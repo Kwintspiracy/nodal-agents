@@ -24,6 +24,7 @@ import {
 import { projectKey } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import { runChatTurn } from '../../chat/run-chat-turn.ts';
+import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 
 // ─── Intercept createLlmClient (same pattern as execute.test.ts) ──────────────
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
@@ -551,6 +552,130 @@ describe('runChatTurn — le titre de la conversation (07/09)', () => {
       .from(conversations)
       .where(eq(conversations.id, conv!.id));
     expect(after?.title).toBe('Cache OpenRouter');
+  });
+});
+
+/**
+ * Un client qui distingue les appels PAR LEUR CONSIGNE, pas par leur rang : le
+ * nommage est le seul à passer `TITLE_SYSTEM_PROMPT`. Compter les appels
+ * marcherait tant que leur nombre ne bouge pas — or un tour en fait deux ou
+ * trois selon que la relance d'escalade se déclenche, et le test se mettrait à
+ * nommer la mauvaise réponse en silence.
+ */
+function makeMockLlmClientByPrompt(input: {
+  reply: string;
+  title: () => string;
+}): RunnerDeps['llmClient'] {
+  let courant = input.reply;
+  const mockModel = new MockLanguageModelV3({
+    provider: 'mock',
+    modelId: 'mock',
+    doGenerate: async () => ({
+      content: [{ type: 'text', text: courant }],
+      finishReason: { unified: 'stop' as const, raw: 'stop' },
+      usage: {
+        inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+        outputTokens: { total: 5, text: 5, reasoning: undefined },
+      },
+      warnings: [],
+    }),
+  });
+  return {
+    config: { provider: 'anthropic', model: 'mock' } as RunnerDeps['llmClient']['config'],
+    capabilities: {
+      toolUse: true,
+      promptCaching: false,
+      vision: false,
+      structuredOutputs: false,
+      streaming: false,
+    },
+    generateText: (args) => {
+      courant = args.system === TITLE_SYSTEM_PROMPT ? input.title() : input.reply;
+      return generateText({ ...args, model: mockModel } as Parameters<
+        typeof generateText
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+    },
+    streamText: () => {
+      throw new Error('streamText not supported in mock');
+    },
+    generateObject: () => {
+      throw new Error('generateObject not supported in mock');
+    },
+  };
+}
+
+describe('runChatTurn — le titre est REDEMANDÉ tant qu’il est provisoire (18/09)', () => {
+  it('premier essai refusé → le provisoire reste ; deuxième tour → nommée ; troisième → plus rien ne bouge', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        title: '',
+        origin: 'user',
+        channel: 'dashboard',
+      })
+      .returning({ id: conversations.id });
+
+    const lire = async (): Promise<string | null> => {
+      const [row] = await db
+        .select({ title: conversations.title })
+        .from(conversations)
+        .where(eq(conversations.id, conv!.id));
+      return row?.title ?? null;
+    };
+
+    // TOUR 1 — le nommeur rend un paragraphe. `cleanTitle` le refuse, et c'est
+    // le cas qui condamnait la conversation à sa première phrase : avant le
+    // 18/09, plus personne ne redemandait.
+    const PREMIER_MESSAGE = 'je cherche des idées de recettes pour dimanche';
+    setActiveLlmClient(
+      makeMockLlmClientByPrompt({
+        reply: 'Avec plaisir, quelles envies ?',
+        title: () =>
+          'Voici un titre possible pour cette conversation, qui porte sur des idées de recettes ' +
+          'à préparer pour le repas du dimanche en famille.',
+      }),
+    );
+    const t1 = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv!.id,
+      message: PREMIER_MESSAGE,
+    });
+    expect(t1.ok).toBe(true);
+    // Le titre provisoire, mot pour mot : la première phrase de la personne.
+    expect(await lire()).toBe(PREMIER_MESSAGE);
+
+    // TOUR 2 — cette fois le nommeur rend un vrai titre. Il PREND : la
+    // conversation portait encore son provisoire.
+    setActiveLlmClient(
+      makeMockLlmClientByPrompt({ reply: 'Un rôti, alors.', title: () => 'Recettes du dimanche' }),
+    );
+    await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv!.id,
+      message: 'plutôt quelque chose de long à cuire',
+    });
+    expect(await lire()).toBe('Recettes du dimanche');
+
+    // TOUR 3 — un titre obtenu ne se remplace JAMAIS, même par un autre titre
+    // parfaitement valide : un fil ne change pas de nom sous les yeux de son
+    // lecteur.
+    setActiveLlmClient(
+      makeMockLlmClientByPrompt({ reply: 'Vers 13 h.', title: () => 'Déjeuner de famille' }),
+    );
+    await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv!.id,
+      message: 'et on mange à quelle heure',
+    });
+    expect(await lire()).toBe('Recettes du dimanche');
   });
 });
 
