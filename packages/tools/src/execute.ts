@@ -24,6 +24,7 @@ import { snapshot, headCheckpoint } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
 import { writeMutationIntent, type DirtiedDeliverable } from './verification/intent';
 import { markDeliverablesProduced } from './verification/produced';
+import { constatedHarnessWrites } from './verification/harness';
 import {
   changedFileTargets,
   observedDeliverableKeys,
@@ -682,8 +683,34 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       //
       // « Réellement écrit » se CONSTATE (issue #60) : un fichier visé dont
       // l'empreinte n'a pas bougé n'est pas produit, quoi que l'outil ait dit.
+      // Ce qu'un HARNAIS a écrit arrive autrement : le CLI écrit dans son
+      // propre processus, et ses fichiers ne sont connus que par les lignes
+      // vivantes qu'il a laissées (`verification/harness.ts`). Sans cette
+      // lecture, un run de `code_task` en écriture ne constaterait plus rien
+      // depuis #102, et chaque run se ferait refuser sa déclaration de preuve.
+      const harnais = auditTool.reportsHarnessWrites
+        ? await constatedHarnessWrites({
+            db: ctx.db,
+            jobId: ctx.jobId ?? '',
+            // Le `cwd` du run d'abord : c'est de lui que parle un chemin
+            // relatif rapporté par le CLI.
+            roots: [
+              ...mutationTargets.filter((t) => t.kind === 'dir').map((t) => t.path),
+              ...(ctx.workspaces ?? []).map((w) => w.path),
+            ],
+          })
+        : { constates: [], introuvables: [] };
+      if (harnais.introuvables.length > 0) {
+        console.warn(
+          `[verification] HARNESS_FILE_NOT_ON_DISK tool=${auditTool.name} job=${ctx.jobId} ` +
+            `paths=${harnais.introuvables.join(',')}`,
+        );
+      }
       const aConstater = {
-        changedFiles: await changedFileTargets(mutationTargets, filesBefore ?? new Map()),
+        changedFiles: [
+          ...(await changedFileTargets(mutationTargets, filesBefore ?? new Map())),
+          ...harnais.constates,
+        ],
         dirTargets: mutationTargets.filter((t) => t.kind === 'dir'),
         workspaceRoots: (ctx.workspaces ?? []).map((w) => w.path),
         // La MÊME règle de projet que l'intention : sinon les deux calculent
@@ -698,6 +725,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // qu'on vient de retirer. `markDeliverablesProduced` journalise de son
       // côté les livrables nommés et non constatés ; cette ligne-ci nomme la
       // CAUSE, qui n'est pas une panne d'écriture.
+      //
+      // OÙ CETTE LIGNE VA, ET OÙ ELLE NE VA PAS (revue C de la PR #196) : dans
+      // le journal du serveur, que personne ne lit depuis le fil. L'agent, lui,
+      // n'apprend rien ici — il le découvre plus tard, au refus de
+      // `declare_verification`, qui lui dit le fait et la sortie. Remonter
+      // l'absence au modèle dès le tour où elle se produit demanderait de
+      // toucher au résultat de l'outil, et c'est une décision de produit à
+      // prendre à part (issue à ouvrir), pas un effet de bord de ce correctif.
       const sansConstat = dossiersNonConstates(aConstater);
       if (sansConstat.size > 0) {
         console.warn(

@@ -119,10 +119,17 @@ export function makeLiveToolRecorder(args: {
   entityId: string | null;
   jobId: string;
   provider: 'claude' | 'codex';
-}): (line: string) => void {
+}): { onLine: (line: string) => void; settled: () => Promise<void> } {
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
+  // Les insertions restent « lancées et oubliées » — une panne d'audit ne doit
+  // pas emporter la session qu'elle audite —, mais leurs promesses sont
+  // gardées pour être ATTENDUES à la fin du run (issue #102, revue C de la
+  // PR #196). La vérification lit ces lignes juste après l'appel pour savoir
+  // quels fichiers constater : une insertion encore en vol serait un fichier
+  // écrit que rien ne crédite, au hasard du minutage.
+  const enVol: Array<Promise<unknown>> = [];
 
-  return (line: string): void => {
+  const onLine = (line: string): void => {
     const parsed = parseLiveToolEvent(args.provider, line);
     if (!parsed) return;
 
@@ -139,7 +146,7 @@ export function makeLiveToolRecorder(args: {
     if (!started) return;
     pending.delete(parsed.event.id);
 
-    void args.db
+    const insertion = args.db
       .insert(toolCalls)
       .values({
         entityId: args.entityId,
@@ -167,6 +174,15 @@ export function makeLiveToolRecorder(args: {
       .catch((err: unknown) => {
         console.warn(`[code-task] live tool_calls insert failed (job=${args.jobId}):`, err);
       });
+    enVol.push(insertion);
+  };
+
+  return {
+    onLine,
+    /** Rend la main quand toutes les insertions lancées sont retombées. */
+    settled: async () => {
+      await Promise.allSettled(enVol);
+    },
   };
 }
 

@@ -36,6 +36,8 @@ import { runSkillScriptTool } from '../builtin/run-skill-script';
 import { codeTaskTool } from '../builtin/code-task';
 import { OFFICE_TOOLS } from '../builtin/office-ops';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
+import { z } from 'zod';
+import { resolveAndCheckPath } from '../builtin/file-ops/workspace';
 
 // `@electric-sql/pglite` n'est PAS une dépendance de ce paquet (le harnais la
 // porte) : le type de la poignée est repris de la signature du harnais.
@@ -131,6 +133,42 @@ async function projectRow(key: string) {
 }
 
 const keyOf = (p: string): string => projectKey(normalizePath(p));
+
+/**
+ * Un outil qui fait écrire un TIERS — la forme de `code_task` en mode écriture,
+ * sans le CLI que la machine de test n'a pas.
+ *
+ * Il déclare ce que déclare le vrai : le projet de son `cwd` en cible DOSSIER,
+ * et `reportsHarnessWrites`, qui dit au seam d'aller lire les lignes vivantes
+ * laissées par la session pour savoir quels fichiers constater.
+ */
+const harnaisFactice = {
+  // Le NOM du vrai : le seam range un outil mutant par son nom dans la table
+  // des surfaces de vérification, et un nom inconnu y est refusé. Ce faux-là
+  // joue donc `code_task`, sans le CLI que la machine de test n'a pas.
+  name: 'code_task',
+  description: 'Un harnais de test : il n’écrit rien lui-même.',
+  inputSchema: z.object({ purpose: z.string(), cwd: z.string().optional() }),
+  riskLevel: 'destructive' as const,
+  card: 'delegation' as const,
+  present: () => ({
+    card: 'delegation' as const,
+    to: 'cli',
+    task: 'test',
+    ok: true,
+    resultText: 'fait',
+  }),
+  mutatesWorkspace: true,
+  reportsHarnessWrites: true,
+  resolveMutationTargets: async (input: { cwd?: string }, c: ToolContext) => [
+    {
+      kind: 'dir' as const,
+      path: await resolveAndCheckPath(c, input.cwd ?? '.'),
+      deliverableType: 'code_project' as const,
+    },
+  ],
+  execute: async () => ({ ok: true }),
+};
 
 const exists = async (p: string): Promise<boolean> => {
   try {
@@ -476,7 +514,7 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(rows[0]!.addressed, 'la racine à manifeste EST le projet visé').toBe(true);
   });
 
-  it('un shell qui n’écrit RIEN ne produit rien — son cwd ne le crédite plus (#102)', async () => {
+  it('un shell qui n’écrit RIEN ne produit rien — son cwd ne le crédite plus (#102) @cap:verifier-un-livrable/moteur', async () => {
     // Ce test disait l'inverse jusqu'à l'issue #102 : `echo ok` dans `zeta`
     // posait `produced` sur `zeta` sur la foi de la cible seule, alors que la
     // commande n'a pas touché un octet, et `declare_verification` accordait
@@ -503,7 +541,88 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(parCle.get(keyOf(join(ws, 'alpha')))?.produced, 'ni la précaution').toBe(false);
   });
 
-  it('un FICHIER écrit dans le même projet, lui, le produit', async () => {
+  it('un HARNAIS : les fichiers qu’il RAPPORTE sont constatés sur le disque (#102) @cap:verifier-un-livrable/moteur', async () => {
+    // Revue C de la PR #196. Un CLI (Claude Code, Codex) écrit dans son propre
+    // processus : ses écritures ne passent par aucun outil de Nodal, donc le
+    // seam n'a ni empreinte d'avant ni même la liste des fichiers à regarder.
+    // Depuis qu'un `cwd` ne crédite plus rien, tous les runs de harnais
+    // seraient partis en « non constaté » — un faux rouge sur tout le flux.
+    //
+    // Ce qu'il a touché arrive en lignes VIVANTES. On les pose ici comme
+    // l'enregistreur les pose pendant la session, et on passe par le VRAI
+    // seam : c'est le câblage qui est éprouvé, pas la fonction.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    await writeFile(join(ws, 'zeta', 'a.ts'), 'export const a = 1;', 'utf8');
+    await writeFile(join(ws, 'zeta', 'b.ts'), 'export const b = 2;', 'utf8');
+    await db.insert(toolCalls).values([
+      {
+        entityId: seed.entityId,
+        jobId,
+        toolName: 'cli:file_change',
+        card: 'files',
+        toolInput: {
+          changes: [
+            { path: join(ws, 'zeta', 'a.ts'), kind: 'update', diff: '+1' },
+            { path: join(ws, 'zeta', 'b.ts'), kind: 'add', diff: '+2' },
+          ],
+        },
+      },
+    ] as never);
+
+    const res = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+
+    const zeta = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(zeta?.addressed, 'le projet est visé par le run').toBe(true);
+    expect(zeta?.produced, 'et ses fichiers rapportés sont sur le disque').toBe(true);
+  });
+
+  it('un fichier RAPPORTÉ que le disque ne porte pas n’est pas constaté, et c’est dit @cap:verifier-un-livrable/moteur', async () => {
+    // Le rapport du CLI ne suffit jamais : on va voir. Un fichier annoncé mais
+    // absent ne crédite rien, et la ligne de journal le nomme (invariant #4).
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    await db.insert(toolCalls).values([
+      {
+        entityId: seed.entityId,
+        jobId,
+        toolName: 'cli:Write',
+        card: 'files',
+        toolInput: { file_path: join(ws, 'zeta', 'jamais-ecrit.ts'), content: 'x' },
+      },
+    ] as never);
+
+    const dits = [];
+    const espion = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+      dits.push(args.map(String).join(' '));
+    });
+    try {
+      const res = await executeTool(
+        harnaisFactice as never,
+        { purpose: 'test', cwd: 'zeta' },
+        ctx(),
+        autoApprove('code_task'),
+      );
+      expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    } finally {
+      espion.mockRestore();
+    }
+
+    const zeta = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(zeta?.produced, 'rien n’a été constaté').toBe(false);
+    expect(
+      dits.some((l) => l.includes('HARNESS_FILE_NOT_ON_DISK') && l.includes('jamais-ecrit.ts')),
+      'et le fichier manquant est nommé',
+    ).toBe(true);
+  });
+
+  it('un FICHIER écrit dans le même projet, lui, le produit @cap:verifier-un-livrable/moteur', async () => {
     // L'autre côté de #102, et la raison pour laquelle le correctif n'est pas
     // un faux rouge : ce qu'un outil NOMME est lu avant et après, donc
     // constaté. Le tour qui écrit vraiment garde son `produced`.
@@ -534,7 +653,7 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(parCle.get(keyOf(join(ws, 'zeta')))?.produced, 'le fichier est constaté').toBe(true);
   });
 
-  it('et `declare_verification` le DIT au lieu d’accuser une panne (#102)', async () => {
+  it('et `declare_verification` le DIT au lieu d’accuser une panne (#102) @cap:verifier-un-livrable/moteur', async () => {
     // Le bout de la chaîne, sur de vraies lignes : un shell réussit dans un
     // projet, rien n'y est constaté, et l'outil qui voudrait déclarer la preuve
     // reçoit le FAIT — pas « l'outil qui le visait a rapporté un échec », qui
@@ -566,7 +685,7 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect((await projectRow(keyOf(join(ws, 'zeta'))))?.verifyCommands ?? null).toBeNull();
   });
 
-  it('le code de sortie d’un shell ne décide de RIEN, dans un sens ni dans l’autre', async () => {
+  it('le code de sortie d’un shell ne décide de RIEN, dans un sens ni dans l’autre @cap:verifier-un-livrable/moteur', async () => {
     // Revue Codex PR #49, passes 3 puis 4 — et la 4 renverse la 3.
     //
     // La passe 3 avait raison : un `exit 1` ne PROUVE pas qu'on a produit. La
