@@ -198,9 +198,23 @@ describe('le portail publié se rafraîchit sur les événements GitHub', () => 
    * `@cap:` lues dans un commentaire.
    */
   const typesDe = (declencheur) => {
-    const bloc = docs.slice(docs.indexOf(`\n  ${declencheur}:`));
-    const types = bloc.match(/types:\s*\n?\s*\[([^\]]+)\]/);
-    return types ? types[1].split(',').map((t) => t.trim()) : [];
+    // Le bloc `on:` SEUL : `issues:` reparaît sous `permissions:`, où il ne dit
+    // pas du tout la même chose.
+    const on = docs.slice(0, docs.indexOf('\npermissions:'));
+    const bloc = on.slice(on.indexOf(`\n  ${declencheur}:`));
+    const apres = bloc.slice(bloc.indexOf('types:') + 'types:'.length);
+    // LES DEUX FORMES YAML, parce que le fichier porte les deux : `[a, b]` tant
+    // que la ligne tient, une liste à tirets au-delà — prettier replie la
+    // première, et l'analyseur des docs ne sait pas lire un repli.
+    const crochets = apres.match(/^[ \t]*\[([^\]]+)\]/);
+    if (crochets) return crochets[1].split(',').map((t) => t.trim());
+    const types = [];
+    for (const ligne of apres.split('\n').slice(1)) {
+      const item = ligne.match(/^\s+-\s+([\w_]+)\s*$/);
+      if (!item) break;
+      types.push(item[1]);
+    }
+    return types;
   };
 
   it('docs.yml écoute les issues et les pull requests', () => {

@@ -56,10 +56,23 @@ on:
   # déploiement Pages. Ce qu'il ferait bouger — l'état des vérifications — bouge
   # de toute façon tout seul, sans qu'aucun événement ne le dise : c'est
   # précisément ce que le filet horaire ci-dessous rattrape.
+  #
+  # Liste À TIRETS, pas entre crochets : à huit types, prettier replie la forme
+  # `[…]` sur la ligne suivante, et l'analyseur YAML minimal des docs
+  # (`apps/docs/src/tests/yaml-lite.ts`) ne sait pas lire une valeur qui
+  # commence SOUS sa clé. Le test de la page d'accueil tombait alors sur ce
+  # fichier, sur Linux comme sur Windows.
   pull_request_target:
     branches: [main]
     types:
-      [opened, closed, reopened, labeled, unlabeled, edited, ready_for_review, converted_to_draft]
+      - opened
+      - closed
+      - reopened
+      - labeled
+      - unlabeled
+      - edited
+      - ready_for_review
+      - converted_to_draft
   schedule:
     # Le filet : les états de la CI ne portent aucun événement d'issue, et un
     # webhook se perd. 41 et non 0 pour ne pas rejoindre la vague de l'heure.
