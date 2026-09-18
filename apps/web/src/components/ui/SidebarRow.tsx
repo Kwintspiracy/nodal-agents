@@ -113,7 +113,18 @@ export default function SidebarRow({
   testId,
   children,
 }: Props) {
-  const inner = `flex h-full min-w-0 flex-1 items-center ${DEPTH[depth]}`;
+  // `text-left` sur TOUTES les lignes, lien comme bouton.
+  //
+  // Un `<button>` natif porte `text-align: center` dans la feuille de style du
+  // navigateur, et le reset de Tailwind ne touche pas cette propriété-là. Le
+  // jour où la ligne d'un dossier est devenue un bouton (19/09/2026), son
+  // libellé est donc parti au MILIEU de la ligne — dans son `flex-1`, il
+  // héritait du centrage — pendant que les lignes restées liens gardaient leur
+  // alignement. Quentin l'a vu tout de suite : « qu'est-ce qui t'a pris de
+  // centrer les Channels ? ». L'aligner ici, et pas sur le bouton seul, fait
+  // que la question ne se repose pas à la prochaine ligne qui changera de
+  // nature.
+  const inner = `flex h-full min-w-0 flex-1 items-center text-left ${DEPTH[depth]}`;
   const commun = {
     title,
     'data-testid': testId,

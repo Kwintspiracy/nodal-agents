@@ -318,6 +318,24 @@ describe('toutes les lignes du rail ont la MÊME forme @cap:installer-et-demarre
       expect(caret?.closest('a')).toBeNull();
     }
   });
+
+  it('aligne tout libellé à GAUCHE, qu’une ligne soit un lien ou un bouton', async () => {
+    await renderTout();
+    // Le contenu d'une ligne : son lien, ou son bouton quand elle ne mène nulle
+    // part. C'est le premier enfant, le chevron venant après.
+    const contenus = rows().map((r) => r.firstElementChild);
+
+    // Les DEUX natures sont là — sans elles, la comparaison ne prouverait rien.
+    expect(contenus.some((el) => el?.tagName === 'BUTTON')).toBe(true);
+    expect(contenus.some((el) => el?.tagName === 'A')).toBe(true);
+
+    // Un `<button>` natif centre son texte, et le reset de Tailwind ne touche
+    // pas `text-align` : les lignes de dossier, devenues boutons, écrivaient
+    // leur nom au milieu du rail pendant que les liens restaient à gauche.
+    for (const el of contenus) {
+      expect(el?.className, `une ligne ${el?.tagName} aligne son libellé`).toContain('text-left');
+    }
+  });
 });
 
 describe('les icônes du rail se distinguent @cap:reprendre-conversation/ecran', () => {
