@@ -2217,6 +2217,22 @@ export function regrouperParCapacite({ capacites, preuves } = {}) {
 }
 
 /**
+ * La ligne qui TERMINE une déclaration `import`.
+ *
+ * Deux formes la terminent, et la seconde manquait : le `from` d'un import
+ * nommé, et le point-virgule d'un import à effet de bord. `import
+ * './helpers.ts';` tient sur une ligne et ne porte aucun `from` ; le drapeau
+ * « on est dans un import » restait donc levé jusqu'à la fin du fichier, tout
+ * l'en-tête était sauté, et la page Journeys affichait « no description » sous
+ * un parcours qui en avait une (revue après coup de la PR #86).
+ *
+ * Un import sur plusieurs lignes ne peut pas se faire prendre par le
+ * point-virgule : entre ses accolades on trouve des virgules, jamais un
+ * point-virgule.
+ */
+const finDImport = (ligne) => /\bfrom\b/.test(ligne) || ligne.endsWith(';');
+
+/**
  * La description d'un parcours : la première phrase UTILE de son fichier.
  *
  * Le cas réel (Quentin, 13/09) : la page Parcours affichait, sous chaque
@@ -2237,22 +2253,6 @@ export function regrouperParCapacite({ capacites, preuves } = {}) {
  * Un commentaire qui suit du CODE n'est pas un en-tête : c'est ce qui
  * distingue cette fonction de la regex qu'elle remplace.
  */
-/**
- * La ligne qui TERMINE une déclaration `import`.
- *
- * Deux formes la terminent, et la seconde manquait : le `from` d'un import
- * nommé, et le point-virgule d'un import à effet de bord. `import
- * './helpers.ts';` tient sur une ligne et ne porte aucun `from` ; le drapeau
- * « on est dans un import » restait donc levé jusqu'à la fin du fichier, tout
- * l'en-tête était sauté, et la page Journeys affichait « no description » sous
- * un parcours qui en avait une (revue après coup de la PR #86).
- *
- * Un import sur plusieurs lignes ne peut pas se faire prendre par le
- * point-virgule : entre ses accolades on trouve des virgules, jamais un
- * point-virgule.
- */
-const finDImport = (ligne) => /\bfrom\b/.test(ligne) || ligne.endsWith(';');
-
 export function intentionDunParcours(texte) {
   const lignes = String(texte ?? '').split(/\r?\n/);
 
