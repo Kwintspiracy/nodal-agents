@@ -189,6 +189,7 @@ import {
   LIVE_JOB_STATUSES,
   isShellProgram,
   redactSecretsInText,
+  CLI_WRITE_TOOLS,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
@@ -12316,13 +12317,10 @@ function deriveJobStage(
 // à la source (apps/runner/src/cli-runtime/codex-turn.ts,
 // `normalizeCodexToolInput`) pour que `file_path` soit là où les deux surfaces
 // le cherchent.
-const EDIT_TOOL_NAMES = new Set([
-  'cli:Edit',
-  'cli:Write',
-  'cli:MultiEdit',
-  'cli:NotebookEdit',
-  'cli:file_change',
-]);
+// La liste elle-même vit dans `@nodal-agents/shared` depuis l'issue #102 : la
+// vérification en a besoin pour savoir quels fichiers constater après un run de
+// harnais, et une troisième copie aurait divergé au premier outil ajouté.
+const EDIT_TOOL_NAMES = new Set(CLI_WRITE_TOOLS);
 const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write']);
 
 /**
