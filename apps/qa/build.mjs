@@ -24,6 +24,8 @@ import {
   releaseDuHash,
   hashDeLaRelease,
   SANS_RELEASE,
+  pileDuneColonne,
+  JOURS_DE_FENETRE,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
@@ -124,18 +126,41 @@ const lienRun = (url) =>
     ? `<a class="lien-run" href="${esc(url)}" target="_blank" rel="noopener">see the run</a>`
     : '';
 const pct = (v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : null);
-/** Le jour seul — sur un axe de courbe, l'heure d'une collecte n'apprend rien. */
+/**
+ * TOUTES LES DATES DE LA PAGE SONT EN UTC, et le disent (#178).
+ *
+ * Elles ne l'étaient pas : `toLocaleString` sans `timeZone` rend l'heure de la
+ * MACHINE QUI REND. Le même instantané donnait « 08:37 » sur le runner GitHub
+ * et « 16:37 » sur le poste du propriétaire, sans un mot pour les distinguer :
+ * deux pages différentes pour la même donnée, et aucune des deux ne disait
+ * laquelle.
+ *
+ * Ce n'est pas un détail de présentation, parce que la date du tableau ne sert
+ * qu'à UNE chose — dire si la page est fraîche. Une heure dont on ignore le
+ * fuseau ne répond pas à cette question, et le `Z` final est ce qui rend la
+ * comparaison possible avec l'heure d'un événement GitHub, qui est en UTC.
+ */
+const EN_UTC = { timeZone: 'UTC' };
+/**
+ * Le jour seul — sur un axe de courbe, l'heure d'une collecte n'apprend rien.
+ * En UTC lui aussi : une collecte de 23 h 30 UTC s'affichait le LENDEMAIN pour
+ * qui rend la page depuis l'Asie, et deux collectes de la même nuit tombaient
+ * alors sur deux jours différents.
+ */
 const jourFr = (iso) =>
-  iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '·';
+  iso
+    ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', ...EN_UTC })
+    : '·';
 const dateFr = (iso) =>
   iso
-    ? new Date(iso).toLocaleString('en-GB', {
+    ? `${new Date(iso).toLocaleString('en-GB', {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-      })
+        ...EN_UTC,
+      })}Z`
     : '·';
 
 // ─── Écarts : la liste qui dit quoi faire, classée par ce que ça coûte ────────
@@ -976,16 +1001,29 @@ function vueChantiers() {
     </a>`;
   };
 
-  // « Fait » est borné : une colonne qui empile tout l'historique noie les
-  // quatre autres, et ce n'est pas là qu'on regarde.
+  // Ce qu'une colonne finie montre est une FENÊTRE de temps, du plus récent au
+  // plus ancien (#176) — la règle vit dans `lib.mjs`, avec son test. La page
+  // la lit, elle ne la refait pas : un plafond recalculé ici est exactement ce
+  // qui avait fait disparaître les PR mergées.
   const colonnes = COLONNES.map((nom) => {
     const dedans = cartes.filter((c) => c.colonne === nom);
-    const montrees = nom === 'Done' || nom === 'Abandoned' ? dedans.slice(0, 8) : dedans;
+    const { montrees, plusAnciennes, sansDate } = pileDuneColonne(cartes, nom);
+    const fini = nom === 'Done' || nom === 'Abandoned';
+    // Deux comptes, parce que ce sont deux faits : ce qui est plus vieux que la
+    // fenêtre, et ce dont GitHub n'a pas donné la date de fin. « + 63 older »
+    // affirmait des secondes ce qu'on ne sait pas d'elles.
+    const repli = [
+      plusAnciennes > 0 ? `+ ${plusAnciennes} older` : '',
+      sansDate > 0 ? `${plusAnciennes > 0 ? '' : '+ '}${sansDate} with no closing date` : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
     return `<section class="colonne">
       <header><h3>${esc(nom)}</h3><span class="compte">${dedans.length}</span></header>
+      ${fini ? `<p class="fenetre">last ${JOURS_DE_FENETRE} days, newest first</p>` : ''}
       <div class="pile">
         ${montrees.length ? montrees.map(carte).join('') : '<p class="vide">Nothing here.</p>'}
-        ${dedans.length > montrees.length ? `<p class="vide">+ ${dedans.length - montrees.length} more</p>` : ''}
+        ${repli ? `<p class="vide">${repli}</p>` : ''}
       </div>
     </section>`;
   }).join('');
@@ -1350,6 +1388,7 @@ tr:last-child td{border-bottom:0}
 .colonne header{display:flex;justify-content:space-between;align-items:baseline;
   gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--encre)}
 .colonne h3{font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--encre)}
+.fenetre{font-size:11px;color:var(--encre3);margin:0 0 2px}
 .pile{display:flex;flex-direction:column;gap:10px}
 .ticket{display:flex;flex-direction:column;gap:9px;background:var(--panneau);
   border:1px solid var(--regle);border-radius:5px;padding:15px 16px 14px;
@@ -1491,11 +1530,16 @@ td.dette{color:var(--ko);font-weight:600}
       <a href="#ci" class="discret">Triggers <b>${s.ci.length}</b></a>
       <a href="#historique" class="discret">History <b>${historique.length}</b></a>
     </nav>
+    <!-- Les deux dates, en UTC (#178). Le TABLEAU d'abord : c'est la seule des
+         deux qu'on regarde pour savoir si la page est fraîche, et elle bouge à
+         chaque événement GitHub là où la mesure dort jusqu'à 03:17. Les mettre
+         dans l'autre ordre faisait lire la date de la nuit comme celle de la
+         page. -->
     <footer>
       ${esc(s.branche ?? '')}<br>
       ${esc(s.commit ?? '')}<br>
-      measured ${esc(dateFr(s.genereLe))}<br>
-      board as of ${esc(dateFr(s.tableauLe ?? s.genereLe))}
+      board as of ${esc(dateFr(s.tableauLe ?? s.genereLe))}<br>
+      measured ${esc(dateFr(s.genereLe))}
     </footer>
   </aside>
   <main class="contenu">

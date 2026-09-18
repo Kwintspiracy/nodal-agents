@@ -35,7 +35,7 @@ export const EXPLICATIONS = {
 <li><b>In progress</b>: an open issue nobody has carried into a pull request yet.</li>
 <li><b>In review</b>: an open pull request, or an issue that an open pull request closes ("Closes #n" in its body). The work is written, it is waiting to be read.</li>
 <li><b>To test</b>: an issue labelled <code>test</code>: something to try out, or a doubt to settle.</li>
-<li><b>Done</b>: closed issue, merged pull request. Capped at the most recent ones.</li>
+<li><b>Done</b>: closed issue, merged pull request, mixed in one chronology. It shows the last seven days, newest first, and folds the rest under a count; the heading still counts everything.</li>
 <li><b>Abandoned</b>: a pull request closed without being merged.</li>
 </ul>
 <p>The left bar follows the same order as the eye: Work in flight, Capabilities, Gaps, Journeys, Test memory. Those five pages are the ones you steer with, and they read in that order.</p>

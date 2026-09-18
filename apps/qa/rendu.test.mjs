@@ -67,6 +67,16 @@ const carte = (o) => ({
   ...o,
 });
 
+/**
+ * L'instant où ce rendu tourne, à une heure près.
+ *
+ * Depuis #176, « Done » est une FENÊTRE de sept jours : une carte finie se
+ * montre parce qu'elle vient d'être finie, et une carte sans date de fin se
+ * replie. Les fixtures finies portent donc une date relative au rendu, et non
+ * une date en dur qui sortirait de la fenêtre dès la semaine suivante.
+ */
+const TOUT_A_LHEURE = new Date(Date.now() - 3600_000).toISOString();
+
 /** Les cartes qui exercent les deux rendus, et rien d'autre : la page est lisible. */
 const CARTES = [
   carte({ numero: 68, titre: 'Publish 0.8.9 to npm' }),
@@ -77,6 +87,7 @@ const CARTES = [
     titre: 'Closed agent card with no proof',
     etat: 'CLOSED',
     colonne: 'Done',
+    finiLe: TOUT_A_LHEURE,
     parUnAgent: true,
     faitsVerifies: false,
   }),
@@ -398,6 +409,7 @@ describe('où en est la revue, SUR la carte (#128)', () => {
             titre: 'A PR already merged',
             etat: 'MERGED',
             colonne: 'Done',
+            finiLe: TOUT_A_LHEURE,
             revue: REVUE_OK,
           }),
         ],
@@ -473,6 +485,112 @@ describe('ce que le portail n’a pas su lire de la revue, il le dit (revue C de
     expect(t).toContain('review state partly unreadable');
     // La carte dit les DEUX choses : rien de lu, et une raison de s'en méfier.
     expect(t).toContain('not reviewed yet');
+  });
+});
+
+describe('« Done » est une fenêtre, et les PR mergées y sont (#176)', () => {
+  // Le 16/09/2026 : huit issues fermées et six PR mergées le même jour. La
+  // colonne en montrait huit, par numéro décroissant, donc aucune des PR.
+  const ilYA = (heures) => new Date(Date.now() - heures * 3600_000).toISOString();
+
+  const JOURNEE = [
+    ...Array.from({ length: 8 }, (_, k) =>
+      carte({
+        numero: 109 + k,
+        titre: `Closed issue ${k}`,
+        etat: 'CLOSED',
+        colonne: 'Done',
+        finiLe: ilYA(k + 1),
+      }),
+    ),
+    ...[103, 112, 113, 114, 118, 120].map((n, k) =>
+      carte({
+        type: 'pr',
+        numero: n,
+        titre: `Merged PR ${n}`,
+        etat: 'MERGED',
+        colonne: 'Done',
+        finiLe: ilYA(k + 1.5),
+      }),
+    ),
+    // Et l'histoire d'avant, qui doit se replier sans faire de bruit.
+    ...Array.from({ length: 61 }, (_, k) =>
+      carte({
+        numero: 10 + k,
+        titre: `Old closed issue ${k}`,
+        etat: 'CLOSED',
+        colonne: 'Done',
+        finiLe: new Date(Date.now() - (30 + k) * 86_400_000).toISOString(),
+      }),
+    ),
+  ];
+
+  let html = '';
+  beforeAll(() => {
+    html = rendre({
+      ...INSTANTANE,
+      chantiers: { ...(SOCLE.chantiers ?? {}), cartes: JOURNEE },
+    });
+  });
+
+  it('les six PR mergées du jour sont SUR la page', () => {
+    for (const n of [103, 112, 113, 114, 118, 120]) {
+      expect(html, `PR #${n} absente`).toContain(`PR #${n}</span>`);
+    }
+  });
+
+  it('les quatorze cartes du jour sont montrées, et le reste est replié sous son compte', () => {
+    const colonne = html.slice(html.indexOf('>Done<'), html.indexOf('>Abandoned<'));
+    expect(colonne.match(/class="ticket /g) ?? []).toHaveLength(14);
+    expect(colonne).toContain('+ 61 older');
+    expect(colonne).toContain('last 7 days, newest first');
+  });
+
+  it('la colonne compte TOUT, même ce qu’elle ne montre pas', () => {
+    const colonne = html.slice(html.indexOf('>Done<'), html.indexOf('>Abandoned<'));
+    expect(colonne).toContain('<span class="compte">75</span>');
+  });
+
+  it('les cartes se suivent du plus récemment fini au plus ancien', () => {
+    const colonne = html.slice(html.indexOf('>Done<'), html.indexOf('>Abandoned<'));
+    const numeros = [...colonne.matchAll(/>(?:PR )?#(\d+)<\/span>/g)].map((m) => Number(m[1]));
+    // Une heure sépare chaque carte : l'ordre attendu est donc connu d'avance,
+    // et il ENTRELACE les deux familles.
+    expect(numeros).toEqual([109, 103, 110, 112, 111, 113, 112, 114, 113, 118, 114, 120, 115, 116]);
+  });
+});
+
+describe('ce que la colonne DIT de ce qu’elle replie (revue C de #188)', () => {
+  it('nomme séparément les plus anciennes et celles qu’elle ne sait pas dater', () => {
+    const vieille = (n) =>
+      carte({
+        numero: n,
+        titre: `Old ${n}`,
+        etat: 'CLOSED',
+        colonne: 'Done',
+        finiLe: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+      });
+    const html = rendre({
+      ...INSTANTANE,
+      chantiers: {
+        ...(SOCLE.chantiers ?? {}),
+        cartes: [
+          carte({
+            numero: 1,
+            titre: 'Closed yesterday',
+            etat: 'CLOSED',
+            colonne: 'Done',
+            finiLe: new Date(Date.now() - 86_400_000).toISOString(),
+          }),
+          vieille(2),
+          vieille(3),
+          carte({ numero: 4, titre: 'Closed, date unknown', etat: 'CLOSED', colonne: 'Done' }),
+        ],
+      },
+    });
+    const colonne = html.slice(html.indexOf('>Done<'), html.indexOf('>Abandoned<'));
+    expect(colonne).toContain('+ 2 older, 1 with no closing date');
+    expect(colonne).not.toContain('+ 3 older');
   });
 });
 
