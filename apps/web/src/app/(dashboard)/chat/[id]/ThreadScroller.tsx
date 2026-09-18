@@ -59,8 +59,8 @@
 //   · sa parole la plus récente doit gagner. S'il descend en bas après son
 //     clic, la queue de son propre dépliage ne doit pas rééteindre le suivi
 //     qu'il vient de rallumer — sinon il est en bas et plus rien ne le suit
-//     (cas B de `thread-unfold-keeps-scroll.spec.ts`, dans la PR #169, mergée
-//     avant celle-ci) ;
+//     (cas B de `thread-unfold-keeps-scroll.spec.ts`, arrivé par la PR #169 et
+//     mergé avant celle-ci) ;
 //   · sa vue ne doit jamais bouger sous son clic. La première écriture de cette
 //     PR clôturait le geste au retour en bas, ce qui rendait la croissance
 //     suivante « ordinaire » — donc suivie, donc la boîte ouverte remontait :

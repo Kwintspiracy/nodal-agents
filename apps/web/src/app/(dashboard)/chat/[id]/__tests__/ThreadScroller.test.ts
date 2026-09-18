@@ -300,8 +300,8 @@ describe('ThreadScroller — ouvrir une boîte éteint le suivi @cap:parler-a-un
     // encore dans la fenêtre du geste — et sans le drapeau « il a défilé
     // depuis » elle rééteignait le suivi qu'il venait de rallumer, sans que
     // rien ne le rallume ensuite. Attrapé par le cas B de
-    // `thread-unfold-keeps-scroll.spec.ts`, dans la PR #169, mergée avant
-    // celle-ci ; ce fichier n'en porte donc pas la copie.
+    // `thread-unfold-keeps-scroll.spec.ts`, arrivé par la PR #169 et mergé
+    // avant celle-ci.
     const { el, fire, geometry } = await mountThread();
     const now = vi.spyOn(performance, 'now');
 
