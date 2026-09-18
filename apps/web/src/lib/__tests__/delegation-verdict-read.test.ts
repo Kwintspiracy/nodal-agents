@@ -189,6 +189,29 @@ beforeAll(async () => {
       { toolName: 'file_read', toolOutput: JSON.stringify({ ok: true, content: 'x' }) },
     ],
   });
+
+  // 6. Un succès PUIS un refus : le relecteur s'est repris, et c'est le DERNIER
+  //    appel qui décide, même quand il ne livre rien. Remonter au succès
+  //    d'avant afficherait un verdict que le relecteur a retiré (Reviewer C,
+  //    passe 1 : sans ce cas, retirer le verrou `tranches` ne rougissait rien).
+  await semerDelegation({
+    cle: 'repris-en-refus',
+    resultatEnfant: 'Je retire mon verdict, le paquet était incomplet.',
+    appels: [
+      {
+        toolOutput: sortieVerdict({
+          verdict: 'approve',
+          counts: { blocker: 0, major: 0, minor: 0 },
+        }),
+      },
+      {
+        toolOutput: JSON.stringify({
+          ok: false,
+          error: 'blocked: an approval rule forbids review_verdict',
+        }),
+      },
+    ],
+  });
 });
 
 describe('le fil remonte le verdict enregistré d’un délégué @cap:verifier-un-livrable/moteur', () => {
@@ -226,5 +249,12 @@ describe('le fil remonte le verdict enregistré d’un délégué @cap:verifier-
   it('un appel d’un autre outil, plus récent, n’efface pas le verdict', async () => {
     const job = await delegationDuFil('autre-outil');
     expect(job.reviewVerdict?.counts).toEqual({ blocker: 2, major: 0, minor: 1 });
+  });
+
+  it('un refus APRÈS un succès retire le verdict : le dernier appel décide, même vide', async () => {
+    const job = await delegationDuFil('repris-en-refus');
+    expect(job.reviewVerdict).toBeNull();
+    // La prose du retrait reste là, c'est elle que l'écran montrera.
+    expect(job.result).toContain('Je retire mon verdict');
   });
 });
