@@ -82,9 +82,10 @@ describe("l'attribution d'une attente à son dossier @cap:reprendre-conversation
 });
 
 describe('les dossiers qui existent @cap:reprendre-conversation/moteur', () => {
-  it('donne un dossier à chaque canal qui porte des conversations, dans l’ordre de la maquette', () => {
+  it('donne un dossier à chaque canal qui porte des conversations : Nodal chats en tête, puis l’ordre de la maquette', () => {
+    // Quentin, 18/09 : « mets Nodal chats en premier avant Telegram ».
     const rows = folders({ channels: ['whatsapp', 'telegram', 'discord'] });
-    expect(rows.map((r) => r.key)).toEqual(['telegram', 'discord', 'whatsapp', DASHBOARD_FOLDER]);
+    expect(rows.map((r) => r.key)).toEqual([DASHBOARD_FOLDER, 'telegram', 'discord', 'whatsapp']);
   });
 
   it('n’invente pas de dossier pour un canal sans conversation', () => {

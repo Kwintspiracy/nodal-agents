@@ -143,7 +143,10 @@ function existingKeys(input: Pick<ChatFoldersInput, 'channels' | 'waiting' | 'ru
   // Un canal que la maquette ne connaît pas se range après, par ordre
   // alphabétique — un ordre stable, plutôt que celui de la base.
   const unknown = [...chan].filter((c) => !CHANNEL_ORDER.includes(c)).sort();
-  return [...known, ...unknown, DASHBOARD_FOLDER];
+  // « Nodal chats » EN TÊTE (Quentin, 18/09) : c'est le dossier où l'on parle
+  // depuis le dashboard, celui qu'on ouvre le plus ; les canaux suivent, dans
+  // l'ordre de la maquette, puis ceux qu'elle ne connaît pas.
+  return [DASHBOARD_FOLDER, ...known, ...unknown];
 }
 
 /** Ce qui attend la personne, rangé par dossier. */
