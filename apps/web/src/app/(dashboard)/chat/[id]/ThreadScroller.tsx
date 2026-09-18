@@ -229,10 +229,12 @@ export default function ThreadScroller({
         return;
       }
       // Le lecteur vient de cliquer dans le fil : cette croissance est un bloc
-      // qu'il a ouvert. La zone visible ne bouge pas, et on cesse de suivre —
-      // il lit ; son retour en bas (onScroll) rallumera le suivi.
+      // qu'il a ouvert. La zone visible ne bouge pas. Suit-on encore ? Ce que
+      // sa position dit, pas un « non » forcé : un petit bloc le laisse en bas
+      // et la réponse suivante doit encore descendre ; un grand bloc l'en
+      // éloigne, il lit, et son retour en bas (onScroll) rallumera le suivi.
       if (growthIsTheReaders({ gestureAt: gestureAt.current, now: performance.now() })) {
-        follow.current = false;
+        follow.current = staysAtBottom(el);
         selfScrollTop.current = null;
         return;
       }
