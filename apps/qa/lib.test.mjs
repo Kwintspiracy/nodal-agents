@@ -54,6 +54,7 @@ import {
   reviewState,
   porteDesFaitsVerifies,
   fusionnerTableauGitHub,
+  pileDuneColonne,
   ORDRE_DES_BACS,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -2885,5 +2886,111 @@ describe('revue : ce que le portail publie, et ce qu’il ne sait pas (revue C d
     );
     expect(etat.passes).toBe(0);
     expect(etat.warnings).toEqual(['review pass 1 has no readable verdict line']);
+  });
+});
+
+describe('pileDuneColonne — ce qu’une colonne finie montre (#176)', () => {
+  // Le 16/09/2026, la colonne « Done » gardait ses huit premières cartes par
+  // numéro décroissant, c'est-à-dire par ordre d'OUVERTURE : les huit issues
+  // fermées ce jour-là ont pris les huit places, et les six PR mergées le même
+  // jour sont parties dans « + 67 more ». Le tableau montrait 75 cartes finies
+  // et pas une seule des PR qui les avaient finies.
+
+  const LE_JOUR = Date.parse('2026-09-16T18:00:00.000Z');
+  const MAINTENANT = Date.parse('2026-09-17T09:00:00.000Z');
+  const heure = (h) => new Date(LE_JOUR + h * 3600_000).toISOString();
+
+  /** Le vrai jour du 16/09 : huit issues fermées, six PR mergées, mêlées. */
+  const journee = () => {
+    const issues = Array.from({ length: 8 }, (_, k) => ({
+      number: 109 + k,
+      title: `issue ${k}`,
+      state: 'CLOSED',
+      closedAt: heure(k),
+    }));
+    const pr = [103, 112, 113, 114, 118, 120].map((n, k) => ({
+      number: n,
+      title: `pr ${n}`,
+      state: 'MERGED',
+      mergedAt: heure(k + 0.5),
+    }));
+    return cartesDuTableau({ issues, pr });
+  };
+
+  it('les QUATORZE cartes du jour sont montrées, PR mergées comprises', () => {
+    const { montrees, replies } = pileDuneColonne(journee(), 'Done', MAINTENANT);
+    expect(montrees).toHaveLength(14);
+    expect(replies).toBe(0);
+    // Les six PR du jour sont là, celles-là mêmes qui manquaient.
+    const prMontrees = montrees.filter((c) => c.type === 'pr').map((c) => c.numero);
+    expect(prMontrees.sort((a, b) => a - b)).toEqual([103, 112, 113, 114, 118, 120]);
+  });
+
+  it('elles sont rangées du plus récemment fini au plus ancien, les deux familles MÊLÉES', () => {
+    const { montrees } = pileDuneColonne(journee(), 'Done', MAINTENANT);
+    const dates = montrees.map((c) => c.finiLe);
+    expect([...dates].sort().reverse()).toEqual(dates);
+    // Mêlées : la première PR n'est pas reléguée derrière toutes les issues.
+    const premierPr = montrees.findIndex((c) => c.type === 'pr');
+    const derniereIssue = montrees.map((c) => c.type).lastIndexOf('issue');
+    expect(premierPr).toBeLessThan(derniereIssue);
+  });
+
+  it('ce qui est plus vieux que la fenêtre est REPLIÉ, et compté', () => {
+    const vieux = Array.from({ length: 20 }, (_, k) => ({
+      number: 10 + k,
+      title: `vieille ${k}`,
+      state: 'CLOSED',
+      closedAt: new Date(LE_JOUR - (30 + k) * 86_400_000).toISOString(),
+    }));
+    const cartes = [...journee(), ...cartesDuTableau({ issues: vieux, pr: [] })];
+    const { montrees, replies } = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    expect(montrees).toHaveLength(14);
+    expect(replies).toBe(20);
+  });
+
+  it('une carte SANS date de fin est repliée, jamais datée d’office', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 1, title: 'fermée sans date', state: 'CLOSED' }],
+      pr: [],
+    });
+    const { montrees, replies } = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    expect(montrees).toEqual([]);
+    expect(replies).toBe(1);
+  });
+
+  it('une semaine sans rien finir montre quand même les trois dernières', () => {
+    // Vider la colonne sous un « + 75 older » cacherait jusqu'au dernier
+    // travail livré, que le plafond de huit montrait au moins.
+    const vieilles = Array.from({ length: 9 }, (_, k) => ({
+      number: 10 + k,
+      title: `vieille ${k}`,
+      state: 'CLOSED',
+      closedAt: new Date(LE_JOUR - (20 + k) * 86_400_000).toISOString(),
+    }));
+    const { montrees, replies } = pileDuneColonne(
+      cartesDuTableau({ issues: vieilles, pr: [] }),
+      'Done',
+      MAINTENANT,
+    );
+    expect(montrees).toHaveLength(3);
+    expect(replies).toBe(6);
+    // Et ce sont les trois PLUS RÉCENTES.
+    expect(montrees.map((c) => c.numero)).toEqual([10, 11, 12]);
+  });
+
+  it('une colonne VIVANTE montre tout : un appel à l’action ne se replie pas', () => {
+    const cartes = cartesDuTableau({
+      issues: Array.from({ length: 12 }, (_, k) => ({
+        number: 200 + k,
+        title: `à faire ${k}`,
+        state: 'OPEN',
+        labels: [{ name: 'decision' }],
+      })),
+      pr: [],
+    });
+    const { montrees, replies } = pileDuneColonne(cartes, 'To do', MAINTENANT);
+    expect(montrees).toHaveLength(12);
+    expect(replies).toBe(0);
   });
 });

@@ -20,6 +20,8 @@ import {
   ORDRE_DES_BACS,
   MOT_ETAT,
   publicationsDejaFaites,
+  pileDuneColonne,
+  JOURS_DE_FENETRE,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
@@ -967,16 +969,20 @@ function vueChantiers() {
     </a>`;
   };
 
-  // « Fait » est borné : une colonne qui empile tout l'historique noie les
-  // quatre autres, et ce n'est pas là qu'on regarde.
+  // Ce qu'une colonne finie montre est une FENÊTRE de temps, du plus récent au
+  // plus ancien (#176) — la règle vit dans `lib.mjs`, avec son test. La page
+  // la lit, elle ne la refait pas : un plafond recalculé ici est exactement ce
+  // qui avait fait disparaître les PR mergées.
   const colonnes = COLONNES.map((nom) => {
     const dedans = cartes.filter((c) => c.colonne === nom);
-    const montrees = nom === 'Done' || nom === 'Abandoned' ? dedans.slice(0, 8) : dedans;
+    const { montrees, replies } = pileDuneColonne(cartes, nom);
+    const fini = nom === 'Done' || nom === 'Abandoned';
     return `<section class="colonne">
       <header><h3>${esc(nom)}</h3><span class="compte">${dedans.length}</span></header>
+      ${fini ? `<p class="fenetre">last ${JOURS_DE_FENETRE} days, newest first</p>` : ''}
       <div class="pile">
         ${montrees.length ? montrees.map(carte).join('') : '<p class="vide">Nothing here.</p>'}
-        ${dedans.length > montrees.length ? `<p class="vide">+ ${dedans.length - montrees.length} more</p>` : ''}
+        ${replies > 0 ? `<p class="vide">+ ${replies} older</p>` : ''}
       </div>
     </section>`;
   }).join('');
@@ -1322,6 +1328,7 @@ tr:last-child td{border-bottom:0}
 .colonne header{display:flex;justify-content:space-between;align-items:baseline;
   gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--encre)}
 .colonne h3{font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--encre)}
+.fenetre{font-size:11px;color:var(--encre3);margin:0 0 2px}
 .pile{display:flex;flex-direction:column;gap:10px}
 .ticket{display:flex;flex-direction:column;gap:9px;background:var(--panneau);
   border:1px solid var(--regle);border-radius:5px;padding:15px 16px 14px;
