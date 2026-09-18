@@ -2049,7 +2049,18 @@ export type JobDetailRow = JobRow & {
 
 /**
  * Send a task: creates a job row and fires it to the runner.
- * Uses 'api' channel so the runner knows it came from the dashboard.
+ *
+ * Le canal est `dashboard` — l'endroit d'où la demande part (Quentin, 18/09).
+ * Il valait `api` depuis toujours, la même valeur qu'écrit `/api/agent` :
+ * rien en base ne distinguait plus une tâche envoyée d'ici d'une requête
+ * venue de dehors, et le dossier MCP listait les deux ensemble. `dashboard`
+ * existe déjà pour le travail né du tableau de bord (les tours de chat
+ * l'écrivent, apps/runner/src/chat/run-chat-turn.ts) et le contrat de la
+ * colonne l'accepte (packages/db/src/schema/jobs.ts).
+ *
+ * ⚠️ LES LIGNES DÉJÀ ÉCRITES gardent `api` : rien ne permet de les relire
+ * comme venant d'ici, et réécrire l'historique inventerait une provenance.
+ * Les anciennes tâches « Send task » restent donc dans le dossier MCP.
  */
 export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId: string }>> {
   try {
@@ -2086,15 +2097,15 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
     }
 
     // Insert job — task is the pure user prompt (no suffix injection).
-    // channel stays 'api' (origin = dashboard). chatId carries the Telegram
-    // recipient when sendViaTelegram is checked, null otherwise.
+    // channel = 'dashboard', l'origine réelle de la demande. chatId carries the
+    // Telegram recipient when sendViaTelegram is checked, null otherwise.
     const [job] = await db
       .insert(agentJobs)
       .values({
         entityId: session.entityId,
         agentId: agent.id,
         status: 'pending',
-        channel: 'api',
+        channel: 'dashboard',
         task: parsed.data.prompt,
         ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
       })

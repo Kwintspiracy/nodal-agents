@@ -40,12 +40,17 @@ export const DASHBOARD_FOLDER = 'dashboard';
  * sous « Other sessions ». Ils ont leur propre entrée, au même endroit que les
  * canaux : c'est bien un endroit d'où le travail arrive.
  *
- * ⚠️ CE QUE LA COLONNE NE SÉPARE PAS. `agent_jobs.channel` vaut `api` pour une
- * requête extérieure ET pour la boîte « Send task » du tableau de bord
- * (`sendTaskAction`, apps/web/src/lib/actions.ts) : les deux écrivent la même
- * valeur, et rien d'autre en base ne les distingue. Le dossier montre donc les
- * deux. Les séparer demanderait une colonne que personne n'écrit ; l'inventer
- * ferait dire au menu une provenance que rien ne vérifie (invariant #4).
+ * ⚠️ CE QUE LES ANCIENNES LIGNES NE DISENT PAS. `agent_jobs.channel` valait
+ * `api` pour une requête extérieure ET pour la boîte « Send task » du tableau
+ * de bord : Quentin a ouvert le dossier le 18/09 et y a trouvé des runs « qui
+ * ne viennent pas du MCP ». Corrigé à la SOURCE — `sendTaskAction` écrit
+ * `dashboard` (apps/web/src/lib/actions.ts) — et non par un filtre ici, qui
+ * n'aurait fait que deviner.
+ *
+ * Les lignes DÉJÀ écrites gardent `api` et restent indiscernables : le dossier
+ * montre donc encore les anciennes tâches « Send task », jusqu'à ce qu'elles
+ * sortent de la liste. Les réécrire leur inventerait une provenance que rien
+ * ne vérifie (invariant #4).
  */
 export const MCP_FOLDER = 'mcp';
 
