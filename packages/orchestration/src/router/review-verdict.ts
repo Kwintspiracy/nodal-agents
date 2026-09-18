@@ -118,6 +118,11 @@ export function parseReviewVerdictOutput(
  * refusé rappelle l'outil, et c'est ce second appel qui fait foi ; à l'inverse,
  * remonter à un succès plus ancien livrerait un verdict que le relecteur a
  * lui-même remis en cause.
+ *
+ * « Dernier » se lit sur `seq`, l'ordre d'ÉCRITURE (migration 0110). Ni l'heure
+ * ni le tour ne le disent : deux appels d'un même tour portent le même `turn`,
+ * et souvent le même `created_at` à la précision stockée — la pré-passe de
+ * lectures en lance plusieurs en parallèle (revue de la PR #170, passe 2).
  */
 export async function readDeliveredReviewVerdict(
   db: AnyDrizzleDb,
@@ -127,7 +132,7 @@ export async function readDeliveredReviewVerdict(
     .select({ toolOutput: toolCalls.toolOutput })
     .from(toolCalls)
     .where(and(eq(toolCalls.jobId, jobId as string), eq(toolCalls.toolName, REVIEW_VERDICT_TOOL)))
-    .orderBy(desc(toolCalls.createdAt), desc(toolCalls.turn))
+    .orderBy(desc(toolCalls.seq))
     .limit(1);
 
   const last = rows[0];
@@ -150,6 +155,12 @@ export async function readDeliveredReviewVerdict(
  * il est exclu de l'exécution des outils (`callsToProcess` dans le runner) et
  * n'écrit aucune ligne, si bien que le tour final « verdict puis signal »
  * laisse bien le verdict en dernier.
+ *
+ * « Dernière » se lit sur `seq`, l'ordre d'ÉCRITURE (migration 0110), et sur
+ * rien d'autre : un verdict et une lecture de fichier posés dans LE MÊME tour
+ * portent le même `turn` et peuvent porter le même `created_at`, si bien que
+ * l'ancien tri rendait l'une ou l'autre au hasard (revue de la PR #170,
+ * passe 2). C'est précisément le cas que cette fonction doit trancher.
  */
 export async function readFinalReviewVerdict(
   db: AnyDrizzleDb,
@@ -159,7 +170,7 @@ export async function readFinalReviewVerdict(
     .select({ toolName: toolCalls.toolName, toolOutput: toolCalls.toolOutput })
     .from(toolCalls)
     .where(eq(toolCalls.jobId, jobId as string))
-    .orderBy(desc(toolCalls.createdAt), desc(toolCalls.turn))
+    .orderBy(desc(toolCalls.seq))
     .limit(1);
 
   const last = rows[0];

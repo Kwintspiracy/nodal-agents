@@ -1,6 +1,16 @@
 // tool_calls table — individual tool invocations within a job
 
-import { pgTable, text, uuid, integer, jsonb, timestamp, index, check } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  integer,
+  jsonb,
+  timestamp,
+  index,
+  check,
+  bigserial,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agentJobs } from './jobs.ts';
@@ -40,12 +50,19 @@ export const toolCalls = pgTable(
     // lignes antérieures à 0095 et sur les lignes `cli:*` (écrites hors
     // registre) : l'écran dit « incertain » plutôt que de deviner.
     riskLevel: text('risk_level'),
+    // 0110 : l'ORDRE D'ÉCRITURE, et la seule colonne qui le porte. `id` est un
+    // uuid aléatoire, `turn` vaut pareil pour tous les appels d'un même tour, et
+    // `created_at` peut être identique pour deux insertions rapprochées — la
+    // pré-passe de lectures exécute plusieurs outils en parallèle. Une règle qui
+    // demande « quelle ligne est la DERNIÈRE » lit cette colonne, jamais l'heure.
+    seq: bigserial('seq', { mode: 'number' }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [
     index('idx_tool_calls_entity_id').on(table.entityId),
     index('idx_tool_calls_job').on(table.jobId),
     index('idx_tool_calls_job_created').on(table.jobId, sql`${table.createdAt} DESC`),
+    index('idx_tool_calls_job_seq').on(table.jobId, sql`${table.seq} DESC`),
     index('idx_tool_calls_recent').on(sql`${table.createdAt} DESC`),
     check(
       'tool_calls_risk_level_check',

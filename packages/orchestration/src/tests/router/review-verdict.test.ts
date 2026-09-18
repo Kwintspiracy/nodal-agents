@@ -85,6 +85,7 @@ async function recordToolRow(
   toolName: string,
   output: unknown,
   createdAt: Date,
+  turn = 1,
 ): Promise<void> {
   await db.insert(toolCalls).values({
     entityId,
@@ -93,6 +94,7 @@ async function recordToolRow(
     toolInput: {},
     toolOutput: typeof output === 'string' ? output : JSON.stringify(output),
     createdAt,
+    turn,
   });
 }
 
@@ -101,8 +103,9 @@ async function recordVerdictRow(
   entityId: string,
   output: unknown,
   createdAt: Date,
+  turn = 1,
 ): Promise<void> {
-  await recordToolRow(jobId, entityId, 'review_verdict', output, createdAt);
+  await recordToolRow(jobId, entityId, 'review_verdict', output, createdAt, turn);
 }
 
 describe('parseReviewVerdictOutput @cap:organiser-equipe/moteur', () => {
@@ -223,5 +226,73 @@ describe('readFinalReviewVerdict @cap:organiser-equipe/moteur', () => {
     expect(await readFinalReviewVerdict(db, jobId as JobId)).toBeNull();
     // Le verdict, lui, reste le verdict de ce job pour son parent.
     expect((await readDeliveredReviewVerdict(db, jobId as JobId))?.verdict).toBe('request_changes');
+  });
+
+  it('deux appels du MÊME tour : c’est l’ordre d’écriture qui tranche', async () => {
+    // Revue de la PR #170, passe 2. Le tri par heure puis par tour rendait
+    // l'une ou l'autre au hasard : même `turn`, même `created_at` à la
+    // précision stockée — ce qui arrive pour de bon dans la pré-passe de
+    // lectures, qui exécute plusieurs outils en parallèle. Les deux ordres sont
+    // joués ici, avec la MÊME heure et le MÊME tour, et chacun a sa réponse.
+    const memeHeure = new Date('2026-09-16T10:00:00.000Z');
+
+    const verdictPuisLecture = await seedJob();
+    await recordVerdictRow(
+      verdictPuisLecture.jobId,
+      verdictPuisLecture.entityId,
+      VERDICT_OUTPUT,
+      memeHeure,
+      4,
+    );
+    await recordToolRow(
+      verdictPuisLecture.jobId,
+      verdictPuisLecture.entityId,
+      'read_file',
+      { ok: true },
+      memeHeure,
+      4,
+    );
+    expect(await readFinalReviewVerdict(db, verdictPuisLecture.jobId as JobId)).toBeNull();
+
+    const lecturePuisVerdict = await seedJob();
+    await recordToolRow(
+      lecturePuisVerdict.jobId,
+      lecturePuisVerdict.entityId,
+      'read_file',
+      { ok: true },
+      memeHeure,
+      4,
+    );
+    await recordVerdictRow(
+      lecturePuisVerdict.jobId,
+      lecturePuisVerdict.entityId,
+      VERDICT_OUTPUT,
+      memeHeure,
+      4,
+    );
+    expect((await readFinalReviewVerdict(db, lecturePuisVerdict.jobId as JobId))?.verdict).toBe(
+      'request_changes',
+    );
+  });
+
+  it('deux verdicts du MÊME tour : le dernier écrit fait foi', async () => {
+    const memeHeure = new Date('2026-09-16T11:00:00.000Z');
+    const { jobId, entityId } = await seedJob();
+    await recordVerdictRow(jobId, entityId, VERDICT_OUTPUT, memeHeure, 7);
+    await recordVerdictRow(
+      jobId,
+      entityId,
+      {
+        ...VERDICT_OUTPUT,
+        verdict: 'approve',
+        findings: [],
+        counts: { blocker: 0, major: 0, minor: 0 },
+      },
+      memeHeure,
+      7,
+    );
+
+    expect((await readDeliveredReviewVerdict(db, jobId as JobId))?.verdict).toBe('approve');
+    expect((await readFinalReviewVerdict(db, jobId as JobId))?.verdict).toBe('approve');
   });
 });

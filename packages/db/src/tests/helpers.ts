@@ -290,6 +290,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- 0095 (P7) : le niveau de risque declare par l'outil. NULL sur les
       -- lignes d'avant et sur les lignes cli:*, ecrites hors registre.
       risk_level text CHECK (risk_level IS NULL OR risk_level IN ('read','write','destructive')),
+      -- 0110 : l'ordre d'ECRITURE. Ni l'uuid, ni le tour, ni created_at ne
+      -- disent laquelle de deux lignes d'un meme tour est arrivee la derniere.
+      seq bigserial,
       created_at timestamptz DEFAULT now()
     );
 
