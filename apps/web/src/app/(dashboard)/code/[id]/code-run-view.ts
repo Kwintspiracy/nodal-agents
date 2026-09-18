@@ -116,6 +116,18 @@ export function codeStats(header: CodeHeader): RunStat[] {
 }
 
 /**
+ * Où mène le bouton « Files » de la barre : la page du dossier du projet.
+ *
+ * Seulement quand le dossier est un projet ENREGISTRÉ — c'est cette ligne-là
+ * qui porte un identifiant, et elle seule ouvre une page. Un dossier jamais
+ * déclaré, ou une session de runtime, n'en a pas : `null`, et la barre ne
+ * dessine pas de bouton plutôt que d'en poser un qui ne mène nulle part.
+ */
+export function codeFilesHref(header: Pick<CodeHeader, 'projectId'>): string | null {
+  return header.projectId === null ? null : `/spaces/${header.projectId}/files`;
+}
+
+/**
  * Les agents qui ont travaillé : celui du process, puis les délégués nommés
  * par les lignes d'audit, dans l'ordre où ils paraissent. Dédoublonnés par nom
  * — le détail d'un process ne porte ni slug ni image, la barre montre donc des

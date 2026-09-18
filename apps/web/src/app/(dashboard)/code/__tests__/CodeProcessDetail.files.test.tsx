@@ -59,6 +59,7 @@ const detail = (): CodingProcessDetail => ({
     activityAt: '2026-09-18T10:00:00.000Z',
     projectPath: null,
     projectName: null,
+    projectId: null,
     sessionType: 'coding',
     durationMs: 4200,
     inputTokens: 100,
@@ -110,7 +111,7 @@ async function render(initial: CodingProcessDetail): Promise<void> {
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root.render(<CodeProcessDetail query={{ jobId: JOB_ID }} initialDetail={initial} />);
+    root.render(<CodeProcessDetail detail={initial} refresh={false} />);
   });
 }
 

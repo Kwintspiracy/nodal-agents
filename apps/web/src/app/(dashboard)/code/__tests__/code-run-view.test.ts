@@ -12,6 +12,7 @@ import {
   codeActivityLabel,
   codeAgents,
   codeDelivery,
+  codeFilesHref,
   codeOrigin,
   codeRuntime,
   codeStats,
@@ -40,6 +41,7 @@ const header = (
   activityAt: null,
   projectPath: null,
   projectName: null,
+  projectId: null,
   sessionType: 'coding',
   durationMs: null,
   inputTokens: 0,
@@ -146,6 +148,12 @@ describe('code-run-view — l’en-tête @cap:suivre-execution/ecran', () => {
       ]),
     ).toBe('claude · claude-opus-5');
     expect(codeRuntime(header(), [])).toBeNull();
+  });
+
+  it('le bouton « Files » ne paraît que sur un projet ENREGISTRÉ', () => {
+    expect(codeFilesHref(header({ projectId: 'p1' }))).toBe('/spaces/p1/files');
+    // Un dossier jamais déclaré n'a pas de page : pas de bouton.
+    expect(codeFilesHref(header({ projectId: null }))).toBeNull();
   });
 
   it('l’état porte le mot de l’étape, et une étape inconnue s’écrit telle quelle', () => {

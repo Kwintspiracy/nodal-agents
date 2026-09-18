@@ -57,6 +57,7 @@ const detail = (): CodingProcessDetail => ({
     activityAt: '2026-09-18T10:00:00.000Z',
     projectPath: 'D:/APPS/NodalAI',
     projectName: 'NodalAI',
+    projectId: 'project-1',
     sessionType: 'coding',
     durationMs: 408_000,
     inputTokens: 184_300,
@@ -166,7 +167,7 @@ async function render(initial: CodingProcessDetail): Promise<void> {
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root.render(<CodeProcessDetail query={{ jobId: JOB_ID }} initialDetail={initial} />);
+    root.render(<CodeProcessDetail detail={initial} />);
   });
 }
 
@@ -183,6 +184,15 @@ afterEach(async () => {
 });
 
 describe('CodeProcessDetail — un process de code se lit comme un run @cap:suivre-execution/ecran', () => {
+  it('le corps ne relit PLUS le détail lui-même — c’est la page qui se relit', async () => {
+    // La sonde côté client ne rafraîchissait que ce corps : la barre du haut
+    // restait sur l'état du chargement, sans sa pastille (Quentin, 18/09). La
+    // fraîcheur passe maintenant par `LiveRefresh`, qui fait re-rendre le
+    // SERVEUR, barres comprises. Le corps, lui, ne va plus rien chercher.
+    await render({ ...detail(), header: { ...detail().header, stage: 'coding' } });
+    expect(getCodingProcessDetailAction).not.toHaveBeenCalled();
+  });
+
   it('les blocs se suivent : demande, livraison, revue, preuve, fichiers, activité', async () => {
     await render(detail());
     const html = container.innerHTML;

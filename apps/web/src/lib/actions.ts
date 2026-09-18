@@ -13084,6 +13084,13 @@ export type CodingActivityItem =
 
 export type CodingProcessDetail = {
   header: CodingProcessRow & {
+    /**
+     * Le projet ENREGISTRÉ de ce process, quand son dossier en est un. C'est
+     * lui qui ouvre la page du dossier, derrière le bouton « Files » de la
+     * barre (18/09). `null` : dossier jamais déclaré, ou session de chat — et
+     * le bouton ne paraît pas, plutôt que de mener nulle part.
+     */
+    projectId: string | null;
     durationMs: number | null;
     /** EFFECTIVE input (hors cache, lectures ET écritures), root + direct children — même normalisation que les turn markers. */
     inputTokens: number;
@@ -13624,18 +13631,26 @@ export async function getCodingProcessDetailAction(
       // peuvent avoir été enregistrées avec des casses différentes. La liste
       // les groupe déjà ainsi ; une égalité stricte aurait fait retomber le
       // titre sur le nom du dossier dès qu'on ouvrait la « mauvaise » session.
+      //
+      // La ligne trouvée donne aussi son ID — celui du projet ENREGISTRÉ, le
+      // seul qui ouvre une page de dossier. Le bouton « Files » de la barre de
+      // /code/[id] en dépend (18/09) : sans ligne, le dossier n'est pas déclaré,
+      // il n'y a rien à ouvrir, et le bouton ne paraît pas.
+      const detailProject =
+        detailProjectPath !== null
+          ? ((
+              await db
+                .select({
+                  id: codeProjects.id,
+                  projectPath: codeProjects.projectPath,
+                  displayName: codeProjects.displayName,
+                })
+                .from(codeProjects)
+                .where(eq(codeProjects.entityId, entityId))
+            ).find((r) => projectKey(r.projectPath) === projectKey(detailProjectPath)) ?? null)
+          : null;
       const detailProjectName = detailProjectPath
-        ? (
-            await db
-              .select({
-                projectPath: codeProjects.projectPath,
-                displayName: codeProjects.displayName,
-              })
-              .from(codeProjects)
-              .where(eq(codeProjects.entityId, entityId))
-          )
-            .find((r) => projectKey(r.projectPath) === projectKey(detailProjectPath!))
-            ?.displayName?.trim() || projectNameFromPath(detailProjectPath)
+        ? detailProject?.displayName?.trim() || projectNameFromPath(detailProjectPath)
         : null;
 
       return ok({
@@ -13651,6 +13666,7 @@ export async function getCodingProcessDetailAction(
           costUsd,
           projectPath: detailProjectPath,
           projectName: detailProjectName,
+          projectId: detailProject?.id ?? null,
           sessionType:
             verdicts.length > 0 && filesChanged === 0
               ? taskReferencesPullRequest(job.task)
@@ -13731,6 +13747,9 @@ export async function getCodingProcessDetailAction(
         costUsd: totalCost,
         projectPath: null,
         projectName: null,
+        // Une session de runtime n'est rattachée à aucun projet enregistré :
+        // pas de dossier à ouvrir, donc pas de bouton « Files ».
+        projectId: null,
         sessionType: 'coding',
         // Une session de runtime n a PAS de code_task, donc le provider n existe
         // que dans cli_runs — c est le cas ou la jointure est la seule source.

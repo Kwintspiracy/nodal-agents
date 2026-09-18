@@ -160,11 +160,25 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
   });
 
   it('le corps garde la largeur d’une page Nodal, calée à gauche', () => {
-    // `max-w-6xl` sans `mx-auto` : la règle du corps de `PageShell`, que les
-    // gouttières de `ThreadScroller` complètent. En pleine largeur, les cartes
-    // s'étiraient d'un bord à l'autre de l'écran (Quentin, vu sur la stack).
-    expect(html).toContain('class="max-w-6xl min-w-0 space-y-4"');
+    // La BOÎTE de `PageShell`, à l'identique : la largeur maximale ET les
+    // gouttières sur le MÊME élément, sans `mx-auto`. Portées séparément — les
+    // gouttières sur la zone de défilement, la largeur ici — elles donnaient
+    // un contenu de 1152 px au lieu de 1080, soit 72 px de plus que toutes les
+    // autres pages (Quentin, deux fois).
+    expect(html).toContain('class="max-w-6xl min-w-0 space-y-4 px-5 sm:px-8 lg:px-9"');
     expect(html).not.toContain('mx-auto');
+  });
+
+  it('la zone de défilement ne pousse plus rien sur les côtés', () => {
+    // Sinon les deux boîtes s'emboîtent et la page s'élargit d'autant.
+    const page = renderToStaticMarkup(
+      <RunPage data={data(false)} back={{ label: 'Back to Scheduled', href: '/scheduled' }} />,
+    );
+    const scroller = /<div[^>]*data-thread-scroller[^>]*class="([^"]*)"/.exec(page)?.[1] ?? '';
+    expect(scroller, 'la zone de défilement est rendue').not.toBe('');
+    expect(scroller).not.toContain('px-5');
+    expect(scroller).not.toContain('lg:px-9');
+    expect(scroller).toContain('pt-6');
   });
 
   it('aucun lien vers le run parent ni vers un délégué : ils se lisent dans la chronologie', () => {

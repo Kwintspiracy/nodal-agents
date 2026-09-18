@@ -47,6 +47,7 @@ import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import { projectKey } from '@nodal-agents/shared';
 import { relativeTime } from '@/lib/format-time';
 import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
+import { codeIsLive } from './[id]/code-run-view.ts';
 import ProjectVerificationPanel, { type ProjectVerification } from './ProjectVerificationPanel.tsx';
 
 const POLL_INTERVAL = 5000;
@@ -631,18 +632,34 @@ function EmbeddedProcessDetail({ query }: { query: { jobId: string } | { session
   const [detail, setDetail] = useState<CodingProcessDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // La donnée est chargée ICI, donc c'est ici qu'elle se RELIT tant que le
+  // process court (18/09). La page /code/[id], elle, se relit côté serveur
+  // (`LiveRefresh`) et rafraîchit ses barres avec ; ce poste de travail n'a pas
+  // de barres à lui, et un `router.refresh()` y rechargerait toute la liste
+  // des sessions toutes les quatre secondes.
+  const live = detail !== null && codeIsLive(detail.header.stage);
   useEffect(() => {
     let cancelled = false;
-    void getCodingProcessDetailAction(query).then((result) => {
-      if (cancelled) return;
-      if (result.ok) setDetail(result.data);
-      else setError(result.message);
-    });
+    const read = () => {
+      void getCodingProcessDetailAction(query).then((result) => {
+        if (cancelled) return;
+        if (result.ok) setDetail(result.data);
+        else setError(result.message);
+      });
+    };
+    read();
+    // Vivant : on relit sans fin. Terminé : UNE relecture de plus, quatre
+    // secondes après — la preuve tourne à la finalisation, juste après le
+    // statut (T24), et sans ce dernier tour la section Verification reste vide
+    // jusqu'à un rechargement à la main.
+    const timer = live ? setInterval(read, POLL_INTERVAL) : setTimeout(read, POLL_INTERVAL);
     return () => {
       cancelled = true;
+      if (live) clearInterval(timer as ReturnType<typeof setInterval>);
+      else clearTimeout(timer as ReturnType<typeof setTimeout>);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [live]);
 
   if (error) {
     return (
@@ -671,5 +688,7 @@ function EmbeddedProcessDetail({ query }: { query: { jobId: string } | { session
   // Le corps est le MÊME partout depuis le 18/09 : la page d'un process n'a
   // plus d'en-tête à elle qu'il aurait fallu masquer ici — la charpente (les
   // deux barres du fil) vit dans `RunScreen`, montée par la route.
-  return <CodeProcessDetail query={query} initialDetail={detail} />;
+  // `refresh={false}` : la fraîcheur est tenue ci-dessus, par la lecture qui a
+  // chargé cette donnée.
+  return <CodeProcessDetail detail={detail} refresh={false} />;
 }

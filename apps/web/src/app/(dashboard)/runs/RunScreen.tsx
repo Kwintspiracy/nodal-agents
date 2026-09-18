@@ -30,6 +30,7 @@ export default function RunScreen({
   agents,
   status = null,
   proofVerdict = null,
+  filesHref = null,
   statusBar = null,
   children,
 }: {
@@ -40,9 +41,15 @@ export default function RunScreen({
   subtitle: string;
   back: BackLink;
   agents: readonly ThreadAgent[];
-  /** La pastille d'état, quand la page peut la dire SANS risque de retard. */
+  /** La pastille d'état du travail (Running, Done…). */
   status?: ReactNode;
   proofVerdict?: string | null;
+  /**
+   * Où mène le bouton « Files » de la barre : la page du dossier du projet.
+   * `null` quand le run n'a pas de projet enregistré — pas de bouton, plutôt
+   * qu'un lien mort.
+   */
+  filesHref?: string | null;
   /** La barre du bas, quand la page en a une. */
   statusBar?: ReactNode;
   children: ReactNode;
@@ -59,9 +66,21 @@ export default function RunScreen({
           subtitle={subtitle}
         />
       }
-      toolbar={<WorkBar back={back} agents={agents} status={status} proofVerdict={proofVerdict} />}
+      toolbar={
+        <WorkBar
+          back={back}
+          agents={agents}
+          status={status}
+          proofVerdict={proofVerdict}
+          filesHref={filesHref}
+        />
+      }
     >
-      <ThreadScreen follow="never" statusBar={statusBar}>
+      {/* `sidePadding={false}` : les gouttières sont portées par le CORPS du
+          run, sur la même boîte que sa largeur maximale — c'est ainsi que
+          `PageShell` construit le corps de toutes les autres pages, et c'est la
+          seule façon d'avoir la même largeur de contenu qu'elles. */}
+      <ThreadScreen follow="never" sidePadding={false} statusBar={statusBar}>
         {children}
       </ThreadScreen>
     </PageShell>

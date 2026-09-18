@@ -14,11 +14,12 @@ import Link from 'next/link';
 import { getCodingProcessDetailAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import RunScreen from '@/app/(dashboard)/runs/RunScreen.tsx';
+import StatusPill from '@/components/ui/StatusPill';
 import { threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { truncate } from '@/lib/format-time';
 import { plainText } from '@/components/Markdown.tsx';
 import CodeProcessDetail from './CodeProcessDetail.tsx';
-import { codeAgents } from './code-run-view.ts';
+import { codeAgents, codeFilesHref, codeStatus } from './code-run-view.ts';
 
 // Force dynamic — this page reads per-request DB state.
 export const dynamic = 'force-dynamic';
@@ -69,6 +70,7 @@ export default async function CodeProcessPage({ params }: Props) {
   const lastProof = verificationRuns.at(-1) ?? null;
   // La seule date que ce détail porte est celle de sa dernière activité.
   const at = header.activityAt === null ? null : new Date(header.activityAt);
+  const status = codeStatus(header.stage);
 
   return (
     <RunScreen
@@ -77,15 +79,19 @@ export default async function CodeProcessPage({ params }: Props) {
       subtitle={threadSubtitle('code', at)}
       back={{ label: 'Back to Code', href: '/code' }}
       agents={codeAgents(header, activity)}
+      // La barre de la maquette, au complet : le retour, les agents, le
+      // dossier, la preuve, l'état. La pastille d'état est rendue par le
+      // SERVEUR et reste fraîche parce que la page se relit d'elle-même tant
+      // que le process court (`LiveRefresh`, dans le corps) — c'est ce qui a
+      // remplacé la sonde côté client, laquelle ne rafraîchissait que le corps
+      // et laissait cette barre sur l'état du chargement.
+      status={<StatusPill variant={status.variant} label={status.label} />}
+      // Le dossier du projet, quand le process en a un d'ENREGISTRÉ. Un dossier
+      // jamais déclaré n'a pas de page : pas de bouton plutôt qu'un lien mort.
+      filesHref={codeFilesHref(header)}
       proofVerdict={lastProof?.verdict ?? null}
-      // PAS de pastille d'état dans la barre : elle est rendue UNE fois, par le
-      // serveur, tandis que le corps se relit tout seul toutes les quatre
-      // secondes. Sur un process vivant, la pastille aurait figé « Coding »
-      // au-dessus d'une carte disant « Done » — un écran qui se contredit est
-      // pire qu'un écran qui se tait. L'état vit donc dans la carte de tête, où
-      // il est toujours frais.
     >
-      <CodeProcessDetail query={parsedId} initialDetail={result.data} />
+      <CodeProcessDetail detail={result.data} />
     </RunScreen>
   );
 }
