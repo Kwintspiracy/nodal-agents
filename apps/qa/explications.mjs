@@ -42,7 +42,8 @@ export const EXPLICATIONS = {
 <p>Under the "How it runs" heading sit the four plumbing pages: the test overview, the bench, the triggers and the history. You open them when you doubt a number, not every day.</p>
 <p>On a pull request card, the CI pill says whether its checks are green, red or still running. "CI green" does not mean "reviewed": a pull request is merged after a review AND green checks.</p>
 <p>A "no verified facts" pill marks an open card that an agent opened without a <code>Verified</code> section stating the commands it ran and what they answered. Nothing in such a card was checked against npm, git or a test run, and that is precisely how a version published a week earlier became a task on this board.</p>
-<p>Above the columns, the release block says what npm serves, what the repository carries, and how many commits sit on main since the last tag. If an open card asks to publish a version npm already has, it is named right there.</p>`,
+<p>Above the columns, the release block says what npm serves, what the repository carries, and how many commits sit on main since the last tag. If an open card asks to publish a version npm already has, it is named right there.</p>
+<p>Every card carries the release it belongs to, read from its GitHub milestone. A card attached to no milestone says "no release" rather than nothing: unplanned work is worth seeing. The buttons under the release block keep only one release on the board, so "what makes up 0.8.10" is one click; the column counts stay those of the whole board.</p>`,
       },
       {
         titre: 'Where it comes from',

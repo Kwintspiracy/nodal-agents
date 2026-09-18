@@ -475,3 +475,58 @@ describe('ce que le portail n’a pas su lire de la revue, il le dit (revue C de
     expect(t).toContain('not reviewed yet');
   });
 });
+
+describe('la release, SUR la page, et son filtre (#177)', () => {
+  const CARTES_RELEASE = [
+    carte({ numero: 117, titre: 'In 0.8.10', release: '0.8.10' }),
+    carte({
+      type: 'pr',
+      numero: 114,
+      titre: 'Its PR, merged',
+      etat: 'MERGED',
+      colonne: 'Done',
+      release: '0.8.10',
+    }),
+    carte({ numero: 190, titre: 'In the next one', release: '0.9.0' }),
+    carte({ numero: 191, titre: 'Attached to nothing', release: null }),
+  ];
+
+  let html = '';
+  beforeAll(() => {
+    html = rendre({
+      ...INSTANTANE,
+      chantiers: { ...(SOCLE.chantiers ?? {}), cartes: CARTES_RELEASE },
+    });
+  });
+
+  it('chaque carte porte sa release, et celle qui n’en a pas le DIT', () => {
+    expect(html).toContain('>0.8.10</span>');
+    expect(html).toContain('>0.9.0</span>');
+    expect(html).toContain('>no release</span>');
+  });
+
+  it('le filtre propose chaque release, avec le nombre de cartes qu’elle porte', () => {
+    const filtre = html.slice(html.indexOf('filtre-release'), html.indexOf('<div class="kanban"'));
+    expect(filtre).toContain('All releases');
+    expect(filtre).toContain('0.8.10 <b>2</b>');
+    expect(filtre).toContain('0.9.0 <b>1</b>');
+    expect(filtre).toContain('no release <b>1</b>');
+    // La plus récente en premier : `0.9.0` avant `0.8.10`.
+    expect(filtre.indexOf('0.9.0 <b>')).toBeLessThan(filtre.indexOf('0.8.10 <b>'));
+  });
+
+  it('chaque carte dit à quelle release elle appartient, pour que le filtre la trouve', () => {
+    expect(html).toContain('data-release="0.8.10"');
+    expect(html).toContain('data-release="no release"');
+  });
+
+  it('le filtre MASQUE des cartes déjà rendues, il ne recalcule pas le tableau', () => {
+    // Deux vérités pour un même chiffre seraient pires que pas de filtre : les
+    // comptes de colonne restent ceux du tableau entier, et le filtre ne fait
+    // que cacher des cartes qui sont là.
+    const kanban = html.slice(html.indexOf('<div class="kanban"'));
+    const aFaire = kanban.slice(kanban.indexOf('>To do<'), kanban.indexOf('>In progress<'));
+    expect(aFaire).toContain('<span class="compte">3</span>');
+    expect(html.slice(html.lastIndexOf('filtre-release__choix'))).toContain('t.hidden =');
+  });
+});

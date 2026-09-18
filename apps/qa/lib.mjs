@@ -594,6 +594,7 @@ export function cartesDuTableau({ issues, pr } = {}) {
       etiquettes: (i.labels ?? []).map((l) => l.name),
       majLe: i.updatedAt ?? null,
       creeLe: i.createdAt ?? null,
+      release: titreDeJalon(i.milestone),
       parPr: couvertes.get(i.number) ?? null,
       // L'état de la revue de LA PR qui la ferme, quand il y en a une : les
       // trois cartes d'un même travail se lisaient « In review » sans jamais
@@ -611,6 +612,7 @@ export function cartesDuTableau({ issues, pr } = {}) {
       etiquettes: [],
       majLe: p.updatedAt ?? null,
       creeLe: p.createdAt ?? null,
+      release: titreDeJalon(p.milestone),
       ci: etatCi(p.statusCheckRollup),
       revue: revueDunePr.get(p.number) ?? null,
       ...provenance(p.body),
@@ -618,6 +620,64 @@ export function cartesDuTableau({ issues, pr } = {}) {
   ];
 
   return cartes.map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
+}
+
+// ─── À quelle release une carte appartient ────────────────────────────────────
+//
+// Le jalon GitHub le dit déjà — les PR de la 0.8.10 le portent —, et le tableau
+// ne le rendait nulle part (#177). « Qu'est-ce qui constitue la 0.8.10 » ne se
+// lisait donc que sur GitHub, une carte à la fois.
+//
+// Le titre du jalon, et rien d'autre : ni sa description, ni sa date. Une carte
+// sans jalon dit « no release » — c'est un fait, et un travail non rattaché
+// mérite d'être vu comme tel, pas d'être rendu invisible.
+
+/** Ce que le tableau retient d'un jalon : son titre, ou `null`. */
+export function titreDeJalon(jalon) {
+  const titre = typeof jalon?.title === 'string' ? jalon.title.trim() : '';
+  return titre === '' ? null : titre;
+}
+
+/** Ce que porte une carte sans jalon — dit, jamais laissé en blanc. */
+export const SANS_RELEASE = 'no release';
+
+/**
+ * Le titre d'un jalon ramené à une forme que `comparerSemver` sait lire, ou
+ * `null` si ce n'en est pas une.
+ *
+ * Deux segments comptent : ce dépôt nomme ses jalons « 0.9 » autant que
+ * « 0.8.10 » (vu en collectant le 18/09/2026 — 28 cartes sous « 0.9 »). Sans
+ * cette lecture, « 0.9 » n'était pas une version du tout et se rangeait
+ * APRÈS « 0.8.10 », dans les jalons alphabétiques : le filtre s'ouvrait sur la
+ * release passée en donnant la suivante pour un nom quelconque.
+ */
+function comparable(titre) {
+  const t = String(titre ?? '').trim();
+  if (/^v?\d+\.\d+$/.test(t)) return `${t}.0`;
+  return comparerSemver(t, t) === null ? null : t;
+}
+
+/**
+ * Les releases présentes sur le tableau, pour en faire un filtre.
+ *
+ * Rangées de la plus récente à la plus ancienne par `comparerSemver`, qui sait
+ * déjà que `0.8.10` vient après `0.8.9` — un tri de chaînes mettrait la 0.8.10
+ * avant la 0.8.9 et le filtre s'ouvrirait sur la mauvaise. Ce qui n'est pas un
+ * numéro de version garde son ordre alphabétique, après les numéros : un jalon
+ * nommé « Backlog » n'est pas une version et ne prétend pas l'être.
+ * « no release » ferme la marche quand au moins une carte n'a pas de jalon.
+ */
+export function releasesDuTableau(cartes) {
+  const titres = [
+    ...new Set(
+      (cartes ?? []).map((c) => c.release).filter((r) => typeof r === 'string' && r !== ''),
+    ),
+  ];
+  const versions = titres.filter((t) => comparable(t) !== null);
+  const autres = titres.filter((t) => comparable(t) === null).sort();
+  versions.sort((a, b) => -(comparerSemver(comparable(a), comparable(b)) ?? 0));
+  const sansJalon = (cartes ?? []).some((c) => !c.release);
+  return [...versions, ...autres, ...(sansJalon ? [SANS_RELEASE] : [])];
 }
 
 // ─── Ce que le dépôt sait de sa propre release ────────────────────────────────
