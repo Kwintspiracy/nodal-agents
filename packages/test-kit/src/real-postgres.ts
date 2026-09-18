@@ -19,10 +19,18 @@
 
 import { createRequire } from 'node:module';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
+import { withPostgresClusterStart } from './cluster-lock';
+import {
+  registerTestCluster,
+  resolvePgCtlFrom,
+  unregisterTestCluster,
+  type TestClusterEntry,
+} from './cluster-registry';
 
 export interface RealPostgres {
   /** `postgresql://user:pwd@localhost:port/db` — même forme que le CLI. */
@@ -89,7 +97,7 @@ async function loadEmbeddedPostgres(): Promise<{ ctor: EmbeddedPostgresCtor; res
 }
 
 /** Un port libre, choisi par le système (bind sur 0), puis relâché. */
-export function pickFreePort(): Promise<number> {
+function pickAnyFreePort(): Promise<number> {
   return new Promise((res, rej) => {
     const srv = createServer();
     srv.unref();
@@ -103,14 +111,87 @@ export function pickFreePort(): Promise<number> {
 }
 
 /**
+ * Les ports que l'INSTALLATION locale utilise, lus dans `~/.nodalai/config.json`.
+ *
+ * Un cluster de test ne doit jamais en prendre un (issue #130) : un survivant
+ * assis sur le port Postgres du poste de travail est un ÉTRANGER pour
+ * `nodal-agents up` — sa preuve de propriété passe par le data dir de
+ * l'installation, pas par le port — et `up` refuse alors de démarrer, comme il
+ * doit. La réparation n'est donc PAS d'apprendre à `up` à reconnaître un
+ * cluster de test : le module `orphans.ts` d'apps/cli existe précisément parce
+ * qu'une table de processus ne peut pas dire à qui appartient un cluster, et
+ * cette leçon a coûté une base de données vivante le 14/09. Elle est de rendre
+ * la collision IMPOSSIBLE.
+ *
+ * Aucun secret n'est lu ici : seulement les trois numéros de port. Une
+ * configuration absente ou illisible rend la liste vide — il n'y a alors pas
+ * d'installation à protéger.
+ */
+export function installedPorts(
+  configPath: string = join(homedir(), '.nodalai', 'config.json'),
+): number[] {
+  try {
+    const cfg = JSON.parse(readFileSync(configPath, 'utf-8')) as unknown;
+    const ports = (cfg as { ports?: unknown })?.ports;
+    if (ports === null || typeof ports !== 'object') return [];
+    return Object.values(ports as Record<string, unknown>).filter(
+      (v): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Un port libre qui n'est AUCUN de ceux qu'on refuse.
+ *
+ * Le système choisit dans la plage éphémère, très au-dessus des ports du
+ * produit, donc la collision est déjà improbable ; « improbable » n'est pas
+ * « impossible », et le coût de la certitude est cette boucle. Dix essais, puis
+ * un échec nommé plutôt qu'un port qu'on n'a pas le droit de prendre.
+ */
+export async function pickFreePort(
+  avoid: readonly number[] = [],
+  // Injectable pour que le REFUS soit éprouvable : on ne choisit pas ce que le
+  // système attribue, donc un test qui se contenterait d'appeler la vraie
+  // source ne verrait jamais le cas qu'on veut prouver.
+  source: () => Promise<number> = pickAnyFreePort,
+): Promise<number> {
+  const taken = new Set(avoid);
+  const refused: number[] = [];
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const port = await source();
+    if (!taken.has(port)) return port;
+    refused.push(port);
+  }
+  throw new Error(
+    `REAL_POSTGRES_NO_PORT: dix ports libres étaient tous réservés à l'installation (${refused.join(', ')})`,
+  );
+}
+
+/**
  * Démarre un Postgres embarqué neuf sur un data dir temporaire et un port
  * libre. Aucune migration n'est appliquée ici : l'appelant fait tourner les
  * VRAIES migrations via `runMigrations` de @nodal-agents/db (ce harnais ne
  * dépend pas de db — db en dépend en dev, un cycle serait de trop).
  */
-export async function startRealPostgres(): Promise<RealPostgres> {
+export function startRealPostgres(): Promise<RealPostgres> {
+  // SOUS LE VERROU DE LA MACHINE (issue #130). `pnpm test` lance un `vitest run`
+  // par paquet, en même temps : sérialiser ici est la seule façon d'empêcher
+  // cinq `initdb` simultanés, qu'aucun réglage vitest ne voit. Le verrou couvre
+  // les trois essais — ils sont UN démarrage — et il est rendu dès que le
+  // cluster répond, jamais gardé pendant la suite qui s'en sert.
+  return withPostgresClusterStart('real-postgres', startRealPostgresLocked);
+}
+
+async function startRealPostgresLocked(): Promise<RealPostgres> {
   const { ctor: EmbeddedPostgres, resolved: binaryPath } = await loadEmbeddedPostgres();
   const attempts: string[] = [];
+  // Résolu UNE fois, avant tout démarrage : le gestionnaire de sortie qui
+  // arrête les clusters survivants est synchrone et ne peut pas faire cet
+  // `import()`. Null quand il échoue — l'arrêt tombe alors sur le signal.
+  const pgCtl = await resolvePgCtlFrom(join(repoRoot(), 'apps', 'cli', 'package.json'));
+  const reserved = installedPorts();
 
   // TROIS ESSAIS, chacun sur un port neuf.
   //
@@ -125,7 +206,7 @@ export async function startRealPostgres(): Promise<RealPostgres> {
   // tranchera sans avoir à re-instrumenter.
   for (let attempt = 1; attempt <= 3; attempt++) {
     const dataDir = await mkdtemp(join(tmpdir(), 'nodal-pg-'));
-    const port = await pickFreePort();
+    const port = await pickFreePort(reserved);
     const logs: string[] = [];
     const pg = new EmbeddedPostgres({
       databaseDir: dataDir,
@@ -150,7 +231,10 @@ export async function startRealPostgres(): Promise<RealPostgres> {
       await pg.start();
       step = 'createDatabase';
       await pg.createDatabase(PG_DATABASE);
-      return makeHandle(pg, dataDir, port);
+      // Inscrit AVANT d'être rendu : entre ce point et le `stop()` de
+      // l'appelant, un Ctrl+C doit trouver ce cluster dans le registre.
+      const entry = registerTestCluster({ dataDir, port, pgCtl });
+      return makeHandle(pg, dataDir, port, entry);
     } catch (err) {
       await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
       const detail =
@@ -183,11 +267,20 @@ function isBusyError(err: unknown): boolean {
   return code === 'EBUSY' || code === 'ENOTEMPTY' || code === 'EPERM' || code === 'EACCES';
 }
 
-function makeHandle(pg: EmbeddedPostgresLike, dataDir: string, port: number): RealPostgres {
+function makeHandle(
+  pg: EmbeddedPostgresLike,
+  dataDir: string,
+  port: number,
+  entry: TestClusterEntry,
+): RealPostgres {
   let stopped = false;
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
+    // Retiré du registre d'entrée de jeu : ce cluster a désormais quelqu'un
+    // pour l'arrêter, et un gestionnaire de sortie qui se déclencherait pendant
+    // ce `stop()` ne doit pas signaler un postmaster déjà en train de s'arrêter.
+    unregisterTestCluster(entry);
     try {
       // `persistent: false` fait supprimer le dossier de données PAR la
       // bibliothèque, à l'arrêt. Sous Windows et sous charge, le postmaster
