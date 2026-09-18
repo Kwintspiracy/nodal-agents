@@ -27,6 +27,12 @@
 
 import { SENT_TEXT_KINDS } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
+// UNIQUEMENT le type, et c'est load-bearing : ce module est lu par des
+// composants `'use client'`, et une importation de VALEUR depuis
+// `@nodal-agents/orchestration` embarquerait `@nodal-agents/db` et drizzle dans
+// le paquet du navigateur — Turbopack ne compile alors plus la page du tout
+// (voir `listInternalToolsAction`, lib/actions.ts). Un `import type` est effacé.
+import type { ReviewVerdictRecord } from '@nodal-agents/orchestration';
 import { blocksFromContent } from './transcript-blocks.ts';
 import {
   parsePresented,
@@ -98,6 +104,19 @@ export type FeedChildJob = {
   error: string | null;
   createdAt: Date | null;
   completedAt: Date | null;
+  /**
+   * Le verdict que ce délégué a ENREGISTRÉ, quand il en a enregistré un (#174).
+   *
+   * Exactement ce que l'outil `review_verdict` a validé par son schéma, relu
+   * sur sa ligne `tool_calls` (`lireVerdictsLivres`, job-feed.ts). `null` ou
+   * absent quand le job n'a livré aucun verdict : le bloc retombe alors sur la
+   * prose de son résultat, qui reste tout ce qu'on sait de lui.
+   *
+   * Pourquoi ce champ existe : le fil DEVINAIT le verdict en lisant la
+   * première ligne du résultat. Depuis #170 il voyage typé, et une prose qui
+   * dit autre chose que ce qui a été enregistré ne doit plus gagner.
+   */
+  reviewVerdict?: ReviewVerdictRecord | null;
   /** Le fil de l'enfant, si l'appelant l'a construit (récursion à sa main). */
   feed?: ConversationFeed;
 };
@@ -132,6 +151,8 @@ export type Origin = {
 // `StepOutcome` et sa lecture vivent dans `tool-card-payload.ts` : la frontière
 // chat/travail (P7) lit la MÊME colonne, et deux lectures auraient divergé.
 export type { StepOutcome } from './tool-card-payload.ts';
+/** Réexporté pour que l'écran nomme le verdict sans importer l'orchestration. */
+export type { ReviewVerdictRecord };
 import type { StepOutcome } from './tool-card-payload.ts';
 
 export type Step =

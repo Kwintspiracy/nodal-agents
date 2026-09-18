@@ -11,10 +11,10 @@ import { PROVIDER_REJECTED, PROVIDER_REJECTED_PREFIX } from '@nodal-agents/share
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
-import ConversationFeedView from '../ConversationFeedView.tsx';
+import ConversationFeedView, { delegationVerdictLine } from '../ConversationFeedView.tsx';
 import { compactTurns } from '@/lib/conversation-feed.ts';
 import { lineCountsOfCall } from '@/lib/coding-changes.ts';
-import type { ConversationFeed, Step } from '@/lib/conversation-feed.ts';
+import type { ConversationFeed, FeedChildJob, Step } from '@/lib/conversation-feed.ts';
 
 const tool = (over: Partial<Extract<Step, { kind: 'tool' }>>): Extract<Step, { kind: 'tool' }> => ({
   kind: 'tool',
@@ -1081,6 +1081,216 @@ describe('ConversationFeedView — le travail replié @cap:suivre-execution/ecra
   it('la densité « folded » le referme — le réglage décide, pas le composant', () => {
     const html = renderToStaticMarkup(<ConversationFeedView feed={runFeed()} density="folded" />);
     expect(html).not.toContain('grep_le_dossier');
+  });
+});
+
+// ─── #174 — le verdict ENREGISTRÉ gagne sur la prose ─────────────────────────
+//
+// Le fil devinait le verdict d'une revue en lisant la première ligne du
+// résultat du délégué. Depuis #170 l'outil `review_verdict` l'écrit typé,
+// validé par son schéma : c'est lui qui doit s'afficher, et la prose n'est plus
+// qu'un repli pour les délégués qui n'ont rien enregistré.
+//
+// Mutation vérifiée : `delegationVerdictLine` ramené à `delegationVerdict(job.result)`
+// → « le verdict enregistré gagne » et « il porte ses constats » rougissent.
+
+/** Une délégation, réduite à ce qui décide de la ligne de verdict. */
+const delegation = (job: Partial<FeedChildJob>): ConversationFeed => ({
+  items: [
+    {
+      kind: 'child',
+      from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+      job: {
+        id: 'job-verdict',
+        agentName: 'Le Relecteur',
+        agentSlug: 'relecteur',
+        agentAvatarUrl: null,
+        status: 'completed',
+        task: 'Relis la PR',
+        result: null,
+        error: null,
+        createdAt: new Date('2026-09-18T10:00:00Z'),
+        completedAt: new Date('2026-09-18T10:02:00Z'),
+        ...job,
+      },
+    },
+  ],
+  totals: feed.totals,
+});
+
+describe('la ligne de verdict d’une délégation @cap:verifier-un-livrable/ecran', () => {
+  it('écrit le verdict ENREGISTRÉ, pas la prose qui dit le contraire', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={delegation({
+          // La prose ment — et c'est exactement le cas qui a fait l'issue.
+          result: 'Verdict global : rien à signaler, tout est propre.',
+          reviewVerdict: {
+            verdict: 'request_changes',
+            summary: 'Deux gardes manquent.',
+            findings: [],
+            counts: { blocker: 2, major: 0, minor: 1 },
+          },
+        })}
+      />,
+    );
+    expect(html2).toContain('Changes requested');
+    expect(html2).not.toContain('rien à signaler, tout est propre');
+  });
+
+  it('porte ses CONSTATS, et tait les gravités absentes', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={delegation({
+          result: null,
+          reviewVerdict: {
+            verdict: 'request_changes',
+            summary: '',
+            findings: [],
+            counts: { blocker: 2, major: 0, minor: 1 },
+          },
+        })}
+      />,
+    );
+    expect(html2).toContain('2 blockers, 1 minor');
+    // « 0 major » demanderait d'être lu pour apprendre qu'il n'y a rien.
+    expect(html2).not.toContain('0 major');
+  });
+
+  it('écrit « Approved » tout court quand la revue n’a rien trouvé', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={delegation({
+          result: null,
+          reviewVerdict: {
+            verdict: 'approve',
+            summary: 'Rien à redire.',
+            findings: [],
+            counts: { blocker: 0, major: 0, minor: 0 },
+          },
+        })}
+      />,
+    );
+    expect(html2).toContain('Approved');
+    expect(html2).not.toMatch(/Approved[^<]*·/);
+  });
+
+  it('montre le RÉSUMÉ enregistré dans le corps, une fois la délégation ouverte', async () => {
+    // DÉPLIÉE : replié, le corps n'est pas dans le DOM et le test ne prouverait
+    // rien. La tête porte la conclusion, le corps porte ce qui la justifie.
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <ConversationFeedView
+          feed={delegation({
+            result: null,
+            reviewVerdict: {
+              verdict: 'request_changes',
+              summary: 'Deux gardes manquent sur la reprise.',
+              findings: [],
+              counts: { blocker: 2, major: 0, minor: 0 },
+            },
+          })}
+        />,
+      );
+    });
+    // La conclusion se lit AVANT d'ouvrir.
+    expect(container.textContent).toContain('Changes requested · 2 blockers');
+    expect(container.textContent).not.toContain('Deux gardes manquent');
+
+    const tete = container.querySelector('button');
+    if (!tete) throw new Error('la délégation n’a pas de tête cliquable');
+    await act(async () => {
+      tete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('Deux gardes manquent sur la reprise.');
+    root.unmount();
+    container.remove();
+  });
+
+  it('retombe sur la PROSE quand rien n’a été enregistré', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={delegation({
+          result: 'Verdict final — la reprise tient, une note mineure.',
+          reviewVerdict: null,
+        })}
+      />,
+    );
+    expect(html2).toContain('la reprise tient, une note mineure.');
+    expect(html2).not.toContain('Changes requested');
+    expect(html2).not.toContain('Approved');
+  });
+
+  it('retombe sur la prose aussi quand le champ est ABSENT — un fil d’avant #170', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView feed={delegation({ result: 'Verdict : approuvé.' })} />,
+    );
+    expect(html2).toContain('approuvé.');
+  });
+
+  it('ne dessine AUCUNE ligne quand il n’y a ni verdict ni prose de verdict', () => {
+    // « Verdict émis. Je clos la tâche. » — une vraie ligne de la base — n'est
+    // pas un verdict : inventer en ferait dire au délégué ce qu'il n'a pas dit.
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={delegation({ result: 'Verdict émis. Je clos la tâche.', reviewVerdict: null })}
+      />,
+    );
+    expect(html2).not.toContain('text-feed-delegation">Verdict émis');
+  });
+});
+
+describe('delegationVerdictLine, la règle seule @cap:verifier-un-livrable/moteur', () => {
+  it('préfère l’enregistré, quoi que dise le résultat', () => {
+    expect(
+      delegationVerdictLine({
+        result: 'Verdict : approuvé',
+        reviewVerdict: {
+          verdict: 'request_changes',
+          summary: '',
+          findings: [],
+          counts: { blocker: 1, major: 0, minor: 0 },
+        },
+      }),
+    ).toBe('Changes requested · 1 blocker');
+  });
+
+  it('accorde le pluriel des constats', () => {
+    expect(
+      delegationVerdictLine({
+        result: null,
+        reviewVerdict: {
+          verdict: 'request_changes',
+          summary: '',
+          findings: [],
+          counts: { blocker: 1, major: 2, minor: 3 },
+        },
+      }),
+    ).toBe('Changes requested · 1 blocker, 2 majors, 3 minors');
+  });
+
+  it('garde la règle de prose À LA LETTRE en repli', () => {
+    // Les formes relevées en base le 17/09, celles que #141 a ouvertes.
+    expect(delegationVerdictLine({ result: 'Verdict global : ça passe' })).toBe('ça passe');
+    expect(delegationVerdictLine({ result: 'Verdict final — ça passe' })).toBe('ça passe');
+    // Le trait d'union n'est PAS un séparateur, et une phrase quelconque non plus.
+    expect(delegationVerdictLine({ result: 'Verdict - ça passe' })).toBeNull();
+    expect(delegationVerdictLine({ result: 'Verdict émis. Je clos la tâche.' })).toBeNull();
+    expect(delegationVerdictLine({ result: null })).toBeNull();
+  });
+
+  it('ne lit PAS le verdict posé sur la ligne suivante — constat, pas promesse', () => {
+    // `plainText` ne rend que la PREMIÈRE ligne lisible d'un markdown : la
+    // branche « le mot seul, le verdict en dessous » de `delegationVerdict` ne
+    // peut donc jamais se déclencher. Le test l'écrit tel quel plutôt que de
+    // laisser croire le contraire ; le corriger changerait ce que le fil
+    // affiche pour toute une famille de résultats, ce qui n'est pas le sujet
+    // de #174 (voir le commentaire de `delegationVerdict`).
+    expect(delegationVerdictLine({ result: 'Verdict\nça passe' })).toBeNull();
+    expect(delegationVerdictLine({ result: '## Verdict\n\nça passe' })).toBeNull();
   });
 });
 
