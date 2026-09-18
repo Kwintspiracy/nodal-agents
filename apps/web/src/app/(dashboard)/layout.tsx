@@ -111,12 +111,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <Sidebar workspaces={workspaces} userMenu={<UserMenu />} />
 
             {/*
-            Main pane sits next to the 220px sidebar on desktop and accounts for
-            the mobile top bar (h-[58px]) when narrower. There is no dashboard-wide
-            top bar: every page's first child is a <PageHeader/> that carries the
-            title AND the global controls. Canonical max-width is on the inner wrapper.
+            Main pane sits next to the sidebar on desktop and accounts for the
+            mobile top bar (h-16) when narrower. Its gutter reads the SAME
+            `--sidebar-w` (app/globals.css) the rail is cut from — two literals
+            drifted apart the day one of them changed. There is no
+            dashboard-wide top bar: every page's first child is a <PageHeader/>
+            that carries the title AND the global controls. Canonical max-width
+            is on the inner wrapper.
           */}
-            <main className="flex min-w-0 flex-1 flex-col pt-16 lg:ml-[244px] lg:pt-0">
+            <main className="flex min-w-0 flex-1 flex-col pt-16 lg:ml-[var(--sidebar-w)] lg:pt-0">
               {/*
               `overflow-x-clip`, PAS `overflow-x-hidden` : `hidden` sur un axe
               force l'autre axe à `auto`, ce qui fait de ce bloc le conteneur

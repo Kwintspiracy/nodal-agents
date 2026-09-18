@@ -15,11 +15,14 @@ import { describe, it, expect } from 'vitest';
 import {
   chatFolders,
   chatWaitingTotal,
+  folderThreads,
+  FOLDER_THREADS_MAX,
   folderOfJobChannel,
   folderOfWork,
   DASHBOARD_FOLDER,
   MCP_FOLDER,
   RUNNING_JOB_STATUSES,
+  type FolderThreadSource,
   type WorkOrigin,
 } from '../chat-folders.ts';
 
@@ -385,5 +388,53 @@ describe('le dossier MCP — ce qui arrive de dehors @cap:parler-par-canal-exter
     });
     expect(byKey(rows, MCP_FOLDER).active).toBe(true);
     expect(byKey(rows, 'telegram').active).toBe(false);
+  });
+});
+
+// ─── Les derniers fils d'un dossier (18/09/2026) ─────────────────────────────
+
+/** Un fil de liste, réduit à ce que le sous-menu en montre. */
+function fil(folder: string, n: number): FolderThreadSource {
+  return { folder, key: `${folder}-${n}`, title: `${folder} ${n}`, href: `/chat/${folder}-${n}` };
+}
+
+describe('folderThreads @cap:reprendre-conversation/ecran', () => {
+  it('garde les CINQ premiers fils d’un dossier, et pas le sixième', () => {
+    const rows = Array.from({ length: 7 }, (_, i) => fil('telegram', i + 1));
+    const dossiers = folderThreads(rows);
+    expect(FOLDER_THREADS_MAX).toBe(5);
+    expect(dossiers.telegram?.map((t) => t.title)).toEqual([
+      'telegram 1',
+      'telegram 2',
+      'telegram 3',
+      'telegram 4',
+      'telegram 5',
+    ]);
+  });
+
+  it('garde l’ORDRE de la liste, qui est celui de la lecture', () => {
+    // Le plus récent d'abord. Un tri d'appoint ici ferait dire au sous-menu
+    // autre chose que la liste que « See all » ouvre juste en dessous.
+    const dossiers = folderThreads([fil('slack', 3), fil('slack', 1), fil('slack', 2)]);
+    expect(dossiers.slack?.map((t) => t.key)).toEqual(['slack-3', 'slack-1', 'slack-2']);
+  });
+
+  it('range chaque fil sous SON dossier, même mêlés', () => {
+    // Les lignes arrivent tous dossiers confondus : le cinquième fil de
+    // Telegram peut précéder le premier de Slack.
+    const rows = [
+      ...Array.from({ length: 6 }, (_, i) => fil('telegram', i + 1)),
+      fil('slack', 1),
+      fil(DASHBOARD_FOLDER, 1),
+    ];
+    const dossiers = folderThreads(rows);
+    expect(dossiers.telegram).toHaveLength(5);
+    expect(dossiers.slack?.map((t) => t.href)).toEqual(['/chat/slack-1']);
+    expect(dossiers[DASHBOARD_FOLDER]).toHaveLength(1);
+  });
+
+  it('ne fabrique AUCUN dossier pour qui n’a pas de fil', () => {
+    expect(folderThreads([])).toEqual({});
+    expect(folderThreads([fil(MCP_FOLDER, 1)]).telegram).toBeUndefined();
   });
 });

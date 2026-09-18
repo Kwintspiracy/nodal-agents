@@ -151,6 +151,23 @@
   color-scheme: dark;
 }
 
+/* --- Layout ----------------------------------------------------------
+   Ce qui n'est ni une couleur ni une police, mais une MESURE que deux
+   éléments doivent partager. Hors des blocs de thème : la mesure ne change
+   pas entre le clair et le sombre. */
+:root {
+  /* La largeur du rail, écrite UNE fois : la barre s'y taille
+     (`lg:w-[var(--sidebar-w)]`) et le contenu s'en écarte d'autant
+     (`lg:ml-[var(--sidebar-w)]`). Les deux valeurs vivaient en dur dans deux
+     fichiers ; changer l'une sans l'autre laissait une bande vide ou un
+     recouvrement.
+
+     244 px jusqu'au 18/09/2026, 300 px depuis (Quentin) : les sous-menus des
+     dossiers de Channels y écrivent des titres de fils, qui se coupaient au
+     troisième mot. */
+  --sidebar-w: 300px;
+}
+
 /* --- Tailwind theme bridge ------------------------------------------ */
 @theme inline {
   /* Colors — exposed as utility classes (bg-canvas, text-ink-3, ...) */

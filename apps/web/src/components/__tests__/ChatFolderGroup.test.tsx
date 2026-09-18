@@ -26,12 +26,14 @@ vi.mock('next/link', () => ({
 }));
 vi.mock('@/lib/actions', () => ({ listApprovalsAction: vi.fn() }));
 vi.mock('@/lib/conversation-actions.ts', () => ({ getChatFoldersAction: vi.fn() }));
+vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
 
 import ChatFolderGroup from '../ChatFolderGroup.tsx';
 import SidebarLink from '../ui/SidebarLink';
 import { ApprovalsProvider, type PendingApproval } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
 import { chatWaitingTotal } from '@/lib/chat-folders.ts';
+import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
 
 let pathname = '/chat';
 let search = '';
@@ -98,10 +100,17 @@ function folderRow(key: string): HTMLAnchorElement {
   return el;
 }
 
+function click(el: Element): Promise<void> {
+  return act(async () => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
 beforeEach(() => {
   pathname = '/chat';
   search = '';
   document.body.innerHTML = '';
+  vi.mocked(listFolderThreadsAction).mockReset();
 });
 
 afterEach(async () => {
@@ -221,6 +230,126 @@ describe('le compte porté par le lien « Chat » @cap:reprendre-conversation/ec
     await render(<SidebarLink href="/chat" label="Channels" count={total} isActive={false} />);
     const link = container.querySelector('a');
     expect(link?.textContent).toBe('Channels3');
+  });
+});
+
+// ─── Le sous-menu d'un dossier (18/09/2026) ──────────────────────────────────
+
+/** Ce que la lecture rapporte, dans la forme exacte de l'action. */
+function seedThreads(snapshot: Record<string, { key: string; title: string; href: string }[]>) {
+  vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: snapshot });
+}
+
+function threadRows(folder: string): HTMLAnchorElement[] {
+  return [
+    ...container.querySelectorAll<HTMLAnchorElement>(`[data-testid="folder-thread-${folder}"]`),
+  ];
+}
+
+describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', () => {
+  it('ne montre RIEN tant que personne n’a déplié — et ne lit rien non plus', async () => {
+    seedThreads({});
+    await renderGroup({ channels: ['telegram'] });
+    expect(container.querySelector('[data-testid="folder-threads-telegram"]')).toBeNull();
+    // Replié par défaut : la barre latérale de toutes les pages du tableau de
+    // bord ne paie pas la lecture d'un menu que personne n'a ouvert.
+    expect(listFolderThreadsAction).not.toHaveBeenCalled();
+  });
+
+  it('déplie CINQ fils, dans l’ordre de la liste, chacun vers son fil', async () => {
+    seedThreads({
+      telegram: [
+        { key: 't1', title: 'Invoice for March', href: '/chat/t1' },
+        { key: 't2', title: 'Book the flight', href: '/chat/t2' },
+        { key: 't3', title: 'Weekly report', href: '/chat/t3' },
+        { key: 't4', title: 'Rename the folder', href: '/chat/t4' },
+        { key: 't5', title: 'Untitled', href: '/chat/t5' },
+      ],
+    });
+    await renderGroup({ channels: ['telegram'] });
+    await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
+
+    const rows = threadRows('telegram');
+    expect(rows.map((a) => a.textContent)).toEqual([
+      'Invoice for March',
+      'Book the flight',
+      'Weekly report',
+      'Rename the folder',
+      'Untitled',
+    ]);
+    expect(rows.map((a) => a.getAttribute('href'))).toEqual([
+      '/chat/t1',
+      '/chat/t2',
+      '/chat/t3',
+      '/chat/t4',
+      '/chat/t5',
+    ]);
+  });
+
+  it('ferme le sous-menu par « See all », vers la liste du dossier', async () => {
+    seedThreads({ telegram: [{ key: 't1', title: 'Invoice for March', href: '/chat/t1' }] });
+    await renderGroup({ channels: ['telegram'] });
+    await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
+
+    const voirTout = container.querySelector('[data-testid="folder-see-all-telegram"]');
+    expect(voirTout?.textContent).toBe('See all');
+    // Le MÊME endroit que le nom du dossier au-dessus : cinq fils ne sont pas
+    // tous les fils, et rien d'autre ne le dirait.
+    expect(voirTout?.getAttribute('href')).toBe('/chat?folder=telegram');
+    // Il vient APRÈS les fils.
+    const bloc = container.querySelector('[data-testid="folder-threads-telegram"]');
+    expect(bloc?.lastElementChild).toBe(voirTout);
+  });
+
+  it('replie ce qu’on vient de déplier', async () => {
+    seedThreads({ telegram: [{ key: 't1', title: 'Invoice for March', href: '/chat/t1' }] });
+    await renderGroup({ channels: ['telegram'] });
+    const caret = container.querySelector('[data-testid="folder-caret-telegram"]')!;
+    expect(caret.getAttribute('aria-expanded')).toBe('false');
+
+    await click(caret);
+    expect(caret.getAttribute('aria-expanded')).toBe('true');
+    await click(caret);
+    expect(caret.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-testid="folder-threads-telegram"]')).toBeNull();
+  });
+
+  it('ne lit qu’UNE fois pour TOUS les dossiers', async () => {
+    seedThreads({
+      telegram: [{ key: 't1', title: 'Invoice for March', href: '/chat/t1' }],
+      dashboard: [{ key: 'd1', title: 'Draft the plan', href: '/chat/d1' }],
+    });
+    await renderGroup({ channels: ['telegram'] });
+    await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
+    await click(container.querySelector('[data-testid="folder-caret-dashboard"]')!);
+
+    // Une requête par dossier redeviendrait un N+1 au premier canal ajouté.
+    expect(listFolderThreadsAction).toHaveBeenCalledTimes(1);
+    expect(threadRows('telegram').map((a) => a.textContent)).toEqual(['Invoice for March']);
+    expect(threadRows('dashboard').map((a) => a.textContent)).toEqual(['Draft the plan']);
+  });
+
+  it('dit qu’un dossier est vide, plutôt que de le laisser muet', async () => {
+    seedThreads({ telegram: [{ key: 't1', title: 'Invoice for March', href: '/chat/t1' }] });
+    await renderGroup({ channels: ['telegram'] });
+    await click(container.querySelector('[data-testid="folder-caret-dashboard"]')!);
+    expect(threadRows('dashboard')).toHaveLength(0);
+    expect(container.querySelector('[data-testid="folder-threads-dashboard"]')?.textContent).toBe(
+      'Nothing here yetSee all',
+    );
+  });
+
+  it('DIT qu’il n’a pas pu lire, au lieu d’afficher un dossier vide', async () => {
+    vi.mocked(listFolderThreadsAction).mockResolvedValue({
+      ok: false,
+      code: 'db_error',
+      message: 'Failed to load conversations',
+    });
+    await renderGroup({ channels: ['telegram'] });
+    await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
+    expect(container.querySelector('[data-testid="folder-threads-telegram"]')?.textContent).toBe(
+      'Failed to load conversationsSee all',
+    );
   });
 });
 

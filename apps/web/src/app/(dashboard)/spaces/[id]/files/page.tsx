@@ -29,7 +29,7 @@ export default async function ProjectFilesPage({ params }: { params: Promise<{ i
     return (
       <PageShell title="Project">
         <Link href="/spaces" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Spaces
+          ← Workspaces
         </Link>
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>

@@ -721,12 +721,18 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
  * déjà.
  */
 export async function listExternalRunsAction(
-  opts: { cursor?: string | null } = {},
+  opts: { cursor?: string | null; limit?: number } = {},
 ): Promise<ActionResult<ExternalRunsPage>> {
   try {
     const session = await getSession();
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
+
+    // Une page plus COURTE se demande — le sous-menu d'un dossier n'en déplie
+    // que cinq (18/09/2026). Rien d'autre ne change : même borne, même ordre,
+    // même curseur. Lire cinquante lignes pour en dessiner cinq serait dix fois
+    // le travail demandé, à chaque ouverture du menu.
+    const taille = opts.limit !== undefined && opts.limit > 0 ? opts.limit : EXTERNAL_RUNS_PAGE;
 
     // Un curseur illisible repart du DÉBUT plutôt que de rendre une page vide.
     const apres = decodeRunCursor(opts.cursor ?? null);
@@ -760,10 +766,10 @@ export async function listExternalRunsAction(
       // la date manque. `created_at` porte `DEFAULT now()` (migration 0000) :
       // le cas demande une écriture qui force `NULL`.
       .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
-      .limit(EXTERNAL_RUNS_PAGE + 1);
+      .limit(taille + 1);
 
-    const page = rows.slice(0, EXTERNAL_RUNS_PAGE);
-    const encore = rows.length > EXTERNAL_RUNS_PAGE;
+    const page = rows.slice(0, taille);
+    const encore = rows.length > taille;
     const derniere = page[page.length - 1];
     return ok({
       runs: page,
