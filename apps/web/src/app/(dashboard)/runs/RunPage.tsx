@@ -19,7 +19,6 @@
 // lire quand le run est fini.
 
 import type { ReactNode } from 'react';
-import Link from 'next/link';
 import type { SpaceConversationView } from '@/lib/actions.ts';
 import type { BackLink } from '@/lib/back-links.ts';
 import PageShell from '@/components/ui/PageShell';
@@ -111,10 +110,15 @@ export function RunBody({
 }) {
   const { job, verification } = data;
   const view = runView(data);
-  const children = data.feed.items.filter((i) => i.kind === 'child');
 
   return (
-    <div className="w-full min-w-0 space-y-4">
+    // La largeur du corps de TOUTE page Nodal : `max-w-6xl`, calée à gauche,
+    // dans les gouttières que `ThreadScroller` porte déjà. Le tableau dessine
+    // un corps de 1140 px à 28 px des bords — c'est exactement cette règle sur
+    // un écran de 1440. Pleine largeur, les cartes s'étiraient d'un bord à
+    // l'autre et la page ne ressemblait plus à aucune autre (Quentin, vu sur
+    // la stack).
+    <div className="max-w-6xl min-w-0 space-y-4" data-testid="run-body">
       <LiveRefresh live={view.live} />
 
       <RunHeaderCard
@@ -128,29 +132,10 @@ export function RunBody({
         actions={actions}
       />
 
-      {/* La chaîne de délégation, en une ligne : d'où ce run vient, et à qui il
-          a délégué. Les deux mènent à la page du run visé — la même que
-          celle-ci. */}
-      {(job.parentJobId !== null || children.length > 0) && (
-        <p className="flex flex-wrap items-center gap-3 text-mono-11 text-ink-4">
-          {job.parentJobId !== null && (
-            <Link href={`/scheduled/${job.parentJobId}`} className="hover:text-ink-2">
-              ↑ parent run
-            </Link>
-          )}
-          {children.map((child) =>
-            child.kind === 'child' ? (
-              <Link
-                key={child.job.id}
-                href={`/scheduled/${child.job.id}`}
-                className="hover:text-ink-2"
-              >
-                ↓ {child.job.agentName ?? 'delegate'}
-              </Link>
-            ) : null,
-          )}
-        </p>
-      )}
+      {/* Pas de liens vers le run parent ni vers les délégués : les délégations
+          d'un run se lisent DANS le run, dépliables dans la chronologie, comme
+          dans le fil (décision Quentin, 18/09). Une ligne de liens en haut
+          renvoyait ailleurs ce qui est déjà là, plus bas. */}
 
       {/* LA RÉPONSE, hors du fil : ce que le run a répondu, en toutes lettres.
           Absente (un run qui n'a rien dit, ou qui court encore) ⇒ rien. */}

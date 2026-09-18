@@ -48,6 +48,24 @@ const turn = (index: number, text: string): FeedItem => ({
   at: null,
 });
 
+/** Une délégation du run : elle vit DANS la chronologie, jamais en haut de page. */
+const child: FeedItem = {
+  kind: 'child',
+  job: {
+    id: 'job-child',
+    agentName: 'Reviewer C',
+    agentSlug: 'reviewer-c',
+    agentAvatarUrl: null,
+    status: 'completed',
+    task: 'relis le digest',
+    result: 'rien à redire',
+    error: null,
+    createdAt: null,
+    completedAt: null,
+  },
+  from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+};
+
 const delivered: FeedItem = {
   kind: 'produced',
   jobId: 'job-1',
@@ -126,6 +144,33 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
       at('data-testid="activity-section"'),
     ];
     expect(ordre).toEqual([...ordre].sort((a, b) => a - b));
+  });
+
+  it('le corps garde la largeur d’une page Nodal, calée à gauche', () => {
+    // `max-w-6xl` sans `mx-auto` : la règle du corps de `PageShell`, que les
+    // gouttières de `ThreadScroller` complètent. En pleine largeur, les cartes
+    // s'étiraient d'un bord à l'autre de l'écran (Quentin, vu sur la stack).
+    expect(html).toContain('class="max-w-6xl min-w-0 space-y-4"');
+    expect(html).not.toContain('mx-auto');
+  });
+
+  it('aucun lien vers le run parent ni vers un délégué : ils se lisent dans la chronologie', () => {
+    // Un run qui DESCEND d'un autre et qui a délégué : ni l'un ni l'autre ne
+    // gagne un lien en haut de page. Une délégation se lit là où elle a eu
+    // lieu, dépliable dans la chronologie (décision Quentin, 18/09).
+    const avecDelegation = data(false);
+    const page = renderToStaticMarkup(
+      <RunBody
+        data={{
+          ...avecDelegation,
+          job: { ...avecDelegation.job, parentJobId: 'job-parent' },
+          feed: { ...avecDelegation.feed, items: [...avecDelegation.feed.items, child] },
+        }}
+      />,
+    );
+    expect(page).not.toContain('job-parent');
+    expect(page).not.toContain('job-child');
+    expect(page).not.toContain('parent run');
   });
 
   it('l’en-tête porte l’agent, la routine, le modèle et les chiffres du run', () => {

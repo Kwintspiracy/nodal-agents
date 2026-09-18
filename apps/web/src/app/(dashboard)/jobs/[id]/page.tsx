@@ -5,8 +5,10 @@
 // `<pre>`. Deux pages pour la même chose, et celle-ci montrait le moins. Elle
 // rend maintenant `RunPage`, la MÊME page que /scheduled/[id], depuis le même
 // chargeur (`getSpaceConversationAction` accepte n'importe quel job : sa seule
-// garde est `not_found`). Ce qui n'existait qu'ici — la chaîne de délégation,
-// et le bouton d'annulation tant que le run court — est gardé.
+// garde est `not_found`). Ce qui n'existait qu'ici et qui compte — le bouton
+// d'annulation tant que le run court — est gardé. Les délégations, elles, ne
+// sont plus une liste de liens : elles se lisent DANS la chronologie du run,
+// dépliables, là où elles ont eu lieu (décision Quentin, 18/09).
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
