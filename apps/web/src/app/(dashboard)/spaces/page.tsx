@@ -21,7 +21,9 @@ export default async function SpacesPage() {
 
   return (
     <PageShell
-      title="Spaces"
+      // « Workspaces » depuis le 18/09/2026, comme la barre latérale. La ROUTE
+      // reste `/spaces` : un libellé n'a pas besoin de casser une URL.
+      title="Workspaces"
       subtitle="Your projects: a folder each, with its conversations and its proof."
       toolbar={
         <div className="flex items-center justify-end">

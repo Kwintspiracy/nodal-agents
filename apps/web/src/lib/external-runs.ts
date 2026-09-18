@@ -36,7 +36,10 @@
 // derrière une fois passée : ni doublon, ni trou, seulement une place qu'on
 // n'a pas choisie pour une ligne dont la date manque.
 
-import { LIVE_JOB_STATUSES } from '@nodal-agents/shared';
+import { LIVE_JOB_STATUSES, redactSecretsInText } from '@nodal-agents/shared';
+import { plainText } from '@/components/Markdown.tsx';
+import { RUNNING_JOB_STATUSES } from './chat-folders.ts';
+import { truncate } from './format-time';
 
 /** Ce qu'il faut d'une ligne pour savoir où reprendre après elle. */
 export type RunCursorRow = { createdAt: Date | null; id: string };
@@ -100,4 +103,54 @@ export function decodeRunCursor(cursor: string | null | undefined): RunCursor | 
 export function runIsDeletable(status: string | null): boolean {
   if (status === null) return false;
   return !(LIVE_JOB_STATUSES as readonly string[]).includes(status);
+}
+
+// ─── Comment un run s'appelle ────────────────────────────────────────────────
+
+/** La même borne que le titre d'une conversation : le CSS coupe le reste. */
+const TITLE_MAX = 120;
+
+/**
+ * Le titre d'un run : la première ligne lisible de sa tâche, MASQUÉE.
+ *
+ * Trois gestes, dans cet ordre, et l'ordre est la moitié du sujet :
+ *
+ *   1. `plainText` aplatit le markdown — une tâche écrite en gras s'afficherait
+ *      sinon avec ses astérisques, et surtout un `**sk-…**` ne serait reconnu
+ *      par aucun motif de rédaction ;
+ *   2. `redactSecretsInText` masque (SECRET-001, Reviewer C sur #179). Ce titre
+ *      EST la tâche que quelqu'un a postée à `/api/agent` : une clé collée
+ *      dedans s'affichait en clair dans la liste, sur une ligne que personne
+ *      n'a besoin d'ouvrir pour la lire ;
+ *   3. `truncate` coupe EN DERNIER — couper d'abord laisserait passer les 120
+ *      premiers signes d'une clé, ce qui en est l'essentiel.
+ *
+ * La liste des conversations masque par la même règle et pour la même raison,
+ * à son propre bord de lecture (`firstLine`, lib/conversation-actions.ts) :
+ * elle coupe les siens à 60 signes AVANT que cette ligne ne les voie.
+ *
+ * Une tâche vide rend « Untitled run » : un titre vide se lirait comme un
+ * défaut d'affichage.
+ *
+ * ⚠️ IL VIT ICI, et non dans le dossier de l'écran, depuis le 18/09/2026 : le
+ * SOUS-MENU d'un dossier de la barre latérale nomme les mêmes runs que la
+ * liste du dossier, et la lecture qui le remplit est une action serveur.
+ * L'importer depuis `app/(dashboard)/chat/run-rows.ts` aurait bouclé —
+ * run-rows lit déjà le type `ExternalRunRow` de cette action — et
+ * dependency-cruiser refuse un cycle, `import type` ou non.
+ */
+export function runTitle(task: string): string {
+  const line = redactSecretsInText(plainText(task));
+  return line === '' ? 'Untitled run' : truncate(line, TITLE_MAX);
+}
+
+/**
+ * Un run avance-t-il encore ? Les mêmes statuts que le point vert des dossiers.
+ *
+ * Ici pour la même raison que `runTitle` : le sous-menu de la barre latérale
+ * allume le point d'un run par cette règle, et sa lecture est une action
+ * serveur.
+ */
+export function runIsRunning(status: string | null): boolean {
+  return status !== null && RUNNING_JOB_STATUSES.includes(status);
 }

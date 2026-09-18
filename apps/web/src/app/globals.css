@@ -43,6 +43,18 @@
   --c-run-bg: rgba(53, 101, 255, 0.12);
   --c-err: #b54141;
 
+  /* Le point d'un fil du menu Channels (Quentin, 19/09/2026) : il est de cette
+     couleur quand le fil A QUELQUE CHOSE POUR LA PERSONNE — une approbation ou
+     une question en attente, un run qui tourne — et gris (`ink-4`) sinon.
+
+     ⚠️ Ce rouge ne dit PAS « non lu ». La base ne porte AUCUN état de lecture,
+     et c'est une décision du 17/09/2026, pas un oubli : rien ne pourrait le
+     vérifier (invariant #4). Il dit « en attente de toi, ou en cours », et rien
+     d'autre.
+
+     Même valeur en clair et en sombre : la consigne n'en donnait qu'une. */
+  --c-attention: #d8153f;
+
   /* Feed palette — one colour per kind of thing in a run (Figma feed/*,
      issue #135). Only `feed-composer` is used today; the others land now so
      the next PRs of #135, one per feed block, can read `text-feed-tool` and
@@ -122,6 +134,9 @@
   --c-run-bg: rgba(53, 101, 255, 0.18);
   --c-err: #ff5631;
 
+  /* La même valeur qu'en clair : la consigne n'en donnait qu'une. */
+  --c-attention: #d8153f;
+
   /* Feed palette — one colour per kind of thing in a run (Figma feed/*,
      issue #135). Only `feed-composer` is used today; the others land now so
      the next PRs of #135, one per feed block, can read `text-feed-tool` and
@@ -149,6 +164,23 @@
   --c-code-bracket: #f8f8f2;
 
   color-scheme: dark;
+}
+
+/* --- Layout ----------------------------------------------------------
+   Ce qui n'est ni une couleur ni une police, mais une MESURE que deux
+   éléments doivent partager. Hors des blocs de thème : la mesure ne change
+   pas entre le clair et le sombre. */
+:root {
+  /* La largeur du rail, écrite UNE fois : la barre s'y taille
+     (`lg:w-[var(--sidebar-w)]`) et le contenu s'en écarte d'autant
+     (`lg:ml-[var(--sidebar-w)]`). Les deux valeurs vivaient en dur dans deux
+     fichiers ; changer l'une sans l'autre laissait une bande vide ou un
+     recouvrement.
+
+     244 px jusqu'au 18/09/2026, 300 px depuis (Quentin) : les sous-menus des
+     dossiers de Channels y écrivent des titres de fils, qui se coupaient au
+     troisième mot. */
+  --sidebar-w: 300px;
 }
 
 /* --- Tailwind theme bridge ------------------------------------------ */
@@ -180,6 +212,8 @@
   --color-run: var(--c-run);
   --color-run-bg: var(--c-run-bg);
   --color-err: var(--c-err);
+  /* `bg-attention` — le point d'un fil qui attend la personne (19/09/2026). */
+  --color-attention: var(--c-attention);
 
   /* Feed palette — one colour per kind of thing in a run (Figma feed/*,
      issue #135). Only `feed-composer` is used today; the others land now so

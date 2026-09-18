@@ -45,6 +45,7 @@ import {
   channelAllowedConversations,
 } from '@nodal-agents/db';
 import { normalizePath, redactSecretsInText, stripGroupPrefix } from '@nodal-agents/shared';
+import { folderChatsQuery, folderConversationsQuery } from './folder-threads-sql.ts';
 import { plainText } from '@/components/Markdown.tsx';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
@@ -375,6 +376,125 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
   } catch (err) {
     console.error('[listAllConversationsAction]', err);
     return fail('db_error', 'Failed to load conversations');
+  }
+}
+
+// ─── listFolderThreadReadsAction ─────────────────────────────────────────────
+
+/** Un chat de canal retenu par le sous-menu, avant d'être nommé. */
+export type FolderChatRead = {
+  /** Le dossier : le canal lui-même. */
+  channel: string;
+  agentId: string;
+  chatId: string;
+};
+
+/** Une conversation de « Nodal chats » retenue par le sous-menu. */
+export type FolderConversationRead = {
+  id: string;
+  /** Le titre, DÉJÀ rédigé et coupé — vide quand rien ne le nomme. */
+  title: string;
+};
+
+export type FolderThreadReads = {
+  chats: FolderChatRead[];
+  conversations: FolderConversationRead[];
+};
+
+/**
+ * Ce que le sous-menu d'un dossier a besoin de lire, ET RIEN DE PLUS.
+ *
+ * Le plafond est EN SQL (`lib/folder-threads-sql.ts`) : deux requêtes bornées,
+ * `perFolder` lignes par dossier, jamais une par dossier ni une par fil. Cette
+ * lecture remplace l'appel à `listAllConversationsAction`, qui rapportait
+ * jusqu'à deux cents conversations et leurs deux agrégats pour qu'on en coupe
+ * cinq (Reviewer C, passe 1 de la PR #206).
+ *
+ * Le titre d'un fil que personne n'a nommé demande une lecture de plus — sa
+ * première demande — mais SEULEMENT pour les fils retenus, et seulement quand
+ * il en manque un : au plus `perFolder` identifiants, jamais la liste.
+ */
+export async function listFolderThreadReadsAction(
+  perFolder: number,
+): Promise<ActionResult<FolderThreadReads>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const db = getDb();
+
+    const [chatRows, convRows] = await Promise.all([
+      folderChatsQuery(db, session.entityId, perFolder),
+      folderConversationsQuery(db, session.entityId, perFolder),
+    ]);
+
+    const chats: FolderChatRead[] = chatRows.map((r) => ({
+      channel: r.channel,
+      agentId: r.agentId,
+      // La requête écarte déjà `null` et la chaîne vide ; le `??` ne sert qu'à
+      // le DIRE au typage, sans jamais fabriquer d'identifiant.
+      chatId: r.chatId ?? '',
+    }));
+
+    // Les fils SANS titre, et eux seuls. Leur titre de repli est leur première
+    // demande — celle de la personne pour une conversation du dashboard, la
+    // tâche du premier job de tête pour un fil de canal sans chat.
+    const sansTitre = convRows.filter((r) => r.title === '').map((r) => r.id);
+    const premiereDemande = new Map<string, string | null>();
+    if (sansTitre.length > 0) {
+      const [messages, jobs] = await Promise.all([
+        db
+          .select({
+            conversationId: chatMessages.conversationId,
+            firstRequest: sql<
+              string | null
+            >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt}) FILTER (WHERE ${chatMessages.role} = 'user'))[1]`,
+          })
+          .from(chatMessages)
+          .where(inArray(chatMessages.conversationId, sansTitre))
+          .groupBy(chatMessages.conversationId),
+        db
+          .select({
+            conversationId: agentJobs.conversationId,
+            firstRequest: sql<
+              string | null
+            >`(array_agg(${agentJobs.task} ORDER BY ${agentJobs.createdAt}))[1]`,
+          })
+          .from(agentJobs)
+          .where(
+            and(
+              eq(agentJobs.entityId, session.entityId),
+              isNull(agentJobs.parentJobId),
+              inArray(agentJobs.conversationId, sansTitre),
+            ),
+          )
+          .groupBy(agentJobs.conversationId),
+      ]);
+      for (const r of messages) premiereDemande.set(r.conversationId ?? '', r.firstRequest);
+      // Les jobs ne remplacent PAS un message déjà trouvé : une conversation du
+      // dashboard se nomme par ce que la personne a écrit, pas par la tâche que
+      // l'escalade en a tirée.
+      for (const r of jobs) {
+        const key = r.conversationId ?? '';
+        if (!premiereDemande.has(key)) premiereDemande.set(key, r.firstRequest);
+      }
+    }
+
+    return ok({
+      chats,
+      conversations: convRows.map((r) => ({
+        id: r.id,
+        // Le titre de la colonne d'abord ; sinon la première demande, sans son
+        // préfixe de groupe — la MÊME règle, et les mêmes bornes, que la liste
+        // (`listAllConversationsAction`).
+        title:
+          r.title !== ''
+            ? firstLine(r.title, TITLE_MAX)
+            : firstLine(stripGroupPrefix(premiereDemande.get(r.id) ?? ''), TITLE_MAX),
+      })),
+    });
+  } catch (err) {
+    console.error('[listFolderThreadReadsAction]', err);
+    return fail('db_error', 'Failed to load the folder threads');
   }
 }
 
@@ -721,12 +841,18 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
  * déjà.
  */
 export async function listExternalRunsAction(
-  opts: { cursor?: string | null } = {},
+  opts: { cursor?: string | null; limit?: number } = {},
 ): Promise<ActionResult<ExternalRunsPage>> {
   try {
     const session = await getSession();
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
+
+    // Une page plus COURTE se demande — le sous-menu d'un dossier n'en déplie
+    // que cinq (18/09/2026). Rien d'autre ne change : même borne, même ordre,
+    // même curseur. Lire cinquante lignes pour en dessiner cinq serait dix fois
+    // le travail demandé, à chaque ouverture du menu.
+    const taille = opts.limit !== undefined && opts.limit > 0 ? opts.limit : EXTERNAL_RUNS_PAGE;
 
     // Un curseur illisible repart du DÉBUT plutôt que de rendre une page vide.
     const apres = decodeRunCursor(opts.cursor ?? null);
@@ -760,10 +886,10 @@ export async function listExternalRunsAction(
       // la date manque. `created_at` porte `DEFAULT now()` (migration 0000) :
       // le cas demande une écriture qui force `NULL`.
       .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
-      .limit(EXTERNAL_RUNS_PAGE + 1);
+      .limit(taille + 1);
 
-    const page = rows.slice(0, EXTERNAL_RUNS_PAGE);
-    const encore = rows.length > EXTERNAL_RUNS_PAGE;
+    const page = rows.slice(0, taille);
+    const encore = rows.length > taille;
     const derniere = page[page.length - 1];
     return ok({
       runs: page,

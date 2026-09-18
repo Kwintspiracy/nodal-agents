@@ -312,3 +312,94 @@ export function chatWaitingTotal(
   const byFolder = waitingByFolder(input.waiting);
   return existingKeys(input).reduce((sum, key) => sum + (byFolder.get(key) ?? 0), 0);
 }
+
+// ─── Les derniers fils d'un dossier (18/09/2026) ─────────────────────────────
+//
+// Un dossier se DÉPLIE : son chevron montre ses derniers fils, et « See all »
+// mène à sa liste entière. Ce ne sont pas d'autres lignes que celles de la
+// liste — ce sont LES MÊMES, coupées aux premières. Le titre est donc celui
+// que la lecture a déjà écrit : masqué (#179) et borné à sa source, jamais
+// reconstruit ici.
+
+/** Une entrée du sous-menu d'un dossier : un fil, et où il mène. */
+export type FolderThread = {
+  /** L'identité de la ligne — sa clé de rendu et son `data-testid`. */
+  key: string;
+  /** Le titre, tel que la LISTE du dossier l'écrit. */
+  title: string;
+  /** Où mène la ligne : un fil (`/chat/<id>`) ou un run (`/jobs/<id>`). */
+  href: string;
+  /**
+   * Quelque chose ATTEND LA PERSONNE sur ce fil : une approbation, une
+   * question. Exactement ce que compte la pastille du dossier, lu au niveau du
+   * FIL plutôt qu'à celui du dossier — la même lecture, la même règle.
+   */
+  waiting: boolean;
+  /** Un run TOURNE sur ce fil. La même donnée que le point vert du dossier. */
+  running: boolean;
+};
+
+/** Une ligne de liste, avec le dossier où elle se range. */
+export type FolderThreadSource = FolderThread & { folder: string };
+
+/**
+ * Le point d'un fil doit-il APPELER la personne ?
+ *
+ * Oui dès qu'il y a de quoi revenir : une demande en attente, ou un run qui
+ * tourne. Rien d'autre.
+ *
+ * ⚠️ CE N'EST PAS « NON LU ». La base ne porte AUCUN état de lecture — pas de
+ * `last_read_at`, nulle part — et c'est une décision (17/09/2026), pas un
+ * oubli. Peindre en rouge un fil « non lu » afficherait un fait que rien ne
+ * peut vérifier (invariant #4). Le jour où la colonne existe, elle s'ajoute
+ * ici, et le point voudra dire une chose de plus.
+ */
+export function threadCallsFor(thread: Pick<FolderThread, 'waiting' | 'running'>): boolean {
+  return thread.waiting || thread.running;
+}
+
+/**
+ * Combien de fils un sous-menu déplie.
+ *
+ * Cinq (Quentin, 18/09/2026). Assez pour retrouver ce qu'on a ouvert ce
+ * matin ; pas assez pour que la barre latérale devienne la liste, qui a sa
+ * page et son bouton « See all ».
+ */
+export const FOLDER_THREADS_MAX = 5;
+
+/**
+ * Les derniers fils de CHAQUE dossier, dans l'ordre reçu.
+ *
+ * L'ordre est celui de la lecture — le plus récent d'abord — et il n'est pas
+ * retrié ici : le sous-menu doit montrer exactement la tête de la liste que
+ * « See all » ouvre, sinon les deux se contredisent sous le même nom.
+ *
+ * Un dossier absent de la table n'a rien à déplier ; c'est l'appelant qui
+ * décide de ce qu'il en dit.
+ */
+export function folderThreads(
+  rows: readonly FolderThreadSource[],
+  max: number = FOLDER_THREADS_MAX,
+): Record<string, FolderThread[]> {
+  const byFolder: Record<string, FolderThread[]> = {};
+  for (const r of rows) {
+    const ligne: FolderThread = {
+      key: r.key,
+      title: r.title,
+      href: r.href,
+      waiting: r.waiting,
+      running: r.running,
+    };
+    const seen = byFolder[r.folder];
+    if (seen === undefined) {
+      byFolder[r.folder] = [ligne];
+      continue;
+    }
+    // On CONTINUE de parcourir plutôt que de s'arrêter : les lignes arrivent
+    // mêlées, tous dossiers confondus, et le cinquième fil de Telegram peut
+    // très bien précéder le premier de Slack.
+    if (seen.length >= max) continue;
+    seen.push(ligne);
+  }
+  return byFolder;
+}

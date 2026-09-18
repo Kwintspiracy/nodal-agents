@@ -42,7 +42,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     return (
       <PageShell title="Project">
         <Link href="/spaces" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Spaces
+          ← Workspaces
         </Link>
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>
@@ -114,7 +114,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       }
       toolbar={
         <WorkBar
-          back={{ label: 'Back to spaces', href: '/spaces' }}
+          back={{ label: 'Back to workspaces', href: '/spaces' }}
           agents={view !== null ? threadAgents(view.feed.items) : []}
           {...(view !== null
             ? { status: <StatusPill variant={view.live ? 'run' : 'idle'} /> }
