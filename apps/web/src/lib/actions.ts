@@ -216,6 +216,7 @@ import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
 import { redactPresented } from './redact-presented.ts';
+import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
 // P2bis — le récapitulatif de livraison d'un run est posé par la fonction du
 // fil d'une conversation, jamais par une seconde lecture des mêmes lignes.
 import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
@@ -2443,6 +2444,12 @@ export type SpaceConversationView = {
     deliverables: DeliverableStatusView[];
   };
   cost: SpaceCostView;
+  /**
+   * 18/09 — CE QUE LA RELECTURE A DIT de ce travail et de ses délégués, par la
+   * MÊME lecture que le détail Code (`review-verdicts.ts`). Sans elle, le même
+   * run disait « aucune relecture » ici et montrait le verdict là-bas.
+   */
+  verdicts: ReviewVerdictView[];
   /** P3 — la file d'envoi de ce travail (`job_deliveries`), telle quelle. */
   deliveries: Array<{
     channel: string;
@@ -2650,6 +2657,10 @@ export async function getSpaceConversationAction(
       // deux fois (passe 57).
       entityWorkspaceRoots(db, session.entityId),
     ]);
+    // La relecture de ce travail et de sa descendance — la lecture partagée
+    // avec le détail Code, pour que les trois portes d'un run en disent la
+    // même chose.
+    const reviewVerdicts = await readReviewVerdicts(db, session.entityId, relevantIds);
     const cost = aggregateSpaceCost({
       calls: costRows,
       approvals: approvalRows,
@@ -2744,6 +2755,7 @@ export async function getSpaceConversationAction(
         scheduleName,
       },
       feed: feedWithDelivery,
+      verdicts: reviewVerdicts.views,
       verification,
       cost,
       // Le message est masqué ICI, à l'affichage : un envoi peut porter un
@@ -12321,21 +12333,6 @@ function truncateForList(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
-type VerdictJson = {
-  verdict?: string;
-  summary?: string;
-  findings?: Array<{ file?: string; line?: number; severity?: string; issue?: string }>;
-  counts?: Record<string, number>;
-};
-
-function parseVerdictJson(raw: string): VerdictJson | null {
-  try {
-    return JSON.parse(raw) as VerdictJson;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Stage derivation (the plan's exact rules):
  *   processing/pending            → 'coding'
@@ -13066,13 +13063,13 @@ export type CodingFileChangeGroup = {
   edits: CodingChangeView[];
 };
 
-export type CodingVerdictView = {
-  jobId: string;
-  verdict: string | null;
-  summary: string | null;
-  findings: Array<{ file?: string; line?: number; severity?: string; issue?: string }>;
-  counts: Record<string, number> | null;
-};
+/**
+ * Un verdict de relecture. Le type et sa lecture vivent dans
+ * `review-verdicts.ts` depuis le 18/09 : la page d'un run et le détail Code
+ * montrent LE MÊME run, et l'un disait « aucune relecture » là où l'autre
+ * montrait le verdict. Le nom reste, les importateurs ne bougent pas.
+ */
+export type CodingVerdictView = ReviewVerdictView;
 
 /**
  * One entry in the Activity trail: either a real tool_call (compact — no
@@ -13254,20 +13251,10 @@ export async function getCodingProcessDetailAction(
         .where(and(eq(toolCalls.entityId, entityId), inArray(toolCalls.jobId, allRelevantIds)))
         .orderBy(toolCalls.createdAt);
 
-      // review_verdict — this job AND its direct children (same rule as the list).
-      const verdictRows =
-        allRelevantIds.length > 0
-          ? await db
-              .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
-              .from(toolCalls)
-              .where(
-                and(
-                  eq(toolCalls.entityId, entityId),
-                  inArray(toolCalls.jobId, allRelevantIds),
-                  eq(toolCalls.toolName, 'review_verdict'),
-                ),
-              )
-          : [];
+      // review_verdict — ce job ET sa descendance, par la lecture PARTAGÉE avec
+      // la page d'un run (18/09) : le même travail ne peut pas dire deux choses
+      // de sa relecture selon la porte par laquelle on l'ouvre.
+      const reviewVerdicts = await readReviewVerdicts(db, entityId, allRelevantIds);
 
       // Tokens/cost, at the HONEST granularity (v4): per turn, never per
       // tool — that data doesn't exist. llm_calls carries the Nodal job
@@ -13332,13 +13319,9 @@ export async function getCodingProcessDetailAction(
         costUsd += r.costUsd ?? 0;
       }
 
-      const verdictOutputsByJob = new Map<string, string[]>();
-      for (const v of verdictRows) {
-        if (!v.jobId || !v.toolOutput) continue;
-        const arr = verdictOutputsByJob.get(v.jobId) ?? [];
-        arr.push(v.toolOutput);
-        verdictOutputsByJob.set(v.jobId, arr);
-      }
+      // La dérivation d'étape cherche le marqueur d'approbation dans la SORTIE
+      // brute : la lecture partagée la rend, rangée par job.
+      const verdictOutputsByJob = reviewVerdicts.rawByJob;
       // Les preuves du pipeline — lues par `allRelevantIds`, déjà bornées à
       // l'espace, et re-bornées par entity_id : la preuve d'un délégué remonte
       // à l'écran de la racine, celle d'un voisin jamais (T24).
@@ -13404,18 +13387,7 @@ export async function getCodingProcessDetailAction(
 
       const stage = deriveJobStage(job.status, job.id, childIds, verdictOutputsByJob);
 
-      const verdicts: CodingVerdictView[] = verdictRows
-        .filter((v): v is { jobId: string; toolOutput: string } => !!v.jobId && !!v.toolOutput)
-        .map((v) => {
-          const parsedVerdict = parseVerdictJson(v.toolOutput);
-          return {
-            jobId: v.jobId,
-            verdict: parsedVerdict?.verdict ?? null,
-            summary: parsedVerdict?.summary ?? null,
-            findings: parsedVerdict?.findings ?? [],
-            counts: parsedVerdict?.counts ?? null,
-          };
-        });
+      const verdicts: CodingVerdictView[] = reviewVerdicts.views;
 
       // Changes = the file-grouped view (v4 — Changes is now the MAIN
       // content, not a sidebar). Every edit-shaped tool_call across the

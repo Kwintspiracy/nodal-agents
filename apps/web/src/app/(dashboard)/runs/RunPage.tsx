@@ -135,6 +135,7 @@ export function RunBody({
       <LiveRefresh live={view.live} />
 
       <RunHeaderCard
+        runId={job.id}
         task={job.task}
         agentName={job.agentName}
         origin={view.origin}
@@ -164,8 +165,11 @@ export function RunBody({
       )}
       <DeliveriesCard deliveries={data.deliveries} />
 
-      {/* La relecture. Vide sur un run d'automatisation : la ligne le dit. */}
-      <ReviewSection verdicts={[]} />
+      {/* La relecture, avec les VRAIS verdicts du travail et de ses délégués
+          (18/09). Le même run les montrait depuis Code et les taisait ici :
+          les deux chargeurs lisent maintenant la même chose. Aucun verdict —
+          le cas d'une automatisation — et la ligne le dit. */}
+      <ReviewSection verdicts={data.verdicts} />
 
       {/* La preuve — la même section que le détail Code, dessinée au tableau.
           Toujours rendue : elle n'est jamais vide, elle dit ce qui n'a pas

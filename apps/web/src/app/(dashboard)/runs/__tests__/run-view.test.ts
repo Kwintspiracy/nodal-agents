@@ -86,6 +86,7 @@ function view(over: {
       ...over.job,
     },
     feed: { items: over.items ?? [turn()], totals },
+    verdicts: [],
     verification: { sequences: [], skippedSurfaces: [], unconfigured: [], deliverables: [] },
     cost: {
       byAgent: [],
