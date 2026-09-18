@@ -8,7 +8,7 @@
 // échec dans son enregistrement de délégation, et un job qui bat encore n'est
 // pas touché.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, agentTasks } from '@nodal-agents/db';
@@ -206,6 +206,53 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
     expect(child.status).toBe('failed');
     const parent = await jobRow(parentId);
     expect(parent.status).toBe('awaiting_delegation');
+  });
+
+  it('un parent qui attend SANS délégation enregistrée n’est pas réveillé, et c’est DIT', async () => {
+    // Revue de la PR #191, constat 2. `awaiting_delegation` avec
+    // `pending_delegation` à NULL : aucun appel d'outil à qui répondre, donc
+    // rien à réveiller. L'enfant, lui, est mort et le reste.
+    //
+    // Le refus se CONSTATE dans les journaux, parce que c'est là qu'est la
+    // différence : essayer quand même finissait en `OrchestrationError`
+    // rattrapée, donc en ligne d'ERREUR — une panne annoncée qui n'en est pas
+    // une, et un diagnostic pour rien. Refuser d'abord pose un FAIT.
+    const { parentId, childId } = await seedDelegationCoupee('assign-r3');
+    await db.update(agentJobs).set({ pendingDelegation: null }).where(eq(agentJobs.id, parentId));
+
+    // Les lignes sont recueillies AU VOL : `mockRestore()` remet la fonction
+    // d'origine ET efface les appels enregistrés, donc les lire après ne rend
+    // rien (vu en écrivant ce test — il restait vert sur un tableau vide).
+    const lignesErreur: string[] = [];
+    const lignesFait: string[] = [];
+    const erreurs = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      lignesErreur.push(String(args[0]));
+    });
+    const avertissements = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      lignesFait.push(String(args[0]));
+    });
+    let result;
+    try {
+      result = await reclaimJobsOfDeadRunners(db);
+    } finally {
+      erreurs.mockRestore();
+      avertissements.mockRestore();
+    }
+
+    expect((await jobRow(childId)).status).toBe('failed');
+    const parent = await jobRow(parentId);
+    expect(parent.status).toBe('awaiting_delegation');
+    // Rien n'a été injecté dans sa transcription : elle reste à deux messages.
+    expect((parent.messages as unknown[]).length).toBe(2);
+    expect(result.parentsResumed).toBe(0);
+
+    expect(lignesErreur.filter((l) => l.includes('could not be resumed'))).toEqual([]);
+    const faits = lignesFait.filter((l) =>
+      l.includes('not resumed, it is not waiting for this child'),
+    );
+    expect(faits).toHaveLength(1);
+    expect(faits[0]).toContain('pending_sub_job_id=none');
+    expect(faits[0]).toContain(`reclaimed_child=${childId}`);
   });
 
   it('un job SANS parent est repris sans rien réveiller', async () => {

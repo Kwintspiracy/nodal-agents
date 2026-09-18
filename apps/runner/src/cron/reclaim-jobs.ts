@@ -157,10 +157,13 @@ export async function reclaimJobsOfDeadRunners(
  * reposer sa demande. Avec, il reçoit un enregistrement de délégation en échec,
  * exactement comme pour n'importe quel enfant raté, et il décide.
  *
- * Rend `false` sans lever quand le parent n'attend pas cet enfant (course
- * légitime : il a pu être annulé, ou repris entre-temps). Une vraie panne est
- * DITE, fort, et n'arrête pas la passe : les autres jobs repris valent mieux
- * qu'une passe interrompue.
+ * Rend `false` sans lever quand le parent n'attend pas cet enfant NOMMÉMENT
+ * (course légitime : annulé, repris entre-temps, ou aucune délégation
+ * enregistrée). L'enfant est repris quand même — il est mort, cela ne se
+ * discute pas ; c'est le réveil du parent qui n'a pas lieu, et la ligne de
+ * journal dit lequel des deux cas s'est produit. Une vraie panne est DITE,
+ * fort, et n'arrête pas la passe : les autres jobs repris valent mieux qu'une
+ * passe interrompue.
  */
 async function resumeParentOfReclaimedChild(
   db: AnyDrizzleDb,
@@ -178,9 +181,20 @@ async function resumeParentOfReclaimedChild(
   if (!parent || parent.status !== 'awaiting_delegation') return false;
 
   const pending = parent.pendingDelegation as { subJobId?: string } | null;
-  // Le parent peut attendre une AUTRE délégation : le réveiller avec l'échec
-  // d'un enfant qu'il n'attend pas répondrait au mauvais appel d'outil.
-  if (pending?.subJobId && pending.subJobId !== childJobId) return false;
+  // Le parent doit attendre CET enfant, nommément. Deux cas se ressemblent et
+  // n'en sont qu'un (revue de la PR #191, constat 2) : il attend une AUTRE
+  // délégation, ou il attend SANS qu'aucune délégation ne soit enregistrée —
+  // ligne d'avant le champ, écriture perdue, annulation en cours. Dans les deux
+  // cas il n'y a pas d'appel d'outil à qui répondre, et le réveiller poserait un
+  // `tool_result` en face d'un `tool_use` qui n'est pas le sien.
+  if (pending?.subJobId !== childJobId) {
+    console.warn(
+      `[reclaim-jobs] parent=${parentJobId} status=awaiting_delegation pending_sub_job_id=${
+        pending?.subJobId ?? 'none'
+      } reclaimed_child=${childJobId} — not resumed, it is not waiting for this child`,
+    );
+    return false;
+  }
 
   try {
     await resumeDelegated(
