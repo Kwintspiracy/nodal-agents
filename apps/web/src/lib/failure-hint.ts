@@ -11,39 +11,38 @@
 // `agent_jobs` n'a pas de colonne pour lui, et un `assign_*` n'écrit pas de
 // ligne d'audit (`conversation-feed.ts` le dit : « execute() lève avant
 // d'écrire »). Le seul fait persisté de ce refus est le CODE D'ERREUR du job,
-// écrit par `providerRejectionCode` (`apps/runner/src/job/execute.ts`) :
-// `provider_rejected_request:<fournisseur>/<modèle> (http <n>, turn <n>)`.
+// écrit par `providerRejectionCode` (`apps/runner/src/job/execute.ts`).
 // L'écran lit donc le même fait que le runner, et en tire le même geste.
+// L'issue #193 porte la suite : mettre le champ en base, pour lire le mot du
+// runner au lieu de le relire du code.
 //
-// ⚠️ DEUX ENDROITS NOMMENT CE GESTE tant que le champ n'est pas persisté : le
-// site du refus dans le runner, et la table ci-dessous. Ils ne peuvent pas se
-// contredire — ils disent la même chose du même code — mais ils peuvent se
-// désynchroniser : un `hint` ajouté côté runner pour un autre échec resterait
-// MUET à l'écran jusqu'à ce que quelqu'un l'ajoute ici. C'est le sens du
+// LE PRÉFIXE ET LE TYPE SONT PARTAGÉS, PAS RECOPIÉS (#194, revue passe 1). Ils
+// vivent dans `@nodal-agents/shared` : le runner les pose, cet écran les lit.
+// Recopiés, un renommage d'un côté rendait l'écran muet avec tous les tests au
+// vert — les tests aussi tenaient leur copie de la chaîne.
+//
+// Ce qui reste écrit à deux endroits est la CORRESPONDANCE « ce code appelle ce
+// geste » : le site du refus dans le runner, et la fonction ci-dessous. Les
+// deux ne peuvent pas se contredire — même code, même geste — mais un `hint`
+// ajouté côté runner pour un autre échec resterait MUET ici. C'est le sens du
 // silence choisi plus bas : un geste inconnu ne rend RIEN, jamais un slug brut.
-// Issue de suite : porter le champ en base, pour que l'écran lise le mot du
-// runner au lieu de le relire du code d'erreur.
 
-/** Les gestes que l'écran sait dire. Même liste que `JobFailureHint` (#119). */
-export type FailureHint = 'switch_model';
+import { PROVIDER_REJECTED_PREFIX, type JobFailureHint } from '@nodal-agents/shared';
 
-/**
- * Le préfixe que `providerRejectionCode` écrit dans `agent_jobs.error`. C'est
- * un CONTRAT de données, pas une heuristique de texte : le code est fabriqué
- * par une seule fonction, et il commence par ce mot-là.
- */
-const PROVIDER_REJECTED = 'provider_rejected_request';
+/** Les gestes que l'écran sait dire — le type du harnais, jamais une copie. */
+export type FailureHint = JobFailureHint;
 
 /**
  * Le geste que cet échec appelle, lu sur ce qui est PERSISTÉ, ou `null`.
  *
  * `null` est la réponse normale : la grande majorité des échecs n'appellent
  * aucun geste nommable, et inventer une suggestion pour eux serait pire que le
- * silence.
+ * silence. Le préfixe porte ses DEUX-POINTS : un futur
+ * `provider_rejected_request_autre_chose` n'est pas ce refus-là.
  */
 export function failureHint(error: string | null | undefined): FailureHint | null {
   if (typeof error !== 'string') return null;
-  return error.startsWith(PROVIDER_REJECTED) ? 'switch_model' : null;
+  return error.startsWith(PROVIDER_REJECTED_PREFIX) ? 'switch_model' : null;
 }
 
 /** Ce que l'écran DIT de chaque geste. Court, en anglais, une phrase par code. */

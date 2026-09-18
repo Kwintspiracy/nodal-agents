@@ -7,6 +7,7 @@
 // de bibliothèque de test de composants dans ce dépôt — on lit le HTML.
 
 import { describe, it, expect } from 'vitest';
+import { PROVIDER_REJECTED, PROVIDER_REJECTED_PREFIX } from '@nodal-agents/shared';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -1089,10 +1090,7 @@ describe('ConversationFeedView — le travail replié @cap:suivre-execution/ecra
 // l'écran. Ce qui se prouve ici : elle paraît quand un geste est nommé, et
 // l'écran reste muet sinon — jamais un conseil posé sur un échec ordinaire.
 
-const feedEnEchec = (
-  hint: 'switch_model' | null,
-  text = 'provider_rejected_request',
-): ConversationFeed => ({
+const feedEnEchec = (hint: 'switch_model' | null, text = PROVIDER_REJECTED): ConversationFeed => ({
   items: [
     {
       kind: 'request',
@@ -1121,7 +1119,7 @@ describe('ConversationFeedView — le geste qu’un échec appelle @cap:suivre-e
   });
 
   it('l’échec d’un DÉLÉGUÉ porte le même geste, dans le bloc de la délégation', async () => {
-    const refus = 'provider_rejected_request:openrouter/google/gemini-3.7-flash (http 400, turn 3)';
+    const refus = `${PROVIDER_REJECTED_PREFIX}openrouter/google/gemini-3.7-flash (http 400, turn 3)`;
     const feedAvecEnfant: ConversationFeed = {
       items: [
         {

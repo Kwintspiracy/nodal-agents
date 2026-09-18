@@ -31,6 +31,18 @@ import type { getDb } from './server.ts';
 
 type Db = ReturnType<typeof getDb>;
 
+/**
+ * CE QU'UN RUN A RENDU, masqué comme sa transcription l'est déjà (#194, revue
+ * passe 1). La page d'un job masquait `result` et `error` depuis toujours
+ * (`jobs/[id]/page.tsx`) ; le fil, lui, les posait BRUTS — et c'est le fil
+ * qu'on lit. Un `run_command` qui échoue en recopiant `ANTHROPIC_API_KEY=…`
+ * dans son message d'erreur s'affichait donc masqué d'un écran, en clair de
+ * l'autre. Une seule porte, celle par où les lignes entrent dans le fil.
+ */
+function redactedText(value: string | null): string | null {
+  return value === null ? null : redactSecretsInText(value);
+}
+
 /** Le job tel que la requête d'appel le rend : la ligne, plus l'agent joint. */
 export type JobFeedInput = {
   job: typeof agentJobs.$inferSelect;
@@ -289,8 +301,8 @@ export async function assembleJobFeeds(
         channel: job.channel,
         chatId: job.chatId,
         status: job.status,
-        result: job.result,
-        error: job.error,
+        result: redactedText(job.result),
+        error: redactedText(job.error),
         agentName: input.agentName,
         agentSlug: input.agentSlug,
         agentAvatarUrl: input.agentAvatarUrl,
@@ -300,7 +312,10 @@ export async function assembleJobFeeds(
         scheduleName,
         children: (childrenByJob.get(job.id) ?? []).map((c) => {
           const childFeed = childFeedById.get(c.id);
-          return childFeed === undefined ? c : { ...c, feed: childFeed };
+          // Le délégué passe par la même rédaction que sa tête : son échec se
+          // lit dans le bloc de la délégation, exactement comme celui du job.
+          const child = { ...c, result: redactedText(c.result), error: redactedText(c.error) };
+          return childFeed === undefined ? child : { ...child, feed: childFeed };
         }),
       },
       // La sortie brute ET la CARTE, masquées ensemble : la carte est bâtie à

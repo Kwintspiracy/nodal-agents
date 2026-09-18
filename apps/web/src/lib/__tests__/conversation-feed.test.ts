@@ -5,6 +5,7 @@
 // ses tool_calls avec carte et charge utile (P1), ses llm_calls par tour.
 
 import { describe, it, expect } from 'vitest';
+import { PROVIDER_REJECTED_PREFIX } from '@nodal-agents/shared';
 import {
   buildConversationFeed,
   compactTurns,
@@ -963,22 +964,19 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
   });
 
   it('un refus du fournisseur pose le GESTE sur l’item d’échec (#184)', () => {
-    // Le code exact qu'écrit `providerRejectionCode` (runner) : c'est le seul
-    // fait de ce refus qui atteigne la base, et c'est donc lui que le modèle
-    // du fil relit pour nommer le geste.
+    // Le code exact qu'écrit `providerRejectionCode` (runner), bâti sur LA
+    // constante partagée : c'est le seul fait de ce refus qui atteigne la base,
+    // et c'est donc lui que le modèle du fil relit pour nommer le geste.
+    const refus = `${PROVIDER_REJECTED_PREFIX}openrouter/google/gemini-3.7-flash (http 400, turn 3)`;
     const j: FeedJob = {
       ...job,
       status: 'failed',
       result: null,
-      error: 'provider_rejected_request:openrouter/google/gemini-3.7-flash (http 400, turn 3)',
+      error: refus,
       children: [],
     };
     const feed = buildConversationFeed(j, [], []);
-    expect(feed.items.at(-1)).toEqual({
-      kind: 'failure',
-      text: 'provider_rejected_request:openrouter/google/gemini-3.7-flash (http 400, turn 3)',
-      hint: 'switch_model',
-    });
+    expect(feed.items.at(-1)).toEqual({ kind: 'failure', text: refus, hint: 'switch_model' });
   });
 
   // #135 — « Les délégations ne sont jamais imbriquées » (tableau de Quentin).

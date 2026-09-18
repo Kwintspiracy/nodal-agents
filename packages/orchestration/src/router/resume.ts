@@ -3,6 +3,7 @@
 
 import { eq, and } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
+import type { JobFailureHint } from '@nodal-agents/shared';
 import { OrchestrationError } from '../errors';
 import { readDeliveredReviewVerdict } from './review-verdict';
 import type { ReviewVerdictRecord } from './review-verdict';
@@ -45,13 +46,14 @@ export interface DelegationOutcomeRecord {
 }
 
 /**
- * Les gestes que le harnais peut nommer après un échec. Un par cas, ajouté
- * quand un cas le mérite — la liste reste courte exprès : un « conseil »
- * fourre-tout ne se rend pas à l'écran.
+ * Les gestes que le harnais peut nommer après un échec.
  *
- * `switch_model` : le fournisseur a refusé la requête de ce modèle-là.
+ * Le type vit dans `@nodal-agents/shared` (#194, revue passe 1) : le runner le
+ * POSE, l'orchestration le TRANSPORTE, l'écran le DIT — trois paquets dont
+ * aucun ne dépend des deux autres. Il reste exporté d'ici, où vit le record qui
+ * le porte, pour que les appelants n'aient pas à changer d'import.
  */
-export type JobFailureHint = 'switch_model';
+export type { JobFailureHint };
 
 /**
  * What the child handed back. `string` = the child's text result on success and
