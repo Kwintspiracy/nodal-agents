@@ -34,6 +34,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  registerTestCluster,
+  resolvePgCtlFrom,
+  withPostgresClusterStart,
+} from '@nodal-agents/test-kit';
 import { startEmbeddedPostgres, type PostgresHandle } from '../lib/postgres.ts';
 import { findFreePort } from '../lib/ports.ts';
 
@@ -54,13 +59,23 @@ const root = mkdtempSync(join(tmpdir(), 'nodal-pg-log-'));
 const logDir = join(root, 'logs', 'postgres');
 
 async function probe(): Promise<EmbeddedPostgresProbe> {
+  const dataDir = join(root, 'pg-data');
   try {
-    const handle = await startEmbeddedPostgres(
-      join(root, 'pg-data'),
-      await findFreePort(25460),
-      'nodalai-test',
-      logDir,
-    );
+    // SOUS LE VERROU DE LA MACHINE (issue #130) : `pnpm test` fait tourner un
+    // vitest par paquet, et trois d'entre eux démarrent de vrais clusters. Le
+    // `fileParallelism: false` de ce paquet ne voit pas les autres processus.
+    const handle = await withPostgresClusterStart('cli/postgres-logging', async () => {
+      const port = await findFreePort(25460);
+      const started = await startEmbeddedPostgres(dataDir, port, 'nodalai-test', logDir);
+      // Inscrit : ce cluster vit jusqu'à l'`afterAll` du fichier, donc bien
+      // au-delà de son démarrage, et un Ctrl+C entre-temps doit l'emporter.
+      registerTestCluster({
+        dataDir,
+        port,
+        pgCtl: await resolvePgCtlFrom(join(process.cwd(), 'package.json')),
+      });
+      return started;
+    });
     return { available: true, reason: '', handle, logDir, root };
   } catch (err) {
     return {

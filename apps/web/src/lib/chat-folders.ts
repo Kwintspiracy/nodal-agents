@@ -32,6 +32,37 @@ import { CHANNEL_LABELS } from './activity-runs.ts';
 export const DASHBOARD_FOLDER = 'dashboard';
 
 /**
+ * Le dossier des runs lancés depuis DEHORS — une requête à `/api/agent`, un
+ * appel du serveur MCP (Quentin, 18/09/2026).
+ *
+ * Ces runs n'ont pas de conversation : personne ne leur parle, une machine les
+ * demande et lit leur résultat. Ils n'apparaissaient qu'en marge de `/code`,
+ * sous « Other sessions ». Ils ont leur propre entrée, au même endroit que les
+ * canaux : c'est bien un endroit d'où le travail arrive.
+ *
+ * ⚠️ CE QUE LES ANCIENNES LIGNES NE DISENT PAS. `agent_jobs.channel` valait
+ * `api` pour une requête extérieure ET pour la boîte « Send task » du tableau
+ * de bord : Quentin a ouvert le dossier le 18/09 et y a trouvé des runs « qui
+ * ne viennent pas du MCP ». Corrigé à la SOURCE — `sendTaskAction` écrit
+ * `dashboard` (apps/web/src/lib/actions.ts) — et non par un filtre ici, qui
+ * n'aurait fait que deviner.
+ *
+ * Les lignes DÉJÀ écrites gardent `api` et restent indiscernables : le dossier
+ * montre donc encore les anciennes tâches « Send task », jusqu'à ce qu'elles
+ * sortent de la liste. Les réécrire leur inventerait une provenance que rien
+ * ne vérifie (invariant #4).
+ */
+export const MCP_FOLDER = 'mcp';
+
+/**
+ * Les canaux d'un job qui rangent son travail dans le dossier MCP. Exportés :
+ * la lecture qui compte et liste ces runs doit filtrer sur EXACTEMENT les
+ * mêmes valeurs que la règle d'attribution, sinon le dossier existe sans rien
+ * lister, ou l'inverse.
+ */
+export const MCP_JOB_CHANNELS: readonly string[] = ['api', MCP_FOLDER];
+
+/**
  * L'ordre des dossiers de canal. Celui de la maquette — pas l'ordre
  * alphabétique, ni celui où la base rend ses lignes, qui changerait d'un
  * chargement à l'autre.
@@ -57,17 +88,21 @@ export const RUNNING_JOB_STATUSES: readonly string[] = LIVE_JOB_STATUSES.filter(
 /**
  * Le dossier auquel appartient le travail d'un job, lu sur SON CANAL.
  *
- * `null` quand le job ne relève d'aucun dossier du menu Chat — `api` (la boîte
- * « New task », qui n'est pas une conversation), `internal`, `mcp`, `webhook`,
- * `task-board`. Ce travail-là reste entier sur `/approvals` ; il n'est
- * simplement rangé dans aucun dossier de chat, et aucun chiffre ne le compte
- * deux fois.
+ * `null` quand le job ne relève d'aucun dossier du menu Chat — `internal` (un
+ * agent qui en appelle un autre), `webhook`, `task-board`, `cron`. Ce
+ * travail-là reste entier sur `/approvals` ; il n'est simplement rangé dans
+ * aucun dossier de chat, et aucun chiffre ne le compte deux fois.
+ *
+ * `api` et `mcp` rangent tous les deux dans le dossier MCP depuis le 18/09 :
+ * ce sont les deux valeurs qu'écrit une demande venue de dehors, et elles
+ * désignent le même endroit pour qui regarde le menu.
  */
 export function folderOfJobChannel(channel: string | null): string | null {
   if (channel === null || channel === '') return null;
   // Une automation n'a pas de dossier : elle n'est pas un endroit où l'on parle.
   if (channel === 'cron') return null;
   if (channel === 'dashboard') return DASHBOARD_FOLDER;
+  if (MCP_JOB_CHANNELS.includes(channel)) return MCP_FOLDER;
   if (CHANNEL_ORDER.includes(channel)) return channel;
   return null;
 }
@@ -84,6 +119,22 @@ export type WorkOrigin = {
    * aucune conversation — une tâche de l'API, une automation.
    */
   conversationChannel: string | null;
+  /**
+   * Le canal du job de TÊTE de la chaîne — celui que personne n'a délégué.
+   * Lu seulement quand le job lui-même ne désigne aucun dossier, et absent
+   * (`undefined`) quand l'appelant ne l'a pas résolu.
+   *
+   * Pourquoi il existe (18/09). Un délégué d'un run venu de dehors porte
+   * `channel = 'internal'` et AUCUNE conversation — son parent n'en a pas
+   * (packages/orchestration/src/router/delegate.ts). Sa question n'était donc
+   * comptée nulle part : le dossier MCP restait muet pendant qu'un run y
+   * attendait une réponse. Le canal de tête est la seule chose en base qui dit
+   * d'où cette chaîne est partie.
+   *
+   * `null` quand la chaîne n'a pas pu être remontée — un maillon manquant ne
+   * devient jamais une supposition (invariant #4).
+   */
+  rootChannel?: string | null;
 };
 
 /**
@@ -108,7 +159,13 @@ export type WorkOrigin = {
 export function folderOfWork(origin: WorkOrigin): string | null {
   const conv = origin.conversationChannel;
   if (conv !== null && conv !== '') return folderOfJobChannel(conv);
-  return folderOfJobChannel(origin.jobChannel);
+  const own = folderOfJobChannel(origin.jobChannel);
+  if (own !== null) return own;
+  // EN DERNIER, et jamais avant : le canal de tête ne sert qu'au travail que
+  // ni sa conversation ni son propre canal ne rangent. Le lire plus tôt ferait
+  // remonter un délégué au dossier de son parent alors qu'il porte lui-même un
+  // canal qui a un dossier — deux règles pour le même cas.
+  return folderOfJobChannel(origin.rootChannel ?? null);
 }
 
 /** Le nom d'un dossier. Un canal inconnu se rend TEL QUEL, comme la colonne
@@ -146,6 +203,13 @@ export type ChatFoldersInput = {
   waiting: readonly WorkOrigin[];
   /** Combien de runs tournent, par dossier. Une clé absente vaut zéro. */
   running: Readonly<Record<string, number>>;
+  /**
+   * Combien de runs de TÊTE viennent de dehors — c'est ce qui fait EXISTER le
+   * dossier MCP, exactement comme une conversation fait exister le dossier
+   * d'un canal. Zéro : pas de dossier du tout, plutôt qu'un dossier vide dont
+   * rien n'expliquerait la présence.
+   */
+  externalRuns: number;
   /** Le chemin courant : un dossier n'est actif que SUR . */
   pathname: string;
   /** Le `folder=` de l'URL, pour l'état actif des dossiers de chat. */
@@ -166,13 +230,17 @@ export type ChatFoldersInput = {
  * produit — la page existe, vide ou non — et la faire apparaître et
  * disparaître ferait bouger le menu sous le curseur.
  */
-function existingKeys(input: Pick<ChatFoldersInput, 'channels' | 'waiting' | 'running'>): string[] {
+function existingKeys(
+  input: Pick<ChatFoldersInput, 'channels' | 'waiting' | 'running' | 'externalRuns'>,
+): string[] {
   const chan = new Set<string>();
   for (const c of input.channels) {
     const key = folderOfJobChannel(c);
     // Une conversation du dashboard ne « crée » pas le dossier Nodal chats :
-    // il est de toute façon là. Les autres canaux, oui.
-    if (key !== null && key !== DASHBOARD_FOLDER) chan.add(key);
+    // il est de toute façon là. Le dossier MCP non plus : il tient à des RUNS,
+    // pas à des conversations, et `externalRuns` est le seul chiffre qui le
+    // dit. Les autres canaux, oui.
+    if (key !== null && key !== DASHBOARD_FOLDER && key !== MCP_FOLDER) chan.add(key);
   }
   for (const w of input.waiting) {
     const key = folderOfWork(w);
@@ -181,14 +249,18 @@ function existingKeys(input: Pick<ChatFoldersInput, 'channels' | 'waiting' | 'ru
   for (const [key, count] of Object.entries(input.running)) {
     if (count > 0 && key !== DASHBOARD_FOLDER) chan.add(key);
   }
+  if (input.externalRuns > 0) chan.add(MCP_FOLDER);
   const known = CHANNEL_ORDER.filter((c) => chan.has(c));
   // Un canal que la maquette ne connaît pas se range après, par ordre
   // alphabétique — un ordre stable, plutôt que celui de la base.
-  const unknown = [...chan].filter((c) => !CHANNEL_ORDER.includes(c)).sort();
+  const unknown = [...chan].filter((c) => !CHANNEL_ORDER.includes(c) && c !== MCP_FOLDER).sort();
   // « Nodal chats » EN TÊTE (Quentin, 18/09) : c'est le dossier où l'on parle
   // depuis le dashboard, celui qu'on ouvre le plus ; les canaux suivent, dans
-  // l'ordre de la maquette, puis ceux qu'elle ne connaît pas.
-  return [DASHBOARD_FOLDER, ...known, ...unknown];
+  // l'ordre de la maquette, puis ceux qu'elle ne connaît pas. MCP FERME la
+  // liste : ce n'est pas un canal qu'on branche, c'est ce qui arrive quand
+  // personne ne parle — sa place est au bout, pas au milieu des messageries.
+  const mcp = chan.has(MCP_FOLDER) ? [MCP_FOLDER] : [];
+  return [DASHBOARD_FOLDER, ...known, ...unknown, ...mcp];
 }
 
 /** Ce qui attend la personne, rangé par dossier. */
@@ -235,7 +307,7 @@ export function chatFolders(input: ChatFoldersInput): ChatFolder[] {
  * serait un chiffre que rien à l'écran ne justifie.
  */
 export function chatWaitingTotal(
-  input: Pick<ChatFoldersInput, 'channels' | 'waiting' | 'running'>,
+  input: Pick<ChatFoldersInput, 'channels' | 'waiting' | 'running' | 'externalRuns'>,
 ): number {
   const byFolder = waitingByFolder(input.waiting);
   return existingKeys(input).reduce((sum, key) => sum + (byFolder.get(key) ?? 0), 0);

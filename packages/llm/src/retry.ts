@@ -8,7 +8,7 @@ import {
   LLMTimeoutError,
 } from './errors';
 
-// 429 = transient rate-limit (billing 429 is caught before this set, see isQuotaError)
+// 429 = transient rate-limit (billing 429 is caught before this set, see throwIfQuotaError)
 // 500/502/503 = upstream server errors (transient)
 // 408 = Request Timeout (transport/gateway timeout — transient, different from our AbortSignal timeout)
 // 504 = Gateway Timeout (reverse-proxy/gateway gave up waiting on the upstream — transient,
@@ -82,26 +82,111 @@ function getRetryAfterMs(err: unknown): number | null {
   return null;
 }
 
+// ─── Classement du corps d'un 429 ─────────────────────────────────────────────
+//
+// Un refus de facturation et une congestion passagère arrivent avec le MÊME
+// statut HTTP ; seul le corps les distingue. Se tromper coûte dans les deux
+// sens : un refus pris pour un passage tourne en boucle contre un compte vide,
+// un passage pris pour un refus tue le job d'un coup. Chaque cas porte donc un
+// nom, et l'ordre de lecture ci-dessous EST la décision.
+//
+// Incident 18/09/2026 (issue #163) : OpenRouter a répondu « openrouter could
+// not verify available credits for this request in time. retry shortly. ». Le
+// seul mot « credit » suffisait à classer ce message en facturation ; deux
+// délégations sont mortes en quota_exhausted alors que le fournisseur demandait
+// lui-même de réessayer, sans que la politique de réessai ait son mot à dire.
+//
+// « rate limit exceeded » n'est volontairement AUCUN cas ici : c'est la phrase
+// générique des fournisseurs (OpenRouter, Groq, …) pour un simple débit par
+// minute, donc un passage, et elle repart par le chemin 429 normal.
+
+/** Les deux classes d'un 429. */
+export type Classe429 = 'facturation' | 'passager';
+
+/** Verdict du classement, avec le cas nommé qui l'a décidé. */
+export interface Verdict429 {
+  classe: Classe429;
+  cas: string;
+}
+
 /**
- * Determines if an error is a billing/quota-exhausted 429 vs a transient
- * rate-limit 429 that should be retried.
- *
- * Heuristic: inspect the message for billing/quota keywords.
- * Conservative — returns false if the message doesn't match known patterns.
- *
- * 'rate limit exceeded' is deliberately NOT in this list: it's the literal,
- * generic phrasing providers (OpenRouter, Groq, ...) use for an ordinary
- * per-minute throttle, which is transient and must go through the normal
- * retryable 429 path. Only real quota/billing terms mark a 429 as fatal.
+ * Les cas reconnus, DANS L'ORDRE DE LECTURE — le premier motif qui accroche
+ * décide. L'ordre porte trois arbitrages :
+ *  1. le cas passager explicite d'abord : il nomme exactement la panne (la
+ *     vérification du solde a expiré, le solde lui-même n'est pas en cause),
+ *     donc il l'emporte même si le message parle de crédits ;
+ *  2. les refus de facturation ensuite : « insufficient credits, add more and
+ *     try again » demande de réessayer, mais le compte refuse quand même ;
+ *  3. la demande de réessai générique, puis la simple mention de crédits, qui
+ *     reste un refus faute de mieux (prudence d'origine conservée).
  */
-function isQuotaError(err: unknown, provider: string, model: string): boolean {
+const CAS_429: ReadonlyArray<{ cas: string; classe: Classe429; motif: RegExp }> = [
+  {
+    // « (could not | couldn't | unable to) verify … credit(s) … » : le
+    // fournisseur n'a pas pu LIRE le solde à temps, il ne dit rien du solde.
+    // La distance entre les deux mots traverse les points : « could not
+    // verify. Available credits … » est la même panne, et s'arrêter au premier
+    // point la renvoyait dans « credits_evoques », donc en facturation. Elle
+    // reste bornée (80 caractères, non gourmande) pour ne pas relier deux
+    // phrases sans rapport dans un long corps d'erreur.
+    cas: 'solde_non_verifie_a_temps',
+    classe: 'passager',
+    motif: /(could not|couldn't|cannot|unable to) verify[\s\S]{0,80}?\bcredits?\b/,
+  },
+  {
+    cas: 'credits_insuffisants',
+    classe: 'facturation',
+    motif:
+      /\binsufficient\b|\b(out of|no) credits?\b|\bcredits? (are )?(depleted|exhausted)\b|balance is too low|\badd (more )?credits?\b/,
+  },
+  { cas: 'quota_depasse', classe: 'facturation', motif: /\bquota\b/ },
+  { cas: 'facturation_requise', classe: 'facturation', motif: /\bbilling\b|\bpayment required\b/ },
+  {
+    // Le fournisseur demande explicitement de réessayer : c'est un passage,
+    // quoi que le reste du message mentionne.
+    cas: 'reessai_demande',
+    classe: 'passager',
+    motif: /\b(retry|try again) (shortly|soon|later|in a\b)|\bplease (retry|try again)\b/,
+  },
+  {
+    // Crédits évoqués sans phrase connue : on garde la prudence d'origine et on
+    // refuse, plutôt que de boucler contre un compte peut-être vide.
+    cas: 'credits_evoques',
+    classe: 'facturation',
+    motif: /\bcredits?\b/,
+  },
+];
+
+/**
+ * Dit si le corps d'un 429 est un refus de facturation ou une congestion
+ * passagère. Aucun fourre-tout : un corps qu'aucun cas ne reconnaît est
+ * « non_reconnu » et repart en passager, c'est-à-dire dans la politique de
+ * réessai / bascule — le chemin normal d'un 429.
+ */
+export function classify429Body(body: string): Verdict429 {
+  const msg = body.toLowerCase();
+  for (const { cas, classe, motif } of CAS_429) {
+    if (motif.test(msg)) return { classe, cas };
+  }
+  return { classe: 'passager', cas: 'non_reconnu' };
+}
+
+/**
+ * Lève QuotaExhaustedError si le 429 est un refus de facturation. Sinon rend le
+ * verdict et la main : l'appelant suit le chemin réessai / bascule, et le cas
+ * part dans la ligne `[llm-attempt-failed]` de cette tentative — une seule
+ * ligne, pas une troisième à côté de celles qui existent déjà.
+ *
+ * Le cas voyage aussi dans le message de l'erreur de facturation, donc
+ * `agent_jobs.error` dit POURQUOI le job est mort, pas seulement qu'il l'est.
+ */
+function throwIfQuotaError(err: unknown, provider: string, model: string): Verdict429 {
   const msg = errorMessage(err).toLowerCase();
-  const quotaKeywords = ['quota', 'billing', 'insufficient', 'credit'];
-  return quotaKeywords.some((kw) => msg.includes(kw))
-    ? (() => {
-        throw new QuotaExhaustedError(provider, model, msg);
-      })()
-    : false;
+  const verdict = classify429Body(msg);
+  if (verdict.classe === 'facturation') {
+    throw new QuotaExhaustedError(provider, model, `${msg} [cas=${verdict.cas}]`);
+  }
+  return verdict;
 }
 
 function errorMessage(err: unknown): string {
@@ -233,11 +318,11 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
       if (err instanceof MessageStructureError) throw err;
       if (err instanceof QuotaExhaustedError) throw err;
 
-      // 429: check if it's a quota error first (throws QuotaExhaustedError if so)
+      // 429: classify the body first — a billing refusal throws
+      // QuotaExhaustedError, a transient one falls through to the retry path
+      // and carries its case name into this attempt's log line.
       const status = getStatusCode(err);
-      if (status === 429) {
-        isQuotaError(err, provider, model);
-      }
+      const cas429 = status === 429 ? throwIfQuotaError(err, provider, model).cas : undefined;
 
       const rateLimited = isRateLimitClass(err, status);
       const retryBudget = rateLimited
@@ -256,6 +341,7 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
         model,
         ms: attemptMs,
         err,
+        cas429,
       });
 
       lastErr = err;
@@ -305,6 +391,7 @@ function logAttempt({
   model,
   ms,
   err,
+  cas429,
 }: {
   attempt: number;
   of: number;
@@ -312,6 +399,8 @@ function logAttempt({
   model: string;
   ms: number;
   err: unknown;
+  /** Cas retenu par classify429Body quand la tentative a fini sur un 429. */
+  cas429?: string;
 }): void {
   const errName = err instanceof Error ? err.name : 'unknown';
   const errMsg = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
@@ -328,6 +417,7 @@ function logAttempt({
     `msg=${JSON.stringify(errMsg)}`,
   ];
   if (statusCode !== null) parts.push(`status=${statusCode}`);
+  if (cas429) parts.push(`cas429=${cas429}`);
   if (causeName) parts.push(`causeName=${causeName}`);
   if (causeMsg) parts.push(`causeMsg=${JSON.stringify(causeMsg)}`);
   console.warn(`[llm-attempt-failed] ${parts.join(' ')}`);

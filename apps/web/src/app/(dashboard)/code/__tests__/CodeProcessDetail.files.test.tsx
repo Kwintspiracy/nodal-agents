@@ -16,7 +16,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { CodingProcessDetail } from '@/lib/actions.ts';
 import CodeProcessDetail from '../[id]/CodeProcessDetail.tsx';
-import { PLATE_LINE_LIMIT } from '../[id]/FileChangeBlock.tsx';
+import {
+  PLATE_LINE_LIMIT,
+  budgetedLines,
+  buildPlateRows,
+  hiddenNote,
+} from '../[id]/FileChangeBlock.tsx';
 
 const getCodingProcessDetailAction = vi.hoisted(() =>
   vi.fn(async () => ({ ok: false as const, code: 'unused', message: 'unused' })),
@@ -48,7 +53,7 @@ const detail = (): CodingProcessDetail => ({
     id: JOB_ID,
     kind: 'job',
     agentId: null,
-    agentName: 'Dev C',
+    agentName: 'Test agent',
     origin: 'api',
     status: 'completed',
     stage: 'done',
@@ -191,5 +196,65 @@ describe('CodeProcessDetail — la section Files @cap:suivre-execution/ecran', (
 
     expect(container.textContent).toContain('No files changed yet.');
     expect(container.querySelectorAll('[data-diff]')).toHaveLength(0);
+  });
+});
+
+describe('buildPlateRows — la borne tient AVANT le diff @cap:suivre-execution/ecran', () => {
+  // Reviewer C, #164 : la borne s'appliquait après coup. Une écriture énorme
+  // était comparée en entier — `fragmentDiff` rend au-delà de sa propre borne
+  // l'ancien puis le nouveau ligne à ligne — pour n'en dessiner que 80. Ce que
+  // ce test regarde est donc ce qui a été CONSTRUIT, pas un temps d'exécution.
+  const ENORME = Array.from({ length: 20_000 }, (_, i) => `ligne ${i + 1}`).join('\n');
+
+  it('ne découpe que ce que la plaque peut dessiner, et compte quand même le reste', () => {
+    const { lines, total } = budgetedLines(ENORME, PLATE_LINE_LIMIT);
+    expect(lines).toHaveLength(PLATE_LINE_LIMIT);
+    expect(lines[0]).toBe('ligne 1');
+    expect(lines[PLATE_LINE_LIMIT - 1]).toBe(`ligne ${PLATE_LINE_LIMIT}`);
+    expect(total).toBe(20_000);
+  });
+
+  it('une écriture de vingt mille lignes ne construit que la borne, et le dit', () => {
+    const { rows, hiddenOld, hiddenNew } = buildPlateRows(
+      [{ filePath: 'src/enorme.ts', kind: 'write', oldText: null, newText: ENORME }],
+      PLATE_LINE_LIMIT,
+    );
+    expect(rows.filter((r) => r.kind === 'line')).toHaveLength(PLATE_LINE_LIMIT);
+    expect(hiddenOld).toBe(0);
+    expect(hiddenNew).toBe(20_000 - PLATE_LINE_LIMIT);
+    expect(hiddenNote(hiddenOld, hiddenNew)).toBe(`… and ${20_000 - PLATE_LINE_LIMIT} more lines`);
+  });
+
+  it('un texte plus court que la borne passe entier, et ne cache rien', () => {
+    const { lines, total } = budgetedLines('a\nb\nc', PLATE_LINE_LIMIT);
+    expect(lines).toEqual(['a', 'b', 'c']);
+    expect(total).toBe(3);
+    const { rows, hiddenOld, hiddenNew } = buildPlateRows(
+      [{ filePath: 'src/court.ts', kind: 'edit', oldText: 'a\nb', newText: 'a\nc' }],
+      PLATE_LINE_LIMIT,
+    );
+    expect(rows.filter((r) => r.kind === 'line')).toHaveLength(3);
+    expect(hiddenNote(hiddenOld, hiddenNew)).toBeNull();
+  });
+
+  // Reviewer C, passe 2 : additionner les deux restes annonçait un nombre que
+  // rien à l'écran ne représente. Une réécriture complète le montre — 80
+  // rangées dessinées, deux restes qui ne s'additionnent pas.
+  it('une réécriture complète compte SÉPARÉMENT l’ancien et le nouveau', () => {
+    const avant = Array.from({ length: 200 }, (_, i) => `avant ${i + 1}`).join('\n');
+    const apres = Array.from({ length: 200 }, (_, i) => `après ${i + 1}`).join('\n');
+    const { rows, hiddenOld, hiddenNew } = buildPlateRows(
+      [{ filePath: 'src/reecrit.ts', kind: 'edit', oldText: avant, newText: apres }],
+      PLATE_LINE_LIMIT,
+    );
+
+    expect(rows.filter((r) => r.kind === 'line')).toHaveLength(PLATE_LINE_LIMIT);
+    expect(hiddenOld).toBe(200 - PLATE_LINE_LIMIT);
+    expect(hiddenNew).toBe(200);
+    expect(hiddenNote(hiddenOld, hiddenNew)).toBe(
+      `… ${200 - PLATE_LINE_LIMIT} old, 200 new lines not shown`,
+    );
+    // Et surtout : jamais la somme, qui se lirait comme des rangées de plus.
+    expect(hiddenNote(hiddenOld, hiddenNew)).not.toContain(String(400 - PLATE_LINE_LIMIT));
   });
 });

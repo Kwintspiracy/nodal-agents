@@ -715,6 +715,12 @@ describe('getSpaceConversationAction', () => {
         messages: [{ role: 'user', content: 'Peer review de la PR #185 de ce dépôt' }],
       })
       .returning();
+    // Le RAPPORT du relecteur, celui que son job rend — et qui contient une
+    // clé recopiée par mégarde : elle ne doit pas atteindre l'écran.
+    const secret = 'sk-ant-api03-ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210'; // secrets:allow (fixture : clé factice pour éprouver la rédaction)
+    const rapport = `# Rapport
+
+Deux majeurs fermés. La clé ${secret} traînait dans un log.`;
     const [reviewer] = await testDb
       .insert(agentJobs)
       .values({
@@ -723,6 +729,7 @@ describe('getSpaceConversationAction', () => {
         channel: 'internal',
         task: 'relis la PR',
         status: 'completed',
+        result: rapport,
         parentJobId: j!.id,
       })
       .returning();
@@ -731,10 +738,21 @@ describe('getSpaceConversationAction', () => {
       jobId: reviewer!.id,
       toolName: 'review_verdict',
       toolInput: {},
+      // La forme que l'outil écrit VRAIMENT (`ok: true` compris) : c'est elle
+      // que le lecteur de l'orchestration valide.
       toolOutput: JSON.stringify({
+        ok: true,
         verdict: 'request_changes',
         summary: 'Two majors closed, one minor left.',
-        findings: [{ file: 'apps/web/src/lib/actions.ts', line: 13398, severity: 'major' }],
+        findings: [
+          {
+            file: 'apps/web/src/lib/actions.ts',
+            line: 13398,
+            issue: 'The timeline returns the raw tool output.',
+            severity: 'major',
+          },
+        ],
+        counts: { blocker: 0, major: 1, minor: 0 },
       }),
       durationMs: 5,
       turn: 1,
@@ -754,6 +772,11 @@ describe('getSpaceConversationAction', () => {
       summary: 'Two majors closed, one minor left.',
     });
     expect(r.data.verdicts[0]?.findings[0]?.line).toBe(13398);
+    // Le rapport entier voyage avec le verdict — c'est LUI que le bloc Review
+    // montre, au lieu de le laisser recopié dans la réponse (18/09).
+    expect(r.data.verdicts[0]?.report).toContain('Deux majeurs fermés.');
+    expect(r.data.verdicts[0]?.report).not.toContain(secret);
+    expect(r.data.verdicts[0]?.report).toContain('[secret masqué]');
   });
 
   it('un travail SANS relecture n’en invente pas', async () => {

@@ -16,11 +16,33 @@
  * Written after `oauth-flow.spec.ts` was found chasing `.rounded-xl` on a card
  * that renders `rounded-2xl` — one character, and the suite had been reporting a
  * missing Google Drive card ever since the connectors redesign. Selectors here
- * are anchored on ROLES and TEXT, never on utility classes.
+ * are anchored on ROLES and ANCHORS, never on utility classes.
+ *
+ * ## CE QUE L'ISSUE #72 A APPRIS À CE FICHIER
+ *
+ * Ces cas ont été verts sur la machine du propriétaire le 10/09 et rouges sur
+ * un runner GitHub le 11/09, sans qu'une ligne de code ait changé entre les
+ * deux. La raison n'était ni une régression ni un service manquant : le bouton
+ * « Install » ouvre DEUX modales différentes selon l'installation. Là où un
+ * identifiant Google existe déjà, c'est `ConnectorAddForm` ; sur une
+ * installation neuve, `needsWizard` est vrai et c'est le `CredentialWizard` —
+ * qui ne rendait alors AUCUNE divulgation. Le vert du 10/09 était donc le vert
+ * du mauvais chemin, et le rouge disait la vérité : on ne pouvait pas lire
+ * jusqu'où va le jeton la première fois qu'on connecte Google, le seul moment
+ * où l'avertissement sert. Défaut produit #83, corrigé depuis.
+ *
+ * Ce fichier ne se contente donc plus de trouver « un dialogue » : il DIT
+ * lequel il a devant lui, et il exige la divulgation sur les deux chemins. Un
+ * parcours qui ne sait pas quel branchement il éprouve peut être vert pour la
+ * mauvaise raison, et personne ne le saura.
  */
 
-import { test, expect } from '@playwright/test';
-import { requireLiveStack, openConnectorInstallDialog } from './helpers.ts';
+import { test, expect, type Page } from '@playwright/test';
+import {
+  requireLiveStack,
+  openConnectorInstallDialog,
+  type ConnectorDialogKind,
+} from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
@@ -28,36 +50,53 @@ test.beforeAll(async () => {
 
 test.describe.configure({ timeout: 60_000 });
 
-// Les trois gestes de la page Connecteurs (onglet « Library », carte par son
-// ancre, bouton « Install » / « Add account ») vivent désormais dans
-// `helpers.ts` : ce fichier les avait écrits le premier, huit autres parcours
-// en avaient besoin.
-const openConnectorDialog = openConnectorInstallDialog;
+/**
+ * Ferme la modale ouverte, quel que soit son chemin : les deux portent un
+ * bouton « Cancel ». Le geste est le même, seul le dialogue diffère.
+ */
+async function closeDialog(page: Page): Promise<void> {
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: /^cancel$/i })
+    .first()
+    .click();
+  await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 10_000 });
+}
 
-test.describe('Connector scope disclosure', () => {
+/** La divulgation, exigée en NOMMANT le chemin sur lequel elle manque. */
+async function expectDisclosure(
+  page: Page,
+  opened: ConnectorDialogKind,
+  label: string,
+): Promise<void> {
+  const path = opened === 'wizard' ? 'première connexion (assistant)' : 'compte existant';
+  await expect(
+    page.getByRole('dialog').getByText(/what this connector can reach/i),
+    `${label} : aucune divulgation sur le chemin « ${path} ». C'est le défaut de l'issue #83 : ` +
+      'la portée du jeton doit se lire sur les DEUX chemins, et surtout sur le premier, qui ' +
+      'est le seul où la personne peut encore renoncer.',
+  ).toBeVisible({ timeout: 10_000 });
+}
+
+test.describe('Connector scope disclosure @cap:connecter-un-service/ecran', () => {
   test('Google Drive states it reaches the ENTIRE Drive', async ({ page }) => {
-    await openConnectorDialog(page, 'Google Drive');
+    const opened = await openConnectorInstallDialog(page, 'Google Drive');
+    // Le chemin est DIT, pas supposé : il paraîtra dans le rapport le jour où
+    // ce cas rougira, et c'est exactement ce qui manquait les 10 et 11/09.
+    console.log(`[scope] Google Drive ouvre : ${opened}`);
 
-    const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText(/what this connector can reach/i)).toBeVisible({
-      timeout: 10_000,
-    });
+    await expectDisclosure(page, opened, 'Google Drive');
     // The specific claim, not just the heading: an owner must read that this is
     // every file, not only the ones agents create.
-    await expect(dialog.getByText(/entire google drive/i)).toBeVisible();
+    await expect(page.getByRole('dialog').getByText(/entire google drive/i)).toBeVisible();
   });
 
   test('Google Sheets and Docs disclose their reach too', async ({ page }) => {
     for (const label of ['Google Sheets', 'Google Docs']) {
-      await openConnectorDialog(page, label);
-      await expect(
-        page.getByRole('dialog').getByText(/what this connector can reach/i),
-        `${label} shows no disclosure`,
-      ).toBeVisible({ timeout: 10_000 });
-      await page
-        .getByRole('dialog')
-        .getByRole('button', { name: /cancel/i })
-        .click();
+      const opened = await openConnectorInstallDialog(page, label);
+      console.log(`[scope] ${label} ouvre : ${opened}`);
+      await expectDisclosure(page, opened, label);
+      await closeDialog(page);
     }
   });
 
@@ -65,9 +104,29 @@ test.describe('Connector scope disclosure', () => {
     // Gmail asks only for readonly + send, which is what "connect Gmail" already
     // implies. A banner there would be noise, and noise is what teaches people
     // to skip the banner that matters.
-    await openConnectorDialog(page, 'Gmail');
+    const opened = await openConnectorInstallDialog(page, 'Gmail');
+    console.log(`[scope] Gmail ouvre : ${opened}`);
     await expect(page.getByRole('dialog').getByText(/what this connector can reach/i)).toHaveCount(
       0,
     );
+  });
+
+  test('la PREMIÈRE connexion est un chemin à part, et il est éprouvé', async ({ page }) => {
+    // Le cas que l'issue #72 réclamait sans pouvoir le nommer. Sur une
+    // installation SANS identifiant Google, le bouton ouvre l'assistant : c'est
+    // la toute première fois qu'on donne le jeton, et c'est là que la portée
+    // doit se lire. Si un identifiant existe déjà sur cette base, ce chemin
+    // n'est pas joignable — le cas le DIT et s'ignore, il ne se tait pas.
+    const opened = await openConnectorInstallDialog(page, 'Google Drive');
+    test.skip(
+      opened !== 'wizard',
+      'un identifiant Google compatible existe déjà sur cette base : le bouton ouvre le ' +
+        "formulaire d'ajout, et le chemin de PREMIÈRE connexion n'est pas joignable ici. " +
+        'Il est éprouvé sur une installation neuve — celle du runner.',
+    );
+
+    await expect(page.getByTestId('credential-wizard-dialog')).toBeVisible();
+    await expectDisclosure(page, opened, 'Google Drive (première connexion)');
+    await expect(page.getByRole('dialog').getByText(/entire google drive/i)).toBeVisible();
   });
 });

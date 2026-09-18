@@ -54,6 +54,8 @@ vi.mock('../tick.ts', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('../tick.ts')>();
   const zero: CronTickResult = {
+    jobsReclaimed: 0,
+    parentsResumedAfterReclaim: 0,
     orphanJobsReset: 0,
     pendingRecovered: 0,
     stalePendingFailed: 0,

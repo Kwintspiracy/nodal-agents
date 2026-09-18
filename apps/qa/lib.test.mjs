@@ -51,6 +51,14 @@ import {
   sansCommentairesYaml,
   exclusionsDuBalayage,
   cadenceAffichee,
+  reviewState,
+  porteDesFaitsVerifies,
+  fusionnerTableauGitHub,
+  releasesDuTableau,
+  releaseDuHash,
+  hashDeLaRelease,
+  SANS_RELEASE,
+  pileDuneColonne,
   ORDRE_DES_BACS,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -2602,5 +2610,567 @@ describe('intentionDunParcours — la description d’un parcours, pas son bande
       .filter((f) => f.endsWith('.spec.ts'))
       .filter((f) => !intentionDunParcours(readFileSync(join(dossier, f), 'utf8')));
     expect(sans).toEqual([]);
+  });
+});
+
+describe('reviewState — où en est la revue d’une PR (#128)', () => {
+  // Le tableau disait « In review » et rien d'autre : PR #114 s'affichait trois
+  // fois, sur sa carte et sur les deux issues qu'elle ferme, sans qu'aucune ne
+  // dise par qui, combien de passes, ni avec quel verdict.
+
+  /** Une passe, dans la forme que la session d'orchestration poste. */
+  const passe = (n, date, verdict, b, i, m) =>
+    `## Review pass ${n} (Reviewer C, ${date})\n\nVerdict: ${verdict} (${b} blocking, ${i} important, ${m} minor)\n\nLu en entier : boucle, gardes, signature.`;
+
+  it('deux passes : la DERNIÈRE décide, et les deux sont comptées', () => {
+    const etat = reviewState([
+      passe(1, '2026-09-17', 'request_changes', 1, 2, 3),
+      passe(2, '2026-09-18', 'approve', 0, 0, 4),
+    ]);
+    expect(etat.passes).toBe(2);
+    expect(etat.lastReviewer).toBe('Reviewer C');
+    expect(etat.lastDate).toBe('2026-09-18');
+    expect(etat.lastVerdict).toBe('approve');
+    expect(etat.counts).toEqual({ blocking: 0, important: 0, minor: 4 });
+    expect(etat.status).toBe('approved-waiting-merge');
+    expect(etat.warnings).toEqual([]);
+  });
+
+  it('l’ordre des commentaires ne décide pas : le NUMÉRO de passe le fait', () => {
+    // Une vieille PR peut porter la passe 1 dans son corps et la passe 2 en
+    // commentaire, ou l'inverse si quelqu'un recopie. Le numéro tranche.
+    const etat = reviewState([
+      passe(2, '2026-09-18', 'approve', 0, 0, 1),
+      passe(1, '2026-09-17', 'request_changes', 2, 0, 0),
+    ]);
+    expect(etat.lastDate).toBe('2026-09-18');
+    expect(etat.status).toBe('approved-waiting-merge');
+  });
+
+  it('une passe CITÉE dans un bloc de code n’est pas une passe rendue', () => {
+    const corps = [
+      'The format the session posts from now on:',
+      '',
+      '```markdown',
+      passe(3, '2026-09-18', 'approve', 0, 0, 0),
+      '```',
+      '',
+      'Nothing has been reviewed yet.',
+    ].join('\n');
+    const etat = reviewState(corps);
+    expect(etat.passes).toBe(0);
+    expect(etat.status).toBe('in-review');
+    expect(etat.lastVerdict).toBe(null);
+  });
+
+  it('aucune passe : la PR est en revue, et la page ne prétend rien d’autre', () => {
+    const etat = reviewState(['Closes #128\n\n## Verified\n\n`pnpm test` → 250 passed', '']);
+    expect(etat).toEqual({
+      passes: 0,
+      lastReviewer: null,
+      lastDate: null,
+      lastVerdict: null,
+      counts: null,
+      status: 'in-review',
+      warnings: [],
+    });
+  });
+
+  it('des comptes mal formés : la passe est IGNORÉE et nommée dans les avertissements', () => {
+    const etat = reviewState(
+      '## Review pass 2 (Reviewer C, 2026-09-18)\n\nVerdict: approve (a few blocking, some important)\n',
+    );
+    expect(etat.passes).toBe(0);
+    expect(etat.status).toBe('in-review');
+    expect(etat.warnings).toEqual(['review pass 2 has no readable verdict line']);
+  });
+
+  it('un en-tête mal formé est dit, jamais deviné', () => {
+    const etat = reviewState(
+      '## Review pass two (Reviewer C, hier)\n\nVerdict: approve (0 blocking, 0 important, 0 minor)\n',
+    );
+    expect(etat.passes).toBe(0);
+    expect(etat.warnings).toEqual([
+      'unreadable review pass header: "Review pass two (Reviewer C, hier)"',
+    ]);
+  });
+
+  it('une passe qui demande des changements le dit', () => {
+    const etat = reviewState(passe(1, '2026-09-18', 'request_changes', 2, 1, 5));
+    expect(etat.status).toBe('changes-requested');
+    expect(etat.counts).toEqual({ blocking: 2, important: 1, minor: 5 });
+  });
+
+  it('approuvée MAIS avec un constat important : ce n’est pas un vert', () => {
+    // La condition d'arrêt de la boucle du CLAUDE.md est « aucun bloquant ET
+    // aucun important ». Un « approve (0 blocking, 2 important) » ne l'atteint
+    // pas, et le peindre en vert ferait merger sur un malentendu.
+    const etat = reviewState(passe(3, '2026-09-18', 'approve', 0, 2, 7));
+    expect(etat.status).toBe('changes-requested');
+  });
+
+  it('un verdict qui se contredit est lu du côté SÉVÈRE', () => {
+    const etat = reviewState(passe(1, '2026-09-18', 'request_changes', 0, 0, 0));
+    expect(etat.lastVerdict).toBe('request_changes');
+    expect(etat.status).toBe('changes-requested');
+  });
+
+  it('la carte d’une issue porte l’état de la revue de la PR qui la ferme', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 128, title: 'Board says nothing about the review', state: 'OPEN' }],
+      pr: [
+        {
+          number: 200,
+          title: 'feat(qa): review state on the board',
+          state: 'OPEN',
+          body: 'Closes #128',
+          comments: [{ body: passe(2, '2026-09-18', 'approve', 0, 0, 4) }],
+        },
+      ],
+    });
+    const issue = cartes.find((c) => c.type === 'issue');
+    const pr = cartes.find((c) => c.type === 'pr');
+    // Les deux cartes disent la MÊME chose : c'est tout l'objet de #128.
+    expect(issue.parPr).toBe(200);
+    expect(issue.revue.status).toBe('approved-waiting-merge');
+    expect(issue.revue.passes).toBe(2);
+    expect(pr.revue).toEqual(issue.revue);
+  });
+
+  it('une PR sans commentaire ni passe laisse ses cartes en « in-review »', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 9, title: 'Something', state: 'OPEN' }],
+      pr: [{ number: 10, title: 'A PR', state: 'OPEN', body: 'Fixes #9' }],
+    });
+    expect(cartes.find((c) => c.type === 'issue').revue.status).toBe('in-review');
+    expect(cartes.find((c) => c.type === 'pr').revue.passes).toBe(0);
+  });
+});
+
+describe('les corps de GitHub arrivent en CRLF, et le portail doit les lire', () => {
+  // Constaté le 18/09/2026 en RENDANT le tableau sur les vraies cartes : la
+  // PR #172 portait sa section « Verified » et s'affichait « no verified
+  // facts ». `gh` rend les corps en CRLF ; un `\r` en fin de ligne est un
+  // terminateur pour JavaScript, que `.` ne reconnaît pas, donc « ## Verified\r »
+  // n'était plus un titre du tout. Le portail accusait des cartes honnêtes,
+  // exactement ce qu'il existe pour empêcher.
+  const crlf = (...lignes) => lignes.join('\r\n');
+
+  it('une section « Verified » en CRLF est vue', () => {
+    const corps = crlf('## Verified', '', '```', '$ pnpm test', '386 passed', '```', '');
+    expect(porteDesFaitsVerifies(corps)).toBe(true);
+  });
+
+  it('un bloc de code en CRLF se REFERME, donc ce qui le suit est relu', () => {
+    // Sans la clôture, tout le corps après le premier bloc passait pour du
+    // code : une passe de revue écrite dessous disparaissait sans un mot.
+    const corps = crlf(
+      '## Verified',
+      '',
+      '```',
+      '$ pnpm test',
+      '```',
+      '',
+      '## Review pass 1 (Reviewer C, 2026-09-18)',
+      '',
+      'Verdict: approve (0 blocking, 0 important, 1 minor)',
+      '',
+    );
+    const etat = reviewState(corps);
+    expect(etat.passes).toBe(1);
+    expect(etat.status).toBe('approved-waiting-merge');
+  });
+
+  it('une passe citée dans un bloc CRLF reste ignorée', () => {
+    const corps = crlf(
+      'The format:',
+      '',
+      '```markdown',
+      '## Review pass 4 (Reviewer C, 2026-09-18)',
+      '',
+      'Verdict: approve (0 blocking, 0 important, 0 minor)',
+      '```',
+      '',
+    );
+    expect(reviewState(corps).passes).toBe(0);
+  });
+});
+
+describe('revue : ce que le portail publie, et ce qu’il ne sait pas (revue C de #175)', () => {
+  const passe = (n, date, verdict, b, i, m) =>
+    `## Review pass ${n} (Reviewer C, ${date})\n\nVerdict: ${verdict} (${b} blocking, ${i} important, ${m} minor)`;
+
+  it('le snapshot publié ne porte AUCUN texte de commentaire ni de corps', () => {
+    // Le snapshot est un fichier suivi, donc publié. Y déposer les corps des
+    // PR et de leurs commentaires republierait des milliers de lignes écrites
+    // ailleurs — un jeton cité dans une discussion en fait partie.
+    const SENTINELLE = 'SECRET-DANS-UN-COMMENTAIRE-sk-ant-xxx'; // secrets:allow (fixture)
+    const pr = [
+      {
+        number: 200,
+        title: 'A PR',
+        state: 'OPEN',
+        body: `Closes #9\n\n${SENTINELLE}`,
+        comments: [{ body: `${passe(1, '2026-09-18', 'approve', 0, 0, 0)}\n\n${SENTINELLE}` }],
+      },
+    ];
+    const issues = [{ number: 9, title: 'An issue', state: 'OPEN', body: SENTINELLE }];
+    // Le chemin RÉEL d'écriture : ce que le collecteur assemble, projeté par
+    // la fonction qui écrit le fichier.
+    const snapshot = fusionnerTableauGitHub(
+      { genereLe: '2026-09-18T00:00:00.000Z' },
+      {
+        chantiers: { issues, pr, cartes: cartesDuTableau({ issues, pr }) },
+        le: '2026-09-18T09:00:00.000Z',
+      },
+    );
+    expect(JSON.stringify(snapshot)).not.toContain(SENTINELLE);
+    // Et ce qui reste est bien ce que la page lit.
+    expect(Object.keys(snapshot.chantiers)).toEqual(['cartes']);
+    expect(snapshot.chantiers.cartes.find((c) => c.type === 'pr').revue.passes).toBe(1);
+  });
+
+  it('une même passe REPOSTÉE : la dernière lue gagne', () => {
+    // La session corrige un commentaire en le repostant. Deux passes 2, et
+    // c'est la seconde qui dit où on en est.
+    const etat = reviewState([
+      passe(2, '2026-09-17', 'request_changes', 1, 0, 0),
+      passe(2, '2026-09-18', 'approve', 0, 0, 2),
+    ]);
+    expect(etat.passes).toBe(2);
+    expect(etat.lastDate).toBe('2026-09-18');
+    expect(etat.status).toBe('approved-waiting-merge');
+  });
+
+  it('une liste de commentaires au plafond d’une page le DIT', () => {
+    // `gh pr list --json comments` ne promet rien sur la complétude. Une passe
+    // au-delà du plafond ne doit pas faire retomber la carte en « pas encore
+    // relue » sans un mot.
+    const cent = Array.from({ length: 100 }, () => ({ body: 'rien à voir' }));
+    const cartes = cartesDuTableau({
+      issues: [],
+      pr: [{ number: 7, title: 'A talkative PR', state: 'OPEN', body: '', comments: cent }],
+    });
+    const revue = cartes[0].revue;
+    expect(revue.passes).toBe(0);
+    expect(revue.warnings).toEqual([
+      'comment list of PR #7 reached 100: a later review pass may be missing',
+    ]);
+  });
+
+  it('une liste courte ne déclenche aucun avertissement', () => {
+    const cartes = cartesDuTableau({
+      issues: [],
+      pr: [
+        {
+          number: 8,
+          title: 'A quiet PR',
+          state: 'OPEN',
+          body: '',
+          comments: [{ body: passe(1, '2026-09-18', 'approve', 0, 0, 0) }],
+        },
+      ],
+    });
+    expect(cartes[0].revue.warnings).toEqual([]);
+  });
+
+  it('le niveau du titre est libre, de # à ######', () => {
+    for (const diese of ['#', '##', '###', '######']) {
+      const etat = reviewState(
+        `${diese} Review pass 1 (Reviewer C, 2026-09-18)\n\nVerdict: approve (0 blocking, 0 important, 0 minor)`,
+      );
+      expect(etat.passes, diese).toBe(1);
+    }
+  });
+
+  it('le verdict doit être la PREMIÈRE ligne non vide sous le titre', () => {
+    // Sinon un verdict CITÉ dans le texte libre passerait pour rendu.
+    const etat = reviewState(
+      '## Review pass 1 (Reviewer C, 2026-09-18)\n\nJ’ai tout relu.\n\nVerdict: approve (0 blocking, 0 important, 0 minor)',
+    );
+    expect(etat.passes).toBe(0);
+    expect(etat.warnings).toEqual(['review pass 1 has no readable verdict line']);
+  });
+});
+
+describe('la release d’une carte, lue sur le jalon GitHub (#177)', () => {
+  // Le jalon existe depuis toujours — les PR de la 0.8.10 le portent — et le
+  // tableau ne le rendait nulle part : « qu'est-ce qui constitue la 0.8.10 »
+  // ne se lisait que sur GitHub, une carte à la fois.
+
+  it('la carte porte le TITRE du jalon, et rien d’autre de lui', () => {
+    const cartes = cartesDuTableau({
+      issues: [
+        {
+          number: 117,
+          title: 'une issue du jalon',
+          state: 'CLOSED',
+          milestone: { number: 1, title: '0.8.10', description: 'tout ce qui suit la 0.8.9' },
+        },
+      ],
+      pr: [
+        {
+          number: 114,
+          title: 'sa PR',
+          state: 'MERGED',
+          mergedAt: '2026-09-16T10:00:00Z',
+          milestone: { title: '0.8.10' },
+        },
+      ],
+    });
+    expect(cartes.map((c) => c.release)).toEqual(['0.8.10', '0.8.10']);
+    // La description du jalon ne voyage pas : le tableau n'en a pas l'usage.
+    expect(JSON.stringify(cartes)).not.toContain('tout ce qui suit');
+  });
+
+  it('une carte sans jalon porte `null`, et la page en fait « no release »', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 186, title: 'sans jalon', state: 'OPEN' }],
+      pr: [{ number: 187, title: 'sans jalon non plus', state: 'OPEN', milestone: null }],
+    });
+    expect(cartes.every((c) => c.release === null)).toBe(true);
+    expect(releasesDuTableau(cartes)).toEqual([SANS_RELEASE]);
+  });
+
+  it('un titre de jalon vide ou fait d’espaces ne devient pas une release', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 1, title: 'a', state: 'OPEN', milestone: { title: '   ' } }],
+      pr: [],
+    });
+    expect(cartes[0].release).toBe(null);
+  });
+
+  it('les releases du filtre sont rangées de la plus RÉCENTE à la plus ancienne', () => {
+    // Un tri de chaînes mettrait `0.8.10` avant `0.8.9`, et le filtre
+    // s'ouvrirait sur la mauvaise — la faute même que ce dépôt a déjà payée.
+    const cartes = cartesDuTableau({
+      issues: [
+        { number: 1, title: 'a', state: 'CLOSED', milestone: { title: '0.8.9' } },
+        { number: 2, title: 'b', state: 'CLOSED', milestone: { title: '0.8.10' } },
+        { number: 3, title: 'c', state: 'OPEN', milestone: { title: '0.9.0' } },
+        { number: 4, title: 'd', state: 'OPEN', milestone: { title: '0.9.0-rc.1' } },
+      ],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.9.0', '0.9.0-rc.1', '0.8.10', '0.8.9']);
+  });
+
+  it('un jalon qui n’est pas une version garde sa place, après les versions', () => {
+    const cartes = cartesDuTableau({
+      issues: [
+        { number: 1, title: 'a', state: 'OPEN', milestone: { title: 'Backlog' } },
+        { number: 2, title: 'b', state: 'OPEN', milestone: { title: '0.8.10' } },
+        { number: 3, title: 'c', state: 'OPEN' },
+      ],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.8.10', 'Backlog', SANS_RELEASE]);
+  });
+
+  it('« no release » n’apparaît que si une carte n’a vraiment pas de jalon', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 1, title: 'a', state: 'OPEN', milestone: { title: '0.8.10' } }],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.8.10']);
+  });
+});
+
+describe('les jalons TELS QUE ce dépôt les nomme (#177)', () => {
+  it('« 0.9 » est une version, et vient après « 0.8.10 »', () => {
+    // Vu en collectant le 18/09/2026 : 16 cartes sous « 0.8.10 », 28 sous
+    // « 0.9 ». Sans lire les deux segments, « 0.9 » n'était pas une version et
+    // se rangeait parmi les jalons alphabétiques, donc APRÈS la release passée.
+    const cartes = cartesDuTableau({
+      issues: [
+        { number: 1, title: 'a', state: 'CLOSED', milestone: { title: '0.8.10' } },
+        { number: 2, title: 'b', state: 'OPEN', milestone: { title: '0.9' } },
+        { number: 3, title: 'c', state: 'OPEN', milestone: { title: 'Backlog' } },
+        { number: 4, title: 'd', state: 'OPEN' },
+      ],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.9', '0.8.10', 'Backlog', SANS_RELEASE]);
+  });
+});
+
+describe('le filtre de release vit dans l’adresse (revue C de #192)', () => {
+  it('lit la release d’une adresse, et rend tout le tableau quand il n’y en a pas', () => {
+    expect(releaseDuHash('#chantiers?release=0.9')).toBe('0.9');
+    expect(releaseDuHash('#chantiers')).toBe('');
+    expect(releaseDuHash('')).toBe('');
+    expect(releaseDuHash(null)).toBe('');
+  });
+
+  it('une valeur encodée revient telle qu’elle a été écrite', () => {
+    expect(releaseDuHash('#chantiers?release=no%20release')).toBe('no release');
+    expect(hashDeLaRelease('no release')).toBe('#chantiers?release=no%20release');
+    expect(releaseDuHash(hashDeLaRelease('0.9'))).toBe('0.9');
+    expect(releaseDuHash(hashDeLaRelease('no release'))).toBe('no release');
+  });
+
+  it('« toutes les releases » est une adresse sans requête', () => {
+    expect(hashDeLaRelease('')).toBe('#chantiers');
+    expect(hashDeLaRelease(null)).toBe('#chantiers');
+  });
+
+  it('une adresse ABÎMÉE montre tout, jamais rien', () => {
+    // `%E0%A4%A` est un pourcentage incomplet : `decodeURIComponent` lève. Une
+    // page vide sur une adresse mal recopiée ferait croire à un tableau vide.
+    expect(releaseDuHash('#chantiers?release=%E0%A4%A')).toBe('');
+    expect(releaseDuHash('#chantiers?autre=chose')).toBe('');
+  });
+});
+
+describe('pileDuneColonne — ce qu’une colonne finie montre (#176)', () => {
+  // Le 16/09/2026, la colonne « Done » gardait ses huit premières cartes par
+  // numéro décroissant, c'est-à-dire par ordre d'OUVERTURE : les huit issues
+  // fermées ce jour-là ont pris les huit places, et les six PR mergées le même
+  // jour sont parties dans « + 67 more ». Le tableau montrait 75 cartes finies
+  // et pas une seule des PR qui les avaient finies.
+
+  const LE_JOUR = Date.parse('2026-09-16T18:00:00.000Z');
+  const MAINTENANT = Date.parse('2026-09-17T09:00:00.000Z');
+  const heure = (h) => new Date(LE_JOUR + h * 3600_000).toISOString();
+
+  /** Le vrai jour du 16/09 : huit issues fermées, six PR mergées, mêlées. */
+  const journee = () => {
+    const issues = Array.from({ length: 8 }, (_, k) => ({
+      number: 109 + k,
+      title: `issue ${k}`,
+      state: 'CLOSED',
+      closedAt: heure(k),
+    }));
+    const pr = [103, 112, 113, 114, 118, 120].map((n, k) => ({
+      number: n,
+      title: `pr ${n}`,
+      state: 'MERGED',
+      mergedAt: heure(k + 0.5),
+    }));
+    return cartesDuTableau({ issues, pr });
+  };
+
+  it('les QUATORZE cartes du jour sont montrées, PR mergées comprises', () => {
+    const { montrees, replies } = pileDuneColonne(journee(), 'Done', MAINTENANT);
+    expect(montrees).toHaveLength(14);
+    expect(replies).toBe(0);
+    // Les six PR du jour sont là, celles-là mêmes qui manquaient.
+    const prMontrees = montrees.filter((c) => c.type === 'pr').map((c) => c.numero);
+    expect(prMontrees.sort((a, b) => a - b)).toEqual([103, 112, 113, 114, 118, 120]);
+  });
+
+  it('elles sont rangées du plus récemment fini au plus ancien, les deux familles MÊLÉES', () => {
+    const { montrees } = pileDuneColonne(journee(), 'Done', MAINTENANT);
+    const dates = montrees.map((c) => c.finiLe);
+    expect([...dates].sort().reverse()).toEqual(dates);
+    // Mêlées : la première PR n'est pas reléguée derrière toutes les issues.
+    const premierPr = montrees.findIndex((c) => c.type === 'pr');
+    const derniereIssue = montrees.map((c) => c.type).lastIndexOf('issue');
+    expect(premierPr).toBeLessThan(derniereIssue);
+  });
+
+  it('ce qui est plus vieux que la fenêtre est REPLIÉ, et compté', () => {
+    const vieux = Array.from({ length: 20 }, (_, k) => ({
+      number: 10 + k,
+      title: `vieille ${k}`,
+      state: 'CLOSED',
+      closedAt: new Date(LE_JOUR - (30 + k) * 86_400_000).toISOString(),
+    }));
+    const cartes = [...journee(), ...cartesDuTableau({ issues: vieux, pr: [] })];
+    const { montrees, replies } = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    expect(montrees).toHaveLength(14);
+    expect(replies).toBe(20);
+  });
+
+  it('une carte SANS date de fin est repliée, jamais datée d’office', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 1, title: 'fermée sans date', state: 'CLOSED' }],
+      pr: [],
+    });
+    const { montrees, replies } = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    expect(montrees).toEqual([]);
+    expect(replies).toBe(1);
+  });
+
+  it('une semaine sans rien finir montre quand même les trois dernières', () => {
+    // Vider la colonne sous un « + 75 older » cacherait jusqu'au dernier
+    // travail livré, que le plafond de huit montrait au moins.
+    const vieilles = Array.from({ length: 9 }, (_, k) => ({
+      number: 10 + k,
+      title: `vieille ${k}`,
+      state: 'CLOSED',
+      closedAt: new Date(LE_JOUR - (20 + k) * 86_400_000).toISOString(),
+    }));
+    const { montrees, replies } = pileDuneColonne(
+      cartesDuTableau({ issues: vieilles, pr: [] }),
+      'Done',
+      MAINTENANT,
+    );
+    expect(montrees).toHaveLength(3);
+    expect(replies).toBe(6);
+    // Et ce sont les trois PLUS RÉCENTES.
+    expect(montrees.map((c) => c.numero)).toEqual([10, 11, 12]);
+  });
+
+  it('une colonne VIVANTE montre tout : un appel à l’action ne se replie pas', () => {
+    const cartes = cartesDuTableau({
+      issues: Array.from({ length: 12 }, (_, k) => ({
+        number: 200 + k,
+        title: `à faire ${k}`,
+        state: 'OPEN',
+        labels: [{ name: 'decision' }],
+      })),
+      pr: [],
+    });
+    const { montrees, replies } = pileDuneColonne(cartes, 'To do', MAINTENANT);
+    expect(montrees).toHaveLength(12);
+    expect(replies).toBe(0);
+  });
+});
+
+describe('le repli compte à part ce qu’on ne sait pas dater (revue C de #188)', () => {
+  const MAINTENANT = Date.parse('2026-09-18T09:00:00.000Z');
+  const vieille = (n) => ({
+    number: n,
+    title: `vieille ${n}`,
+    state: 'CLOSED',
+    closedAt: new Date(MAINTENANT - 30 * 86_400_000).toISOString(),
+  });
+  const sansDate = (n) => ({ number: n, title: `sans date ${n}`, state: 'CLOSED' });
+
+  it('« older » ne parle que de ce qui a une date ; le reste est compté à part', () => {
+    // Dire « + 5 older » d'une carte dont on ignore la date de fermeture, c'est
+    // affirmer d'elle exactement ce qu'on ne sait pas.
+    const cartes = cartesDuTableau({
+      issues: [vieille(1), vieille(2), vieille(3), sansDate(4), sansDate(5)],
+      pr: [],
+    });
+    const pile = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    // La fenêtre est vide : les trois plus récentes DATÉES sont montrées.
+    expect(pile.montrees).toHaveLength(3);
+    expect(pile.replies).toBe(2);
+    expect(pile.plusAnciennes).toBe(0);
+    expect(pile.sansDate).toBe(2);
+  });
+
+  it('les deux comptes se séparent quand il y a des deux', () => {
+    const cartes = cartesDuTableau({
+      issues: [
+        ...Array.from({ length: 6 }, (_, k) => vieille(10 + k)),
+        sansDate(20),
+        {
+          number: 30,
+          title: 'finie hier',
+          state: 'CLOSED',
+          closedAt: new Date(MAINTENANT - 86_400_000).toISOString(),
+        },
+      ],
+      pr: [],
+    });
+    const pile = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    expect(pile.montrees.map((c) => c.numero)).toEqual([30]);
+    expect(pile.plusAnciennes).toBe(6);
+    expect(pile.sansDate).toBe(1);
+    expect(pile.replies).toBe(7);
   });
 });

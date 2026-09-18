@@ -77,7 +77,11 @@ export type OrchestrationErrorCode =
   | 'delegation_no_entity'
   | 'cycle_detected'
   | 'missing_dependency'
-  | 'task_board_error';
+  | 'task_board_error'
+  // Une ligne `review_verdict` qui s'annonce réussie mais ne respecte pas le
+  // contrat de l'outil : le contrat est rompu entre l'outil et son lecteur, et
+  // livrer au parent un verdict tronqué serait pire que s'arrêter (#124).
+  | 'review_verdict_malformed';
 
 export class OrchestrationError extends Error {
   constructor(

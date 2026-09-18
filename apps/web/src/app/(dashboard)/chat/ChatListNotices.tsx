@@ -39,6 +39,12 @@ export type ChatListNoticesProps = {
    * asked » ni « Approval pending » n'est dessinée, même si l'une attend.
    */
   waitingUnreadable?: boolean;
+  /**
+   * La lecture des runs venus de dehors a échoué (dossier MCP). Sans ce
+   * bandeau, la liste vide dirait « aucun run » — un fait — alors qu'on ne
+   * sait rien (invariant #4).
+   */
+  runsUnreadable?: boolean;
 };
 
 export default function ChatListNotices({
@@ -48,9 +54,15 @@ export default function ChatListNotices({
   namesUnreadable = false,
   runningUnreadable = false,
   waitingUnreadable = false,
+  runsUnreadable = false,
 }: ChatListNoticesProps) {
   return (
     <>
+      {runsUnreadable && (
+        <p className="text-body-12 text-err mb-2">
+          Runs started from outside couldn’t be read just now. Reload to try again.
+        </p>
+      )}
       {threadsUnreadable && (
         <p className="text-body-12 text-err mb-2">
           Channel chats couldn’t be read just now. This list may be incomplete — reload to try

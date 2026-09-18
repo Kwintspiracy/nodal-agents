@@ -114,15 +114,30 @@ export function parseLiveToolEvent(
  * write must never take down the session it is auditing, so it warns and moves
  * on (the authoritative `cli_runs` row is written separately at the end).
  */
+/**
+ * Ce qu'on accorde aux insertions d'audit pour retomber à la fin d'un run.
+ *
+ * Dix secondes : très au-delà d'une insertion locale, et assez court pour
+ * qu'une base muette ne retienne pas un travail qui, lui, est fini.
+ */
+const BUDGET_INSERTIONS_MS = 10_000;
+
 export function makeLiveToolRecorder(args: {
   db: AnyDrizzleDb;
   entityId: string | null;
   jobId: string;
   provider: 'claude' | 'codex';
-}): (line: string) => void {
+}): { onLine: (line: string) => void; settled: () => Promise<void> } {
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
+  // Les insertions restent « lancées et oubliées » — une panne d'audit ne doit
+  // pas emporter la session qu'elle audite —, mais leurs promesses sont
+  // gardées pour être ATTENDUES à la fin du run (issue #102, revue C de la
+  // PR #196). La vérification lit ces lignes juste après l'appel pour savoir
+  // quels fichiers constater : une insertion encore en vol serait un fichier
+  // écrit que rien ne crédite, au hasard du minutage.
+  const enVol: Array<Promise<unknown>> = [];
 
-  return (line: string): void => {
+  const onLine = (line: string): void => {
     const parsed = parseLiveToolEvent(args.provider, line);
     if (!parsed) return;
 
@@ -139,7 +154,7 @@ export function makeLiveToolRecorder(args: {
     if (!started) return;
     pending.delete(parsed.event.id);
 
-    void args.db
+    const insertion = args.db
       .insert(toolCalls)
       .values({
         entityId: args.entityId,
@@ -167,6 +182,34 @@ export function makeLiveToolRecorder(args: {
       .catch((err: unknown) => {
         console.warn(`[code-task] live tool_calls insert failed (job=${args.jobId}):`, err);
       });
+    enVol.push(insertion);
+  };
+
+  return {
+    onLine,
+    /**
+     * Rend la main quand toutes les insertions lancées sont retombées — ou au
+     * bout du budget.
+     *
+     * BORNÉE, et c'est le point (revue C de la PR #196, passe 2) : une
+     * insertion qui ne revient jamais — une base qui ne répond plus, un verrou
+     * tenu — suspendrait la fin du `code_task` pour toujours. Le run, lui, a
+     * fini et son résultat existe ; ce qui manque alors est une ligne d'audit,
+     * et cela se dit par un code. L'attente sert la vérification, elle ne la
+     * vaut pas.
+     */
+    settled: async () => {
+      const aTemps = await Promise.race([
+        Promise.allSettled(enVol).then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), BUDGET_INSERTIONS_MS)),
+      ]);
+      if (!aTemps) {
+        console.warn(
+          `[code-task] LIVE_ROWS_NOT_SETTLED job=${args.jobId} ` +
+            `budgetMs=${BUDGET_INSERTIONS_MS} lancees=${enVol.length}`,
+        );
+      }
+    },
   };
 }
 

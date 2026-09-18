@@ -47,6 +47,7 @@ const FALLBACK: ChatFoldersContextValue = {
   channels: [],
   running: {},
   runningConversationIds: [],
+  externalRuns: 0,
 };
 
 export function useChatFolders(): ChatFoldersContextValue {

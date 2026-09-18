@@ -11,10 +11,25 @@
 //
 // Ce module tranche pour les cibles FICHIER, et pour elles seules : on prend
 // l'état du fichier avant l'outil (existence, taille, empreinte du CONTENU),
-// on le reprend après, et une différence est une écriture constatée. Une cible
-// DOSSIER (le `cwd` d'un shell) reste déclarative : constater ce qu'un shell
-// a écrit sous un dossier demanderait un instantané de l'arbre à chaque
-// commande, et c'est un autre lot — dit ici, pas caché.
+// on le reprend après, et une différence est une écriture constatée.
+//
+// UNE CIBLE DOSSIER NE CRÉDITE RIEN (issue #102). Le `cwd` d'un shell, le
+// périmètre d'écriture d'un tour de harnais : rien n'en est lu sur le disque,
+// donc rien n'y est constaté. La première version créditait quand même le
+// projet du dossier, sur la foi de la cible seule — une commande qui n'écrivait
+// pas un octet posait `produced`, et `declare_verification` lui accordait
+// ensuite le droit de dire comment ce projet se vérifie. C'était le trou que
+// #60 avait fermé pour les fichiers, resté ouvert pour la surface shell.
+//
+// Ce que ce module ne fait PAS, et le dit : constater ce qu'un shell a écrit
+// sous un dossier demanderait un instantané de l'arbre à chaque commande. Le
+// coût est toute la question — une marche complète est hors de question sur un
+// gros dépôt, et toute approximation bon marché (mtime du dossier, une
+// profondeur, une liste d'exclusions) serait un trou de plus qu'il faudrait
+// nommer. En attendant, l'absence est VISIBLE plutôt que comblée : le livrable
+// reste `produced = false`, la ligne de journal le dit par un code, et
+// `declare_verification` refuse en nommant le fait au lieu d'accuser une panne
+// qui n'a pas eu lieu. Un faux vert est devenu une absence dite (invariant #4).
 //
 // LE CONTENU, PAS LA DATE (revue Codex post-merge de la PR #75, constat 3).
 // La première empreinte était `{ size, mtimeNs }`, et ces lignes annonçaient un
@@ -146,10 +161,15 @@ export async function changedFileTargets(
 }
 
 /**
- * Les clés de livrables qu'une écriture CONSTATÉE (ou une cible dossier,
- * déclarative) soutient — la même règle de nommage que l'intention, sans
- * expansion : ce sont les livrables VISÉS qui comptent ici, jamais le périmètre
- * de précaution.
+ * Les clés de livrables qu'une écriture CONSTATÉE soutient — la même règle de
+ * nommage que l'intention, sans expansion : ce sont les livrables VISÉS qui
+ * comptent ici, jamais le périmètre de précaution.
+ *
+ * Les cibles DOSSIER n'en font plus partie (issue #102) : rien n'est lu sous
+ * un dossier, donc rien n'y est constaté. Elles restent demandées en entrée
+ * parce que l'appelant en a besoin pour DIRE l'absence — voir
+ * `dossiersNonConstates` juste en dessous, et le refus de
+ * `declare_verification`.
  */
 export function observedDeliverableKeys(input: {
   readonly changedFiles: readonly MutationTarget[];
@@ -172,7 +192,6 @@ export function observedDeliverableKeys(input: {
 }): ReadonlySet<string> {
   const keys = new Set<string>();
   const rebasedFiles = rebaseOntoLexicalRoots(input.changedFiles, input.workspaceRoots);
-  const rebasedDirs = rebaseOntoLexicalRoots(input.dirTargets, input.workspaceRoots);
   const isProjectRoot = input.isProjectRoot;
   const projects = (targets: readonly MutationTarget[]): readonly ProjectRoot[] =>
     resolveProjectRoots({
@@ -183,7 +202,9 @@ export function observedDeliverableKeys(input: {
   for (const p of projects(rebasedFiles.filter((t) => t.deliverableType === 'code_project'))) {
     keys.add(p.key);
   }
-  for (const p of projects(rebasedDirs)) keys.add(p.key);
+  // Les cibles DOSSIER ne créditent rien (#102). La ligne d'avant faisait
+  // `for (const p of projects(rebasedDirs)) keys.add(p.key)` : le projet du
+  // `cwd` était crédité sur la foi de la cible, sans qu'un octet ait été lu.
   for (const f of officeFileDeliverables(
     rebasedFiles.filter((t) => t.deliverableType !== 'code_project'),
     input.workspaceRoots,
@@ -191,4 +212,33 @@ export function observedDeliverableKeys(input: {
     keys.add(f.key);
   }
   return keys;
+}
+
+/**
+ * Les projets qu'une cible DOSSIER aurait crédités, et que plus rien ne
+ * crédite — ce dont il n'a RIEN été constaté.
+ *
+ * Existe pour que l'absence se dise (invariant #4). L'appelant en fait une
+ * ligne de journal à code ; `declare_verification`, plus tard et depuis la
+ * base, en fait un refus qui nomme le fait. Les clés déjà soutenues par une
+ * écriture constatée en sont retirées : une commande qui a aussi écrit un
+ * fichier nommé dans le même projet n'a rien d'inconstaté.
+ */
+export function dossiersNonConstates(input: {
+  readonly changedFiles: readonly MutationTarget[];
+  readonly dirTargets: readonly MutationTarget[];
+  readonly workspaceRoots: readonly string[];
+  readonly isProjectRoot: (dir: string) => boolean;
+}): ReadonlySet<string> {
+  const constatees = observedDeliverableKeys(input);
+  const rebasedDirs = rebaseOntoLexicalRoots(input.dirTargets, input.workspaceRoots);
+  const out = new Set<string>();
+  for (const p of resolveProjectRoots({
+    targets: rebasedDirs,
+    workspaceRoots: input.workspaceRoots,
+    hasMarker: input.isProjectRoot,
+  })) {
+    if (!constatees.has(p.key)) out.add(p.key);
+  }
+  return out;
 }

@@ -48,3 +48,34 @@ export function redactPresented(presented: unknown): unknown {
   }
   return presented;
 }
+
+/** Une ligne d'audit telle que les lectures d'écran la manipulent. */
+export type AuditRowLike = {
+  toolInput: unknown;
+  toolOutput: string | null;
+  presented: unknown;
+};
+
+/**
+ * UNE ligne d'audit, masquée AUX TROIS ENDROITS où elle se lit : la carte, la
+ * sortie brute, l'entrée.
+ *
+ * Pourquoi les trois ensemble (Reviewer C, passe 2 du 18/09) : le chargeur d'un
+ * run masquait la carte seule avant de passer la ligne au récapitulatif de
+ * livraison. Ce récapitulatif ne rend que des comptes AUJOURD'HUI — mais il
+ * reçoit la ligne entière, et le premier écran qui montrerait sa sortie
+ * afficherait un jeton en clair. On masque à la PORTE, pas à l'usage : c'est la
+ * règle qui a fermé le trou de #150, et elle vaut pour chaque champ, pas
+ * seulement pour celui auquel on a pensé.
+ *
+ * La ligne STOCKÉE n'est jamais touchée : le runner la relit pour reprendre un
+ * travail, et une reprise doit voir ce qui s'est vraiment passé (SECRET-001).
+ */
+export function redactAuditRow<T extends AuditRowLike>(row: T): T {
+  return {
+    ...row,
+    toolInput: redactPresented(row.toolInput),
+    toolOutput: row.toolOutput === null ? null : redactSecretsInText(row.toolOutput),
+    presented: redactPresented(row.presented),
+  };
+}

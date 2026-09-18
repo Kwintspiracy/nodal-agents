@@ -47,6 +47,7 @@ import {
 import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 import {
   QuotaExhaustedError,
+  LLMTimeoutError,
   MessageStructureError,
   AllProvidersFailedError,
   isContextOverflowError,
@@ -110,6 +111,7 @@ import {
   CANCEL_UNDO_INTENT_RE,
   CANCEL_UNDO_INTENT_SCAN_CHARS,
   VERIFY_BEFORE_ASSERT_NUDGE,
+  readFinalReviewVerdict,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -121,6 +123,8 @@ import type {
   SameToolStreakState,
   ErrorStreakState,
   DelegationOutcomeRecord,
+  JobFailureHint,
+  ReviewVerdictRecord,
 } from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
@@ -538,7 +542,16 @@ export type ExecuteJobResult =
   // not just the machine error code — never leave the user without an
   // explanation. The job row's own result column is filled independently by
   // failJob, so direct (non-delegated) surfaces don't depend on this.
-  | { status: 'failed'; error: string; result?: string; toolsUsed?: string[]; exitReason?: string }
+  // `hint` nomme le geste que cet échec appelle, quand il en appelle un
+  // (#119) : un CHAMP typé, jamais une phrase du harnais (invariant #2).
+  | {
+      status: 'failed';
+      error: string;
+      result?: string;
+      toolsUsed?: string[];
+      exitReason?: string;
+      hint?: JobFailureHint;
+    }
   | { status: 'cancelled' }
   | { status: 'awaiting_approval' }
   | { status: 'awaiting_delegation' }
@@ -555,7 +568,7 @@ export type ExecuteJobResult =
  * never a status write — moving it out of that neighbourhood keeps the gate
  * honest instead of loosening it.
  */
-function delegationRecordFromOutcome(
+export function delegationRecordFromOutcome(
   outcome: Extract<ExecuteJobResult, { status: 'completed' | 'failed' }>,
 ): DelegationOutcomeRecord {
   if (outcome.status === 'completed') {
@@ -573,6 +586,9 @@ function delegationRecordFromOutcome(
     error: outcome.error || 'unknown',
     exit_reason: outcome.exitReason ?? null,
     tools_used: outcome.toolsUsed ?? [],
+    // Le geste voyage jusqu'au parent avec le reste : sans lui, le parent
+    // relaierait un échec sans savoir qu'un autre modèle le réglerait (#119).
+    hint: outcome.hint ?? null,
   };
 }
 
@@ -619,6 +635,155 @@ export function shortBlockReason(reason: string): string {
   if (!r) return BLOCK_NO_REASON;
   const firstSentence = r.split(/(?<=[.!?])\s/)[0] ?? r;
   return firstSentence.length > 240 ? firstSentence.slice(0, 239).trimEnd() + '…' : firstSentence;
+}
+
+// ─── expiration d'un tour ─────────────────────────────────────────────────────
+
+/** Les faits qu'un tour expiré laisse derrière lui — rien qui soit à inventer. */
+export interface TimeoutFacts {
+  provider: string;
+  model: string;
+  /** Le tour atteint : celui qui a expiré, pas le suivant. */
+  turn: number;
+  /** Le temps passé à attendre CE tour, rejeu compris. */
+  elapsedMs: number;
+}
+
+/**
+ * Le code machine d'un tour expiré, pour `agent_jobs.error`.
+ *
+ * De la même famille que `context_window_exceeded:<modèle> (…)` : un code, puis
+ * les faits qui le rendent actionnable. Ce qui est lu par une personne est la
+ * ligne ci-dessous, jamais celui-ci.
+ */
+export function timeoutErrorCode(faits: TimeoutFacts): string {
+  return `llm_timeout:${faits.provider}/${faits.model} (turn ${faits.turn}, ${secondes(faits.elapsedMs)})`;
+}
+
+/**
+ * La ligne que l'utilisateur lit quand un tour a expiré jusqu'au bout.
+ *
+ * Même nature que `[stopped: …]` et `[delegation stopped: … — no deliverable]`
+ * un peu plus bas : une ligne de PLATEFORME, entre crochets, faite de CHAMPS
+ * TYPÉS — le fournisseur, le modèle, le tour atteint, le temps passé. Ce n'est
+ * pas la voix de l'agent, et l'invariant #2 tient : le harnais ne raconte rien,
+ * il pose les faits qu'il a.
+ *
+ * Ce qu'elle remplace (#121) : l'exception recopiée telle quelle dans le
+ * résultat, « ⚠️ The task could not be completed (LLM call timed out after
+ * 300000ms: openrouter/qwen/qwen3.8-max) and no explanation was provided ».
+ * Elle disait le temps d'UN appel, taisait le tour atteint, et laissait croire
+ * que rien n'avait été fait. Pure — testée à part.
+ */
+export function timeoutStopLine(faits: TimeoutFacts): string {
+  return `[stopped: llm timeout — ${faits.provider}/${faits.model}, turn ${faits.turn}, ${secondes(faits.elapsedMs)}]`;
+}
+
+/** Des millisecondes en secondes entières, jamais négatives. */
+function secondes(ms: number): string {
+  return `${Math.max(0, Math.round(ms / 1000))}s`;
+}
+
+/**
+ * L'expiration derrière l'erreur d'un tour, ou `null` si ce n'en est pas une.
+ *
+ * Deux formes, et la seconde manquait (revue C de la PR #172) : un client à UN
+ * fournisseur lève `LLMTimeoutError` ; un client à plusieurs essaie la chaîne
+ * et, quand elle est épuisée, lève `AllProvidersFailedError` en portant la
+ * dernière erreur dans `underlyingCause` (`packages/llm/src/failover.ts`, où
+ * une expiration est explicitement de celles qui font passer au suivant). Sans
+ * cette seconde lecture, un agent qui a un repli configuré mourait de
+ * l'ancienne mort, exactement celle de #121.
+ *
+ * Rien d'autre n'est élargi : une chaîne épuisée sur des 5xx ou sur un quota
+ * n'est pas une expiration et repart vers la capture extérieure, qui a son
+ * propre code pour elle. L'erreur rendue est celle du fournisseur qui a
+ * VRAIMENT expiré — le dernier essayé, pas le premier de la liste.
+ */
+export function timeoutOfTurn(err: unknown): LLMTimeoutError | null {
+  if (err instanceof LLMTimeoutError) return err;
+  if (err instanceof AllProvidersFailedError && err.underlyingCause instanceof LLMTimeoutError) {
+    return err.underlyingCause;
+  }
+  return null;
+}
+
+// ─── refus de la requête par le fournisseur ───────────────────────────────────
+
+/** Les faits qu'un refus laisse derrière lui — rien qui soit à inventer. */
+export interface ProviderRejectionFacts {
+  provider: string;
+  model: string;
+  /** Le statut HTTP rendu par le fournisseur. */
+  status: number;
+  /** Le tour atteint : celui qui a été refusé. */
+  turn: number;
+}
+
+/**
+ * Le statut d'un REFUS DE REQUÊTE, ou `null` si l'erreur n'en est pas un.
+ *
+ * 400 et 422, et rien d'autre : le fournisseur dit que la requête elle-même ne
+ * passe pas. Une clé invalide (401/403), un modèle inconnu (404) et un débit
+ * dépassé (429) ont chacun leur chemin et leur conseil ; les mettre ici rendrait
+ * la ligne fausse pour trois cas sur quatre.
+ *
+ * Le statut se lit sur l'erreur ou sur sa cause : le SDK lève un `APICallError`
+ * qui porte `statusCode`, que nos enveloppes reportent en `cause`.
+ */
+export function providerRejectionOfTurn(err: unknown): number | null {
+  let cur: unknown = err;
+  for (let i = 0; i < 5 && cur !== null && typeof cur === 'object'; i++) {
+    const c = cur as {
+      statusCode?: unknown;
+      status?: unknown;
+      underlyingCause?: unknown;
+      cause?: unknown;
+    };
+    const status =
+      typeof c.statusCode === 'number'
+        ? c.statusCode
+        : typeof c.status === 'number'
+          ? c.status
+          : null;
+    // Le PREMIER statut rencontré fait foi : en chercher un autre plus bas
+    // ferait passer une panne 500 pour un refus de requête.
+    if (status !== null) return status === 400 || status === 422 ? status : null;
+    const next = c.underlyingCause ?? c.cause;
+    if (next === cur) break;
+    cur = next;
+  }
+  return null;
+}
+
+/**
+ * Le code machine d'un refus, pour `agent_jobs.error` — même famille que
+ * `llm_timeout:…` et `context_window_exceeded:…` : un code, puis les faits qui
+ * le rendent actionnable.
+ */
+export function providerRejectionCode(faits: ProviderRejectionFacts): string {
+  return `provider_rejected_request:${faits.provider}/${faits.model} (http ${faits.status}, turn ${faits.turn})`;
+}
+
+/**
+ * La ligne que l'utilisateur lit quand le fournisseur a refusé la requête.
+ *
+ * Même nature que `timeoutStopLine`, et RIEN DE PLUS : une ligne de PLATEFORME,
+ * entre crochets, faite de CHAMPS TYPÉS — le fournisseur, le modèle, le statut,
+ * le tour. Pas un mot de conseil : une phrase du harnais, en anglais, est
+ * exactement ce que l'invariant #2 refuse (revue passe 1 de la PR #180). Le
+ * geste à faire voyage À CÔTÉ, en champ typé (`hint: 'switch_model'`) ; c'est
+ * l'écran, ou le modèle, qui le dit dans la langue de la personne.
+ *
+ * Ce qu'elle remplace (#119) : le JSON du fournisseur recopié tel quel, suivi de
+ * « and no explanation was provided » — illisible, et muet sur ce qu'il y avait
+ * à faire.
+ */
+export function providerRejectionStopLine(faits: ProviderRejectionFacts): string {
+  return (
+    `[stopped: provider rejected the request — ${faits.provider}/${faits.model}, ` +
+    `http ${faits.status}, turn ${faits.turn}]`
+  );
 }
 
 // ─── executeJob ───────────────────────────────────────────────────────────────
@@ -2912,6 +3077,13 @@ async function runJob(
   const MAX_UNAVAILABLE_TOOL_NUDGES = 3;
   let unavailableToolNudges = 0;
 
+  // Expiration d'un tour : UN rejeu, puis l'échec (#121). Le compteur et le
+  // temps perdu valent pour le tour en cours, et sont remis à zéro dès qu'un
+  // tour répond — voir la capture de `LLMTimeoutError` dans la boucle.
+  const MAX_LLM_TIMEOUT_TURN_RETRIES = 1;
+  let expirationsCeTour = 0;
+  let msExpiresCeTour = 0;
+
   try {
     while (true) {
       turn += 1;
@@ -2995,6 +3167,7 @@ async function runJob(
         void touchJob(db, jobId as string).catch(() => {});
       }, 60_000);
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
+      const appelCommenceA = Date.now();
       try {
         response = await llmClient.generateText({
           system: systemPrompt,
@@ -3006,6 +3179,60 @@ async function runJob(
           toolChoice,
         });
       } catch (genErr) {
+        // Un tour qui EXPIRE ne tue plus un travail qui avançait (#121).
+        //
+        // Le transcript est intact — la réponse n'est jamais revenue, donc
+        // `messages` n'a pas bougé —, et le même tour est redemandé UNE fois,
+        // avec exactement les mêmes messages. Ce rejeu n'est pas celui de
+        // `withStaleRetry` (packages/llm) : celui-là rouvre une connexion neuve
+        // sur le MÊME appel, dans la même minute, et il a déjà eu lieu quand
+        // l'erreur arrive ici. Celui-ci est d'un autre ordre — un tour entier,
+        // redemandé, après que le transport a rendu les armes.
+        //
+        // Le budget vaut pour CE tour : un tour qui répond le remet à zéro
+        // (juste après le `finally`). Un travail de quarante tours n'est donc
+        // pas condamné par une expiration au cinquième.
+        //
+        // L'expiration se lit sous ses DEUX formes, `timeoutOfTurn` : en
+        // direct, et au bout d'une chaîne de repli épuisée.
+        const expiration = timeoutOfTurn(genErr);
+        if (expiration !== null) {
+          msExpiresCeTour += Date.now() - appelCommenceA;
+          if (expirationsCeTour < MAX_LLM_TIMEOUT_TURN_RETRIES) {
+            expirationsCeTour += 1;
+            trace('llm_timeout_turn_retry', { turn, attempt: expirationsCeTour });
+            // Le MÊME tour est rejoué : sans ce retrait, la boucle le compterait
+            // deux fois et le tour annoncé à l'utilisateur ne serait plus le sien.
+            turn -= 1;
+            continue;
+          }
+          // Budget épuisé. Ce que le travail a écrit AVANT d'expirer reste le
+          // livrable : douze tours de lecture n'ont pas à disparaître parce que
+          // le treizième a expiré. Le parent le reçoit par l'enregistrement
+          // typé (`delegationRecordFromOutcome`), avec `exit_reason: timeout`.
+          // Le fournisseur et le modèle viennent de l'expiration elle-même :
+          // derrière une chaîne de repli, celui qui a expiré est le DERNIER
+          // essayé, pas celui que porte la configuration du client.
+          const faits = {
+            provider: expiration.provider,
+            model: expiration.model,
+            turn,
+            elapsedMs: msExpiresCeTour,
+          };
+          const code = timeoutErrorCode(faits);
+          const livrable = [lastAssistantTextSeen, timeoutStopLine(faits)]
+            .filter((t) => t !== '')
+            .join('\n\n');
+          trace('llm_timeout_exhausted', { turn, elapsedMs: msExpiresCeTour });
+          await failJob(db, jobId as string, code, runStats(), messages, livrable);
+          return {
+            status: 'failed',
+            error: code,
+            result: livrable,
+            toolsUsed,
+            exitReason: 'timeout',
+          };
+        }
         // Recoverable: the model named a tool that isn't in its whitelist, so
         // the AI SDK rejected the whole turn before returning. Rather than
         // hard-killing an otherwise-productive job on one bad tool name, feed
@@ -3037,6 +3264,11 @@ async function runJob(
       } finally {
         clearInterval(hbInterval);
       }
+      // Le tour a répondu : son budget d'expiration repart à zéro, et le temps
+      // perdu avec. Ce qui est compté plus bas est CE tour-ci, pas la mémoire
+      // d'un tour plus ancien qui, lui, s'est remis en marche.
+      expirationsCeTour = 0;
+      msExpiresCeTour = 0;
 
       // Accumulate token usage. Some providers may return undefined/NaN for
       // either field — coerce to 0 so we never persist NaN. Local providers
@@ -4583,7 +4815,39 @@ async function runJob(
             .from(agentJobs)
             .where(eq(agentJobs.parentJobId, jobId as string));
           const aChildDelivered = childDeliverables.some((r) => (r.result ?? '').trim() !== '');
-          if ((deliverableRow?.result ?? '').trim() === '' && !aChildDelivered) {
+          // Un verdict de revue ENREGISTRÉ est un livrable (issue #124) : il est
+          // validé par le schéma de l'outil, il voyage dans le record typé de la
+          // délégation, et il est plus précis que la phrase que l'agent aurait
+          // écrite. La règle ne connaît aucun agent (invariant #3).
+          //
+          // Le verdict doit être le DERNIER geste du job : posé au tour 2 puis
+          // suivi d'un travail sans rapport, il ne tient plus lieu de livrable
+          // pour ce run-là (revue de la PR #170, constat 1).
+          //
+          // Une ligne illisible lève : on échoue ce job par son code plutôt que
+          // de laisser l'exception remonter, et jamais en silence (invariant #4).
+          let deliveredVerdict: ReviewVerdictRecord | null = null;
+          try {
+            deliveredVerdict = await readFinalReviewVerdict(db, jobId as JobId);
+          } catch (err) {
+            trace('review_verdict_malformed', { turn });
+            console.error(
+              `[job ${jobId}] review_verdict row unreadable — failing the job rather than guessing:`,
+              err,
+            );
+            await failJob(db, jobId as string, 'review_verdict_malformed', runStats(), messages);
+            return {
+              status: 'failed',
+              error: 'review_verdict_malformed',
+              exitReason: 'review_verdict_malformed',
+              toolsUsed,
+            };
+          }
+          if (
+            (deliverableRow?.result ?? '').trim() === '' &&
+            !aChildDelivered &&
+            !deliveredVerdict
+          ) {
             if (emptyDeliverableNudges < MAX_EMPTY_DELIVERABLE_NUDGES) {
               emptyDeliverableNudges += 1;
               trace('empty_deliverable_nudge', { turn, attempt: emptyDeliverableNudges });
@@ -4956,6 +5220,42 @@ async function runJob(
         `(configured ~${win} tokens — set the model's real context window in LLM providers)`;
       await failJob(db, jobId as string, code, runStats(), messages);
       return { status: 'failed', error: code };
+    }
+
+    // Le fournisseur a REFUSÉ la requête (#119). Vécu le 16/09/2026 : un modèle
+    // Gemini via OpenRouter rendait « 400 Request contains an invalid argument »
+    // au tour 1, et l'utilisateur recevait le JSON du fournisseur suivi de « and
+    // no explanation was provided ». Le JSON ne dit ni qui a refusé, ni ce qu'il
+    // y avait à faire. La ligne, elle, pose les faits et le seul geste possible.
+    //
+    // Après la garde du contexte, qui est un refus elle aussi mais dont le
+    // conseil est autrement précis, et après la chaîne de repli épuisée, qui
+    // raconte la chaîne et non un fournisseur.
+    const refusStatus = providerRejectionOfTurn(err);
+    if (refusStatus !== null) {
+      const faits: ProviderRejectionFacts = {
+        provider: llmClient.config.provider,
+        model: llmClient.config.model,
+        status: refusStatus,
+        turn,
+      };
+      const code = providerRejectionCode(faits);
+      // Ce que le travail avait écrit avant le refus reste le livrable : un
+      // refus au tour 9 n'efface pas huit tours (même règle que l'expiration).
+      const livrable = [lastAssistantTextSeen, providerRejectionStopLine(faits)]
+        .filter((t) => t !== '')
+        .join('\n\n');
+      trace('provider_rejected_request', { turn, status: refusStatus });
+      await failJob(db, jobId as string, code, runStats(), messages, livrable);
+      return {
+        status: 'failed',
+        error: code,
+        result: livrable,
+        toolsUsed,
+        exitReason: 'provider_rejected_request',
+        // Le seul geste que ces faits appellent : ce modèle-là ne passe pas.
+        hint: 'switch_model',
+      };
     }
 
     // AI SDK throws when the model calls a tool not in the allowed list. The

@@ -24,6 +24,13 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  registerTestCluster,
+  resolvePgCtlFrom,
+  unregisterTestCluster,
+  withPostgresClusterStart,
+  type TestClusterEntry,
+} from '@nodal-agents/test-kit';
 import { startEmbeddedPostgres, livePostmasterPid } from '../lib/postgres.ts';
 import { findFreePort } from '../lib/ports.ts';
 
@@ -33,17 +40,52 @@ const logDir = join(root, 'logs');
 const RIGHT = 'nodalai-right';
 const WRONG = 'nodalai-wrong';
 
+const port = await findFreePort(25480);
+// Résolu UNE fois : le gestionnaire de sortie du registre est synchrone et ne
+// peut pas faire cet `import()` au moment où il en a besoin.
+const pgCtl = await resolvePgCtlFrom(join(process.cwd(), 'package.json'));
+
+/**
+ * Démarre un cluster SOUS LE VERROU DE LA MACHINE, et le tient inscrit tant
+ * qu'il vit (issue #130).
+ *
+ * Deux défauts en un. Le verrou : `pnpm test` lance un `vitest run` par paquet
+ * et trois d'entre eux démarrent de vrais clusters — le `fileParallelism:
+ * false` de ce paquet ne voit rien des autres processus, et c'est bien depuis
+ * les autres que venait la concurrence qui a fait dépasser les 120 s le 16/09.
+ * Le registre : un run tué laissait des `postgres.exe` orphelins, parce que
+ * sous Windows tuer un parent ne tue pas ses enfants et qu'aucun `afterAll` ne
+ * s'exécute alors.
+ *
+ * `run` reçoit ce que `startEmbeddedPostgres` a rendu — ou rien, quand le
+ * démarrage a échoué : c'est le cas du mot de passe refusé, où le produit
+ * arrête lui-même le cluster qu'il a démarré.
+ */
+async function underClusterLock<T>(label: string, run: () => Promise<T>): Promise<T> {
+  // Inscrit AVANT le verrou, et c'est sans effet de bord : tant qu'aucun
+  // postmaster n'a écrit `postmaster.pid`, le gestionnaire de sortie ne trouve
+  // rien à arrêter sur ce data dir. Ce qui compte est qu'il n'existe aucun
+  // instant où un cluster tourne sans être inscrit.
+  const entry: TestClusterEntry = registerTestCluster({ dataDir, port, pgCtl });
+  try {
+    return await withPostgresClusterStart(label, run);
+  } finally {
+    unregisterTestCluster(entry);
+  }
+}
+
 /**
  * Can this machine start a cluster at all? Asked by doing it, then stopping it
  * — the same judgement `embedded-postgres-available.ts` makes, and for the same
  * reason: GitHub's Windows runner cannot, and a test that asserts a capability
  * the OS declines to provide reports nothing about the product.
  */
-const port = await findFreePort(25480);
 const setup = await (async (): Promise<{ ok: boolean; reason: string }> => {
   try {
-    const handle = await startEmbeddedPostgres(dataDir, port, RIGHT, logDir);
-    await handle.stop();
+    await underClusterLock('cli/postgres-auth-stop:probe', async () => {
+      const handle = await startEmbeddedPostgres(dataDir, port, RIGHT, logDir);
+      await handle.stop();
+    });
     return { ok: true, reason: '' };
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
@@ -70,9 +112,11 @@ describe('a refused password leaves nothing running @cap:installer-et-demarrer/m
       // a postmaster come up, accept the TCP connection, and refuse the login —
       // which is exactly the case that used to wait 180 seconds and then report
       // a readiness timeout over a cluster nobody could stop any more.
-      await expect(startEmbeddedPostgres(dataDir, port, WRONG, logDir)).rejects.toThrow(
-        /authentication failed \(SQLSTATE 28/,
-      );
+      await expect(
+        underClusterLock('cli/postgres-auth-stop:wrong', () =>
+          startEmbeddedPostgres(dataDir, port, WRONG, logDir),
+        ),
+      ).rejects.toThrow(/authentication failed \(SQLSTATE 28/);
 
       // THE ASSERTION THIS FILE EXISTS FOR. `postmaster.pid` is written by the
       // postmaster that holds this directory and removed by a clean stop, so a
@@ -88,8 +132,10 @@ describe('a refused password leaves nothing running @cap:installer-et-demarrer/m
       // The stop was clean, not a kill: the very next start succeeds. A
       // teardown that left a shared-memory segment behind would fail here with
       // "pre-existing shared memory block is still in use".
-      const handle = await startEmbeddedPostgres(dataDir, port, RIGHT, logDir);
-      await handle.stop();
+      await underClusterLock('cli/postgres-auth-stop:right', async () => {
+        const handle = await startEmbeddedPostgres(dataDir, port, RIGHT, logDir);
+        await handle.stop();
+      });
       expect(livePostmasterPid(dataDir)).toBeNull();
     },
     120_000,

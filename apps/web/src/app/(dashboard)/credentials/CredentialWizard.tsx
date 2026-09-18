@@ -159,6 +159,11 @@ export default function CredentialWizard({
       // Step 2 collects typed credentials (draft) — non-dismissable, same
       // rule as every other draft form in the app (UX-B7).
       dismissable={step === 'type'}
+      // L'ancre du PREMIER branchement : on atterrit ici quand aucun
+      // identifiant compatible n'existe, donc la toute première fois qu'on
+      // connecte un fournisseur — le seul moment où la portée du jeton se lit
+      // avant de la donner (issues #72 et #83).
+      testId="credential-wizard-dialog"
       footer={
         step === 'type' ? (
           <ModalFooter>

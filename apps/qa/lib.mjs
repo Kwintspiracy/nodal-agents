@@ -561,6 +561,29 @@ export function cartesDuTableau({ issues, pr } = {}) {
     faitsVerifies: porteDesFaitsVerifies(corps),
   });
 
+  // L'état de la revue, lu UNE fois par PR (#128). Comme la provenance : les
+  // commentaires pèsent lourd et ne vont pas dans le snapshot, seul l'état
+  // qu'on en tire voyage. Les issues qu'une PR ouverte ferme héritent du même
+  // objet, pour que les trois cartes d'un même travail disent la même chose.
+  const revueDunePr = new Map();
+  for (const p of pr) {
+    const commentaires = p.comments ?? [];
+    const etat = reviewState([p.body, ...commentaires.map((c) => c?.body)]);
+    // Une liste de commentaires qui atteint le plafond d'une page peut être
+    // TRONQUÉE, et une passe plus récente serait alors invisible : la carte
+    // retomberait en « not reviewed yet » sans que rien ne le dise. Le cas
+    // n'est pas démontré sur ce dépôt — la plus longue liste y fait sept
+    // commentaires — et `gh` ne promet rien sur ce point ; il est donc DIT et
+    // non supposé résolu (revue C de la PR #175).
+    if (commentaires.length >= COMMENTAIRES_PAR_PAGE) {
+      etat.warnings = [
+        ...etat.warnings,
+        `comment list of PR #${p.number} reached ${COMMENTAIRES_PAR_PAGE}: a later review pass may be missing`,
+      ];
+    }
+    revueDunePr.set(p.number, etat);
+  }
+
   const cartes = [
     ...issues.map((i) => ({
       type: 'issue',
@@ -571,7 +594,17 @@ export function cartesDuTableau({ issues, pr } = {}) {
       etiquettes: (i.labels ?? []).map((l) => l.name),
       majLe: i.updatedAt ?? null,
       creeLe: i.createdAt ?? null,
+      // Quand cette carte a été FINIE — `null` tant qu'elle ne l'est pas, et
+      // `null` aussi quand GitHub ne l'a pas dit. Jamais remplacée par la date
+      // de mise à jour : une carte rouverte puis commentée serait datée d'un
+      // jour où rien ne s'est fini (#176).
+      finiLe: i.closedAt ?? null,
+      release: titreDeJalon(i.milestone),
       parPr: couvertes.get(i.number) ?? null,
+      // L'état de la revue de LA PR qui la ferme, quand il y en a une : les
+      // trois cartes d'un même travail se lisaient « In review » sans jamais
+      // dire où en était cette revue (#128).
+      revue: couvertes.has(i.number) ? (revueDunePr.get(couvertes.get(i.number)) ?? null) : null,
       ...provenance(i.body),
     })),
     ...pr.map((p) => ({
@@ -584,12 +617,188 @@ export function cartesDuTableau({ issues, pr } = {}) {
       etiquettes: [],
       majLe: p.updatedAt ?? null,
       creeLe: p.createdAt ?? null,
+      // Le merge d'abord : une PR mergée est fermée dans la foulée, et les deux
+      // dates sont à la seconde près. C'est le merge qui a fini le travail.
+      finiLe: p.mergedAt ?? p.closedAt ?? null,
+      release: titreDeJalon(p.milestone),
       ci: etatCi(p.statusCheckRollup),
+      revue: revueDunePr.get(p.number) ?? null,
       ...provenance(p.body),
     })),
   ];
 
   return cartes.map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
+}
+
+// ─── À quelle release une carte appartient ────────────────────────────────────
+//
+// Le jalon GitHub le dit déjà — les PR de la 0.8.10 le portent —, et le tableau
+// ne le rendait nulle part (#177). « Qu'est-ce qui constitue la 0.8.10 » ne se
+// lisait donc que sur GitHub, une carte à la fois.
+//
+// Le titre du jalon, et rien d'autre : ni sa description, ni sa date. Une carte
+// sans jalon dit « no release » — c'est un fait, et un travail non rattaché
+// mérite d'être vu comme tel, pas d'être rendu invisible.
+
+/** Ce que le tableau retient d'un jalon : son titre, ou `null`. */
+export function titreDeJalon(jalon) {
+  const titre = typeof jalon?.title === 'string' ? jalon.title.trim() : '';
+  return titre === '' ? null : titre;
+}
+
+/** Ce que porte une carte sans jalon — dit, jamais laissé en blanc. */
+export const SANS_RELEASE = 'no release';
+
+/**
+ * La release demandée par une adresse : `#chantiers?release=0.9` → `0.9`.
+ *
+ * Le filtre vit dans l'ADRESSE (revue C de la PR #192) : sans cela, « ce qui
+ * constitue la 0.9 » ne se partageait pas — le lien renvoyait au tableau
+ * entier, et le destinataire devait deviner quel bouton cliquer. Rien, une
+ * adresse sans requête ou une valeur illisible rendent `''`, c'est-à-dire tout
+ * le tableau : une adresse abîmée montre trop, jamais rien.
+ *
+ * Écrite pour être lue DEUX fois : ici par les tests, et par la page, où
+ * `build.mjs` l'inscrit telle quelle. Elle ne ferme donc sur rien et n'emploie
+ * que ce qu'un navigateur connaît depuis toujours.
+ */
+export function releaseDuHash(hash) {
+  var brut = String(hash == null ? '' : hash);
+  var i = brut.indexOf('?');
+  if (i < 0) return '';
+  var m = /(?:^|&)release=([^&]*)/.exec(brut.slice(i + 1));
+  if (!m) return '';
+  try {
+    return decodeURIComponent(m[1]);
+  } catch (e) {
+    return '';
+  }
+}
+
+/** L'adresse qui montre une release : `0.9` → `#chantiers?release=0.9`. */
+export function hashDeLaRelease(release) {
+  var r = String(release == null ? '' : release);
+  return r === '' ? '#chantiers' : '#chantiers?release=' + encodeURIComponent(r);
+}
+
+/**
+ * Le titre d'un jalon ramené à une forme que `comparerSemver` sait lire, ou
+ * `null` si ce n'en est pas une.
+ *
+ * Deux segments comptent : ce dépôt nomme ses jalons « 0.9 » autant que
+ * « 0.8.10 » (vu en collectant le 18/09/2026 — 28 cartes sous « 0.9 »). Sans
+ * cette lecture, « 0.9 » n'était pas une version du tout et se rangeait
+ * APRÈS « 0.8.10 », dans les jalons alphabétiques : le filtre s'ouvrait sur la
+ * release passée en donnant la suivante pour un nom quelconque.
+ */
+function comparable(titre) {
+  const t = String(titre ?? '').trim();
+  if (/^v?\d+\.\d+$/.test(t)) return `${t}.0`;
+  return comparerSemver(t, t) === null ? null : t;
+}
+
+/**
+ * Les releases présentes sur le tableau, pour en faire un filtre.
+ *
+ * Rangées de la plus récente à la plus ancienne par `comparerSemver`, qui sait
+ * déjà que `0.8.10` vient après `0.8.9` — un tri de chaînes mettrait la 0.8.10
+ * avant la 0.8.9 et le filtre s'ouvrirait sur la mauvaise. Ce qui n'est pas un
+ * numéro de version garde son ordre alphabétique, après les numéros : un jalon
+ * nommé « Backlog » n'est pas une version et ne prétend pas l'être.
+ * « no release » ferme la marche quand au moins une carte n'a pas de jalon.
+ */
+export function releasesDuTableau(cartes) {
+  const titres = [
+    ...new Set(
+      (cartes ?? []).map((c) => c.release).filter((r) => typeof r === 'string' && r !== ''),
+    ),
+  ];
+  const versions = titres.filter((t) => comparable(t) !== null);
+  const autres = titres.filter((t) => comparable(t) === null).sort();
+  versions.sort((a, b) => -(comparerSemver(comparable(a), comparable(b)) ?? 0));
+  const sansJalon = (cartes ?? []).some((c) => !c.release);
+  return [...versions, ...autres, ...(sansJalon ? [SANS_RELEASE] : [])];
+}
+
+// ─── Ce qu'une colonne MONTRE ─────────────────────────────────────────────────
+//
+// « Done » gardait ses huit premières cartes dans l'ordre où elles arrivaient,
+// c'est-à-dire par numéro décroissant : l'ordre d'OUVERTURE, pas celui
+// d'achèvement. Le 16/09/2026, les huit issues fermées de la journée ont donc
+// rempli les huit places, et les six PR mergées le même jour sont parties dans
+// « + 67 more » : le tableau a montré 75 cartes finies et pas une seule des PR
+// qui les avaient finies (#176).
+//
+// La colonne répond maintenant à la question qu'on lui pose vraiment — « qu'a-
+// t-on fini ces jours-ci ? » — donc une FENÊTRE de temps, du plus récent au
+// plus ancien, et le reste replié sous son compte.
+
+/** La fenêtre de « Done » : ce qui s'est fini dans la semaine. */
+export const JOURS_DE_FENETRE = 7;
+
+/**
+ * Le minimum qu'une colonne finie montre quand la fenêtre est vide.
+ *
+ * Une semaine sans rien finir est un fait, et la colonne le dit en ne montrant
+ * presque rien. Mais la vider complètement sous un « + 75 older » cacherait
+ * jusqu'au dernier travail livré, que le plafond de huit montrait au moins.
+ * Trois cartes : assez pour savoir où on en était, trop peu pour faire croire
+ * que c'est de cette semaine.
+ */
+const MINIMUM_VISIBLE = 3;
+
+/** Les colonnes qui regardent en arrière, et se lisent donc par date. */
+const COLONNES_FINIES = new Set(['Done', 'Abandoned']);
+
+/** Une date lisible en millisecondes, ou `null` — jamais une date inventée. */
+function instant(valeur) {
+  const t = Date.parse(String(valeur ?? ''));
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Ce qu'une colonne montre, et ce qu'elle replie.
+ *
+ * Les colonnes vivantes (« To do » à « In review ») montrent tout : ce sont des
+ * appels à l'action, et en cacher un le ferait oublier.
+ *
+ * Les colonnes finies se rangent du plus récemment fini au plus ancien, PR
+ * mergées et issues fermées MÊLÉES. Pas de bande « merged » à part : la
+ * question est chronologique, la carte d'une PR se reconnaît déjà à son liseré
+ * et à son « PR #n », et couper la colonne en deux rendrait la même question
+ * qu'aujourd'hui — laquelle des deux piles faut-il lire d'abord.
+ *
+ * Une carte SANS date de fin ne peut pas entrer dans une fenêtre : elle est
+ * repliée avec les anciennes, jamais datée d'office.
+ */
+export function pileDuneColonne(cartes, nom, maintenant = Date.now(), jours = JOURS_DE_FENETRE) {
+  const dedans = (cartes ?? []).filter((c) => c.colonne === nom);
+  if (!COLONNES_FINIES.has(nom)) {
+    return { montrees: dedans, replies: 0, plusAnciennes: 0, sansDate: 0 };
+  }
+
+  const datees = dedans
+    .map((c) => ({ carte: c, quand: instant(c.finiLe) }))
+    .sort((a, b) => (b.quand ?? -Infinity) - (a.quand ?? -Infinity));
+  const depuis = maintenant - jours * 24 * 60 * 60 * 1000;
+  const dansLaFenetre = datees.filter((d) => d.quand !== null && d.quand >= depuis);
+  const montrees =
+    dansLaFenetre.length > 0
+      ? dansLaFenetre
+      : datees.slice(0, MINIMUM_VISIBLE).filter((d) => d.quand !== null);
+
+  // Le repli se compte en DEUX, parce que ce sont deux choses (revue C de la
+  // PR #188) : ce qui est plus ancien que la fenêtre, et ce dont on ignore la
+  // date. Les mettre ensemble sous « older » affirmerait d'une carte sans date
+  // qu'elle est vieille, et c'est justement ce qu'on ne sait pas.
+  const sansDate = dedans.filter((c) => instant(c.finiLe) === null).length;
+  const replies = dedans.length - montrees.length;
+  return {
+    montrees: montrees.map((d) => d.carte),
+    replies,
+    plusAnciennes: replies - sansDate,
+    sansDate,
+  };
 }
 
 // ─── Ce que le dépôt sait de sa propre release ────────────────────────────────
@@ -827,7 +1036,14 @@ export function ecritParUnAgent(corps) {
 function lignesAnnotees(texte) {
   const out = [];
   let cloture = null;
-  for (const ligne of texte.split('\n')) {
+  // Découpage sur `\r?\n`, et c'est tout sauf un détail (constaté en rendant le
+  // tableau, 18/09/2026) : GitHub rend les corps en CRLF. Un `\r` traînant à la
+  // fin d'une ligne est un TERMINATEUR de ligne pour JavaScript, que `.` ne
+  // reconnaît pas — « ## Verified\r » ne satisfaisait donc plus la forme d'un
+  // titre, et la clôture d'un bloc ne satisfaisait plus la sienne. Toutes les
+  // PR portaient la pastille « no verified facts » alors qu'elles portaient
+  // leur section, et un bloc de code y restait ouvert jusqu'au bas du corps.
+  for (const ligne of texte.split(/\r?\n/)) {
     const marque = /^ {0,3}(`{3,}|~{3,})/.exec(ligne)?.[1];
     if (cloture) {
       const ferme =
@@ -900,6 +1116,172 @@ export function porteDesFaitsVerifies(corps) {
 export function sansFaitsVerifies(cartes) {
   if (!Array.isArray(cartes)) return [];
   return cartes.filter((c) => c.etat === 'OPEN' && c.parUnAgent && !c.faitsVerifies);
+}
+
+// ─── Où en est la revue d'une PR ──────────────────────────────────────────────
+//
+// Le tableau disait « In review » et rien d'autre : ni par qui, ni combien de
+// passes, ni le dernier verdict (issue #128). Une PR relue quatre fois et une
+// PR que personne n'a ouverte s'affichaient pareil, et les issues qu'une PR
+// ferme n'en disaient pas davantage.
+//
+// La source est un FAIT écrit là où la revue se passe : un commentaire de la
+// PR, dans une forme stable. Le corps est lu aussi, pour les PR d'avant cette
+// règle qui portent la section dedans.
+//
+//   ## Review pass 2 (Reviewer C, 2026-09-18)
+//
+//   Verdict: approve (0 blocking, 0 important, 4 minor)
+//
+// Rien n'est deviné : un en-tête qui ne suit pas la forme est IGNORÉ et dit
+// dans les avertissements, jamais interprété au jugé. Ce portail existe contre
+// les affirmations ; il ne va pas en fabriquer une sur l'état d'une revue.
+
+/**
+ * `## Review pass <N> (<relecteur>, <AAAA-MM-JJ>)` — le titre, exactement.
+ *
+ * Deux libertés et deux exigences, qu'il vaut mieux écrire que découvrir
+ * (revue C de la PR #175) :
+ *   — le NIVEAU du titre est libre, de `#` à `######` : la convention pose
+ *     `##`, un commentaire qui remonte d'un cran reste lu ;
+ *   — la casse est libre ;
+ *   — le numéro est en CHIFFRES et la date en AAAA-MM-JJ ; « pass two » ou
+ *     « hier » sont refusés et dits, jamais devinés ;
+ *   — le nom du relecteur ne contient ni virgule ni parenthèse, puisque ce
+ *     sont elles qui délimitent les trois champs.
+ */
+const ENTETE_PASSE = /^review pass\s+(\d+)\s*\(\s*([^,()]+?)\s*,\s*(\d{4}-\d{2}-\d{2})\s*\)$/i;
+
+/**
+ * `Verdict: <approve|request_changes> (<b> blocking, <i> important, <m> minor)`.
+ *
+ * Elle doit être la PREMIÈRE ligne non vide sous le titre : le texte libre
+ * vient après, jamais avant. C'est voulu — chercher le verdict n'importe où
+ * sous le titre le ferait trouver dans une phrase qui le CITE (« la passe 1
+ * disait Verdict: approve »), et la carte annoncerait un verdict que personne
+ * n'a rendu. Une ligne qui ne suit pas la forme fait une passe ignorée, dite
+ * dans `warnings` (revue C de la PR #175).
+ */
+const LIGNE_VERDICT =
+  /^verdict:\s*(approve|request_changes)\s*\(\s*(\d+)\s+blocking\s*,\s*(\d+)\s+important\s*,\s*(\d+)\s+minor\s*\)$/i;
+
+/**
+ * La taille d'une page de commentaires que `gh` rend avec une PR.
+ *
+ * Ce n'est pas une mesure : `gh pr list --json comments` ne documente aucune
+ * garantie de complétude, et ce dépôt n'a pas de PR assez bavarde pour le
+ * montrer (la plus longue liste y fait sept commentaires, PR #45, comparée à
+ * `gh pr view 45 --json comments` : mêmes sept, mêmes identifiants). Cent est
+ * la page usuelle de l'API GraphQL. Une liste qui l'atteint est donc traitée
+ * comme PEUT-ÊTRE tronquée et le dit, plutôt que de laisser une carte retomber
+ * en silence sur « pas encore relue ».
+ */
+const COMMENTAIRES_PAR_PAGE = 100;
+
+/** Rien à dire : aucune passe lue, la PR attend encore sa première relecture. */
+const AUCUNE_REVUE = {
+  passes: 0,
+  lastReviewer: null,
+  lastDate: null,
+  lastVerdict: null,
+  counts: null,
+  status: 'in-review',
+};
+
+/**
+ * L'état de la revue d'une PR, lu dans son corps et dans ses commentaires.
+ *
+ * Prend une chaîne ou une liste de chaînes (le corps d'abord, puis les
+ * commentaires dans leur ordre). Rend toujours un objet — jamais `null` —, où
+ * `passes` est le NUMÉRO de la dernière passe (0 quand il n'y en a aucune) et
+ * `status` vaut :
+ *
+ *   - `in-review` — aucune passe lisible : personne n'a encore rendu de
+ *     verdict, ou ce qui est écrit ne suit pas la forme (et `warnings` le dit) ;
+ *   - `approved-waiting-merge` — la DERNIÈRE passe approuve, sans rien de
+ *     bloquant ni d'important. C'est la condition d'arrêt de la boucle de revue
+ *     du CLAUDE.md, mot pour mot ;
+ *   - `changes-requested` — tout le reste.
+ *
+ * Le mot du verdict ET les comptes doivent s'accorder pour peindre en vert : un
+ * « request_changes (0 blocking, 0 important) » se contredit lui-même, et entre
+ * deux lectures d'un même fait la page prend la plus sévère. Un faux vert sur
+ * un tableau de suivi est exactement ce que ce portail existe pour empêcher.
+ *
+ * Les blocs de code sont retirés avant lecture, comme pour `## Verified` : une
+ * passe CITÉE en exemple — il y en a dans les tests de ce portail — n'est pas
+ * une passe rendue.
+ */
+export function reviewState(corpsEtCommentaires) {
+  const sources = Array.isArray(corpsEtCommentaires) ? corpsEtCommentaires : [corpsEtCommentaires];
+  const passes = [];
+  const warnings = [];
+
+  for (const source of sources) {
+    const lignes = lignesAnnotees(String(source ?? ''));
+    for (let i = 0; i < lignes.length; i += 1) {
+      if (lignes[i].dansUnBloc) continue;
+      const titre = TITRE.exec(lignes[i].ligne);
+      if (!titre) continue;
+      const texte = titre[2].trim();
+      if (!/^review pass\b/i.test(texte)) continue;
+      const entete = ENTETE_PASSE.exec(texte);
+      if (!entete) {
+        warnings.push(`unreadable review pass header: "${texte}"`);
+        continue;
+      }
+      // Le verdict est la première ligne qui DIT quelque chose sous le titre.
+      // Absent ou mal formé, la passe ne compte pas : un titre seul ne dit pas
+      // où en est la revue.
+      let verdict = null;
+      for (let j = i + 1; j < lignes.length; j += 1) {
+        const { ligne, dansUnBloc } = lignes[j];
+        if (dansUnBloc || ligne.trim() === '') continue;
+        if (TITRE.test(ligne)) break;
+        verdict = LIGNE_VERDICT.exec(ligne.trim());
+        break;
+      }
+      if (!verdict) {
+        warnings.push(`review pass ${entete[1]} has no readable verdict line`);
+        continue;
+      }
+      passes.push({
+        numero: Number(entete[1]),
+        reviewer: entete[2].trim(),
+        date: entete[3],
+        verdict: verdict[1].toLowerCase(),
+        counts: {
+          blocking: Number(verdict[2]),
+          important: Number(verdict[3]),
+          minor: Number(verdict[4]),
+        },
+      });
+    }
+  }
+
+  if (passes.length === 0) return { ...AUCUNE_REVUE, warnings };
+
+  // La DERNIÈRE passe est celle du plus grand numéro : les commentaires
+  // arrivent dans l'ordre, mais une passe recopiée dans le corps d'une vieille
+  // PR n'a pas d'ordre du tout. À numéro égal, la dernière lue gagne.
+  let derniere = passes[0];
+  for (const p of passes) if (p.numero >= derniere.numero) derniere = p;
+  const propre = derniere.counts.blocking === 0 && derniere.counts.important === 0;
+
+  return {
+    // Le NUMÉRO atteint, pas le nombre de sections lues : la session ne poste
+    // qu'un commentaire par passe, et une PR reprise dont seule la passe 3 est
+    // recopiée en est bien à sa troisième. « Pass 1 » sur une revue qui en a
+    // vu trois serait un fait faux, et la boucle a un budget de quatre.
+    passes: derniere.numero,
+    lastReviewer: derniere.reviewer,
+    lastDate: derniere.date,
+    lastVerdict: derniere.verdict,
+    counts: derniere.counts,
+    status:
+      derniere.verdict === 'approve' && propre ? 'approved-waiting-merge' : 'changes-requested',
+    warnings,
+  };
 }
 
 // ─── La gravité ───────────────────────────────────────────────────────────────
@@ -1993,7 +2375,15 @@ export function fusionnerTableauGitHub(mesure, frais) {
   if (!frais?.chantiers) return socle;
   return {
     ...socle,
-    chantiers: frais.chantiers,
+    // Le tableau publié ne porte QUE ses cartes — l'état dérivé —, jamais les
+    // lignes brutes de GitHub (revue C de la PR #175). Le snapshot est un
+    // fichier suivi, donc publié : y déposer les corps des issues et des PR,
+    // et depuis #128 les corps des COMMENTAIRES, revenait à republier des
+    // milliers de lignes écrites ailleurs, dont un secret cité dans une
+    // discussion. Personne ne lisait `issues` ni `pr` : la page ne connaît que
+    // `cartes`. La projection est ici, au point d'écriture, pour qu'aucun
+    // chemin d'assemblage ne puisse la contourner.
+    chantiers: { cartes: frais.chantiers.cartes ?? null },
     // Le prix d'une PR vient du même GitHub, par une requête distincte. Absent,
     // on garde le dernier connu : l'effacer ferait clignoter la page à chaque
     // requête un peu lente.

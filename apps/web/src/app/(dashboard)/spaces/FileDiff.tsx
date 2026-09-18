@@ -14,6 +14,15 @@
 // fichier inchangé alors que, le plus souvent, l'écriture est simplement
 // antérieure aux instantanés ou porte sur un fichier que le `.gitignore` du
 // dossier exclut.
+//
+// L'AUTRE DESSIN DU MÊME OBJET (Reviewer C, #164). La page d'un run dessine le
+// même bloc fichier dans `code/[id]/FileChangeBlock.tsx`, et autrement : elle
+// tient les fragments en mémoire (aucun appel au runner) et rend la plaque
+// numérotée de la planche #135. Ici le diff est DEMANDÉ, paresseux, et le rendu
+// date d'avant la planche. Une seule chose doit rester vraie des deux côtés :
+// les lignes sortent de `fragmentDiff`, jamais d'un second moteur. Ce panneau
+// se posera sur la plaque de `FileChangeBlock` quand viendra la PR #135 du bloc
+// fichier du fil.
 
 import { useState } from 'react';
 import DisclosureButton from '@/components/ui/DisclosureButton';
