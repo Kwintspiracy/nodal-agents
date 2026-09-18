@@ -298,25 +298,45 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
     expect(lifted.reply).toBe('Fourteen issues.');
   });
 
-  it('une réponse qui RECOPIE le rapport d’un verdict ne se lit pas deux fois', () => {
-    // Quentin, 18/09 : l'orchestrateur rendait le rapport de son relecteur tel
-    // quel, et la page montrait la même relecture deux fois — en prose sous
-    // l'en-tête, puis dans le bloc Review. « Il ne devrait y en avoir qu'une
-    // seule et elle devrait être dans le bloc review prévu à cet effet. »
+  it('un run RELU n’a pas de réponse en haut : le bloc Review est sa réponse', () => {
+    // Quentin, 18/09, après mesure : comparer la réponse au rapport ne marche
+    // pas — un modèle qui recopie « tel quel » ne recopie pas octet pour octet
+    // (divergence au caractère 341 sur 5 835, blancs normalisés). La règle est
+    // un FAIT : un verdict enregistré, donc pas de réponse en haut, quel que
+    // soit le texte.
     const recopie = `Rapport de la relecture, tel quel :\n\n---\n\n${RAPPORT}`;
     const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: recopie }] })];
-    expect(liftReply(items, done, [RAPPORT]).reply).toBeNull();
+    expect(liftReply(items, done, true).reply).toBeNull();
+    // Même une réponse qui ne ressemble en rien au rapport : c'est la relecture
+    // qui est la réponse de ce run.
+    const autre: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Je livre.' }] })];
+    expect(liftReply(autre, done, true).reply).toBeNull();
   });
 
-  it('une réponse qui REFORMULE reste : c’est un autre texte, pas une copie', () => {
+  it('un run relu GARDE tout dans sa chronologie : la prose reste dans son tour', () => {
+    // Sortir la prose pour ne pas l'afficher l'aurait fait disparaître des deux
+    // endroits.
+    const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Je livre.' }] })];
+    const lifted = liftReply(items, done, true);
+    expect(lifted.items).toHaveLength(1);
+    const reste = lifted.items[0];
+    expect(reste?.kind === 'turn' && reste.blocks).toEqual([{ kind: 'prose', text: 'Je livre.' }]);
+  });
+
+  it('sans verdict, la réponse sort comme avant', () => {
     const propre = 'Reviewer C a fermé les deux majeurs. Je livre.';
     const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: propre }] })];
-    expect(liftReply(items, done, [RAPPORT]).reply).toBe(propre);
+    expect(liftReply(items, done, false).reply).toBe(propre);
+    // Et le défaut du paramètre est « pas relu » : un appelant qui l'ignore
+    // obtient le comportement d'avant.
+    expect(liftReply(items, done).reply).toBe(propre);
   });
 
-  it('un rapport vide ou absent n’efface aucune réponse', () => {
-    const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Fait.' }] })];
-    expect(liftReply(items, done, [null, '', '   ']).reply).toBe('Fait.');
+  it('un run relu qui a fini SANS un mot : son item `answer` quitte quand même le fil', () => {
+    const items: FeedItem[] = [turn(), { kind: 'answer', text: 'Digest posted.' }];
+    const lifted = liftReply(items, done, true);
+    expect(lifted.reply).toBeNull();
+    expect(lifted.items.some((i) => i.kind === 'answer')).toBe(false);
   });
 
   it('rien ne sort tant que le run court : sa dernière phrase est une étape', () => {

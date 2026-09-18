@@ -246,6 +246,13 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
     expect(page).toContain('1 verdict');
     expect(page).toContain('Two majors closed, one minor left.');
     expect(page).not.toContain('No review on this run');
+    // Et la réponse ne sort PLUS en haut : sur un run relu, le bloc Review EST
+    // la réponse (Quentin, 18/09). Sans cette règle, la relecture se lisait
+    // deux fois sur la même page.
+    expect(page).not.toContain('data-testid="run-reply"');
+    // Elle n'est pas perdue pour autant : elle reste dans la chronologie, à sa
+    // place, et une seule fois.
+    expect(page.replace(/<[^>]*>/g, ' ').split(REPLY)).toHaveLength(2);
   });
 
   it('la page dit DE QUEL run il s’agit', () => {
