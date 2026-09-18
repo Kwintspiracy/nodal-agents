@@ -151,14 +151,18 @@ describe('les entrées du menu @cap:installer-et-demarrer/ecran', () => {
 
   it('ne laisse plus « LLM Providers » ni « Settings » ailleurs', async () => {
     await renderSidebar();
-    expect(groupLabels('Overview')).toEqual([
-      'Dashboard',
-      'Channels',
-      'Code',
-      'Workspaces',
-      'Scheduled',
-    ]);
+    expect(groupLabels('Overview')).toEqual(['Dashboard', 'Channels', 'Workspaces', 'Scheduled']);
     expect(groupLabels('About Nodal-Agents')).not.toContain('Settings');
+  });
+
+  it('ne propose plus « Code » nulle part dans le rail', async () => {
+    await renderSidebar();
+    // Les pages /code et /code/[id] existent toujours, et restent
+    // atteignables par les liens des pages de run et du dossier MCP. C'est la
+    // DESTINATION du menu qui disparaît, en attendant leur fusion dans
+    // Workspaces (issue #143).
+    expect(() => navLink('Code')).toThrow();
+    expect(container.querySelector('a[href="/code"]')).toBeNull();
   });
 });
 

@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import {
   House,
   Tray,
-  Code,
   CardsThree,
   CalendarCheck,
   Sparkle,
@@ -80,7 +79,11 @@ const NAV: Group[] = [
       // portaient la même icône — la ligne parente et son premier enfant
       // étaient indiscernables.
       { href: '/chat', label: 'Channels', icon: Tray },
-      { href: '/code', label: 'Code', icon: Code },
+      // PAS d'entrée « Code » (Quentin, 19/09/2026). Les pages `/code` et
+      // `/code/[id]` restent en place et restent atteignables — la page d'un
+      // run y mène, le dossier MCP aussi. Ce qui disparaît est la DESTINATION
+      // dans le rail : leur fusion dans Workspaces est l'issue #143, et
+      // jusque-là le menu ne propose pas deux portes vers le même endroit.
       // « Workspaces », pas « Spaces » (Quentin, 18/09/2026). La ROUTE ne
       // bouge pas : `/spaces` est dans les favoris et dans les liens déjà
       // envoyés, et un libellé n'a jamais besoin de casser une URL.
