@@ -147,8 +147,11 @@ export function runRows(input: RunRowsInput): ConversationRowModel[] {
  *
  * Il se lit sur les LIGNES affichées, pas sur le compte du menu : les deux
  * portent le même nom mais pas la même portée, le menu comptant aussi ce qui
- * dépasse le plafond de la liste.
+ * dépasse la page chargée.
  */
 export function runningCount(runs: readonly ExternalRunRow[]): number {
   return runs.filter((r) => runIsRunning(r.status)).length;
 }
+
+// `runIsDeletable` vit dans `lib/external-runs.ts` : l'action serveur en a
+// besoin elle aussi, et une règle qui est une GARDE ne se recopie pas.
