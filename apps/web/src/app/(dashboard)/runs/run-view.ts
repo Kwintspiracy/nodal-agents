@@ -243,27 +243,56 @@ export function dropTaskRequest(items: readonly FeedItem[], task: string): FeedI
  * `buildConversationFeed` ne pose `answer` que sur un job `completed`. La
  * garde ne change donc rien à ce qui s'affiche — elle dit la règle dans le
  * code plutôt que de la faire dépendre d'un autre module.
+ *
+ * UN RUN RELU N'A PAS DE RÉPONSE EN HAUT (Quentin, 18/09, après mesure).
+ * ---------------------------------------------------------------------
+ * Un run dont la relecture a été déléguée rendait DEUX fois la même chose :
+ * l'orchestrateur reprenait le rapport de son relecteur dans sa réponse
+ * finale, et la page l'affichait en prose sous l'en-tête, puis en structure
+ * dans le bloc Review.
+ *
+ * La première règle comparait les deux textes et effaçait la réponse quand
+ * elle CONTENAIT le rapport. Elle est morte à la mesure : sur le run
+ * `94bc9dfb…`, la réponse et le rapport du délégué divergent dès le caractère
+ * 341 sur 5 835 après normalisation des blancs (l'orchestrateur avait retiré
+ * les séparateurs `---`, et d'autres écarts suivent) ; l'inclusion échoue même
+ * en ne gardant que lettres et chiffres. Un modèle qui recopie « tel quel » ne
+ * recopie jamais octet pour octet, et un seuil de similarité serait une
+ * heuristique — donc une invention (invariant #4).
+ *
+ * La règle est désormais un FAIT, pas une comparaison : dès que le run porte
+ * au moins un verdict de relecture enregistré — le sien ou celui d'un délégué
+ * —, le bloc Review EST la réponse de ce run, et rien ne sort sous l'en-tête.
+ * L'item `answer` quitte quand même la chronologie : il y serait un doublon de
+ * plus.
+ *
+ * Le compromis est assumé : sur un run de code relu par un délégué, la phrase
+ * finale de l'agent ne se lit plus en haut. Ce que le run a donné se lit dans
+ * Review, dans Delivered et dans Files, et la chronologie garde tout — la
+ * prose reste dans son tour, elle n'est pas sortie pour être jetée.
  */
 export function liftReply(
   items: readonly FeedItem[],
   job: Pick<RunJob, 'completedAt'> & { result?: string | null },
   /**
-   * Les RAPPORTS déjà portés par les verdicts de relecture. Une réponse qui en
-   * recopie un n'est pas abandonnée dans la chronologie : elle n'est
-   * simplement pas affichée deux fois (voir `dropsCopiedReport`).
+   * Le run porte-t-il au moins UN verdict de relecture enregistré — le sien ou
+   * celui d'un délégué ? Alors le bloc Review EST la réponse de ce run, et
+   * rien ne sort sous l'en-tête (voir la règle ci-dessus).
    */
-  reports: readonly (string | null)[] = [],
+  hasReview = false,
 ): { reply: string | null; items: FeedItem[] } {
   const out = [...items];
   if (job.completedAt === null) return { reply: null, items: out };
-  const keep = (reply: string | null): string | null =>
-    reply !== null && dropsCopiedReport(reply, reports) ? null : reply;
   const answerAt = out.findIndex((i) => i.kind === 'answer');
   if (answerAt >= 0) {
     const answer = out[answerAt];
     out.splice(answerAt, 1);
-    return { reply: keep(answer?.kind === 'answer' ? answer.text : null), items: out };
+    return { reply: hasReview ? null : answer?.kind === 'answer' ? answer.text : null, items: out };
   }
+  // Relu ⇒ rien d'autre ne sort, et la chronologie garde tout : la prose du
+  // dernier tour reste DANS son tour. La sortir pour ne pas l'afficher aurait
+  // fait disparaître le texte des deux endroits.
+  if (hasReview) return { reply: null, items: out };
   if (out.some((i) => i.kind === 'failure')) return { reply: null, items: out };
 
   const result = job.result?.trim() ?? '';
@@ -277,7 +306,7 @@ export function liftReply(
   const lastProse = block !== undefined && block.kind === 'prose' ? block : null;
 
   if (result !== '' && readsAsReply(result, lastProse?.text ?? null)) {
-    return { reply: keep(job.result ?? ''), items: out };
+    return { reply: job.result ?? '', items: out };
   }
   if (lastProse === null || turn === undefined || turn.kind !== 'turn') {
     return { reply: null, items: out };
@@ -286,32 +315,7 @@ export function liftReply(
   // Un tour vidé de sa prose et sans appel de modèle n'a plus rien à montrer.
   if (rest.length === 0 && turn.usage === null) out.splice(turnAt, 1);
   else out[turnAt] = { ...turn, blocks: rest };
-  return { reply: keep(lastProse.text), items: out };
-}
-
-/**
- * Cette réponse RECOPIE-T-ELLE un rapport déjà montré par le bloc Review ?
- *
- * Le cas vu par Quentin (18/09, run `94bc9dfb…`) : l'orchestrateur délègue la
- * relecture, puis rend le rapport du relecteur TEL QUEL comme réponse finale,
- * précédé d'une phrase de présentation. La page montrait alors la même
- * relecture deux fois — une fois en prose flottante sous l'en-tête, une fois
- * dans le bloc prévu pour elle. Sa décision : « il ne devrait y en avoir
- * qu'une seule et elle devrait être dans le bloc review prévu à cet effet ».
- *
- * La règle est une ÉGALITÉ DE CONTENU, jamais une heuristique de mots : la
- * réponse contient-elle le rapport, aux blancs près ? Un orchestrateur qui
- * REFORMULE écrit un autre texte, et sa réponse reste — c'est sa parole, pas
- * une copie.
- */
-function dropsCopiedReport(reply: string, reports: readonly (string | null)[]): boolean {
-  const flat = normalizeText(reply);
-  if (flat === '') return false;
-  return reports.some((report) => {
-    if (report === null) return false;
-    const needle = normalizeText(report);
-    return needle !== '' && flat.includes(needle);
-  });
+  return { reply: lastProse.text, items: out };
 }
 
 /**
@@ -390,12 +394,13 @@ export type RunView = {
 export function runView(data: SpaceConversationView): RunView {
   // Dans l'ordre : la demande s'en va (elle titre la page), puis la réponse et
   // le récapitulatif montent au-dessus de la chronologie.
-  // Les rapports déjà portés par le bloc Review : une réponse qui en recopie un
-  // ne se lit pas deux fois sur la même page (Quentin, 18/09).
+  // Un run RELU n'a pas de réponse en haut : le bloc Review est sa réponse
+  // (Quentin, 18/09). Un verdict enregistré suffit à le dire — le sien ou celui
+  // d'un délégué.
   const lifted = liftReply(
     dropTaskRequest(data.feed.items, data.job.task),
     data.job,
-    data.verdicts.map((v) => v.report),
+    data.verdicts.length > 0,
   );
   const { delivered, items } = liftDelivered(lifted.items);
   return {
