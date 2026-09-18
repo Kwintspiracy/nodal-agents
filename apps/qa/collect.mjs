@@ -232,8 +232,13 @@ function chantiers() {
   const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,url,body';
   // `body` : c'est là que « Closes #n » vit — sans lui le tableau ne peut pas
   // savoir qu'une issue a sa PR.
+  // `comments` : c'est là que vit l'état de la revue (#128), une passe par
+  // commentaire dans la forme que `reviewState` lit. Un champ de plus sur la
+  // requête qui existe déjà, et non un appel par PR : `gh pr list` les rend
+  // avec le reste. Comme le corps, ils ne vont pas dans le snapshot — seul
+  // l'état qu'on en tire voyage.
   const CHAMPS_PR =
-    'number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,body,statusCheckRollup';
+    'number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,body,comments,statusCheckRollup';
   const deuxEtats = (famille, champs, limiteFermes) =>
     fusionnerEtats(
       j(`gh ${famille} list --state open --limit 1000 --json ${champs}`),

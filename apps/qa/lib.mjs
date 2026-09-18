@@ -561,6 +561,15 @@ export function cartesDuTableau({ issues, pr } = {}) {
     faitsVerifies: porteDesFaitsVerifies(corps),
   });
 
+  // L'état de la revue, lu UNE fois par PR (#128). Comme la provenance : les
+  // commentaires pèsent lourd et ne vont pas dans le snapshot, seul l'état
+  // qu'on en tire voyage. Les issues qu'une PR ouverte ferme héritent du même
+  // objet, pour que les trois cartes d'un même travail disent la même chose.
+  const revueDunePr = new Map();
+  for (const p of pr) {
+    revueDunePr.set(p.number, reviewState([p.body, ...(p.comments ?? []).map((c) => c?.body)]));
+  }
+
   const cartes = [
     ...issues.map((i) => ({
       type: 'issue',
@@ -572,6 +581,10 @@ export function cartesDuTableau({ issues, pr } = {}) {
       majLe: i.updatedAt ?? null,
       creeLe: i.createdAt ?? null,
       parPr: couvertes.get(i.number) ?? null,
+      // L'état de la revue de LA PR qui la ferme, quand il y en a une : les
+      // trois cartes d'un même travail se lisaient « In review » sans jamais
+      // dire où en était cette revue (#128).
+      revue: couvertes.has(i.number) ? (revueDunePr.get(couvertes.get(i.number)) ?? null) : null,
       ...provenance(i.body),
     })),
     ...pr.map((p) => ({
@@ -585,6 +598,7 @@ export function cartesDuTableau({ issues, pr } = {}) {
       majLe: p.updatedAt ?? null,
       creeLe: p.createdAt ?? null,
       ci: etatCi(p.statusCheckRollup),
+      revue: revueDunePr.get(p.number) ?? null,
       ...provenance(p.body),
     })),
   ];
@@ -827,7 +841,14 @@ export function ecritParUnAgent(corps) {
 function lignesAnnotees(texte) {
   const out = [];
   let cloture = null;
-  for (const ligne of texte.split('\n')) {
+  // Découpage sur `\r?\n`, et c'est tout sauf un détail (constaté en rendant le
+  // tableau, 18/09/2026) : GitHub rend les corps en CRLF. Un `\r` traînant à la
+  // fin d'une ligne est un TERMINATEUR de ligne pour JavaScript, que `.` ne
+  // reconnaît pas — « ## Verified\r » ne satisfaisait donc plus la forme d'un
+  // titre, et la clôture d'un bloc ne satisfaisait plus la sienne. Toutes les
+  // PR portaient la pastille « no verified facts » alors qu'elles portaient
+  // leur section, et un bloc de code y restait ouvert jusqu'au bas du corps.
+  for (const ligne of texte.split(/\r?\n/)) {
     const marque = /^ {0,3}(`{3,}|~{3,})/.exec(ligne)?.[1];
     if (cloture) {
       const ferme =
@@ -900,6 +921,138 @@ export function porteDesFaitsVerifies(corps) {
 export function sansFaitsVerifies(cartes) {
   if (!Array.isArray(cartes)) return [];
   return cartes.filter((c) => c.etat === 'OPEN' && c.parUnAgent && !c.faitsVerifies);
+}
+
+// ─── Où en est la revue d'une PR ──────────────────────────────────────────────
+//
+// Le tableau disait « In review » et rien d'autre : ni par qui, ni combien de
+// passes, ni le dernier verdict (issue #128). Une PR relue quatre fois et une
+// PR que personne n'a ouverte s'affichaient pareil, et les issues qu'une PR
+// ferme n'en disaient pas davantage.
+//
+// La source est un FAIT écrit là où la revue se passe : un commentaire de la
+// PR, dans une forme stable. Le corps est lu aussi, pour les PR d'avant cette
+// règle qui portent la section dedans.
+//
+//   ## Review pass 2 (Reviewer C, 2026-09-18)
+//
+//   Verdict: approve (0 blocking, 0 important, 4 minor)
+//
+// Rien n'est deviné : un en-tête qui ne suit pas la forme est IGNORÉ et dit
+// dans les avertissements, jamais interprété au jugé. Ce portail existe contre
+// les affirmations ; il ne va pas en fabriquer une sur l'état d'une revue.
+
+/** `## Review pass <N> (<relecteur>, <AAAA-MM-JJ>)` — le titre, exactement. */
+const ENTETE_PASSE = /^review pass\s+(\d+)\s*\(\s*([^,()]+?)\s*,\s*(\d{4}-\d{2}-\d{2})\s*\)$/i;
+
+/** `Verdict: <approve|request_changes> (<b> blocking, <i> important, <m> minor)`. */
+const LIGNE_VERDICT =
+  /^verdict:\s*(approve|request_changes)\s*\(\s*(\d+)\s+blocking\s*,\s*(\d+)\s+important\s*,\s*(\d+)\s+minor\s*\)$/i;
+
+/** Rien à dire : aucune passe lue, la PR attend encore sa première relecture. */
+const AUCUNE_REVUE = {
+  passes: 0,
+  lastReviewer: null,
+  lastDate: null,
+  lastVerdict: null,
+  counts: null,
+  status: 'in-review',
+};
+
+/**
+ * L'état de la revue d'une PR, lu dans son corps et dans ses commentaires.
+ *
+ * Prend une chaîne ou une liste de chaînes (le corps d'abord, puis les
+ * commentaires dans leur ordre). Rend toujours un objet — jamais `null` —, où
+ * `passes` est le NUMÉRO de la dernière passe (0 quand il n'y en a aucune) et
+ * `status` vaut :
+ *
+ *   - `in-review` — aucune passe lisible : personne n'a encore rendu de
+ *     verdict, ou ce qui est écrit ne suit pas la forme (et `warnings` le dit) ;
+ *   - `approved-waiting-merge` — la DERNIÈRE passe approuve, sans rien de
+ *     bloquant ni d'important. C'est la condition d'arrêt de la boucle de revue
+ *     du CLAUDE.md, mot pour mot ;
+ *   - `changes-requested` — tout le reste.
+ *
+ * Le mot du verdict ET les comptes doivent s'accorder pour peindre en vert : un
+ * « request_changes (0 blocking, 0 important) » se contredit lui-même, et entre
+ * deux lectures d'un même fait la page prend la plus sévère. Un faux vert sur
+ * un tableau de suivi est exactement ce que ce portail existe pour empêcher.
+ *
+ * Les blocs de code sont retirés avant lecture, comme pour `## Verified` : une
+ * passe CITÉE en exemple — il y en a dans les tests de ce portail — n'est pas
+ * une passe rendue.
+ */
+export function reviewState(corpsEtCommentaires) {
+  const sources = Array.isArray(corpsEtCommentaires) ? corpsEtCommentaires : [corpsEtCommentaires];
+  const passes = [];
+  const warnings = [];
+
+  for (const source of sources) {
+    const lignes = lignesAnnotees(String(source ?? ''));
+    for (let i = 0; i < lignes.length; i += 1) {
+      if (lignes[i].dansUnBloc) continue;
+      const titre = TITRE.exec(lignes[i].ligne);
+      if (!titre) continue;
+      const texte = titre[2].trim();
+      if (!/^review pass\b/i.test(texte)) continue;
+      const entete = ENTETE_PASSE.exec(texte);
+      if (!entete) {
+        warnings.push(`unreadable review pass header: "${texte}"`);
+        continue;
+      }
+      // Le verdict est la première ligne qui DIT quelque chose sous le titre.
+      // Absent ou mal formé, la passe ne compte pas : un titre seul ne dit pas
+      // où en est la revue.
+      let verdict = null;
+      for (let j = i + 1; j < lignes.length; j += 1) {
+        const { ligne, dansUnBloc } = lignes[j];
+        if (dansUnBloc || ligne.trim() === '') continue;
+        if (TITRE.test(ligne)) break;
+        verdict = LIGNE_VERDICT.exec(ligne.trim());
+        break;
+      }
+      if (!verdict) {
+        warnings.push(`review pass ${entete[1]} has no readable verdict line`);
+        continue;
+      }
+      passes.push({
+        numero: Number(entete[1]),
+        reviewer: entete[2].trim(),
+        date: entete[3],
+        verdict: verdict[1].toLowerCase(),
+        counts: {
+          blocking: Number(verdict[2]),
+          important: Number(verdict[3]),
+          minor: Number(verdict[4]),
+        },
+      });
+    }
+  }
+
+  if (passes.length === 0) return { ...AUCUNE_REVUE, warnings };
+
+  // La DERNIÈRE passe est celle du plus grand numéro : les commentaires
+  // arrivent dans l'ordre, mais une passe recopiée dans le corps d'une vieille
+  // PR n'a pas d'ordre du tout. À numéro égal, la dernière lue gagne.
+  let derniere = passes[0];
+  for (const p of passes) if (p.numero >= derniere.numero) derniere = p;
+  const propre = derniere.counts.blocking === 0 && derniere.counts.important === 0;
+
+  return {
+    // Le NUMÉRO atteint, pas le nombre de sections lues : la session ne poste
+    // qu'un commentaire par passe, et une PR reprise dont seule la passe 3 est
+    // recopiée en est bien à sa troisième. « Pass 1 » sur une revue qui en a
+    // vu trois serait un fait faux, et la boucle a un budget de quatre.
+    passes: derniere.numero,
+    lastReviewer: derniere.reviewer,
+    lastDate: derniere.date,
+    lastVerdict: derniere.verdict,
+    counts: derniere.counts,
+    status:
+      derniere.verdict === 'approve' && propre ? 'approved-waiting-merge' : 'changes-requested',
+    warnings,
+  };
 }
 
 // ─── La gravité ───────────────────────────────────────────────────────────────
