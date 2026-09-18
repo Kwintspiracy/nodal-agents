@@ -14,6 +14,7 @@ import type { CardPayloadFor, TableEntry } from '@nodal-agents/shared';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 import { deliverableStatusKey, type DeliverableStatusView } from '@/lib/verification-runs-view.ts';
 import { findLineCounts, type LineCounts } from '@/lib/coding-changes.ts';
+import { failureHint, hintSentence } from '@/lib/failure-hint.ts';
 import type {
   ConversationFeed,
   FeedChildJob,
@@ -227,11 +228,25 @@ function FeedItemView({
           <CardFrame title="Failed" tone="warn">
             <div className="px-4 py-3">
               <Markdown text={item.text} />
+              <HintLine hint={item.hint} />
             </div>
           </CardFrame>
         </div>
       );
   }
+}
+
+/**
+ * LE GESTE, sous l'échec (#184). Le harnais nomme un geste en champ typé
+ * (`hint: 'switch_model'`) et se garde d'écrire la phrase ; c'est ici qu'elle
+ * s'écrit, courte, en anglais. Rien du tout quand aucun geste n'est nommé — ou
+ * quand il l'est dans un mot que cet écran ne connaît pas : un slug brut
+ * affiché ne serait un conseil pour personne.
+ */
+function HintLine({ hint }: { hint: string | null }) {
+  const phrase = hintSentence(hint);
+  if (phrase === null) return null;
+  return <p className="pt-2 text-body-13 text-ink-3">{phrase}</p>;
 }
 
 /**
@@ -1032,6 +1047,9 @@ function DelegationGroup({
                   </div>
                 )}
                 {job.error !== null && <p className="text-body-13 text-err">{job.error}</p>}
+                {/* Le geste que l'échec du délégué appelle, lu sur le même
+                    code que le fil lit pour un run (#184). */}
+                <HintLine hint={failureHint(job.error)} />
               </>
             )}
             {/* Le RÉSUMÉ du verdict enregistré, ici et pas dans la tête : la
