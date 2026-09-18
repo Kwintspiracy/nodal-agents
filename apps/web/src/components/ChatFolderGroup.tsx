@@ -24,10 +24,9 @@
 // redeviendrait un N+1 au premier canal ajouté.
 
 import { useRef, useState } from 'react';
-import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
-  ChatCircle,
+  ChatCircleText,
   DiscordLogo,
   PaperPlaneTilt,
   PlugsConnected,
@@ -38,6 +37,7 @@ import {
 } from '@phosphor-icons/react';
 import InboxFolder from './ui/InboxFolder';
 import SidebarCaret from './ui/SidebarCaret';
+import SidebarRow, { SIDEBAR_ROW } from './ui/SidebarRow';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
 import { chatFolders, DASHBOARD_FOLDER, MCP_FOLDER } from '@/lib/chat-folders.ts';
@@ -57,18 +57,24 @@ const FOLDER_ICON: Readonly<Record<string, PhosphorIcon>> = {
   slack: SlackLogo,
   discord: DiscordLogo,
   whatsapp: WhatsappLogo,
-  [DASHBOARD_FOLDER]: ChatCircle,
+  // Une bulle AVEC DES LIGNES, et pas la bulle nue que portait « Channels »
+  // juste au-dessus (Quentin, 19/09/2026) : le parent et son premier enfant
+  // avaient la même icône. « Channels » a pris un bac ; celui-ci garde la
+  // bulle, parce que c'est bien ici qu'on parle.
+  [DASHBOARD_FOLDER]: ChatCircleText,
   // Une prise branchée, et pas une bulle : ce dossier n'est pas un endroit où
   // l'on parle, c'est ce qui arrive quand une machine se branche au produit.
   [MCP_FOLDER]: PlugsConnected,
 };
 
-/** Une ligne de sous-menu : en retrait du dossier, comme lui l'est du lien. */
-const THREAD_ROW =
-  'mx-3 flex h-9 items-center rounded-lg pr-2.5 pl-12 text-body-13 text-ink-3 transition-colors hover:bg-hover hover:text-ink-2 lg:h-7';
-
-/** Ce que dit le sous-menu quand il n'a pas de fil à montrer. */
-const THREAD_NOTE = 'mx-3 flex h-9 items-center pr-2.5 pl-12 text-body-13 text-ink-4 lg:h-7';
+/**
+ * Ce que dit le sous-menu quand il n'a pas de fil à montrer.
+ *
+ * Une phrase, pas un lien : elle prend la FORME d'une ligne — mêmes marges,
+ * même hauteur, même retrait que les fils qu'elle remplace — sans en prendre
+ * le survol, parce qu'il n'y a rien à cliquer.
+ */
+const THREAD_NOTE = `${SIDEBAR_ROW} pr-2.5 pl-12 text-body-13 text-ink-4`;
 
 export default function ChatFolderGroup() {
   const pathname = usePathname();
@@ -121,25 +127,27 @@ export default function ChatFolderGroup() {
         const fils = threads === null ? null : (threads[f.key] ?? []);
         return (
           <div key={f.key}>
-            <div className="flex items-center">
-              <div className="min-w-0 flex-1">
-                <InboxFolder
-                  folderKey={f.key}
+            {/* Le chevron est DANS la ligne du dossier, frère de son lien : le
+                survol appartient à la ligne entière, chevron compris. Il vivait
+                à côté, dans un conteneur sans fond, et la ligne s'éclairait à
+                moitié (Quentin, 19/09/2026). */}
+            <InboxFolder
+              folderKey={f.key}
+              label={f.label}
+              href={f.href}
+              icon={<Icon size={14} className="h-3.5 w-3.5" />}
+              waiting={f.waiting}
+              running={f.running}
+              active={f.active}
+              caret={
+                <SidebarCaret
+                  open={ouvert}
+                  onToggle={() => basculer(f.key)}
                   label={f.label}
-                  href={f.href}
-                  icon={<Icon size={14} className="h-3.5 w-3.5" />}
-                  waiting={f.waiting}
-                  running={f.running}
-                  active={f.active}
+                  testId={`folder-caret-${f.key}`}
                 />
-              </div>
-              <SidebarCaret
-                open={ouvert}
-                onToggle={() => basculer(f.key)}
-                label={f.label}
-                testId={`folder-caret-${f.key}`}
-              />
-            </div>
+              }
+            />
             {ouvert && (
               <div className="flex flex-col gap-0.5 pt-0.5" data-testid={`folder-threads-${f.key}`}>
                 {erreur !== null ? (
@@ -150,27 +158,28 @@ export default function ChatFolderGroup() {
                   <p className={THREAD_NOTE}>Nothing here yet</p>
                 ) : (
                   fils.map((t) => (
-                    <Link
+                    <SidebarRow
                       key={t.key}
                       href={t.href}
                       title={t.title}
-                      data-testid={`folder-thread-${f.key}`}
-                      className={THREAD_ROW}
+                      depth="thread"
+                      testId={`folder-thread-${f.key}`}
                     >
-                      <span className="truncate leading-5">{t.title}</span>
-                    </Link>
+                      <span className="flex-1 truncate leading-5">{t.title}</span>
+                    </SidebarRow>
                   ))
                 )}
                 {/* « See all » mène à la liste ENTIÈRE du dossier, le même
                     endroit que son nom au-dessus. Il est là parce que cinq fils
                     ne sont pas tous les fils, et que rien d'autre ne le dit. */}
-                <Link
+                <SidebarRow
                   href={f.href}
-                  data-testid={`folder-see-all-${f.key}`}
-                  className="mx-3 flex h-8 w-fit items-center rounded-lg pr-2 pl-12 text-medium-13 text-ink-3 transition-colors hover:bg-hover hover:text-ink lg:h-6"
+                  title="See all"
+                  depth="thread"
+                  testId={`folder-see-all-${f.key}`}
                 >
-                  See all
-                </Link>
+                  <span className="flex-1 truncate leading-5 font-medium!">See all</span>
+                </SidebarRow>
               </div>
             )}
           </div>

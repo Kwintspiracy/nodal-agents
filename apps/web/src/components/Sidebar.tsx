@@ -4,7 +4,7 @@ import { Fragment, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import {
   House,
-  ChatCircle,
+  Tray,
   Code,
   CardsThree,
   CalendarCheck,
@@ -74,7 +74,12 @@ const NAV: Group[] = [
     section: 'Overview',
     items: [
       { href: '/', label: 'Dashboard', icon: House },
-      { href: '/chat', label: 'Channels', icon: ChatCircle },
+      // Un BAC, pas une bulle (Quentin, 19/09/2026). « Channels » est le
+      // dessus du casier : ce qui arrive, tous canaux confondus. La bulle
+      // appartient au dossier « Nodal chats » juste en dessous, et les deux
+      // portaient la même icône — la ligne parente et son premier enfant
+      // étaient indiscernables.
+      { href: '/chat', label: 'Channels', icon: Tray },
       { href: '/code', label: 'Code', icon: Code },
       // « Workspaces », pas « Spaces » (Quentin, 18/09/2026). La ROUTE ne
       // bouge pas : `/spaces` est dans les favoris et dans les liens déjà
@@ -315,106 +320,80 @@ export default function Sidebar({
               {group.section && <SidebarSection>{group.section}</SidebarSection>}
               {group.items.map((it) => (
                 <Fragment key={it.href}>
-                  {it.external && it.brand === 'discord' ? (
-                    // Discord — always Discord-blurple, new tab. Depuis le
-                    // 18/09/2026, la MÊME grammaire que « Documentation » :
-                    // l'icône de gauche dit OÙ l'on va (le logo Discord), et la
-                    // flèche de droite dit qu'on QUITTE l'application. La
-                    // flèche tenait la place du logo, si bien que la seule
-                    // ligne de marque du menu ne portait aucune marque.
-                    // Sizing mirrors SidebarLink: roomy on mobile, compact on desktop.
-                    <a
-                      href={it.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="group mx-3 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-medium-15 text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-medium-13 lg:leading-none!"
-                    >
-                      <span
-                        data-testid="nav-leading-icon"
-                        className="flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5"
-                      >
-                        {it.icon ? (
-                          <it.icon size={20} weight="fill" className="h-5 w-5 lg:h-3.5 lg:w-3.5" />
-                        ) : null}
-                      </span>
-                      <span className="flex-1 truncate leading-5">{it.label}</span>
-                      <ArrowSquareOut
-                        size={14}
-                        weight="bold"
-                        data-testid="external-arrow"
-                        className="h-3.5 w-3.5 shrink-0 text-white/70 lg:h-3 lg:w-3"
-                      />
-                    </a>
-                  ) : it.external ? (
-                    // Plain external link (e.g. Documentation) — mirrors SidebarLink's
-                    // inactive row styling, opens in a new tab, with a small external
-                    // arrow at the end so it reads as "leaves the app".
-                    <a
-                      href={it.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-legacy-16 text-ink-2 transition-colors hover:bg-hover lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-body-13 lg:leading-none!"
-                    >
-                      <span
-                        data-testid="nav-leading-icon"
-                        className="flex h-5 w-5 shrink-0 items-center justify-center text-ink-3 group-hover:text-ink-2 lg:h-3.5 lg:w-3.5"
-                      >
-                        {it.icon ? (
-                          <it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />
-                        ) : null}
-                      </span>
-                      <span className="flex-1 truncate leading-5">{it.label}</span>
-                      <ArrowSquareOut
-                        size={14}
-                        weight="bold"
-                        data-testid="external-arrow"
-                        className="h-3.5 w-3.5 shrink-0 text-ink-4 lg:h-3 lg:w-3"
-                      />
-                    </a>
-                  ) : (
-                    // « Channels » porte un CHEVRON, et lui seul : c'est la
-                    // seule ligne du menu qui ouvre un groupe en dessous
-                    // d'elle. Le nom reste un lien — cliquer « Channels » va
-                    // toujours sur /chat — et le chevron replie les dossiers
-                    // sur place. Deux gestes distincts sur une même ligne,
-                    // d'où un chevron À CÔTÉ du lien et non un bouton autour :
-                    // un <button> ne peut pas contenir un <a>.
-                    <div className="flex items-center">
-                      <div className="min-w-0 flex-1">
-                        <SidebarLink
-                          href={it.href}
-                          label={it.label}
-                          icon={
-                            it.icon ? (
-                              <it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />
-                            ) : undefined
-                          }
-                          dot={it.dot}
-                          count={
-                            it.href === '/approvals'
-                              ? undefined
-                              : it.href === '/chat'
-                                ? chatWaiting > 0
-                                  ? chatWaiting
-                                  : undefined
-                                : it.count
-                          }
-                          pill={
-                            it.href === '/approvals' && pendingCount > 0 ? pendingCount : undefined
-                          }
-                          isActive={isItemActive(it.href, pathname)}
+                  {/* UNE seule forme de ligne pour tout le rail (19/09/2026).
+                      Interne, externe ou marquée Discord, avec chevron ou
+                      sans : c'est le même `SidebarLink`, donc le même
+                      `SidebarRow` dessous — mêmes marges, même hauteur, même
+                      rayon, même fond de survol, même fond actif. Ce qui
+                      change d'une ligne à l'autre tient en trois props : la
+                      teinte de marque, ce qui ferme la ligne à droite, et le
+                      chevron.
+
+                      « Channels » est la seule entrée à porter un chevron :
+                      c'est la seule qui ouvre un groupe sous elle. Cliquer son
+                      nom mène toujours à /chat ; le chevron, lui, ne navigue
+                      pas — c'est un bouton, frère du lien DANS la ligne, si
+                      bien que le survol éclaire la ligne entière, zone du
+                      chevron comprise. */}
+                  <SidebarLink
+                    href={it.href}
+                    label={it.label}
+                    external={it.external === true}
+                    // Discord garde son bleu — une COULEUR, pas une forme.
+                    tint={
+                      it.brand === 'discord'
+                        ? 'bg-[#5865F2] text-white hover:brightness-110'
+                        : undefined
+                    }
+                    icon={
+                      it.icon ? (
+                        <it.icon
+                          size={20}
+                          // Le logo de marque se remplit ; les icônes de
+                          // l'interface restent au trait, comme partout.
+                          {...(it.brand === 'discord' ? { weight: 'fill' as const } : {})}
+                          className="h-5 w-5 lg:h-3.5 lg:w-3.5"
                         />
-                      </div>
-                      {it.href === '/chat' && (
+                      ) : undefined
+                    }
+                    // La flèche dit qu'on QUITTE l'application, et elle ferme
+                    // la ligne — sur Documentation, sur le portail qualité et
+                    // sur Discord, à l'identique.
+                    trailing={
+                      it.external === true ? (
+                        <ArrowSquareOut
+                          size={14}
+                          weight="bold"
+                          data-testid="external-arrow"
+                          className={`h-3.5 w-3.5 shrink-0 lg:h-3 lg:w-3 ${
+                            it.brand === 'discord' ? 'text-white/70' : 'text-ink-4'
+                          }`}
+                        />
+                      ) : undefined
+                    }
+                    dot={it.dot}
+                    count={
+                      it.href === '/approvals'
+                        ? undefined
+                        : it.href === '/chat'
+                          ? chatWaiting > 0
+                            ? chatWaiting
+                            : undefined
+                          : it.count
+                    }
+                    pill={it.href === '/approvals' && pendingCount > 0 ? pendingCount : undefined}
+                    isActive={it.external === true ? false : isItemActive(it.href, pathname)}
+                    caret={
+                      it.href === '/chat' ? (
                         <SidebarCaret
                           open={channelsOpen}
                           onToggle={toggleChannels}
                           label={it.label}
                           testId="channels-caret"
                         />
-                      )}
-                    </div>
-                  )}
+                      ) : undefined
+                    }
+                  />
                   {/* Les dossiers de Chat, JUSTE sous leur lien — dans le même
                       arbre, donc desktop et mobile à la fois. Sous <Suspense> :
                       le groupe lit `useSearchParams`, et sans frontière Next

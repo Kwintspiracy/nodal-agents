@@ -296,9 +296,10 @@ describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', (
     // Le MÊME endroit que le nom du dossier au-dessus : cinq fils ne sont pas
     // tous les fils, et rien d'autre ne le dirait.
     expect(voirTout?.getAttribute('href')).toBe('/chat?folder=telegram');
-    // Il vient APRÈS les fils.
+    // Il vient APRÈS les fils. La dernière LIGNE du bloc, donc — le lien vit
+    // dans sa ligne, comme toutes les lignes du rail depuis le 19/09/2026.
     const bloc = container.querySelector('[data-testid="folder-threads-telegram"]');
-    expect(bloc?.lastElementChild).toBe(voirTout);
+    expect(bloc?.lastElementChild).toBe(voirTout?.closest('[data-sidebar-row]'));
   });
 
   it('replie ce qu’on vient de déplier', async () => {

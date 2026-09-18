@@ -6,9 +6,11 @@
 // Pourquoi il n'est pas un `DisclosureButton`. Celui-ci est un `<button>` qui
 // PORTE le contenu de la ligne ; or les lignes qui se déplient ici — le groupe
 // Channels, chacun de ses dossiers — sont déjà des LIENS, et un bouton ne peut
-// pas contenir un lien. La ligne reste donc ce qu'elle était, cliquable vers sa
-// destination, et le chevron se pose à côté d'elle : cliquer le nom ouvre le
-// dossier, cliquer le chevron le déplie sur place.
+// pas contenir un lien. Le chevron est donc le FRÈRE du lien, à l'intérieur de
+// la ligne (`SidebarRow`) : cliquer le nom ouvre le dossier, cliquer le chevron
+// le déplie sur place, et le survol, qui appartient à la LIGNE, éclaire les
+// deux d'un seul tenant. Il a son propre focus clavier — c'est un vrai
+// `<button>` — et il ne navigue jamais.
 //
 // Même primitif que partout ailleurs (`IconButton` en mode `ghost`, les carets
 // Phosphor du DS) : ni `<button>` nu, ni SVG dessiné à la main.
@@ -37,7 +39,10 @@ export default function SidebarCaret({ open, onToggle, label, testId, className 
       aria-label={aria}
       title={aria}
       data-testid={testId}
-      className={`mr-3 h-9 w-9 rounded-lg text-ink-3 hover:bg-hover hover:text-ink-2 lg:h-6 lg:w-6 ${className}`}
+      // `mr-2` et pas `mr-3` : la ligne porte déjà sa marge, et le chevron ne
+      // règle plus que son retrait DEDANS. Pas de fond propre au survol — il
+      // appartient à la ligne, et deux fonds superposés se verraient.
+      className={`mr-2 h-9 w-9 rounded-lg text-ink-3 hover:text-ink lg:h-6 lg:w-6 ${className}`}
     >
       {open ? <CaretDown size={14} weight="bold" /> : <CaretRight size={14} weight="bold" />}
     </IconButton>

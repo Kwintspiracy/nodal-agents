@@ -34,6 +34,8 @@ vi.mock('../ui/ThemeToggle', () => ({ default: () => null }));
 import Sidebar from '../Sidebar.tsx';
 import { ApprovalsProvider } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
+import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
+import { SIDEBAR_ROW, SIDEBAR_ROW_ACTIVE, SIDEBAR_ROW_IDLE } from '../ui/SidebarRow';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -47,11 +49,11 @@ async function render(node: ReactElement): Promise<void> {
   });
 }
 
-async function renderSidebar(): Promise<void> {
+async function renderSidebar(channels: string[] = []): Promise<void> {
   await render(
     <ApprovalsProvider initial={[]}>
       <ChatFoldersProvider
-        initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+        initial={{ channels, running: {}, runningConversationIds: [], externalRuns: 0 }}
       >
         <Sidebar workspaces={[]} />
       </ChatFoldersProvider>
@@ -243,5 +245,84 @@ describe('le chevron du groupe Channels @cap:reprendre-conversation/ecran', () =
     expect(
       container.querySelector('[data-testid="channels-caret"]')?.getAttribute('aria-expanded'),
     ).toBe('false');
+  });
+});
+
+// ─── Une seule forme de ligne (19/09/2026) ───────────────────────────────────
+
+/**
+ * Le rail déplié EN ENTIER : une entrée de menu, un lien externe, le bouton
+ * Discord, le groupe Channels avec son chevron, un dossier avec le sien, ses
+ * fils et son « See all ». Toutes les sortes de ligne du rail, d'un coup.
+ */
+async function renderTout(): Promise<void> {
+  vi.mocked(listFolderThreadsAction).mockResolvedValue({
+    ok: true,
+    data: { telegram: [{ key: 't1', title: 'Invoice for March', href: '/chat/t1' }] },
+  });
+  await renderSidebar(['telegram']);
+  await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
+}
+
+/** Toutes les lignes du rail, quelle que soit leur profondeur. */
+function rows(): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>('[data-sidebar-row]')];
+}
+
+describe('toutes les lignes du rail ont la MÊME forme @cap:installer-et-demarrer/ecran', () => {
+  it('rend la même classe de ligne pour chacune, quelle que soit sa profondeur', async () => {
+    await renderTout();
+
+    // Le rail déplié porte bien les cinq sortes de ligne : sans elles, la
+    // comparaison ci-dessous ne prouverait rien.
+    expect(container.querySelector('[data-testid="inbox-folder-telegram"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="folder-thread-telegram"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="folder-see-all-telegram"]')).not.toBeNull();
+    expect(rows().length).toBeGreaterThan(20);
+
+    // UNE comparaison, pas cinq assertions : chaque ligne est la forme
+    // commune, suivie de son état et de rien d'autre. Marges, hauteur, rayon,
+    // fond de survol, fond actif — tout vient du même endroit.
+    const formes = new Set(rows().map((r) => r.className));
+    const attendues = new Set([
+      `${SIDEBAR_ROW} ${SIDEBAR_ROW_IDLE}`,
+      `${SIDEBAR_ROW} ${SIDEBAR_ROW_ACTIVE}`,
+      // La seule exception est une COULEUR de marque, pas une forme : le bleu
+      // Discord remplace le fond d'état, le reste de la ligne est identique.
+      `${SIDEBAR_ROW} bg-[#5865F2] text-white hover:brightness-110`,
+    ]);
+    for (const forme of formes) {
+      expect(attendues.has(forme), `forme de ligne inattendue : « ${forme} »`).toBe(true);
+    }
+  });
+
+  it('fait porter le survol à la LIGNE, pas au lien — donc aussi sous le chevron', async () => {
+    await renderTout();
+    for (const testId of ['channels-caret', 'folder-caret-telegram']) {
+      const caret = container.querySelector(`[data-testid="${testId}"]`);
+      const ligne = caret?.closest('[data-sidebar-row]');
+      // Le chevron est DANS la ligne : le fond de survol de celle-ci court
+      // donc sous lui, au lieu de s'arrêter au bord du lien.
+      expect(ligne, `${testId} vit dans une ligne`).not.toBeNull();
+      expect(ligne?.className).toContain('hover:bg-hover');
+      // Et il ne navigue pas : c'est un bouton, pas un lien.
+      expect(caret?.tagName).toBe('BUTTON');
+      expect(caret?.closest('a')).toBeNull();
+    }
+  });
+});
+
+describe('les icônes du rail se distinguent @cap:reprendre-conversation/ecran', () => {
+  it('ne donne pas la même icône à « Channels » et à « Nodal chats »', async () => {
+    await renderTout();
+    const groupe = navLink('Channels').querySelector('[data-testid="nav-leading-icon"] svg');
+    const dossier = container
+      .querySelector('[data-testid="inbox-folder-dashboard"]')
+      ?.querySelector('svg');
+    expect(groupe?.innerHTML).not.toBe('');
+    expect(dossier?.innerHTML).not.toBe('');
+    // Les deux portaient la même bulle : la ligne parente et son premier
+    // enfant étaient indiscernables l'une de l'autre.
+    expect(groupe?.innerHTML).not.toBe(dossier?.innerHTML);
   });
 });

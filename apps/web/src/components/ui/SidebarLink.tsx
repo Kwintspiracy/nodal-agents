@@ -1,9 +1,9 @@
 'use client';
 
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import AttentionCount from './AttentionCount';
+import SidebarRow from './SidebarRow';
 
 type DotVariant = 'agent' | 'skill' | 'conn';
 
@@ -22,6 +22,16 @@ type Props = {
   /** Override active matching — defaults to "pathname equals href or starts
    *  with href + '/'", which is the right behaviour for nested routes. */
   isActive?: boolean;
+  /** Opens in a new tab: a row that LEAVES the app (Documentation, Discord). */
+  external?: boolean;
+  /** Rendered hard right, after the label — the external-link arrow. */
+  trailing?: ReactNode;
+  /** Brand tint replacing the state background (the Discord button's blurple).
+   *  Colour only: the row keeps every other row's shape. */
+  tint?: string;
+  /** The caret that folds whatever sits under this row. A sibling of the link
+   *  inside the row, so hovering anywhere on the row lights all of it. */
+  caret?: ReactNode;
 };
 
 const DOT_BG: Record<DotVariant, string> = {
@@ -32,27 +42,36 @@ const DOT_BG: Record<DotVariant, string> = {
 
 /**
  * SidebarLink — single nav row. Maps to `.side-link` in the design.
- * The active state uses paper-coloured background so it always reads as
- * raised regardless of theme; the design specifies a small drop shadow.
+ *
+ * Its shape, its hover and its active background come from `SidebarRow`, the
+ * ONE row of the rail (2026-09-19): a nav entry, a folder and a thread are the
+ * same row at three depths. What lives here is only what a nav entry carries
+ * and the others do not — the meaning dot, the mono count, the attention pill.
  */
-export default function SidebarLink({ href, label, icon, dot, count, pill, isActive }: Props) {
+export default function SidebarLink({
+  href,
+  label,
+  icon,
+  dot,
+  count,
+  pill,
+  isActive,
+  external = false,
+  trailing,
+  tint,
+  caret,
+}: Props) {
   const pathname = usePathname();
   const active = isActive ?? (pathname === href || pathname.startsWith(href + '/'));
 
   return (
-    // Mobile-first sizing: 48px-tall, 15px rows are comfortable thumb targets
-    // inside the full-screen menu; `lg:` reverts to the compact 30px desktop rail.
-    <Link
+    <SidebarRow
       href={href}
       title={label}
-      className={`group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-legacy-16 transition-colors lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-body-13 lg:leading-none! ${
-        active
-          ? // font-medium! — the "active" row must stay bold at every breakpoint,
-            // including desktop where lg:text-body-13 now also sets font-weight:400;
-            // without `!` the ramp utility's bundled weight wins the cascade tie.
-            'bg-paper text-ink font-medium! shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
-          : 'text-ink-2 hover:bg-hover'
-      }`}
+      active={active}
+      external={external}
+      tint={tint}
+      caret={caret}
     >
       {dot ? (
         <span className="relative flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5">
@@ -72,14 +91,20 @@ export default function SidebarLink({ href, label, icon, dot, count, pill, isAct
         </span>
       ) : (
         <span
-          className={`flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5 ${active ? 'text-ink' : 'text-ink-3 group-hover:text-ink-2'}`}
+          data-testid="nav-leading-icon"
+          className={`flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5 ${
+            tint !== undefined ? '' : active ? 'text-ink' : 'text-ink-3 group-hover:text-ink-2'
+          }`}
         >
           {icon}
         </span>
       )}
-      {/* leading-5: truncate = overflow:hidden, et la line box du leading-none!
-          hérité du Link (13px) tronquerait les descendantes (g, y). */}
-      <span className="flex-1 truncate leading-5">{label}</span>
+      {/* leading-5 : `truncate` coupe le débordement, et la line box du
+          `leading-none!` hérité de la ligne (13 px) rognerait les descendantes
+          (g, y). `font-medium!` — la ligne ACTIVE reste grasse à toutes les
+          tailles, y compris en `lg` où `text-body-13` rembarque un poids 400 ;
+          sans le `!`, l'utilitaire de la rampe gagne l'égalité de spécificité. */}
+      <span className={`flex-1 truncate leading-5 ${active ? 'font-medium!' : ''}`}>{label}</span>
       {pill !== undefined ? (
         // La MÊME pastille que les dossiers du menu Chat, depuis #135 — son
         // apparence « Approvals » (corail translucide, plafond 99) est le
@@ -90,6 +115,7 @@ export default function SidebarLink({ href, label, icon, dot, count, pill, isAct
           <span className="text-mono-13 tracking-[0.02em] text-ink-4 lg:text-mono-11">{count}</span>
         )
       )}
-    </Link>
+      {trailing}
+    </SidebarRow>
   );
 }

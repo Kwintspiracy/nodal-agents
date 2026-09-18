@@ -2,19 +2,25 @@
 
 // InboxFolder — une ligne du groupe « Chat folders » (#135).
 //
-// Plus basse et plus en retrait qu'un `SidebarLink` : ce n'est pas une
+// Plus en RETRAIT qu'un `SidebarLink`, et rien d'autre : ce n'est pas une
 // destination de plus dans la barre, c'est un sous-endroit de « Chat ». Le
 // retrait à gauche (28 px) aligne son icône sous le libellé du lien parent,
 // ce qui est la seule chose qui dise « ceci est dedans ».
+//
+// Sa FORME, en revanche, est celle de toutes les lignes du rail depuis le
+// 19/09/2026 : elle vient de `SidebarRow`. Elle était plus basse, ses coins
+// plus serrés et son état actif différent (`bg-hover`, qu'on lisait comme un
+// survol) ; trois écarts qu'aucune règle ne justifiait, et qui sautaient aux
+// yeux dès que la ligne a gagné un chevron.
 //
 // Deux signaux, jamais confondus : le POINT vert (un run tourne) et la
 // PASTILLE corail (ce qui attend la personne). Le point n'a pas de nombre —
 // voir `lib/chat-folders.ts`, qui porte la règle et sa raison.
 
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 import LiveDot from './LiveDot';
 import AttentionCount from './AttentionCount';
+import SidebarRow from './SidebarRow';
 
 type Props = {
   /** L'identité du dossier — sert au `data-testid`. */
@@ -27,6 +33,8 @@ type Props = {
   /** Un run tourne ici. */
   running: boolean;
   active: boolean;
+  /** Le chevron qui déplie les derniers fils. Frère du lien dans la ligne. */
+  caret?: ReactNode;
 };
 
 export default function InboxFolder({
@@ -37,16 +45,17 @@ export default function InboxFolder({
   waiting,
   running,
   active,
+  caret,
 }: Props) {
   return (
-    <Link
+    <SidebarRow
       href={href}
       title={label}
-      data-testid={`inbox-folder-${folderKey}`}
-      aria-current={active ? 'page' : undefined}
-      className={`group mx-3 flex h-10 items-center gap-2 rounded-lg pr-2.5 pl-7 transition-colors lg:h-8 ${
-        active ? 'bg-hover' : 'hover:bg-hover'
-      }`}
+      active={active}
+      markCurrent
+      depth="folder"
+      testId={`inbox-folder-${folderKey}`}
+      caret={caret}
     >
       <span
         className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center ${
@@ -57,13 +66,11 @@ export default function InboxFolder({
       </span>
       {/* leading-5 : `truncate` coupe le débordement, et une line box serrée
           rognerait les descendantes (g, p, y) du nom du dossier. */}
-      <span
-        className={`flex-1 truncate leading-5 ${active ? 'text-medium-13 text-ink' : 'text-body-13 text-ink-2'}`}
-      >
+      <span className={`flex-1 truncate leading-5 ${active ? 'text-ink font-medium!' : ''}`}>
         {label}
       </span>
       {running && <LiveDot variant="ok" size="sm" />}
       {waiting > 0 && <AttentionCount count={waiting} max={9} variant="solid" />}
-    </Link>
+    </SidebarRow>
   );
 }
