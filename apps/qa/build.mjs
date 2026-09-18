@@ -20,6 +20,12 @@ import {
   ORDRE_DES_BACS,
   MOT_ETAT,
   publicationsDejaFaites,
+  releasesDuTableau,
+  releaseDuHash,
+  hashDeLaRelease,
+  SANS_RELEASE,
+  pileDuneColonne,
+  JOURS_DE_FENETRE,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
@@ -982,24 +988,42 @@ function vueChantiers() {
       r && r.passes > 0
         ? `<span class="ticket__revue">Pass ${r.passes} · ${esc(r.lastReviewer)} · ${esc(r.lastDate)} · ${esc(r.lastVerdict)} (${Number(r.counts.blocking)} blocking, ${Number(r.counts.important)} important, ${Number(r.counts.minor)} minor)</span>`
         : '';
-    return `<a class="ticket ticket--${c.type}" href="${esc(c.url)}" target="_blank" rel="noopener">
-      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${pastilleRevue}${revueIllisible}${ci}${sansFaits}</span>
+    // La release, sur chaque carte (#177). Le jalon le dit déjà côté GitHub ;
+    // sans jalon, la carte porte « no release » plutôt que rien — un travail
+    // rattaché à aucune version est un fait qui mérite d'être vu.
+    const release = c.release ?? SANS_RELEASE;
+    const jeton = `<span class="etiq etiq--release${c.release ? '' : ' etiq--release-absente'}">${esc(release)}</span>`;
+    return `<a class="ticket ticket--${c.type}" data-release="${esc(release)}" href="${esc(c.url)}" target="_blank" rel="noopener">
+      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${jeton}${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${pastilleRevue}${revueIllisible}${ci}${sansFaits}</span>
       <span class="ticket__titre">${esc(c.titre)}</span>
       ${ligneRevue}
       ${etiquettes ? `<span class="ticket__pied">${etiquettes}</span>` : ''}
     </a>`;
   };
 
-  // « Fait » est borné : une colonne qui empile tout l'historique noie les
-  // quatre autres, et ce n'est pas là qu'on regarde.
+  // Ce qu'une colonne finie montre est une FENÊTRE de temps, du plus récent au
+  // plus ancien (#176) — la règle vit dans `lib.mjs`, avec son test. La page
+  // la lit, elle ne la refait pas : un plafond recalculé ici est exactement ce
+  // qui avait fait disparaître les PR mergées.
   const colonnes = COLONNES.map((nom) => {
     const dedans = cartes.filter((c) => c.colonne === nom);
-    const montrees = nom === 'Done' || nom === 'Abandoned' ? dedans.slice(0, 8) : dedans;
+    const { montrees, plusAnciennes, sansDate } = pileDuneColonne(cartes, nom);
+    const fini = nom === 'Done' || nom === 'Abandoned';
+    // Deux comptes, parce que ce sont deux faits : ce qui est plus vieux que la
+    // fenêtre, et ce dont GitHub n'a pas donné la date de fin. « + 63 older »
+    // affirmait des secondes ce qu'on ne sait pas d'elles.
+    const repli = [
+      plusAnciennes > 0 ? `+ ${plusAnciennes} older` : '',
+      sansDate > 0 ? `${plusAnciennes > 0 ? '' : '+ '}${sansDate} with no closing date` : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
     return `<section class="colonne">
       <header><h3>${esc(nom)}</h3><span class="compte">${dedans.length}</span></header>
+      ${fini ? `<p class="fenetre">last ${JOURS_DE_FENETRE} days, newest first</p>` : ''}
       <div class="pile">
         ${montrees.length ? montrees.map(carte).join('') : '<p class="vide">Nothing here.</p>'}
-        ${dedans.length > montrees.length ? `<p class="vide">+ ${dedans.length - montrees.length} more</p>` : ''}
+        ${repli ? `<p class="vide">${repli}</p>` : ''}
       </div>
     </section>`;
   }).join('');
@@ -1007,11 +1031,30 @@ function vueChantiers() {
   const aFaire = cartes.filter((c) => c.colonne === 'To do').length;
   const enReview = cartes.filter((c) => c.colonne === 'In review').length;
 
+  // Le filtre par release (#177) : « ce qui constitue la 0.8.10 » en un clic.
+  // Il masque des cartes déjà rendues, il ne rend pas une autre page : les
+  // comptes de colonne restent ceux du tableau entier, et le bandeau dit
+  // combien de cartes la release montre.
+  const releases = releasesDuTableau(cartes);
+  const filtre =
+    releases.length > 1
+      ? `<div class="filtre-release" role="group" aria-label="Filter by release">
+      <button type="button" class="filtre-release__choix actif" data-release="">All releases</button>
+      ${releases
+        .map(
+          (r) =>
+            `<button type="button" class="filtre-release__choix" data-release="${esc(r)}">${esc(r)} <b>${cartes.filter((c) => (c.release ?? SANS_RELEASE) === r).length}</b></button>`,
+        )
+        .join('')}
+    </div>`
+      : '';
+
   return `
 <section id="chantiers" class="vue actif">
   ${entete('chantiers', 'Work in flight')}
   ${repere('chantiers', 'release')}${cadreRelease()}
   ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} decision${aFaire > 1 ? 's' : ''} waiting on you</b>: they block the rest until they are settled.${enReview > 0 ? ` And ${enReview} pull request${enReview > 1 ? 's are' : ' is'} waiting for your merge.` : ''}</div>` : ''}
+  ${filtre}
   <div class="kanban">${colonnes}</div>
 </section>`;
 }
@@ -1345,6 +1388,7 @@ tr:last-child td{border-bottom:0}
 .colonne header{display:flex;justify-content:space-between;align-items:baseline;
   gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--encre)}
 .colonne h3{font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--encre)}
+.fenetre{font-size:11px;color:var(--encre3);margin:0 0 2px}
 .pile{display:flex;flex-direction:column;gap:10px}
 .ticket{display:flex;flex-direction:column;gap:9px;background:var(--panneau);
   border:1px solid var(--regle);border-radius:5px;padding:15px 16px 14px;
@@ -1367,6 +1411,16 @@ tr:last-child td{border-bottom:0}
 .etiq--vert{background:var(--ok-doux);color:var(--ok);border-color:var(--ok)}
 .etiq--rose{background:rgba(198,70,140,.14);color:#c6468c;border-color:rgba(198,70,140,.3)}
 .etiq--gris{background:var(--panneau2);color:var(--encre3);border-color:var(--regle)}
+.etiq--release{background:var(--panneau2);color:var(--encre2);border-color:var(--regle);
+  font-family:"JetBrains Mono",monospace}
+.etiq--release-absente{color:var(--encre3);font-style:italic}
+.filtre-release{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.filtre-release__choix{font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;
+  border:1px solid var(--regle);background:var(--panneau);color:var(--encre2);cursor:pointer}
+.filtre-release__choix b{font-weight:600;color:var(--encre3)}
+.filtre-release__choix:hover{border-color:var(--encre)}
+.filtre-release__choix.actif{background:var(--accent);color:#fff;border-color:var(--accent)}
+.filtre-release__choix.actif b{color:#fff}
 
 /* ── Divers ── */
 .alerte{border-left:3px solid var(--ko);padding:2px 0 2px 18px;color:var(--encre2);
@@ -1512,8 +1566,46 @@ ${modaleExplications()}
     liens.forEach(function(a){ a.classList.toggle('actif', a.getAttribute('href')===id); });
     window.scrollTo(0,0);
   }
-  window.addEventListener('hashchange', function(){ montrer(location.hash); });
-  montrer(location.hash || '#chantiers');
+  // Les deux lectures de l'adresse, INSCRITES depuis lib.mjs : la page
+  // exécute exactement la fonction que les tests éprouvent, et non une copie
+  // qui dériverait d'elle au premier changement.
+  ${releaseDuHash}
+  ${hashDeLaRelease}
+
+  function vueDuHash(){ return (location.hash || '').split('?')[0]; }
+  window.addEventListener('hashchange', function(){ montrer(vueDuHash()); appliquerFiltre(); });
+
+  // Le filtre par release (#177) : il MASQUE des cartes déjà rendues, sans
+  // toucher aux comptes des colonnes — ceux-là disent le tableau entier, et
+  // les faire varier avec le filtre ferait deux vérités pour un même chiffre.
+  // Il vit dans l'ADRESSE, donc un lien partage « ce qui constitue la 0.9 ».
+  var choix = document.querySelectorAll('.filtre-release__choix');
+  var tickets = document.querySelectorAll('.kanban .ticket');
+  function appliquerFiltre(){
+    var voulue = releaseDuHash(location.hash);
+    var connue = voulue === '';
+    choix.forEach(function(x){ if((x.getAttribute('data-release') || '') === voulue) connue = true; });
+    // Une release absente de CE tableau ne vide pas la page : l'adresse est
+    // peut-être plus vieille que la collecte, et tout montrer est le seul repli
+    // honnête.
+    if(!connue) voulue = '';
+    choix.forEach(function(x){
+      x.classList.toggle('actif', (x.getAttribute('data-release') || '') === voulue);
+    });
+    tickets.forEach(function(t){
+      t.hidden = voulue !== '' && t.getAttribute('data-release') !== voulue;
+    });
+  }
+  choix.forEach(function(b){
+    b.addEventListener('click', function(){
+      // L'adresse décide, l'événement hashchange fait le reste. Un clic sur le choix déjà
+      // actif ne la change pas : d'où le second appel, qui ne coûte rien.
+      location.hash = hashDeLaRelease(b.getAttribute('data-release') || '');
+      appliquerFiltre();
+    });
+  });
+  montrer(vueDuHash() || '#chantiers');
+  appliquerFiltre();
 
   // « Comprendre cette page » : une seule modale, remplie depuis les
   // explications embarquées. Un <dialog> natif du document, pas window.alert :

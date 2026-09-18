@@ -47,6 +47,8 @@ export interface GuardedTickResult extends CronTickResult {
 }
 
 const ZERO_RESULT: CronTickResult = {
+  jobsReclaimed: 0,
+  parentsResumedAfterReclaim: 0,
   orphanJobsReset: 0,
   pendingRecovered: 0,
   stalePendingFailed: 0,

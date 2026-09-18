@@ -231,7 +231,10 @@ describe('declare_verification', () => {
       ctx(),
     );
     expect(echoue.declared).toBe(false);
-    if (!echoue.declared) expect(echoue.reason).toContain('reported a failure');
+    // Le troisième refus dit le FAIT — aucune écriture constatée — depuis
+    // l'issue #102 : une cible dossier ne crédite plus rien, donc « l'outil a
+    // rapporté un échec » serait faux pour un `run_command` qui a réussi.
+    if (!echoue.declared) expect(echoue.reason).toContain('No write was observed');
 
     // Les trois messages diffèrent : c'est ce qui les rend utiles.
     const messages = [jamais, precaution, echoue].map((r) => (r.declared ? '' : r.reason));
@@ -249,7 +252,7 @@ describe('declare_verification', () => {
       ctx(),
     );
     expect(out.declared).toBe(false);
-    if (!out.declared) expect(out.reason).toContain('Nothing was successfully written');
+    if (!out.declared) expect(out.reason).toContain('No write was observed');
     expect((await projet())?.verifyCommands).toBeNull();
   });
 

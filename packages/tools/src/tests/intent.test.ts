@@ -31,10 +31,13 @@ import { writeMutationIntent, codeProjectLockOrder } from '../verification/inten
 import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { fileEditTool } from '../builtin/file-ops/file-edit';
 import { runCommandTool } from '../builtin/run-command';
+import { declareVerificationTool } from '../builtin/declare-verification';
 import { runSkillScriptTool } from '../builtin/run-skill-script';
 import { codeTaskTool } from '../builtin/code-task';
 import { OFFICE_TOOLS } from '../builtin/office-ops';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
+import { z } from 'zod';
+import { resolveAndCheckPath } from '../builtin/file-ops/workspace';
 
 // `@electric-sql/pglite` n'est PAS une dépendance de ce paquet (le harnais la
 // porte) : le type de la poignée est repris de la signature du harnais.
@@ -76,6 +79,9 @@ beforeEach(async () => {
   // Le réglage d'espace revient au défaut (tout coché) — un test qui décoche
   // une surface ne doit pas décider pour les suivants.
   await db.update(entities).set({ verificationSurfaces: {} }).where(eq(entities.id, seed.entityId));
+  // Le harnais factice ne rapporte rien par défaut : chaque test dit ce que SON
+  // run laisse comme lignes vivantes.
+  lignesDuProchainRun = [];
   await db.update(agents).set({ cliDefaults: null }).where(eq(agents.id, seed.agentId));
 });
 
@@ -130,6 +136,71 @@ async function projectRow(key: string) {
 }
 
 const keyOf = (p: string): string => projectKey(normalizePath(p));
+
+/**
+ * Un outil qui fait écrire un TIERS — la forme de `code_task` en mode écriture,
+ * sans le CLI que la machine de test n'a pas.
+ *
+ * Il déclare ce que déclare le vrai : le projet de son `cwd` en cible DOSSIER,
+ * et `reportsHarnessWrites`, qui dit au seam d'aller lire les lignes vivantes
+ * laissées par la session pour savoir quels fichiers constater.
+ */
+const harnaisFactice = {
+  // Le NOM du vrai : le seam range un outil mutant par son nom dans la table
+  // des surfaces de vérification, et un nom inconnu y est refusé. Ce faux-là
+  // joue donc `code_task`, sans le CLI que la machine de test n'a pas.
+  name: 'code_task',
+  description: 'Un harnais de test : il n’écrit rien lui-même.',
+  inputSchema: z.object({ purpose: z.string(), cwd: z.string().optional() }),
+  riskLevel: 'destructive' as const,
+  card: 'delegation' as const,
+  present: () => ({
+    card: 'delegation' as const,
+    to: 'cli',
+    task: 'test',
+    ok: true,
+    resultText: 'fait',
+  }),
+  mutatesWorkspace: true,
+  reportsHarnessWrites: true,
+  resolveMutationTargets: async (input: { cwd?: string }, c: ToolContext) => [
+    {
+      kind: 'dir' as const,
+      path: await resolveAndCheckPath(c, input.cwd ?? '.'),
+      deliverableType: 'code_project' as const,
+    },
+  ],
+  // Les lignes vivantes arrivent PENDANT le run, comme l'enregistreur les pose
+  // pendant une vraie session. Les poser avant l'appel les rangerait parmi
+  // celles d'un run PRÉCÉDENT, que le seam écarte justement, et le test ne
+  // prouverait plus rien.
+  execute: async (_input: unknown, c: ToolContext) => {
+    for (const ligne of lignesDuProchainRun) {
+      await c.db.insert(toolCalls).values({
+        entityId: c.entityId,
+        jobId: c.jobId,
+        card: 'files',
+        ...ligne,
+      } as never);
+    }
+    return { ok: true };
+  },
+};
+
+/** Ce que le harnais factice « rapportera » à son prochain appel. */
+let lignesDuProchainRun: Array<{ toolName: string; toolInput: Record<string, unknown> }> = [];
+
+/** Une ligne `cli:Write` — la forme de Claude Code : un chemin par appel. */
+const ligneEcriture = (path: string) => ({
+  toolName: 'cli:Write',
+  toolInput: { file_path: path, content: 'peu importe' },
+});
+
+/** Une ligne `cli:file_change` — la forme de Codex : plusieurs, avec un genre. */
+const ligneCodex = (changements: Array<{ path: string; kind: string }>) => ({
+  toolName: 'cli:file_change',
+  toolInput: { changes: changements.map((c) => ({ ...c, diff: '+1' })) },
+});
 
 const exists = async (p: string): Promise<boolean> => {
   try {
@@ -475,11 +546,15 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(rows[0]!.addressed, 'la racine à manifeste EST le projet visé').toBe(true);
   });
 
-  it('une écriture RÉUSSIE marque le livrable comme produit', async () => {
-    // `produced` est ce qui autorisera `declare_verification` à dire comment on
-    // vérifie ce projet. Il n'est posé qu'ici, après le succès — et sur les
-    // seuls livrables NOMMÉS : une racine voisine salie par précaution ne
-    // devient pas quelque chose que ce travail a produit.
+  it('un shell qui n’écrit RIEN ne produit rien — son cwd ne le crédite plus (#102) @cap:verifier-un-livrable/moteur', async () => {
+    // Ce test disait l'inverse jusqu'à l'issue #102 : `echo ok` dans `zeta`
+    // posait `produced` sur `zeta` sur la foi de la cible seule, alors que la
+    // commande n'a pas touché un octet, et `declare_verification` accordait
+    // ensuite à ce tour le droit de dire comment ce projet se vérifie.
+    //
+    // Rien n'est lu sous un dossier, donc une cible dossier ne crédite plus.
+    // Ce qui survit de l'ancien test est son autre moitié, et elle compte
+    // toujours : une racine voisine salie par PRÉCAUTION n'est pas produite.
     await mkdir(join(ws, 'zeta'), { recursive: true });
     await mkdir(join(ws, 'alpha'), { recursive: true });
 
@@ -491,12 +566,225 @@ describe('l’intention de mutation, posée par executeTool', () => {
     );
     expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
 
-    const parCle = new Map((await statesOf(jobId)).map((r) => [r.canonicalKey, r.produced]));
-    expect(parCle.get(keyOf(join(ws, 'zeta'))), 'le cwd visé est produit').toBe(true);
-    expect(parCle.get(keyOf(join(ws, 'alpha'))), 'une précaution n’est pas produite').toBe(false);
+    const parCle = new Map((await statesOf(jobId)).map((r) => [r.canonicalKey, r]));
+    const zeta = parCle.get(keyOf(join(ws, 'zeta')));
+    expect(zeta?.addressed, 'le cwd a bien été VISÉ').toBe(true);
+    expect(zeta?.produced, 'mais rien n’y a été constaté').toBe(false);
+    expect(parCle.get(keyOf(join(ws, 'alpha')))?.produced, 'ni la précaution').toBe(false);
   });
 
-  it('un shell qui sort NON-ZÉRO marque quand même le projet produit', async () => {
+  it('un HARNAIS : les fichiers qu’il RAPPORTE sont constatés sur le disque (#102) @cap:verifier-un-livrable/moteur', async () => {
+    // Revue C de la PR #196. Un CLI (Claude Code, Codex) écrit dans son propre
+    // processus : ses écritures ne passent par aucun outil de Nodal, donc le
+    // seam n'a ni empreinte d'avant ni même la liste des fichiers à regarder.
+    // Depuis qu'un `cwd` ne crédite plus rien, tous les runs de harnais
+    // seraient partis en « non constaté » — un faux rouge sur tout le flux.
+    //
+    // Ce qu'il a touché arrive en lignes VIVANTES. On les pose ici comme
+    // l'enregistreur les pose pendant la session, et on passe par le VRAI
+    // seam : c'est le câblage qui est éprouvé, pas la fonction.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    await writeFile(join(ws, 'zeta', 'a.ts'), 'export const a = 1;', 'utf8');
+    await writeFile(join(ws, 'zeta', 'b.ts'), 'export const b = 2;', 'utf8');
+    lignesDuProchainRun = [
+      ligneCodex([
+        { path: join(ws, 'zeta', 'a.ts'), kind: 'update' },
+        { path: join(ws, 'zeta', 'b.ts'), kind: 'add' },
+      ]),
+    ];
+
+    const res = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+
+    const zeta = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(zeta?.addressed, 'le projet est visé par le run').toBe(true);
+    expect(zeta?.produced, 'et ses fichiers rapportés sont sur le disque').toBe(true);
+  });
+
+  it('un SECOND run n’hérite pas des fichiers du premier @cap:verifier-un-livrable/moteur', async () => {
+    // Revue C, passe 2. Les lignes vivantes étaient lues pour tout le JOB : un
+    // second `code_task` dans le même dossier héritait de celles du premier, et
+    // le fichier que le PREMIER avait écrit est toujours sur le disque. Le
+    // second passait donc pour avoir produit sans avoir rien écrit — le faux
+    // vert de #102, revenu par la bande.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    await writeFile(join(ws, 'zeta', 'a.ts'), 'export const a = 1;', 'utf8');
+    lignesDuProchainRun = [ligneEcriture(join(ws, 'zeta', 'a.ts'))];
+
+    const premier = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(premier.outcome === 'error' ? premier.error : premier.outcome).toBe('success');
+    const apresPremier = (await statesOf(jobId)).find(
+      (r) => r.canonicalKey === keyOf(join(ws, 'zeta')),
+    );
+    expect(apresPremier?.produced, 'le premier run a bien écrit').toBe(true);
+
+    // On efface la trace de production pour repartir du même point qu'un job
+    // neuf sur ce projet : ce qui est testé est le SECOND run, qui n'écrit rien
+    // et ne pose aucune ligne nouvelle.
+    await db
+      .update(jobDeliverableVerificationState)
+      .set({ produced: false })
+      .where(eq(jobDeliverableVerificationState.jobId, jobId));
+
+    // Le second run ne rapporte RIEN : aucune ligne nouvelle.
+    lignesDuProchainRun = [];
+    const second = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(second.outcome === 'error' ? second.error : second.outcome).toBe('success');
+    const apresSecond = (await statesOf(jobId)).find(
+      (r) => r.canonicalKey === keyOf(join(ws, 'zeta')),
+    );
+    expect(apresSecond?.produced, 'le second n’a rien écrit, et n’hérite de rien').toBe(false);
+  });
+
+  it('une SUPPRESSION rapportée est constatée par l’absence @cap:verifier-un-livrable/moteur', async () => {
+    // Un fichier supprimé est constaté par son ABSENCE. Le dire « jamais vu sur
+    // le disque » énoncerait un fait faux d'une suppression réussie.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    lignesDuProchainRun = [ligneCodex([{ path: join(ws, 'zeta', 'parti.ts'), kind: 'delete' }])];
+
+    const res = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    const zeta = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(zeta?.produced, 'le fichier annoncé supprimé n’est pas là').toBe(true);
+  });
+
+  it('un fichier VIDÉ est une écriture, pas une absence @cap:verifier-un-livrable/moteur', async () => {
+    // Un harnais qui vide un fichier a bel et bien écrit. Le compter comme
+    // « jamais sur le disque » serait le troisième fait faux de cette famille.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    await writeFile(join(ws, 'zeta', 'vide.ts'), '', 'utf8');
+    lignesDuProchainRun = [ligneEcriture(join(ws, 'zeta', 'vide.ts'))];
+
+    const res = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    const zeta = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(zeta?.produced, 'le fichier est là, vide, donc écrit').toBe(true);
+  });
+
+  it('un fichier RAPPORTÉ que le disque ne porte pas n’est pas constaté, et c’est dit @cap:verifier-un-livrable/moteur', async () => {
+    // Le rapport du CLI ne suffit jamais : on va voir. Un fichier annoncé mais
+    // absent ne crédite rien, et la ligne de journal le nomme (invariant #4).
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    lignesDuProchainRun = [ligneEcriture(join(ws, 'zeta', 'jamais-ecrit.ts'))];
+
+    const dits: string[] = [];
+    const espion = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      dits.push(args.map(String).join(' '));
+    });
+    try {
+      const res = await executeTool(
+        harnaisFactice as never,
+        { purpose: 'test', cwd: 'zeta' },
+        ctx(),
+        autoApprove('code_task'),
+      );
+      expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    } finally {
+      espion.mockRestore();
+    }
+
+    const zeta = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(zeta?.produced, 'rien n’a été constaté').toBe(false);
+    expect(
+      dits.some((l) => l.includes('HARNESS_FILE_NOT_ON_DISK') && l.includes('jamais-ecrit.ts')),
+      'et le fichier manquant est nommé',
+    ).toBe(true);
+  });
+
+  it('un FICHIER écrit dans le même projet, lui, le produit @cap:verifier-un-livrable/moteur', async () => {
+    // L'autre côté de #102, et la raison pour laquelle le correctif n'est pas
+    // un faux rouge : ce qu'un outil NOMME est lu avant et après, donc
+    // constaté. Le tour qui écrit vraiment garde son `produced`.
+    //
+    // Le manifeste fait de `zeta` un PROJET DE CODE : sans lui, le fichier
+    // écrit serait typé `document` (`written-file-type.ts`) et sa ligne d'état
+    // porterait une autre clé que celle du projet — le test passerait à côté.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+
+    const shell = await executeTool(
+      runCommandTool as never,
+      { purpose: 'test', command: 'echo ok', cwd: 'zeta' },
+      ctx(),
+      autoApprove('run_command'),
+    );
+    expect(shell.outcome === 'error' ? shell.error : shell.outcome).toBe('success');
+
+    const ecriture = await executeTool(
+      fileWriteTool as never,
+      { purpose: 'test', path: 'zeta/app.js', content: '// ce que le shell n’a pas écrit\n' },
+      ctx(),
+      autoApprove('file_write'),
+    );
+    expect(ecriture.outcome === 'error' ? ecriture.error : ecriture.outcome).toBe('success');
+
+    const parCle = new Map((await statesOf(jobId)).map((r) => [r.canonicalKey, r]));
+    expect(parCle.get(keyOf(join(ws, 'zeta')))?.produced, 'le fichier est constaté').toBe(true);
+  });
+
+  it('et `declare_verification` le DIT au lieu d’accuser une panne (#102) @cap:verifier-un-livrable/moteur', async () => {
+    // Le bout de la chaîne, sur de vraies lignes : un shell réussit dans un
+    // projet, rien n'y est constaté, et l'outil qui voudrait déclarer la preuve
+    // reçoit le FAIT — pas « l'outil qui le visait a rapporté un échec », qui
+    // enverrait réparer un travail intact.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+
+    const shell = await executeTool(
+      runCommandTool as never,
+      { purpose: 'test', command: 'echo ok', cwd: 'zeta' },
+      ctx(),
+      autoApprove('run_command'),
+    );
+    expect(shell.outcome === 'error' ? shell.error : shell.outcome).toBe('success');
+
+    const etat = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(etat?.addressed, 'le projet a bien été visé').toBe(true);
+    expect(etat?.produced).toBe(false);
+
+    const refus = (await declareVerificationTool.execute(
+      { project_path: join(ws, 'zeta'), commands: [{ command: 'node --check app.js' }] },
+      ctx(),
+    )) as { declared: boolean; reason?: string };
+    expect(refus.declared).toBe(false);
+    expect(refus.reason).toContain('No write was observed');
+    // Ce que le refus ne dit PLUS : une panne qui n'a pas eu lieu.
+    expect(refus.reason).not.toContain('reported a failure');
+    // Et la preuve n'est pas posée sur le projet.
+    expect((await projectRow(keyOf(join(ws, 'zeta'))))?.verifyCommands ?? null).toBeNull();
+  });
+
+  it('le code de sortie d’un shell ne décide de RIEN, dans un sens ni dans l’autre @cap:verifier-un-livrable/moteur', async () => {
     // Revue Codex PR #49, passes 3 puis 4 — et la 4 renverse la 3.
     //
     // La passe 3 avait raison : un `exit 1` ne PROUVE pas qu'on a produit. La
@@ -505,11 +793,11 @@ describe('l’intention de mutation, posée par executeTool', () => {
     // `build && test` sort non-zéro sur un test rouge alors que le build a
     // écrit son dossier de sortie.
     //
-    // Juger sur le code de sortie refusait donc des productions réelles, et
-    // cassait au passage le rattachement du REGISTRE des projets, qui lit le
-    // même signal depuis la PR #46. Le statut d'un processus ne dit rien de ce
-    // qui a été écrit sur le disque ; le savoir demande de le CONSTATER, et
-    // c'est un mécanisme à part (backlog).
+    // La leçon tient toujours, et l'issue #102 la mène au bout : puisque le
+    // statut d'un processus ne dit rien de ce qui a été écrit, et que rien
+    // n'est lu sous le dossier où il a tourné, il n'y a RIEN à créditer — dans
+    // un sens comme dans l'autre. Avant, `exit 1` posait `produced` ; il ne le
+    // pose plus, pas plus que `exit 0`.
     await mkdir(join(ws, 'zeta'), { recursive: true });
 
     const res = await executeTool(
@@ -523,7 +811,7 @@ describe('l’intention de mutation, posée par executeTool', () => {
     const parCle = new Map((await statesOf(jobId)).map((r) => [r.canonicalKey, r]));
     const zeta = parCle.get(keyOf(join(ws, 'zeta')));
     expect(zeta?.addressed, 'le cwd a bien été VISÉ').toBe(true);
-    expect(zeta?.produced, 'et un code de sortie ne dit pas qu’il n’a rien écrit').toBe(true);
+    expect(zeta?.produced, 'et rien n’a été constaté sous lui').toBe(false);
   });
 
   it('une tentative qui n’écrit RIEN salit le projet sans le marquer produit', async () => {

@@ -24,9 +24,11 @@ import { snapshot, headCheckpoint } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
 import { writeMutationIntent, type DirtiedDeliverable } from './verification/intent';
 import { markDeliverablesProduced } from './verification/produced';
+import { constatedHarnessWrites, lignesDeHarnaisDejaLa } from './verification/harness';
 import {
   changedFileTargets,
   observedDeliverableKeys,
+  dossiersNonConstates,
   snapshotFileTargets,
 } from './verification/observed';
 import { attachProductionToProject } from './projects/attach';
@@ -656,8 +658,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   //
   // L'état des fichiers VISÉS est pris AVANT l'outil (issue #60) : c'est la
   // seule façon de constater, après, qu'il a réellement écrit. Une cible
-  // dossier n'est pas prise — elle reste déclarative, voir `observed.ts`.
+  // dossier n'est pas prise — elle ne crédite plus rien, voir `observed.ts`.
   const filesBefore = mutationTargets ? await snapshotFileTargets(mutationTargets) : null;
+  // Et, pour un harnais, les lignes vivantes que ce job porte DÉJÀ : elles
+  // bornent à CE run la lecture d'après (revue C de la PR #196, passe 2). Sans
+  // elles, un second `code_task` dans le même dossier héritait des lignes du
+  // premier, dont les fichiers sont toujours sur le disque — le faux vert de
+  // #102, revenu par la bande.
+  const harnaisAvant = auditTool.reportsHarnessWrites
+    ? await lignesDeHarnaisDejaLa(ctx.db, ctx.jobId)
+    : new Set<string>();
   try {
     const output = await tool.execute(validatedInput, ctx);
     const durationMs = Date.now() - startMs;
@@ -681,15 +691,72 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       //
       // « Réellement écrit » se CONSTATE (issue #60) : un fichier visé dont
       // l'empreinte n'a pas bougé n'est pas produit, quoi que l'outil ait dit.
-      const observed = observedDeliverableKeys({
-        changedFiles: await changedFileTargets(mutationTargets, filesBefore ?? new Map()),
+      // Ce qu'un HARNAIS a écrit arrive autrement : le CLI écrit dans son
+      // propre processus, et ses fichiers ne sont connus que par les lignes
+      // vivantes qu'il a laissées (`verification/harness.ts`). Sans cette
+      // lecture, un run de `code_task` en écriture ne constaterait plus rien
+      // depuis #102, et chaque run se ferait refuser sa déclaration de preuve.
+      const harnais = auditTool.reportsHarnessWrites
+        ? await constatedHarnessWrites({
+            db: ctx.db,
+            jobId: ctx.jobId ?? '',
+            // Le `cwd` du run d'abord : c'est de lui que parle un chemin
+            // relatif rapporté par le CLI.
+            roots: [
+              ...mutationTargets.filter((t) => t.kind === 'dir').map((t) => t.path),
+              ...(ctx.workspaces ?? []).map((w) => w.path),
+            ],
+            dejaLa: harnaisAvant,
+          })
+        : { constates: [], introuvables: [], toujoursLa: [] };
+      // Chaque désaccord sous son propre nom : une écriture annoncée dont le
+      // fichier manque n'est pas une suppression annoncée qui n'a pas eu lieu.
+      if (harnais.introuvables.length > 0) {
+        console.warn(
+          `[verification] HARNESS_FILE_NOT_ON_DISK tool=${auditTool.name} job=${ctx.jobId} ` +
+            `paths=${harnais.introuvables.join(',')}`,
+        );
+      }
+      if (harnais.toujoursLa.length > 0) {
+        console.warn(
+          `[verification] HARNESS_FILE_STILL_ON_DISK tool=${auditTool.name} job=${ctx.jobId} ` +
+            `paths=${harnais.toujoursLa.join(',')}`,
+        );
+      }
+      const aConstater = {
+        changedFiles: [
+          ...(await changedFileTargets(mutationTargets, filesBefore ?? new Map())),
+          ...harnais.constates,
+        ],
         dirTargets: mutationTargets.filter((t) => t.kind === 'dir'),
         workspaceRoots: (ctx.workspaces ?? []).map((w) => w.path),
         // La MÊME règle de projet que l'intention : sinon les deux calculent
         // deux clés pour la même écriture, et `produced` reste faux sur un
         // fichier constaté (revue Codex post-merge de la PR #66, constat C4).
         isProjectRoot: projectRootPredicate(await loadDeclaredCodeRoots(ctx.db, ctx.entityId)),
-      });
+      };
+      const observed = observedDeliverableKeys(aConstater);
+      // Un dossier visé dont RIEN n'a été constaté se dit ici, par un code
+      // (issue #102, invariant #4). C'est le cas d'un `run_command` : son `cwd`
+      // ne crédite plus rien, et le silence serait exactement le faux vert
+      // qu'on vient de retirer. `markDeliverablesProduced` journalise de son
+      // côté les livrables nommés et non constatés ; cette ligne-ci nomme la
+      // CAUSE, qui n'est pas une panne d'écriture.
+      //
+      // OÙ CETTE LIGNE VA, ET OÙ ELLE NE VA PAS (revue C de la PR #196) : dans
+      // le journal du serveur, que personne ne lit depuis le fil. L'agent, lui,
+      // n'apprend rien ici — il le découvre plus tard, au refus de
+      // `declare_verification`, qui lui dit le fait et la sortie. Remonter
+      // l'absence au modèle dès le tour où elle se produit demanderait de
+      // toucher au résultat de l'outil, et c'est une décision de produit à
+      // prendre à part (issue à ouvrir), pas un effet de bord de ce correctif.
+      const sansConstat = dossiersNonConstates(aConstater);
+      if (sansConstat.size > 0) {
+        console.warn(
+          `[verification] VERIFICATION_DIR_NOT_CONSTATED tool=${auditTool.name} job=${ctx.jobId} ` +
+            `keys=${[...sansConstat].join(',')}`,
+        );
+      }
       await markDeliverablesProduced(ctx.db, ctx.jobId, mutationDeliverables, observed);
       await attachProductionToProject(
         {

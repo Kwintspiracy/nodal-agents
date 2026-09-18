@@ -35,14 +35,16 @@ export const EXPLICATIONS = {
 <li><b>In progress</b>: an open issue nobody has carried into a pull request yet.</li>
 <li><b>In review</b>: an open pull request, or an issue that an open pull request closes ("Closes #n" in its body). The work is written, it is waiting to be read.</li>
 <li><b>To test</b>: an issue labelled <code>test</code>: something to try out, or a doubt to settle.</li>
-<li><b>Done</b>: closed issue, merged pull request. Capped at the most recent ones.</li>
+<li><b>Done</b>: closed issue, merged pull request, mixed in one chronology. It shows the last seven days, newest first, and folds the rest under a count; the heading still counts everything.</li>
 <li><b>Abandoned</b>: a pull request closed without being merged.</li>
 </ul>
 <p>The left bar follows the same order as the eye: Work in flight, Capabilities, Gaps, Journeys, Test memory. Those five pages are the ones you steer with, and they read in that order.</p>
 <p>Under the "How it runs" heading sit the four plumbing pages: the test overview, the bench, the triggers and the history. You open them when you doubt a number, not every day.</p>
 <p>On a pull request card, the CI pill says whether its checks are green, red or still running. "CI green" does not mean "reviewed": a pull request is merged after a review AND green checks.</p>
 <p>A "no verified facts" pill marks an open card that an agent opened without a <code>Verified</code> section stating the commands it ran and what they answered. Nothing in such a card was checked against npm, git or a test run, and that is precisely how a version published a week earlier became a task on this board.</p>
-<p>Above the columns, the release block says what npm serves, what the repository carries, and how many commits sit on main since the last tag. If an open card asks to publish a version npm already has, it is named right there.</p>`,
+<p>Above the columns, the release block says what npm serves, what the repository carries, and how many commits sit on main since the last tag. If an open card asks to publish a version npm already has, it is named right there.</p>
+<p>Every card carries the release it belongs to, read from its GitHub milestone. A card attached to no milestone says "no release" rather than nothing: unplanned work is worth seeing. The buttons under the release block keep only one release on the board, so "what makes up 0.8.10" is one click; the column counts stay those of the whole board. The address carries that choice, so the link you copy opens on the same release.</p>
+<p>One limit worth knowing: the filter hides cards the page has already drawn, it never fetches more. A release view is therefore bounded by what Done shows, its last seven days, so an older card of that release stays folded. "What makes up 0.9" reads as complete only while the release is recent.</p>`,
       },
       {
         titre: 'Where it comes from',

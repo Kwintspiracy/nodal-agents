@@ -34,6 +34,19 @@ interface Props {
    * informational modals keep the default `true`.
    */
   dismissable?: boolean;
+  /**
+   * Ancre stable, posée en `data-testid` sur l'élément qui porte
+   * `role="dialog"`.
+   *
+   * Pourquoi elle existe (issue #72) : deux modales très différentes peuvent
+   * s'ouvrir sur le MÊME geste, et rien dans le DOM ne les distinguait qu'un
+   * titre affiché. Cliquer « Install » sur un connecteur OAuth ouvre le
+   * formulaire d'ajout quand un identifiant compatible existe, et l'assistant
+   * d'identifiant quand il n'y en a aucun. Un parcours qui ne sait pas
+   * laquelle il a devant lui peut passer au vert sur le mauvais chemin — c'est
+   * exactement ce qui s'est joué les 10 et 11 septembre.
+   */
+  testId?: string;
 }
 
 /**
@@ -53,6 +66,7 @@ export default function Modal({
   footer,
   className = '',
   dismissable = true,
+  testId,
 }: Props) {
   // SSR-safe portal gate — createPortal needs document, which is only present
   // after hydration. Setting state in this effect is intentional (same pattern
@@ -95,6 +109,7 @@ export default function Modal({
       <div
         role="dialog"
         aria-modal="true"
+        data-testid={testId}
         className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
       >
         <div

@@ -118,6 +118,10 @@ function ConnectorMarketCard({
         onClose={() => setAddOpen(false)}
         title={isInstalled ? `Add account - ${catalogItem.label}` : `Install ${catalogItem.label}`}
         dismissable={false}
+        // L'ancre dit LAQUELLE des deux modales du même bouton s'est ouverte :
+        // celle-ci quand un identifiant compatible existe déjà, l'assistant
+        // quand il n'y en a aucun (issue #72).
+        testId="connector-add-dialog"
       >
         <ConnectorAddForm
           catalogItem={catalogItem}
