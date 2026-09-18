@@ -1510,6 +1510,52 @@ describe('getConversationThreadAction — les secrets d’une carte (#150)', () 
 
     expect(JSON.stringify(r.data.feed)).not.toContain(secret);
   });
+
+  it('un échec SANS code d’erreur retombe sur son résultat, masqué lui aussi (#194)', async () => {
+    // L'item d'échec prend `job.error ?? job.result` : un run qui meurt sans
+    // code d'erreur affiche donc son RÉSULTAT. Rédiger `error` seul aurait
+    // laissé cette porte-là ouverte (revue passe 2).
+    const secret = 'sk-ant-api03-ZYXWVUTSRQPONMLKJIHGFEDCBA98765'; // secrets:allow (fixture : clé factice)
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        title: 'Run en échec sans code',
+        origin: 'user',
+        channel: 'telegram',
+        chatId: 'secret-194-result',
+        createdAt: new Date('2026-09-18T11:00:00Z'),
+        updatedAt: new Date('2026-09-18T11:10:00Z'),
+      })
+      .returning({ id: conversations.id });
+
+    await testDb.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: 'secret-194-result',
+      conversationId: conv!.id,
+      task: 'Appelle l’API',
+      status: 'failed',
+      error: null,
+      result: `stopped while writing ANTHROPIC_API_KEY=${secret}`,
+      messages: [{ role: 'user', content: 'Appelle l’API' }],
+      createdAt: new Date('2026-09-18T11:00:00Z'),
+      completedAt: new Date('2026-09-18T11:01:00Z'),
+    });
+
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(conv!.id);
+    if (!r.ok) throw new Error(`échec inattendu : ${r.code} ${r.message}`);
+
+    const echec = r.data.feed.items.find((i) => i.kind === 'failure');
+    if (echec?.kind !== 'failure') throw new Error('item failure attendu');
+    expect(echec.text).toContain('stopped while writing');
+    expect(echec.text).not.toContain(secret);
+    expect(echec.text).toContain(REDACTED_TEXT);
+    expect(JSON.stringify(r.data.feed)).not.toContain(secret);
+  });
 });
 
 describe('listAllConversationsAction — aucun secret dans la boîte de réception', () => {

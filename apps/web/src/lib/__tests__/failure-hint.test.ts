@@ -18,6 +18,15 @@ import { failureHint, hintSentence } from '../failure-hint.ts';
 const REFUS = `${PROVIDER_REJECTED_PREFIX}openrouter/google/gemini-3.7-flash (http 400, turn 3)`;
 
 describe('failureHint — le geste se lit sur ce qui est persisté @cap:suivre-execution/ecran', () => {
+  it('la constante partagée vaut CE qu’elle doit valoir', () => {
+    // Épinglée en clair, une fois (revue passe 2). Tout le reste du fichier est
+    // bâti SUR elle : si la jonction `node_modules` d'un worktree la résout vers
+    // un autre paquet, elle vaut `undefined` et la suite passe au vert sur du
+    // vide — c'est arrivé. Cette ligne-là le dit tout de suite.
+    expect(PROVIDER_REJECTED_PREFIX).toBe('provider_rejected_request:');
+    expect(PROVIDER_REJECTED).toBe('provider_rejected_request');
+  });
+
   it('un refus du fournisseur appelle un changement de modèle', () => {
     expect(failureHint(REFUS)).toBe('switch_model');
   });
