@@ -40,6 +40,7 @@ import {
   projectNameFromPath,
   fallbackProjectFromAgentWorkspaces,
   isUnderPath,
+  normPath,
 } from './code-projects.ts';
 import { feedDensitySchema, parseFeedDensity, type FeedDensity } from './feed-density.ts';
 import {
@@ -215,6 +216,10 @@ import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
 import { redactPresented } from './redact-presented.ts';
+// P2bis — le récapitulatif de livraison d'un run est posé par la fonction du
+// fil d'une conversation, jamais par une seconde lecture des mêmes lignes.
+import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
+import { classifyProduction } from './chat-or-work.ts';
 import { probeContextWindow } from '@nodal-agents/llm';
 import {
   systemSkillSlugs,
@@ -2489,101 +2494,141 @@ export async function getSpaceConversationAction(
     // ROLLUP_MAX_DEPTH). Chacun porte sa trace D8.
     const descendants = await collectDescendants(db, session.entityId, [id]);
     const relevantIds = [id, ...descendants.map((d) => d.id)];
-    const [verificationRunRows, unconfiguredRows, deliveryRows, costRows, approvalRows] =
-      await Promise.all([
-        db
-          .select({
-            jobId: verificationRuns.jobId,
-            deliverableType: verificationRuns.deliverableType,
-            canonicalKey: verificationRuns.canonicalKey,
-            sequenceId: verificationRuns.sequenceId,
-            commandRank: verificationRuns.commandRank,
-            command: verificationRuns.command,
-            exitCode: verificationRuns.exitCode,
-            outcomeKind: verificationRuns.outcomeKind,
-            durationMs: verificationRuns.durationMs,
-            verdict: verificationRuns.verdict,
-            testedGeneration: verificationRuns.testedGeneration,
-            testedEpoch: verificationRuns.testedEpoch,
-            createdAt: verificationRuns.createdAt,
-          })
-          .from(verificationRuns)
-          .where(
-            and(
-              eq(verificationRuns.entityId, session.entityId),
-              inArray(verificationRuns.jobId, relevantIds),
+    const [
+      verificationRunRows,
+      unconfiguredRows,
+      deliveryRows,
+      costRows,
+      approvalRows,
+      classifiableRows,
+      projectRows,
+      workspaceRoots,
+    ] = await Promise.all([
+      db
+        .select({
+          jobId: verificationRuns.jobId,
+          deliverableType: verificationRuns.deliverableType,
+          canonicalKey: verificationRuns.canonicalKey,
+          sequenceId: verificationRuns.sequenceId,
+          commandRank: verificationRuns.commandRank,
+          command: verificationRuns.command,
+          exitCode: verificationRuns.exitCode,
+          outcomeKind: verificationRuns.outcomeKind,
+          durationMs: verificationRuns.durationMs,
+          verdict: verificationRuns.verdict,
+          testedGeneration: verificationRuns.testedGeneration,
+          testedEpoch: verificationRuns.testedEpoch,
+          createdAt: verificationRuns.createdAt,
+        })
+        .from(verificationRuns)
+        .where(
+          and(
+            eq(verificationRuns.entityId, session.entityId),
+            inArray(verificationRuns.jobId, relevantIds),
+          ),
+        ),
+      db
+        .select({
+          jobId: jobDeliverableVerificationState.jobId,
+          deliverableType: jobDeliverableVerificationState.deliverableType,
+          canonicalKey: jobDeliverableVerificationState.canonicalKey,
+          displayPath: jobDeliverableVerificationState.displayPathSnapshot,
+          decisionStatus: jobDeliverableVerificationState.decisionStatus,
+        })
+        .from(jobDeliverableVerificationState)
+        .where(
+          and(
+            inArray(jobDeliverableVerificationState.jobId, relevantIds),
+            // P3 veut les livrables NON configurés ; P12 veut l'état de TOUS
+            // les documents, `dirty` et `green` compris, pour la carte du
+            // classeur écrit. Une requête, deux lectures triées ensuite.
+            or(
+              inArray(jobDeliverableVerificationState.decisionStatus, [
+                'not_configured',
+                'pending_approval',
+              ]),
+              inArray(jobDeliverableVerificationState.deliverableType, [...FILE_DELIVERABLE_TYPES]),
             ),
           ),
-        db
-          .select({
-            jobId: jobDeliverableVerificationState.jobId,
-            deliverableType: jobDeliverableVerificationState.deliverableType,
-            canonicalKey: jobDeliverableVerificationState.canonicalKey,
-            displayPath: jobDeliverableVerificationState.displayPathSnapshot,
-            decisionStatus: jobDeliverableVerificationState.decisionStatus,
-          })
-          .from(jobDeliverableVerificationState)
-          .where(
-            and(
-              inArray(jobDeliverableVerificationState.jobId, relevantIds),
-              // P3 veut les livrables NON configurés ; P12 veut l'état de TOUS
-              // les documents, `dirty` et `green` compris, pour la carte du
-              // classeur écrit. Une requête, deux lectures triées ensuite.
-              or(
-                inArray(jobDeliverableVerificationState.decisionStatus, [
-                  'not_configured',
-                  'pending_approval',
-                ]),
-                inArray(jobDeliverableVerificationState.deliverableType, [
-                  ...FILE_DELIVERABLE_TYPES,
-                ]),
-              ),
-            ),
+        ),
+      db
+        .select({
+          channel: jobDeliveries.channel,
+          chatId: jobDeliveries.chatId,
+          outcome: jobDeliveries.outcome,
+          attempts: jobDeliveries.attempts,
+          createdAt: jobDeliveries.createdAt,
+          updatedAt: jobDeliveries.updatedAt,
+        })
+        .from(jobDeliveries)
+        .where(eq(jobDeliveries.jobId, id))
+        .orderBy(jobDeliveries.createdAt),
+      // P4 — les appels LLM du job ET de ses délégués, avec l'agent qui a appelé.
+      db
+        .select({
+          agentId: llmCalls.agentId,
+          agentName: agents.name,
+          modelEffective: llmCalls.modelEffective,
+          inputTokens: llmCalls.inputTokens,
+          outputTokens: llmCalls.outputTokens,
+          cachedTokens: llmCalls.cachedTokens,
+          cacheCreationTokens: llmCalls.cacheCreationTokens,
+          costUsd: llmCalls.costUsd,
+          durationMs: llmCalls.durationMs,
+        })
+        .from(llmCalls)
+        .leftJoin(agents, eq(agents.id, llmCalls.agentId))
+        .where(and(eq(llmCalls.entityId, session.entityId), inArray(llmCalls.jobId, relevantIds))),
+      // P4 — l'attente humaine : chaque approbation tranchée, du moment demandé au moment tranché.
+      db
+        .select({
+          requestedAt: approvalRequests.requestedAt,
+          resolvedAt: approvalRequests.resolvedAt,
+        })
+        .from(approvalRequests)
+        .where(
+          and(
+            eq(approvalRequests.entityId, session.entityId),
+            inArray(approvalRequests.jobId, relevantIds),
           ),
-        db
-          .select({
-            channel: jobDeliveries.channel,
-            chatId: jobDeliveries.chatId,
-            outcome: jobDeliveries.outcome,
-            attempts: jobDeliveries.attempts,
-            createdAt: jobDeliveries.createdAt,
-            updatedAt: jobDeliveries.updatedAt,
-          })
-          .from(jobDeliveries)
-          .where(eq(jobDeliveries.jobId, id))
-          .orderBy(jobDeliveries.createdAt),
-        // P4 — les appels LLM du job ET de ses délégués, avec l'agent qui a appelé.
-        db
-          .select({
-            agentId: llmCalls.agentId,
-            agentName: agents.name,
-            modelEffective: llmCalls.modelEffective,
-            inputTokens: llmCalls.inputTokens,
-            outputTokens: llmCalls.outputTokens,
-            cachedTokens: llmCalls.cachedTokens,
-            cacheCreationTokens: llmCalls.cacheCreationTokens,
-            costUsd: llmCalls.costUsd,
-            durationMs: llmCalls.durationMs,
-          })
-          .from(llmCalls)
-          .leftJoin(agents, eq(agents.id, llmCalls.agentId))
-          .where(
-            and(eq(llmCalls.entityId, session.entityId), inArray(llmCalls.jobId, relevantIds)),
-          ),
-        // P4 — l'attente humaine : chaque approbation tranchée, du moment demandé au moment tranché.
-        db
-          .select({
-            requestedAt: approvalRequests.requestedAt,
-            resolvedAt: approvalRequests.resolvedAt,
-          })
-          .from(approvalRequests)
-          .where(
-            and(
-              eq(approvalRequests.entityId, session.entityId),
-              inArray(approvalRequests.jobId, relevantIds),
-            ),
-          ),
-      ]);
+        ),
+      // P2bis — les lignes d'audit du travail ET de toute sa descendance,
+      // pour le RÉCAPITULATIF DE LIVRAISON : la frontière chat/travail se
+      // lit dessus, et le récapitulatif y compte les fichiers et les lignes.
+      // Les mêmes colonnes que le fil d'une conversation (`ClassifiableRow`)
+      // — c'est la même lecture, faite pour un seul travail.
+      db
+        .select({
+          jobId: toolCalls.jobId,
+          toolName: toolCalls.toolName,
+          card: toolCalls.card,
+          presented: toolCalls.presented,
+          riskLevel: toolCalls.riskLevel,
+          toolInput: toolCalls.toolInput,
+          toolOutput: toolCalls.toolOutput,
+        })
+        .from(toolCalls)
+        .where(and(eq(toolCalls.entityId, session.entityId), inArray(toolCalls.jobId, relevantIds)))
+        .orderBy(toolCalls.createdAt),
+      // Le projet du travail, quand il en a un : le récapitulatif dit d'où
+      // sort ce qu'il a produit.
+      job.projectId !== null
+        ? db
+            .select({
+              id: codeProjects.id,
+              displayName: codeProjects.displayName,
+              projectPath: codeProjects.projectPath,
+            })
+            .from(codeProjects)
+            .where(
+              and(eq(codeProjects.entityId, session.entityId), eq(codeProjects.id, job.projectId)),
+            )
+        : Promise.resolve([]),
+      // Les racines des dossiers de travail : un chemin absolu de carte se
+      // ramène au relatif avant d'être compté, sinon le même fichier compte
+      // deux fois (passe 57).
+      entityWorkspaceRoots(db, session.entityId),
+    ]);
     const cost = aggregateSpaceCost({
       calls: costRows,
       approvals: approvalRows,
@@ -2613,6 +2658,55 @@ export async function getSpaceConversationAction(
       deliverables: deliverableStatuses(unconfiguredRows),
     };
 
+    // P2bis / 18/09 — LE RÉCAPITULATIF DE LIVRAISON du run, posé par la même
+    // fonction que le fil d'une conversation (`afterJobItems`), sur la même
+    // matière : les lignes d'audit de tout l'arbre, la preuve rangée sous la
+    // racine, le verdict chat/travail, le projet, les racines de dossiers.
+    // Recopier cette lecture l'aurait fait diverger au premier correctif — et
+    // la page d'un run doit dire de ce run EXACTEMENT ce que le chat en dit.
+    //
+    // La carte est masquée en entrant (#150) : le récapitulatif nomme les
+    // fichiers et les envois qu'elle porte, c'est un chemin de lecture de plus
+    // des mêmes lignes.
+    const auditRows = classifiableRows.map((r) => ({
+      ...r,
+      presented: redactPresented(r.presented),
+    }));
+    const projectRow = projectRows[0];
+    const runJob: ThreadJob = {
+      jobId: job.id,
+      feed,
+      createdAt: job.createdAt,
+      completedAt: job.completedAt,
+      result: job.result,
+      verdict: classifyProduction({
+        conversation: { channel: job.channel, chatId: job.chatId },
+        rows: auditRows,
+      }),
+      project:
+        projectRow === undefined
+          ? null
+          : {
+              id: projectRow.id,
+              name: projectRow.displayName ?? projectNameFromPath(normPath(projectRow.projectPath)),
+              path: projectRow.projectPath,
+            },
+      // La preuve de la racine ET de ses délégués : un délégué qui fait tourner
+      // les tests les fait tourner POUR ce travail (T24).
+      proof: verificationRunRows.map((r) => ({ command: r.command, verdict: r.verdict })),
+      audit: auditRows.map((r) => ({
+        toolName: r.toolName,
+        toolInput: r.toolInput,
+        toolOutput: r.toolOutput,
+        presented: r.presented,
+      })),
+      workspaceRoots,
+    };
+    const feedWithDelivery: ConversationFeed = {
+      items: [...feed.items, ...afterJobItems(runJob)],
+      totals: feed.totals,
+    };
+
     return ok({
       job: {
         id: job.id,
@@ -2628,7 +2722,7 @@ export async function getSpaceConversationAction(
         parentJobId: job.parentJobId,
         scheduleName,
       },
-      feed,
+      feed: feedWithDelivery,
       verification,
       cost,
       deliveries: deliveryRows,
