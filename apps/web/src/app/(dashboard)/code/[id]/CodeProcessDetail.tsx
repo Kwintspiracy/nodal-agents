@@ -130,6 +130,7 @@ export default function CodeProcessDetail({
       {refresh && <LiveRefresh live={live} everyMs={POLL_INTERVAL} />}
 
       <RunHeaderCard
+        runId={header.id}
         task={header.task}
         agentName={header.agentName}
         origin={codeOrigin(header)}
