@@ -51,6 +51,28 @@ export interface CliWriteDeclaration {
 /** Les mots par lesquels un runtime dit « j'ai supprimé ce fichier ». */
 const MOTS_DE_SUPPRESSION = new Set(['delete', 'deleted', 'remove', 'removed']);
 
+/** Ceux par lesquels il dit « j'ai écrit dedans ». */
+const MOTS_D_ECRITURE = new Set([
+  'add',
+  'added',
+  'create',
+  'created',
+  'update',
+  'updated',
+  'modify',
+  'modified',
+  'write',
+  'written',
+]);
+
+/**
+ * Les genres inconnus déjà signalés — UN par valeur, pas un par fichier.
+ *
+ * Un CLI qui se mettrait à dire `rename` en écrirait un par fichier déplacé, et
+ * l'avertissement deviendrait le bruit qui fait ignorer les avertissements.
+ */
+const genresDejaDits = new Set<string>();
+
 /**
  * Les fichiers qu'une ligne d'un outil CLI DÉCLARE avoir touchés.
  *
@@ -59,6 +81,12 @@ const MOTS_DE_SUPPRESSION = new Set(['delete', 'deleted', 'remove', 'removed']);
  *     l'outil) ;
  *   — Codex pose `changes: [{ path, kind, diff }]`, plusieurs fichiers dans le
  *     même appel, et son `kind` distingue `add`, `update` et `delete`.
+ *
+ * UN GENRE INCONNU est traité en écriture — le repli sûr, puisqu'il exige que
+ * le fichier SOIT là — et il est DIT par une ligne `HARNESS_UNKNOWN_CHANGE_KIND`,
+ * une fois par valeur. Le cas qui viendra est un `rename` ou un `move` : le
+ * rabattre en silence ferait chercher le fichier à son ancien chemin et mettre
+ * son absence au compte d'une écriture ratée.
  *
  * Rend une liste vide pour tout le reste, y compris une entrée absente ou d'une
  * forme inconnue : un chemin inventé ferait constater un fichier que personne
@@ -80,7 +108,19 @@ export function pathsDeclaredByCliWrite(
       const rec = c as Record<string, unknown>;
       const p = rec['path'];
       if (typeof p !== 'string' || p.trim() === '') continue;
-      const mot = typeof rec['kind'] === 'string' ? rec['kind'].toLowerCase() : '';
+      const mot = typeof rec['kind'] === 'string' ? rec['kind'].trim().toLowerCase() : '';
+      // Un genre qu'on ne connaît pas est traité en ÉCRITURE — le repli sûr,
+      // puisqu'il demande au fichier d'être là — mais il est DIT (revue C de la
+      // PR #196, passe 3). Un `rename` rabattu en silence ferait chercher le
+      // fichier à son ancien chemin, et l'absence serait mise au compte d'une
+      // écriture ratée. Le jour où un runtime en ajoute un, la ligne le nomme
+      // au lieu de laisser deviner (invariant #4).
+      if (mot !== '' && !MOTS_DE_SUPPRESSION.has(mot) && !MOTS_D_ECRITURE.has(mot)) {
+        if (!genresDejaDits.has(mot)) {
+          genresDejaDits.add(mot);
+          console.warn(`[verification] HARNESS_UNKNOWN_CHANGE_KIND tool=${toolName} kind=${mot}`);
+        }
+      }
       out.push({ path: p, kind: MOTS_DE_SUPPRESSION.has(mot) ? 'delete' : 'write' });
     }
     return out;

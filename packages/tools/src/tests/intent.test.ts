@@ -777,7 +777,7 @@ describe('l’intention de mutation, posée par executeTool', () => {
       ctx(),
     )) as { declared: boolean; reason?: string };
     expect(refus.declared).toBe(false);
-    expect(refus.reason).toContain('No write was constated');
+    expect(refus.reason).toContain('No write was observed');
     // Ce que le refus ne dit PLUS : une panne qui n'a pas eu lieu.
     expect(refus.reason).not.toContain('reported a failure');
     // Et la preuve n'est pas posée sur le projet.

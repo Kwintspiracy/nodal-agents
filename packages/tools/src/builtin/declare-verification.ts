@@ -182,19 +182,24 @@ export const declareVerificationTool: ToolDefinition<
       // parfaitement réussi arrive donc ici, et lui répondre qu'il a échoué
       // l'enverrait réparer un travail qui n'est pas cassé.
       //
-      // La phrase dit maintenant le FAIT — aucune écriture constatée —, ce que
+      // La phrase dit maintenant le FAIT — aucune écriture observée —, ce que
       // le harnais lit et ne lit pas, et la sortie : nommer un fichier. Une
       // absence dite, pas un verdict sur le travail (invariant #4).
+      //
+      // En anglais ORDINAIRE : « constated » n'est pas un mot qu'un lecteur
+      // anglophone emploie, et cette phrase est lue par un agent autant que par
+      // une personne (revue C, passe 3). Le vocabulaire du code reste le nôtre ;
+      // ce qui sort, non.
       return {
         declared: false,
         reason:
-          `No write was constated in ${path} during this run. A write is constated by reading ` +
-          'the files a tool NAMES, before and after it runs; what a shell command writes under ' +
-          'its working directory is never read, so it supports nothing here. A coding harness ' +
-          'sits in between: the files it REPORTS are looked for on disk, with no before and ' +
-          'after, so a run that reported none supports nothing either. Write what proves this ' +
-          'project with a file tool, or name the file you wrote, then declare how it is ' +
-          'verified. If a tool did report a failure, fix that first.',
+          `No write was observed in ${path} during this run. A write is observed by reading ` +
+          'the file a tool NAMED, before and after it ran. Nobody reads what a shell command ' +
+          'writes under its working directory, so running one there proves nothing. A coding ' +
+          'harness sits in between: the files it reports are looked for on disk, so a run that ' +
+          'reported none proves nothing either. Write what proves this project with a file ' +
+          'tool, or name the file you wrote, then declare how it is verified. If a tool did ' +
+          'report a failure, fix that first.',
       };
     }
 
