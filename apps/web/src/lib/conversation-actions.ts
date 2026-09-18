@@ -852,7 +852,16 @@ export async function getConversationThreadAction(
     for (const row of classifiableRows) {
       const root = row.jobId !== null ? rootOf.get(row.jobId) : undefined;
       if (root === undefined) continue;
-      const brut = parsePresented(row.presented);
+      // La validation Zod ne tourne que sur une charge qui se DIT `files` :
+      // seule cette carte porte des chemins, et valider toutes les autres pour
+      // jeter le résultat coûtait sur chaque ligne du fil (revue C, C2). Une
+      // charge qui ment sur son `card` est rejetée par `parsePresented` comme
+      // avant, et repart donc sans chemins bruts.
+      const diteFiles =
+        row.presented !== null &&
+        typeof row.presented === 'object' &&
+        (row.presented as { card?: unknown }).card === 'files';
+      const brut = diteFiles ? parsePresented(row.presented) : null;
       const bucket = rowsByRoot.get(root) ?? [];
       bucket.push({
         ...row,
