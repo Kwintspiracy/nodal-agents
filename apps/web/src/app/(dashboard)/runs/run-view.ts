@@ -167,18 +167,26 @@ export type RunStat = { label: string; value: string };
  * ordre et avec les mêmes mots : deux écrans qui montrent le même run ne
  * peuvent pas nommer ses chiffres différemment.
  *
- * Une case dont la donnée ne dit rien affiche « — ». Un coût inconnu n'est pas
- * un coût nul, une durée absente n'est pas zéro seconde.
+ * « — » veut dire ABSENT, et rien d'autre. Un vrai zéro s'écrit `0` : un run
+ * qui n'a appelé aucun modèle a bien consommé zéro jeton, et l'écrire « — »
+ * le faisait passer pour une donnée manquante (Reviewer C, passe 1). Les deux
+ * seules valeurs qui peuvent vraiment manquer ici sont le coût (aucun appel
+ * tarifé : `null`, et un coût inconnu n'est pas un coût nul) et la durée (le
+ * travail n'a pas de date de début, donc rien à mesurer).
  */
 export function runStats(data: SpaceConversationView): RunStat[] {
   const t = data.cost.totals;
   const files = runFilesChanged(data.feed.items);
+  // `durationMs` vaut 0 dans DEUX cas que la somme ne distingue pas : aucun
+  // début connu, et un travail qui vient de commencer. C'est la date de début
+  // qui tranche, et elle seule.
+  const measured = data.job.createdAt !== null;
   return [
     { label: 'Cost', value: t.costUsd === null ? UNKNOWN : `$${t.costUsd.toFixed(2)}` },
-    { label: 'Duration', value: t.durationMs > 0 ? formatMs(t.durationMs) : UNKNOWN },
-    { label: 'Input tokens', value: t.inputTokens > 0 ? formatTokens(t.inputTokens) : UNKNOWN },
-    { label: 'Output tokens', value: t.outputTokens > 0 ? formatTokens(t.outputTokens) : UNKNOWN },
-    { label: 'Cache reads', value: t.cachedTokens > 0 ? formatTokens(t.cachedTokens) : UNKNOWN },
+    { label: 'Duration', value: measured ? formatMs(t.durationMs) : UNKNOWN },
+    { label: 'Input tokens', value: formatTokens(t.inputTokens) },
+    { label: 'Output tokens', value: formatTokens(t.outputTokens) },
+    { label: 'Cache reads', value: formatTokens(t.cachedTokens) },
     { label: 'Files changed', value: files === null ? UNKNOWN : String(files) },
     { label: 'Activity', value: relativeTime(runLastActivity(data)) },
   ];
@@ -226,21 +234,28 @@ export function dropTaskRequest(items: readonly FeedItem[], task: string): FeedI
  *     dans la chronologie, où elle a eu lieu) ;
  *   - sinon la DERNIÈRE prose du DERNIER tour sort, et son tour la perd.
  *
- * Tant que le run court, rien ne sort : sa dernière phrase est une étape, pas
- * une fin (invariant #4).
+ * Tant que le run court, RIEN ne sort : sa dernière phrase est une étape, pas
+ * une fin (invariant #4). La garde passe donc avant tout le reste, l'item
+ * `answer` compris (Reviewer C, passe 1 : elle venait après, et une réponse
+ * aurait quitté la chronologie d'un run encore en cours).
+ *
+ * Un tel item peut-il exister sur un run vivant ? Non aujourd'hui :
+ * `buildConversationFeed` ne pose `answer` que sur un job `completed`. La
+ * garde ne change donc rien à ce qui s'affiche — elle dit la règle dans le
+ * code plutôt que de la faire dépendre d'un autre module.
  */
 export function liftReply(
   items: readonly FeedItem[],
   job: Pick<RunJob, 'completedAt'> & { result?: string | null },
 ): { reply: string | null; items: FeedItem[] } {
   const out = [...items];
+  if (job.completedAt === null) return { reply: null, items: out };
   const answerAt = out.findIndex((i) => i.kind === 'answer');
   if (answerAt >= 0) {
     const answer = out[answerAt];
     out.splice(answerAt, 1);
     return { reply: answer?.kind === 'answer' ? answer.text : null, items: out };
   }
-  if (job.completedAt === null) return { reply: null, items: out };
   if (out.some((i) => i.kind === 'failure')) return { reply: null, items: out };
 
   const result = job.result?.trim() ?? '';
