@@ -5,7 +5,7 @@
 // moitié du bloc.
 
 import { describe, it, expect } from 'vitest';
-import { tokenizeJson, prettyJson, type JsonToken } from '../json-tokens';
+import { tokenizeJson, prettyJson, PRETTY_JSON_MAX_CHARS, type JsonToken } from '../json-tokens';
 
 /** Les jetons qui portent une couleur — les blancs ne disent rien. */
 const meaty = (tokens: JsonToken[]): JsonToken[] => tokens.filter((t) => t.kind !== 'space');
@@ -123,5 +123,13 @@ describe('prettyJson', () => {
     expect(prettyJson('pas du json')).toBeNull();
     expect(prettyJson('')).toBeNull();
     expect(prettyJson('{"a":')).toBeNull();
+  });
+
+  it('ne met pas en forme une sortie plus longue que la borne : le brut reste lisible', () => {
+    const big = JSON.stringify({ items: Array.from({ length: 4000 }, (_, i) => `item-${i}`) });
+    expect(big.length).toBeGreaterThan(PRETTY_JSON_MAX_CHARS);
+    expect(prettyJson(big)).toBeNull();
+    const small = JSON.stringify({ items: Array.from({ length: 10 }, (_, i) => `item-${i}`) });
+    expect(prettyJson(small)).not.toBeNull();
   });
 });

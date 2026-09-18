@@ -11,9 +11,10 @@
 // gouttière, qui font déjà l'essentiel : on sait qu'on lit du code, et on peut
 // en citer une ligne.
 //
-// Composant serveur : le seul morceau interactif est `CopyButton`, qui est
-// déjà un composant client. Le rendre ici évite de faire basculer tout le fil
-// côté navigateur pour un bouton.
+// Sans `'use client'` : aucun hook ici, le seul morceau interactif est
+// `CopyButton`, déjà un composant client. Rendu côté serveur par le markdown
+// du fil, et côté navigateur quand un composant client (`ToolBlock`) l'importe
+// — les deux sont valides pour un composant sans état.
 
 import { Fragment } from 'react';
 import { MonoMicroTag } from './MonoMicroTag';

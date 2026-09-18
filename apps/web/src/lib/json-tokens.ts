@@ -96,11 +96,21 @@ export function tokenizeJson(text: string): JsonToken[] {
 }
 
 /**
+ * Au-delà de cette taille, une sortie d'outil n'est plus mise en forme : parser
+ * et réécrire le texte le double en mémoire à CHAQUE rendu du fil, et un fil
+ * assemble jusqu'à vingt fils de délégués (Reviewer C, #155). Le texte brut
+ * reste lisible et copiable ; seule l'indentation manque.
+ */
+export const PRETTY_JSON_MAX_CHARS = 32_000;
+
+/**
  * `text` mis en forme sur deux espaces s'il est du JSON, `null` sinon. C'est le
  * seul endroit qui DÉCIDE qu'une sortie d'outil est du JSON — un appelant qui
- * reçoit `null` affiche le texte tel quel, sans pastille de langue.
+ * reçoit `null` affiche le texte tel quel, sans pastille de langue. Un texte
+ * plus long que `PRETTY_JSON_MAX_CHARS` rend `null` aussi, sans être parsé.
  */
 export function prettyJson(text: string): string | null {
+  if (text.length > PRETTY_JSON_MAX_CHARS) return null;
   try {
     return JSON.stringify(JSON.parse(text), null, 2);
   } catch {
