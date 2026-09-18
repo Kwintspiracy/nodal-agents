@@ -20,9 +20,10 @@
 //   child    — un travail confié à un autre agent, avec son propre fil
 //   answer   — la réponse finale, quand le travail est terminé
 //
-// Lecteur des trois formats de message : `blocksFromContent` (JobMessages),
-// réutilisé et non copié — plan, « ce qu'on garde ». Les parties `reasoning`
-// (persistées par le runner, execute.ts) sont lues ici, en amont.
+// Lecteur des trois formats de message : `blocksFromContent`
+// (`transcript-blocks.ts`), réutilisé et non copié — plan, « ce qu'on garde ».
+// Les parties `reasoning` (persistées par le runner, execute.ts) sont lues ici,
+// en amont.
 
 import { SENT_TEXT_KINDS } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
@@ -32,7 +33,7 @@ import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 // le paquet du navigateur — Turbopack ne compile alors plus la page du tout
 // (voir `listInternalToolsAction`, lib/actions.ts). Un `import type` est effacé.
 import type { ReviewVerdictRecord } from '@nodal-agents/orchestration';
-import { blocksFromContent } from '@/components/JobMessages.tsx';
+import { blocksFromContent } from './transcript-blocks.ts';
 import {
   parsePresented,
   outcomeOfToolOutput,

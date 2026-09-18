@@ -99,11 +99,14 @@ export default function DeliveryBlock({
   return (
     <div className="mt-4 overflow-hidden rounded-xl border border-rule-2 bg-paper">
       <div className="flex h-[48px] items-center gap-2.5 px-4">
+        {/* L'icône dit LIVRÉ, la pastille dit vérifié ou non — deux faits, deux
+            signes (Quentin, 18/09). Elle est donc verte dès que ce bloc
+            paraît : un run livré sans preuve n'est pas un demi-run, et un
+            crochet gris le faisait passer pour éteint. Seul un verdict ROUGE
+            la fait virer : là, quelque chose ne va pas. */}
         <CheckCircle
           size={16}
-          className={
-            verdict === 'green' ? 'text-ok' : verdict === 'red' ? 'text-warn' : 'text-ink-4'
-          }
+          className={verdict === 'red' ? 'text-warn' : 'text-ok'}
           aria-hidden
         />
         <span className="text-title-15 text-ink">Delivered</span>

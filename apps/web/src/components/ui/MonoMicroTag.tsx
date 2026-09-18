@@ -1,9 +1,16 @@
 /**
  * MonoMicroTag — rounded-full uppercase mono micro-badge (h-18).
- * Tones: `err` (coral), `skill` (lime), `warn` (amber) on a /10 tint of the
- * tone; `agent` (the Agent entity colour, light/dark split copied from
+ * Tones: `err` (coral), `ok` (the semantic green), `skill` (the Skill entity
+ * colour — an orange-red, `--c-skill-vivid`), `warn` (amber) on a /10 tint of
+ * the tone; `agent` (the Agent entity colour, light/dark split copied from
  * TypeChip because agent-vivid text is illegible on paper in light mode);
  * `ink` (neutral, for provenance/state flags with no entity colour).
+ *
+ * `ok` is the one to reach for when the tag says something WENT WELL. Added
+ * 18/09: a green proof verdict wore `tone="skill"`, so the word "green" was
+ * drawn in orange-red (Quentin, seen on the stack). A colour may not
+ * contradict the word it carries. Same values as `StatusPill variant="done"`,
+ * so the two chips agree in both themes.
  *
  * The inline flag that sits next to a setting label ("irreversible", "beta",
  * "experimental", skill provenance). Distinct from TagMini (squared, semibold,
@@ -11,10 +18,11 @@
  * from five identical inline spans across AgentComposer and
  * AutoRunPauseSection.
  */
-type Tone = 'err' | 'skill' | 'warn' | 'agent' | 'ink';
+type Tone = 'err' | 'ok' | 'skill' | 'warn' | 'agent' | 'ink';
 
 const TONES: Record<Tone, string> = {
   err: 'bg-err/10 text-err',
+  ok: 'bg-ok-bg text-ok',
   skill: 'bg-skill-vivid/10 text-skill-vivid',
   warn: 'bg-warn/10 text-warn',
   agent: 'bg-agent-vivid/40 text-ink-2 dark:bg-agent-vivid/20 dark:text-agent-vivid',

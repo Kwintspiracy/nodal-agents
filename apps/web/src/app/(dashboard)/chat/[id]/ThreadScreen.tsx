@@ -11,12 +11,14 @@
 // géométrie ne doit pas diverger d'un écran à l'autre.
 
 import type { ReactNode } from 'react';
-import ThreadScroller from './ThreadScroller.tsx';
+import ThreadScroller, { type ThreadFollow } from './ThreadScroller.tsx';
 
 export default function ThreadScreen({
   children,
   composer,
   statusBar,
+  follow = 'bottom',
+  sidePadding = true,
 }: {
   /** Le fil : la seule zone qui défile. */
   children: ReactNode;
@@ -24,6 +26,28 @@ export default function ThreadScreen({
   composer?: ReactNode;
   /** La barre d'état, tout en bas, pleine largeur. */
   statusBar?: ReactNode;
+  /**
+   * Ce que l'écran fait du bas de son contenu (voir `ThreadFollow`). Un fil se
+   * lit par sa fin : il s'ouvre en bas et suit ce qui arrive. La page d'un run
+   * est un tableau : elle s'ouvre en haut, sur sa carte de tête, et ne déplace
+   * jamais la vue toute seule (Quentin, 18/09).
+   */
+  follow?: ThreadFollow;
+  /**
+   * Les gouttières latérales de la zone de défilement. Un fil les veut ICI :
+   * sa colonne de 760 px est centrée dans ce qui reste, et la saisie se cale
+   * dessus.
+   *
+   * La page d'un run les veut sur SON corps, et pas ici (Quentin, 18/09 : « le
+   * corps est plus large que toutes les autres pages »). La raison est le
+   * modèle de boîte : `PageShell` pose `max-w-6xl` ET ses gouttières sur LA
+   * MÊME boîte, donc son contenu fait 1152 − 2 × 36 = 1080 px au-delà de
+   * `lg`. Les poser ici et la largeur maximale là-bas faisait deux boîtes
+   * emboîtées : un contenu de 1152 px, soit 72 px de plus que partout
+   * ailleurs. Le corps d'un run reproduit donc la boîte de `PageShell`, et
+   * cette zone ne pousse plus rien sur les côtés.
+   */
+  sidePadding?: boolean;
 }) {
   return (
     <>
@@ -33,7 +57,12 @@ export default function ThreadScreen({
       {/* `pb-8` : au bout du fil, le dernier bloc s'arrête à 32 px de la saisie,
           pas collé dessous (Quentin, 17/09 : « augmente l'espace maximal entre
           la fin du feed et le haut du chat »). */}
-      <ThreadScroller className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-8 [scrollbar-gutter:stable] sm:px-8 lg:px-9">
+      <ThreadScroller
+        follow={follow}
+        className={`min-h-0 flex-1 overflow-y-auto pt-6 pb-8 [scrollbar-gutter:stable] ${
+          sidePadding ? 'px-5 sm:px-8 lg:px-9' : ''
+        }`}
+      >
         {/* Un seul enfant : c'est LUI dont la hauteur est observée. Sans ce
             conteneur, l'observateur suivrait la zone de défilement, dont la
             hauteur ne bouge jamais — et rien ne descendrait. */}

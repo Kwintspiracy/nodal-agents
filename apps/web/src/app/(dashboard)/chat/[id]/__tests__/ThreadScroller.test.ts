@@ -12,6 +12,7 @@ import {
   staysAtBottom,
   scrollbarGutterOf,
   growthIsTheReaders,
+  scrollPolicy,
   AT_BOTTOM_SLACK_PX,
   READER_GESTURE_WINDOW_MS,
 } from '../ThreadScroller.tsx';
@@ -72,6 +73,20 @@ describe('growthIsTheReaders', () => {
 
   it('un geste vieux d’une minute ne fait pas d’une réponse un dépliage', () => {
     expect(growthIsTheReaders({ gestureAt: 1000, now: 61_000 })).toBe(false);
+  });
+});
+
+// Ce que l'écran demande à la zone : un FIL se lit par sa fin, un TABLEAU (la
+// page d'un run) s'ouvre en haut et ne bouge jamais tout seul. Le run
+// s'ouvrait déjà défilé, parce qu'il héritait des règles du chat (Quentin,
+// 18/09).
+describe('scrollPolicy', () => {
+  it('un fil s’ouvre en bas et suit ce qui arrive', () => {
+    expect(scrollPolicy('bottom')).toEqual({ jumpOnMount: true, followsGrowth: true });
+  });
+
+  it('un tableau ne saute nulle part et ne suit rien', () => {
+    expect(scrollPolicy('never')).toEqual({ jumpOnMount: false, followsGrowth: false });
   });
 });
 
