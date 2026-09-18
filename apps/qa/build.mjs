@@ -21,6 +21,8 @@ import {
   MOT_ETAT,
   publicationsDejaFaites,
   releasesDuTableau,
+  releaseDuHash,
+  hashDeLaRelease,
   SANS_RELEASE,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
@@ -1520,23 +1522,46 @@ ${modaleExplications()}
     liens.forEach(function(a){ a.classList.toggle('actif', a.getAttribute('href')===id); });
     window.scrollTo(0,0);
   }
-  window.addEventListener('hashchange', function(){ montrer(location.hash); });
-  montrer(location.hash || '#chantiers');
+  // Les deux lectures de l'adresse, INSCRITES depuis lib.mjs : la page
+  // exécute exactement la fonction que les tests éprouvent, et non une copie
+  // qui dériverait d'elle au premier changement.
+  ${releaseDuHash}
+  ${hashDeLaRelease}
+
+  function vueDuHash(){ return (location.hash || '').split('?')[0]; }
+  window.addEventListener('hashchange', function(){ montrer(vueDuHash()); appliquerFiltre(); });
 
   // Le filtre par release (#177) : il MASQUE des cartes déjà rendues, sans
   // toucher aux comptes des colonnes — ceux-là disent le tableau entier, et
   // les faire varier avec le filtre ferait deux vérités pour un même chiffre.
+  // Il vit dans l'ADRESSE, donc un lien partage « ce qui constitue la 0.9 ».
   var choix = document.querySelectorAll('.filtre-release__choix');
   var tickets = document.querySelectorAll('.kanban .ticket');
+  function appliquerFiltre(){
+    var voulue = releaseDuHash(location.hash);
+    var connue = voulue === '';
+    choix.forEach(function(x){ if((x.getAttribute('data-release') || '') === voulue) connue = true; });
+    // Une release absente de CE tableau ne vide pas la page : l'adresse est
+    // peut-être plus vieille que la collecte, et tout montrer est le seul repli
+    // honnête.
+    if(!connue) voulue = '';
+    choix.forEach(function(x){
+      x.classList.toggle('actif', (x.getAttribute('data-release') || '') === voulue);
+    });
+    tickets.forEach(function(t){
+      t.hidden = voulue !== '' && t.getAttribute('data-release') !== voulue;
+    });
+  }
   choix.forEach(function(b){
     b.addEventListener('click', function(){
-      var voulue = b.getAttribute('data-release') || '';
-      choix.forEach(function(x){ x.classList.toggle('actif', x === b); });
-      tickets.forEach(function(t){
-        t.hidden = voulue !== '' && t.getAttribute('data-release') !== voulue;
-      });
+      // L'adresse décide, l'événement hashchange fait le reste. Un clic sur le choix déjà
+      // actif ne la change pas : d'où le second appel, qui ne coûte rien.
+      location.hash = hashDeLaRelease(b.getAttribute('data-release') || '');
+      appliquerFiltre();
     });
   });
+  montrer(vueDuHash() || '#chantiers');
+  appliquerFiltre();
 
   // « Comprendre cette page » : une seule modale, remplie depuis les
   // explications embarquées. Un <dialog> natif du document, pas window.alert :

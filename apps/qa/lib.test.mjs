@@ -55,6 +55,8 @@ import {
   porteDesFaitsVerifies,
   fusionnerTableauGitHub,
   releasesDuTableau,
+  releaseDuHash,
+  hashDeLaRelease,
   SANS_RELEASE,
   ORDRE_DES_BACS,
 } from './lib.mjs';
@@ -2988,5 +2990,33 @@ describe('les jalons TELS QUE ce dépôt les nomme (#177)', () => {
       pr: [],
     });
     expect(releasesDuTableau(cartes)).toEqual(['0.9', '0.8.10', 'Backlog', SANS_RELEASE]);
+  });
+});
+
+describe('le filtre de release vit dans l’adresse (revue C de #192)', () => {
+  it('lit la release d’une adresse, et rend tout le tableau quand il n’y en a pas', () => {
+    expect(releaseDuHash('#chantiers?release=0.9')).toBe('0.9');
+    expect(releaseDuHash('#chantiers')).toBe('');
+    expect(releaseDuHash('')).toBe('');
+    expect(releaseDuHash(null)).toBe('');
+  });
+
+  it('une valeur encodée revient telle qu’elle a été écrite', () => {
+    expect(releaseDuHash('#chantiers?release=no%20release')).toBe('no release');
+    expect(hashDeLaRelease('no release')).toBe('#chantiers?release=no%20release');
+    expect(releaseDuHash(hashDeLaRelease('0.9'))).toBe('0.9');
+    expect(releaseDuHash(hashDeLaRelease('no release'))).toBe('no release');
+  });
+
+  it('« toutes les releases » est une adresse sans requête', () => {
+    expect(hashDeLaRelease('')).toBe('#chantiers');
+    expect(hashDeLaRelease(null)).toBe('#chantiers');
+  });
+
+  it('une adresse ABÎMÉE montre tout, jamais rien', () => {
+    // `%E0%A4%A` est un pourcentage incomplet : `decodeURIComponent` lève. Une
+    // page vide sur une adresse mal recopiée ferait croire à un tableau vide.
+    expect(releaseDuHash('#chantiers?release=%E0%A4%A')).toBe('');
+    expect(releaseDuHash('#chantiers?autre=chose')).toBe('');
   });
 });

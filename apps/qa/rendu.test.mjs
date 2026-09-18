@@ -530,3 +530,51 @@ describe('la release, SUR la page, et son filtre (#177)', () => {
     expect(html.slice(html.lastIndexOf('filtre-release__choix'))).toContain('t.hidden =');
   });
 });
+
+describe('l’adresse porte la release, et la PAGE la relit (revue C de #192)', () => {
+  // Pas de DOM dans ce paquet, et en ajouter un pour un test serait une
+  // dépendance de plus sur le portail. Ce qui est éprouvé ici est donc le CODE
+  // QUE LA PAGE EMBARQUE : `build.mjs` inscrit les deux fonctions de `lib.mjs`
+  // telles quelles, ce test les extrait du HTML rendu et les exécute. Une page
+  // qui n'aurait plus la logique du hash ne peut pas passer.
+  let lireHash;
+  let ecrireHash;
+
+  beforeAll(() => {
+    const html = rendre(INSTANTANE);
+    const prendre = (nom) => {
+      const debut = html.indexOf(`function ${nom}(`);
+      expect(debut, `${nom} absente de la page`).toBeGreaterThan(-1);
+      // Jusqu'à la déclaration suivante, ou la fin du script : la fonction est
+      // inscrite entière, accolades comprises.
+      const fin = html.indexOf('\n  function ', debut + 1);
+      return html.slice(debut, fin > debut ? fin : html.indexOf('</script>', debut));
+    };
+    lireHash = new Function(`${prendre('releaseDuHash')}; return releaseDuHash;`)();
+    ecrireHash = new Function(`${prendre('hashDeLaRelease')}; return hashDeLaRelease;`)();
+  });
+
+  it('la page sait lire une release dans l’adresse', () => {
+    expect(lireHash('#chantiers?release=0.9')).toBe('0.9');
+    expect(lireHash('#chantiers')).toBe('');
+  });
+
+  it('l’aller-retour tient, y compris sur « no release »', () => {
+    expect(lireHash(ecrireHash('0.8.10'))).toBe('0.8.10');
+    expect(lireHash(ecrireHash('no release'))).toBe('no release');
+    expect(ecrireHash('')).toBe('#chantiers');
+  });
+
+  it('la page applique le filtre au chargement, pas seulement au clic', () => {
+    // Sans cet appel, une adresse partagée ouvrirait le tableau entier et le
+    // lien ne vaudrait rien.
+    const html = rendre(INSTANTANE);
+    // Le filtre est posé AU DÉMARRAGE, juste après la vue : sans cet appel-là,
+    // une adresse partagée ouvrirait le tableau entier.
+    expect(html).toMatch(/montrer\(vueDuHash\(\) \|\| '#chantiers'\);\s*\n\s*appliquerFiltre\(\);/);
+    // Et l'adresse qui change le rejoue : sans quoi un retour en arrière du
+    // navigateur laisserait la page sur l'ancienne release.
+    expect(html).toContain("addEventListener('hashchange'");
+    expect(html).toContain('montrer(vueDuHash()); appliquerFiltre();');
+  });
+});

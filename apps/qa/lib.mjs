@@ -642,6 +642,38 @@ export function titreDeJalon(jalon) {
 export const SANS_RELEASE = 'no release';
 
 /**
+ * La release demandée par une adresse : `#chantiers?release=0.9` → `0.9`.
+ *
+ * Le filtre vit dans l'ADRESSE (revue C de la PR #192) : sans cela, « ce qui
+ * constitue la 0.9 » ne se partageait pas — le lien renvoyait au tableau
+ * entier, et le destinataire devait deviner quel bouton cliquer. Rien, une
+ * adresse sans requête ou une valeur illisible rendent `''`, c'est-à-dire tout
+ * le tableau : une adresse abîmée montre trop, jamais rien.
+ *
+ * Écrite pour être lue DEUX fois : ici par les tests, et par la page, où
+ * `build.mjs` l'inscrit telle quelle. Elle ne ferme donc sur rien et n'emploie
+ * que ce qu'un navigateur connaît depuis toujours.
+ */
+export function releaseDuHash(hash) {
+  var brut = String(hash == null ? '' : hash);
+  var i = brut.indexOf('?');
+  if (i < 0) return '';
+  var m = /(?:^|&)release=([^&]*)/.exec(brut.slice(i + 1));
+  if (!m) return '';
+  try {
+    return decodeURIComponent(m[1]);
+  } catch (e) {
+    return '';
+  }
+}
+
+/** L'adresse qui montre une release : `0.9` → `#chantiers?release=0.9`. */
+export function hashDeLaRelease(release) {
+  var r = String(release == null ? '' : release);
+  return r === '' ? '#chantiers' : '#chantiers?release=' + encodeURIComponent(r);
+}
+
+/**
  * Le titre d'un jalon ramené à une forme que `comparerSemver` sait lire, ou
  * `null` si ce n'en est pas une.
  *
