@@ -594,6 +594,11 @@ export function cartesDuTableau({ issues, pr } = {}) {
       etiquettes: (i.labels ?? []).map((l) => l.name),
       majLe: i.updatedAt ?? null,
       creeLe: i.createdAt ?? null,
+      // Quand cette carte a été FINIE — `null` tant qu'elle ne l'est pas, et
+      // `null` aussi quand GitHub ne l'a pas dit. Jamais remplacée par la date
+      // de mise à jour : une carte rouverte puis commentée serait datée d'un
+      // jour où rien ne s'est fini (#176).
+      finiLe: i.closedAt ?? null,
       parPr: couvertes.get(i.number) ?? null,
       // L'état de la revue de LA PR qui la ferme, quand il y en a une : les
       // trois cartes d'un même travail se lisaient « In review » sans jamais
@@ -611,6 +616,9 @@ export function cartesDuTableau({ issues, pr } = {}) {
       etiquettes: [],
       majLe: p.updatedAt ?? null,
       creeLe: p.createdAt ?? null,
+      // Le merge d'abord : une PR mergée est fermée dans la foulée, et les deux
+      // dates sont à la seconde près. C'est le merge qui a fini le travail.
+      finiLe: p.mergedAt ?? p.closedAt ?? null,
       ci: etatCi(p.statusCheckRollup),
       revue: revueDunePr.get(p.number) ?? null,
       ...provenance(p.body),
@@ -618,6 +626,87 @@ export function cartesDuTableau({ issues, pr } = {}) {
   ];
 
   return cartes.map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
+}
+
+// ─── Ce qu'une colonne MONTRE ─────────────────────────────────────────────────
+//
+// « Done » gardait ses huit premières cartes dans l'ordre où elles arrivaient,
+// c'est-à-dire par numéro décroissant : l'ordre d'OUVERTURE, pas celui
+// d'achèvement. Le 16/09/2026, les huit issues fermées de la journée ont donc
+// rempli les huit places, et les six PR mergées le même jour sont parties dans
+// « + 67 more » : le tableau a montré 75 cartes finies et pas une seule des PR
+// qui les avaient finies (#176).
+//
+// La colonne répond maintenant à la question qu'on lui pose vraiment — « qu'a-
+// t-on fini ces jours-ci ? » — donc une FENÊTRE de temps, du plus récent au
+// plus ancien, et le reste replié sous son compte.
+
+/** La fenêtre de « Done » : ce qui s'est fini dans la semaine. */
+export const JOURS_DE_FENETRE = 7;
+
+/**
+ * Le minimum qu'une colonne finie montre quand la fenêtre est vide.
+ *
+ * Une semaine sans rien finir est un fait, et la colonne le dit en ne montrant
+ * presque rien. Mais la vider complètement sous un « + 75 older » cacherait
+ * jusqu'au dernier travail livré, que le plafond de huit montrait au moins.
+ * Trois cartes : assez pour savoir où on en était, trop peu pour faire croire
+ * que c'est de cette semaine.
+ */
+const MINIMUM_VISIBLE = 3;
+
+/** Les colonnes qui regardent en arrière, et se lisent donc par date. */
+const COLONNES_FINIES = new Set(['Done', 'Abandoned']);
+
+/** Une date lisible en millisecondes, ou `null` — jamais une date inventée. */
+function instant(valeur) {
+  const t = Date.parse(String(valeur ?? ''));
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Ce qu'une colonne montre, et ce qu'elle replie.
+ *
+ * Les colonnes vivantes (« To do » à « In review ») montrent tout : ce sont des
+ * appels à l'action, et en cacher un le ferait oublier.
+ *
+ * Les colonnes finies se rangent du plus récemment fini au plus ancien, PR
+ * mergées et issues fermées MÊLÉES. Pas de bande « merged » à part : la
+ * question est chronologique, la carte d'une PR se reconnaît déjà à son liseré
+ * et à son « PR #n », et couper la colonne en deux rendrait la même question
+ * qu'aujourd'hui — laquelle des deux piles faut-il lire d'abord.
+ *
+ * Une carte SANS date de fin ne peut pas entrer dans une fenêtre : elle est
+ * repliée avec les anciennes, jamais datée d'office.
+ */
+export function pileDuneColonne(cartes, nom, maintenant = Date.now(), jours = JOURS_DE_FENETRE) {
+  const dedans = (cartes ?? []).filter((c) => c.colonne === nom);
+  if (!COLONNES_FINIES.has(nom)) {
+    return { montrees: dedans, replies: 0, plusAnciennes: 0, sansDate: 0 };
+  }
+
+  const datees = dedans
+    .map((c) => ({ carte: c, quand: instant(c.finiLe) }))
+    .sort((a, b) => (b.quand ?? -Infinity) - (a.quand ?? -Infinity));
+  const depuis = maintenant - jours * 24 * 60 * 60 * 1000;
+  const dansLaFenetre = datees.filter((d) => d.quand !== null && d.quand >= depuis);
+  const montrees =
+    dansLaFenetre.length > 0
+      ? dansLaFenetre
+      : datees.slice(0, MINIMUM_VISIBLE).filter((d) => d.quand !== null);
+
+  // Le repli se compte en DEUX, parce que ce sont deux choses (revue C de la
+  // PR #188) : ce qui est plus ancien que la fenêtre, et ce dont on ignore la
+  // date. Les mettre ensemble sous « older » affirmerait d'une carte sans date
+  // qu'elle est vieille, et c'est justement ce qu'on ne sait pas.
+  const sansDate = dedans.filter((c) => instant(c.finiLe) === null).length;
+  const replies = dedans.length - montrees.length;
+  return {
+    montrees: montrees.map((d) => d.carte),
+    replies,
+    plusAnciennes: replies - sansDate,
+    sansDate,
+  };
 }
 
 // ─── Ce que le dépôt sait de sa propre release ────────────────────────────────

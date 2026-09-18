@@ -25,7 +25,7 @@ import { resumeDelegated, DELEGATION_FAILED_MARKER } from '@nodal-agents/orchest
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
-import { executeJob } from '../../job/execute.ts';
+import { delegationRecordFromOutcome, executeJob } from '../../job/execute.ts';
 
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
   let active: RunnerDeps['llmClient'] | null = null;
@@ -512,6 +512,105 @@ describe('parent receives a typed delegation record @cap:organiser-equipe/moteur
     // AND that announcing progress is not one of its options.
     expect(part.output.value).not.toContain('(no output)');
     expect(part.output.value).toContain('DO NOT tell the user the work is in progress');
+  });
+
+  // Les CLÉS du JSON que le parent reçoit SONT le contrat (#119, revue passe 2).
+  // Les épingler fait rougir aussi bien un champ perdu en route qu'un champ
+  // ajouté sans que personne l'ait décidé. `review_verdict` y figure depuis que
+  // la PR #170 est entrée : ce n'est plus une clé tolérée, c'est le contrat.
+  const CLES_DU_CONTRAT = [
+    'error',
+    'exit_reason',
+    'hint',
+    'review_verdict',
+    'status',
+    'summary',
+    'tools_used',
+  ];
+
+  function clesDuContrat(payload: Record<string, unknown>): string[] {
+    return Object.keys(payload).sort();
+  }
+
+  /** Le JSON d'un échec vit dans le texte d'erreur, entre le marqueur et la prose. */
+  function payloadOfErrorText(value: string): Record<string, unknown> {
+    return JSON.parse(value.slice(value.indexOf('{'), value.lastIndexOf('}') + 1)) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  async function seedParentAwaiting(toolUseId: string, toolName: string): Promise<string> {
+    return insertJob({
+      channel: 'api',
+      status: 'awaiting_delegation',
+      messages: [
+        { role: 'user', content: 'une tâche' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: toolUseId, toolName, input: {} }],
+        },
+      ],
+      pendingDelegation: { toolUseId, toolName },
+    });
+  }
+
+  it('une délégation ordinaire porte les clés du contrat, hint à null', async () => {
+    const parentId = await seedParentAwaiting('assign-k1', 'assign_researcher');
+    const childId = await insertJob({ channel: 'internal', parentJobId: parentId });
+
+    await resumeDelegated(
+      parentId as JobId,
+      childId as JobId,
+      delegationRecordFromOutcome({
+        status: 'completed',
+        result: 'Longueur de Planck : 1.616255e-35 m.',
+        toolsUsed: ['tavily_search', 'return_result'],
+        exitReason: 'return_result_success',
+      }),
+      db,
+    );
+
+    const row = await jobRow(parentId);
+    const last = (row.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
+    const part = last.content[0] as { output: { type: string; value: string } };
+    const payload = JSON.parse(part.output.value) as Record<string, unknown>;
+
+    expect(clesDuContrat(payload)).toEqual(CLES_DU_CONTRAT);
+    expect(payload['hint']).toBeNull();
+    expect(payload['review_verdict']).toBeNull();
+    expect(payload['status']).toBe('completed');
+  });
+
+  it('un refus du fournisseur fait voyager hint jusqu’au parent', async () => {
+    const parentId = await seedParentAwaiting('assign-k2', 'assign_reviewer');
+    const childId = await insertJob({ channel: 'internal', parentJobId: parentId });
+
+    await resumeDelegated(
+      parentId as JobId,
+      childId as JobId,
+      delegationRecordFromOutcome({
+        status: 'failed',
+        error: 'provider_rejected_request:openrouter/google/gemini-3.7-flash (http 400, turn 1)',
+        result:
+          '[stopped: provider rejected the request — openrouter/google/gemini-3.7-flash, http 400, turn 1]',
+        toolsUsed: [],
+        exitReason: 'provider_rejected_request',
+        hint: 'switch_model',
+      }),
+      db,
+    );
+
+    const row = await jobRow(parentId);
+    const last = (row.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
+    const part = last.content[0] as { output: { type: string; value: string } };
+    expect(part.output.type).toBe('error-text');
+    const payload = payloadOfErrorText(part.output.value);
+
+    expect(clesDuContrat(payload)).toEqual(CLES_DU_CONTRAT);
+    // Le geste arrive au parent : c'est tout l'objet du champ.
+    expect(payload['hint']).toBe('switch_model');
+    expect(payload['exit_reason']).toBe('provider_rejected_request');
   });
 });
 
