@@ -86,7 +86,18 @@ const repere = (id, bloc) => {
   return `<p class="repere">${esc(t)}</p>`;
 };
 
-/** La modale, une seule, remplie au clic depuis les explications embarquées. */
+/**
+ * La modale, une seule, remplie au clic depuis les explications embarquées.
+ *
+ * La charge voyage dans un bloc de script, donc elle doit être aveugle à ce
+ * qui ferme un bloc de script. Le remplacement ci-dessous le fait, avec DEUX
+ * antislashs, et c'est tout le sujet : écrit avec un seul, le littéral valait
+ * le caractère « inférieur » lui-même — on remplaçait « < » par « < » et la
+ * garde ne gardait rien. Ce qu'il faut poser, c'est la SÉQUENCE littérale que
+ * le parseur JSON du navigateur relit comme « < ». Sans elle, une explication
+ * qui cite une balise de fermeture de script coupe le bloc au milieu de la
+ * charge, et la page meurt là (revue après coup de la PR #78).
+ */
 const modaleExplications = () => `<dialog id="explication" class="modale">
   <div class="modale__cadre">
     <header class="modale__tete">
@@ -101,7 +112,7 @@ const modaleExplications = () => `<dialog id="explication" class="modale">
     Object.fromEntries(
       Object.entries(EXPLICATIONS).map(([k, v]) => [k, { titre: v.titre, parties: v.parties }]),
     ),
-  ).replace(/</g, '\u003c')};
+  ).replace(/</g, '\\u003c')};
 </script>`;
 
 const esc = (v) =>
@@ -404,7 +415,7 @@ function vueParcours() {
           ? `<span class="intention">${esc(p.intention)}</span>`
           : '<span class="intention intention--absente">no description</span>'
       }
-        ${r?.rouge ? lienRun(s.execution?.url) : ''}
+        ${r?.rouge || r?.instable ? lienRun(s.execution?.url) : ''}
         ${e.rouge ? '<br><span class="intention intention--absente">Nothing runs it: this file guards nothing.</span>' : ''}</td>
       <td class="num">${p.cas}</td>
       <td>${etat}</td>
@@ -651,9 +662,15 @@ function vueCapacites() {
     const noms = nomsDe(n.preuves);
     const tete = noms.slice(0, TESTS_VISIBLES);
     const reste = noms.slice(TESTS_VISIBLES);
-    // Seulement quand elle TOMBE : sur une preuve verte, le lien n'emmène
-    // nulle part d'utile et ne ferait que du bruit.
-    const cause = n.etat === 'echouee' ? ` ${lienRun(s.execution?.url)}` : '';
+    // Quand elle TOMBE, et quand elle VACILLE. Sur une preuve verte le lien
+    // n'emmène nulle part d'utile et ne ferait que du bruit ; sur une preuve
+    // instable il emmène exactement là où il faut. `trace: 'on-first-retry'`
+    // et `screenshot: 'only-on-failure'` (playwright.config.ts) : un cas
+    // instable est précisément celui qui a été rejoué, donc le seul dont le
+    // run porte une trace ET une capture. Le portail disait « flaky » et ne
+    // donnait aucun chemin vers elles.
+    const cause =
+      n.etat === 'echouee' || n.etat === 'instable' ? ` ${lienRun(s.execution?.url)}` : '';
     return `<td><span class="pastille pastille--${cls}">${esc(mot)}</span>${cause}
       <div class="preuves">${tete.map((t) => `<div>${esc(t)}</div>`).join('')}${
         reste.length > 0

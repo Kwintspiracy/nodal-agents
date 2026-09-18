@@ -2217,6 +2217,39 @@ export function regrouperParCapacite({ capacites, preuves } = {}) {
 }
 
 /**
+ * Un `import` qui tient tout entier sur SA ligne.
+ *
+ * Rien d'ouvert, rien en suspens : aucune accolade laissée béante, et pas de
+ * virgule finale qui annonce une suite. `import './x'` en est un, sans point-
+ * virgule et sans `from` — et c'est du JavaScript valide, que le point-virgule
+ * seul ne rattrapait pas (revue C de la PR #214).
+ *
+ * `import {` n'en est pas un : son accolade attend sa fermeture. `import a,`
+ * non plus : sa virgule attend la suite.
+ */
+const importDuneSeuleLigne = (ligne) =>
+  /^import\b/.test(ligne) &&
+  !ligne.endsWith(',') &&
+  ligne.split('{').length === ligne.split('}').length;
+
+/**
+ * La ligne qui TERMINE une déclaration `import`.
+ *
+ * Trois formes la terminent, et deux manquaient : le `from` d'un import nommé,
+ * le point-virgule, et l'import d'une seule ligne qui n'a ni l'un ni l'autre.
+ * `import './helpers.ts';` ne porte aucun `from` ; le drapeau « on est dans un
+ * import » restait donc levé jusqu'à la fin du fichier, tout l'en-tête était
+ * sauté, et la page Journeys affichait « no description » sous un parcours qui
+ * en avait une (revue après coup de la PR #86).
+ *
+ * Un import sur PLUSIEURS lignes ne se fait prendre par aucune des trois : son
+ * accolade reste ouverte jusqu'à la ligne qui porte son `from`, et entre ses
+ * accolades on ne trouve que des virgules, jamais un point-virgule.
+ */
+const finDImport = (ligne) =>
+  /\bfrom\b/.test(ligne) || ligne.endsWith(';') || importDuneSeuleLigne(ligne);
+
+/**
  * La description d'un parcours : la première phrase UTILE de son fichier.
  *
  * Le cas réel (Quentin, 13/09) : la page Parcours affichait, sous chaque
@@ -2242,19 +2275,19 @@ export function intentionDunParcours(texte) {
 
   // ── L'en-tête : on saute le vide et les imports, et on s'arrête au premier
   // code. `import … from '…'` tient parfois sur plusieurs lignes ; on reste
-  // dedans jusqu'au `from`.
+  // dedans jusqu'à la fin de la déclaration.
   let i = 0;
   let dansImport = false;
   const brut = [];
   for (; i < lignes.length; i++) {
     const l = lignes[i].trim();
     if (dansImport) {
-      if (/\bfrom\b/.test(l)) dansImport = false;
+      if (finDImport(l)) dansImport = false;
       continue;
     }
     if (l === '') continue;
     if (/^import\b/.test(l)) {
-      if (!/\bfrom\b/.test(l)) dansImport = true;
+      if (!finDImport(l)) dansImport = true;
       continue;
     }
     if (l.startsWith('/*')) {

@@ -113,11 +113,21 @@ const bac = mkdtempSync(join(tmpdir(), 'qa-rendu-'));
 let page = '';
 let rendus = 0;
 
-/** Rend le portail POUR DE VRAI sur cet instantané, et rend son HTML. */
-const rendre = (instantane) => {
+/**
+ * Rend le portail POUR DE VRAI sur cet instantané, et rend son HTML.
+ *
+ * `modules` remplace le SOURCE d'un module du bac. Un seul cas l'utilise, et il
+ * n'a pas d'autre moyen : la garde qui empêche une explication de fermer le
+ * bloc de script ne se prouve qu'avec une explication qui contient cette
+ * balise, et les vraies explications n'en contiennent aucune.
+ */
+const rendre = (instantane, modules = {}) => {
   const app = join(bac, `rendu-${(rendus += 1)}`, 'apps', 'qa');
   mkdirSync(join(app, 'data'), { recursive: true });
-  for (const f of MODULES_DU_BAC) cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
+  for (const f of MODULES_DU_BAC) {
+    if (Object.hasOwn(modules, f)) writeFileSync(join(app, f), modules[f]);
+    else cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
+  }
   writeFileSync(join(app, 'data', 'snapshot.json'), JSON.stringify(instantane));
   execFileSync(process.execPath, [join(app, 'build.mjs')], { encoding: 'utf8' });
   return readFileSync(join(app, 'dist', 'index.html'), 'utf8');
@@ -704,5 +714,154 @@ describe('l’adresse porte la release, et la PAGE la relit (revue C de #192)', 
     // navigateur laisserait la page sur l'ancienne release.
     expect(html).toContain("addEventListener('hashchange'");
     expect(html).toContain('montrer(vueDuHash()); appliquerFiltre();');
+  });
+});
+
+// ─── La charge des explications, et ce qui peut la couper ────────────────────
+//
+// Les explications voyagent dans un bloc de script, sous forme de JSON. Une
+// balise de fermeture de script dans l'un de ces textes ferme le bloc au
+// milieu de la charge : le navigateur lit la fin du JSON comme du HTML, la
+// modale ne s'ouvre plus, et la page est cassée SOUS le pied de page. Le
+// remplacement de build.mjs existe pour ça ; écrit avec un seul antislash, il
+// remplaçait « < » par « < » et ne gardait rien.
+//
+// Les vraies explications n'en contiennent aucune, donc rien ne pouvait le
+// dire. Ce cas en pose une.
+describe('une explication qui cite la fermeture d’un script', () => {
+  // Assemblée à l'exécution, comme `'@' + 'cap'` ailleurs : écrite en toutes
+  // lettres, elle couperait aussi ce fichier-ci le jour où il passe dans un
+  // rendu.
+  const FERMETURE = '</scr' + 'ipt>';
+  // La séquence d'échappement attendue dans la page, construite sans poser
+  // d'antislash dans ce fichier.
+  const ECHAPPEE = String.fromCharCode(92) + 'u003c/scr' + 'ipt';
+
+  /** Les explications du bac, avec une balise de fermeture dans un texte. */
+  const explicationsPiegees = () =>
+    lireSource('explications.mjs') +
+    `\nEXPLICATIONS.chantiers.parties[0].texte += ${JSON.stringify(`<p>${FERMETURE}</p>`)};\n`;
+
+  it('ne ferme pas le bloc de script : la charge reste entière et échappée', () => {
+    const html = rendre(INSTANTANE, { 'explications.mjs': explicationsPiegees() });
+    const debut = html.indexOf('window.__EXPLICATIONS = ');
+    expect(debut, 'la charge des explications est absente de la page').toBeGreaterThan(-1);
+    // La charge s'arrête à la PREMIÈRE fermeture de script rencontrée. Si le
+    // texte en a posé une, c'est celle-là, et la charge est tronquée.
+    const charge = html.slice(debut, html.indexOf('</scr' + 'ipt>', debut));
+    // Une affectation complète : elle finit sur son point-virgule. Sans la
+    // garde, elle finit au milieu d'un paragraphe.
+    expect(charge.trimEnd().endsWith(';')).toBe(true);
+    // Et le caractère est bien posé sous sa forme échappée, celle que le
+    // parseur JSON du navigateur relit comme « < ».
+    expect(charge).toContain(ECHAPPEE);
+  });
+});
+
+// ─── « See the run » sur une preuve INSTABLE ─────────────────────────────────
+//
+// Un cas instable est celui que Playwright a rejoué : `trace: 'on-first-retry'`
+// et `screenshot: 'only-on-failure'` (apps/web/playwright.config.ts) font qu'il
+// est le SEUL dont le run porte une trace et une capture. Le portail écrivait
+// « flaky » et n'y menait pas : le lien ne s'affichait que sur un rouge franc,
+// donc la seule preuve visuelle du dépôt restait hors d'atteinte.
+describe('le chemin vers le run, sur une preuve instable', () => {
+  const RUN = 'https://github.com/x/y/actions/runs/777';
+
+  const niveau = (etat, titre) => ({
+    etat,
+    preuves: etat === 'absente' ? [] : [{ titre, origine: 'apps/web/tests/e2e/x.spec.ts' }],
+  });
+
+  const capacite = (slug, nom, ecran) => ({
+    slug,
+    domaine: 'Getting in',
+    nom,
+    question: 'Can I?',
+    phrase: 'two facts',
+    exigee: true,
+    nonDit: [],
+    ecran,
+    moteur: niveau('passee', 'an engine case'),
+  });
+
+  const REGISTRE = [
+    capacite('cap-instable', 'Flaky screen', niveau('instable', 'a flaky case')),
+    capacite('cap-rouge', 'Failed screen', niveau('echouee', 'a failed case')),
+    capacite('cap-verte', 'Passed screen', niveau('passee', 'a passing case')),
+  ];
+
+  /** La ligne du tableau des capacités qui porte ce nom. */
+  const ligneDe = (html, nom) => {
+    const debut = html.lastIndexOf('<tr>', html.indexOf(`<b>${nom}</b>`));
+    expect(debut, `capacité « ${nom} » absente de la page`).toBeGreaterThan(-1);
+    return html.slice(debut, html.indexOf('</tr>', debut));
+  };
+
+  let page2 = '';
+  beforeAll(() => {
+    page2 = rendre({
+      ...INSTANTANE,
+      execution: { id: '777', url: RUN },
+      capacites: { registre: REGISTRE, fautes: [] },
+    });
+  });
+
+  it('une capacité instable mène au run qui l’a vue vaciller', () => {
+    expect(ligneDe(page2, 'Flaky screen')).toContain(RUN);
+  });
+
+  it('une capacité tombée y mène toujours', () => {
+    expect(ligneDe(page2, 'Failed screen')).toContain(RUN);
+  });
+
+  it('une capacité verte n’y mène pas — le lien n’y montrerait rien', () => {
+    expect(ligneDe(page2, 'Passed screen')).not.toContain(RUN);
+  });
+
+  // Même faille, même page d'à côté : un fichier de parcours dont un cas a
+  // vacillé sans qu'aucun ne tombe n'offrait aucun chemin vers sa trace.
+  it('un parcours dont un cas a vacillé mène au run, sans un seul rouge', () => {
+    const parcours = [
+      {
+        nom: 'flaky.spec.ts',
+        fichier: 'apps/web/tests/e2e/flaky.spec.ts',
+        cas: 2,
+        intention: 'Le propriétaire fait quelque chose.',
+        jouParLaCi: true,
+        cadence: 'every night',
+        resultat: { total: 2, vert: 1, rouge: 0, ignoré: 0, instable: 1, dureeMs: 1000, cas: [] },
+      },
+    ];
+    const html = rendre({
+      ...INSTANTANE,
+      execution: { id: '777', url: RUN },
+      parcours,
+    });
+    const debut = html.indexOf('flaky.spec.ts');
+    expect(debut, 'le parcours est absent de la page').toBeGreaterThan(-1);
+    expect(html.slice(debut, html.indexOf('</tr>', debut))).toContain(RUN);
+  });
+
+  // L'autre moitié de la règle, et elle se lit ICI depuis ce lot : elle vivait
+  // dans `lib.test.mjs` sous forme de grep du source, où elle ne disait que la
+  // FORME d'une condition. Un lien mort, ou un lien qui ne mène à rien, use la
+  // seule chose qui fait qu'on clique.
+  it('un parcours entièrement vert ne porte pas de lien : il n’y a rien à voir', () => {
+    const parcours = [
+      {
+        nom: 'green.spec.ts',
+        fichier: 'apps/web/tests/e2e/green.spec.ts',
+        cas: 2,
+        intention: 'Le propriétaire fait autre chose.',
+        jouParLaCi: true,
+        cadence: 'every night',
+        resultat: { total: 2, vert: 2, rouge: 0, ignoré: 0, instable: 0, dureeMs: 1000, cas: [] },
+      },
+    ];
+    const html = rendre({ ...INSTANTANE, execution: { id: '777', url: RUN }, parcours });
+    const debut = html.indexOf('green.spec.ts');
+    expect(debut, 'le parcours est absent de la page').toBeGreaterThan(-1);
+    expect(html.slice(debut, html.indexOf('</tr>', debut))).not.toContain(RUN);
   });
 });
