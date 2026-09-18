@@ -32,11 +32,16 @@
 //   2. Il redescend jusqu'en bas après avoir lu l'historique, le contenu grandit
 //      aussitôt : son geste est jugé sur la nouvelle hauteur, donc « pas en
 //      bas », et le suivi reste éteint.
+//   3. (18/09, règle du dépliage) Il clique dans le fil SANS rien déplier — une
+//      sélection de texte, un lien — et une réponse arrive dans la fenêtre du
+//      geste (`READER_GESTURE_WINDOW_MS`) : elle passe pour un bloc qu'il a
+//      ouvert, et n'est pas suivie ; elle attend sous le pli jusqu'à son
+//      prochain défilement.
 //
-// Les deux se réparent au geste SUIVANT : dans le premier cas sa remontée est
-// alors prise en compte, dans le second son retour en bas rallume le suivi.
-// Aucun ne piège durablement, aucun n'a été observé hors d'un test qui force la
-// course dans un seul tour de boucle.
+// Les trois se réparent au geste SUIVANT : dans le premier cas sa remontée est
+// alors prise en compte, dans les deux autres son retour en bas rallume le
+// suivi. Aucun ne piège durablement, aucun n'a été observé hors d'un test qui
+// force la course dans un seul tour de boucle.
 //
 // Les fermer vraiment demanderait de mémoriser la hauteur en même temps que la
 // position et de juger chaque geste à l'aune de ce que le lecteur VOYAIT — donc
@@ -93,6 +98,27 @@ export function staysAtBottom(m: {
   return m.scrollHeight - m.scrollTop - m.clientHeight < AT_BOTTOM_SLACK_PX;
 }
 
+/**
+ * Fenêtre, en millisecondes, pendant laquelle une croissance du contenu qui
+ * suit un geste du lecteur DANS le fil (un clic, une touche) est la sienne :
+ * un bloc qu'il vient de déplier, pas une réponse qui arrive.
+ *
+ * Quentin, 18/09/2026 : « quand je déroule quoi que ce soit dans un feed, ça
+ * déroule vers le haut ; si je clique sur dérouler, la position du scroll ne
+ * DOIT PAS bouger et le contenu se déroule vers le bas ». Le fil suivait le
+ * bas à CHAQUE croissance ; un bloc ouvert depuis le bas faisait donc filer la
+ * zone visible sous ce qu'on venait d'ouvrir.
+ */
+export const READER_GESTURE_WINDOW_MS = 800;
+
+/**
+ * Cette croissance vient-elle du lecteur ? Oui si un geste vient d'avoir lieu
+ * dans le fil. Une fonction pure, pour être éprouvée sans navigateur.
+ */
+export function growthIsTheReaders(m: { gestureAt: number | null; now: number }): boolean {
+  return m.gestureAt !== null && m.now - m.gestureAt < READER_GESTURE_WINDOW_MS;
+}
+
 export default function ThreadScroller({
   children,
   className,
@@ -117,6 +143,12 @@ export default function ThreadScroller({
    * nôtre, quel qu'ait été le nombre d'événements en route.
    */
   const selfScrollTop = useRef<number | null>(null);
+  /**
+   * L'instant du dernier geste du lecteur DANS le fil (clic, touche). Une
+   * croissance qui le suit de près est un bloc qu'il a déplié : elle s'ouvre
+   * vers le bas, sous ses yeux, et on ne le déplace pas.
+   */
+  const gestureAt = useRef<number | null>(null);
 
   /**
    * Descendre, sans que notre propre geste passe pour celui du lecteur.
@@ -201,6 +233,16 @@ export default function ThreadScroller({
         follow.current = false;
         return;
       }
+      // Le lecteur vient de cliquer dans le fil : cette croissance est un bloc
+      // qu'il a ouvert. La zone visible ne bouge pas. Suit-on encore ? Ce que
+      // sa position dit, pas un « non » forcé : un petit bloc le laisse en bas
+      // et la réponse suivante doit encore descendre ; un grand bloc l'en
+      // éloigne, il lit, et son retour en bas (onScroll) rallumera le suivi.
+      if (growthIsTheReaders({ gestureAt: gestureAt.current, now: performance.now() })) {
+        follow.current = staysAtBottom(el);
+        selfScrollTop.current = null;
+        return;
+      }
       if (follow.current) scrollToBottom(el);
     });
     ro.observe(observed);
@@ -214,6 +256,14 @@ export default function ThreadScroller({
       // désigne aussi le conteneur du layout du dashboard, qui défile lui aussi.
       data-thread-scroller=""
       className={className}
+      // En capture : le geste est noté AVANT que le bloc cliqué ne change
+      // d'état et ne fasse grandir le fil.
+      onPointerDownCapture={() => {
+        gestureAt.current = performance.now();
+      }}
+      onKeyDownCapture={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') gestureAt.current = performance.now();
+      }}
       onScroll={() => {
         const el = ref.current;
         if (!el) return;
