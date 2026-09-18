@@ -851,6 +851,18 @@ const TONS_ETIQUETTE = {
 };
 
 /**
+ * Les trois états d'une revue, mis en mots (#128).
+ *
+ * « not reviewed yet » est GRIS, pas rouge : une PR ouverte il y a dix minutes
+ * n'est pas en faute. Le portail dit ce qui est, il ne gronde pas.
+ */
+const TONS_REVUE = {
+  'approved-waiting-merge': { ton: 'ok', mot: 'approved, waiting for merge' },
+  'changes-requested': { ton: 'ko', mot: 'changes requested' },
+  'in-review': { ton: 'inconnu', mot: 'not reviewed yet' },
+};
+
+/**
  * Ce que npm sert, face à ce que le dépôt porte.
  *
  * Le bloc qui manquait le 12/09/2026, quand une issue « Publish 0.8.9 » a vécu
@@ -923,9 +935,34 @@ function vueChantiers() {
       c.etat === 'OPEN' && c.parUnAgent && !c.faitsVerifies
         ? '<span class="pastille pastille--ko">no verified facts</span>'
         : '';
+    // Où en est la revue (#128). Sur la carte de la PR, et sur celles des
+    // issues qu'elle ferme, juste à côté de leur étiquette « PR #n » : les
+    // trois cartes d'un même travail disaient « In review » sans jamais dire
+    // par qui, combien de fois, ni avec quel verdict.
+    //
+    // Seulement tant que la carte est OUVERTE : « approved, waiting for merge »
+    // sur une PR déjà mergée serait une nouvelle qui n'en est plus une.
+    const r = c.etat === 'OPEN' ? (c.revue ?? null) : null;
+    const etatRevue = r ? (TONS_REVUE[r.status] ?? TONS_REVUE['in-review']) : null;
+    const pastilleRevue = etatRevue
+      ? `<span class="pastille pastille--${etatRevue.ton}">${etatRevue.mot}</span>`
+      : '';
+    // Ce que le portail n'a PAS su lire se dit. Un en-tête hors forme, ou une
+    // liste de commentaires peut-être tronquée, laisserait sinon la carte en
+    // « not reviewed yet » : une absence rendue comme un zéro, exactement ce
+    // que cette page reproche ailleurs.
+    const revueIllisible =
+      r && (r.warnings ?? []).length > 0
+        ? '<span class="pastille pastille--moyen">review state partly unreadable</span>'
+        : '';
+    const ligneRevue =
+      r && r.passes > 0
+        ? `<span class="ticket__revue">Pass ${r.passes} · ${esc(r.lastReviewer)} · ${esc(r.lastDate)} · ${esc(r.lastVerdict)} (${Number(r.counts.blocking)} blocking, ${Number(r.counts.important)} important, ${Number(r.counts.minor)} minor)</span>`
+        : '';
     return `<a class="ticket ticket--${c.type}" href="${esc(c.url)}" target="_blank" rel="noopener">
-      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${ci}${sansFaits}</span>
+      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${pastilleRevue}${revueIllisible}${ci}${sansFaits}</span>
       <span class="ticket__titre">${esc(c.titre)}</span>
+      ${ligneRevue}
       ${etiquettes ? `<span class="ticket__pied">${etiquettes}</span>` : ''}
     </a>`;
   };
@@ -1293,6 +1330,8 @@ tr:last-child td{border-bottom:0}
 .ticket--pr{box-shadow:inset 3px 0 0 var(--accent)}
 .ticket__tete{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .ticket__titre{font-size:15px;line-height:1.4;color:var(--encre)}
+.ticket__revue{font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.5;
+  color:var(--encre3)}
 .ticket__pied{display:flex;flex-wrap:wrap;gap:5px}
 .num-ticket{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--encre3)}
 .vide{font-size:13px;color:var(--encre3);margin:0;padding:6px 0}

@@ -12,6 +12,7 @@ import {
   users,
   agents,
   agentJobs,
+  agentWorkspaces,
   cliRuns,
   verificationRuns,
   jobDeliverableVerificationState,
@@ -247,6 +248,46 @@ describe('getCodingProcessDetailAction — verification (T24)', () => {
     expect(appel.toolOutput).toContain(REDACTED_TEXT);
     expect(JSON.stringify(appel.toolInput)).not.toContain(jeton);
     expect(JSON.stringify(appel.toolInput)).toContain(REDACTED_TEXT);
+  });
+
+  it('les fichiers changés partent RÉDIGÉS : une clé écrite dans un fichier ne se lit pas dans Files', async () => {
+    // Reviewer C, #164 : la frise rédige depuis #158, les GROUPES DE
+    // CHANGEMENTS non — et ce sont eux que la plaque du bloc Files dessine,
+    // avec `old_string`, `new_string` et `content` tels quels. Le masquage
+    // d'écriture ne rattrape pas ça : il masque par NOM de champ, et aucun de
+    // ces trois-là ne s'annonce comme un secret.
+    const jeton = 'sk-ant-api03-0123456789ABCDEFGHIJKLMNOPQRSTUV'; // secrets:allow (fixture)
+    await testDb.insert(agentWorkspaces).values({
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+      label: 'Projet',
+      path: 'D:/apps/projet',
+    });
+    await testDb.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: rootJobId,
+      toolName: 'file_write',
+      toolCallId: 'call-secret-files',
+      toolInput: {
+        path: 'D:/apps/projet/src/config.ts',
+        content: `export const key = '${jeton}';\n`,
+      },
+      toolOutput: '{"ok":true}',
+      turn: 2,
+    });
+
+    const { getCodingProcessDetailAction } = await actions();
+    const r = await getCodingProcessDetailAction({ jobId: rootJobId });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const groupe = r.data.changes.find((c) => c.filePath.endsWith('src/config.ts'));
+    if (groupe === undefined) throw new Error('the written file is not in the changes');
+    const ecrit = groupe.edits[0]?.newText ?? '';
+    expect(ecrit).not.toContain(jeton);
+    expect(ecrit).toContain(REDACTED_TEXT);
+    // Et le jeton nulle part ailleurs dans ce que l'action rend.
+    expect(JSON.stringify(r.data)).not.toContain(jeton);
   });
 
   it('borné à l’espace : la preuve du voisin est absente, et son job est introuvable', async () => {
