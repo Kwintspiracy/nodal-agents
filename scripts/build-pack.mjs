@@ -43,7 +43,13 @@ const packDir = resolve(repoRoot, 'pack');
 //
 // Un réglage explicite de l'appelant est donc respecté désormais : ce script
 // pose un plancher, il ne rabote plus.
-const HEAP_FLOOR_MB = 12288;
+//
+// Le 19/09, à la 0.8.11, le build meurt de nouveau à 12288 (SIGABRT, 134) et
+// passe à 24576 en 20 min sur la machine du propriétaire (64 Go). Le dashboard
+// a encore grossi (page de run, sidebar, dossiers), mais un doublement en trois
+// jours se mesure avant de se justifier : une issue porte le pic réel et ce
+// qui le fait monter. Le plancher suit la mesure, pas l'inverse.
+const HEAP_FLOOR_MB = 24576;
 
 function heapEnv() {
   const inherited = process.env['NODE_OPTIONS'] ?? '';
