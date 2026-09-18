@@ -647,6 +647,16 @@ describe('la release, SUR la page, et son filtre (#177)', () => {
     expect(aFaire).toContain('<span class="compte">3</span>');
     expect(html.slice(html.lastIndexOf('filtre-release__choix'))).toContain('t.hidden =');
   });
+
+  it('une carte écartée DISPARAÎT : la feuille de style honore `hidden` (#205)', () => {
+    // Le script pose `hidden`, mais `.ticket{display:flex}` est une règle
+    // d'auteur, et elle bat le `[hidden]{display:none}` du navigateur : la
+    // pastille s'allumait, l'adresse changeait, aucune carte ne bougeait (vu
+    // par le propriétaire, 18/09). La feuille doit donc le dire elle-même.
+    const style = html.slice(html.indexOf('<style'), html.indexOf('</style>'));
+    expect(style).toContain('.ticket{display:flex');
+    expect(style).toContain('.ticket[hidden]{display:none}');
+  });
 });
 
 describe('l’adresse porte la release, et la PAGE la relit (revue C de #192)', () => {
