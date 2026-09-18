@@ -324,7 +324,7 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
   });
 
   it('rien ne sort d’un run qui a ÉCHOUÉ : la carte d’échec dit ce qui s’est passé', () => {
-    const items: FeedItem[] = [turn(), { kind: 'failure', text: 'boom' }];
+    const items: FeedItem[] = [turn(), { kind: 'failure', text: 'boom', hint: null }];
     const lifted = liftReply(items, done);
     expect(lifted.reply).toBeNull();
     expect(lifted.items.some((i) => i.kind === 'failure')).toBe(true);
