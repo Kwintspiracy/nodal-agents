@@ -161,6 +161,13 @@ export async function readDeliveredReviewVerdict(
  * portent le même `turn` et peuvent porter le même `created_at`, si bien que
  * l'ancien tri rendait l'une ou l'autre au hasard (revue de la PR #170,
  * passe 2). C'est précisément le cas que cette fonction doit trancher.
+ *
+ * Une réserve, assumée : `seq` a été REMPLIE sur les lignes déjà écrites dans
+ * l'ordre physique de la table, pas dans l'ordre chronologique (l'en-tête de la
+ * migration 0110 le dit et dit pourquoi). Un job à cheval sur la migration peut
+ * donc porter de vieilles lignes mal ordonnées. Sans effet ici : un job déjà
+ * fini n'est jamais relu, et toute ligne écrite après la migration porte un
+ * numéro supérieur à tout le remplissage — le dernier geste reste le dernier.
  */
 export async function readFinalReviewVerdict(
   db: AnyDrizzleDb,
