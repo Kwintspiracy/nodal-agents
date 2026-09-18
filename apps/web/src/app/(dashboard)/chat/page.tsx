@@ -27,7 +27,7 @@ import {
 } from '@/lib/conversation-actions.ts';
 import { listApprovalsAction } from '@/lib/actions.ts';
 import { groupChatLists } from '@/lib/chat-list.ts';
-import { folderOfJobChannel } from '@/lib/chat-folders.ts';
+import { folderOfWork } from '@/lib/chat-folders.ts';
 import { chatFolderView, folderSubtitle } from './folder-view.ts';
 import { conversationRows } from './conversation-rows.ts';
 import ChannelChatsTable from './ChannelChatsTable.tsx';
@@ -100,7 +100,7 @@ export default async function ChatPage({
       : (folderSubtitle({
           conversations: view.showDashboard ? dashboard.length : shownChannels.length,
           waiting: approvals.ok
-            ? approvals.data.filter((a) => folderOfJobChannel(a.jobChannel) === view.key).length
+            ? approvals.data.filter((a) => folderOfWork(a) === view.key).length
             : 0,
           running: folders.ok ? (folders.data.running[view.key] ?? 0) : 0,
         }) ?? undefined);

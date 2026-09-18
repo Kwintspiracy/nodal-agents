@@ -72,6 +72,45 @@ export function folderOfJobChannel(channel: string | null): string | null {
   return null;
 }
 
+/**
+ * D'où vient un travail, tel que l'attribution le lit : le canal de son job, et
+ * celui de sa CONVERSATION quand il en a une.
+ */
+export type WorkOrigin = {
+  /** Le canal du job lui-même. */
+  jobChannel: string | null;
+  /**
+   * Le canal de la conversation du job. `null` quand le job ne se rattache à
+   * aucune conversation — une tâche de l'API, une automation.
+   */
+  conversationChannel: string | null;
+};
+
+/**
+ * Le dossier auquel appartient un travail : celui du canal de SA CONVERSATION
+ * quand il en a une, celui de son propre canal sinon.
+ *
+ * **Pourquoi la conversation d'abord** (#148). Un job délégué que le tableau
+ * des tâches crée porte `channel = 'task-board'` et le `conversation_id` de son
+ * créateur. Lu sur son canal, il ne relève d'aucun dossier : la LIGNE de la
+ * conversation s'allumait — elle attribue par `conversation_id` — pendant que
+ * la pastille du dossier, son sous-titre et le total du menu comptaient zéro.
+ * Un dossier muet au-dessus d'une ligne qui dit « Question asked ».
+ *
+ * Le canal d'une conversation est l'endroit d'où la personne parle ; celui d'un
+ * job dit seulement quelle mécanique l'a lancé. C'est le premier qui range le
+ * travail, et la ligne et le dossier comptent de nouveau la MÊME chose.
+ *
+ * Le canal du job reste la règle pour un travail SANS conversation : il n'y a
+ * alors rien d'autre à lire, et lui choisir un dossier serait l'inventer
+ * (invariant #4).
+ */
+export function folderOfWork(origin: WorkOrigin): string | null {
+  const conv = origin.conversationChannel;
+  if (conv !== null && conv !== '') return folderOfJobChannel(conv);
+  return folderOfJobChannel(origin.jobChannel);
+}
+
 /** Le nom d'un dossier. Un canal inconnu se rend TEL QUEL, comme la colonne
  *  « d'où vient la demande » le fait : un canal ajouté demain doit s'afficher,
  *  pas disparaître. */
@@ -100,8 +139,11 @@ export type ChatFolder = {
 export type ChatFoldersInput = {
   /** Les canaux qui portent au moins une conversation (lus en base). */
   channels: readonly string[];
-  /** Une entrée par demande en attente, avec le canal du job qui la porte. */
-  waiting: readonly { jobChannel: string | null }[];
+  /**
+   * Une entrée par demande en attente, avec d'où elle vient : le canal de sa
+   * conversation quand elle en a une, celui de son job sinon (`folderOfWork`).
+   */
+  waiting: readonly WorkOrigin[];
   /** Combien de runs tournent, par dossier. Une clé absente vaut zéro. */
   running: Readonly<Record<string, number>>;
   /** Le chemin courant : un dossier n'est actif que SUR . */
@@ -133,7 +175,7 @@ function existingKeys(input: Pick<ChatFoldersInput, 'channels' | 'waiting' | 'ru
     if (key !== null && key !== DASHBOARD_FOLDER) chan.add(key);
   }
   for (const w of input.waiting) {
-    const key = folderOfJobChannel(w.jobChannel);
+    const key = folderOfWork(w);
     if (key !== null && key !== DASHBOARD_FOLDER) chan.add(key);
   }
   for (const [key, count] of Object.entries(input.running)) {
@@ -150,7 +192,7 @@ function existingKeys(input: Pick<ChatFoldersInput, 'channels' | 'waiting' | 'ru
 function waitingByFolder(waiting: ChatFoldersInput['waiting']): Map<string, number> {
   const byFolder = new Map<string, number>();
   for (const w of waiting) {
-    const key = folderOfJobChannel(w.jobChannel);
+    const key = folderOfWork(w);
     if (key === null) continue;
     byFolder.set(key, (byFolder.get(key) ?? 0) + 1);
   }

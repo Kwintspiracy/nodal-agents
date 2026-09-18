@@ -5814,6 +5814,21 @@ export type ApprovalRow = {
    */
   conversationId: string | null;
   /**
+   * Le CANAL de cette conversation — donc le dossier du menu Chat qui compte la
+   * demande (#148). Une jointure de plus sur `conversations`, jamais une
+   * requête par ligne.
+   *
+   * Pourquoi `jobChannel` ne suffit pas : un job délégué que le tableau des
+   * tâches crée porte `channel = 'task-board'`, qui n'est le dossier de
+   * personne, et le `conversation_id` de son créateur. La LIGNE de la
+   * conversation s'allumait, la pastille du dossier restait muette.
+   * `folderOfWork` (lib/chat-folders.ts) lit ce champ d'abord et retombe sur
+   * `jobChannel` quand il est `null`.
+   *
+   * `null` quand le job ne se rattache à aucune conversation.
+   */
+  conversationChannel: string | null;
+  /**
    * Structured, readable explanation of what is being approved. Computed
    * server-side so the client renders it without another round trip, and so the
    * dashboard and the channel cards say the SAME thing.
@@ -5880,10 +5895,26 @@ export async function listApprovalsAction(
         jobTask: agentJobs.task,
         jobChannel: agentJobs.channel,
         conversationId: agentJobs.conversationId,
+        conversationChannel: conversations.channel,
       })
       .from(approvalRequests)
       .leftJoin(agents, eq(agents.id, approvalRequests.agentId))
       .leftJoin(agentJobs, eq(agentJobs.id, approvalRequests.jobId))
+      // Le canal de la conversation, pour que le dossier compte la demande là
+      // où la LIGNE l'affiche déjà (#148). `left`, parce qu'un job sans
+      // conversation reste une demande à rendre. Seule une conversation que la
+      // liste des chats MONTRE (`origin` user/project — l'entretien d'accueil
+      // reste dehors) range le travail : sinon la pastille du dossier
+      // compterait une demande qu'aucune ligne n'affiche (Reviewer C, #157).
+      // L'entité est refiltrée par sûreté, pas par nécessité.
+      .leftJoin(
+        conversations,
+        and(
+          eq(conversations.id, agentJobs.conversationId),
+          eq(conversations.entityId, session.entityId),
+          inArray(conversations.origin, ['user', 'project']),
+        ),
+      )
       .where(where)
       .orderBy(desc(approvalRequests.requestedAt))
       .limit(100);
