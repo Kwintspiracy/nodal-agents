@@ -77,6 +77,13 @@ export default function RunPage({ data, back, actions = null }: RunPageProps) {
       }
     >
       <ThreadScreen
+        // Un run s'ouvre sur SA CARTE DE TÊTE et ne bouge jamais tout seul.
+        // L'écran d'un fil saute en bas à l'ouverture et suit ce qui arrive,
+        // parce qu'une conversation se lit par sa fin ; la page d'un run est un
+        // tableau, et elle s'ouvrait donc déjà défilée (Quentin, 18/09). Un run
+        // qui court ne doit pas non plus faire filer ce qu'on est en train de
+        // lire à chaque rafraîchissement.
+        follow="never"
         statusBar={
           <StatusBar
             cost={cost}

@@ -22,7 +22,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: () => {}, refresh: () => {} }),
 }));
 
-import { RunBody } from '../RunPage.tsx';
+import RunPage, { RunBody } from '../RunPage.tsx';
 
 const totals: ConversationFeed['totals'] = {
   turns: 2,
@@ -145,6 +145,18 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
       at('data-testid="activity-section"'),
     ];
     expect(ordre).toEqual([...ordre].sort((a, b) => a - b));
+  });
+
+  it('la page s’ouvre EN HAUT : sa zone de défilement ne suit pas le bas', () => {
+    // Un run n'est pas un fil. L'écran de conversation saute en bas à
+    // l'ouverture et suit ce qui arrive, donc la page d'un run s'ouvrait déjà
+    // défilée (Quentin, 18/09). Elle demande maintenant l'inverse, et un run
+    // qui court ne fait plus filer ce qu'on est en train de lire.
+    const page = renderToStaticMarkup(
+      <RunPage data={data(false)} back={{ label: 'Back to Scheduled', href: '/scheduled' }} />,
+    );
+    expect(page).toContain('data-follow="never"');
+    expect(page).not.toContain('data-follow="bottom"');
   });
 
   it('le corps garde la largeur d’une page Nodal, calée à gauche', () => {

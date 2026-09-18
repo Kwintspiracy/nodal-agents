@@ -11,12 +11,13 @@
 // géométrie ne doit pas diverger d'un écran à l'autre.
 
 import type { ReactNode } from 'react';
-import ThreadScroller from './ThreadScroller.tsx';
+import ThreadScroller, { type ThreadFollow } from './ThreadScroller.tsx';
 
 export default function ThreadScreen({
   children,
   composer,
   statusBar,
+  follow = 'bottom',
 }: {
   /** Le fil : la seule zone qui défile. */
   children: ReactNode;
@@ -24,6 +25,13 @@ export default function ThreadScreen({
   composer?: ReactNode;
   /** La barre d'état, tout en bas, pleine largeur. */
   statusBar?: ReactNode;
+  /**
+   * Ce que l'écran fait du bas de son contenu (voir `ThreadFollow`). Un fil se
+   * lit par sa fin : il s'ouvre en bas et suit ce qui arrive. La page d'un run
+   * est un tableau : elle s'ouvre en haut, sur sa carte de tête, et ne déplace
+   * jamais la vue toute seule (Quentin, 18/09).
+   */
+  follow?: ThreadFollow;
 }) {
   return (
     <>
@@ -33,7 +41,10 @@ export default function ThreadScreen({
       {/* `pb-8` : au bout du fil, le dernier bloc s'arrête à 32 px de la saisie,
           pas collé dessous (Quentin, 17/09 : « augmente l'espace maximal entre
           la fin du feed et le haut du chat »). */}
-      <ThreadScroller className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-8 [scrollbar-gutter:stable] sm:px-8 lg:px-9">
+      <ThreadScroller
+        follow={follow}
+        className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-8 [scrollbar-gutter:stable] sm:px-8 lg:px-9"
+      >
         {/* Un seul enfant : c'est LUI dont la hauteur est observée. Sans ce
             conteneur, l'observateur suivrait la zone de défilement, dont la
             hauteur ne bouge jamais — et rien ne descendrait. */}
