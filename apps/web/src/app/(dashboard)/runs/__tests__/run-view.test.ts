@@ -125,15 +125,25 @@ describe('run-view — les sept chiffres de l’en-tête @cap:suivre-execution/e
     ]);
   });
 
-  it('une valeur que la donnée ne dit pas s’écrit « — », jamais 0', () => {
-    const data = view({});
+  it('« — » veut dire ABSENT : un coût sans appel tarifé, une durée sans début', () => {
+    const data = view({ job: { createdAt: null } });
+    // Aucun appel tarifé : un coût inconnu n'est pas un coût nul.
     expect(valueOf(data, 'Cost')).toBe(UNKNOWN);
+    // Pas de date de début : il n'y a rien à mesurer.
     expect(valueOf(data, 'Duration')).toBe(UNKNOWN);
-    expect(valueOf(data, 'Input tokens')).toBe(UNKNOWN);
-    expect(valueOf(data, 'Output tokens')).toBe(UNKNOWN);
-    expect(valueOf(data, 'Cache reads')).toBe(UNKNOWN);
-    // Aucune carte `files` dans le fil : on ne sait pas, on ne dit pas « 0 ».
+    // Aucune carte `files` dans le fil : on ne sait pas ce qui a été écrit.
     expect(valueOf(data, 'Files changed')).toBe(UNKNOWN);
+  });
+
+  it('un vrai ZÉRO s’écrit 0 — un run qui n’a appelé aucun modèle n’est pas une donnée manquante', () => {
+    // Reviewer C, passe 1 : « 0 jeton » et « jeton inconnu » s'affichaient
+    // pareil, et le second est bien plus grave que le premier.
+    const data = view({});
+    expect(valueOf(data, 'Input tokens')).toBe('0');
+    expect(valueOf(data, 'Output tokens')).toBe('0');
+    expect(valueOf(data, 'Cache reads')).toBe('0');
+    // Un travail qui vient de commencer a une durée de zéro, pas d'inconnue.
+    expect(valueOf(data, 'Duration')).toBe('0 ms');
   });
 
   it('les valeurs connues sont formatées, coût compris', () => {

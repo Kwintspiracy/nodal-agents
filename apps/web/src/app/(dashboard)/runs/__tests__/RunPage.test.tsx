@@ -267,8 +267,11 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
   });
 
   it('la demande ne se lit pas deux fois : la chronologie ne la reprend pas', () => {
-    // La carte de tête porte déjà la consigne en entier.
-    expect(html.split(TASK)).toHaveLength(3); // le titre et le corps de la carte
+    // Ce qu'un lecteur VOIT, pas ce que le balisage contient : le titre porte
+    // aussi la demande dans son attribut `title` (le texte au survol).
+    const lu = (page: string): string[] => page.replace(/<[^>]*>/g, ' ').split(TASK);
+    // La carte de tête la porte deux fois : en titre, et en entier dessous.
+    expect(lu(html)).toHaveLength(3);
     const avecDemande = data(false);
     const page = renderToStaticMarkup(
       <RunBody
@@ -285,7 +288,7 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
       />,
     );
     // Toujours deux fois, pas trois : l'item `request` a quitté la chronologie.
-    expect(page.split(TASK)).toHaveLength(3);
+    expect(lu(page)).toHaveLength(3);
   });
 
   it('une demande qui dit AUTRE CHOSE que la tâche reste dans la chronologie', () => {

@@ -14,6 +14,7 @@ import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import CopyButton from '@/components/ui/CopyButton';
 import { plainText } from '@/components/Markdown.tsx';
+import { truncate } from '@/lib/format-time';
 import type { RunStat } from './run-view.ts';
 
 export default function RunHeaderCard({
@@ -46,13 +47,20 @@ export default function RunHeaderCard({
   /** Ce que la route ajoute au bout de la première ligne (annuler un run vivant). */
   actions?: ReactNode;
 }) {
-  // Le titre est la PREMIÈRE LIGNE de la demande, à plat : une demande en
-  // markdown sur dix lignes ne fait pas un titre de dix lignes.
-  const title = plainText(task);
+  // Le titre est la PREMIÈRE LIGNE de la demande, à plat et COUPÉE à soixante
+  // caractères — la règle que les trois routes appliquent déjà à l'en-tête de
+  // page. `plainText` rend la première ligne ; sans la coupe, une demande d'un
+  // seul paragraphe de trois cents caractères passait entière dans la ligne de
+  // faits et repoussait l'agent, l'origine et l'état à la ligne suivante
+  // (Reviewer C, passe 1). Le texte entier reste juste dessous, et au survol.
+  const firstLine = plainText(task);
+  const title = truncate(firstLine, 60);
   return (
     <div className="space-y-4 rounded-xl border border-rule-2 bg-paper p-5">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="min-w-0 text-medium-15 text-ink">{title}</span>
+        <span className="min-w-0 text-medium-15 text-ink" title={firstLine}>
+          {title}
+        </span>
         {agentName !== null && agentName !== '' && (
           <MonoMicroTag tone="agent">{agentName}</MonoMicroTag>
         )}
