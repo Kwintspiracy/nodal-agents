@@ -15,7 +15,9 @@ import {
   cliRuns,
   verificationRuns,
   jobDeliverableVerificationState,
+  toolCalls,
 } from '@nodal-agents/db';
+import { REDACTED_TEXT } from '@nodal-agents/shared';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -217,6 +219,34 @@ describe('getCodingProcessDetailAction — verification (T24)', () => {
     expect(seqs[1]!.jobId).toBe(rootJobId);
     expect(seqs[1]!.runs.map((x) => x.command)).toEqual(['pnpm lint']);
     expect(seqs[1]!.verdict).toBe('green');
+  });
+
+  it('la frise des appels part RÉDIGÉE : un jeton dans l’entrée ou la sortie ne se lit pas sur l’écran Code', async () => {
+    // Reviewer C, #158 : le fil et Activity rédigeaient, l'écran d'un
+    // processus Code montrait la sortie brute.
+    const jeton = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture)
+    await testDb.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: rootJobId,
+      toolName: 'run_command',
+      toolCallId: 'call-secret-t24',
+      toolInput: { command: 'printenv', note: { why: `clé ${jeton}` } },
+      toolOutput: `ANTHROPIC_API_KEY=${jeton}\n`,
+      turn: 1,
+    });
+    const { getCodingProcessDetailAction } = await actions();
+    const r = await getCodingProcessDetailAction({ jobId: rootJobId });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const appel = r.data.activity.find(
+      (i) => i.kind === 'call' && i.toolName === 'run_command' && i.toolOutput !== null,
+    );
+    if (appel === undefined || appel.kind !== 'call')
+      throw new Error('the call is not on the timeline');
+    expect(appel.toolOutput).not.toContain(jeton);
+    expect(appel.toolOutput).toContain(REDACTED_TEXT);
+    expect(JSON.stringify(appel.toolInput)).not.toContain(jeton);
+    expect(JSON.stringify(appel.toolInput)).toContain(REDACTED_TEXT);
   });
 
   it('borné à l’espace : la preuve du voisin est absente, et son job est introuvable', async () => {

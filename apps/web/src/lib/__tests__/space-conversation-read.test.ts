@@ -404,6 +404,175 @@ describe('getSpaceConversationAction', () => {
     expect(r.data.feed.items.some((i) => i.kind === 'note')).toBe(false);
   });
 
+  it('#150 : la CARTE d’un appel est masquée comme sa sortie brute, forme intacte', async () => {
+    // Le fil rédigeait `tool_output` et laissait passer `presented`, bâtie sur
+    // la MÊME sortie : le jeton s'affichait masqué en vue brute et en clair sur
+    // la carte, qui est justement ce que `ToolBlock` rend en premier.
+    const secret = 'sk-ant-api03-ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210'; // secrets:allow (fixture : clé factice pour éprouver la rédaction)
+    const lecture = {
+      card: 'read',
+      path: '/srv/app/.env',
+      excerpt: `ANTHROPIC_API_KEY=${secret}\nPORT=3000`,
+      chars: 64,
+      truncated: false,
+    };
+    const ecriture = {
+      card: 'files',
+      files: [{ path: `/srv/app/sauvegarde-${secret}.env`, action: 'written', bytes: 64 }],
+      total: 1,
+      truncated: false,
+    };
+    const [j] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '4242',
+        task: 'Sauvegarde la configuration',
+        status: 'completed',
+        result: 'Configuration sauvegardée.',
+        turn: 1,
+        messages: [
+          { role: 'user', content: 'Sauvegarde la configuration' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'c_read',
+                toolName: 'file_read',
+                input: { path: '/srv/app/.env' },
+              },
+              {
+                type: 'tool-call',
+                toolCallId: 'c_write',
+                toolName: 'file_write',
+                input: { path: '/srv/app/sauvegarde.env' },
+              },
+              {
+                type: 'tool-call',
+                toolCallId: 'c_nu',
+                toolName: 'file_read',
+                input: { path: '/srv/app/vide.txt' },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'c_read',
+                toolName: 'file_read',
+                output: { type: 'text', value: 'lu' },
+              },
+              {
+                type: 'tool-result',
+                toolCallId: 'c_write',
+                toolName: 'file_write',
+                output: { type: 'text', value: 'écrit' },
+              },
+              {
+                type: 'tool-result',
+                toolCallId: 'c_nu',
+                toolName: 'file_read',
+                output: { type: 'text', value: 'vide' },
+              },
+            ],
+          },
+          { role: 'assistant', content: 'Configuration sauvegardée.' },
+        ],
+      })
+      .returning();
+
+    await testDb.insert(toolCalls).values([
+      {
+        entityId: seed.entityId,
+        jobId: j!.id,
+        toolName: 'file_read',
+        toolInput: { path: '/srv/app/.env' },
+        toolOutput: `ANTHROPIC_API_KEY=${secret}`,
+        durationMs: 5,
+        turn: 1,
+        toolCallId: 'c_read',
+        card: 'read',
+        presented: lecture,
+      },
+      {
+        entityId: seed.entityId,
+        jobId: j!.id,
+        toolName: 'file_write',
+        toolInput: { path: '/srv/app/sauvegarde.env' },
+        toolOutput: 'ok',
+        durationMs: 7,
+        turn: 1,
+        toolCallId: 'c_write',
+        card: 'files',
+        presented: ecriture,
+      },
+      {
+        // Une ligne SANS charge utile : la rédaction ne doit rien casser.
+        entityId: seed.entityId,
+        jobId: j!.id,
+        toolName: 'file_read',
+        toolInput: { path: '/srv/app/vide.txt' },
+        toolOutput: 'vide',
+        durationMs: 3,
+        turn: 1,
+        toolCallId: 'c_nu',
+        card: null,
+        presented: null,
+      },
+    ]);
+
+    const { getSpaceConversationAction } = await actions();
+    const r = await getSpaceConversationAction(j!.id);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const steps = r.data.feed.items.flatMap((i) =>
+      i.kind === 'turn'
+        ? i.blocks.flatMap((b) =>
+            b.kind === 'card' ? [b.step] : b.kind === 'steps' ? b.steps : [],
+          )
+        : [],
+    );
+    const parCall = new Map(
+      steps.flatMap((s) => (s.kind === 'tool' && s.toolCallId ? [[s.toolCallId, s] as const] : [])),
+    );
+
+    // La carte `read` : l'extrait masqué, tout le reste de la charge intact.
+    const lue = parCall.get('c_read');
+    expect(lue?.kind === 'tool' && lue.presented).toEqual({
+      card: 'read',
+      path: '/srv/app/.env',
+      excerpt: 'ANTHROPIC_API_KEY=[secret masqué] (sk-)\nPORT=3000',
+      chars: 64,
+      truncated: false,
+    });
+    // La carte `files` : le secret masqué DANS le chemin, l'action et les
+    // comptes inchangés.
+    const ecrite = parCall.get('c_write');
+    expect(ecrite?.kind === 'tool' && ecrite.presented).toEqual({
+      card: 'files',
+      files: [
+        { path: '/srv/app/sauvegarde-[secret masqué] (sk-).env', action: 'written', bytes: 64 },
+      ],
+      total: 1,
+      truncated: false,
+    });
+    // Et la vue brute, masquée elle aussi — les deux disent la même chose.
+    expect(lue?.kind === 'tool' && lue.outputText).toBe('ANTHROPIC_API_KEY=[secret masqué] (sk-)');
+    // Nulle part dans ce que l'écran reçoit.
+    expect(JSON.stringify(r.data.feed)).not.toContain(secret);
+
+    // La ligne sans charge utile vit toujours, sa carte reste absente.
+    const nue = parCall.get('c_nu');
+    expect(nue?.kind === 'tool' && nue.presented).toBeNull();
+    expect(nue?.kind === 'tool' && nue.outputText).toBe('vide');
+  });
+
   it("P3 : la preuve d'un délégué remonte à la racine, et la file d'envoi se lit telle quelle", async () => {
     const { getSpaceConversationAction } = await actions();
     const r = await getSpaceConversationAction(jobId);

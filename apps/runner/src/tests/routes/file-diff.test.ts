@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
+import { REDACTED_TEXT } from '@nodal-agents/shared';
 import {
   agentJobs,
   agentWorkspaces,
@@ -175,6 +176,35 @@ describe('GET /api/jobs/:jobId/file-diff', () => {
     expect(body.truncated).toBe(false);
   });
 
+  it('file_write : le diff part RÉDIGÉ — un jeton écrit dans un fichier suivi ne se lit pas à l’écran', async () => {
+    // Reviewer C, #158, passe 2 : le fragment était rédigé, la branche git de
+    // la même route rendait le contenu du fichier tel quel.
+    const jeton = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture)
+    await writeFile(join(ws, 'secret.env'), 'ANTHROPIC_API_KEY=\n');
+    const avant = await snapshot(store, ws, 'tour 7');
+    await db
+      .insert(jobCheckpoints)
+      .values({ jobId: seed.jobId, turn: 7, workspace: ws, sha: avant!.sha });
+    await writeFile(join(ws, 'secret.env'), `ANTHROPIC_API_KEY=${jeton}\n`);
+    await callRow({
+      toolCallId: 'call-secret-diff',
+      toolName: 'file_write',
+      toolInput: { path: 'secret.env', content: `ANTHROPIC_API_KEY=${jeton}\n` },
+      turn: 7,
+    });
+
+    const body = (await (await get(seed.jobId, 'toolCallId=call-secret-diff')).json()) as {
+      kind: string;
+      text: string;
+      path: string;
+    };
+    expect(body.kind).toBe('diff');
+    expect(body.path).toBe('secret.env');
+    expect(body.text).toContain('+ANTHROPIC_API_KEY=');
+    expect(body.text).not.toContain(jeton);
+    expect(body.text).toContain(REDACTED_TEXT);
+  });
+
   it('un tour SUIVANT existe : la borne haute est cet instantané, et la réponse le dit', async () => {
     await writeFile(join(ws, 'code.txt'), 'v1\n');
     const t1 = await snapshot(store, ws, 'tour 1');
@@ -227,6 +257,35 @@ describe('GET /api/jobs/:jobId/file-diff', () => {
       newString: 'après',
       path: 'note.md',
     });
+  });
+
+  it('file_edit : le fragment part RÉDIGÉ — un jeton écrit dans un fichier ne se lit pas à l’écran', async () => {
+    // Reviewer C, #158 : la carte et la sortie brute partent rédigées vers le
+    // fil, le fragment de diff partait en clair. Le chemin reste tel quel :
+    // c'est la clé du fichier.
+    const jeton = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture)
+    await callRow({
+      toolCallId: 'call-secret',
+      toolName: 'file_edit',
+      toolInput: {
+        path: 'config/.env',
+        old_string: 'ANTHROPIC_API_KEY=',
+        new_string: `ANTHROPIC_API_KEY=${jeton}`,
+      },
+      turn: 1,
+    });
+
+    const body = (await (await get(seed.jobId, 'toolCallId=call-secret')).json()) as {
+      kind: string;
+      oldString: string;
+      newString: string;
+      path: string;
+    };
+    expect(body.kind).toBe('fragment');
+    expect(body.path).toBe('config/.env');
+    expect(body.newString).not.toContain(jeton);
+    expect(body.newString).toContain(REDACTED_TEXT);
+    expect(body.oldString).toBe('ANTHROPIC_API_KEY=');
   });
 
   it('aucun instantané pour ce travail : no_checkpoint, pas une erreur', async () => {
