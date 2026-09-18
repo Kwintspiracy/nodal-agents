@@ -15,12 +15,15 @@ import {
 import type { ThreadAuditRow, ThreadJob } from '../conversation-thread.ts';
 import type {
   ConversationFeed,
+  DeliverySummary,
   FeedItem,
   FeedTotals,
   Step,
   TurnBlock,
   TurnUsage,
 } from '../conversation-feed.ts';
+import { REDACTED_TEXT } from '@nodal-agents/shared';
+import { redactPresented } from '../redact-presented.ts';
 import type { ProductionVerdict } from '../chat-or-work.ts';
 
 const totals = (over: Partial<FeedTotals> = {}): FeedTotals => ({
@@ -936,5 +939,96 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
     const groupe = items[2];
     expect(groupe?.kind === 'run' && groupe.summary.modelCalls).toBe(1);
     expect(groupe?.kind === 'run' && groupe.summary.tools).toBe(0);
+  });
+});
+
+// Jetons factices, de la forme que le masqueur reconnaît — aucun n'a jamais
+// existé. Deux fichiers nommés d'après eux masquent vers le MÊME chemin.
+const CLE_A = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture)
+const CLE_B = 'sk-ant-api03-ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210'; // secrets:allow (fixture)
+
+/**
+ * Une ligne d'audit telle que `conversation-actions` la range sous le job de
+ * tête : la carte MASQUÉE, et les chemins d'avant masquage à côté.
+ */
+const ecritureMasquee = (path: string): ThreadAuditRow => {
+  const carte = {
+    card: 'files',
+    total: 1,
+    truncated: false,
+    files: [{ path, action: 'created' }],
+  };
+  return {
+    toolName: 'file_write',
+    toolInput: { path, content: 'x' },
+    toolOutput: '{"ok":true}',
+    presented: redactPresented(carte),
+    rawFilePaths: [path],
+  };
+};
+
+const recapDe = (audit: readonly ThreadAuditRow[]): DeliverySummary => {
+  const { items } = buildConversationThread({
+    conversation,
+    messages: [],
+    jobs: [job({ jobId: 'j-secret', verdict: travail, audit: [...audit] })],
+  });
+  const produit = items.find((i) => i.kind === 'produced');
+  if (produit?.kind !== 'produced') throw new Error('aucun encart de livraison');
+  return produit.summary;
+};
+
+describe('récapitulatif de livraison — un chemin masqué n’efface pas un fichier @cap:suivre-execution/moteur', () => {
+  it('compte DEUX fichiers dont les chemins ne diffèrent que par un jeton, et les montre masqués', () => {
+    // #161 : la carte entre dans le fil déjà masquée (#150), donc les deux
+    // chemins y sont devenus identiques. L'identité reste le chemin brut.
+    const recap = recapDe([
+      ecritureMasquee(`cles/${CLE_A}.txt`),
+      ecritureMasquee(`cles/${CLE_B}.txt`),
+    ]);
+    expect(recap.files).toBe(2);
+    expect(recap.filePaths).toEqual([
+      `cles/${REDACTED_TEXT} (sk-).txt`,
+      `cles/${REDACTED_TEXT} (sk-).txt`,
+    ]);
+  });
+
+  it('AUCUN chemin brut n’arrive dans la liste affichée', () => {
+    const recap = recapDe([
+      ecritureMasquee(`cles/${CLE_A}.txt`),
+      ecritureMasquee(`cles/${CLE_B}.txt`),
+    ]);
+    const affiche = recap.filePaths.join('\n');
+    expect(affiche).not.toContain(CLE_A);
+    expect(affiche).not.toContain(CLE_B);
+    expect(affiche).toContain(REDACTED_TEXT);
+  });
+
+  it('le MÊME fichier écrit deux fois compte une seule fois, jeton ou pas', () => {
+    const recap = recapDe([
+      ecritureMasquee(`cles/${CLE_A}.txt`),
+      ecritureMasquee(`cles/${CLE_A}.txt`),
+    ]);
+    expect(recap.files).toBe(1);
+    expect(recap.filePaths).toEqual([`cles/${REDACTED_TEXT} (sk-).txt`]);
+  });
+
+  it('une ligne SANS chemins bruts garde l’ancienne identité : le chemin présenté', () => {
+    // Une ligne construite ailleurs (ou d'avant #161) n'a pas `rawFilePaths` :
+    // deux chemins présentés différents restent deux fichiers.
+    const sansBruts = (path: string): ThreadAuditRow => ({
+      toolName: 'file_write',
+      toolInput: { path, content: 'x' },
+      toolOutput: '{"ok":true}',
+      presented: {
+        card: 'files',
+        total: 1,
+        truncated: false,
+        files: [{ path, action: 'created' }],
+      },
+    });
+    const recap = recapDe([sansBruts('src/a.ts'), sansBruts('src/b.ts')]);
+    expect(recap.files).toBe(2);
+    expect(recap.filePaths).toEqual(['src/a.ts', 'src/b.ts']);
   });
 });
