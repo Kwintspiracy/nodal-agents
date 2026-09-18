@@ -1,7 +1,7 @@
 // quota.test.ts — quota detection logic
 
 import { describe, it, expect, vi } from 'vitest';
-import { withRetry } from '../retry';
+import { withRetry, classify429Body } from '../retry';
 import { QuotaExhaustedError } from '../errors';
 
 vi.useFakeTimers();
@@ -111,5 +111,89 @@ describe('quota detection', () => {
     const qe = new QuotaExhaustedError('anthropic', 'claude-3-5-sonnet', 'ran out');
     expect(qe.message).toContain('anthropic');
     expect(qe.message).toContain('claude-3-5-sonnet');
+  });
+});
+
+// Le corps EXACT relevé dans `llm_calls` le 18/09/2026 (issue #163), qui a tué
+// deux délégations en quota_exhausted alors qu'il demandait de réessayer.
+const CORPS_OPENROUTER_163 =
+  'openrouter could not verify available credits for this request in time. retry shortly.';
+
+describe('un 429 qui demande de réessayer est passager @cap:parler-a-un-agent/moteur', () => {
+  it('le corps exact de #163 est classé passager, cas solde_non_verifie_a_temps', () => {
+    expect(classify429Body(CORPS_OPENROUTER_163)).toEqual({
+      classe: 'passager',
+      cas: 'solde_non_verifie_a_temps',
+    });
+  });
+
+  it('un vrai refus de facturation reste facturation', () => {
+    expect(classify429Body('Insufficient credits. Add more credits to continue.')).toEqual({
+      classe: 'facturation',
+      cas: 'credits_insuffisants',
+    });
+    expect(
+      classify429Body('You exceeded your current quota, please check your plan and billing'),
+    ).toEqual({ classe: 'facturation', cas: 'quota_depasse' });
+    expect(classify429Body('Payment required for this model')).toEqual({
+      classe: 'facturation',
+      cas: 'facturation_requise',
+    });
+  });
+
+  it('un refus qui dit aussi de réessayer reste un refus', () => {
+    // « add credits and try again later » demande un réessai, mais le compte
+    // refuse quand même : les trois cas de facturation passent AVANT le réessai
+    // générique, et chacun est vérifié, pas seulement le premier.
+    expect(classify429Body('Insufficient credits — add credits and try again later.')).toEqual({
+      classe: 'facturation',
+      cas: 'credits_insuffisants',
+    });
+    expect(classify429Body('Payment required for this model, please retry')).toEqual({
+      classe: 'facturation',
+      cas: 'facturation_requise',
+    });
+    expect(classify429Body('Quota exceeded for this key, try again later')).toEqual({
+      classe: 'facturation',
+      cas: 'quota_depasse',
+    });
+  });
+
+  it('un point entre « verify » et « credits » ne renvoie pas en facturation', () => {
+    // Le fournisseur peut couper sa phrase : « could not verify. Available
+    // credits … ». C'est la même panne, et aucune demande de réessai ne vient
+    // la sauver ici — seul le cas passager explicite peut le faire.
+    expect(
+      classify429Body('openrouter could not verify. available credits for this request: unknown.'),
+    ).toEqual({ classe: 'passager', cas: 'solde_non_verifie_a_temps' });
+  });
+
+  it('la politique de réessai rejoue le corps de #163 et rend le résultat', async () => {
+    const err = makeHttpError(429, CORPS_OPENROUTER_163);
+    const fn = vi.fn().mockRejectedValueOnce(err).mockResolvedValue('réponse du modèle');
+
+    const promise = withRetry(fn, { provider: 'openrouter', model: 'z-ai/glm-5.3' });
+    await vi.runAllTimersAsync();
+
+    // Le résultat de la 2e tentative revient à l'appelant : le job vit.
+    await expect(promise).resolves.toBe('réponse du modèle');
+  });
+
+  it('le corps de #163 ne produit JAMAIS un QuotaExhaustedError, même en échouant', async () => {
+    // Même quand toutes les tentatives échouent, la classe de l'erreur dit
+    // « réessais épuisés », pas « facturation » : le job n'est pas déclaré mort
+    // pour une raison de compte.
+    const err = makeHttpError(429, CORPS_OPENROUTER_163);
+    const fn = vi.fn().mockRejectedValue(err);
+
+    const promise = withRetry(fn, { provider: 'openrouter', model: 'z-ai/glm-5.3' });
+    const verdict = promise.catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+
+    const caught = await verdict;
+    expect(caught).not.toBeInstanceOf(QuotaExhaustedError);
+    expect((caught as Error).name).toBe('RetryExhaustedError');
+    // Et il a bien rejoué : 1 tentative initiale + les réessais de la politique.
+    expect(fn.mock.calls.length).toBeGreaterThan(1);
   });
 });

@@ -325,3 +325,153 @@ describe('la carte d’ensemble parle la même langue que la page Journeys', () 
     expect(bloc).not.toContain('never played');
   });
 });
+
+describe('où en est la revue, SUR la carte (#128)', () => {
+  // Le tableau disait « In review » et rien d'autre. Les trois cartes d'un même
+  // travail — la PR et les issues qu'elle ferme — doivent dire la même chose,
+  // et cette chose doit être lue, jamais tapée.
+
+  const REVUE_OK = {
+    passes: 2,
+    lastReviewer: 'Reviewer C',
+    lastDate: '2026-09-18',
+    lastVerdict: 'approve',
+    counts: { blocking: 0, important: 0, minor: 4 },
+    status: 'approved-waiting-merge',
+    warnings: [],
+  };
+  const REVUE_KO = {
+    passes: 1,
+    lastReviewer: 'Reviewer C',
+    lastDate: '2026-09-17',
+    lastVerdict: 'request_changes',
+    counts: { blocking: 1, important: 2, minor: 3 },
+    status: 'changes-requested',
+    warnings: [],
+  };
+
+  /** Le HTML d'une carte, jusqu'à la fin de son lien. */
+  const ticket = (html, tete) => {
+    const debut = html.indexOf(`${tete}</span>`);
+    expect(debut, `carte ${tete} absente de la page`).toBeGreaterThan(-1);
+    return html.slice(debut, html.indexOf('</a>', debut));
+  };
+
+  let html = '';
+  beforeAll(() => {
+    html = rendre({
+      ...INSTANTANE,
+      chantiers: {
+        ...(SOCLE.chantiers ?? {}),
+        cartes: [
+          carte({
+            type: 'pr',
+            numero: 200,
+            titre: 'The board shows where a review stands',
+            colonne: 'In review',
+            revue: REVUE_OK,
+          }),
+          carte({
+            numero: 128,
+            titre: 'Board says nothing',
+            parPr: 200,
+            colonne: 'In review',
+            revue: REVUE_OK,
+          }),
+          carte({
+            type: 'pr',
+            numero: 201,
+            titre: 'A PR the reviewer sent back',
+            colonne: 'In review',
+            revue: REVUE_KO,
+          }),
+          carte({
+            type: 'pr',
+            numero: 202,
+            titre: 'A PR nobody has opened yet',
+            colonne: 'In review',
+            revue: { ...REVUE_OK, passes: 0, status: 'in-review', counts: null, lastVerdict: null },
+          }),
+          carte({
+            type: 'pr',
+            numero: 203,
+            titre: 'A PR already merged',
+            etat: 'MERGED',
+            colonne: 'Done',
+            revue: REVUE_OK,
+          }),
+        ],
+      },
+    });
+  });
+
+  it('la carte de la PR porte la passe, le relecteur, la date et les comptes', () => {
+    const t = ticket(html, 'PR #200');
+    expect(t).toContain(
+      'Pass 2 · Reviewer C · 2026-09-18 · approve (0 blocking, 0 important, 4 minor)',
+    );
+    expect(t).toContain('approved, waiting for merge');
+  });
+
+  it('l’issue que cette PR ferme dit la MÊME chose, à côté de son étiquette PR', () => {
+    const t = ticket(html, '#128');
+    expect(t).toContain('PR #200');
+    expect(t).toContain('approved, waiting for merge');
+    expect(t).toContain(
+      'Pass 2 · Reviewer C · 2026-09-18 · approve (0 blocking, 0 important, 4 minor)',
+    );
+  });
+
+  it('une PR renvoyée le dit, et ne passe pas pour approuvée', () => {
+    const t = ticket(html, 'PR #201');
+    expect(t).toContain('changes requested');
+    expect(t).toContain('(1 blocking, 2 important, 3 minor)');
+    expect(t).not.toContain('approved, waiting for merge');
+  });
+
+  it('une PR que personne n’a encore relue le dit en gris, sans ligne de passe', () => {
+    const t = ticket(html, 'PR #202');
+    expect(t).toContain('not reviewed yet');
+    expect(t).not.toContain('Pass ');
+  });
+
+  it('une PR DÉJÀ MERGÉE ne porte plus « waiting for merge »', () => {
+    const t = ticket(html, 'PR #203');
+    expect(t).not.toContain('approved, waiting for merge');
+    expect(t).not.toContain('Pass 2');
+  });
+});
+
+describe('ce que le portail n’a pas su lire de la revue, il le dit (revue C de #175)', () => {
+  it('une carte dont l’état de revue porte un avertissement le montre', () => {
+    const html = rendre({
+      ...INSTANTANE,
+      chantiers: {
+        ...(SOCLE.chantiers ?? {}),
+        cartes: [
+          carte({
+            type: 'pr',
+            numero: 300,
+            titre: 'A PR whose review state could not be fully read',
+            colonne: 'In review',
+            revue: {
+              passes: 0,
+              lastReviewer: null,
+              lastDate: null,
+              lastVerdict: null,
+              counts: null,
+              status: 'in-review',
+              warnings: ['comment list of PR #300 reached 100: a later review pass may be missing'],
+            },
+          }),
+        ],
+      },
+    });
+    const debut = html.indexOf('PR #300</span>');
+    expect(debut).toBeGreaterThan(-1);
+    const t = html.slice(debut, html.indexOf('</a>', debut));
+    expect(t).toContain('review state partly unreadable');
+    // La carte dit les DEUX choses : rien de lu, et une raison de s'en méfier.
+    expect(t).toContain('not reviewed yet');
+  });
+});
