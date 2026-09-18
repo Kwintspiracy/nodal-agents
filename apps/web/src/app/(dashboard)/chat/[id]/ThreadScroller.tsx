@@ -93,6 +93,27 @@ export function staysAtBottom(m: {
   return m.scrollHeight - m.scrollTop - m.clientHeight < AT_BOTTOM_SLACK_PX;
 }
 
+/**
+ * Fenêtre, en millisecondes, pendant laquelle une croissance du contenu qui
+ * suit un geste du lecteur DANS le fil (un clic, une touche) est la sienne :
+ * un bloc qu'il vient de déplier, pas une réponse qui arrive.
+ *
+ * Quentin, 18/09/2026 : « quand je déroule quoi que ce soit dans un feed, ça
+ * déroule vers le haut ; si je clique sur dérouler, la position du scroll ne
+ * DOIT PAS bouger et le contenu se déroule vers le bas ». Le fil suivait le
+ * bas à CHAQUE croissance ; un bloc ouvert depuis le bas faisait donc filer la
+ * zone visible sous ce qu'on venait d'ouvrir.
+ */
+export const READER_GESTURE_WINDOW_MS = 800;
+
+/**
+ * Cette croissance vient-elle du lecteur ? Oui si un geste vient d'avoir lieu
+ * dans le fil. Une fonction pure, pour être éprouvée sans navigateur.
+ */
+export function growthIsTheReaders(m: { gestureAt: number | null; now: number }): boolean {
+  return m.gestureAt !== null && m.now - m.gestureAt < READER_GESTURE_WINDOW_MS;
+}
+
 export default function ThreadScroller({
   children,
   className,
@@ -117,6 +138,12 @@ export default function ThreadScroller({
    * nôtre, quel qu'ait été le nombre d'événements en route.
    */
   const selfScrollTop = useRef<number | null>(null);
+  /**
+   * L'instant du dernier geste du lecteur DANS le fil (clic, touche). Une
+   * croissance qui le suit de près est un bloc qu'il a déplié : elle s'ouvre
+   * vers le bas, sous ses yeux, et on ne le déplace pas.
+   */
+  const gestureAt = useRef<number | null>(null);
 
   /**
    * Descendre, sans que notre propre geste passe pour celui du lecteur.
@@ -201,6 +228,14 @@ export default function ThreadScroller({
         follow.current = false;
         return;
       }
+      // Le lecteur vient de cliquer dans le fil : cette croissance est un bloc
+      // qu'il a ouvert. La zone visible ne bouge pas, et on cesse de suivre —
+      // il lit ; son retour en bas (onScroll) rallumera le suivi.
+      if (growthIsTheReaders({ gestureAt: gestureAt.current, now: performance.now() })) {
+        follow.current = false;
+        selfScrollTop.current = null;
+        return;
+      }
       if (follow.current) scrollToBottom(el);
     });
     ro.observe(observed);
@@ -214,6 +249,14 @@ export default function ThreadScroller({
       // désigne aussi le conteneur du layout du dashboard, qui défile lui aussi.
       data-thread-scroller=""
       className={className}
+      // En capture : le geste est noté AVANT que le bloc cliqué ne change
+      // d'état et ne fasse grandir le fil.
+      onPointerDownCapture={() => {
+        gestureAt.current = performance.now();
+      }}
+      onKeyDownCapture={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') gestureAt.current = performance.now();
+      }}
       onScroll={() => {
         const el = ref.current;
         if (!el) return;

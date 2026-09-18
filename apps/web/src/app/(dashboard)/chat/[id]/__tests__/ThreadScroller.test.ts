@@ -8,7 +8,13 @@
 //     remonter devient impossible.
 
 import { describe, it, expect } from 'vitest';
-import { staysAtBottom, scrollbarGutterOf, AT_BOTTOM_SLACK_PX } from '../ThreadScroller.tsx';
+import {
+  staysAtBottom,
+  scrollbarGutterOf,
+  growthIsTheReaders,
+  AT_BOTTOM_SLACK_PX,
+  READER_GESTURE_WINDOW_MS,
+} from '../ThreadScroller.tsx';
 
 /** Un fil de 3000 px dans une fenêtre de 800 px : 2200 px de course. */
 const FIL = { scrollHeight: 3000, clientHeight: 800 };
@@ -39,6 +45,33 @@ describe('staysAtBottom', () => {
 
   it('un fil plus court que la fenêtre : on suit (il n’y a pas de « haut » où remonter)', () => {
     expect(staysAtBottom({ scrollHeight: 400, clientHeight: 800, scrollTop: 0 })).toBe(true);
+  });
+});
+
+// Un bloc que le lecteur déplie s'ouvre vers le bas, sous ses yeux (Quentin,
+// 18/09 : « la position du scroll ne DOIT PAS bouger »). La décision : une
+// croissance qui suit de près un geste dans le fil est la sienne, pas une
+// réponse qui arrive — et le fil ne la suit pas.
+describe('growthIsTheReaders', () => {
+  it('une croissance juste après un clic dans le fil est celle du lecteur : on ne suit pas', () => {
+    expect(growthIsTheReaders({ gestureAt: 1000, now: 1016 })).toBe(true);
+  });
+
+  it('à la limite de la fenêtre, encore la sienne ; au-delà, plus', () => {
+    expect(growthIsTheReaders({ gestureAt: 1000, now: 1000 + READER_GESTURE_WINDOW_MS - 1 })).toBe(
+      true,
+    );
+    expect(growthIsTheReaders({ gestureAt: 1000, now: 1000 + READER_GESTURE_WINDOW_MS })).toBe(
+      false,
+    );
+  });
+
+  it('sans aucun geste, une croissance est une arrivée : on suit', () => {
+    expect(growthIsTheReaders({ gestureAt: null, now: 5000 })).toBe(false);
+  });
+
+  it('un geste vieux d’une minute ne fait pas d’une réponse un dépliage', () => {
+    expect(growthIsTheReaders({ gestureAt: 1000, now: 61_000 })).toBe(false);
   });
 });
 
