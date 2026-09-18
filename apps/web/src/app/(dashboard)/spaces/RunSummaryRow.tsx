@@ -73,7 +73,8 @@ export default function RunSummaryRow({
           open={open}
           onClick={() => setOpen((v) => !v)}
           testId={`run-summary-${jobId}`}
-          className="h-8 gap-2 px-3"
+          inset="tight"
+          className="h-8 gap-2"
         >
           {parts.length > 0 && (
             <span className="min-w-0 flex-1 truncate text-mono-12 text-feed-metric">
