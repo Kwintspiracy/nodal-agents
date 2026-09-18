@@ -32,11 +32,16 @@
 //   2. Il redescend jusqu'en bas après avoir lu l'historique, le contenu grandit
 //      aussitôt : son geste est jugé sur la nouvelle hauteur, donc « pas en
 //      bas », et le suivi reste éteint.
+//   3. (18/09, règle du dépliage) Il clique dans le fil SANS rien déplier — une
+//      sélection de texte, un lien — et une réponse arrive dans la fenêtre du
+//      geste (`READER_GESTURE_WINDOW_MS`) : elle passe pour un bloc qu'il a
+//      ouvert, et n'est pas suivie ; elle attend sous le pli jusqu'à son
+//      prochain défilement.
 //
-// Les deux se réparent au geste SUIVANT : dans le premier cas sa remontée est
-// alors prise en compte, dans le second son retour en bas rallume le suivi.
-// Aucun ne piège durablement, aucun n'a été observé hors d'un test qui force la
-// course dans un seul tour de boucle.
+// Les trois se réparent au geste SUIVANT : dans le premier cas sa remontée est
+// alors prise en compte, dans les deux autres son retour en bas rallume le
+// suivi. Aucun ne piège durablement, aucun n'a été observé hors d'un test qui
+// force la course dans un seul tour de boucle.
 //
 // Les fermer vraiment demanderait de mémoriser la hauteur en même temps que la
 // position et de juger chaque geste à l'aune de ce que le lecteur VOYAIT — donc
