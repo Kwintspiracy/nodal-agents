@@ -107,6 +107,11 @@ export function classNamesSurLaBalise(source: string): string[] {
     }
     const balise = source.slice(i, j);
     for (const m of balise.matchAll(/className="([^"]*)"/g)) trouves.push(m[1]!);
+    // Un `className={…}` (variable, gabarit, `cn(...)`) ne se lit pas : la garde
+    // le rend TEL QUEL, avec son accolade, et le test le refuse — un retrait
+    // caché dans une expression est exactement le trou que la garde annonce
+    // fermer (Reviewer C, #156).
+    if (/className=\{/.test(balise)) trouves.push('{expression}');
     i = source.indexOf(NOM_BALISE, j);
   }
   return trouves;
@@ -128,7 +133,11 @@ describe('DisclosureButton — la garde du retrait', () => {
       const source = readFileSync(fichier, 'utf8');
       if (!source.includes(NOM_BALISE)) continue;
       for (const valeur of classNamesSurLaBalise(source)) {
-        if (/(^|\s)px-[\w.[\]/-]+/.test(valeur)) {
+        if (valeur.startsWith('{')) {
+          fautes.push(
+            `${relative(SRC_DIR, fichier)} → className=${valeur} (une expression : la garde ne peut pas y lire le retrait ; écris la classe en toutes lettres)`,
+          );
+        } else if (/(^|\s)px-[\w.[\]/-]+/.test(valeur)) {
           fautes.push(`${relative(SRC_DIR, fichier)} → className="${valeur}"`);
         }
       }
@@ -147,5 +156,13 @@ describe('DisclosureButton — la garde du retrait', () => {
 
     const propre = `${NOM_BALISE} open={o} onClick={() => setO((v) => !v)} inset="tight" className="h-8 py-0">`;
     expect(classNamesSurLaBalise(propre)).toEqual(['h-8 py-0']);
+
+    // Une expression n'est pas lisible : elle ressort telle quelle, accolade
+    // comprise, pour que la garde la refuse — un gabarit qui glisserait un
+    // `px-3.5` battrait `inset="tight"` par l'ordre de la feuille.
+    const cachee = `${NOM_BALISE} open={o} onClick={() => setO((v) => !v)} className={\`h-8 \${x}\`}>`;
+    expect(classNamesSurLaBalise(cachee)).toEqual(['{expression}']);
+    const fonction = `${NOM_BALISE} open={o} onClick={() => {}} className={cn('h-8', 'px-3')}>`;
+    expect(classNamesSurLaBalise(fonction)).toEqual(['{expression}']);
   });
 });
