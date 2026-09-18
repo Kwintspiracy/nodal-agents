@@ -102,7 +102,7 @@ export async function readReviewVerdicts(
     const bucket = rawByJob.get(row.jobId) ?? [];
     bucket.push(row.toolOutput);
     rawByJob.set(row.jobId, bucket);
-    const parsed = readVerdict(row.toolOutput);
+    const parsed = readVerdict(row.toolOutput, row.jobId);
     views.push({
       jobId: row.jobId,
       verdict: parsed?.verdict ?? null,
@@ -132,8 +132,19 @@ export async function readReviewVerdicts(
   return { views, rawByJob };
 }
 
-/** Le verdict d'une sortie, ou `null` — une sortie hors contrat ne fait pas tomber la page. */
-function readVerdict(raw: string): {
+/**
+ * Le verdict d'une sortie, ou `null` — une sortie hors contrat ne fait pas
+ * tomber la page, mais elle ne disparaît pas en silence non plus : le job est
+ * NOMMÉ dans le journal (Reviewer C, passe 3). Un contrat rompu entre l'outil
+ * et ce lecteur est un défaut à corriger, et un `catch` muet le cachait —
+ * l'écran montrait alors une ligne de relecture vide sans que rien n'explique
+ * pourquoi. Même geste que `job-feed.ts` quand une lecture reste incomplète :
+ * un avertissement qui dit par où regarder.
+ */
+function readVerdict(
+  raw: string,
+  jobId: string,
+): {
   verdict: string;
   summary: string;
   findings: ReviewFinding[];
@@ -141,7 +152,10 @@ function readVerdict(raw: string): {
 } | null {
   try {
     return parseReviewVerdictOutput(raw);
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[review-verdicts] job ${jobId}: a ${REVIEW_VERDICT_TOOL} output claims success but breaks the verdict contract — the review is shown without its verdict. ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }
