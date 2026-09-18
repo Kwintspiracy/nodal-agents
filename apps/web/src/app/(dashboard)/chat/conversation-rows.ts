@@ -11,6 +11,16 @@
 // TOURNE (les runs) — et les recoller est exactement le genre de règle qui se
 // trompe en silence dans un composant. Ici, elle se teste sans navigateur.
 //
+// ⚠️ LES SECRETS SONT MASQUÉS EN AMONT. Le titre d'un fil que personne n'a
+// nommé EST la première demande de la personne, et l'aperçu la dernière réponse
+// de l'agent : une clé collée dans l'un ou l'autre s'affichait ici en clair
+// (SECRET-001, Reviewer C sur #179). Le masquage vit dans `firstLine`
+// (lib/conversation-actions.ts) et PAS ici, parce que cette lecture-là coupe
+// les deux textes — 60 et 120 signes — avant que ce module ne les voie :
+// masquer après la coupe laisserait passer le début d'une clé, qui en est
+// l'essentiel. Les lignes de RUN, elles, reçoivent la tâche entière et masquent
+// chez elles (`runTitle`, run-rows.ts).
+//
 // ⚠️ CE QUI N'EST PAS DESSINÉ. La maquette montre aussi une pastille « Unread ».
 // La base ne porte AUCUN état de lecture — pas de `last_read_at`, nulle part —
 // donc aucune ligne ne peut dire qu'elle n'est pas lue. Elle n'est pas

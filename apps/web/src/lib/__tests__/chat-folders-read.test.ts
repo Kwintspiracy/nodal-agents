@@ -201,7 +201,12 @@ describe('les dossiers lus en base @cap:reprendre-conversation/moteur', () => {
     if (!result.ok) throw new Error(result.message);
     // Deux `processing` sur Telegram. Les jobs `awaiting_approval` du même
     // canal ne sont PAS comptés — c'est la pastille qui les dit, pas le point.
-    expect(result.data.running).toEqual({ telegram: 2 });
+    //
+    // Le `mcp: 1` est le job que `seedMinimal` crée lui-même : `channel = 'api'`,
+    // `pending`, sans conversation. C'est exactement la forme d'un run venu de
+    // dehors, et depuis le 18/09 il allume le dossier MCP. La lecture dit donc
+    // ce que la base CONTIENT, pas ce que la fixture avait en tête.
+    expect(result.data.running).toEqual({ telegram: 2, mcp: 1 });
   });
 
   it('dit sur QUELLES conversations un run tourne — et seulement celles-là', async () => {

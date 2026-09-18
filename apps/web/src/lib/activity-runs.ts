@@ -44,6 +44,11 @@ export const CHANNEL_LABELS: Readonly<Record<string, string>> = {
   discord: 'Discord',
   whatsapp: 'WhatsApp',
   mcp: 'MCP',
+  // `api` ne nomme plus qu'UNE chose : une requête à `/api/agent`. La boîte
+  // « Send task » du tableau de bord écrivait la même valeur jusqu'au 18/09 ;
+  // elle écrit `dashboard` depuis, et ce mot redevient donc lisible tel quel
+  // au lieu d'être deviné d'après la présence d'une conversation.
+  api: 'API',
   internal: 'Agent',
   'task-board': 'Task board',
 };
@@ -62,9 +67,11 @@ export function originOfRun(input: RunOriginInput): RunOrigin {
   }
   const known = CHANNEL_LABELS[input.channel];
   if (known !== undefined) return { label: known, detail: null };
-  if (input.channel === 'api' || input.channel === 'dashboard') {
-    // Le même canal sert la boîte de dialogue « New task » et un tour de chat :
-    // ce qui les sépare est la conversation, pas le canal.
+  if (input.channel === 'dashboard') {
+    // Le même canal sert la boîte « Send task » et un tour de chat : ce qui les
+    // sépare est la conversation, pas le canal. `api` ne passe PLUS par ici
+    // (18/09) — il a son mot, « API », et le prendre pour le tableau de bord
+    // ferait lire « Dashboard » sur un run qu'une machine a demandé.
     return { label: input.conversationId === null ? 'Dashboard' : 'Chat', detail: null };
   }
   return { label: input.channel, detail: null };

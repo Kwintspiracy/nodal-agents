@@ -4,6 +4,8 @@
 import { eq, and } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
+import { readDeliveredReviewVerdict } from './review-verdict';
+import type { ReviewVerdictRecord } from './review-verdict';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
 
 /**
@@ -26,7 +28,30 @@ export interface DelegationOutcomeRecord {
   exit_reason?: string | null;
   /** Tools the child actually ran, so the parent can see what was attempted. */
   tools_used?: string[];
+  /**
+   * Le verdict de revue que l'enfant a ENREGISTRÉ, quand il en a enregistré un
+   * (issue #124). `summary` reste la dernière phrase du modèle ; ce champ, lui,
+   * porte ce que l'outil `review_verdict` a validé — verdict, résumé, constats.
+   * `null` sur l'immense majorité des délégations, qui ne sont pas des revues.
+   */
+  review_verdict?: ReviewVerdictRecord | null;
+  /**
+   * Le geste que ce code d'échec appelle, quand il en appelle un — un CHAMP,
+   * jamais une phrase (#119, revue passe 1). Le harnais n'a pas à écrire
+   * « essaie un autre modèle » : il pose le fait, et l'écran ou le modèle le
+   * dit dans la langue de la personne (invariant #2).
+   */
+  hint?: JobFailureHint | null;
 }
+
+/**
+ * Les gestes que le harnais peut nommer après un échec. Un par cas, ajouté
+ * quand un cas le mérite — la liste reste courte exprès : un « conseil »
+ * fourre-tout ne se rend pas à l'écran.
+ *
+ * `switch_model` : le fournisseur a refusé la requête de ce modèle-là.
+ */
+export type JobFailureHint = 'switch_model';
 
 /**
  * What the child handed back. `string` = the child's text result on success and
@@ -72,10 +97,49 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
       error: result.error ?? null,
       exit_reason: result.exit_reason ?? null,
       tools_used: result.tools_used ?? [],
+      // Tous deux TOUJOURS présents, `null` quand il n'y a pas eu de revue ou
+      // qu'aucun geste n'est nommé : un champ qui apparaît et disparaît se lit
+      // comme une absence de contrat.
+      review_verdict: result.review_verdict ?? null,
+      hint: result.hint ?? null,
     },
     null,
     2,
   );
+}
+
+/**
+ * Attache au record le verdict que l'enfant a enregistré, s'il en a enregistré
+ * un. Le verdict déjà porté par l'appelant l'emporte — il l'a lu de plus près.
+ *
+ * Une ligne illisible ne remonte PAS en exception : elle deviendrait une sortie
+ * de `resumeDelegated` AVANT la mise à jour du parent, qui resterait
+ * `awaiting_delegation` avec un appel d'outil sans réponse, et personne ne
+ * serait prévenu (revue de la PR #170, constat 2). La délégation devient donc
+ * un ÉCHEC nommé : le parent reçoit le `error-text` des délégations ratées,
+ * avec le code, et peut agir. Fort et à la bonne place.
+ */
+async function withDeliveredReviewVerdict(
+  outcome: DelegationOutcomeRecord,
+  childJobId: JobId,
+  db: AnyDrizzleDb,
+): Promise<DelegationOutcomeRecord> {
+  if (outcome.review_verdict) return outcome;
+  try {
+    return { ...outcome, review_verdict: await readDeliveredReviewVerdict(db, childJobId) };
+  } catch (err) {
+    if (!(err instanceof OrchestrationError) || err.code !== 'review_verdict_malformed') throw err;
+    console.error(
+      `[resume] child ${childJobId} recorded an unreadable review_verdict — the delegation is reported as failed:`,
+      err,
+    );
+    return {
+      ...outcome,
+      status: 'failed',
+      error: 'review_verdict_malformed',
+      review_verdict: null,
+    };
+  }
 }
 
 /**
@@ -106,14 +170,15 @@ function childSlugFromToolName(toolName: string): string | null {
  * 5. Set parent.status = 'pending', clear pending_delegation
  *
  * @param parentJobId  The ID of the waiting parent job
- * @param childJobId   The ID of the completed child job (for logging/audit)
+ * @param childJobId   The ID of the completed child job — read for its
+ *                     `review_verdict` rows (#124), and for logging/audit
  * @param childOutcome The child's text result, OR `{error}` if the child failed
  * @param db           Drizzle DB handle
  * @returns            Updated parent job row
  */
 export async function resumeDelegated(
   parentJobId: JobId,
-  _childJobId: JobId,
+  childJobId: JobId,
   childOutcome: DelegationOutcome,
   db: AnyDrizzleDb,
 ): Promise<AgentJob> {
@@ -225,7 +290,15 @@ export async function resumeDelegated(
   // results (string) and 'error-text' for the deferred-sibling markers (which
   // carry is_error=true so the LLM treats them as failures, not normal results).
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'error-text'; value: string };
-  const outcome = normalizeDelegationOutcome(childOutcome);
+  // Le livrable d'une revue est le verdict que l'enfant a enregistré, pas la
+  // phrase par laquelle il l'annonce (issue #124). On le lit sur ses lignes
+  // `tool_calls` et on le met dans le record TYPÉ, seul objet que le parent
+  // reçoive : sans cela le parent redélègue la même revue.
+  const outcome = await withDeliveredReviewVerdict(
+    normalizeDelegationOutcome(childOutcome),
+    childJobId,
+    db,
+  );
   const isFailure = outcome.status !== 'completed';
 
   // Per-slug delegation cap: track the slug of the LAST failed child so the

@@ -25,6 +25,7 @@ import { ProviderConfigError } from '../errors';
 import { kimiToolCallMiddleware, nodalToolCallMiddleware } from './parsers';
 import { createTolerantFetch } from './tolerant-fetch';
 import { isMoonshotModel, sanitizeMoonshotTools } from './moonshot-schema';
+import { isGeminiModel, sanitizeGeminiTools } from './gemini-schema';
 
 type ModelFamily = 'kimi' | 'nodal-format' | null;
 
@@ -125,6 +126,13 @@ export function buildOpenRouterExtraBody(
  * hits the same 400 a direct api.moonshot.ai call would. Detection is by
  * MODEL NAME (`isMoonshotModel`), not host — OpenRouter is a single shared
  * host for every model family. Non-Kimi models pass through untouched.
+ *
+ * Same treatment, same reason, for a Gemini model (issue #119): the native
+ * route never sends raw JSON Schema — `@ai-sdk/google` rewrites it field by
+ * field — while this OpenAI-shaped route does, and Google AI Studio answers
+ * `400 Request contains an invalid argument` at turn 1. The rule is by MODEL
+ * FAMILY (`isGeminiModel`), so it holds whichever aggregator relays the call.
+ *
  * Pure function — exported for unit testing.
  */
 export function patchOpenRouterRequestBody(body: unknown): unknown {
@@ -133,6 +141,9 @@ export function patchOpenRouterRequestBody(body: unknown): unknown {
   const modelId = typeof b['model'] === 'string' ? (b['model'] as string) : undefined;
   if (isMoonshotModel(modelId) && Array.isArray(b['tools'])) {
     b['tools'] = sanitizeMoonshotTools(b['tools']);
+  }
+  if (isGeminiModel(modelId) && Array.isArray(b['tools'])) {
+    b['tools'] = sanitizeGeminiTools(b['tools']);
   }
   return body;
 }

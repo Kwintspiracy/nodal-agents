@@ -114,6 +114,18 @@ export type ThreadAuditRow = {
   toolInput: unknown;
   toolOutput: string | null;
   presented: unknown;
+  /**
+   * Les chemins des fichiers de la carte AVANT masquage, dans l'ordre exact de
+   * `presented.files` — l'IDENTITÉ des fichiers, jamais leur affichage (#161).
+   *
+   * La carte est masquée en entrant dans le fil (#150) : deux fichiers dont les
+   * chemins ne diffèrent que par une chaîne de forme credential masquent vers
+   * le MÊME chemin, et le récapitulatif n'en comptait alors qu'un. Le compte se
+   * fait donc sur ces chemins-là ; ce qui s'affiche reste le chemin masqué.
+   * Absent d'une ligne sans carte `files`, et d'une ligne construite sans
+   * masquage : le chemin présenté sert alors d'identité, comme avant.
+   */
+  rawFilePaths?: readonly string[];
 };
 
 /** Ce que le fil dit quand le travail d'un tour n'existe plus en base. */
@@ -354,16 +366,24 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
   // chemin relatif, et le même fichier faisait « 2 files » (vu en vrai le
   // 07/09). Par égalité et non par suffixe : `index.ts` et `a/index.ts` sont
   // deux fichiers (revue Codex, passe 57).
-  const files = new Set<string>();
-  const addFile = (path: string): void => {
-    files.add(canonicalChangePath(path, job.workspaceRoots));
+  //
+  // L'identité est le chemin BRUT, l'affichage le chemin masqué (#161) : la
+  // carte entre ici déjà masquée (#150), et deux fichiers dont les chemins ne
+  // diffèrent que par un jeton n'en faisaient plus qu'un. La clé de la `Map`
+  // ne sort jamais d'ici ; sa valeur, seule, est montrée.
+  const files = new Map<string, string>();
+  const addFile = (masked: string, raw: string): void => {
+    const key = canonicalChangePath(raw, job.workspaceRoots);
+    if (!files.has(key)) files.set(key, canonicalChangePath(masked, job.workspaceRoots));
   };
   const counted = job.audit
     .filter((row) => callHappened(outcomeOfToolOutput(row.toolOutput)))
     .map((row) => {
       const p = parsePresented(row.presented);
       if (p !== null && p.card === 'files') {
-        for (const f of p.files) if (f.action !== 'listed') addFile(f.path);
+        p.files.forEach((f, i) => {
+          if (f.action !== 'listed') addFile(f.path, row.rawFilePaths?.[i] ?? f.path);
+        });
       }
       return lineCountsOfCall(row.toolName, row.toolInput, row.toolOutput);
     });
@@ -411,7 +431,7 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
   // Les chemins, dans l'ORDRE OÙ ILS ONT ÉTÉ ÉCRITS : un `Set` garde l'ordre
   // d'insertion, et les lignes d'audit arrivent déjà triées par date. Le compte
   // en est dérivé — il ne peut plus diverger de la liste (#135).
-  const filePaths = [...files];
+  const filePaths = [...files.values()];
   return {
     files: filePaths.length,
     filePaths,

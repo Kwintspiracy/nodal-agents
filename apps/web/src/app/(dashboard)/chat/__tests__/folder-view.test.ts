@@ -37,6 +37,25 @@ describe('la vue d’un dossier @cap:reprendre-conversation/moteur', () => {
     expect(v.channel).toBeNull();
   });
 
+  it('sur MCP, ne montre QUE les runs venus de dehors', () => {
+    // Le seul dossier qui ne liste pas des conversations : ces runs n'en ont
+    // aucune. Il est valide SANS figurer parmi les canaux de la base, parce
+    // qu'il ne tient pas à une conversation mais à des runs.
+    const v = chatFolderView('mcp', CHANNELS);
+    expect(v.key).toBe('mcp');
+    expect(v.title).toBe('MCP');
+    expect(v.showRuns).toBe(true);
+    expect(v.showChannels).toBe(false);
+    expect(v.showDashboard).toBe(false);
+    expect(v.channel).toBeNull();
+  });
+
+  it('ne montre de RUNS dans aucun autre dossier', () => {
+    expect(chatFolderView(null, CHANNELS).showRuns).toBe(false);
+    expect(chatFolderView('telegram', CHANNELS).showRuns).toBe(false);
+    expect(chatFolderView('dashboard', CHANNELS).showRuns).toBe(false);
+  });
+
   it('sur un canal que la base ne connaît pas, redevient la page entière', () => {
     // `?folder=nimportequoi` donnait sinon une page vide intitulée
     // « Nimportequoi » — un dossier vide là où il n'y a pas de dossier.
@@ -74,5 +93,14 @@ describe('la phrase sous le titre d’un dossier @cap:reprendre-conversation/mot
 
   it('ne dit RIEN quand tout est à zéro', () => {
     expect(folderSubtitle({ conversations: 0, waiting: 0, running: 0 })).toBeNull();
+  });
+
+  it('nomme des RUNS dans le dossier MCP, jamais des conversations', () => {
+    // Ces lignes ne sont pas des conversations : les appeler ainsi nommerait ce
+    // qu'elles ne sont pas.
+    expect(folderSubtitle({ conversations: 3, waiting: 1, running: 2 }, 'run')).toBe(
+      '3 runs · 1 waiting for you · 2 running',
+    );
+    expect(folderSubtitle({ conversations: 1, waiting: 0, running: 0 }, 'run')).toBe('1 run');
   });
 });

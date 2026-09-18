@@ -261,6 +261,12 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
       return [];
     }
   },
+  // Ce que le CLI écrit ne passe par AUCUN outil de Nodal : le seam lit donc
+  // les lignes vivantes que la session a laissées et constate chaque fichier
+  // rapporté sur le disque (issue #102, revue C de la PR #196). Sans cela,
+  // depuis qu'un `cwd` ne crédite plus rien, aucun run de harnais ne serait
+  // constaté et `declare_verification` les refuserait tous.
+  reportsHarnessWrites: true,
   defaultApproval: 'require_approval',
   // Runs BEFORE the approval card is written. The refusal below exists because
   // the card would otherwise state a confinement promise this run cannot keep —
@@ -375,10 +381,17 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         env,
         stdin: input.task,
         onStdoutLine: (line) => {
-          liveRecorder(line);
+          liveRecorder.onLine(line);
           essential.onLine(line);
         },
       });
+      // Les lignes vivantes sont EN BASE avant qu'on rende la main : c'est
+      // d'elles que la vérification tire les fichiers à constater, juste après
+      // cet appel (issue #102, revue C de la PR #196). Une insertion encore en
+      // vol serait un fichier écrit que rien ne crédite, au hasard du minutage.
+      // Attendre ne change rien à leur nature : une panne s'y dit toujours dans
+      // un avertissement et n'emporte pas la session.
+      await liveRecorder.settled();
 
       if (run.timedOut) {
         await safeRecord(

@@ -80,7 +80,16 @@ export {
   renderDelegationOutcome,
   DELEGATION_FAILED_MARKER,
 } from './router/resume';
-export type { DelegationOutcome, DelegationOutcomeRecord } from './router/resume';
+export type { DelegationOutcome, DelegationOutcomeRecord, JobFailureHint } from './router/resume';
+
+// ─── Router: le verdict de revue est un livrable (#124) ───────────────────────
+export {
+  readDeliveredReviewVerdict,
+  readFinalReviewVerdict,
+  parseReviewVerdictOutput,
+  REVIEW_VERDICT_TOOL,
+} from './router/review-verdict';
+export type { ReviewVerdictRecord, ReviewVerdictFinding } from './router/review-verdict';
 
 // ─── Router: only-one-per-turn ────────────────────────────────────────────────
 export { filterToolCallsForDelegation, buildDeferredToolResults } from './router/only-one-per-turn';

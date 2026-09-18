@@ -15,6 +15,7 @@ import {
   ChatCircle,
   DiscordLogo,
   PaperPlaneTilt,
+  PlugsConnected,
   SlackLogo,
   TelegramLogo,
   WhatsappLogo,
@@ -23,7 +24,7 @@ import {
 import InboxFolder from './ui/InboxFolder';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
-import { chatFolders, DASHBOARD_FOLDER } from '@/lib/chat-folders.ts';
+import { chatFolders, DASHBOARD_FOLDER, MCP_FOLDER } from '@/lib/chat-folders.ts';
 
 /**
  * L'icône d'un dossier. Les logos de marque quand le paquet d'icônes en a un —
@@ -37,18 +38,22 @@ const FOLDER_ICON: Readonly<Record<string, PhosphorIcon>> = {
   discord: DiscordLogo,
   whatsapp: WhatsappLogo,
   [DASHBOARD_FOLDER]: ChatCircle,
+  // Une prise branchée, et pas une bulle : ce dossier n'est pas un endroit où
+  // l'on parle, c'est ce qui arrive quand une machine se branche au produit.
+  [MCP_FOLDER]: PlugsConnected,
 };
 
 export default function ChatFolderGroup() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { pending } = useApprovals();
-  const { channels, running } = useChatFolders();
+  const { channels, running, externalRuns } = useChatFolders();
 
   const folders = chatFolders({
     channels,
     waiting: pending,
     running,
+    externalRuns,
     pathname,
     folderParam: searchParams.get('folder'),
   });

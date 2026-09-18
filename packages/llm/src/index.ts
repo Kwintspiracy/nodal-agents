@@ -51,3 +51,14 @@ export {
   IMAGE_CAPABLE_PROVIDERS,
 } from './providers/image-models';
 export type { GeneratedImage } from './providers/image-models';
+
+// Le sous-ensemble de JSON Schema que Gemini accepte (#119). Exporté pour que
+// les VRAIS schémas d'outils, qui vivent dans @nodal-agents/tools, soient
+// passés à l'assainisseur dans un test : le sens des dépendances interdit
+// l'import inverse.
+export {
+  sanitizeGeminiTools,
+  convertSchemaForGemini,
+  isGeminiModel,
+} from './providers/gemini-schema';
+export { patchOpenRouterRequestBody } from './providers/openrouter';

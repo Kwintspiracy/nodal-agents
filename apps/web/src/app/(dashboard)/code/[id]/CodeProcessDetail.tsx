@@ -20,10 +20,8 @@
 // the 'coding' stage — same interval-effect shape as CodeProcessesTable's
 // list poller.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { diffLines } from '@/lib/line-diff';
-import type { CodingChangeView } from '@/lib/coding-changes.ts';
 import {
   getCodingProcessDetailAction,
   listApprovalsAction,
@@ -31,11 +29,11 @@ import {
   type CodingProcessDetail as CodingProcessDetailData,
   type CodingToolCallView,
   type CodingActivityItem,
-  type CodingFileChangeGroup,
   type CodingVerdictView,
 } from '@/lib/actions.ts';
 import ApprovalActions from '@/app/(dashboard)/approvals/ApprovalActions.tsx';
 import VerificationSection from './VerificationSection.tsx';
+import FileChangeBlock from './FileChangeBlock.tsx';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import DisclosureButton from '@/components/ui/DisclosureButton';
@@ -344,7 +342,11 @@ export default function CodeProcessDetail({
         {changes.length === 0 ? (
           <p className="px-4 py-6 text-body-13 text-ink-4">No files changed yet.</p>
         ) : (
-          changes.map((group) => <FileDiffRow key={group.filePath} group={group} />)
+          <div className="space-y-3 p-4">
+            {changes.map((group) => (
+              <FileChangeBlock key={group.filePath} group={group} />
+            ))}
+          </div>
         )}
       </div>
 
@@ -431,223 +433,6 @@ function VerdictsSection({ verdicts, stage }: { verdicts: CodingVerdictView[]; s
           {verdicts.map((v, i) => (
             <VerdictCard key={i} verdict={v} />
           ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Fichiers repliables façon PR review (spec Quentin, image CodeRabbit) ────
-
-function FileDiffRow({ group }: { group: CodingFileChangeGroup }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="border-b border-rule-2 last:border-b-0">
-      <DisclosureButton open={open} onClick={() => setOpen((v) => !v)} className="w-full py-2.5">
-        <PathTail
-          text={group.filePath}
-          className="min-w-0 flex-1 font-mono text-body-13 text-ink"
-        />
-        <span className="shrink-0 text-mono-11">
-          {group.removedLines > 0 && <span className="text-err">−{group.removedLines}</span>}{' '}
-          {group.addedLines > 0 && <span className="text-ok">+{group.addedLines}</span>}
-        </span>
-      </DisclosureButton>
-      {open && (
-        <div className="border-t border-rule-2">
-          <FileSplitDiff edits={group.edits} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Split diff (spec Quentin 25/08, maquette CodeRabbit/GitHub) ─────────────
-// Le classique côte à côte ligne contre ligne : ancien à gauche (suppressions
-// en rouge), nouveau à droite (ajouts en vert), lignes alignées, cellule vide
-// grisée en face d'une ligne sans vis-à-vis, runs inchangés repliés en
-// « N unmodified lines ». Construit sur diffLines (LCS maison, line-diff.ts).
-
-type SplitCell = { n: number; text: string; changed: boolean } | null;
-type SplitRow =
-  | { kind: 'line'; left: SplitCell; right: SplitCell }
-  | { kind: 'elided'; count: number };
-
-/** Apparie le script d'ops LCS en lignes gauche/droite alignées (style GitHub). */
-function buildSplitRows(oldText: string, newText: string): SplitRow[] {
-  const ops = diffLines(oldText, newText);
-  const rows: SplitRow[] = [];
-  let ln = 0; // numéro de ligne gauche (relatif au hunk)
-  let rn = 0; // numéro de ligne droite
-
-  let i = 0;
-  while (i < ops.length) {
-    const op = ops[i]!;
-    if (op.op === 'same') {
-      // Run de lignes inchangées — contexte de 3 de chaque côté, le reste replié.
-      let j = i;
-      while (j < ops.length && ops[j]!.op === 'same') j++;
-      const run = ops.slice(i, j);
-      const CONTEXT = 3;
-      const isFirst = i === 0;
-      const isLast = j === ops.length;
-      // En bord de fichier, un seul côté de contexte est utile.
-      const head = isFirst ? 0 : CONTEXT;
-      const tail = isLast ? 0 : CONTEXT;
-      run.forEach((line, k) => {
-        const inHead = k < head;
-        const inTail = k >= run.length - tail;
-        if (run.length > head + tail + 1 && !inHead && !inTail) {
-          ln++;
-          rn++;
-          const prev = rows[rows.length - 1];
-          if (prev && prev.kind === 'elided') prev.count++;
-          else rows.push({ kind: 'elided', count: 1 });
-        } else {
-          ln++;
-          rn++;
-          rows.push({
-            kind: 'line',
-            left: { n: ln, text: line.text, changed: false },
-            right: { n: rn, text: line.text, changed: false },
-          });
-        }
-      });
-      i = j;
-      continue;
-    }
-    // Run de changements : les suppressions puis les ajouts contigus sont
-    // appariés rangée par rangée — l'excédent d'un côté fait face à du vide.
-    const removes: string[] = [];
-    const adds: string[] = [];
-    while (i < ops.length && ops[i]!.op !== 'same') {
-      if (ops[i]!.op === 'remove') removes.push(ops[i]!.text);
-      else adds.push(ops[i]!.text);
-      i++;
-    }
-    const len = Math.max(removes.length, adds.length);
-    for (let k = 0; k < len; k++) {
-      const left = k < removes.length ? { n: ++ln, text: removes[k]!, changed: true } : null;
-      const right = k < adds.length ? { n: ++rn, text: adds[k]!, changed: true } : null;
-      rows.push({ kind: 'line', left, right });
-    }
-  }
-  return rows;
-}
-
-function SplitDiffCell({ cell, side }: { cell: SplitCell; side: 'left' | 'right' }) {
-  // Cellule sans vis-à-vis : le hachuré sombre de la maquette, rendu en fond
-  // neutre appuyé — rien à lire de ce côté.
-  if (!cell) {
-    return (
-      <>
-        <span className="select-none border-r border-rule-2 bg-hover px-2" />
-        <span className="min-w-0 bg-hover" />
-      </>
-    );
-  }
-  const tone = cell.changed ? (side === 'left' ? 'bg-err/10' : 'bg-ok/10') : '';
-  const numTone = cell.changed
-    ? side === 'left'
-      ? 'bg-err/15 text-err'
-      : 'bg-ok/15 text-ok'
-    : 'text-ink-4';
-  return (
-    <>
-      <span
-        className={`select-none border-r border-rule-2 px-2 text-right font-mono text-mono-11 leading-[1.6] ${numTone}`}
-      >
-        {cell.n}
-      </span>
-      {/* min-w-0 + overflow-hidden : une ligne plus longue que sa DEMI-colonne
-          est coupée au bord (comme GitHub/CodeRabbit), au lieu de déborder en
-          peinture sur la moitié d'en face — le bug du 1er rendu. Le texte
-          complet reste lisible au survol (title). */}
-      <span
-        title={cell.text}
-        className={`min-w-0 overflow-hidden whitespace-pre px-2 font-mono text-mono-12 leading-[1.6] text-ink-2 ${tone}`}
-      >
-        {cell.text || ' '}
-      </span>
-    </>
-  );
-}
-
-const SPLIT_ROW_LIMIT = 80;
-
-/**
- * Le diff d'UN fichier : tous ses hunks dans UNE seule grille (le rendu par
- * hunk séparé donnait des mini-blocs déconnectés qui repartaient chacun à la
- * ligne 1 — illisible), séparés par une barre « ⋯ », numérotation continue
- * par colonne, un seul « Show all ».
- */
-function FileSplitDiff({ edits }: { edits: CodingChangeView[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const rows = useMemo(() => {
-    const out: Array<SplitRow | { kind: 'hunk-sep' }> = [];
-    let lnOffset = 0;
-    let rnOffset = 0;
-    edits.forEach((edit, idx) => {
-      if (idx > 0) out.push({ kind: 'hunk-sep' });
-      const hunkRows = buildSplitRows(edit.oldText ?? '', edit.newText ?? '');
-      let maxL = 0;
-      let maxR = 0;
-      for (const r of hunkRows) {
-        if (r.kind !== 'line') {
-          out.push(r);
-          continue;
-        }
-        const left = r.left ? { ...r.left, n: r.left.n + lnOffset } : null;
-        const right = r.right ? { ...r.right, n: r.right.n + rnOffset } : null;
-        if (r.left) maxL = Math.max(maxL, r.left.n);
-        if (r.right) maxR = Math.max(maxR, r.right.n);
-        out.push({ kind: 'line', left, right });
-      }
-      lnOffset += maxL;
-      rnOffset += maxR;
-    });
-    return out;
-  }, [edits]);
-
-  const visible = expanded ? rows : rows.slice(0, SPLIT_ROW_LIMIT);
-  const hasMore = rows.length > SPLIT_ROW_LIMIT;
-
-  return (
-    <div>
-      <div className="overflow-x-auto bg-canvas">
-        <div className="grid min-w-[560px] grid-cols-[3rem_minmax(0,1fr)_3rem_minmax(0,1fr)]">
-          {visible.map((row, i) =>
-            row.kind === 'hunk-sep' ? (
-              <div
-                key={i}
-                className="col-span-4 border-y border-rule-2 bg-hover px-3 py-0.5 text-center font-mono text-mono-11 text-ink-4"
-              >
-                ⋯
-              </div>
-            ) : row.kind === 'elided' ? (
-              <div
-                key={i}
-                className="col-span-4 border-y border-rule-2 bg-hover px-3 py-1 font-mono text-mono-11 text-ink-4"
-              >
-                {row.count} unmodified line{row.count === 1 ? '' : 's'}
-              </div>
-            ) : (
-              <div key={i} className="col-span-4 grid grid-cols-subgrid">
-                <SplitDiffCell cell={row.left} side="left" />
-                <SplitDiffCell cell={row.right} side="right" />
-              </div>
-            ),
-          )}
-        </div>
-      </div>
-      {hasMore && !expanded && (
-        <div className="px-4 py-2">
-          <TextButton
-            onClick={() => setExpanded(true)}
-            className="text-body-12 text-ink-4 underline hover:text-ink-3"
-          >
-            Show all ({rows.length} lines)
-          </TextButton>
         </div>
       )}
     </div>

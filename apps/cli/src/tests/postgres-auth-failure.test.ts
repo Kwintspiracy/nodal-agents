@@ -16,7 +16,11 @@
 // (invariant #4: no silent smart fallback, and no orphan left behind).
 
 import { describe, it, expect, vi } from 'vitest';
-import { isPostgresAuthFailure, startAndWaitUntilReady } from '../lib/postgres.ts';
+import {
+  isPostgresAuthFailure,
+  postmasterGaveUp,
+  startAndWaitUntilReady,
+} from '../lib/postgres.ts';
 
 /** An error exactly as `pg` raises it: a message plus a SQLSTATE `code`. */
 function pgError(code: string, message = 'refused'): Error {
@@ -87,5 +91,99 @@ describe('startAndWaitUntilReady @cap:installer-et-demarrer/moteur', () => {
 
     expect(attempts).toBe(3);
     expect(stop).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Le postmaster qui renonce (issue #130) ───────────────────────────────────
+//
+// Mesuré le 18/09/2026 en reproduisant l'issue sous `pnpm test` complet : le
+// troisième démarrage de `postgres-auth-stop.pg.test.ts` écrivait
+// `FATAL: pre-existing shared memory block is still in use` à la première
+// seconde, puis l'attente comptait jusqu'à ses 120 s et le test mourait sur
+// « Test timed out » — sans un mot du message que le journal portait déjà. Même
+// famille que la classe 28 : ce qu'aucune attente ne peut défaire se dit tout
+// de suite.
+
+describe('postmasterGaveUp @cap:installer-et-demarrer/moteur', () => {
+  it('reconnaît la ligne par laquelle le postmaster renonce, et la rend telle quelle', () => {
+    const line =
+      '2026-09-18 17:56:31.551 +08 [58844] FATAL:  pre-existing shared memory block is still in use';
+    expect(postmasterGaveUp(['LOG:  starting PostgreSQL 18', line])).toBe(line);
+    expect(postmasterGaveUp(['FATAL:  could not create any TCP/IP sockets'])).toContain(
+      'TCP/IP sockets',
+    );
+  });
+
+  it('laisse passer ce qu’un cluster qui démarre — ou qui tourne — écrit normalement', () => {
+    expect(
+      postmasterGaveUp([
+        'LOG:  database system was not properly shut down; automatic recovery in progress',
+        'LOG:  redo starts at 0/1A2B3C',
+        // Un refus de session : le cluster va très bien, il dit non à quelqu'un.
+        'FATAL:  password authentication failed for user "nodalai"',
+        'LOG:  database system is ready to accept connections',
+      ]),
+    ).toBeNull();
+    expect(postmasterGaveUp([])).toBeNull();
+  });
+});
+
+describe('startAndWaitUntilReady face à un postmaster qui a renoncé @cap:installer-et-demarrer/moteur', () => {
+  it('échoue TOUT DE SUITE, en citant la ligne, plutôt que d’attendre 180 s', async () => {
+    const stop = vi.fn(async () => {});
+    const connect = vi.fn(async () => {
+      throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    });
+    const began = Date.now();
+
+    await expect(
+      startAndWaitUntilReady(
+        {
+          // Le paquet ne tranche jamais : le collecteur possède stderr depuis
+          // #111, donc sa promesse ne se résout ni ne se rejette.
+          start: () => new Promise<void>(() => {}),
+          stop,
+          getPgClient: () => ({ connect, end: async () => {} }),
+        },
+        { logs: () => ['FATAL:  pre-existing shared memory block is still in use'] },
+      ),
+    ).rejects.toThrow(/pre-existing shared memory block is still in use/);
+
+    // ZÉRO sonde : le journal suffisait avant même la première connexion.
+    expect(connect).toHaveBeenCalledTimes(0);
+    expect(Date.now() - began).toBeLessThan(2_000);
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('préfère l’arrêt GRACIEUX, et ne tire à balle réelle que s’il échoue', async () => {
+    const hard = vi.fn(async () => {});
+    const graceful = vi.fn(async () => true);
+    const base = {
+      start: () => new Promise<void>(() => {}),
+      stop: hard,
+      getPgClient: () => ({ connect: async () => {}, end: async () => {} }),
+    };
+
+    await expect(
+      startAndWaitUntilReady(
+        { ...base, getPgClient: () => ({ connect: async () => {}, end: async () => {} }) },
+        { logs: () => ['FATAL:  could not create any TCP/IP sockets'], gracefulStop: graceful },
+      ),
+    ).rejects.toThrow(/TCP\/IP sockets/);
+    expect(graceful).toHaveBeenCalledTimes(1);
+    // `taskkill /f /t` — celui qui laisse fuir la mémoire partagée — n'a pas eu
+    // lieu : c'est TOUTE la raison d'être de ce chemin.
+    expect(hard).not.toHaveBeenCalled();
+
+    // Et quand le gracieux n'aboutit pas, on ne laisse pas tourner pour autant.
+    const refuses = vi.fn(async () => false);
+    await expect(
+      startAndWaitUntilReady(base, {
+        logs: () => ['FATAL:  could not create any TCP/IP sockets'],
+        gracefulStop: refuses,
+      }),
+    ).rejects.toThrow(/TCP\/IP sockets/);
+    expect(refuses).toHaveBeenCalledTimes(1);
+    expect(hard).toHaveBeenCalledTimes(1);
   });
 });

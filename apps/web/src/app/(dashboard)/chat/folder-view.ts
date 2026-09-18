@@ -9,7 +9,7 @@
 // page complète. Montrer « 0 conversation » sous un nom de dossier inventé
 // ferait croire à un dossier vide là où il n'y a pas de dossier du tout.
 
-import { DASHBOARD_FOLDER, folderLabel } from '@/lib/chat-folders.ts';
+import { DASHBOARD_FOLDER, folderLabel, MCP_FOLDER } from '@/lib/chat-folders.ts';
 
 export type ChatFolderView = {
   /** Le dossier retenu, ou `null` quand l'URL n'en désigne aucun de valide. */
@@ -22,6 +22,11 @@ export type ChatFolderView = {
   showChannels: boolean;
   /** La liste des conversations de Nodal s'affiche-t-elle ? */
   showDashboard: boolean;
+  /**
+   * La liste des RUNS venus de dehors s'affiche-t-elle ? Le dossier MCP est le
+   * seul qui ne liste pas des conversations : ces runs n'en ont aucune.
+   */
+  showRuns: boolean;
 };
 
 const FULL_VIEW: ChatFolderView = {
@@ -30,6 +35,7 @@ const FULL_VIEW: ChatFolderView = {
   channel: null,
   showChannels: true,
   showDashboard: true,
+  showRuns: false,
 };
 
 /**
@@ -52,6 +58,21 @@ export function chatFolderView(
       channel: null,
       showChannels: false,
       showDashboard: true,
+      showRuns: false,
+    };
+  }
+  // Le dossier MCP est valide SANS passer par `channels` : il ne tient pas à
+  // une conversation mais à des runs, et la page les lit elle-même. Sa liste
+  // vide dit alors « aucun run venu de dehors », ce qui est vrai — tandis que
+  // rendre la page entière ferait disparaître un dossier que le menu propose.
+  if (folderParam === MCP_FOLDER) {
+    return {
+      key: MCP_FOLDER,
+      title: folderLabel(MCP_FOLDER),
+      channel: null,
+      showChannels: false,
+      showDashboard: false,
+      showRuns: true,
     };
   }
   // Un `folder=` que le menu ne propose pas (une valeur tapée à la main, un
@@ -63,10 +84,12 @@ export function chatFolderView(
     channel: folderParam,
     showChannels: true,
     showDashboard: false,
+    showRuns: false,
   };
 }
 
 export type FolderCounts = {
+  /** Ce que le dossier LISTE — des conversations partout, des runs sur MCP. */
   conversations: number;
   /** Ce qui attend la personne dans ce dossier. */
   waiting: number;
@@ -82,13 +105,14 @@ export type FolderCounts = {
  * pour apprendre qu'il n'y a rien. Tout à zéro rend `null` : la page n'affiche
  * alors aucune phrase, plutôt qu'une phrase vide ou un texte inventé sur ce
  * que le dossier deviendra.
+ *
+ * `noun` nomme ce que le dossier liste. Le dossier MCP dit « 3 runs » : y
+ * écrire « conversations » nommerait ce que ces lignes ne sont pas.
  */
-export function folderSubtitle(counts: FolderCounts): string | null {
+export function folderSubtitle(counts: FolderCounts, noun = 'conversation'): string | null {
   const parts: string[] = [];
   if (counts.conversations > 0) {
-    parts.push(
-      `${counts.conversations} ${counts.conversations === 1 ? 'conversation' : 'conversations'}`,
-    );
+    parts.push(`${counts.conversations} ${counts.conversations === 1 ? noun : `${noun}s`}`);
   }
   if (counts.waiting > 0) parts.push(`${counts.waiting} waiting for you`);
   if (counts.running > 0) parts.push(`${counts.running} running`);

@@ -28,8 +28,16 @@ const APPROVAL_EXPIRED_NOTICE =
  * Best-effort: deliver a finalized job's failure notice to its Telegram chat so
  * the reaper's outcome is never silent (D1, audit followup). No-ops for jobs
  * with no bot/chat (dashboard/api/cron). A delivery failure only logs.
+ *
+ * Exportée depuis #186 : la reprise des jobs d'un runner mort
+ * (`reclaim-jobs.ts`) finalise elle aussi des jobs, et son issue ne doit pas
+ * être plus silencieuse que celle du faucheur.
  */
-async function notifyJobFailure(db: AnyDrizzleDb, jobId: string, notice: string): Promise<void> {
+export async function notifyJobFailure(
+  db: AnyDrizzleDb,
+  jobId: string,
+  notice: string,
+): Promise<void> {
   try {
     const target = await resolveTelegramDeliveryTarget(db as unknown as RunnerDeps['db'], jobId);
     if (!target) return;

@@ -25,8 +25,10 @@ import {
   desc,
   isNull,
   isNotNull,
+  lt,
   ne,
   inArray,
+  notInArray,
   sql,
   agents,
   agentJobs,
@@ -42,13 +44,24 @@ import {
   telegramAllowedChats,
   channelAllowedConversations,
 } from '@nodal-agents/db';
-import { normalizePath, stripGroupPrefix } from '@nodal-agents/shared';
+import { normalizePath, redactSecretsInText, stripGroupPrefix } from '@nodal-agents/shared';
 import { plainText } from '@/components/Markdown.tsx';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
+import { revalidatePath } from 'next/cache';
+import {
+  decodeRunCursor,
+  encodeRunCursor,
+  runIsDeletable,
+  type RunCursor,
+} from './external-runs.ts';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
+// La borne de `collectDescendants`, nommée ici pour que le message d'erreur la
+// dise plutôt que de la recopier en dur.
+import { ROLLUP_MAX_DEPTH } from './coding-rollup.ts';
 import { redactPresented } from './redact-presented.ts';
+import { parsePresented } from './tool-card-payload.ts';
 import { entityWorkspaceRoots } from './workspace-roots.ts';
 import { buildConversationThread } from './conversation-thread.ts';
 // UNE seule définition de la clé d'un chat, des deux côtés. Elle vit dans son
@@ -57,7 +70,7 @@ import { buildConversationThread } from './conversation-thread.ts';
 import { chatKey, LIST_MAX } from './chat-key.ts';
 import type { ThreadJob, ThreadProject, ThreadProofRun } from './conversation-thread.ts';
 import { classifyProduction } from './chat-or-work.ts';
-import { folderOfWork, RUNNING_JOB_STATUSES } from './chat-folders.ts';
+import { folderOfWork, MCP_JOB_CHANNELS, RUNNING_JOB_STATUSES } from './chat-folders.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import {
@@ -196,9 +209,19 @@ const PREVIEW_MAX = 120;
  * La première ligne LISIBLE d'un texte d'agent : son markdown est aplati
  * (P2bis) avant la coupe, sinon la liste des conversations affichait
  * « ## **PRD**, Podium » avec ses dièses et ses astérisques.
+ *
+ * ET MASQUÉE (SECRET-001, Reviewer C sur #179). Le titre d'un fil que personne
+ * n'a nommé EST la première demande de la personne, et l'aperçu est la dernière
+ * réponse de l'agent : une clé collée dans l'un ou l'autre s'affichait en clair
+ * dans la boîte de réception. Le fil, lui, était déjà masqué — pas sa liste.
+ *
+ * L'ORDRE compte, et c'est tout l'intérêt de le faire ici. Aplatir d'abord :
+ * un `**sk-…**` garde ses astérisques et aucun motif ne le reconnaît. Masquer
+ * ensuite, AVANT la coupe : couper à 60 signes d'abord laisserait passer les
+ * 60 premiers signes d'une clé, ce qui en est l'essentiel.
  */
 function firstLine(text: string, max: number): string {
-  const line = plainText(text);
+  const line = redactSecretsInText(plainText(text));
   return line.length <= max ? line : line.slice(0, max);
 }
 
@@ -504,7 +527,74 @@ export type ChatFoldersSnapshot = {
    * n'y figure pas — il tourne, mais aucune ligne ne peut le montrer.
    */
   runningConversationIds: string[];
+  /**
+   * Combien de runs de TÊTE viennent de dehors — `/api/agent` ou le serveur
+   * MCP, donc `channel` à `api` ou `mcp`, sans parent et sans conversation.
+   * C'est ce qui fait EXISTER le dossier MCP (18/09), comme une conversation
+   * fait exister celui d'un canal.
+   */
+  externalRuns: number;
 };
+
+/**
+ * Ce qu'un run venu de dehors est dans la liste de son dossier.
+ *
+ * Pas de conversation, donc pas de fil : la ligne ouvre la page du RUN. Le
+ * titre est la tâche demandée — la seule chose que la machine à l'autre bout a
+ * écrite.
+ */
+export type ExternalRunRow = {
+  id: string;
+  /** La tâche, telle qu'elle a été demandée. Coupée à l'affichage, pas ici. */
+  task: string;
+  /** Le statut du job de tête : c'est lui qui dit si le run avance encore. */
+  status: string | null;
+  createdAt: Date | null;
+};
+
+/** Une page de la liste, et de quoi demander la suivante. */
+export type ExternalRunsPage = {
+  runs: ExternalRunRow[];
+  /**
+   * Où reprendre. `null` = il n'y a plus rien après, et le bouton « Load more »
+   * disparaît — un bouton qui rendrait une page vide se lirait comme une panne.
+   */
+  nextCursor: string | null;
+};
+
+/**
+ * La taille d'UNE page (#183). La table entière ne se lit jamais : la base du
+ * propriétaire porte déjà plus de cent runs de tête, et ce nombre ne fait que
+ * monter — c'est une machine qui les crée.
+ *
+ * Cinquante, comme une boîte de réception : de quoi remplir l'écran et
+ * quelques défilements, sans faire attendre l'ouverture du dossier.
+ */
+const EXTERNAL_RUNS_PAGE = 50;
+
+/** Combien de runs une suppression accepte d'un coup. */
+const EXTERNAL_RUNS_DELETE_MAX = 200;
+
+/**
+ * Ce qui fait d'un job un RUN VENU DE DEHORS, écrit à UN seul endroit : le
+ * compte qui fait exister le dossier, la liste qu'il ouvre et la suppression
+ * doivent dire la même chose, sinon le dossier s'affiche vide ou disparaît en
+ * portant des lignes — ou l'on supprime par cette porte un job qu'elle ne
+ * montre pas.
+ *
+ * `parent_job_id IS NULL` — un délégué n'est pas un run à lui seul, c'est une
+ * étape de celui qui l'a créé. `conversation_id IS NULL` — un job `api`
+ * rattaché à une conversation est un TOUR DE CHAT, et `folderOfWork` le range
+ * déjà dans le dossier de cette conversation.
+ */
+function runsFromOutside(entityId: string) {
+  return and(
+    eq(agentJobs.entityId, entityId),
+    isNull(agentJobs.parentJobId),
+    isNull(agentJobs.conversationId),
+    inArray(agentJobs.channel, [...MCP_JOB_CHANNELS]),
+  );
+}
 
 export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSnapshot>> {
   try {
@@ -512,7 +602,7 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
 
-    const [channelRows, runningRows, runningConvRows] = await Promise.all([
+    const [channelRows, runningRows, runningConvRows, externalRows] = await Promise.all([
       db
         .selectDistinct({ channel: conversations.channel })
         .from(conversations)
@@ -568,15 +658,27 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
             isNotNull(agentJobs.conversationId),
           ),
         ),
+      // Combien de runs viennent de dehors — le chiffre qui fait exister le
+      // dossier MCP. Un `count` en base : la liste, elle, ne se lit qu'en
+      // ouvrant le dossier.
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(agentJobs)
+        .where(runsFromOutside(session.entityId)),
     ]);
 
     const running: Record<string, number> = {};
     for (const r of runningRows) {
       // Un run devient un DOSSIER par la même règle que partout ailleurs : le
       // canal de sa conversation d'abord, le sien ensuite. Un canal qui n'en
-      // désigne aucun (`api`, `internal`, `mcp`…) n'allume aucun point : son
-      // run existe, il n'est dans aucun dossier de chat, et il reste lisible
-      // sur la page des runs.
+      // désigne aucun (`internal`, `webhook`, `task-board`…) n'allume aucun
+      // point : son run existe, il n'est dans aucun dossier de chat, et il
+      // reste lisible sur la page des runs.
+      //
+      // ⚠️ UN DÉLÉGUÉ QUI TOURNE n'a pas besoin d'être compté ici : son parent
+      // est alors `awaiting_delegation`, un statut vivant, et c'est le parent
+      // qui porte le canal du dossier. Remonter la chaîne pour le point vert
+      // compterait deux fois la même chose.
       const key = folderOfWork(r);
       if (key === null) continue;
       running[key] = (running[key] ?? 0) + r.n;
@@ -591,10 +693,253 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
       runningConversationIds: runningConvRows
         .map((r) => r.conversationId)
         .filter((id): id is string => id !== null),
+      externalRuns: externalRows[0]?.n ?? 0,
     });
   } catch (err) {
     console.error('[getChatFoldersAction]', err);
     return fail('db_error', 'Failed to load the chat folders');
+  }
+}
+
+/**
+ * UNE PAGE des runs venus de dehors, les plus récents d'abord — la liste du
+ * dossier MCP (#183).
+ *
+ * Les mêmes conditions que le compte du menu (`runsFromOutside`), et rien de
+ * plus : ni approbation ni descendance ne se lit ici. Ce qui ATTEND la
+ * personne vient des approbations que la page a déjà en main, comme pour les
+ * dossiers de canal — les relire ferait deux vérités pour le même chiffre.
+ *
+ * LA PAGE SUIVANTE SE DEMANDE PAR CURSEUR, pas par `offset` : une machine peut
+ * poster un run entre deux pages, et un rang se décale quand une ligne entre
+ * ou sort (voir `lib/external-runs-cursor.ts`). La borne `(created_at, id)`
+ * désigne une LIGNE ; ce qui arrive après ne la déplace pas.
+ *
+ * `N + 1` lignes sont lues, jamais un `count` : la ligne en trop ne sert qu'à
+ * SAVOIR s'il y en a d'autres, et elle n'est pas rendue. Compter à part
+ * coûterait une seconde requête pour une réponse que cette lecture contient
+ * déjà.
+ */
+export async function listExternalRunsAction(
+  opts: { cursor?: string | null } = {},
+): Promise<ActionResult<ExternalRunsPage>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const db = getDb();
+
+    // Un curseur illisible repart du DÉBUT plutôt que de rendre une page vide.
+    const apres = decodeRunCursor(opts.cursor ?? null);
+    const borne =
+      apres === null
+        ? runsFromOutside(session.entityId)
+        : and(runsFromOutside(session.entityId), apresLaLigne(apres));
+
+    const rows = await db
+      .select({
+        id: agentJobs.id,
+        task: agentJobs.task,
+        status: agentJobs.status,
+        createdAt: agentJobs.createdAt,
+      })
+      .from(agentJobs)
+      .where(borne)
+      // `DESC` NU, donc `NULLS FIRST` — l'ordre exact de l'index
+      // `idx_agent_jobs_entity_created (entity_id, created_at DESC)`.
+      //
+      // Il portait `NULLS LAST`, pour ranger en dernier les lignes dont on
+      // ignore la date. Mesuré sur 10 001 runs (Reviewer C, passe 1), ce mot
+      // coûtait le balayage de TOUS les jobs de l'entité puis un tri complet —
+      // 8,1 ms et 10 001 lignes lues, là où l'index nu en lit 52 en 0,19 ms, et
+      // l'écart grandit avec la table. Une page qui coûte toute la table n'est
+      // pas une pagination.
+      //
+      // Le prix : une ligne sans date se range en TÊTE. Elle paraît donc sur la
+      // première page, et la borne ci-dessous la laisse derrière — ni doublon,
+      // ni trou, seulement une place qu'on n'a pas choisie pour une ligne dont
+      // la date manque. `created_at` porte `DEFAULT now()` (migration 0000) :
+      // le cas demande une écriture qui force `NULL`.
+      .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
+      .limit(EXTERNAL_RUNS_PAGE + 1);
+
+    const page = rows.slice(0, EXTERNAL_RUNS_PAGE);
+    const encore = rows.length > EXTERNAL_RUNS_PAGE;
+    const derniere = page[page.length - 1];
+    return ok({
+      runs: page,
+      nextCursor: encore && derniere !== undefined ? encodeRunCursor(derniere) : null,
+    });
+  } catch (err) {
+    console.error('[listExternalRunsAction]', err);
+    return fail('db_error', 'Failed to load the runs started from outside');
+  }
+}
+
+/**
+ * « Strictement après cette ligne », dans l'ordre exact de la liste —
+ * `created_at DESC` (donc `NULLS FIRST`), puis `id DESC`.
+ *
+ * Écrit en deux morceaux plutôt qu'en comparaison de paires, à cause des dates
+ * absentes : `(NULL, id) < (date, id)` vaut NULL, donc FAUX, et une ligne sans
+ * date disparaîtrait de toutes les pages au lieu de tenir sa place.
+ *
+ *   - curseur SANS date : on est dans la TÊTE de la liste. Après lui viennent
+ *     les autres lignes sans date d'`id` plus petit, puis toutes les lignes
+ *     datées, sans exception ;
+ *   - curseur AVEC date : les lignes sans date sont déjà passées. Reste ce qui
+ *     est plus ancien, et, à date égale, un `id` plus petit.
+ */
+function apresLaLigne(apres: RunCursor) {
+  if (apres.createdAt === null) {
+    return or(
+      and(isNull(agentJobs.createdAt), lt(agentJobs.id, apres.id)),
+      isNotNull(agentJobs.createdAt),
+    );
+  }
+  return or(
+    lt(agentJobs.createdAt, apres.createdAt),
+    and(eq(agentJobs.createdAt, apres.createdAt), lt(agentJobs.id, apres.id)),
+  );
+}
+
+/**
+ * Supprimer des runs venus de dehors, AVEC leur descendance (#183).
+ *
+ * **Pourquoi la descendance, explicitement.** `agent_jobs.parent_job_id` n'est
+ * PAS une clé étrangère dans la vraie base (migration 0000 : une colonne et
+ * deux index, aucune contrainte) : rien ne suit un parent supprimé, et ses
+ * délégués resteraient là, orphelins et invisibles — plus aucun run ne les
+ * porterait. On les supprime donc à la main, niveau par niveau
+ * (`collectDescendants`), dans la MÊME instruction que leurs racines.
+ *
+ * **Ce qui part avec eux, et ce qui reste.** Les tables qui cascadent :
+ * `tool_calls`, `approval_requests`, `job_deliveries`, `job_checkpoints`,
+ * `job_deliverable_verification_state`. Celles qui se contentent d'oublier le
+ * job (`ON DELETE SET NULL`) : `llm_calls` — donc le COÛT déjà dépensé reste
+ * compté, ce qui est voulu, une facture ne s'annule pas en effaçant sa
+ * ligne — `chat_messages`, `cli_runs`, `tasks`, `verification_runs`,
+ * `code_projects.registered_job_id`.
+ *
+ * **Un run VIVANT ne se supprime pas.** Il écrit encore : le runner le relit
+ * pour reprendre, et le retirer sous ses pieds ferait échouer une reprise au
+ * lieu de dire non. La liste le montre déjà — case désactivée — et la règle est
+ * REFAITE ici, parce qu'un écran n'est pas une garde.
+ *
+ * **Ce qui revient est une LISTE D'IDENTIFIANTS, pas un compte** (Reviewer C,
+ * passe 1 de la PR #185). L'écran retirait toutes les lignes cochées et
+ * annonçait à côté « 1 run was left » : la ligne refusée disparaissait quand
+ * même, et `router.refresh()` ne la ramenait pas — la liste garde son état
+ * jusqu'à un rechargement complet. Deux chiffres ne disent pas QUI ; deux
+ * listes, si.
+ */
+export async function deleteExternalRunsAction(
+  ids: readonly string[],
+): Promise<ActionResult<{ deletedIds: string[]; skippedLiveIds: string[] }>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const parsed = z.array(z.string().guid()).min(1).max(EXTERNAL_RUNS_DELETE_MAX).safeParse(ids);
+    if (!parsed.success) return fail('validation_failed', 'Invalid run ids');
+    const db = getDb();
+
+    // Les racines DEMANDÉES qui sont vraiment des runs de dehors DE CETTE
+    // ENTITÉ. Une ligne absente d'ici — un job d'un autre espace, un délégué,
+    // un tour de chat — n'est pas refusée une par une : elle n'entre
+    // simplement jamais dans ce qui suit.
+    const racines = await db
+      .select({ id: agentJobs.id, status: agentJobs.status })
+      .from(agentJobs)
+      .where(and(runsFromOutside(session.entityId), inArray(agentJobs.id, parsed.data)));
+
+    // LA MÊME règle que la case de l'écran, pas une seconde : `runIsDeletable`
+    // (lib/external-runs.ts) est lue des deux côtés.
+    const supprimables = racines.filter((r) => runIsDeletable(r.status)).map((r) => r.id);
+    const skippedLiveIds = racines.filter((r) => !runIsDeletable(r.status)).map((r) => r.id);
+    if (supprimables.length === 0) return ok({ deletedIds: [], skippedLiveIds });
+
+    // ─── UNE SEULE TRANSACTION : marche, vérification, suppression ──────────
+    //
+    // Les trois gestes étaient trois allers-retours séparés (Reviewer C, passe
+    // 2). Entre la vérification et le `DELETE`, un délégué inséré par le runner
+    // survivait en orphelin — exactement ce que cette action prétend empêcher.
+    //
+    // CE QUE LA TRANSACTION FERME. La marche et la vérification lisent le MÊME
+    // état, et la suppression est tout ou rien : plus de demi-suppression où
+    // les racines partent pendant qu'une descendance lue avant reste. Une
+    // erreur en cours de route ne laisse rien derrière elle.
+    //
+    // CE QU'ELLE NE FERME PAS, et il faut le dire. En `READ COMMITTED` — le
+    // niveau par défaut — chaque instruction prend son propre instantané : un
+    // délégué dont l'insertion est validée APRÈS l'instantané du `DELETE`
+    // devient orphelin, transaction ou pas. La fenêtre passe de trois
+    // allers-retours à l'intérieur d'une instruction, elle ne disparaît pas.
+    // Seule une clé étrangère sur `parent_job_id` la fermerait vraiment, et la
+    // vraie base n'en a pas (migration 0000) ; la poser est un sujet à part, qui
+    // touche toutes les écritures de jobs. C'est nommé ici plutôt que promis
+    // ailleurs (invariant #4).
+    const issue = await db.transaction(async (tx) => {
+      const descendants = await collectDescendants(tx, session.entityId, supprimables);
+      const aSupprimer = [...supprimables, ...descendants.map((d) => d.id)];
+
+      // AUCUN ORPHELIN, et on le VÉRIFIE plutôt que de faire confiance à une
+      // borne (Reviewer C, passe 1). `collectDescendants` s'arrête à
+      // `ROLLUP_MAX_DEPTH` niveaux : sur une chaîne plus profonde — une base
+      // abîmée, un import — elle rendrait une descendance incomplète, et le
+      // `DELETE` laisserait des délégués que plus aucun run ne porte. La
+      // question se pose donc à la base, exactement : reste-t-il un enfant d'un
+      // job qu'on s'apprête à supprimer, hors de la liste ?
+      const orphelins = await tx
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.entityId, session.entityId),
+            inArray(agentJobs.parentJobId, aSupprimer),
+            notInArray(agentJobs.id, aSupprimer),
+          ),
+        )
+        .limit(1);
+      if (orphelins.length > 0) {
+        console.error(
+          `[deleteExternalRunsAction] delegation chain deeper than ${ROLLUP_MAX_DEPTH} levels — refusing to delete and leave orphans behind (first: ${orphelins[0]?.id})`,
+        );
+        // On REND le refus plutôt que de lever : une exception ferait un
+        // `db_error` sans nom, et la personne lirait « impossible de
+        // supprimer » au lieu de la raison. Rien n'a été écrit, il n'y a donc
+        // rien à annuler.
+        return { refuse: true as const };
+      }
+
+      // UNE seule instruction, racines et descendants ensemble. Le SQL en ligne
+      // des tests de base donne à `parent_job_id` une clé étrangère que la
+      // vraie base n'a pas ; en un seul `DELETE`, la vérification tombe en fin
+      // d'instruction et les deux côtés s'accordent.
+      const parties = await tx
+        .delete(agentJobs)
+        .where(and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.id, aSupprimer)))
+        .returning({ id: agentJobs.id });
+      return { refuse: false as const, parties };
+    });
+
+    if (issue.refuse) {
+      return fail(
+        'chain_too_deep',
+        'These runs delegate deeper than this screen can follow. Nothing was deleted.',
+      );
+    }
+    const parties = issue.parties;
+
+    revalidatePath('/chat');
+    // Les RACINES réellement parties, nommées une par une : c'est ce que
+    // l'écran retire de sa liste, et lui seul sait quelles lignes il affiche.
+    const partiesSet = new Set(parties.map((r) => r.id));
+    return ok({
+      deletedIds: supprimables.filter((id) => partiesSet.has(id)),
+      skippedLiveIds,
+    });
+  } catch (err) {
+    console.error('[deleteExternalRunsAction]', err);
+    return fail('db_error', 'Failed to delete the runs');
   }
 }
 
@@ -838,12 +1183,36 @@ export async function getConversationThreadAction(
     // lecture des mêmes lignes. Le masquage ne change que des chaînes de forme
     // credential : la carte, son étiquette et ses comptes traversent intacts,
     // donc le classement chat/travail rend le même verdict.
-    const rowsByRoot = new Map<string, Array<(typeof classifiableRows)[number]>>();
+    //
+    // Le masquage a un effet de bord sur le COMPTE (#161) : deux fichiers dont
+    // les chemins ne diffèrent que par une chaîne de forme credential masquent
+    // vers le même chemin. Les chemins d'AVANT masquage partent donc avec la
+    // ligne, pour la seule identité des fichiers dans le récapitulatif ; ils ne
+    // s'affichent nulle part, seule la carte masquée va jusqu'à l'écran.
+    const rowsByRoot = new Map<
+      string,
+      Array<(typeof classifiableRows)[number] & { rawFilePaths?: readonly string[] }>
+    >();
     for (const row of classifiableRows) {
       const root = row.jobId !== null ? rootOf.get(row.jobId) : undefined;
       if (root === undefined) continue;
+      // La validation Zod ne tourne que sur une charge qui se DIT `files` :
+      // seule cette carte porte des chemins, et valider toutes les autres pour
+      // jeter le résultat coûtait sur chaque ligne du fil (revue C, C2). Une
+      // charge qui ment sur son `card` est rejetée par `parsePresented` comme
+      // avant, et repart donc sans chemins bruts.
+      const diteFiles =
+        row.presented !== null &&
+        typeof row.presented === 'object' &&
+        (row.presented as { card?: unknown }).card === 'files';
+      const brut = diteFiles ? parsePresented(row.presented) : null;
       const bucket = rowsByRoot.get(root) ?? [];
-      bucket.push({ ...row, presented: redactPresented(row.presented) });
+      bucket.push({
+        ...row,
+        presented: redactPresented(row.presented),
+        rawFilePaths:
+          brut !== null && brut.card === 'files' ? brut.files.map((f) => f.path) : undefined,
+      });
       rowsByRoot.set(root, bucket);
     }
 
@@ -998,6 +1367,7 @@ export async function getConversationThreadAction(
         toolInput: row.toolInput,
         toolOutput: row.toolOutput,
         presented: row.presented,
+        rawFilePaths: row.rawFilePaths,
       })),
       workspaceRoots,
     }));

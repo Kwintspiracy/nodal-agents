@@ -87,7 +87,11 @@ beforeAll(async () => {
     .values({
       entityId: seed.entityId,
       agentId: seed.agentId,
-      channel: 'api',
+      // `dashboard`, comme la boîte « Send task » l'écrit depuis le 18/09. Elle
+      // écrivait `api`, indistinguable d'une requête venue de dehors ; la
+      // colonne « d'où vient la demande » dit « Dashboard » dans les deux
+      // versions, et c'est bien la MÊME chose qui reste prouvée ici.
+      channel: 'dashboard',
       conversationId: null,
       task: 'Résumer la veille de la semaine et la poster',
       status: 'completed',

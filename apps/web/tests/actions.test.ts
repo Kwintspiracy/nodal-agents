@@ -4828,7 +4828,9 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
     // chatId is set on the job row (runner will build Job context block in system_prompt)
     expect(jobValues?.['chatId']).toBe('12345');
-    expect(jobValues?.['channel']).toBe('api');
+    // 'dashboard' depuis le 18/09 : la boîte écrit l'endroit d'où la demande
+    // part. Avec 'api', ses tâches se mêlaient aux runs venus de dehors.
+    expect(jobValues?.['channel']).toBe('dashboard');
   });
 
   it('does NOT set chatId and task is pure prompt when sendViaTelegram is absent (regression)', async () => {
@@ -4857,7 +4859,7 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
     // chatId not set (key absent or undefined — no spread)
     expect(jobValues?.['chatId']).toBeUndefined();
-    expect(jobValues?.['channel']).toBe('api');
+    expect(jobValues?.['channel']).toBe('dashboard');
   });
 
   it('returns not_found when sendViaTelegram=true but agent belongs to a different entity', async () => {

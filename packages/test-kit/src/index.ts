@@ -16,6 +16,10 @@
 //                     copies qui peuvent diverger.
 //   real-postgres   — un VRAI Postgres à deux connexions pour les tests de
 //                     course ; PGlite sérialise tout et ne prouve aucun verrou.
+//   cluster-lock    — un seul démarrage de cluster à la fois sur la MACHINE :
+//                     turbo lance un vitest par paquet, et aucun réglage vitest
+//                     ne voit au-delà du sien (issue #130).
+//   cluster-registry— un cluster de test meurt avec son lanceur, Ctrl+C compris.
 //
 // Ce paquet est privé et ne part jamais dans le tarball : il n'est référencé que
 // par des devDependencies.
@@ -26,3 +30,5 @@ export * from './gate';
 export * from './trust-boundary';
 export * from './architecture';
 export * from './real-postgres';
+export * from './cluster-lock';
+export * from './cluster-registry';

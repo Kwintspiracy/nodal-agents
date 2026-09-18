@@ -229,11 +229,25 @@ function chantiers() {
   // `body` sur les issues aussi : c'est là que se lit la PROVENANCE — le pied
   // que les agents posent, et la section `## Verified` qu'ils doivent porter.
   // Le corps ne va pas dans le snapshot, seuls les deux verdicts qu'on en tire.
-  const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,url,body';
+  // `closedAt` : la date à laquelle une carte a été FINIE. La colonne « Done »
+  // se lisait par numéro décroissant, donc par ordre d'ouverture : les cartes
+  // fermées d'un jour chargé chassaient les PR mergées du même jour hors des
+  // huit places (#176). Un ordre chronologique demande une chronologie.
+  // `milestone` : la release à laquelle une carte appartient (#177). Le jalon
+  // existe sur GitHub — les PR de la 0.8.10 le portent — et le tableau ne le
+  // rendait nulle part : « ce qui constitue la 0.8.10 » ne se lisait donc que
+  // sur GitHub, une carte à la fois. Un champ de plus sur la requête qui tourne
+  // déjà ; seul son TITRE voyage jusqu'au snapshot.
+  const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,closedAt,milestone,url,body';
   // `body` : c'est là que « Closes #n » vit — sans lui le tableau ne peut pas
   // savoir qu'une issue a sa PR.
+  // `comments` : c'est là que vit l'état de la revue (#128), une passe par
+  // commentaire dans la forme que `reviewState` lit. Un champ de plus sur la
+  // requête qui existe déjà, et non un appel par PR : `gh pr list` les rend
+  // avec le reste. Comme le corps, ils ne vont pas dans le snapshot — seul
+  // l'état qu'on en tire voyage.
   const CHAMPS_PR =
-    'number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,body,statusCheckRollup';
+    'number,title,state,isDraft,createdAt,updatedAt,mergedAt,closedAt,milestone,url,body,comments,statusCheckRollup';
   const deuxEtats = (famille, champs, limiteFermes) =>
     fusionnerEtats(
       j(`gh ${famille} list --state open --limit 1000 --json ${champs}`),
@@ -252,7 +266,13 @@ function chantiers() {
     return null;
   }
 
-  return { issues, pr, cartes };
+  // Les CARTES seules repartent d'ici : les lignes brutes ont servi à les
+  // construire et n'ont plus rien à faire dans un fichier suivi (revue C de la
+  // PR #175). Personne ne les lisait — la page ne connaît que `cartes` —, et
+  // elles portaient les corps des issues, des PR, et depuis #128 ceux des
+  // commentaires. `fusionnerTableauGitHub` reprojette de son côté : deux
+  // ceintures, parce qu'un secret republié ne se retire pas de l'historique.
+  return { cartes };
 }
 
 // ─── 7 ter. L'état de la release, DEMANDÉ, jamais raconté ─────────────────────
