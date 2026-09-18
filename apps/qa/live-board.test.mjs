@@ -188,6 +188,35 @@ describe('le portail publié se rafraîchit sur les événements GitHub', () => 
     expect(iRendu).toBeGreaterThan(iCollecte);
   });
 
+  /**
+   * Les types d'UN déclencheur, lus sous son nom.
+   *
+   * Le test lisait `docs.toContain(type)` sur le fichier ENTIER : `unlabeled`
+   * et `edited`, présents dans la liste des issues, le rendaient vert alors que
+   * les pull requests ne les portaient pas (#178). Un mot trouvé quelque part
+   * n'est pas un mot trouvé au bon endroit — la même faute que les étiquettes
+   * `@cap:` lues dans un commentaire.
+   */
+  const typesDe = (declencheur) => {
+    // Le bloc `on:` SEUL : `issues:` reparaît sous `permissions:`, où il ne dit
+    // pas du tout la même chose.
+    const on = docs.slice(0, docs.indexOf('\npermissions:'));
+    const bloc = on.slice(on.indexOf(`\n  ${declencheur}:`));
+    const apres = bloc.slice(bloc.indexOf('types:') + 'types:'.length);
+    // LES DEUX FORMES YAML, parce que le fichier porte les deux : `[a, b]` tant
+    // que la ligne tient, une liste à tirets au-delà — prettier replie la
+    // première, et l'analyseur des docs ne sait pas lire un repli.
+    const crochets = apres.match(/^[ \t]*\[([^\]]+)\]/);
+    if (crochets) return crochets[1].split(',').map((t) => t.trim());
+    const types = [];
+    for (const ligne of apres.split('\n').slice(1)) {
+      const item = ligne.match(/^\s+-\s+([\w_]+)\s*$/);
+      if (!item) break;
+      types.push(item[1]);
+    }
+    return types;
+  };
+
   it('docs.yml écoute les issues et les pull requests', () => {
     for (const evenement of ['issues:', 'pull_request_target:']) {
       expect(docs).toContain(evenement);
@@ -196,18 +225,28 @@ describe('le portail publié se rafraîchit sur les événements GitHub', () => 
     // `main`, et le déploiement échouait sur chaque pull request. Une case
     // rouge permanente finit par ne plus être lue.
     expect(docs).not.toMatch(/^\s{2}pull_request:/m);
-    for (const type of [
-      'opened',
-      'closed',
-      'reopened',
-      'labeled',
-      'unlabeled',
-      'edited',
-      'ready_for_review',
-      'converted_to_draft',
-    ]) {
-      expect(docs).toContain(type);
+  });
+
+  it('les DEUX déclencheurs republient sur les mêmes mouvements de carte', () => {
+    // Le tableau lit l'état, les étiquettes et le CORPS des deux familles — le
+    // « Closes #n » vit dans le corps. Poser une étiquette et la retirer
+    // doivent donc republier pareil.
+    for (const declencheur of ['issues', 'pull_request_target']) {
+      const types = typesDe(declencheur);
+      for (const type of ['opened', 'closed', 'reopened', 'labeled', 'unlabeled', 'edited']) {
+        expect(types, `${declencheur} n’écoute pas ${type}`).toContain(type);
+      }
     }
+    // Ce qui n'appartient qu'aux pull requests.
+    expect(typesDe('pull_request_target')).toContain('ready_for_review');
+    expect(typesDe('pull_request_target')).toContain('converted_to_draft');
+  });
+
+  it('n’écoute PAS `synchronize` : un rendu complet à chaque poussée', () => {
+    // Ce qu'il ferait bouger — l'état des vérifications — bouge tout seul, sans
+    // qu'aucun événement ne le dise : c'est le filet horaire qui le rattrape,
+    // pas un déploiement par commit.
+    expect(typesDe('pull_request_target')).not.toContain('synchronize');
   });
 
   it('docs.yml garde un filet horaire, à une minute qui n’est pas :00', () => {
@@ -233,12 +272,66 @@ describe('le portail publié se rafraîchit sur les événements GitHub', () => 
   });
 });
 
-describe('la page montre les deux dates', () => {
-  const build = lire('./build.mjs');
+describe('la page montre les deux dates, en UTC', () => {
+  // RENDUE POUR DE VRAI, et depuis un fuseau qui n'est pas UTC. Le test lisait
+  // la SOURCE de `build.mjs` et cherchait les mots « measured » et « board as
+  // of » : il restait vert pendant que la page rendait l'heure locale de la
+  // machine, sans jamais le dire (#178). Le même instantané donnait « 08:37 »
+  // sur le runner et « 16:37 » sur le poste du propriétaire.
+  //
+  // Mutation vérifiée : `timeZone: 'UTC'` retiré de `dateFr` → les deux
+  // premiers cas rougissent sous `TZ=Asia/Tokyo`.
+  const bac = mkdtempSync(join(tmpdir(), 'qa-dates-'));
+  /** Un instant dont l'heure UTC et l'heure de Tokyo tombent des jours différents. */
+  const INSTANT = '2026-09-15T23:30:00.000Z';
+  let html = '';
 
-  it('le pied de page date la mesure ET le tableau', () => {
-    expect(build).toContain('measured');
-    expect(build).toContain('board as of');
-    expect(build).toContain('s.tableauLe');
+  beforeAll(() => {
+    const app = join(bac, 'apps', 'qa');
+    const data = join(app, 'data');
+    mkdirSync(data, { recursive: true });
+    for (const f of ['build.mjs', 'lib.mjs', 'capacites.mjs', 'explications.mjs', 'depot.mjs']) {
+      cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
+    }
+    // La VRAIE mesure committée, avec les deux seules dates changées : `build.mjs`
+    // rend la page entière et lit bien plus que ce qu'un instantané de test
+    // porterait. Le cas montré est celui que les deux dates existent pour dire —
+    // un tableau relu bien APRÈS la mesure.
+    const snapshot = {
+      ...JSON.parse(lire('./data/snapshot.json')),
+      genereLe: '2026-09-15T03:17:00.000Z',
+      tableauLe: INSTANT,
+    };
+    writeFileSync(join(data, 'snapshot.json'), JSON.stringify(snapshot, null, 2));
+    writeFileSync(join(data, 'history.ndjson'), `{"le":"2026-09-15T03:17:00.000Z"}\n`);
+    execSync(`node "${join(app, 'build.mjs')}"`, {
+      encoding: 'utf8',
+      env: { ...process.env, TZ: 'Asia/Tokyo' },
+    });
+    html = readFileSync(join(app, 'dist', 'index.html'), 'utf8');
+  });
+
+  afterAll(() => rmSync(bac, { recursive: true, force: true }));
+
+  it('date le TABLEAU à l’heure UTC de sa lecture, et le dit', () => {
+    // 23:30Z, et non le 08:30 du lendemain que Tokyo aurait affiché.
+    expect(html).toContain('board as of 15 Sept 2026, 23:30Z');
+    expect(html).not.toContain('16 Sept 2026, 08:30');
+  });
+
+  it('date la MESURE à son heure à elle, sans la rajeunir', () => {
+    expect(html).toContain('measured 15 Sept 2026, 03:17Z');
+  });
+
+  it('montre le tableau AVANT la mesure — c’est lui qui dit si la page est fraîche', () => {
+    expect(html.indexOf('board as of')).toBeLessThan(html.indexOf('measured 15 Sept'));
+  });
+
+  it('ne laisse AUCUNE heure sans fuseau sur la page', () => {
+    // Toute heure rendue par `dateFr` porte son `Z`. Une heure nue se
+    // compare à l'œil avec l'heure d'un événement GitHub, qui est en UTC, et
+    // un décalage de huit heures passe alors pour de la fraîcheur.
+    const heuresNues = [...html.matchAll(/\d{2} \w+ \d{4}, \d{2}:\d{2}(?!Z)/g)];
+    expect(heuresNues.map((m) => m[0])).toEqual([]);
   });
 });

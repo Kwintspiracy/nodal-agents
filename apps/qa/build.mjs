@@ -120,18 +120,41 @@ const lienRun = (url) =>
     ? `<a class="lien-run" href="${esc(url)}" target="_blank" rel="noopener">see the run</a>`
     : '';
 const pct = (v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : null);
-/** Le jour seul — sur un axe de courbe, l'heure d'une collecte n'apprend rien. */
+/**
+ * TOUTES LES DATES DE LA PAGE SONT EN UTC, et le disent (#178).
+ *
+ * Elles ne l'étaient pas : `toLocaleString` sans `timeZone` rend l'heure de la
+ * MACHINE QUI REND. Le même instantané donnait « 08:37 » sur le runner GitHub
+ * et « 16:37 » sur le poste du propriétaire, sans un mot pour les distinguer :
+ * deux pages différentes pour la même donnée, et aucune des deux ne disait
+ * laquelle.
+ *
+ * Ce n'est pas un détail de présentation, parce que la date du tableau ne sert
+ * qu'à UNE chose — dire si la page est fraîche. Une heure dont on ignore le
+ * fuseau ne répond pas à cette question, et le `Z` final est ce qui rend la
+ * comparaison possible avec l'heure d'un événement GitHub, qui est en UTC.
+ */
+const EN_UTC = { timeZone: 'UTC' };
+/**
+ * Le jour seul — sur un axe de courbe, l'heure d'une collecte n'apprend rien.
+ * En UTC lui aussi : une collecte de 23 h 30 UTC s'affichait le LENDEMAIN pour
+ * qui rend la page depuis l'Asie, et deux collectes de la même nuit tombaient
+ * alors sur deux jours différents.
+ */
 const jourFr = (iso) =>
-  iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '·';
+  iso
+    ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', ...EN_UTC })
+    : '·';
 const dateFr = (iso) =>
   iso
-    ? new Date(iso).toLocaleString('en-GB', {
+    ? `${new Date(iso).toLocaleString('en-GB', {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-      })
+        ...EN_UTC,
+      })}Z`
     : '·';
 
 // ─── Écarts : la liste qui dit quoi faire, classée par ce que ça coûte ────────
@@ -1453,11 +1476,16 @@ td.dette{color:var(--ko);font-weight:600}
       <a href="#ci" class="discret">Triggers <b>${s.ci.length}</b></a>
       <a href="#historique" class="discret">History <b>${historique.length}</b></a>
     </nav>
+    <!-- Les deux dates, en UTC (#178). Le TABLEAU d'abord : c'est la seule des
+         deux qu'on regarde pour savoir si la page est fraîche, et elle bouge à
+         chaque événement GitHub là où la mesure dort jusqu'à 03:17. Les mettre
+         dans l'autre ordre faisait lire la date de la nuit comme celle de la
+         page. -->
     <footer>
       ${esc(s.branche ?? '')}<br>
       ${esc(s.commit ?? '')}<br>
-      measured ${esc(dateFr(s.genereLe))}<br>
-      board as of ${esc(dateFr(s.tableauLe ?? s.genereLe))}
+      board as of ${esc(dateFr(s.tableauLe ?? s.genereLe))}<br>
+      measured ${esc(dateFr(s.genereLe))}
     </footer>
   </aside>
   <main class="contenu">
