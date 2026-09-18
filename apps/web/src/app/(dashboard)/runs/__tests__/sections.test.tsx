@@ -1,7 +1,7 @@
-// sections.test.tsx — les deux lignes repliables de la page d'un run.
+// sections.test.tsx — les sections de la page d'un run.
 //
-// Activity : un clic l'ouvre et montre la chronologie. C'est la promesse du
-// tableau — replié ne veut pas dire perdu.
+// Activity : elle ne se replie pas. La chronologie est là, tout de suite, et
+// aucun bouton ne la ferme — c'est ce qu'on vient lire (Quentin, 18/09).
 // Review : avec des verdicts, la ligne s'ouvre et montre les constats, fichier
 // et ligne compris. Sans verdict, elle se dessine mais ne s'ouvre pas : il n'y
 // a rien dessous, et un chevron qui ne fait rien est un bouton menteur.
@@ -34,17 +34,16 @@ async function click(el: Element | null): Promise<void> {
 }
 
 describe('ActivitySection @cap:suivre-execution/ecran', () => {
-  it('repliée, un clic montre la chronologie', async () => {
+  it('montre la chronologie tout de suite, et rien ne la referme', async () => {
     const host = await mount(
-      <ActivitySection label="9 steps · 3 agents · 41 s" live={false}>
+      <ActivitySection label="9 steps · 3 agents · 41 s">
         <p>file_search in apps/web</p>
       </ActivitySection>,
     );
-    expect(host.textContent).toContain('9 steps · 3 agents · 41 s');
-    expect(host.textContent).not.toContain('file_search');
-
-    await click(host.querySelector('[data-testid="activity-row"]'));
+    expect(host.textContent).toContain('Activity · 9 steps · 3 agents · 41 s');
     expect(host.textContent).toContain('file_search in apps/web');
+    // Aucun bouton dans la section : son titre est un titre, pas un chevron.
+    expect(host.querySelectorAll('button')).toHaveLength(0);
   });
 });
 

@@ -12,6 +12,7 @@ import {
   UNKNOWN,
   activityLabel,
   activitySummary,
+  dropTaskRequest,
   liftDelivered,
   liftReply,
   runFilesChanged,
@@ -209,6 +210,39 @@ describe('run-view — d’où vient le run @cap:suivre-execution/ecran', () => 
     expect(runStatus('failed')).toEqual({ variant: 'warn', label: 'Failed' });
     expect(runStatus('processing')).toEqual({ variant: 'run', label: 'Running' });
     expect(runStatus('teleported')).toEqual({ variant: 'idle', label: 'teleported' });
+  });
+});
+
+describe('run-view — la demande retirée de la chronologie @cap:suivre-execution/ecran', () => {
+  const origin = { channel: 'cron', scheduleName: 'lundi 09:00', chatId: null };
+  const task = 'Écris le digest de la semaine';
+
+  it('la demande qui répète la tâche quitte le fil — elle titre déjà la page', () => {
+    const items: FeedItem[] = [{ kind: 'request', text: task, origin, at: null }, turn()];
+    const out = dropTaskRequest(items, task);
+    expect(out.some((i) => i.kind === 'request')).toBe(false);
+    expect(out).toHaveLength(1);
+  });
+
+  it('les espaces et les retours à la ligne ne font pas une autre demande', () => {
+    const items: FeedItem[] = [
+      { kind: 'request', text: `  Écris le digest\n  de la semaine `, origin, at: null },
+      turn(),
+    ];
+    expect(dropTaskRequest(items, 'Écris le digest de la semaine')).toHaveLength(1);
+  });
+
+  it('une demande qui dit AUTRE chose reste : la carte de tête ne la porte pas', () => {
+    const items: FeedItem[] = [
+      { kind: 'request', text: 'Et le mois dernier ?', origin, at: null },
+      turn(),
+    ];
+    expect(dropTaskRequest(items, task)).toHaveLength(2);
+  });
+
+  it('un fil sans demande n’est pas touché', () => {
+    const items: FeedItem[] = [turn(), turn({ index: 2 })];
+    expect(dropTaskRequest(items, task)).toEqual(items);
   });
 });
 

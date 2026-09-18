@@ -84,6 +84,7 @@ const delivered: FeedItem = {
   },
 };
 
+const ORIGIN = { channel: 'cron', scheduleName: 'every Monday 09:00', chatId: null };
 const TASK = 'Weekly digest of the open GitHub issues';
 const STEP = 'Reading the issues opened this week.';
 const REPLY = 'Digest posted. Fourteen issues were opened this week.';
@@ -197,18 +198,60 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
     expect(html).toContain('No proof ran for this process.');
   });
 
-  it('la chronologie d’un run TERMINÉ est repliée — son contenu n’est pas dans la page', () => {
-    // Un seul bloc reste dans la chronologie : le tour qui portait la réponse
-    // l'a perdue (elle est sortie en haut) et n'avait rien d'autre à montrer.
-    expect(html).toContain('1 step · 1 agent · 41 s');
-    expect(html).not.toContain(STEP);
+  it('la chronologie est LÀ, sur un run terminé comme sur un autre', () => {
+    // Un seul bloc y reste : le tour qui portait la réponse l'a perdue (elle
+    // est sortie en haut) et n'avait rien d'autre à montrer. L'autre tour, lui,
+    // se lit sans rien déplier — la section ne se replie plus (18/09).
+    expect(html).toContain('Activity · 1 step · 1 agent · 41 s');
+    expect(html).toContain(STEP);
+  });
+
+  it('la demande ne se lit pas deux fois : la chronologie ne la reprend pas', () => {
+    // La carte de tête porte déjà la consigne en entier.
+    expect(html.split(TASK)).toHaveLength(3); // le titre et le corps de la carte
+    const avecDemande = data(false);
+    const page = renderToStaticMarkup(
+      <RunBody
+        data={{
+          ...avecDemande,
+          feed: {
+            ...avecDemande.feed,
+            items: [
+              { kind: 'request', text: TASK, origin: ORIGIN, at: null },
+              ...avecDemande.feed.items,
+            ],
+          },
+        }}
+      />,
+    );
+    // Toujours deux fois, pas trois : l'item `request` a quitté la chronologie.
+    expect(page.split(TASK)).toHaveLength(3);
+  });
+
+  it('une demande qui dit AUTRE CHOSE que la tâche reste dans la chronologie', () => {
+    const autre = data(false);
+    const page = renderToStaticMarkup(
+      <RunBody
+        data={{
+          ...autre,
+          feed: {
+            ...autre.feed,
+            items: [
+              { kind: 'request', text: 'Et le mois dernier ?', origin: ORIGIN, at: null },
+              ...autre.feed.items,
+            ],
+          },
+        }}
+      />,
+    );
+    expect(page).toContain('Et le mois dernier ?');
   });
 });
 
 describe('RunPage — un run qui court @cap:suivre-execution/ecran', () => {
   const html = renderToStaticMarkup(<RunBody data={data(true)} />);
 
-  it('la chronologie est OUVERTE : on est venu le regarder travailler', () => {
+  it('la chronologie est là aussi : on est venu le regarder travailler', () => {
     expect(html).toContain(STEP);
   });
 

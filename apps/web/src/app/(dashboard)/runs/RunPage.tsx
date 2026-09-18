@@ -165,8 +165,8 @@ export function RunBody({
         live={view.live}
       />
 
-      {/* La chronologie, repliée dès que le run est terminé. */}
-      <ActivitySection label={activityLabel(view.activity)} live={view.live}>
+      {/* La chronologie, toujours dépliée : c'est ce qu'on vient lire. */}
+      <ActivitySection label={activityLabel(view.activity)}>
         <ConversationFeedView
           feed={{ items: view.timeline, totals: data.feed.totals }}
           deliverables={verification.deliverables}

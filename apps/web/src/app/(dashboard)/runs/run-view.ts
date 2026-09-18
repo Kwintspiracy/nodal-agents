@@ -12,7 +12,7 @@
 
 import type { SpaceConversationView } from '@/lib/actions.ts';
 import type { StatusVariant } from '@/components/ui/StatusPill';
-import type { ConversationFeed, FeedItem } from '@/lib/conversation-feed.ts';
+import { normalizeText, type ConversationFeed, type FeedItem } from '@/lib/conversation-feed.ts';
 import { readsAsReply } from '@/lib/conversation-thread.ts';
 import { threadAgents } from '@/app/(dashboard)/spaces/format.ts';
 import { formatMs, formatTokens } from '@/app/(dashboard)/spaces/format.ts';
@@ -187,6 +187,30 @@ export function runStats(data: SpaceConversationView): RunStat[] {
 // ─── La réponse, sortie de la chronologie ───────────────────────────────────
 
 /**
+ * LA DEMANDE, retirée de la chronologie — elle est déjà en haut de la page.
+ *
+ * Le fil d'un run s'ouvre sur un item `request` qui porte la consigne du job
+ * (`buildConversationFeed` le pose depuis le message `user` égal à la tâche).
+ * La carte de tête montre cette même consigne, en entier : la laisser aussi en
+ * première ligne de la chronologie, c'est lire deux fois la même phrase à trois
+ * centimètres d'écart (Quentin, 18/09).
+ *
+ * Retirée SEULEMENT si elle répète la tâche. Une demande qui dit autre chose —
+ * un fil de canal dont la frontière n'a pas été trouvée, par exemple — est une
+ * information que la carte de tête ne porte pas : elle reste. Le fil d'une
+ * conversation, lui, ne change pas : là, la demande est le tour de la personne.
+ */
+export function dropTaskRequest(items: readonly FeedItem[], task: string): FeedItem[] {
+  const at = items.findIndex((i) => i.kind === 'request');
+  const request = at >= 0 ? items[at] : undefined;
+  if (request === undefined || request.kind !== 'request') return [...items];
+  if (normalizeText(request.text) !== normalizeText(task)) return [...items];
+  const out = [...items];
+  out.splice(at, 1);
+  return out;
+}
+
+/**
  * LA RÉPONSE du run, sortie du fil pour être lue sans rien déplier.
  *
  * C'est la règle que `conversation-thread.ts` applique déjà au fil d'une
@@ -316,7 +340,9 @@ export type RunView = {
 };
 
 export function runView(data: SpaceConversationView): RunView {
-  const lifted = liftReply(data.feed.items, data.job);
+  // Dans l'ordre : la demande s'en va (elle titre la page), puis la réponse et
+  // le récapitulatif montent au-dessus de la chronologie.
+  const lifted = liftReply(dropTaskRequest(data.feed.items, data.job.task), data.job);
   const { delivered, items } = liftDelivered(lifted.items);
   return {
     stats: runStats(data),
