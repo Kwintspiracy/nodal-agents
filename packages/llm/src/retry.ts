@@ -8,7 +8,7 @@ import {
   LLMTimeoutError,
 } from './errors';
 
-// 429 = transient rate-limit (billing 429 is caught before this set, see isQuotaError)
+// 429 = transient rate-limit (billing 429 is caught before this set, see throwIfQuotaError)
 // 500/502/503 = upstream server errors (transient)
 // 408 = Request Timeout (transport/gateway timeout — transient, different from our AbortSignal timeout)
 // 504 = Gateway Timeout (reverse-proxy/gateway gave up waiting on the upstream — transient,
@@ -124,9 +124,14 @@ const CAS_429: ReadonlyArray<{ cas: string; classe: Classe429; motif: RegExp }> 
   {
     // « (could not | couldn't | unable to) verify … credit(s) … » : le
     // fournisseur n'a pas pu LIRE le solde à temps, il ne dit rien du solde.
+    // La distance entre les deux mots traverse les points : « could not
+    // verify. Available credits … » est la même panne, et s'arrêter au premier
+    // point la renvoyait dans « credits_evoques », donc en facturation. Elle
+    // reste bornée (80 caractères, non gourmande) pour ne pas relier deux
+    // phrases sans rapport dans un long corps d'erreur.
     cas: 'solde_non_verifie_a_temps',
     classe: 'passager',
-    motif: /(could not|couldn't|cannot|unable to) verify[^.]*credit/,
+    motif: /(could not|couldn't|cannot|unable to) verify[\s\S]{0,80}?\bcredits?\b/,
   },
   {
     cas: 'credits_insuffisants',
@@ -167,21 +172,21 @@ export function classify429Body(body: string): Verdict429 {
 }
 
 /**
- * Lève QuotaExhaustedError si le 429 est un refus de facturation. Sinon, trace
- * le cas retenu et rend la main : l'appelant suit le chemin réessai / bascule.
- * Le cas voyage dans le message de l'erreur, donc `agent_jobs.error` dit
- * POURQUOI le job est mort, pas seulement qu'il est mort.
+ * Lève QuotaExhaustedError si le 429 est un refus de facturation. Sinon rend le
+ * verdict et la main : l'appelant suit le chemin réessai / bascule, et le cas
+ * part dans la ligne `[llm-attempt-failed]` de cette tentative — une seule
+ * ligne, pas une troisième à côté de celles qui existent déjà.
+ *
+ * Le cas voyage aussi dans le message de l'erreur de facturation, donc
+ * `agent_jobs.error` dit POURQUOI le job est mort, pas seulement qu'il l'est.
  */
-function throwIfQuotaError(err: unknown, provider: string, model: string): void {
+function throwIfQuotaError(err: unknown, provider: string, model: string): Verdict429 {
   const msg = errorMessage(err).toLowerCase();
   const verdict = classify429Body(msg);
   if (verdict.classe === 'facturation') {
     throw new QuotaExhaustedError(provider, model, `${msg} [cas=${verdict.cas}]`);
   }
-  console.warn(
-    `[llm-429-passager] provider=${provider} model=${model} cas=${verdict.cas} ` +
-      `msg=${JSON.stringify(msg.slice(0, 160))}`,
-  );
+  return verdict;
 }
 
 function errorMessage(err: unknown): string {
@@ -314,11 +319,10 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
       if (err instanceof QuotaExhaustedError) throw err;
 
       // 429: classify the body first — a billing refusal throws
-      // QuotaExhaustedError, a transient one falls through to the retry path.
+      // QuotaExhaustedError, a transient one falls through to the retry path
+      // and carries its case name into this attempt's log line.
       const status = getStatusCode(err);
-      if (status === 429) {
-        throwIfQuotaError(err, provider, model);
-      }
+      const cas429 = status === 429 ? throwIfQuotaError(err, provider, model).cas : undefined;
 
       const rateLimited = isRateLimitClass(err, status);
       const retryBudget = rateLimited
@@ -337,6 +341,7 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
         model,
         ms: attemptMs,
         err,
+        cas429,
       });
 
       lastErr = err;
@@ -386,6 +391,7 @@ function logAttempt({
   model,
   ms,
   err,
+  cas429,
 }: {
   attempt: number;
   of: number;
@@ -393,6 +399,8 @@ function logAttempt({
   model: string;
   ms: number;
   err: unknown;
+  /** Cas retenu par classify429Body quand la tentative a fini sur un 429. */
+  cas429?: string;
 }): void {
   const errName = err instanceof Error ? err.name : 'unknown';
   const errMsg = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
@@ -409,6 +417,7 @@ function logAttempt({
     `msg=${JSON.stringify(errMsg)}`,
   ];
   if (statusCode !== null) parts.push(`status=${statusCode}`);
+  if (cas429) parts.push(`cas429=${cas429}`);
   if (causeName) parts.push(`causeName=${causeName}`);
   if (causeMsg) parts.push(`causeMsg=${JSON.stringify(causeMsg)}`);
   console.warn(`[llm-attempt-failed] ${parts.join(' ')}`);

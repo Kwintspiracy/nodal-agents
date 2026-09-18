@@ -143,11 +143,29 @@ describe('un 429 qui demande de réessayer est passager @cap:parler-a-un-agent/m
 
   it('un refus qui dit aussi de réessayer reste un refus', () => {
     // « add credits and try again later » demande un réessai, mais le compte
-    // refuse quand même : le cas facturation passe AVANT le réessai générique.
+    // refuse quand même : les trois cas de facturation passent AVANT le réessai
+    // générique, et chacun est vérifié, pas seulement le premier.
     expect(classify429Body('Insufficient credits — add credits and try again later.')).toEqual({
       classe: 'facturation',
       cas: 'credits_insuffisants',
     });
+    expect(classify429Body('Payment required for this model, please retry')).toEqual({
+      classe: 'facturation',
+      cas: 'facturation_requise',
+    });
+    expect(classify429Body('Quota exceeded for this key, try again later')).toEqual({
+      classe: 'facturation',
+      cas: 'quota_depasse',
+    });
+  });
+
+  it('un point entre « verify » et « credits » ne renvoie pas en facturation', () => {
+    // Le fournisseur peut couper sa phrase : « could not verify. Available
+    // credits … ». C'est la même panne, et aucune demande de réessai ne vient
+    // la sauver ici — seul le cas passager explicite peut le faire.
+    expect(
+      classify429Body('openrouter could not verify. available credits for this request: unknown.'),
+    ).toEqual({ classe: 'passager', cas: 'solde_non_verifie_a_temps' });
   });
 
   it('la politique de réessai rejoue le corps de #163 et rend le résultat', async () => {
