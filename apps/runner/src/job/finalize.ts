@@ -53,7 +53,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, lt, or, sql } from '@nodal-agents/db';
 import { agentJobs, jobDeliverableVerificationState, verificationRuns } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import type { DecisionStatus } from '@nodal-agents/shared';
+import type { DecisionStatus, JobResultKind } from '@nodal-agents/shared';
 import { getVerifier } from '../verification/registry.ts';
 import type {
   DeliverableVerifier,
@@ -198,6 +198,21 @@ export interface FinalizeInput {
   readonly jobId: string;
   /** Le texte final du job — `completeJob` préserve un `result` non vide déjà écrit. */
   readonly result: string;
+  /**
+   * COMMENT `result` a été produit (#154, #210) — écrit sur la ligne AVEC le
+   * texte, jamais deviné plus tard à partir de sa forme.
+   *
+   * REQUIS : chaque porte terminale le dit. Les appelantes n'écrivent pas le
+   * même genre de texte — la branche texte de `executeJob` et le runtime CLI
+   * rendent les mots de l'agent (`prose`), le cron du tableau de tâches rend
+   * la compilation de ses tâches (`relay`) —, et une valeur par défaut aurait
+   * rangé les deux sous la même marque.
+   *
+   * Sans effet quand `result` est vide : rien n'est alors écrit, et la marque
+   * déjà posée par `dashboard_publish` — ou celle que les remplissages de
+   * `completeJob` poseront — reste en place.
+   */
+  readonly resultKind: JobResultKind;
   readonly toolsUsed?: readonly string[];
   /**
    * Le marqueur `finalizing_at` que l'APPELANT a déjà posé (le cron réclame un
@@ -565,6 +580,8 @@ export async function finalizeJobSuccess(
         toolsUsed,
         input.stats,
         input.messages,
+        // La provenance, posée dans la MÊME écriture que le texte (#154, #210).
+        input.resultKind,
       );
       if (!landed) {
         // Impossible tant que le `FOR UPDATE` ci-dessus tient : on le dit fort

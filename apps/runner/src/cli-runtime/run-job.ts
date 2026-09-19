@@ -750,7 +750,15 @@ export async function runCliRuntimeJob(args: {
 
   const outcome = await finalizeJobSuccess(
     db,
-    { jobId, result: turn.finalText, toolsUsed: [binding.toolLabel], delivery },
+    // `prose` : le texte final du CLI est celui de l'agent, relayé verbatim
+    // (#154, #210).
+    {
+      jobId,
+      result: turn.finalText,
+      resultKind: 'prose',
+      toolsUsed: [binding.toolLabel],
+      delivery,
+    },
     {
       prepareDelivery: async (tx, input) => {
         await prepareDelivery(tx, {

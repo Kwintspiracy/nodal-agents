@@ -3634,6 +3634,9 @@ async function runJob(
             {
               jobId: jobId as string,
               result: textContent,
+              // Les MOTS DE L'AGENT : c'est son texte final, sur la branche
+              // texte (#154, #210).
+              resultKind: 'prose',
               toolsUsed,
               stats: runStats(),
               messages,
@@ -5009,6 +5012,13 @@ async function runJob(
           {
             jobId: jobId as string,
             result: finalResult,
+            // `finalResult` est VIDE ici (brique 33 : `return_result` ne
+            // transporte aucun contenu), donc rien n'est écrit et cette marque
+            // n'est pas posée : celle de l'outil de livraison qui a rempli
+            // `result` plus tôt, ou celle des remplissages de `completeJob`,
+            // reste en place. Elle est nommée quand même — la primitive exige
+            // que chaque porte DISE de quel genre est le texte qu'elle passe.
+            resultKind: 'prose',
             toolsUsed,
             stats: runStats(),
             messages,
