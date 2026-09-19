@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
+import { useLayer } from '@/lib/layers.ts';
 
 type Props = {
   open: boolean;
@@ -36,18 +37,8 @@ export default function Drawer({
   className = '',
   children,
 }: Props) {
-  useEffect(() => {
-    if (!open) return;
-    // Voir `DockedPanel.tsx` : un calque modal — le Drawer pose un voile —
-    // écoute en CAPTURE et prend la touche.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      e.preventDefault();
-      onClose();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [open, onClose]);
+  // Échap va au calque ouvert le plus intérieur (`@/lib/layers.ts`).
+  useLayer(open, onClose);
 
   if (!open) return null;
 

@@ -12,15 +12,13 @@
 //   5. il n'y a AUCUN voile : le contenu de la page reste cliquable à côté du
 //      panneau. C'est la différence avec `Drawer` et `Modal`, et la promesse
 //      de la planche P1 — donc elle s'assert, elle ne se documente pas ;
-//   6. la POLITESSE entre calques (revue #233) : une modale ouverte prend
-//      Échap, et le panneau dessous ne se ferme pas avec elle. C'est le seul
-//      cas où deux calques se parlent, donc il se prouve.
+//   6. le panneau ouvert sous un autre calque ne prend PAS Échap à sa place.
+//      Ce qui décide entre plusieurs calques est un protocole partagé, pas une
+//      affaire de ce composant : il vit dans `@/lib/layers.ts` et se prouve
+//      dans `src/lib/__tests__/layers.test.tsx`, sur les vrais calques.
 //
 // Échap part de `document.body`, jamais de `window` : c'est le vrai chemin
-// d'une touche dans un navigateur (la cible est l'élément focalisé), et c'est
-// ce chemin-là qui fait passer la CAPTURE avant la BULLE. Envoyé sur `window`
-// même, l'événement est AT_TARGET et les écouteurs repartent dans leur ordre
-// d'inscription — le test serait vert sur une coordination qui ne marche pas.
+// d'une touche dans un navigateur, la cible étant l'élément focalisé.
 //
 // Rendu dans jsdom et MANIPULÉ : les assertions portent sur le DOM produit et
 // sur ce que l'appelant REÇOIT (`onClose`), jamais sur un compte d'appels seul.
@@ -30,12 +28,8 @@
 //   - l'effet Échap sans sa garde `if (!open) return` → le cas « fermé,
 //     Échap ne rappelle pas » rougit ;
 //   - `footer !== undefined` remplacé par `true` → le cas « sans pied » rougit ;
-//   - la garde `e.defaultPrevented` retirée du panneau → les deux cas
-//     « sous une modale » rougissent ;
-//   - la `Modal` non-dismissable qui ne prend plus la touche → le cas
-//     « sous une modale non-dismissable » rougit ;
-//   - la `Modal` remise en phase de BULLE → le cas « modale sœur » rougit, et
-//     lui seul : c'est exactement ce que la capture achète.
+//   - le panneau qui n'entrerait plus dans la pile des calques → le cas
+//     « sous une modale, Échap ne ferme pas le panneau » rougit.
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { act, useState } from 'react';
@@ -219,107 +213,41 @@ describe('DockedPanel', () => {
     expect(onPageClick).toHaveBeenCalledTimes(1);
   });
 
-  /**
-   * Le panneau est ouvert D'ABORD, la modale ensuite, par un clic — le vrai
-   * enchaînement d'un formulaire ouvert DANS le panneau.
-   *
-   * Ce cas-là ne prouve pas à lui seul la phase de capture : la modale est un
-   * ENFANT du panneau, et React exécute les effets de l'enfant avant ceux du
-   * parent, donc elle s'inscrit la première de toute façon. C'est le cas
-   * « modale sœur » plus bas qui prouve la capture.
-   */
-  function Empile({ dismissable }: { dismissable: boolean }) {
-    const [panelOpen, setPanelOpen] = useState(true);
-    const [modalOpen, setModalOpen] = useState(false);
-    return (
-      <DockedPanel
-        open={panelOpen}
-        onClose={() => setPanelOpen(false)}
-        title="Network access"
-        testId="panel"
-      >
-        <button type="button" data-testid="ouvrir" onClick={() => setModalOpen(true)}>
-          Ouvrir la modale
-        </button>
-        <Modal
-          open={modalOpen}
-          onClose={() => setModalOpen(false)}
-          dismissable={dismissable}
-          title="Confirm"
-          testId="modale"
-        >
-          <p>contenu</p>
-        </Modal>
-      </DockedPanel>
-    );
-  }
-
-  it('sous une modale non-dismissable ouverte depuis lui, Échap ne ferme pas le panneau', async () => {
-    await render(<Empile dismissable={false} />);
-    await click(container.querySelector('[data-testid="ouvrir"]')!);
-    expect(document.body.querySelector('[data-testid="modale"]')).not.toBeNull();
-
-    await pressEscape();
-
-    // La modale a PRIS la touche sans se fermer : les deux sont encore là.
-    expect(document.body.querySelector('[data-testid="modale"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="panel"]')).not.toBeNull();
-  });
-
-  it('sous une modale ordinaire, un Échap ferme la modale, le suivant le panneau', async () => {
-    await render(<Empile dismissable />);
-    await click(container.querySelector('[data-testid="ouvrir"]')!);
-    expect(document.body.querySelector('[data-testid="modale"]')).not.toBeNull();
-
-    await pressEscape();
-    expect(document.body.querySelector('[data-testid="modale"]')).toBeNull();
-    expect(container.querySelector('[data-testid="panel"]')).not.toBeNull();
-
-    // Le second Échap, lui, revient au panneau.
-    await pressEscape();
-    expect(container.querySelector('[data-testid="panel"]')).toBeNull();
-  });
-
-  it('une modale SŒUR, montée après, prend quand même Échap avant le panneau', async () => {
-    // Le cas qui prouve la phase de CAPTURE, et lui seul.
-    //
-    // Ici la modale n'est pas dans le panneau : c'est une sœur, montée plus
-    // tard. Les effets partent alors dans l'ordre de l'arbre — le panneau
-    // s'inscrit AVANT elle. En phase de bulle il parlerait le premier et se
-    // fermerait ; seule la capture fait passer la modale devant.
-    function Cote() {
+  it('sous une modale ouverte depuis lui, Échap ne ferme pas le panneau', async () => {
+    // Ce que ce fichier doit dire du panneau, et rien de plus : il n'attrape
+    // pas la touche d'un calque ouvert au-dessus de lui. Qui l'attrape, et
+    // dans quel ordre, se prouve dans `src/lib/__tests__/layers.test.tsx`.
+    function Empile() {
       const [panelOpen, setPanelOpen] = useState(true);
       const [modalOpen, setModalOpen] = useState(false);
       return (
-        <div>
-          <DockedPanel
-            open={panelOpen}
-            onClose={() => setPanelOpen(false)}
-            title="Network access"
-            testId="panel"
-          >
-            <p>corps</p>
-          </DockedPanel>
+        <DockedPanel
+          open={panelOpen}
+          onClose={() => setPanelOpen(false)}
+          title="Network access"
+          testId="panel"
+        >
           <button type="button" data-testid="ouvrir" onClick={() => setModalOpen(true)}>
-            Ouvrir
+            Ouvrir la modale
           </button>
-          {modalOpen && (
-            <Modal open onClose={() => {}} dismissable={false} title="Confirm" testId="modale">
-              <p>contenu</p>
-            </Modal>
-          )}
-        </div>
+          <Modal
+            open={modalOpen}
+            onClose={() => setModalOpen(false)}
+            title="Confirm"
+            testId="modale"
+          >
+            <p>contenu</p>
+          </Modal>
+        </DockedPanel>
       );
     }
-
-    await render(<Cote />);
+    await render(<Empile />);
     await click(container.querySelector('[data-testid="ouvrir"]')!);
     expect(document.body.querySelector('[data-testid="modale"]')).not.toBeNull();
 
     await pressEscape();
-
-    expect(container.querySelector('[data-testid="panel"]')).not.toBeNull();
-    expect(document.body.querySelector('[data-testid="modale"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-testid="modale"]'), 'la modale part').toBeNull();
+    expect(container.querySelector('[data-testid="panel"]'), 'le panneau reste').not.toBeNull();
   });
 
   it('la largeur est posée par l’appelant, 400 px par défaut', async () => {

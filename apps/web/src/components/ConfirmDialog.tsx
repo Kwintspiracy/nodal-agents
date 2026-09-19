@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useLayer } from '@/lib/layers.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextInput from '@/components/ui/TextInput';
 import { ModalFooter } from '@/components/ui/Modal';
@@ -73,19 +74,13 @@ export default function ConfirmDialog({
     setMounted(true);
   }, []);
 
+  // Échap va au calque ouvert le plus intérieur (`@/lib/layers.ts`).
+  useLayer(open, onCancel);
+
   useEffect(() => {
     if (!open) return;
     cancelRef.current?.focus();
-    // Voir `DockedPanel.tsx` : un calque modal écoute en CAPTURE et prend la
-    // touche, pour qu'un panneau ancré dessous ne se ferme pas avec lui.
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      e.preventDefault();
-      onCancel();
-    }
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [open, onCancel]);
+  }, [open]);
 
   if (!open || !mounted) return null;
 

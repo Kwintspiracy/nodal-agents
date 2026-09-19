@@ -16,6 +16,7 @@
 // `overflow: hidden` ancestor on the form. Same pattern as ConfirmDialog.
 
 import { useEffect, useState } from 'react';
+import { useLayer } from '@/lib/layers.ts';
 import { createPortal } from 'react-dom';
 import { AVATAR_CATALOG } from '@/lib/avatar-catalog.ts';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
@@ -39,19 +40,10 @@ export default function AvatarPicker({ value, onChange, label = 'Avatar' }: Prop
     setMounted(true);
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    // Voir `DockedPanel.tsx` : ce popover n'est pas un calque modal, donc il
-    // reste en phase de bulle — mais il PREND la touche quand il se ferme,
-    // sinon le panneau ou la modale qui le porte se ferme avec lui.
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      e.preventDefault();
-      setOpen(false);
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  // Échap va au calque ouvert le plus intérieur (`@/lib/layers.ts`). Ouvert
+  // DANS une modale, même non-dismissable, ce popover reçoit donc la touche et
+  // se ferme seul — c'est ce que la phase capture/bulle ne savait pas dire.
+  useLayer(open, () => setOpen(false));
 
   function pick(url: string | null) {
     onChange(url);
