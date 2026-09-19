@@ -19,6 +19,19 @@ type Props = {
   ariaLabel?: string;
   ariaLabelledBy?: string;
   ariaDescribedBy?: string;
+  /**
+   * L'IMAGE d'un interrupteur, pas un interrupteur : rend un `<span>` inerte
+   * et invisible aux lecteurs d'écran, au lieu du bouton.
+   *
+   * Pourquoi (#231) : la liste des réglages montre l'état de deux réglages sur
+   * la ligne, et RIEN ne se modifie depuis la liste — le geste vit dans le
+   * panneau, avec sa confirmation. Un bouton qu'on ne peut pas actionner est un
+   * mensonge, et un bouton imbriqué dans la ligne cliquable est un HTML
+   * invalide. La valeur reste écrite en toutes lettres à côté (« Released »,
+   * « Closed to external clients »), donc rien n'est perdu au clavier ni à la
+   * voix. `onChange` n'est jamais appelé dans ce mode.
+   */
+  readOnly?: boolean;
 };
 
 const TRACK_DIM: Record<Size, string> = {
@@ -49,7 +62,26 @@ export default function Switch({
   ariaLabel,
   ariaLabelledBy,
   ariaDescribedBy,
+  readOnly = false,
 }: Props) {
+  const thumb = (
+    <span
+      className={`pointer-events-none inline-block rounded-full transition-transform duration-200 ${THUMB_DIM[size]} ${thumbClassName}`}
+    />
+  );
+
+  if (readOnly) {
+    return (
+      <span
+        aria-hidden="true"
+        data-state={checked ? 'on' : 'off'}
+        className={`relative inline-flex shrink-0 items-center rounded-full ${TRACK_DIM[size]} ${trackClassName}`}
+      >
+        {thumb}
+      </span>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -62,9 +94,7 @@ export default function Switch({
       onClick={onChange}
       className={`relative inline-flex shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 ${TRACK_DIM[size]} ${trackClassName}`}
     >
-      <span
-        className={`pointer-events-none inline-block rounded-full transition-transform duration-200 ${THUMB_DIM[size]} ${thumbClassName}`}
-      />
+      {thumb}
     </button>
   );
 }

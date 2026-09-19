@@ -40,7 +40,9 @@ export default function NetworkForm({ initial }: Props) {
 
   return (
     <form onSubmit={handleSubmit}>
-      <SetForm label="Network access">
+      {/* Pas de label ici : le panneau qui accueille ce formulaire porte déjà
+          « Network access » en titre (#231). */}
+      <SetForm>
         <OptionRadio
           active={bind === 'loopback'}
           onClick={() => setBind('loopback')}

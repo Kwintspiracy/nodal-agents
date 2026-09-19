@@ -20,7 +20,6 @@ import { toast } from 'sonner';
 import { setRootAgentAction, type AgentRow } from '@/lib/actions.ts';
 import { AUTONOMY_OPTIONS } from '@/lib/autonomy.ts';
 import { type RootGrants, type AutonomyLevel, DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
-import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetForm } from '@/components/ui/SetForm.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
 import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
@@ -77,11 +76,10 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
     setGrants(initialGrants ?? DEFAULT_ROOT_GRANTS);
   }
 
+  // Le titre et le lede sont ceux du panneau qui accueille ce formulaire
+  // (SettingsList) — la section ne porte plus son propre en-tête (#231).
   return (
-    <SetBlock
-      label="ROOT agent"
-      lede="Your first orchestrator is automatically this workspace's ROOT — the single top-level agent that can manage it (create skills/agents, assign skills) on your behalf. Tune its powers below."
-    >
+    <>
       {rootAgent === null ? (
         /* Empty state — no ROOT yet (no orchestrator has been created) */
         <div className="mt-3.5 rounded-xl border border-rule-2 bg-paper px-[18px] py-4">
@@ -173,6 +171,6 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
           </SetForm>
         </form>
       )}
-    </SetBlock>
+    </>
   );
 }
