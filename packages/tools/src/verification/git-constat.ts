@@ -49,6 +49,14 @@
 //     faire entrer le premier. Sans elle, une restauration ne se voyait nulle
 //     part.
 //
+//  6. UN RENOMMAGE N'EST RAPPROCHÉ QUE S'IL EST RANGÉ DANS L'INDEX.
+//     `git status` ne rapproche pas un renommage laissé dans l'arbre de
+//     travail : un `mv` par le shell y paraît comme une suppression et un
+//     fichier non suivi, et le constat dit donc deux gestes. Un `git mv`, lui,
+//     donne une ligne `renamed` avec son nom d'avant. C'est ce que git VOIT
+//     dans les deux cas ; rapprocher nous-mêmes ce que git refuse de
+//     rapprocher serait inventer un fait plutôt qu'en constater un.
+//
 // ═══ POURQUOI DES EMPREINTES, ET PAS SEULEMENT LES CODES DE STATUT ═══
 //
 // Un fichier déjà modifié AVANT le run et modifié ENCORE pendant porte le même
@@ -74,20 +82,29 @@ const run = promisify(execFile);
 const GIT_TIMEOUT_MS = 5_000;
 
 /**
- * ═══ QUEL `git` EST LANCÉ — et pourquoi ce n'est pas une question oiseuse ═══
+ * ═══ QUEL `git` EST LANCÉ — un DURCISSEMENT, pas un trou refermé ═══
  *
- * Revue C de la PR #227, constat 3. `execFile('git', …, { cwd: <le dossier du
- * projet> })` laisse Windows chercher le programme, et `CreateProcess` regarde
- * le RÉPERTOIRE COURANT avant le PATH. Un `git.exe` déposé dans le dossier d'un
- * projet — par une dépendance, par un dépôt cloné, par l'agent lui-même —
- * s'exécutait donc à la place du git du système, à chaque appel d'outil mutant.
- * « git est lu, jamais écrit » cessait d'être vrai, et une sortie fabriquée
- * alimentait la liste des fichiers livrés.
+ * Revue C de la PR #227, constat 3. La crainte : `execFile('git', …, { cwd:
+ * <le dossier du projet> })` laisse le système chercher le programme, et la
+ * recherche de `CreateProcess` a longtemps regardé le RÉPERTOIRE COURANT avant
+ * le PATH. Un `git.exe` déposé dans le dossier d'un projet — par une
+ * dépendance, par un dépôt cloné, par l'agent lui-même — aurait alors tourné à
+ * la place du git du système, à chaque appel d'outil mutant, et sa sortie
+ * fabriquée aurait alimenté la liste des fichiers livrés.
  *
- * Le binaire est donc résolu UNE FOIS, à partir du PATH du processus runner et
- * de lui seul — aucun sous-processus n'est lancé pour le trouver, sans quoi la
- * recherche se reposerait exactement là où est le trou. Le chemin ABSOLU obtenu
- * est ensuite passé à `execFile`, qui n'a plus rien à chercher.
+ * CE N'EST PAS CE QUI SE PASSE SUR CE RUNTIME, et le dire autrement serait se
+ * vanter d'une réparation qu'on n'a pas faite. Mesuré : un vrai `git.exe` posé
+ * dans le dossier du projet, la résolution remise au nom nu, et le cas reste
+ * VERT sous Windows avec Node 26.4.0 — libuv ne cherche plus le répertoire
+ * courant pour le programme (CVE-2024-24806), et ce Node porte le correctif.
+ *
+ * Le mécanisme est gardé quand même : il ne coûte rien, il retire une
+ * recherche de programme par appel, et il tient sur un runtime — plus ancien,
+ * ou un autre — qui chercherait encore. Le binaire est donc résolu UNE FOIS, à
+ * partir du PATH du processus runner et de lui seul : aucun sous-processus
+ * n'est lancé pour le trouver, sans quoi la recherche se reposerait exactement
+ * là où serait le trou. Le chemin ABSOLU obtenu est passé à `execFile`, qui n'a
+ * plus rien à chercher.
  *
  * `null` quand il n'y a pas de git sur le PATH : le constat par git décline,
  * le run retombe sur le disque, et le dit.
@@ -435,6 +452,23 @@ export function perimetreGit(
  * pas la racine retombe ainsi sur le constat disque, et le dit : c'est plus
  * pauvre, et c'est le seul repli honnête — Nodal constate le projet qu'on lui
  * a donné, pas la machine autour.
+ *
+ * ═══ UN DÉPÔT IMBRIQUÉ EST CONSTATÉ AVEC CELUI QUI LE CONTIENT ═══
+ *
+ * Revue C de la PR #227, passe 2. Quand le `cwd` tombe dans un sous-dossier qui
+ * a SON PROPRE `.git`, les deux racines entrent dans le périmètre : celle du
+ * sous-dépôt (par le `cwd`) et celle du dossier attaché (par le projet). Les
+ * deux sont donc sondées, et c'est VOULU — un `npm install` qui écrit dans le
+ * sous-dépôt et un script qui écrit à côté sont deux écritures du même run, et
+ * n'en montrer qu'une serait le trou que #199 ferme.
+ *
+ * Ce que git en dit se répartit proprement : le sous-dépôt liste SES fichiers
+ * un par un, et le dépôt extérieur ne descend pas dedans — il ne voit qu'une
+ * entrée pour le dossier. Le fichier écrit dans le sous-dépôt est donc constaté
+ * par son propre dépôt, avec son chemin exact, et l'entrée de dossier du dépôt
+ * extérieur porte un chemin qui lui est propre. Aucune écriture n'est perdue ;
+ * un chemin de dossier peut paraître en plus, ce qui est dit ici plutôt que
+ * découvert à l'écran.
  *
  * ═══ LE PÉRIMÈTRE EST LE DOSSIER DU PROJET, PAS LE `cwd` DE LA COMMANDE ═══
  *

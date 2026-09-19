@@ -144,6 +144,28 @@ async function lignes(jobId: string) {
     .sort((a, b) => a.nom.localeCompare(b.nom));
 }
 
+/** Les mêmes lignes, avec le nom d'AVANT — ce que seul un renommage porte. */
+async function lignesAvecOrigine(jobId: string) {
+  const rows = await db
+    .select({
+      path: constatedWrites.path,
+      changeKind: constatedWrites.changeKind,
+      constatedBy: constatedWrites.constatedBy,
+      renamedFrom: constatedWrites.renamedFrom,
+    })
+    .from(constatedWrites)
+    .where(eq(constatedWrites.jobId, jobId));
+  return rows
+    .map((r) => ({
+      nom: r.path.slice(r.path.lastIndexOf('/') + 1),
+      kind: r.changeKind,
+      par: r.constatedBy,
+      depuis:
+        r.renamedFrom === null ? null : r.renamedFrom.slice(r.renamedFrom.lastIndexOf('/') + 1),
+    }))
+    .sort((a, b) => a.nom.localeCompare(b.nom));
+}
+
 /** Une commande qui écrit sans jamais nommer son fichier à Nodal. */
 function ecrire(chemin: string, contenu: string): string {
   return `node -e "require('fs').writeFileSync('${normalizePath(chemin)}', '${contenu}')"`;
@@ -197,6 +219,54 @@ describe('le seam range le constat @cap:travailler-sur-des-fichiers/moteur', () 
     );
 
     expect(await lignes(jobId)).toEqual([]);
+  });
+
+  it('un renommage RANGÉ DANS L’INDEX fait UNE ligne, avec son nom d’avant', async () => {
+    // Revue C de la PR #227, passe 2, mineur 2. La sortie du seam était déjà
+    // affirmée ; ce qui compte pour l'écran est la LIGNE rangée en base.
+    const ws = await depotNeuf('depot');
+    const jobId = await jobNeuf();
+
+    const res = await executeTool(
+      outil('run_command'),
+      { purpose: 'renommer', command: 'git mv depart.ts arrive.ts' },
+      ctx(ws, jobId),
+      autoApprove(),
+    );
+    expect(res.outcome).toBe('success');
+
+    expect(await lignesAvecOrigine(jobId)).toEqual([
+      { nom: 'arrive.ts', kind: 'renamed', par: 'git', depuis: 'depart.ts' },
+    ]);
+  });
+
+  it('un renommage PAR LE SHELL fait deux lignes — c’est ce que git voit', async () => {
+    // TROUVÉ EN ÉCRIVANT LE CAS PRÉCÉDENT, et gardé parce que c'est la vérité
+    // de l'outil : `git status` ne rapproche un renommage QUE s'il est rangé
+    // dans l'index. Un `fs.rename` laisse une suppression et un fichier non
+    // suivi, et git les nomme ainsi. Le constat dit donc deux gestes, parce que
+    // c'est ce que git en dit — deviner un rapprochement que git refuse de
+    // faire serait inventer un fait, pas en constater un.
+    const ws = await depotNeuf('depot');
+    const jobId = await jobNeuf();
+    const depuis = normalizePath(join(ws, 'depart.ts'));
+    const vers = normalizePath(join(ws, 'arrive.ts'));
+
+    const res = await executeTool(
+      outil('run_command'),
+      {
+        purpose: 'renommer',
+        command: `node -e "require('fs').renameSync('${depuis}', '${vers}')"`,
+      },
+      ctx(ws, jobId),
+      autoApprove(),
+    );
+    expect(res.outcome).toBe('success');
+
+    expect(await lignesAvecOrigine(jobId)).toEqual([
+      { nom: 'arrive.ts', kind: 'added', par: 'git', depuis: null },
+      { nom: 'depart.ts', kind: 'deleted', par: 'git', depuis: null },
+    ]);
   });
 
   it('une commande lancée dans un SOUS-DOSSIER du projet est constatée par git', async () => {

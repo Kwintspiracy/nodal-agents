@@ -299,6 +299,36 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     await rm(sous, { recursive: true, force: true });
   });
 
+  it('un dépôt IMBRIQUÉ est constaté avec celui qui le contient', async () => {
+    // Revue C de la PR #227, passe 2. Comportement tenu mais jamais dit : un
+    // sous-dossier qui a son propre `.git` met DEUX racines dans le périmètre,
+    // la sienne (par le `cwd`) et celle du projet (par le dossier attaché).
+    // Les deux sont sondées, et c'est voulu — un `npm install` qui écrit dans
+    // le sous-dépôt et un script qui écrit à côté sont deux écritures du même
+    // run, et n'en montrer qu'une serait le trou que #199 ferme.
+    const sous = join(depot, 'vendor');
+    await mkdir(sous, { recursive: true });
+    await run('git', ['init', '--initial-branch=main'], { cwd: sous, windowsHide: true });
+
+    const avant = await snapshotGitAvant(perimetreGit([sous], [depot]));
+    expect(avant.map((s) => s.root).sort()).toEqual(
+      [await repoRootOf(depot), await repoRootOf(sous)].sort(),
+    );
+
+    // Une écriture DANS le sous-dépôt et une écriture à côté : les deux sont
+    // constatées, chacune par le dépôt qui la voit.
+    await writeFile(join(sous, 'dedans.ts'), 'export const d = 1;\n');
+    await writeFile(join(depot, 'a-cote.ts'), 'export const c = 1;\n');
+    const constat = await constatedGitWrites(avant);
+
+    const noms = constat.writes.map((w) => w.path);
+    expect(noms.some((p) => p.endsWith('/vendor/dedans.ts'))).toBe(true);
+    expect(noms.some((p) => p.endsWith('/a-cote.ts'))).toBe(true);
+
+    await rm(sous, { recursive: true, force: true });
+    await rm(join(depot, 'a-cote.ts'), { force: true });
+  });
+
   it('un dépôt au-dessus de TOUT ce qui est passé n’est pas retenu', async () => {
     // Ce que la garde refuse vraiment : une racine qui n'est ni l'un des
     // dossiers passés, ni sous l'un d'eux. Sans elle, un projet posé sous un
@@ -392,12 +422,19 @@ describe('le delta lui-même @cap:travailler-sur-des-fichiers/moteur', () => {
 });
 
 describe('quel git est lancé @cap:travailler-sur-des-fichiers/moteur', () => {
-  // Revue C de la PR #227, constat 3. `execFile('git', …, { cwd: <dossier du
-  // projet> })` laisse Windows chercher le programme, et `CreateProcess`
-  // regarde le répertoire courant AVANT le PATH. Un `git.exe` déposé dans le
-  // dossier d'un projet — par une dépendance, par un dépôt cloné, par l'agent
-  // lui-même — s'exécutait à la place du git du système, à chaque appel d'outil
-  // mutant, et sa sortie fabriquée alimentait la liste des fichiers livrés.
+  // Revue C de la PR #227, constat 3, et ce qui en est RÉELLEMENT vrai ici.
+  //
+  // La crainte : `execFile('git', …, { cwd: <dossier du projet> })` laisse le
+  // système chercher le programme, et la recherche de `CreateProcess` a
+  // longtemps regardé le répertoire courant avant le PATH — un `git.exe` déposé
+  // dans le dossier d'un projet aurait tourné à la place du git du système.
+  //
+  // MESURÉ : ce n'est pas ce qui se passe sur ce runtime. Le cas du faux git
+  // ci-dessous reste VERT quand on remet la résolution au nom nu, sous Windows
+  // avec Node 26.4.0 : libuv ne cherche plus le répertoire courant pour le
+  // programme. La résolution absolue est donc un DURCISSEMENT, et c'est le
+  // premier cas qui la prouve. Le second garde le mécanisme sous les yeux pour
+  // un runtime qui chercherait encore.
 
   it('le binaire est un chemin ABSOLU pris dans le PATH du processus', async () => {
     const binaire = await resolveGitBinary();
