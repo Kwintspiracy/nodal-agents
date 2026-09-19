@@ -40,6 +40,7 @@ import {
   CheckpointError,
   measureWorkspace,
   SKIPPED_DIRS,
+  SKIPPED_FILE_SUFFIXES,
   type CheckpointFailureCode,
 } from './failure';
 
@@ -76,7 +77,7 @@ function snapshotTimeoutMs(explicit?: number): number {
     badTimeoutSaid = true;
     console.warn(
       `[checkpoints] NODALAI_CHECKPOINT_TIMEOUT_MS=${JSON.stringify(raw)} is not a positive ` +
-        `number of milliseconds — using ${GIT_TIMEOUT_MS} ms`,
+        `number of milliseconds. Using ${GIT_TIMEOUT_MS} ms.`,
     );
   }
   return GIT_TIMEOUT_MS;
@@ -99,6 +100,56 @@ function isGitMissingError(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const e = err as { code?: unknown; syscall?: unknown };
   return e.code === 'ENOENT' && typeof e.syscall === 'string' && e.syscall.startsWith('spawn');
+}
+
+/**
+ * git A RÉPONDU, et sa réponse est « non ».
+ *
+ * `err.code` est alors le CODE DE SORTIE, un nombre, et l'enfant n'a pas été
+ * tué. Un `ENOENT` porte une chaîne, un dépassement de borne porte `killed` :
+ * ni l'un ni l'autre n'est une réponse, et les confondre avec « non » est
+ * exactement le défaut que `gitAllowingMiss` existe pour interdire.
+ */
+function isOrdinaryExitFailure(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { killed?: boolean; code?: unknown };
+  return e.killed !== true && typeof e.code === 'number';
+}
+
+/**
+ * Comme `git`, mais une réponse NÉGATIVE de git rend `''` au lieu de lever.
+ *
+ * Ce que ce nom protège (revue de la PR #262, passe 1). Les deux lectures de
+ * l'instantané — « ce dossier a-t-il déjà une photo ? » et « son arbre est-il
+ * celui d'aujourd'hui ? » — portaient un `.catch(() => '')` nu. Après l'ajout
+ * de la borne de temps (#245), un `rev-parse` TUÉ par cette borne se lisait
+ * donc « pas de parent » : `commit-tree` repartait sans `-p`, `update-ref`
+ * posait un commit RACINE, et la chaîne des checkpoints était coupée en
+ * silence — la photo d'avant devenait irretrouvable, sans une ligne nulle part.
+ *
+ * Un `catch` qui avale tout ne distingue pas un refus d'une panne. Celui-ci ne
+ * garde que le refus : une sortie non nulle ordinaire. Un dépassement de
+ * borne, un `git` absent, un magasin illisible remontent, et le refus qui en
+ * découle dit lequel.
+ *
+ * Exporté pour son test : c'est la distinction elle-même qui doit être
+ * épinglée, et un dépassement de borne ne peut pas être provoqué SUR CET
+ * APPEL-LÀ depuis l'extérieur (chaque commande a sa propre borne, et `add -A`
+ * est toujours plus lent que `rev-parse` : aucune valeur ne tue le second sans
+ * tuer le premier).
+ */
+export async function gitAllowingMiss(
+  store: string,
+  workspace: string,
+  args: string[],
+  timeoutMs: number = GIT_TIMEOUT_MS,
+): Promise<string> {
+  try {
+    return await git(store, workspace, args, undefined, timeoutMs);
+  } catch (err) {
+    if (isOrdinaryExitFailure(err)) return '';
+    throw err;
+  }
 }
 
 /**
@@ -131,11 +182,14 @@ async function qualifySnapshotFailure(
  * Never snapshotted. Dependency trees and build output are large, regenerable,
  * and are exactly what makes a naive `add -A` take minutes on a real project.
  *
- * Les dossiers viennent de `SKIPPED_DIRS` (failure.ts), que la MESURE d'un
- * refus utilise aussi : deux listes auraient dérivé, et un refus aurait alors
- * annoncé une taille que git n'avait jamais eu à traverser (#245).
+ * La liste vient de `failure.ts`, que la MESURE d'un refus utilise aussi : deux
+ * listes auraient dérivé, et un refus aurait alors annoncé une taille que git
+ * n'avait jamais eu à enregistrer (#245, revue passe 1).
  */
-const EXCLUDES = [...SKIPPED_DIRS.map((dir) => `${dir}/`), '*.log'];
+const EXCLUDES = [
+  ...SKIPPED_DIRS.map((dir) => `${dir}/`),
+  ...SKIPPED_FILE_SUFFIXES.map((suffixe) => `*${suffixe}`),
+];
 
 /**
  * What a checkpoint does NOT cover — one sentence, so the limit travels with
@@ -408,21 +462,22 @@ async function takeSnapshot(
 
   // Nothing changed since the last checkpoint — recording it again would bury
   // the useful ones under identical noise.
-  const parent = await git(
+  // `gitAllowingMiss`, jamais un `.catch(() => '')` nu : une ref absente est
+  // une RÉPONSE de git, un dépassement de borne est une PANNE, et lire la
+  // seconde comme la première pose un commit racine (revue #262, passe 1).
+  const parent = await gitAllowingMiss(
     store,
     workspace,
     ['rev-parse', '--verify', '--quiet', ref],
-    undefined,
     limitMs,
-  ).catch(() => '');
+  );
   if (parent) {
-    const parentTree = await git(
+    const parentTree = await gitAllowingMiss(
       store,
       workspace,
       ['rev-parse', `${parent}^{tree}`],
-      undefined,
       limitMs,
-    ).catch(() => '');
+    );
     if (parentTree === tree) return null;
   }
 
@@ -446,11 +501,15 @@ async function takeSnapshot(
 export async function headCheckpoint(store: string, workspace: string): Promise<string | null> {
   if (!existsSync(join(store, 'store', 'HEAD'))) return null;
   const ref = `refs/nodal/${workspaceKey(workspace)}`;
-  // `--verify --quiet` : ref absente ⇒ sortie vide et code 1, donc rejet — d'où
-  // le `catch`. C'est la même forme que dans `snapshot`.
-  const sha = await git(store, workspace, ['rev-parse', '--verify', '--quiet', ref]).catch(
-    () => '',
-  );
+  // `--verify --quiet` : ref absente ⇒ sortie vide et code 1, donc rejet, d'où
+  // `gitAllowingMiss`. Comme dans `snapshot`, une PANNE remonte au lieu d'être
+  // lue comme une absence (revue #262, passe 1).
+  //
+  // Ce que ça change pour l'appelant, et c'est VOULU : `takeCliTurnCheckpoints`
+  // entoure cet appel du `try` qui refuse le tour. Une lecture qui panne y
+  // refusera donc, comme un instantané qui panne — mieux que d'inscrire, ou de
+  // ne pas inscrire, une ligne d'audit sur une réponse qu'on n'a pas eue.
+  const sha = await gitAllowingMiss(store, workspace, ['rev-parse', '--verify', '--quiet', ref]);
   return sha === '' ? null : sha;
 }
 

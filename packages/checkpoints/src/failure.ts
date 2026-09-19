@@ -68,13 +68,19 @@ export const MEASURE_MAX_FILES = 50_000;
 export const MEASURE_MAX_MS = 3_000;
 
 /**
- * Dossiers que l'instantané n'a jamais regardés, et que la mesure ne descend
- * donc pas non plus.
+ * Ce que l'instantané n'enregistre jamais, et que la mesure ne compte donc pas
+ * non plus.
  *
- * UNE SEULE LISTE pour les deux : `checkpoints.ts` construit ses `EXCLUDES`
- * à partir d'ici. Deux listes auraient dérivé, et la mesure aurait alors
- * compté un `node_modules` que git avait ignoré — envoyant le propriétaire
+ * UNE SEULE SOURCE pour les deux : `checkpoints.ts` construit ses `EXCLUDES` à
+ * partir d'ici. Deux listes auraient dérivé, et la mesure aurait alors annoncé
+ * une taille que git n'a jamais eu à enregistrer, envoyant le propriétaire
  * vider un dossier qui n'était pas le problème.
+ *
+ * DEUX listes et pas une (revue #262, passe 1) : un motif de fichier n'est pas
+ * un nom de dossier, et `*.log` ne pouvait pas entrer dans un ensemble de noms
+ * de dossiers. Les entrées de la seconde sont des SUFFIXES, pas des globs :
+ * c'est tout ce dont la règle a besoin, et ça évite d'écrire un moteur de
+ * motifs pour un seul cas.
  */
 export const SKIPPED_DIRS: readonly string[] = [
   'node_modules',
@@ -87,7 +93,15 @@ export const SKIPPED_DIRS: readonly string[] = [
   'target',
 ];
 
+/** Fichiers exclus par leur fin de nom. `EXCLUDES` en fait des motifs `*<suffixe>`. */
+export const SKIPPED_FILE_SUFFIXES: readonly string[] = ['.log'];
+
 const MEASURE_SKIP: ReadonlySet<string> = new Set(SKIPPED_DIRS);
+
+/** Un fichier que l'instantané n'enregistre pas ne pèse rien dans la mesure. */
+function estUnFichierExclu(nom: string): boolean {
+  return SKIPPED_FILE_SUFFIXES.some((suffixe) => nom.endsWith(suffixe));
+}
 
 /**
  * Compte les fichiers et les octets d'un dossier, en s'arrêtant au plafond.
@@ -139,6 +153,7 @@ export async function measureWorkspace(
         continue;
       }
       if (!entry.isFile()) continue;
+      if (estUnFichierExclu(entry.name)) continue;
       if (files >= maxFiles || Date.now() >= deadline) {
         capped = true;
         break;
@@ -276,15 +291,45 @@ function describeMeasure(measure: WorkspaceMeasure): string {
 }
 
 /**
+ * Au-delà, un chemin est raccourci PAR LE MILIEU dans la phrase du refus.
+ *
+ * Deux bouts, jamais un seul : la tête dit où l'on est (le lecteur reconnaît
+ * son disque), la queue dit lequel des dossiers c'est. Couper la queue d'un
+ * `.../workspaces/<entité>/shared` rendrait tous les dossiers identiques.
+ */
+export const PATH_MAX_CHARS = 160;
+
+/** Un chemin trop long, raccourci par le milieu et le DISANT (le caractère `…`). */
+function shortenPath(path: string): string {
+  if (path.length <= PATH_MAX_CHARS) return path;
+  const head = Math.ceil((PATH_MAX_CHARS - 1) / 2);
+  const tail = PATH_MAX_CHARS - 1 - head;
+  return `${path.slice(0, head)}…${path.slice(path.length - tail)}`;
+}
+
+/**
+ * Au-delà, ce que git a dit est coupé. Une sortie de git peut être longue ;
+ * la phrase, elle, doit rester bornée pour que son GESTE survive.
+ */
+export const GIT_MESSAGE_MAX_CHARS = 200;
+
+/**
  * LA phrase du refus : le code, les chiffres, et le geste à faire.
  *
  * Une seule source pour le message que l'outil rend à l'agent, celui que
  * l'écran affiche dans le fil, et celui que le journal porte. Trois copies
  * auraient divergé au premier correctif, et c'est la copie de l'écran qui
  * serait restée générique.
+ *
+ * ELLE EST BORNÉE PAR CONSTRUCTION (revue #262, passe 1). L'appelant la
+ * coupait à 600 caractères, et sur un chemin profond cette coupe tombait dans
+ * la fin de la phrase : elle mangeait « move or ignore the heavy folders »,
+ * c'est-à-dire la seule partie sur laquelle quelqu'un peut agir. Ce sont donc
+ * les parties VARIABLES qui sont bornées ici, chacune en le disant, et la
+ * queue de la phrase ne bouge plus.
  */
 export function describeCheckpointFailure(facts: CheckpointFailureFacts): string {
-  const where = `the "${basename(facts.workspace)}" workspace (${facts.workspace})`;
+  const where = `the "${basename(facts.workspace)}" workspace (${shortenPath(facts.workspace)})`;
   switch (facts.code) {
     case 'snapshot_timeout': {
       const size =
@@ -297,8 +342,13 @@ export function describeCheckpointFailure(facts: CheckpointFailureFacts): string
     }
     case 'git_missing':
       return `git_missing: git is not available, so no safety snapshot can be taken for ${where}.`;
-    case 'snapshot_failed':
-      return `snapshot_failed: the safety snapshot of ${where} failed: ${facts.gitMessage}`;
+    case 'snapshot_failed': {
+      const said =
+        facts.gitMessage.length <= GIT_MESSAGE_MAX_CHARS
+          ? facts.gitMessage
+          : `${facts.gitMessage.slice(0, GIT_MESSAGE_MAX_CHARS - 1)}…`;
+      return `snapshot_failed: the safety snapshot of ${where} failed: ${said}`;
+    }
   }
 }
 

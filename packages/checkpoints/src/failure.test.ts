@@ -15,12 +15,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { snapshot } from './checkpoints';
+import { snapshot, headCheckpoint, gitAllowingMiss } from './checkpoints';
 import {
   CheckpointError,
   isCheckpointError,
   measureWorkspace,
   SKIPPED_DIRS,
+  SKIPPED_FILE_SUFFIXES,
+  PATH_MAX_CHARS,
   checkpointFailureLogLine,
   checkpointRefusalMessage,
   formatBytes,
@@ -140,6 +142,79 @@ describe('un instantané qui dépasse la borne @cap:executer-une-commande/moteur
   });
 });
 
+/** Les parents d'un commit du magasin, lus sur le magasin lui-même. */
+async function parentsDe(sha: string): Promise<string[]> {
+  const ligne = await gitAllowingMiss(store, ws, ['rev-list', '--parents', '-n', '1', sha]);
+  return ligne.split(/\s+/).filter(Boolean).slice(1);
+}
+
+describe('une PANNE n’est jamais lue comme une réponse @cap:executer-une-commande/moteur', () => {
+  // Revue de la PR #262, passe 1. Les deux lectures de l'instantané portaient
+  // un `.catch(() => '')` nu. Depuis que la borne de temps existe (#245), un
+  // `rev-parse` TUÉ par cette borne se lisait donc « pas de parent » :
+  // `commit-tree` repartait sans `-p`, `update-ref` posait un commit RACINE et
+  // la chaîne des checkpoints se coupait en silence.
+  //
+  // POURQUOI LA DISTINCTION EST ÉPINGLÉE ICI, et pas par un instantané entier
+  // calibré pour frapper le `rev-parse` : chaque commande git a SA borne, et
+  // `add -A` parcourt l'arbre quand `rev-parse` lit un fichier. `add -A` est
+  // donc toujours le plus lent, et aucune valeur de borne ne tue le second
+  // sans avoir tué le premier. Un test qui prétendrait le contraire serait
+  // instable. C'est donc `gitAllowingMiss` — la fonction que l'instantané
+  // utilise, sur un vrai magasin — qui est épinglée, avec de VRAIES erreurs.
+
+  it('une ref absente est une RÉPONSE : la lecture rend une chaîne vide', async () => {
+    await writeFile(join(ws, 'a.txt'), 'bonjour');
+    await snapshot(store, ws, 'premier');
+
+    const absente = await gitAllowingMiss(store, ws, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      'refs/nodal/jamais-photographie',
+    ]);
+
+    expect(absente).toBe('');
+  });
+
+  it('une borne dépassée est une PANNE : la lecture REJETTE au lieu de rendre une chaîne vide', async () => {
+    await writeFile(join(ws, 'a.txt'), 'bonjour');
+    const premier = await snapshot(store, ws, 'premier');
+    const cible = premier!.sha;
+
+    // La même lecture, sans borne serrée, répond bien.
+    expect(await gitAllowingMiss(store, ws, ['rev-parse', '--verify', '--quiet', cible])).toBe(
+      cible,
+    );
+
+    // Avec une borne de 1 ms, elle ne répond pas : elle doit le DIRE.
+    await expect(
+      gitAllowingMiss(store, ws, ['rev-parse', '--verify', '--quiet', cible], 1),
+    ).rejects.toThrow();
+  });
+
+  it('la chaîne des instantanés ne repart JAMAIS d’un commit racine', async () => {
+    // Le dommage que tout ça évite, constaté sur le magasin : chaque photo a
+    // la précédente pour parent, donc l'état d'avant reste retrouvable.
+    await writeFile(join(ws, 'a.txt'), 'un');
+    const premier = await snapshot(store, ws, 'premier');
+    await writeFile(join(ws, 'a.txt'), 'deux');
+    const second = await snapshot(store, ws, 'second');
+
+    // Une tentative qui PANNE entre les deux ne bouge pas la ref.
+    await writeFile(join(ws, 'a.txt'), 'trois');
+    const err = await refusDe(snapshot(store, ws, 'tue par la borne', { timeoutMs: 1 }));
+    expect(err.code).toBe('snapshot_timeout');
+    expect(await headCheckpoint(store, ws)).toBe(second!.sha);
+
+    // Puis un instantané qui réussit reprend la chaîne où elle était.
+    const troisieme = await snapshot(store, ws, 'troisieme');
+    expect(await parentsDe(troisieme!.sha)).toEqual([second!.sha]);
+    expect(await parentsDe(second!.sha)).toEqual([premier!.sha]);
+    expect(await parentsDe(premier!.sha)).toEqual([]);
+  });
+});
+
 describe('un instantané ordinaire ne change pas @cap:executer-une-commande/moteur', () => {
   it('rend un checkpoint avec son sha, borne par défaut', async () => {
     await writeFile(join(ws, 'a.txt'), 'bonjour');
@@ -251,6 +326,34 @@ describe('la mesure est bornée et le DIT @cap:executer-une-commande/moteur', ()
     expect(dossiersExclus).toEqual([...SKIPPED_DIRS].sort());
   });
 
+  it('ne compte pas non plus les FICHIERS que l’instantané exclut', async () => {
+    // Revue #262, passe 1 : `EXCLUDES` porte aussi `*.log`, qu'un ensemble de
+    // noms de dossiers ne pouvait pas honorer. Un dossier plein de journaux
+    // aurait donc été annoncé comme la cause d'un refus alors que git ne les
+    // enregistre jamais, et le propriétaire aurait vidé le mauvais dossier.
+    await writeFile(join(ws, 'serveur.log'), 'y'.repeat(100_000));
+    await writeFile(join(ws, 'a.txt'), 'bonjour');
+
+    const mesure = await measureWorkspace(ws);
+
+    expect(mesure.files).toBe(1);
+    expect(mesure.bytes).toBe(7);
+  });
+
+  it('les suffixes exclus sont EXACTEMENT ceux que le magasin écrit comme motifs', async () => {
+    await writeFile(join(ws, 'a.txt'), 'bonjour');
+    await snapshot(store, ws, 'premier');
+
+    const exclude = await readFile(join(store, 'store', 'info', 'exclude'), 'utf-8');
+    const motifs = exclude
+      .split('\n')
+      .filter((ligne) => ligne.startsWith('*'))
+      .map((ligne) => ligne.slice(1))
+      .sort();
+
+    expect(motifs).toEqual([...SKIPPED_FILE_SUFFIXES].sort());
+  });
+
   it('ne descend pas dans les dossiers que l’instantané exclut déjà', async () => {
     // Compter `node_modules` enverrait le propriétaire vider un dossier qui
     // n'était pas le problème : git ne l'a jamais regardé.
@@ -265,6 +368,47 @@ describe('la mesure est bornée et le DIT @cap:executer-une-commande/moteur', ()
     expect(mesure.files).toBe(1);
     expect(mesure.bytes).toBe(7);
     expect(mesure.capped).toBe(false);
+  });
+});
+
+describe('la phrase est bornée SANS perdre son geste @cap:executer-une-commande/moteur', () => {
+  // Revue #262, passe 1 : l'appelant coupait le message à 600 caractères, et
+  // sur un chemin profond la coupe tombait dans la fin de la phrase — elle
+  // mangeait « move or ignore the heavy folders », la seule partie sur
+  // laquelle quelqu'un peut agir. Ce sont les parties VARIABLES qui sont
+  // bornées désormais, chacune en le disant.
+
+  it('un chemin très long est raccourci PAR LE MILIEU et la phrase finit toujours par le geste', async () => {
+    const profond = join(ws, ...Array.from({ length: 14 }, (_, i) => `un-dossier-assez-long-${i}`));
+    await mkdir(profond, { recursive: true });
+    await writeFile(join(profond, 'a.txt'), 'bonjour');
+    expect(profond.length).toBeGreaterThan(PATH_MAX_CHARS);
+
+    const err = await refusDe(snapshot(store, profond, 'before run_command', { timeoutMs: 1 }));
+
+    expect(err.message).toContain('…');
+    expect(err.message).toContain(profond.slice(0, 40));
+    expect(err.message.endsWith('move or ignore the heavy folders.')).toBe(true);
+    // Et la conséquence survit elle aussi : c'est ce que l'appelant coupait.
+    expect(
+      checkpointRefusalMessage(err, 'the code harness turn').endsWith(
+        'the code harness turn was refused rather than run without a way back.',
+      ),
+    ).toBe(true);
+  });
+
+  it('une sortie de git interminable est coupée, et le dit', () => {
+    const err = new CheckpointError({
+      code: 'snapshot_failed',
+      workspace: 'C:\\ws',
+      limitMs: null,
+      elapsedMs: null,
+      measure: null,
+      gitMessage: 'z'.repeat(5_000),
+    });
+
+    expect(err.message.length).toBeLessThan(400);
+    expect(err.message.endsWith('…')).toBe(true);
   });
 });
 

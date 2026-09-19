@@ -313,10 +313,15 @@ export async function takeCliTurnCheckpoints(
       console.error(
         checkpointFailureLogLine(failure, { harness: 'cli-runtime', job: jobId, turn }),
       );
-      // La borne était de 300 caractères, ce qui coupait la phrase avant ses
-      // chiffres sur un chemin un peu long : un message tronqué au milieu de
-      // sa mesure ne vaut pas mieux que le message générique qu'il remplace.
-      throw new Error(checkpointRefusalMessage(failure, 'the code harness turn').slice(0, 600));
+      // AUCUNE coupe ici (revue #262, passe 1). La borne était de 300, puis de
+      // 600 caractères, et sur un chemin profond elle tombait dans la FIN de la
+      // phrase : elle mangeait « move or ignore the heavy folders », la seule
+      // partie sur laquelle quelqu'un peut agir. Le message est désormais borné
+      // par construction dans `describeCheckpointFailure` (chemin raccourci par
+      // le milieu, sortie de git coupée, chacun le disant), et couper une
+      // seconde fois ici ne ferait que reprendre au lecteur ce que la première
+      // borne a préservé.
+      throw new Error(checkpointRefusalMessage(failure, 'the code harness turn'));
     }
     if (!sha) continue;
     try {
