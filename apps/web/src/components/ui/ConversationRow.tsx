@@ -15,7 +15,7 @@
 // NON LU, ET PAS DE QUATRIÈME SIGNE (#209, 19/09/2026). La maquette dessinait
 // une pastille « Unread » à droite. Elle n'est toujours pas rendue, et cette
 // fois ce n'est plus faute de donnée — la base porte un état de lecture depuis
-// la migration 0111 — mais par décision du propriétaire : une pastille de plus
+// la migration 0112 — mais par décision du propriétaire : une pastille de plus
 // entrerait en concurrence avec les trois signes qui disent ce que le fil
 // ATTEND, alors que « non lu » ne demande rien à personne. C'est le TITRE qui
 // change de poids, comme dans n'importe quelle boîte de réception, et il n'y a

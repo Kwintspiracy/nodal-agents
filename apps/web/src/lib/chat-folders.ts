@@ -358,7 +358,7 @@ export type FolderThreadSource = FolderThread & { folder: string };
  * ⚠️ « NON LU » EXISTE DEPUIS LE 19/09/2026, et pas avant. La base ne portait
  * aucun état de lecture ; peindre en rouge un fil non lu aurait affiché un
  * fait que rien ne pouvait vérifier (invariant #4), et ce commentaire disait
- * exactement cela. La table `conversation_reads` (migration 0111, #209) l'a
+ * exactement cela. La table `conversation_reads` (migration 0112, #209) l'a
  * rendu vérifiable : un marqueur par personne et par fil, posé quand le fil est
  * OUVERT sur le tableau de bord. La règle de la comparaison vit en un seul
  * endroit, `lib/unread.ts` ; ici, on ne fait que l'ajouter aux deux autres.

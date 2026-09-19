@@ -633,7 +633,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       created_at timestamptz DEFAULT now()
     );
 
-    -- conversation_reads (migration 0111, #209) — le marqueur de lecture d'une
+    -- conversation_reads (migration 0112, #209) — le marqueur de lecture d'une
     -- personne sur un fil. Non lu = updated_at de la conversation plus récent
     -- que read_at, ou aucune ligne du tout.
     CREATE TABLE IF NOT EXISTS conversation_reads (

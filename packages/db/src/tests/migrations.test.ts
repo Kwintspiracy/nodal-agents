@@ -49,7 +49,7 @@ const expectedTables = [
   'job_deliveries',
   'job_deliverable_verification_state',
   'verification_runs',
-  // #209 — le marqueur de lecture d'une personne sur un fil (migration 0111).
+  // #209 — le marqueur de lecture d'une personne sur un fil (migration 0112).
   'conversation_reads',
 ];
 

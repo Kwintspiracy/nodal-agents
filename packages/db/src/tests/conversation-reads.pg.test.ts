@@ -1,4 +1,4 @@
-// conversation-reads.pg.test.ts — migration 0111 contre un VRAI Postgres.
+// conversation-reads.pg.test.ts — migration 0112 contre un VRAI Postgres.
 //
 // @cap:reprendre-conversation/moteur
 //
@@ -14,7 +14,7 @@
 // fil AVANCE le premier au lieu de s'empiler — et les deux cascades emportent
 // les marqueurs quand le fil ou la personne disparaît.
 //
-// Mutation vérifiée : l'entrée 111 retirée de `meta/_journal.json` → le second
+// Mutation vérifiée : l'entrée 112 retirée de `meta/_journal.json` → le second
 // test rougit (« conversation_reads absente après les vraies migrations »).
 
 import { describe, it, expect, afterAll } from 'vitest';
@@ -46,7 +46,7 @@ function harness(): RealPostgres {
 /** Les identités semées par le troisième test, relues par les suivants. */
 const seme = { userId: '', entityId: '', agentId: '', conversationId: '' };
 
-describe('migration 0111_conversation_reads @cap:reprendre-conversation/moteur', () => {
+describe('migration 0112_conversation_reads @cap:reprendre-conversation/moteur', () => {
   it('démarre un vrai Postgres et applique les VRAIES migrations', async () => {
     pg = await startRealPostgres();
     expect(pg.url).toMatch(/^postgresql:\/\//);

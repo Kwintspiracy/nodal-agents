@@ -22,7 +22,7 @@
 // chez elles (`runTitle`, run-rows.ts).
 //
 // NON LU (#209, 19/09/2026). La base porte enfin un état de lecture
-// (`conversation_reads`, migration 0111) : une ligne SAIT si son fil a bougé
+// (`conversation_reads`, migration 0112) : une ligne SAIT si son fil a bougé
 // depuis que cette personne l'a ouvert. Elle le porte donc — mais PAS sous la
 // forme de la planche. La maquette dessinait une pastille « Unread » : c'est un
 // quatrième signe à droite, en concurrence avec les trois qui disent ce que le

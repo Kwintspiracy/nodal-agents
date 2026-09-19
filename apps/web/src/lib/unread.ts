@@ -4,7 +4,7 @@
 // d'un fil dans la barre latérale ne pouvait donc signifier que « quelque
 // chose attend » ou « un run tourne », et la pastille « Unread » de la planche
 // n'était pas dessinée : l'afficher aurait montré un fait que rien ne pouvait
-// vérifier (invariant #4). La table `conversation_reads` (migration 0111) est
+// vérifier (invariant #4). La table `conversation_reads` (migration 0112) est
 // ce qui manquait ; ce module en tire la règle.
 //
 // DEUX COLONNES, ET PAS UNE TROISIÈME. Une conversation porte un `updated_at`
