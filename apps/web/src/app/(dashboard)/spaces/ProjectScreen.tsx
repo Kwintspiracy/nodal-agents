@@ -28,7 +28,6 @@ import {
   listApprovalsAction,
   listCodeProjectPrefsAction,
 } from '@/lib/actions.ts';
-import type { VerificationUnconfiguredView } from '@/lib/verification-runs-view.ts';
 
 import { projectFactsLine } from './project-header.ts';
 import { activityRows } from './activity-rows.ts';
@@ -84,16 +83,20 @@ export default async function ProjectScreen({
 
   return (
     <ProjectPanelProvider forceOpen={forceFilesOpen}>
-      <PageShell
-        fill
-        title={facts.name}
-        subtitle={projectFactsLine(facts)}
-        toolbar={
-          <ProjectToolbar projectId={facts.id} projectPath={facts.path} projectName={facts.name} />
-        }
-      >
+      {/* PAS de `toolbar` ici, et c'est le point (Quentin, 19/09) : passée au
+          `PageShell`, la barre faisait un bandeau pleine largeur AU-DESSUS du
+          panneau. Elle vit dans la colonne de gauche, avec la liste qu'elle
+          commande — voir `ProjectPanelLayout`. */}
+      <PageShell fill title={facts.name} subtitle={projectFactsLine(facts)}>
         <ProjectPanelLayout
           title="Files & proof"
+          toolbar={
+            <ProjectToolbar
+              projectId={facts.id}
+              projectPath={facts.path}
+              projectName={facts.name}
+            />
+          }
           panel={<FilesAndProof result={pageResult} prefs={prefsResult} owner={ownerResult} />}
         >
           {/* Une activité illisible est DITE, pas remplacée par une liste vide :
@@ -136,22 +139,6 @@ function FilesAndProof({
   if (!result.ok) return <p className="text-sm text-err">{result.message}</p>;
   const { project, files, proof } = result.data;
 
-  // Ce que la preuve n'a pas pu éprouver, dans la forme que `VerificationSection`
-  // attend. Le type de livrable suit la SORTE du projet : dire « pas de
-  // commandes configurées » d'un dossier de documents enverrait son
-  // propriétaire chercher un réglage qui n'existe pas pour lui.
-  const unconfigured: VerificationUnconfiguredView[] =
-    proof.approval === 'approved'
-      ? []
-      : [
-          {
-            deliverableType: project.kind === 'documents' ? 'office_file' : 'code_project',
-            canonicalKey: project.path,
-            displayPath: project.path,
-            reason: proof.approval,
-          },
-        ];
-
   // L'état de la séquence de preuve, retrouvé par CLÉ d'identité — jamais par
   // égalité de texte sur le chemin. `null` quand aucune ligne n'existe encore,
   // ou quand la lecture a échoué : le panneau dit alors « rien de configuré »,
@@ -172,7 +159,7 @@ function FilesAndProof({
 
   return (
     <>
-      <ProjectShelf project={project} files={files} proof={proof} unconfigured={unconfigured} />
+      <ProjectShelf project={project} files={files} proof={proof} />
 
       {/* Les commandes qui PRODUISENT la preuve, sous ce qu'elles ont donné.
           Un projet de DOCUMENTS n'en a pas : il n'exécute rien, et lui offrir

@@ -428,7 +428,16 @@ export type ProjectActivityView = {
 /** Plafond par liste. Une page d'activité se lit, elle ne s'inventorie pas. */
 const ACTIVITY_MAX = 50;
 const ACTIVITY_TITLE_MAX = 60;
-const ACTIVITY_PREVIEW_MAX = 120;
+/**
+ * BORNE HAUTE, pas une coupe d'affichage (Quentin, 19/09).
+ *
+ * À 120 signes, l'aperçu tombait au milieu d'une citation (« … ou " ») et la
+ * ligne montrait une phrase estropiée. Ce n'est pas ici que ça se décide : la
+ * ligne tronque par CSS, sur une seule ligne, à la largeur qu'elle a. Ce
+ * plafond ne sert plus qu'à ne pas faire voyager un pavé de mille mots jusqu'au
+ * navigateur.
+ */
+const ACTIVITY_PREVIEW_MAX = 300;
 
 /** La première ligne d'un texte, masquée puis coupée — jamais l'inverse. */
 function firstLineOf(text: string, max: number): string {

@@ -6,7 +6,7 @@
  * « Files & proof » de la page du projet, ouvert par défaut à côté de ses
  * conversations, et ce parcours l'y trouve.
  *
- * Six scénarios :
+ * Sept scénarios :
  *   A — configurer puis approuver : la pilule passe à « Needs your approval »
  *       puis à « Approved », et code_projects porte le hash EN BASE ;
  *   B — éditer une commande approuvée retire l'approbation (hash NULL en base) ;
@@ -17,7 +17,9 @@
  *       derrière le dos de la page ⇒ toast d'erreur et la pilule ne bouge pas ;
  *   F — `/code` mène à Workspaces ; le panneau « Files & proof » d'un projet
  *       se ferme, le choix tient au rechargement, et `/spaces/<id>/files` le
- *       rouvre quand même (#143).
+ *       rouvre quand même (#143) ;
+ *   G — RIEN ne déborde du panneau, chemin long et commande longue comprises.
+ *       Il demande une vraie mise en page, donc un vrai navigateur.
  *
  * PRÉCONDITIONS semées en base, comme telegram-allowlist.spec.ts : un agent,
  * un dossier réel sur le disque (un projet dont le dossier n'existe pas n'est
@@ -386,6 +388,50 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     await expect(panel.getByTestId('verify-status')).toHaveText('Needs your approval');
     // …et rien d'approuvé en base.
     expect((await readProjectRow())?.verifyApprovedManifestHash).toBeNull();
+  });
+
+  test('G — RIEN ne déborde du panneau, chemin long et commande longue comprises', async ({
+    page,
+  }) => {
+    // Le constat de Quentin (19/09), sur la stack, thème sombre : le chemin du
+    // dossier, la ligne de comptes de la preuve et la carte des commandes
+    // étaient coupés au bord droit, avec une barre de défilement horizontale
+    // sur la carte.
+    //
+    // Ce cas est ici et pas en unitaire parce qu'il demande une MISE EN PAGE :
+    // jsdom ne calcule aucune largeur, `scrollWidth` et `clientWidth` y valent
+    // zéro, et un test qui les comparerait passerait au vert sur n'importe quoi.
+    const panel = await openProjectPanel(page);
+    await addButton(panel).click();
+    await fillCommand(
+      panel,
+      0,
+      'pnpm --filter @nodal-agents/web exec vitest run --reporter=verbose --coverage',
+      '600',
+    );
+    await panel.getByTestId('verify-save').click();
+    await expect(panel.getByTestId('verify-status')).toHaveText('Needs your approval');
+
+    // Aucun élément du panneau ne dépasse sa propre boîte. Un pixel de marge
+    // pour les arrondis du navigateur, pas plus.
+    const debordements = await page.getByTestId('project-files-panel').evaluate((racine) => {
+      const trop: string[] = [];
+      const voir = (el: Element): void => {
+        if (el.scrollWidth - el.clientWidth > 1) {
+          trop.push(`${el.tagName.toLowerCase()} ${el.scrollWidth}>${el.clientWidth}`);
+        }
+        for (const enfant of el.children) voir(enfant);
+      };
+      voir(racine);
+      return trop;
+    });
+    expect(debordements, debordements.join(' | ')).toEqual([]);
+
+    // Et le panneau ne pousse pas la page hors de l'écran.
+    const pageDeborde = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth > 1,
+    );
+    expect(pageDeborde).toBe(false);
   });
 
   test('F — /code mène à Workspaces : la liste a disparu, le panneau est sur le projet', async ({

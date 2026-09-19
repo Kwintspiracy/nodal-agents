@@ -38,7 +38,10 @@ describe('ProjectVerificationPanel — ce que l’écran dit', () => {
     });
 
     expect(html).toContain('Nothing declared yet');
-    expect(html).toContain('Nothing to fill in');
+    // UNE ligne depuis le 19/09, pas un paragraphe : dans un panneau de 400 px
+    // on ne lisait pas les trois phrases, et elles repoussaient les commandes
+    // hors de l'écran. Ce qu'elles disaient de plus vit en commentaire. Ce
+    // qui RESTE est le fond : l'écran n'accuse pas, il nomme qui déclarera.
     expect(html).toContain('declares how to check its own work');
     // L'ancien libellé disait « Not configured » — un reproche adressé à qui
     // n'avait rien à configurer.
@@ -55,7 +58,7 @@ describe('ProjectVerificationPanel — ce que l’écran dit', () => {
     });
 
     expect(html).toContain('Declared by the agent');
-    expect(html).toContain('you never have to write them');
+    expect(html).toContain('The agent that built this project declared these commands');
     // Le point qui compte : ne pas présenter comme le choix du propriétaire ce
     // qu'il n'a pas décidé. La preuve s'exécute pareil ; c'est le MOT qui
     // change.

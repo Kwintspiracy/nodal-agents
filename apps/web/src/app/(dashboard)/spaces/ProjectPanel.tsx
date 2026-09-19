@@ -88,45 +88,70 @@ export function ProjectPanelProvider({
   );
 }
 
-/** Le bouton de la barre d'outils. Il DIT ce qu'il va faire, pas où l'on est. */
+/**
+ * La BASCULE de la barre d'outils.
+ *
+ * Son libellé ne bouge pas : il nomme la CHOSE, pas le geste. « Hide files &
+ * proof » décrivait le geste, et l'écran offrait alors deux façons de fermer
+ * qui se disaient différemment — ce bouton et la croix du panneau (Quentin,
+ * 19/09). Un bouton pressoir dit où l'on en est par son ÉTAT (`aria-pressed`,
+ * et le fond que le DS lui donne), pas par un mot qui change sous le curseur.
+ */
 export function ProjectPanelButton() {
   const { open, toggle } = usePanel();
   return (
     <PrimaryButton
-      variant="neutral"
+      // Pressé = PLEIN, la façon dont le DS dit « actif » ailleurs (la
+      // pastille sombre de `PillTabs`). Relâché = neutre, comme ses voisins.
+      variant={open ? 'ink' : 'neutral'}
       size="sm"
       onClick={toggle}
-      aria-expanded={open}
+      aria-pressed={open}
       data-testid="project-panel-toggle"
     >
       <FolderOpen size={14} aria-hidden />
-      {open ? 'Hide files & proof' : 'Files & proof'}
+      Files &amp; proof
     </PrimaryButton>
   );
 }
 
 /**
- * Le corps de la page et le panneau, CÔTE À CÔTE.
+ * UNE rangée sous l'en-tête : le contenu à gauche, le panneau à droite.
  *
  * `DockedPanel` est un enfant flex dimensionné en pixels : son parent doit
  * être la rangée qui porte les deux. C'est cette rangée-là, et c'est elle qui
- * donne au panneau sa pleine hauteur sous l'en-tête.
+ * donne au panneau sa pleine hauteur, du filet de l'en-tête au bas de l'écran.
+ *
+ * LA BARRE D'OUTILS EST DANS LA COLONNE DE GAUCHE, et c'est le point (Quentin,
+ * 19/09). Passée au `toolbar` du `PageShell`, elle faisait un bandeau pleine
+ * largeur AU-DESSUS du panneau : le panneau commençait plus bas que le filet,
+ * et le bandeau traînait à gauche des boutons une bande vide qui n'appartenait
+ * à rien. Ici elle est alignée sur la liste qu'elle commande, et le panneau
+ * monte jusqu'au filet.
+ *
+ * Elle NE DÉFILE PAS : la liste seule défile sous elle. Les trois gestes d'un
+ * projet restent sous la main au bout de cinquante lignes.
  */
 export function ProjectPanelLayout({
   title,
+  toolbar,
   panel,
   children,
 }: {
   title: string;
+  toolbar: ReactNode;
   panel: ReactNode;
   children: ReactNode;
 }) {
   const { open, close } = usePanel();
   return (
     <div className="flex min-h-0 flex-1">
-      <main className="min-w-0 flex-1 overflow-y-auto px-5 pt-5 pb-10 sm:px-8 lg:px-9">
-        {children}
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="shrink-0 px-5 pt-4 pb-1 sm:px-8 lg:px-9">{toolbar}</div>
+        <main className="min-w-0 flex-1 overflow-y-auto px-5 pt-3 pb-10 sm:px-8 lg:px-9">
+          {children}
+        </main>
+      </div>
       <DockedPanel open={open} onClose={close} title={title} testId="project-files-panel">
         {panel}
       </DockedPanel>
