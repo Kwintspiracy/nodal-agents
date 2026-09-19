@@ -96,6 +96,7 @@ import {
   findDeliveredReviewForTarget,
   describeDuplicateReview,
   resumeDelegated,
+  parseDelegationOutcomePayload,
   DELEGATION_FAILED_MARKER,
   filterToolCallsForDelegation,
   buildDeferredToolResults,
@@ -127,6 +128,7 @@ import type {
   SameToolStreakState,
   ErrorStreakState,
   DelegationOutcomeRecord,
+  SubDelegationOutcome,
   JobFailureHint,
   ReviewVerdictRecord,
 } from '@nodal-agents/orchestration';
@@ -137,7 +139,7 @@ import { failJob, cancelJob, setJobStatus, saveCheckpoint, touchJob, claimJob } 
 // deux chemins de succès de cette boucle passent par elle, jamais par
 // completeJob directement — c'est elle qui calcule et journalise la décision
 // de vérification, et qui commet l'intention de livrer avec le statut.
-import { finalizeJobSuccess } from './finalize.ts';
+import { finalizeJobFailure, finalizeJobSuccess } from './finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import { loadConversationContext } from './conversation-id.ts';
@@ -544,7 +546,13 @@ function stableStringify(value: unknown): string {
 // ─── JobStatus type (what we return) ─────────────────────────────────────────
 
 export type ExecuteJobResult =
-  | { status: 'completed'; result: string; toolsUsed?: string[]; exitReason?: string }
+  | {
+      status: 'completed';
+      result: string;
+      toolsUsed?: string[];
+      exitReason?: string;
+      subDelegations?: SubDelegationOutcome[];
+    }
   // `result` carries a user-facing explanation when one exists (e.g. a blocked
   // agent's reason). It lets a delegating parent relay WHY a child stopped,
   // not just the machine error code — never leave the user without an
@@ -559,6 +567,7 @@ export type ExecuteJobResult =
       toolsUsed?: string[];
       exitReason?: string;
       hint?: JobFailureHint;
+      subDelegations?: SubDelegationOutcome[];
     }
   | { status: 'cancelled' }
   | { status: 'awaiting_approval' }
@@ -586,6 +595,10 @@ export function delegationRecordFromOutcome(
       error: null,
       exit_reason: outcome.exitReason ?? null,
       tools_used: outcome.toolsUsed ?? [],
+      // L'issue du sous-arbre voyage avec le reste (#116) : sans elle, l'échec
+      // d'un petit-enfant n'atteignait le grand-parent que dans la prose du
+      // livrable, donc dans un texte qu'un modèle peut écrire lui-même.
+      sub_delegations: outcome.subDelegations ?? [],
     };
   }
   return {
@@ -597,6 +610,7 @@ export function delegationRecordFromOutcome(
     // Le geste voyage jusqu'au parent avec le reste : sans lui, le parent
     // relaierait un échec sans savoir qu'un autre modèle le réglerait (#119).
     hint: outcome.hint ?? null,
+    sub_delegations: outcome.subDelegations ?? [],
   };
 }
 
@@ -937,11 +951,60 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
   }
 }
 
+/**
+ * La comptabilité du harnais sur les délégations de CE run : la dernière issue
+ * connue de chaque spécialiste, celles que ce job a appelées comme celles que
+ * ses enfants ont appelées (#116).
+ *
+ * Une carte, pas un ensemble : l'échec ET la livraison sont des faits, et il
+ * fallait les deux pour qu'une réparation faite ailleurs dans l'arbre puisse
+ * effacer un échec propagé.
+ */
+type DelegationOutcomeMap = Map<string, 'failed' | 'delivered'>;
+
+/** Les noms qui n'ont RIEN rendu, triés — ce que la notice nomme. */
+function failedDelegationNames(carte: DelegationOutcomeMap): string[] {
+  return [...carte.entries()]
+    .filter(([, issue]) => issue === 'failed')
+    .map(([nom]) => nom)
+    .sort();
+}
+
+/** La carte, telle qu'elle voyage jusqu'au parent dans l'enregistrement typé. */
+function subDelegationList(carte: DelegationOutcomeMap): SubDelegationOutcome[] {
+  return [...carte.entries()]
+    .map(([tool, status]) => ({ tool, status }))
+    .sort((a, b) => a.tool.localeCompare(b.tool));
+}
+
+/**
+ * Le run, plus l'issue de son sous-arbre posée sur ce qu'il rend.
+ *
+ * Elle est posée ICI, à la sortie, et pas à chacun des quarante `return` du
+ * corps : un seul endroit à tenir, et aucun chemin terminal ne peut l'oublier.
+ * Un résultat qui la porte DÉJÀ est laissé tel quel — c'est le cas des reprises
+ * (`return runJob(...)` après une délégation), dont la carte est plus récente
+ * que la nôtre puisqu'elle a relu le transcript après l'injection.
+ */
 async function runJob(
   jobId: JobId,
   deps: RunnerDeps,
   runnerEnv?: RunnerEnv,
   opts?: ExecuteJobOpts,
+): Promise<ExecuteJobResult> {
+  const delegationOutcomes: DelegationOutcomeMap = new Map();
+  const result = await runJobTracked(jobId, deps, runnerEnv, opts, delegationOutcomes);
+  if (result.status !== 'completed' && result.status !== 'failed') return result;
+  if (result.subDelegations !== undefined) return result;
+  return { ...result, subDelegations: subDelegationList(delegationOutcomes) };
+}
+
+async function runJobTracked(
+  jobId: JobId,
+  deps: RunnerDeps,
+  runnerEnv: RunnerEnv | undefined,
+  opts: ExecuteJobOpts | undefined,
+  delegationOutcomes: DelegationOutcomeMap,
 ): Promise<ExecuteJobResult> {
   const { db, registry } = deps;
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
@@ -2511,10 +2574,10 @@ async function runJob(
    * Si le parent a dit lui-même que le spécialiste a échoué, la ligne le répète
    * — une redite vaut mieux qu'un silence, et elle nomme le spécialiste.
    */
-  const failedDelegationNotice = (): string =>
-    failedDelegations.size === 0
-      ? ''
-      : `[delegation stopped: ${[...failedDelegations].sort().join(', ')} — no deliverable]`;
+  const failedDelegationNotice = (): string => {
+    const noms = failedDelegationNames(delegationOutcomes);
+    return noms.length === 0 ? '' : `[delegation stopped: ${noms.join(', ')} — no deliverable]`;
+  };
 
   const withFailedDelegationNotice = (resultText: string): string => {
     const notice = failedDelegationNotice();
@@ -2558,35 +2621,56 @@ async function runJob(
     return { channel: canal, chatId: job.chatId, payload };
   };
 
-  const prepareHarnessNotice = async (payload: string, suffixeCle: string): Promise<void> => {
-    // Le canal de SECOURS, exactement celui que les gardes de livraison
-    // regardent : le canal du job, ou celui que la routine a choisi pour sa
-    // confirmation (`notifyChannelOverride`). Ne prendre que `job.channel`
-    // laissait muets les jobs cron et webhook qui demandent une confirmation,
-    // alors que `requiresToolDelivery` les compte (passe ciblée, constat 4).
-    const canal = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')
-      ? (job.channel ?? '')
-      : (notifyChannelOverride ?? '');
-    if (!TOOL_ONLY_DELIVERY_CHANNELS.has(canal) || !job.chatId || payload.trim() === '') return;
-    try {
-      await prepareDelivery(db, {
+  /**
+   * L'ÉCHEC terminal et ce que le harnais a à en dire, commis ensemble
+   * (issue #116, résidu 3).
+   *
+   * Avant, ces deux gestes étaient séparés : `failJob` écrivait la ligne
+   * terminale, puis la notice se préparait après. Une panne entre les deux
+   * laissait un job fini avec rien à livrer, et rien ne pouvait le rattraper
+   * — le drain ne réclame que des lignes `prepared`, et il n'y en avait pas.
+   * C'est exactement la couture que `finalizeJobSuccess` tient du côté succès
+   * depuis #108 ; elle tient les deux côtés maintenant.
+   *
+   * Le canal est celui des gardes de livraison : le canal du job, ou celui que
+   * la routine a choisi pour sa confirmation (`notifyChannelOverride`). Rien à
+   * dire, pas de canal à outil, pas de destinataire ⇒ l'échec s'écrit seul.
+   */
+  const failJobWithHarnessNotice = async (
+    errorCode: string,
+    payload: string,
+    suffixeCle: string,
+    userMessage?: string,
+  ): Promise<void> => {
+    const notice = harnessNoticeDelivery(payload);
+    await finalizeJobFailure(
+      db,
+      {
         jobId: jobId as string,
-        channel: canal as Parameters<typeof prepareDelivery>[1]['channel'],
-        chatId: job.chatId,
-        payload,
-        idempotencyKey: `${jobId}:harness:${suffixeCle}`,
-      });
-    } catch (e: unknown) {
-      console.error(`[execute] HARNESS_NOTICE_PREPARE_FAILED job=${jobId} kind=${suffixeCle}`, e);
-      return;
-    }
+        errorCode,
+        stats: runStats(),
+        messages,
+        ...(userMessage !== undefined ? { userMessage } : {}),
+        ...(notice
+          ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
+          : {}),
+      },
+      {
+        prepareDelivery: async (tx, d) =>
+          void (await prepareDelivery(tx, {
+            ...d,
+            channel: d.channel as Parameters<typeof prepareDelivery>[1]['channel'],
+          })),
+      },
+    );
+    if (!notice) return;
     await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
       console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
     );
   };
 
   const stampFailedDelegations = async (): Promise<void> => {
-    if (failedDelegations.size === 0) return;
+    if (failedDelegationNames(delegationOutcomes).length === 0) return;
     const [row] = await db
       .select({ result: agentJobs.result })
       .from(agentJobs)
@@ -2948,12 +3032,12 @@ async function runJob(
   const stuckDeliveriesNow = (): string[] =>
     [...unresolvedToolFailures].filter((t) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(t));
 
-  /**
-   * Les délégations qui n'ont RIEN rendu, relues dans la transcription et
-   * tenues à jour pendant le run. Elles ne bloquent rien ; elles se DISENT dans
-   * le résultat que l'utilisateur reçoit.
-   */
-  const failedDelegations = new Set<string>();
+  // `delegationOutcomes` — la carte des délégations de ce run, prise en
+  // PARAMÈTRE (voir `runJob` juste au-dessus) : elle sort avec le résultat pour
+  // que le parent reçoive l'issue du sous-arbre, typée (#116). Ce qu'elle
+  // porte : la dernière issue connue de chaque spécialiste, celles que ce job a
+  // appelées et celles que ses enfants ont appelées. Les échecs ne bloquent
+  // rien ; ils se DISENT dans le résultat que l'utilisateur reçoit.
 
   /** Le rappel que les deux chemins envoient, mot pour mot. */
   const unresolvedFailureNudge = (stuck: string[]): ModelMessage =>
@@ -2976,6 +3060,11 @@ async function runJob(
   // occurrence decides — an error-text one leaves the slug unresolved, a later
   // successful one clears it (so a fallback to another specialist, or a redo
   // that worked, is not held against the parent).
+  //
+  // #116 — la même boucle relit désormais l'issue du SOUS-ARBRE portée par
+  // l'enregistrement typé, si bien que l'échec d'un petit-enfant atteint le
+  // grand-parent sans passer par une phrase, et qu'une réparation faite
+  // ailleurs dans l'arbre l'en efface.
   for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
     if (!m || m.role !== 'tool' || !Array.isArray(m.content)) continue;
     for (const part of m.content as Array<{
@@ -2993,8 +3082,26 @@ async function runJob(
       // et il n'y a alors plus rien à dire à l'utilisateur.
       const value = typeof part.output?.value === 'string' ? part.output.value : '';
       const estErreur = part.output?.type === 'error-text';
+
+      // L'ENREGISTREMENT TYPÉ d'abord (#116). Il est écrit par `resumeDelegated`,
+      // jamais par un modèle : ni le texte de l'enfant, ni celui du parent ne
+      // peuvent fabriquer un `tool_result`. C'est ce qui rend lisible ce que la
+      // prose ne permettait pas — l'issue du SOUS-ARBRE, `assign_*` par
+      // `assign_*`. Elle est appliquée AVANT le nom de l'enfant lui-même, pour
+      // qu'un enfant qui rejoue son propre sous-arbre ne soit pas écrasé par
+      // lui-même.
+      const record = parseDelegationOutcomePayload(value);
+      for (const issue of record?.sub_delegations ?? []) {
+        delegationOutcomes.set(issue.tool, issue.status);
+      }
+
+      // Une délégation qui n'a RIEN rendu porte le marqueur d'échec. Les autres
+      // `error-text` sont des REPORTS (« un autre transfert a la priorité,
+      // rappelle-moi ») : ni un échec, ni une livraison. Le dernier résultat de
+      // ce spécialiste décide — une livraison plus tard efface l'échec d'avant,
+      // et il n'y a alors plus rien à dire à l'utilisateur.
       if (estErreur && value.startsWith(DELEGATION_FAILED_MARKER)) {
-        failedDelegations.add(name);
+        delegationOutcomes.set(name, 'failed');
       } else if (!estErreur && value.trim() !== '') {
         // Efface SEULEMENT sur une vraie livraison. Un résultat vide, une
         // erreur sérialisée en `json` par `toResultOutput` (un rejeu refusé,
@@ -3006,15 +3113,17 @@ async function runJob(
           typeof part.output?.value === 'object' &&
           part.output?.value !== null &&
           'error' in (part.output.value as Record<string, unknown>);
-        if (!estErreurJson) failedDelegations.delete(name);
+        // L'enregistrement typé tranche quand il est là : un `text` porte
+        // toujours un enfant qui a fini `completed`, mais le dire depuis le
+        // champ plutôt que depuis la forme du bloc est ce qui fait la
+        // différence entre SAVOIR et deviner.
+        if (!estErreurJson) {
+          delegationOutcomes.set(
+            name,
+            record && record.status !== 'completed' ? 'failed' : 'delivered',
+          );
+        }
       }
-      // L'échec d'un PETIT-enfant ne remonte pas ici, et c'est délibéré : il
-      // faudrait le lire dans le résultat de l'enfant, qui est du texte écrit
-      // par un modèle. Un enfant peut donc écrire cette ligne lui-même, avec le
-      // nom qu'il veut, et le harnais l'enverrait comme un fait — de
-      // l'injection, mesurée (passe ciblée sur la livraison, constat 1). La
-      // remontée passera par l'enregistrement TYPÉ que le harnais écrit,
-      // jamais par de la prose : c'est l'issue de dette ouverte avec cette PR.
     }
   }
 
@@ -3604,15 +3713,16 @@ async function runJob(
               continue;
             }
             trace('telegram_not_delivered', { turn, via: 'text_branch' });
-            await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
             // Rien n'est parti, le job s'arrête, et le harnais le DIT à
             // l'utilisateur (issue #115) — avec SES mots et rien d'autre. Le
             // texte de l'agent ne part PAS sous un habillage de plateforme :
             // habiller de la prose de modèle en fait de harnais est exactement
             // ce que l'invariant #2 interdit, et la passe ciblée l'a dit
             // (constat 6). Ce que le harnais sait ici : ça s'est arrêté, rien
-            // n'a été livré, et quel spécialiste n'a rien rendu.
-            await prepareHarnessNotice(
+            // n'a été livré, et quel spécialiste n'a rien rendu. L'intention de
+            // livrer est commise AVEC la ligne terminale (#116, résidu 3).
+            await failJobWithHarnessNotice(
+              'telegram_not_delivered',
               [`[stopped: nothing was delivered on this channel]`, failedDelegationNotice()]
                 .filter(Boolean)
                 .join('\n\n'),
@@ -4378,11 +4488,13 @@ async function runJob(
         // probably already arrived.
         if (toolResult.outcome === 'success') {
           unresolvedToolFailures.delete(call.name);
-          // Une délégation qui livre efface ce qu'on avait à dire d'elle.
-          if (call.name.startsWith('assign_')) failedDelegations.delete(call.name);
+          // Une délégation qui livre efface ce qu'on avait à dire d'elle — et
+          // le FAIT qu'elle ait livré reste dans la carte, parce qu'il voyage
+          // jusqu'au parent et y efface le même échec propagé (#116).
+          if (call.name.startsWith('assign_')) delegationOutcomes.set(call.name, 'delivered');
         } else if (!(toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true)) {
           unresolvedToolFailures.add(call.name);
-          if (call.name.startsWith('assign_')) failedDelegations.add(call.name);
+          if (call.name.startsWith('assign_')) delegationOutcomes.set(call.name, 'failed');
         }
 
         // Punch list V1.1 — transition du pipeline code notifiée au canal
@@ -4738,21 +4850,27 @@ async function runJob(
           // lives in result (failJob fills it when no delivery tool already did).
           const errorMessage = shortBlockReason(reason);
           const resultMessage = reason || BLOCK_NO_REASON;
-          await failJob(db, jobId as string, errorMessage, runStats(), messages, resultMessage);
           // La raison existe, et sur un canal à outil personne ne l'a envoyée si
           // les rappels de livraison sont épuisés : le harnais la fait partir
           // (issue #115). `toolDelivered` dit que l'agent l'a déjà dite — on ne
-          // double pas son message.
-          if (!toolDelivered) {
-            // `errorMessage` vient du champ TYPÉ que le harnais a écrit
-            // lui-même à partir de la raison de l'agent (`shortBlockReason`) :
-            // c'est un statut, pas une phrase relayée. La raison complète reste
-            // dans le résultat, que l'utilisateur voit sur l'écran du job.
-            await prepareHarnessNotice(
-              [`[stopped: ${errorMessage}]`, failedDelegationNotice()].filter(Boolean).join('\n\n'),
-              'blocked',
-            );
-          }
+          // double pas son message, et la notice devient alors vide, ce que la
+          // porte terminale lit comme « rien à livrer ».
+          //
+          // `errorMessage` vient du champ TYPÉ que le harnais a écrit lui-même
+          // à partir de la raison de l'agent (`shortBlockReason`) : c'est un
+          // statut, pas une phrase relayée. La raison complète reste dans le
+          // résultat, que l'utilisateur voit sur l'écran du job. L'intention de
+          // livrer est commise AVEC la ligne terminale (#116, résidu 3).
+          await failJobWithHarnessNotice(
+            errorMessage,
+            toolDelivered
+              ? ''
+              : [`[stopped: ${errorMessage}]`, failedDelegationNotice()]
+                  .filter(Boolean)
+                  .join('\n\n'),
+            'blocked',
+            resultMessage,
+          );
           trace('exit_blocked_via_return_result', { hasReason: reason !== '' });
           // Carry the reason so a delegating parent can relay WHY we stopped.
           return {
@@ -4853,9 +4971,10 @@ async function runJob(
             continue;
           }
           trace('telegram_not_delivered', { turn, via: 'return_result_branch' });
-          await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
-          // Même chose sur ce chemin : les mots du harnais, pas ceux de l'agent.
-          await prepareHarnessNotice(
+          // Même chose sur ce chemin : les mots du harnais, pas ceux de l'agent,
+          // et la livraison commise avec la ligne terminale (#116, résidu 3).
+          await failJobWithHarnessNotice(
+            'telegram_not_delivered',
             [`[stopped: nothing was delivered on this channel]`, failedDelegationNotice()]
               .filter(Boolean)
               .join('\n\n'),

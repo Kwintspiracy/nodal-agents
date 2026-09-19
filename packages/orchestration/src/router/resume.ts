@@ -54,6 +54,40 @@ export interface DelegationOutcomeRecord {
    * dit dans la langue de la personne (invariant #2).
    */
   hint?: JobFailureHint | null;
+  /**
+   * L'issue du SOUS-ARBRE de cette délégation, spécialiste par spécialiste
+   * (issue #116, résidus 1 et 2).
+   *
+   * Un parent ne voyait que son propre enfant. L'échec d'un PETIT-enfant ne lui
+   * parvenait que dans le texte du livrable — la ligne `[delegation stopped:
+   * … — no deliverable]` —, donc dans de la prose qu'un modèle peut écrire
+   * lui-même, avec le nom qu'il veut. La PR #108 l'a relue un temps ; la revue
+   * l'a mesuré et la relecture a été retirée avant le merge.
+   *
+   * Ce champ est écrit par le HARNAIS, depuis sa propre comptabilité : la carte
+   * que le runner tient pendant le run de l'enfant, elle-même alimentée par les
+   * enregistrements TYPÉS de ses propres enfants. Rien n'en est lu dans une
+   * phrase, à aucun étage.
+   *
+   * Chaque entrée porte la DERNIÈRE issue connue du spécialiste nommé, y
+   * compris `delivered` : c'est ce fait-là qui permet à une réparation réelle
+   * d'effacer un échec propagé (résidu 2). Sans lui, un échec transmis une fois
+   * ne pouvait plus s'effacer que par une livraison du même nom AU MÊME ÉTAGE,
+   * jamais par une réparation faite ailleurs dans l'arbre.
+   */
+  sub_delegations?: SubDelegationOutcome[];
+}
+
+/**
+ * La dernière issue connue d'UN spécialiste dans le sous-arbre d'une délégation.
+ *
+ * `tool` est le nom d'outil (`assign_<slug>`), le même à tous les étages : les
+ * slugs sont globaux, donc la clé désigne le même spécialiste que le parent
+ * l'ait appelé lui-même ou qu'un de ses enfants l'ait fait.
+ */
+export interface SubDelegationOutcome {
+  tool: string;
+  status: 'failed' | 'delivered';
 }
 
 /**
@@ -116,10 +150,94 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
       review_verdict: result.review_verdict ?? null,
       delivery_blocked: result.delivery_blocked ?? null,
       hint: result.hint ?? null,
+      // Toujours présent, `[]` quand le sous-arbre n'a rien à dire — même
+      // raison que les deux champs ci-dessus (#116).
+      sub_delegations: result.sub_delegations ?? [],
     },
     null,
     2,
   );
+}
+
+/**
+ * L'inverse de `renderDelegationOutcome` : relit l'enregistrement typé dans la
+ * charge utile d'un `tool_result` de délégation (issue #116).
+ *
+ * Elle vit ICI, contre le rendu, parce que deux formes qui divergent seraient
+ * le bug : le runner qui relit ses propres délégations n'a jamais à connaître
+ * la mise en page du texte d'échec.
+ *
+ * Deux formes acceptées, et seulement elles :
+ *   - un succès, qui EST le JSON ;
+ *   - un échec, `DELEGATION_FAILED_MARKER`, l'objet JSON, puis les consignes
+ *     que le parent lit.
+ *
+ * Rend `null` sur tout le reste — un report, un texte posé par la compaction,
+ * une ligne d'une version antérieure. `null` veut dire « je ne sais pas », pas
+ * « rien n'a échoué » : l'appelant garde alors ses heuristiques.
+ *
+ * Le balayage d'accolades est conscient des chaînes : le `summary` est du
+ * texte de modèle et peut contenir une accolade, voire un faux
+ * `"sub_delegations"`. Comme il est une VALEUR du même objet, il ne peut pas
+ * en sortir, et le champ relu reste celui que le harnais a écrit.
+ */
+export function parseDelegationOutcomePayload(payload: string): DelegationOutcomeRecord | null {
+  const debut = payload.indexOf('{');
+  if (debut === -1) return null;
+  let profondeur = 0;
+  let dansChaine = false;
+  let echappe = false;
+  let fin = -1;
+  for (let i = debut; i < payload.length; i++) {
+    const c = payload[i];
+    if (dansChaine) {
+      if (echappe) echappe = false;
+      else if (c === '\\') echappe = true;
+      else if (c === '"') dansChaine = false;
+      continue;
+    }
+    if (c === '"') dansChaine = true;
+    else if (c === '{') profondeur++;
+    else if (c === '}') {
+      profondeur--;
+      if (profondeur === 0) {
+        fin = i;
+        break;
+      }
+    }
+  }
+  if (fin === -1) return null;
+  let brut: unknown;
+  try {
+    brut = JSON.parse(payload.slice(debut, fin + 1));
+  } catch {
+    return null;
+  }
+  if (!brut || typeof brut !== 'object' || Array.isArray(brut)) return null;
+  const objet = brut as Record<string, unknown>;
+  const status = objet['status'];
+  if (status !== 'completed' && status !== 'failed' && status !== 'blocked') return null;
+  if (typeof objet['summary'] !== 'string') return null;
+  const record: DelegationOutcomeRecord = { status, summary: objet['summary'] };
+  if (typeof objet['error'] === 'string') record.error = objet['error'];
+  if (typeof objet['exit_reason'] === 'string') record.exit_reason = objet['exit_reason'];
+  const sub = objet['sub_delegations'];
+  if (Array.isArray(sub)) {
+    const issues: SubDelegationOutcome[] = [];
+    for (const entree of sub) {
+      if (!entree || typeof entree !== 'object' || Array.isArray(entree)) continue;
+      const e = entree as Record<string, unknown>;
+      const tool = e['tool'];
+      const etat = e['status'];
+      // Un nom d'outil de délégation, et rien d'autre : c'est la seule clé que
+      // ce champ a le droit de nommer.
+      if (typeof tool !== 'string' || !tool.startsWith('assign_')) continue;
+      if (etat !== 'failed' && etat !== 'delivered') continue;
+      issues.push({ tool, status: etat });
+    }
+    record.sub_delegations = issues;
+  }
+  return record;
 }
 
 /**

@@ -78,9 +78,15 @@ export {
   resumeDelegated,
   normalizeDelegationOutcome,
   renderDelegationOutcome,
+  parseDelegationOutcomePayload,
   DELEGATION_FAILED_MARKER,
 } from './router/resume';
-export type { DelegationOutcome, DelegationOutcomeRecord, JobFailureHint } from './router/resume';
+export type {
+  DelegationOutcome,
+  DelegationOutcomeRecord,
+  SubDelegationOutcome,
+  JobFailureHint,
+} from './router/resume';
 
 // ─── Router: le verdict de revue est un livrable (#124) ───────────────────────
 export {
