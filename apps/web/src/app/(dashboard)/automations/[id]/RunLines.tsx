@@ -27,16 +27,20 @@ function statusVariant(status: string | null): StatusVariant {
 /**
  * Les runs, une ligne chacun, menant à leur page de run.
  *
- * `basePath` est une CHAÎNE et non une fonction : un composant serveur ne peut
- * passer que des valeurs sérialisables à un composant client. Une routine mène
- * à `/scheduled/<id>`, un webhook à `/jobs/<id>` — deux portes, la même page.
+ * `basePath` est OBLIGATOIRE : une routine mène à `/scheduled/<id>`, un webhook
+ * à `/jobs/<id>`, et aucun des deux n'est le cas ordinaire dont l'autre serait
+ * l'exception. Un défaut aurait fait taire l'oubli, et donné des liens morts
+ * pour la moitié des automatisations (revue, passe 2).
+ *
+ * C'est une CHAÎNE et non une fonction : un composant serveur ne peut passer
+ * que des valeurs sérialisables à un composant client.
  */
 export function ScheduleRunList({
   runs,
-  basePath = '/scheduled',
+  basePath,
 }: {
   runs: readonly SpaceListRow[];
-  basePath?: string;
+  basePath: string;
 }) {
   return (
     <ul className="border-t border-rule-2 bg-canvas/40 py-1">

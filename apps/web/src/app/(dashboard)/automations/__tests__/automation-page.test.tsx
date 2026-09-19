@@ -602,6 +602,19 @@ describe('la page d’un webhook @cap:declencher-sur-evenement/ecran', () => {
     expect(f.Notify).toBe('Off');
   });
 
+  it('ne dessine PAS de bloc d’état de routine : un webhook n’en a pas', async () => {
+    // L'état de routine est une notion de CRON : ce qu'une routine a retenu
+    // d'un run pour décider du suivant. Un webhook n'en tient aucun, et la vue
+    // ne porte même pas le champ. Un bloc vide, ou emprunté à une routine,
+    // dirait qu'il y a quelque chose à lire là où il n'y a rien.
+    const view = await load(hookId);
+    await render(<AutomationScreen view={view} agents={[]} />);
+
+    expect(container.querySelector('[data-testid="routine-state"]')).toBeNull();
+    // Et ce n'est pas que la page serait vide : ses runs, eux, sont rendus.
+    expect(container.querySelector('[data-testid="automation-runs"]')).not.toBeNull();
+  });
+
   it('mène ses runs à /jobs, et ne promet ni « Run now » ni « Edit »', async () => {
     const view = await load(hookId);
     await render(<AutomationScreen view={view} agents={[]} />);
