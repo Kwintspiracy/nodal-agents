@@ -99,15 +99,15 @@ export default function ProjectGitPanel({
       </h2>
       <div className="space-y-2 p-4">
         <div className="flex items-start gap-3">
+          {/* Aucune classe de couleur : `Switch` porte la sienne depuis #238,
+              et c'est tout l'intérêt de cette PR-là — l'interrupteur du serveur
+              MCP avait l'air éteint en étant allumé parce que chaque appelant
+              peignait le sien. */}
           <Switch
             checked={initGit}
             onChange={basculer}
             disabled={!isOwner || busy}
             size="md"
-            trackClassName={
-              initGit ? 'bg-ink border-ink' : 'bg-canvas border-rule hover:border-rule-2'
-            }
-            thumbClassName={initGit ? 'bg-paper translate-x-[18px]' : 'bg-ink-4 translate-x-[2px]'}
             ariaLabel="Initialise git in this folder"
           />
           <div className="min-w-0">
