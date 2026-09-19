@@ -98,6 +98,16 @@ const nextConfig: NextConfig = {
       static: 180,
     },
     optimizePackageImports: ['@phosphor-icons/react'],
+    // #219 — webpack-sources garde la source de chaque module DEUX fois, en
+    // chaîne et en tampon, et n'interne aucune chaîne. Ce réglage coupe la
+    // double copie et interne les chaînes pendant les trois compilations
+    // (serveur, edge, client), qui se suivent dans le MÊME processus et
+    // cumulent donc tout ce qu'elles retiennent.
+    //
+    // Mesuré le 20/09 sur l'arbre de la 0.8.11, plafond 12288, machine de
+    // release : 15 223 Mo de pic sans ce réglage ni celui du cache ci-dessous,
+    // 13 069 Mo avec les deux. La compilation passe de 13,6 à 14,0 min.
+    webpackMemoryOptimizations: true,
     // NETWORK-001 (audit 2026-08-07). Next's server-action guard compares
     // `Origin` against `Host`, and only consults this allowlist when the two
     // DIFFER. Measured on a real packed install:
@@ -141,7 +151,26 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  webpack(config: Configuration, { isServer }: { isServer: boolean }) {
+  webpack(config: Configuration, { dev, isServer }: { dev: boolean; isServer: boolean }) {
+    // #219 — pas de cache webpack sur disque en production.
+    //
+    // Next pose `cache: { type: 'filesystem', maxMemoryGenerations: Infinity }`
+    // pour les builds de production. `Infinity` veut dire que RIEN n'est évincé
+    // de la couche mémoire du cache : les trois compilations se suivent dans le
+    // même processus et le tas ne redescend jamais. À la fin, webpack sérialise
+    // tout le paquet en mémoire avant de l'écrire — un second pic, par-dessus
+    // le premier.
+    //
+    // Et ce cache ne sert à rien ici. `scripts/build-pack.mjs` PURGE
+    // `apps/web/.next` avant chaque build de release — un build de release ne
+    // doit pas dépendre de ce qu'il trouve — donc il est écrit à chaque fois et
+    // relu jamais. La CI part d'un dépôt frais, même chose. Reste le développeur
+    // qui enchaîne deux `pnpm build` : Turborepo répond déjà par son propre
+    // cache quand rien n'a bougé, et quand quelque chose a bougé le cache
+    // webpack se révoque de toute façon.
+    //
+    // `dev` reste intact : là, le cache sert à chaque frappe.
+    if (!dev) config.cache = false;
     // Safety net: workspace package source no longer uses `.js` extensions in
     // relative imports (Turbopack-compatible), but if a future contributor
     // reintroduces a `.js` import, this alias keeps webpack resolving correctly.

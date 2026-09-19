@@ -1,0 +1,11 @@
+{
+  "_pourquoi": "Le dernier pic mesuré du build web (#219). scripts/build-pack.mjs le compare à ce qu'il vient de mesurer et le dit quand il monte. Le ré-enregistrer après une mesure délibérée (node scripts/measure-web-build-heap.mjs --enregistrer), jamais pour faire taire l'alerte.",
+  "_note": "Relevé à la main, pas par --enregistrer : ce build s'est arrêté à la toute dernière étape (Collecting build traces) pour une raison qui n'est pas la mémoire. Le pic est tombé à t+860 s, et sur la fenêtre du traçage l'arbre ne dépasse pas 6 191 Mo, soit moins de la moitié. Les chiffres décrivent donc bien tout ce que ce build demande au tas.",
+  "commit": "dee372ea",
+  "date": "2026-09-20",
+  "machine": "win32 24 cœurs, node 26.4.0, 64 Go",
+  "capMo": 12288,
+  "picProcessusMo": 13069,
+  "picArbreMo": 13603,
+  "secondes": 1193
+}
