@@ -188,9 +188,15 @@ beforeAll(async () => {
   seed = await seedMinimal(db);
 
   // Turn the seeded agent into a ROUTER orchestrator — the role the real ROOT has.
+  //
+  // `mayChangeTeam` is turned on here because this file's subject is the
+  // ORCHESTRATOR BRANCH, not the team gate: `create_agent` is one of the three
+  // tools issue #137 put behind the per-agent setting, and leaving it off would
+  // make this regression stop watching the thing it was written for. The gate
+  // itself is proved by may-change-team.test.ts.
   await db
     .update(agents)
-    .set({ role: 'orchestrator', orchestratorMode: 'router' })
+    .set({ role: 'orchestrator', orchestratorMode: 'router', mayChangeTeam: true })
     .where(eq(agents.id, seed.agentId));
 });
 

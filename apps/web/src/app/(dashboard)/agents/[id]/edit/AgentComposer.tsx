@@ -73,6 +73,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import FolderPickerModal from './FolderPickerModal.tsx';
 import { SectionCard, SectionHead } from './SectionCard.tsx';
 import CommandAllowlistSection from './CommandAllowlistSection.tsx';
+import TeamChangeSection from './TeamChangeSection.tsx';
 import {
   MODEL_CATALOG,
   groupModelCatalog,
@@ -666,6 +667,7 @@ export default function AgentComposer({
               isOwner={isOwner}
               cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
               commandAllowlist={agent.commandAllowlist ?? null}
+              mayChangeTeam={agent.mayChangeTeam ?? false}
             />
           </>
         )}
@@ -1637,6 +1639,7 @@ function AutonomyTab({
   isOwner,
   cliDailyBudgetUsd,
   commandAllowlist,
+  mayChangeTeam,
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
@@ -1648,6 +1651,8 @@ function AutonomyTab({
   cliDailyBudgetUsd: number;
   /** agents.command_allowlist — NULL = no list (see CommandAllowlistSection). */
   commandAllowlist: string[] | null;
+  /** agents.may_change_team — false = the three team tools are not in the list. */
+  mayChangeTeam: boolean;
 }) {
   const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -1873,6 +1878,13 @@ function AutonomyTab({
         hasCommandSkill={attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG)}
         isOwner={isOwner}
       />
+
+      {/*
+        Next to the command allowlist, and for the same reason: both name what
+        this agent may do with nobody watching. This one is about the
+        organisation itself — whether it may recruit mid-run (issue #137).
+      */}
+      <TeamChangeSection agentId={agentId} mayChangeTeam={mayChangeTeam} isOwner={isOwner} />
 
       <CodeTaskSection
         agentId={agentId}

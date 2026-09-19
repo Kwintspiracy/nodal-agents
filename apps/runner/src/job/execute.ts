@@ -27,7 +27,7 @@ import {
 } from '@nodal-agents/db';
 import type { ApprovalRequestRow, JobTriggerContext } from '@nodal-agents/db';
 import {
-  enabledMetaTools,
+  metaToolsForAgent,
   parseRootGrants,
   modelContextWindow,
   modelCanSeeImages,
@@ -93,6 +93,8 @@ import {
   generateAssignTools,
   generateTaskTools,
   handleDelegation,
+  findDeliveredReviewForTarget,
+  describeDuplicateReview,
   resumeDelegated,
   DELEGATION_FAILED_MARKER,
   filterToolCallsForDelegation,
@@ -1539,11 +1541,16 @@ async function runJob(
       channel: job.channel ?? null,
       parentJobId: job.parentJobId ?? null,
     });
+    // `may_change_team` (issue #137) retire `create_agent`, `attach_agent` et
+    // `detach_agent` de la liste tant qu'il est à false — c'est-à-dire pour
+    // tout agent existant, que la migration 0111 a mis à OFF. Le modèle ne les
+    // voit alors pas, et dit ce qu'il ne peut pas faire au lieu de recomposer
+    // l'équipe pour y arriver.
     const metaToolNames: string[] =
       isRootAgent && !isMcpChannel
-        ? enabledMetaTools(parseRootGrants(rootEntityRow?.rootGrants)).filter(
-            (name) => registry.get(name) !== undefined,
-          )
+        ? metaToolsForAgent(parseRootGrants(rootEntityRow?.rootGrants), {
+            mayChangeTeam: agentRow.mayChangeTeam,
+          }).filter((name) => registry.get(name) !== undefined)
         : [];
     const metaToolDefs: AnyToolDef[] = metaToolNames
       .map((name) => registry.get(name))
@@ -4031,6 +4038,48 @@ async function runJob(
               });
             }
             continue;
+          }
+
+          // Pas de seconde revue de la même chose (#173). Un enfant de ce job
+          // a déjà livré un `review_verdict` sur cette cible, par ce même
+          // relecteur : l'enfant n'est pas lancé, le verdict existant est
+          // RENDU au parent dans le résultat d'outil. Depuis la PR #170 le
+          // verdict voyageait déjà jusqu'ici, mais rien n'empêchait le modèle
+          // de redemander — trente à quarante minutes payées deux fois
+          // (incident #124, PR #113 et #120).
+          //
+          // « La même chose » est décidé sur les lignes, jamais sur une
+          // ressemblance de texte : même agent délégué ET même cible écrite
+          // dans la tâche (`extractReviewTarget`). Sans cible reconnaissable,
+          // pas de garde — la délégation passe.
+          if (job.entityId) {
+            const duplicate = await findDeliveredReviewForTarget(db, {
+              parentJobId: jobId as JobId,
+              entityId: job.entityId as EntityId,
+              childSlug,
+              task: (call.input['task'] as string) ?? '',
+            });
+            if (duplicate) {
+              toolResultBlocks.push({
+                type: 'tool-result',
+                toolCallId: call.id,
+                toolName: call.name,
+                output: toResultOutput({ error: describeDuplicateReview(duplicate) }),
+              });
+              // Même raison que pour les autres refus de délégation : les
+              // assign_* frères écartés par `filterToolCallsForDelegation`
+              // n'ont pas de tool_result si on ne les vide pas ici, et le tour
+              // suivant meurt sur `unmatched_tool_use`.
+              for (const sr of sideToolResults) {
+                toolResultBlocks.push({
+                  type: 'tool-result',
+                  toolCallId: sr.tool_use_id,
+                  toolName: sr.toolName,
+                  output: toResultOutput({ error: sr.content }),
+                });
+              }
+              continue;
+            }
           }
 
           // Per-slug naive-retry block. `resumeDelegated` set

@@ -129,12 +129,20 @@ afterAll(() => {
 // createAgentRepo would have done: point the entity at our seeded orchestrator
 // (or leave it without a ROOT), then exercise the grants-only action.
 
-async function setRoot(orchId: string | null) {
+//
+// `mayChangeTeam` (issue #137) is part of the state a test runs in: the rules
+// synced by setRootAgentAction describe the tools the runner will ACTUALLY hand
+// the ROOT, and the three team tools only reach it when this is on. It defaults
+// to false here, which is what every install gets from migration 0111.
+async function setRoot(orchId: string | null, mayChangeTeam = false) {
   if (!_testDb) throw new Error('DB not initialised');
   await _testDb
     .update(entities)
     .set({ rootAgentId: orchId, rootGrants: {} })
     .where(eq(entities.id, _testEntityId));
+  if (orchId) {
+    await _testDb.update(agents).set({ mayChangeTeam }).where(eq(agents.id, orchId));
+  }
   await _testDb
     .delete(approvalRules)
     .where(
@@ -271,7 +279,10 @@ describe('setRootAgentAction — write paths', () => {
   });
 
   it('propose_confirm: inserts require_approval rules for all enabled meta-tools', async () => {
-    await setRoot(_orchestratorId);
+    // The ROOT may change its team here, so the full granted list applies —
+    // this test is about the autonomy level, not about the team gate, which
+    // has its own describe below.
+    await setRoot(_orchestratorId, true);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
 
@@ -290,7 +301,7 @@ describe('setRootAgentAction — write paths', () => {
   });
 
   it('propose_confirm with only createAgent=true: only 1 rule inserted', async () => {
-    await setRoot(_orchestratorId);
+    await setRoot(_orchestratorId, true);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     await setRootAgentAction({
       grants: {
@@ -351,7 +362,7 @@ describe('setRootAgentAction — write paths', () => {
   });
 
   it('switching from propose_confirm to fully_autonomous deletes existing rules', async () => {
-    await setRoot(_orchestratorId);
+    await setRoot(_orchestratorId, true);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
 
     const { enabledMetaTools } = await import('@nodal-agents/shared');
@@ -367,7 +378,7 @@ describe('setRootAgentAction — write paths', () => {
     // The delete-then-insert is now wrapped in db.transaction + onConflictDoUpdate
     // (approval_rules carries a UNIQUE(entity_id, agent_id, tool_name) constraint
     // since DB-1) — re-syncing must stay canonical, never duplicate a row per tool.
-    await setRoot(_orchestratorId);
+    await setRoot(_orchestratorId, true);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     const grants = {
       createAgent: true,
@@ -393,5 +404,76 @@ describe('setRootAgentAction — write paths', () => {
     expect(rules).toHaveLength(1);
     expect(rules[0]?.toolName).toBe('create_agent');
     expect(rules[0]?.action).toBe('require_approval');
+  });
+});
+
+// ─── The team gate and the approval rules agree (issue #137) ──────────────────
+//
+// The rules this action writes are read by the Autonomy tab and by the runner's
+// approval gate. Syncing them from the workspace grants ALONE would write a
+// `require_approval` row for a tool the runner never hands this agent: an
+// approval nobody is ever asked for, and a line on screen for a power the agent
+// does not have. The assertions are on the rows in `approval_rules`, not on
+// what the action was called with.
+describe('setRootAgentAction — approval rules follow "May change its own team"', () => {
+  const TEAM_TOOLS = ['create_agent', 'attach_agent', 'detach_agent'];
+
+  it('setting OFF: no rule for the three team tools, every other granted tool keeps its rule', async () => {
+    await setRoot(_orchestratorId, false);
+    const { setRootAgentAction } = await import('../src/lib/actions.ts');
+    const res = await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
+    expect(res.ok).toBe(true);
+
+    const toolNames = (await metaRules()).map((r) => r.toolName).sort();
+    for (const name of TEAM_TOOLS) {
+      expect(toolNames, `${name} has an approval rule it can never use`).not.toContain(name);
+    }
+    // The gate removes the three and nothing else — computed from the source of
+    // truth so it stays correct as the grant map evolves.
+    const { metaToolsForAgent } = await import('@nodal-agents/shared');
+    const expected = metaToolsForAgent(
+      { ...ALL_ON, autonomy: 'propose_confirm' },
+      { mayChangeTeam: false },
+    ).sort();
+    expect(toolNames).toEqual(expected);
+    expect(toolNames).toContain('update_agent');
+    expect(toolNames).toContain('attach_skill');
+  });
+
+  it('setting ON: the three team tools get their require_approval rule', async () => {
+    await setRoot(_orchestratorId, true);
+    const { setRootAgentAction } = await import('../src/lib/actions.ts');
+    await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
+
+    const rules = await metaRules();
+    const toolNames = rules.map((r) => r.toolName);
+    for (const name of TEAM_TOOLS) {
+      expect(toolNames).toContain(name);
+    }
+    for (const rule of rules.filter((r) => TEAM_TOOLS.includes(r.toolName))) {
+      expect(rule.agentId).toBe(_orchestratorId);
+      expect(rule.action).toBe('require_approval');
+    }
+  });
+
+  it('turning the setting back off clears the three rules on the next sync', async () => {
+    const { setRootAgentAction } = await import('../src/lib/actions.ts');
+    await setRoot(_orchestratorId, true);
+    await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
+    expect((await metaRules()).map((r) => r.toolName)).toContain('attach_agent');
+
+    // Only the agent's own setting changes — the workspace grants are re-sent
+    // exactly as they were.
+    await _testDb!
+      .update(agents)
+      .set({ mayChangeTeam: false })
+      .where(eq(agents.id, _orchestratorId));
+    await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
+
+    const toolNames = (await metaRules()).map((r) => r.toolName);
+    for (const name of TEAM_TOOLS) {
+      expect(toolNames).not.toContain(name);
+    }
+    expect(toolNames).toContain('create_skill');
   });
 });
