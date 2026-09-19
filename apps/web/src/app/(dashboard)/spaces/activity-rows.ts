@@ -194,6 +194,10 @@ export function activityRows(input: ActivityRowsInput): ConversationRowModel[] {
         time: conversationTimeLabel(c.updatedAt, now),
         waiting: strongestWaiting(parConversation.get(c.id) ?? []),
         running: c.running,
+        // Branche de démo seulement : l'état de lecture (#223) n'est pas
+        // encore relié à l'activité d'un projet ; la PR #226 le fera en
+        // reprenant main.
+        unread: false,
       },
     });
   }
@@ -213,6 +217,8 @@ export function activityRows(input: ActivityRowsInput): ConversationRowModel[] {
         time: conversationTimeLabel(s.createdAt, now),
         waiting: strongestWaiting(parRun.get(s.id) ?? []) ?? statusWaiting(s.status),
         running: jobIsRunning(s.status),
+        // Un run de code n'a pas d'état de lecture : rien n'y est « lu ».
+        unread: false,
       },
     });
   }
