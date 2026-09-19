@@ -71,9 +71,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           projectPath={facts.path}
           projectName={facts.name}
           active="activity"
-          // `null` quand la lecture a ÉCHOUÉ : l'onglet s'affiche sans chiffre
-          // plutôt qu'avec un zéro qui affirmerait qu'il ne s'est rien passé.
-          activityCount={activityResult.ok ? activityResult.data.total : null}
+          // Le MÊME chiffre que depuis l'autre onglet : il se lit sur les
+          // faits du projet, jamais sur les lignes chargées, qui sont
+          // plafonnées.
+          activityCount={facts.conversations + facts.sessionsWithoutConversation}
         />
       }
     >

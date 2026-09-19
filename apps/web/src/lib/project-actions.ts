@@ -314,6 +314,15 @@ export type ProjectFacts = {
   conversations: number;
   /** Les runs DE TÊTE rattachés au projet — ce que la ligne appelle « sessions ». */
   sessions: number;
+  /**
+   * Ceux d'entre eux qui n'ont AUCUNE conversation — les lignes que l'onglet
+   * Activity ajoute aux conversations.
+   *
+   * Compté ici plutôt que déduit de `sessions` : le compteur de l'onglet doit
+   * dire le MÊME nombre depuis les deux onglets, et `sessions` inclut les runs
+   * qu'une conversation porte déjà, lesquels ne font pas de ligne à eux.
+   */
+  sessionsWithoutConversation: number;
 };
 
 /**
@@ -356,8 +365,13 @@ export async function getProjectFactsAction(id: string): Promise<ActionResult<Pr
 
     const [conversationsCount, sessionRows] = await Promise.all([
       countProjectConversations(db, entityId, [id]),
+      // Les deux comptes en UNE requête : tous les runs de tête, et ceux sans
+      // conversation. `count(*) FILTER` plutôt qu'une seconde lecture.
       db
-        .select({ n: sql<number>`count(*)::int` })
+        .select({
+          n: sql<number>`count(*)::int`,
+          seuls: sql<number>`count(*) FILTER (WHERE ${agentJobs.conversationId} IS NULL)::int`,
+        })
         .from(agentJobs)
         .where(
           and(
@@ -380,6 +394,7 @@ export async function getProjectFactsAction(id: string): Promise<ActionResult<Pr
       isGitRepository: existsSync(`${normalizePath(row.path)}/.git`),
       conversations: conversationsCount.get(id) ?? 0,
       sessions: Number(sessionRows[0]?.n ?? 0),
+      sessionsWithoutConversation: Number(sessionRows[0]?.seuls ?? 0),
     });
   } catch (err) {
     console.error('[projects] PROJECT_FACTS_FAILED', err);
@@ -424,9 +439,12 @@ export type ProjectActivitySession = {
 export type ProjectActivityView = {
   conversations: ProjectActivityConversation[];
   sessions: ProjectActivitySession[];
-  /** Les deux ensemble — le chiffre de l'onglet. */
-  total: number;
 };
+
+// Le chiffre de l'onglet n'est PAS ici : il vient de `getProjectFactsAction`,
+// que les deux onglets lisent. Le calculer sur les lignes CHARGÉES le ferait
+// diverger d'un onglet à l'autre — elles sont plafonnées — et un onglet qui
+// annonce deux nombres selon la page qu'on regarde n'annonce rien.
 
 /** Plafond par liste. Une page d'activité se lit, elle ne s'inventorie pas. */
 const ACTIVITY_MAX = 50;
@@ -641,7 +659,6 @@ export async function getProjectActivityAction(
           createdAt: j.createdAt,
         }),
       ),
-      total: convRows.length + sansConversation.length,
     });
   } catch (err) {
     console.error('[projects] PROJECT_ACTIVITY_FAILED', err);
