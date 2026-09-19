@@ -44,10 +44,13 @@ vi.mock('../ui/ThemeToggle', () => ({ default: () => null }));
 import Sidebar from '../Sidebar.tsx';
 import { ApprovalsProvider } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
+import { listApprovalsAction } from '@/lib/actions';
+import { getChatFoldersAction } from '@/lib/conversation-actions.ts';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
 import { listRecentThreadsAction } from '@/lib/recent-threads-actions.ts';
 import { SIDEBAR_ROW, SIDEBAR_ROW_ACTIVE, SIDEBAR_ROW_IDLE } from '../ui/SidebarRow';
 import { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
+import { SIDEBAR_POLL_MS } from '@/lib/use-polling';
 import type { FolderThread } from '@/lib/chat-folders.ts';
 
 let container: HTMLDivElement;
@@ -131,6 +134,17 @@ beforeEach(() => {
   pathname = '/agents';
   vi.mocked(listRecentThreadsAction).mockResolvedValue({ ok: true, data: [] });
   vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: {} });
+  // LES DEUX PROVIDERS VOISINS RÉPONDENT, MÊME SI AUCUN TEST NE LES REGARDE.
+  // Ils posent chacun un `setInterval` de 15 s ; dès qu'un test fait tourner
+  // l'horloge, leurs actions partent aussi. Sans valeur de retour, elles
+  // rendent `undefined`, et le `result.ok` du provider lève une rejection non
+  // rattrapée qui fait rougir la suite ENTIÈRE sans qu'aucun test n'échoue
+  // (le piège que la CI de la PR #223 a déjà attrapé une fois).
+  vi.mocked(listApprovalsAction).mockResolvedValue({ ok: true, data: [] });
+  vi.mocked(getChatFoldersAction).mockResolvedValue({
+    ok: true,
+    data: { channels: [], running: {}, runningConversationIds: [], externalRuns: 0 },
+  });
 });
 
 afterEach(async () => {
@@ -397,6 +411,84 @@ describe('la section « Recent » du panneau Talk @cap:reprendre-conversation/ec
   });
 });
 
+// ─── La section « Recent » se relit, comme le sous-menu (#223) ───────────────
+//
+// CE QUE CE BLOC PROUVE. Le sous-menu d'un dossier se relit depuis #223 —
+// navigation et horloge — précisément pour que son point de non-lu ne mente
+// pas. « Recent » montre les MÊMES fils, juste en dessous : figée, elle aurait
+// fait dire deux heures différentes à la même barre.
+//
+// Mutations vérifiées : `pathname` retiré des dépendances de `relireSurRoute`
+// → le premier test rougit (le point reste allumé après l'ouverture du fil) ;
+// `usePolling` remplacé par un `useEffect` de montage → le second rougit (le
+// point ne s'allume jamais).
+
+describe('la section « Recent » se relit @cap:reprendre-conversation/ecran', () => {
+  /** Le point du premier fil récent : `yes` = il appelle la personne. */
+  function pointDuPremier(): string | null {
+    const ligne = container.querySelector('[data-testid="recent-thread"]');
+    if (!ligne) throw new Error('no recent thread row');
+    return ligne.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls') ?? null;
+  }
+
+  /** Ce que la prochaine lecture rendra. */
+  function semer(unread: boolean): void {
+    vi.mocked(listRecentThreadsAction).mockResolvedValue({
+      ok: true,
+      data: [thread({ key: 'r1', title: 'Invoice for March', unread })],
+    });
+  }
+
+  it('éteint le point du fil qu’on OUVRE, sans rechargement', async () => {
+    semer(true);
+    pathname = '/chat';
+    await renderSidebar();
+    expect(pointDuPremier()).toBe('yes');
+
+    // La personne ouvre le fil. Le rendu serveur de sa page écrit le marqueur
+    // de lecture ; la lecture suivante rend donc le fil LU.
+    semer(false);
+    pathname = '/chat/r1';
+    await act(async () => {
+      root.render(
+        <ApprovalsProvider initial={[]}>
+          <ChatFoldersProvider
+            initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+          >
+            <Sidebar workspaces={[]} />
+          </ChatFoldersProvider>
+        </ApprovalsProvider>,
+      );
+    });
+
+    // Et le point s'éteint tout seul : personne n'a rechargé la page.
+    expect(pointDuPremier()).toBe('no');
+  });
+
+  it('allume le point d’un fil qui REÇOIT, sur la cadence de la barre', async () => {
+    vi.useFakeTimers();
+    try {
+      semer(false);
+      pathname = '/chat';
+      await renderSidebar();
+      expect(pointDuPremier()).toBe('no');
+
+      // Un message arrive pendant qu'on regarde autre chose. Rien ne navigue.
+      semer(true);
+      expect(pointDuPremier()).toBe('no');
+
+      // Un tour d'horloge de la barre latérale — le MÊME que la pastille
+      // corail, le point vert et le sous-menu d'un dossier — et il s'allume.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SIDEBAR_POLL_MS);
+      });
+      expect(pointDuPremier()).toBe('yes');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('le point de non-lu survit au rail @cap:reprendre-conversation/ecran', () => {
   it('rend le point sur un fil de dossier ET sur un fil récent (#209)', async () => {
     await renderTalk();
@@ -513,14 +605,39 @@ describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
     );
   });
 
-  it('se referme à Échap', async () => {
+  it('se referme à Échap, et PREND la touche en le faisant', async () => {
     await renderSidebar();
     await click(railCell('help'));
     expect(container.querySelector('[data-testid="rail-popover"]')).not.toBeNull();
+
+    const echap = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      // `cancelable`, sinon `preventDefault()` ne marque rien et l'assertion
+      // ci-dessous passerait pour une raison qui n'est pas la bonne.
+      cancelable: true,
+    });
     await act(async () => {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      window.dispatchEvent(echap);
     });
     expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
+    // La convention des calques (#233) : celui qui se ferme DIT qu'il a pris
+    // la touche, sinon le calque qui le porte se fermerait avec lui.
+    expect(echap.defaultPrevented).toBe(true);
+  });
+
+  it('ne bouge pas quand un autre calque a déjà pris la touche', async () => {
+    await renderSidebar();
+    await click(railCell('help'));
+
+    const echap = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    echap.preventDefault();
+    await act(async () => {
+      window.dispatchEvent(echap);
+    });
+    // Un calque n'agit QUE si personne n'a déjà pris la touche : sans cette
+    // règle, un seul Échap traverse tous les calques ouverts d'un coup.
+    expect(container.querySelector('[data-testid="rail-popover"]')).not.toBeNull();
   });
 
   it('se referme au clic DEHORS, et pas au clic dedans', async () => {
