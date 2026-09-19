@@ -209,7 +209,10 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
     };
     const ordre = [
       at(TASK),
-      at('>Delivered<'),
+      // Ce run porte un verdict `request_changes` : depuis #59 le bloc de
+      // conclusion s'appelle « Changes requested ». Sa PLACE, elle, ne bouge
+      // pas — c'est ce que ce cas vérifie.
+      at('>Changes requested<'),
       at('data-testid="review-section"'),
       at('data-testid="verification-section"'),
       at('Files · 1'),
@@ -259,11 +262,27 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
   });
 
   it('ce qui a été livré se lit en haut : fichiers, lignes, preuve', async () => {
+    // Le verdict de ce run demande des corrections : le bloc le DIT au lieu de
+    // « Delivered » (#59), et montre quand même tout ce que le travail a fait.
     await render(detail());
     const text = container.textContent ?? '';
-    expect(text).toContain('Delivered');
+    expect(text).toContain('Changes requested');
+    expect(text).not.toContain('Delivered');
     expect(text).toContain('apps/web/src/app/page.tsx');
     expect(text).toContain('1 / 1');
+  });
+
+  it('un run APPROUVÉ conclut « Delivered » @cap:verifier-un-livrable/ecran', async () => {
+    // La contre-épreuve du cas précédent : seul un `request_changes` change le
+    // mot. Une relecture qui approuve laisse le run se conclure comme avant.
+    const approuve = detail();
+    await render({
+      ...approuve,
+      verdicts: [{ ...approuve.verdicts[0]!, verdict: 'approve', findings: [] }],
+    });
+    const text = container.textContent ?? '';
+    expect(text).toContain('Delivered');
+    expect(text).not.toContain('Changes requested');
   });
 
   it('l’activité est LÀ, sans filtre à cliquer, chaque appel dans un bloc du fil', async () => {

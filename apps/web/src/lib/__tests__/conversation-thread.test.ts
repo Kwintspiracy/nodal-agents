@@ -191,6 +191,10 @@ describe('buildConversationThread — une conversation de canal', () => {
         reviews: [],
         checks: [],
         verdict: null,
+        // #59 — personne n'a relu ce travail : le récapitulatif le dit, et il
+        // n'interdit rien.
+        review: null,
+        changesRequested: false,
       },
     });
   });
