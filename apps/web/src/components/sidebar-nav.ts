@@ -1,105 +1,137 @@
-// sidebar-nav.ts — LES TROIS DESTINATIONS DE LA BARRE LATÉRALE (#230).
+// sidebar-nav.ts — LES CINQ DESTINATIONS DE LA BARRE LATÉRALE (#258).
 //
-// Décision du propriétaire du 19/09/2026, planches Figma reprises par lui
-// (GWXBALe90DMFR3XYGccofJ, frames 487:5489, 487:5579, 487:5652) : la colonne
-// unique de 0.8.11 devient un RAIL de trois destinations — Work, Agent, Run —
-// et un PANNEAU qui montre celle qui est active.
+// Le propriétaire a redessiné la barre le 19/09/2026 au soir, dans un nouveau
+// fichier Figma : `WPLtjoJjXJBEqDyCpLy9xc`, nœud `25:1062`, cinq planches côte
+// à côte, une par destination. Ces planches sont la SPEC.
 //
-// ⚠️ LES NOMS ONT CHANGÉ le 19/09, après une première livraison : « Talk » est
-// devenu « Work » et « Build » est devenu « Agent », au SINGULIER. Work dit
-// l'endroit où l'on travaille, ce qui couvre les conversations ET les espaces
-// de travail que la destination porte maintenant ; Agent dit ce qu'on y monte,
-// et le singulier parce qu'on en règle un à la fois.
+// ⚠️ LEURS NOMS DE CALQUES SONT PÉRIMÉS. Les cinq cadres sont des copies des
+// planches 4a, jamais renommées : ils s'appellent tous « 4a · Talk », les cases
+// du rail « rail/Talk » et « rail/Build », les sections de Run
+// « section/AUTOMATE » alors qu'elles affichent CRON et WEBHOOKS, et presque
+// toutes les lignes « row/Suivis Candidatures ». Seuls le TEXTE rendu et la
+// GÉOMÉTRIE font foi. Qui relira la planche par ses noms lira l'ancienne.
 //
-// Le contenu ne change pas : ce sont les MÊMES entrées qu'en 0.8.11, réparties
-// en trois. Rien n'est ajouté, rien n'est retiré — c'est ce que dit l'issue, et
-// c'est ce que ce fichier doit rendre vérifiable : le test d'énumération
-// compare les libellés panneau par panneau.
+// Ce qui change depuis #230 :
 //
-// ⚠️ DEUX ÉCARTS ASSUMÉS AVEC LA PLANCHE, et leur raison.
+//   - trois destinations deviennent CINQ : Approvals et Settings quittent
+//     l'état de case sans panneau pour en avoir un ;
+//   - « Agent » redevient « Agents », au pluriel, et sa section ouvre par un
+//     dossier dépliable qui liste les agents ;
+//   - Run ne montre plus ce qu'on surveille mais ce qu'on PROGRAMME : les
+//     automatisations et les webhooks, chacun sous un titre portant un « + » ;
+//   - Logs quitte les panneaux pour le rail, d'où il NAVIGUE ;
+//   - les espaces de travail cessent d'être un dossier dépliable pour devenir
+//     les lignes mêmes de la section WORKSPACES.
 //
-//   - « LLM Providers » ferme Build/CONNECT. Il a d'abord vécu dans Run, sur le
-//     texte de l'issue et sur une décision du 18/09 (« le fournisseur de
-//     modèles ouvre ce qu'on règle »). Les planches que Quentin a reprises le
-//     19/09 (487:5579) le rangent sous CONNECT, après Credentials : c'est ce
-//     qu'on branche au produit, au même titre qu'un connecteur. La planche du
-//     propriétaire est la plus récente, et c'est elle qui décide.
-//   - « Scheduled » (/scheduled) n'apparaît dans AUCUNE des trois listes de
-//     l'issue, et c'est VOULU : la page disparaît (#202, PR #224). Les runs
-//     d'une automatisation se lisent désormais sur SA page, et `/scheduled`
-//     redirige vers `/automations`. La table ne la connaît donc ni comme
-//     entrée ni comme route — deux portes vers la même chose obligeaient à
-//     choisir sans rien pour choisir.
+// ⚠️ UNE SECTION DISPARAÎT DES PLANCHES : RECENT, les cinq derniers fils tous
+// canaux confondus livrés en #230. Le propriétaire ne la redessine pas, et
+// « Nodal chats » déplié tient le rôle pour les conversations du tableau de
+// bord. Dit ici, et dans la PR, plutôt que découvert plus tard.
+//
+// ⚠️ ET UNE ENTRÉE REVIENT CONTRE LA PLANCHE : « Dashboard ». Aucune des cinq
+// ne la dessine — elles l'OMETTENT, sans dire de la retirer. Une page qu'on
+// n'atteint plus que par son adresse est exactement le constat que la revue a
+// posé sur la PR de l'écran d'accueil, et on ne le rouvre pas : la ligne
+// ouvre le panneau Run, au-dessus du premier titre, là où la planche ne
+// dessine aucune section (décision de l'orchestrateur, 19/09 au soir).
 
 import {
   Brain,
   BookOpenText,
   ChatCircleText,
-  ClockCountdown,
   Cube,
+  GearSix,
   House,
   Key,
   Lightbulb,
-  ListMagnifyingGlass,
   Plug,
   PlugsConnected,
   Pulse,
+  ShieldCheck,
   Sparkle,
-  UsersThree,
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
 
-/**
- * Une entrée du panneau : une destination interne du tableau de bord.
- *
- * ⚠️ PLUS DE PASTILLE DE COULEUR. Agents, Skills et les deux connecteurs
- * portaient la pastille de sens du DS — une couleur par famille d'objets — qui
- * REMPLAÇAIT leur icône sur grand écran. Les planches du propriétaire
- * (19/09/2026, Figma 487:5579) dessinent l'icône de chaque entrée, et rien
- * d'autre : à côté de Credentials et de Memory, qui n'ont jamais eu de
- * pastille, une ligne sur deux montrait un rond et l'autre un dessin.
- */
+/** Une entrée du panneau : une destination interne du tableau de bord. */
 export type PanelItem = {
   href: string;
   label: string;
   icon: PhosphorIcon;
 };
 
-/** Un bloc du panneau, sous son titre en capitales. */
-export type PanelGroup = { section: string; items: readonly PanelItem[] };
+/**
+ * Une LISTE qui n'existe qu'en base, et que le panneau lit à l'exécution.
+ *
+ * Elle est NOMMÉE ici plutôt que devinée dans le rendu : la table dit ce que
+ * chaque section contient, et le panneau ne fait que le dessiner.
+ */
+export type PanelDynamic =
+  | 'workspaces'
+  | 'channels'
+  | 'agents'
+  | 'cron'
+  | 'webhooks'
+  | 'approvals'
+  | 'recents';
 
-/** Laquelle des trois destinations du rail. */
-export type DestinationKey = 'work' | 'agent' | 'run';
+/** Un bloc du panneau, sous son titre en capitales. */
+export type PanelGroup = {
+  /**
+   * Le titre du bloc. ABSENT pour le bloc qui ouvre un panneau SANS titre —
+   * la ligne « Dashboard » de Run est dans ce cas, la planche ne lui en
+   * dessinant aucun.
+   */
+  section?: string;
+  /** La liste lue en base, rendue EN TÊTE du bloc, avant ses entrées écrites. */
+  dynamic?: PanelDynamic;
+  items: readonly PanelItem[];
+  /**
+   * Le « + » du titre de section : où il mène, et ce qu'il promet. La planche
+   * le dessine sur CRON et sur WEBHOOKS, et nulle part ailleurs.
+   */
+  add?: { href: string; label: string };
+};
+
+/** Laquelle des cinq destinations du rail. */
+export type DestinationKey = 'work' | 'agents' | 'run' | 'approvals' | 'settings';
 
 export type Destination = {
   key: DestinationKey;
   /** Le libellé du rail ET le titre du panneau : un seul mot, le même. */
   label: string;
   icon: PhosphorIcon;
-  /** Où mène le clic sur la destination : sa première entrée. */
+  /** Où mène le clic sur la destination. */
   href: string;
   /**
-   * Les préfixes de route qui allument cette destination. `/` ne vaut QUE
-   * pour lui-même — sans quoi il préfixerait toutes les autres.
+   * Les préfixes de route qui allument cette destination. `/` ne vaut QUE pour
+   * lui-même — sans quoi il préfixerait toutes les autres.
    */
   routes: readonly string[];
-  /**
-   * Les blocs FIXES du panneau. Work n'en a qu'un — ses espaces de travail —
-   * parce que le reste de son panneau, les dossiers de canaux et les fils
-   * récents, n'existe qu'en base et se lit à l'exécution (#135, #230).
-   */
   groups: readonly PanelGroup[];
 };
 
 /**
- * Le panneau AGENT — ce qu'on monte. Les deux blocs de la planche : l'équipe
- * et ce qu'elle sait faire d'abord, ce à quoi on la branche ensuite.
+ * Le panneau WORK — là où l'on travaille.
+ *
+ * Deux blocs, tous deux LUS EN BASE : les espaces de travail, puis les canaux
+ * d'où les conversations arrivent. Aucune entrée écrite.
  */
-const BUILD_GROUPS: readonly PanelGroup[] = [
+const WORK_GROUPS: readonly PanelGroup[] = [
+  { section: 'Workspaces', dynamic: 'workspaces', items: [] },
+  { section: 'Channels', dynamic: 'channels', items: [] },
+];
+
+/**
+ * Le panneau AGENTS — ce qu'on monte, puis ce qu'on y branche.
+ *
+ * Le bloc AGENTS ouvre par un DOSSIER dépliable qui liste les agents, puis
+ * porte ce qu'ils savent faire et ce dont ils se souviennent.
+ */
+const AGENTS_GROUPS: readonly PanelGroup[] = [
   {
     section: 'Agents',
+    dynamic: 'agents',
     items: [
-      { href: '/agents', label: 'Agents', icon: UsersThree },
       { href: '/skills', label: 'Skills', icon: BookOpenText },
       { href: '/learned-skills', label: 'Learned Skills', icon: Lightbulb },
       { href: '/memories', label: 'Memory', icon: Brain },
@@ -117,37 +149,70 @@ const BUILD_GROUPS: readonly PanelGroup[] = [
 ];
 
 /**
- * Le panneau RUN — ce qui tourne, et ce qu'on surveille.
+ * Le panneau RUN — ce qu'on programme.
  *
- * Deux blocs : ce qu'on regarde, ce qu'on programme. « Models » n'existe plus,
- * le fournisseur de modèles ayant rejoint Agent/CONNECT.
- *
- * ⚠️ DEUX ENTRÉES EN SONT PARTIES le 19/09, et aucune n'a disparu du produit :
- * « Workspaces » ouvre maintenant le panneau Work, où l'on travaille ;
- * « Approvals » est devenu une CASE DU RAIL, parce que ce qui attend une
- * réponse doit se voir sans changer de destination.
+ * Les deux façons de déclencher un agent sans lui parler : une horloge, ou un
+ * appel venu de dehors. Chaque titre porte un « + » vers la page où l'on en
+ * crée un.
  */
 const RUN_GROUPS: readonly PanelGroup[] = [
+  // SANS TITRE, et au-dessus de tout : la planche ne dessine ni cette ligne ni
+  // une section pour elle. Lui en inventer une nommerait un bloc d'un seul
+  // élément ; la laisser nue la met là où l'œil la cherche, tout en haut.
+  { items: [{ href: '/dashboard', label: 'Dashboard', icon: House }] },
   {
-    section: 'Monitor',
-    items: [
-      // Le tableau de bord a DÉMÉNAGÉ sur `/dashboard` (issue #248) : la
-      // racine rend désormais un fil vide. Le déménagement de la page vit
-      // dans sa propre PR ; ici, c'est l'adresse du lien qui change.
-      { href: '/dashboard', label: 'Dashboard', icon: House },
-      { href: '/logs', label: 'Logs', icon: ListMagnifyingGlass },
-    ],
+    section: 'Cron',
+    dynamic: 'cron',
+    items: [],
+    add: { href: '/automations', label: 'New automation' },
   },
   {
-    section: 'Automate',
-    items: [{ href: '/automations', label: 'Automations & Webhooks', icon: ClockCountdown }],
+    section: 'Webhooks',
+    dynamic: 'webhooks',
+    items: [],
+    add: { href: '/automations', label: 'New webhook' },
+  },
+];
+
+/** Le panneau APPROVALS — ce qui attend une réponse, puis ce qui en a reçu une. */
+const APPROVALS_GROUPS: readonly PanelGroup[] = [
+  { section: 'Approvals', dynamic: 'approvals', items: [] },
+  { section: 'Recents', dynamic: 'recents', items: [] },
+];
+
+/**
+ * Le panneau SETTINGS — les familles de la page des réglages.
+ *
+ * ⚠️ « INSTALL » N'EST PAS UNE FAMILLE, et la planche en dessine une. Les
+ * familles sont `access`, `safety`, `workspace` et `advanced`
+ * (`settings/settings-rows.ts`) ; « Install notes » est une LIGNE de la famille
+ * `workspace`. La planche la sort donc au premier plan, et laisse `advanced` de
+ * côté. Décision de l'orchestrateur du 19/09 au soir : les quatre lignes de la
+ * planche, chacune menant à quelque chose de RÉEL.
+ *
+ * Chaque ligne ouvre la PREMIÈRE entrée de sa famille (`/settings?open=…`),
+ * parce que c'est le seul point d'entrée que la page connaisse : elle ouvre un
+ * RÉGLAGE, pas une famille. On atterrit donc dans la bonne famille, sur son
+ * premier réglage, et jamais sur une page qui ignorerait ce qu'on a cliqué.
+ */
+const SETTINGS_GROUPS: readonly PanelGroup[] = [
+  {
+    section: 'Settings',
+    items: [
+      { href: '/settings?open=sign-in', label: 'Access', icon: Key },
+      { href: '/settings?open=auto-run-brake', label: 'Safety', icon: ShieldCheck },
+      { href: '/settings?open=timezone', label: 'Workspace', icon: Cube },
+      { href: '/settings?open=install-notes', label: 'Install', icon: PlugsConnected },
+    ],
   },
 ];
 
 /**
- * Les trois destinations, dans l'ordre du rail.
+ * Les cinq destinations, dans l'ordre du rail.
  *
- * Talk d'abord : c'est là qu'on parle, et c'est la raison d'être du produit.
+ * Work d'abord : c'est là qu'on travaille, et c'est la raison d'être du
+ * produit. Approvals ferme le groupe du haut parce que c'est la seule qui
+ * compte quelque chose.
  */
 export const DESTINATIONS: readonly Destination[] = [
   {
@@ -155,22 +220,16 @@ export const DESTINATIONS: readonly Destination[] = [
     label: 'Work',
     icon: ChatCircleText,
     href: '/',
-    // `/` allume WORK depuis le 19/09 au soir (issue #248) : la racine n'est
-    // plus le tableau de bord, c'est un fil vide — « New conversation » — et
-    // c'est donc l'endroit où l'on travaille.
-    //
-    // `/spaces` aussi : les espaces de travail vivent dans ce panneau, et une
-    // destination qui ne s'allume pas sur la page qu'elle porte se lit comme
-    // un menu cassé.
+    // `/` allume Work (#248) : la racine est un fil vide, donc l'endroit où
+    // l'on travaille. `/spaces` aussi, puisque les espaces sont dans ce
+    // panneau — une destination qui ne s'allume pas sur la page qu'elle porte
+    // se lit comme un menu cassé.
     routes: ['/', '/chat', '/spaces'],
-    // AUCUN bloc écrit. Le panneau Work n'a que des lignes qui n'existent
-    // qu'en base : son dossier « Workspaces », qui déplie les projets, et ses
-    // dossiers de canaux. Toutes deux se lisent à l'exécution.
-    groups: [],
+    groups: WORK_GROUPS,
   },
   {
-    key: 'agent',
-    label: 'Agent',
+    key: 'agents',
+    label: 'Agents',
     icon: Cube,
     href: '/agents',
     routes: [
@@ -183,34 +242,62 @@ export const DESTINATIONS: readonly Destination[] = [
       '/credentials',
       '/llm-providers',
     ],
-    groups: BUILD_GROUPS,
+    groups: AGENTS_GROUPS,
   },
   {
     key: 'run',
     label: 'Run',
     icon: Pulse,
-    // `/dashboard`, et non `/` (issue #248, constaté au rebase). La case du
-    // rail est un LIEN : tant que la racine ÉTAIT le tableau de bord, `/` était
-    // la bonne adresse pour Run. Elle rend un fil vide depuis #248, et cliquer
-    // Run emmenait donc sur Work, qui s'allumait à sa place — un rail qui
-    // répond à côté. L'adresse d'une destination est la première de ses routes.
+    // `/dashboard`, et non `/` (issue #248) ni `/automations`. La case du rail
+    // est un LIEN, et elle mène là où mène la PREMIÈRE LIGNE de son panneau —
+    // « Dashboard », que le propriétaire a fait revenir en tête de Run le
+    // 19/09 au soir. Tant que la racine ÉTAIT le tableau de bord, `/` faisait
+    // l'affaire ; elle rend un fil vide depuis #248, et cliquer Run emmenait
+    // alors sur Work, qui s'allumait à sa place — un rail qui répond à côté.
     href: '/dashboard',
     routes: [
+      // Le tableau de bord OUVRE la liste : c'est la première ligne du
+      // panneau, donc l'adresse de la destination.
       '/dashboard',
-      '/logs',
       '/automations',
-      // Les pages d'un run et d'un espace de travail. Elles n'ont PAS d'entrée
-      // dans le panneau — on y arrive depuis une liste, jamais depuis le menu
-      // (#143 les fusionnera dans Workspaces) — mais elles doivent allumer une
-      // destination : le rail sans destination active se lit comme un rail
-      // cassé.
+      // Les pages d'un run et d'un espace de travail. On y arrive depuis une
+      // liste, jamais depuis le menu (#143 les fusionnera dans Workspaces).
       '/jobs',
       '/runs',
       '/code',
     ],
     groups: RUN_GROUPS,
   },
+  {
+    key: 'approvals',
+    label: 'Approvals',
+    icon: ShieldCheck,
+    href: '/approvals',
+    routes: ['/approvals'],
+    groups: APPROVALS_GROUPS,
+  },
+  {
+    key: 'settings',
+    label: 'Settings',
+    icon: GearSix,
+    href: '/settings',
+    routes: ['/settings'],
+    groups: SETTINGS_GROUPS,
+  },
 ];
+
+/**
+ * Ce que le rail porte EN BAS, sous la séparation : ce qui n'ouvre pas de
+ * panneau.
+ *
+ * Logs NAVIGUE — sa page est une liste, elle n'a rien à déplier dans une
+ * colonne de 300 px. Help ouvre la documentation, qui est dehors.
+ */
+export const RAIL_FOOT = {
+  logs: { href: '/logs', label: 'Logs' },
+  /** L'adresse que l'application utilise déjà pour sa documentation. */
+  docs: 'https://kwintspiracy.github.io/nodal-agents/',
+} as const;
 
 /**
  * La destination que la route DÉSIGNE, ou `null` quand aucune ne la reconnaît.
@@ -219,9 +306,8 @@ export const DESTINATIONS: readonly Destination[] = [
  * et une route couverte par deux destinations ne dépendrait pas de l'ordre de
  * la table. `/` ne vaut que pour lui-même.
  *
- * `null` est un fait, pas un trou : c'est la réponse sur `/settings`, dont la
- * case vit au bas du rail. Le rail n'y allume alors AUCUNE des trois, et dire
- * « Run » ferait mentir la case sur la page où l'on se trouve.
+ * `null` est un fait, pas un trou : c'est la réponse sur `/logs`, dont la case
+ * vit au bas du rail et n'ouvre aucun panneau.
  */
 export function matchedDestination(pathname: string): Destination | null {
   let best: Destination | null = null;
@@ -242,13 +328,13 @@ export function matchedDestination(pathname: string): Destination | null {
 /**
  * La destination que le PANNEAU montre — toujours une, jamais zéro.
  *
- * Celle que la route désigne, sinon RUN. Le panneau doit bien montrer quelque
- * chose, et Run porte le tableau de bord, donc la racine du produit. Un panneau
- * vide serait pire, et « la dernière destination visitée » ferait deux écrans
- * différents pour la même adresse.
+ * Celle que la route désigne, sinon WORK. Le panneau doit bien montrer quelque
+ * chose, et Work porte la racine du produit. Un panneau vide serait pire, et
+ * « la dernière destination visitée » ferait deux écrans différents pour la
+ * même adresse.
  */
 export function destinationForPath(pathname: string): Destination {
-  return matchedDestination(pathname) ?? runDestination();
+  return matchedDestination(pathname) ?? workDestination();
 }
 
 /** Une route est-elle celle-ci, ou dedans ? Jamais un préfixe de mot. */
@@ -256,17 +342,24 @@ function isUnder(pathname: string, route: string): boolean {
   return pathname === route || pathname.startsWith(route + '/');
 }
 
-/** Run, la destination de repli. Lue dans la table, jamais réécrite. */
-function runDestination(): Destination {
-  const run = DESTINATIONS.find((d) => d.key === 'run');
-  // La table est une constante de ce module : l'absence de `run` serait une
+/** Work, la destination de repli. Lue dans la table, jamais réécrite. */
+function workDestination(): Destination {
+  const work = DESTINATIONS.find((d) => d.key === 'work');
+  // La table est une constante de ce module : l'absence de `work` serait une
   // faute de frappe, pas un cas d'exécution. On le dit fort (invariant #4).
-  if (run === undefined) throw new Error('sidebar-nav: no "run" destination');
-  return run;
+  if (work === undefined) throw new Error('sidebar-nav: no "work" destination');
+  return work;
 }
 
-/** L'entrée du panneau qui correspond à la route — exacte, ou dedans. */
+/**
+ * L'entrée du panneau qui correspond à la route — exacte, ou dedans.
+ *
+ * Le `?open=` des réglages est ÉCARTÉ avant la comparaison : quatre lignes
+ * mènent à la même page avec un paramètre différent, et les quatre
+ * s'allumeraient si on comparait l'adresse entière.
+ */
 export function isPanelItemActive(href: string, pathname: string): boolean {
-  if (href === '/') return pathname === '/';
-  return isUnder(pathname, href);
+  const chemin = href.split('?')[0] ?? href;
+  if (chemin === '/') return pathname === '/';
+  return isUnder(pathname, chemin);
 }

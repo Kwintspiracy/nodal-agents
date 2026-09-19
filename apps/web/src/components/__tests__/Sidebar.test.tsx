@@ -558,7 +558,13 @@ describe('le panneau Talk garde les dossiers de 0.8.11 @cap:reprendre-conversati
 describe('le dossier Workspaces se déplie @cap:reprendre-conversation/ecran', () => {
   /** `n` projets, tels que la lecture bornée les rend. */
   function projets(n: number) {
-    return Array.from({ length: n }, (_, i) => ({ id: `p${i + 1}`, name: `Project ${i + 1}` }));
+    // `unread` est FAUX par défaut : le point d'une ligne d'espace de travail
+    // se prouve dans son propre cas, pas en passant.
+    return Array.from({ length: n }, (_, i) => ({
+      id: `p${i + 1}`,
+      name: `Project ${i + 1}`,
+      unread: false,
+    }));
   }
 
   it('plie et déplie au clic sur son nom, comme un canal', async () => {
