@@ -8,6 +8,11 @@
  * (`buildSettingRows`, testé à part), et elle passe à la liste les formulaires
  * EXISTANTS, inchangés — ce sont eux qui enregistrent, chacun avec son action
  * serveur, exactement comme avant.
+ *
+ * Chacun reçoit en plus un `formId`, et rien d'autre : c'est par lui que le
+ * bouton Save posé au bas du panneau soumet le bon formulaire (attribut HTML
+ * `form`, voir `DockedFormCta.tsx`). Les sections à interrupteur immédiat n'en
+ * reçoivent pas — elles n'ont rien à soumettre.
  */
 
 import Link from 'next/link';
@@ -38,6 +43,7 @@ import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
 import SettingsList from './SettingsList.tsx';
 import { buildSettingRows, type SettingId } from './settings-rows.ts';
+import { dockedFormId } from '@/components/ui/DockedFormCta.tsx';
 import PageShell from '@/components/ui/PageShell';
 import { SetPane } from '@/components/ui/SetPane.tsx';
 import { SetRow } from '@/components/ui/SetRow.tsx';
@@ -127,9 +133,14 @@ export default async function SettingsPage({ searchParams }: PageProps) {
   // Les formulaires existants, tels quels : le panneau porte le titre et le
   // lede, eux gardent leur contenu, leur validation et leur action serveur.
   const panels: Partial<Record<SettingId, React.ReactNode>> = {
-    'sign-in': securityResult.ok ? <SecurityForm initial={securityResult.data} /> : null,
-    network: networkResult.ok ? <NetworkForm initial={networkResult.data} /> : null,
-    password: s.authMode === 'local-auth' ? <PasswordForm /> : null,
+    'sign-in': securityResult.ok ? (
+      <SecurityForm initial={securityResult.data} formId={dockedFormId('sign-in')} />
+    ) : null,
+    network: networkResult.ok ? (
+      <NetworkForm initial={networkResult.data} formId={dockedFormId('network')} />
+    ) : null,
+    password:
+      s.authMode === 'local-auth' ? <PasswordForm formId={dockedFormId('password')} /> : null,
     'worker-secret': <WorkerSecretPanel configured={s.workerSecretConfigured} />,
     'auto-run-brake': autoRunPauseResult.ok ? (
       <AutoRunPauseSection initial={autoRunPauseResult.data} />
@@ -142,16 +153,21 @@ export default async function SettingsPage({ searchParams }: PageProps) {
         agents={agentsResult.ok ? agentsResult.data : []}
         initialRootAgentId={rootConfigResult.ok ? rootConfigResult.data.rootAgentId : null}
         initialGrants={grants}
+        formId={dockedFormId('root-agent')}
       />
     ),
     'mcp-server': mcpSwitchResult.ok ? <McpServerSection initial={mcpSwitchResult.data} /> : null,
     timezone: tzResult.ok ? (
-      <TimezoneForm initial={tzResult.data.timezone} isExplicit={tzResult.data.isExplicit} />
+      <TimezoneForm
+        initial={tzResult.data.timezone}
+        isExplicit={tzResult.data.isExplicit}
+        formId={dockedFormId('timezone')}
+      />
     ) : null,
     'install-notes': installNotesResult.ok ? (
-      <InstallNotesForm initial={installNotesResult.data} />
+      <InstallNotesForm initial={installNotesResult.data} formId={dockedFormId('install-notes')} />
     ) : null,
-    workspaces: <WorkspacesSection initial={workspaces} />,
+    workspaces: <WorkspacesSection initial={workspaces} formId={dockedFormId('workspaces')} />,
     urls: (
       <SetPane>
         <SetRow label="App URL">

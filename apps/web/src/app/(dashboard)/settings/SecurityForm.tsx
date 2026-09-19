@@ -14,10 +14,15 @@ import TextInput from '@/components/ui/TextInput';
 import FieldLabel from '@/components/ui/FieldLabel';
 
 interface Props {
-  initial: SecurityView;
+  initial: SecurityView; /**
+   * L'`id` du `<form>` quand ce formulaire est rendu dans le panneau ancré
+   * (#231) : le bouton Save du pied le soumet par l'attribut HTML `form`.
+   * Absent ailleurs — le formulaire garde alors ses propres boutons.
+   */
+  formId?: string;
 }
 
-export default function SecurityForm({ initial }: Props) {
+export default function SecurityForm({ initial, formId }: Props) {
   const [mode, setMode] = useState<'local-trust' | 'local-auth'>(initial.configuredMode);
   const [editGoogle, setEditGoogle] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -58,7 +63,7 @@ export default function SecurityForm({ initial }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form id={formId} onSubmit={handleSubmit}>
       <SetForm label="Auth mode">
         <OptionRadio
           active={mode === 'local-trust'}

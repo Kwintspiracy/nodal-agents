@@ -10,10 +10,15 @@ import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
 import { SetForm } from '@/components/ui/SetForm.tsx';
 
 interface Props {
-  initial: NetworkView;
+  initial: NetworkView; /**
+   * L'`id` du `<form>` quand ce formulaire est rendu dans le panneau ancré
+   * (#231) : le bouton Save du pied le soumet par l'attribut HTML `form`.
+   * Absent ailleurs — le formulaire garde alors ses propres boutons.
+   */
+  formId?: string;
 }
 
-export default function NetworkForm({ initial }: Props) {
+export default function NetworkForm({ initial, formId }: Props) {
   const [bind, setBind] = useState<'loopback' | 'lan'>(initial.configuredBind);
   const [isPending, startTransition] = useTransition();
   const [restartHint, setRestartHint] = useState(false);
@@ -39,7 +44,7 @@ export default function NetworkForm({ initial }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form id={formId} onSubmit={handleSubmit}>
       {/* Pas de label ici : le panneau qui accueille ce formulaire porte déjà
           « Network access » en titre (#231). */}
       <SetForm>

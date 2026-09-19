@@ -22,9 +22,15 @@ import TextInput from '@/components/ui/TextInput';
 
 interface Props {
   initial: WorkspaceRow[];
+  /**
+   * L'`id` du formulaire de CRÉATION quand cette section est rendue dans le
+   * panneau ancré (#231) : le bouton du pied le soumet par l'attribut HTML
+   * `form`. Le formulaire de renommage, en ligne dans la liste, garde le sien.
+   */
+  formId?: string;
 }
 
-export default function WorkspacesSection({ initial }: Props) {
+export default function WorkspacesSection({ initial, formId }: Props) {
   const router = useRouter();
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>(initial);
 
@@ -208,7 +214,7 @@ export default function WorkspacesSection({ initial }: Props) {
       </div>
 
       {/* Create form */}
-      <form onSubmit={handleCreate}>
+      <form id={formId} onSubmit={handleCreate}>
         <SetForm label="Create workspace">
           <div className="mb-2">
             <EmojiPicker value={newIcon} onChange={setNewIcon} disabled={isCreating} />

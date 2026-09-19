@@ -17,9 +17,15 @@
  * direct ouvre le panneau. La page serveur lit `?open` au premier rendu ; les
  * clics suivants réécrivent l'URL sans repasser par le serveur, sinon chaque
  * ligne cliquée rechargerait les onze lectures.
+ *
+ * Cancel et Save vivent au BAS du panneau, comme sur la planche, sans qu'aucun
+ * formulaire ait eu à changer de logique : voir `DockedFormCta.tsx`. Un panneau
+ * n'a donc un pied QUE si son formulaire a des actions — les sections à
+ * interrupteur immédiat et les panneaux en lecture seule n'en ont pas, et
+ * aucune liste ne le répète ici.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Browser,
   Checks,
@@ -37,7 +43,13 @@ import {
   type Icon,
 } from '@phosphor-icons/react';
 import DockedPanel from '@/components/ui/DockedPanel';
+import {
+  DockedFormCtaProvider,
+  dockedFormId,
+  type DockedFormCta,
+} from '@/components/ui/DockedFormCta.tsx';
 import DisclosureButton from '@/components/ui/DisclosureButton';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import SetListRow from '@/components/ui/SetListRow';
 import Switch from '@/components/ui/Switch';
@@ -83,6 +95,20 @@ export default function SettingsList({ rows, panels, initialOpen }: Props) {
   const [query, setQuery] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [open, setOpen] = useState<SettingId | null>(initialOpen);
+
+  // Ce que le formulaire ouvert a annoncé de ses actions. `null` ⇒ pas de pied.
+  // Le geste d'annulation vit dans une ref : il ne change rien à l'affichage,
+  // et le garder dans l'état ferait re-rendre le pied pour rien.
+  const [cta, setCta] = useState<{ saveLabel: string; pending: boolean } | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
+  const report = useCallback((next: DockedFormCta | null) => {
+    cancelRef.current = next ? next.onCancel : null;
+    setCta((prev) => {
+      if (next === null) return null;
+      if (prev && prev.saveLabel === next.saveLabel && prev.pending === next.pending) return prev;
+      return { saveLabel: next.saveLabel, pending: next.pending };
+    });
+  }, []);
 
   const visible = useMemo(() => filterSettingRows(rows, query), [rows, query]);
   const filtering = query.trim() !== '';
@@ -172,6 +198,33 @@ export default function SettingsList({ rows, panels, initialOpen }: Props) {
         onClose={() => setOpen(null)}
         title={openRow?.name ?? ''}
         testId="settings-panel"
+        footer={
+          openRow !== null && cta !== null ? (
+            <>
+              <PrimaryButton
+                variant="neutral"
+                type="button"
+                data-testid="settings-panel-cancel"
+                onClick={() => {
+                  // Le formulaire remet son état, puis le panneau se ferme.
+                  cancelRef.current?.();
+                  setOpen(null);
+                }}
+              >
+                Cancel
+              </PrimaryButton>
+              <PrimaryButton
+                variant="ink"
+                type="submit"
+                form={dockedFormId(openRow.id)}
+                disabled={cta.pending}
+                data-testid="settings-panel-save"
+              >
+                {cta.pending ? 'Saving…' : cta.saveLabel}
+              </PrimaryButton>
+            </>
+          ) : undefined
+        }
       >
         {openRow !== null && <p className="text-body-13 text-ink-3">{openRow.lede}</p>}
         {/* Un panneau vide est un cul-de-sac : quand la lecture du réglage a
@@ -182,7 +235,14 @@ export default function SettingsList({ rows, panels, initialOpen }: Props) {
             {openRow.value}. Reload the page, and check the runner is up.
           </p>
         ) : (
-          panel
+          openRow !== null && (
+            <DockedFormCtaProvider
+              key={openRow.id}
+              value={{ formId: dockedFormId(openRow.id), report }}
+            >
+              {panel}
+            </DockedFormCtaProvider>
+          )
         )}
       </DockedPanel>
     </div>
