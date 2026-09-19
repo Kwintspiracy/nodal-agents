@@ -40,10 +40,19 @@ vi.mock('next/link', () => ({
   default: ({ children, href, ...rest }: { children: ReactNode; href: string }) =>
     createElement('a', { href, ...rest }, children),
 }));
+// UN SEUL faux pour ce module, et il porte TOUT ce que la barre lui demande.
+// `@/lib/actions` et `@/lib/actions.ts` désignent le même fichier : deux
+// `vi.mock` se remplacent l'un l'autre, et celui qui perd emporte ses
+// fonctions — c'est ce qui a fait tomber la capture le jour où le rail a pris
+// la ligne de version (#258).
 vi.mock('@/lib/actions', () => ({
   listApprovalsAction: vi.fn(),
   switchWorkspaceAction: vi.fn(),
   createWorkspaceAction: vi.fn(),
+  getVersionInfoAction: vi.fn(async () => ({
+    ok: true as const,
+    data: { current: '0.8.11', latest: '0.8.11', updateAvailable: false },
+  })),
 }));
 vi.mock('@/lib/conversation-actions.ts', () => ({ getChatFoldersAction: vi.fn() }));
 vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
@@ -56,12 +65,6 @@ vi.mock('@/lib/sidebar-actions.ts', () => ({
 }));
 vi.mock('../NotificationsBell', () => ({ default: () => null }));
 vi.mock('../ui/ThemeToggle', () => ({ default: () => null }));
-vi.mock('@/lib/actions.ts', () => ({
-  getVersionInfoAction: vi.fn(async () => ({
-    ok: true as const,
-    data: { current: '0.8.11', latest: '0.8.11', updateAvailable: false },
-  })),
-}));
 
 import Sidebar from '../Sidebar.tsx';
 import { ApprovalsProvider } from '../ApprovalsProvider';

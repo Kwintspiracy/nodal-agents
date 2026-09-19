@@ -501,22 +501,24 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     expect(navLink('Install').getAttribute('href')).toBe('/settings?open=install-notes');
   });
 
-  it('allume les quatre réglages ENSEMBLE, faute de pouvoir les distinguer', async () => {
-    // Les quatre mènent à `/settings` avec un paramètre différent, et le
-    // paramètre est ÉCARTÉ avant la comparaison : la route seule ne dit pas
-    // lequel est ouvert, et comparer l'adresse entière n'en allumerait aucun
-    // (`usePathname` ne porte pas la chaîne de requête). Quatre lignes
-    // allumées sur la page qu'elles ouvrent toutes vaut mieux que zéro.
+  it('n’allume AUCUN des quatre réglages, comme la planche', async () => {
+    // Les quatre mènent à `/settings` avec un paramètre différent, et la route
+    // n'en porte aucun : `usePathname` s'arrête au chemin. Comparer sur le
+    // chemin seul les allumerait TOUTES LES QUATRE — quatre lignes qui se
+    // disent « la page où vous êtes » — et la planche n'en allume aucune. La
+    // case Settings du rail, elle, s'allume bien : c'est là que se lit où l'on
+    // est.
     //
-    // Mutation vérifiée : le `href.split('?')[0]` retiré de
-    // `isPanelItemActive` → ce cas rougit, aucune ne s'allume.
+    // Mutation vérifiée : le `href.split('?')[0]` de la v1 remis dans
+    // `isPanelItemActive` → ce cas rougit, les quatre s'allument d'un coup.
     pathname = '/settings';
     await renderSidebar();
     const panneau = container.querySelector('[data-testid="sidebar-panel"]');
     const actives = [...(panneau?.querySelectorAll('[data-sidebar-row]') ?? [])].filter((r) =>
       r.className.includes(SIDEBAR_ROW_ACTIVE),
     );
-    expect(actives.length).toBe(4);
+    expect(actives.length).toBe(0);
+    expect(railCell('settings').getAttribute('aria-current')).toBe('page');
   });
 
   it('marque l’entrée du panneau où l’on se trouve, et elle seule', async () => {
@@ -827,6 +829,12 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     // serait plus atteignable depuis la barre — le raisonnement que le
     // propriétaire a retenu pour « Dashboard » le 19/09 au soir.
     //
+    // ⚠️ ET IL SURVIT AUX TROIS ABSENCES : aucune ligne, une lecture qui n'a
+    // pas répondu, une lecture en échec. C'est justement sur une installation
+    // NEUVE — zéro projet — qu'on a besoin d'aller créer le premier, et la
+    // ligne disparaissait alors avec la liste. Le parcours Playwright l'a dit
+    // avant un humain.
+    //
     // Mutation vérifiée : `seeAllAlways` retiré → ce cas rougit à un seul
     // espace, et la page devient inatteignable.
     pathname = '/chat';
@@ -838,6 +846,30 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     expect(
       container.querySelector('[data-testid="see-all-workspaces"]')?.getAttribute('href'),
     ).toBe('/spaces');
+
+    await remonter();
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
+    await renderSidebar();
+    // Le cadre du vide, PUIS la ligne : les deux, et pas l'un ou l'autre.
+    expect(container.querySelector('[data-testid="sidebar-empty"]')?.textContent?.trim()).toBe(
+      'No Workspace Yet',
+    );
+    expect(
+      container.querySelector('[data-testid="see-all-workspaces"]')?.getAttribute('href'),
+    ).toBe('/spaces');
+
+    await remonter();
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({
+      ok: false,
+      code: 'db_error',
+      message: 'Could not list the workspaces',
+    });
+    await renderSidebar();
+    // Une lecture en échec est précisément le moment où l'on veut pouvoir
+    // aller voir la page par soi-même.
+    expect(container.querySelector('[data-testid="sidebar-list-workspaces"]')?.textContent).toBe(
+      'Could not list the workspacesSee all',
+    );
   });
 
   it('DÉPLIE « Nodal chats » au chargement, et laisse les canaux pliés', async () => {

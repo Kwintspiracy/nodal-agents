@@ -1,5 +1,5 @@
 // capture-sidebar.mjs — photographie la barre latérale pour la comparer à la
-// planche (#230, 19/09/2026).
+// planche (#230, cinq panneaux depuis #258).
 //
 // POURQUOI. Les planches du propriétaire sont la spécification, et une
 // ressemblance affirmée n'est pas une vérification. Il faut une IMAGE du
@@ -13,7 +13,8 @@
 // réécrite pour l'occasion.
 //
 // Usage : node scripts/capture-sidebar.mjs <dossier>
-//   Le dossier doit déjà contenir talk.html, build.html et run.html.
+//   Le dossier doit déjà contenir les cinq panneaux : work.html, agents.html,
+//   run.html, approvals.html et settings.html.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -48,7 +49,7 @@ const { chromium } = require('@playwright/test');
 const navigateur = await chromium.launch();
 
 for (const theme of ['light', 'dark']) {
-  for (const nom of ['talk', 'build', 'run']) {
+  for (const nom of ['work', 'agents', 'run', 'approvals', 'settings']) {
     const markup = readFileSync(join(dossier, `${nom}.html`), 'utf8');
     const page = `<!doctype html><html data-theme="${theme}"><head><meta charset="utf-8">
 <style>${css}</style>

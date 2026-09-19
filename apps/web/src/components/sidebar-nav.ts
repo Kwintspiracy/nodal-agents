@@ -368,12 +368,20 @@ function workDestination(): Destination {
 /**
  * L'entrée du panneau qui correspond à la route — exacte, ou dedans.
  *
- * Le `?open=` des réglages est ÉCARTÉ avant la comparaison : quatre lignes
- * mènent à la même page avec un paramètre différent, et les quatre
- * s'allumeraient si on comparait l'adresse entière.
+ * ⚠️ UNE ENTRÉE QUI PORTE UN PARAMÈTRE NE S'ALLUME JAMAIS. Les quatre lignes
+ * de Settings mènent toutes à `/settings`, chacune avec un `?open=` différent ;
+ * la route, elle, n'en porte aucun (`usePathname` s'arrête au chemin). Les
+ * comparer sur le chemin seul allumerait les QUATRE d'un coup — quatre lignes
+ * qui se disent toutes « la page où vous êtes », ce qui ne veut plus rien dire
+ * et ce que la planche ne dessine pas : elle n'en allume aucune. Les comparer
+ * sur l'adresse entière n'en allumerait aucune non plus, mais par accident.
+ * On le dit donc franchement : sans le paramètre, la route ne distingue pas
+ * ces lignes, et aucune ne se prétend courante.
  */
 export function isPanelItemActive(href: string, pathname: string): boolean {
-  const chemin = href.split('?')[0] ?? href;
-  if (chemin === '/') return pathname === '/';
-  return isUnder(pathname, chemin);
+  // L'adresse est comparée ENTIÈRE, paramètre compris. C'est ce qui suffit :
+  // `/settings` n'est ni égal à `/settings?open=sign-in` ni dedans, donc la
+  // ligne ne s'allume pas, et il n'y a pas de garde à écrire pour cela.
+  if (href === '/') return pathname === '/';
+  return isUnder(pathname, href);
 }

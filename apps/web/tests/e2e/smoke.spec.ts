@@ -88,9 +88,10 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
     // Les libellés sont ceux de `components/sidebar-nav.ts`, la source.
     const panneaux: ReadonlyArray<readonly [string, readonly string[]]> = [
       [
+        // « Agents » n'est PAS dans cette liste : depuis #258 c'est un dossier
+        // qui plie, donc un bouton, et il est verifie plus bas comme tel.
         '/agents',
         [
-          'Agents',
           'Skills',
           'Learned Skills',
           'Memory',
@@ -127,6 +128,13 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
         ).toBeVisible();
       }
     }
+
+    // Le dossier « Agents » ouvre son panneau, et il arrive DEPLIE : un
+    // bouton qui plie, pas un lien, exactement comme un dossier de canal.
+    await page.goto('/agents');
+    const dossierAgents = page.locator('[data-testid="inbox-folder-agents"]');
+    await expect(dossierAgents).toBeVisible();
+    await expect(dossierAgents).toHaveAttribute('aria-expanded', 'true');
 
     // Les espaces de travail ne se deplient plus (#258) : ce sont les lignes
     // memes de leur section. Le chemin vers `/spaces` est le « See all » qui

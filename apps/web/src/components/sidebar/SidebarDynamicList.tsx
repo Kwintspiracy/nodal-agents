@@ -100,44 +100,52 @@ export default function SidebarDynamicList({
   const lire = useCallback(() => read(FOLDER_THREADS_PROBE), [read]);
   const { rows, erreur } = useSidebarRead<DynamicRow>(lire, active);
 
-  if (erreur !== null) return <p className={SIDEBAR_NOTE}>{erreur}</p>;
-  if (rows === null) return <p className={SIDEBAR_NOTE}>Loading</p>;
-  if (rows.length === 0) return <SidebarEmpty>{empty}</SidebarEmpty>;
+  const { rows: lignes, hasMore } =
+    rows === null ? { rows: null, hasMore: false } : unfoldedRows(rows);
 
-  const { rows: lignes, hasMore } = unfoldedRows(rows);
+  // ⚠️ « SEE ALL » SURVIT AUX TROIS ABSENCES quand la section en a un en
+  // permanence. C'est tout l'intérêt du cas : `/spaces` n'est plus atteignable
+  // que par cette ligne, et elle disparaissait avec la liste sur une base
+  // vide — c'est-à-dire précisément sur l'installation neuve où l'on va
+  // créer son premier projet. Le parcours Playwright l'a dit avant un humain.
+  const voirTout = seeAll !== undefined && (hasMore || seeAllAlways) && (
+    <SidebarRow href={seeAll} title="See all" depth="thread" testId={`see-all-${testId}`}>
+      <span className="h-3.5 w-3.5 shrink-0" />
+      <span className="flex-1 truncate leading-5 italic">See all</span>
+      <ArrowRight size={12} data-testid="see-all-arrow" className="h-3 w-3 shrink-0 text-ink-3" />
+    </SidebarRow>
+  );
 
   return (
     <div className="flex flex-col gap-0.5" data-testid={`sidebar-list-${testId}`}>
-      {lignes.map((r) => (
-        <SidebarRow
-          key={r.id}
-          href={hrefOf(r)}
-          title={r.title ?? r.name}
-          depth="thread"
-          testId={`sidebar-row-${testId}`}
-        >
-          {dot ? (
-            <ThreadDot thread={{ waiting: r.calls ?? false, running: false, unread: false }} />
-          ) : (
-            // Une place vide de la largeur d'un point : les noms s'alignent
-            // sur ceux des sections qui en portent un, sans rien mettre devant
-            // eux. C'est ce que la planche dessine sur CRON et sur les agents.
-            <span className="h-3.5 w-3.5 shrink-0" />
-          )}
-          <span className="flex-1 truncate leading-5">{r.name}</span>
-        </SidebarRow>
-      ))}
-      {(hasMore || seeAllAlways) && seeAll !== undefined && (
-        <SidebarRow href={seeAll} title="See all" depth="thread" testId={`see-all-${testId}`}>
-          <span className="h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1 truncate leading-5 italic">See all</span>
-          <ArrowRight
-            size={12}
-            data-testid="see-all-arrow"
-            className="h-3 w-3 shrink-0 text-ink-3"
-          />
-        </SidebarRow>
+      {erreur !== null ? (
+        <p className={SIDEBAR_NOTE}>{erreur}</p>
+      ) : lignes === null ? (
+        <p className={SIDEBAR_NOTE}>Loading</p>
+      ) : lignes.length === 0 ? (
+        <SidebarEmpty>{empty}</SidebarEmpty>
+      ) : (
+        lignes.map((r) => (
+          <SidebarRow
+            key={r.id}
+            href={hrefOf(r)}
+            title={r.title ?? r.name}
+            depth="thread"
+            testId={`sidebar-row-${testId}`}
+          >
+            {dot ? (
+              <ThreadDot thread={{ waiting: r.calls ?? false, running: false, unread: false }} />
+            ) : (
+              // Une place vide de la largeur d'un point : les noms s'alignent
+              // sur ceux des sections qui en portent un, sans rien mettre devant
+              // eux. C'est ce que la planche dessine sur CRON et sur les agents.
+              <span className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span className="flex-1 truncate leading-5">{r.name}</span>
+          </SidebarRow>
+        ))
       )}
+      {voirTout}
     </div>
   );
 }
