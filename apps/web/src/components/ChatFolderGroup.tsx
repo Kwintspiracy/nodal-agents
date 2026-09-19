@@ -73,7 +73,7 @@ import {
   listFolderThreadsAction,
   type FolderThreadsSnapshot,
 } from '@/lib/folder-threads-actions.ts';
-import { usePolling } from '@/lib/use-polling';
+import { usePolling, SIDEBAR_POLL_MS } from '@/lib/use-polling';
 
 /**
  * L'icône d'un dossier. Les logos de marque quand le paquet d'icônes en a un —
@@ -95,14 +95,6 @@ const FOLDER_ICON: Readonly<Record<string, PhosphorIcon>> = {
   // l'on parle, c'est ce qui arrive quand une machine se branche au produit.
   [MCP_FOLDER]: PlugsConnected,
 };
-
-/**
- * La cadence de relecture du sous-menu. QUINZE SECONDES, et pas un chiffre
- * choisi ici : c'est exactement celle d'`ApprovalsProvider` et de
- * `ChatFoldersProvider`, d'où viennent la pastille corail et le point vert.
- * Les trois signaux de la barre latérale disent donc l'état du même instant.
- */
-const POLL_INTERVAL_MS = 15_000;
 
 export default function ChatFolderGroup() {
   const pathname = usePathname();
@@ -203,7 +195,7 @@ export default function ChatFolderGroup() {
     // tours d'horloge (#223).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suivi, relire, pathname]);
-  usePolling(relireSiSuivi, POLL_INTERVAL_MS, true);
+  usePolling(relireSiSuivi, SIDEBAR_POLL_MS, true);
 
   const basculer = (key: string): void => {
     setDeplies((etat) => ({ ...etat, [key]: etat[key] !== true }));
