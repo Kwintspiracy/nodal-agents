@@ -34,6 +34,8 @@ import { ApprovalsProvider, type PendingApproval } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
 import { chatWaitingTotal, type FolderThread } from '@/lib/chat-folders.ts';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
+import { listApprovalsAction } from '@/lib/actions';
+import { getChatFoldersAction } from '@/lib/conversation-actions.ts';
 
 let pathname = '/chat';
 let search = '';
@@ -94,6 +96,18 @@ async function renderGroup(opts: {
   running?: Record<string, number>;
   externalRuns?: number;
 }): Promise<void> {
+  // Les relectures des deux providers voisins rendent CE QUE LA PAGE A SEMÉ.
+  // Leur `setInterval` de 15 s part dès qu'un test fait tourner l'horloge, et
+  // une réponse vide leur ferait effacer les dossiers sous les yeux du test.
+  vi.mocked(getChatFoldersAction).mockResolvedValue({
+    ok: true,
+    data: {
+      channels: opts.channels ?? [],
+      running: opts.running ?? {},
+      runningConversationIds: [],
+      externalRuns: opts.externalRuns ?? 0,
+    },
+  });
   await render(
     <ApprovalsProvider initial={opts.approvals ?? []}>
       <ChatFoldersProvider
@@ -129,6 +143,19 @@ beforeEach(() => {
   search = '';
   document.body.innerHTML = '';
   vi.mocked(listFolderThreadsAction).mockReset();
+  // LES DEUX PROVIDERS VOISINS RÉPONDENT, MÊME SI AUCUN TEST NE LES REGARDE.
+  // Ils posent chacun un `setInterval` de 15 s ; dès qu'un test fait tourner
+  // l'horloge, leurs actions partent aussi. Sans valeur de retour, elles
+  // rendent `undefined`, et le `result.ok` du provider lève une rejection non
+  // rattrapée qui fait rougir la suite ENTIÈRE sans qu'aucun test n'échoue
+  // (CI de la PR #223 : « 2088 passed, 2 errors »).
+  vi.mocked(listApprovalsAction).mockResolvedValue({ ok: true, data: [] });
+  // `renderGroup` la réarme avec ce que la page sème ; ce défaut ne sert qu'aux
+  // rendus qui ne passent pas par lui.
+  vi.mocked(getChatFoldersAction).mockResolvedValue({
+    ok: true,
+    data: { channels: [], running: {}, runningConversationIds: [], externalRuns: 0 },
+  });
 });
 
 afterEach(async () => {
