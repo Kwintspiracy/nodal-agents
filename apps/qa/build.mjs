@@ -26,6 +26,9 @@ import {
   SANS_RELEASE,
   pileDuneColonne,
   JOURS_DE_FENETRE,
+  etatDeMesure,
+  repartitionDeLaMesure,
+  MOT_MESURE,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
@@ -296,6 +299,45 @@ function vueEnsemble() {
   const jamaisJoues = etats.filter((c) => c === 'jamais joué').length;
   const illisibles = etats.filter((c) => c === 'ci illisible').length;
 
+  // Hors mesure, oui, mais POURQUOI. Un paquet qu'on a décidé de ne pas
+  // mesurer ne demande rien à personne ; un paquet qu'on croyait mesuré et qui
+  // ne l'est pas demande qu'on aille voir. La carte disait « never been
+  // instrumented » des deux, et c'est ce qui a laissé `@nodal-agents/auth`
+  // dans l'ombre derrière `@nodal-agents/docs` (issue #58).
+  //
+  // La répartition est RECALCULÉE à partir des paquets, jamais lue dans le
+  // résumé : une collecte antérieure à ce lot n'a pas les clés, et la page
+  // doit rester juste sur elle.
+  const repMesure = repartitionDeLaMesure(s.paquets ?? []);
+  const sansMesure = [...repMesure.echouees, ...repMesure.absentes];
+  // Nommer, oui, mais la carte tient dans une boîte : au-delà de huit noms la
+  // phrase chasse tout le reste de l'écran. Les autres sont comptés, et la
+  // table juste en dessous les porte tous, ligne par ligne.
+  const PLAFOND = 8;
+  const nommer = (liste) => {
+    const noms = liste
+      .slice(0, PLAFOND)
+      .map((p) => `${esc(p.nom)}${p.raison ? ` (${esc(p.raison)})` : ''}`);
+    const reste = liste.length - noms.length;
+    return reste > 0 ? `${noms.join(', ')} and ${reste} more` : noms.join(', ');
+  };
+  const boutsHorsMesure = [];
+  if (sansMesure.length > 0) {
+    boutsHorsMesure.push(
+      `${sansMesure.length} package${sansMesure.length > 1 ? 's are' : ' is'} not instrumented: ${nommer(sansMesure)}`,
+    );
+  }
+  if (repMesure.exclues.length > 0) {
+    boutsHorsMesure.push(
+      `${repMesure.exclues.length} ${repMesure.exclues.length > 1 ? 'are' : 'is'} left out on purpose: ${nommer(repMesure.exclues)}`,
+    );
+  }
+  const horsMesure = sansMesure.length + repMesure.exclues.length;
+  const phraseHorsMesure =
+    boutsHorsMesure.length > 0
+      ? `This number only holds for the measured share. ${boutsHorsMesure.join('. ')}. ${horsMesure > 1 ? 'They count' : 'It counts'} in neither the numerator nor the denominator.`
+      : 'Every package of the repository is instrumented.';
+
   return `
 <section id="vue" class="vue">
   ${entete('vue', 'Tests, overview')}
@@ -309,7 +351,7 @@ function vueEnsemble() {
         <b>over ${r.paquetsMesures} measured packages / ${r.paquets}</b></p>
       ${barre(r.couvertureLignes, 'line coverage')}
       <p class="tendance tendance--${tCouv.direction ?? 'seule'}">${esc(phraseCouv)}</p>
-      <p class="avertissement">This number only holds for the measured share. ${r.paquets - r.paquetsMesures} package${r.paquets - r.paquetsMesures > 1 ? 's have' : ' has'} never been instrumented, they count in neither the numerator nor the denominator.</p>
+      <p class="avertissement">${phraseHorsMesure}</p>
     </article>
 
     <article class="carte">
@@ -340,7 +382,7 @@ function vueEnsemble() {
 
   <h3 class="sous-titre">Coverage by package</h3>
   ${repere('vue', 'paquets')}
-  <p class="note-section">Sorted by uncovered line count: what sits on top is what costs the most to ignore. An unmeasured package is hatched, it does not have zero, it has nothing.</p>
+  <p class="note-section">Sorted by uncovered line count: what sits on top is what costs the most to ignore. An unmeasured package is hatched, it does not have zero, it has nothing. A package left out on purpose says so, and says why.</p>
   <div class="tableau">
     <table>
       <thead><tr><th>Package</th><th>Cases</th><th class="num">Lines</th><th style="min-width:180px">Line coverage</th><th class="num">Branches</th></tr></thead>
@@ -356,15 +398,25 @@ function vueEnsemble() {
               : -1;
             return nb - na;
           })
-          .map(
-            (p) => `<tr>
+          .map((p) => {
+            // La jauge hachurée dit « not measured » et s'arrête là. Pour un
+            // paquet hors mesure, la ligne porte l'état et sa raison : c'est
+            // la seule façon de ne pas relire cette table comme un oubli.
+            const m = etatDeMesure(p);
+            const cellule =
+              m.etat === 'mesuree'
+                ? barre(p.couverture.lignes, p.nom)
+                : m.etat === 'absente'
+                  ? barre(null, p.nom)
+                  : `<span class="hors-mesure">${esc(MOT_MESURE[m.etat])}: ${esc(m.raison)}</span>`;
+            return `<tr>
               <td><span class="mono">${esc(p.nom)}</span></td>
               <td class="num">${n(p.tests.cas)}</td>
               <td class="num dim">${p.couverture ? `${n(p.couverture.lignesCouvertes)}/${n(p.couverture.lignesTotal)}` : '·'}</td>
-              <td>${barre(p.couverture?.lignes ?? null, p.nom)}</td>
+              <td>${cellule}</td>
               <td class="num dim">${p.couverture ? pct(p.couverture.branches) : '·'}</td>
-            </tr>`,
-          )
+            </tr>`;
+          })
           .join('\n')}
       </tbody>
     </table>
@@ -1307,6 +1359,9 @@ nav a.discret:hover,nav a.discret.actif{color:var(--encre)}
 .jauge--faible span{color:var(--ko)}
 .jauge--inconnue{background:repeating-linear-gradient(135deg,var(--panneau2),var(--panneau2) 5px,transparent 5px,transparent 10px)}
 .jauge--inconnue span{color:var(--inconnu)}
+/* Hors mesure : ni jauge ni hachures. Une jauge, même vide, se lit comme un
+   résultat ; une exclusion assumée n'en est pas un, elle est une phrase. */
+.hors-mesure{display:inline-block;font-size:12px;line-height:1.35;color:var(--inconnu)}
 
 /* ── Tableaux ── */
 .tableau{overflow-x:auto;border-top:2px solid var(--encre)}

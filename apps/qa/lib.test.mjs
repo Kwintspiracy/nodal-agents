@@ -60,6 +60,9 @@ import {
   SANS_RELEASE,
   pileDuneColonne,
   ORDRE_DES_BACS,
+  HORS_MESURE,
+  etatDeMesure,
+  repartitionDeLaMesure,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -3218,5 +3221,126 @@ describe('le repli compte à part ce qu’on ne sait pas dater (revue C de #188)
     expect(pile.plusAnciennes).toBe(6);
     expect(pile.sansDate).toBe(1);
     expect(pile.replies).toBe(7);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #58 — « deux paquets sont hors de la mesure de couverture ».
+//
+// Le titre de l'issue mettait les deux dans le même sac, et le portail aussi :
+// `@nodal-agents/docs` est un site qu'on a DÉCIDÉ de ne pas instrumenter,
+// `@nodal-agents/auth` était un vrai trou. Une seule phrase pour les deux
+// (« never been instrumented ») et une colonne vide dans les deux cas : il n'y
+// avait aucun moyen de savoir lequel appelait un geste.
+//
+// Chaque test ci-dessous a été éprouvé PAR MUTATION : la ligne de `lib.mjs`
+// qu'il garde a été cassée, et il a rougi.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('etatDeMesure — une exclusion assumée n’est pas un trou de mesure (#58)', () => {
+  const docs = { nom: '@nodal-agents/docs', couverture: null };
+  const trou = { nom: '@nodal-agents/inconnu', couverture: null };
+
+  it('un paquet volontairement hors mesure porte son état ET sa raison', () => {
+    expect(etatDeMesure(docs)).toEqual({
+      etat: 'exclue',
+      raison: HORS_MESURE['@nodal-agents/docs'],
+    });
+    // Pas une phrase vide : c'est la raison qui fait la différence entre
+    // « on a choisi » et « on ne sait pas ».
+    expect(etatDeMesure(docs).raison.length).toBeGreaterThan(20);
+  });
+
+  it('un paquet sans couverture et hors de la liste reste un trou, sans raison inventée', () => {
+    expect(etatDeMesure(trou)).toEqual({ etat: 'absente', raison: null });
+  });
+
+  it('une mesure TENTÉE qui échoue se distingue d’une mesure jamais lancée', () => {
+    const echoue = { nom: '@nodal-agents/auth', couverture: null, mesureEchouee: { code: 1 } };
+    expect(etatDeMesure(echoue).etat).toBe('echouee');
+    expect(etatDeMesure(echoue).raison).toContain('code 1');
+    // Le même paquet sans témoin : personne ne sait, et le portail le dit.
+    expect(etatDeMesure({ nom: '@nodal-agents/auth', couverture: null }).etat).toBe('absente');
+  });
+
+  it('un code de sortie illisible ne fabrique pas un faux numéro', () => {
+    const flou = { nom: '@nodal-agents/x', couverture: null, mesureEchouee: { code: null } };
+    expect(etatDeMesure(flou)).toEqual({ etat: 'echouee', raison: 'the measurement run failed' });
+  });
+
+  it('un paquet MESURÉ reste mesuré, même s’il figurait dans la liste', () => {
+    // Un fait mesuré l'emporte sur une intention. Effacer un chiffre au nom
+    // d'une liste, ce serait l'inverse de ce portail.
+    const mesure = { nom: '@nodal-agents/docs', couverture: { lignes: 42 } };
+    expect(etatDeMesure(mesure)).toEqual({ etat: 'mesuree', raison: null });
+  });
+});
+
+describe('repartitionDeLaMesure — les trous sont COMPTÉS à part, et NOMMÉS (#58)', () => {
+  const paquets = [
+    { nom: '@nodal-agents/db', couverture: { lignes: 63.2 } },
+    { nom: '@nodal-agents/docs', couverture: null },
+    { nom: '@nodal-agents/auth', couverture: null, mesureEchouee: { code: 1 } },
+    { nom: '@nodal-agents/orphelin', couverture: null },
+  ];
+
+  it('un paquet exclu volontairement ne compte pas dans les jamais mesurés', () => {
+    const r = repartitionDeLaMesure(paquets);
+    expect(r.exclues.map((p) => p.nom)).toEqual(['@nodal-agents/docs']);
+    // LE point de l'issue : `docs` n'est NI dans les absents, NI dans les échecs.
+    expect(r.absentes.map((p) => p.nom)).toEqual(['@nodal-agents/orphelin']);
+    expect(r.echouees.map((p) => p.nom)).toEqual(['@nodal-agents/auth']);
+    expect(r.mesurees.map((p) => p.nom)).toEqual(['@nodal-agents/db']);
+  });
+
+  it('chaque bac nomme ses paquets — un compteur seul n’a jamais fait aller voir', () => {
+    const r = repartitionDeLaMesure(paquets);
+    for (const bac of ['mesurees', 'exclues', 'echouees', 'absentes']) {
+      for (const p of r[bac]) expect(typeof p.nom).toBe('string');
+    }
+    expect(r.exclues[0].raison).toBe(HORS_MESURE['@nodal-agents/docs']);
+  });
+
+  it('une liste vide rend quatre bacs vides, jamais `undefined`', () => {
+    expect(repartitionDeLaMesure()).toEqual({
+      mesurees: [],
+      exclues: [],
+      echouees: [],
+      absentes: [],
+    });
+  });
+});
+
+describe('la liste des exclusions vit à UN seul endroit (#58)', () => {
+  it('le paquet d’authentification n’y est pas, et n’a pas à y entrer', () => {
+    // L'angle mort de l'issue #58 se refermait aussi en déclarant `auth`
+    // « exclu ». Ce test interdit ce raccourci : c'est le paquet qui porte
+    // l'authentification, le moins souhaitable des paquets non mesurés.
+    expect(Object.keys(HORS_MESURE)).not.toContain('@nodal-agents/auth');
+  });
+
+  it('`collect.mjs --hors-mesure` rend EXACTEMENT la liste de `lib.mjs`', () => {
+    const sortie = execSync('node collect.mjs --hors-mesure', {
+      cwd: join(RACINE, 'apps', 'qa'),
+      encoding: 'utf8',
+    });
+    expect(sortie.trim().split('\n').filter(Boolean)).toEqual(Object.keys(HORS_MESURE));
+  });
+
+  it('la mesure nocturne DEMANDE la liste au lieu d’en tenir une copie', () => {
+    const yml = readFileSync(join(RACINE, '.github', 'workflows', 'qa.yml'), 'utf8');
+    const etape = yml.slice(yml.indexOf('Couverture par paquet'));
+    const boucle = etape.slice(0, etape.indexOf('- name:', 1));
+    expect(boucle).toContain('--hors-mesure');
+    // Aucun nom de paquet écrit en dur dans la boucle : c'est la seconde copie
+    // qui diverge, et c'est alors la page qui ment.
+    for (const nom of Object.keys(HORS_MESURE)) expect(boucle).not.toContain(nom);
+  });
+
+  it('un échec de mesure laisse un témoin que le collecteur sait lire', () => {
+    const yml = readFileSync(join(RACINE, '.github', 'workflows', 'qa.yml'), 'utf8');
+    expect(yml).toContain('coverage/mesure-echouee.json');
+    const collect = readFileSync(join(RACINE, 'apps', 'qa', 'collect.mjs'), 'utf8');
+    expect(collect).toContain('mesure-echouee.json');
   });
 });
