@@ -100,15 +100,21 @@ describe('ProjectScreen — l’ordre de la page @cap:travailler-sur-des-fichier
     if (iListe > -1) expect(iPanneau).toBeGreaterThan(iListe);
   });
 
-  it('le retour est DANS la barre, et il mène à Workspaces', () => {
+  it('AUCUN retour dans la barre : elle ne dit que le contexte', () => {
+    // #242, second temps : le soir du 19/09, Quentin a fait retirer les retours
+    // PARTOUT. La barre garde ce que la page EST — ici le chemin du projet —
+    // et on repart par la barre latérale.
     const iBarre = html.indexOf('data-testid="work-bar"');
-    const finBarre = html.indexOf('</div>', html.indexOf('Workspaces', iBarre));
-    expect(html.slice(iBarre, finBarre)).toContain('href="/spaces"');
-    expect(html.slice(iBarre, finBarre)).toContain('Workspaces');
+    const iActions = html.indexOf('data-testid="action-row"');
+    const barre = html.slice(iBarre, iActions);
+    expect(iBarre).toBeGreaterThan(-1);
+    expect(barre).not.toContain('href="/spaces"');
+    expect(barre).not.toContain('Workspaces');
   });
 
-  it('AUCUNE action n’est sur la ligne du retour', () => {
-    // Le constat du 19/09 : un retour entouré de boutons n'est plus un retour.
+  it('AUCUNE action n’est dans la barre', () => {
+    // Le constat du 19/09 : une action sur la ligne de la barre brouille ce
+    // que la barre dit.
     const iBarre = html.indexOf('data-testid="work-bar"');
     const iActions = html.indexOf('data-testid="action-row"');
     const barre = html.slice(iBarre, iActions);

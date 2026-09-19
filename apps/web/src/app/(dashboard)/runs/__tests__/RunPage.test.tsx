@@ -154,12 +154,7 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
     // l'ouverture et suit ce qui arrive, donc la page d'un run s'ouvrait déjà
     // défilée (Quentin, 18/09). Elle demande maintenant l'inverse, et un run
     // qui court ne fait plus filer ce qu'on est en train de lire.
-    const page = renderToStaticMarkup(
-      <RunPage
-        data={data(false)}
-        back={{ label: 'Back to the automation', href: '/automations/schedule-1' }}
-      />,
-    );
+    const page = renderToStaticMarkup(<RunPage data={data(false)} />);
     expect(page).toContain('data-follow="never"');
     expect(page).not.toContain('data-follow="bottom"');
   });
@@ -176,12 +171,7 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
 
   it('la zone de défilement ne pousse plus rien sur les côtés', () => {
     // Sinon les deux boîtes s'emboîtent et la page s'élargit d'autant.
-    const page = renderToStaticMarkup(
-      <RunPage
-        data={data(false)}
-        back={{ label: 'Back to the automation', href: '/automations/schedule-1' }}
-      />,
-    );
+    const page = renderToStaticMarkup(<RunPage data={data(false)} />);
     const scroller = /<div[^>]*data-thread-scroller[^>]*class="([^"]*)"/.exec(page)?.[1] ?? '';
     expect(scroller, 'la zone de défilement est rendue').not.toBe('');
     expect(scroller).not.toContain('px-5');

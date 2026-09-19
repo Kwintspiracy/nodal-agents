@@ -106,14 +106,7 @@ describe('PageShell — la borne du mode pleine hauteur @cap:suivre-execution/ec
 
   it('la page d’un RUN rend sans la borne', () => {
     const html = renderToStaticMarkup(
-      <RunScreen
-        avatarName="Builder A"
-        avatarUrl={null}
-        title="Un run"
-        subtitle="code"
-        back={{ label: 'Back to Activity', href: '/logs' }}
-        agents={[]}
-      >
+      <RunScreen avatarName="Builder A" avatarUrl={null} title="Un run" subtitle="code" agents={[]}>
         <p data-testid="corps">le corps du run</p>
       </RunScreen>,
     );

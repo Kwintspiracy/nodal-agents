@@ -101,10 +101,7 @@ export default async function ProjectScreen({
         subtitle={projectFactsLine(facts)}
         toolbar={
           <>
-            <WorkBar
-              back={{ label: 'Workspaces', parent: '/spaces' }}
-              context={<span className="text-body-13 text-ink-3">{facts.path}</span>}
-            />
+            <WorkBar context={<span className="text-body-13 text-ink-3">{facts.path}</span>} />
             <ActionRow className="px-5 pt-4 sm:px-8 lg:px-9">
               <ProjectToolbar
                 projectId={facts.id}

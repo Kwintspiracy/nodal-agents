@@ -9,12 +9,10 @@
 // `RunPage`, la page partagée avec /jobs/[id]. Un run est un tableau de bord,
 // pas un fil (décision Quentin) ; l'ordre des blocs vit dans `runs/RunPage.tsx`.
 
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getSpaceConversationAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import RunPage from '@/app/(dashboard)/runs/RunPage.tsx';
-import { runBackLink } from '@/lib/back-links.ts';
 
 // Force dynamic — the feed is read per request, and re-read while the job runs.
 export const dynamic = 'force-dynamic';
@@ -26,10 +24,7 @@ export default async function ScheduledRunPage({ params }: { params: Promise<{ i
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Run">
-        <Link href="/automations" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Automations
-        </Link>
-        <p className="mt-4 text-sm text-err">{result.message}</p>
+        <p className="text-sm text-err">{result.message}</p>
       </PageShell>
     );
   }
@@ -38,5 +33,5 @@ export default async function ScheduledRunPage({ params }: { params: Promise<{ i
   // de cron (#202 — la page Scheduled où il ramenait n'existe plus), la
   // conversation pour son run, Activity pour le reste (Quentin, 17/09 : « ce
   // problème est à plusieurs endroits »).
-  return <RunPage data={result.data} back={runBackLink(result.data.job)} />;
+  return <RunPage data={result.data} />;
 }

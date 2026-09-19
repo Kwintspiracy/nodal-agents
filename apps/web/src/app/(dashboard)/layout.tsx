@@ -4,7 +4,6 @@ import { AuthError, NoEntityError } from '@nodal-agents/auth';
 import Sidebar from '@/components/Sidebar';
 import UserMenu from '@/components/UserMenu.tsx';
 import ThemedToaster from '@/components/ui/ThemedToaster';
-import NavigationTrail from '@/components/NavigationTrail';
 import { ApprovalsProvider, type PendingApproval } from '@/components/ApprovalsProvider';
 import { SkillUpdatesProvider, type SkillUpdateNotice } from '@/components/SkillUpdatesProvider';
 import { ChatFoldersProvider } from '@/components/ChatFoldersProvider';
@@ -114,12 +113,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
             comme si elle n'était pas là — l'écran déborde et la saisie passe
             dessous (revue Codex, passe 65). `dvh` suit la hauteur réellement
             visible. Repli `h-screen` pour un navigateur qui l'ignore. */}
-          {/* #232 — le greffier du fil de navigation. Il ne dessine rien : il
-              note les pages de l'app visitées dans cet onglet pour que « Back »
-              revienne d'où l'on vient, au lieu du parent codé en dur de chaque
-              page de détail. Monté ICI parce que c'est la seule enveloppe que
-              toutes les pages du dashboard traversent. */}
-          <NavigationTrail />
+          {/* #242 — le greffier du fil de navigation de #232 est parti avec les
+              retours eux-mêmes : plus personne ne lui demande d'où l'on vient.
+              On se déplace par la barre latérale, qui reste visible. */}
           <div className="flex h-screen h-[100dvh] overflow-hidden bg-canvas text-ink">
             <Sidebar
               workspaces={workspaces}

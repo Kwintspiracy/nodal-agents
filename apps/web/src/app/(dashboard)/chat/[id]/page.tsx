@@ -6,11 +6,10 @@
 // un coût. Ce que cette page ajoute, c'est la saisie en bas quand la
 // conversation est celle du dashboard.
 
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
 import StatusPill from '@/components/ui/StatusPill';
-import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
+import ThreadWorkBar from '@/app/(dashboard)/spaces/ThreadWorkBar.tsx';
 import ConversationFeedView from '@/app/(dashboard)/spaces/ConversationFeedView.tsx';
 import LiveRefresh from '@/app/(dashboard)/spaces/LiveRefresh.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
@@ -23,7 +22,6 @@ import { truncate } from '@/lib/format-time';
 import ThreadComposer from '../ThreadComposer.tsx';
 import ThreadScreen from './ThreadScreen.tsx';
 import ThreadHeader from './ThreadHeader.tsx';
-import { threadBackLink } from '@/lib/back-links.ts';
 import PendingTurn, { PendingTurnProvider } from '../PendingTurn.tsx';
 import { feedAwaitsReply, feedRequests } from '../feed-requests.ts';
 
@@ -37,10 +35,7 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Conversation">
-        <Link href="/chat" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Channels
-        </Link>
-        <p className="mt-4 text-sm text-err">{result.message}</p>
+        <p className="text-sm text-err">{result.message}</p>
       </PageShell>
     );
   }
@@ -102,12 +97,11 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
         />
       }
       toolbar={
-        <WorkBar
-          // Le retour ramène dans le DOSSIER du fil (Discord, Telegram, Nodal
-          // chats), pas sur la liste entière (Quentin, 17/09) — et au PROJET
-          // quand le fil y est ancré (Quentin, 19/09) : c'est de là qu'on
-          // l'ouvre, et c'est là que ses frères sont listés.
-          back={threadBackLink(conversation.channel, project)}
+        <ThreadWorkBar
+          // #242 — la barre ne porte plus de retour. Elle a longtemps ramené
+          // dans le DOSSIER du fil, puis au projet quand le fil y était ancré ;
+          // Quentin a fait retirer les retours partout le soir du 19/09. Il ne
+          // reste que ce que le fil DIT de lui-même.
           agents={threadAgents(feed.items)}
           status={<StatusPill variant={live ? 'run' : 'idle'} />}
           proofVerdict={lastProof?.verdict ?? null}

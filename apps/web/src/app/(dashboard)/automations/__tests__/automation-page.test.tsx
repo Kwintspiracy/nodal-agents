@@ -555,14 +555,14 @@ describe('la page d’une routine @cap:planifier-une-tache/ecran', () => {
     expect(container.querySelector('[data-testid="routine-state"]')).toBeNull();
   });
 
-  it('porte le retour vers la liste et les trois gestes de la planche', async () => {
+  it('porte les trois gestes de la planche, et AUCUN retour', async () => {
     const view = await load(digestId);
     await render(<AutomationScreen view={view} agents={[]} />);
 
-    // Le retour est celui de la BARRE du design system, et il n'y en a qu'un.
-    const retours = [...container.querySelectorAll('a[href="/automations"]')];
-    expect(retours).toHaveLength(1);
-    expect(retours[0]?.textContent).toContain('Automations');
+    // #242, second temps : le soir du 19/09, Quentin a fait retirer les retours
+    // PARTOUT. La page ne ramène donc plus à la liste ; on y repart par la
+    // barre latérale. Les trois gestes, eux, n'ont pas bougé.
+    expect(container.querySelectorAll('a[href="/automations"]')).toHaveLength(0);
     expect(buttonLabels()).toEqual(['Run now', 'Pause', 'Edit']);
   });
 
@@ -588,7 +588,7 @@ describe('la page d’une routine @cap:planifier-une-tache/ecran', () => {
 
     const ordre = [
       position('h1'),
-      position('a[href="/automations"]'),
+      position('[data-testid="work-bar"]'),
       position('[data-testid="automation-actions-row"]'),
       position('[data-testid="automation-settings"]'),
     ];
@@ -598,17 +598,16 @@ describe('la page d’une routine @cap:planifier-une-tache/ecran', () => {
     // ci-dessus tiendrait sur une rangée vide.
     const rangee = container.querySelector('[data-testid="automation-actions-row"]');
     expect(rangee?.querySelector('[data-testid="automation-actions"]')).not.toBeNull();
-    // Le retour, lui, n'en porte aucun : il est seul sur sa ligne.
-    expect(
-      container.querySelector('a[href="/automations"]')?.parentElement?.querySelector('button'),
-    ).toBeNull();
+    // La barre, elle, n'en porte aucun : elle dit ce que la page EST, pas ce
+    // qu'elle permet de faire.
+    expect(container.querySelector('[data-testid="work-bar"]')?.querySelector('button')).toBeNull();
   });
 
   it('montre l’agent et l’état DANS la barre de travail', async () => {
     const view = await load(digestId);
     await render(<AutomationScreen view={view} agents={[]} />);
 
-    const barre = container.querySelector('a[href="/automations"]')?.parentElement;
+    const barre = container.querySelector('[data-testid="work-bar"]');
     expect(barre?.textContent).toContain('1 agent');
     expect(barre?.textContent).toContain('Active');
   });

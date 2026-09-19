@@ -10,7 +10,6 @@
 // il se relit tout seul tant que le process court (`CodeProcessDetail`).
 
 import { notFound } from 'next/navigation';
-import Link from 'next/link';
 import { getCodingProcessDetailAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import RunScreen from '@/app/(dashboard)/runs/RunScreen.tsx';
@@ -19,7 +18,7 @@ import { threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { truncate } from '@/lib/format-time';
 import { plainText } from '@/components/Markdown.tsx';
 import CodeProcessDetail from './CodeProcessDetail.tsx';
-import { codeAgents, codeBackLink, codeFilesHref, codeStatus } from './code-run-view.ts';
+import { codeAgents, codeFilesHref, codeStatus } from './code-run-view.ts';
 
 // Force dynamic — this page reads per-request DB state.
 export const dynamic = 'force-dynamic';
@@ -53,13 +52,9 @@ export default async function CodeProcessPage({ params }: Props) {
   if (!result.ok) {
     if (result.code === 'not_found') notFound();
     return (
+      // #242 — plus de lien retour : on repart par la barre latérale.
       <PageShell title="Code">
-        <div className="space-y-4">
-          <Link href="/spaces" className="text-body-13 text-ink-3 hover:text-ink-2">
-            ← Workspaces
-          </Link>
-          <p className="text-body-14 text-err">{result.message}</p>
-        </div>
+        <p className="text-body-14 text-err">{result.message}</p>
       </PageShell>
     );
   }
@@ -78,10 +73,9 @@ export default async function CodeProcessPage({ params }: Props) {
       avatarUrl={header.agentAvatarUrl}
       title={agentName !== '' ? `${agentName} · ${title}` : title}
       subtitle={threadSubtitle('code', at)}
-      back={codeBackLink(header)}
       agents={codeAgents(header, activity)}
-      // La barre de la maquette, au complet : le retour, les agents, le
-      // dossier, la preuve, l'état. La pastille d'état est rendue par le
+      // La barre de la maquette : les agents, le dossier, la preuve, l'état.
+      // Plus de retour depuis #242. La pastille d'état est rendue par le
       // SERVEUR et reste fraîche parce que la page se relit d'elle-même tant
       // que le process court (`LiveRefresh`, dans le corps) — c'est ce qui a
       // remplacé la sonde côté client, laquelle ne rafraîchissait que le corps

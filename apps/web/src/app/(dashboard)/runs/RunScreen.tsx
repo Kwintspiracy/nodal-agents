@@ -14,11 +14,10 @@
 // conversation fait l'inverse, parce qu'une conversation se lit par sa fin.
 
 import type { ReactNode } from 'react';
-import type { BackLink } from '@/lib/back-links.ts';
 import PageShell from '@/components/ui/PageShell';
 import ThreadHeader from '@/app/(dashboard)/chat/[id]/ThreadHeader.tsx';
 import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
-import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
+import ThreadWorkBar from '@/app/(dashboard)/spaces/ThreadWorkBar.tsx';
 import type { ThreadAgent } from '@/app/(dashboard)/spaces/format.ts';
 
 export default function RunScreen({
@@ -26,7 +25,6 @@ export default function RunScreen({
   avatarUrl = null,
   title,
   subtitle,
-  back,
   agents,
   status = null,
   proofVerdict = null,
@@ -39,7 +37,6 @@ export default function RunScreen({
   avatarUrl?: string | null;
   title: string;
   subtitle: string;
-  back: BackLink;
   agents: readonly ThreadAgent[];
   /** La pastille d'état du travail (Running, Done…). */
   status?: ReactNode;
@@ -71,8 +68,7 @@ export default function RunScreen({
         />
       }
       toolbar={
-        <WorkBar
-          back={back}
+        <ThreadWorkBar
           agents={agents}
           status={status}
           proofVerdict={proofVerdict}
