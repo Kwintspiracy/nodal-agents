@@ -13,6 +13,17 @@ import { useEffect } from 'react';
  * current consumers pass false to keep their existing behavior (they seed
  * from server-rendered `initial` state instead of fetching on mount).
  */
+/**
+ * La cadence de la BARRE LATÉRALE. Quinze secondes, écrites une seule fois.
+ *
+ * `ApprovalsProvider` et `ChatFoldersProvider` relisent à ce rythme : de là
+ * viennent la pastille corail et le point vert. Le sous-menu d'un dossier
+ * (#223) et la section « Recent » du panneau Talk (#230) prennent la MÊME, et
+ * par ce même constant — un signal qui s'allumerait plus vite qu'un autre
+ * ferait dire deux heures différentes à la même barre.
+ */
+export const SIDEBAR_POLL_MS = 15_000;
+
 export function usePolling(
   fetchFn: () => void | Promise<void>,
   intervalMs: number,

@@ -46,7 +46,11 @@ import {
   channelAllowedConversations,
 } from '@nodal-agents/db';
 import { normalizePath, redactSecretsInText, stripGroupPrefix } from '@nodal-agents/shared';
-import { folderChatsQuery, folderConversationsQuery } from './folder-threads-sql.ts';
+import {
+  folderChatsQuery,
+  folderConversationsQuery,
+  recentConversationsQuery,
+} from './folder-threads-sql.ts';
 import { readsOfUser, unreadColumn } from './unread.ts';
 import { plainText } from '@/components/Markdown.tsx';
 import { requireAuth } from '@nodal-agents/auth';
@@ -418,7 +422,15 @@ export type FolderChatRead = {
 /** Une conversation de « Nodal chats » retenue par le sous-menu. */
 export type FolderConversationRead = {
   id: string;
-  /** Le titre, DÉJÀ rédigé et coupé — vide quand rien ne le nomme. */
+  /**
+   * Le titre, DÉJÀ rédigé, coupé et NOMMÉ : « Untitled » quand rien ne le
+   * nomme, jamais la chaîne vide (Reviewer C, passe 1 de la PR #235).
+   *
+   * Le repli vivait chez CHAQUE appelant — le sous-menu d'un dossier et la
+   * section « Recent » l'écrivaient chacun de son côté. Deux copies du même
+   * dernier recours finissent par diverger, et le même fil se serait appelé
+   * autrement selon l'endroit d'où on le regarde.
+   */
   title: string;
   /** Le fil a bougé depuis que cette personne l'a ouvert, ou jamais ouvert (#209). */
   unread: boolean;
@@ -463,68 +475,112 @@ export async function listFolderThreadReadsAction(
       chatId: r.chatId ?? '',
     }));
 
-    // Les fils SANS titre, et eux seuls. Leur titre de repli est leur première
-    // demande — celle de la personne pour une conversation du dashboard, la
-    // tâche du premier job de tête pour un fil de canal sans chat.
-    const sansTitre = convRows.filter((r) => r.title === '').map((r) => r.id);
-    const premiereDemande = new Map<string, string | null>();
-    if (sansTitre.length > 0) {
-      const [messages, jobs] = await Promise.all([
-        db
-          .select({
-            conversationId: chatMessages.conversationId,
-            firstRequest: sql<
-              string | null
-            >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt}) FILTER (WHERE ${chatMessages.role} = 'user'))[1]`,
-          })
-          .from(chatMessages)
-          .where(inArray(chatMessages.conversationId, sansTitre))
-          .groupBy(chatMessages.conversationId),
-        db
-          .select({
-            conversationId: agentJobs.conversationId,
-            firstRequest: sql<
-              string | null
-            >`(array_agg(${agentJobs.task} ORDER BY ${agentJobs.createdAt}))[1]`,
-          })
-          .from(agentJobs)
-          .where(
-            and(
-              eq(agentJobs.entityId, session.entityId),
-              isNull(agentJobs.parentJobId),
-              inArray(agentJobs.conversationId, sansTitre),
-            ),
-          )
-          .groupBy(agentJobs.conversationId),
-      ]);
-      for (const r of messages) premiereDemande.set(r.conversationId ?? '', r.firstRequest);
-      // Les jobs ne remplacent PAS un message déjà trouvé : une conversation du
-      // dashboard se nomme par ce que la personne a écrit, pas par la tâche que
-      // l'escalade en a tirée.
-      for (const r of jobs) {
-        const key = r.conversationId ?? '';
-        if (!premiereDemande.has(key)) premiereDemande.set(key, r.firstRequest);
-      }
-    }
-
-    return ok({
-      chats,
-      conversations: convRows.map((r) => ({
-        id: r.id,
-        // Le titre de la colonne d'abord ; sinon la première demande, sans son
-        // préfixe de groupe — la MÊME règle, et les mêmes bornes, que la liste
-        // (`listAllConversationsAction`).
-        title:
-          r.title !== ''
-            ? firstLine(r.title, TITLE_MAX)
-            : firstLine(stripGroupPrefix(premiereDemande.get(r.id) ?? ''), TITLE_MAX),
-        unread: r.unread,
-      })),
-    });
+    return ok({ chats, conversations: await nommerLesFils(db, session.entityId, convRows) });
   } catch (err) {
     console.error('[listFolderThreadReadsAction]', err);
     return fail('db_error', 'Failed to load the folder threads');
   }
+}
+
+/**
+ * LES DERNIERS FILS, TOUS CANAUX CONFONDUS — la section « Recent » du panneau
+ * Talk (#230, 19/09/2026).
+ *
+ * Une seule requête, bornée en SQL, et la MÊME reprise de titre que le
+ * sous-menu d'un dossier : un fil que personne n'a nommé porte ici le nom qu'il
+ * porte partout ailleurs, jamais un autre.
+ */
+export async function listRecentThreadReadsAction(
+  limit: number,
+): Promise<ActionResult<FolderConversationRead[]>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const db = getDb();
+    const rows = await recentConversationsQuery(db, session.entityId, session.userId, limit);
+    return ok(await nommerLesFils(db, session.entityId, rows));
+  } catch (err) {
+    console.error('[listRecentThreadReadsAction]', err);
+    return fail('db_error', 'Failed to load the recent threads');
+  }
+}
+
+/** Une ligne de conversation telle que les requêtes bornées la rendent. */
+type LigneLue = { id: string; title: string; unread: boolean };
+
+/**
+ * LE NOM D'UN FIL, écrit une seule fois pour toutes les lectures de la barre
+ * latérale (extrait de `listFolderThreadReadsAction` le 19/09/2026, quand
+ * « Recent » a eu besoin exactement du même).
+ *
+ * Le titre de la colonne d'abord ; sinon la première demande, sans son préfixe
+ * de groupe — la MÊME règle, et les mêmes bornes, que la liste
+ * (`listAllConversationsAction`). Deux copies de cette règle auraient fini par
+ * nommer différemment le même fil selon l'endroit d'où on le regarde.
+ *
+ * La lecture de repli ne part que pour les fils SANS titre, et jamais plus loin
+ * que ceux-là : au plus `limit` identifiants, jamais la liste.
+ */
+async function nommerLesFils(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  rows: readonly LigneLue[],
+): Promise<FolderConversationRead[]> {
+  const sansTitre = rows.filter((r) => r.title === '').map((r) => r.id);
+  const premiereDemande = new Map<string, string | null>();
+  if (sansTitre.length > 0) {
+    const [messages, jobs] = await Promise.all([
+      db
+        .select({
+          conversationId: chatMessages.conversationId,
+          firstRequest: sql<
+            string | null
+          >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt}) FILTER (WHERE ${chatMessages.role} = 'user'))[1]`,
+        })
+        .from(chatMessages)
+        .where(inArray(chatMessages.conversationId, sansTitre))
+        .groupBy(chatMessages.conversationId),
+      db
+        .select({
+          conversationId: agentJobs.conversationId,
+          firstRequest: sql<
+            string | null
+          >`(array_agg(${agentJobs.task} ORDER BY ${agentJobs.createdAt}))[1]`,
+        })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.entityId, entityId),
+            isNull(agentJobs.parentJobId),
+            inArray(agentJobs.conversationId, sansTitre),
+          ),
+        )
+        .groupBy(agentJobs.conversationId),
+    ]);
+    for (const r of messages) premiereDemande.set(r.conversationId ?? '', r.firstRequest);
+    // Les jobs ne remplacent PAS un message déjà trouvé : une conversation du
+    // dashboard se nomme par ce que la personne a écrit, pas par la tâche que
+    // l'escalade en a tirée.
+    for (const r of jobs) {
+      const key = r.conversationId ?? '';
+      if (!premiereDemande.has(key)) premiereDemande.set(key, r.firstRequest);
+    }
+  }
+
+  return rows.map((r) => {
+    const titre =
+      r.title !== ''
+        ? firstLine(r.title, TITLE_MAX)
+        : firstLine(stripGroupPrefix(premiereDemande.get(r.id) ?? ''), TITLE_MAX);
+    return {
+      id: r.id,
+      // LE DERNIER RECOURS EST ICI, et nulle part ailleurs : un fil que
+      // personne n'a nommé et dont la première demande est vide s'appelle
+      // « Untitled » pour tous ceux qui le lisent.
+      title: titre === '' ? 'Untitled' : titre,
+      unread: r.unread,
+    };
+  });
 }
 
 /**

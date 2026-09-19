@@ -57,9 +57,15 @@ function rowToFleet(ws: WorkspaceRow): Fleet {
 
 interface Props {
   workspaces: WorkspaceRow[];
+  /**
+   * La CAPSULE de la tête du panneau (#230, planches du 19/09/2026), au lieu
+   * du bloc pleine largeur. Seule la forme du déclencheur change : la liste,
+   * le changement d'espace et la création restent les mêmes.
+   */
+  compact?: boolean;
 }
 
-export default function WorkspaceSwitcher({ workspaces }: Props) {
+export default function WorkspaceSwitcher({ workspaces, compact = false }: Props) {
   const router = useRouter();
   const [isSwitching, startSwitchTransition] = useTransition();
   const [isCreating, startCreateTransition] = useTransition();
@@ -118,19 +124,26 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
   }
 
   return (
-    <div>
+    // En capsule, le bloc ne prend que la place de son contenu et se laisse
+    // couper : c'est la tête du panneau qui décide de la largeur.
+    <div className={compact ? 'relative min-w-0 shrink' : undefined}>
       <FleetPicker
         fleets={fleets}
         activeId={activeId}
         onChange={handleSwitch}
         disabled={isSwitching || fleets.length === 0}
         onNewWorkspace={handleOpenNew}
+        compact={compact}
       />
 
       {showNewForm && (
         <form
           onSubmit={handleCreateSubmit}
-          className="mx-3.5 mt-1 rounded-[9px] border border-rule-2 bg-paper p-2.5"
+          className={`mt-1 rounded-[9px] border border-rule-2 bg-paper p-2.5 ${
+            // Le formulaire de création se pose sous la capsule, aligné à
+            // droite comme la liste ; pleine largeur dans le bloc classique.
+            compact ? 'absolute top-full right-0 z-30 w-[220px] max-w-[80vw]' : 'mx-3.5'
+          }`}
         >
           <p className="mb-1.5 text-mono-11 uppercase tracking-[0.1em] text-ink-4">New workspace</p>
           <div className="mb-2">

@@ -42,9 +42,12 @@ export default function SidebarCaret({ open, onToggle, label, testId, className 
       // `mr-2` et pas `mr-3` : la ligne porte déjà sa marge, et le chevron ne
       // règle plus que son retrait DEDANS. Pas de fond propre au survol — il
       // appartient à la ligne, et deux fonds superposés se verraient.
-      className={`mr-2 h-9 w-9 rounded-lg text-ink-3 hover:text-ink lg:h-6 lg:w-6 ${className}`}
+      // `ink-4` et un trait FIN (planches du 19/09/2026) : la planche écrit un
+      // simple « › » gris, et un chevron gras attirait l'œil plus que le nom du
+      // dossier qu'il ouvre. La zone cliquable, elle, ne bouge pas.
+      className={`mr-1 h-9 w-9 rounded-lg text-ink-4 hover:text-ink-2 lg:h-6 lg:w-6 ${className}`}
     >
-      {open ? <CaretDown size={14} weight="bold" /> : <CaretRight size={14} weight="bold" />}
+      {open ? <CaretDown size={12} /> : <CaretRight size={12} />}
     </IconButton>
   );
 }

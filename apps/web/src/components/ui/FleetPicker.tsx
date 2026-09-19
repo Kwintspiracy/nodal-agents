@@ -22,6 +22,15 @@ type Props = {
   onChange?: (id: string) => void;
   /** When provided, a "New workspace" button appears at the bottom of the dropdown. */
   onNewWorkspace?: () => void;
+  /**
+   * La CAPSULE, et non le bloc pleine largeur (planches de Quentin du
+   * 19/09/2026, Figma 487:5489) : la tête du panneau met le titre à gauche et
+   * l'espace à droite, sur UNE ligne. Le déclencheur devient une pastille —
+   * point de couleur de 8 px, nom, caret — et la liste qu'il ouvre ne change
+   * pas : même contenu, même « New workspace », simplement alignée à droite et
+   * posée à une largeur qui la rend lisible.
+   */
+  compact?: boolean;
 };
 
 /**
@@ -38,6 +47,7 @@ export default function FleetPicker({
   disabled,
   onChange,
   onNewWorkspace,
+  compact = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -55,33 +65,71 @@ export default function FleetPicker({
   if (!active) return null;
 
   return (
-    <div ref={ref} className="relative mx-3.5 mt-3.5 mb-1">
+    <div ref={ref} className={compact ? 'relative min-w-0' : 'relative mx-3.5 mt-3.5 mb-1'}>
       <button
         type="button"
         onClick={() => !disabled && setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-disabled={disabled || undefined}
-        className={`flex h-12 w-full items-center gap-3 rounded-xl border border-rule-2 bg-paper px-3 text-body-15 leading-none! text-ink lg:h-[38px] lg:gap-2.5 lg:rounded-[9px] lg:px-2.5 lg:text-body-13 ${
-          disabled ? 'cursor-default' : 'cursor-pointer hover:bg-hover-2/40'
-        }`}
+        data-testid={compact ? 'workspace-pill' : undefined}
+        className={
+          compact
+            ? `flex max-w-full items-center gap-1.5 rounded-lg border border-rule-2 bg-paper py-1 pr-1.5 pl-2 text-medium-12 text-ink-2 ${
+                disabled ? 'cursor-default' : 'cursor-pointer hover:bg-hover-2/40'
+              }`
+            : `flex h-12 w-full items-center gap-3 rounded-xl border border-rule-2 bg-paper px-3 text-body-15 leading-none! text-ink lg:h-[38px] lg:gap-2.5 lg:rounded-[9px] lg:px-2.5 lg:text-body-13 ${
+                disabled ? 'cursor-default' : 'cursor-pointer hover:bg-hover-2/40'
+              }`
+        }
       >
+        {compact ? (
+          // Une PASTILLE de 8 px, et pas le carré à initiales : à cette taille
+          // deux lettres ne se lisent plus, et la planche ne dessine qu'un
+          // point. Il garde la couleur de l'espace, qui est ce qui le
+          // distingue d'un coup d'œil.
+          <span
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ background: active.color }}
+            aria-hidden="true"
+          />
+        ) : (
+          <span
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-legacy-12 font-semibold leading-none! tracking-[0.04em] text-[#0a0a0a] lg:h-[22px] lg:w-[22px] lg:rounded-[5px] lg:text-micro-10"
+            style={{ background: active.color }}
+          >
+            {active.icon ?? active.tag.slice(0, 2)}
+          </span>
+        )}
+        {/* Le nom SE COUPE, il n'élargit pas la tête : un espace au long nom
+            ferait déborder le titre du panneau, dont la largeur est fixe. */}
         <span
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-legacy-12 font-semibold leading-none! tracking-[0.04em] text-[#0a0a0a] lg:h-[22px] lg:w-[22px] lg:rounded-[5px] lg:text-micro-10"
-          style={{ background: active.color }}
+          className={
+            compact
+              ? 'min-w-0 truncate text-left'
+              : 'min-w-0 flex-1 truncate text-left text-medium-15 text-ink lg:text-medium-13'
+          }
         >
-          {active.icon ?? active.tag.slice(0, 2)}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-left text-medium-15 text-ink lg:text-medium-13">
           {active.name}
         </span>
-        {!disabled && <CaretDown size={12} className="h-4 w-4 shrink-0 text-ink-3 lg:h-3 lg:w-3" />}
+        {!disabled && (
+          <CaretDown
+            size={12}
+            className={
+              compact ? 'h-3 w-3 shrink-0 text-ink-3' : 'h-4 w-4 shrink-0 text-ink-3 lg:h-3 lg:w-3'
+            }
+          />
+        )}
       </button>
 
       {open && !disabled && (
         <div
           role="listbox"
-          className="absolute inset-x-0 top-[calc(100%+6px)] z-30 rounded-[9px] border border-rule-2 bg-paper p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.10)]"
+          className={`absolute top-[calc(100%+6px)] z-30 rounded-[9px] border border-rule-2 bg-paper p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.10)] ${
+            // La capsule est étroite : sa liste se pose à DROITE, sous elle, et
+            // prend la largeur qu'il lui faut pour rester lisible.
+            compact ? 'right-0 w-[220px] max-w-[80vw]' : 'inset-x-0'
+          }`}
         >
           {fleets.map((f) => {
             const isActive = f.id === activeId;
