@@ -26,6 +26,7 @@ import {
   telegramAllowedChats,
   channelBindings,
   agentSchedules,
+  toolCalls,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -554,6 +555,248 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(JSON.stringify(row?.messages ?? [])).toContain('delegation_depth_exceeded');
+  });
+
+  // ─── #173 : pas de seconde revue de la même chose ──────────────────────────
+
+  it('une seconde revue de la MÊME PR au MÊME relecteur est refusée, le verdict existant est rendu (#173)', async () => {
+    // Incident #124 : le parent redéléguait la revue de la PR déjà relue, et
+    // payait une seconde passe de trente à quarante minutes. Ici l'enfant a
+    // déjà livré son verdict ; la seconde demande ne crée AUCUN job.
+    const ts = Date.now();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Dup Orchestrator',
+        slug: `dup-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    const reviewerSlug = `dup-reviewer-${ts}`;
+    const [reviewer] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Dup Reviewer',
+        slug: reviewerSlug,
+        personality: 'reviewer',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    await db.insert(agentAssignments).values({
+      orchestratorId: orch!.id,
+      subAgentId: reviewer!.id,
+      entityId: seed.entityId,
+    });
+    const assignTool = `assign_${reviewerSlug.replace(/-/g, '_')}`;
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch!.id,
+        channel: 'api',
+        task: 'Fais relire la PR #185.',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create duplicate-review test job');
+
+    // La revue DÉJÀ faite dans ce job : un enfant terminé, et sa ligne
+    // `review_verdict` telle que `executeTool` l'écrit.
+    const [firstChild] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: reviewer!.id,
+        channel: 'internal',
+        task: 'Relis la PR #185.',
+        status: 'completed',
+        parentJobId: job.id,
+        delegationDepth: 1,
+      })
+      .returning();
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: firstChild!.id,
+      toolName: 'review_verdict',
+      toolInput: {},
+      toolOutput: JSON.stringify({
+        ok: true,
+        verdict: 'request_changes',
+        summary: 'PR #185 : le retry classe un 429 passager en facturation.',
+        findings: [
+          {
+            file: 'packages/llm/src/retry.ts',
+            line: 99,
+            issue: 'Un 429 passager est classé en facturation.',
+            severity: 'blocker',
+          },
+        ],
+        counts: { blocker: 1, major: 0, minor: 0 },
+      }),
+      turn: 3,
+    });
+
+    // Tour 1 : le parent redemande la même revue → refus. Tour 2 : il conclut.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-dup',
+            toolName: assignTool,
+            args: { task: 'Relis la PR #185 et dis-moi si elle est mergeable.' },
+          },
+        ],
+      },
+      {
+        text: 'Verdict déjà rendu.',
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // AUCUN second enfant : la ligne n'existe pas.
+    const children = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, job.id));
+    expect(children.map((c) => c.id)).toEqual([firstChild!.id]);
+
+    // Le refus NOMME le verdict existant, pour que le parent conclue dessus.
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    const transcript = JSON.stringify(row?.messages ?? []);
+    expect(transcript).toContain('duplicate_review_blocked');
+    expect(transcript).toContain(firstChild!.id);
+    expect(transcript).toContain('request_changes');
+    expect(transcript).toContain('429 passager');
+  });
+
+  it('une revue d’une AUTRE PR passe — la garde ne ferme pas la délégation (#173)', async () => {
+    const ts = Date.now();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Dup Orchestrator 2',
+        slug: `dup2-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    const reviewerSlug = `dup2-reviewer-${ts}`;
+    const [reviewer] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Dup Reviewer 2',
+        slug: reviewerSlug,
+        personality: 'reviewer',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    await db.insert(agentAssignments).values({
+      orchestratorId: orch!.id,
+      subAgentId: reviewer!.id,
+      entityId: seed.entityId,
+    });
+    const assignTool = `assign_${reviewerSlug.replace(/-/g, '_')}`;
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch!.id,
+        channel: 'api',
+        task: 'Fais relire les PR ouvertes.',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create other-target test job');
+
+    const [firstChild] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: reviewer!.id,
+        channel: 'internal',
+        task: 'Relis la PR #185.',
+        status: 'completed',
+        parentJobId: job.id,
+        delegationDepth: 1,
+      })
+      .returning();
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: firstChild!.id,
+      toolName: 'review_verdict',
+      toolInput: {},
+      toolOutput: JSON.stringify({
+        ok: true,
+        verdict: 'approve',
+        summary: 'PR #185 : rien à signaler.',
+        findings: [],
+        counts: { blocker: 0, major: 0, minor: 0 },
+      }),
+      turn: 3,
+    });
+
+    // L'enfant délégué répond tout de suite ; seul compte ici le fait qu'il
+    // ait bien été CRÉÉ pour la PR #190.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-190', toolName: assignTool, args: { task: 'Relis la PR #190.' } },
+        ],
+      },
+      {
+        text: 'Revue faite.',
+        toolCalls: [
+          { toolCallId: 'tc-child-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      {
+        text: 'Compte rendu.',
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    const children = await db
+      .select({ id: agentJobs.id, task: agentJobs.task })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, job.id));
+    expect(children).toHaveLength(2);
+    expect(children.some((c) => c.task.includes('#190'))).toBe(true);
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(JSON.stringify(row?.messages ?? [])).not.toContain('duplicate_review_blocked');
   });
 
   it('une personnalité qui nomme un outil absent de la liste est DITE au démarrage, et le job tourne (#62)', async () => {
