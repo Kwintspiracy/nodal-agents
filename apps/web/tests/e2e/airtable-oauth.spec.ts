@@ -19,6 +19,7 @@ import {
   connectorCard,
   openInstalledConnectors,
   installedConnectorRow,
+  wizardStepTwo,
 } from './helpers.ts';
 
 test.beforeAll(async () => {
@@ -80,6 +81,11 @@ test.describe('Airtable OAuth flow (wizard-driven)', () => {
     await expect(wizard).toBeVisible({ timeout: 5_000 });
 
     // ── 5. Fill wizard form ───────────────────────────────────────────────────
+    // Sur une installation neuve, l'assistant s'ouvre sur le CHOIX du
+    // fournisseur : les champs ci-dessous n'existent qu'à l'étape suivante. Ce
+    // parcours expirait là, sur un champ d'une page qui n'était pas à l'écran
+    // (issue #55).
+    await wizardStepTwo(page, 'airtable-oauth');
     await wizard.locator('input[name="clientId"]').fill('airtable-test-client-id');
     await wizard.locator('input[name="clientSecret"]').fill('airtable-test-client-secret');
     // Le nom PORTE le marqueur e2e : c'est lui qui autorise le nettoyage

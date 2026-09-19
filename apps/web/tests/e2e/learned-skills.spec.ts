@@ -57,24 +57,40 @@ test.describe('learned-skills page @cap:apprendre-une-skill/ecran', () => {
       timeout: 10_000,
     });
 
-    // Both radio options must be visible
-    const autoOption = page.getByRole('radio', { name: /auto-assign to the agent/i });
-    const approvalOption = page.getByRole('radio', { name: /require my approval/i });
+    // Les deux options, par leur ANCRE et non par leur prose : le nom
+    // accessible d'une OptionRadio est son libellé SUIVI de sa description, et
+    // ce parcours se cassait à la première reformulation (issue #55).
+    const autoOption = page.getByTestId('assign-mode-auto');
+    const approvalOption = page.getByTestId('assign-mode-approval');
     await expect(autoOption).toBeVisible();
     await expect(approvalOption).toBeVisible();
 
-    // Default should be "approval" (aria-checked=true on approval option)
-    await expect(approvalOption).toHaveAttribute('aria-checked', 'true');
-    await expect(autoOption).toHaveAttribute('aria-checked', 'false');
+    // ⚠️ AUCUNE assertion sur l'option cochée AU DÉPART. C'est un réglage de la
+    // personne, pas une promesse du produit : sur une installation où il vaut
+    // « auto », ce cas rougissait en affirmant « approval » — et il rougissait
+    // sur l'installation, pas sur un défaut. Ce qui se prouve ici, c'est que
+    // le contrôle EST un choix exclusif et qu'il répond.
+    const startedOn = (await approvalOption.getAttribute('aria-checked')) === 'true';
+    const [first, second] = startedOn ? [autoOption, approvalOption] : [approvalOption, autoOption];
 
-    // Clicking "Auto-assign" should flip the selection (optimistic UI)
-    await autoOption.click();
-    await expect(autoOption).toHaveAttribute('aria-checked', 'true');
-    await expect(approvalOption).toHaveAttribute('aria-checked', 'false');
+    // Une seule option cochée à la fois, avant tout geste.
+    expect(
+      [
+        await autoOption.getAttribute('aria-checked'),
+        await approvalOption.getAttribute('aria-checked'),
+      ].filter((v) => v === 'true'),
+      'le groupe doit avoir exactement une option cochée',
+    ).toHaveLength(1);
 
-    // Clicking "Require my approval" restores selection
-    await approvalOption.click();
-    await expect(approvalOption).toHaveAttribute('aria-checked', 'true');
-    await expect(autoOption).toHaveAttribute('aria-checked', 'false');
+    // Le geste bascule (UI optimiste)…
+    await first.click();
+    await expect(first).toHaveAttribute('aria-checked', 'true');
+    await expect(second).toHaveAttribute('aria-checked', 'false');
+
+    // …et le geste inverse revient à l'état trouvé : ce parcours ne laisse pas
+    // derrière lui un réglage qu'il a changé.
+    await second.click();
+    await expect(second).toHaveAttribute('aria-checked', 'true');
+    await expect(first).toHaveAttribute('aria-checked', 'false');
   });
 });

@@ -132,6 +132,38 @@ export async function openConnectorInstallDialog(
  */
 export type ConnectorDialogKind = 'wizard' | 'add-form';
 
+/**
+ * Amène l'assistant d'identifiant à son ÉTAPE 2, celle du formulaire.
+ *
+ * Sur une installation neuve, « Install » ouvre l'assistant à son étape 1 — le
+ * choix du fournisseur — et les champs `clientId` / `clientSecret` n'existent
+ * pas encore. Des parcours s'y cassaient en attendant un champ d'une page qui
+ * n'était pas à l'écran (issue #55). Sans effet quand l'étape 2 est déjà là.
+ */
+export async function wizardStepTwo(page: Page, type: string): Promise<void> {
+  const dialog = page.getByRole('dialog');
+
+  // BRANCHE 1 — le formulaire d'ajout s'est ouvert parce qu'un identifiant
+  // compatible existe déjà (celui d'un run précédent, ou celui d'un humain).
+  // « or create new » est le geste qui mène quand même à l'assistant.
+  const createNew = dialog.getByRole('button', { name: /or create new/i });
+  if (await createNew.isVisible()) {
+    await createNew.click();
+  }
+
+  // BRANCHE 2 — l'assistant s'est ouvert sur le CHOIX du fournisseur.
+  const option = page.getByTestId(`credential-type-${type}`);
+  if (await option.isVisible()) {
+    await option.click();
+  }
+
+  await expect(
+    page.getByRole('dialog').locator('input[name="clientId"]'),
+    `l'assistant n'a pas atteint son formulaire pour « ${type} ». Les deux branches ont été ` +
+      'tentées : « or create new » depuis le formulaire d’ajout, puis le choix du fournisseur.',
+  ).toBeVisible({ timeout: 10_000 });
+}
+
 export async function openedConnectorDialog(page: Page): Promise<ConnectorDialogKind> {
   if (await page.getByTestId('credential-wizard-dialog').isVisible()) return 'wizard';
   if (await page.getByTestId('connector-add-dialog').isVisible()) return 'add-form';

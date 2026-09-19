@@ -12,6 +12,7 @@ export function OptionRadio({
   name,
   description,
   children,
+  testId,
 }: {
   active: boolean;
   onClick: () => void;
@@ -19,11 +20,19 @@ export function OptionRadio({
   description: string;
   /** Rendered under the description — the mock puts a row of pills there. */
   children?: React.ReactNode;
+  /**
+   * Ancre stable (issue #55). Le nom accessible d'une option est sa PROSE — son
+   * libellé suivi de sa description — donc un parcours qui la désigne par le
+   * texte se casse à la première reformulation, en silence. L'ancre survit à la
+   * copie.
+   */
+  testId?: string;
 }) {
   return (
     <div
       role="radio"
       aria-checked={active}
+      data-testid={testId}
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => {

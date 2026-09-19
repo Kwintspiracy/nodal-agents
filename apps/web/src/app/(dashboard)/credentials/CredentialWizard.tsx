@@ -196,6 +196,11 @@ export default function CredentialWizard({
                 onClick={() => handleTypeSelect(opt.type)}
                 name={opt.label}
                 description={opt.description}
+                // Ancre stable (issue #55) : l'étape 1 de l'assistant est le
+                // passage obligé d'une PREMIÈRE connexion, et un parcours qui
+                // désignait ces options par leur libellé se cassait dès qu'on
+                // reformulait « Google Workspace ».
+                testId={`credential-type-${opt.type}`}
               />
             ))}
           </div>
