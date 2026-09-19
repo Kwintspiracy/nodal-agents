@@ -26,6 +26,7 @@
 
 import Link from 'next/link';
 import {
+  ArrowCounterClockwise,
   ArrowSquareOut,
   Check,
   CheckCircle,
@@ -61,7 +62,7 @@ export default function DeliveryBlock({
    */
   jobId: string | null;
 }) {
-  const { verdict } = summary;
+  const { verdict, changesRequested } = summary;
   const stats: Array<{ label: string; value: string; mono?: boolean }> = [];
   if (summary.files > 0) stats.push({ label: 'Files', value: String(summary.files) });
   if (summary.lines !== null) {
@@ -103,18 +104,32 @@ export default function DeliveryBlock({
             signes (Quentin, 18/09). Elle est donc verte dès que ce bloc
             paraît : un run livré sans preuve n'est pas un demi-run, et un
             crochet gris le faisait passer pour éteint. Seul un verdict ROUGE
-            la fait virer : là, quelque chose ne va pas. */}
-        <CheckCircle
-          size={16}
-          className={verdict === 'red' ? 'text-warn' : 'text-ok'}
-          aria-hidden
-        />
-        <span className="text-title-15 text-ink">Delivered</span>
+            la fait virer : là, quelque chose ne va pas.
+
+            #59 — une relecture qui a demandé des corrections change le MOT, et
+            pas seulement le signe : annoncer « Delivered » au-dessus d'un
+            « request_changes » est exactement ce que le propriétaire a
+            interdit le 19/09. Le bloc reste, avec tout ce qui a été fait ; il
+            ne prétend simplement plus que c'est fini. */}
+        {changesRequested ? (
+          <ArrowCounterClockwise size={16} className="text-warn" aria-hidden />
+        ) : (
+          <CheckCircle
+            size={16}
+            className={verdict === 'red' ? 'text-warn' : 'text-ok'}
+            aria-hidden
+          />
+        )}
+        <span className="text-title-15 text-ink">
+          {changesRequested ? 'Changes requested' : 'Delivered'}
+        </span>
         {/* La pastille suit le mot, à trente pixels — pas poussée au bord
             droit : c'est ainsi que la planche la dessine (Quentin, 17/09,
             « design légèrement différent »). */}
         <span className="ml-5">
-          {verdict === 'green' ? (
+          {changesRequested ? (
+            <StatusPill variant="warn" label="By the reviewer" />
+          ) : verdict === 'green' ? (
             <StatusPill variant="done" label="Verified" />
           ) : verdict === 'red' ? (
             <StatusPill variant="warn" label="Checks failed" />

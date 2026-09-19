@@ -42,6 +42,10 @@ import {
 import { canonicalChangePath, lineCountsOfCall, sumLineCounts } from './coding-changes.ts';
 import { callHappened, outcomeOfToolOutput, parsePresented } from './tool-card-payload.ts';
 import type { ProductionVerdict } from './chat-or-work.ts';
+// La règle « une relecture interdit-elle d'annoncer livré ? » vit dans
+// `@nodal-agents/shared` (#59) : l'orchestration la lit pour poser son champ
+// typé, l'écran pour choisir son mot. Une seule écriture, deux lecteurs.
+import { reviewBlocksDelivery } from '@nodal-agents/shared';
 
 export type ThreadProject = { id: string; name: string; path: string };
 
@@ -91,6 +95,17 @@ export type ThreadJob = {
    * n'affiche alors ni « Tests » ni « Checks », plutôt que « 0 / 0 ».
    */
   proof: readonly ThreadProofRun[];
+  /**
+   * Le DERNIER verdict de relecture enregistré sous ce travail (#59) — le sien
+   * ou celui d'un délégué relecteur, lu par `seq`, l'ordre d'écriture.
+   * `'approve'`, `'request_changes'`, ou `null` quand personne n'a relu.
+   *
+   * La décision du propriétaire, le 19/09/2026 : un `request_changes` empêche
+   * d'annoncer « livré ». C'est la seule chose que ce champ sert à dire, et la
+   * règle qui le lit est celle de l'orchestration (`reviewBlocksDelivery`) —
+   * pas une seconde, écrite ici, qui divergerait au premier correctif.
+   */
+  reviewVerdict: string | null;
   /**
    * Les lignes d'audit (`tool_calls`) de CE travail et de TOUTE sa
    * descendance, dans l'ordre. C'est de là que le récapitulatif compte les
@@ -447,6 +462,11 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     // Un `infra_error` n'est pas un succès : tout ce qui n'est pas vert fait
     // « Checks failed ». La section « Checks » montre laquelle a lâché.
     verdict: job.proof.length === 0 ? null : passed === job.proof.length ? 'green' : 'red',
+    // #59 — ce que la relecture a dit, tel quel. L'écran en tire le mot du
+    // bloc : « Delivered » ou « Changes requested ». Le récapitulatif ne
+    // TRADUIT rien ici, il transporte.
+    review: job.reviewVerdict,
+    changesRequested: reviewBlocksDelivery(job.reviewVerdict),
   };
 }
 

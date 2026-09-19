@@ -31,6 +31,8 @@ const EMPTY: DeliverySummary = {
   reviews: [],
   checks: [],
   verdict: null,
+  review: null,
+  changesRequested: false,
 };
 
 const totals = (costUsd: number | null = null) => ({
@@ -111,6 +113,7 @@ function summaryOf(over: Partial<ThreadJob> & { feed: ConversationFeed }): Deliv
     verdict: travail,
     project: null,
     proof: [],
+    reviewVerdict: null,
     audit: [],
     workspaceRoots: [],
     ...over,
@@ -495,5 +498,78 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     expect(html).toContain('Vega Orin');
     expect(html).not.toContain('Open run');
     expect(html).not.toContain('/scheduled/');
+  });
+});
+
+// ─── #59 — une relecture qui demande des corrections ────────────────────────
+//
+// La décision du propriétaire, le 19/09/2026 : un `request_changes` empêche
+// d'annoncer « livré ». Le bloc reste — tout ce qui a été fait est toujours là
+// — mais il ne dit plus que c'est fini.
+
+describe('DeliveryBlock — changes requested @cap:verifier-un-livrable/ecran', () => {
+  it('dit « Changes requested », jamais « Delivered », quand le relecteur a demandé des corrections', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-59"
+        summary={{
+          ...EMPTY,
+          review: 'request_changes',
+          changesRequested: true,
+          files: 2,
+          filePaths: ['src/a.ts', 'src/b.ts'],
+          tests: { passed: 2, total: 2 },
+          verdict: 'green',
+          checks: [{ command: 'pnpm test', ok: true }],
+        }}
+      />,
+    );
+    expect(html).toContain('Changes requested');
+    expect(html).not.toContain('>Delivered<');
+    // La pastille NOMME d'où vient le refus, et elle remplace « Verified » :
+    // deux commandes vertes ne rendent pas un travail livré quand la relecture
+    // dit non.
+    expect(html).toContain('By the reviewer');
+    expect(html).not.toContain('Verified');
+    // Le signe suit le mot : plus de crochet vert au-dessus d'un refus. Lu sur
+    // l'EN-TÊTE seul — les crochets des commandes de preuve, plus bas, disent
+    // autre chose et restent verts.
+    const entete = html.slice(0, html.indexOf('Changes requested'));
+    expect(entete).toMatch(/<svg[^>]*class="[^"]*text-warn/);
+    expect(entete).not.toMatch(/<svg[^>]*class="[^"]*text-ok/);
+    // Ce que le travail a fait reste montré — le bloc n'efface rien.
+    expect(html).toContain('src/a.ts');
+    expect(html).toContain('pnpm test');
+  });
+
+  it('un approve ne change RIEN : le bloc conclut comme avant', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-59"
+        summary={{ ...EMPTY, review: 'approve', changesRequested: false, verdict: 'green' }}
+      />,
+    );
+    expect(html).toContain('Delivered');
+    expect(html).toContain('Verified');
+    expect(html).not.toContain('Changes requested');
+  });
+});
+
+describe('deliverySummary — la relecture décide du mot @cap:verifier-un-livrable/moteur', () => {
+  it('reporte le dernier verdict du travail, et l’interdit qu’il pose', () => {
+    const bloque = summaryOf({
+      feed: { items: [], totals: totals() },
+      reviewVerdict: 'request_changes',
+    });
+    expect(bloque.review).toBe('request_changes');
+    expect(bloque.changesRequested).toBe(true);
+
+    const passe = summaryOf({ feed: { items: [], totals: totals() }, reviewVerdict: 'approve' });
+    expect(passe.review).toBe('approve');
+    expect(passe.changesRequested).toBe(false);
+
+    const sansRelecture = summaryOf({ feed: { items: [], totals: totals() } });
+    expect(sansRelecture.review).toBeNull();
+    expect(sansRelecture.changesRequested).toBe(false);
   });
 });

@@ -412,6 +412,20 @@ export type DeliverySummary = {
   checks: DeliveryCheck[];
   /** 'green' toutes vertes, 'red' au moins une qui ne l'est pas, null aucune preuve. */
   verdict: 'green' | 'red' | null;
+  /**
+   * Le DERNIER verdict de relecture enregistré sous ce travail (#59), tel
+   * quel : `'approve'`, `'request_changes'`, ou `null` quand personne n'a relu.
+   */
+  review: string | null;
+  /**
+   * Ce que ce verdict INTERDIT : à `true`, le travail ne peut pas être annoncé
+   * livré, et le bloc dit « Changes requested » au lieu de « Delivered ».
+   *
+   * Un champ, pas un calcul refait dans le composant : la règle est celle de
+   * `reviewBlocksDelivery` (`@nodal-agents/shared`), la même que celle qui
+   * remplit `delivery_blocked` dans le résultat typé que reçoit le parent.
+   */
+  changesRequested: boolean;
 };
 
 export type FeedTotals = {

@@ -22,6 +22,8 @@ const SEQ: VerificationSequenceView = {
   canonicalKey: 'd:/apps/projet',
   verdict: 'red',
   startedAt: new Date().toISOString(),
+  source: 'job',
+  sourceAgentName: null,
   runs: [
     {
       jobId: 'job-a',
@@ -34,6 +36,8 @@ const SEQ: VerificationSequenceView = {
       verdict: 'green',
       testedGeneration: 3,
       testedEpoch: 0,
+      source: 'job',
+      sourceAgentName: null,
       createdAt: new Date().toISOString(),
     },
     {
@@ -47,6 +51,8 @@ const SEQ: VerificationSequenceView = {
       verdict: 'red',
       testedGeneration: 3,
       testedEpoch: 0,
+      source: 'job',
+      sourceAgentName: null,
       createdAt: new Date().toISOString(),
     },
   ],
@@ -221,5 +227,41 @@ describe('VerificationSection', () => {
     expect(html).toContain('>red<');
     expect(html).toContain('>green<');
     expect(html).not.toContain('No proof');
+  });
+});
+
+// ─── #59 — d'où vient une preuve ────────────────────────────────────────────
+//
+// Les commandes d'un relecteur sont enregistrées sous le travail relu. La
+// section doit DIRE qu'elles viennent de là : sans cela, six scénarios
+// Playwright lancés par un relecteur se liraient comme des commandes du job.
+
+describe('VerificationSection — l’origine d’une preuve @cap:verifier-un-livrable/ecran', () => {
+  const RELU = {
+    ...SEQ,
+    canonicalKey: 'review:job-relecteur',
+    verdict: 'green',
+    source: 'reviewer',
+    sourceAgentName: 'Second Pair Of Eyes',
+  };
+
+  it('nomme le rôle et l’agent quand la preuve vient d’un relecteur', async () => {
+    const html = await open({ sequences: [RELU] });
+    expect(html).toContain('data-testid="verification-origin"');
+    expect(html).toContain('reviewer');
+    expect(html).toContain('Second Pair Of Eyes');
+  });
+
+  it('ne dit RIEN d’une preuve lancée par le job lui-même', async () => {
+    const html = await open({ sequences: [SEQ] });
+    expect(html).not.toContain('data-testid="verification-origin"');
+    expect(html).not.toContain('Second Pair Of Eyes');
+  });
+
+  it('un agent effacé laisse son rôle, jamais un nom de remplacement', async () => {
+    const html = await open({ sequences: [{ ...RELU, sourceAgentName: null }] });
+    expect(html).toContain('data-testid="verification-origin"');
+    expect(html).toContain('reviewer');
+    expect(html).not.toContain('Second Pair Of Eyes');
   });
 });

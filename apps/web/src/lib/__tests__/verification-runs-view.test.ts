@@ -26,6 +26,8 @@ function row(
     testedGeneration: 1,
     testedEpoch: 0,
     createdAt: new Date('2026-09-04T10:00:00Z'),
+    source: 'job',
+    sourceAgentName: null,
     ...over,
   };
 }
