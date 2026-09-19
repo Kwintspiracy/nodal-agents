@@ -633,6 +633,19 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       created_at timestamptz DEFAULT now()
     );
 
+    -- conversation_reads (migration 0111, #209) — le marqueur de lecture d'une
+    -- personne sur un fil. Non lu = updated_at de la conversation plus récent
+    -- que read_at, ou aucune ligne du tout.
+    CREATE TABLE IF NOT EXISTS conversation_reads (
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      conversation_id uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      read_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT conversation_reads_pkey PRIMARY KEY (user_id, conversation_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_conversation_reads_conversation
+      ON conversation_reads(conversation_id);
+
     CREATE TABLE IF NOT EXISTS agent_budgets (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       agent_id uuid UNIQUE REFERENCES agents(id) ON DELETE CASCADE,

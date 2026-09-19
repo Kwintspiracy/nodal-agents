@@ -17,13 +17,15 @@
 //     et il ne porte JAMAIS de nombre : deux chiffres côte à côte, l'un
 //     d'attentes et l'autre de runs, ne se lisent plus.
 //
-// ⚠️ CE QUI N'EST PAS COMPTÉ, et pourquoi. La base ne porte AUCUN état de
-// lecture — pas de `last_read_at`, nulle part. Une réponse d'agent non lue
-// n'est donc pas comptable, et elle n'est pas comptée : inventer un état de
-// lecture ici ferait dire à la pastille un chiffre que rien ne peut vérifier
-// (invariant #4). Même chose pour « un livrable à vérifier » : aucune colonne
-// ne dit qu'un livrable attend un œil. Le jour où l'une des deux existe, elle
-// s'ajoute à `waiting` sans rien changer d'autre.
+// ⚠️ CE QUI N'EST PAS COMPTÉ, et pourquoi. La base porte un état de lecture
+// depuis le 19/09/2026 (`conversation_reads`, #209), et le POINT d'un fil le
+// dit — voir `threadCallsFor`. La PASTILLE, elle, ne le compte pas : elle
+// compte ce que la personne peut faire tomber à zéro en RÉPONDANT, et un fil
+// non lu tombe à zéro en étant simplement ouvert. Mélanger les deux ferait un
+// chiffre qui ne veut plus dire une seule chose (décision du propriétaire,
+// 19/09). Même chose pour « un livrable à vérifier » : aucune colonne ne dit
+// qu'un livrable attend un œil. Le jour où elle existe, elle s'ajoute à
+// `waiting` sans rien changer d'autre.
 
 import { LIVE_JOB_STATUSES } from '@nodal-agents/shared';
 import { CHANNEL_LABELS } from './activity-runs.ts';
@@ -337,6 +339,11 @@ export type FolderThread = {
   waiting: boolean;
   /** Un run TOURNE sur ce fil. La même donnée que le point vert du dossier. */
   running: boolean;
+  /**
+   * Ce fil a bougé depuis que la personne l'a ouvert, ou elle ne l'a jamais
+   * ouvert (#209). Lu en base, dans la lecture qui rapporte déjà la ligne.
+   */
+  unread: boolean;
 };
 
 /** Une ligne de liste, avec le dossier où elle se range. */
@@ -345,17 +352,26 @@ export type FolderThreadSource = FolderThread & { folder: string };
 /**
  * Le point d'un fil doit-il APPELER la personne ?
  *
- * Oui dès qu'il y a de quoi revenir : une demande en attente, ou un run qui
- * tourne. Rien d'autre.
+ * Oui dès qu'il y a de quoi revenir : une demande en attente, un run qui
+ * tourne, ou quelque chose de NON LU. Rien d'autre.
  *
- * ⚠️ CE N'EST PAS « NON LU ». La base ne porte AUCUN état de lecture — pas de
- * `last_read_at`, nulle part — et c'est une décision (17/09/2026), pas un
- * oubli. Peindre en rouge un fil « non lu » afficherait un fait que rien ne
- * peut vérifier (invariant #4). Le jour où la colonne existe, elle s'ajoute
- * ici, et le point voudra dire une chose de plus.
+ * ⚠️ « NON LU » EXISTE DEPUIS LE 19/09/2026, et pas avant. La base ne portait
+ * aucun état de lecture ; peindre en rouge un fil non lu aurait affiché un
+ * fait que rien ne pouvait vérifier (invariant #4), et ce commentaire disait
+ * exactement cela. La table `conversation_reads` (migration 0111, #209) l'a
+ * rendu vérifiable : un marqueur par personne et par fil, posé quand le fil est
+ * OUVERT sur le tableau de bord. La règle de la comparaison vit en un seul
+ * endroit, `lib/unread.ts` ; ici, on ne fait que l'ajouter aux deux autres.
+ *
+ * Les trois disent la même chose à l'œil — « il y a de quoi revenir » — et
+ * c'est pour cela qu'elles partagent UN point plutôt que trois signes : un
+ * menu qui distinguerait « non lu » de « en attente » demanderait de lire une
+ * légende avant de lire la barre latérale.
  */
-export function threadCallsFor(thread: Pick<FolderThread, 'waiting' | 'running'>): boolean {
-  return thread.waiting || thread.running;
+export function threadCallsFor(
+  thread: Pick<FolderThread, 'waiting' | 'running' | 'unread'>,
+): boolean {
+  return thread.waiting || thread.running || thread.unread;
 }
 
 /**
@@ -389,6 +405,7 @@ export function folderThreads(
       href: r.href,
       waiting: r.waiting,
       running: r.running,
+      unread: r.unread,
     };
     const seen = byFolder[r.folder];
     if (seen === undefined) {

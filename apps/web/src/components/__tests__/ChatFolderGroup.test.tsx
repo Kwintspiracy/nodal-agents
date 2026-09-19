@@ -243,7 +243,7 @@ describe('le compte porté par le lien « Chat » @cap:reprendre-conversation/ec
 function fil(
   key: string,
   title: string,
-  etat: { waiting?: boolean; running?: boolean } = {},
+  etat: { waiting?: boolean; running?: boolean; unread?: boolean } = {},
 ): FolderThread {
   return {
     key,
@@ -251,6 +251,7 @@ function fil(
     href: `/chat/${key}`,
     waiting: etat.waiting ?? false,
     running: etat.running ?? false,
+    unread: etat.unread ?? false,
   };
 }
 
@@ -453,6 +454,27 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
     expect(dots[3]?.className).not.toContain('bg-attention');
     // Aucun `#D8153F` en dur dans le rendu : le jeton est la seule source.
     expect(container.innerHTML.toLowerCase()).not.toContain('d8153f');
+  });
+
+  it('est ROUGE sur un fil NON LU, même sans demande ni run (#209)', async () => {
+    // Le troisième sens du point, ajouté le 19/09/2026 : avant la table
+    // `conversation_reads`, un fil au repos était forcément gris parce que
+    // rien ne savait s'il avait été lu.
+    //
+    // Mutation vérifiée : `unread` retiré de `threadCallsFor` → ce test rougit.
+    seedThreads({
+      telegram: [
+        fil('t1', 'Nobody opened this one', { unread: true }),
+        fil('t2', 'Seen it', { unread: false }),
+      ],
+    });
+    await renderGroup({ channels: ['telegram'] });
+    await click(folderRow('telegram'));
+
+    const dots = threadDots('telegram');
+    expect(dots.map((d) => d.getAttribute('data-calls'))).toEqual(['yes', 'no']);
+    expect(dots[0]?.className).toContain('bg-attention');
+    expect(dots[1]?.className).toContain('bg-ink-4');
   });
 
   it('pose le point DEVANT le titre, dans la colonne de l’icône du dossier', async () => {

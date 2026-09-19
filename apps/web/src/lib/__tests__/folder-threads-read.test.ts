@@ -49,7 +49,9 @@ vi.mock('@nodal-agents/auth', async (importOriginal) => {
   return {
     ...actual,
     requireAuth: async () => ({
-      userId: 'mock-user-id',
+      // Un VRAI identifiant : la lecture joint les marqueurs de lecture de
+      // cette personne (#209), et `user_id` est un uuid en base.
+      userId: seed?.userId ?? 'mock-user-id',
       entityId: seed?.entityId ?? 'mock-entity-id',
     }),
   };
@@ -198,7 +200,12 @@ describe('la borne est dans le SQL ÉMIS @cap:reprendre-conversation/moteur', ()
 
   it('borne « Nodal chats » par un limit, et pas après coup', async () => {
     const { folderConversationsQuery } = await import('../folder-threads-sql.ts');
-    const { sql, params } = folderConversationsQuery(commeDb(testDb), seed.entityId, 5).toSQL();
+    const { sql, params } = folderConversationsQuery(
+      commeDb(testDb),
+      seed.entityId,
+      seed.userId,
+      5,
+    ).toSQL();
     expect(sql.toLowerCase()).toContain('limit');
     expect(params).toContain(5);
   });
