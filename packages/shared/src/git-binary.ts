@@ -45,8 +45,21 @@
 import { stat } from 'node:fs/promises';
 import { delimiter as PATH_DELIMITER } from 'node:path';
 
-/** Les extensions exécutables à essayer sous Windows, dans l'ordre. */
-const EXTENSIONS_WINDOWS = ['.exe', '.cmd', '.bat', '.com'];
+/**
+ * Les extensions à essayer sous Windows, dans l'ordre — et SEULEMENT des
+ * binaires.
+ *
+ * Revue C de la PR #244, passe 2. La liste portait aussi `.cmd` et `.bat`, ce
+ * qui était un piège : depuis le correctif de Node d'avril 2024, `execFile`
+ * REFUSE un script batch sans `shell: true` et rend `EINVAL`. Un `git.cmd`
+ * posé devant le vrai `git.exe` dans le PATH aurait donc été résolu ici, puis
+ * refusé au lancement — et tout ce qui dépend de git serait tombé en silence
+ * sur son repli, sans que le PATH ait l'air fautif.
+ *
+ * Un shim batch n'est de toute façon pas le binaire qu'on cherche : il le
+ * relance derrière lui. On ne retient que ce qui s'exécute directement.
+ */
+const EXTENSIONS_WINDOWS = ['.exe', '.com'];
 
 /** Un chemin en barres obliques, la forme que tout le dépôt manipule. */
 function enBarresObliques(chemin: string): string {

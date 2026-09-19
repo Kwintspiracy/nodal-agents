@@ -32,6 +32,17 @@ let terrainId = '';
 let terrain = '';
 /** Un autre utilisateur — sert à rendre la session NON-propriétaire. */
 let voisinUserId = '';
+/**
+ * L'entité de la session, telle que les mocks la rendent.
+ *
+ * Revue C de la PR #244, passe 2, mineur 2. Le cas « pas le propriétaire »
+ * changeait le propriétaire de l'entité du SEED, partagée par tout le fichier,
+ * et la remettait dans un `finally` — un cas qui casse en cours de route la
+ * laisse cassée pour les suivants. On déplace plutôt la SESSION : elle regarde
+ * une entité à elle, dont le propriétaire est quelqu'un d'autre, et rien du
+ * seed ne bouge.
+ */
+let entiteActive = '';
 /** Un dossier HORS de tout projet : celui qu'une charge utile hostile viserait. */
 let horsRegistre = '';
 
@@ -43,7 +54,7 @@ vi.mock('@/lib/server.ts', () => ({
   ACTIVE_ENTITY_COOKIE: 'nodalai_active_entity',
   applyActiveEntity: (session: { userId: string; entityId?: string }) => ({
     ...session,
-    entityId: seed?.entityId ?? session.entityId ?? '',
+    entityId: entiteActive || (seed?.entityId ?? session.entityId ?? ''),
   }),
 }));
 
@@ -60,7 +71,7 @@ vi.mock('@nodal-agents/auth', async (importOriginal) => {
     ...actual,
     requireAuth: async () => ({
       userId: seed?.userId ?? 'mock-user-id',
-      entityId: seed?.entityId ?? 'mock-entity-id',
+      entityId: entiteActive || (seed?.entityId ?? 'mock-entity-id'),
     }),
   };
 });
@@ -69,6 +80,7 @@ beforeAll(async () => {
   const res = await spinUpTestDb();
   testDb = res.db;
   seed = await seedMinimal(testDb);
+  entiteActive = seed.entityId;
 
   racine = norm(await mkdtemp(join(tmpdir(), 'nodal-init-git-')));
   terrain = `${racine}/terrain`;
@@ -236,28 +248,41 @@ describe('setCodeProjectInitGitAction @cap:travailler-sur-des-fichiers/moteur', 
   });
 
   it('hors PROPRIÉTAIRE, rien n’est posé', async () => {
+    // L'entité de CE cas est à lui : elle appartient au voisin, la session la
+    // regarde le temps de l'appel, et le seed partagé n'est pas touché. Un cas
+    // qui mute le seed et le remet dans un `finally` laisse tout le fichier
+    // cassé s'il échoue au milieu (revue C, passe 2, mineur 2).
     const { setCodeProjectInitGitAction } = await import('../actions.ts');
-    const projet = await projetNeuf('pas-a-toi');
+    const [entiteDuVoisin] = await testDb
+      .insert(entities)
+      .values({ userId: voisinUserId, name: 'Voisin', slug: `voisin-pasatoi-${Date.now()}` })
+      .returning({ id: entities.id });
+    const chemin = `${racine}/pas-a-toi`;
+    await mkdir(chemin, { recursive: true });
+    const [row] = await testDb
+      .insert(codeProjects)
+      .values({
+        entityId: entiteDuVoisin!.id,
+        projectPath: chemin,
+        projectKey: chemin.toLowerCase(),
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
 
-    await testDb
-      .update(entities)
-      .set({ userId: voisinUserId })
-      .where(eq(entities.id, seed.entityId));
+    entiteActive = entiteDuVoisin!.id;
     try {
-      const r = await setCodeProjectInitGitAction({ projectId: projet.id, initGit: true });
+      const r = await setCodeProjectInitGitAction({ projectId: row!.id, initGit: true });
 
       expect(r.ok).toBe(false);
       expect(r.ok ? '' : r.code).toBe('forbidden');
       expect(
-        existsSync(join(projet.path, '.git')),
+        existsSync(join(chemin, '.git')),
         'un non-propriétaire a posé un dépôt dans un dossier partagé',
       ).toBe(false);
-      expect((await ligne(projet.id))?.initGit).toBe(false);
+      expect((await ligne(row!.id))?.initGit).toBe(false);
     } finally {
-      await testDb
-        .update(entities)
-        .set({ userId: seed.userId })
-        .where(eq(entities.id, seed.entityId));
+      entiteActive = seed.entityId;
     }
   });
 
