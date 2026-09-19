@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -24,6 +24,7 @@ import { normalizePath } from '@nodal-agents/shared';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
 import { executeTool } from '../execute';
+import { recordConstatedWrites } from '../verification/record-constat';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
 
 const run = promisify(execFile);
@@ -246,5 +247,42 @@ describe('le seam range le constat @cap:travailler-sur-des-fichiers/moteur', () 
     );
 
     expect(await lignes(jobId)).toEqual([{ nom: 'ecrit.ts', kind: 'added', par: 'disk' }]);
+  });
+});
+
+describe('une ligne par fichier @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('deux ORTHOGRAPHES du même fichier ne font qu’une ligne', async () => {
+    // Le cas réel : dans un dépôt, un harnais rapporte ses fichiers avec la
+    // graphie qu'on lui a donnée (forme courte 8.3, ou à travers une jonction)
+    // pendant que git rend la forme longue et suivie. Sans résolution, le même
+    // fichier entrait deux fois — une ligne `git`, une ligne `disk` — et le
+    // bloc Files le montrait deux fois sous deux noms.
+    const ws = await dossierNeuf('deux-noms');
+    const jobId = await jobNeuf();
+    await writeFile(join(ws, 'a.ts'), 'export const a = 1;\n');
+    const lien = join(racine, 'alias-deux-noms');
+    try {
+      await symlink(ws, lien, 'junction');
+    } catch (err) {
+      console.warn(
+        `[tests] CAS SAUTÉ — impossible de créer un lien : ${String(err)}\n` +
+          '        La règle reste prouvée par `constat-chemin-reel.test.ts`.',
+      );
+      return;
+    }
+
+    await recordConstatedWrites({
+      db,
+      jobId,
+      turn: 1,
+      lignes: [
+        { path: normalizePath(join(ws, 'a.ts')), kind: 'added', constatedBy: 'git' },
+        { path: normalizePath(join(lien, 'a.ts')), kind: 'modified', constatedBy: 'disk' },
+      ],
+    });
+
+    // UNE ligne, et c'est la première — celle du constat par git.
+    expect(await lignes(jobId)).toEqual([{ nom: 'a.ts', kind: 'added', par: 'git' }]);
+    await rm(lien, { recursive: true, force: true });
   });
 });

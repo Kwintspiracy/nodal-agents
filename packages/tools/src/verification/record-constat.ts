@@ -22,7 +22,41 @@ import { constatedWrites } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { ConstatedBy, ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { normalizePath } from '@nodal-agents/shared';
+import { realpath } from 'node:fs/promises';
 import { fingerprint, type FileSnapshot } from './observed';
+
+/**
+ * LE CHEMIN RÉEL D'UN FICHIER CONSTATÉ, et pourquoi il faut le prendre.
+ *
+ * Les deux constats ne nomment pas le même fichier de la même façon. Git rend
+ * toujours la forme longue et suivie ; un outil de Nodal rend ce que son
+ * appelant lui a donné, qui peut être une forme courte 8.3 ou passer par une
+ * jonction. Sans cette résolution, le MÊME fichier écrit par un harnais dans un
+ * dépôt entre deux fois dans `constated_writes` — une ligne `git`, une ligne
+ * `disk` — et le bloc Files le montre deux fois sous deux orthographes.
+ *
+ * C'est le défaut que la CI Windows a trouvé sur la garde de périmètre du
+ * constat par git, dans son chemin jumeau.
+ *
+ * UN FICHIER SUPPRIMÉ N'A PLUS DE CHEMIN RÉEL : on résout alors son DOSSIER et
+ * on lui raccroche son nom. Si le dossier non plus n'existe pas, on garde ce
+ * qu'on nous a donné — c'est ce qu'on avait, et inventer serait pire.
+ */
+export async function cheminConstate(path: string): Promise<string> {
+  const p = normalizePath(path);
+  try {
+    return normalizePath(await realpath(p));
+  } catch {
+    /* le fichier n'est plus là — son dossier, peut-être */
+  }
+  const coupe = p.lastIndexOf('/');
+  if (coupe <= 0) return p;
+  try {
+    return `${normalizePath(await realpath(p.slice(0, coupe)))}${p.slice(coupe)}`;
+  } catch {
+    return p;
+  }
+}
 
 /** Une ligne prête à ranger : le constat, plus d'où il vient. */
 export interface LigneDeConstat extends ConstatedWrite {
@@ -94,7 +128,9 @@ export async function recordConstatedWrites(input: {
   const vus = new Set<string>();
   const values = [];
   for (const l of lignes) {
-    const path = normalizePath(l.path);
+    // Le chemin RÉEL, pour que deux orthographes du même fichier ne fassent
+    // pas deux lignes — voir `cheminConstate`.
+    const path = await cheminConstate(l.path);
     if (vus.has(path)) continue;
     vus.add(path);
     values.push({
