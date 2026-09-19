@@ -1,49 +1,21 @@
-import Link from 'next/link';
-import { listScheduledRunsAction, listRoutineStatesAction } from '@/lib/actions.ts';
-import { groupSpaces } from '@/lib/spaces-list.ts';
-import PageShell from '@/components/ui/PageShell';
-import EmptyState from '@/components/ui/EmptyState';
-import ScheduledSection from './ScheduledSection.tsx';
+import { permanentRedirect } from 'next/navigation';
 
-// Force dynamic — this page reads per-request DB state.
-export const dynamic = 'force-dynamic';
-
-export default async function ScheduledPage() {
-  // P9 : les runs d'automatisation ont leur page. On lit UNIQUEMENT les runs
-  // cron (leur propre action, leur propre limite) ; `groupSpaces` les replie
-  // par automatisation, une ligne par automatisation, ses runs dessous.
-  const [result, states] = await Promise.all([
-    listScheduledRunsAction(),
-    // L'état de chaque routine — ce qui décide s'il y aura du travail au
-    // prochain run. Une lecture qui échoue ne doit pas emporter la page : la
-    // liste des runs reste lisible, l'état est simplement absent.
-    listRoutineStatesAction(),
-  ]);
-  const { scheduled } = groupSpaces(result.ok ? result.data : []);
-  const routineState = states.ok ? states.data : {};
-
-  return (
-    <PageShell
-      title="Scheduled"
-      subtitle="Every run of your automations, grouped by automation."
-      toolbar={
-        <div className="flex items-center gap-3">
-          <Link href="/automations" className="text-xs text-ink-3 hover:text-ink-2">
-            Configure automations
-          </Link>
-        </div>
-      }
-    >
-      {!result.ok ? (
-        <p className="text-sm text-err">{result.message}</p>
-      ) : scheduled.length === 0 ? (
-        <EmptyState
-          title="No scheduled run yet"
-          description="Runs of your automations show up here. Set one up in Automations."
-        />
-      ) : (
-        <ScheduledSection groups={scheduled} routineState={routineState} />
-      )}
-    </PageShell>
-  );
+/**
+ * La page Scheduled n'existe plus (Quentin, 19/09/2026, #202).
+ *
+ * Elle listait les runs groupés par automatisation. Chaque automatisation
+ * montre désormais les SIENS sur sa propre page, et la liste des
+ * automatisations est la porte unique : deux endroits pour la même chose
+ * obligeaient à choisir sans rien pour choisir, et le retour d'une page de run
+ * déposait le lecteur sur un écran retiré du menu.
+ *
+ * La route reste, et REDIRIGE : elle est dans des favoris et dans des liens
+ * déjà envoyés. Une redirection permanente, parce que ce déménagement est
+ * définitif — rien ne reviendra vivre ici.
+ *
+ * Les pages de run gardent leur adresse (`/scheduled/<id>`, le dossier voisin) :
+ * ce sont elles que les notifications et les fils pointent.
+ */
+export default function ScheduledPage(): never {
+  permanentRedirect('/automations');
 }

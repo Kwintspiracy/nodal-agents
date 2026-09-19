@@ -1,21 +1,10 @@
 'use client';
 
-import { useState, useTransition } from 'react';
-import { toast } from 'sonner';
-import { Play, Pause, PlayCircle, PencilSimple, Copy, Trash } from '@phosphor-icons/react';
-import {
-  toggleScheduleAction,
-  deleteScheduleAction,
-  duplicateScheduleAction,
-  runScheduleNowAction,
-  type AgentRow,
-  type ScheduleRow as ScheduleRowData,
-} from '@/lib/actions.ts';
-import ConfirmDialog from '@/components/ConfirmDialog.tsx';
-import ScheduleForm from './ScheduleForm.tsx';
+import Link from 'next/link';
+import type { AgentRow, ScheduleRow as ScheduleRowData } from '@/lib/actions.ts';
 import { humanLabel } from '@/lib/cron.ts';
 import StatusPill from '@/components/ui/StatusPill';
-import RowActionButton from '@/components/ui/RowActionButton';
+import ScheduleActions from './ScheduleActions.tsx';
 
 interface Props {
   schedule: ScheduleRowData;
@@ -23,49 +12,20 @@ interface Props {
 }
 
 export default function ScheduleRow({ schedule: s, agents }: Props) {
-  const [isPending, startTransition] = useTransition();
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
-
-  function handleToggle() {
-    startTransition(async () => {
-      const r = await toggleScheduleAction(s.id);
-      if (!r.ok) toast.error(r.message);
-      else toast.success(r.data.active ? 'Schedule enabled' : 'Schedule disabled');
-    });
-  }
-
-  function performDelete() {
-    setConfirmOpen(false);
-    startTransition(async () => {
-      const r = await deleteScheduleAction(s.id);
-      if (!r.ok) toast.error(r.message);
-      else toast.success('Schedule deleted');
-    });
-  }
-
-  function handleRunNow() {
-    startTransition(async () => {
-      const r = await runScheduleNowAction(s.id);
-      if (!r.ok) toast.error(r.message);
-      else toast.success(`Running "${s.name}" now`);
-    });
-  }
-
-  function handleDuplicate() {
-    startTransition(async () => {
-      const r = await duplicateScheduleAction(s.id);
-      if (!r.ok) toast.error(r.message);
-      else toast.success(`Duplicated "${s.name}" — paused; enable it when ready`);
-    });
-  }
-
   return (
     <div className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-semibold text-ink">{s.name}</h3>
+            {/* Le nom OUVRE l'automatisation (#202) : ses réglages en entier et
+                ses derniers runs. La carte garde ses gestes rapides. Le lien
+                vit DANS le titre : le nom reste le titre de la carte, pour qui
+                lit l'écran comme pour qui le parcourt au clavier. */}
+            <h3 className="text-base font-semibold text-ink">
+              <Link href={`/automations/${s.id}`} className="hover:underline">
+                {s.name}
+              </Link>
+            </h3>
             <StatusPill
               variant={s.active ? 'done' : 'idle'}
               label={s.active ? 'Active' : 'Paused'}
@@ -136,46 +96,7 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <RowActionButton
-            square
-            icon={<Play size={16} weight="fill" />}
-            title={s.task ? 'Run now' : 'No task to run'}
-            onClick={handleRunNow}
-            disabled={isPending || !s.task}
-          />
-          <RowActionButton
-            square
-            icon={
-              s.active ? <Pause size={16} weight="fill" /> : <PlayCircle size={16} weight="fill" />
-            }
-            title={s.active ? 'Pause' : 'Enable'}
-            onClick={handleToggle}
-            disabled={isPending}
-          />
-          <RowActionButton
-            square
-            icon={<PencilSimple size={16} />}
-            title="Edit"
-            onClick={() => setEditing(true)}
-            disabled={isPending}
-          />
-          <RowActionButton
-            square
-            icon={<Copy size={16} />}
-            title="Duplicate"
-            onClick={handleDuplicate}
-            disabled={isPending}
-          />
-          <RowActionButton
-            square
-            icon={<Trash size={16} />}
-            title="Delete"
-            tone="danger"
-            onClick={() => setConfirmOpen(true)}
-            disabled={isPending}
-          />
-        </div>
+        <ScheduleActions schedule={s} agents={agents} />
       </div>
 
       {s.task && (
@@ -185,22 +106,6 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
           </summary>
           <pre className="whitespace-pre-wrap px-3 pb-3 text-xs text-ink-2">{s.task}</pre>
         </details>
-      )}
-
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Delete schedule?"
-        message="This cron schedule will be removed. Past runs are kept for audit."
-        confirmLabel="Delete"
-        onConfirm={performDelete}
-        onCancel={() => setConfirmOpen(false)}
-      />
-
-      {/* Edit — ScheduleForm owns its non-dismissable Modal (UX-B6), title and
-          footer composed via the Modal component's props. Rendered only while
-          editing so its state initializes fresh from `initial` each open. */}
-      {editing && (
-        <ScheduleForm mode="edit" agents={agents} initial={s} onDone={() => setEditing(false)} />
       )}
     </div>
   );

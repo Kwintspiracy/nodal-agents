@@ -38,11 +38,39 @@ describe('threadBackLink — un fil revient dans SON dossier', () => {
 });
 
 describe('runBackLink — un run revient là d’où on l’ouvre', () => {
-  it('une automation revient à Scheduled, même si elle a une conversation', () => {
-    expect(runBackLink({ channel: 'cron', conversationId: 'c1' })).toEqual({
-      label: 'Back to Scheduled',
-      href: '/scheduled',
+  it('le run d’une automatisation revient à SON automatisation, même s’il a une conversation', () => {
+    // Quentin, 19/09 : « le bouton back me ramène à la page Scheduled, qui est
+    // censée ne plus exister ». Il ramène à l'automatisation, où ce run est
+    // justement listé.
+    expect(runBackLink({ channel: 'cron', conversationId: 'c1', scheduleId: 's1' })).toEqual({
+      label: 'Back to the automation',
+      href: '/automations/s1',
     });
+  });
+
+  it('un run de cron trop ancien pour porter cet id revient à la LISTE', () => {
+    // Les jobs d'avant cette provenance n'ont pas d'id d'automatisation. On ne
+    // devine pas laquelle c'était : on ramène à la liste, jamais à une page
+    // d'automatisation choisie au hasard (invariant #4).
+    expect(runBackLink({ channel: 'cron', conversationId: null, scheduleId: null })).toEqual({
+      label: 'Back to Automations',
+      href: '/automations',
+    });
+    expect(runBackLink({ channel: 'cron', conversationId: null })).toEqual({
+      label: 'Back to Automations',
+      href: '/automations',
+    });
+  });
+
+  it('ne ramène JAMAIS à /scheduled, la page retirée', () => {
+    for (const job of [
+      { channel: 'cron', conversationId: 'c1', scheduleId: 's1' },
+      { channel: 'cron', conversationId: null },
+      { channel: 'telegram', conversationId: 'c1' },
+      { channel: 'dashboard', conversationId: '' },
+    ]) {
+      expect(runBackLink(job).href).not.toBe('/scheduled');
+    }
   });
 
   it('le run d’une conversation revient à cette conversation', () => {
