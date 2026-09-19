@@ -24,10 +24,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 let pathname = '/agents';
+/** Les paramètres de la route — `?open=` des réglages. Sans le « ? ». */
+let search = '';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => pathname,
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(search),
 }));
 vi.mock('next/link', () => ({
   default: ({ children, href, ...rest }: { children: ReactNode; href: string }) =>
@@ -173,6 +175,7 @@ function nommees(n: number, prefixe: string) {
 beforeEach(() => {
   document.body.innerHTML = '';
   pathname = '/agents';
+  search = '';
   vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: {} });
   vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
   vi.mocked(listSidebarAgentsAction).mockResolvedValue({ ok: true, data: [] });
@@ -501,24 +504,54 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     expect(navLink('Install').getAttribute('href')).toBe('/settings?open=install-notes');
   });
 
-  it('n’allume AUCUN des quatre réglages, comme la planche', async () => {
-    // Les quatre mènent à `/settings` avec un paramètre différent, et la route
-    // n'en porte aucun : `usePathname` s'arrête au chemin. Comparer sur le
-    // chemin seul les allumerait TOUTES LES QUATRE — quatre lignes qui se
-    // disent « la page où vous êtes » — et la planche n'en allume aucune. La
-    // case Settings du rail, elle, s'allume bien : c'est là que se lit où l'on
-    // est.
+  it('n’allume QUE le réglage ouvert, et aucun sur /settings nu', async () => {
+    // Les quatre mènent à `/settings` avec un `?open=` différent. Comparer sur
+    // le CHEMIN seul les allumait toutes les quatre — quatre lignes qui se
+    // disent « la page où vous êtes » (passe 1 de la revue de la PR #279) ;
+    // comparer sur la chaîne entière n'en allumait aucune, même la bonne,
+    // parce que `usePathname` s'arrête au chemin. La règle lit donc les DEUX :
+    // le chemin, puis chaque paramètre que l'entrée écrit.
     //
     // Mutation vérifiée : le `href.split('?')[0]` de la v1 remis dans
     // `isPanelItemActive` → ce cas rougit, les quatre s'allument d'un coup.
     pathname = '/settings';
+    search = 'open=timezone';
+    await renderSidebar();
+    const allumees = () => {
+      const panneau = container.querySelector('[data-testid="sidebar-panel"]');
+      return [...(panneau?.querySelectorAll('[data-sidebar-row]') ?? [])]
+        .filter((r) => r.className.includes(SIDEBAR_ROW_ACTIVE))
+        .map((r) => r.textContent?.trim() ?? '');
+    };
+    expect(allumees()).toEqual(['Workspace']);
+
+    await remonter();
+    search = 'open=install-notes';
+    await renderSidebar();
+    expect(allumees()).toEqual(['Install']);
+
+    await remonter();
+    // `/settings` NU : la route ne dit aucun réglage ouvert, donc aucune ligne
+    // ne se prétend courante — ce que la planche dessine. La case du rail,
+    // elle, s'allume : c'est là que se lit où l'on est.
+    search = '';
+    await renderSidebar();
+    expect(allumees()).toEqual([]);
+    expect(railCell('settings').getAttribute('aria-current')).toBe('page');
+  });
+
+  it('ne fait PAS dépendre une entrée sans paramètre de ceux de la route', async () => {
+    // `/skills?tab=installed` est la page de `/skills`, et sa ligne doit
+    // rester allumée : la règle des paramètres ne vaut que pour les entrées
+    // qui en écrivent un.
+    pathname = '/skills';
+    search = 'tab=installed';
     await renderSidebar();
     const panneau = container.querySelector('[data-testid="sidebar-panel"]');
     const actives = [...(panneau?.querySelectorAll('[data-sidebar-row]') ?? [])].filter((r) =>
       r.className.includes(SIDEBAR_ROW_ACTIVE),
     );
-    expect(actives.length).toBe(0);
-    expect(railCell('settings').getAttribute('aria-current')).toBe('page');
+    expect(actives.map((r) => r.textContent?.trim())).toEqual(['Skills']);
   });
 
   it('marque l’entrée du panneau où l’on se trouve, et elle seule', async () => {

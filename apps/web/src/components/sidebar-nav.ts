@@ -366,22 +366,37 @@ function workDestination(): Destination {
 }
 
 /**
- * L'entrée du panneau qui correspond à la route — exacte, ou dedans.
+ * L'entrée du panneau qui correspond à la route — CHEMIN ET PARAMÈTRES.
  *
- * ⚠️ UNE ENTRÉE QUI PORTE UN PARAMÈTRE NE S'ALLUME JAMAIS. Les quatre lignes
- * de Settings mènent toutes à `/settings`, chacune avec un `?open=` différent ;
- * la route, elle, n'en porte aucun (`usePathname` s'arrête au chemin). Les
- * comparer sur le chemin seul allumerait les QUATRE d'un coup — quatre lignes
- * qui se disent toutes « la page où vous êtes », ce qui ne veut plus rien dire
- * et ce que la planche ne dessine pas : elle n'en allume aucune. Les comparer
- * sur l'adresse entière n'en allumerait aucune non plus, mais par accident.
- * On le dit donc franchement : sans le paramètre, la route ne distingue pas
- * ces lignes, et aucune ne se prétend courante.
+ * ⚠️ UNE ENTRÉE QUI PORTE UN PARAMÈTRE SE COMPARE SUR CE PARAMÈTRE. Les quatre
+ * lignes de Settings mènent toutes à `/settings`, chacune avec un `?open=`
+ * différent. Les comparer sur le chemin seul allumait les QUATRE d'un coup —
+ * quatre lignes qui se disent toutes « la page où vous êtes », ce qui ne veut
+ * plus rien dire (passe 1 de la revue de la PR #279). Les comparer sur la
+ * chaîne entière n'en allumait aucune, jamais, même sur la bonne : la route
+ * porte bien `?open=timezone`, mais `usePathname` s'arrête au chemin.
+ *
+ * La règle tient donc en deux temps : le chemin doit correspondre, et CHAQUE
+ * paramètre que l'entrée écrit doit se retrouver, avec la même valeur, dans
+ * ceux de la route. Sur `/settings?open=timezone`, seule « Workspace »
+ * s'allume ; sur `/settings` nu, aucune — ce que la planche dessine.
+ *
+ * Une entrée SANS paramètre ne regarde pas ceux de la route : `/skills`
+ * s'allume sur `/skills?tab=installed` comme sur `/skills`, et c'est bien la
+ * même page.
  */
-export function isPanelItemActive(href: string, pathname: string): boolean {
-  // L'adresse est comparée ENTIÈRE, paramètre compris. C'est ce qui suffit :
-  // `/settings` n'est ni égal à `/settings?open=sign-in` ni dedans, donc la
-  // ligne ne s'allume pas, et il n'y a pas de garde à écrire pour cela.
-  if (href === '/') return pathname === '/';
-  return isUnder(pathname, href);
+export function isPanelItemActive(href: string, pathname: string, search = ''): boolean {
+  const [chemin = href, query] = href.split('?');
+  if (query === undefined || query === '') {
+    if (chemin === '/') return pathname === '/';
+    return isUnder(pathname, chemin);
+  }
+  // Le chemin EXACT : une entrée paramétrée désigne un état d'une page, pas
+  // une branche de routes, et `/settings?open=x` ne couvre pas `/settings/y`.
+  if (pathname !== chemin) return false;
+  const courants = new URLSearchParams(search);
+  for (const [cle, valeur] of new URLSearchParams(query)) {
+    if (courants.get(cle) !== valeur) return false;
+  }
+  return true;
 }

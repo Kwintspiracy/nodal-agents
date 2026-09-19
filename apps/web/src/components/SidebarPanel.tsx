@@ -25,6 +25,7 @@
 // non une demande (les cadres sont des duplicatas jamais renommés).
 
 import { Suspense, type ReactElement } from 'react';
+import { useSearchParams } from 'next/navigation';
 import SidebarSection from './ui/SidebarSection';
 import SidebarLink from './ui/SidebarLink';
 import ChatFolderGroup from './ChatFolderGroup';
@@ -61,6 +62,50 @@ const DYNAMIC: Record<PanelDynamic, () => ReactElement> = {
   approvals: () => <ApprovalsList />,
   recents: () => <RecentApprovals />,
 };
+
+/**
+ * Les entrées ÉCRITES d'un bloc, et la ligne allumée parmi elles.
+ *
+ * À part pour une raison : elles sont les seules du panneau à dépendre des
+ * PARAMÈTRES de la route, et `useSearchParams` fait basculer son sous-arbre en
+ * rendu client. L'isoler ici garde le rail, la tête et les listes lues hors de
+ * cette frontière (le même geste que `ChatFolderGroup` depuis #230).
+ */
+function PanelItems({
+  group,
+  pathname,
+  search,
+}: {
+  group: Destination['groups'][number];
+  pathname: string;
+  search: string;
+}) {
+  return (
+    <>
+      {group.items.map((it) => (
+        <SidebarLink
+          key={it.href}
+          href={it.href}
+          label={it.label}
+          icon={<it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />}
+          isActive={isPanelItemActive(it.href, pathname, search)}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Les mêmes, avec les paramètres que la route porte vraiment. */
+function PanelItemsLive({
+  group,
+  pathname,
+}: {
+  group: Destination['groups'][number];
+  pathname: string;
+}) {
+  const search = useSearchParams().toString();
+  return <PanelItems group={group} pathname={pathname} search={search} />;
+}
 
 export default function SidebarPanel({
   destination,
@@ -104,15 +149,15 @@ export default function SidebarPanel({
 
             {group.dynamic !== undefined && DYNAMIC[group.dynamic]()}
 
-            {group.items.map((it) => (
-              <SidebarLink
-                key={it.href}
-                href={it.href}
-                label={it.label}
-                icon={<it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />}
-                isActive={isPanelItemActive(it.href, pathname)}
-              />
-            ))}
+            {/* Sous <Suspense> : ces lignes lisent les PARAMÈTRES de la route
+                (`?open=` des réglages), et Next veut voir `useSearchParams`
+                sous une frontière. Le repli dessine les MÊMES lignes sans
+                paramètre — donc aucune allumée — plutôt que rien : un menu qui
+                disparaîtrait le temps d'un rendu se remarquerait, un menu
+                allumé une fraction de seconde plus tard, non. */}
+            <Suspense fallback={<PanelItems group={group} pathname={pathname} search="" />}>
+              <PanelItemsLive group={group} pathname={pathname} />
+            </Suspense>
           </div>
         ))}
       </div>

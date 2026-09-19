@@ -1082,7 +1082,11 @@ export async function listSidebarProjectsAction(
               agentJobs.projectId,
               rows.map((r) => r.id),
             ),
-            sql`(${conversationReads.readAt} IS NULL OR ${conversations.updatedAt} > ${conversationReads.readAt})`,
+            // La MÊME colonne que les trois autres lectures de non-lu, et pas
+            // une quatrième écriture du même SQL (`lib/unread.ts`) : deux
+            // copies de cette comparaison finiraient par se contredire, et la
+            // barre dirait deux choses du même fil.
+            unreadColumn,
           ),
         );
       for (const v of vus) if (v.projectId !== null) nonLus.add(v.projectId);
