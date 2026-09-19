@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowClockwise, CheckCircle } from '@phosphor-icons/react';
+import { ArrowClockwise } from '@phosphor-icons/react';
 import Modal, { ModalFooter } from '@/components/ui/Modal';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import IconTextButton from '@/components/ui/IconTextButton';
@@ -37,7 +37,7 @@ export default function VersionBadge() {
   const { current, latest, updateAvailable } = info;
 
   return (
-    <div className="mx-2 mt-1">
+    <div className="mt-1">
       {updateAvailable ? (
         <IconTextButton
           onClick={() => setOpen(true)}
@@ -47,10 +47,12 @@ export default function VersionBadge() {
           subtitle={`v${current} → v${latest}`}
         />
       ) : (
-        <div className="flex items-center gap-1.5 px-2.5 py-1 text-ink-4">
-          <CheckCircle size={12} className="shrink-0" />
-          <span className="text-mono-11">Nodal v{current}</span>
-        </div>
+        // Au repos, la ligne de version est une PHRASE et rien d'autre
+        // (planches de Quentin du 19/09/2026) : mono 10, `ink-4`, 8 px de
+        // retrait, alignée sur les titres de section au-dessus d'elle. La
+        // coche verte qui l'ouvrait disait « à jour », ce que l'absence de
+        // badge de mise à jour dit déjà.
+        <div className="px-2 py-1 font-mono text-legacy-10 text-ink-4">Nodal v{current}</div>
       )}
 
       <Modal

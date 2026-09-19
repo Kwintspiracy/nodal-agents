@@ -277,8 +277,14 @@ function waitingByFolder(waiting: ChatFoldersInput['waiting']): Map<string, numb
 }
 
 /**
- * Un dossier est ACTIF quand l'URL le désigne : le `folder=` de `/chat`. Sur
- * `/scheduled`, aucun ne l'est : Scheduled a son propre lien dans le menu.
+ * Un dossier est ACTIF quand l'URL le DÉSIGNE : le `folder=` de `/chat`, et
+ * rien d'autre. Aucune autre page n'allume de dossier.
+ *
+ * ⚠️ La raison a changé le 19/09/2026 (#230). Elle disait : « sur /scheduled,
+ * aucun ne l'est, Scheduled a son propre lien dans le menu ». Ce lien n'existe
+ * plus — le rail ne porte plus l'entrée, et la page part avec #224. La règle,
+ * elle, n'a pas bougé d'un caractère, parce qu'elle ne tenait pas à ce lien :
+ * un dossier s'allume quand l'URL le nomme, un point.
  *
  * Un fil ouvert (`/chat/<id>`) ne rallume aucun dossier : rien dans son URL ne
  * dit d'où il vient, et deviner le rendrait faux une fois sur deux.
@@ -382,6 +388,15 @@ export function threadCallsFor(
  * page et son bouton « See all ».
  */
 export const FOLDER_THREADS_MAX = 5;
+
+/**
+ * Combien de fils la section « Recent » du panneau Talk montre (#230).
+ *
+ * Cinq, comme un sous-menu : la barre latérale montre la TÊTE des listes, et
+ * deux plafonds différents sous deux titres voisins se liraient comme une règle
+ * de plus à retenir.
+ */
+export const RECENT_THREADS_MAX = 5;
 
 /**
  * Les derniers fils de CHAQUE dossier, dans l'ordre reçu.

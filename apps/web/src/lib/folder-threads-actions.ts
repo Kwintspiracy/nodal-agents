@@ -140,9 +140,11 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
       folder: DASHBOARD_FOLDER,
       key: c.id,
       // Le MÊME titre que la ligne de la liste (`conversationRows`) : déjà
-      // masqué et coupé par la lecture (#179), « Untitled » quand personne ne
-      // l'a nommé et que l'IA ne l'a pas encore renommé.
-      title: c.title === '' ? 'Untitled' : c.title,
+      // masqué, coupé ET nommé par la lecture (#179), « Untitled » compris.
+      // Le dernier recours vit dans `nommerLesFils`, pas ici : il était écrit
+      // à deux endroits, et deux copies du même repli finissent par diverger
+      // (Reviewer C, passe 1 de la PR #235).
+      title: c.title,
       href: `/chat/${c.id}`,
       waiting: attendSurFil.has(c.id),
       running: tourne.has(c.id),

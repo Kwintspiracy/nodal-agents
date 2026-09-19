@@ -1,9 +1,6 @@
 import 'server-only';
 
-import { headers } from 'next/headers';
 import { ShieldCheck, User } from '@phosphor-icons/react/dist/ssr';
-import { users, eq } from '@nodal-agents/db';
-import { getDb, requireUserWithEntity } from '@/lib/server.ts';
 import { env } from '@/lib/env.ts';
 import SignOutButton from './SignOutButton.tsx';
 
@@ -18,7 +15,7 @@ import SignOutButton from './SignOutButton.tsx';
  * neutral-900-on-black. Colours respond to the active theme automatically
  * via the design tokens.
  */
-export default async function UserMenu() {
+export default async function UserMenu({ email }: { email: string | null }) {
   const mode = env.AUTH_MODE;
 
   if (mode === 'local-trust') {
@@ -40,8 +37,9 @@ export default async function UserMenu() {
     );
   }
 
-  // local-auth — fetch email for the current session.
-  const email = await getCurrentEmail();
+  // local-auth — le courriel est LU PAR LE LAYOUT et passé ici (#230) : le
+  // rond du rail en tire son initiale, et deux lectures pour le même fait
+  // auraient payé deux allers-retours.
   if (!email) {
     // Should not happen: dashboard layout already gates with requireUserWithEntity.
     return null;
@@ -60,22 +58,6 @@ export default async function UserMenu() {
       <SignOutButton />
     </div>
   );
-}
-
-async function getCurrentEmail(): Promise<string | null> {
-  try {
-    const h = await headers();
-    const req = new Request('http://localhost/', { headers: h });
-    const session = await requireUserWithEntity(req);
-    const row = await getDb()
-      .select({ email: users.email })
-      .from(users)
-      .where(eq(users.id, session.userId))
-      .limit(1);
-    return row[0]?.email ?? null;
-  } catch {
-    return null;
-  }
 }
 
 function ModeBadge({ icon, label, hint }: { icon: React.ReactNode; label: string; hint?: string }) {
