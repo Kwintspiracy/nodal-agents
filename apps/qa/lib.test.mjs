@@ -2421,6 +2421,52 @@ describe('ecartsDe — le prix d’une PR décide du sort des tests', () => {
       ecartsDe(SNAP(prixDe({ runs: 0 })), [{}, {}]).some((x) => /costs|grew/.test(x.titre)),
     ).toBe(false);
   });
+
+  // Constat M1 de la revue C de la PR #85 (dette #88, issue #211). Trente runs
+  // rouges d'affilée donnent `runs: 0` : ni écart « costs », ni écart « grew »,
+  // et la liste se taisait. Or c'est le moment où le prix compte le plus — une
+  // CI qui ne passe plus est aussi une CI dont personne ne mesure l'attente.
+  // Une absence de mesure se DIT, elle ne se déduit pas d'un silence
+  // (invariant #4, la même règle que « npm was unreachable »).
+  it('aucun run vert : le trou de mesure est DIT, et aucun prix n’est affirmé', () => {
+    const liste = ecartsDe(SNAP(prixDe({ runs: 0 })), [{}, {}]);
+    const e = liste.find((x) => /not measured/.test(x.titre));
+    expect(e, 'rien ne dit que le prix n’a pas pu être mesuré').toBeTruthy();
+    expect(e.gravite).toBe('moyenne');
+    expect(e.detail).toContain('red');
+    // Moyenne, donc hors des alertes : c'est un trou de mesure, pas une panne.
+    expect(alertes(liste)).not.toContain(e);
+  });
+
+  it('un seul run vert suffit : le trou n’est plus dit', () => {
+    expect(
+      ecartsDe(SNAP(prixDe({ runs: 1, medianeRecente: 10 })), [{}, {}]).some((x) =>
+        /not measured/.test(x.titre),
+      ),
+    ).toBe(false);
+  });
+
+  it('`prixCi` absent ⇒ pas non plus de trou de mesure : GitHub n’a rien dit du tout', () => {
+    expect(ecartsDe(SNAP(null), [{}, {}]).some((x) => /not measured/.test(x.titre))).toBe(false);
+  });
+
+  // Constat M3 de la même revue. « Median of the last 10 green runs » ne dit
+  // pas QUAND : dix verts peuvent remonter à des semaines si les récents sont
+  // rouges, et le chiffre se lit alors comme le prix d'aujourd'hui.
+  it('le prix nomme la DATE du plus ancien run de sa fenêtre', () => {
+    const serie = [
+      { le: '2026-07-31T00:00:00.000Z', valeur: 30 },
+      ...Array.from({ length: 10 }, (_, i) => ({
+        le: `2026-08-0${i + 1}T00:00:00.000Z`,
+        valeur: 32,
+      })),
+    ];
+    const e = ecartsDe(SNAP(prixDe({ runs: 11, medianeRecente: 32, serie })), [{}, {}]).find((x) =>
+      /costs/.test(x.titre),
+    );
+    expect(e.detail).toContain('2026-08-01');
+    expect(e.detail, 'un run HORS fenêtre est nommé').not.toContain('2026-07-31');
+  });
 });
 
 // Un nom de test rouge dans un tableau est un cul-de-sac : on sait QUE ça
@@ -2470,54 +2516,21 @@ describe('fusionnerEssais — chaque rouge garde l’adresse du run qui l’a vu
 // Le lien n'existe que s'il mène quelque part. Un lien mort coûte plus cher que
 // pas de lien : il use la seule chose qui fait qu'on clique.
 
-describe('le rendu mène à la cause, et seulement quand elle existe', () => {
-  const source = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
-  /** Le corps d'une fonction de vue, du `function vueX()` à la suivante. */
-  const vue = (nom) => {
-    const i = source.indexOf(`function ${nom}(`);
-    const j = source.indexOf('\nfunction ', i + 1);
-    return source.slice(i, j < 0 ? undefined : j);
-  };
-
-  it('« voir le run » est posé dans la Mémoire, les Capacités et les Parcours', () => {
-    expect(vue('vueMemoire')).toContain('lienRun(');
-    expect(vue('vueCapacites')).toContain('lienRun(');
-    expect(vue('vueParcours')).toContain('lienRun(');
-  });
-
-  it('la Mémoire suit le test, pas la collecte : chaque ligne pointe SON dernier rouge', () => {
-    expect(vue('vueMemoire')).toContain('lienRun(e.dernierRougeExecution)');
-  });
-
-  it('le lien est CONDITIONNEL — sans adresse, il n’est pas rendu du tout', () => {
-    expect(source).toMatch(/const lienRun = \(url\) =>\s*\n?\s*url\s*\n?\s*\?/);
-  });
-
-  // « Un parcours vert ne porte pas de lien » se lit désormais SUR LA PAGE,
-  // dans `rendu.test.mjs` : cherché dans le source, il ne disait que la forme
-  // d'une condition, et il est tombé le jour où cette condition a dû accepter
-  // un cas instable — un parcours qui a vacillé est le seul dont le run porte
-  // une trace, et la page n'y menait pas.
-
-  it('le cadre « Prix d’une PR » dit l’absence plutôt qu’un zéro', () => {
-    const cadre = vue('cadrePrix');
-    expect(cadre).toContain('GitHub did not answer');
-    expect(cadre).toContain('prix--absent');
-  });
-});
-
-describe('le rendu ne plante pas sur une collecte plus vieille que lui', () => {
-  // Le cas réel : `pnpm --filter @nodal-agents/qa build` sortait en erreur dans
-  // la CI de TOUTE PR de la chaîne, parce que le snapshot committé datait
-  // d'avant les niveaux écran/moteur et que le rendu lisait `c.ecran.etat`
-  // sans regarder si la clé existait.
-  const build = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
-
-  it('un registre sans niveaux est reconnu, et le portail le DIT', () => {
-    expect(build).toContain('!reg[0]?.ecran || !reg[0]?.moteur');
-    expect(build).toContain('predates the screen / engine levels');
-  });
-});
+// « Le rendu mène à la cause » et « le rendu ne plante pas sur une collecte
+// plus vieille que lui » vivaient ICI, sous forme de grep du source de
+// `build.mjs` : `vue('vueMemoire')).toContain('lienRun(')`, et
+// `build).toContain('!reg[0]?.ecran || !reg[0]?.moteur')`.
+//
+// Constat M2 de la revue C de la PR #85 (dette #88, issue #211) : ces
+// assertions prouvaient la PRÉSENCE D'UN TEXTE dans un fichier, jamais ce que
+// la page affiche. Déplacer une expression, réécrire une condition à
+// l'identique ou changer la forme du garde les faisait rougir sans qu'aucun
+// rendu ne bouge ; à l'inverse, un HTML privé de son lien les laissait vertes
+// tant que la chaîne cherchée subsistait ailleurs dans le fichier. Le second
+// bloc allait plus loin : il figeait `!reg[0]?.ecran` comme LA forme correcte
+// du garde, alors que c'était précisément le défaut (m1 de la même revue).
+//
+// Les deux se lisent désormais SUR LA PAGE RENDUE, dans `rendu.test.mjs`.
 
 describe('intentionDunParcours — la description d’un parcours, pas son bandeau', () => {
   // Le cas réel (Quentin, 13/09) : sur la page Parcours, chaque description

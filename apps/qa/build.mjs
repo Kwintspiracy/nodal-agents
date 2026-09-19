@@ -672,7 +672,12 @@ function vueCapacites() {
   // rendu plantait dessus — et `apps/qa build` sortait en erreur dans la CI
   // de toute PR, tant que la mesure nocturne n'avait pas réécrit les données.
   // On le DIT, on ne devine pas : deviner afficherait un registre faux.
-  if (!reg[0]?.ecran || !reg[0]?.moteur) {
+  //
+  // TOUTES les lignes, pas seulement la première (constat m1 de la revue C de
+  // la PR #85, issue #211) : un registre MIXTE — première ligne aux niveaux,
+  // une suivante sans — passait le garde, puis plantait trois lignes plus bas,
+  // ce que le garde existe précisément pour empêcher.
+  if (reg.some((c) => !c?.ecran || !c?.moteur)) {
     return `<section id="capacites" class="vue">${entete('capacites', 'What the product can do')}
       <p class="chapo">This collection predates the screen / engine levels: its registry does not say at which level each capability is proven. The next measurement will replace it.</p></section>`;
   }
