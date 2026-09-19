@@ -87,9 +87,9 @@ export {
   readDeliveredReviewVerdict,
   readFinalReviewVerdict,
   parseReviewVerdictOutput,
-  // #59 — la règle qui dit si une relecture interdit d'annoncer « livré »,
-  // et le code qu'elle pose. Une seule lecture, partagée par l'orchestration
-  // et par l'écran.
+  // #59 — la règle qui dit si une relecture demande des corrections, et le
+  // code que le parent reçoit alors. Une seule lecture du fait ; l'écran la lit
+  // aussi, pour poser un mot à côté de « Delivered ».
   reviewBlocksDelivery,
   REVIEW_VERDICT_TOOL,
   REVIEW_CHANGES_REQUESTED,

@@ -210,10 +210,7 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
     };
     const ordre = [
       at(TASK),
-      // Ce run porte un verdict `request_changes` : depuis #59 le bloc de
-      // conclusion s'appelle « Changes requested ». Sa PLACE, elle, ne bouge
-      // pas — c'est ce que ce cas vérifie.
-      at('>Changes requested<'),
+      at('Delivered'),
       at('data-testid="review-section"'),
       at('data-testid="verification-section"'),
       at('Files · 1'),
@@ -263,19 +260,19 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
   });
 
   it('ce qui a été livré se lit en haut : fichiers, lignes, preuve', async () => {
-    // Le verdict de ce run demande des corrections : le bloc le DIT au lieu de
-    // « Delivered » (#59), et montre quand même tout ce que le travail a fait.
+    // Le verdict de ce run demande des corrections : le bloc dit « Delivered »
+    // ET le verdict à côté (#59), et montre tout ce que le travail a fait.
     await render(detail());
     const text = container.textContent ?? '';
+    expect(text).toContain('Delivered');
     expect(text).toContain('Changes requested');
-    expect(text).not.toContain('Delivered');
     expect(text).toContain('apps/web/src/app/page.tsx');
     expect(text).toContain('1 / 1');
   });
 
-  it('un run APPROUVÉ conclut « Delivered » @cap:verifier-un-livrable/ecran', async () => {
-    // La contre-épreuve du cas précédent : seul un `request_changes` change le
-    // mot. Une relecture qui approuve laisse le run se conclure comme avant.
+  it('un run APPROUVÉ se lit « Delivered · Approved » @cap:verifier-un-livrable/ecran', async () => {
+    // La contre-épreuve du cas précédent : le mot du résultat ne bouge jamais,
+    // c'est le verdict posé à côté qui change.
     const approuve = detail();
     await render({
       ...approuve,
@@ -283,6 +280,7 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
     });
     const text = container.textContent ?? '';
     expect(text).toContain('Delivered');
+    expect(text).toContain('Approved');
     expect(text).not.toContain('Changes requested');
   });
 

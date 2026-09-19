@@ -8,7 +8,8 @@
 //
 //  - les commandes d'un relecteur remontent dans la section Verification AVEC
 //    leur origine — le rôle et le nom de qui les a lancées ;
-//  - un `request_changes` empêche le récapitulatif d'annoncer « livré ».
+//  - le récapitulatif de livraison porte le DERNIER verdict de relecture, que
+//    l'écran pose à côté de « Delivered » (décision du 19/09 au soir).
 //
 // Aucun nom d'agent réel : le relecteur s'appelle ici « Second Pair Of Eyes ».
 
@@ -213,15 +214,15 @@ describe('la section Verification montre l’origine d’une preuve @cap:verifie
   });
 });
 
-describe('un request_changes empêche d’annoncer « livré » @cap:verifier-un-livrable/moteur', () => {
-  it('bloque le récapitulatif quand le relecteur demande des corrections', async () => {
+describe('le récapitulatif porte le verdict de la relecture @cap:verifier-un-livrable/moteur', () => {
+  it('rend le verdict et le fait qu’il demande des corrections', async () => {
     await setVerdict('request_changes');
     const summary = await deliveredSummary();
     expect(summary.review).toBe('request_changes');
     expect(summary.changesRequested).toBe(true);
   });
 
-  it('laisse passer « livré » sur un approve — rien d’autre ne change', async () => {
+  it('rend l’approbation sans rien changer d’autre', async () => {
     await setVerdict('approve');
     const summary = await deliveredSummary();
     expect(summary.review).toBe('approve');

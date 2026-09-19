@@ -100,10 +100,11 @@ export type ThreadJob = {
    * ou celui d'un délégué relecteur, lu par `seq`, l'ordre d'écriture.
    * `'approve'`, `'request_changes'`, ou `null` quand personne n'a relu.
    *
-   * La décision du propriétaire, le 19/09/2026 : un `request_changes` empêche
-   * d'annoncer « livré ». C'est la seule chose que ce champ sert à dire, et la
-   * règle qui le lit est celle de l'orchestration (`reviewBlocksDelivery`) —
-   * pas une seconde, écrite ici, qui divergerait au premier correctif.
+   * Le bloc de conclusion le pose À CÔTÉ de « Delivered », jamais à sa place
+   * (Quentin, 19/09 au soir) : le travail a eu lieu, et ce que la relecture en
+   * pense est un second fait. La règle qui lit ce fait est celle de
+   * `@nodal-agents/shared` (`reviewBlocksDelivery`) — pas une seconde, écrite
+   * ici, qui divergerait au premier correctif.
    */
   reviewVerdict: string | null;
   /**

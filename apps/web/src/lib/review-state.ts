@@ -1,14 +1,20 @@
-// review-state.ts — CE QUE LA RELECTURE AUTORISE, lu une fois pour les trois
-// écrans qui concluent un travail (#59).
+// review-state.ts — CE QUE LA RELECTURE A DIT EN DERNIER, lu une fois pour les
+// trois écrans qui concluent un travail (#59).
 //
-// Le 19/09/2026 le propriétaire a tranché : un `request_changes` empêche
-// d'annoncer « livré ». La décision porte sur le DERNIER verdict enregistré
-// sous un travail — le sien ou celui d'un délégué relecteur — et il n'y a
-// qu'un endroit où ce « dernier » se choisit : ici.
+// Un travail peut porter plusieurs verdicts : le sien, celui d'un délégué
+// relecteur, une seconde passe après correction. C'est le DERNIER qui compte, et
+// il n'y a qu'un endroit où ce « dernier » se choisit : ici.
+//
+// Ce que l'écran en fait a changé le 19/09 au soir, après que le propriétaire a
+// vu le bloc sur la stack : un `request_changes` ne retire plus le mot
+// « Delivered », il s'affiche à côté. Un run relu a livré quelque chose, et le
+// nier revenait à dire que le travail n'avait pas eu lieu. Ce module, lui, n'a
+// pas bougé — il rend un fait, pas une décision.
 //
 // Module PUR : il ne lit ni la base ni le réseau, il range une liste déjà lue.
-// La règle qu'il sert (`reviewBlocksDelivery`) vit dans `@nodal-agents/shared`,
-// où l'orchestration la lit aussi pour poser son champ typé.
+// La règle qui LIT ce fait (`reviewBlocksDelivery`) vit dans
+// `@nodal-agents/shared`, où l'orchestration la lit aussi pour poser le champ
+// typé que reçoit le parent.
 
 /**
  * Le dernier verdict de relecture d'une liste ORDONNÉE par `seq` (l'ordre
