@@ -80,9 +80,10 @@ export type SidebarNamedRow = {
  * dessinent.
  *
  * Le NOM est celui de l'agent qui demande — c'est ce que la planche écrit sur
- * ses quatre lignes de RECENTS. `null` quand l'agent a été supprimé depuis :
- * la ligne porte alors le nom de l'outil, qui est le seul fait qui reste, et
- * jamais un nom inventé (invariant #4).
+ * ses quatre lignes de RECENTS. Quand l'agent a été supprimé depuis, la
+ * jointure ne rend rien et la ligne porte le nom de l'OUTIL, qui est le seul
+ * fait qui reste ; jamais un nom inventé (invariant #4). Le champ n'est donc
+ * jamais vide, et c'est pour cela qu'il n'est pas nullable.
  */
 export type SidebarApprovalRow = SidebarNamedRow & {
   /** L'outil dont l'appel est en jeu. L'infobulle de la ligne. */
