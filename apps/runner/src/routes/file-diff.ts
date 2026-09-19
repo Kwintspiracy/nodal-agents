@@ -11,15 +11,21 @@
 //
 // CE QU'ELLE NE RÉPOND JAMAIS : de la prose. Chaque cas se dit par un CODE
 // (`no_checkpoint`, `path_unresolved`, `workspace_unreachable`,
-// `not_in_snapshot`) et c'est l'écran qui l'écrit en anglais — invariant #2, et
-// la seule façon d'ajouter une langue sans rouvrir le runner.
+// `not_in_snapshot`, `checkpoint_store_unreadable`) et c'est l'écran qui
+// l'écrit en anglais — invariant #2, et la seule façon d'ajouter une langue
+// sans rouvrir le runner.
 
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { existsSync, statSync } from 'node:fs';
 import { relative } from 'node:path';
 import { agentJobs, agentWorkspaces, jobCheckpoints, toolCalls, and, eq } from '@nodal-agents/db';
-import { checkpointsRoot, diffFile } from '@nodal-agents/checkpoints';
+import {
+  checkpointsRoot,
+  diffFile,
+  asCheckpointError,
+  checkpointFailureLogLine,
+} from '@nodal-agents/checkpoints';
 import { normalizePath, isWindowsPath, redactSecretsInText } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { resolveScannedPath, scannedEditPath } from '../job/code-projects.ts';
@@ -29,6 +35,15 @@ export type FileDiffUnavailable =
   | 'no_checkpoint'
   | 'path_unresolved'
   | 'workspace_unreachable'
+  /**
+   * Le magasin de checkpoints n'a pas répondu (borne de temps, `git` absent,
+   * magasin illisible). SÉPARÉ de `not_in_snapshot` et de
+   * `workspace_unreachable` parce que ni l'un ni l'autre n'est vrai : le
+   * fichier est peut-être parfaitement photographié, et le dossier est là.
+   * Les confondre rendait « ce fichier est ignoré par le .gitignore » sur un
+   * fichier qui ne l'est pas (revue #262, passe 2).
+   */
+  | 'checkpoint_store_unreadable'
   | 'not_in_snapshot';
 
 const QuerySchema = z.object({
@@ -223,11 +238,19 @@ export async function fileDiffRoute(c: Context, deps: RunnerDeps): Promise<Respo
   try {
     diff = await diffFile(checkpointsRoot(), workspace, from.sha, toSha, relPath);
   } catch (err) {
+    // Le magasin n'a pas répondu. La route rendait `workspace_unreachable`,
+    // donc « dossier injoignable » à l'écran, pour un dossier qui est là et un
+    // fichier qui est photographié (revue #262, passe 2). Le journal porte le
+    // code typé et ses faits, comme un refus d'écriture.
+    const failure = asCheckpointError(err, workspace, 'read');
     console.error(
-      `[file-diff] FILE_DIFF_FAILED job=${jobId} tool_call=${toolCallId} ` +
-        `error=${err instanceof Error ? err.message : String(err)}`,
+      checkpointFailureLogLine(failure, {
+        route: 'file-diff',
+        job: jobId,
+        tool_call: toolCallId,
+      }),
     );
-    return unavailable('workspace_unreachable');
+    return unavailable('checkpoint_store_unreadable');
   }
 
   if (diff.kind === 'not_in_snapshot') return unavailable('not_in_snapshot');

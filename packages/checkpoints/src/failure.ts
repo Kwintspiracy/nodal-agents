@@ -34,17 +34,46 @@ import { readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 /**
- * Pourquoi l'instantané n'a pas pu être pris. Un code par cause qui appelle un
- * GESTE DIFFÉRENT du propriétaire — c'est le seul critère qui justifie un code
- * de plus.
+ * Ce que le magasin était en train de faire.
+ *
+ * Deux opérations qui n'échouent pas pour les mêmes raisons et n'appellent pas
+ * le même geste : PRENDRE une photo parcourt le dossier de l'utilisateur, la
+ * RELIRE ne touche que le magasin. Les confondre ferait dire à un refus de
+ * lecture « déplace tes gros dossiers » alors que le dossier n'y est pour rien.
+ */
+export type CheckpointOperation = 'snapshot' | 'read';
+
+/**
+ * Pourquoi l'opération n'a pas abouti. Un code par cause qui appelle un GESTE
+ * DIFFÉRENT du propriétaire — c'est le seul critère qui justifie un code de
+ * plus. Le nom porte l'opération, parce qu'un `snapshot_timeout` rendu par une
+ * LECTURE serait la même approximation que le `checkpoint_failed` que cette
+ * série de correctifs supprime (revue #262, passe 2).
  */
 export type CheckpointFailureCode =
-  /** La borne de temps a été atteinte : le dossier est trop gros pour le filet. */
+  /** La borne de temps a été atteinte en photographiant : le dossier est trop gros. */
   | 'snapshot_timeout'
-  /** Le binaire `git` est introuvable : aucun instantané n'est possible ici. */
-  | 'git_missing'
-  /** Tout le reste (magasin corrompu, droits, disque plein). */
-  | 'snapshot_failed';
+  /** Tout le reste, en photographiant (magasin corrompu, droits, disque plein). */
+  | 'snapshot_failed'
+  /** La borne de temps a été atteinte en RELISANT le magasin. */
+  | 'checkpoint_read_timeout'
+  /** Tout le reste, en relisant le magasin. */
+  | 'checkpoint_read_failed'
+  /** Le binaire `git` est introuvable : ni photo ni relecture ne sont possibles. */
+  | 'git_missing';
+
+/** La cause brute, avant qu'on sache pour quelle opération la nommer. */
+export type CheckpointFailureCause = 'timeout' | 'git_missing' | 'other';
+
+/** Le code d'une cause POUR une opération. La seule table, et elle est ici. */
+export function checkpointFailureCode(
+  cause: CheckpointFailureCause,
+  operation: CheckpointOperation,
+): CheckpointFailureCode {
+  if (cause === 'git_missing') return 'git_missing';
+  if (operation === 'snapshot') return cause === 'timeout' ? 'snapshot_timeout' : 'snapshot_failed';
+  return cause === 'timeout' ? 'checkpoint_read_timeout' : 'checkpoint_read_failed';
+}
 
 /**
  * Ce que pèse un dossier, tel qu'il a été COMPTÉ — jamais estimé.
@@ -171,10 +200,12 @@ export async function measureWorkspace(
   return { bytes, files, capped };
 }
 
-/** Les faits d'un échec d'instantané, tels qu'ils ont été constatés. */
+/** Les faits d'un échec du magasin, tels qu'ils ont été constatés. */
 export interface CheckpointFailureFacts {
   code: CheckpointFailureCode;
-  /** Le dossier qu'on n'a pas pu photographier. */
+  /** Photographier, ou relire ce qui a été photographié. */
+  operation: CheckpointOperation;
+  /** Le dossier concerné. */
   workspace: string;
   /**
    * La borne de temps en vigueur, en millisecondes — `null` quand l'échec n'est
@@ -200,6 +231,7 @@ export interface CheckpointFailureFacts {
  */
 export class CheckpointError extends Error {
   readonly code: CheckpointFailureCode;
+  readonly operation: CheckpointOperation;
   readonly workspace: string;
   readonly limitMs: number | null;
   readonly elapsedMs: number | null;
@@ -210,6 +242,7 @@ export class CheckpointError extends Error {
     super(describeCheckpointFailure(facts));
     this.name = 'CheckpointError';
     this.code = facts.code;
+    this.operation = facts.operation;
     this.workspace = facts.workspace;
     this.limitMs = facts.limitMs;
     this.elapsedMs = facts.elapsedMs;
@@ -232,11 +265,16 @@ export function isCheckpointError(err: unknown): err is CheckpointError {
  * Une seule fonction pour les deux appelants, sinon le repli serait recopié —
  * et une copie finirait par dire autre chose que l'autre.
  */
-export function asCheckpointError(err: unknown, workspace: string): CheckpointError {
+export function asCheckpointError(
+  err: unknown,
+  workspace: string,
+  operation: CheckpointOperation = 'snapshot',
+): CheckpointError {
   if (isCheckpointError(err)) return err;
   const first = err instanceof Error ? err.message.split('\n')[0] : undefined;
   return new CheckpointError({
-    code: 'snapshot_failed',
+    code: checkpointFailureCode('other', operation),
+    operation,
     workspace,
     limitMs: null,
     elapsedMs: null,
@@ -330,25 +368,46 @@ export const GIT_MESSAGE_MAX_CHARS = 200;
  */
 export function describeCheckpointFailure(facts: CheckpointFailureFacts): string {
   const where = `the "${basename(facts.workspace)}" workspace (${shortenPath(facts.workspace)})`;
+  const limit = facts.limitMs === null ? 'the time limit' : formatDuration(facts.limitMs);
+  const said =
+    facts.gitMessage.length <= GIT_MESSAGE_MAX_CHARS
+      ? facts.gitMessage
+      : `${facts.gitMessage.slice(0, GIT_MESSAGE_MAX_CHARS - 1)}…`;
+
   switch (facts.code) {
     case 'snapshot_timeout': {
       const size =
         facts.measure === null ? 'could not be measured' : describeMeasure(facts.measure);
-      const limit = facts.limitMs === null ? 'the time limit' : formatDuration(facts.limitMs);
       return (
         `snapshot_timeout: ${where} ${size}, the safety snapshot cannot finish in ` +
         `${limit}; move or ignore the heavy folders.`
       );
     }
-    case 'git_missing':
-      return `git_missing: git is not available, so no safety snapshot can be taken for ${where}.`;
-    case 'snapshot_failed': {
-      const said =
-        facts.gitMessage.length <= GIT_MESSAGE_MAX_CHARS
-          ? facts.gitMessage
-          : `${facts.gitMessage.slice(0, GIT_MESSAGE_MAX_CHARS - 1)}…`;
+    case 'snapshot_failed':
       return `snapshot_failed: the safety snapshot of ${where} failed: ${said}`;
-    }
+
+    // LES DEUX PHRASES DE LECTURE NE PROMETTENT AUCUN GESTE, et c'est délibéré
+    // (revue #262, passe 2). Une photo qui dépasse la borne parcourt le dossier
+    // de l'utilisateur, donc « déplace les gros dossiers » est vrai et mesuré.
+    // Une RELECTURE ne touche que le magasin : y recopier ce geste enverrait le
+    // propriétaire vider un dossier qui n'a rien à voir, et compter le magasin
+    // pour l'occasion coûterait le prix d'un instantané sur le chemin d'un clic
+    // qui a déjà échoué. On dit donc ce qui s'est passé, et rien de plus.
+    case 'checkpoint_read_timeout':
+      return (
+        `checkpoint_read_timeout: reading the checkpoint history of ${where} did not ` +
+        `finish in ${limit}, so no history is shown rather than an empty one.`
+      );
+    case 'checkpoint_read_failed':
+      return (
+        `checkpoint_read_failed: reading the checkpoint history of ${where} failed, ` +
+        `so no history is shown rather than an empty one: ${said}`
+      );
+
+    case 'git_missing':
+      return facts.operation === 'snapshot'
+        ? `git_missing: git is not available, so no safety snapshot can be taken for ${where}.`
+        : `git_missing: git is not available, so the checkpoint history of ${where} cannot be read.`;
   }
 }
 
@@ -380,6 +439,7 @@ export function checkpointFailureLogLine(
 ): string {
   const fields: string[] = [
     `code=${facts.code}`,
+    `operation=${facts.operation}`,
     `workspace=${JSON.stringify(facts.workspace)}`,
     `limit_ms=${facts.limitMs ?? 'unknown'}`,
     `elapsed_ms=${facts.elapsedMs ?? 'unknown'}`,

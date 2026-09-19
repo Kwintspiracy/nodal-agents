@@ -43,9 +43,12 @@ export {
   formatBytes,
   formatCount,
   formatDuration,
+  checkpointFailureCode,
   MEASURE_MAX_FILES,
   MEASURE_MAX_MS,
+  type CheckpointFailureCause,
   type CheckpointFailureCode,
   type CheckpointFailureFacts,
+  type CheckpointOperation,
   type WorkspaceMeasure,
 } from './failure';

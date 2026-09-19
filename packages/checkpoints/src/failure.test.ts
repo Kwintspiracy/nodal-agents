@@ -15,7 +15,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { snapshot, headCheckpoint, gitAllowingMiss } from './checkpoints';
+import {
+  snapshot,
+  headCheckpoint,
+  gitAllowingMiss,
+  listCheckpoints,
+  diffFile,
+} from './checkpoints';
 import {
   CheckpointError,
   isCheckpointError,
@@ -189,7 +195,7 @@ describe('une PANNE n’est jamais lue comme une réponse @cap:executer-une-comm
 
     // Avec une borne de 1 ms, elle ne répond pas : elle doit le DIRE.
     await expect(
-      gitAllowingMiss(store, ws, ['rev-parse', '--verify', '--quiet', cible], 1),
+      gitAllowingMiss(store, ws, ['rev-parse', '--verify', '--quiet', cible], { timeoutMs: 1 }),
     ).rejects.toThrow();
   });
 
@@ -212,6 +218,86 @@ describe('une PANNE n’est jamais lue comme une réponse @cap:executer-une-comm
     expect(await parentsDe(troisieme!.sha)).toEqual([second!.sha]);
     expect(await parentsDe(second!.sha)).toEqual([premier!.sha]);
     expect(await parentsDe(premier!.sha)).toEqual([]);
+  });
+});
+
+describe('une LECTURE du magasin ne ment pas non plus @cap:executer-une-commande/moteur', () => {
+  // Revue de la PR #262, passe 2. `listCheckpoints` et `diffFile` avalaient
+  // chaque panne dans une réponse vide : « aucun checkpoint » sur un magasin
+  // qui en a, « pas dans l'instantané » sur un chemin photographié. Même
+  // classe de silence que celui que ce lot supprime côté écriture, et il frappe
+  // exactement les magasins qui grossissent.
+  //
+  // Le dépassement est provoqué par `NODALAI_CHECKPOINT_TIMEOUT_MS`, comme pour
+  // l'instantané, et il est RÉEL : le magasin contient vraiment des photos, et
+  // la lecture ordinaire vient de les rendre juste avant.
+
+  it('`listCheckpoints` LÈVE au lieu de rendre une liste vide', async () => {
+    await writeFile(join(ws, 'a.txt'), 'un');
+    await snapshot(store, ws, 'premier');
+    await writeFile(join(ws, 'a.txt'), 'deux');
+    await snapshot(store, ws, 'second');
+    expect(await listCheckpoints(store, ws)).toHaveLength(2);
+
+    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
+    const err = await refusDe(listCheckpoints(store, ws));
+
+    expect(err.code).toBe('checkpoint_read_timeout');
+    expect(err.operation).toBe('read');
+    // Aucune mesure : relire ne parcourt pas le dossier, donc sa taille ne
+    // serait pas la cause et le geste de l'instantané ne s'applique pas.
+    expect(err.measure).toBeNull();
+    expect(err.message).toContain('reading the checkpoint history');
+    expect(err.message).toContain('no history is shown rather than an empty one');
+    expect(err.message).not.toContain('move or ignore the heavy folders');
+  });
+
+  it('un dossier jamais photographié rend TOUJOURS une liste vide', async () => {
+    // Le contrôle du correctif trop large : une vraie réponse de git reste une
+    // réponse. Sans lui, « lève sur une panne » pourrait devenir « lève ».
+    const jamais = join(root, 'jamais-photographie');
+    await mkdir(jamais, { recursive: true });
+    await writeFile(join(ws, 'a.txt'), 'un');
+    await snapshot(store, ws, 'premier');
+
+    expect(await listCheckpoints(store, jamais)).toEqual([]);
+  });
+
+  it('`diffFile` LÈVE au lieu de dire qu’un fichier photographié est hors instantané', async () => {
+    await writeFile(join(ws, 'a.txt'), 'avant');
+    const premier = await snapshot(store, ws, 'premier');
+    await writeFile(join(ws, 'a.txt'), 'apres');
+    expect((await diffFile(store, ws, premier!.sha, null, 'a.txt')).kind).toBe('diff');
+
+    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
+    const err = await refusDe(diffFile(store, ws, premier!.sha, null, 'a.txt'));
+
+    expect(err.code).toBe('checkpoint_read_timeout');
+    expect(err.operation).toBe('read');
+    expect(err.message).toContain('reading the checkpoint history');
+  });
+
+  it('un chemin réellement absent des deux états rend TOUJOURS `not_in_snapshot`', async () => {
+    await writeFile(join(ws, 'a.txt'), 'avant');
+    const premier = await snapshot(store, ws, 'premier');
+
+    expect((await diffFile(store, ws, premier!.sha, null, 'jamais-ecrit.txt')).kind).toBe(
+      'not_in_snapshot',
+    );
+  });
+
+  it('la ligne de journal d’une lecture dit son opération', async () => {
+    await writeFile(join(ws, 'a.txt'), 'un');
+    await snapshot(store, ws, 'premier');
+    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
+
+    const err = await refusDe(listCheckpoints(store, ws));
+    const ligne = checkpointFailureLogLine(err, { route: 'file-diff' });
+
+    expect(ligne).toContain('code=checkpoint_read_timeout');
+    expect(ligne).toContain('operation=read');
+    expect(ligne).toContain('bytes=unmeasured');
+    expect(ligne).toContain('route=file-diff');
   });
 });
 
@@ -294,6 +380,7 @@ describe('la mesure est bornée et le DIT @cap:executer-une-commande/moteur', ()
     const mesure = await measureWorkspace(ws, { maxFiles: 5 });
     const err = new CheckpointError({
       code: 'snapshot_timeout',
+      operation: 'snapshot',
       workspace: ws,
       limitMs: 30_000,
       elapsedMs: 30_001,
@@ -400,6 +487,7 @@ describe('la phrase est bornée SANS perdre son geste @cap:executer-une-commande
   it('une sortie de git interminable est coupée, et le dit', () => {
     const err = new CheckpointError({
       code: 'snapshot_failed',
+      operation: 'snapshot',
       workspace: 'C:\\ws',
       limitMs: null,
       elapsedMs: null,
