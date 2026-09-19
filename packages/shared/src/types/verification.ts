@@ -69,7 +69,7 @@ export const RunVerdictSchema = z.enum(RUN_VERDICTS);
 export type RunVerdict = z.infer<typeof RunVerdictSchema>;
 
 /**
- * D'OÙ vient une ligne `verification_runs` (#59, migration 0113).
+ * D'OÙ vient une ligne `verification_runs` (#59, migration 0115).
  *
  * `job` : la preuve que la finalisation du job a lancée elle-même — le seul
  * écrivain jusqu'ici, et donc la valeur par défaut de la colonne.

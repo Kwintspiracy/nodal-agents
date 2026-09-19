@@ -34,6 +34,7 @@ import {
   recordReviewerVerificationRuns,
   reviewerVerificationRecord,
   reviewCanonicalKey,
+  REVIEWER_VERIFY_ENTITY_MISMATCH,
 } from '../../verification/reviewer-runs.ts';
 
 let db: TestDb;
@@ -280,6 +281,49 @@ describe('recordReviewerVerificationRuns @cap:verifier-un-livrable/moteur', () =
     await recordReviewerVerificationRuns(db, s.reviewerJobId);
     expect(await rowsFor(s.reviewerJobId)).toHaveLength(1);
     expect(anchorJobId(s.reviewerJobId, null)).toBe(s.reviewerJobId);
+  });
+
+  it('REFUSE d’écrire quand le job relu est d’un AUTRE espace', async () => {
+    // Reviewer C, mineur 1 : la ligne porterait l'entité du relecteur sous le
+    // job d'un autre espace. Aucun écran ne la montrerait — tous filtrent par
+    // l'entité de la session — mais elle existerait, rattachée à personne.
+    // Rien dans ce module ne rendait le cas impossible ; il est fermé AVANT
+    // toute écriture, et il se dit.
+    const s = await seed();
+    const voisin = await seed();
+    await db
+      .update(agentJobs)
+      .set({ parentJobId: voisin.parentJobId })
+      .where(eq(agentJobs.id, s.reviewerJobId));
+    await recordCommand(s, 'npx playwright test tests/e2e/panier.spec.ts', shellOutput());
+
+    await expect(recordReviewerVerificationRuns(db, s.reviewerJobId)).rejects.toThrow(
+      REVIEWER_VERIFY_ENTITY_MISMATCH,
+    );
+    // Ni chez le voisin, ni chez soi : le refus n'écrit nulle part.
+    expect(await rowsFor(voisin.parentJobId)).toHaveLength(0);
+    expect(await rowsFor(s.parentJobId)).toHaveLength(0);
+    expect(await rowsFor(s.reviewerJobId)).toHaveLength(0);
+  });
+
+  it('un refus n’efface pas la trace d’une relecture déjà enregistrée', async () => {
+    // La garde est posée AVANT la suppression : un job relu devenu inaccessible
+    // ne doit pas emporter avec lui ce que ce relecteur avait déjà prouvé.
+    const s = await seed();
+    await recordCommand(s, 'pnpm typecheck', shellOutput());
+    expect(await recordReviewerVerificationRuns(db, s.reviewerJobId)).toBe(1);
+
+    const voisin = await seed();
+    await db
+      .update(agentJobs)
+      .set({ parentJobId: voisin.parentJobId })
+      .where(eq(agentJobs.id, s.reviewerJobId));
+    await expect(recordReviewerVerificationRuns(db, s.reviewerJobId)).rejects.toThrow(
+      REVIEWER_VERIFY_ENTITY_MISMATCH,
+    );
+
+    const rows = await rowsFor(s.parentJobId);
+    expect(rows.map((r) => r.command)).toEqual(['pnpm typecheck']);
   });
 });
 

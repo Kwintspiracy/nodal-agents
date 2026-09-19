@@ -1,4 +1,4 @@
-// verification-runs-source.pg.test.ts — migration 0113 contre un VRAI Postgres.
+// verification-runs-source.pg.test.ts — migration 0115 contre un VRAI Postgres.
 //
 // @cap:verifier-un-livrable/moteur
 //
@@ -40,7 +40,7 @@ interface ColumnRow {
   column_default: string | null;
 }
 
-describe('migration 0113_verification_runs_source @cap:verifier-un-livrable/moteur', () => {
+describe('migration 0115_verification_runs_source @cap:verifier-un-livrable/moteur', () => {
   it('starts a real Postgres and applies the REAL migrations — red if the binary is missing, not skipped', async () => {
     pg = await startRealPostgres();
     expect(pg.url).toMatch(/^postgresql:\/\//);
@@ -127,6 +127,6 @@ describe('migration 0113_verification_runs_source @cap:verifier-un-livrable/mote
       with: { type: 'json' },
     })) as { default: { entries: Array<{ idx: number; tag: string }> } };
     const tags = journal.default.entries.map((e) => e.tag);
-    expect(tags).toContain('0113_verification_runs_source');
+    expect(tags).toContain('0115_verification_runs_source');
   });
 });
