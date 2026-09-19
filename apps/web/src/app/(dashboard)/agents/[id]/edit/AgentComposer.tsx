@@ -17,6 +17,7 @@ import {
   type CliRuntimeValue,
 } from '@/lib/cli-runtimes.ts';
 import PageShell from '@/components/ui/PageShell';
+import ActionRow from '@/components/ui/ActionRow';
 import { toast } from 'sonner';
 import {
   Area,
@@ -537,9 +538,12 @@ export default function AgentComposer({
   return (
     <PageShell title="Edit agent" subtitle={agent.name}>
       <div className="space-y-6">
-        <BackLink />
-
-        <AgentPicker agents={allAgents} activeId={agent.id} />
+        {/* #242 — le retour est parti avec tous ceux du produit (Quentin,
+            19/09). Les pastilles des agents voisins sont ce que cette page
+            permet de faire : elles vont sur leur propre rangée. */}
+        <ActionRow>
+          <AgentPicker agents={allAgents} activeId={agent.id} />
+        </ActionRow>
 
         <HeroCard
           initial={initial}
@@ -726,18 +730,6 @@ export default function AgentComposer({
 }
 
 // ─── Back link ────────────────────────────────────────────────────────────────
-
-function BackLink() {
-  return (
-    <Link
-      href="/agents"
-      className="inline-flex items-center gap-1.5 text-body-13 text-ink-3 transition-colors hover:text-ink-2"
-    >
-      <span className="text-body-15 leading-none!">‹</span>
-      Back to agents
-    </Link>
-  );
-}
 
 // ─── Agent picker pills ───────────────────────────────────────────────────────
 

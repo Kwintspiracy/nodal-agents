@@ -10,13 +10,11 @@
 // sont plus une liste de liens : elles se lisent DANS la chronologie du run,
 // dépliables, là où elles ont eu lieu (décision Quentin, 18/09).
 
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getSpaceConversationAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import RunPage from '@/app/(dashboard)/runs/RunPage.tsx';
 import { runIsLive } from '@/app/(dashboard)/runs/run-view.ts';
-import { runBackLink } from '@/lib/back-links.ts';
 import CancelJobButton from '../CancelJobButton.tsx';
 
 // Force dynamic — this page reads per-request DB state.
@@ -29,10 +27,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Run">
-        <Link href="/logs" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Activity
-        </Link>
-        <p className="mt-4 text-sm text-err">{result.message}</p>
+        <p className="text-sm text-err">{result.message}</p>
       </PageShell>
     );
   }
@@ -41,7 +36,6 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   return (
     <RunPage
       data={result.data}
-      back={runBackLink(job)}
       actions={runIsLive(job.status) ? <CancelJobButton jobId={job.id} /> : null}
     />
   );

@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
-import WorkBar from '../WorkBar.tsx';
+import ThreadWorkBar from '../ThreadWorkBar.tsx';
 
 // #132 — la barre porte désormais le réglage de densité, qui appelle une action
 // serveur. `actions.ts` est `server-only` : le mock est ce qui rend la barre
@@ -106,8 +106,7 @@ describe('threadAgents', () => {
 describe('AvatarStack dans la barre — les tuiles du Figma', () => {
   it('montre le VRAI avatar quand l’agent en a un, les initiales sinon', () => {
     const html = renderToStaticMarkup(
-      <WorkBar
-        back={{ label: 'Back to channels', href: '/chat' }}
+      <ThreadWorkBar
         agents={[
           { key: 'alfred', name: 'Alfred', avatarUrl: '/avatars/avatar-07.png' },
           { key: 'codeur', name: 'Le Codeur', avatarUrl: null },
@@ -126,8 +125,7 @@ describe('AvatarStack dans la barre — les tuiles du Figma', () => {
 
   it('au-delà de quatre, une tuile « +N » compte le reste — et le libellé compte tout', () => {
     const html = renderToStaticMarkup(
-      <WorkBar
-        back={{ label: 'Back to channels', href: '/chat' }}
+      <ThreadWorkBar
         agents={['Ada', 'Bo', 'Cy', 'Di', 'Ed', 'Fa'].map((name) => ({
           key: name.toLowerCase(),
           name,
@@ -143,13 +141,10 @@ describe('AvatarStack dans la barre — les tuiles du Figma', () => {
   });
 });
 
-describe('WorkBar — la barre SOUS l’en-tête de page', () => {
-  const back = { label: 'Back to spaces', href: '/spaces' };
-
-  it('dit d’où l’on vient, qui a travaillé, et ouvre le dossier du projet', () => {
+describe('ThreadWorkBar — la barre SOUS l’en-tête de page', () => {
+  it('dit qui a travaillé, et ouvre le dossier du projet', () => {
     const html = renderToStaticMarkup(
-      <WorkBar
-        back={back}
+      <ThreadWorkBar
         agents={[
           { key: 'alfred', name: 'Alfred' },
           { key: 'relecteur', name: 'Le Relecteur' },
@@ -158,9 +153,9 @@ describe('WorkBar — la barre SOUS l’en-tête de page', () => {
         filesHref="/spaces/proj-1/files"
       />,
     );
-    // Le motif du DS, celui de « Back to agents » : un chevron, un mot.
-    expect(html).toContain('Back to spaces');
-    expect(html).toContain('href="/spaces"');
+    // #242 — plus aucun retour dans la barre : elle ne porte que le contexte.
+    expect(html).not.toContain('Back');
+    expect(html).not.toContain('‹');
     expect(html).toContain('2 agents');
     expect(html).toContain('Verified');
     expect(html).toContain('/spaces/proj-1/files');
@@ -171,8 +166,15 @@ describe('WorkBar — la barre SOUS l’en-tête de page', () => {
     expect(html).not.toMatch(/text-\[\d/);
   });
 
+  it('un fil qui n’a RIEN à dire ne dessine pas de bandeau vide (#242)', () => {
+    // Depuis que le retour est parti, une barre peut n'avoir aucun contenu :
+    // 54 px de fond entre deux filets autour de rien ne sont pas un élément
+    // d'interface. Elle disparaît.
+    expect(renderToStaticMarkup(<ThreadWorkBar agents={[]} />)).toBe('');
+  });
+
   it('va d’un bord à l’autre : 54 px, un fond, deux filets, ses propres gouttières (#135)', () => {
-    const html = renderToStaticMarkup(<WorkBar back={back} agents={[]} />);
+    const html = renderToStaticMarkup(<ThreadWorkBar agents={[{ key: 'a', name: 'Alfred' }]} />);
     // La barre dessinée porte SA géométrie : l'enveloppe à gouttières de
     // `PageShell` la coupait de chaque côté, et le filet s'arrêtait avec elle.
     expect(html).toMatch(/class="[^"]*h-\[54px\][^"]*"/);
@@ -182,15 +184,15 @@ describe('WorkBar — la barre SOUS l’en-tête de page', () => {
   });
 
   it('dit « 1 agent » au singulier', () => {
-    const html = renderToStaticMarkup(
-      <WorkBar back={back} agents={[{ key: 'a', name: 'Alfred' }]} />,
-    );
+    const html = renderToStaticMarkup(<ThreadWorkBar agents={[{ key: 'a', name: 'Alfred' }]} />);
     expect(html).toContain('1 agent');
     expect(html).not.toContain('1 agents');
   });
 
   it('sans preuve, aucune pastille ; sans projet, aucun bouton Files', () => {
-    const html = renderToStaticMarkup(<WorkBar back={back} agents={[]} />);
+    // Un état suffit à faire exister la barre : ce qui est en jeu ici est ce
+    // qu'elle TAIT, pas le fait qu'elle se dessine.
+    const html = renderToStaticMarkup(<ThreadWorkBar agents={[]} status={<span>Idle</span>} />);
     expect(html).not.toContain('Verified');
     expect(html).not.toContain('Checks failed');
     expect(html).not.toContain('Files');
@@ -199,15 +201,13 @@ describe('WorkBar — la barre SOUS l’en-tête de page', () => {
   });
 
   it('une preuve rouge dit que les contrôles ont échoué, jamais « Verified »', () => {
-    const html = renderToStaticMarkup(<WorkBar back={back} agents={[]} proofVerdict="red" />);
+    const html = renderToStaticMarkup(<ThreadWorkBar agents={[]} proofVerdict="red" />);
     expect(html).toContain('Checks failed');
     expect(html).not.toContain('Verified');
   });
 
   it('un verdict que l’écran ne connaît pas ne rend aucune pastille', () => {
-    const html = renderToStaticMarkup(
-      <WorkBar back={back} agents={[]} proofVerdict="infra_error" />,
-    );
+    const html = renderToStaticMarkup(<ThreadWorkBar agents={[]} proofVerdict="infra_error" />);
     expect(html).not.toContain('Verified');
     expect(html).not.toContain('Checks failed');
   });
@@ -219,11 +219,9 @@ describe('WorkBar — la barre SOUS l’en-tête de page', () => {
 // d'appels (invariant #5) : ce qui compte n'est pas qu'un bouton ait été
 // cliqué, c'est que la densité choisie parte bien vers la base.
 
-describe('WorkBar — la densité de lecture @cap:suivre-execution/ecran', () => {
+describe('ThreadWorkBar — la densité de lecture @cap:suivre-execution/ecran', () => {
   it('montre les deux segments, et celui de la personne est le retenu', () => {
-    const html = renderToStaticMarkup(
-      <WorkBar back={{ label: 'Back', href: '/chat' }} agents={[]} density="unfolded" />,
-    );
+    const html = renderToStaticMarkup(<ThreadWorkBar agents={[]} density="unfolded" />);
     expect(html).toContain('Show the work');
     expect(html).toContain('Folded');
     expect(html).toContain('Unfolded');
@@ -235,9 +233,7 @@ describe('WorkBar — la densité de lecture @cap:suivre-execution/ecran', () =>
   });
 
   it('sans densité, la barre ne montre AUCUN réglage — la page d’un run n’en a pas', () => {
-    const html = renderToStaticMarkup(
-      <WorkBar back={{ label: 'Back', href: '/scheduled' }} agents={[]} />,
-    );
+    const html = renderToStaticMarkup(<ThreadWorkBar agents={[]} />);
     expect(html).not.toContain('Show the work');
     expect(html).not.toContain('density-folded');
   });
@@ -248,7 +244,7 @@ describe('WorkBar — la densité de lecture @cap:suivre-execution/ecran', () =>
     document.body.appendChild(container);
     const root = createRoot(container);
     await act(async () => {
-      root.render(<WorkBar back={{ label: 'Back', href: '/chat' }} agents={[]} density="folded" />);
+      root.render(<ThreadWorkBar agents={[]} density="folded" />);
     });
     const segment = container.querySelector<HTMLButtonElement>('[data-testid="density-unfolded"]');
     if (!segment) throw new Error('la barre n’a pas dessiné le segment « Unfolded »');

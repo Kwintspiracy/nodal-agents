@@ -20,7 +20,6 @@
 
 import type { ReactNode } from 'react';
 import type { SpaceConversationView } from '@/lib/actions.ts';
-import type { BackLink } from '@/lib/back-links.ts';
 import StatusPill from '@/components/ui/StatusPill';
 import Markdown, { plainText } from '@/components/Markdown.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
@@ -39,13 +38,11 @@ import { activityLabel, runView } from './run-view.ts';
 
 export type RunPageProps = {
   data: SpaceConversationView;
-  /** D'où l'on vient, calculé par `runBackLink` sur la donnée du job. */
-  back: BackLink;
   /** Ce que la route ajoute dans la carte de tête (annuler un run vivant). */
   actions?: ReactNode;
 };
 
-export default function RunPage({ data, back, actions = null }: RunPageProps) {
+export default function RunPage({ data, actions = null }: RunPageProps) {
   const { job, feed, verification, cost } = data;
   const view = runView(data);
   const lastProof = verification.sequences.at(-1) ?? null;
@@ -58,7 +55,6 @@ export default function RunPage({ data, back, actions = null }: RunPageProps) {
       avatarUrl={job.agentAvatarUrl}
       title={agentName !== '' ? `${agentName} · ${title}` : title}
       subtitle={threadSubtitle('run', job.createdAt)}
-      back={back}
       agents={threadAgents(feed.items)}
       status={<StatusPill variant={view.status.variant} label={view.status.label} />}
       proofVerdict={lastProof?.verdict ?? null}

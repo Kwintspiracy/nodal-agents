@@ -16,7 +16,7 @@ import StatusPill from '@/components/ui/StatusPill';
 // précisément le constat de #242 : une barre rangée là ne se lit pas comme un
 // composant du système. Cet import croisé est délibéré et temporaire — il sera
 // déplacé mécaniquement au merge de #243, et rien d'autre n'est à changer ici.
-import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
+import ThreadWorkBar from '@/app/(dashboard)/spaces/ThreadWorkBar.tsx';
 import { RoutineState, ScheduleRunList } from './RunLines.tsx';
 import ScheduleActions from '../ScheduleActions.tsx';
 import WebhookPageActions from './WebhookPageActions.tsx';
@@ -74,8 +74,7 @@ export default function AutomationScreen({
       // ailleurs, et les actions de la page ont leur rangée EN DESSOUS. Cette
       // page est la première à s'y conformer ; les huit autres suivent.
       toolbar={
-        <WorkBar
-          back={{ label: 'Automations', href: '/automations' }}
+        <ThreadWorkBar
           agents={view.agent === null ? [] : [view.agent]}
           status={
             <StatusPill variant={active ? 'done' : 'idle'} label={active ? 'Active' : 'Paused'} />
