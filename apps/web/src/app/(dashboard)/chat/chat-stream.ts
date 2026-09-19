@@ -21,7 +21,20 @@
 import { sendChatMessageAction } from '@/lib/actions.ts';
 import { readSseMessages } from '@/lib/sse.ts';
 
-export type SendResult = { ok: true; reply: string } | { ok: false; message: string };
+export type SendResult =
+  | {
+      ok: true;
+      reply: string;
+      /**
+       * Les fragments déjà montrés SONT-ils cette réponse ? Faux quand le tour
+       * a livré son texte d'un bloc : `streamText` cassé, agent en runtime CLI,
+       * ou repli sur l'action serveur. Porté depuis le runner, jamais deviné.
+       * Rien à l'écran n'en dépend aujourd'hui — c'est le fait qui manquait
+       * pour qu'un lecteur puisse un jour le dire sans supposer (inv. #4).
+       */
+      streamed: boolean;
+    }
+  | { ok: false; message: string };
 
 export interface SendOptions {
   conversationId: string;
@@ -47,7 +60,8 @@ async function viaAction(opts: SendOptions): Promise<SendResult> {
     };
   }
   if (!r.ok) return { ok: false, message: r.message };
-  return { ok: true, reply: r.data?.reply ?? '' };
+  // L'action serveur attend la réponse entière : rien n'a été montré mot à mot.
+  return { ok: true, reply: r.data?.reply ?? '', streamed: false };
 }
 
 export async function sendChatMessage(opts: SendOptions): Promise<SendResult> {
@@ -76,12 +90,12 @@ export async function sendChatMessage(opts: SendOptions): Promise<SendResult> {
         continue;
       }
       if (msg.event === 'done') {
-        const reply = (JSON.parse(msg.data) as { reply?: unknown }).reply;
+        const payload = JSON.parse(msg.data) as { reply?: unknown; streamed?: unknown };
         // La réponse entière remplace ce qui a été accumulé : si le flux a
         // sauté un fragment, c'est ici que l'écart se corrige.
-        const full = typeof reply === 'string' ? reply : '';
+        const full = typeof payload.reply === 'string' ? payload.reply : '';
         opts.onText(full);
-        return { ok: true, reply: full };
+        return { ok: true, reply: full, streamed: payload.streamed === true };
       }
       if (msg.event === 'error') {
         const error = (JSON.parse(msg.data) as { error?: unknown }).error;

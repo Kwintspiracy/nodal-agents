@@ -13,12 +13,17 @@
 //
 // Protocole (SSE) :
 //   event: delta  data: { "text": "…" }        un fragment de la réponse
-//   event: done   data: { "reply": "…", "spawnedJobId": … }  le tour est écrit
+//   event: done   data: { "reply": "…", "spawnedJobId": …, "streamed": bool }
 //   event: error  data: { "error": "code" }    le tour a échoué
 //
 // `done` porte la réponse ENTIÈRE, et c'est elle qui fait foi : un flux coupé
 // en route ne doit jamais laisser un texte tronqué passer pour la réponse
 // finale (invariant #4). Le lecteur d'en face remplace ce qu'il a accumulé.
+//
+// `streamed` dit si les fragments qui précèdent SONT cette réponse. Faux quand
+// `streamText` a cassé et que la relance sans outils a livré le texte d'un
+// bloc, ou quand l'agent tourne sur un runtime CLI qui ne diffuse rien. C'est
+// un fait, pas une supposition laissée au lecteur (invariant #4).
 
 import type { Context } from 'hono';
 import { z } from 'zod';
@@ -92,7 +97,11 @@ export async function chatStreamRoute(
             send('error', { error: result.error });
             return;
           }
-          send('done', { reply: result.reply, spawnedJobId: result.spawnedJobId ?? null });
+          send('done', {
+            reply: result.reply,
+            spawnedJobId: result.spawnedJobId ?? null,
+            streamed: result.streamed === true,
+          });
 
           // Le tour a escaladé : le travail part en fond, exactement comme sur
           // /api/chat. L'écran suit le job, pas ce flux-ci.

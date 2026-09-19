@@ -8,7 +8,10 @@
 //   3. le recheck d'escalade, qui tourne après la réponse, ne fuit PAS dans le
 //      flux : son texte n'apparaît nulle part dans les fragments ;
 //   4. un second message sur le même fil ATTEND — la file par conversation
-//      (#149) n'a pas bougé.
+//      (#149) n'a pas bougé ;
+//   5. quand `streamText` casse, `done` porte `streamed: false` ET la réponse
+//      entière : ce qui a pu être montré mot à mot n'était pas elle, et le
+//      lecteur le sait au lieu de le deviner (invariant #4).
 //
 // Le modèle est un faux qui diffuse trois fragments, et qui RETIENT le premier
 // tour jusqu'à ce que le test le libère : c'est ce temps-là que le second
@@ -114,6 +117,10 @@ function flattenText(messages: ModelMessage[]): string {
 
 const FIRST = 'first question: say it slowly';
 const SECOND = 'second question: and then?';
+/** Celle dont le flux casse : sa réponse arrivera d'un bloc, par ailleurs. */
+const BROKEN = 'third question: the stream breaks';
+/** Celle dont le flux marche mais ne dit RIEN : même conclusion, autre chemin. */
+const SILENT = 'fourth question: the stream says nothing';
 
 /** Les trois fragments du premier tour — la réponse, découpée. */
 const FIRST_CHUNKS = ['A reply ', 'in three ', 'pieces.'];
@@ -121,8 +128,9 @@ const FIRST_REPLY = FIRST_CHUNKS.join('');
 const SECOND_CHUNKS = ['And ', 'then this.'];
 const SECOND_REPLY = SECOND_CHUNKS.join('');
 
-/** Ce que le recheck d'escalade répond — il ne doit JAMAIS être diffusé. */
-const RECHECK_TEXT = 'RECHECK-ONLY TEXT, never streamed';
+/** Ce que `generateText` rend : le recheck d'escalade, et la relance sans
+ *  outils. Rien de tout cela ne passe par le flux. */
+const BLOCK_TEXT = 'A whole reply, delivered in one block';
 
 /** Ce que le modèle a reçu, appel par appel, et la porte du premier tour. */
 const streamCalls: ModelMessage[][] = [];
@@ -136,6 +144,8 @@ function chunksFor(messages: ModelMessage[]): string[] {
   const asked = last ? flattenText([last]) : '';
   if (asked.includes(FIRST)) return FIRST_CHUNKS;
   if (asked.includes(SECOND)) return SECOND_CHUNKS;
+  // Un flux qui s'ouvre, se ferme, et n'a rien dit.
+  if (asked.includes(SILENT)) return [];
   return ['other'];
 }
 
@@ -189,7 +199,7 @@ function makeStreamingLlmClient(): RunnerDeps['llmClient'] {
         modelId: 'mock',
         doGenerate: () =>
           Promise.resolve({
-            content: [{ type: 'text' as const, text: RECHECK_TEXT }],
+            content: [{ type: 'text' as const, text: BLOCK_TEXT }],
             finishReason: { unified: 'stop' as const, raw: 'stop' },
             usage: {
               inputTokens: { total: 4, noCache: 4, cacheRead: undefined, cacheWrite: undefined },
@@ -205,11 +215,19 @@ function makeStreamingLlmClient(): RunnerDeps['llmClient'] {
     streamText: (args) => {
       const messages = (args.messages ?? []) as ModelMessage[];
       streamCalls.push(messages);
+      const last = messages.at(-1);
+      const asked = last ? flattenText([last]) : '';
       const chunks = chunksFor(messages);
       // Le premier tour reste bloqué jusqu'à `releaseFirst()` : un flux qui ne
       // rend pas la main, exactement ce que le second message doit attendre.
-      const model =
-        chunks === FIRST_CHUNKS
+      // Le troisième CASSE : le tour retombera sur la relance sans outils.
+      const model = asked.includes(BROKEN)
+        ? new MockLanguageModelV3({
+            provider: 'mock',
+            modelId: 'mock',
+            doStream: () => Promise.reject(new Error('the stream broke')),
+          })
+        : chunks === FIRST_CHUNKS
           ? new MockLanguageModelV3({
               provider: 'mock',
               modelId: 'mock',
@@ -285,7 +303,7 @@ beforeAll(async () => {
   app = createApp(deps, testEnv);
 });
 
-function post(message: string): Promise<Response> {
+function post(message: string, thread = conversationId): Promise<Response> {
   return Promise.resolve(
     app.fetch(
       new Request('http://localhost/api/chat/stream', {
@@ -294,7 +312,7 @@ function post(message: string): Promise<Response> {
         body: JSON.stringify({
           entityId: seed.entityId,
           agentId: seed.agentId,
-          conversationId,
+          conversationId: thread,
           message,
         }),
       }),
@@ -304,7 +322,7 @@ function post(message: string): Promise<Response> {
 
 interface Collected {
   deltas: string[];
-  done: { reply: string; spawnedJobId: string | null } | null;
+  done: { reply: string; spawnedJobId: string | null; streamed: boolean } | null;
   errors: string[];
 }
 
@@ -332,7 +350,11 @@ async function collect(res: Response): Promise<Collected> {
       }
       if (event === 'delta') out.deltas.push((JSON.parse(data) as { text: string }).text);
       else if (event === 'done')
-        out.done = JSON.parse(data) as { reply: string; spawnedJobId: string | null };
+        out.done = JSON.parse(data) as {
+          reply: string;
+          spawnedJobId: string | null;
+          streamed: boolean;
+        };
       else if (event === 'error') out.errors.push((JSON.parse(data) as { error: string }).error);
       sep = buffer.indexOf('\n\n');
     }
@@ -369,13 +391,15 @@ describe('POST /api/chat/stream — la réponse mot à mot @cap:parler-a-un-agen
     // Les fragments, dans l'ordre et mot pour mot.
     expect(c1.deltas).toEqual(FIRST_CHUNKS);
     expect(c1.errors).toEqual([]);
-    expect(c1.done).toEqual({ reply: FIRST_REPLY, spawnedJobId: null });
+    // `streamed: true` : ce qui vient d'être dit mot à mot EST la réponse.
+    expect(c1.done).toEqual({ reply: FIRST_REPLY, spawnedJobId: null, streamed: true });
     // Le recheck d'escalade tourne après la réponse et ne fuit pas dans le flux.
-    expect(c1.deltas.join('')).not.toContain(RECHECK_TEXT);
+    expect(c1.deltas.join('')).not.toContain(BLOCK_TEXT);
 
     const c2 = await collect(r2);
     expect(c2.deltas).toEqual(SECOND_CHUNKS);
     expect(c2.done?.reply).toBe(SECOND_REPLY);
+    expect(c2.done?.streamed).toBe(true);
 
     // Le second tour a vu la réponse au premier : la file tient toujours.
     const secondCall = streamCalls.find((m) => {
@@ -398,6 +422,62 @@ describe('POST /api/chat/stream — la réponse mot à mot @cap:parler-a-un-agen
       `assistant:${FIRST_REPLY}`,
       `user:${SECOND}`,
       `assistant:${SECOND_REPLY}`,
+    ]);
+  });
+
+  it('quand le flux casse, `done` le DIT et porte quand même la réponse entière', async () => {
+    // Un fil à part : ce tour n'a rien à voir avec la file du précédent.
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Broken stream' })
+      .returning();
+    if (!conv) throw new Error('conversation insert failed');
+
+    const collected = await collect(await post(BROKEN, conv.id));
+
+    // Rien n'a pu être montré mot à mot, et le tour ne le laisse pas supposer :
+    // il dit que sa réponse n'est PAS celle du flux, et la donne en entier.
+    expect(collected.errors).toEqual([]);
+    expect(collected.deltas).toEqual([]);
+    expect(collected.done?.streamed).toBe(false);
+    expect(collected.done?.reply).toBe(BLOCK_TEXT);
+
+    // Et la base porte cette réponse-là, comme pour n'importe quel tour.
+    const rows = await db
+      .select({ role: chatMessages.role, content: chatMessages.content })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv.id))
+      .orderBy(asc(chatMessages.createdAt), asc(chatMessages.id));
+    expect(rows.map((r) => `${r.role}:${r.content}`)).toEqual([
+      `user:${BROKEN}`,
+      `assistant:${BLOCK_TEXT}`,
+    ]);
+  });
+
+  it('un flux qui s’ouvre sans rien dire rend `streamed: false`, pas un demi-vrai', async () => {
+    // L'autre chemin vers la relance sans outils : le flux marche, il ne porte
+    // simplement aucun texte. La réponse vient donc d'ailleurs, elle aussi.
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Silent stream' })
+      .returning();
+    if (!conv) throw new Error('conversation insert failed');
+
+    const collected = await collect(await post(SILENT, conv.id));
+
+    expect(collected.errors).toEqual([]);
+    expect(collected.deltas).toEqual([]);
+    expect(collected.done?.streamed).toBe(false);
+    expect(collected.done?.reply).toBe(BLOCK_TEXT);
+
+    const rows = await db
+      .select({ role: chatMessages.role, content: chatMessages.content })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv.id))
+      .orderBy(asc(chatMessages.createdAt), asc(chatMessages.id));
+    expect(rows.map((r) => `${r.role}:${r.content}`)).toEqual([
+      `user:${SILENT}`,
+      `assistant:${BLOCK_TEXT}`,
     ]);
   });
 });

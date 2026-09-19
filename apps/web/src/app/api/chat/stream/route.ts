@@ -131,7 +131,11 @@ export async function POST(req: Request): Promise<Response> {
             continue;
           }
           if (msg.event === 'done') {
-            const payload = JSON.parse(msg.data) as { reply?: unknown; spawnedJobId?: unknown };
+            const payload = JSON.parse(msg.data) as {
+              reply?: unknown;
+              spawnedJobId?: unknown;
+              streamed?: unknown;
+            };
             // La réserve du masqueur n'a plus de suite à attendre : elle sort
             // ici, avant la réponse entière qui la remplace de toute façon.
             const tail = redactor.flush();
@@ -142,6 +146,9 @@ export async function POST(req: Request): Promise<Response> {
               // fil rendra au rechargement. C'est elle qui fait foi.
               reply: redactSecretsInText(reply),
               spawnedJobId: typeof payload.spawnedJobId === 'string' ? payload.spawnedJobId : null,
+              // Relayé tel quel : le runner sait si les fragments étaient bien
+              // cette réponse, la porte web n'a rien à en juger.
+              streamed: payload.streamed === true,
             });
             continue;
           }
