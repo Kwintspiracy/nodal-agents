@@ -142,7 +142,17 @@ beforeEach(() => {
   pathname = '/chat';
   search = '';
   document.body.innerHTML = '';
+  // REMISE À ZÉRO, PUIS UNE RÉPONSE PAR DÉFAUT — les deux, et dans cet ordre.
+  //
+  // Le compte des appels doit repartir de zéro : deux cas le lisent. Mais
+  // depuis #258 « Nodal chats » arrive DÉPLIÉ, donc une lecture part au montage
+  // de chaque rendu, y compris dans les cas qui ne sèment rien. Un faux remis à
+  // zéro rend `undefined`, le `r.ok` de la relecture lève, et la rejection non
+  // rattrapée fait rougir la suite ENTIÈRE sans qu'aucun test n'échoue — le
+  // piège que la CI de la PR #223 a déjà attrapé une fois, et celle de #279 une
+  // seconde.
   vi.mocked(listFolderThreadsAction).mockReset();
+  vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: {} });
   // LES DEUX PROVIDERS VOISINS RÉPONDENT, MÊME SI AUCUN TEST NE LES REGARDE.
   // Ils posent chacun un `setInterval` de 15 s ; dès qu'un test fait tourner
   // l'horloge, leurs actions partent aussi. Sans valeur de retour, elles
