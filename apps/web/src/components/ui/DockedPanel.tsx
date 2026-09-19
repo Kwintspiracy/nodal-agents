@@ -66,12 +66,19 @@ export default function DockedPanel({
 
   // Le repère est nommé par le titre RENDU (`aria-labelledby`) et non par un
   // `aria-label` calculé : un titre `ReactNode` laissait le repère sans nom.
+  //
+  // Deux jetons de trait, et la différence n'est pas décorative : le trait
+  // GAUCHE sépare deux surfaces — la page d'un côté, le panneau de l'autre —
+  // donc `rule`, le plus fort ; les traits intérieurs, eux, découpent une
+  // même surface, donc `rule-2`. En thème sombre, `rule-2` à gauche laissait
+  // le panneau se confondre avec la page (constat de Quentin sur la page d'un
+  // projet).
   return (
     <aside
       role="complementary"
       aria-labelledby={titleId}
       data-testid={testId}
-      className={`flex h-full shrink-0 flex-col overflow-hidden border-l border-rule-2 bg-paper ${className}`}
+      className={`flex h-full shrink-0 flex-col overflow-hidden border-l border-rule bg-paper ${className}`}
       style={{ width }}
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-rule-2 py-3 pr-3 pl-5">

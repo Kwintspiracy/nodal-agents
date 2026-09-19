@@ -29,7 +29,8 @@
 //     Échap ne rappelle pas » rougit ;
 //   - `footer !== undefined` remplacé par `true` → le cas « sans pied » rougit ;
 //   - le panneau qui n'entrerait plus dans la pile des calques → le cas
-//     « sous une modale, Échap ne ferme pas le panneau » rougit.
+//     « sous une modale, Échap ne ferme pas le panneau » rougit ;
+//   - le trait gauche repassé à `rule-2` → le cas des deux traits rougit.
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { act, useState } from 'react';
@@ -248,6 +249,31 @@ describe('DockedPanel', () => {
     await pressEscape();
     expect(document.body.querySelector('[data-testid="modale"]'), 'la modale part').toBeNull();
     expect(container.querySelector('[data-testid="panel"]'), 'le panneau reste').not.toBeNull();
+  });
+
+  it('le trait gauche sépare deux surfaces, les traits intérieurs découpent', async () => {
+    // `rule` à gauche, `rule-2` dedans. En thème sombre, un `rule-2` à gauche
+    // laissait le panneau se confondre avec la page (constat de Quentin).
+    await render(
+      <DockedPanel
+        open
+        onClose={() => {}}
+        title="Network access"
+        testId="panel"
+        footer={<span data-testid="pied">actions</span>}
+      >
+        <p>corps</p>
+      </DockedPanel>,
+    );
+    const classes = [...panel().classList];
+    expect(classes, 'le trait gauche est le jeton fort').toContain('border-rule');
+    expect(classes, 'et pas le faible').not.toContain('border-rule-2');
+
+    // L'en-tête et le pied, eux, découpent la même surface.
+    const entete = panel().querySelector('h2')!.closest('div')!;
+    expect([...entete.classList]).toContain('border-rule-2');
+    const pied = panel().querySelector('[data-slot="footer"]')!;
+    expect([...pied.classList]).toContain('border-rule-2');
   });
 
   it('la largeur est posée par l’appelant, 400 px par défaut', async () => {
