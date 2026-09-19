@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
+import { useLayer } from '@/lib/layers.ts';
 
 type Props = {
   open: boolean;
@@ -36,14 +37,8 @@ export default function Drawer({
   className = '',
   children,
 }: Props) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  // Échap va au calque ouvert le plus intérieur (`@/lib/layers.ts`).
+  useLayer(open, onClose);
 
   if (!open) return null;
 

@@ -3,6 +3,7 @@
 import { Children, cloneElement, isValidElement, useEffect, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { ABSORB_ESCAPE, useLayer } from '@/lib/layers.ts';
 import PrimaryButton from './PrimaryButton';
 
 interface Props {
@@ -77,21 +78,21 @@ export default function Modal({
     setMounted(true);
   }, []);
 
-  // Esc to close (skipped when non-dismissable) + body scroll lock.
+  // Échap va au calque ouvert le plus intérieur (`@/lib/layers.ts`). Une
+  // modale non-dismissable s'inscrit avec un geste VIDE : elle absorbe la
+  // touche quand elle est au sommet — Échap ne fait rien, c'est la règle
+  // produit — mais elle ne la prend pas à un calque ouvert DANS elle.
+  useLayer(open, dismissable ? onClose : ABSORB_ESCAPE);
+
+  // Body scroll lock while open.
   useEffect(() => {
     if (!open) return;
-
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape' && dismissable) onClose();
-    }
-    window.addEventListener('keydown', handleKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      window.removeEventListener('keydown', handleKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose, dismissable]);
+  }, [open]);
 
   if (!open || !mounted) return null;
 

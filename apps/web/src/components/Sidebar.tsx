@@ -2,6 +2,7 @@
 
 import { Fragment, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
+import { useLayer } from '@/lib/layers.ts';
 import {
   House,
   Tray,
@@ -231,17 +232,15 @@ export default function Sidebar({
   // While the full-screen mobile menu is open, lock body scroll and let Escape
   // dismiss it — standard dialog etiquette so the page behind doesn't move and
   // keyboard users can always back out. No-op on desktop (menu never "opens").
+  // Échap va au calque ouvert le plus intérieur (`@/lib/layers.ts`).
+  useLayer(open, () => setOpen(false));
+
   useEffect(() => {
     if (!open) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
     return () => {
       document.body.style.overflow = prevOverflow;
-      window.removeEventListener('keydown', onKey);
     };
   }, [open]);
 
