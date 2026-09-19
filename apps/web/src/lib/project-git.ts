@@ -32,8 +32,9 @@ import { normalizePath } from '@nodal-agents/shared';
 // LA MÊME résolution que le constat par git (#227), pas une copie : c'est le
 // même `git`, lancé avec le même `cwd`, donc la même question. Deux copies
 // auraient divergé au premier correctif porté d'un seul côté (revue C de la
-// PR #244, constat bloquant).
-import { resolveGitBinary } from '@nodal-agents/tools/git-binary';
+// PR #244, constat bloquant). Elle vit dans un SOUS-CHEMIN de `shared`, que
+// les deux paquets ont déjà — voir l'en-tête de ce module-là.
+import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
 
 const run = promisify(execFile);
 

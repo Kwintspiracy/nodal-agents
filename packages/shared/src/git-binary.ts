@@ -29,10 +29,18 @@
 // résolution aurait fait deux règles qui divergent au premier correctif porté
 // d'un seul côté.
 //
-// Le module est donc servi par un chemin d'export à lui
-// (`@nodal-agents/tools/git-binary`) plutôt que par l'index du paquet : il ne
-// dépend que de `node:fs` et de `node:path`, et un écran n'a pas à tirer le
-// registre des outils pour savoir où est git.
+// OÙ IL VIT, ET POURQUOI PAS DANS `packages/tools`. Il y était d'abord, servi
+// par un chemin d'export à lui. Mais `apps/web` ne dépend pas de `tools` : lui
+// ajouter cette dépendance pour une fonction de trente lignes aurait posé une
+// arête de paquet entière, et fait passer l'écran par le registre des outils
+// pour savoir où est git. Les DEUX dépendent déjà de `shared`, alors il est
+// ici.
+//
+// Servi par un SOUS-CHEMIN (`@nodal-agents/shared/git-binary`), jamais par
+// l'index : l'index de `shared` est pur — des schémas et des types, aucun
+// module de Node — et des composants de navigateur l'importent. Ce fichier-ci
+// touche `node:fs` ; le laisser entrer dans l'index le ferait entrer dans le
+// navigateur avec.
 
 import { stat } from 'node:fs/promises';
 import { delimiter as PATH_DELIMITER } from 'node:path';

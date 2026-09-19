@@ -72,7 +72,7 @@ import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { normalizePath } from '@nodal-agents/shared';
-import { resolveGitBinary } from './git-binary';
+import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
 import type { ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { fingerprint, type FileFingerprint } from './observed';
 
@@ -81,10 +81,11 @@ const run = promisify(execFile);
 /** Une sonde qui pend ne doit pas tenir un appel d'outil. */
 const GIT_TIMEOUT_MS = 5_000;
 
-// QUEL `git` EST LANCÉ : la réponse vit dans `git-binary.ts`, parce que
-// `apps/web` pose git dans le dossier d'un projet (issue #200) et que c'est la
-// même question. Réexporté ici pour les appelants qui l'avaient déjà.
-export { resolveGitBinary, _resetGitBinaryCache } from './git-binary';
+// QUEL `git` EST LANCÉ : la réponse vit dans `@nodal-agents/shared/git-binary`,
+// parce que `apps/web` pose git dans le dossier d'un projet (issue #200) et que
+// c'est la même question, posée avec le même `cwd`. Réexporté ici pour les
+// appelants qui l'avaient déjà.
+export { resolveGitBinary, _resetGitBinaryCache } from '@nodal-agents/shared/git-binary';
 
 /**
  * Au-delà, le constat par git décline (borne nº 4 de l'en-tête). Mille lignes

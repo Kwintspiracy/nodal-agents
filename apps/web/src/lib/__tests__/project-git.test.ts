@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { normalizePath } from '@nodal-agents/shared';
 import { GITIGNORE_MINIMAL, initGitRepository } from '../project-git.ts';
-import { resolveGitBinary, _resetGitBinaryCache } from '@nodal-agents/tools/git-binary';
+import { resolveGitBinary, _resetGitBinaryCache } from '@nodal-agents/shared/git-binary';
 
 const run = promisify(execFile);
 
@@ -145,7 +145,7 @@ describe('quel git est lancé @cap:travailler-sur-des-fichiers/moteur', () => {
   // avec `cwd` = le dossier du projet, c'est-à-dire un dossier où des agents
   // écrivent. C'est la règle que #227 a posée pour le constat, et c'est le même
   // `git` lancé de la même façon : la résolution est donc PARTAGÉE
-  // (`@nodal-agents/tools/git-binary`), pas recopiée.
+  // (`@nodal-agents/shared/git-binary`), pas recopiée.
   //
   // Ce que ce cas prouve et ce qu'il ne prouve pas : sur ce runtime, `execFile`
   // ne cherche plus le répertoire courant (mesuré dans #227, Node 26.4.0), donc
