@@ -184,6 +184,14 @@ export function readStampedKey(): number | null {
  * Marque l'entrée d'historique courante. On FUSIONNE avec l'état existant :
  * l'App Router de Next range son propre arbre là-dedans, l'écraser casserait
  * la navigation.
+ *
+ * Next 16.3 remplace `history.replaceState` par une version qui, lorsque
+ * l'état porte déjà son drapeau `__NA` — c'est le cas ici, puisqu'on part de
+ * l'état existant —, appelle la fonction d'origine SANS rien renvoyer au
+ * routeur (`app-router.js`, la garde « Avoid a loop when Next.js internals
+ * trigger pushState/replaceState »). Pas de re-rendu, pas de boucle ; et son
+ * écouteur `popstate` continue de voir `__NA`, donc il ne recharge pas la page.
+ * On ne passe pas d'URL : seul l'état change.
  */
 export function stampKey(key: number): void {
   if (typeof window === 'undefined') return;
