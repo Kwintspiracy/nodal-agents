@@ -81,8 +81,6 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
           onChange={handleToggleActive}
           disabled={togglingActive || isPending}
           ariaLabel={row.isActive ? 'Deactivate provider' : 'Activate provider'}
-          trackClassName={row.isActive ? 'border-ok/40 bg-ok/20' : 'border-rule-2 bg-canvas'}
-          thumbClassName={row.isActive ? 'translate-x-[18px] bg-ok' : 'translate-x-[2px] bg-ink-4'}
         />
       </div>
 

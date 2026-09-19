@@ -209,8 +209,6 @@ export default function LearnedSkillsClient({
             size="sm"
             ariaLabelledBy="agent-learning-label"
             ariaDescribedBy="agent-learning-desc"
-            trackClassName={enabled ? 'bg-ok' : 'bg-ink-4'}
-            thumbClassName={`bg-white ${enabled ? 'translate-x-4' : 'translate-x-0'}`}
           />
         </div>
 
@@ -237,8 +235,6 @@ export default function LearnedSkillsClient({
                     disabled={isPending}
                     size="sm"
                     ariaLabelledBy={`agent-learns-${agent.id}`}
-                    trackClassName={agent.learns ? 'bg-ok' : 'bg-ink-4'}
-                    thumbClassName={`bg-white ${agent.learns ? 'translate-x-4' : 'translate-x-0'}`}
                   />
                 </li>
               ))}
