@@ -83,6 +83,7 @@ function view(over: {
       conversationId: null,
       parentJobId: null,
       scheduleName: 'every Monday 09:00',
+      scheduleId: 'schedule-1',
       ...over.job,
     },
     feed: { items: over.items ?? [turn()], totals },

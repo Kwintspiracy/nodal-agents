@@ -13,9 +13,11 @@ type Common = {
    * à gouttières du `toolbar` coupait de chaque côté. Un drapeau plutôt qu'un
    * créneau de plus : les trois écrans de fil passent déjà par `toolbar`.
    *
-   * N'a d'effet que sur un écran `fill` — ailleurs, le `toolbar` vit DANS le
-   * corps à largeur bornée, et le tirer d'un bord à l'autre demanderait de
-   * défaire cette enveloppe. Aucune page de liste ne le demande.
+   * Vaut aussi pour un écran qui DÉFILE normalement (#202) : la page d'une
+   * automatisation porte la même `WorkBar` que les écrans de fil, et une barre
+   * du design system ne peut pas se dessiner autrement d'un écran à l'autre.
+   * La barre sort alors de l'enveloppe à gouttières du corps et se pose juste
+   * sous l'en-tête, d'un bord à l'autre ; le corps garde les siennes.
    */
   toolbarBleed?: boolean;
   /** Page body. */
@@ -106,10 +108,13 @@ export default function PageShell(props: Props) {
   return (
     <>
       {head}
+      {/* Une barre « bleed » se pose HORS du corps : elle porte ses propres
+          gouttières et va d'un bord à l'autre, comme sous l'en-tête d'un fil. */}
+      {toolbar && toolbarBleed && toolbar}
       <div
         className={`px-5 pt-6 pb-10 sm:px-8 lg:px-9 ${fluid ? '' : 'max-w-6xl'} ${bodyClassName}`}
       >
-        {toolbar && <div className="mb-5">{toolbar}</div>}
+        {toolbar && !toolbarBleed && <div className="mb-5">{toolbar}</div>}
         {children}
       </div>
     </>
