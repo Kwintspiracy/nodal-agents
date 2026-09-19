@@ -95,7 +95,11 @@ export default function WorkspacesFolder() {
   const relireSiOuvert = useCallback(async (): Promise<void> => {
     if (!ouvert) return;
     await relire();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `pathname` est le DÉCLENCHEUR de la relecture, pas une donnée qu'elle
+    // lit : la règle des dépendances le verrait comme inutile, et il est au
+    // contraire tout le sujet. La phrase le dit ; la directive de suppression
+    // qui l'accompagnait ne supprimait RIEN — la règle n'est pas active dans
+    // cette configuration (Reviewer C, passe 3 de la PR #235).
   }, [ouvert, relire, pathname]);
   usePolling(relireSiOuvert, SIDEBAR_POLL_MS, true);
 

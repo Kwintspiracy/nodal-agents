@@ -1012,12 +1012,22 @@ export type SidebarProjectRow = {
  * Les projets MASQUÉS sont écartés : masquer est le geste par lequel on les
  * retire de la vue, et un menu qui les ramènerait défairait ce geste.
  */
+const SidebarProjectsLimit = z.number().int().min(1).max(50);
+
 export async function listSidebarProjectsAction(
   limit: number,
 ): Promise<ActionResult<SidebarProjectRow[]>> {
   try {
     const session = await getSession();
     if (!session.entityId) return fail('no_entity', 'No active entity');
+    // Le plafond est VALIDÉ, comme toute entrée d'une action serveur
+    // (Reviewer C, passe 3 de la PR #235). Il vient du menu aujourd'hui, donc
+    // d'un constant, mais une action est une porte publique : un appelant qui
+    // passerait zéro, un nombre négatif ou dix mille ferait soit une requête
+    // absurde, soit une lecture non bornée — exactement ce que cette action
+    // existe pour éviter.
+    const parsed = SidebarProjectsLimit.safeParse(limit);
+    if (!parsed.success) return fail('validation_failed', 'Invalid limit');
     const rows = await getDb()
       .select({
         id: codeProjects.id,
@@ -1035,7 +1045,7 @@ export async function listSidebarProjectsAction(
         ),
       )
       .orderBy(desc(codeProjects.registeredAt), desc(codeProjects.id))
-      .limit(limit);
+      .limit(parsed.data);
 
     return ok(rows.map((r) => ({ id: r.id, name: r.displayName ?? basenameOf(r.path) })));
   } catch (err) {

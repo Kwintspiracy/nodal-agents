@@ -132,6 +132,26 @@ describe('la lecture du dossier Workspaces @cap:travailler-sur-des-fichiers/mote
     expect(r.data.map((p) => p.name)).toEqual(['Project 12', 'Project 11', 'Project 10']);
   });
 
+  it('REFUSE un plafond absurde, au lieu de lire sans borne', async () => {
+    // Une action serveur est une porte publique : le menu lui passe une
+    // constante aujourd'hui, mais un zéro, un négatif ou dix mille ferait soit
+    // une requête absurde, soit la lecture non bornée que cette action existe
+    // justement pour éviter.
+    //
+    // Mutation vérifiée : la validation retirée → ce cas rougit, et `limit(0)`
+    // rend une liste vide au lieu d'une erreur.
+    const { listSidebarProjectsAction } = await import('../project-actions.ts');
+    for (const mauvais of [0, -1, 1.5, 51]) {
+      const r = await listSidebarProjectsAction(mauvais);
+      expect(r.ok, `limite ${mauvais}`).toBe(false);
+      if (!r.ok) expect(r.code).toBe('validation_failed');
+    }
+    // Et les bornes elles-mêmes passent : un refus trop large serait aussi
+    // faux qu'une absence de refus.
+    expect((await listSidebarProjectsAction(1)).ok).toBe(true);
+    expect((await listSidebarProjectsAction(50)).ok).toBe(true);
+  });
+
   it('écarte un projet MASQUÉ et un dossier jamais enregistré', async () => {
     const { listSidebarProjectsAction } = await import('../project-actions.ts');
     const r = await listSidebarProjectsAction(50);
