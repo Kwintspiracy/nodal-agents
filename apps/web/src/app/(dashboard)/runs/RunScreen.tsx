@@ -57,6 +57,10 @@ export default function RunScreen({
   return (
     <PageShell
       fill
+      // #237 — la page d'un run remplit le cadre, comme le fil dont elle
+      // reprend la forme : la borne de largeur du mode pleine hauteur ne vaut
+      // pas pour elle.
+      fluid
       toolbarBleed
       header={
         <ThreadHeader

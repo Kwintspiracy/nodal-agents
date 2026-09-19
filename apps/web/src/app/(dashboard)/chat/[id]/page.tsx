@@ -88,6 +88,10 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
   return (
     <PageShell
       fill
+      // #237 — un fil remplit le cadre : sa saisie tient le bas de l'ÉCRAN, et
+      // ses blocs vont d'un bord à l'autre. La borne de largeur du mode pleine
+      // hauteur ne vaut pas pour lui.
+      fluid
       toolbarBleed
       header={
         <ThreadHeader
