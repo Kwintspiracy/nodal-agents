@@ -181,7 +181,7 @@ import type {
 import {
   type RootGrants,
   META_TOOL_NAMES,
-  enabledMetaTools,
+  metaToolsForAgent,
   parseRootGrants,
   redactSecretsForAudit,
   explainApproval,
@@ -12115,6 +12115,21 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
       return fail('not_found', 'No ROOT agent yet — create an orchestrator first');
     }
 
+    // The ROOT's own "May change its own team" (issue #137). The rules synced
+    // below must describe the tools the runner will ACTUALLY hand this agent:
+    // a `require_approval` row for a tool that never reaches its list is an
+    // approval nobody will ever be asked for, and a line on the Autonomy tab
+    // for a power the agent does not have.
+    //
+    // Nothing is lost by leaving the row out: the three tools ship
+    // `defaultApproval: 'require_approval'`, so an agent whose owner turns the
+    // setting on later still gets asked, rule or no rule.
+    const [rootAgentRow] = await db
+      .select({ mayChangeTeam: agents.mayChangeTeam })
+      .from(agents)
+      .where(eq(agents.id, rootAgentId));
+    const rootMayChangeTeam = rootAgentRow?.mayChangeTeam ?? false;
+
     // Persist rootGrants on the entity (rootAgentId is structural — left as-is).
     // Cast grants to unknown so Drizzle accepts it as JSONB without type friction.
     await db
@@ -12145,8 +12160,12 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
 
       // Step 2: insert new rules according to autonomy level.
       if (grants.autonomy === 'propose_confirm') {
-        // Each enabled meta-tool requires explicit user approval before execution.
-        const tools = enabledMetaTools(grants as RootGrants);
+        // Each enabled meta-tool requires explicit user approval before
+        // execution — the same list the runner builds, team tools included
+        // only when this agent may change its team.
+        const tools = metaToolsForAgent(grants as RootGrants, {
+          mayChangeTeam: rootMayChangeTeam,
+        });
         if (tools.length > 0) {
           await tx
             .insert(approvalRules)
