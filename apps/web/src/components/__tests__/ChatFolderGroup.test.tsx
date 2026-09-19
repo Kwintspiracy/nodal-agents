@@ -10,7 +10,7 @@
 // serveur, un contexte, un rendu.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { createElement, type ReactElement, type ReactNode } from 'react';
+import { cloneElement, createElement, type ReactElement, type ReactNode } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -40,12 +40,30 @@ let search = '';
 let container: HTMLDivElement;
 let root: Root;
 
+/** Le dernier arbre rendu, pour le re-rendre SUR PLACE après une navigation. */
+let dernierArbre: ReactElement | null = null;
+
 async function render(node: ReactElement): Promise<void> {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
+  dernierArbre = node;
   await act(async () => {
     root.render(node);
+  });
+}
+
+/**
+ * Naviguer, du point de vue de la barre latérale : le chemin change et le même
+ * arbre se re-rend. La barre est cliente et SURVIT à la navigation — c'est
+ * exactement la situation qui laissait son sous-menu figé (#223, 19/09/2026).
+ */
+async function naviguer(vers: string): Promise<void> {
+  pathname = vers;
+  await act(async () => {
+    // CLONÉ, et pas le même objet : React court-circuite le rendu d'un élément
+    // référentiellement identique, et la barre resterait sur l'ancien chemin.
+    root.render(cloneElement(dernierArbre!));
   });
 }
 
@@ -490,6 +508,68 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
     expect(ligne?.firstElementChild?.className).toContain('h-3.5 w-3.5');
     // Il ne clignote pas : ce n'est pas un `LiveDot`.
     expect(dot?.className).not.toContain('animate');
+  });
+});
+
+// ─── Le sous-menu SE RELIT (19/09/2026, retour du propriétaire sur #223) ─────
+//
+// CE QUE CE BLOC PROUVE, et pourquoi il vaut la peine d'exister. Le sous-menu
+// lisait UNE FOIS, au premier dépliage, et gardait cet instantané pour la vie
+// de l'onglet. À l'écran : « les états dans la sidebar ne se mettent pas à
+// jour, il faut rafraîchir la page ». Les deux moitiés du défaut se prouvent
+// séparément, parce que ce sont deux déclencheurs différents — une navigation,
+// et une horloge.
+//
+// Mutations vérifiées : l'effet de navigation retiré de `ChatFolderGroup` → le
+// premier test rougit (le point reste rouge après l'ouverture du fil) ;
+// `usePolling` retiré → le second rougit (le point ne s'allume jamais).
+
+describe('le sous-menu se relit @cap:reprendre-conversation/ecran', () => {
+  /** Le point du premier fil d'un dossier : `yes` = il appelle la personne. */
+  function pointDuPremier(folder: string): string | null {
+    const ligne = threadRows(folder)[0];
+    if (!ligne) throw new Error(`no thread row in ${folder}`);
+    return ligne.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls') ?? null;
+  }
+
+  it('éteint le point du fil qu’on OUVRE, sans rechargement', async () => {
+    // Un fil non lu : son point appelle.
+    seedThreads({ telegram: [fil('t1', 'Invoice for March', { unread: true })] });
+    await renderGroup({ channels: ['telegram'] });
+    await click(folderRow('telegram'));
+    expect(pointDuPremier('telegram')).toBe('yes');
+
+    // La personne ouvre le fil. Le rendu serveur de sa page écrit le marqueur
+    // de lecture ; la lecture suivante du sous-menu rend donc le fil LU.
+    seedThreads({ telegram: [fil('t1', 'Invoice for March', { unread: false })] });
+    await naviguer('/chat/t1');
+
+    // Et le point s'éteint tout seul : personne n'a rechargé la page.
+    expect(pointDuPremier('telegram')).toBe('no');
+  });
+
+  it('allume le point d’un fil qui REÇOIT, sur la cadence de la barre', async () => {
+    vi.useFakeTimers();
+    try {
+      // Un fil lu, au repos : rien ne l'appelle.
+      seedThreads({ telegram: [fil('t1', 'Invoice for March', { unread: false })] });
+      await renderGroup({ channels: ['telegram'] });
+      await click(folderRow('telegram'));
+      expect(pointDuPremier('telegram')).toBe('no');
+
+      // Un message arrive pendant qu'on regarde autre chose. Rien ne navigue.
+      seedThreads({ telegram: [fil('t1', 'Invoice for March', { unread: true })] });
+      expect(pointDuPremier('telegram')).toBe('no');
+
+      // Un tour d'horloge de la barre latérale — le même que la pastille
+      // corail et le point vert — et le point s'allume.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(pointDuPremier('telegram')).toBe('yes');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
