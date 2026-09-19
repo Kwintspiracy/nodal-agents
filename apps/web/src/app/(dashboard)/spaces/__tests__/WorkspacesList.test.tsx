@@ -88,10 +88,29 @@ describe('WorkspacesList @cap:travailler-sur-des-fichiers/ecran', () => {
     expect(html).toContain('href="/spaces/p-2"');
   });
 
-  it('montre le CHEMIN de chaque ligne, et le garde entier au survol', () => {
+  it('montre le CHEMIN de chaque ligne, ENTIER, et le garde entier au survol', () => {
     expect(html).toContain('D:/Dev/nodal');
     expect(html).toContain('D:/APPS/scratch-tools');
     expect(html).toContain('title="D:/Dev/nodal"');
+  });
+
+  it('un chemin LONG est rendu en entier : c’est le CSS qui coupe, pas un compteur', () => {
+    // Revue Reviewer C, passe 4. Le chemin passait par un compteur de 44
+    // signes qui décidait d'une coupe sans connaître la largeur : sur un écran
+    // large il raccourcissait pour rien, sur un étroit le CSS recoupait par
+    // dessus. Le texte RENDU est donc le chemin complet, et `truncate` s'en
+    // charge à l'affichage.
+    const long =
+      'D:/APPS/NodalAI/apps/web/src/app/(dashboard)/spaces/un-dossier-au-nom-interminable';
+    const rendu = render({
+      rows: [ligne({ key: 'k', name: 'Long', path: long })],
+      counts: { total: 1, registered: 1, detected: 0, waiting: 0 },
+    });
+    expect(rendu).toContain(`>${long}</span>`);
+    expect(rendu).toContain(`title="${long}"`);
+    // Aucune ellipse posée par du code : celle du CSS n'est pas dans le HTML.
+    expect(rendu).not.toContain('…');
+    expect(rendu).toContain('truncate');
   });
 
   it('ne dit PLUS l’agent, ni les comptes, ni la dernière activité', () => {

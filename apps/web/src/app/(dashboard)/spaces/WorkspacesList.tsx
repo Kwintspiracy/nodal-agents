@@ -55,12 +55,6 @@ import { setCodeProjectHiddenAction } from '@/lib/actions.ts';
 import { registerDetectedProjectAction } from '@/lib/project-actions.ts';
 import type { WorkspaceProof, WorkspaceRow, WorkspacesView } from '@/lib/workspaces.ts';
 
-/** Le chemin, raccourci par la GAUCHE : la fin d'un chemin est ce qui le nomme. */
-function shortPath(path: string, max = 44): string {
-  if (path.length <= max) return path;
-  return `…${path.slice(path.length - max + 1)}`;
-}
-
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -119,10 +113,15 @@ function RowBody({ row }: { row: WorkspaceRow }) {
         {/* LE CHEMIN, et rien d'autre (Quentin, 19/09). La sous-ligne comptait
             les conversations, les sessions et la dernière activité, et nommait
             l'agent responsable ; rien de tout cela n'aide à retrouver un
-            projet dans une liste. Le titre attribut garde le chemin ENTIER :
-            la coupe est un fait d'affichage, pas une perte. */}
+            projet dans une liste.
+            RENDU ENTIER, coupé par le CSS à la largeur qu'il a (revue Reviewer
+            C, passe 4). Il passait d'abord par un compteur de 44 signes, qui
+            décidait d'une coupe sans connaître la largeur : sur un écran large
+            il raccourcissait pour rien, sur un étroit le CSS recoupait par
+            dessus — deux coupes pour une. L'infobulle porte la même valeur,
+            entière elle aussi. */}
         <span className="truncate text-mono-12 text-ink-3" title={row.path}>
-          {shortPath(row.path)}
+          {row.path}
         </span>
       </span>
       {/* LA DATE : au registre pour un projet, première écriture vue pour un
