@@ -31,8 +31,15 @@
 //   - l'HORLOGE, qui allume le point d'un fil qui reçoit pendant qu'on regarde
 //     ailleurs, saute les tours quand l'onglet est caché, et relit dès qu'il
 //     revient.
+//
+// ⚠️ ELLE NE S'ÉTEINT PAS, et c'est la seule chose qu'elle ne reprend PAS du
+// sous-menu des dossiers. Celui-ci arrête son sondage dès que tout est replié,
+// parce qu'il n'y a alors plus rien à l'écran à tenir à jour. « Recent » n'a
+// pas d'état replié : elle est visible tant que le panneau Talk l'est, et
+// démontée dès qu'on quitte Talk. Le sondage suit donc exactement sa présence
+// à l'écran, ce qui est le même critère, atteint autrement.
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { ArrowRight } from '@phosphor-icons/react';
 import SidebarSection from './ui/SidebarSection';
@@ -49,8 +56,33 @@ export default function RecentThreads() {
   /** Ce que la lecture a répondu quand elle a échoué. Jamais un silence. */
   const [erreur, setErreur] = useState<string | null>(null);
 
+  /**
+   * L'ÂGE de la lecture qu'on attend. Une réponse ne s'affiche que si elle est
+   * encore celle-là — la MÊME garde que le sous-menu des dossiers (Reviewer C,
+   * passe 2 de la PR #223), et pour la même raison.
+   *
+   * DEUX lectures peuvent être en vol en même temps : celle qu'une navigation
+   * vient de lancer et celle du tour d'horloge. Rien ne garantit l'ordre des
+   * réponses, et sans cet âge la plus ancienne qui revient en dernier réécrit
+   * la section avec un état périmé — précisément le point de non-lu qu'on
+   * venait d'éteindre en ouvrant le fil.
+   *
+   * Le démontage périme tout ce qui est en vol, par le même chemin : une
+   * réponse qui arrive après ne dessine rien.
+   */
+  const age = useRef(0);
+  useEffect(() => {
+    return () => {
+      age.current += 1;
+    };
+  }, []);
+
   const relire = useCallback(async (): Promise<void> => {
+    const mien = (age.current += 1);
     const r = await listRecentThreadsAction();
+    // Périmée : l'écran est démonté, ou une lecture plus récente est partie
+    // depuis. Dans les deux cas il n'y a rien à dessiner avec ça.
+    if (mien !== age.current) return;
     if (r.ok) {
       setFils(r.data);
       // Une lecture qui repasse efface le message de la précédente : sinon la
