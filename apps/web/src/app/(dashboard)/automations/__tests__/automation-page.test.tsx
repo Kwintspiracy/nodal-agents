@@ -29,7 +29,7 @@ import { createElement, type ReactElement, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, agentSchedules, webhookTriggers, eq } from '@nodal-agents/db';
+import { agentJobs, agentSchedules, scheduleState, webhookTriggers, eq } from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -203,6 +203,18 @@ beforeAll(async () => {
     ])
     .returning({ id: agentJobs.id });
   digestRunIds = digestRuns.map((r) => r.id);
+
+  // Ce que « Weekly digest » a RETENU de ses runs. « Nightly cleanup » n'a rien
+  // noté : les deux cas se lisent, celui qui montre l'état et celui qui n'en a
+  // pas.
+  await testDb.insert(scheduleState).values([
+    {
+      scheduleId: digest.id,
+      key: 'last_announced_version',
+      value: 'v0.8.8 (2026-08-28)',
+    },
+    { scheduleId: digest.id, key: 'last_checked_at', value: '2026-09-08T01:00:30Z' },
+  ]);
 
   const cleanupRuns = await testDb
     .insert(agentJobs)
@@ -511,9 +523,36 @@ describe('la page d’une routine @cap:planifier-une-tache/ecran', () => {
     expect(container.querySelector('[data-testid="runs-headline"]')?.textContent).toBe(
       'Runs · 3 · $0.12 over 30 days',
     );
+    // « See all » mène à Activity filtrée sur l'AGENT, jamais à /scheduled :
+    // cette page est retirée (#202), et Activity ne sait pas filtrer par
+    // automatisation. Le libellé nomme donc ce qu'on y trouvera vraiment.
     const seeAll = container.querySelector('[data-testid="runs-see-all"]');
-    expect(seeAll?.getAttribute('href')).toBe('/scheduled');
-    expect(seeAll?.textContent).toContain('See all in Scheduled');
+    expect(seeAll?.getAttribute('href')).toBe(`/logs?agent=${seed.agentId}`);
+    expect(seeAll?.textContent).toContain('See all runs of Test Agent');
+    expect(container.innerHTML).not.toContain('href="/scheduled"');
+  });
+
+  it('montre ce que la routine a RETENU, au-dessus de ses runs', async () => {
+    // Cet état décide s'il y aura du travail au prochain run. La page
+    // /scheduled qui le montrait est retirée (#202) : celle-ci est le seul
+    // écran qui reste, et le perdre ferait republier une annonce déjà publiée
+    // (08/09/2026).
+    const view = await load(digestId);
+    await render(<AutomationScreen view={view} agents={[]} />);
+
+    const etat = container.querySelector('[data-testid="routine-state"]');
+    expect(etat, 'la routine a un état, et il est rendu').not.toBeNull();
+    expect(etat?.textContent).toContain('last_announced_version');
+    expect(etat?.textContent).toContain('v0.8.8 (2026-08-28)');
+    // La valeur exacte reste atteignable au survol, même tronquée à l'écran :
+    // c'est elle que la routine compare.
+    expect(etat?.querySelector('[title="v0.8.8 (2026-08-28)"]')).not.toBeNull();
+  });
+
+  it('ne rend PAS de bloc d’état pour une routine qui n’a rien retenu', async () => {
+    const view = await load(cleanupId);
+    await render(<AutomationScreen view={view} agents={[]} />);
+    expect(container.querySelector('[data-testid="routine-state"]')).toBeNull();
   });
 
   it('porte le retour vers la liste et les trois gestes de la planche', async () => {

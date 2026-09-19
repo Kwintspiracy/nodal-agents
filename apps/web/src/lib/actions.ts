@@ -2289,6 +2289,32 @@ type SpaceListDbRow = {
   triggerContext: JobTriggerContext | null;
 };
 
+/**
+ * L'automatisation à laquelle un run appartient : la COLONNE d'abord, la
+ * PROVENANCE ensuite.
+ *
+ * `agent_jobs.schedule_id` est mise à NULL quand l'automatisation est
+ * supprimée ; sans l'id gardé dans la provenance, deux automatisations
+ * supprimées puis recréées sous le même nom se fondaient en une (revue passe
+ * 26). Les jobs antérieurs à cet id n'en ont aucun, et le disent en valant
+ * `null` plutôt qu'en se rattachant au hasard.
+ *
+ * Une seule fonction depuis #202 : la liste des runs d'une automatisation et
+ * le retour de la page d'un run posent la MÊME question, et deux réponses
+ * auraient fini par différer.
+ */
+function scheduleIdOfJob(r: {
+  channel: string;
+  scheduleId: string | null;
+  triggerContext: JobTriggerContext | null;
+}): string | null {
+  if (r.scheduleId !== null) return r.scheduleId;
+  if (r.channel === 'cron' && r.triggerContext?.type === 'cron') {
+    return r.triggerContext.scheduleId ?? null;
+  }
+  return null;
+}
+
 function toSpaceListRow(r: SpaceListDbRow): SpaceListRow {
   return {
     id: r.id,
@@ -2304,16 +2330,7 @@ function toSpaceListRow(r: SpaceListDbRow): SpaceListRow {
     createdAt: r.createdAt,
     completedAt: r.completedAt,
     conversationId: r.conversationId,
-    // La colonne d'abord, la provenance ensuite : `schedule_id` est SET NULL
-    // quand l'automatisation est supprimée, et sans l'id gardé dans la
-    // provenance deux automatisations supprimées puis recréées sous le même
-    // nom se fondaient en une ligne (revue passe 26). Les jobs antérieurs à
-    // cet id retombent sur le nom — `groupSpaces` le dit.
-    scheduleId:
-      r.scheduleId ??
-      (r.channel === 'cron' && r.triggerContext?.type === 'cron'
-        ? (r.triggerContext.scheduleId ?? null)
-        : null),
+    scheduleId: scheduleIdOfJob(r),
     scheduleName:
       r.channel === 'cron' && r.triggerContext?.type === 'cron'
         ? r.triggerContext.scheduleName
@@ -2326,40 +2343,18 @@ function toSpaceListRow(r: SpaceListDbRow): SpaceListRow {
 // `listAllConversationsAction` (P7, conversation-actions.ts). Un mode canonique
 // par feature — deux listes de « ce qui s'est passé » divergeaient forcément.
 
-/**
- * Les runs d'automatisation de TÊTE, les plus récents d'abord (P9 : les runs
- * d'automatisation ont leur page, /scheduled, où ils sont groupés par
- * automatisation ; ils ne noient plus la liste des conversations).
- */
-export async function listScheduledRunsAction(
-  opts: { limit?: number } = {},
-): Promise<ActionResult<SpaceListRow[]>> {
-  try {
-    const session = await getSession();
-    const db = getDb();
-    const limit = Math.min(opts.limit ?? 300, 2000);
-    const rows = await db
-      .select(SPACE_LIST_SELECT)
-      .from(agentJobs)
-      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-      .where(
-        and(
-          eq(agentJobs.entityId, session.entityId),
-          isNull(agentJobs.parentJobId),
-          eq(agentJobs.channel, 'cron'),
-        ),
-      )
-      .orderBy(desc(agentJobs.createdAt))
-      .limit(limit);
-    return ok(rows.map(toSpaceListRow));
-  } catch (err) {
-    console.error('[listScheduledRunsAction]', err);
-    return fail('db_error', 'Failed to load scheduled runs');
-  }
-}
+// `listScheduledRunsAction` (tous les runs cron de l'espace, à plat) est
+// RETIRÉE avec la page /scheduled (#202) : les runs d'une automatisation se
+// lisent sur SA page, par `getAutomationAction`, et il n'existe plus d'écran
+// qui les liste tous mêlés. Le regroupement qu'elle nourrissait
+// (`lib/spaces-list.ts`) est parti avec elle — un module vivant pour une page
+// morte est une promesse que personne ne tient.
+
+/** Ce qu'une routine a retenu, une clé et sa valeur. */
+export type RoutineStateRow = { key: string; value: string; updatedAt: Date };
 
 /**
- * L'état que chaque routine de cet espace a enregistré, par `schedule_id`.
+ * L'état qu'UNE routine a enregistré.
  *
  * Pourquoi c'est à l'écran : cet état décide si une routine refait ou non son
  * travail. Tant qu'il vivait dans la mémoire, le propriétaire pouvait le
@@ -2367,53 +2362,26 @@ export async function listScheduledRunsAction(
  * une annonce publiée deux fois le 08/09/2026. Ce qui commande un comportement
  * doit se voir là où on regarde ce comportement.
  *
- * Une seule requête pour toutes les routines : la page en liste une dizaine, et
- * une requête par ligne serait le N+1 que l'audit perf a déjà corrigé ailleurs.
+ * Lu par routine et non plus pour toutes (#202) : l'écran qui en listait une
+ * dizaine n'existe plus, et la page d'une automatisation n'en regarde qu'une.
+ * Appelé UNIQUEMENT pour une routine dont l'appartenance vient d'être vérifiée
+ * par la lecture d'`agent_schedules` — la garde est là-bas, elle n'est pas
+ * refaite ici.
  */
-export async function listRoutineStatesAction(): Promise<
-  ActionResult<Record<string, Array<{ key: string; value: string; updatedAt: Date }>>>
-> {
-  try {
-    const session = await getSession();
-    const db = getDb();
-    const rows = await db
-      .select({
-        scheduleId: scheduleState.scheduleId,
-        key: scheduleState.key,
-        value: scheduleState.value,
-        updatedAt: scheduleState.updatedAt,
-      })
-      .from(scheduleState)
-      .innerJoin(agentSchedules, eq(agentSchedules.id, scheduleState.scheduleId))
-      .innerJoin(agents, eq(agents.id, agentSchedules.agentId))
-      // `agent_schedules.entity_id` est NULLABLE, et une égalité SQL avec NULL
-      // n'est jamais vraie : une routine ancienne sans entité voyait son état
-      // disparaître de l'écran (revue Codex, PR #47). On se rabat alors sur
-      // l'entité de son AGENT, qui, lui, est obligatoire sur la routine. Sans
-      // fuite possible : les deux branches comparent à l'entité de la session,
-      // et une routine dont ni elle ni son agent n'a d'entité reste invisible —
-      // rien ne permettrait de l'attribuer.
-      .where(
-        or(
-          eq(agentSchedules.entityId, session.entityId),
-          and(isNull(agentSchedules.entityId), eq(agents.entityId, session.entityId)),
-        ),
-      )
-      .orderBy(asc(scheduleState.key));
-
-    const bySchedule: Record<string, Array<{ key: string; value: string; updatedAt: Date }>> = {};
-    for (const r of rows) {
-      (bySchedule[r.scheduleId] ??= []).push({
-        key: r.key,
-        value: r.value,
-        updatedAt: r.updatedAt,
-      });
-    }
-    return ok(bySchedule);
-  } catch (err) {
-    console.error('[listRoutineStatesAction]', err);
-    return fail('db_error', 'Failed to load routine state');
-  }
+async function readRoutineState(
+  db: ReturnType<typeof getDb>,
+  scheduleId: string,
+): Promise<RoutineStateRow[]> {
+  const rows = await db
+    .select({
+      key: scheduleState.key,
+      value: scheduleState.value,
+      updatedAt: scheduleState.updatedAt,
+    })
+    .from(scheduleState)
+    .where(eq(scheduleState.scheduleId, scheduleId))
+    .orderBy(asc(scheduleState.key));
+  return rows;
 }
 
 // P4 — la forme du coût (`SpaceCostView`) vit dans space-cost.ts, avec sa
@@ -2447,6 +2415,12 @@ export type SpaceConversationView = {
     conversationId: string | null;
     parentJobId: string | null;
     scheduleName: string | null;
+    /**
+     * L'automatisation qui a lancé ce run, quand il en vient une. C'est là que
+     * son bouton retour ramène depuis #202 : la page Scheduled n'existe plus,
+     * et un run revient à la chose qui l'a déclenché.
+     */
+    scheduleId: string | null;
   };
   feed: ConversationFeed;
   /** P3 — ce que la preuve a fait pour ce travail et ses délégués (même lecture que le détail Code). */
@@ -2772,6 +2746,11 @@ export async function getSpaceConversationAction(
         conversationId: job.conversationId,
         parentJobId: job.parentJobId,
         scheduleName,
+        scheduleId: scheduleIdOfJob({
+          channel: job.channel,
+          scheduleId: job.scheduleId,
+          triggerContext: job.triggerContext as JobTriggerContext | null,
+        }),
       },
       feed: feedWithDelivery,
       verdicts: reviewVerdicts.views,
@@ -10467,7 +10446,18 @@ export type ScheduleDetail = ScheduleRow & { timezone: string | null };
  * la moitié de ses colonnes à `null`.
  */
 export type AutomationView =
-  | { kind: 'schedule'; schedule: ScheduleDetail; runs: SpaceListRow[]; window: AutomationWindow }
+  | {
+      kind: 'schedule';
+      schedule: ScheduleDetail;
+      runs: SpaceListRow[];
+      window: AutomationWindow;
+      /**
+       * Ce que la routine a retenu de ses runs précédents. Vide quand elle n'a
+       * rien noté. C'est le seul écran qui le montre depuis le retrait de
+       * /scheduled (#202), et il décide s'il y aura du travail au prochain run.
+       */
+      state: RoutineStateRow[];
+    }
   | { kind: 'webhook'; webhook: WebhookTriggerRow; runs: SpaceListRow[]; window: AutomationWindow };
 
 /**
@@ -10565,15 +10555,21 @@ export async function getAutomationAction(id: string): Promise<ActionResult<Auto
       .where(and(eq(agentSchedules.id, id), eq(agentSchedules.entityId, session.entityId)));
 
     if (schedule) {
-      const { runs, window } = await readAutomationRuns(
-        db,
-        and(
-          eq(agentJobs.entityId, session.entityId),
-          isNull(agentJobs.parentJobId),
-          eq(agentJobs.channel, 'cron'),
-          or(eq(agentJobs.scheduleId, id), sql`${agentJobs.triggerContext}->>'scheduleId' = ${id}`),
+      const [{ runs, window }, state] = await Promise.all([
+        readAutomationRuns(
+          db,
+          and(
+            eq(agentJobs.entityId, session.entityId),
+            isNull(agentJobs.parentJobId),
+            eq(agentJobs.channel, 'cron'),
+            or(
+              eq(agentJobs.scheduleId, id),
+              sql`${agentJobs.triggerContext}->>'scheduleId' = ${id}`,
+            ),
+          ),
         ),
-      );
+        readRoutineState(db, id),
+      ]);
       return ok({
         kind: 'schedule',
         schedule: {
@@ -10585,6 +10581,7 @@ export async function getAutomationAction(id: string): Promise<ActionResult<Auto
         },
         runs,
         window,
+        state,
       });
     }
 

@@ -156,22 +156,26 @@ export function runsBasePath(view: AutomationView): string {
 }
 
 /**
- * Où mène « See all ».
+ * Où mène « See all » : Activity (`/logs`), filtrée sur l'agent de
+ * l'automatisation.
  *
- * Activity (`/logs`) ne filtre aujourd'hui que par agent, outil et run : elle
- * n'a AUCUN filtre par automatisation. Y renvoyer déposerait le lecteur sur la
- * liste entière de la flotte en lui promettant le contraire. Les runs d'une
- * routine se retrouvent donc sur `/scheduled`, où ils sont groupés par
- * automatisation ; ceux d'un webhook vivent dans Activity, filtrés par agent,
- * ce que cette page-là sait faire.
+ * Un schedule y menait par `/scheduled` jusqu'au 19/09. Cette page est retirée
+ * (#202), et sa liste groupée par automatisation n'a plus lieu d'être puisqu'on
+ * est précisément SUR une automatisation.
+ *
+ * Le filtre est celui de l'AGENT, pas de l'automatisation : Activity ne filtre
+ * que par agent, outil et run. C'est donc plus large que les runs listés
+ * au-dessus, et le libellé le dit plutôt que de promettre un filtre qu'aucun
+ * écran ne sait servir. Une automatisation dont l'agent a disparu mène à
+ * Activity entière : aucun filtre ne s'applique, et le taire serait pire.
  */
 export function seeAllHref(view: AutomationView): string {
-  if (view.kind === 'schedule') return '/scheduled';
-  const agentId = view.webhook.agentId;
-  return agentId === null ? '/logs' : `/logs?agent=${agentId}`;
+  const agentId = view.kind === 'schedule' ? view.schedule.agentId : view.webhook.agentId;
+  return agentId === null || agentId === '' ? '/logs' : `/logs?agent=${agentId}`;
 }
 
-/** Ce que « See all » annonce, puisque les deux destinations diffèrent. */
+/** Ce que « See all » annonce : l'agent dont il montrera tous les runs. */
 export function seeAllLabel(view: AutomationView): string {
-  return view.kind === 'schedule' ? 'See all in Scheduled' : 'See all in Activity';
+  const agent = automationAgent(view);
+  return agent === UNKNOWN ? 'See all in Activity' : `See all runs of ${agent}`;
 }

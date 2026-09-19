@@ -27,14 +27,30 @@ export function threadBackLink(channel: string): BackLink {
 }
 
 /**
- * Un run ramène là d'où on l'a ouvert, dans l'ordre de ce qu'il EST : une
- * automation revient aux routines ; un run d'une conversation revient à cette
- * conversation (c'est « Open run » qui y mène) ; un run venu de dehors revient
- * au dossier MCP, d'où on vient de le lister (18/09) ; le reste revient à
- * Activity, la liste des runs.
+ * Un run ramène là d'où on l'a ouvert, dans l'ordre de ce qu'il EST : un run
+ * d'automatisation revient à SON automatisation ; un run d'une conversation
+ * revient à cette conversation (c'est « Open run » qui y mène) ; un run venu de
+ * dehors revient au dossier MCP, d'où on vient de le lister (18/09) ; le reste
+ * revient à Activity, la liste des runs.
+ *
+ * Le cron ramenait à `/scheduled`, une page qui n'existe plus (#202) — Quentin,
+ * 19/09 : « le bouton back me ramène à la page Scheduled, qui est censée ne
+ * plus exister ». Il ramène maintenant à la page de l'automatisation, où ce run
+ * est justement listé. Un run trop ancien pour porter cet id revient à la LISTE
+ * des automatisations : on ne devine pas laquelle c'était.
  */
-export function runBackLink(job: { channel: string; conversationId: string | null }): BackLink {
-  if (job.channel === 'cron') return { label: 'Back to Scheduled', href: '/scheduled' };
+export function runBackLink(job: {
+  channel: string;
+  conversationId: string | null;
+  /** L'automatisation qui a lancé ce run, quand elle est connue. */
+  scheduleId?: string | null;
+}): BackLink {
+  if (job.channel === 'cron') {
+    const id = job.scheduleId ?? null;
+    return id === null
+      ? { label: 'Back to Automations', href: '/automations' }
+      : { label: 'Back to the automation', href: `/automations/${id}` };
+  }
   if (job.conversationId !== null && job.conversationId !== '') {
     return { label: 'Back to the conversation', href: `/chat/${job.conversationId}` };
   }

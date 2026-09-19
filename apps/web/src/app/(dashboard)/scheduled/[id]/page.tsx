@@ -26,16 +26,17 @@ export default async function ScheduledRunPage({ params }: { params: Promise<{ i
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Run">
-        <Link href="/scheduled" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Scheduled
+        <Link href="/automations" className="text-xs text-ink-3 hover:text-ink-2">
+          ← Automations
         </Link>
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>
     );
   }
 
-  // Le retour ramène là d'où le run s'ouvre : les routines pour une
-  // automatisation, la conversation pour son run, Activity pour le reste
-  // (Quentin, 17/09 : « ce problème est à plusieurs endroits »).
+  // Le retour ramène là d'où le run s'ouvre : SON automatisation pour un run
+  // de cron (#202 — la page Scheduled où il ramenait n'existe plus), la
+  // conversation pour son run, Activity pour le reste (Quentin, 17/09 : « ce
+  // problème est à plusieurs endroits »).
   return <RunPage data={result.data} back={runBackLink(result.data.job)} />;
 }

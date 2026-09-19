@@ -12,7 +12,7 @@ import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import EmptyState from '@/components/ui/EmptyState';
 import StatusPill from '@/components/ui/StatusPill';
-import { ScheduleRunList } from '@/app/(dashboard)/scheduled/ScheduledSection.tsx';
+import { RoutineState, ScheduleRunList } from './RunLines.tsx';
 import ScheduleActions from '../ScheduleActions.tsx';
 import WebhookPageActions from './WebhookPageActions.tsx';
 import {
@@ -108,14 +108,22 @@ export default function AutomationScreen({
               <ArrowRight size={12} />
             </Link>
           </div>
-          {view.runs.length === 0 ? (
+          {view.runs.length === 0 && (view.kind !== 'schedule' || view.state.length === 0) ? (
             <EmptyState title="No run yet. It shows up here the first time this automation fires." />
           ) : (
             <div
               className="overflow-hidden rounded-xl border border-rule-2 bg-paper"
               data-testid="automation-runs"
             >
-              <ScheduleRunList runs={view.runs} basePath={runsBasePath(view)} />
+              {/* Ce que la routine a RETENU, au-dessus de ses runs : c'est cet
+                  état qui décide s'il y aura du travail au prochain. Depuis le
+                  retrait de /scheduled (#202), c'est le seul écran qui le
+                  montre, et l'y perdre ferait republier une annonce déjà
+                  publiée (08/09/2026). */}
+              {view.kind === 'schedule' && <RoutineState entries={view.state} />}
+              {view.runs.length > 0 && (
+                <ScheduleRunList runs={view.runs} basePath={runsBasePath(view)} />
+              )}
             </div>
           )}
         </section>
