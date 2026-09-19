@@ -34,6 +34,42 @@
  * n'existe que dans l'application Next : les scanners partagés portent des
  * invariants que TOUS les paquets doivent tenir.
  *
+ * ─── Pourquoi elle refuse aussi les LECTURES (#240, 20/09) ────────────────
+ *
+ * La première version s'arrêtait à l'APPEL, parce que c'est la forme qui casse
+ * bruyamment, et elle disait ne rien savoir d'une CONSTANTE lue par le serveur
+ * (`DOT[outcome]` dans le fil). La question a été tranchée par l'expérience, et
+ * la réponse est : c'est cassé, et silencieusement.
+ *
+ * Ce que le chargeur de Next met à la place d'un module `'use client'` vu du
+ * graphe serveur, c'est UNE RÉFÉRENCE PAR EXPORT
+ * (`next/dist/build/webpack/loaders/next-flight-loader/index.js`, branche
+ * `assumedSourceType === 'module'`) :
+ *
+ *     export const DOT = registerClientReference(
+ *       function () { throw new Error('Attempted to call DOT() …'); },
+ *       cleDuModule, "DOT",
+ *     );
+ *
+ * et `registerClientReference` ne fait que poser `$$typeof`, `$$id` et
+ * `$$async` sur cette fonction. Y entrer par une clé ne jette donc RIEN : ça
+ * rend `undefined`. `DOT[outcome] ?? 'bg-ink-4'` prenait le repli, et toutes
+ * les pastilles du fil étaient grises sans que personne le voie — l'appel
+ * tombe, la lecture ment. (Seul le proxy CommonJS, `createClientModuleProxy`,
+ * jette « You cannot dot into a client module » ; un `.tsx` à exports nommés ne
+ * passe pas par là.)
+ *
+ * La preuve est exécutable et vit à côté du fil :
+ * `app/(dashboard)/spaces/__tests__/feed-dots-server-boundary.test.tsx` fait
+ * tourner le vrai `registerClientReference` dans un node lancé avec la
+ * condition `react-server`, puis rend le fil avec les constantes remplacées par
+ * des références. Les couleurs ont été réparées en sortant les deux tables dans
+ * `spaces/feed-dots.ts`, un module SANS directive.
+ *
+ * D'où la règle d'aujourd'hui : un binding client ne peut être ni APPELÉ
+ * (`X(…)`) ni LU (`X.y`, `X[y]`) depuis le graphe serveur. Il peut être rendu
+ * (`<X />`) ou passé tel quel en prop — et rien d'autre.
+ *
  * ─── Ce qu'elle NE voit pas, et c'est écrit exprès ─────────────────────────
  *
  * Une garde qui prétend tout voir se fait croire sur parole. Celle-ci lit du
@@ -50,15 +86,21 @@
  *   - l'ordre. Elle regarde le texte APRÈS la ligne d'import, donc un appel
  *     placé avant son propre import (une déclaration de fonction remontée) lui
  *     échappe ;
- *   - les commentaires et les chaînes. `// dockedFormId(x)` ou
- *     `'appelle dockedFormId(x)'` ressemblent à un appel : faux ROUGE possible.
- *     C'est le sens le moins dangereux — quelqu'un regarde — mais il faut le
- *     savoir avant d'accuser la garde.
+ *   - les CHAÎNES de caractères. `'appelle dockedFormId(x)'` ressemble encore à
+ *     un appel : faux ROUGE possible. Les COMMENTAIRES, eux, ne comptent plus —
+ *     `retirerCommentaires` les efface avant la recherche. Sans lui, élargir
+ *     aux lectures rendait un faux rouge sur l'arbre réel : `agents/page.tsx`
+ *     écrit « the view used by AgentsList. Active jobs… » dans un commentaire,
+ *     et le point d'une phrase se lit comme un accès à un champ. L'issue #240
+ *     en annonçait six, comptés sur un élargissement plus large (tout USAGE) ;
+ *     mesuré sur celui-ci, il y en a un. Un seul suffit : une garde qui rougit
+ *     sur du code qui marche se fait désactiver le lendemain.
  *
- * Couvrir tout cela demanderait un vrai parcours de l'arbre syntaxique. Le
- * défaut qu'elle attrape — l'appel direct, celui qui a fait tomber /settings —
- * vaut déjà son coût ; les autres formes sont ici pour que personne ne prenne
- * son silence pour une preuve.
+ * Couvrir tout cela demanderait un vrai parcours de l'arbre syntaxique. Les
+ * deux défauts qu'elle attrape — l'appel qui a fait tomber /settings, la
+ * lecture qui a éteint les pastilles du fil — valent déjà leur coût ; les
+ * autres formes sont ici pour que personne ne prenne son silence pour une
+ * preuve.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -79,6 +121,70 @@ const IMPORT_RE = /import\s+([^;]+?)\s+from\s+['"]([^'"]+)['"]/g;
 
 /** `export { X, Y as Z } from './Autre.tsx'` — un conduit, pas un import. */
 const REEXPORT_RE = /export\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g;
+
+/** Les caractères après lesquels un `/` ouvre une expression régulière. */
+const AVANT_REGEX = new Set(['(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '\n']);
+
+/**
+ * Le même texte, commentaires effacés, LONGUEUR ET LIGNES INCHANGÉES — les
+ * décalages d'import et les numéros de ligne restent valables.
+ *
+ * Elle ne remplace que les commentaires. Les chaînes, gabarits et expressions
+ * régulières sont seulement TRAVERSÉS, pour qu'un `//` d'une URL ou d'un motif
+ * ne passe pas pour un commentaire. Se tromper en les traversant ne peut donc
+ * que LAISSER un commentaire en place — un faux rouge, jamais un faux vert.
+ */
+export function retirerCommentaires(texte: string): string {
+  const out = texte.split('');
+  // Borne explicite : sans elle, un commentaire de bloc non fermé écrirait
+  // au-delà du tableau et RALLONGERAIT le texte rendu.
+  const effacer = (i: number): void => {
+    if (i < out.length && out[i] !== NEWLINE && out[i] !== '\r') out[i] = ' ';
+  };
+  /** Le dernier caractère de code rencontré, pour reconnaître `/` en tête de motif. */
+  let precedent = NEWLINE;
+  let i = 0;
+  while (i < texte.length) {
+    const c = texte[i]!;
+    const suivant = texte[i + 1] ?? '';
+    if (c === '/' && suivant === '/') {
+      while (i < texte.length && texte[i] !== NEWLINE) effacer(i++);
+      continue;
+    }
+    if (c === '/' && suivant === '*') {
+      effacer(i++);
+      while (i < texte.length && !(texte[i] === '*' && texte[i + 1] === '/')) effacer(i++);
+      effacer(i++);
+      if (i < texte.length) effacer(i++);
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      i++;
+      while (i < texte.length && texte[i] !== c) i += texte[i] === '\\' ? 2 : 1;
+      i++;
+      precedent = c;
+      continue;
+    }
+    if (c === '/' && AVANT_REGEX.has(precedent)) {
+      i++;
+      let crochets = false;
+      while (i < texte.length && (crochets || texte[i] !== '/')) {
+        if (texte[i] === '\\') i++;
+        else if (texte[i] === '[') crochets = true;
+        else if (texte[i] === ']') crochets = false;
+        else if (texte[i] === NEWLINE) break;
+        i++;
+      }
+      i++;
+      precedent = '/';
+      continue;
+    }
+    if (c.trim() !== '') precedent = c;
+    else if (c === NEWLINE) precedent = NEWLINE;
+    i++;
+  }
+  return out.join('');
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -190,6 +296,7 @@ export function scanForServerUsesOfClientValues(opts: { srcDir: string }): Viola
   const violations: Violation[] = [];
   for (const f of serverGraph) {
     const text = source.get(f)!;
+    const code = retirerCommentaires(text);
     IMPORT_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = IMPORT_RE.exec(text)) !== null) {
@@ -198,30 +305,35 @@ export function scanForServerUsesOfClientValues(opts: { srcDir: string }): Viola
       const relayes = conduits.get(dest);
       const direct = isClient.get(dest) === true;
       if (!direct && relayes === undefined) continue;
-      const after = text.slice(m.index + m[0].length);
+      // La recherche se fait sur le texte SANS commentaires : élargir aux
+      // lectures sans cela rendait six faux rouges (#240).
+      const after = code.slice(m.index + m[0].length);
       for (const name of bindings(m[1]!)) {
         if (!direct && !relayes!.has(name)) continue;
-        // Ce que la garde retient : l'APPEL. C'est la forme qui casse à coup
-        // sûr et bruyamment — Next lève « Attempted to call X() from the
-        // server but X is on the client » — et c'est celle qui a fait tomber
-        // `/settings`.
-        //
-        // Elle ne dit rien d'une CONSTANTE d'un module client lue par le
-        // serveur (`DOT[outcome]` dans le fil, par exemple). Le cas est voisin
-        // et mériterait d'être regardé, mais il ne se prouve pas d'ici, et une
-        // garde qui rougit sur du code qui marche se fait désactiver.
-        if (new RegExp(`(?<![<./\\w$])${name}\\s*\\(`).test(after)) {
-          violations.push({
-            file: f.slice(opts.srcDir.length + 1),
-            line: text.slice(0, m.index).split(NEWLINE).length,
-            rule: 'server-uses-client-value',
-            text: direct
-              ? `${name}() est APPELÉ depuis le graphe serveur alors que ${m[2]} porte ` +
-                `'use client' — le serveur ne peut que le RENDRE, pas l'appeler`
-              : `${name}() est APPELÉ depuis le graphe serveur ; ${m[2]} le ré-exporte ` +
-                `d'un module 'use client', ce qui ne le rend pas appelable`,
-          });
-        }
+        // Deux formes, deux dégâts. L'APPEL casse bruyamment — Next lève
+        // « Attempted to call X() from the server but X is on the client » —
+        // et c'est lui qui a fait tomber `/settings` (#237). La LECTURE
+        // (`X.y`, `X[y]`) ne casse rien du tout : elle rend `undefined`, et le
+        // repli derrière passe pour une valeur (#240). Le RENDU (`<X />`) et le
+        // passage en prop restent les seuls usages permis.
+        const appel = new RegExp(`(?<![<./\\w$])${name}\\s*\\(`).test(after);
+        const lecture = new RegExp(`(?<![<./\\w$])${name}\\s*(?:\\??\\.|\\[)`).test(after);
+        if (!appel && !lecture) continue;
+        const geste = appel ? `${name}() est APPELÉ` : `${name} est LU`;
+        const degat = appel
+          ? `le serveur ne peut que le RENDRE, pas l'appeler`
+          : `le serveur n'en reçoit qu'une référence : la lecture rend ` +
+            `\`undefined\` sans rien dire`;
+        violations.push({
+          file: f.slice(opts.srcDir.length + 1),
+          line: text.slice(0, m.index).split(NEWLINE).length,
+          rule: 'server-uses-client-value',
+          text: direct
+            ? `${geste} depuis le graphe serveur alors que ${m[2]} porte ` +
+              `'use client' — ${degat}`
+            : `${geste} depuis le graphe serveur ; ${m[2]} le ré-exporte ` +
+              `d'un module 'use client' — ${degat}`,
+        });
       }
     }
   }
