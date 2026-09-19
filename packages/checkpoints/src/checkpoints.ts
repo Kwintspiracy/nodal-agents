@@ -36,10 +36,91 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { CheckpointError, measureWorkspace, type CheckpointFailureCode } from './failure';
+
 const run = promisify(execFile);
 
 /** A snapshot that hangs must not hold a tool call. */
 const GIT_TIMEOUT_MS = 30_000;
+
+/**
+ * La borne de temps de l'instantané, surchargeable — issue #245.
+ *
+ * Deux raisons, et aucune n'est le confort :
+ *
+ *   - les tests ont besoin d'un dépassement RÉEL sur un arbre réel. Simuler un
+ *     « timed out » avec un faux `execFile` prouverait que le message se met en
+ *     forme, pas que la borne se déclenche ;
+ *   - un propriétaire dont le dossier est gros mais légitime doit pouvoir
+ *     relever la borne plutôt que de perdre son filet.
+ *
+ * Une valeur d'environnement illisible ne retombe pas en silence sur le défaut
+ * (invariant #4) : elle est dite, une fois, puis ignorée.
+ */
+let badTimeoutSaid = false;
+function snapshotTimeoutMs(explicit?: number): number {
+  if (explicit !== undefined) {
+    if (Number.isFinite(explicit) && explicit > 0) return explicit;
+    throw new Error(`invalid snapshot timeout: ${explicit}`);
+  }
+  const raw = process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'];
+  if (raw === undefined || raw === '') return GIT_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  if (!badTimeoutSaid) {
+    badTimeoutSaid = true;
+    console.warn(
+      `[checkpoints] NODALAI_CHECKPOINT_TIMEOUT_MS=${JSON.stringify(raw)} is not a positive ` +
+        `number of milliseconds — using ${GIT_TIMEOUT_MS} ms`,
+    );
+  }
+  return GIT_TIMEOUT_MS;
+}
+
+/**
+ * `execFile` tue l'enfant quand la borne tombe et rejette avec `killed`. Un
+ * `ETIMEDOUT` est la même chose dite autrement selon la plateforme, d'où les
+ * deux. Aucun appel du chemin d'instantané ne tue l'enfant qu'il lance, donc
+ * `killed` ne peut venir que de la borne.
+ */
+function isTimeoutError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { killed?: boolean; code?: unknown };
+  return e.killed === true || e.code === 'ETIMEDOUT';
+}
+
+/** `git` introuvable : l'`ENOENT` vient du spawn, pas d'un fichier du dossier. */
+function isGitMissingError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { code?: unknown; syscall?: unknown };
+  return e.code === 'ENOENT' && typeof e.syscall === 'string' && e.syscall.startsWith('spawn');
+}
+
+/**
+ * Qualifie l'échec d'un instantané : un CODE, et les faits qui vont avec.
+ *
+ * La mesure n'est faite que sur un dépassement de borne, parce que c'est le
+ * seul cas où elle répond à la question posée. Sur un `git` absent ou un
+ * magasin cassé, parcourir l'arbre coûterait le prix d'un instantané pour
+ * n'éclairer personne.
+ */
+async function qualifySnapshotFailure(
+  err: unknown,
+  workspace: string,
+  limitMs: number,
+  elapsedMs: number,
+): Promise<CheckpointError> {
+  const gitMessage =
+    err instanceof Error ? (err.message.split('\n')[0] ?? err.message) : String(err);
+  const code: CheckpointFailureCode = isGitMissingError(err)
+    ? 'git_missing'
+    : isTimeoutError(err)
+      ? 'snapshot_timeout'
+      : 'snapshot_failed';
+  const measure =
+    code === 'snapshot_timeout' ? await measureWorkspace(workspace).catch(() => null) : null;
+  return new CheckpointError({ code, workspace, limitMs, elapsedMs, measure, gitMessage });
+}
 
 /**
  * Never snapshotted. Dependency trees and build output are large, regenerable,
@@ -127,9 +208,11 @@ async function git(
   workspace: string,
   args: string[],
   indexFile?: string,
+  /** La borne de CET appel. Seul l'instantané la surcharge — voir snapshotTimeoutMs. */
+  timeoutMs: number = GIT_TIMEOUT_MS,
 ): Promise<string> {
   const { stdout } = await run('git', args, {
-    timeout: GIT_TIMEOUT_MS,
+    timeout: timeoutMs,
     windowsHide: true,
     env: gitEnv(store, workspace, indexFile),
   });
@@ -262,18 +345,46 @@ export async function ensureStore(store: string): Promise<void> {
   }
 }
 
+export interface SnapshotOptions {
+  /**
+   * Borne de temps de chaque commande git de cet instantané, en millisecondes.
+   * Par défaut `NODALAI_CHECKPOINT_TIMEOUT_MS`, sinon 30 s.
+   */
+  timeoutMs?: number;
+}
+
 /**
  * Snapshot `workspace` as it is right now. Returns the checkpoint, or null when
  * there was nothing to record (an unchanged tree since the last snapshot).
  *
- * Throws on a real failure. The caller is expected to refuse the write rather
- * than proceed without a net — a checkpoint that fails quietly is worse than no
- * checkpoint at all, because it is the one the owner thought they had.
+ * Throws on a real failure, and depuis #245 il lève TOUJOURS une
+ * `CheckpointError` : un code (`snapshot_timeout`, `git_missing`,
+ * `snapshot_failed`) et, sur un dépassement de borne, la taille et le nombre de
+ * fichiers mesurés. L'appelant refuse l'écriture plutôt que d'avancer sans
+ * filet — un checkpoint qui échoue en silence est pire que pas de checkpoint,
+ * parce que c'est celui que le propriétaire croyait avoir — mais il peut
+ * désormais DIRE pourquoi, au lieu d'envoyer les agents en chasse.
  */
 export async function snapshot(
   store: string,
   workspace: string,
   label: string,
+  options: SnapshotOptions = {},
+): Promise<Checkpoint | null> {
+  const limitMs = snapshotTimeoutMs(options.timeoutMs);
+  const startedAt = Date.now();
+  try {
+    return await takeSnapshot(store, workspace, label, limitMs);
+  } catch (err) {
+    throw await qualifySnapshotFailure(err, workspace, limitMs, Date.now() - startedAt);
+  }
+}
+
+async function takeSnapshot(
+  store: string,
+  workspace: string,
+  label: string,
+  limitMs: number,
 ): Promise<Checkpoint | null> {
   await ensureStore(store);
   const key = workspaceKey(workspace);
@@ -293,26 +404,34 @@ export async function snapshot(
   // secret gets a second, unmanaged copy", the first is the smaller harm. But
   // it is only acceptable while it is SAID: see CHECKPOINT_COVERAGE_NOTE and
   // the test that pins this behaviour, so nobody discovers it from a lost file.
-  await git(store, workspace, ['add', '-A']);
-  const tree = await git(store, workspace, ['write-tree']);
+  await git(store, workspace, ['add', '-A'], undefined, limitMs);
+  const tree = await git(store, workspace, ['write-tree'], undefined, limitMs);
 
   // Nothing changed since the last checkpoint — recording it again would bury
   // the useful ones under identical noise.
-  const parent = await git(store, workspace, ['rev-parse', '--verify', '--quiet', ref]).catch(
-    () => '',
-  );
+  const parent = await git(
+    store,
+    workspace,
+    ['rev-parse', '--verify', '--quiet', ref],
+    undefined,
+    limitMs,
+  ).catch(() => '');
   if (parent) {
-    const parentTree = await git(store, workspace, ['rev-parse', `${parent}^{tree}`]).catch(
-      () => '',
-    );
+    const parentTree = await git(
+      store,
+      workspace,
+      ['rev-parse', `${parent}^{tree}`],
+      undefined,
+      limitMs,
+    ).catch(() => '');
     if (parentTree === tree) return null;
   }
 
   const at = new Date().toISOString();
   const args = ['commit-tree', tree, '-m', `${label} — ${at}`];
   if (parent) args.push('-p', parent);
-  const sha = await git(store, workspace, args);
-  await git(store, workspace, ['update-ref', ref, sha]);
+  const sha = await git(store, workspace, args, undefined, limitMs);
+  await git(store, workspace, ['update-ref', ref, sha], undefined, limitMs);
 
   return { sha, workspace, at, label };
 }

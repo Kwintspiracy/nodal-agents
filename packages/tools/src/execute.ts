@@ -21,7 +21,13 @@ import type {
 import { InvalidInputError } from './errors';
 import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
-import { snapshot, headCheckpoint } from '@nodal-agents/checkpoints';
+import {
+  snapshot,
+  headCheckpoint,
+  asCheckpointError,
+  checkpointRefusalMessage,
+  checkpointFailureLogLine,
+} from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
 import { writeMutationIntent, type DirtiedDeliverable } from './verification/intent';
 import { markDeliverablesProduced } from './verification/produced';
@@ -1293,11 +1299,25 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
     } catch (err) {
       // One workspace that cannot be snapshotted is enough to refuse: we have
       // no way to tell it is not the one about to be written.
-      return (
-        `checkpoint_failed: could not snapshot "${workspace}" before running "${toolName}", ` +
-        `so the write was refused rather than run without a way back. ` +
-        `Cause: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`
+      //
+      // LE REFUS NOMME SA CAUSE (issue #245). Il rendait
+      // `checkpoint_failed: ... Cause: git add timed out after 30000 ms`, et
+      // les agents délégués ont lu ça comme une panne du dossier : le soir du
+      // 19/09 ils ont cherché une réparation pendant des heures alors que la
+      // cause tenait en une phrase — 3,3 Go de paquets de relecture déballés
+      // dans le dossier partagé. Le code et les chiffres viennent maintenant
+      // de `@nodal-agents/checkpoints`, source unique : le même texte part
+      // vers l'agent, vers le fil (c'est le contenu du `tool_result`) et vers
+      // le journal. Ce n'est pas une parole d'agent (invariant #2) mais le
+      // compte rendu d'échec d'un OUTIL, exactement comme la phrase qu'il
+      // remplace.
+      const failure = asCheckpointError(err, workspace);
+      // UNE ligne par refus, grepable et chiffrée : sans elle, l'incident de
+      // #245 reste un « ça échoue » qu'il faut reproduire pour diagnostiquer.
+      console.error(
+        checkpointFailureLogLine(failure, { tool: toolName, job: ctx.jobId, turn: ctx.turn }),
       );
+      return checkpointRefusalMessage(failure, `"${toolName}"`);
     }
   }
   return null;
