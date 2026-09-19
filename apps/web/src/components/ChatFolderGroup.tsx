@@ -45,10 +45,11 @@
 //     le MÊME hook : un non-lu qui s'allumerait plus vite que la pastille
 //     ferait dire deux heures différentes à la même barre.
 //
-// La relecture reste bornée au cas utile : tant que personne n'a déplié un
-// dossier, il n'y a pas de sous-menu à rafraîchir, et rien ne part.
+// La relecture reste bornée au cas utile : elle ne tourne QUE pendant qu'un
+// dossier est déplié. Tout replier l'arrête ; rouvrir la relance, et par une
+// lecture immédiate plutôt que par l'instantané d'il y a un quart d'heure.
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
   ArrowRight,
@@ -154,15 +155,53 @@ export default function ChatFolderGroup() {
   const [threads, setThreads] = useState<FolderThreadsSnapshot | null>(null);
   /** Ce que la lecture a répondu quand elle a échoué. Jamais un silence. */
   const [erreur, setErreur] = useState<string | null>(null);
+
   /**
-   * Un dossier a été déplié au moins une fois : il y a un sous-menu à l'écran,
-   * donc quelque chose à tenir à jour. Tant que c'est faux, aucune lecture ne
-   * part — c'est la paresse d'origine, gardée telle quelle.
+   * Y A-T-IL UN SOUS-MENU À TENIR À JOUR ? Déduit des dossiers ouverts, et pas
+   * gardé dans son propre état (Reviewer C, passe 2 de la PR #223).
+   *
+   * Un drapeau « on a déplié au moins une fois » ne redescendait jamais : la
+   * personne repliait tout et le sondage continuait de tourner pour un menu
+   * que plus personne ne regardait. Déduit, il s'éteint au dernier repli et se
+   * rallume au dépliage suivant — avec une lecture immédiate, donc un
+   * sous-menu frais plutôt que l'instantané d'il y a un quart d'heure.
+   *
+   * C'est un BOOLÉEN, et c'est ce qui le rend gratuit : replier un dossier
+   * pendant qu'un autre reste ouvert ne le change pas, donc ne relance rien.
    */
-  const [suivi, setSuivi] = useState(false);
+  const suivi = Object.values(deplies).some((ouvert) => ouvert);
+
+  /**
+   * L'ÂGE de la lecture qu'on attend. Une réponse ne s'affiche que si elle est
+   * encore celle-là (Reviewer C, passe 2 de la PR #223).
+   *
+   * Le constat était qu'une lecture en vol n'est pas annulée au démontage, et
+   * que `setThreads` s'exécute alors sur un composant démonté. Un simple
+   * drapeau « démonté » l'aurait couvert, mais il n'aurait rien prouvé : sous
+   * React 19, une mise à jour d'état sur un composant démonté est un non-
+   * événement silencieux, et aucun test ne peut l'observer.
+   *
+   * Un âge couvre le même cas ET un second, celui-là bien visible : DEUX
+   * lectures peuvent être en vol en même temps — celle qu'une navigation
+   * vient de lancer et celle du tour d'horloge — et rien ne garantit l'ordre
+   * des réponses. Sans cet âge, la plus ancienne qui revient en dernier
+   * réécrit le sous-menu avec un état périmé.
+   *
+   * Le démontage périme donc tout ce qui est en vol, par le même chemin.
+   */
+  const age = useRef(0);
+  useEffect(() => {
+    return () => {
+      age.current += 1;
+    };
+  }, []);
 
   const relire = useCallback(async (): Promise<void> => {
+    const mien = (age.current += 1);
     const r = await listFolderThreadsAction();
+    // Périmée : l'écran est démonté, ou une lecture plus récente est partie
+    // depuis. Dans les deux cas il n'y a rien à dessiner avec ça.
+    if (mien !== age.current) return;
     if (r.ok) {
       setThreads(r.data);
       // Une lecture qui repasse efface le message de la précédente : sinon le
@@ -206,7 +245,6 @@ export default function ChatFolderGroup() {
 
   const basculer = (key: string): void => {
     setDeplies((etat) => ({ ...etat, [key]: etat[key] !== true }));
-    setSuivi(true);
   };
 
   const folders = chatFolders({

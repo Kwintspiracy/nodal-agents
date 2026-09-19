@@ -600,6 +600,76 @@ describe('le sous-menu se relit @cap:reprendre-conversation/ecran', () => {
   });
 });
 
+// ─── Ce que la relecture NE fait pas (Reviewer C, passe 2 de #223) ───────────
+
+describe('la relecture du sous-menu s’arrête @cap:reprendre-conversation/ecran', () => {
+  it('laisse tomber une réponse PÉRIMÉE, arrivée après une plus récente', async () => {
+    // DEUX lectures en vol, et elles reviennent dans le désordre : c'est le
+    // cas réel dès qu'une navigation en lance une pendant qu'un tour
+    // d'horloge en a déjà une. Sans l'âge, la plus vieille réécrit le menu.
+    //
+    // Le même âge couvre le constat de la revue — une réponse qui revient
+    // après le démontage —, qui ne peut pas se prouver seul : sous React 19
+    // une mise à jour d'état sur un composant démonté ne dit rien.
+    //
+    // Mutation vérifiée : `if (mien !== age.current) return;` retiré de
+    // `relire` → ce test rougit, le menu affiche « Ancienne ».
+    const promesses: Array<(r: { ok: true; data: Record<string, FolderThread[]> }) => void> = [];
+    vi.mocked(listFolderThreadsAction).mockImplementation(
+      () =>
+        new Promise((r) => {
+          promesses.push(r as (typeof promesses)[number]);
+        }) as ReturnType<typeof listFolderThreadsAction>,
+    );
+    await renderGroup({ channels: ['telegram'] });
+    await click(folderRow('telegram'));
+    // Une seconde lecture part : la personne ouvre un fil.
+    await naviguer('/chat/t1');
+    expect(promesses, 'deux lectures devraient être en vol').toHaveLength(2);
+
+    // La SECONDE répond d'abord, la PREMIÈRE ensuite.
+    await act(async () => {
+      promesses[1]?.({ ok: true, data: { telegram: [fil('t1', 'Récente')] } });
+    });
+    await act(async () => {
+      promesses[0]?.({ ok: true, data: { telegram: [fil('t1', 'Ancienne')] } });
+    });
+
+    expect(threadRows('telegram')[0]?.textContent).toBe('Récente');
+  });
+
+  it('s’ARRÊTE quand on replie tout, et repart frais au dépliage suivant', async () => {
+    vi.useFakeTimers();
+    try {
+      seedThreads({ telegram: [fil('t1', 'Invoice for March')] });
+      await renderGroup({ channels: ['telegram'] });
+      await click(folderRow('telegram'));
+      expect(threadRows('telegram')[0]?.textContent).toBe('Invoice for March');
+
+      // Tout replié : il n'y a plus de sous-menu à l'écran. Le compte des
+      // lectures EST le sujet ici — la propriété à prouver est qu'aucune
+      // requête ne part, et cela ne se lit nulle part ailleurs.
+      await click(folderRow('telegram'));
+      const avant = vi.mocked(listFolderThreadsAction).mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(
+        vi.mocked(listFolderThreadsAction).mock.calls.length,
+        'le sondage tourne encore pour un menu que personne ne regarde',
+      ).toBe(avant);
+
+      // Et rouvrir ne ressort pas l'instantané d'il y a un quart d'heure : la
+      // reprise passe par une lecture immédiate.
+      seedThreads({ telegram: [fil('t1', 'Freshly renamed')] });
+      await click(folderRow('telegram'));
+      expect(threadRows('telegram')[0]?.textContent).toBe('Freshly renamed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('la pastille d’« Approvals » n’a pas bougé @cap:approuver-une-action/ecran', () => {
   it('garde son plafond à 99', async () => {
     await render(<SidebarLink href="/approvals" label="Approvals" pill={120} isActive={false} />);
