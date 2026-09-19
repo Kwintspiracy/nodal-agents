@@ -174,7 +174,16 @@ export default function SettingsList({ rows, panels, initialOpen }: Props) {
         testId="settings-panel"
       >
         {openRow !== null && <p className="text-body-13 text-ink-3">{openRow.lede}</p>}
-        {panel}
+        {/* Un panneau vide est un cul-de-sac : quand la lecture du réglage a
+            échoué, la page n'a aucun formulaire à mettre ici, et le panneau
+            dit pourquoi au lieu de ne rien dire (invariant #4). */}
+        {openRow !== null && panel === null ? (
+          <p className="text-body-13 text-warn" data-testid="settings-panel-unread">
+            {openRow.value}. Reload the page, and check the runner is up.
+          </p>
+        ) : (
+          panel
+        )}
       </DockedPanel>
     </div>
   );
