@@ -139,6 +139,8 @@ const detail = (): CodingProcessDetail => ({
       canonicalKey: 'd:/apps/nodalai',
       verdict: 'green',
       startedAt: '2026-09-18T09:58:00.000Z',
+      source: 'job',
+      sourceAgentName: null,
       runs: [
         {
           jobId: JOB_ID,
@@ -151,6 +153,8 @@ const detail = (): CodingProcessDetail => ({
           verdict: 'green',
           testedGeneration: 1,
           testedEpoch: 0,
+          source: 'job',
+          sourceAgentName: null,
           createdAt: '2026-09-18T09:58:00.000Z',
         },
       ],
@@ -206,7 +210,7 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
     };
     const ordre = [
       at(TASK),
-      at('>Delivered<'),
+      at('Delivered'),
       at('data-testid="review-section"'),
       at('data-testid="verification-section"'),
       at('Files · 1'),
@@ -256,11 +260,28 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
   });
 
   it('ce qui a été livré se lit en haut : fichiers, lignes, preuve', async () => {
+    // Le verdict de ce run demande des corrections : le bloc dit « Delivered »
+    // ET le verdict à côté (#59), et montre tout ce que le travail a fait.
     await render(detail());
     const text = container.textContent ?? '';
-    expect(text).toContain('Delivered');
+    // La ligne entière, dans l'ordre où elle se lit : deux `toContain` séparés
+    // passeraient sur une page qui affiche les deux mots sans rapport.
+    expect(text).toContain('Delivered · Changes requested');
     expect(text).toContain('apps/web/src/app/page.tsx');
     expect(text).toContain('1 / 1');
+  });
+
+  it('un run APPROUVÉ se lit « Delivered · Approved » @cap:verifier-un-livrable/ecran', async () => {
+    // La contre-épreuve du cas précédent : le mot du résultat ne bouge jamais,
+    // c'est le verdict posé à côté qui change.
+    const approuve = detail();
+    await render({
+      ...approuve,
+      verdicts: [{ ...approuve.verdicts[0]!, verdict: 'approve', findings: [] }],
+    });
+    const text = container.textContent ?? '';
+    expect(text).toContain('Delivered · Approved');
+    expect(text).not.toContain('Changes requested');
   });
 
   it('l’activité est LÀ, sans filtre à cliquer, chaque appel dans un bloc du fil', async () => {

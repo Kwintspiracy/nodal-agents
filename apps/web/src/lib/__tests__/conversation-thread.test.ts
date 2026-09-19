@@ -99,6 +99,7 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   verdict: chat,
   project: null,
   proof: [],
+  reviewVerdict: null,
   audit: [],
   workspaceRoots: [],
   ...over,
@@ -190,6 +191,10 @@ describe('buildConversationThread — une conversation de canal', () => {
         reviews: [],
         checks: [],
         verdict: null,
+        // #59 — personne n'a relu ce travail : le récapitulatif le dit, et il
+        // n'interdit rien.
+        review: null,
+        changesRequested: false,
       },
     });
   });

@@ -52,6 +52,7 @@ import { isUnderPath } from './code-projects.ts';
 
 import { deriveVerifyStatus, type VerifyStatus } from './verification-display.ts';
 import { groupVerificationRuns, type VerificationSequenceView } from './verification-runs-view.ts';
+import { selectVerificationRuns } from './verification-runs-query.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -983,30 +984,13 @@ export async function getProjectPageAction(id: string): Promise<ActionResult<Pro
       .limit(PROOF_SEQUENCES_MAX);
 
     const [proofRows, files, jobsRows] = await Promise.all([
-      db
-        .select({
-          jobId: verificationRuns.jobId,
-          deliverableType: verificationRuns.deliverableType,
-          canonicalKey: verificationRuns.canonicalKey,
-          sequenceId: verificationRuns.sequenceId,
-          commandRank: verificationRuns.commandRank,
-          command: verificationRuns.command,
-          exitCode: verificationRuns.exitCode,
-          outcomeKind: verificationRuns.outcomeKind,
-          durationMs: verificationRuns.durationMs,
-          verdict: verificationRuns.verdict,
-          testedGeneration: verificationRuns.testedGeneration,
-          testedEpoch: verificationRuns.testedEpoch,
-          createdAt: verificationRuns.createdAt,
-        })
-        .from(verificationRuns)
-        .where(
-          and(
-            eq(verificationRuns.entityId, session.entityId),
-            eq(verificationRuns.canonicalKey, key),
-            inArray(verificationRuns.sequenceId, lastSequenceIds),
-          ),
+      selectVerificationRuns(db).where(
+        and(
+          eq(verificationRuns.entityId, session.entityId),
+          eq(verificationRuns.canonicalKey, key),
+          inArray(verificationRuns.sequenceId, lastSequenceIds),
         ),
+      ),
       readProjectFolder(path),
       // L'activité du projet (compte de travaux, dernière date) : l'étagère
       // l'affiche, la page du fil non — elle ne la lit donc pas.

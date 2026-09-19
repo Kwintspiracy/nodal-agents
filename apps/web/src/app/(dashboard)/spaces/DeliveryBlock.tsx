@@ -23,6 +23,13 @@
 // `ThreadProofRun` ne porte qu'un VERDICT par commande, jamais un compte de
 // cas : ces nombres ne sont donc pas écrits. Les inventer ferait dire au
 // produit ce que la base ne sait pas.
+//
+// « DELIVERED TOUJOURS, ET LE VERDICT À CÔTÉ » (Quentin, 19/09 au soir, devant
+// le bloc sur la stack). Une première version remplaçait le mot par « Changes
+// requested » quand la relecture demandait des corrections. C'était faux : un
+// run relu a bel et bien livré quelque chose, et effacer « Delivered » revenait
+// à dire que le travail n'avait pas eu lieu. Le bloc dit donc toujours ce qui
+// s'est passé, et ce que la relecture en pense est un SECOND fait, posé à côté.
 
 import Link from 'next/link';
 import {
@@ -30,6 +37,7 @@ import {
   Check,
   CheckCircle,
   PencilSimple,
+  Warning,
   X,
 } from '@phosphor-icons/react/dist/ssr';
 import AgentAvatar from '@/components/ui/AgentAvatar';
@@ -39,6 +47,25 @@ import { formatCost, formatMs, shortToolName } from './format.ts';
 
 /** Au-delà, la liste de fichiers cesse d'être lisible : on compte le reste. */
 const FILES_SHOWN = 12;
+
+/**
+ * Le mot que la relecture ajoute à côté de « Delivered » (#59). `null` quand
+ * personne n'a relu : le bloc n'a alors qu'un fait à dire.
+ *
+ * La base ne porte qu'un code (`approve`, `request_changes`) ; les mots vivent
+ * ici, comme tout le texte de cet écran (invariant #2). Un code inconnu
+ * s'affiche TEL QUEL — une relecture qu'on ne sait pas nommer a quand même eu
+ * lieu, et la taire serait pire que la nommer mal (invariant #4).
+ */
+const REVIEW_WORDS: Record<string, string> = {
+  approve: 'Approved',
+  request_changes: 'Changes requested',
+};
+
+function reviewWord(review: string | null): string | null {
+  if (review === null || review === '') return null;
+  return REVIEW_WORDS[review] ?? review;
+}
 
 function Stat({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -61,7 +88,11 @@ export default function DeliveryBlock({
    */
   jobId: string | null;
 }) {
-  const { verdict } = summary;
+  const { verdict, changesRequested } = summary;
+  // Le mot de la relecture, ou `null` quand personne n'a relu. Il ne remplace
+  // jamais « Delivered », il s'ajoute — et une valeur que cet écran ne connaît
+  // pas s'affiche telle quelle plutôt que de disparaître (invariant #4).
+  const reviewLabel = reviewWord(summary.review);
   const stats: Array<{ label: string; value: string; mono?: boolean }> = [];
   if (summary.files > 0) stats.push({ label: 'Files', value: String(summary.files) });
   if (summary.lines !== null) {
@@ -103,18 +134,38 @@ export default function DeliveryBlock({
             signes (Quentin, 18/09). Elle est donc verte dès que ce bloc
             paraît : un run livré sans preuve n'est pas un demi-run, et un
             crochet gris le faisait passer pour éteint. Seul un verdict ROUGE
-            la fait virer : là, quelque chose ne va pas. */}
-        <CheckCircle
-          size={16}
-          className={verdict === 'red' ? 'text-warn' : 'text-ok'}
-          aria-hidden
-        />
-        <span className="text-title-15 text-ink">Delivered</span>
+            la fait virer : là, quelque chose ne va pas.
+
+            Une relecture qui demande des corrections fait le même effet sur le
+            signe, et sur lui seul : le mot, lui, ne bouge plus (#59, décision
+            du 19/09 au soir). */}
+        {changesRequested ? (
+          <Warning size={16} className="text-warn" aria-hidden />
+        ) : (
+          <CheckCircle
+            size={16}
+            className={verdict === 'red' ? 'text-warn' : 'text-ok'}
+            aria-hidden
+          />
+        )}
+        {/* Le mot du résultat, puis ce que la relecture en dit — deux faits,
+            jamais l'un à la place de l'autre. Sans relecture, il n'y a qu'un
+            fait et la ligne s'arrête là. */}
+        <span className="text-title-15 text-ink">
+          Delivered
+          {reviewLabel !== null && <span className="text-ink-3"> · {reviewLabel}</span>}
+        </span>
         {/* La pastille suit le mot, à trente pixels — pas poussée au bord
             droit : c'est ainsi que la planche la dessine (Quentin, 17/09,
-            « design légèrement différent »). */}
+            « design légèrement différent »).
+
+            Quand quelqu'un a relu, elle NOMME qui a tranché ; c'est alors le
+            fait le plus frais du bloc. Les commandes de preuve gardent leur
+            sort une ligne plus bas, dans « Proof ». */}
         <span className="ml-5">
-          {verdict === 'green' ? (
+          {reviewLabel !== null ? (
+            <StatusPill variant={changesRequested ? 'warn' : 'done'} label="By the reviewer" />
+          ) : verdict === 'green' ? (
             <StatusPill variant="done" label="Verified" />
           ) : verdict === 'red' ? (
             <StatusPill variant="warn" label="Checks failed" />

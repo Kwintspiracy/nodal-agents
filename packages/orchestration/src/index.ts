@@ -87,7 +87,12 @@ export {
   readDeliveredReviewVerdict,
   readFinalReviewVerdict,
   parseReviewVerdictOutput,
+  // #59 — la règle qui dit si une relecture demande des corrections, et le
+  // code que le parent reçoit alors. Une seule lecture du fait ; l'écran la lit
+  // aussi, pour poser un mot à côté de « Delivered ».
+  reviewBlocksDelivery,
   REVIEW_VERDICT_TOOL,
+  REVIEW_CHANGES_REQUESTED,
 } from './router/review-verdict';
 export type { ReviewVerdictRecord, ReviewVerdictFinding } from './router/review-verdict';
 

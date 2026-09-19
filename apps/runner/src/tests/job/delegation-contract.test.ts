@@ -518,7 +518,11 @@ describe('parent receives a typed delegation record @cap:organiser-equipe/moteur
   // Les épingler fait rougir aussi bien un champ perdu en route qu'un champ
   // ajouté sans que personne l'ait décidé. `review_verdict` y figure depuis que
   // la PR #170 est entrée : ce n'est plus une clé tolérée, c'est le contrat.
+  // `delivery_blocked` s'y ajoute avec #59 : un verdict de relecture ne voyage
+  // plus seulement comme information, il pose un INTERDIT — et le parent le lit
+  // dans un CHAMP, pas entre les lignes d'un résumé.
   const CLES_DU_CONTRAT = [
+    'delivery_blocked',
     'error',
     'exit_reason',
     'hint',

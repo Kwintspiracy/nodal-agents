@@ -85,6 +85,8 @@ import {
   type VerificationSequenceView,
   type VerificationUnconfiguredView,
 } from './verification-runs-view.ts';
+import { selectVerificationRuns } from './verification-runs-query.ts';
+import { readReviewVerdicts } from './review-verdicts.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1451,33 +1453,16 @@ export async function getConversationThreadAction(
 
     // P3/P4 — la preuve et la file d'envoi de TOUT le fil : les jobs de tête et
     // leurs délégués, jamais le réglage courant.
-    const [verificationRunRows, unconfiguredRows, deliveryRows, approvalRows] =
+    const [verificationRunRows, unconfiguredRows, deliveryRows, approvalRows, reviewVerdicts] =
       relevantIds.length === 0
-        ? [[], [], [], []]
+        ? [[], [], [], [], { views: [], rawByJob: new Map<string, string[]>() }]
         : await Promise.all([
-            db
-              .select({
-                jobId: verificationRuns.jobId,
-                deliverableType: verificationRuns.deliverableType,
-                canonicalKey: verificationRuns.canonicalKey,
-                sequenceId: verificationRuns.sequenceId,
-                commandRank: verificationRuns.commandRank,
-                command: verificationRuns.command,
-                exitCode: verificationRuns.exitCode,
-                outcomeKind: verificationRuns.outcomeKind,
-                durationMs: verificationRuns.durationMs,
-                verdict: verificationRuns.verdict,
-                testedGeneration: verificationRuns.testedGeneration,
-                testedEpoch: verificationRuns.testedEpoch,
-                createdAt: verificationRuns.createdAt,
-              })
-              .from(verificationRuns)
-              .where(
-                and(
-                  eq(verificationRuns.entityId, session.entityId),
-                  inArray(verificationRuns.jobId, relevantIds),
-                ),
+            selectVerificationRuns(db).where(
+              and(
+                eq(verificationRuns.entityId, session.entityId),
+                inArray(verificationRuns.jobId, relevantIds),
               ),
+            ),
             db
               .select({
                 jobId: jobDeliverableVerificationState.jobId,
@@ -1532,6 +1517,10 @@ export async function getConversationThreadAction(
                   inArray(approvalRequests.jobId, relevantIds),
                 ),
               ),
+            // #59 — les verdicts de relecture du fil, par la MÊME lecture que
+            // la page d'un run : un travail dont la relecture a demandé des
+            // corrections ne s'annonce pas livré, ici comme là-bas.
+            readReviewVerdicts(db, session.entityId, relevantIds),
           ]);
 
     const conversationRef = { channel: conv.channel, chatId: conv.chatId };
@@ -1542,6 +1531,16 @@ export async function getConversationThreadAction(
     // un délégué qui fait tourner les tests les fait tourner POUR le travail
     // qui l'a mandaté, et c'est le récapitulatif de ce travail-là qui doit les
     // montrer. Une ligne dont le job n'appartient pas au fil est ignorée.
+    // #59 — la relecture rangée sous le job de tête, par la même règle que la
+    // preuve : un délégué relit POUR le travail qui l'a mandaté. Les verdicts
+    // arrivent triés par `seq` (l'ordre d'écriture), si bien que le dernier
+    // écrit pour une racine écrase les précédents — c'est lui qui décide.
+    const reviewByRoot = new Map<string, string>();
+    for (const view of reviewVerdicts.views) {
+      const root = rootOf.get(view.jobId);
+      if (root === undefined || view.verdict === null) continue;
+      reviewByRoot.set(root, view.verdict);
+    }
     const proofByRoot = new Map<string, ThreadProofRun[]>();
     for (const row of verificationRunRows) {
       const root = row.jobId !== null ? rootOf.get(row.jobId) : undefined;
@@ -1563,6 +1562,7 @@ export async function getConversationThreadAction(
       }),
       project: r.job.projectId !== null ? (projectById.get(r.job.projectId) ?? null) : null,
       proof: proofByRoot.get(r.job.id) ?? [],
+      reviewVerdict: reviewByRoot.get(r.job.id) ?? null,
       // Les lignes d'audit de la tête ET de toute sa descendance, déjà
       // rangées sous la tête pour la frontière chat/travail : le récapitulatif
       // y compte fichiers et lignes en entier (revue Codex, passe 56).
