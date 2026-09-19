@@ -964,3 +964,124 @@ describe('listCodeProjectsForContext', () => {
     expect(projects).toEqual([]);
   });
 });
+
+// ─── #143 : la liste annoncée aux agents LIT LE REGISTRE ─────────────────────
+//
+// Jusqu'ici elle était le SCAN et rien d'autre. Un projet déclaré depuis
+// Workspaces, mais où personne n'avait encore écrit, n'existait pas pour les
+// agents : le premier travail commençait par chercher un dossier que l'écran
+// affichait déjà. Les cas qui suivent tiennent les deux bouts — ce qui est
+// GAGNÉ, et ce qui ne doit rien PERDRE.
+describe('listCodeProjectsForContext — le registre @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('un projet DÉCLARÉ où personne n’a écrit est annoncé aux agents', async () => {
+    const chemin = `${racine}/dev/silent-app`;
+    await mkdir(chemin, { recursive: true });
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: chemin,
+      projectKey: projectKeyOf(chemin),
+      kind: 'code',
+      displayName: 'Silent App',
+      agentId: leadAgentId,
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+    _resetProjectsCacheForTests();
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      const silent = projects.find((p) => p.path === chemin);
+      expect(silent, 'un projet déclaré sans écriture reste invisible aux agents').toBeTruthy();
+      // Le nom que le propriétaire a choisi, et le responsable déclaré : rien
+      // n'est observé sur ce dossier, il n'y a que la déclaration à lire.
+      expect(silent!.name).toBe('Silent App');
+      expect(silent!.owners).toEqual(['Lead-Dev']);
+      // Aucune activité OBSERVÉE : `null`, jamais une date inventée.
+      expect(silent!.lastActivityAt).toBeNull();
+
+      // ET RIEN N'EST PERDU : les deux dossiers détectés sont toujours là,
+      // sans qu'aucun d'eux ne soit au registre.
+      expect(projects.map((p) => p.path)).toEqual(
+        expect.arrayContaining([`${racine}/dev/calorie-counter`, `${racine}/dev/water-intake`]),
+      );
+    } finally {
+      await db.delete(codeProjects).where(eq(codeProjects.entityId, seed.entityId));
+      await rm(chemin, { recursive: true, force: true });
+      _resetProjectsCacheForTests();
+    }
+  });
+
+  it('un projet déclaré ET détecté ne fait qu’UNE entrée, avec son activité observée', async () => {
+    const chemin = `${racine}/dev/calorie-counter`;
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: chemin,
+      projectKey: projectKeyOf(chemin),
+      kind: 'code',
+      agentId: devAgentId,
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+    _resetProjectsCacheForTests();
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      const entrees = projects.filter((p) => p.path === chemin);
+      expect(entrees).toHaveLength(1);
+      // Les détenteurs OBSERVÉS l'emportent sur le seul responsable déclaré :
+      // les deux agents partagent le dossier, et le contexte le dit.
+      expect(entrees[0]!.owners).toEqual(['Dev C', 'Lead-Dev']);
+      expect(entrees[0]!.lastActivityAt).toBeTruthy();
+    } finally {
+      await db.delete(codeProjects).where(eq(codeProjects.entityId, seed.entityId));
+      _resetProjectsCacheForTests();
+    }
+  });
+
+  it('MASQUER un projet déclaré le retire du contexte, exactement comme un détecté', async () => {
+    const chemin = `${racine}/dev/silent-hidden`;
+    await mkdir(chemin, { recursive: true });
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: chemin,
+      projectKey: projectKeyOf(chemin),
+      kind: 'code',
+      hidden: true,
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+    _resetProjectsCacheForTests();
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(projects.some((p) => p.path === chemin)).toBe(false);
+    } finally {
+      await db.delete(codeProjects).where(eq(codeProjects.entityId, seed.entityId));
+      await rm(chemin, { recursive: true, force: true });
+      _resetProjectsCacheForTests();
+    }
+  });
+
+  it('un projet de DOCUMENTS n’entre pas dans la liste des projets de CODE', async () => {
+    const chemin = `${racine}/dev/notes`;
+    await mkdir(chemin, { recursive: true });
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: chemin,
+      projectKey: projectKeyOf(chemin),
+      kind: 'documents',
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+    _resetProjectsCacheForTests();
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(projects.some((p) => p.path === chemin)).toBe(false);
+    } finally {
+      await db.delete(codeProjects).where(eq(codeProjects.entityId, seed.entityId));
+      await rm(chemin, { recursive: true, force: true });
+      _resetProjectsCacheForTests();
+    }
+  });
+});

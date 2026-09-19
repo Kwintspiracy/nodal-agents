@@ -30,6 +30,7 @@ import {
   sql,
   inArray,
   isNotNull,
+  isNull,
   agents,
   agentJobs,
   agentWorkspaces,
@@ -76,11 +77,20 @@ export type ProjectListRow = {
   agentId: string | null;
   agentName: string | null;
   agentSlug: string | null;
+  /** L'avatar de l'agent responsable — la ligne de Workspaces l'affiche (#143). */
+  agentAvatarUrl: string | null;
   registeredFrom: 'spaces' | 'conversation';
   registeredAt: Date;
   hidden: boolean;
   /** Les travaux rattachés à ce projet (`agent_jobs.project_id`). */
   jobsCount: number;
+  /**
+   * Les conversations du projet : celles qui y sont ANCRÉES
+   * (`conversations.current_project_id`) et celles qui portent un de ses
+   * travaux. Comptées comme la page du projet les liste, pour que la liste et
+   * la page ne se contredisent pas (#143).
+   */
+  conversationsCount: number;
   /** Le plus récent d'entre eux, ou `null` : un projet neuf n'a pas d'activité. */
   lastActivityAt: Date | null;
   /**
@@ -196,6 +206,62 @@ function basenameOf(path: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
+/**
+ * Combien de conversations chaque projet porte — pour TOUTE la liste, en deux
+ * requêtes groupées.
+ *
+ * Une conversation appartient au projet de deux façons, et il faut les deux :
+ * elle y est ANCRÉE (`conversations.current_project_id`), ou elle porte un
+ * travail rattaché au projet (`agent_jobs.project_id` + `conversation_id`).
+ * C'est l'union exacte que `loadProjectCore` liste sur la page du projet ;
+ * n'en compter qu'une moitié ferait dire « 2 conversations » à une liste dont
+ * la page en montre cinq.
+ *
+ * L'union se fait en JS sur des identifiants, pas en SQL : deux `group by`
+ * indexés coûtent moins qu'un `UNION` sur une jointure, et le nombre de
+ * conversations d'une entité tient en mémoire.
+ */
+async function countProjectConversations(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  projectIds: readonly string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (projectIds.length === 0) return counts;
+
+  const [anchored, viaJobs] = await Promise.all([
+    db
+      .select({ projectId: conversations.currentProjectId, id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.entityId, entityId),
+          inArray(conversations.currentProjectId, [...projectIds]),
+        ),
+      ),
+    db
+      .selectDistinct({ projectId: agentJobs.projectId, id: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          inArray(agentJobs.projectId, [...projectIds]),
+          isNotNull(agentJobs.conversationId),
+        ),
+      ),
+  ]);
+
+  const seen = new Map<string, Set<string>>();
+  for (const row of [...anchored, ...viaJobs]) {
+    if (!row.projectId || !row.id) continue;
+    const set = seen.get(row.projectId) ?? new Set<string>();
+    set.add(row.id);
+    seen.set(row.projectId, set);
+  }
+  for (const [projectId, set] of seen) counts.set(projectId, set.size);
+  return counts;
+}
+
 // ─── listProjectsAction ──────────────────────────────────────────────────────
 
 /**
@@ -228,6 +294,7 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         agentId: codeProjects.agentId,
         agentName: agents.name,
         agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
         jobsCount: sql<number>`count(${agentJobs.id})`,
         lastActivityAt: sql<Date | null>`max(${agentJobs.createdAt})`,
       })
@@ -239,6 +306,7 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         codeProjects.id,
         agents.name,
         agents.slug,
+        agents.avatarUrl,
         // `max()` et `count()` imposent de grouper sur tout le reste : Postgres
         // ne déduit pas que la clé primaire suffit dès qu'une table jointe
         // apporte ses colonnes.
@@ -252,6 +320,16 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
     const proofKeys = [
       ...new Set(rows.filter((r) => r.kind !== 'documents').map((r) => projectKey(r.path))),
     ];
+    // Les conversations de CHAQUE projet, en DEUX requêtes groupées pour toute
+    // la liste — jamais une par ligne. Deux, parce qu'une conversation
+    // appartient au projet de deux façons : elle y est ANCRÉE, ou elle porte
+    // un de ses travaux. C'est l'union exacte que la page du projet liste, et
+    // un compte qui ne dirait que la première contredirait sa propre page.
+    const conversationsCountByProject = await countProjectConversations(
+      db,
+      session.entityId,
+      rows.map((r) => r.id),
+    );
     const lastProofByKey = new Map<string, { verdict: 'pass' | 'fail'; at: Date }>();
     if (proofKeys.length > 0) {
       const proofRows = await db
@@ -290,7 +368,9 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         registeredFrom: (r.registeredFrom ?? 'spaces') as 'spaces' | 'conversation',
         registeredAt: r.registeredAt as Date,
         hidden: r.hidden,
+        agentAvatarUrl: r.agentAvatarUrl ?? null,
         jobsCount: Number(r.jobsCount ?? 0),
+        conversationsCount: conversationsCountByProject.get(r.id) ?? 0,
         lastActivityAt: r.lastActivityAt ? new Date(r.lastActivityAt) : null,
         lastProof: r.kind === 'documents' ? null : (lastProofByKey.get(projectKey(r.path)) ?? null),
       })),
@@ -298,6 +378,193 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
   } catch (err) {
     console.error('[projects] PROJECT_LIST_FAILED', err);
     return fail('list_failed', 'Could not list projects');
+  }
+}
+
+// ─── listProofsForPathsAction ────────────────────────────────────────────────
+
+/**
+ * Le dernier verdict de preuve de chemins DONNÉS, en UNE requête.
+ *
+ * `listProjectsAction` fait déjà cette lecture pour les projets du registre.
+ * Les dossiers DÉTECTÉS n'y sont pas, et ils peuvent avoir une preuve : une
+ * séquence se configure par CLÉ de dossier (`verification_runs.canonical_key`),
+ * pas par appartenance au registre. Les laisser tous en « Unverified » ferait
+ * dire à la pastille le contraire de ce que le dossier porte.
+ *
+ * Bornée par liste : un `inArray` sur les clés, jamais un appel par ligne.
+ */
+export async function listProofsForPathsAction(
+  paths: readonly string[],
+): Promise<ActionResult<Array<{ key: string; verdict: 'pass' | 'fail'; at: Date }>>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const keys = [...new Set(paths.filter((p) => p !== '').map((p) => projectKey(p)))];
+    if (keys.length === 0) return ok([]);
+    // Plafond : la liste en montre au plus quelques dizaines, et une requête
+    // dont la taille suit une entrée non bornée n'a pas sa place ici.
+    if (keys.length > 200) return fail('validation_failed', 'Too many paths');
+
+    const rows = await getDb()
+      .selectDistinctOn([verificationRuns.canonicalKey], {
+        canonicalKey: verificationRuns.canonicalKey,
+        verdict: verificationRuns.verdict,
+        createdAt: verificationRuns.createdAt,
+      })
+      .from(verificationRuns)
+      .where(
+        and(
+          eq(verificationRuns.entityId, session.entityId),
+          inArray(verificationRuns.canonicalKey, keys),
+        ),
+      )
+      .orderBy(verificationRuns.canonicalKey, desc(verificationRuns.createdAt));
+
+    return ok(
+      rows.map((r) => ({
+        key: r.canonicalKey,
+        // `green` est le SEUL verdict qui prouve quelque chose — un rouge et
+        // une erreur d'infrastructure disent tous deux « ce n'est pas prouvé ».
+        verdict: (r.verdict === 'green' ? 'pass' : 'fail') as 'pass' | 'fail',
+        at: r.createdAt,
+      })),
+    );
+  } catch (err) {
+    console.error('[projects] PROOF_LOOKUP_FAILED', err);
+    return fail('proofs_failed', 'Could not read the proof state');
+  }
+}
+
+// ─── registerDetectedProjectAction ───────────────────────────────────────────
+
+const registerDetectedSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+  /** L'agent qui a écrit là, tel que la ligne le nomme. Vérifié au serveur. */
+  agentId: z.string().uuid().nullable(),
+});
+
+/**
+ * INSCRIT au registre un dossier que la détection a trouvé (#143).
+ *
+ * Le geste que l'onglet Code n'avait pas : un dossier où un agent a écrit
+ * devient un projet, avec son responsable, sans passer par le formulaire de
+ * création — le dossier existe déjà, il n'y a rien à créer sur le disque.
+ *
+ * LA GARDE : le chemin doit être DANS un dossier attaché à un agent de
+ * l'entité. Sans elle, l'action inscrirait n'importe quel chemin de la machine
+ * au registre, donc dans le contexte injecté aux agents comme endroit où ils
+ * peuvent écrire. La contenance est LEXICALE ici, et c'est suffisant : le
+ * chemin ne vient pas d'une saisie libre mais de la dérivation des écritures
+ * déjà enregistrées, et aucun dossier n'est créé — il n'y a pas de `mkdir` à
+ * détourner par un lien, ce qui est la raison d'être du contrôle physique de
+ * `createProjectAction`.
+ *
+ * L'agent responsable est celui que la ligne nomme, à condition qu'il détienne
+ * un dossier contenant le chemin. À défaut, le détenteur UNIQUE du dossier ;
+ * s'ils sont plusieurs, `null` — l'ordre des lignes `agent_workspaces` n'en
+ * désigne aucun, et en choisir un au hasard serait un repli malin.
+ *
+ * Pas de garde d'imbrication (celle de `createProjectAction`) : c'est le
+ * contrat du registre lui-même, dont les autres écrivains — le backfill au
+ * démarrage et l'outil `register_project` — n'en ont pas non plus. Un dossier
+ * dérivé est par construction un enfant direct d'un terrain.
+ */
+export async function registerDetectedProjectAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string; path: string }>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const parsed = registerDetectedSchema.safeParse(raw);
+    if (!parsed.success) return fail('validation_failed', 'Invalid project input');
+    const path = normalizePath(parsed.data.projectPath);
+    if (path === '') return fail('validation_failed', 'Invalid project path');
+
+    const db = getDb();
+    const wsRows = await db
+      .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.entityId, session.entityId));
+
+    const holders = [
+      ...new Set(
+        wsRows
+          .filter((w) => {
+            const root = normalizePath(w.path);
+            return projectKey(path) === projectKey(root) || isUnderPath(path, root);
+          })
+          .map((w) => w.agentId),
+      ),
+    ];
+    if (holders.length === 0) {
+      return fail('not_in_workspace', 'This folder is not inside a workspace of this space.');
+    }
+
+    const asked = parsed.data.agentId;
+    // Le responsable : celui que la ligne nomme s'il détient bien le dossier,
+    // sinon le détenteur UNIQUE. À plusieurs et sans nom, personne.
+    const responsable =
+      asked !== null && holders.includes(asked)
+        ? asked
+        : holders.length === 1
+          ? (holders[0] ?? null)
+          : null;
+
+    const key = projectKey(path);
+    // UPSERT sur la clé d'identité, `setWhere registered_at IS NULL` — la même
+    // règle que `registerCodeProjects` (packages/tools) : un projet DÉJÀ au
+    // registre ne se réinscrit pas, et son nom, son agent et sa date d'ajout
+    // restent ceux qu'il a. L'écriture est ici et non dans ce module partagé
+    // parce que `apps/web` ne dépend pas de `@nodal-agents/tools` ; les deux
+    // écrivent la MÊME forme de ligne, et c'est cette forme que le test fige.
+    const inserted = await db
+      .insert(codeProjects)
+      .values({
+        entityId: session.entityId,
+        projectPath: path,
+        projectKey: key,
+        // Un dossier trouvé par la détection des écritures de CODE : c'est ce
+        // que le scan observe, et rien d'autre.
+        kind: 'code',
+        agentId: responsable,
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .onConflictDoUpdate({
+        target: [codeProjects.entityId, codeProjects.projectKey],
+        set: {
+          kind: 'code',
+          ...(responsable ? { agentId: responsable } : {}),
+          registeredAt: new Date(),
+          registeredFrom: 'spaces',
+          updatedAt: new Date(),
+        },
+        setWhere: isNull(codeProjects.registeredAt),
+      })
+      .returning({ id: codeProjects.id });
+
+    let id = inserted[0]?.id ?? null;
+    if (id === null) {
+      // Rien n'a été écrit : la ligne existe et porte DÉJÀ une inscription. On
+      // rend son id plutôt qu'une erreur — deux onglets ouverts sur la même
+      // liste, et le second clic doit mener au projet, pas à un échec.
+      const [existing] = await db
+        .select({ id: codeProjects.id })
+        .from(codeProjects)
+        .where(and(eq(codeProjects.entityId, session.entityId), eq(codeProjects.projectKey, key)))
+        .limit(1);
+      id = existing?.id ?? null;
+    }
+    if (id === null) return fail('register_failed', 'Could not register this folder');
+
+    console.warn(`[projects] PROJECT_REGISTERED_FROM_SPACES id=${id} key=${key}`);
+    revalidatePath('/spaces');
+    revalidatePath('/code');
+    return ok({ id, path });
+  } catch (err) {
+    console.error('[projects] PROJECT_REGISTER_DETECTED_FAILED', err);
+    return fail('register_failed', 'Could not register this folder');
   }
 }
 

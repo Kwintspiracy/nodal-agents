@@ -999,6 +999,137 @@ describe('createProjectConversationAction', () => {
   });
 });
 
+// ─── #143 : INSCRIRE un dossier détecté ──────────────────────────────────────
+//
+// Le geste que l'onglet Code n'avait pas. Ce qui compte ici est la LIGNE
+// écrite — `registered_at` posé, le responsable, l'origine — et la garde qui
+// refuse un chemin hors des dossiers de l'espace : sans elle, n'importe quel
+// chemin de la machine entrerait au registre, donc dans le contexte injecté
+// aux agents comme endroit où ils peuvent écrire.
+describe('registerDetectedProjectAction @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('refuse un chemin HORS des dossiers de l’espace, et n’écrit rien', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const dehors = join(racine, 'pas-un-terrain', 'app').replace(/\\/g, '/');
+
+    const result = await registerDetectedProjectAction({ projectPath: dehors, agentId: null });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_in_workspace');
+    expect(await ligneDuProjet(dehors)).toBeNull();
+  });
+
+  it('refuse le dossier d’un AUTRE espace', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const chezLeVoisin = `${voisin.path}/leur-app`;
+
+    const result = await registerDetectedProjectAction({
+      projectPath: chezLeVoisin,
+      agentId: voisin.agentId,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_in_workspace');
+    expect(await ligneDuProjet(chezLeVoisin)).toBeNull();
+  });
+
+  it('ÉCRIT la ligne du registre : enregistrée, de sorte « code », avec son responsable', async () => {
+    const { registerDetectedProjectAction, listProjectsAction } =
+      await import('../project-actions.ts');
+    const detecte = `${terrain.path}/detecte-app`;
+
+    const avant = new Date();
+    const result = await registerDetectedProjectAction({ projectPath: detecte, agentId: null });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const ligne = await ligneDuProjet(detecte);
+    expect(ligne, 'aucune ligne écrite pour le dossier inscrit').toBeTruthy();
+    expect(ligne!.id).toBe(result.data.id);
+    expect(ligne!.projectPath).toBe(detecte);
+    expect(ligne!.kind).toBe('code');
+    expect(ligne!.registeredFrom).toBe('spaces');
+    // `registered_at` est LE discriminant du registre : sans lui, la ligne
+    // resterait une ligne de comptabilité et le projet n'aurait pas de page.
+    expect(ligne!.registeredAt).toBeTruthy();
+    expect(ligne!.registeredAt!.getTime()).toBeGreaterThanOrEqual(avant.getTime() - 1000);
+    // Le détenteur UNIQUE du terrain devient le responsable.
+    expect(ligne!.agentId).toBe(seed.agentId);
+
+    // Et le registre le liste — c'est ce que l'écran relira.
+    const liste = await listProjectsAction();
+    expect(liste.ok).toBe(true);
+    if (!liste.ok) return;
+    expect(liste.data.some((p) => p.id === ligne!.id)).toBe(true);
+  });
+
+  it('un projet DÉJÀ inscrit n’est pas réinscrit : sa date d’ajout et son nom restent', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const dejaLa = `${terrain.path}/deja-inscrit`;
+    const ancienne = new Date('2026-09-01T10:00:00.000Z');
+    await testDb.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: dejaLa,
+      projectKey: projectKey(dejaLa),
+      kind: 'code',
+      displayName: 'Le nom que j’ai choisi',
+      registeredAt: ancienne,
+      registeredFrom: 'conversation',
+    });
+
+    const result = await registerDetectedProjectAction({ projectPath: dejaLa, agentId: null });
+    // Le second clic mène au projet, jamais à une erreur.
+    expect(result.ok).toBe(true);
+
+    const ligne = await ligneDuProjet(dejaLa);
+    expect(ligne!.registeredAt!.toISOString()).toBe(ancienne.toISOString());
+    expect(ligne!.registeredFrom).toBe('conversation');
+    expect(ligne!.displayName).toBe('Le nom que j’ai choisi');
+  });
+
+  it('une ligne de COMPTABILITÉ (renommée, masquée) devient un projet sans perdre ses gestes', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const range = `${terrain.path}/range-puis-inscrit`;
+    await testDb.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: range,
+      projectKey: projectKey(range),
+      displayName: 'Portail client',
+      hidden: true,
+      // Pas de `registered_at` : c'est une ligne de comptabilité.
+    });
+
+    const result = await registerDetectedProjectAction({ projectPath: range, agentId: null });
+    expect(result.ok).toBe(true);
+
+    const ligne = await ligneDuProjet(range);
+    expect(ligne!.registeredAt, 'la ligne n’a pas été inscrite au registre').toBeTruthy();
+    // Les deux gestes du propriétaire survivent à l'inscription : ranger un
+    // projet n'est pas le désinscrire, et le renommer n'est pas le perdre.
+    expect(ligne!.displayName).toBe('Portail client');
+    expect(ligne!.hidden).toBe(true);
+  });
+});
+
+describe('listProofsForPathsAction @cap:verifier-un-livrable/moteur', () => {
+  it('rend le DERNIER verdict de chaque chemin, et rien pour un chemin sans preuve', async () => {
+    const { listProofsForPathsAction } = await import('../project-actions.ts');
+    const prouve = `${terrain.path}/prouve-pour-la-liste`;
+    const sansPreuve = `${terrain.path}/sans-preuve`;
+
+    await preuve(projectKey(prouve), 'red', new Date('2026-09-10T10:00:00.000Z'));
+    await preuve(projectKey(prouve), 'green', new Date('2026-09-11T10:00:00.000Z'));
+
+    const result = await listProofsForPathsAction([prouve, sansPreuve]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const lu = result.data.filter((p) => p.key === projectKey(prouve));
+    expect(lu).toHaveLength(1);
+    // Le plus RÉCENT gagne : le rouge de la veille ne décrit plus rien.
+    expect(lu[0]!.verdict).toBe('pass');
+    expect(result.data.some((p) => p.key === projectKey(sansPreuve))).toBe(false);
+  });
+});
+
 describe('listProjectTerrainsAction', () => {
   it('rend les agents de l’entité avec leurs dossiers, et personne d’autre', async () => {
     const { listProjectTerrainsAction } = await import('../project-actions.ts');
