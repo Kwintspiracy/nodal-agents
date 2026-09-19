@@ -22,6 +22,7 @@ export * from './auth.ts';
 export * from './agent-connector-assignments.ts';
 export * from './agent-workspaces.ts';
 export * from './chat-messages.ts';
+export * from './conversation-reads.ts';
 export * from './app-settings.ts';
 export * from './telegram-allowed-chats.ts';
 export * from './channel-bindings.ts';

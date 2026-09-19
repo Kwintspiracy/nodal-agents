@@ -19,11 +19,37 @@
 // ⚠️ LA LECTURE EST PARESSEUSE, ET ELLE COUVRE TOUS LES DOSSIERS. Un dossier
 // est replié par défaut : charger ses fils à chaque rendu de la barre ferait
 // payer à toutes les pages du tableau de bord un menu que personne n'a ouvert.
-// Elle part donc au PREMIER dépliage, une seule fois, et rapporte les fils de
-// tous les dossiers d'un coup — jamais une requête par dossier, qui
-// redeviendrait un N+1 au premier canal ajouté.
+// Elle part donc au PREMIER dépliage, et rapporte les fils de tous les
+// dossiers d'un coup — jamais une requête par dossier, qui redeviendrait un
+// N+1 au premier canal ajouté.
+//
+// ⚠️ ELLE SE RELIT, ET ELLE NE LE FAISAIT PAS (19/09/2026, retour du
+// propriétaire sur #223 : « les états dans la sidebar ne se mettent pas à
+// jour, il faut rafraîchir la page »). Le sous-menu lisait UNE FOIS, au
+// premier dépliage, et gardait cet instantané pour la vie de l'onglet : le
+// point d'un fil qu'on venait d'ouvrir restait rouge, et un message arrivé
+// après coup n'allumait rien. Deux déclencheurs le corrigent, et aucun n'est
+// une seconde source de données — c'est la MÊME action, celle qui remplit
+// déjà le sous-menu :
+//
+//   - À CHAQUE CHANGEMENT DE PAGE. Ouvrir un fil écrit son marqueur de lecture
+//     côté serveur (`getConversationThreadAction`) ; la barre latérale, elle,
+//     est cliente et survit à la navigation, donc rien ne la prévenait. Elle
+//     relit maintenant quand `pathname` change — c'est-à-dire juste après que
+//     le rendu serveur du fil a posé le marqueur — et le point s'éteint sans
+//     rechargement.
+//   - SUR LA CADENCE DES DEUX AUTRES SIGNAUX. La pastille corail et le point
+//     vert viennent de `ChatFoldersProvider` et d'`ApprovalsProvider`, qui
+//     relisent toutes les 15 s par `usePolling` (sauté quand l'onglet est
+//     caché, repris quand il revient). Le sous-menu prend la MÊME cadence et
+//     le MÊME hook : un non-lu qui s'allumerait plus vite que la pastille
+//     ferait dire deux heures différentes à la même barre.
+//
+// La relecture reste bornée au cas utile : elle ne tourne QUE pendant qu'un
+// dossier est déplié. Tout replier l'arrête ; rouvrir la relance, et par une
+// lecture immédiate plutôt que par l'instantané d'il y a un quart d'heure.
 
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
   ArrowRight,
@@ -52,6 +78,7 @@ import {
   listFolderThreadsAction,
   type FolderThreadsSnapshot,
 } from '@/lib/folder-threads-actions.ts';
+import { usePolling } from '@/lib/use-polling';
 
 /**
  * L'icône d'un dossier. Les logos de marque quand le paquet d'icônes en a un —
@@ -82,6 +109,14 @@ const FOLDER_ICON: Readonly<Record<string, PhosphorIcon>> = {
  * le survol, parce qu'il n'y a rien à cliquer.
  */
 const THREAD_NOTE = `${SIDEBAR_ROW} pr-2.5 pl-7 text-body-13 text-ink-4`;
+
+/**
+ * La cadence de relecture du sous-menu. QUINZE SECONDES, et pas un chiffre
+ * choisi ici : c'est exactement celle d'`ApprovalsProvider` et de
+ * `ChatFoldersProvider`, d'où viennent la pastille corail et le point vert.
+ * Les trois signaux de la barre latérale disent donc l'état du même instant.
+ */
+const POLL_INTERVAL_MS = 15_000;
 
 /**
  * Le point d'un fil, dans la COLONNE de l'icône de son dossier — même largeur,
@@ -120,23 +155,96 @@ export default function ChatFolderGroup() {
   const [threads, setThreads] = useState<FolderThreadsSnapshot | null>(null);
   /** Ce que la lecture a répondu quand elle a échoué. Jamais un silence. */
   const [erreur, setErreur] = useState<string | null>(null);
-  /** Une lecture est-elle déjà partie ? Une ref, pour ne pas la relancer. */
-  const lancee = useRef(false);
+
+  /**
+   * Y A-T-IL UN SOUS-MENU À TENIR À JOUR ? Déduit des dossiers ouverts, et pas
+   * gardé dans son propre état (Reviewer C, passe 2 de la PR #223).
+   *
+   * Un drapeau « on a déplié au moins une fois » ne redescendait jamais : la
+   * personne repliait tout et le sondage continuait de tourner pour un menu
+   * que plus personne ne regardait. Déduit, il s'éteint au dernier repli et se
+   * rallume au dépliage suivant — avec une lecture immédiate, donc un
+   * sous-menu frais plutôt que l'instantané d'il y a un quart d'heure.
+   *
+   * C'est un BOOLÉEN, et c'est ce qui le rend gratuit : replier un dossier
+   * pendant qu'un autre reste ouvert ne le change pas, donc ne relance rien.
+   */
+  const suivi = Object.values(deplies).some((ouvert) => ouvert);
+
+  /**
+   * L'ÂGE de la lecture qu'on attend. Une réponse ne s'affiche que si elle est
+   * encore celle-là (Reviewer C, passe 2 de la PR #223).
+   *
+   * Le constat était qu'une lecture en vol n'est pas annulée au démontage, et
+   * que `setThreads` s'exécute alors sur un composant démonté. Un simple
+   * drapeau « démonté » l'aurait couvert, mais il n'aurait rien prouvé : sous
+   * React 19, une mise à jour d'état sur un composant démonté est un non-
+   * événement silencieux, et aucun test ne peut l'observer.
+   *
+   * Un âge couvre le même cas ET un second, celui-là bien visible : DEUX
+   * lectures peuvent être en vol en même temps — celle qu'une navigation
+   * vient de lancer et celle du tour d'horloge — et rien ne garantit l'ordre
+   * des réponses. Sans cet âge, la plus ancienne qui revient en dernier
+   * réécrit le sous-menu avec un état périmé.
+   *
+   * Le démontage périme donc tout ce qui est en vol, par le même chemin.
+   */
+  const age = useRef(0);
+  useEffect(() => {
+    return () => {
+      age.current += 1;
+    };
+  }, []);
+
+  const relire = useCallback(async (): Promise<void> => {
+    const mien = (age.current += 1);
+    const r = await listFolderThreadsAction();
+    // Périmée : l'écran est démonté, ou une lecture plus récente est partie
+    // depuis. Dans les deux cas il n'y a rien à dessiner avec ça.
+    if (mien !== age.current) return;
+    if (r.ok) {
+      setThreads(r.data);
+      // Une lecture qui repasse efface le message de la précédente : sinon le
+      // sous-menu garderait sous les yeux une panne déjà réparée.
+      setErreur(null);
+      return;
+    }
+    // Un échec se DIT sous le dossier ouvert, et la relecture suivante le
+    // retente : un sous-menu vide se lirait comme « aucun fil ici ».
+    setErreur(r.message);
+  }, []);
+
+  /**
+   * La relecture, telle que la barre la déclenche — UN SEUL chemin pour les
+   * deux déclencheurs.
+   *
+   * `pathname` est une dépendance VOULUE, et elle ne sert pas au calcul : elle
+   * change l'identité de cette fonction à chaque navigation, ce qui relance
+   * l'effet de `usePolling` et, avec `immediate`, refait la lecture sur-le-
+   * champ. C'est ce qui éteint le point du fil qu'on vient d'ouvrir — son
+   * marqueur a été écrit par le rendu serveur de la page du fil, et ce
+   * changement de chemin arrive après.
+   *
+   * Le même hook tient l'autre moitié : l'intervalle de 15 s allume le point
+   * d'un fil qui reçoit pendant qu'on regarde ailleurs, saute les tours quand
+   * l'onglet est caché, et relit dès qu'il revient.
+   *
+   * `immediate` ne coûte rien tant qu'aucun dossier n'est déplié : la garde
+   * rend la main avant toute requête.
+   */
+  const relireSiSuivi = useCallback(async (): Promise<void> => {
+    if (!suivi) return;
+    await relire();
+    // `pathname` est le DÉCLENCHEUR de la relecture, pas une donnée qu'elle
+    // lit : la règle le voit comme inutile, et il est au contraire tout le
+    // sujet. Le retirer rendrait la barre latérale de nouveau figée entre deux
+    // tours d'horloge (#223).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suivi, relire, pathname]);
+  usePolling(relireSiSuivi, POLL_INTERVAL_MS, true);
 
   const basculer = (key: string): void => {
     setDeplies((etat) => ({ ...etat, [key]: etat[key] !== true }));
-    if (lancee.current) return;
-    lancee.current = true;
-    void listFolderThreadsAction().then((r) => {
-      if (r.ok) {
-        setThreads(r.data);
-        return;
-      }
-      // Un échec se DIT sous le dossier ouvert, et se retente au prochain
-      // dépliage : un sous-menu vide se lirait comme « aucun fil ici ».
-      setErreur(r.message);
-      lancee.current = false;
-    });
   };
 
   const folders = chatFolders({

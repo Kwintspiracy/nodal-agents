@@ -34,6 +34,7 @@ function chat(over: Partial<ChannelChatRow> = {}): ChannelChatRow {
     updatedAt: new Date(2026, 8, 18, 9, 30),
     lastPreview: 'C’est envoyé.',
     turns: 12,
+    unread: false,
     ...over,
   };
 }
@@ -53,6 +54,7 @@ function conversation(over: Partial<ConversationListRow> = {}): ConversationList
     currentProject: null,
     turns: 4,
     lastPreview: 'Voilà le tableau.',
+    unread: false,
     ...over,
   };
 }
