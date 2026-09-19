@@ -1,6 +1,7 @@
 import { defineConfig, globalIgnores } from 'eslint/config';
 import nextVitals from 'eslint-config-next/core-web-vitals';
 import nextTs from 'eslint-config-next/typescript';
+import { blocTypeScript, blocTestsTypeScript } from '../../eslint.shared.mjs';
 
 // Native browser dialogs (window.confirm/alert/prompt or their bare global form)
 // are banned. Use the designed <ConfirmDialog /> component instead — see
@@ -78,6 +79,11 @@ const noRawFormElements = {
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  // Les règles TypeScript du dépôt, importées de la racine et non recopiées :
+  // avant l'issue #249, la racine les appliquait à `apps/web` et la CI non, si
+  // bien que le même fichier était rouge à la main et vert en intégration.
+  blocTypeScript,
+  blocTestsTypeScript,
   noNativeDialogs,
   noRawFormElements,
   globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
