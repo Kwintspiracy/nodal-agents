@@ -8,8 +8,9 @@
 // surface (`bg-feed-composer`), pas sur le papier du fil.
 //
 // C'est ce qui reste du chat à deux volets : une zone de texte et un envoi.
-// L'envoi est SYNCHRONE côté runner (il génère la réponse et écrit les deux
-// tours), donc l'écran attend puis se rafraîchit — le fil relu montre la
+// Le runner joue le tour en entier (il génère la réponse et écrit les deux
+// tours) ; depuis #152 il en dit le texte au fur et à mesure, et la copie en
+// attente le montre. À la fin, l'écran se rafraîchit — le fil relu montre la
 // réponse, ses actions et, s'il y a lieu, ce qui est sorti du chat.
 //
 // Un fil venu d'un canal n'a pas ce composant : répondre depuis le web vers
@@ -21,9 +22,9 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
-import { sendChatMessageAction } from '@/lib/actions.ts';
 import ModelEffortChip, { type ComposerLlmKey } from './ModelEffortChip.tsx';
 import { usePendingTurn } from './PendingTurn.tsx';
+import { sendChatMessage } from './chat-stream.ts';
 
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
@@ -174,16 +175,17 @@ export default function ThreadComposer({
         giveBack();
         return;
       }
-      let r: Awaited<ReturnType<typeof sendChatMessageAction>>;
-      try {
-        r = await sendChatMessageAction({ conversationId: target, message: text });
-      } catch (err) {
-        // Une action qui ne revient pas (réseau coupé) ne bloque pas la file.
-        toast.error(err instanceof Error ? err.message : 'Could not send the message');
-        giveBack();
-        return;
-      }
+      // La réponse arrive mot à mot (#152) : chaque état du texte va dans la
+      // copie en attente, qui le montre à la place des trois points. Le repli
+      // sur l'action serveur vit dans `sendChatMessage`, et il est explicite.
+      const r = await sendChatMessage({
+        conversationId: target,
+        message: text,
+        onText: (reply) => pendingTurn.stream(id, reply),
+      });
       if (!r.ok) {
+        // Le même bloc d'échec qu'avant : le texte revient dans la zone, et
+        // rien de partiel ne reste à l'écran (`onText('')` l'a déjà effacé).
         toast.error(r.message);
         giveBack();
         return;

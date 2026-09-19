@@ -39,6 +39,10 @@ vi.mock('@/lib/actions.ts', () => ({
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: toastError } }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
+// Le flux (#152) n'ouvre pas ici. Ce fichier prouve donc, en plus de ce qu'il
+// prouvait déjà, que le REPLI sur l'action serveur rend exactement le même
+// écran : même copie, même effacement, même retour du texte sur échec.
+vi.stubGlobal('fetch', () => Promise.reject(new Error('no stream in this test')));
 
 let container: HTMLDivElement;
 let root: Root;

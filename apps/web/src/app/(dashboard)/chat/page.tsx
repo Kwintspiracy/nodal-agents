@@ -85,6 +85,11 @@ export default async function ChatPage({
     names.ok ? names.data : {},
     currents.ok ? currents.data.current : {},
     currents.ok ? currents.data.listable : [],
+    // Le non-lu du fil COURANT de chaque chat (#209), lu par la même requête
+    // que la désignation. Une lecture en échec ne peint rien en non-lu : la
+    // ligne se tait, et le bandeau au-dessus dit déjà que la désignation
+    // manque.
+    currents.ok ? currents.data.unread : {},
   );
 
   // L'échec de la désignation se transmet TEL QUEL, sans passer par les lignes.

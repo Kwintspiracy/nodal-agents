@@ -110,7 +110,21 @@ const ESCALATION_RECHECK =
   'tool — the conversation is complete.';
 
 export type ChatTurnResult =
-  | { ok: true; reply: string; spawnedJobId?: string }
+  | {
+      ok: true;
+      reply: string;
+      spawnedJobId?: string;
+      /**
+       * `reply` est-elle EXACTEMENT ce que `onTextDelta` a dit ? (#152)
+       *
+       * Vrai quand le texte rendu est celui qui est passé par le flux. Faux
+       * partout ailleurs : aucun flux demandé, `streamText` qui casse et laisse
+       * la relance sans outils livrer la réponse d'un bloc, ou un flux resté
+       * vide dont cette même relance a pris le relais. L'appelant n'a donc pas
+       * à deviner si ce qu'il a montré mot à mot est bien la réponse.
+       */
+      streamed?: boolean;
+    }
   | { ok: false; error: string };
 
 /**
@@ -251,8 +265,25 @@ export async function runChatTurn(opts: {
   agentId: string;
   conversationId: string;
   message: string;
+  /**
+   * Le texte de la réponse, fragment par fragment, pendant qu'il arrive (#152).
+   *
+   * Absent — le cas de `/api/chat` — le tour se joue exactement comme avant :
+   * un seul appel `generateText`, la réponse d'un bloc. Présent, SEUL l'appel
+   * PRINCIPAL passe en flux : ni le recheck d'escalade, ni la relance sans
+   * outils, ni la génération du titre n'appellent ce rappel. Ce ne sont pas la
+   * réponse, et les diffuser montrerait du texte que personne n'a écrit pour
+   * être lu.
+   *
+   * Ce que ce rappel reçoit n'est jamais la vérité finale : la réponse rendue
+   * par ce tour, et la ligne écrite en base, le sont. Un flux coupé en route
+   * retombe dans la relance sans outils plus bas, dont le texte n'est PAS
+   * diffusé — l'appelant remplace donc ce qu'il a accumulé par `reply`, sans
+   * quoi un texte tronqué passerait pour la réponse (invariant #4).
+   */
+  onTextDelta?: (delta: string) => void;
 }): Promise<ChatTurnResult> {
-  const { deps, entityId, agentId, conversationId, message } = opts;
+  const { deps, entityId, agentId, conversationId, message, onTextDelta } = opts;
   const db = deps.db;
 
   // 1. Load + verify the agent belongs to this entity.
@@ -479,14 +510,36 @@ export async function runChatTurn(opts: {
   //    retry in 6b so conversation still works.
   let text = '';
   let runTask: { input?: unknown } | undefined;
+  // Le texte qu'on va rendre est-il celui qui est sorti par le flux ? Posé ici
+  // à faux, tenu vrai par le seul chemin qui le diffuse, et remis à faux par
+  // la relance sans outils qui, elle, ne diffuse rien.
+  let streamed = false;
   try {
-    const response = await llmClient.generateText({
-      system: systemPrompt,
-      messages,
-      tools: CHAT_TOOLS,
-    });
-    text = (response.text ?? '').trim();
-    runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+    if (onTextDelta) {
+      // Le MÊME appel, dit au fur et à mesure (#152). `streamText` rend son
+      // résultat tout de suite ; le texte complet et les appels d'outils ne
+      // sont connus qu'une fois le flux consommé, d'où les `await` après la
+      // boucle. L'escalade se lit donc exactement comme sur l'autre chemin.
+      const result = llmClient.streamText({
+        system: systemPrompt,
+        messages,
+        tools: CHAT_TOOLS,
+      });
+      for await (const delta of result.textStream) onTextDelta(delta);
+      text = ((await result.text) ?? '').trim();
+      runTask = ((await result.toolCalls) ?? []).find((tc) => tc.toolName === 'run_task');
+      // Après les `await` : une erreur en cours de flux passe par le catch, et
+      // le texte de ce tour viendra alors d'ailleurs.
+      streamed = true;
+    } else {
+      const response = await llmClient.generateText({
+        system: systemPrompt,
+        messages,
+        tools: CHAT_TOOLS,
+      });
+      text = (response.text ?? '').trim();
+      runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+    }
   } catch (err) {
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
@@ -601,7 +654,7 @@ export async function runChatTurn(opts: {
         llmClient.generateText({ system, messages: [{ role: 'user', content: prompt }] }),
     });
 
-    return { ok: true, reply, spawnedJobId: job?.id };
+    return { ok: true, reply, spawnedJobId: job?.id, streamed };
   }
 
   // 6b. Pure conversation — persist the assistant turn. No job created.
@@ -614,6 +667,9 @@ export async function runChatTurn(opts: {
     try {
       const retry = await llmClient.generateText({ system: systemPrompt, messages });
       replyText = (retry.text ?? '').trim();
+      // Cette réponse-là n'est jamais passée par le flux : ce qui a pu être
+      // montré mot à mot, s'il y a eu quoi que ce soit, n'était pas elle.
+      streamed = false;
     } catch {
       return { ok: false, error: 'llm_error' };
     }
@@ -640,7 +696,7 @@ export async function runChatTurn(opts: {
       llmClient.generateText({ system, messages: [{ role: 'user', content: prompt }] }),
   });
 
-  return { ok: true, reply: replyText };
+  return { ok: true, reply: replyText, streamed };
 }
 
 /**

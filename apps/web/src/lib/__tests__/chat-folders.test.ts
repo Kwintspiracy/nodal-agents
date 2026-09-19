@@ -398,7 +398,7 @@ describe('le dossier MCP — ce qui arrive de dehors @cap:parler-par-canal-exter
 function fil(
   folder: string,
   n: number,
-  etat: { waiting?: boolean; running?: boolean } = {},
+  etat: { waiting?: boolean; running?: boolean; unread?: boolean } = {},
 ): FolderThreadSource {
   return {
     folder,
@@ -407,6 +407,7 @@ function fil(
     href: `/chat/${folder}-${n}`,
     waiting: etat.waiting ?? false,
     running: etat.running ?? false,
+    unread: etat.unread ?? false,
   };
 }
 
@@ -468,14 +469,19 @@ describe('folderThreads @cap:reprendre-conversation/ecran', () => {
 
 describe('threadCallsFor @cap:reprendre-conversation/ecran', () => {
   it('appelle la personne dès qu’une demande attend, ou qu’un run tourne', () => {
-    expect(threadCallsFor({ waiting: true, running: false })).toBe(true);
-    expect(threadCallsFor({ waiting: false, running: true })).toBe(true);
-    expect(threadCallsFor({ waiting: true, running: true })).toBe(true);
+    expect(threadCallsFor({ waiting: true, running: false, unread: false })).toBe(true);
+    expect(threadCallsFor({ waiting: false, running: true, unread: false })).toBe(true);
+    expect(threadCallsFor({ waiting: true, running: true, unread: false })).toBe(true);
   });
 
-  it('se tait quand il n’y a ni l’un ni l’autre', () => {
-    // Et JAMAIS pour « non lu » : la base ne porte aucun état de lecture
-    // (décision du 17/09/2026), donc rien ici ne peut le dire.
-    expect(threadCallsFor({ waiting: false, running: false })).toBe(false);
+  it('appelle la personne sur un fil NON LU, même au repos (#209)', () => {
+    // Le troisième sens du point, et le seul qui ne demande rien : le fil a
+    // bougé depuis qu'on l'a ouvert. Avant le 19/09/2026 la base ne portait
+    // aucun état de lecture et ce cas ne pouvait pas exister.
+    expect(threadCallsFor({ waiting: false, running: false, unread: true })).toBe(true);
+  });
+
+  it('se tait quand il n’y a ni demande, ni run, ni non-lu', () => {
+    expect(threadCallsFor({ waiting: false, running: false, unread: false })).toBe(false);
   });
 });

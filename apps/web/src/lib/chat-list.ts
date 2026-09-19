@@ -54,6 +54,15 @@ export type ChannelChatRow = {
   lastPreview: string | null;
   /** Les tours du fil courant. */
   turns: number;
+  /**
+   * Le FIL COURANT de ce chat a bougé depuis que la personne l'a ouvert, ou
+   * elle ne l'a jamais ouvert (#209).
+   *
+   * Celui du fil COURANT, et d'aucun autre : c'est là que la ligne mène, et
+   * répondre « non lu » en regardant un fil que le clic n'ouvre pas ferait un
+   * point que rien n'éteint.
+   */
+  unread: boolean;
 };
 
 export type ChatLists = {
@@ -157,6 +166,18 @@ export function groupChatLists(
    * écarté, ce qui serait faux.
    */
   listableChats: readonly string[] = Object.keys(currentByChat),
+  /**
+   * Les chats dont le fil COURANT est non lu (#209), lus par la MÊME requête
+   * que la désignation (`listCurrentThreadByChatAction`). Une clé absente
+   * n'est pas non lue.
+   *
+   * Pourquoi ça ne se calcule pas sur les lignes reçues, alors qu'elles
+   * portent chacune leur `unread` : le fil désigné peut être HORS de la
+   * fenêtre de la liste — c'est la raison même pour laquelle la désignation
+   * est une lecture à part — et la ligne dirait alors « rien à signaler » sur
+   * un fil qu'elle n'a jamais vu.
+   */
+  unreadByChat: Readonly<Record<string, boolean>> = {},
 ): ChatLists {
   const channels = new Map<string, ChannelChatRow>();
   const dashboard: ConversationListRow[] = [];
@@ -210,6 +231,7 @@ export function groupChatLists(
       // vraie que le dernier mot d'un autre fil.
       lastPreview: designe === r.id ? r.lastPreview : null,
       turns: designe === r.id ? r.turns : 0,
+      unread: unreadByChat[key] ?? false,
     });
   }
 

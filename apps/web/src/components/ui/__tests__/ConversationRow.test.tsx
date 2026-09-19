@@ -25,6 +25,7 @@ const BASE = {
   time: '14:02',
   waiting: null,
   running: false,
+  unread: false,
 } as const;
 
 function render(over: Partial<React.ComponentProps<typeof ConversationRow>> = {}): string {
@@ -118,6 +119,56 @@ describe('la ligne d’une conversation @cap:reprendre-conversation/ecran', () =
   });
 });
 
+// ─── Non lu (#209, 19/09/2026) ───────────────────────────────────────────────
+
+describe('une ligne NON LUE @cap:reprendre-conversation/ecran', () => {
+  // Mutation vérifiée : le poids rendu SANS regarder `unread` (toujours
+  // `text-medium-14`) → les deux premiers tests rougissent.
+
+  it('écrit son titre plus gras que celui d’une ligne lue, à la même taille', () => {
+    const nonLu = render({ agent: null, chatName: 'Recettes du dimanche', unread: true });
+    const lu = render({ agent: null, chatName: 'Recettes du dimanche', unread: false });
+
+    expect(nonLu).toContain('text-medium-14');
+    expect(lu).toContain('text-body-14');
+    expect(lu).not.toContain('text-medium-14');
+    // MÊME taille et même interlignage des deux côtés — ce sont les deux
+    // jetons 14 px du design system. Un titre qui changerait de taille ferait
+    // sauter la ligne au moment où on la lit.
+    expect(nonLu).not.toContain('text-medium-15');
+    expect(nonLu).not.toContain('text-title-16');
+  });
+
+  it('porte le poids sur le NOM DE L’AGENT quand la ligne en montre un', () => {
+    // Sur un dossier de canal, la ligne principale est l'agent ; c'est elle qui
+    // doit s'alourdir, pas l'étiquette du chat qui la suit.
+    const html = render({ unread: true });
+    const principale = html.slice(html.indexOf('Marlow') - 120, html.indexOf('Marlow'));
+    expect(principale).toContain('text-medium-14');
+  });
+
+  it('ne dessine AUCUN mot « Unread », ni pastille de plus', () => {
+    // La planche en dessinait une. Le propriétaire a tranché autrement
+    // (19/09) : un quatrième signe à droite entrerait en concurrence avec les
+    // trois qui disent ce que le fil ATTEND.
+    const html = render({ unread: true });
+    expect(texte(html).toLowerCase()).not.toContain('unread');
+    // Et rien ne s'est ajouté à droite : au repos, la ligne ne porte toujours
+    // ni pastille ni point.
+    expect(texte(html)).not.toContain('Question asked');
+    expect(texte(html)).not.toContain('Approval pending');
+    expect(html).not.toContain('bg-ok ');
+  });
+
+  it('laisse les trois signes dire ce qu’ils disent, non lue ou non', () => {
+    // Le poids du titre et la pastille sont deux langues différentes : l'une
+    // dit « tu n'as pas vu », l'autre « on t'attend ». Elles coexistent.
+    const html = render({ unread: true, waiting: 'question' });
+    expect(texte(html)).toContain('Question asked');
+    expect(html).toContain('text-medium-14');
+  });
+});
+
 describe('la ligne SANS agent : le dossier « Nodal chats » @cap:reprendre-conversation/ecran', () => {
   // Quentin, 18/09 : « pas besoin de répéter l'agent partout avec son avatar ;
   // pas besoin de montrer le dernier message posté ; il faut juste un titre de
@@ -139,7 +190,9 @@ describe('la ligne SANS agent : le dossier « Nodal chats » @cap:reprendre-conv
   });
 
   it('le titre porte la graisse et la couleur de la ligne principale', () => {
-    const html = render(SANS_AGENT);
+    // NON LU (#209) : le poids fort, celui qu'avaient toutes les lignes avant
+    // que l'état de lecture existe.
+    const html = render({ ...SANS_AGENT, unread: true });
     expect(html).toContain('truncate text-medium-14 text-ink');
     // Pas d'étiquette mono : elle ne s'étire pas, et coupait le titre à 18
     // signes au milieu de la ligne.

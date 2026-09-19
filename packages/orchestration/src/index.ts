@@ -91,6 +91,15 @@ export {
 } from './router/review-verdict';
 export type { ReviewVerdictRecord, ReviewVerdictFinding } from './router/review-verdict';
 
+// ─── Router: pas de seconde revue de la même chose (#173) ─────────────────────
+export {
+  extractReviewTarget,
+  findDeliveredReviewForTarget,
+  describeDuplicateReview,
+  DUPLICATE_REVIEW_REFUSAL_CODE,
+} from './router/duplicate-review';
+export type { DeliveredReviewMatch } from './router/duplicate-review';
+
 // ─── Router: only-one-per-turn ────────────────────────────────────────────────
 export { filterToolCallsForDelegation, buildDeferredToolResults } from './router/only-one-per-turn';
 export type { ToolCallBlock } from './router/only-one-per-turn';
