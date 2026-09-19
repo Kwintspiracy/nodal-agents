@@ -14,6 +14,12 @@ npm install -g nodal-agents
 nodal-agents up
 ```
 
+If npm answers with `npm warn allow-scripts …`, it skipped the install step of
+the packages it lists. One of them matters: approve
+`@embedded-postgres/<platform>` and install again. See
+[Getting Started](/docs/getting-started#if-npm-asks-you-to-approve-install-scripts)
+for the exact commands.
+
 The first run launches an interactive setup wizard that asks for:
 
 1. **LLM provider** — pick a local model (Ollama, LM Studio, Jan.ai, llama.cpp, vLLM) or a remote one (Anthropic, OpenAI, OpenRouter). You can add more providers later in the dashboard.

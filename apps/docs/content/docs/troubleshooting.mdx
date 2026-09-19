@@ -271,6 +271,35 @@ errors.
 **Fix.** Use **Node 22 or newer**. Check with `node -v` and upgrade if it's
 below 22. See [Self-hosting](/docs/self-hosting).
 
+### npm skipped the database binaries
+
+**Symptom.** The install ended with `npm warn allow-scripts`, and `nodal-agents
+up` stops straight away on a line naming `@embedded-postgres/<platform>`.
+
+**Cause.** Recent npm versions do not run a package's install scripts until you
+approve them. `@embedded-postgres/<platform>` carries the Postgres binaries
+Nodal boots, and its install step finishes preparing them. Skipped, the embedded
+database has nothing to start.
+
+**Fix.** Approve that one package and install again. The name is the one npm
+printed:
+
+```bash
+npm approve-scripts @embedded-postgres/windows-x64
+npm install -g nodal-agents@latest
+```
+
+The other packages npm lists (`@whiskeysockets/baileys`, `protobufjs`,
+`tesseract.js`) run fine without their scripts. See
+[Getting Started](/docs/getting-started#if-npm-asks-you-to-approve-install-scripts).
+
+<Callout type="warn">
+  On Windows the gate is harmless. `@embedded-postgres/windows-x64` ships the Postgres executables
+  in its tarball, and the list of links its install step would recreate is empty (2 bytes, `[]`,
+  against 1100 bytes in the Linux package). So a Windows install that fails after that warning fails
+  for another reason: send the output of `nodal-agents up` rather than assuming the gate.
+</Callout>
+
 ## Related
 
 - [Connecting a tool](/docs/guides/connect-a-tool) — the full connector setup flow

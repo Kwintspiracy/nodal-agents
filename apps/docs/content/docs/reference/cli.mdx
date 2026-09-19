@@ -15,6 +15,14 @@ Requires **Node.js 22 or newer**. The published package declares `engines: { "no
 npm install -g nodal-agents
 ```
 
+`npx nodal-agents up` runs the same stack without a global install.
+
+Recent npm versions gate install scripts behind `allowScripts` and print
+`npm warn allow-scripts …`. Approve `@embedded-postgres/<platform>` and install
+again: that package prepares the database binaries. When they are not usable,
+`up` stops on that command instead of on a Postgres error. See
+[Getting Started](/docs/getting-started#if-npm-asks-you-to-approve-install-scripts).
+
 ## Commands
 
 | Command | What it does |

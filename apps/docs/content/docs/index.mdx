@@ -39,7 +39,9 @@ npm install -g nodal-agents
 nodal-agents up
 ```
 
-Opens the dashboard on `localhost:3000` with an embedded Postgres — no external database, no Redis, no config files to edit.
+Opens the dashboard on `localhost:3000` with an embedded Postgres — no external database, no Redis, no config files to edit. Or `npx nodal-agents up`, with nothing installed globally.
+
+If npm prints `npm warn allow-scripts`, approve `@embedded-postgres/<platform>` and install again. It prepares the database binaries. [How](/docs/getting-started#if-npm-asks-you-to-approve-install-scripts).
 
 </Tab>
 
