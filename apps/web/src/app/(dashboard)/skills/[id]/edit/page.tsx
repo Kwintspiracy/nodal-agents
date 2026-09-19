@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getSkillByIdAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
@@ -15,9 +14,6 @@ export default async function EditSkillPage({ params }: { params: Promise<{ id: 
     <PageShell title="Edit skill" subtitle={result.data.name}>
       <div className="space-y-6">
         <div>
-          <Link href="/skills" className="text-xs text-ink-3 hover:text-ink-2 transition-colors">
-            ← Skills
-          </Link>
           <p className="text-sm text-ink-3 mt-2">
             Changes apply to the next LLM call that uses this skill — no cache invalidation needed.
           </p>

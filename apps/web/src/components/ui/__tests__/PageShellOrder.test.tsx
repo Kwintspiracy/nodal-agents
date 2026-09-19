@@ -9,13 +9,8 @@
 // l'enveloppe à gouttières du corps. Sans cela ses deux filets seraient coupés
 // de chaque côté, et elle ne tomberait pas où elle tombe sur les écrans de fil.
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
-  usePathname: () => '/agents/a-1/edit',
-}));
 
 import PageShell from '../PageShell';
 import WorkBar from '../WorkBar';
@@ -27,7 +22,7 @@ function page(): string {
       title="Edit agent"
       subtitle="Alfred"
       toolbarBleed
-      toolbar={<WorkBar back={{ label: 'Back to agents', parent: '/agents' }} />}
+      toolbar={<WorkBar context={<span>2 agents</span>} />}
     >
       <ActionRow>
         <button type="button">Run now</button>
@@ -75,7 +70,7 @@ describe('PageShell — l’ordre d’une page de détail @cap:suivre-execution/
         fluid
         title="A project"
         toolbarBleed
-        toolbar={<WorkBar back={{ label: 'Workspaces', parent: '/spaces' }} />}
+        toolbar={<WorkBar context={<span>Idle</span>} />}
         aside={<aside data-testid="le-panneau">Files</aside>}
       >
         <p data-testid="contenu">The body of the page.</p>
