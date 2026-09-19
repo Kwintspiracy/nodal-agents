@@ -96,11 +96,14 @@ const PROOF: Record<WorkspaceProof, { variant: 'done' | 'warn' | 'idle'; label: 
 const ROW = 'flex min-h-14 items-center gap-3.5 px-4 py-2';
 
 function RowBody({ row }: { row: WorkspaceRow }) {
-  const proof = PROOF[row.proof];
+  const proof = row.proof === null ? null : PROOF[row.proof];
   return (
     <>
+      {/* L'avatar de l'agent RESPONSABLE. Sans agent, une case vide : mettre
+          les initiales du projet à cette place ferait lire le nom du dossier
+          comme le nom d'un agent qui n'existe pas. */}
       <AgentAvatar
-        name={row.agentName ?? row.name}
+        name={row.agentName ?? ''}
         imageUrl={row.agentAvatarUrl}
         size="md"
         shape="square"
@@ -138,7 +141,9 @@ function RowBody({ row }: { row: WorkspaceRow }) {
           {conversationTimeLabel(row.lastActivityAt)}
         </span>
       )}
-      <StatusPill variant={proof.variant} label={proof.label} className="shrink-0" />
+      {proof !== null && (
+        <StatusPill variant={proof.variant} label={proof.label} className="shrink-0" />
+      )}
     </>
   );
 }

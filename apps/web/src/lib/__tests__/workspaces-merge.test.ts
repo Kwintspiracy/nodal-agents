@@ -131,6 +131,20 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(masque.counts.total).toBe(0);
   });
 
+  it('un projet de DOCUMENTS ne porte AUCUNE pastille : il n’a rien à prouver', () => {
+    const view = mergeWorkspaces({
+      projects: [
+        projet({ id: 'p-1', name: 'Notes', path: 'D:/Docs/notes', kind: 'documents' }),
+        projet({ id: 'p-2', name: 'Code', path: 'D:/Dev/code' }),
+      ],
+      sessions: [],
+      prefs: [],
+    });
+    expect(view.rows.find((r) => r.id === 'p-1')!.proof).toBeNull();
+    // Un projet de code, lui, dit ce qu'il en est — « Unverified » ici.
+    expect(view.rows.find((r) => r.id === 'p-2')!.proof).toBe('unverified');
+  });
+
   it('un projet du REGISTRE masqué reste listé, avec son drapeau', () => {
     const view = mergeWorkspaces({
       projects: [projet({ id: 'p-1', name: 'Rangé', path: 'D:/Dev/range', hidden: true })],

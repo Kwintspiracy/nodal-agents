@@ -118,6 +118,27 @@ describe('WorkspacesList @cap:travailler-sur-des-fichiers/ecran', () => {
     expect(html).toContain('documents');
   });
 
+  it('un projet de DOCUMENTS ne porte AUCUNE pastille de preuve', () => {
+    const seulDocument = render({
+      rows: [
+        ligne({
+          key: 'd:/docs/notes',
+          id: 'p-doc',
+          name: 'Notes',
+          path: 'D:/Docs/notes',
+          produces: 'documents',
+          proof: null,
+        }),
+      ],
+      counts: { total: 1, registered: 1, detected: 0, waiting: 0 },
+    });
+    expect(seulDocument).toContain('Notes');
+    // Ni « Unverified », ni rien d'autre : il n'exécute aucune commande.
+    expect(seulDocument).not.toContain('Unverified');
+    expect(seulDocument).not.toContain('Verified');
+    expect(seulDocument).not.toContain('Approval pending');
+  });
+
   it('les dossiers masqués sont COMPTÉS et retrouvables, jamais effacés', () => {
     const avecMasques = render({
       rows: [],

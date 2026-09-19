@@ -58,7 +58,13 @@ export type WorkspaceRow = {
   /** Les sessions de code retombées sur ce dossier, dans la fenêtre du scan. */
   sessions: number;
   lastActivityAt: Date | null;
-  proof: WorkspaceProof;
+  /**
+   * L'état de la preuve. `null` = il n'y a RIEN à prouver — un projet de
+   * DOCUMENTS n'exécute aucune commande, et lui coller « Unverified » lui
+   * reprocherait une preuve qui n'existe pas pour lui. La ligne ne dessine
+   * alors aucune pastille.
+   */
+  proof: WorkspaceProof | null;
   /** Masqué par le propriétaire (`code_projects.hidden`). */
   hidden: boolean;
 };
@@ -211,11 +217,15 @@ export function mergeWorkspaces(input: {
       conversations: p.conversationsCount,
       sessions: g?.sessions ?? 0,
       lastActivityAt: laterOf(p.lastActivityAt, g?.lastActivityAt ?? null),
-      // Un projet de DOCUMENTS n'a rien à prouver : il n'exécute aucune
-      // commande, et lui coller « Unverified » lui reprocherait une preuve
-      // qui n'existe pas pour lui. `listProjectsAction` rend déjà `lastProof`
-      // à `null` dans ce cas ; on garde la même retenue sur la pastille.
-      proof: workspaceProof(prefsByKey.get(key)?.verifyStatus ?? null, p.lastProof),
+      // Un projet de DOCUMENTS n'a RIEN à prouver : il n'exécute aucune
+      // commande. `listProjectsAction` rend déjà `lastProof` à `null` dans ce
+      // cas ; la pastille garde la même retenue et ne paraît pas du tout,
+      // plutôt que d'écrire « Unverified » — un reproche pour une preuve qui
+      // n'existe pas pour lui.
+      proof:
+        p.kind === 'documents'
+          ? null
+          : workspaceProof(prefsByKey.get(key)?.verifyStatus ?? null, p.lastProof),
       hidden: p.hidden,
     };
   });
