@@ -37,21 +37,20 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
 
     // In local-trust the app is open; in local-auth the session cookie
     // injected by global-setup carries us through. Either way the one thing
-    // that must never happen is landing on the login form. Onboarding is a
-    // legitimate destination on a stack with no agent created yet.
+    // that must never happen is landing on the login form.
     expect(page.url()).not.toMatch(/\/login/);
     expect(response?.status(), 'root page HTTP status').toBeLessThan(400);
-    await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
 
+    // Onboarding is a legitimate destination on a stack with no agent created
+    // yet — and it is decided BEFORE anything about the page is asserted, so a
+    // fresh stack skips instead of failing on a screen it was never shown.
+    test.skip(page.url().includes('/onboarding'), 'fresh stack — still in onboarding');
+
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
     // #248 — the root is the empty thread: the greeting and the composer, not
-    // the dashboard's metric cards. Skipped on a stack still in onboarding,
-    // which has no ROOT agent and therefore no composer to show.
-    if (!page.url().includes('/onboarding')) {
-      await expect(page.getByText(/what are we building today\?/i)).toBeVisible({
-        timeout: 10_000,
-      });
-      await expect(page.getByText('Total jobs')).toHaveCount(0);
-    }
+    // the dashboard's metric cards.
+    await expect(page.getByText(/what are we building today\?/i)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Total jobs')).toHaveCount(0);
   });
 
   test('the dashboard moved to /dashboard, and nothing redirects back to the root', async ({
@@ -59,7 +58,7 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
   }) => {
     const response = await page.goto('/dashboard');
     expect(response?.status(), '/dashboard HTTP status').toBeLessThan(400);
-    if (page.url().includes('/onboarding')) test.skip();
+    test.skip(page.url().includes('/onboarding'), 'fresh stack — still in onboarding');
     expect(new URL(page.url()).pathname, 'no redirect away from /dashboard').toBe('/dashboard');
     await expect(page.getByText('Total jobs')).toBeVisible({ timeout: 10_000 });
   });

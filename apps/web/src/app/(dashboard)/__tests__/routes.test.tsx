@@ -13,8 +13,32 @@ import DashboardPage from '../dashboard/page.tsx';
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 
+// Le routeur de Next en entier, pas `useRouter` seul : un composant client de
+// l'une ou l'autre page peut lire le chemin ou les paramètres, et un mock
+// partiel échouerait alors sur « n'est pas une fonction » au lieu de dire ce
+// qui manque (revue Reviewer C, passe 1). `redirect` et `notFound` lèvent :
+// aucune de ces deux pages ne doit en appeler, et un jour où l'une le ferait,
+// ce test le dirait plutôt que de rendre une page vide.
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: () => {}, replace: () => {}, refresh: () => {} }),
+  useRouter: () => ({
+    push: () => {},
+    replace: () => {},
+    refresh: () => {},
+    back: () => {},
+    forward: () => {},
+    prefetch: () => {},
+  }),
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(),
+  useParams: () => ({}),
+  useSelectedLayoutSegment: () => null,
+  useSelectedLayoutSegments: () => [],
+  redirect: (url: string) => {
+    throw new Error(`redirection inattendue vers ${url}`);
+  },
+  notFound: () => {
+    throw new Error('notFound inattendu');
+  },
 }));
 
 vi.mock('@/lib/conversation-actions.ts', () => ({

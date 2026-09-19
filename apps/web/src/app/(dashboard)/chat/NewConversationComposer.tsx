@@ -14,14 +14,22 @@
 // naît ANCRÉE à lui (`createProjectConversationAction`), pour que l'agent sache
 // de quel dossier on parle dès le premier mot.
 //
+// ET AUCUNE LIGNE NE SURVIT À UN PREMIER ENVOI RATÉ (revue Reviewer C, passe
+// 1). Créer puis envoyer fait deux appels : entre les deux, le runner peut être
+// coupé. La conversation qui vient de naître serait alors restée vide, et
+// l'orphelin de #248 aurait simplement changé de porte. Le chemin d'échec la
+// jette — et seulement si elle est VIDE, la garde étant relue en base
+// (`discardEmptyConversationAction`) : passé l'ouverture du flux, le runner a
+// déjà écrit le tour de la personne, et jeter perdrait ce qu'elle a écrit.
+//
 // Ce fichier existe pour une raison de React, la même que `ProjectComposer` :
 // un composant serveur ne peut pas passer une fonction à un composant client.
-// Les deux rappels sont donc noués ici, du côté client.
+// Les rappels sont donc noués ici, du côté client.
 
 import { useRouter } from 'next/navigation';
 import ThreadComposer from './ThreadComposer.tsx';
 import type { ComposerLlmKey } from './ModelEffortChip.tsx';
-import { createConversationAction } from '@/lib/actions.ts';
+import { createConversationAction, discardEmptyConversationAction } from '@/lib/actions.ts';
 import { createProjectConversationAction } from '@/lib/project-actions.ts';
 
 /**
@@ -79,6 +87,17 @@ export default function NewConversationComposer({
       // revenir en arrière doit ramener d'où l'on venait, pas sur un écran
       // vide qui rouvrirait une seconde conversation.
       onSent={(id) => router.replace(`/chat/${id}`)}
+      // L'envoi a échoué : la conversation ouverte pour lui n'a rien reçu.
+      // On la jette, et l'écran reste où il est — le texte est déjà retombé
+      // dans la zone, on peut réessayer. Un échec du jet ne se dit pas à
+      // l'écran : la personne a déjà le message d'erreur de l'envoi, et un
+      // second toast sur du ménage ne lui apprendrait rien de ce qu'elle peut
+      // faire. Il est journalisé, là où on le cherchera.
+      onSendFailed={(id) => {
+        void discardEmptyConversationAction(id).then((r) => {
+          if (!r.ok) console.error('[new conversation] discard failed', r.code, r.message);
+        });
+      }}
     />
   );
 }
