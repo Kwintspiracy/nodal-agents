@@ -105,6 +105,7 @@ const detail = (): CodingProcessDetail => ({
   pipelineJobIds: [JOB_ID],
   verificationRuns: [],
   verificationSkippedSurfaces: [],
+  constatedBy: [],
   verificationUnconfigured: [],
 });
 
@@ -152,9 +153,13 @@ describe('CodeProcessDetail — la section Files @cap:suivre-execution/ecran', (
     const lignes = Array.from(container.querySelectorAll('button[aria-expanded]'))
       .map((b) => b.textContent ?? '')
       .filter((t) => t.includes('.tsx') || t.includes('.ts'));
+    // LE MOT DU GESTE EST CELUI DU CONSTAT depuis #199, plus le nom de
+    // l'outil. La liste ne vient plus des outils : elle vient de ce que git a
+    // vu, où un fichier peut avoir été supprimé ou renommé sans qu'aucun outil
+    // l'ait nommé. `file_write` / `file_edit` ne savaient pas dire ces deux-là.
     expect(lignes).toEqual([
-      'file_editapps/web/src/app/page.tsx+1 −1',
-      `file_writeapps/web/src/lib/long.ts+${LONG_LINES.length}`,
+      'modifiedapps/web/src/app/page.tsx+1 −1',
+      `addedapps/web/src/lib/long.ts+${LONG_LINES.length}`,
     ]);
     // Un zéro se tait : le second fichier n'a rien remplacé.
     expect(text).not.toContain('−0');
@@ -195,6 +200,71 @@ describe('CodeProcessDetail — la section Files @cap:suivre-execution/ecran', (
     await render(empty);
 
     expect(container.textContent).toContain('No files changed yet.');
+    expect(container.querySelectorAll('[data-diff]')).toHaveLength(0);
+  });
+
+  // ── CE QUI FAIT FOI POUR LA LISTE (issue #199) ─────────────────────────
+  //
+  // Une liste prise dans `git status` autour de chaque run ne promet pas ce
+  // qu'une liste des fichiers nommes par les outils promet, et une liste
+  // simplement declaree ne promet rien. Le bloc doit le DIRE, sans quoi la
+  // personne lit les trois de la meme facon.
+
+  it('dit que la liste vient de git quand elle en vient', async () => {
+    const d = detail();
+    d.constatedBy = ['git'];
+    await render(d);
+
+    expect(container.querySelector('[data-testid="files-constat"]')?.textContent).toBe(
+      'Constated by git: the delta of git status around each run',
+    );
+  });
+
+  it('dit que la liste vient du disque hors depot', async () => {
+    const d = detail();
+    d.constatedBy = ['disk'];
+    await render(d);
+
+    expect(container.querySelector('[data-testid="files-constat"]')?.textContent).toBe(
+      'Constated on disk: the files the tools named, read before and after',
+    );
+  });
+
+  it('un run sans aucun constat le dit, plutot que de se taire', async () => {
+    const d = detail();
+    d.constatedBy = [];
+    await render(d);
+
+    expect(container.querySelector('[data-testid="files-constat"]')?.textContent).toBe(
+      'Declared by the tools, not constated',
+    );
+  });
+
+  it('un fichier que git a vu et qu’aucun outil n’a nomme parait, sans diff', async () => {
+    const d = detail();
+    d.constatedBy = ['git'];
+    d.changes = [
+      // Ce que le shell a supprime : aucun appel d'outil ne le nomme, donc
+      // aucun fragment a peindre. C'est exactement le fichier qui manquait.
+      {
+        filePath: 'scripts/genere.ts',
+        addedLines: 0,
+        removedLines: 0,
+        edits: [],
+        changeKind: 'deleted',
+      },
+    ];
+    d.header.filesChanged = 1;
+    await render(d);
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('Files · 1');
+    const ligne = Array.from(container.querySelectorAll('button[aria-expanded]'))
+      .map((b) => b.textContent ?? '')
+      .find((t) => t.includes('genere.ts'));
+    expect(ligne).toBe('deletedscripts/genere.ts');
+    // Rien n'est fabrique : la plaque le dit au lieu de peindre un diff vide.
+    expect(text).toContain('No text recorded for this change.');
     expect(container.querySelectorAll('[data-diff]')).toHaveLength(0);
   });
 });

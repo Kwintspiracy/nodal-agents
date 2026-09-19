@@ -86,6 +86,7 @@ const detail = (over: Partial<CodingProcessDetail> = {}): CodingProcessDetail =>
   pipelineJobIds: [JOB],
   verificationRuns: [],
   verificationSkippedSurfaces: [],
+  constatedBy: [],
   verificationUnconfigured: [],
   ...over,
 });

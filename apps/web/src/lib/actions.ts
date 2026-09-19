@@ -51,6 +51,7 @@ import {
   lineCountsOfCall,
   type CodingChangeView,
 } from './coding-changes.ts';
+import { faconsDeConstater, rapprocherConstat } from './constated-files.ts';
 import {
   entityWorkspaceRoots,
   entityDeclaredCodeRoots,
@@ -132,6 +133,7 @@ import {
   verificationRuns,
   jobDeliverableVerificationState,
   jobDeliveries,
+  constatedWrites,
   dropApprovalRulesForDetachedSkill,
 } from '@nodal-agents/db';
 import {
@@ -177,6 +179,8 @@ import type {
   CliModelUsage,
   CredentialType,
   OperationDescriptor,
+  ConstatedBy,
+  ConstatedChangeKind,
 } from '@nodal-agents/shared';
 import {
   type RootGrants,
@@ -13201,6 +13205,13 @@ export type CodingFileChangeGroup = {
   removedLines: number;
   /** Chronological, root + direct children merged. Each rendered as its own hunk — an edit acts on the PREVIOUS edit's result, so concatenating them into one blob would misrepresent the sequence. */
   edits: CodingChangeView[];
+  /**
+   * Ce que le CONSTAT dit de ce fichier (issue #199) : créé, modifié, supprimé,
+   * renommé. Absent sur un run d'avant la migration 0113, dont la liste est
+   * encore celle que les outils ont déclarée — et où personne n'a jamais su
+   * dire qu'un fichier avait été supprimé.
+   */
+  changeKind?: ConstatedChangeKind;
 };
 
 /**
@@ -13274,6 +13285,15 @@ export type CodingProcessDetail = {
   activity: CodingActivityItem[];
   verdicts: CodingVerdictView[];
   changes: CodingFileChangeGroup[];
+  /**
+   * COMMENT la liste ci-dessus a été constatée (issue #199) — `git` pour un
+   * dossier qui est un dépôt, `disk` pour les fichiers nommés hors dépôt, les
+   * deux quand un run a écrit des deux côtés.
+   *
+   * VIDE = aucune ligne de constat, donc une liste encore DÉCLARÉE : les runs
+   * d'avant la migration 0113. Le bloc le dit plutôt que de laisser croire.
+   */
+  constatedBy: ConstatedBy[];
   /**
    * Tous les jobs du pipeline (racine + délégués). Sert au client à filtrer
    * les approbations en attente (`listApprovalsAction`) qui appartiennent à
@@ -13634,7 +13654,52 @@ export async function getCodingProcessDetailAction(
         group.edits.push({ ...change, filePath: canonical });
         changeGroups.set(canonical, group);
       }
-      const changes = Array.from(changeGroups.values());
+      const changesDeclares = Array.from(changeGroups.values());
+
+      // ── LA LISTE VIENT DU CONSTAT (issue #199) ───────────────────────────
+      //
+      // Les groupes ci-dessus sont ce que les outils ont DÉCLARÉ. Les lignes
+      // de `constated_writes` sont ce qui a été CONSTATÉ : le delta de
+      // `git status` autour de chaque run quand le dossier est un dépôt, les
+      // fichiers nommés relus sur le disque sinon. C'est la seconde liste qui
+      // fait foi ; la première ne sert plus qu'à donner son diff à un fichier
+      // qu'un outil avait aussi nommé.
+      //
+      // Un run d'avant la migration 0113 n'a aucune ligne : sa liste déclarée
+      // est gardée telle quelle, et le pied du bloc dit qu'elle est déclarée.
+      const constatRows =
+        allRelevantIds.length > 0
+          ? await db
+              .select({
+                path: constatedWrites.path,
+                changeKind: constatedWrites.changeKind,
+                constatedBy: constatedWrites.constatedBy,
+                renamedFrom: constatedWrites.renamedFrom,
+                turn: constatedWrites.turn,
+                createdAt: constatedWrites.createdAt,
+              })
+              .from(constatedWrites)
+              .where(inArray(constatedWrites.jobId, allRelevantIds))
+              .orderBy(constatedWrites.turn, constatedWrites.createdAt)
+          : [];
+      const constatedBy = faconsDeConstater(constatRows);
+      const changes: CodingFileChangeGroup[] =
+        constatRows.length === 0
+          ? changesDeclares
+          : rapprocherConstat({
+              rows: constatRows,
+              declared: changesDeclares,
+              workspaceRoots,
+            }).map(({ filePath, changeKind, declared }) => ({
+              filePath,
+              changeKind,
+              addedLines: declared?.addedLines ?? 0,
+              removedLines: declared?.removedLines ?? 0,
+              // Un fichier que git a vu et qu'aucun outil n'a nommé n'a pas de
+              // fragment à montrer : la ligne le dit par son genre, sans
+              // fabriquer un diff que personne n'a.
+              edits: declared?.edits ?? [],
+            }));
 
       // Activity = tool_calls + turn markers, one merged chronological trail.
       // A marker is placed just before the first llm_calls/cli_runs row it
@@ -13744,7 +13809,11 @@ export async function getCodingProcessDetailAction(
       events.sort((a, b) => a.sortKey - b.sortKey);
       const activity = events.map((e) => e.item);
 
-      const filesChanged = changeGroups.size;
+      // LE MÊME COMPTE QUE LE BLOC — depuis #199, `changes` est la liste
+      // constatée, et `changeGroups` seulement ce que les outils ont déclaré.
+      // Compter la seconde ferait dire « 3 fichiers » à l'en-tête au-dessus
+      // d'un bloc qui en montre cinq.
+      const filesChanged = changes.length;
 
       // Duration of the PIPELINE, not of the root job alone — which is what
       // made the header read "0.0s" on real sessions (punch list V1.1).
@@ -13858,6 +13927,7 @@ export async function getCodingProcessDetailAction(
         activity,
         verdicts,
         changes,
+        constatedBy,
         pipelineJobIds: allRelevantIds,
         verificationRuns: verificationSequences,
         verificationSkippedSurfaces,
@@ -13938,6 +14008,9 @@ export async function getCodingProcessDetailAction(
       activity: [],
       verdicts: [],
       changes: [],
+      // Un tour de chat n'a pas de job, donc aucune ligne de constat : la
+      // liste est vide, et rien ne prétend qu'elle a été constatée.
+      constatedBy: [],
       pipelineJobIds: [],
       // Un tour de chat n'a pas de jobId (run-chat.ts) : aucune intention
       // posée, aucune preuve — l'écran le dit tel quel (T17/T24).
