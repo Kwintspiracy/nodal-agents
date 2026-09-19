@@ -61,6 +61,7 @@
 // rien écrire).
 
 import { execFile } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { normalizePath } from '@nodal-agents/shared';
 import type { ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
@@ -292,6 +293,30 @@ function sousOuEgal(chemin: string, racine: string): boolean {
 }
 
 /**
+ * Le chemin RÉEL d'un dossier, pour que la comparaison de périmètre porte sur
+ * le même objet des deux côtés.
+ *
+ * TROUVÉ PAR LA CI WINDOWS, PREMIER PASSAGE DE LA PR. `git rev-parse` rend
+ * toujours la forme longue et suivie (`C:/Users/runneradmin/…`), alors que le
+ * dossier visé peut arriver en forme courte 8.3 (`C:/Users/RUNNER~1/…`, ce que
+ * donne `os.tmpdir()` sur un agent GitHub) ou à travers une jonction. Les deux
+ * désignent le même dossier et ne se ressemblent pas : la garde de périmètre
+ * refusait alors le dépôt du run lui-même, et tout le constat par git tombait
+ * silencieusement sur le repli disque.
+ *
+ * Rend le chemin d'entrée quand il n'existe pas encore (un dossier attaché
+ * d'avance) : à défaut de mieux, la comparaison de texte, qui est ce qu'on
+ * avait.
+ */
+async function cheminReel(dir: string): Promise<string> {
+  try {
+    return normalizePath(await realpath(normalizePath(dir)));
+  } catch {
+    return normalizePath(dir);
+  }
+}
+
+/**
  * L'état d'AVANT, pris sur les dossiers que l'outil vise.
  *
  * Un dossier est réduit à la RACINE de son dépôt : un `cwd` trois niveaux plus
@@ -319,13 +344,16 @@ function sousOuEgal(chemin: string, racine: string): boolean {
 export async function snapshotGitAvant(dirs: readonly string[]): Promise<GitConstatBefore> {
   const racines = new Map<string, RepoSnapshot>();
   const vus = new Set<string>();
-  const perimetre = dirs.map((d) => normalizePath(d));
+  // Le périmètre est comparé sur les chemins RÉELS : git rend la forme longue
+  // et suivie, le dossier visé peut arriver en 8.3 ou à travers une jonction.
+  const perimetre = await Promise.all(dirs.map((d) => cheminReel(d)));
   for (const dir of perimetre) {
     if (vus.has(dir)) continue;
     vus.add(dir);
     const root = await repoRootOf(dir);
     if (root === null || racines.has(root)) continue;
-    if (!perimetre.some((d) => sousOuEgal(root, d))) {
+    const rootReel = await cheminReel(root);
+    if (!perimetre.some((d) => sousOuEgal(rootReel, d))) {
       console.warn(`[verification] GIT_CONSTAT_ROOT_ABOVE_SCOPE root=${root} dir=${dir}`);
       continue;
     }

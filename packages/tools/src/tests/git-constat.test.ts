@@ -13,12 +13,14 @@
 //   — une RESTAURATION (`git checkout --`) est une écriture, bien qu'elle
 //     vide la ligne de statut, et un `git commit` n'en est pas une ;
 //   — un dossier qui n'est pas un dépôt ne rend aucune racine, donc le run
-//     retombe sur le constat disque.
+//     retombe sur le constat disque ;
+//   — le périmètre du run se compare sur les chemins RÉELS, sans quoi une
+//     forme courte 8.3 ou un lien faisait refuser le dépôt du run lui-même.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, rm, writeFile, unlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -167,6 +169,36 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     await writeFile(join(horsDepot, 'ecrit.ts'), 'export const e = 1;\n');
     const constat = await constatedGitWrites(avant);
     expect(constat).toEqual({ writes: [], roots: [], indecis: [] });
+  });
+
+  it('le périmètre est comparé sur les chemins RÉELS, pas sur leur graphie', async () => {
+    // TROUVÉ PAR LA CI WINDOWS, PREMIER PASSAGE DE LA PR. `git rev-parse` rend
+    // toujours la forme longue et suivie ; le dossier visé, lui, peut arriver
+    // en forme courte 8.3 (`C:/Users/RUNNER~1/…`, ce que donne `os.tmpdir()`
+    // sur un agent GitHub) ou à travers un lien. Les deux désignent le même
+    // dossier et ne se ressemblent pas — la garde de périmètre refusait alors
+    // le dépôt du run lui-même, et TOUT le constat par git tombait en silence
+    // sur le repli disque.
+    //
+    // Le lien est la forme portable de ce désaccord. Quand la machine ne
+    // permet pas d'en créer un (Windows sans mode développeur), le cas se
+    // saute EN LE DISANT plutôt que de passer pour vert.
+    const lien = join(racine, 'alias-depot');
+    try {
+      await symlink(depot, lien, 'junction');
+    } catch (err) {
+      console.warn(
+        `[tests] CAS SAUTÉ — impossible de créer un lien vers le dépôt : ${String(err)}\n` +
+          '        La règle reste prouvée par la CI Windows, qui a trouvé le défaut.',
+      );
+      return;
+    }
+
+    const avant = await snapshotGitAvant([lien]);
+
+    expect(avant).toHaveLength(1);
+    expect(avant[0]?.root).toBe(await repoRootOf(depot));
+    await rm(lien, { recursive: true, force: true });
   });
 
   it('un dépôt AU-DESSUS du périmètre du run n’est pas retenu', async () => {
