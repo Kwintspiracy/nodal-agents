@@ -12,6 +12,24 @@ type Props = {
   ariaLabel?: string;
   ariaLabelledBy?: string;
   ariaDescribedBy?: string;
+  /**
+   * L'IMAGE d'un interrupteur, pas un interrupteur : rend un `<span>` inerte
+   * et invisible aux lecteurs d'écran, au lieu du bouton.
+   *
+   * Vient de la PR #237 (la page Settings en liste, issue #231) : la liste
+   * montre l'état de deux réglages sur la ligne, et RIEN ne se modifie depuis
+   * la liste — le geste vit dans le panneau, avec sa confirmation. Un bouton
+   * qu'on ne peut pas actionner est un mensonge, et un bouton imbriqué dans la
+   * ligne cliquable est un HTML invalide. La valeur reste écrite en toutes
+   * lettres à côté, donc rien n'est perdu au clavier ni à la voix. `onChange`
+   * n'est jamais appelé dans ce mode.
+   *
+   * L'image porte exactement les couleurs de l'état qu'elle montre, `disabled`
+   * compris : une image qui ne ressemblerait pas au contrôle ne servirait à
+   * rien. Elle n'a en revanche ni curseur, ni anneau de focus, ni transition —
+   * il n'y a rien à actionner, et rien qui bouge.
+   */
+  readOnly?: boolean;
 };
 
 /** Piste : 36×20 en `sm`, 38×22 en `md` (planche Figma `Switch`, node 108:18). */
@@ -48,12 +66,16 @@ const THUMB_DIM: Record<Size, string> = {
  *   radius=3` de la planche).
  * - Disabled : le même dessin à 50% d'opacité. C'est le seul état atténué.
  *
- * Les appelants passent `checked`, `onChange`, `disabled`, `size` et l'aria.
- * Aucune couleur, aucune classe : une nuance qui doit se dire se dit À CÔTÉ de
- * l'interrupteur, avec un `MonoMicroTag` ou une phrase, jamais en le teintant
- * (c'est ce que faisait l'état « dormant » de Yolo jusqu'au 19/09/2026).
- * `apps/web/src/tests/one-switch.arch.test.ts` refuse tout autre dessin
- * d'interrupteur dans `apps/web/src`.
+ * `readOnly` rend l'IMAGE de l'un de ces états sans le contrôle — voir sa
+ * propre note. C'est le seul rendu qui ne soit pas un bouton, et il ne change
+ * aucune couleur.
+ *
+ * Les appelants passent `checked`, `onChange`, `disabled`, `size`, `readOnly`
+ * et l'aria. Aucune couleur, aucune classe : une nuance qui doit se dire se dit
+ * À CÔTÉ de l'interrupteur, avec un `MonoMicroTag` ou une phrase, jamais en le
+ * teintant (c'est ce que faisait l'état « dormant » de Yolo jusqu'au
+ * 19/09/2026). `apps/web/src/tests/one-switch.arch.test.ts` refuse tout autre
+ * dessin d'interrupteur dans `apps/web/src`.
  */
 export default function Switch({
   checked,
@@ -63,7 +85,29 @@ export default function Switch({
   ariaLabel,
   ariaLabelledBy,
   ariaDescribedBy,
+  readOnly = false,
 }: Props) {
+  // Une seule expression de couleur pour les deux rendus : l'image et le
+  // contrôle ne peuvent pas diverger (#236 + #237).
+  const track = `relative inline-flex shrink-0 items-center rounded-full ${TRACK_DIM[size]} ${checked ? 'bg-ok' : 'bg-ink-4'}`;
+  const thumb = (
+    <span
+      className={`pointer-events-none inline-block rounded-full bg-paper ${readOnly ? '' : 'transition-transform duration-200'} ${THUMB_DIM[size]} ${checked ? 'translate-x-[19px]' : 'translate-x-[3px]'}`}
+    />
+  );
+
+  if (readOnly) {
+    return (
+      <span
+        aria-hidden="true"
+        data-state={checked ? 'on' : 'off'}
+        className={`${track} ${disabled ? 'opacity-50' : ''}`}
+      >
+        {thumb}
+      </span>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -74,11 +118,9 @@ export default function Switch({
       aria-describedby={ariaDescribedBy}
       disabled={disabled}
       onClick={onChange}
-      className={`relative inline-flex shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-conn-vivid/50 disabled:cursor-not-allowed disabled:opacity-50 ${TRACK_DIM[size]} ${checked ? 'bg-ok' : 'bg-ink-4'}`}
+      className={`${track} cursor-pointer transition-colors duration-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-conn-vivid/50 disabled:cursor-not-allowed disabled:opacity-50`}
     >
-      <span
-        className={`pointer-events-none inline-block rounded-full bg-paper transition-transform duration-200 ${THUMB_DIM[size]} ${checked ? 'translate-x-[19px]' : 'translate-x-[3px]'}`}
-      />
+      {thumb}
     </button>
   );
 }

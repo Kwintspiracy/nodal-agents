@@ -18,6 +18,9 @@
 //   5. le clavier marche sans code : c'est un vrai <button>, donc Entrée et
 //      Espace déclenchent `onChange` via l'activation native.
 //   6. les deux tailles de la planche rendent leurs géométries, et rien d'autre.
+//   7. le mode image (`readOnly`, venu de la PR #237) rend les MÊMES couleurs
+//      que le contrôle sans en être un : pas de bouton, pas de rôle, pas de
+//      focus. Une liste qui montrerait un autre état que son panneau mentirait.
 //
 // Mutations vérifiées (chacune appliquée à Switch.tsx, le test devant rougir) :
 //   - piste allumée repassée à `bg-agent/20` → le cas « allumé » rougit sur la
@@ -45,6 +48,14 @@ function classesPiste(html: string): string[] {
 function classesBouton(html: string): string[] {
   const m = /<span[^>]*class="([^"]*)"/.exec(html);
   if (!m) throw new Error('aucun bouton rendu');
+  return m[1]!.split(/\s+/);
+}
+
+/** En mode image (`readOnly`), la piste est elle-même un <span> : c'est le
+ *  premier, et le bouton qui glisse est le second. */
+function classesSpan(html: string, rang: number): string[] {
+  const m = [...html.matchAll(/<span[^>]*class="([^"]*)"/g)][rang];
+  if (!m) throw new Error(`pas de <span> au rang ${rang}`);
   return m[1]!.split(/\s+/);
 }
 
@@ -125,6 +136,51 @@ describe('Switch — un seul look, sans ambiguïté @cap:regler-autonomie/ecran'
     expect(piste).toContain('focus-visible:ring-[3px]');
     expect(piste).toContain('focus-visible:ring-conn-vivid/50');
     expect(piste).toContain('focus-visible:outline-none');
+  });
+});
+
+// Le mode image vient de la PR #237 (page Settings en liste, issue #231) :
+// la ligne montre l'état de deux réglages sans que rien s'y modifie. Ce qui
+// s'y prouve, c'est que l'image RESSEMBLE au contrôle — sinon la liste dit
+// autre chose que le panneau — et qu'elle ne prétend PAS être actionnable.
+describe('Switch — le mode image (readOnly) @cap:regler-autonomie/ecran', () => {
+  it("ne rend aucun bouton : ni <button>, ni rôle, ni état pour un lecteur d'écran", () => {
+    const html = rendu({ checked: true, readOnly: true });
+    expect(html).not.toContain('<button');
+    expect(html).not.toContain('role=' + '"switch"');
+    expect(html).not.toContain('aria-checked');
+    expect(html).toContain('aria-hidden="true"');
+  });
+
+  it("porte l'état en attribut, pour que la ligne puisse le styler et le test le lire", () => {
+    expect(rendu({ checked: true, readOnly: true })).toContain('data-state="on"');
+    expect(rendu({ checked: false, readOnly: true })).toContain('data-state="off"');
+  });
+
+  it("l'image porte exactement les couleurs du contrôle qu'elle montre", () => {
+    for (const checked of [true, false]) {
+      const image = classesSpan(rendu({ checked, readOnly: true }), 0);
+      const controle = classesPiste(rendu({ checked }));
+      const couleur = (l: string[]) => l.filter((c) => c.startsWith('bg-'));
+      expect(couleur(image)).toEqual(couleur(controle));
+      // Le bouton est au même endroit des deux côtés.
+      expect(classesSpan(rendu({ checked, readOnly: true }), 1)).toContain(
+        checked ? 'translate-x-[19px]' : 'translate-x-[3px]',
+      );
+    }
+  });
+
+  it("n'a ni curseur ni anneau de focus : il n'y a rien à actionner", () => {
+    const image = classesSpan(rendu({ checked: true, readOnly: true }), 0);
+    expect(image).not.toContain('cursor-pointer');
+    expect(image.filter((c) => c.startsWith('focus-visible:'))).toEqual([]);
+  });
+
+  it('une image de contrôle désactivé a bien l’air désactivée', () => {
+    expect(classesSpan(rendu({ checked: true, readOnly: true, disabled: true }), 0)).toContain(
+      'opacity-50',
+    );
+    expect(classesSpan(rendu({ checked: true, readOnly: true }), 0)).not.toContain('opacity-50');
   });
 });
 
