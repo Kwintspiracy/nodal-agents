@@ -10,6 +10,7 @@
     "mesurer": "node collect.mjs && node build.mjs",
     "render": "node build.mjs",
     "serve": "node serve.mjs",
+    "lint": "eslint .",
     "porte": "node porte.mjs",
     "alerte": "node alerte.mjs",
     "test": "vitest run"
