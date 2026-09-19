@@ -175,6 +175,19 @@ describe('scanForServerUsesOfClientValues — ses angles morts, tenus à jour', 
     expect(scanner(), 'angle mort documenté : entrées hors de SERVER_ENTRY').toEqual([]);
   });
 
+  it('ne dit rien d’un binding PASSÉ EN VALEUR à un appel', () => {
+    // Angle mort assumé, pas un oubli (Reviewer C, #268) : passer la référence
+    // est légal. Ce qui casse est la lecture, et elle a lieu chez le
+    // destinataire — la voir d'ici demanderait de descendre dans `emballe`.
+    poser('app/thing/Client.tsx', TABLE_CLIENT);
+    poser('app/thing/util.ts', 'export const emballe = (x: unknown) => ({ x });\n');
+    poser(
+      'app/thing/page.tsx',
+      "import { DOT } from './Client.tsx';\nimport { emballe } from './util.ts';\nexport default () => <p>{String(emballe(DOT))}</p>;\n",
+    );
+    expect(scanner(), 'angle mort documenté : le passage en valeur').toEqual([]);
+  });
+
   it('prend un appel écrit dans une CHAÎNE pour un vrai appel', () => {
     poser('app/thing/Client.tsx', CLIENT);
     poser(

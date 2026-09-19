@@ -86,6 +86,14 @@
  *   - l'ordre. Elle regarde le texte APRÈS la ligne d'import, donc un appel
  *     placé avant son propre import (une déclaration de fonction remontée) lui
  *     échappe ;
+ *   - le binding PASSÉ EN VALEUR — `fn(DOT)`, `const t = DOT`, `{ ...DOT }`.
+ *     C'est délibéré et non un oubli : passer la référence est LÉGAL, c'est
+ *     même le seul usage permis avec le rendu (`<X />`, `prop={X}`). Ce qui
+ *     casse est la LECTURE, et elle a lieu alors chez le destinataire : la
+ *     nommer ici demanderait de suivre l'argument jusque dans le corps de
+ *     `fn`, donc un vrai parcours de l'arbre syntaxique. Refuser `fn(DOT)` à
+ *     vue rougirait sur tous les passages corrects, et une garde qui rougit
+ *     sur du code qui marche se fait désactiver ;
  *   - les CHAÎNES de caractères. `'appelle dockedFormId(x)'` ressemble encore à
  *     un appel : faux ROUGE possible. Les COMMENTAIRES, eux, ne comptent plus —
  *     `retirerCommentaires` les efface avant la recherche. Sans lui, élargir
