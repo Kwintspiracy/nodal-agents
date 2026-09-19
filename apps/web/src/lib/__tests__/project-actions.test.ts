@@ -1052,6 +1052,52 @@ describe('registerDetectedProjectAction @cap:travailler-sur-des-fichiers/moteur'
     expect(await ligneDuProjet(evade)).toBeNull();
   });
 
+  it('refuse un LIEN posé dans le terrain qui pointe dehors', async () => {
+    // Le texte du chemin est dans le terrain, le disque non. Sans la garde
+    // physique, les agents se verraient offrir un chemin qui écrit ailleurs.
+    // Une jonction de dossier se crée sans droit particulier, sur Windows
+    // comme ailleurs.
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const dehors = join(racine, 'cible-hors-terrain').replace(/\\/g, '/');
+    await mkdir(dehors, { recursive: true });
+    await mkdir(terrain.path, { recursive: true });
+    const lien = `${terrain.path}/lien-sortant`;
+    await symlink(dehors, lien, 'junction');
+
+    const result = await registerDetectedProjectAction({ projectPath: lien, agentId: null });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_in_workspace');
+    expect(await ligneDuProjet(lien)).toBeNull();
+    expect(await ligneDuProjet(dehors)).toBeNull();
+  });
+
+  it('STOCKE le chemin demandé, jamais le chemin résolu', async () => {
+    // Le constat de la CI Windows (19/09) : `realpath` détend un nom court 8.3
+    // (`C:/Users/RUNNER~1/…` → `C:/Users/runneradmin/…`), donc écrire le chemin
+    // résolu donne une CLÉ que la détection ne produit jamais — le projet
+    // resterait « Detected » et son masquage ne serait plus retrouvé. Prouvé
+    // ici par un lien INTERNE, qui fait diverger les deux formes sur n'importe
+    // quel système.
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const cible = `${terrain.path}/cible-interne`;
+    await mkdir(cible, { recursive: true });
+    const alias = `${terrain.path}/alias-interne`;
+    await symlink(cible, alias, 'junction');
+
+    const result = await registerDetectedProjectAction({ projectPath: alias, agentId: null });
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.path).toBe(alias);
+
+    const ligne = await ligneDuProjet(alias);
+    expect(ligne!.projectPath).toBe(alias);
+    expect(ligne!.projectKey).toBe(projectKey(alias));
+    // Et RIEN sous le nom de la cible : une seconde identité pour le même
+    // dossier est exactement ce qu'on évite.
+    expect(await ligneDuProjet(cible)).toBeNull();
+  });
+
   it('refuse un dossier qui n’existe PAS : un projet fantôme ne s’inscrit pas', async () => {
     const { registerDetectedProjectAction } = await import('../project-actions.ts');
     const disparu = `${terrain.path}/jamais-cree`;

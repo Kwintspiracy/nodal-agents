@@ -21,6 +21,8 @@ import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
+// L'aplatissement LEXICAL d'un chemin (`.` et `..`), par la plateforme.
+import { normalize as posixNormalize } from 'node:path/posix';
 import type { Dirent } from 'node:fs';
 import {
   eq,
@@ -42,6 +44,7 @@ import {
 import {
   normalizePath,
   projectKey,
+  isAbsolutePath,
   isSafeSubfolder,
   projectFolderNameFrom,
   type VerifyCommand,
@@ -438,6 +441,27 @@ export async function listProofsForPathsAction(
 
 // ─── registerDetectedProjectAction ───────────────────────────────────────────
 
+/**
+ * Le chemin reçu, ramené à sa forme LEXICALE canonique : slashes uniformes,
+ * puis `.` et `..` aplatis.
+ *
+ * Aplati par `node:path/posix` et non par un motif : les règles de `..` au
+ * milieu d'un chemin sont celles de la plateforme, et les réécrire est le
+ * genre de copie qui diverge. `normalizePath` (@nodal-agents/shared) reste
+ * inchangée — elle est la clé d'identité de TOUT le dépôt, et lui faire
+ * aplatir les segments changerait la casse de cas qu'aucun test ne couvre ici.
+ *
+ * Le partage UNC est le seul cas particulier : `//serveur/part` commence par
+ * DEUX slashes, que `posix.normalize` réduit à un. On le met de côté le temps
+ * de l'aplatissement et on le remet ensuite.
+ */
+function flattenPath(raw: string): string {
+  const p = normalizePath(raw);
+  const unc = p.startsWith('//');
+  const flat = posixNormalize(unc ? p.slice(1) : p);
+  return normalizePath(unc ? `/${flat}` : flat);
+}
+
 const registerDetectedSchema = z.object({
   projectPath: z.string().min(1).max(4096),
   /** L'agent qui a écrit là, tel que la ligne le nomme. Vérifié au serveur. */
@@ -478,8 +502,21 @@ export async function registerDetectedProjectAction(
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const parsed = registerDetectedSchema.safeParse(raw);
     if (!parsed.success) return fail('validation_failed', 'Invalid project input');
-    const demande = normalizePath(parsed.data.projectPath);
-    if (demande === '') return fail('validation_failed', 'Invalid project path');
+    // Le chemin reçu, APLATI (revue Reviewer C, passe 1). `normalizePath`
+    // uniformise les slashes et retire le slash final : elle n'aplatit NI `..`
+    // NI `.`, et `isUnderPath` compare du texte. Les deux ensemble laissaient
+    // passer `<terrain>/../ailleurs`, qui commence bien par `<terrain>/` — le
+    // dossier entrait au registre, donc dans la liste des endroits où les
+    // agents peuvent écrire, HORS de tout terrain. La même forme brute
+    // produisait un second défaut, silencieux : `<terrain>/./app` a une CLÉ
+    // différente de `<terrain>/app`, donc une seconde ligne de registre pour le
+    // même dossier, que rien n'aurait rapprochée.
+    const demande = flattenPath(parsed.data.projectPath);
+    // Un chemin qui remonte au-dessus de sa racine n'est plus absolu une fois
+    // aplati (`C:/../x` devient `x`) : il ne désigne rien, et il est refusé.
+    if (demande === '' || !isAbsolutePath(demande)) {
+      return fail('validation_failed', 'Invalid project path');
+    }
 
     const db = getDb();
     const wsRows = await db
@@ -505,35 +542,35 @@ export async function registerDetectedProjectAction(
       return fail('not_in_workspace', 'This folder is not inside a workspace of this space.');
     }
 
-    // 2. LE CHEMIN RÉSOLU, jamais celui qu'on a reçu (revue Reviewer C, passe 1).
-    //
-    //    `normalizePath` uniformise les slashes et retire le slash final :
-    //    elle n'aplatit NI `..` NI `.`. Et `isUnderPath` compare du texte. Les
-    //    deux ensemble laissaient passer `<terrain>/../ailleurs`, qui commence
-    //    bien par `<terrain>/` — le dossier entrait au registre, donc dans la
-    //    liste des endroits où les agents peuvent écrire, HORS de tout terrain.
-    //
-    //    La même forme brute produisait un second défaut, silencieux :
-    //    `<terrain>/./app` a une CLÉ différente de `<terrain>/app`, donc une
-    //    seconde ligne de registre pour le même dossier, que rien n'aurait
-    //    rapprochée. Résoudre règle les deux, et c'est la RÉSOLUTION — pas un
-    //    motif à interdire — parce qu'un lien ment aussi bien qu'un `..`.
-    //
-    //    Le dossier doit donc EXISTER. Une ligne qui désigne un dossier absent
-    //    est un projet fantôme que chaque écran devra contourner (en-tête de
-    //    ce module), et la détection ne remonte que des dossiers écrits.
-    const path = await realPathIfExists(demande);
-    if (path === null) return fail('folder_missing', 'This folder is not there any more.');
+    // 2. LE DOSSIER DOIT EXISTER. Une ligne qui désigne un dossier absent est
+    //    un projet fantôme que chaque écran devra contourner (en-tête de ce
+    //    module), et la détection ne remonte que des dossiers écrits.
+    if ((await realPathIfExists(demande)) === null) {
+      return fail('folder_missing', 'This folder is not there any more.');
+    }
 
-    // 3. PHYSIQUE, sur le chemin résolu : elle seule attrape `..` et les liens.
+    // 3. PHYSIQUE : les LIENS. L'aplatissement a réglé `..` et `.`, mais un
+    //    lien posé DANS le terrain et pointant dehors passe les deux gardes de
+    //    texte, et les agents se verraient offrir un chemin qui écrit ailleurs.
+    //    `physicallyInside` résout les deux côtés ; ce qu'elle résout sert à
+    //    DÉCIDER, jamais à nommer — voir la note sur le chemin stocké.
     const holders: string[] = [];
     for (const w of candidats) {
-      if (!(await physicallyInside(path, normalizePath(w.path)))) continue;
+      if (!(await physicallyInside(demande, normalizePath(w.path)))) continue;
       if (!holders.includes(w.agentId)) holders.push(w.agentId);
     }
     if (holders.length === 0) {
       return fail('not_in_workspace', 'This folder is not inside a workspace of this space.');
     }
+
+    // LE CHEMIN STOCKÉ est celui qu'on a reçu, aplati — JAMAIS le chemin
+    // RÉSOLU (constat de la CI Windows, 19/09). Sur un runner Windows,
+    // `tmpdir()` rend un nom court 8.3 (`C:/Users/RUNNER~1/…`) que `realpath`
+    // détend en `C:/Users/runneradmin/…` : deux écritures du même dossier, donc
+    // deux CLÉS. Le registre serait indexé sur une identité que la détection ne
+    // produit jamais — le projet fraîchement inscrit resterait « Detected »
+    // dans la liste, et ni son masquage ni son nom ne seraient plus retrouvés.
+    const path = demande;
 
     const asked = parsed.data.agentId;
     // Le responsable : celui que la ligne nomme s'il détient bien le dossier,
