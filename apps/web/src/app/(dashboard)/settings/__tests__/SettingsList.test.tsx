@@ -363,6 +363,54 @@ describe('SettingsList @cap:installer-et-demarrer/ecran', () => {
     expect(onSave.mock.calls).toEqual([['Asia/Singapore']]);
   });
 
+  it('pendant l’enregistrement, le pied le dit et refuse un second clic', async () => {
+    // Le formulaire passe en attente à la soumission et n'en ressort pas —
+    // c'est ce que fait un `useTransition` tant que l'action tourne. Le pied
+    // n'a pas cet état : le `SetCtaRow` le lui ANNONCE (`DockedFormCta.tsx`),
+    // donc ce cas prouve que le fil remonte jusqu'en bas du panneau.
+    let soumissions = 0;
+    function FormulaireQuiAttend({ id }: { id: string }) {
+      const [pending, setPending] = useState(false);
+      return (
+        <form
+          id={id}
+          onSubmit={(e) => {
+            e.preventDefault();
+            soumissions += 1;
+            setPending(true);
+          }}
+        >
+          <SetCtaRow onCancel={() => {}} pending={pending} saveLabel="Save" />
+        </form>
+      );
+    }
+
+    await render(
+      list({
+        panels: { ...PANELS, timezone: <FormulaireQuiAttend id={dockedFormId('timezone')} /> },
+        initialOpen: 'timezone',
+      }),
+    );
+
+    const save = () =>
+      panel()!.querySelector<HTMLButtonElement>('[data-testid="settings-panel-save"]')!;
+    expect(save().disabled, 'au repos, il enregistre').toBe(false);
+    expect(save().textContent).toBe('Save');
+
+    await act(async () => {
+      save().click();
+    });
+
+    expect(save().textContent, 'le pied dit ce qui se passe').toBe('Saving…');
+    expect(save().disabled, 'et refuse un second envoi').toBe(true);
+
+    // Un second clic ne soumet rien : c'est ce que le `disabled` achète.
+    await act(async () => {
+      save().click();
+    });
+    expect(soumissions, 'une seule soumission').toBe(1);
+  });
+
   it('Cancel remet l’état du formulaire, puis ferme le panneau', async () => {
     await render(
       list({

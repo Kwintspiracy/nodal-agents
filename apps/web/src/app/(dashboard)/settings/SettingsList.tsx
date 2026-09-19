@@ -168,17 +168,14 @@ function ListRow({
       trailing={
         <>
           {row.toggle !== undefined && (
+            // Une IMAGE de l'état, qui se nomme. La ligne ne connaît ni les
+            // couleurs ni les décalages du composant : ils sont à lui.
             <Switch
               readOnly
               checked={row.toggle}
               onChange={() => {}}
               size="sm"
-              trackClassName={
-                row.toggle ? 'border-agent/40 bg-agent/20' : 'border-rule-2 bg-canvas'
-              }
-              thumbClassName={
-                row.toggle ? 'translate-x-[18px] bg-agent' : 'translate-x-[2px] bg-ink-3'
-              }
+              ariaLabel={`${row.name} ${row.toggle ? 'on' : 'off'}`}
             />
           )}
           {row.tag && <TagMini variant={row.tag.variant}>{row.tag.label}</TagMini>}

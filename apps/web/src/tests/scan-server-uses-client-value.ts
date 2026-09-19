@@ -33,6 +33,32 @@
  * Elle vit ici et non dans `@nodal-agents/test-kit` parce que cette frontière
  * n'existe que dans l'application Next : les scanners partagés portent des
  * invariants que TOUS les paquets doivent tenir.
+ *
+ * ─── Ce qu'elle NE voit pas, et c'est écrit exprès ─────────────────────────
+ *
+ * Une garde qui prétend tout voir se fait croire sur parole. Celle-ci lit du
+ * TEXTE, pas un arbre syntaxique, et elle laisse passer :
+ *
+ *   - les CHAÎNES de ré-exports. Un conduit (`export { X } from './Client'`)
+ *     est suivi sur UN niveau ; un conduit de conduit ne l'est pas. Et
+ *     `export * from './Client'` ne nomme rien, donc rien n'est suivi ;
+ *   - l'import DYNAMIQUE. `await import('./Client.tsx')` n'est pas une clause
+ *     `import … from`, donc il n'entre ni dans le graphe ni dans les bindings ;
+ *   - les entrées serveur que Next ajoute et que `SERVER_ENTRY` ne nomme pas —
+ *     `loading.tsx`, `global-error.tsx`, `proxy.ts`. Un module atteint
+ *     UNIQUEMENT par l'une d'elles reste hors du graphe ;
+ *   - l'ordre. Elle regarde le texte APRÈS la ligne d'import, donc un appel
+ *     placé avant son propre import (une déclaration de fonction remontée) lui
+ *     échappe ;
+ *   - les commentaires et les chaînes. `// dockedFormId(x)` ou
+ *     `'appelle dockedFormId(x)'` ressemblent à un appel : faux ROUGE possible.
+ *     C'est le sens le moins dangereux — quelqu'un regarde — mais il faut le
+ *     savoir avant d'accuser la garde.
+ *
+ * Couvrir tout cela demanderait un vrai parcours de l'arbre syntaxique. Le
+ * défaut qu'elle attrape — l'appel direct, celui qui a fait tomber /settings —
+ * vaut déjà son coût ; les autres formes sont ici pour que personne ne prenne
+ * son silence pour une preuve.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -50,6 +76,9 @@ const NEWLINE = String.fromCharCode(10);
 const SERVER_ENTRY = /(^|[\\/])(page|layout|route|template|error|not-found)\.tsx?$/;
 
 const IMPORT_RE = /import\s+([^;]+?)\s+from\s+['"]([^'"]+)['"]/g;
+
+/** `export { X, Y as Z } from './Autre.tsx'` — un conduit, pas un import. */
+const REEXPORT_RE = /export\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -138,6 +167,26 @@ export function scanForServerUsesOfClientValues(opts: { srcDir: string }): Viola
     }
   }
 
+  // Les CONDUITS : un module neutre qui ré-exporte des noms d'un module
+  // client. `export { X } from './Client.tsx'` ne rend pas `X` appelable pour
+  // autant — le serveur reçoit toujours une référence — mais le fichier qui
+  // l'importe depuis le conduit ne mentionne plus le module client, et la
+  // garde le manquerait. Un niveau de conduit suffit : le produit n'en fait
+  // pas de chaîne, et le prouver coûterait un parcours d'arbre syntaxique.
+  const conduits = new Map<string, Set<string>>();
+  for (const f of files) {
+    const text = source.get(f)!;
+    REEXPORT_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = REEXPORT_RE.exec(text)) !== null) {
+      const dest = target(f, m[2]!);
+      if (dest === null || isClient.get(dest) !== true) continue;
+      const noms = conduits.get(f) ?? new Set<string>();
+      for (const n of bindings(`{${m[1]!}}`)) noms.add(n);
+      conduits.set(f, noms);
+    }
+  }
+
   const violations: Violation[] = [];
   for (const f of serverGraph) {
     const text = source.get(f)!;
@@ -145,9 +194,13 @@ export function scanForServerUsesOfClientValues(opts: { srcDir: string }): Viola
     let m: RegExpExecArray | null;
     while ((m = IMPORT_RE.exec(text)) !== null) {
       const dest = target(f, m[2]!);
-      if (dest === null || isClient.get(dest) !== true) continue;
+      if (dest === null) continue;
+      const relayes = conduits.get(dest);
+      const direct = isClient.get(dest) === true;
+      if (!direct && relayes === undefined) continue;
       const after = text.slice(m.index + m[0].length);
       for (const name of bindings(m[1]!)) {
+        if (!direct && !relayes!.has(name)) continue;
         // Ce que la garde retient : l'APPEL. C'est la forme qui casse à coup
         // sûr et bruyamment — Next lève « Attempted to call X() from the
         // server but X is on the client » — et c'est celle qui a fait tomber
@@ -162,9 +215,11 @@ export function scanForServerUsesOfClientValues(opts: { srcDir: string }): Viola
             file: f.slice(opts.srcDir.length + 1),
             line: text.slice(0, m.index).split(NEWLINE).length,
             rule: 'server-uses-client-value',
-            text:
-              `${name}() est APPELÉ depuis le graphe serveur alors que ${m[2]} porte ` +
-              `'use client' — le serveur ne peut que le RENDRE, pas l'appeler`,
+            text: direct
+              ? `${name}() est APPELÉ depuis le graphe serveur alors que ${m[2]} porte ` +
+                `'use client' — le serveur ne peut que le RENDRE, pas l'appeler`
+              : `${name}() est APPELÉ depuis le graphe serveur ; ${m[2]} le ré-exporte ` +
+                `d'un module 'use client', ce qui ne le rend pas appelable`,
           });
         }
       }

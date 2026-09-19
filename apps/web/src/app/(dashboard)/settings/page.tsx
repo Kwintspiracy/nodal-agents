@@ -246,7 +246,7 @@ function WorkerSecretPanel({ configured }: { configured: boolean }) {
         {configured ? (
           <span className="text-medium-14 text-ink-2">Set at install</span>
         ) : (
-          <span className="text-medium-14 text-warn">missing — runner calls will 403</span>
+          <span className="text-medium-14 text-warn">Missing, runner calls will 403</span>
         )}
       </SetRow>
       <SetRow
