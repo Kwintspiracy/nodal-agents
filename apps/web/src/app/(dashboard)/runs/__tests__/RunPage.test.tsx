@@ -41,7 +41,7 @@ const turn = (index: number, text: string): FeedItem => ({
   index,
   turn: index,
   turnSource: 'audit',
-  agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+  agent: { name: 'Nestor', slug: 'nestor', avatarUrl: null },
   model: 'z-ai/glm-5.3',
   blocks: [{ kind: 'prose', text }],
   usage: null,
@@ -53,8 +53,8 @@ const child: FeedItem = {
   kind: 'child',
   job: {
     id: 'job-child',
-    agentName: 'Reviewer C',
-    agentSlug: 'reviewer-c',
+    agentName: 'Second Reader',
+    agentSlug: 'second-reader',
     agentAvatarUrl: null,
     status: 'completed',
     task: 'relis le digest',
@@ -63,7 +63,7 @@ const child: FeedItem = {
     createdAt: null,
     completedAt: null,
   },
-  from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+  from: { name: 'Nestor', slug: 'nestor', avatarUrl: null },
 };
 
 const delivered: FeedItem = {
@@ -98,8 +98,8 @@ function data(live: boolean): SpaceConversationView {
       task: TASK,
       channel: 'cron',
       status: live ? 'processing' : 'completed',
-      agentName: 'Alfred',
-      agentSlug: 'alfred',
+      agentName: 'Nestor',
+      agentSlug: 'nestor',
       agentAvatarUrl: null,
       createdAt: new Date('2026-09-18T09:00:00Z'),
       completedAt: live ? null : new Date('2026-09-18T09:00:41Z'),
@@ -201,7 +201,7 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
   });
 
   it('l’en-tête porte l’agent, la routine, le modèle et les chiffres du run', () => {
-    expect(html).toContain('Alfred');
+    expect(html).toContain('Nestor');
     expect(html).toContain('scheduled · every Monday 09:00');
     expect(html).toContain('z-ai/glm-5.3');
     expect(html).toContain('$0.04');

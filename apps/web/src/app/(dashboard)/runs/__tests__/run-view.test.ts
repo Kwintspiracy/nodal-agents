@@ -39,7 +39,7 @@ const turn = (over: Partial<Extract<FeedItem, { kind: 'turn' }>> = {}): FeedItem
   index: 1,
   turn: 1,
   turnSource: 'audit',
-  agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+  agent: { name: 'Nestor', slug: 'nestor', avatarUrl: null },
   model: 'z-ai/glm-5.3',
   blocks: [{ kind: 'prose', text: 'Digest posted.' }],
   usage: null,
@@ -75,8 +75,8 @@ function view(over: {
       task: 'Weekly digest of the open GitHub issues',
       channel: 'cron',
       status: 'completed',
-      agentName: 'Alfred',
-      agentSlug: 'alfred',
+      agentName: 'Nestor',
+      agentSlug: 'nestor',
       agentAvatarUrl: null,
       createdAt: new Date('2026-09-18T09:00:00Z'),
       completedAt: new Date('2026-09-18T09:00:41Z'),
@@ -325,7 +325,7 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
   });
 
   it('sans verdict, la réponse sort comme avant', () => {
-    const propre = 'Reviewer C a fermé les deux majeurs. Je livre.';
+    const propre = 'Second Reader a fermé les deux majeurs. Je livre.';
     const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: propre }] })];
     expect(liftReply(items, done, false).reply).toBe(propre);
     // Et le défaut du paramètre est « pas relu » : un appelant qui l'ignore
@@ -384,7 +384,7 @@ describe('run-view — le résumé de l’activité @cap:suivre-execution/ecran'
     const items: FeedItem[] = [
       turn(),
       turn({ index: 2 }),
-      turn({ index: 3, agent: { name: 'Reviewer C', slug: 'reviewer-c', avatarUrl: null } }),
+      turn({ index: 3, agent: { name: 'Second Reader', slug: 'second-reader', avatarUrl: null } }),
     ];
     const summary = activitySummary(items, {
       createdAt: new Date('2026-09-18T09:00:00Z'),
