@@ -27,7 +27,18 @@ nodal-agents up
 
 Run the two commands — **no config files, no account, nothing to answer in the terminal**. Your browser opens straight to a guided setup: connect a model, create your first agent, and you're working. Behind it, the CLI spawns an embedded Postgres on a free port, applies migrations, seeds the system skills, and starts the runner (`:3001`) and dashboard (`:3000`).
 
+Or, without installing anything globally: `npx nodal-agents up`.
+
 > Node 22+ · no external Postgres, no Redis, no cloud config · runs locally with no login · data lives in `~/.nodalai/` · stop with `nodal-agents down`
+
+**If npm asks you to approve install scripts.** Recent npm versions print `npm warn allow-scripts …` and skip the install step of the packages they list. Only one of them matters: `@embedded-postgres/<platform>` carries the Postgres binaries Nodal boots. Approve that one, then install again:
+
+```bash
+npm approve-scripts @embedded-postgres/windows-x64   # or darwin-arm64, darwin-x64, linux-x64, linux-arm64
+npm install -g nodal-agents@latest
+```
+
+The other packages npm lists run fine without their scripts. [Full note in the docs](https://kwintspiracy.github.io/nodal-agents/docs/getting-started).
 
 ---
 

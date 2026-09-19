@@ -16,6 +16,42 @@ npm install -g nodal-agents
 nodal-agents up
 ```
 
+Prefer not to install anything globally? `npx nodal-agents up` runs the same
+stack from a one-off download.
+
+### If npm asks you to approve install scripts
+
+Recent npm versions do not run a package's install scripts until you approve
+them. On a fresh install you may see this:
+
+```
+npm warn allow-scripts 4 packages have install scripts not yet covered by allowScripts:
+npm warn allow-scripts   @embedded-postgres/windows-x64@18.3.0-beta.17 (install: (install scripts present))
+npm warn allow-scripts   @whiskeysockets/baileys@6.7.23 (preinstall: node ./engine-requirements.js)
+npm warn allow-scripts   protobufjs@7.6.6 (postinstall: node scripts/postinstall)
+npm warn allow-scripts   tesseract.js@7.0.0 (postinstall: opencollective-postinstall || true)
+npm warn allow-scripts Run npm approve-scripts --allow-scripts-pending to review, or npm approve-scripts <pkg> to allow.
+```
+
+**Only one of those packages matters.** `@embedded-postgres/<platform>` carries
+the Postgres binaries Nodal boots, and its install step finishes preparing them.
+The other three run fine without their scripts. Approve that one package, then
+install again:
+
+```bash
+npm approve-scripts @embedded-postgres/darwin-arm64
+npm install -g nodal-agents@latest
+```
+
+Use the name for your machine: `darwin-arm64` (Apple Silicon), `darwin-x64`
+(Intel Mac), `linux-x64`, `linux-arm64`, or `windows-x64`. It is the name npm
+printed in the warning.
+
+<Callout type="info">
+  Skip this if your npm printed no such warning. Older npm has no `approve-scripts` command at all
+  (npm 11.5.2, for one), and nothing to approve.
+</Callout>
+
 ## First run: the setup wizard
 
 The very first time you run `nodal-agents up` — when no `~/.nodalai/config.json`
