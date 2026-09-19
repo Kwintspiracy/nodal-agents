@@ -58,8 +58,8 @@ beforeAll(async () => {
     .insert(agents)
     .values({
       entityId: seed.entityId,
-      name: 'Dev C',
-      slug: `dev-c-${Date.now()}`,
+      name: 'Builder A',
+      slug: `builder-a-${Date.now()}`,
       personality: 'x',
     })
     .returning();
@@ -68,8 +68,8 @@ beforeAll(async () => {
     .insert(agents)
     .values({
       entityId: seed.entityId,
-      name: 'Lead-Dev',
-      slug: `lead-${Date.now()}`,
+      name: 'Builder B',
+      slug: `builder-b-${Date.now()}`,
       personality: 'x',
     })
     .returning();
@@ -146,7 +146,7 @@ describe('listCodeProjectsForContext', () => {
     const calorie = projects.find((p) => p.name === 'calorie-counter')!;
     expect(calorie.path).toBe(`${racine}/dev/calorie-counter`);
     // Les deux agents partagent le workspace → tous deux détenteurs.
-    expect(calorie.owners).toEqual(['Dev C', 'Lead-Dev']);
+    expect(calorie.owners).toEqual(['Builder A', 'Builder B']);
     expect(calorie.lastActivityAt).toBeTruthy();
 
     // Le conteneur lui-même n'est JAMAIS un projet.
@@ -995,7 +995,7 @@ describe('listCodeProjectsForContext — le registre @cap:travailler-sur-des-fic
       // Le nom que le propriétaire a choisi, et le responsable déclaré : rien
       // n'est observé sur ce dossier, il n'y a que la déclaration à lire.
       expect(silent!.name).toBe('Silent App');
-      expect(silent!.owners).toEqual(['Lead-Dev']);
+      expect(silent!.owners).toEqual(['Builder B']);
       // Aucune activité OBSERVÉE : `null`, jamais une date inventée.
       expect(silent!.lastActivityAt).toBeNull();
 
@@ -1030,7 +1030,7 @@ describe('listCodeProjectsForContext — le registre @cap:travailler-sur-des-fic
       expect(entrees).toHaveLength(1);
       // Les détenteurs OBSERVÉS l'emportent sur le seul responsable déclaré :
       // les deux agents partagent le dossier, et le contexte le dit.
-      expect(entrees[0]!.owners).toEqual(['Dev C', 'Lead-Dev']);
+      expect(entrees[0]!.owners).toEqual(['Builder A', 'Builder B']);
       expect(entrees[0]!.lastActivityAt).toBeTruthy();
     } finally {
       await db.delete(codeProjects).where(eq(codeProjects.entityId, seed.entityId));

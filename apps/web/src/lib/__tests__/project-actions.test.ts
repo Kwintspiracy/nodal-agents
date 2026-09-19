@@ -1032,10 +1032,84 @@ describe('registerDetectedProjectAction @cap:travailler-sur-des-fichiers/moteur'
     expect(await ligneDuProjet(chezLeVoisin)).toBeNull();
   });
 
+  it('refuse un chemin qui SORT du terrain par `..`, même s’il commence par lui', async () => {
+    // Revue Reviewer C, passe 1. `normalizePath` n'aplatit pas `..` et
+    // `isUnderPath` compare du texte : `<terrain>/../evade` commence bien par
+    // `<terrain>/` et passait pour un enfant. Le dossier entrait au registre,
+    // donc dans la liste des endroits où les agents peuvent écrire, HORS de
+    // tout terrain.
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const evade = join(racine, 'evade').replace(/\\/g, '/');
+    await mkdir(evade, { recursive: true });
+    const parLeHaut = `${terrain.path}/../evade`;
+
+    const result = await registerDetectedProjectAction({ projectPath: parLeHaut, agentId: null });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_in_workspace');
+    // Ni sous la forme reçue, ni sous la forme résolue.
+    expect(await ligneDuProjet(parLeHaut)).toBeNull();
+    expect(await ligneDuProjet(evade)).toBeNull();
+  });
+
+  it('refuse un dossier qui n’existe PAS : un projet fantôme ne s’inscrit pas', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const disparu = `${terrain.path}/jamais-cree`;
+
+    const result = await registerDetectedProjectAction({ projectPath: disparu, agentId: null });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('folder_missing');
+    expect(await ligneDuProjet(disparu)).toBeNull();
+  });
+
+  it('un `.` et des antislashs désignent le MÊME dossier : une seule ligne, chemin canonique', async () => {
+    // Le second défaut de la forme brute : `<terrain>/./app` a une CLÉ
+    // différente de `<terrain>/app`, donc une seconde ligne de registre pour
+    // le même dossier, que rien n'aurait rapprochée.
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const canonique = `${terrain.path}/canonique`;
+    await mkdir(canonique, { recursive: true });
+
+    const premier = await registerDetectedProjectAction({
+      projectPath: `${terrain.path}/./canonique`,
+      agentId: null,
+    });
+    expect(premier.ok, premier.ok ? '' : premier.message).toBe(true);
+    if (!premier.ok) return;
+    // Le chemin STOCKÉ est le chemin réel, pas la forme reçue.
+    expect(premier.data.path).toBe(canonique);
+    const ligne = await ligneDuProjet(canonique);
+    expect(ligne!.projectPath).toBe(canonique);
+
+    // La même demande écrite autrement ne crée PAS de seconde ligne.
+    const second = await registerDetectedProjectAction({
+      projectPath: `${terrain.path.replace(/\//g, '\\')}\\canonique`,
+      agentId: null,
+    });
+    expect(second.ok, second.ok ? '' : second.message).toBe(true);
+    if (!second.ok) return;
+    expect(second.data.id).toBe(premier.data.id);
+
+    const toutes = await testDb
+      .select({ id: codeProjects.id })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.entityId, seed.entityId),
+          eq(codeProjects.projectKey, projectKey(canonique)),
+        ),
+      );
+    expect(toutes).toHaveLength(1);
+  });
+
   it('ÉCRIT la ligne du registre : enregistrée, de sorte « code », avec son responsable', async () => {
     const { registerDetectedProjectAction, listProjectsAction } =
       await import('../project-actions.ts');
     const detecte = `${terrain.path}/detecte-app`;
+    // Le dossier EXISTE : la détection ne remonte que des dossiers où quelque
+    // chose a été écrit, et le registre refuse un projet fantôme.
+    await mkdir(detecte, { recursive: true });
 
     const avant = new Date();
     const result = await registerDetectedProjectAction({ projectPath: detecte, agentId: null });
@@ -1065,6 +1139,7 @@ describe('registerDetectedProjectAction @cap:travailler-sur-des-fichiers/moteur'
   it('un projet DÉJÀ inscrit n’est pas réinscrit : sa date d’ajout et son nom restent', async () => {
     const { registerDetectedProjectAction } = await import('../project-actions.ts');
     const dejaLa = `${terrain.path}/deja-inscrit`;
+    await mkdir(dejaLa, { recursive: true });
     const ancienne = new Date('2026-09-01T10:00:00.000Z');
     await testDb.insert(codeProjects).values({
       entityId: seed.entityId,
@@ -1089,6 +1164,7 @@ describe('registerDetectedProjectAction @cap:travailler-sur-des-fichiers/moteur'
   it('une ligne de COMPTABILITÉ (renommée, masquée) devient un projet sans perdre ses gestes', async () => {
     const { registerDetectedProjectAction } = await import('../project-actions.ts');
     const range = `${terrain.path}/range-puis-inscrit`;
+    await mkdir(range, { recursive: true });
     await testDb.insert(codeProjects).values({
       entityId: seed.entityId,
       projectPath: range,

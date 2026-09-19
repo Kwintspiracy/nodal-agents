@@ -478,8 +478,8 @@ export async function registerDetectedProjectAction(
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const parsed = registerDetectedSchema.safeParse(raw);
     if (!parsed.success) return fail('validation_failed', 'Invalid project input');
-    const path = normalizePath(parsed.data.projectPath);
-    if (path === '') return fail('validation_failed', 'Invalid project path');
+    const demande = normalizePath(parsed.data.projectPath);
+    if (demande === '') return fail('validation_failed', 'Invalid project path');
 
     const db = getDb();
     const wsRows = await db
@@ -487,16 +487,50 @@ export async function registerDetectedProjectAction(
       .from(agentWorkspaces)
       .where(eq(agentWorkspaces.entityId, session.entityId));
 
-    const holders = [
-      ...new Set(
-        wsRows
-          .filter((w) => {
-            const root = normalizePath(w.path);
-            return projectKey(path) === projectKey(root) || isUnderPath(path, root);
-          })
-          .map((w) => w.agentId),
-      ),
-    ];
+    // TROIS gardes, dans CET ordre, et l'ordre fait partie de la garde.
+    //
+    // 1. LEXICALE, sur le chemin demandé. Elle passe avant toute lecture du
+    //    disque : un chemin qui ne ressemble à aucun terrain est refusé sans
+    //    qu'on soit allé voir s'il existe. Sinon la réponse dirait, de
+    //    n'importe quel chemin de la machine, s'il est là ou non.
+    //    C'est aussi la seule qui tienne quand un terrain n'est pas encore sur
+    //    le disque : la garde physique remonterait alors le terrain jusqu'à un
+    //    ancêtre existant — parfois la racine du disque — et laisserait tout
+    //    passer.
+    const candidats = wsRows.filter((w) => {
+      const root = normalizePath(w.path);
+      return isUnderPath(demande, root) || projectKey(demande) === projectKey(root);
+    });
+    if (candidats.length === 0) {
+      return fail('not_in_workspace', 'This folder is not inside a workspace of this space.');
+    }
+
+    // 2. LE CHEMIN RÉSOLU, jamais celui qu'on a reçu (revue Reviewer C, passe 1).
+    //
+    //    `normalizePath` uniformise les slashes et retire le slash final :
+    //    elle n'aplatit NI `..` NI `.`. Et `isUnderPath` compare du texte. Les
+    //    deux ensemble laissaient passer `<terrain>/../ailleurs`, qui commence
+    //    bien par `<terrain>/` — le dossier entrait au registre, donc dans la
+    //    liste des endroits où les agents peuvent écrire, HORS de tout terrain.
+    //
+    //    La même forme brute produisait un second défaut, silencieux :
+    //    `<terrain>/./app` a une CLÉ différente de `<terrain>/app`, donc une
+    //    seconde ligne de registre pour le même dossier, que rien n'aurait
+    //    rapprochée. Résoudre règle les deux, et c'est la RÉSOLUTION — pas un
+    //    motif à interdire — parce qu'un lien ment aussi bien qu'un `..`.
+    //
+    //    Le dossier doit donc EXISTER. Une ligne qui désigne un dossier absent
+    //    est un projet fantôme que chaque écran devra contourner (en-tête de
+    //    ce module), et la détection ne remonte que des dossiers écrits.
+    const path = await realPathIfExists(demande);
+    if (path === null) return fail('folder_missing', 'This folder is not there any more.');
+
+    // 3. PHYSIQUE, sur le chemin résolu : elle seule attrape `..` et les liens.
+    const holders: string[] = [];
+    for (const w of candidats) {
+      if (!(await physicallyInside(path, normalizePath(w.path)))) continue;
+      if (!holders.includes(w.agentId)) holders.push(w.agentId);
+    }
     if (holders.length === 0) {
       return fail('not_in_workspace', 'This folder is not inside a workspace of this space.');
     }
