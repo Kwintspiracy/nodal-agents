@@ -25,7 +25,6 @@ const projet = (over: Partial<ProjectListRow> & { id: string; name: string }): P
   agentId: 'agent-1',
   agentName: 'Alfred',
   agentSlug: 'alfred',
-  agentAvatarUrl: null,
   registeredFrom: 'spaces',
   registeredAt: new Date('2026-09-01T10:00:00Z'),
   hidden: false,

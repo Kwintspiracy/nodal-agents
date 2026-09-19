@@ -28,7 +28,8 @@ import { useId, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import AgentAvatar from '@/components/ui/AgentAvatar';
+import { Folder } from '@phosphor-icons/react/dist/ssr';
+import Disc from '@/components/ui/Disc';
 import StatusPill from '@/components/ui/StatusPill';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
@@ -99,15 +100,15 @@ function RowBody({ row }: { row: WorkspaceRow }) {
   const proof = row.proof === null ? null : PROOF[row.proof];
   return (
     <>
-      {/* L'avatar de l'agent RESPONSABLE. Sans agent, une case vide : mettre
-          les initiales du projet à cette place ferait lire le nom du dossier
-          comme le nom d'un agent qui n'existe pas. */}
-      <AgentAvatar
-        name={row.agentName ?? ''}
-        imageUrl={row.agentAvatarUrl}
-        size="md"
-        shape="square"
-      />
+      {/* UN DOSSIER, pas un visage (Quentin, 19/09). La ligne portait l'avatar
+          de l'agent responsable ; il est systématiquement l'orchestrateur, donc
+          le même sur toutes les lignes — une colonne qui n'apprend rien. Ce
+          que la ligne EST, c'est un dossier, et la marque le dit.
+          `Disc` est la primitive du DS pour une icône dans une case : même
+          géométrie et même fond que l'avatar carré qu'elle remplace. */}
+      <Disc variant="neutral" size="sm" shape="square">
+        <Folder weight="fill" />
+      </Disc>
       {/* min-w-0 : sans lui, un chemin long refuse de se couper et pousse
           l'heure et la pastille hors de la ligne. */}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">

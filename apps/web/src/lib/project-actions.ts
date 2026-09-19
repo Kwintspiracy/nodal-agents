@@ -80,8 +80,6 @@ export type ProjectListRow = {
   agentId: string | null;
   agentName: string | null;
   agentSlug: string | null;
-  /** L'avatar de l'agent responsable — la ligne de Workspaces l'affiche (#143). */
-  agentAvatarUrl: string | null;
   registeredFrom: 'spaces' | 'conversation';
   registeredAt: Date;
   hidden: boolean;
@@ -297,7 +295,6 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         agentId: codeProjects.agentId,
         agentName: agents.name,
         agentSlug: agents.slug,
-        agentAvatarUrl: agents.avatarUrl,
         jobsCount: sql<number>`count(${agentJobs.id})`,
         lastActivityAt: sql<Date | null>`max(${agentJobs.createdAt})`,
       })
@@ -309,7 +306,6 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         codeProjects.id,
         agents.name,
         agents.slug,
-        agents.avatarUrl,
         // `max()` et `count()` imposent de grouper sur tout le reste : Postgres
         // ne déduit pas que la clé primaire suffit dès qu'une table jointe
         // apporte ses colonnes.
@@ -371,7 +367,6 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         registeredFrom: (r.registeredFrom ?? 'spaces') as 'spaces' | 'conversation',
         registeredAt: r.registeredAt as Date,
         hidden: r.hidden,
-        agentAvatarUrl: r.agentAvatarUrl ?? null,
         jobsCount: Number(r.jobsCount ?? 0),
         conversationsCount: conversationsCountByProject.get(r.id) ?? 0,
         lastActivityAt: r.lastActivityAt ? new Date(r.lastActivityAt) : null,

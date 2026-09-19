@@ -48,7 +48,6 @@ export type WorkspaceRow = {
    */
   produces: 'code' | 'documents' | null;
   agentName: string | null;
-  agentAvatarUrl: string | null;
   /**
    * Les conversations du projet. `null` pour un détecté — un dossier hors
    * registre n'en porte aucune, et écrire « 0 conversations » laisserait
@@ -213,7 +212,6 @@ export function mergeWorkspaces(input: {
       path: p.path,
       produces: p.kind,
       agentName: p.agentName ?? g?.agentName ?? null,
-      agentAvatarUrl: p.agentAvatarUrl,
       conversations: p.conversationsCount,
       sessions: g?.sessions ?? 0,
       lastActivityAt: laterOf(p.lastActivityAt, g?.lastActivityAt ?? null),
@@ -244,7 +242,6 @@ export function mergeWorkspaces(input: {
       path: g.path,
       produces: null,
       agentName: g.agentName,
-      agentAvatarUrl: null,
       conversations: null,
       sessions: g.sessions,
       lastActivityAt: g.lastActivityAt,

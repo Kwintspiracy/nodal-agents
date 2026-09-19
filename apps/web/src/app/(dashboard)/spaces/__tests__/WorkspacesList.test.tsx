@@ -27,7 +27,6 @@ const ligne = (over: Partial<WorkspaceRow> & { key: string; name: string }): Wor
   path: 'D:/Dev/projet',
   produces: 'code',
   agentName: 'Alfred',
-  agentAvatarUrl: null,
   conversations: 0,
   sessions: 0,
   lastActivityAt: null,
@@ -92,6 +91,16 @@ describe('WorkspacesList @cap:travailler-sur-des-fichiers/ecran', () => {
   it('un projet masqué reste listé, et le DIT', () => {
     expect(html).toContain('Vieux dossier');
     expect(html).toContain('hidden');
+  });
+
+  it('chaque ligne porte un DOSSIER, jamais un visage', () => {
+    // Quentin, 19/09 : l'avatar de l'agent responsable était le même sur
+    // toutes les lignes — c'est systématiquement l'orchestrateur —, donc une
+    // colonne qui n'apprenait rien. Ce que la ligne EST, c'est un dossier.
+    // Une marque par ligne, et aucune initiale d'agent.
+    expect(html.match(/<svg/g)?.length ?? 0).toBeGreaterThanOrEqual(rows.length);
+    // « AL », les initiales qu'Alfred dessinait dans l'avatar, ont disparu.
+    expect(html).not.toContain('>AL<');
   });
 
   it('les deux sortes de lignes sont dans la MÊME liste', () => {
