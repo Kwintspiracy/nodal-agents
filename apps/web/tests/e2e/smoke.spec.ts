@@ -30,7 +30,7 @@ test.beforeAll(async () => {
 });
 
 test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
-  test('the root page IS a new conversation — no login form, no redirect away', async ({
+  test('the root page IS a new conversation, with no login form and no redirect away', async ({
     page,
   }) => {
     const response = await page.goto('/');
@@ -42,12 +42,12 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
     expect(response?.status(), 'root page HTTP status').toBeLessThan(400);
 
     // Onboarding is a legitimate destination on a stack with no agent created
-    // yet — and it is decided BEFORE anything about the page is asserted, so a
+    // yet, and it is decided BEFORE anything about the page is asserted, so a
     // fresh stack skips instead of failing on a screen it was never shown.
-    test.skip(page.url().includes('/onboarding'), 'fresh stack — still in onboarding');
+    test.skip(page.url().includes('/onboarding'), 'fresh stack, still in onboarding');
 
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
-    // #248 — the root is the empty thread: the greeting and the composer, not
+    // #248: the root is the empty thread, the greeting and the composer, not
     // the dashboard's metric cards.
     await expect(page.getByText(/what are we building today\?/i)).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Total jobs')).toHaveCount(0);
@@ -58,7 +58,7 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
   }) => {
     const response = await page.goto('/dashboard');
     expect(response?.status(), '/dashboard HTTP status').toBeLessThan(400);
-    test.skip(page.url().includes('/onboarding'), 'fresh stack — still in onboarding');
+    test.skip(page.url().includes('/onboarding'), 'fresh stack, still in onboarding');
     expect(new URL(page.url()).pathname, 'no redirect away from /dashboard').toBe('/dashboard');
     await expect(page.getByText('Total jobs')).toBeVisible({ timeout: 10_000 });
   });
