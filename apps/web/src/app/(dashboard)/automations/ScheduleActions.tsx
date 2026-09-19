@@ -71,7 +71,7 @@ export default function ScheduleActions({ schedule: s, agents, layout = 'row' }:
     startTransition(async () => {
       const r = await duplicateScheduleAction(s.id);
       if (!r.ok) toast.error(r.message);
-      else toast.success(`Duplicated "${s.name}" — paused; enable it when ready`);
+      else toast.success(`Duplicated "${s.name}", paused. Enable it when ready.`);
     });
   }
 

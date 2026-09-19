@@ -57,7 +57,7 @@ export default function WebhookActions({ webhook: w, onRevealed, layout = 'row' 
       if (!r.ok) toast.error(r.message);
       else {
         onRevealed(w.id, { secret: r.data.secret, path: r.data.path });
-        toast.success('Secret rotated — the old URL no longer works');
+        toast.success('Secret rotated. The old URL no longer works.');
       }
     });
   }
@@ -75,7 +75,7 @@ export default function WebhookActions({ webhook: w, onRevealed, layout = 'row' 
     <ConfirmDialog
       open={rotateConfirmOpen}
       title="Rotate webhook secret?"
-      message="A new URL is generated immediately and the current one stops working — update the external service before it fires again."
+      message="A new URL is generated immediately and the current one stops working. Update the external service before it fires again."
       confirmLabel="Rotate"
       destructive={false}
       onConfirm={performRotate}

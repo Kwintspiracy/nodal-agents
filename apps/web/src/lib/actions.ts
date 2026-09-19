@@ -10521,7 +10521,13 @@ async function readAutomationRuns(
  *     dans la provenance quand la colonne a été mise à NULL par une
  *     suppression (même règle que `toSpaceListRow`) ;
  *   — un webhook n'a pas de colonne : ses runs portent son `slug` dans la
- *     provenance, qui est stable à travers les renommages.
+ *     provenance, qui est stable à travers les renommages. C'est bien ce que
+ *     la route entrante écrit — `apps/runner/src/routes/webhook.ts`, montée
+ *     sur `POST /webhooks/:slug/:secret` (`apps/runner/src/server.ts`), insère
+ *     `channel: 'webhook'` et `triggerContext: { type: 'webhook', …, slug:
+ *     trigger.slug }`, ce que son propre test affirme ligne à ligne
+ *     (`apps/runner/src/tests/routes/webhook.test.ts`). Vérifié le 19/09/2026
+ *     plutôt que supposé : le filtre d'ici ne vaut que ce que la route écrit.
  *
  * Un id qui n'est ni l'un ni l'autre — ou qui appartient à une autre entité —
  * est `not_found`, jamais une page vide (invariant #4).

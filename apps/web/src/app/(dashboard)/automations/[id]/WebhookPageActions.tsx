@@ -25,7 +25,7 @@ export default function WebhookPageActions({ webhook }: { webhook: WebhookTrigge
       {revealed && (
         <div className="w-full">
           <SetUrl
-            subtitle="Webhook URL — contains the secret, treat it like a password"
+            subtitle="Webhook URL, contains the secret. Treat it like a password."
             url={composeWebhookUrl(revealed.path)}
           />
         </div>

@@ -29,7 +29,7 @@ import { createElement, type ReactElement, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, agentSchedules, webhookTriggers } from '@nodal-agents/db';
+import { agentJobs, agentSchedules, webhookTriggers, eq } from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -96,6 +96,9 @@ let digestRunIds: string[];
 /** Les runs qui ne sont PAS les siens et ne doivent apparaître nulle part. */
 let etrangerRunIds: string[];
 let hookRunId: string;
+/** Les automatisations d'une AUTRE entité — jamais servies à cette session. */
+let scheduleVoisinId: string;
+let hookVoisinId: string;
 
 beforeAll(async () => {
   const result = await spinUpTestDb();
@@ -296,6 +299,40 @@ beforeAll(async () => {
     .returning({ id: agentJobs.id });
   hookRunId = hookRuns[0]?.id ?? '';
   etrangerRunIds = [...cleanupRuns.map((r) => r.id), hookRuns[1]?.id ?? ''];
+
+  // Une SECONDE entité, avec son agent et ses automatisations. La session des
+  // tests reste celle de la première (voir les doubles de `requireAuth` et
+  // `applyActiveEntity` plus haut, qui rendent tous deux `seed.entityId`) :
+  // tout ce qui est semé ici appartient à quelqu'un d'autre.
+  const voisin = await seedMinimal(testDb);
+  const [scheduleVoisin] = await testDb
+    .insert(agentSchedules)
+    .values({
+      entityId: voisin.entityId,
+      agentId: voisin.agentId,
+      name: 'Another tenant digest',
+      cronExpr: '0 9 * * 1',
+      task: 'Not ours to read.',
+      active: true,
+    })
+    .returning();
+  if (!scheduleVoisin) throw new Error('seed: schedule of the other entity');
+  scheduleVoisinId = scheduleVoisin.id;
+
+  const [hookVoisin] = await testDb
+    .insert(webhookTriggers)
+    .values({
+      entityId: voisin.entityId,
+      agentId: voisin.agentId,
+      name: 'Another tenant hook',
+      slug: 'another-tenant-hook',
+      taskTemplate: 'Not ours to read.',
+      secret: 'not-ours',
+      active: true,
+    })
+    .returning();
+  if (!hookVoisin) throw new Error('seed: webhook of the other entity');
+  hookVoisinId = hookVoisin.id;
 });
 
 let container: HTMLDivElement;
@@ -397,6 +434,34 @@ describe('les runs d’une automatisation @cap:planifier-une-tache/moteur', () =
     const result = await getAutomationAction('11111111-1111-4111-8111-111111111111');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('not_found');
+  });
+
+  it('ne sert pas l’automatisation d’une AUTRE entité, même avec son id exact', async () => {
+    // L'id existe, la ligne existe, et elle n'appartient pas à cette session.
+    // Elle doit être introuvable — pas « vide », pas « sans runs » : un id
+    // valide qui rendrait une page à moitié remplie dirait déjà que la chose
+    // existe, et c'est déjà en dire trop.
+    for (const id of [scheduleVoisinId, hookVoisinId]) {
+      const result = await getAutomationAction(id);
+      expect(result.ok, `l'automatisation ${id} n'est pas servie`).toBe(false);
+      if (!result.ok) expect(result.code).toBe('not_found');
+    }
+    // Les deux lignes sont bien LÀ, et lisibles par leur id seul : sans cette
+    // vérification, le test passerait sur une base où rien n'a été semé, ou sur
+    // un chargeur qui refuserait tout.
+    const semees = await testDb
+      .select({ id: agentSchedules.id, entityId: agentSchedules.entityId })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, scheduleVoisinId));
+    expect(semees).toHaveLength(1);
+    expect(semees[0]?.entityId).not.toBe(seed.entityId);
+
+    // Le contraste qui rend le cas discriminant : le MÊME chargeur, appelé de
+    // la MÊME façon, ouvre les automatisations de cette session. Seule
+    // l'appartenance sépare les deux réponses.
+    for (const id of [digestId, hookId]) {
+      expect((await getAutomationAction(id)).ok, `les nôtres s'ouvrent (${id})`).toBe(true);
+    }
   });
 
   it('ne rend jamais le secret d’un webhook', async () => {
