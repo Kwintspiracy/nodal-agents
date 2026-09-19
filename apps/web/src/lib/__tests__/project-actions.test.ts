@@ -1390,12 +1390,9 @@ describe('getProjectFactsAction @cap:travailler-sur-des-fichiers/moteur', () => 
     expect(result.data.conversations).toBe(1);
     expect(result.data.sessions).toBe(1);
     expect(result.data.isGitRepository).toBe(true);
-    // Ce run-là a une conversation : il ne fait pas de ligne à lui, et le
-    // compteur de l'onglet ne le compte donc pas deux fois.
-    expect(result.data.sessionsWithoutConversation).toBe(0);
   });
 
-  it('le compteur de l’onglet ne compte PAS deux fois un run que sa conversation porte', async () => {
+  it('compte TOUS les runs de tête du projet, portés par un fil ou non', async () => {
     const { getProjectFactsAction } = await import('../project-actions.ts');
     const chemin = `${terrain.path}/faits-compteur`;
     const projectId = await enregistre({ path: chemin, name: 'Compteur' });
@@ -1434,10 +1431,9 @@ describe('getProjectFactsAction @cap:travailler-sur-des-fichiers/moteur', () => 
     const result = await getProjectFactsAction(projectId);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // Deux runs au total, mais UNE seule ligne de session à l'écran : l'autre
-    // vit dans son fil, sous « 1 session inside ».
+    // « 2 sessions » sous le nom du projet : les deux ont tourné dedans, que
+    // l'une soit portée par un fil ou non.
     expect(result.data.sessions).toBe(2);
-    expect(result.data.sessionsWithoutConversation).toBe(1);
     expect(result.data.conversations).toBe(1);
   });
 

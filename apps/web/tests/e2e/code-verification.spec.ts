@@ -3,7 +3,8 @@
  * (plan « Vérifier & Corriger », T22 / D9).
  *
  * Il vivait sur l'onglet Code jusqu'à #143 ; il est maintenant sur l'onglet
- * « Files & proof » de la page du projet, et ce parcours l'y ouvre.
+ * « Files & proof » de la page du projet, ouvert par défaut à côté de ses
+ * conversations, et ce parcours l'y trouve.
  *
  * Six scénarios :
  *   A — configurer puis approuver : la pilule passe à « Needs your approval »
@@ -14,8 +15,9 @@
  *       (non jouable en local-trust, voir le skip) ;
  *   E — un échec serveur ne ment pas : approbation d'un manifeste modifié
  *       derrière le dos de la page ⇒ toast d'erreur et la pilule ne bouge pas ;
- *   F — `/code` mène à Workspaces, et l'onglet Conversations d'un projet ne porte
- *       aucun panneau : la preuve vit sur « Files & proof » (#143).
+ *   F — `/code` mène à Workspaces ; le panneau « Files & proof » d'un projet
+ *       se ferme, le choix tient au rechargement, et `/spaces/<id>/files` le
+ *       rouvre quand même (#143).
  *
  * PRÉCONDITIONS semées en base, comme telegram-allowlist.spec.ts : un agent,
  * un dossier réel sur le disque (un projet dont le dossier n'existe pas n'est
@@ -213,19 +215,30 @@ async function readProjectRow() {
 /**
  * Ouvre la page du projet semé et rend son panneau de preuve (#143).
  *
- * Par le PARCOURS, pas par une URL construite : Workspaces, la ligne du
- * projet, puis l'onglet « Files & proof ». C'est ce chemin-là que la planche
- * décrit, et le prendre prouve au passage que la liste ouvre le projet et que
- * les deux onglets s'enchaînent.
+ * Par le PARCOURS, pas par une URL construite : Workspaces, puis la ligne du
+ * projet. Le panneau « Files & proof » est OUVERT par défaut, donc la preuve
+ * est là sans un clic de plus — et le prendre par ce chemin prouve au passage
+ * que la liste ouvre bien le projet.
+ *
+ * Le stockage local est vidé avant : le panneau garde le choix de la personne
+ * d'une visite à l'autre, et un scénario précédent qui l'aurait refermé
+ * ferait échouer le suivant pour une raison qui n'a rien à voir avec lui.
  */
 async function openProjectPanel(page: Page): Promise<Locator> {
   await page.goto('/spaces');
+  await page.evaluate(() => {
+    try {
+      window.localStorage.removeItem('nodal.project-panel-open');
+    } catch {
+      // Un navigateur qui refuse le stockage rend le défaut, qui est ouvert.
+    }
+  });
   await page
     .getByRole('link', { name: new RegExp(projectLabel) })
     .first()
     .click();
   await expect(page).toHaveURL(new RegExp(`/spaces/${projectId}$`));
-  await page.getByRole('tab', { name: 'Files & proof' }).click();
+  await expect(page.getByTestId('project-files-panel')).toBeVisible();
   const panel = page.getByTestId('project-verification');
   await expect(panel).toBeVisible();
   return panel;
@@ -386,9 +399,19 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     await page.goto('/code');
     await expect(page).toHaveURL(/\/spaces$/);
     await expect(page.getByRole('heading', { name: 'Workspaces' })).toBeVisible();
-    // Et sur la page du projet, l'onglet Conversations n'en porte AUCUN : la preuve
-    // vit sur « Files & proof », pas sur l'activité.
+    // Et le panneau du projet se REFERME : la preuve est à côté des
+    // conversations, pas devant elles, et la personne décide.
     await page.goto(`/spaces/${projectId}`);
+    await expect(page.getByTestId('project-files-panel')).toBeVisible();
+    await page.getByTestId('project-panel-toggle').click();
+    await expect(page.getByTestId('project-files-panel')).toHaveCount(0);
     await expect(page.getByTestId('project-verification')).toHaveCount(0);
+    // Le choix TIENT d'une visite à l'autre.
+    await page.reload();
+    await expect(page.getByTestId('project-files-panel')).toHaveCount(0);
+    // Mais `/spaces/<id>/files` veut dire « montre-moi le dossier », et il le
+    // montre quand même.
+    await page.goto(`/spaces/${projectId}/files`);
+    await expect(page.getByTestId('project-files-panel')).toBeVisible();
   });
 });
