@@ -41,6 +41,52 @@ describe('navigation-trail — ce que le fil retient @cap:suivre-execution/ecran
     expect(isAppPath('/scheduled/run-1')).toBe(true);
   });
 
+  // ── Les chemins qui MENTENT sur leur destination (revue #234, passe 1) ────
+  //
+  // Chacun commence par un seul `/`, donc chacun passait la garde du double
+  // slash. Un cas par forme, à l'ÉCRITURE et à la LECTURE : c'est la lecture
+  // qui compte contre une entrée glissée à la main dans `sessionStorage`.
+
+  it('refuse un chemin à ANTISLASH — le navigateur en refait un double slash', () => {
+    const menteur = '/\\evil.example.com';
+    expect(isAppPath(menteur)).toBe(false);
+    expect(visits([menteur, '/agents']).map((e) => e.path)).toEqual(['/agents']);
+    expect(parseTrail(JSON.stringify([{ path: menteur, key: 0 }]))).toEqual([]);
+    // Un antislash au milieu ment tout autant.
+    expect(isAppPath('/chat/..\\..\\evil')).toBe(false);
+  });
+
+  it('refuse un slash ENCODÉ — %2F et %5C redeviennent des séparateurs', () => {
+    expect(isAppPath('/%2Fevil.example.com')).toBe(false);
+    expect(isAppPath('/%5Cevil.example.com')).toBe(false);
+    expect(isAppPath('/chat/%2f%2fevil')).toBe(false);
+    expect(visits(['/%2Fevil.example.com', '/agents']).map((e) => e.path)).toEqual(['/agents']);
+    expect(parseTrail(JSON.stringify([{ path: '/%5Cevil', key: 0 }]))).toEqual([]);
+  });
+
+  it('refuse un caractère de CONTRÔLE — l’analyse d’URL le retire avant de lire le chemin', () => {
+    const nul = '/\x00/evil.example.com';
+    const retour = '/chat/c-9\n/evil';
+    for (const menteur of [nul, retour, '/\t/evil.example.com', '/chat/\x7f']) {
+      expect(isAppPath(menteur)).toBe(false);
+    }
+    expect(visits([nul, '/agents']).map((e) => e.path)).toEqual(['/agents']);
+    expect(parseTrail(JSON.stringify([{ path: retour, key: 0 }]))).toEqual([]);
+  });
+
+  it('les vrais chemins de l’app passent encore — le filtre ne mord pas dedans', () => {
+    for (const bon of [
+      '/agents',
+      '/chat/c-9',
+      '/spaces/ws-1/files',
+      '/jobs/codex-42',
+      '/scheduled/run-7',
+      '/settings/root-context',
+    ]) {
+      expect(isAppPath(bon)).toBe(true);
+    }
+  });
+
   it('ne garde PAS une adresse qui sort du site, même écrite à la main dans le stockage', () => {
     // `sessionStorage` s'édite : sans ce filtre, « Back » emmènerait ailleurs.
     const raw = JSON.stringify([

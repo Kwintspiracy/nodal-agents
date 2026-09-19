@@ -100,6 +100,27 @@ describe('BackButton — revenir d’où l’on vient @cap:suivre-execution/ecra
     expect(routeur.back).not.toHaveBeenCalled();
   });
 
+  it('un chemin trompeur glissé dans le stockage n’atteint JAMAIS le routeur', async () => {
+    // Revue #234, passe 1 : `/\evil.example.com` commence par un seul slash,
+    // mais le navigateur le relit comme `//evil.example.com`. Il passait la
+    // garde et arrivait jusqu'à `router.push()`.
+    for (const menteur of ['/\\evil.example.com', '/%2Fevil.example.com', '/\x00/evil']) {
+      routeur.push.mockClear();
+      routeur.back.mockClear();
+      window.sessionStorage.setItem(
+        TRAIL_STORAGE_KEY,
+        serializeTrail([
+          { path: menteur, key: 0 },
+          { path: '/chat/c-9', key: 1 },
+        ]),
+      );
+      routeur.pathname = '/chat/c-9';
+      await cliquerSurBack('/chat');
+      expect(routeur.push.mock.calls.map((c) => c[0])).toEqual(['/chat']);
+      expect(routeur.back).not.toHaveBeenCalled();
+    }
+  });
+
   it('le même écran atteint par deux chemins repart à deux endroits', async () => {
     const depuis = async (liste: string): Promise<string[]> => {
       routeur.push.mockClear();

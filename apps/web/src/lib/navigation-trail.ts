@@ -39,13 +39,32 @@ export const TRAIL_STATE_KEY = 'nodalTrailKey';
 const HORS_APP = ['/login', '/onboarding'] as const;
 
 /**
- * Une page de l'app, et rien d'autre : un chemin absolu d'un seul slash. La
- * double barre (`//exemple.com`) est une URL de protocole relatif — le
- * navigateur la suivrait vers un autre site. Le fil vit dans `sessionStorage`,
- * donc éditable : ce filtre vaut à l'écriture ET à la lecture.
+ * Ce qui fait mentir un chemin sur sa destination (revue #234, passe 1) :
+ *
+ * - l'ANTISLASH. `/\exemple.com` passe la garde du double slash — il commence
+ *   par un seul `/` — mais l'analyse d'URL du navigateur normalise `\` en `/`,
+ *   donc il redevient `//exemple.com`, c'est-à-dire un autre site. C'est le cas
+ *   même que la garde prétend exclure, et il arrivait jusqu'à `router.push()`.
+ * - les caractères de CONTRÔLE, que l'analyse d'URL retire avant de lire le
+ *   chemin : un chemin qui en porte un ne dit pas où il mène. Ils s'écrivent en
+ *   notation hexadécimale et non en notation unicode : cette dernière se fait
+ *   décoder en vrai octet par certains outils d'édition, et le fichier devient
+ *   binaire (constaté ici, et refusé par le contrôle d'hygiène du commit).
+ * - les slashs ENCODÉS (`%2F`, `%5C`) : une couche de décodage les rend
+ *   séparateurs. Aucune route de l'app n'en porte, donc les refuser ne coûte rien.
+ */
+const CHEMIN_TROMPEUR = /[\x00-\x1f\x7f\\]|%(?:2f|5c)/i;
+
+/**
+ * Une page de l'app, et rien d'autre : un chemin absolu d'un seul slash, sans
+ * aucune des formes ci-dessus. La double barre (`//exemple.com`) est une URL de
+ * protocole relatif — le navigateur la suivrait vers un autre site. Le fil vit
+ * dans `sessionStorage`, donc éditable : ce filtre vaut à l'écriture ET à la
+ * lecture, et c'est la lecture qui compte contre une entrée écrite à la main.
  */
 export function isAppPath(path: string): boolean {
   if (!path.startsWith('/') || path.startsWith('//')) return false;
+  if (CHEMIN_TROMPEUR.test(path)) return false;
   return !HORS_APP.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
