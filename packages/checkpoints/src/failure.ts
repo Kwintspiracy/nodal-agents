@@ -68,12 +68,15 @@ export const MEASURE_MAX_FILES = 50_000;
 export const MEASURE_MAX_MS = 3_000;
 
 /**
- * Dossiers jamais descendus par la mesure — les mêmes que ceux que
- * l'instantané exclut (`EXCLUDES` dans checkpoints.ts). Les compter donnerait
- * un chiffre qui ne correspond à rien de ce que git a eu à faire, et enverrait
- * le propriétaire vider un `node_modules` qui n'était pas le problème.
+ * Dossiers que l'instantané n'a jamais regardés, et que la mesure ne descend
+ * donc pas non plus.
+ *
+ * UNE SEULE LISTE pour les deux : `checkpoints.ts` construit ses `EXCLUDES`
+ * à partir d'ici. Deux listes auraient dérivé, et la mesure aurait alors
+ * compté un `node_modules` que git avait ignoré — envoyant le propriétaire
+ * vider un dossier qui n'était pas le problème.
  */
-const MEASURE_SKIP: ReadonlySet<string> = new Set([
+export const SKIPPED_DIRS: readonly string[] = [
   'node_modules',
   '.git',
   '.next',
@@ -82,7 +85,9 @@ const MEASURE_SKIP: ReadonlySet<string> = new Set([
   '__pycache__',
   '.venv',
   'target',
-]);
+];
+
+const MEASURE_SKIP: ReadonlySet<string> = new Set(SKIPPED_DIRS);
 
 /**
  * Compte les fichiers et les octets d'un dossier, en s'arrêtant au plafond.

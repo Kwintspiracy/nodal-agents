@@ -12,7 +12,7 @@
 // relecture y avaient été déballés.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { snapshot } from './checkpoints';
@@ -20,6 +20,7 @@ import {
   CheckpointError,
   isCheckpointError,
   measureWorkspace,
+  SKIPPED_DIRS,
   checkpointFailureLogLine,
   checkpointRefusalMessage,
   formatBytes,
@@ -230,6 +231,24 @@ describe('la mesure est bornée et le DIT @cap:executer-une-commande/moteur', ()
         `more than 5 files, the safety snapshot cannot finish in 30 s; ` +
         `move or ignore the heavy folders.`,
     );
+  });
+
+  it('saute EXACTEMENT les dossiers que le magasin met dans son fichier d’exclusion', async () => {
+    // La liste est UNE. Si la mesure et l'instantané divergeaient, un refus
+    // annoncerait une taille que git n'a jamais eu à traverser, et enverrait
+    // le propriétaire vider le mauvais dossier. Le fichier relu ici est celui
+    // qu'un VRAI instantané vient d'écrire dans le magasin, pas une constante.
+    await writeFile(join(ws, 'a.txt'), 'bonjour');
+    await snapshot(store, ws, 'premier');
+
+    const exclude = await readFile(join(store, 'store', 'info', 'exclude'), 'utf-8');
+    const dossiersExclus = exclude
+      .split('\n')
+      .filter((ligne) => ligne.endsWith('/'))
+      .map((ligne) => ligne.slice(0, -1))
+      .sort();
+
+    expect(dossiersExclus).toEqual([...SKIPPED_DIRS].sort());
   });
 
   it('ne descend pas dans les dossiers que l’instantané exclut déjà', async () => {

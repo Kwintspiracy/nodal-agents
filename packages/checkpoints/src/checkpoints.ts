@@ -36,7 +36,12 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { CheckpointError, measureWorkspace, type CheckpointFailureCode } from './failure';
+import {
+  CheckpointError,
+  measureWorkspace,
+  SKIPPED_DIRS,
+  type CheckpointFailureCode,
+} from './failure';
 
 const run = promisify(execFile);
 
@@ -125,18 +130,12 @@ async function qualifySnapshotFailure(
 /**
  * Never snapshotted. Dependency trees and build output are large, regenerable,
  * and are exactly what makes a naive `add -A` take minutes on a real project.
+ *
+ * Les dossiers viennent de `SKIPPED_DIRS` (failure.ts), que la MESURE d'un
+ * refus utilise aussi : deux listes auraient dérivé, et un refus aurait alors
+ * annoncé une taille que git n'avait jamais eu à traverser (#245).
  */
-const EXCLUDES = [
-  'node_modules/',
-  '.git/',
-  '.next/',
-  'dist/',
-  'build/',
-  '__pycache__/',
-  '.venv/',
-  'target/',
-  '*.log',
-];
+const EXCLUDES = [...SKIPPED_DIRS.map((dir) => `${dir}/`), '*.log'];
 
 /**
  * What a checkpoint does NOT cover — one sentence, so the limit travels with
