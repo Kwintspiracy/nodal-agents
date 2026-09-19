@@ -34,6 +34,11 @@ interface Props {
   initialRootAgentId: string | null;
   /** Current grants — falls back to DEFAULT_ROOT_GRANTS when none saved. */
   initialGrants: RootGrants;
+  /**
+   * L'`id` du `<form>` quand cette section est rendue dans le panneau ancré
+   * (#231) : le bouton Save du pied le soumet par l'attribut HTML `form`.
+   */
+  formId?: string;
 }
 
 // Autonomy options: the single shared source of truth (identical text + order in
@@ -41,7 +46,12 @@ interface Props {
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 
-export default function RootAgentSection({ agents, initialRootAgentId, initialGrants }: Props) {
+export default function RootAgentSection({
+  agents,
+  initialRootAgentId,
+  initialGrants,
+  formId,
+}: Props) {
   const router = useRouter();
   const [isSaving, startSaveTransition] = useTransition();
 
@@ -95,7 +105,7 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
           </p>
         </div>
       ) : (
-        <form onSubmit={handleSave}>
+        <form id={formId} onSubmit={handleSave}>
           <SetForm>
             {/* ── ROOT agent (read-only — designated automatically) ─────────── */}
             <div className="mb-4">

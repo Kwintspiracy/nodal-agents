@@ -12,17 +12,27 @@
 // d'une source explicite. Une valeur qui changerait de forme casserait le test
 // de moteur, pas celui-ci — chacun prouve sa moitié.
 //
+// Le PIED du panneau se prouve ici aussi (planche P1) : Cancel et Save vivent
+// au bas du panneau, et le Save soumet le formulaire ouvert par l'attribut HTML
+// `form`. L'assertion porte sur ce que la soumission REÇOIT — la valeur saisie
+// — jamais sur un compte d'appels.
+//
 // Mutations vérifiées : le panneau branché sur la PREMIÈRE ligne au lieu de la
 // ligne cliquée → « cliquer une ligne ouvre SON formulaire » rougit ;
 // `advancedOpen` initialisé à `true` → « Advanced est repliée » rougit ; le
 // filtre ignoré (toutes les lignes rendues) → « le filtre réduit la liste »
-// rougit.
+// rougit ; l'attribut `form` du bouton Save retiré → « Save soumet le
+// formulaire » rougit ; `SetCtaRow` qui s'affiche quand même dans le panneau →
+// « le formulaire ne porte plus ses propres boutons » rougit.
 
-import { describe, it, expect, afterEach } from 'vitest';
-import { act } from 'react';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import SettingsList from '../SettingsList.tsx';
 import { buildSettingRows, type SettingId } from '../settings-rows.ts';
+import { dockedFormId } from '@/components/ui/DockedFormCta.tsx';
+import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
+import TextInput from '@/components/ui/TextInput';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -257,6 +267,112 @@ describe('SettingsList @cap:installer-et-demarrer/ecran', () => {
     const vide = panel()!.querySelector('[data-testid="settings-panel-unread"]');
     expect(vide).not.toBeNull();
     expect(vide!.textContent).toContain(ROWS.find((r) => r.id === 'network')!.value);
+  });
+
+  /**
+   * Un formulaire de réglage, réduit à ce qui compte ici : un `<form>` qui
+   * porte l'`id` du panneau, un champ, et le `SetCtaRow` partagé — le même
+   * composant que les dix vrais formulaires.
+   */
+  function FauxFormulaire({ id, onSave }: { id: string; onSave: (valeur: string) => void }) {
+    const [valeur, setValeur] = useState('Europe/Paris');
+    return (
+      <form
+        id={id}
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave(valeur);
+        }}
+      >
+        <TextInput data-testid="champ" value={valeur} onChange={(e) => setValeur(e.target.value)} />
+        <SetCtaRow onCancel={() => setValeur('Europe/Paris')} saveLabel="Save" />
+      </form>
+    );
+  }
+
+  it('le pied du panneau porte Cancel et Save, et Save soumet le formulaire ouvert', async () => {
+    const onSave = vi.fn();
+    await render(
+      <SettingsList
+        rows={ROWS}
+        panels={{
+          ...PANELS,
+          timezone: <FauxFormulaire id={dockedFormId('timezone')} onSave={onSave} />,
+        }}
+        initialOpen="timezone"
+      />,
+    );
+
+    // Le formulaire ne porte plus ses propres boutons : ils sont dans le pied.
+    const pied = panel()!.querySelector('[data-slot="footer"]')!;
+    expect(pied).not.toBeNull();
+    expect(panel()!.querySelectorAll('[data-testid="settings-panel-save"]')).toHaveLength(1);
+    expect(pied.querySelector('[data-testid="settings-panel-save"]')).not.toBeNull();
+    expect(pied.querySelector('[data-testid="settings-panel-cancel"]')).not.toBeNull();
+    // Le corps du panneau n'a aucun bouton de soumission à lui.
+    const corps = panel()!.querySelector('form')!;
+    expect(corps.querySelector('button[type="submit"]')).toBeNull();
+
+    // On saisit une valeur, puis on enregistre DEPUIS LE PIED.
+    const champ = panel()!.querySelector<HTMLInputElement>('[data-testid="champ"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )!.set!;
+      setter.call(champ, 'Asia/Singapore');
+      champ.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    const save = pied.querySelector<HTMLButtonElement>('[data-testid="settings-panel-save"]')!;
+    expect(save.getAttribute('form')).toBe(dockedFormId('timezone'));
+    await act(async () => {
+      save.click();
+    });
+
+    // Ce que la soumission a REÇU, pas le nombre de fois qu'on l'a appelée.
+    expect(onSave.mock.calls).toEqual([['Asia/Singapore']]);
+  });
+
+  it('Cancel remet l’état du formulaire, puis ferme le panneau', async () => {
+    await render(
+      <SettingsList
+        rows={ROWS}
+        panels={{
+          ...PANELS,
+          timezone: <FauxFormulaire id={dockedFormId('timezone')} onSave={() => {}} />,
+        }}
+        initialOpen="timezone"
+      />,
+    );
+    const champ = panel()!.querySelector<HTMLInputElement>('[data-testid="champ"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )!.set!;
+      setter.call(champ, 'Asia/Tokyo');
+      champ.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(panel()!.querySelector<HTMLInputElement>('[data-testid="champ"]')!.value).toBe(
+      'Asia/Tokyo',
+    );
+
+    await click(panel()!.querySelector('[data-testid="settings-panel-cancel"]')!);
+    expect(panel()).toBeNull();
+
+    // Rouvrir montre la valeur d'origine, pas la saisie abandonnée.
+    await click(row('timezone'));
+    expect(panel()!.querySelector<HTMLInputElement>('[data-testid="champ"]')!.value).toBe(
+      'Europe/Paris',
+    );
+  });
+
+  it('un réglage sans bouton d’enregistrement n’a pas de pied', async () => {
+    // Un interrupteur immédiat : rien à soumettre, donc rien au bas du panneau.
+    await render(list({ initialOpen: 'mcp-server' }));
+    expect(panel()).not.toBeNull();
+    expect(panel()!.querySelector('[data-slot="footer"]')).toBeNull();
   });
 
   it('un lien direct ouvre le panneau au premier rendu', async () => {
