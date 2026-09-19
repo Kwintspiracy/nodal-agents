@@ -65,14 +65,20 @@ export default function AutomationScreen({
       subtitle={automationSubtitle(view)}
       toolbarBleed
       // LA barre du design system (Figma 353:3378), celle du fil de chat et de
-      // la page de run : le retour à gauche, le contexte à droite. La page
-      // dessinait son propre lien de retour dans un `PageTopBar` — un motif de
-      // plus pour une chose qui existe déjà (Quentin, 19/09/2026).
+      // la page de run. Cette page dessinait son propre lien de retour dans un
+      // `PageTopBar` — un motif de plus pour une chose qui existait déjà.
       //
       // La RÈGLE que cela applique est l'issue #242 : toute page de détail
-      // porte cette barre sous l'en-tête, le retour vit DEDANS et nulle part
-      // ailleurs, et les actions de la page ont leur rangée EN DESSOUS. Cette
-      // page est la première à s'y conformer ; les huit autres suivent.
+      // porte cette barre sous l'en-tête, et les actions de la page ont leur
+      // rangée EN DESSOUS. Le retour, lui, n'y est plus : Quentin l'a fait
+      // retirer partout le soir du 19/09 (« ça casse complètement la
+      // navigation »). On repart par la barre latérale.
+      //
+      // La barre se dessine ici même sans agent, et c'est VOULU : une
+      // automatisation est Active ou Paused, toujours, et c'est le premier fait
+      // qu'on vient lire sur sa page. L'agent, lui, peut manquer — supprimé, ou
+      // jamais résolu. Exiger un agent cacherait l'état au moment où il compte
+      // le plus.
       toolbar={
         <ThreadWorkBar
           agents={view.agent === null ? [] : [view.agent]}

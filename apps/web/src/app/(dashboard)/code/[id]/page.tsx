@@ -74,8 +74,8 @@ export default async function CodeProcessPage({ params }: Props) {
       title={agentName !== '' ? `${agentName} · ${title}` : title}
       subtitle={threadSubtitle('code', at)}
       agents={codeAgents(header, activity)}
-      // La barre de la maquette, au complet : le retour, les agents, le
-      // dossier, la preuve, l'état. La pastille d'état est rendue par le
+      // La barre de la maquette : les agents, le dossier, la preuve, l'état.
+      // Plus de retour depuis #242. La pastille d'état est rendue par le
       // SERVEUR et reste fraîche parce que la page se relit d'elle-même tant
       // que le process court (`LiveRefresh`, dans le corps) — c'est ce qui a
       // remplacé la sonde côté client, laquelle ne rafraîchissait que le corps
