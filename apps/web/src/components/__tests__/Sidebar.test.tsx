@@ -1,22 +1,31 @@
-// Sidebar.test.tsx — la barre latérale À L'ÉCRAN (retouches du 18/09/2026).
+// Sidebar.test.tsx — la barre latérale À L'ÉCRAN, rail et panneau (#230).
 //
-// Huit demandes de Quentin, dont sept se voient dans ce fichier : le libellé
-// des entrées, l'ordre du groupe « Operate », la forme des liens externes, le
-// portail qualité, et le chevron qui replie le groupe Channels. La huitième —
-// les cinq derniers fils d'un dossier — se prouve dans
-// `ChatFolderGroup.test.tsx`, avec les dossiers.
+// La colonne unique de 0.8.11 est devenue un RAIL de trois destinations et un
+// PANNEAU pour celle qui est active (décision du propriétaire, 19/09/2026,
+// planche « Sidebar propositions · 4a »). Ce fichier prouve les six choses que
+// cette bascule pouvait casser sans qu'on le voie :
+//
+//   1. les entrées sont les MÊMES qu'avant, réparties en trois panneaux ;
+//   2. la destination active se DÉDUIT de la route, et rien d'autre ;
+//   3. un canal n'a de dossier que branché (#135) ;
+//   4. un dossier se plie et se déplie, et seul « See all » navigue (#206) ;
+//   5. le point de non-lu est toujours rendu, dans les dossiers ET dans la
+//      nouvelle section « Recent » (#209) ;
+//   6. un titre long se COUPE, il n'élargit pas la colonne.
 //
 // Les blocs qui ne sont pas le sujet (version, sélecteur d'espace, cloche,
-// thème) sont remplacés par du vide : ils appellent chacun leur action
-// serveur, et les monter ici n'aurait rien prouvé de plus sur le menu.
+// thème) sont remplacés par du vide : ils appellent chacun leur action serveur,
+// et les monter ici n'aurait rien prouvé de plus sur le menu.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { createElement, type ReactElement, type ReactNode } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
+let pathname = '/agents';
+
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/agents',
+  usePathname: () => pathname,
   useSearchParams: () => new URLSearchParams(''),
 }));
 vi.mock('next/link', () => ({
@@ -26,6 +35,7 @@ vi.mock('next/link', () => ({
 vi.mock('@/lib/actions', () => ({ listApprovalsAction: vi.fn() }));
 vi.mock('@/lib/conversation-actions.ts', () => ({ getChatFoldersAction: vi.fn() }));
 vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
+vi.mock('@/lib/recent-threads-actions.ts', () => ({ listRecentThreadsAction: vi.fn() }));
 vi.mock('../VersionBadge', () => ({ default: () => null }));
 vi.mock('../WorkspaceSwitcher', () => ({ default: () => null }));
 vi.mock('../NotificationsBell', () => ({ default: () => null }));
@@ -35,7 +45,10 @@ import Sidebar from '../Sidebar.tsx';
 import { ApprovalsProvider } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
+import { listRecentThreadsAction } from '@/lib/recent-threads-actions.ts';
 import { SIDEBAR_ROW, SIDEBAR_ROW_ACTIVE, SIDEBAR_ROW_IDLE } from '../ui/SidebarRow';
+import { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
+import type { FolderThread } from '@/lib/chat-folders.ts';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -61,6 +74,14 @@ async function renderSidebar(channels: string[] = []): Promise<void> {
   );
 }
 
+/** Démonte le rendu courant — pour en refaire un dans le MÊME cas de test. */
+async function remonter(): Promise<void> {
+  await act(async () => {
+    root.unmount();
+  });
+  document.body.innerHTML = '';
+}
+
 /** Le lien du menu qui porte ce libellé, quelle que soit sa forme. */
 function navLink(label: string): HTMLAnchorElement {
   const el = [...container.querySelectorAll('a')].find((a) => a.textContent?.trim() === label);
@@ -68,20 +89,24 @@ function navLink(label: string): HTMLAnchorElement {
   return el;
 }
 
+/** Une case du rail, par la destination qu'elle porte. */
+function railCell(key: string): HTMLElement {
+  const el = container.querySelector<HTMLElement>(`[data-testid="rail-${key}"]`);
+  if (!el) throw new Error(`no rail cell "${key}"`);
+  return el;
+}
+
 /**
- * Les libellés d'un groupe, DANS L'ORDRE où ils sont rendus.
+ * Les libellés d'un groupe du panneau, DANS L'ORDRE où ils sont rendus.
  *
- * Les dossiers de Channels sont écartés : ils vivent dans le groupe Overview,
- * sous leur lien, mais ce ne sont pas des entrées du menu — ils ont leur propre
- * test (`ChatFolderGroup.test.tsx`).
+ * Un groupe ne contient que des entrées de menu : les dossiers de canaux et les
+ * fils récents vivent hors des groupes, dans le panneau Talk, et ont leurs
+ * propres cas.
  */
 function groupLabels(section: string): string[] {
   const group = container.querySelector(`[data-testid="nav-group-${section}"]`);
   if (!group) throw new Error(`no group "${section}"`);
-  const folders = group.querySelector('[data-testid="chat-folders"]');
-  return [...group.querySelectorAll('a')]
-    .filter((a) => folders === null || !folders.contains(a))
-    .map((a) => a.textContent?.trim() ?? '');
+  return [...group.querySelectorAll('a')].map((a) => a.textContent?.trim() ?? '');
 }
 
 function click(el: Element): Promise<void> {
@@ -90,31 +115,22 @@ function click(el: Element): Promise<void> {
   });
 }
 
-/**
- * Un `localStorage` en mémoire.
- *
- * Node 26 fournit le sien, et il est INDISPONIBLE sans `--localstorage-file` :
- * le global vaut `undefined` sous vitest, jsdom ou non. Le composant s'en
- * arrange (tout accès est sous `try`), mais le souvenir du repli, lui, se
- * prouve — d'où ce double, posé pour la durée du fichier.
- */
-function fakeStorage(): Storage {
-  const data = new Map<string, string>();
+/** Un fil, réduit à ce que le menu en rend. */
+function thread(over: Partial<FolderThread> & { key: string; title: string }): FolderThread {
   return {
-    get length() {
-      return data.size;
-    },
-    clear: () => data.clear(),
-    getItem: (k: string) => data.get(k) ?? null,
-    key: (i: number) => [...data.keys()][i] ?? null,
-    removeItem: (k: string) => void data.delete(k),
-    setItem: (k: string, v: string) => void data.set(k, v),
+    href: `/chat/${over.key}`,
+    waiting: false,
+    running: false,
+    unread: false,
+    ...over,
   };
 }
 
 beforeEach(() => {
   document.body.innerHTML = '';
-  vi.stubGlobal('localStorage', fakeStorage());
+  pathname = '/agents';
+  vi.mocked(listRecentThreadsAction).mockResolvedValue({ ok: true, data: [] });
+  vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: {} });
 });
 
 afterEach(async () => {
@@ -123,249 +139,396 @@ afterEach(async () => {
   });
 });
 
-describe('les entrées du menu @cap:installer-et-demarrer/ecran', () => {
-  it('nomme la racine « Dashboard », et plus « Home »', async () => {
+// ─── 1. Le rail, et sa destination active ────────────────────────────────────
+
+describe('le rail porte trois destinations @cap:installer-et-demarrer/ecran', () => {
+  it('rend Talk, Build et Run, puis Settings et Help', async () => {
+    await renderSidebar();
+    for (const key of ['talk', 'build', 'run', 'settings', 'help']) {
+      expect(railCell(key), `le rail porte « ${key} »`).not.toBeNull();
+    }
+    expect(railCell('talk').textContent?.trim()).toBe('Talk');
+    expect(railCell('build').textContent?.trim()).toBe('Build');
+    expect(railCell('run').textContent?.trim()).toBe('Run');
+  });
+
+  it('donne la MÊME forme aux cases, active ou non', async () => {
+    await renderSidebar();
+    const formes = new Set(
+      ['talk', 'build', 'run', 'settings', 'help'].map((k) => railCell(k).className),
+    );
+    const attendues = new Set([
+      `${RAIL_CELL} ${RAIL_CELL_IDLE}`,
+      `${RAIL_CELL} ${RAIL_CELL_ACTIVE}`,
+    ]);
+    // La route est /agents : Build est active, les autres non. Les DEUX états
+    // sont donc là — sans cela, la comparaison ne prouverait rien.
+    expect(formes.has(`${RAIL_CELL} ${RAIL_CELL_ACTIVE}`)).toBe(true);
+    expect(formes.has(`${RAIL_CELL} ${RAIL_CELL_IDLE}`)).toBe(true);
+    for (const forme of formes) {
+      expect(attendues.has(forme), `forme de case inattendue : « ${forme} »`).toBe(true);
+    }
+  });
+});
+
+describe('la destination active suit la route @cap:installer-et-demarrer/ecran', () => {
+  /** Quelle case porte `aria-current="page"` ? Une seule doit la porter. */
+  function destinationActive(): string {
+    const actives = [...container.querySelectorAll('[data-testid^="rail-"]')].filter(
+      (el) => el.getAttribute('aria-current') === 'page',
+    );
+    expect(actives.length, 'une seule case du rail est la page courante').toBe(1);
+    return actives[0]?.getAttribute('data-testid')?.replace('rail-', '') ?? '';
+  }
+
+  const cas: ReadonlyArray<readonly [string, string, string]> = [
+    ['/agents', 'build', 'Build'],
+    ['/memories', 'build', 'Build'],
+    ['/mcp', 'build', 'Build'],
+    ['/chat', 'talk', 'Talk'],
+    ['/chat/abc', 'talk', 'Talk'],
+    ['/', 'run', 'Run'],
+    ['/logs', 'run', 'Run'],
+    ['/spaces', 'run', 'Run'],
+    ['/scheduled', 'run', 'Run'],
+    // Une page de run n'a pas d'entrée dans le panneau, mais elle allume bien
+    // une destination : un rail sans case active se lirait comme cassé.
+    ['/jobs/j1', 'run', 'Run'],
+  ];
+
+  for (const [route, attendue, titre] of cas) {
+    it(`allume « ${attendue} » sur ${route}`, async () => {
+      pathname = route;
+      await renderSidebar();
+      expect(destinationActive()).toBe(attendue);
+      // Et le PANNEAU montre la même destination : son titre le dit.
+      expect(container.querySelector('[data-testid="sidebar-panel"] h2')?.textContent?.trim()).toBe(
+        titre,
+      );
+    });
+  }
+
+  it('allume Settings sur /settings, sans allumer aucune des trois', async () => {
+    pathname = '/settings';
+    await renderSidebar();
+    expect(railCell('settings').getAttribute('aria-current')).toBe('page');
+    for (const key of ['talk', 'build', 'run']) {
+      expect(railCell(key).getAttribute('aria-current'), `${key} n'est pas la page`).toBeNull();
+    }
+    // Le panneau doit bien montrer quelque chose : Run, qui porte le tableau de
+    // bord, est le repli — et il est le même pour tout le monde, ce qu'une
+    // « dernière destination visitée » n'aurait pas été.
+    expect(
+      container.querySelector('[data-testid="sidebar-panel"]')?.getAttribute('aria-label'),
+    ).toBe('Run');
+  });
+});
+
+// ─── 2. Les entrées, réparties en trois panneaux ─────────────────────────────
+
+describe('les entrées de 0.8.11, réparties en trois @cap:installer-et-demarrer/ecran', () => {
+  it('range Build en deux blocs : ce qu’on monte, puis ce qu’on y branche', async () => {
+    pathname = '/agents';
+    await renderSidebar();
+    expect(groupLabels('Agents')).toEqual(['Agents', 'Skills', 'Learned Skills', 'Memory']);
+    expect(groupLabels('Connect')).toEqual(['API Connectors', 'MCP Connectors', 'Credentials']);
+  });
+
+  it('range Run en trois blocs, et n’y perd ni Scheduled ni LLM Providers', async () => {
+    pathname = '/';
+    await renderSidebar();
+    expect(groupLabels('Monitor')).toEqual(['Dashboard', 'Workspaces', 'Approvals', 'Logs']);
+    // « Scheduled » n'est dans aucune liste de l'issue, et ce n'est pourtant
+    // pas /automations : celui-ci ÉDITE les automatisations, celui-là liste
+    // leurs runs. Le retirer aurait supprimé une destination du produit.
+    expect(groupLabels('Automate')).toEqual(['Automations & Webhooks', 'Scheduled']);
+    expect(groupLabels('Models')).toEqual(['LLM Providers']);
+  });
+
+  it('nomme la racine « Dashboard », et « Workspaces » ce qui vit sur /spaces', async () => {
+    pathname = '/';
     await renderSidebar();
     expect(navLink('Dashboard').getAttribute('href')).toBe('/');
     expect(() => navLink('Home')).toThrow();
-  });
-
-  it('nomme « Workspaces » ce qui vit toujours sur /spaces', async () => {
-    await renderSidebar();
     // Le libellé change, la ROUTE ne bouge pas : les liens déjà envoyés et les
     // favoris continuent d'ouvrir la page.
     expect(navLink('Workspaces').getAttribute('href')).toBe('/spaces');
     expect(() => navLink('Spaces')).toThrow();
   });
 
-  it('ouvre « Operate » par le fournisseur de modèles et le ferme par Settings', async () => {
-    await renderSidebar();
-    expect(groupLabels('Operate')).toEqual([
-      'LLM Providers',
-      'Automations & Webhooks',
-      'Approvals',
-      'Logs',
-      'Settings',
-    ]);
-  });
-
-  it('ne laisse plus « LLM Providers » ni « Settings » ailleurs', async () => {
-    await renderSidebar();
-    expect(groupLabels('Overview')).toEqual(['Dashboard', 'Channels', 'Workspaces']);
-    expect(groupLabels('About Nodal-Agents')).not.toContain('Settings');
-  });
-
-  it('ne propose plus « Scheduled » nulle part dans le rail', async () => {
-    await renderSidebar();
-    // La page /scheduled existe toujours et reste atteignable : la page d'une
-    // automatisation y mène par son « See all », et chaque run garde son
-    // adresse. C'est la DESTINATION du menu qui disparaît (#202), les runs
-    // d'une automatisation se lisant désormais sur sa page.
-    expect(() => navLink('Scheduled')).toThrow();
-    expect(container.querySelector('a[href="/scheduled"]')).toBeNull();
-  });
-
-  it('ne propose plus « Code » nulle part dans le rail', async () => {
-    await renderSidebar();
-    // Les pages /code et /code/[id] existent toujours, et restent
-    // atteignables par les liens des pages de run et du dossier MCP. C'est la
-    // DESTINATION du menu qui disparaît, en attendant leur fusion dans
-    // Workspaces (issue #143).
-    expect(() => navLink('Code')).toThrow();
-    expect(container.querySelector('a[href="/code"]')).toBeNull();
-  });
-});
-
-describe('le groupe « About Nodal-Agents » @cap:consulter-l-aide/ecran', () => {
-  it('remplace le groupe « Workspace » et garde ses deux liens', async () => {
-    await renderSidebar();
-    expect(container.querySelector('[data-testid="nav-group-Workspace"]')).toBeNull();
-    expect(groupLabels('About Nodal-Agents')).toEqual([
-      'Join Discord',
-      'Documentation',
-      'Quality board',
-    ]);
-  });
-
-  it('mène au portail public, dans un nouvel onglet', async () => {
-    await renderSidebar();
-    const portail = navLink('Quality board');
-    // L'URL vérifiée au curl le 18/09/2026 : 200, « Nodal-Agents, Quality ».
-    expect(portail.getAttribute('href')).toBe('https://kwintspiracy.github.io/nodal-agents/qa/');
-    expect(portail.getAttribute('target')).toBe('_blank');
-    expect(portail.getAttribute('rel')).toBe('noopener noreferrer');
-  });
-
-  it('donne au portail la MÊME forme qu’à Documentation : flèche à droite', async () => {
-    await renderSidebar();
-    for (const label of ['Documentation', 'Quality board']) {
-      const row = navLink(label);
-      const arrow = row.querySelector('[data-testid="external-arrow"]');
-      expect(arrow, `${label} porte une flèche de lien externe`).not.toBeNull();
-      expect(row.lastElementChild, `${label} la porte en DERNIER`).toBe(arrow);
+  it('ne propose « Code » dans aucun des trois panneaux', async () => {
+    for (const route of ['/', '/agents', '/chat']) {
+      pathname = route;
+      await renderSidebar();
+      // Les pages /code et /code/[id] existent toujours et restent
+      // atteignables par les liens des pages de run et du dossier MCP. C'est la
+      // DESTINATION du menu qui n'existe pas (issue #143).
+      expect(container.querySelector('a[href="/code"]'), route).toBeNull();
+      await remonter();
     }
+    // `afterEach` démonte : on rend une dernière fois pour qu'il ait de quoi.
+    await renderSidebar();
+  });
+
+  it('marque l’entrée du panneau où l’on se trouve, et elle seule', async () => {
+    pathname = '/skills';
+    await renderSidebar();
+    const panneau = container.querySelector('[data-testid="sidebar-panel"]');
+    const actives = [...(panneau?.querySelectorAll('[data-sidebar-row]') ?? [])].filter((r) =>
+      r.className.includes(SIDEBAR_ROW_ACTIVE),
+    );
+    expect(actives.length).toBe(1);
+    expect(actives[0]?.textContent?.trim()).toBe('Skills');
   });
 });
 
-describe('le bouton « Join Discord » @cap:consulter-l-aide/ecran', () => {
-  it('porte le logo Discord à gauche et la flèche à DROITE', async () => {
-    await renderSidebar();
-    const row = navLink('Join Discord');
-    const icone = row.querySelector('[data-testid="nav-leading-icon"]');
-    const arrow = row.querySelector('[data-testid="external-arrow"]');
-    // La flèche menait la ligne et aucune marque ne la nommait ; elle ferme
-    // maintenant la ligne, exactement comme sur « Documentation ».
-    expect(row.firstElementChild).toBe(icone);
-    expect(row.lastElementChild).toBe(arrow);
-    // Et l'icône de tête N'EST PAS la flèche : c'est tout le sujet de la
-    // demande. Deux dessins différents, donc deux markups différents.
-    const dessin = icone?.querySelector('svg')?.innerHTML ?? '';
-    expect(dessin).not.toBe('');
-    expect(dessin).not.toBe(arrow?.innerHTML);
-  });
-});
+// ─── 3. Le panneau Talk : canaux, fils récents, non-lu ───────────────────────
 
-describe('le chevron du groupe Channels @cap:reprendre-conversation/ecran', () => {
-  it('déplie les dossiers par défaut, et les replie au clic', async () => {
-    await renderSidebar();
-    const caret = container.querySelector('[data-testid="channels-caret"]');
-    expect(caret).not.toBeNull();
-    expect(caret?.getAttribute('aria-expanded')).toBe('true');
-    expect(container.querySelector('[data-testid="chat-folders"]')).not.toBeNull();
-
-    await click(caret!);
-    expect(caret?.getAttribute('aria-expanded')).toBe('false');
-    // Replié, le groupe n'est pas seulement caché : il n'est pas rendu, donc
-    // ses lignes ne restent pas dans l'ordre de tabulation.
-    expect(container.querySelector('[data-testid="chat-folders"]')).toBeNull();
-  });
-
-  it('laisse le nom « Channels » mener à /chat malgré le chevron', async () => {
-    await renderSidebar();
-    expect(navLink('Channels').getAttribute('href')).toBe('/chat');
-  });
-
-  it('se souvient du repli dans ce navigateur', async () => {
-    await renderSidebar();
-    await click(container.querySelector('[data-testid="channels-caret"]')!);
-    expect(localStorage.getItem('nodal.sidebar.channels')).toBe('closed');
-
-    // Un rechargement : la barre relit le choix au montage.
-    await act(async () => {
-      root.unmount();
-    });
-    await renderSidebar();
-    expect(container.querySelector('[data-testid="chat-folders"]')).toBeNull();
-    expect(
-      container.querySelector('[data-testid="channels-caret"]')?.getAttribute('aria-expanded'),
-    ).toBe('false');
-  });
-});
-
-// ─── Une seule forme de ligne (19/09/2026) ───────────────────────────────────
-
-/**
- * Le rail déplié EN ENTIER : une entrée de menu, un lien externe, le bouton
- * Discord, le groupe Channels avec son chevron, un dossier avec le sien, ses
- * fils et son « See all ». Toutes les sortes de ligne du rail, d'un coup.
- */
-async function renderTout(): Promise<void> {
+/** Le panneau Talk, avec un dossier Telegram qui déplie un fil non lu. */
+async function renderTalk(channels: string[] = ['telegram']): Promise<void> {
   vi.mocked(listFolderThreadsAction).mockResolvedValue({
     ok: true,
     data: {
-      telegram: [
-        {
-          key: 't1',
-          title: 'Invoice for March',
-          href: '/chat/t1',
-          waiting: false,
-          running: false,
-          unread: false,
-        },
-      ],
+      telegram: [thread({ key: 't1', title: 'Invoice for March', unread: true })],
     },
   });
-  await renderSidebar(['telegram']);
-  await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
+  vi.mocked(listRecentThreadsAction).mockResolvedValue({
+    ok: true,
+    data: [
+      thread({ key: 'r1', title: 'Recipes' }),
+      thread({
+        key: 'r2',
+        title: 'Crée-moi une application de suivi de candidatures assez simple',
+        unread: true,
+      }),
+    ],
+  });
+  pathname = '/chat';
+  await renderSidebar(channels);
 }
 
-/** Toutes les lignes du rail, quelle que soit leur profondeur. */
-function rows(): HTMLElement[] {
-  return [...container.querySelectorAll<HTMLElement>('[data-sidebar-row]')];
-}
+describe('le panneau Talk garde les dossiers de 0.8.11 @cap:reprendre-conversation/ecran', () => {
+  it('n’affiche un canal que lorsqu’il est branché', async () => {
+    await renderTalk([]);
+    // « Nodal chats » est une destination permanente : elle est toujours là.
+    expect(container.querySelector('[data-testid="inbox-folder-dashboard"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="inbox-folder-discord"]')).toBeNull();
+    expect(container.querySelector('[data-testid="inbox-folder-whatsapp"]')).toBeNull();
 
-describe('toutes les lignes du rail ont la MÊME forme @cap:installer-et-demarrer/ecran', () => {
+    await remonter();
+    await renderTalk(['discord', 'whatsapp']);
+    expect(container.querySelector('[data-testid="inbox-folder-discord"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="inbox-folder-whatsapp"]')).not.toBeNull();
+  });
+
+  it('plie et déplie un dossier au clic sur sa ligne', async () => {
+    await renderTalk();
+    const dossier = container.querySelector('[data-testid="inbox-folder-telegram"]')!;
+    expect(dossier.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-testid="folder-threads-telegram"]')).toBeNull();
+
+    await click(dossier);
+    expect(dossier.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      container.querySelector('[data-testid="folder-thread-telegram"]')?.textContent,
+    ).toContain('Invoice for March');
+
+    await click(dossier);
+    // Replié, le sous-menu n'est pas seulement caché : il n'est pas rendu, donc
+    // ses lignes ne restent pas dans l'ordre de tabulation.
+    expect(container.querySelector('[data-testid="folder-threads-telegram"]')).toBeNull();
+  });
+
+  it('ne fait naviguer QUE « See all », jamais le nom du dossier', async () => {
+    await renderTalk();
+    const dossier = container.querySelector('[data-testid="inbox-folder-telegram"]')!;
+    // Le nom d'un dossier est un BOUTON : il plie, il ne mène nulle part.
+    expect(dossier.tagName).toBe('BUTTON');
+    expect(dossier.closest('a')).toBeNull();
+
+    await click(dossier);
+    const seeAll = container.querySelector('[data-testid="folder-see-all-telegram"]');
+    expect(seeAll?.tagName).toBe('A');
+    expect(seeAll?.getAttribute('href')).toBe('/chat?folder=telegram');
+  });
+});
+
+describe('la section « Recent » du panneau Talk @cap:reprendre-conversation/ecran', () => {
+  it('liste les derniers fils tous canaux confondus, puis « See all »', async () => {
+    await renderTalk();
+    const lignes = [...container.querySelectorAll('[data-testid="recent-thread"]')];
+    expect(lignes.map((l) => l.getAttribute('href'))).toEqual(['/chat/r1', '/chat/r2']);
+    const seeAll = container.querySelector('[data-testid="recent-see-all"]');
+    expect(seeAll?.tagName).toBe('A');
+    expect(seeAll?.getAttribute('href')).toBe('/chat');
+    expect(seeAll?.querySelector('[data-testid="see-all-arrow"]')).not.toBeNull();
+  });
+
+  it('dit ce qu’une lecture en échec a répondu, au lieu de se taire', async () => {
+    vi.mocked(listRecentThreadsAction).mockResolvedValue({
+      ok: false,
+      code: 'db_error',
+      message: 'Failed to load the recent threads',
+    });
+    pathname = '/chat';
+    await renderSidebar();
+    expect(container.querySelector('[data-testid="recent-threads"]')?.textContent).toContain(
+      'Failed to load the recent threads',
+    );
+    // Et AUCUNE ligne : une section vide et une section illisible ne se
+    // ressemblent pas (invariant #4).
+    expect(container.querySelector('[data-testid="recent-thread"]')).toBeNull();
+  });
+});
+
+describe('le point de non-lu survit au rail @cap:reprendre-conversation/ecran', () => {
+  it('rend le point sur un fil de dossier ET sur un fil récent (#209)', async () => {
+    await renderTalk();
+    await click(container.querySelector('[data-testid="inbox-folder-telegram"]')!);
+
+    const fil = container.querySelector('[data-testid="folder-thread-telegram"]');
+    expect(fil?.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls')).toBe(
+      'yes',
+    );
+
+    const recents = [...container.querySelectorAll('[data-testid="recent-thread"]')];
+    const appels = recents.map((l) =>
+      l.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls'),
+    );
+    // Le premier est lu, le second ne l'est pas : le point dit les deux, et il
+    // les dit différemment.
+    expect(appels).toEqual(['no', 'yes']);
+  });
+});
+
+// ─── 4. La largeur du panneau ne bouge pas ───────────────────────────────────
+
+describe('un titre long ne pousse pas la colonne @cap:reprendre-conversation/ecran', () => {
+  it('coupe le titre d’un fil au lieu d’élargir le panneau', async () => {
+    await renderTalk();
+    const long = [...container.querySelectorAll('[data-testid="recent-thread"]')].find((l) =>
+      l.textContent?.includes('suivi de candidatures'),
+    );
+    expect(long, 'le fil au titre long est rendu').not.toBeUndefined();
+    // Le libellé porte `truncate` : il se coupe dans la place qu'il a.
+    const libelle = [...(long?.querySelectorAll('span') ?? [])].find((s) =>
+      s.className.includes('flex-1'),
+    );
+    expect(libelle?.className).toContain('truncate');
+
+    // Et la colonne, elle, est taillée dans une mesure FIXE : `--panel-w`. Une
+    // largeur qui suivrait le contenu décalerait toute la page en ouvrant un
+    // dossier, et la gouttière que le contenu garde (`--sidebar-w`) serait
+    // fausse une ligne plus tard.
+    const panneau = container.querySelector('[data-testid="sidebar-panel"]');
+    expect(panneau?.className).toContain('lg:w-[var(--panel-w)]');
+    expect(panneau?.className).toContain('min-w-0');
+  });
+});
+
+// ─── 5. Une seule forme de ligne, dans tout le panneau ───────────────────────
+
+describe('toutes les lignes du panneau ont la MÊME forme @cap:installer-et-demarrer/ecran', () => {
   it('rend la même classe de ligne pour chacune, quelle que soit sa profondeur', async () => {
-    await renderTout();
+    await renderTalk();
+    await click(container.querySelector('[data-testid="inbox-folder-telegram"]')!);
 
-    // Le rail déplié porte bien les cinq sortes de ligne : sans elles, la
+    // Le panneau déplié porte bien les quatre sortes de ligne : sans elles, la
     // comparaison ci-dessous ne prouverait rien.
     expect(container.querySelector('[data-testid="inbox-folder-telegram"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="folder-thread-telegram"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="folder-see-all-telegram"]')).not.toBeNull();
-    expect(rows().length).toBeGreaterThan(20);
+    expect(container.querySelector('[data-testid="recent-thread"]')).not.toBeNull();
 
-    // UNE comparaison, pas cinq assertions : chaque ligne est la forme
+    // Deux dossiers, le fil déplié, son « See all », deux fils récents et le
+    // « See all » de la section : sept lignes, toutes sortes confondues.
+    const lignes = [...container.querySelectorAll<HTMLElement>('[data-sidebar-row]')];
+    expect(lignes.length).toBe(7);
+
+    // UNE comparaison, pas quatre assertions : chaque ligne est la forme
     // commune, suivie de son état et de rien d'autre. Marges, hauteur, rayon,
     // fond de survol, fond actif — tout vient du même endroit.
-    const formes = new Set(rows().map((r) => r.className));
     const attendues = new Set([
       `${SIDEBAR_ROW} ${SIDEBAR_ROW_IDLE}`,
       `${SIDEBAR_ROW} ${SIDEBAR_ROW_ACTIVE}`,
-      // La seule exception est une COULEUR de marque, pas une forme : le bleu
-      // Discord remplace le fond d'état, le reste de la ligne est identique.
-      `${SIDEBAR_ROW} bg-[#5865F2] text-white hover:brightness-110`,
     ]);
-    for (const forme of formes) {
+    for (const forme of new Set(lignes.map((l) => l.className))) {
       expect(attendues.has(forme), `forme de ligne inattendue : « ${forme} »`).toBe(true);
-    }
-  });
-
-  it('fait porter le survol à la LIGNE, pas au lien — donc aussi sous le chevron', async () => {
-    await renderTout();
-    for (const testId of ['channels-caret', 'folder-caret-telegram']) {
-      const caret = container.querySelector(`[data-testid="${testId}"]`);
-      const ligne = caret?.closest('[data-sidebar-row]');
-      // Le chevron est DANS la ligne : le fond de survol de celle-ci court
-      // donc sous lui, au lieu de s'arrêter au bord du lien.
-      expect(ligne, `${testId} vit dans une ligne`).not.toBeNull();
-      expect(ligne?.className).toContain('hover:bg-hover');
-      // Et il ne navigue pas : c'est un bouton, pas un lien.
-      expect(caret?.tagName).toBe('BUTTON');
-      expect(caret?.closest('a')).toBeNull();
-    }
-  });
-
-  it('aligne tout libellé à GAUCHE, qu’une ligne soit un lien ou un bouton', async () => {
-    await renderTout();
-    // Le contenu d'une ligne : son lien, ou son bouton quand elle ne mène nulle
-    // part. C'est le premier enfant, le chevron venant après.
-    const contenus = rows().map((r) => r.firstElementChild);
-
-    // Les DEUX natures sont là — sans elles, la comparaison ne prouverait rien.
-    expect(contenus.some((el) => el?.tagName === 'BUTTON')).toBe(true);
-    expect(contenus.some((el) => el?.tagName === 'A')).toBe(true);
-
-    // Un `<button>` natif centre son texte, et le reset de Tailwind ne touche
-    // pas `text-align` : les lignes de dossier, devenues boutons, écrivaient
-    // leur nom au milieu du rail pendant que les liens restaient à gauche.
-    for (const el of contenus) {
-      expect(el?.className, `une ligne ${el?.tagName} aligne son libellé`).toContain('text-left');
     }
   });
 });
 
-describe('les icônes du rail se distinguent @cap:reprendre-conversation/ecran', () => {
-  it('ne donne pas la même icône à « Channels » et à « Nodal chats »', async () => {
-    await renderTout();
-    const groupe = navLink('Channels').querySelector('[data-testid="nav-leading-icon"] svg');
-    const dossier = container
-      .querySelector('[data-testid="inbox-folder-dashboard"]')
-      ?.querySelector('svg');
-    expect(groupe?.innerHTML).not.toBe('');
-    expect(dossier?.innerHTML).not.toBe('');
-    // Les deux portaient la même bulle : la ligne parente et son premier
-    // enfant étaient indiscernables l'une de l'autre.
-    expect(groupe?.innerHTML).not.toBe(dossier?.innerHTML);
+// ─── 6. Help : les trois liens du produit, tous dehors ───────────────────────
+
+describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
+  it('reste fermée tant qu’on ne l’ouvre pas', async () => {
+    await renderSidebar();
+    expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
+    expect(railCell('help').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('garde les trois liens externes de 0.8.11, chacun dans un nouvel onglet', async () => {
+    await renderSidebar();
+    await click(railCell('help'));
+    const carte = container.querySelector('[data-testid="rail-popover"]');
+    expect(carte?.getAttribute('aria-label')).toBe('Help');
+
+    const liens = [...(carte?.querySelectorAll('a') ?? [])];
+    expect(liens.map((a) => a.textContent?.trim())).toEqual([
+      'Documentation',
+      'Join Discord',
+      'Quality board',
+    ]);
+    for (const lien of liens) {
+      expect(lien.getAttribute('target'), lien.textContent ?? '').toBe('_blank');
+      expect(lien.getAttribute('rel'), lien.textContent ?? '').toBe('noopener noreferrer');
+      // La flèche dit qu'on quitte l'application, et elle FERME la ligne.
+      const fleche = lien.querySelector('[data-testid="external-arrow"]');
+      expect(fleche, lien.textContent ?? '').not.toBeNull();
+      expect(lien.lastElementChild, lien.textContent ?? '').toBe(fleche);
+    }
+  });
+
+  it('mène au portail public vérifié le 18/09/2026', async () => {
+    await renderSidebar();
+    await click(railCell('help'));
+    expect(navLink('Quality board').getAttribute('href')).toBe(
+      'https://kwintspiracy.github.io/nodal-agents/qa/',
+    );
+  });
+
+  it('se referme à Échap', async () => {
+    await renderSidebar();
+    await click(railCell('help'));
+    expect(container.querySelector('[data-testid="rail-popover"]')).not.toBeNull();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
+  });
+});
+
+describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
+  it('n’ouvre le bloc de compte qu’au clic, et il vient du serveur', async () => {
+    await render(
+      <ApprovalsProvider initial={[]}>
+        <ChatFoldersProvider
+          initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+        >
+          <Sidebar workspaces={[]} userMenu={<p>quentin@example.com</p>} />
+        </ChatFoldersProvider>
+      </ApprovalsProvider>,
+    );
+    expect(container.querySelector('[data-testid="user-menu"]')).toBeNull();
+
+    await click(container.querySelector('[data-testid="rail-account"]')!);
+    expect(container.querySelector('[data-testid="user-menu"]')?.textContent).toContain(
+      'quentin@example.com',
+    );
+
+    // L'avatar n'invente AUCUNE initiale : le rail ne sait pas qui est
+    // connecté, et une lettre choisie au hasard serait un fait que rien ne
+    // vérifie (invariant #4).
+    expect(container.querySelector('[data-testid="rail-account"]')?.textContent?.trim()).toBe('');
   });
 });

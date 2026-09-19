@@ -1,5 +1,5 @@
-// folder-threads-sql.ts — les DEUX requêtes bornées du sous-menu des dossiers
-// (Reviewer C, passe 1 de la PR #206).
+// folder-threads-sql.ts — les requêtes BORNÉES de la barre latérale
+// (Reviewer C, passe 1 de la PR #206 ; une troisième depuis #230).
 //
 // POURQUOI ELLES EXISTENT. Le sous-menu ne montre que CINQ lignes par dossier,
 // et il les prenait sur la lecture de la page de liste : jusqu'à deux cents
@@ -8,11 +8,12 @@
 // pour quinze lignes. Le plafond est maintenant EN SQL, et ce qui remonte est
 // exactement ce que le menu dessine.
 //
-// DEUX requêtes, et pas une par dossier : la première rapporte les cinq
+// TROIS requêtes, et pas une par dossier : la première rapporte les cinq
 // derniers chats de CHAQUE canal d'un coup, par une fenêtre
-// (`row_number() over (partition by channel …)`), la seconde les cinq
-// dernières conversations de « Nodal chats ». Un canal branché demain ne coûte
-// pas un aller-retour de plus.
+// (`row_number() over (partition by channel …)`), la deuxième les cinq
+// dernières conversations de « Nodal chats », la troisième les cinq derniers
+// fils tous canaux confondus — la section « Recent » du panneau Talk (#230).
+// Un canal branché demain ne coûte pas un aller-retour de plus.
 //
 // ⚠️ ELLES NE DÉSIGNENT PAS LE FIL COURANT d'un chat. Cette règle-là vit en un
 // seul endroit — `listCurrentThreadByChatAction` — et la recopier ici, fût-ce
@@ -138,6 +139,33 @@ export function folderConversationsQuery(db: Db, entityId: string, userId: strin
         duDashboard(),
       ),
     )
+    .orderBy(desc(conversations.updatedAt), desc(conversations.id))
+    .limit(limit);
+}
+
+/**
+ * LES DERNIERS FILS, TOUS CANAUX CONFONDUS — la section « Recent » du panneau
+ * Talk (#230, 19/09/2026).
+ *
+ * La MÊME requête que celle de « Nodal chats » ci-dessus, moins son seul
+ * filtre : elle ne se limite pas au dossier du tableau de bord. Un fil est un
+ * fil, qu'il vienne de Telegram, de Discord ou d'ici ; « Recent » montre les
+ * derniers, d'où qu'ils viennent.
+ *
+ * Bornée en SQL, comme les deux autres : la barre latérale ne lit JAMAIS une
+ * liste entière pour en garder cinq lignes (Reviewer C, passe 1 de la PR #206).
+ */
+export function recentConversationsQuery(db: Db, entityId: string, userId: string, limit: number) {
+  return db
+    .select({
+      id: conversations.id,
+      title: conversations.title,
+      channel: conversations.channel,
+      unread: unreadColumn,
+    })
+    .from(conversations)
+    .leftJoin(conversationReads, readsOfUser(userId))
+    .where(and(eq(conversations.entityId, entityId), inArray(conversations.origin, [...ORIGINES])))
     .orderBy(desc(conversations.updatedAt), desc(conversations.id))
     .limit(limit);
 }

@@ -64,16 +64,11 @@ import {
 } from '@phosphor-icons/react';
 import InboxFolder from './ui/InboxFolder';
 import SidebarCaret from './ui/SidebarCaret';
-import SidebarRow, { SIDEBAR_ROW } from './ui/SidebarRow';
+import SidebarRow, { SIDEBAR_NOTE } from './ui/SidebarRow';
+import ThreadDot from './ui/ThreadDot';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
-import {
-  chatFolders,
-  threadCallsFor,
-  DASHBOARD_FOLDER,
-  MCP_FOLDER,
-  type FolderThread,
-} from '@/lib/chat-folders.ts';
+import { chatFolders, DASHBOARD_FOLDER, MCP_FOLDER } from '@/lib/chat-folders.ts';
 import {
   listFolderThreadsAction,
   type FolderThreadsSnapshot,
@@ -102,45 +97,12 @@ const FOLDER_ICON: Readonly<Record<string, PhosphorIcon>> = {
 };
 
 /**
- * Ce que dit le sous-menu quand il n'a pas de fil à montrer.
- *
- * Une phrase, pas un lien : elle prend la FORME d'une ligne — mêmes marges,
- * même hauteur, même retrait que les fils qu'elle remplace — sans en prendre
- * le survol, parce qu'il n'y a rien à cliquer.
- */
-const THREAD_NOTE = `${SIDEBAR_ROW} pr-2.5 pl-7 text-body-13 text-ink-4`;
-
-/**
  * La cadence de relecture du sous-menu. QUINZE SECONDES, et pas un chiffre
  * choisi ici : c'est exactement celle d'`ApprovalsProvider` et de
  * `ChatFoldersProvider`, d'où viennent la pastille corail et le point vert.
  * Les trois signaux de la barre latérale disent donc l'état du même instant.
  */
 const POLL_INTERVAL_MS = 15_000;
-
-/**
- * Le point d'un fil, dans la COLONNE de l'icône de son dossier — même largeur,
- * même retrait, si bien que les points d'un sous-menu et les icônes des
- * dossiers tombent sur une seule verticale.
- *
- * Deux couleurs, et deux seulement : `attention` quand le fil a quelque chose
- * pour la personne, `ink-4` sinon. Il ne clignote pas — ce n'est pas un
- * `LiveDot`, qui dit « ça bouge en ce moment » ; celui-ci dit « il y a de quoi
- * revenir ». Ce que ce rouge veut dire exactement, et ce qu'il ne veut PAS
- * dire, vit avec la règle : `threadCallsFor`, lib/chat-folders.ts.
- */
-function ThreadDot({ thread }: { thread: FolderThread }) {
-  const appelle = threadCallsFor(thread);
-  return (
-    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-      <span
-        data-testid="thread-dot"
-        data-calls={appelle ? 'yes' : 'no'}
-        className={`h-1.5 w-1.5 rounded-full ${appelle ? 'bg-attention' : 'bg-ink-4'}`}
-      />
-    </span>
-  );
-}
 
 export default function ChatFolderGroup() {
   const pathname = usePathname();
@@ -292,11 +254,11 @@ export default function ChatFolderGroup() {
             {ouvert && (
               <div className="flex flex-col gap-0.5 pt-0.5" data-testid={`folder-threads-${f.key}`}>
                 {erreur !== null ? (
-                  <p className={THREAD_NOTE}>{erreur}</p>
+                  <p className={SIDEBAR_NOTE}>{erreur}</p>
                 ) : fils === null ? (
-                  <p className={THREAD_NOTE}>Loading</p>
+                  <p className={SIDEBAR_NOTE}>Loading</p>
                 ) : fils.length === 0 ? (
-                  <p className={THREAD_NOTE}>Nothing here yet</p>
+                  <p className={SIDEBAR_NOTE}>Nothing here yet</p>
                 ) : (
                   fils.map((t) => (
                     <SidebarRow

@@ -48,6 +48,18 @@ export function sidebarRowClass(active = false): string {
   return `${SIDEBAR_ROW} ${active ? SIDEBAR_ROW_ACTIVE : SIDEBAR_ROW_IDLE}`;
 }
 
+/**
+ * Ce que la barre DIT quand elle n'a rien à montrer — « Loading », « Nothing
+ * here yet », le message d'une lecture en échec.
+ *
+ * Une phrase, pas un lien : elle prend la FORME d'une ligne de fil — mêmes
+ * marges, même hauteur, même retrait que les lignes qu'elle remplace — sans en
+ * prendre le survol, parce qu'il n'y a rien à cliquer. Écrite ici depuis le
+ * 19/09/2026 (#230) : les dossiers et la section « Recent » la portent tous les
+ * deux, et deux copies auraient fini par se décaler l'une de l'autre.
+ */
+export const SIDEBAR_NOTE = `${SIDEBAR_ROW} pr-2.5 pl-7 text-body-13 text-ink-4`;
+
 /** Ce qui est dans quoi : une entrée de menu, un dossier, un fil d'un dossier. */
 export type SidebarDepth = 'nav' | 'folder' | 'thread';
 
