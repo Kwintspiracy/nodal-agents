@@ -21,6 +21,14 @@ export type {
 // d'exécution ; exportée pour les surfaces qui n'y passent PAS (le runtime CLI
 // écrit sans jamais traverser executeTool).
 export { writeMutationIntent, MAX_PROJECTS } from './verification/intent';
+// La SECONDE montée d'époque, celle de l'ÉCRITURE (issue #101) — exportée pour
+// les mêmes surfaces et pour la même raison : le runtime CLI écrit hors du
+// seam, donc il porte cette discipline lui-même.
+export {
+  bumpEpochsAfterWrite,
+  WRITE_EPOCH_BUMP_FAILED,
+  WRITE_EPOCH_ROW_MISSING,
+} from './verification/write-epoch';
 // La carte d'un outil (P1) : ce que l'écran de conversation lit pour choisir
 // comment montrer un résultat. Résolue ici, jamais devinée depuis un nom.
 export {

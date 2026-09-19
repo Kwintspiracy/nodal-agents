@@ -243,6 +243,52 @@ describe('run-job : l’intention AVANT binding.run', () => {
     expect(await locksHeld()).toEqual([]);
   });
 
+  // ── L'ÉPOQUE MONTE AUSSI À LA SORTIE DE LA CLI (issue #101) ───────────────
+  //
+  // Le runtime CLI écrit hors du seam des outils : il porte donc en propre la
+  // seconde montée d'époque. Sans elle, une preuve lancée par un AUTRE job
+  // pendant la session CLI capture l'époque de l'intention, prouve l'arbre
+  // d'avant, et repose un vert que rien ne périme. La garde est ici une
+  // DIFFÉRENCE d'époque, relue en base, jamais un compte d'appels.
+  const epochOf = async (path: string): Promise<number | null> => {
+    const [row] = await db
+      .select({ verificationEpoch: codeProjects.verificationEpoch })
+      .from(codeProjects)
+      .where(eq(codeProjects.projectKey, keyOf(path)));
+    return row?.verificationEpoch ?? null;
+  };
+
+  it('write : l’époque du projet monte DEUX fois — à l’intention, puis à la sortie de la CLI (#101)', async () => {
+    const jobId = await newJob();
+    fakeRun.mockResolvedValueOnce(greenTurn());
+
+    const outcome = await runJob(jobId, 'write', [alpha]);
+
+    expect(outcome.status).toBe('completed');
+    // L'intention crée la ligne à 0 et la monte à 1 ; la sortie de la CLI la
+    // monte à 2. Une seule montée laisserait 1 — c'est exactement le trou
+    // que #101 décrit.
+    expect(await epochOf(alpha)).toBe(2);
+  });
+
+  it('write : le binding LÈVE — l’époque monte quand même, la CLI a pu écrire avant de tomber', async () => {
+    const jobId = await newJob();
+    fakeRun.mockRejectedValueOnce(new Error('binding exploded'));
+
+    await expect(runJob(jobId, 'write', [alpha])).rejects.toThrow('binding exploded');
+
+    expect(await epochOf(alpha)).toBe(2);
+  });
+
+  it('read : aucune intention, donc aucune montée — la ligne code_projects n’existe même pas', async () => {
+    const jobId = await newJob();
+    fakeRun.mockResolvedValueOnce(greenTurn());
+
+    await runJob(jobId, 'read', [alpha]);
+
+    expect(await epochOf(alpha)).toBeNull();
+  });
+
   it('job déjà terminal (annulé) ⇒ le CLI ne démarre pas', async () => {
     const jobId = await newJob();
     await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, jobId));

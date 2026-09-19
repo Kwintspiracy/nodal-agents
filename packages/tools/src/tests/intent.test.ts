@@ -274,9 +274,11 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(rows.map((r) => r.deliverableType)).toEqual(['code_project', 'office_file']);
     expect(rows[0]!.canonicalKey).toBe(keyOf(ws));
     expect(rows[1]!.canonicalKey).toBe(keyOf(join(ws, 'donnees.xlsx')));
-    // Une seule écriture de code : l'epoch du projet vaut 1, pas 2. Le
-    // classeur ne fait pas vieillir la configuration du dépôt.
-    expect((await projectRow(keyOf(ws)))?.verificationEpoch).toBe(1);
+    // Une seule écriture de code : le classeur ne fait pas vieillir la
+    // configuration du dépôt. Deux montées d'époque par écriture DE CODE
+    // depuis #101 — l'intention, puis la sortie de l'outil (`write-epoch.ts`)
+    // —, donc 2 ici et non 4.
+    expect((await projectRow(keyOf(ws)))?.verificationEpoch).toBe(2);
   });
 
   it('un lot MIXTE : deux projets et un classeur, en UN seul appel', async () => {
@@ -408,7 +410,10 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(normalizePath(row.displayPathSnapshot ?? '')).toBe(normalizePath(ws));
 
     const project = await projectRow(keyOf(ws));
-    expect(project?.verificationEpoch).toBe(1);
+    // Une écriture, DEUX montées d'époque depuis #101 : l'intention dit
+    // « quelqu'un s'apprête à écrire », la sortie de l'outil dit « le disque
+    // vient peut-être de changer ». Voir `write-epoch.ts`.
+    expect(project?.verificationEpoch).toBe(2);
   });
 
   it('crée la ligne code_projects qui n’existait pas', async () => {
@@ -441,7 +446,9 @@ describe('l’intention de mutation, posée par executeTool', () => {
     const rows = await statesOf(jobId);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.dirtyGeneration).toBe(2);
-    expect((await projectRow(keyOf(ws)))?.verificationEpoch).toBe(2);
+    // Deux écritures, quatre montées (#101) : chacune périme la preuve que la
+    // précédente aurait pu laisser passer.
+    expect((await projectRow(keyOf(ws)))?.verificationEpoch).toBe(4);
   });
 
   it('run_command salit TOUT le périmètre d’écriture', async () => {
