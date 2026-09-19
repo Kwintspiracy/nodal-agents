@@ -422,7 +422,15 @@ export type FolderChatRead = {
 /** Une conversation de « Nodal chats » retenue par le sous-menu. */
 export type FolderConversationRead = {
   id: string;
-  /** Le titre, DÉJÀ rédigé et coupé — vide quand rien ne le nomme. */
+  /**
+   * Le titre, DÉJÀ rédigé, coupé et NOMMÉ : « Untitled » quand rien ne le
+   * nomme, jamais la chaîne vide (Reviewer C, passe 1 de la PR #235).
+   *
+   * Le repli vivait chez CHAQUE appelant — le sous-menu d'un dossier et la
+   * section « Recent » l'écrivaient chacun de son côté. Deux copies du même
+   * dernier recours finissent par diverger, et le même fil se serait appelé
+   * autrement selon l'endroit d'où on le regarde.
+   */
   title: string;
   /** Le fil a bougé depuis que cette personne l'a ouvert, ou jamais ouvert (#209). */
   unread: boolean;
@@ -559,14 +567,20 @@ async function nommerLesFils(
     }
   }
 
-  return rows.map((r) => ({
-    id: r.id,
-    title:
+  return rows.map((r) => {
+    const titre =
       r.title !== ''
         ? firstLine(r.title, TITLE_MAX)
-        : firstLine(stripGroupPrefix(premiereDemande.get(r.id) ?? ''), TITLE_MAX),
-    unread: r.unread,
-  }));
+        : firstLine(stripGroupPrefix(premiereDemande.get(r.id) ?? ''), TITLE_MAX);
+    return {
+      id: r.id,
+      // LE DERNIER RECOURS EST ICI, et nulle part ailleurs : un fil que
+      // personne n'a nommé et dont la première demande est vide s'appelle
+      // « Untitled » pour tous ceux qui le lisent.
+      title: titre === '' ? 'Untitled' : titre,
+      unread: r.unread,
+    };
+  });
 }
 
 /**

@@ -45,11 +45,11 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
     await page.goto('/agents');
     // Depuis #230 la barre est un RAIL de destinations et un PANNEAU pour
     // celle qui est active. Le rail, lui, est le même partout.
-    for (const key of ['talk', 'build', 'run', 'settings', 'help']) {
+    for (const key of ['work', 'agent', 'run', 'approvals', 'settings', 'help']) {
       await expect(page.locator(`[data-testid="rail-${key}"]`), `rail cell "${key}"`).toBeVisible();
     }
-    // Et c'est bien Build qui est allumée sur /agents.
-    await expect(page.locator('[data-testid="rail-build"]')).toHaveAttribute(
+    // Et c'est bien Agent qui est allumee sur /agents.
+    await expect(page.locator('[data-testid="rail-agent"]')).toHaveAttribute(
       'aria-current',
       'page',
     );
@@ -70,21 +70,21 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
           'API Connectors',
           'MCP Connectors',
           'Credentials',
+          'LLM Providers',
         ],
       ],
+      // Les espaces de travail ouvrent le panneau Work depuis le 19/09/2026.
+      ['/chat', ['Workspaces']],
       [
         '/',
         [
-          // 'Home' et 'Spaces' jusqu'au 18/09/2026 : la barre dit maintenant
-          // 'Dashboard' et 'Workspaces'. Les ROUTES, elles, n'ont pas bouge.
+          // 'Home' jusqu'au 18/09/2026 : la barre dit maintenant 'Dashboard'.
+          // Les ROUTES, elles, n'ont pas bouge.
           'Dashboard',
-          'Workspaces',
-          'Approvals',
-          'Logs',
           // « Runs » n'est plus une entree du menu depuis #134 : la liste des
           // runs EST Activity, le premier onglet de Logs.
+          'Logs',
           'Automations & Webhooks',
-          'LLM Providers',
         ],
       ],
     ];
@@ -100,14 +100,19 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
       }
     }
 
-    // Settings vit au bas du RAIL, pas dans un panneau.
+    // Settings et Approvals vivent sur le RAIL, pas dans un panneau : ce qui
+    // attend une reponse se voit de n'importe quelle destination.
     await expect(page.locator('[data-testid="rail-settings"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rail-approvals"]')).toHaveAttribute(
+      'href',
+      '/approvals',
+    );
   });
 
-  test('the Talk panel lists the channels and the recent threads', async ({ page }) => {
+  test('the Work panel lists the channels and the recent threads', async ({ page }) => {
     await page.goto('/chat');
     const panneau = page.locator('[data-testid="sidebar-panel"]');
-    await expect(panneau).toHaveAttribute('aria-label', 'Talk');
+    await expect(panneau).toHaveAttribute('aria-label', 'Work');
     // « Nodal chats » est une destination permanente du produit : son dossier
     // est là même sur une base vide. C'est un bouton — il PLIE, il ne navigue
     // pas (#206) — et « See all » est ce qui ouvre la liste.

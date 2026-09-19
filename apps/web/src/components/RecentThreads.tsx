@@ -7,9 +7,20 @@
 // un dossier répond à « où ça se passe », celle-ci à « qu'est-ce que je viens
 // de faire ».
 //
-// Ce sont les MÊMES lignes qu'ailleurs — même forme (`SidebarRow` en
-// profondeur `thread`), même point (`ThreadDot`, #209), même titre (écrit par
-// la lecture, masqué et coupé à la source). Rien n'est recalculé ici.
+// Les titres sont ceux que la lecture écrit — masqués, coupés et nommés à la
+// source. Rien n'est recalculé ici.
+//
+// ⚠️ UNE LIGNE DE « RECENT » NE PORTE AUCUN POINT, et c'est la seule du
+// panneau dans ce cas (planches de Quentin du 19/09/2026, Figma 487:5489).
+// Elle a une place vide là où un dossier a son icône, puis son titre en gris.
+// Conséquence à dire tout haut : l'état NON LU de #209 ne se dessine plus
+// ici. Il reste entier dans le sous-menu d'un dossier, qui est l'endroit où
+// l'on choisit un fil ; « Recent » est un rappel de ce qu'on vient de faire,
+// et le propriétaire l'a dessinée sans signal.
+//
+// ⚠️ ELLE NE FAIT QU'UNE SEULE LECTURE. Sans point à peindre, il ne reste que
+// les titres et leurs adresses (Reviewer C, passe 1 de la PR #235, qui
+// relevait trois actions serveur là où une suffit).
 //
 // ⚠️ LA LECTURE PART AU MONTAGE, et pas au premier clic comme celle des
 // sous-menus : la section est VISIBLE dès que le panneau Talk s'affiche, donc
@@ -44,15 +55,17 @@ import { usePathname } from 'next/navigation';
 import { ArrowRight } from '@phosphor-icons/react';
 import SidebarSection from './ui/SidebarSection';
 import SidebarRow, { SIDEBAR_NOTE } from './ui/SidebarRow';
-import ThreadDot from './ui/ThreadDot';
-import { listRecentThreadsAction } from '@/lib/recent-threads-actions.ts';
+import {
+  listRecentThreadReadsAction,
+  type FolderConversationRead,
+} from '@/lib/conversation-actions.ts';
 import { usePolling, SIDEBAR_POLL_MS } from '@/lib/use-polling';
-import type { FolderThread } from '@/lib/chat-folders.ts';
+import { RECENT_THREADS_MAX } from '@/lib/chat-folders.ts';
 
 export default function RecentThreads() {
   const pathname = usePathname();
   /** `null` = la lecture n'a pas encore répondu. Un tableau vide est un fait. */
-  const [fils, setFils] = useState<readonly FolderThread[] | null>(null);
+  const [fils, setFils] = useState<readonly FolderConversationRead[] | null>(null);
   /** Ce que la lecture a répondu quand elle a échoué. Jamais un silence. */
   const [erreur, setErreur] = useState<string | null>(null);
 
@@ -79,7 +92,7 @@ export default function RecentThreads() {
 
   const relire = useCallback(async (): Promise<void> => {
     const mien = (age.current += 1);
-    const r = await listRecentThreadsAction();
+    const r = await listRecentThreadReadsAction(RECENT_THREADS_MAX);
     // Périmée : l'écran est démonté, ou une lecture plus récente est partie
     // depuis. Dans les deux cas il n'y a rien à dessiner avec ça.
     if (mien !== age.current) return;
@@ -117,13 +130,16 @@ export default function RecentThreads() {
       ) : (
         fils.map((t) => (
           <SidebarRow
-            key={t.key}
-            href={t.href}
+            key={t.id}
+            href={`/chat/${t.id}`}
             title={t.title}
-            depth="thread"
+            depth="recent"
             testId="recent-thread"
           >
-            <ThreadDot thread={t} />
+            {/* Une place vide de la largeur d'une icône : les titres de
+                « Recent » s'alignent alors sur les libellés des dossiers
+                au-dessus, sans rien mettre devant eux. */}
+            <span className="h-3.5 w-3.5 shrink-0" />
             <span className="flex-1 truncate leading-5">{t.title}</span>
           </SidebarRow>
         ))
@@ -131,17 +147,13 @@ export default function RecentThreads() {
       {/* « See all » mène à la liste entière, et c'est la SEULE ligne de la
           section qui y mène — comme dans le sous-menu d'un dossier. Cinq fils
           ne sont pas tous les fils, et rien d'autre ne le dirait. */}
-      <SidebarRow href="/chat" title="See all" depth="thread" testId="recent-see-all">
-        {/* Une place vide de la largeur d'un point : le libellé s'aligne alors
-            sur les titres des fils au-dessus. */}
+      <SidebarRow href="/chat" title="See all" depth="recent" testId="recent-see-all">
         <span className="h-3.5 w-3.5 shrink-0" />
-        <span className="flex-1 truncate leading-5 font-medium!">See all</span>
-        <ArrowRight
-          size={14}
-          weight="bold"
-          data-testid="see-all-arrow"
-          className="h-3.5 w-3.5 shrink-0 text-ink-4"
-        />
+        {/* Le MÊME poids que les fils au-dessus : la planche ne le met pas en
+            gras, et un « See all » plus lourd que les titres se lirait comme
+            l'entrée principale de la section. */}
+        <span className="flex-1 truncate leading-5">See all</span>
+        <ArrowRight size={12} data-testid="see-all-arrow" className="h-3 w-3 shrink-0 text-ink-3" />
       </SidebarRow>
     </div>
   );

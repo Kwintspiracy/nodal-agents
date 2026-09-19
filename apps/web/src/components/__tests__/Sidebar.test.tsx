@@ -33,22 +33,32 @@ vi.mock('next/link', () => ({
     createElement('a', { href, ...rest }, children),
 }));
 vi.mock('@/lib/actions', () => ({ listApprovalsAction: vi.fn() }));
-vi.mock('@/lib/conversation-actions.ts', () => ({ getChatFoldersAction: vi.fn() }));
+vi.mock('@/lib/conversation-actions.ts', () => ({
+  getChatFoldersAction: vi.fn(),
+  listRecentThreadReadsAction: vi.fn(),
+}));
 vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
-vi.mock('@/lib/recent-threads-actions.ts', () => ({ listRecentThreadsAction: vi.fn() }));
 vi.mock('../VersionBadge', () => ({ default: () => null }));
 vi.mock('../WorkspaceSwitcher', () => ({ default: () => null }));
 vi.mock('../NotificationsBell', () => ({ default: () => null }));
 vi.mock('../ui/ThemeToggle', () => ({ default: () => null }));
 
 import Sidebar from '../Sidebar.tsx';
-import { ApprovalsProvider } from '../ApprovalsProvider';
+import { ApprovalsProvider, type PendingApproval } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
 import { listApprovalsAction } from '@/lib/actions';
-import { getChatFoldersAction } from '@/lib/conversation-actions.ts';
+import {
+  getChatFoldersAction,
+  listRecentThreadReadsAction,
+  type FolderConversationRead,
+} from '@/lib/conversation-actions.ts';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
-import { listRecentThreadsAction } from '@/lib/recent-threads-actions.ts';
-import { SIDEBAR_ROW, SIDEBAR_ROW_ACTIVE, SIDEBAR_ROW_IDLE } from '../ui/SidebarRow';
+import {
+  SIDEBAR_ROW_BASE,
+  SIDEBAR_ROW_H,
+  SIDEBAR_ROW_ACTIVE,
+  SIDEBAR_ROW_IDLE,
+} from '../ui/SidebarRow';
 import { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
 import { SIDEBAR_POLL_MS } from '@/lib/use-polling';
 import type { FolderThread } from '@/lib/chat-folders.ts';
@@ -65,13 +75,22 @@ async function render(node: ReactElement): Promise<void> {
   });
 }
 
-async function renderSidebar(channels: string[] = []): Promise<void> {
+/** Deux espaces de travail : le compte de la ligne « Workspaces » vaut 2. */
+const ESPACES = [
+  { id: 'w1', name: 'Local', slug: 'local', icon: null, active: true },
+  { id: 'w2', name: 'Client', slug: 'client', icon: null, active: false },
+] as unknown as Parameters<typeof Sidebar>[0]['workspaces'];
+
+async function renderSidebar(
+  channels: string[] = [],
+  attentes: PendingApproval[] = [],
+): Promise<void> {
   await render(
-    <ApprovalsProvider initial={[]}>
+    <ApprovalsProvider initial={attentes}>
       <ChatFoldersProvider
         initial={{ channels, running: {}, runningConversationIds: [], externalRuns: 0 }}
       >
-        <Sidebar workspaces={[]} />
+        <Sidebar workspaces={ESPACES} />
       </ChatFoldersProvider>
     </ApprovalsProvider>,
   );
@@ -118,7 +137,7 @@ function click(el: Element): Promise<void> {
   });
 }
 
-/** Un fil, réduit à ce que le menu en rend. */
+/** Un fil d'un sous-menu de dossier, réduit à ce que le menu en rend. */
 function thread(over: Partial<FolderThread> & { key: string; title: string }): FolderThread {
   return {
     href: `/chat/${over.key}`,
@@ -129,10 +148,21 @@ function thread(over: Partial<FolderThread> & { key: string; title: string }): F
   };
 }
 
+/**
+ * Une ligne de « Recent » telle que la LECTURE la rend.
+ *
+ * Trois champs, et c'est tout : depuis la passe 1 de la revue, la section ne
+ * lit que les fils. Ce qui ATTEND et ce qui TOURNE vient des contextes de la
+ * page, que les deux providers relisent déjà.
+ */
+function recent(id: string, title: string, unread = false): FolderConversationRead {
+  return { id, title, unread };
+}
+
 beforeEach(() => {
   document.body.innerHTML = '';
   pathname = '/agents';
-  vi.mocked(listRecentThreadsAction).mockResolvedValue({ ok: true, data: [] });
+  vi.mocked(listRecentThreadReadsAction).mockResolvedValue({ ok: true, data: [] });
   vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: {} });
   // LES DEUX PROVIDERS VOISINS RÉPONDENT, MÊME SI AUCUN TEST NE LES REGARDE.
   // Ils posent chacun un `setInterval` de 15 s ; dès qu'un test fait tourner
@@ -156,32 +186,88 @@ afterEach(async () => {
 // ─── 1. Le rail, et sa destination active ────────────────────────────────────
 
 describe('le rail porte trois destinations @cap:installer-et-demarrer/ecran', () => {
-  it('rend Talk, Build et Run, puis Settings et Help', async () => {
+  it('rend Work, Agent, Run et Approvals, puis Settings et Help', async () => {
     await renderSidebar();
-    for (const key of ['talk', 'build', 'run', 'settings', 'help']) {
+    for (const key of ['work', 'agent', 'run', 'approvals', 'settings', 'help']) {
       expect(railCell(key), `le rail porte « ${key} »`).not.toBeNull();
     }
-    expect(railCell('talk').textContent?.trim()).toBe('Talk');
-    expect(railCell('build').textContent?.trim()).toBe('Build');
+    // Les noms du 19/09/2026 : « Work » pour l'endroit où l'on travaille,
+    // « Agent » au singulier parce qu'on en règle un à la fois.
+    expect(railCell('work').textContent?.trim()).toBe('Work');
+    expect(railCell('agent').textContent?.trim()).toBe('Agent');
     expect(railCell('run').textContent?.trim()).toBe('Run');
+    expect(() => navLink('Talk')).toThrow();
+    expect(() => navLink('Build')).toThrow();
   });
 
   it('donne la MÊME forme aux cases, active ou non', async () => {
     await renderSidebar();
     const formes = new Set(
-      ['talk', 'build', 'run', 'settings', 'help'].map((k) => railCell(k).className),
+      ['work', 'agent', 'run', 'settings', 'help'].map((k) => railCell(k).className),
     );
     const attendues = new Set([
-      `${RAIL_CELL} ${RAIL_CELL_IDLE}`,
-      `${RAIL_CELL} ${RAIL_CELL_ACTIVE}`,
+      `relative ${RAIL_CELL} ${RAIL_CELL_IDLE}`,
+      `relative ${RAIL_CELL} ${RAIL_CELL_ACTIVE}`,
     ]);
-    // La route est /agents : Build est active, les autres non. Les DEUX états
+    // La route est /agents : Agent est active, les autres non. Les DEUX états
     // sont donc là — sans cela, la comparaison ne prouverait rien.
-    expect(formes.has(`${RAIL_CELL} ${RAIL_CELL_ACTIVE}`)).toBe(true);
-    expect(formes.has(`${RAIL_CELL} ${RAIL_CELL_IDLE}`)).toBe(true);
+    expect(formes.has(`relative ${RAIL_CELL} ${RAIL_CELL_ACTIVE}`)).toBe(true);
+    expect(formes.has(`relative ${RAIL_CELL} ${RAIL_CELL_IDLE}`)).toBe(true);
     for (const forme of formes) {
       expect(attendues.has(forme), `forme de case inattendue : « ${forme} »`).toBe(true);
     }
+  });
+});
+
+// ─── Approvals : une CASE du rail, et sa pastille ────────────────────────────
+//
+// Elle vivait dans le panneau Run : ce qui attendait une réponse ne se voyait
+// donc qu'en allant dans Run. Sur le rail, son nombre est visible d'où que
+// l'on soit — c'est le seul de la barre qu'une personne puisse faire tomber à
+// zéro en répondant.
+
+describe('la case Approvals du rail @cap:approuver-une-action/ecran', () => {
+  /** Une demande en attente, réduite à ce que le contexte en garde. */
+  function attente(n: number): PendingApproval[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `a${i}`,
+      jobId: `j${i}`,
+      toolName: 'send_message',
+      agentName: null,
+      toolInput: {},
+      requestedAt: null,
+      jobChannel: 'dashboard',
+      conversationChannel: 'dashboard',
+    }));
+  }
+
+  it('mène à /approvals, et s’allume quand on y est', async () => {
+    pathname = '/approvals';
+    await renderSidebar();
+    expect(railCell('approvals').getAttribute('href')).toBe('/approvals');
+    expect(railCell('approvals').getAttribute('aria-current')).toBe('page');
+    // Approvals n'est PAS une destination : aucune des trois ne s'allume, et
+    // le panneau montre le repli, comme sur `/settings`.
+    for (const key of ['work', 'agent', 'run']) {
+      expect(railCell(key).getAttribute('aria-current'), key).toBeNull();
+    }
+    expect(
+      container.querySelector('[data-testid="sidebar-panel"]')?.getAttribute('aria-label'),
+    ).toBe('Run');
+  });
+
+  it('porte le NOMBRE de demandes en attente', async () => {
+    // Mutation vérifiée : `pill={approvalsCount}` remplacé par `pill={0}`
+    // dans `SidebarRail` → ce cas rougit, la case n'écrit plus rien.
+    await renderSidebar([], attente(3));
+    expect(railCell('approvals').textContent?.trim()).toBe('Approvals3');
+  });
+
+  it('n’écrit RIEN à zéro', async () => {
+    await renderSidebar([], []);
+    // Une pastille « 0 » demande d'être lue pour apprendre qu'il n'y a rien à
+    // faire : à zéro, la case ne porte que son nom.
+    expect(railCell('approvals').textContent?.trim()).toBe('Approvals');
   });
 });
 
@@ -196,14 +282,17 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
   }
 
   const cas: ReadonlyArray<readonly [string, string, string]> = [
-    ['/agents', 'build', 'Build'],
-    ['/memories', 'build', 'Build'],
-    ['/mcp', 'build', 'Build'],
-    ['/chat', 'talk', 'Talk'],
-    ['/chat/abc', 'talk', 'Talk'],
+    ['/agents', 'agent', 'Agent'],
+    ['/memories', 'agent', 'Agent'],
+    ['/mcp', 'agent', 'Agent'],
+    ['/llm-providers', 'agent', 'Agent'],
+    ['/chat', 'work', 'Work'],
+    ['/chat/abc', 'work', 'Work'],
+    // Les espaces de travail ouvrent Work depuis le 19/09 : leur ligne est
+    // dans son panneau, et la case doit s'allumer avec elle.
+    ['/spaces', 'work', 'Work'],
     ['/', 'run', 'Run'],
     ['/logs', 'run', 'Run'],
-    ['/spaces', 'run', 'Run'],
     ['/automations', 'run', 'Run'],
     // Une page de run n'a pas d'entrée dans le panneau, mais elle allume bien
     // une destination : un rail sans case active se lirait comme cassé.
@@ -226,7 +315,7 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
     pathname = '/settings';
     await renderSidebar();
     expect(railCell('settings').getAttribute('aria-current')).toBe('page');
-    for (const key of ['talk', 'build', 'run']) {
+    for (const key of ['work', 'agent', 'run']) {
       expect(railCell(key).getAttribute('aria-current'), `${key} n'est pas la page`).toBeNull();
     }
     // Le panneau doit bien montrer quelque chose : Run, qui porte le tableau de
@@ -241,22 +330,43 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
 // ─── 2. Les entrées, réparties en trois panneaux ─────────────────────────────
 
 describe('les entrées de 0.8.11, réparties en trois @cap:installer-et-demarrer/ecran', () => {
-  it('range Build en deux blocs : ce qu’on monte, puis ce qu’on y branche', async () => {
+  it('range Agent en deux blocs : ce qu’on monte, puis ce qu’on y branche', async () => {
     pathname = '/agents';
     await renderSidebar();
     expect(groupLabels('Agents')).toEqual(['Agents', 'Skills', 'Learned Skills', 'Memory']);
-    expect(groupLabels('Connect')).toEqual(['API Connectors', 'MCP Connectors', 'Credentials']);
+    // « LLM Providers » ferme CONNECT depuis les planches du 19/09/2026 : il a
+    // vécu dans Run sur le texte de l'issue, et le propriétaire l'a redessiné
+    // ici, avec ce qu'on branche au produit.
+    expect(groupLabels('Connect')).toEqual([
+      'API Connectors',
+      'MCP Connectors',
+      'Credentials',
+      'LLM Providers',
+    ]);
   });
 
-  it('range Run en trois blocs, et garde LLM Providers avec lui', async () => {
+  it('range Run en DEUX blocs, sans Workspaces ni Approvals', async () => {
     pathname = '/';
     await renderSidebar();
-    expect(groupLabels('Monitor')).toEqual(['Dashboard', 'Workspaces', 'Approvals', 'Logs']);
+    // Les deux sont PARTIES le 19/09, et aucune n'a disparu du produit :
+    // Workspaces ouvre le panneau Work, Approvals est une case du rail.
+    expect(groupLabels('Monitor')).toEqual(['Dashboard', 'Logs']);
     expect(groupLabels('Automate')).toEqual(['Automations & Webhooks']);
-    // « LLM Providers » est dessiné sous Build/CONNECT sur la planche, et rangé
-    // ici par l'issue : la décision de Quentin du 18/09 (« le fournisseur de
-    // modèles ouvre ce qu'on règle ») est plus récente que la planche.
-    expect(groupLabels('Models')).toEqual(['LLM Providers']);
+    expect(container.querySelector('[data-testid="nav-group-Models"]')).toBeNull();
+  });
+
+  it('ouvre le panneau Work par ses espaces de travail, avec leur compte', async () => {
+    pathname = '/chat';
+    await renderSidebar();
+    // Le libellé et son COMPTE, collés dans le texte rendu : deux espaces de
+    // travail sont semés, la ligne en écrit le nombre à droite.
+    expect(groupLabels('Workspaces')).toEqual(['Workspaces2']);
+    const lien = container.querySelector('a[href="/spaces"]');
+    expect(lien, 'la ligne mène bien à /spaces').not.toBeNull();
+    // Le bloc OUVRE le panneau : il précède CHANNELS, où vivent les dossiers.
+    const panneau = container.querySelector('[data-testid="sidebar-panel"]');
+    const blocs = [...(panneau?.querySelectorAll('[data-testid^="nav-group-"]') ?? [])];
+    expect(blocs[0]?.getAttribute('data-testid')).toBe('nav-group-Workspaces');
   });
 
   it('ne propose « Scheduled » dans aucun des trois panneaux', async () => {
@@ -275,14 +385,13 @@ describe('les entrées de 0.8.11, réparties en trois @cap:installer-et-demarrer
     await renderSidebar();
   });
 
-  it('nomme la racine « Dashboard », et « Workspaces » ce qui vit sur /spaces', async () => {
+  it('nomme la racine « Dashboard », et jamais « Spaces »', async () => {
     pathname = '/';
     await renderSidebar();
     expect(navLink('Dashboard').getAttribute('href')).toBe('/');
     expect(() => navLink('Home')).toThrow();
-    // Le libellé change, la ROUTE ne bouge pas : les liens déjà envoyés et les
-    // favoris continuent d'ouvrir la page.
-    expect(navLink('Workspaces').getAttribute('href')).toBe('/spaces');
+    // Le libellé dit « Workspaces », la ROUTE reste `/spaces` : les liens déjà
+    // envoyés et les favoris continuent d'ouvrir la page.
     expect(() => navLink('Spaces')).toThrow();
   });
 
@@ -322,15 +431,11 @@ async function renderTalk(channels: string[] = ['telegram']): Promise<void> {
       telegram: [thread({ key: 't1', title: 'Invoice for March', unread: true })],
     },
   });
-  vi.mocked(listRecentThreadsAction).mockResolvedValue({
+  vi.mocked(listRecentThreadReadsAction).mockResolvedValue({
     ok: true,
     data: [
-      thread({ key: 'r1', title: 'Recipes' }),
-      thread({
-        key: 'r2',
-        title: 'Crée-moi une application de suivi de candidatures assez simple',
-        unread: true,
-      }),
+      recent('r1', 'Recipes'),
+      recent('r2', 'Crée-moi une application de suivi de candidatures assez simple', true),
     ],
   });
   pathname = '/chat';
@@ -395,7 +500,7 @@ describe('la section « Recent » du panneau Talk @cap:reprendre-conversation/ec
   });
 
   it('dit ce qu’une lecture en échec a répondu, au lieu de se taire', async () => {
-    vi.mocked(listRecentThreadsAction).mockResolvedValue({
+    vi.mocked(listRecentThreadReadsAction).mockResolvedValue({
       ok: false,
       code: 'db_error',
       message: 'Failed to load the recent threads',
@@ -424,30 +529,37 @@ describe('la section « Recent » du panneau Talk @cap:reprendre-conversation/ec
 // point ne s'allume jamais).
 
 describe('la section « Recent » se relit @cap:reprendre-conversation/ecran', () => {
-  /** Le point du premier fil récent : `yes` = il appelle la personne. */
-  function pointDuPremier(): string | null {
+  /**
+   * Le titre du premier fil récent.
+   *
+   * C'est LUI qu'on observe, et non un point : depuis les planches du
+   * 19/09/2026 une ligne de « Recent » ne porte aucun signal. Un titre qui
+   * change à l'écran sans rechargement prouve la relecture aussi bien, et il
+   * se lit dans le rendu plutôt que dans un attribut.
+   */
+  function titreDuPremier(): string {
     const ligne = container.querySelector('[data-testid="recent-thread"]');
     if (!ligne) throw new Error('no recent thread row');
-    return ligne.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls') ?? null;
+    return ligne.textContent?.trim() ?? '';
   }
 
   /** Ce que la prochaine lecture rendra. */
-  function semer(unread: boolean): void {
-    vi.mocked(listRecentThreadsAction).mockResolvedValue({
+  function semer(titre: string): void {
+    vi.mocked(listRecentThreadReadsAction).mockResolvedValue({
       ok: true,
-      data: [thread({ key: 'r1', title: 'Invoice for March', unread })],
+      data: [recent('r1', titre)],
     });
   }
 
-  it('éteint le point du fil qu’on OUVRE, sans rechargement', async () => {
-    semer(true);
+  it('relit quand on NAVIGUE, sans rechargement', async () => {
+    semer('Invoice for March');
     pathname = '/chat';
     await renderSidebar();
-    expect(pointDuPremier()).toBe('yes');
+    expect(titreDuPremier()).toBe('Invoice for March');
 
-    // La personne ouvre le fil. Le rendu serveur de sa page écrit le marqueur
-    // de lecture ; la lecture suivante rend donc le fil LU.
-    semer(false);
+    // La personne ouvre le fil, et l'IA l'a renommé entre-temps : la lecture
+    // suivante rend le nouveau titre.
+    semer('Invoice for April');
     pathname = '/chat/r1';
     await act(async () => {
       root.render(
@@ -461,28 +573,28 @@ describe('la section « Recent » se relit @cap:reprendre-conversation/ecran', (
       );
     });
 
-    // Et le point s'éteint tout seul : personne n'a rechargé la page.
-    expect(pointDuPremier()).toBe('no');
+    // Et la ligne change toute seule : personne n'a rechargé la page.
+    expect(titreDuPremier()).toBe('Invoice for April');
   });
 
-  it('allume le point d’un fil qui REÇOIT, sur la cadence de la barre', async () => {
+  it('relit sur la CADENCE de la barre, sans que rien ne navigue', async () => {
     vi.useFakeTimers();
     try {
-      semer(false);
+      semer('Invoice for March');
       pathname = '/chat';
       await renderSidebar();
-      expect(pointDuPremier()).toBe('no');
+      expect(titreDuPremier()).toBe('Invoice for March');
 
-      // Un message arrive pendant qu'on regarde autre chose. Rien ne navigue.
-      semer(true);
-      expect(pointDuPremier()).toBe('no');
+      // Le fil est renommé pendant qu'on regarde autre chose. Rien ne navigue.
+      semer('Invoice for April');
+      expect(titreDuPremier()).toBe('Invoice for March');
 
       // Un tour d'horloge de la barre latérale — le MÊME que la pastille
-      // corail, le point vert et le sous-menu d'un dossier — et il s'allume.
+      // corail, le point vert et le sous-menu d'un dossier — et la ligne suit.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(SIDEBAR_POLL_MS);
       });
-      expect(pointDuPremier()).toBe('yes');
+      expect(titreDuPremier()).toBe('Invoice for April');
     } finally {
       vi.useRealTimers();
     }
@@ -502,13 +614,13 @@ describe('la relecture de « Recent » laisse tomber le périmé @cap:reprendre-
     //
     // Mutation vérifiée : `if (mien !== age.current) return;` retiré de
     // `relire` → ce test rougit, la section affiche « Ancienne ».
-    type Reponse = { ok: true; data: readonly FolderThread[] };
+    type Reponse = { ok: true; data: FolderConversationRead[] };
     const promesses: Array<(r: Reponse) => void> = [];
-    vi.mocked(listRecentThreadsAction).mockImplementation(
+    vi.mocked(listRecentThreadReadsAction).mockImplementation(
       () =>
         new Promise((r) => {
           promesses.push(r as (typeof promesses)[number]);
-        }) as ReturnType<typeof listRecentThreadsAction>,
+        }) as ReturnType<typeof listRecentThreadReadsAction>,
     );
 
     pathname = '/chat';
@@ -530,10 +642,10 @@ describe('la relecture de « Recent » laisse tomber le périmé @cap:reprendre-
 
     // La SECONDE répond d'abord, la PREMIÈRE ensuite.
     await act(async () => {
-      promesses[1]?.({ ok: true, data: [thread({ key: 'r1', title: 'Récente' })] });
+      promesses[1]?.({ ok: true, data: [recent('r1', 'Récente')] });
     });
     await act(async () => {
-      promesses[0]?.({ ok: true, data: [thread({ key: 'r1', title: 'Ancienne' })] });
+      promesses[0]?.({ ok: true, data: [recent('r1', 'Ancienne')] });
     });
 
     expect(container.querySelector('[data-testid="recent-thread"]')?.textContent).toBe('Récente');
@@ -541,22 +653,26 @@ describe('la relecture de « Recent » laisse tomber le périmé @cap:reprendre-
 });
 
 describe('le point de non-lu survit au rail @cap:reprendre-conversation/ecran', () => {
-  it('rend le point sur un fil de dossier ET sur un fil récent (#209)', async () => {
+  it('rend le point sur le fil d’un DOSSIER (#209)', async () => {
     await renderTalk();
     await click(container.querySelector('[data-testid="inbox-folder-telegram"]')!);
-
     const fil = container.querySelector('[data-testid="folder-thread-telegram"]');
     expect(fil?.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls')).toBe(
       'yes',
     );
+  });
 
+  it('n’en met AUCUN dans « Recent », qui n’en dessine pas', async () => {
+    await renderTalk();
     const recents = [...container.querySelectorAll('[data-testid="recent-thread"]')];
-    const appels = recents.map((l) =>
-      l.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls'),
-    );
-    // Le premier est lu, le second ne l'est pas : le point dit les deux, et il
-    // les dit différemment.
-    expect(appels).toEqual(['no', 'yes']);
+    expect(recents.length).toBeGreaterThan(0);
+    // La planche du propriétaire (487:5489) ne dessine aucun signal devant un
+    // fil récent : une place vide, puis le titre. L'état non lu de #209 reste
+    // entier dans le sous-menu d'un dossier, qui est l'endroit où l'on choisit
+    // un fil ; « Recent » est un rappel de ce qu'on vient de faire.
+    for (const ligne of recents) {
+      expect(ligne.querySelector('[data-testid="thread-dot"]')).toBeNull();
+    }
   });
 });
 
@@ -599,18 +715,25 @@ describe('toutes les lignes du panneau ont la MÊME forme @cap:installer-et-dema
     expect(container.querySelector('[data-testid="folder-see-all-telegram"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="recent-thread"]')).not.toBeNull();
 
-    // Deux dossiers, le fil déplié, son « See all », deux fils récents et le
-    // « See all » de la section : sept lignes, toutes sortes confondues.
+    // La ligne des espaces de travail, deux dossiers, le fil déplié, son
+    // « See all », deux fils récents et le « See all » de la section : huit
+    // lignes, toutes sortes confondues.
     const lignes = [...container.querySelectorAll<HTMLElement>('[data-sidebar-row]')];
-    expect(lignes.length).toBe(7);
+    expect(lignes.length).toBe(8);
 
     // UNE comparaison, pas quatre assertions : chaque ligne est la forme
-    // commune, suivie de son état et de rien d'autre. Marges, hauteur, rayon,
-    // fond de survol, fond actif — tout vient du même endroit.
-    const attendues = new Set([
-      `${SIDEBAR_ROW} ${SIDEBAR_ROW_IDLE}`,
-      `${SIDEBAR_ROW} ${SIDEBAR_ROW_ACTIVE}`,
-    ]);
+    // commune, sa HAUTEUR, puis son état, et rien d'autre. Rayon, fond de
+    // survol, fond actif — tout vient du même endroit.
+    //
+    // Deux hauteurs, et deux seulement : 30 px pour une destination, un
+    // dossier ou le fil d'un dossier ; 28 px pour un fil de « Recent », que
+    // les planches du 19/09/2026 dessinent d'un cran plus court.
+    const attendues = new Set(
+      [SIDEBAR_ROW_H.nav, SIDEBAR_ROW_H.recent].flatMap((h) => [
+        `${SIDEBAR_ROW_BASE} ${h} ${SIDEBAR_ROW_IDLE}`,
+        `${SIDEBAR_ROW_BASE} ${h} ${SIDEBAR_ROW_ACTIVE}`,
+      ]),
+    );
     for (const forme of new Set(lignes.map((l) => l.className))) {
       expect(attendues.has(forme), `forme de ligne inattendue : « ${forme} »`).toBe(true);
     }

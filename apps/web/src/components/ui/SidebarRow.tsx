@@ -29,8 +29,27 @@ import type { ReactNode } from 'react';
  * fait de « toutes les lignes se ressemblent » une chose vérifiable, et pas
  * une intention dans un commentaire.
  */
-export const SIDEBAR_ROW =
-  'group mx-3 flex h-12 items-center rounded-xl transition-colors lg:h-[30px] lg:rounded-lg';
+export const SIDEBAR_ROW_BASE =
+  'group flex w-full items-center rounded-xl transition-colors lg:rounded-lg';
+
+/**
+ * La HAUTEUR d'une ligne, par profondeur. Elle est à part parce que c'est la
+ * SEULE chose que les planches de Quentin (19/09/2026) font varier : 30 px
+ * pour une entrée de menu, un dossier ou le fil d'un dossier, 28 px pour un
+ * fil de la section « Recent », qui est une liste de rappel et non une
+ * destination.
+ *
+ * Sur mobile, toutes montent à 48 px : un doigt ne vise pas 28 px.
+ */
+export const SIDEBAR_ROW_H: Record<SidebarDepth, string> = {
+  nav: 'h-12 lg:h-[30px]',
+  folder: 'h-12 lg:h-[30px]',
+  thread: 'h-12 lg:h-[30px]',
+  recent: 'h-12 lg:h-7',
+};
+
+/** La forme d'une ligne de menu — la plus courante, et le défaut des notes. */
+export const SIDEBAR_ROW = `${SIDEBAR_ROW_BASE} ${SIDEBAR_ROW_H.nav}`;
 
 /**
  * La ligne ACTIVE : fond papier et ombre légère, donc « en relief » quel que
@@ -43,9 +62,9 @@ export const SIDEBAR_ROW_ACTIVE = 'bg-paper text-ink shadow-[0_1px_2px_rgba(0,0,
 /** La ligne au repos, et son survol. */
 export const SIDEBAR_ROW_IDLE = 'text-ink-2 hover:bg-hover';
 
-/** La classe complète d'une ligne — forme, puis état. Dans cet ordre. */
-export function sidebarRowClass(active = false): string {
-  return `${SIDEBAR_ROW} ${active ? SIDEBAR_ROW_ACTIVE : SIDEBAR_ROW_IDLE}`;
+/** La classe complète d'une ligne — forme, hauteur, puis état. Dans cet ordre. */
+export function sidebarRowClass(active = false, depth: SidebarDepth = 'nav'): string {
+  return `${SIDEBAR_ROW_BASE} ${SIDEBAR_ROW_H[depth]} ${active ? SIDEBAR_ROW_ACTIVE : SIDEBAR_ROW_IDLE}`;
 }
 
 /**
@@ -60,8 +79,11 @@ export function sidebarRowClass(active = false): string {
  */
 export const SIDEBAR_NOTE = `${SIDEBAR_ROW} pr-2.5 pl-7 text-body-13 text-ink-4`;
 
-/** Ce qui est dans quoi : une entrée de menu, un dossier, un fil d'un dossier. */
-export type SidebarDepth = 'nav' | 'folder' | 'thread';
+/**
+ * Ce qui est dans quoi : une entrée de menu, un dossier, le fil d'un dossier,
+ * ou un fil de la section « Recent ».
+ */
+export type SidebarDepth = 'nav' | 'folder' | 'thread' | 'recent';
 
 /**
  * Le retrait du CONTENU, et la graisse du texte. Le retrait aligne l'icône
@@ -69,12 +91,19 @@ export type SidebarDepth = 'nav' | 'folder' | 'thread';
  * libellé de son dossier — c'est la seule chose qui dise « ceci est dedans ».
  */
 const DEPTH: Record<SidebarDepth, string> = {
-  nav: 'gap-3 px-3 text-legacy-16 lg:gap-2.5 lg:text-body-13 lg:leading-none!',
-  folder: 'gap-2 pr-2.5 pl-7 text-body-13',
+  // 12 à gauche, 10 à droite, 10 entre l'icône et le libellé : les mesures de
+  // la planche (487:5489). Le libellé est en Inter Medium 13.
+  nav: 'gap-3 pr-2.5 pl-3 text-legacy-16 lg:gap-2.5 lg:text-medium-13 lg:leading-none!',
+  folder: 'gap-2 pr-2.5 pl-3 text-body-13 lg:text-medium-13',
   // Le MÊME retrait que `folder` : le point d'un fil se pose dans la colonne
   // de l'icône de son dossier, et son titre commence là où commence le nom du
   // dossier (Quentin, 19/09/2026).
   thread: 'gap-2 pr-2.5 pl-7 text-body-13',
+  // Un fil de « Recent » : une place vide de 14 px là où les autres ont une
+  // icône, puis le titre en Inter Regular 12, gris `ink-3`. Il ne porte AUCUN
+  // point — la planche n'en dessine pas — et c'est la seule ligne du panneau
+  // dans ce cas.
+  recent: 'gap-2.5 pr-2.5 pl-3 text-body-13 lg:text-body-12',
 };
 
 type Props = {
@@ -148,7 +177,11 @@ export default function SidebarRow({
     <div
       // Le marqueur que le test lit pour comparer les lignes entre elles.
       data-sidebar-row=""
-      className={tint === undefined ? sidebarRowClass(active) : `${SIDEBAR_ROW} ${tint}`}
+      className={
+        tint === undefined
+          ? sidebarRowClass(active, depth)
+          : `${SIDEBAR_ROW_BASE} ${SIDEBAR_ROW_H[depth]} ${tint}`
+      }
     >
       {href === undefined ? (
         // Une ligne qui ne mène nulle part est un BOUTON, pas un lien vidé de

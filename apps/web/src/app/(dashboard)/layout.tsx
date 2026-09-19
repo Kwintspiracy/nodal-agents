@@ -9,6 +9,7 @@ import { SkillUpdatesProvider, type SkillUpdateNotice } from '@/components/Skill
 import { ChatFoldersProvider } from '@/components/ChatFoldersProvider';
 import { getChatFoldersAction, type ChatFoldersSnapshot } from '@/lib/conversation-actions.ts';
 import { requireUserWithEntity } from '@/lib/server.ts';
+import { accountEmail, initialOf } from '@/lib/account.ts';
 import {
   listWorkspacesAction,
   listApprovalsAction,
@@ -84,6 +85,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const foldersResult = await getChatFoldersAction();
   if (foldersResult.ok) initialFolders = foldersResult.data;
 
+  // QUI est connecté, lu UNE fois : le bloc de compte écrit le courriel en
+  // entier, le rond du rail n'en garde que l'initiale (#230). `null` en
+  // confiance locale ou sous jeton d'API — il n'y a alors personne à nommer.
+  const email = await accountEmail();
+
   // Seed the skill-updates context the same way — instant first-paint,
   // provider polls and fills in on next tick.
   let initialUpdates: SkillUpdateNotice[] = [];
@@ -108,7 +114,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
             dessous (revue Codex, passe 65). `dvh` suit la hauteur réellement
             visible. Repli `h-screen` pour un navigateur qui l'ignore. */}
           <div className="flex h-screen h-[100dvh] overflow-hidden bg-canvas text-ink">
-            <Sidebar workspaces={workspaces} userMenu={<UserMenu />} />
+            <Sidebar
+              workspaces={workspaces}
+              userMenu={<UserMenu email={email} />}
+              initiale={initialOf(email)}
+            />
 
             {/*
             Main pane sits next to the sidebar on desktop and accounts for the
