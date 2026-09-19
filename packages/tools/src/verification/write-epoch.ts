@@ -129,6 +129,12 @@ export async function bumpEpochsAfterWrite(
         // L'intention CRÉE la ligne si elle manque : ne plus la trouver signifie
         // qu'elle a été effacée entre les deux. Dit, jamais recréé ici — une
         // ligne recréée repartirait à l'époque 1 et RAJEUNIRAIT le projet.
+        //
+        // Le jumeau SANS JOB (`bumpEpochsAfterJoblessWrite`, intent.ts) fait
+        // l'inverse, et c'est juste des deux côtés : lui n'a aucune intention
+        // devant lui, donc au premier tour de chat sur un projet jamais sali la
+        // ligne n'a jamais existé, et refuser de la créer reviendrait à ne rien
+        // faire vieillir du tout. Son commentaire porte la règle en entier.
         console.warn(`[verification] ${WRITE_EPOCH_ROW_MISSING} entity=${entityId} key=${key}`);
         continue;
       }

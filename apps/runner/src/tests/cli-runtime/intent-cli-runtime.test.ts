@@ -183,7 +183,7 @@ const jobStatus = async (jobId: string): Promise<string | null> => {
   return row?.status ?? null;
 };
 
-describe('run-job : l’intention AVANT binding.run', () => {
+describe('run-job : l’intention AVANT binding.run @cap:verifier-un-livrable/moteur', () => {
   it('write : le binding LÈVE, la ligne d’état existe quand même (dirty 1, verified NULL) et les verrous sont rendus', async () => {
     const jobId = await newJob();
     fakeRun.mockRejectedValueOnce(new Error('binding exploded'));
@@ -303,7 +303,7 @@ describe('run-job : l’intention AVANT binding.run', () => {
   });
 });
 
-describe('run-chat : le jumeau, sans jobId', () => {
+describe('run-chat : le jumeau, sans jobId @cap:verifier-un-livrable/moteur', () => {
   it('pas de jobId ⇒ aucune ligne, code journalisé, et le tour va quand même jusqu’à binding.run', async () => {
     await db.insert(agentWorkspaces).values({
       agentId: seed.agentId,
@@ -417,7 +417,7 @@ describe('run-chat : le jumeau, sans jobId', () => {
   });
 });
 
-describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)', () => {
+describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27) @cap:travailler-sur-des-fichiers/moteur', () => {
   /** `alpha` déclaré comme projet ENREGISTRÉ (P5) : c'est à lui qu'un tour réussi se rattache. */
   async function alphaEnregistre(): Promise<string> {
     const [row] = await db
@@ -531,7 +531,7 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
   });
 });
 
-describe('run-job : le registre se remplit tout seul (P5b)', () => {
+describe('run-job : le registre se remplit tout seul (P5b) @cap:travailler-sur-des-fichiers/moteur', () => {
   const ligneDeclaree = async (path: string) => {
     const [row] = await db
       .select({
@@ -635,7 +635,7 @@ describe('run-job : le registre se remplit tout seul (P5b)', () => {
   });
 });
 
-describe('run-job : les écritures d’audit en vol sont attendues avant de lire les chemins (passe 33)', () => {
+describe('run-job : les écritures d’audit en vol sont attendues avant de lire les chemins (passe 33) @cap:travailler-sur-des-fichiers/moteur', () => {
   const ligneDeclaree = async (path: string) => {
     const [row] = await db
       .select({ id: codeProjects.id, registeredAt: codeProjects.registeredAt })

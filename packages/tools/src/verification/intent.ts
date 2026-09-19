@@ -713,6 +713,23 @@ export async function writeMutationIntent(
  * l'identité d'un projet est précisément ce que le §2 de #101 reproche déjà au
  * dépôt, et ce n'est pas ici qu'on en ajoutera une.
  *
+ * ELLE CRÉE LA LIGNE `code_projects` SI ELLE MANQUE, et son jumeau
+ * `write-epoch.ts` REFUSE de la créer. Les deux règles sont justes parce que
+ * les deux helpers n'arrivent pas au même moment (revue C de cette PR, passe 2,
+ * mineur nº 1).
+ *
+ *   - `bumpEpochsAfterWrite` court APRÈS une intention, et une intention crée
+ *     toujours la ligne. Ne plus la trouver veut dire qu'on l'a effacée entre
+ *     les deux : la recréer la remettrait à l'époque 1 et RAJEUNIRAIT le projet,
+ *     donc elle est dite (`WRITE_EPOCH_ROW_MISSING`) et rien n'est écrit.
+ *   - celle-ci court SANS intention, et c'est le seul geste du tour. Au premier
+ *     tour de chat sur un projet que personne n'a encore sali, la ligne n'existe
+ *     pas et n'a jamais existé : refuser de la créer, c'est ne rien faire
+ *     vieillir du tout, donc laisser le trou ouvert. Elle passe par
+ *     `bumpProjectEpoch`, le MÊME geste que l'intention — insert à 0, verrou,
+ *     +1 — et une ligne neuve naît donc à l'époque 1, jamais en dessous de ce
+ *     qu'elle valait.
+ *
  * D8 RESPECTÉ : surface décochée ⇒ rien. La trace `agent_jobs` ne peut pas être
  * posée (pas de job) ; le refus est dit par un code.
  *
