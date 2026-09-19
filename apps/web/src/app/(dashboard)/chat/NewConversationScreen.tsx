@@ -21,7 +21,6 @@ import ThreadHeader from './[id]/ThreadHeader.tsx';
 import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
 import { originLabel, threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
-import { composerPresentation } from '@/lib/project-landing.ts';
 import { EMPTY_SPACE_COST } from '@/lib/space-cost.ts';
 import { threadBackLink } from '@/lib/back-links.ts';
 import { DEFAULT_FEED_DENSITY, type FeedDensity } from '@/lib/feed-density.ts';
@@ -30,6 +29,27 @@ import NewConversationComposer from './NewConversationComposer.tsx';
 import { PendingTurnProvider } from './PendingTurn.tsx';
 import type { ComposerLlmKey } from './ModelEffortChip.tsx';
 import { welcomeLine } from './welcome-line.ts';
+
+/**
+ * Sans ROOT, il n'y a pas de saisie : toute création échouerait, et un champ
+ * « What are we doing today? » qui refuserait à l'envoi mentirait (inv. #4).
+ * Un mot à la place, et le geste qui débloque.
+ *
+ * Le ROOT ne se DÉSIGNE pas à la main : il naît avec le premier orchestrateur
+ * créé, et c'est vers /agents qu'il faut aller — « Designate one in Settings »
+ * menait à une action qui n'existe pas (revue Codex, passe 62).
+ *
+ * Ces deux phrases venaient de `lib/project-landing.ts`, qui portait la même
+ * règle pour la page d'un projet sans conversation. Ce module est parti avec
+ * #226 (« A project opens on its activity ») : la page d'un projet n'est plus
+ * un fil, et plus personne d'autre n'avait besoin de la règle. Elle vit donc
+ * ici, à son seul point d'usage, plutôt que dans un module à un client.
+ */
+const NO_ROOT_MESSAGE = 'No ROOT agent yet. Create an orchestrator agent to write here:';
+const NO_ROOT_ACTION = {
+  label: 'the first one you create becomes this workspace’s ROOT.',
+  href: '/agents',
+} as const;
 
 export default function NewConversationScreen({
   accountName,
@@ -57,16 +77,6 @@ export default function NewConversationScreen({
   llmKeys?: ComposerLlmKey[];
   requireTools?: boolean;
 }) {
-  // La même règle que la page d'un projet sans conversation : sans ROOT, toute
-  // création échouerait, donc pas de saisie du tout — un mot et le geste qui
-  // débloque. Une fonction pure, déjà éprouvée, plutôt qu'un second `if`.
-  const composer = composerPresentation({
-    continues: false,
-    threadAgentName: null,
-    threadOrigin: null,
-    rootAgentName: root?.name ?? null,
-  });
-
   const agentName = root?.name ?? '';
   // « <agent> · Untitled » : le fil n'a pas de sujet tant que rien n'est dit.
   // Le nom vient du ROOT lu en base, jamais d'ici (invariant #1).
@@ -116,14 +126,14 @@ export default function NewConversationScreen({
           agentName={root?.name ?? 'Agent'}
           agentAvatarUrl={root?.avatarUrl ?? null}
           composer={
-            composer.kind === 'blocked' ? (
+            root === null ? (
               <p className="mx-auto max-w-[760px] text-center text-body-13 text-ink-4">
-                {composer.message}{' '}
+                {NO_ROOT_MESSAGE}{' '}
                 <Link
-                  href={composer.action.href}
+                  href={NO_ROOT_ACTION.href}
                   className="font-medium text-ink underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
                 >
-                  {composer.action.label}
+                  {NO_ROOT_ACTION.label}
                 </Link>
               </p>
             ) : (
