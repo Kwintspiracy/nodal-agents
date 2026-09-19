@@ -5,9 +5,10 @@
  * Realigned 2026-08-10. This spec had drifted behind two UI passes and was
  * asserting a product that no longer exists:
  *   - `/billing` — deleted in b29bdf2 (the 0.6.3 design pass)
- *   - `/stats`   — folded into the root page in 9c43de6 ("merge Home + Stats
- *                  into a single root page"), so `/` IS the dashboard and
- *                  redirects nowhere
+ *   - `/stats`   — folded into the dashboard in 9c43de6 ("merge Home + Stats
+ *                  into a single root page"); the dashboard itself left the
+ *                  root for `/dashboard` on 2026-09-19 (#248), and `/` is now
+ *                  a conversation that has not started
  *   - sidebar labels 'Stats', 'Jobs', 'Memories', 'Billing' — now 'Home',
  *     'Runs', 'Memory', and gone, respectively
  *
@@ -29,16 +30,38 @@ test.beforeAll(async () => {
 });
 
 test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
-  test('the root page IS the dashboard — no login form, no redirect away', async ({ page }) => {
+  test('the root page IS a new conversation — no login form, no redirect away', async ({
+    page,
+  }) => {
     const response = await page.goto('/');
 
-    // In local-trust the dashboard is open; in local-auth the session cookie
+    // In local-trust the app is open; in local-auth the session cookie
     // injected by global-setup carries us through. Either way the one thing
     // that must never happen is landing on the login form. Onboarding is a
-    // legitimate destination on a stack with no LLM key configured yet.
+    // legitimate destination on a stack with no agent created yet.
     expect(page.url()).not.toMatch(/\/login/);
     expect(response?.status(), 'root page HTTP status').toBeLessThan(400);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
+
+    // #248 — the root is the empty thread: the greeting and the composer, not
+    // the dashboard's metric cards. Skipped on a stack still in onboarding,
+    // which has no ROOT agent and therefore no composer to show.
+    if (!page.url().includes('/onboarding')) {
+      await expect(page.getByText(/what are we building today\?/i)).toBeVisible({
+        timeout: 10_000,
+      });
+      await expect(page.getByText('Total jobs')).toHaveCount(0);
+    }
+  });
+
+  test('the dashboard moved to /dashboard, and nothing redirects back to the root', async ({
+    page,
+  }) => {
+    const response = await page.goto('/dashboard');
+    expect(response?.status(), '/dashboard HTTP status').toBeLessThan(400);
+    if (page.url().includes('/onboarding')) test.skip();
+    expect(new URL(page.url()).pathname, 'no redirect away from /dashboard').toBe('/dashboard');
+    await expect(page.getByText('Total jobs')).toBeVisible({ timeout: 10_000 });
   });
 
   test('the rail carries the three destinations on every page', async ({ page }) => {
@@ -241,6 +264,8 @@ test.describe('settings pages render without runtime errors @cap:installer-et-de
     // Every folder under src/app/(dashboard), plus the root page itself.
     const routes = [
       '/',
+      // #248 — le Dashboard a quitté la racine pour cette adresse.
+      '/dashboard',
       '/agents',
       '/chat',
       '/jobs',

@@ -22,12 +22,16 @@
 //    la corbeille par ligne avec lui — une ligne est un lien, et supprimer
 //    passe par le mode « Select », qui était déjà la seconde façon de le faire.
 //
+// ET UN DU 19/09 (#248) : « New conversation » n'écrit plus rien. C'est un lien
+// vers l'écran de conversation neuve (`/`), et c'est le premier message envoyé
+// qui fait naître la ligne. Le bouton créait le fil puis y menait : une visite
+// sans un mot laissait un fil vide dans ce dossier, pour toujours.
+//
 // Le filtre reste côté client : deux cents lignes tiennent en mémoire, et
 // taper doit répondre à la frappe.
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { toast } from 'sonner';
 import Checkbox from '@/components/ui/Checkbox';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
@@ -35,7 +39,7 @@ import ConversationRow from '@/components/ui/ConversationRow';
 import EmptyState from '@/components/ui/EmptyState';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
-import { createConversationAction, deleteConversationsAction } from '@/lib/actions.ts';
+import { deleteConversationsAction } from '@/lib/actions.ts';
 import type { ConversationRowModel } from './conversation-rows.ts';
 
 export default function ConversationsList({ rows }: { rows: ConversationRowModel[] }) {
@@ -56,9 +60,6 @@ export default function ConversationsList({ rows }: { rows: ConversationRowModel
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   /** La suppression EN MASSE attend sa confirmation. */
   const [confirmMass, setConfirmMass] = useState(false);
-  // Aucun agent ROOT désigné : le bouton ne peut pas marcher, et l'écran le dit
-  // avec le chemin pour y remédier plutôt que d'échouer à chaque clic.
-  const [noRoot, setNoRoot] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   // La recherche porte sur le TITRE, qui est tout ce que la ligne montre
@@ -123,18 +124,6 @@ export default function ConversationsList({ rows }: { rows: ConversationRowModel
     });
   }
 
-  function create(): void {
-    startTransition(async () => {
-      const r = await createConversationAction();
-      if (!r.ok) {
-        if (r.code === 'no_root_agent') setNoRoot(true);
-        else toast.error(r.message);
-        return;
-      }
-      router.push(`/chat/${r.data.id}`);
-    });
-  }
-
   return (
     <>
       <div className="mb-5 flex flex-wrap items-center gap-3">
@@ -167,9 +156,11 @@ export default function ConversationsList({ rows }: { rows: ConversationRowModel
           </>
         ) : (
           <>
-            <PrimaryButton onClick={create} disabled={isPending || noRoot}>
-              New conversation
-            </PrimaryButton>
+            {/* #248 — un LIEN, plus un bouton qui crée. Ouvrir une conversation
+                n'écrit plus rien : on va sur l'écran vide, et c'est le premier
+                message qui fait naître la ligne. Sans ROOT, c'est cet écran qui
+                le dit, à un seul endroit, au lieu d'un clic qui échoue ici. */}
+            <PrimaryButton href="/">New conversation</PrimaryButton>
             {rows.length > 0 && (
               <PrimaryButton variant="neutral" size="sm" onClick={() => setSelecting(true)}>
                 Select
@@ -185,19 +176,11 @@ export default function ConversationsList({ rows }: { rows: ConversationRowModel
         />
       </div>
 
-      {noRoot && (
-        // Le ROOT n'est pas désigné à la main : il naît avec le premier
-        // orchestrateur créé — Settings renvoie lui-même vers /agents (revue
-        // Codex, passe 62 : « Designate one in Settings » menait à une action
-        // qui n'existe pas).
-        <p className="mb-4 text-body-13 text-ink-3">
-          No ROOT agent yet.{' '}
-          <Link href="/agents" className="text-ink-2 underline hover:text-ink">
-            Create an orchestrator agent
-          </Link>{' '}
-          — the first one you create becomes this workspace’s ROOT.
-        </p>
-      )}
+      {/* L'avertissement « No ROOT agent yet » vivait ici, levé par l'échec du
+          clic. Il vit maintenant sur l'écran de conversation neuve, là où la
+          saisie serait (#248) : c'est le seul endroit où l'absence de ROOT
+          empêche vraiment quelque chose, et le dire deux fois faisait deux
+          formulations à tenir. */}
 
       {filtered.length === 0 ? (
         <EmptyState

@@ -1,9 +1,13 @@
 // ConversationsList.test.tsx — la barre d'actions du dossier « Nodal chats ».
 //
 // Ce qu'elle prouve, et que le module de lignes ne peut pas prouver : le
-// dossier porte de quoi CRÉER une conversation (Quentin, 18/09 : « je n'ai plus
-// d'option pour créer un nouveau chat »), de quoi en chercher une, et de quoi
-// en supprimer plusieurs — et que le bouton mène vraiment au fil créé.
+// dossier porte de quoi OUVRIR une conversation (Quentin, 18/09 : « je n'ai
+// plus d'option pour créer un nouveau chat »), de quoi en chercher une, et de
+// quoi en supprimer plusieurs.
+//
+// Depuis #248, « New conversation » n'écrit plus : c'est un lien vers l'écran
+// vide, et la ligne naît du premier message. Le test le vérifie en cliquant —
+// l'action de création ne doit PAS être appelée.
 //
 // Rendu dans jsdom et CLIQUÉ, pas seulement rendu : les assertions portent sur
 // ce que l'action mockée a reçu et sur l'adresse poussée (invariant #5).
@@ -76,6 +80,15 @@ function bouton(label: string): HTMLButtonElement {
   return found as HTMLButtonElement;
 }
 
+/** Le lien « New conversation » — depuis #248, ce n'est plus un bouton. */
+function nouvelleConversation(): HTMLAnchorElement {
+  const found = [...document.querySelectorAll('a')].find(
+    (a) => (a.textContent ?? '').trim() === 'New conversation',
+  );
+  if (!found) throw new Error('aucun lien « New conversation »');
+  return found;
+}
+
 function libelles(): string {
   return [...document.querySelectorAll('button')]
     .map((b) => `« ${(b.textContent ?? '').trim()} »`)
@@ -110,35 +123,32 @@ beforeEach(() => {
 });
 
 describe('le dossier « Nodal chats » : sa barre d’actions @cap:reprendre-conversation/ecran', () => {
-  it('« New conversation » crée le fil ET y mène', async () => {
+  it('« New conversation » MÈNE à l’écran vide, et n’écrit RIEN (#248)', async () => {
     await render([ligne()]);
-    await clic('New conversation');
-    expect(createConversationAction).toHaveBeenCalledTimes(1);
-    // L'adresse RÉELLE du fil rendu par l'action — pas « une navigation a eu
-    // lieu ».
-    expect(push).toHaveBeenCalledWith('/chat/conv-neuve');
+    // Un lien vers la racine — l'écran de conversation neuve. La ligne naîtra
+    // du premier message envoyé là-bas, jamais de ce clic.
+    const lien = nouvelleConversation();
+    expect(lien.getAttribute('href')).toBe('/');
+    await act(async () => {
+      lien.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(createConversationAction).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
   });
 
-  it('le bouton est là MÊME quand le dossier est vide — c’est là qu’il sert', async () => {
+  it('le lien est là MÊME quand le dossier est vide — c’est là qu’il sert', async () => {
     await render([]);
-    await clic('New conversation');
-    expect(createConversationAction).toHaveBeenCalledTimes(1);
+    expect(nouvelleConversation().getAttribute('href')).toBe('/');
     // Et l'écran dit qu'il n'y a rien, plutôt qu'une liste blanche.
     expect(container.textContent).toContain('No conversation yet');
   });
 
-  it('sans agent ROOT, l’écran dit où aller et le bouton se ferme', async () => {
-    createConversationAction.mockResolvedValueOnce({
-      ok: false,
-      code: 'no_root_agent',
-      message: 'No ROOT agent yet.',
-    });
+  it('le dossier ne parle plus du ROOT : c’est l’écran d’arrivée qui le dit', async () => {
     await render([ligne()]);
-    await clic('New conversation');
-    expect(container.textContent).toContain('No ROOT agent yet');
-    expect(container.querySelector('a[href="/agents"]')).not.toBeNull();
-    expect(bouton('New conversation').disabled).toBe(true);
-    // Pas de toast rouge par-dessus : la phrase sur l'écran porte le chemin.
+    // L'avertissement vivait ici, levé par l'échec du clic. Le clic n'appelle
+    // plus rien : le dire ici serait une seconde formulation à tenir, et elle
+    // se périmerait sans que personne ne la voie.
+    expect(container.textContent).not.toContain('No ROOT agent yet');
     expect(toastError).not.toHaveBeenCalled();
   });
 
