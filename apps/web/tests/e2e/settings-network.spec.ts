@@ -22,32 +22,32 @@ test.beforeAll(async () => {
 });
 
 /**
- * Locate the Network section on /settings, so no locator below can reach
- * another form's Save button.
+ * Locate the Network settings, so no locator below can reach another form's
+ * Save button.
+ *
+ * Since #231 the settings page is one list and each setting opens in the panel
+ * docked to the right edge. The panel IS the scope — exact by construction,
+ * because only one setting is open at a time. Before that the scope was the
+ * <section> SetBlock rendered; scoping on `div` at the time matched the
+ * outermost wrapper that merely CONTAINED the heading, i.e. most of the page,
+ * so "the first Save button in the section" was whatever form came first in
+ * the document and this suite drove the wrong one.
  */
 function networkSection(
   page: Parameters<typeof test>[1] extends never ? never : import('@playwright/test').Page,
 ): Locator {
-  // SetBlock renders each settings group as a real <section> carrying its own
-  // <h2>. Scoping on `div` instead matched the outermost wrapper that merely
-  // CONTAINS that heading — i.e. most of the page — so "the first Save button
-  // in the section" was whatever form happened to come first in the document,
-  // and this suite drove the wrong one. `section` is exact by construction.
-  return page
-    .locator('section')
-    .filter({ has: page.getByRole('heading', { name: 'Network', level: 2 }) })
-    .first();
+  return page.getByTestId('settings-panel');
 }
 
 test.describe('NetworkForm — /settings @cap:se-connecter/ecran', () => {
   // ── Test 1 — Section renders correctly ────────────────────────────────────
   test('Network section renders with radio buttons and read-only URL fields', async ({ page }) => {
-    await page.goto('/settings');
+    await page.goto('/settings?open=network');
 
     const section = networkSection(page);
 
-    // Section heading
-    await expect(page.getByRole('heading', { name: 'Network', level: 2 })).toBeVisible({
+    // The panel's heading — the setting's name, exactly as the list shows it.
+    await expect(section.getByRole('heading', { name: 'Network access', level: 2 })).toBeVisible({
       timeout: 10_000,
     });
 
@@ -66,13 +66,14 @@ test.describe('NetworkForm — /settings @cap:se-connecter/ecran', () => {
       timeout: 5_000,
     });
 
-    // App URL and Runner URL moved out of the Network block into their own
-    // "URLs" section, so they are asserted where they now live rather than
-    // dropped — the page still has to show both.
-    const urls = page
-      .locator('section')
-      .filter({ has: page.getByRole('heading', { name: 'URLs', level: 2 }) })
-      .first();
+    // App URL and Runner URL are their own setting, folded under Advanced, so
+    // they are asserted where they now live rather than dropped — the product
+    // still has to show both. A direct link opens that panel.
+    await page.goto('/settings?open=urls');
+    const urls = page.getByTestId('settings-panel');
+    await expect(urls.getByRole('heading', { name: 'URLs', level: 2 })).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(urls.getByText('App URL')).toBeVisible({ timeout: 5_000 });
     await expect(urls.getByText('Runner URL')).toBeVisible({ timeout: 5_000 });
   });
@@ -81,7 +82,7 @@ test.describe('NetworkForm — /settings @cap:se-connecter/ecran', () => {
   test('clicking LAN radio shows LAN addresses or "No LAN interface detected"', async ({
     page,
   }) => {
-    await page.goto('/settings');
+    await page.goto('/settings?open=network');
 
     const section = networkSection(page);
 
@@ -178,7 +179,7 @@ test.describe('NetworkForm — /settings @cap:se-connecter/ecran', () => {
   // exists. This one re-saves the CURRENT mode, which mutates nothing and pins
   // the other half of the rule: same as the runtime → no restart demanded.
   test('re-saving the mode already in force reports no restart needed', async ({ page }) => {
-    await page.goto('/settings');
+    await page.goto('/settings?open=network');
     const section = await readySection(page);
     const current = await selectedBind(section);
 
@@ -203,7 +204,7 @@ test.describe('NetworkForm — /settings @cap:se-connecter/ecran', () => {
   test('saving the other mode persists it, demands a restart, and is put back', async ({
     page,
   }) => {
-    await page.goto('/settings');
+    await page.goto('/settings?open=network');
     let section = await readySection(page);
     const original = await selectedBind(section);
     const other = original === 'loopback' ? 'lan' : 'loopback';
@@ -221,7 +222,7 @@ test.describe('NetworkForm — /settings @cap:se-connecter/ecran', () => {
       await page.reload();
       expect(await selectedBind(await readySection(page)), 'bind after reload').toBe(other);
     } finally {
-      await page.goto('/settings');
+      await page.goto('/settings?open=network');
       section = await readySection(page);
       if ((await selectedBind(section)) !== original) {
         await chooseAndSave(page, section, original);

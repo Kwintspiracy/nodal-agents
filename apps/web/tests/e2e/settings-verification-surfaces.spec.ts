@@ -9,6 +9,10 @@
  * propriétaire : le cas « non-owner ⇒ cases désactivées » se prouve dans le test
  * unitaire de l'action (isOwner false) et par le composant (disabled) — une
  * seconde identité n'est pas fabricable ici sans compte.
+ *
+ * Depuis #231 le réglage n'est plus un bloc empilé sur la page : c'est une
+ * ligne de la liste, qui s'ouvre dans le panneau ancré à droite. Le parcours
+ * y va donc par l'URL (`/settings?open=verification`) et se borne au panneau.
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
@@ -18,18 +22,19 @@ test.beforeAll(async () => {
   await requireLiveStack();
 });
 
-function surfacesSection(page: Page): Locator {
-  return page
-    .locator('section')
-    .filter({ has: page.getByRole('heading', { name: 'Verification surfaces', level: 2 }) })
-    .first();
+/** Le panneau ancré, ouvert sur le réglage — et rien d'autre de la page. */
+async function openSurfacesPanel(page: Page): Promise<Locator> {
+  await page.goto('/settings?open=verification');
+  const panel = page.getByTestId('settings-panel');
+  await expect(panel.getByRole('heading', { name: 'Verification surfaces', level: 2 })).toBeVisible(
+    { timeout: 10_000 },
+  );
+  return panel;
 }
 
 test.describe('Verification surfaces — /settings', () => {
   test('la section rend ses quatre cases et la pilule owner only', async ({ page }) => {
-    await page.goto('/settings');
-    const section = surfacesSection(page);
-    await expect(section).toBeVisible();
+    const section = await openSurfacesPanel(page);
     await expect(section.getByText('owner only')).toBeVisible();
     for (const key of ['codeTask', 'cliRuntime', 'fileOps', 'shell']) {
       await expect(section.getByTestId(`verification-surface-${key}`)).toBeVisible();
@@ -37,8 +42,7 @@ test.describe('Verification surfaces — /settings', () => {
   });
 
   test('décocher demande confirmation, annuler laisse la case cochée', async ({ page }) => {
-    await page.goto('/settings');
-    const section = surfacesSection(page);
+    const section = await openSurfacesPanel(page);
     const shell = section.getByTestId('verification-surface-shell');
     test.skip(!(await shell.isChecked()), 'shell déjà décochée : pas de décochage à tester');
 
@@ -57,8 +61,7 @@ test.describe('Verification surfaces — /settings', () => {
   });
 
   test('décocher puis recocher : le second geste n’ouvre aucun dialogue', async ({ page }) => {
-    await page.goto('/settings');
-    const section = surfacesSection(page);
+    const section = await openSurfacesPanel(page);
     const shell = section.getByTestId('verification-surface-shell');
     test.skip(!(await shell.isChecked()), 'shell déjà décochée : état non nominal');
 

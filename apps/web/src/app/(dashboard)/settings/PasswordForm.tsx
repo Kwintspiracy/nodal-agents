@@ -20,7 +20,16 @@ import { SetForm } from '@/components/ui/SetForm.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
 import TextInput from '@/components/ui/TextInput';
 
-export default function PasswordForm() {
+interface Props {
+  /**
+   * L'`id` du `<form>` quand ce formulaire est rendu dans le panneau ancré
+   * (#231) : le bouton Save du pied le soumet par l'attribut HTML `form`.
+   * Absent ailleurs — le formulaire garde alors ses propres boutons.
+   */
+  formId?: string;
+}
+
+export default function PasswordForm({ formId }: Props) {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -74,7 +83,7 @@ export default function PasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form id={formId} onSubmit={handleSubmit}>
       <SetForm>
         <div className="space-y-2">
           <TextInput

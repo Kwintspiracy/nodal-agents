@@ -18,10 +18,15 @@ import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
 import TextArea from '@/components/ui/TextArea';
 
 interface Props {
-  initial: string;
+  initial: string; /**
+   * L'`id` du `<form>` quand ce formulaire est rendu dans le panneau ancré
+   * (#231) : le bouton Save du pied le soumet par l'attribut HTML `form`.
+   * Absent ailleurs — le formulaire garde alors ses propres boutons.
+   */
+  formId?: string;
 }
 
-export default function InstallNotesForm({ initial }: Props) {
+export default function InstallNotesForm({ initial, formId }: Props) {
   const [notes, setNotes] = useState(initial);
   const [isPending, startTransition] = useTransition();
 
@@ -42,7 +47,7 @@ export default function InstallNotesForm({ initial }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form id={formId} onSubmit={handleSubmit}>
       <SetForm>
         <div className="space-y-2">
           <p className="text-body-13 leading-[1.5]! text-ink-3">

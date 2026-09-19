@@ -16,6 +16,7 @@ import {
   scanForDirectTerminalCompleted,
   assertNoViolations,
 } from '@nodal-agents/test-kit';
+import { scanForServerUsesOfClientValues } from './scan-server-uses-client-value.ts';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
 
@@ -34,6 +35,16 @@ describe('architecture invariants', () => {
 
   it('does not re-implement projectKey — the path identity rule lives in @nodal-agents/shared', () => {
     assertNoViolations('copie de projectKey', scanForProjectKeyCopies({ srcDir }));
+  });
+
+  it('no server component USES what a client module exports — it may only render it (#237)', () => {
+    // La frontière serveur / client n'a ni type ni test unitaire pour la dire :
+    // `dockedFormId` appelé depuis `/settings` a fait répondre 500 à la page
+    // sur une stack fraîche, et seule la CI l'a vu. Voir le scanner.
+    assertNoViolations(
+      "valeur d'un module 'use client' servie côté serveur",
+      scanForServerUsesOfClientValues({ srcDir }),
+    );
   });
 
   it('never writes status=completed on agent_jobs — the runner primitive is the only terminal door (V&C T13)', () => {
