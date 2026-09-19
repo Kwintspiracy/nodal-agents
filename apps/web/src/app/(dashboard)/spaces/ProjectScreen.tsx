@@ -36,6 +36,7 @@ import { activityRows } from './activity-rows.ts';
 import ProjectToolbar from './ProjectToolbar.tsx';
 import ProjectActivity from './ProjectActivity.tsx';
 import ProjectShelf from './ProjectShelf.tsx';
+import ProjectGitPanel from './ProjectGitPanel.tsx';
 import ProjectProof from './ProjectProof.tsx';
 import { ProjectFilesPanel, ProjectPanelBody, ProjectPanelProvider } from './ProjectPanel.tsx';
 import type { ProjectVerification } from './ProjectVerificationPanel.tsx';
@@ -120,6 +121,30 @@ export default async function ProjectScreen({
         }
       >
         <ProjectPanelBody>
+          {/* L'OPTION GIT DU PROJET (issue #200), dans la colonne et pas dans
+              le panneau : le panneau montre ce que le dossier CONTIENT et ce
+              que la preuve en dit, tandis que poser un dépôt est un geste qu'on
+              pose sur le projet lui-même. Il appartient donc à la page, au-dessus
+              de son activité — et il reste lisible quand le panneau est refermé.
+              Rendu seulement si la lecture du projet a répondu : un interrupteur
+              posé au-dessus d'un état qu'on n'a pas pu lire dirait quelque chose
+              de faux (invariant #4). */}
+          {pageResult.ok && (
+            <div className="mb-6">
+              <ProjectGitPanel
+                projectId={pageResult.data.project.id}
+                git={{
+                  initGit: pageResult.data.project.initGit,
+                  gitInitializedAt: pageResult.data.project.gitInitializedAt,
+                }}
+                // Une lecture en échec vaut NON-propriétaire : offrir un geste
+                // que le serveur refusera ensuite serait pire que de ne pas
+                // l'offrir. Le refus est dit à l'écran, pas deviné.
+                isOwner={ownerResult.ok ? ownerResult.data.isOwner : false}
+              />
+            </div>
+          )}
+
           {/* Une activité illisible est DITE, pas remplacée par une liste vide :
               « rien ne s'est passé » et « je n'ai pas pu lire » sont deux choses
               différentes (invariant #4). */}
