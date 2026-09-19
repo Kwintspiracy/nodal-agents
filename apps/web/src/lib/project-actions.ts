@@ -71,29 +71,24 @@ function fail(code: string, message: string): ActionResult<never> {
   return { ok: false, code, message };
 }
 
+/**
+ * Un projet du registre, tel que la LISTE le montre.
+ *
+ * Quatre faits et rien d'autre (Quentin, 19/09) : son nom, son dossier, le jour
+ * où il est entré au registre, et sa preuve. Le nom de l'agent responsable, le
+ * compte de travaux et la dernière activité en sont partis — l'agent est
+ * toujours le même orchestrateur, et le reste n'aidait pas à retrouver un
+ * projet dans une liste.
+ */
 export type ProjectListRow = {
   id: string;
   /** `display_name`, ou le nom du dossier — jamais un chemin vide à l'écran. */
   name: string;
   path: string;
   kind: 'code' | 'documents';
-  agentId: string | null;
-  agentName: string | null;
-  agentSlug: string | null;
-  registeredFrom: 'spaces' | 'conversation';
+  /** Le jour où il est entré au registre — la date que la ligne affiche. */
   registeredAt: Date;
   hidden: boolean;
-  /** Les travaux rattachés à ce projet (`agent_jobs.project_id`). */
-  jobsCount: number;
-  /**
-   * Les conversations du projet : celles qui y sont ANCRÉES
-   * (`conversations.current_project_id`) et celles qui portent un de ses
-   * travaux. Comptées comme la page du projet les liste, pour que la liste et
-   * la page ne se contredisent pas (#143).
-   */
-  conversationsCount: number;
-  /** Le plus récent d'entre eux, ou `null` : un projet neuf n'a pas d'activité. */
-  lastActivityAt: Date | null;
   /**
    * L'état de la PREUVE : le verdict de la commande de vérification la plus
    * récente sur ce dossier, ou `null` — aucune n'a jamais tourné, ou le projet
@@ -207,62 +202,6 @@ function basenameOf(path: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-/**
- * Combien de conversations chaque projet porte — pour TOUTE la liste, en deux
- * requêtes groupées.
- *
- * Une conversation appartient au projet de deux façons, et il faut les deux :
- * elle y est ANCRÉE (`conversations.current_project_id`), ou elle porte un
- * travail rattaché au projet (`agent_jobs.project_id` + `conversation_id`).
- * C'est l'union exacte que `loadProjectCore` liste sur la page du projet ;
- * n'en compter qu'une moitié ferait dire « 2 conversations » à une liste dont
- * la page en montre cinq.
- *
- * L'union se fait en JS sur des identifiants, pas en SQL : deux `group by`
- * indexés coûtent moins qu'un `UNION` sur une jointure, et le nombre de
- * conversations d'une entité tient en mémoire.
- */
-async function countProjectConversations(
-  db: ReturnType<typeof getDb>,
-  entityId: string,
-  projectIds: readonly string[],
-): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
-  if (projectIds.length === 0) return counts;
-
-  const [anchored, viaJobs] = await Promise.all([
-    db
-      .select({ projectId: conversations.currentProjectId, id: conversations.id })
-      .from(conversations)
-      .where(
-        and(
-          eq(conversations.entityId, entityId),
-          inArray(conversations.currentProjectId, [...projectIds]),
-        ),
-      ),
-    db
-      .selectDistinct({ projectId: agentJobs.projectId, id: agentJobs.conversationId })
-      .from(agentJobs)
-      .where(
-        and(
-          eq(agentJobs.entityId, entityId),
-          inArray(agentJobs.projectId, [...projectIds]),
-          isNotNull(agentJobs.conversationId),
-        ),
-      ),
-  ]);
-
-  const seen = new Map<string, Set<string>>();
-  for (const row of [...anchored, ...viaJobs]) {
-    if (!row.projectId || !row.id) continue;
-    const set = seen.get(row.projectId) ?? new Set<string>();
-    set.add(row.id);
-    seen.set(row.projectId, set);
-  }
-  for (const [projectId, set] of seen) counts.set(projectId, set.size);
-  return counts;
-}
-
 // ─── listProjectsAction ──────────────────────────────────────────────────────
 
 /**
@@ -280,9 +219,14 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
 
-    // Le compte et la dernière activité en une passe (un LEFT JOIN groupé),
-    // jamais une requête par projet : la liste est le premier écran des
-    // espaces, elle ne doit pas dégrader avec le nombre de projets.
+    // UNE lecture, sans jointure ni agrégat (Quentin, 19/09).
+    //
+    // La ligne portait l'agent responsable, le compte de travaux et la
+    // dernière activité : trois jointures pour trois choses qu'elle n'affiche
+    // plus (Quentin, 19/09). On parle toujours au MÊME orchestrateur, donc son
+    // nom était la même colonne répétée sur toutes les lignes. Ce qui reste
+    // est ce qu'un projet EST : son nom, son dossier, le jour où il est entré
+    // au registre.
     const rows = await db
       .select({
         id: codeProjects.id,
@@ -290,27 +234,13 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         path: codeProjects.projectPath,
         kind: codeProjects.kind,
         hidden: codeProjects.hidden,
-        registeredFrom: codeProjects.registeredFrom,
         registeredAt: codeProjects.registeredAt,
-        agentId: codeProjects.agentId,
-        agentName: agents.name,
-        agentSlug: agents.slug,
-        jobsCount: sql<number>`count(${agentJobs.id})`,
-        lastActivityAt: sql<Date | null>`max(${agentJobs.createdAt})`,
       })
       .from(codeProjects)
-      .leftJoin(agents, eq(agents.id, codeProjects.agentId))
-      .leftJoin(agentJobs, eq(agentJobs.projectId, codeProjects.id))
       .where(and(eq(codeProjects.entityId, session.entityId), isNotNull(codeProjects.registeredAt)))
-      .groupBy(
-        codeProjects.id,
-        agents.name,
-        agents.slug,
-        // `max()` et `count()` imposent de grouper sur tout le reste : Postgres
-        // ne déduit pas que la clé primaire suffit dès qu'une table jointe
-        // apporte ses colonnes.
-      )
-      .orderBy(sql`max(${agentJobs.createdAt}) desc nulls last`, desc(codeProjects.registeredAt));
+      // Le plus récemment ajouté d'abord — la date que la ligne affiche, donc
+      // un ordre que l'œil peut vérifier.
+      .orderBy(desc(codeProjects.registeredAt));
 
     // L'état de la preuve, en UNE requête groupée (`DISTINCT ON` sur la clé,
     // la plus récente d'abord) — pas une par projet : la liste ne doit pas
@@ -319,16 +249,6 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
     const proofKeys = [
       ...new Set(rows.filter((r) => r.kind !== 'documents').map((r) => projectKey(r.path))),
     ];
-    // Les conversations de CHAQUE projet, en DEUX requêtes groupées pour toute
-    // la liste — jamais une par ligne. Deux, parce qu'une conversation
-    // appartient au projet de deux façons : elle y est ANCRÉE, ou elle porte
-    // un de ses travaux. C'est l'union exacte que la page du projet liste, et
-    // un compte qui ne dirait que la première contredirait sa propre page.
-    const conversationsCountByProject = await countProjectConversations(
-      db,
-      session.entityId,
-      rows.map((r) => r.id),
-    );
     const lastProofByKey = new Map<string, { verdict: 'pass' | 'fail'; at: Date }>();
     if (proofKeys.length > 0) {
       const proofRows = await db
@@ -361,15 +281,8 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         name: r.displayName ?? basenameOf(r.path),
         path: r.path,
         kind: (r.kind === 'documents' ? 'documents' : 'code') as 'code' | 'documents',
-        agentId: r.agentId,
-        agentName: r.agentName ?? null,
-        agentSlug: r.agentSlug ?? null,
-        registeredFrom: (r.registeredFrom ?? 'spaces') as 'spaces' | 'conversation',
         registeredAt: r.registeredAt as Date,
         hidden: r.hidden,
-        jobsCount: Number(r.jobsCount ?? 0),
-        conversationsCount: conversationsCountByProject.get(r.id) ?? 0,
-        lastActivityAt: r.lastActivityAt ? new Date(r.lastActivityAt) : null,
         lastProof: r.kind === 'documents' ? null : (lastProofByKey.get(projectKey(r.path)) ?? null),
       })),
     );

@@ -457,7 +457,7 @@ describe('createProjectAction', () => {
 });
 
 describe('listProjectsAction', () => {
-  it('ne montre QUE les projets enregistrés, avec le compte de travaux et la dernière activité', async () => {
+  it('ne montre QUE les projets enregistrés, et rien de ce que la ligne n’affiche plus', async () => {
     const { listProjectsAction } = await import('../project-actions.ts');
 
     // Une ligne de comptabilité pure — elle ne doit apparaître nulle part.
@@ -503,18 +503,19 @@ describe('listProjectsAction', () => {
 
     const x = result.data.find((p) => p.path === `${terrain.path}/projet-x`);
     expect(x!.name).toBe('Projet X');
-    expect(x!.agentId).toBe(seed.agentId);
-    expect(x!.agentName).toBe('Test Agent');
-    expect(x!.jobsCount).toBe(2);
-    expect(x!.lastActivityAt?.toISOString()).toBe(dernier.toISOString());
+    // La date que la ligne affiche est celle de l'ENTRÉE AU REGISTRE.
+    expect(x!.registeredAt).toBeInstanceOf(Date);
 
-    // Un projet sans travail : compte à zéro, activité nulle — pas une absence.
-    const neuf = result.data.find((p) => p.path === `${terrain.path}/deja-touche`);
-    expect(neuf!.jobsCount).toBe(0);
-    expect(neuf!.lastActivityAt).toBeNull();
+    // Le nom de l'agent, le compte de travaux et la dernière activité ont
+    // quitté la ligne le 19/09 : elle ne les porte plus, et la requête ne les
+    // joint plus. Un test qui les lirait encore ferait revenir les jointures.
+    expect(x).not.toHaveProperty('agentName');
+    expect(x).not.toHaveProperty('jobsCount');
+    expect(x).not.toHaveProperty('lastActivityAt');
 
-    // Le plus actif d'abord.
-    expect(result.data[0]!.path).toBe(`${terrain.path}/projet-x`);
+    // Le plus récemment ajouté d'abord.
+    const dates = result.data.map((p) => p.registeredAt.getTime());
+    expect([...dates].sort((a, b) => b - a)).toEqual(dates);
   });
 });
 

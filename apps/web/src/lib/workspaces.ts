@@ -47,16 +47,12 @@ export type WorkspaceRow = {
    * et supposer « code » ferait afficher une étiquette que personne n'a posée.
    */
   produces: 'code' | 'documents' | null;
-  agentName: string | null;
   /**
-   * Les conversations du projet. `null` pour un détecté — un dossier hors
-   * registre n'en porte aucune, et écrire « 0 conversations » laisserait
-   * croire qu'on a compté.
+   * LA DATE de la ligne. Pour un projet du registre, le jour où il y est
+   * entré ; pour un dossier détecté, le jour où on l'a vu écrire pour la
+   * première fois. `null` quand rien ne la donne — et la colonne reste vide.
    */
-  conversations: number | null;
-  /** Les sessions de code retombées sur ce dossier, dans la fenêtre du scan. */
-  sessions: number;
-  lastActivityAt: Date | null;
+  createdAt: Date | null;
   /**
    * L'état de la preuve. `null` = il n'y a RIEN à prouver — un projet de
    * DOCUMENTS n'exécute aucune commande, et lui coller « Unverified » lui
@@ -86,7 +82,6 @@ export type WorkspacesView = {
 export type WorkspaceSession = {
   projectPath: string | null;
   projectName: string | null;
-  agentName: string | null;
   activityAt: string | null;
 };
 
@@ -125,19 +120,18 @@ function basenameOf(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-/** La plus récente des deux dates, `null` seulement si les deux le sont. */
-function laterOf(a: Date | null, b: Date | null): Date | null {
+/** La plus ANCIENNE des deux dates, `null` seulement si les deux le sont. */
+function earlierOf(a: Date | null, b: Date | null): Date | null {
   if (a === null) return b;
   if (b === null) return a;
-  return a.getTime() >= b.getTime() ? a : b;
+  return a.getTime() <= b.getTime() ? a : b;
 }
 
 type Grouped = {
   path: string;
   name: string | null;
-  agentName: string | null;
-  sessions: number;
-  lastActivityAt: Date | null;
+  /** La PREMIÈRE fois qu'on a vu une écriture ici — la date de la ligne. */
+  firstSeenAt: Date | null;
 };
 
 /**
@@ -148,8 +142,9 @@ type Grouped = {
  * en ferait deux projets — le désaccord que l'onglet Code corrigeait déjà.
  *
  * `sessions` est attendu de la plus récente à la plus ancienne (l'ordre de
- * `listCodingProcessesAction`) : l'agent retenu est donc celui de la DERNIÈRE
- * session, celui que la ligne nomme.
+ * `listCodingProcessesAction`), mais la date retenue est la PLUS ANCIENNE : la
+ * ligne dit depuis quand ce dossier existe pour Nodal, pas ce qui vient de s'y
+ * passer.
  */
 export function groupSessionsByProject(
   sessions: readonly WorkspaceSession[],
@@ -161,18 +156,10 @@ export function groupSessionsByProject(
     const at = s.activityAt ? new Date(s.activityAt) : null;
     const existing = byKey.get(key);
     if (existing) {
-      existing.sessions += 1;
-      existing.lastActivityAt = laterOf(existing.lastActivityAt, at);
-      existing.agentName ??= s.agentName;
+      existing.firstSeenAt = earlierOf(existing.firstSeenAt, at);
       continue;
     }
-    byKey.set(key, {
-      path: s.projectPath,
-      name: s.projectName,
-      agentName: s.agentName,
-      sessions: 1,
-      lastActivityAt: at,
-    });
+    byKey.set(key, { path: s.projectPath, name: s.projectName, firstSeenAt: at });
   }
   return byKey;
 }
@@ -181,8 +168,8 @@ export function groupSessionsByProject(
  * Le registre et la détection, en UNE liste.
  *
  * LA RÈGLE DE FUSION : un dossier détecté dont la clé est DÉJÀ au registre
- * n'est pas une seconde ligne — ses sessions et sa dernière activité
- * enrichissent la ligne du projet. Sans cette règle, tout projet déclaré
+ * n'est pas une seconde ligne — c'est la ligne du projet, et elle garde SA
+ * date d'entrée au registre. Sans cette règle, tout projet déclaré
  * apparaîtrait deux fois dès qu'un agent y écrit, ce qui est le cas normal.
  *
  * Les MASQUÉS : un dossier détecté masqué sort de la liste et se compte à part
@@ -203,7 +190,6 @@ export function mergeWorkspaces(input: {
 
   const registered: WorkspaceRow[] = input.projects.map((p) => {
     const key = projectKey(p.path);
-    const g = grouped.get(key);
     return {
       kind: 'registered' as const,
       id: p.id,
@@ -211,10 +197,7 @@ export function mergeWorkspaces(input: {
       name: p.name,
       path: p.path,
       produces: p.kind,
-      agentName: p.agentName ?? g?.agentName ?? null,
-      conversations: p.conversationsCount,
-      sessions: g?.sessions ?? 0,
-      lastActivityAt: laterOf(p.lastActivityAt, g?.lastActivityAt ?? null),
+      createdAt: p.registeredAt,
       // Un projet de DOCUMENTS n'a RIEN à prouver : il n'exécute aucune
       // commande. `listProjectsAction` rend déjà `lastProof` à `null` dans ce
       // cas ; la pastille garde la même retenue et ne paraît pas du tout,
@@ -241,21 +224,20 @@ export function mergeWorkspaces(input: {
       name: prefs?.displayName?.trim() || g.name || basenameOf(g.path),
       path: g.path,
       produces: null,
-      agentName: g.agentName,
-      conversations: null,
-      sessions: g.sessions,
-      lastActivityAt: g.lastActivityAt,
+      createdAt: g.firstSeenAt,
       proof: workspaceProof(prefs?.verifyStatus ?? null, proofRuns.get(key) ?? null),
       hidden: prefs?.hidden ?? false,
     });
   }
 
   const byActivity = (a: WorkspaceRow, b: WorkspaceRow): number => {
-    const at = a.lastActivityAt?.getTime() ?? 0;
-    const bt = b.lastActivityAt?.getTime() ?? 0;
+    // Le plus récemment ajouté d'abord — la date que la ligne affiche, donc un
+    // ordre que l'œil peut vérifier.
+    const at = a.createdAt?.getTime() ?? 0;
+    const bt = b.createdAt?.getTime() ?? 0;
     if (at !== bt) return bt - at;
-    // À activité égale, l'ordre est celui du NOM : sans départage, deux lignes
-    // sans activité s'échangeaient d'un rendu à l'autre.
+    // À date égale, l'ordre est celui du NOM : sans départage, deux lignes
+    // s'échangeaient d'un rendu à l'autre.
     return a.name.localeCompare(b.name);
   };
 

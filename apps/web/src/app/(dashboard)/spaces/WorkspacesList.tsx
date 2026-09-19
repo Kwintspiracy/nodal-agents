@@ -2,15 +2,20 @@
 
 // WorkspacesList — UNE liste de projets, registre et détection confondus (#143).
 //
-// La planche (page « #143 Workspaces are the only projects page », écran
-// 444:210) : une ligne par projet — la marque du dossier, le nom, une
-// sous-ligne qui dit le dossier, l'agent et ce qui s'y est passé, l'heure à
-// droite, et la pastille de preuve. Même géométrie que la boîte de réception
-// d'un dossier de chat : un trait entre les lignes, une seule boîte.
+// UNE LIGNE DIT QUATRE CHOSES, et pas une de plus (Quentin, 19/09) : la marque
+// du dossier, le NOM du projet, son CHEMIN, la DATE où il est apparu, et sa
+// PREUVE. Même géométrie que la boîte de réception d'un dossier de chat : un
+// trait entre les lignes, une seule boîte.
 //
-// La planche dessinait l'AVATAR de l'agent responsable à la place de la marque.
-// Il est systématiquement l'orchestrateur (Quentin, 19/09), donc le même visage
-// répété sur toute la liste — une colonne qui n'apprend rien.
+// La planche (écran 444:210) en dessinait davantage : l'avatar de l'agent
+// responsable, son nom, le compte de conversations et de sessions, la dernière
+// activité. Tout cela est parti le 19/09, sur un constat de Quentin : on parle
+// toujours au MÊME orchestrateur, donc son visage et son nom étaient la même
+// colonne répétée sur toute la liste. Les comptes, eux, n'aidaient pas à
+// RETROUVER un projet, qui est ce qu'on vient faire ici.
+//
+// (Le nom de cet orchestrateur ne s'écrit nulle part dans le source, pas même
+// dans ce commentaire : invariant #1, et `architecture.test.ts` le vérifie.)
 //
 // Les dossiers DÉTECTÉS — ceux où un agent a écrit sans que personne les ait
 // déclarés — sont dans la MÊME liste, marqués « Detected », avec les deux
@@ -38,7 +43,7 @@ import StatusPill from '@/components/ui/StatusPill';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
-import { relativeTime, truncate } from '@/lib/format-time';
+import { truncate } from '@/lib/format-time';
 // La MÊME langue d'heure que les boîtes de réception (`14:02`, `Mon`,
 // `Sep 12`) : deux listes de la même application ne datent pas une ligne de
 // deux façons.
@@ -58,35 +63,6 @@ function shortPath(path: string, max = 44): string {
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
-}
-
-/**
- * Ce que la sous-ligne DIT, morceau par morceau — exporté pour être prouvé
- * sans navigateur.
- *
- * Rien d'absent ne se dessine (invariant #4) : pas de « 0 conversations » sous
- * un dossier détecté dont personne n'a compté les conversations, pas de
- * « never » sous un projet neuf. Un projet du registre sans aucune session ne
- * ment pas non plus : il dit « no session ».
- */
-export function workspaceSubline(row: WorkspaceRow): string {
-  const parts: string[] = [shortPath(row.path)];
-  if (row.kind === 'detected') {
-    if (row.agentName) parts.push(`${row.agentName} wrote here`);
-    parts.push(plural(row.sessions, 'session', 'sessions'));
-    parts.push('not registered yet');
-    return parts.join(' · ');
-  }
-  if (row.agentName) parts.push(row.agentName);
-  if (row.conversations !== null) {
-    parts.push(plural(row.conversations, 'conversation', 'conversations'));
-  }
-  parts.push(row.sessions === 0 ? 'no session' : plural(row.sessions, 'session', 'sessions'));
-  // « last activity 2h ago » : le TEMPS ÉCOULÉ, quand la colonne de droite dit
-  // l'heure au cadran. Les deux ne se répètent pas — l'une répond « quand »,
-  // l'autre « il y a combien de temps ».
-  if (row.lastActivityAt) parts.push(`last activity ${relativeTime(row.lastActivityAt)}`);
-  return parts.join(' · ');
 }
 
 /** La pastille de preuve : quatre états, quatre mots. */
@@ -140,13 +116,21 @@ function RowBody({ row }: { row: WorkspaceRow }) {
             </MonoMicroTag>
           )}
         </span>
-        <span className="truncate text-body-13 text-ink-3">{workspaceSubline(row)}</span>
+        {/* LE CHEMIN, et rien d'autre (Quentin, 19/09). La sous-ligne comptait
+            les conversations, les sessions et la dernière activité, et nommait
+            l'agent responsable ; rien de tout cela n'aide à retrouver un
+            projet dans une liste. Le titre attribut garde le chemin ENTIER :
+            la coupe est un fait d'affichage, pas une perte. */}
+        <span className="truncate text-mono-12 text-ink-3" title={row.path}>
+          {shortPath(row.path)}
+        </span>
       </span>
-      {/* L'heure, `null` quand la date manque : la colonne reste VIDE plutôt
-          que de porter un tiret qu'on lirait comme une valeur. */}
-      {conversationTimeLabel(row.lastActivityAt) !== null && (
-        <span className="shrink-0 text-mono-11 text-ink-4">
-          {conversationTimeLabel(row.lastActivityAt)}
+      {/* LA DATE : au registre pour un projet, première écriture vue pour un
+          dossier détecté. `null` quand rien ne la donne — la colonne reste
+          VIDE plutôt que de porter un tiret qu'on lirait comme une valeur. */}
+      {conversationTimeLabel(row.createdAt) !== null && (
+        <span className="shrink-0 text-mono-11 text-ink-4" title={row.createdAt?.toISOString()}>
+          {conversationTimeLabel(row.createdAt)}
         </span>
       )}
       {proof !== null && (
@@ -261,9 +245,8 @@ export default function WorkspacesList({ view }: { view: WorkspacesView }) {
       </div>
 
       <p className="mt-3 text-body-12 text-ink-4">
-        A row: the project, its folder, its counts, the last activity, and its proof. Detected
-        folders are projects Nodal found by itself; Register keeps them, Hide removes them from the
-        list
+        A row: the project, its folder, when it appeared, and its proof. Detected folders are
+        projects Nodal found by itself; Register keeps them, Hide removes them from the list
         {hiddenCount > 0 ? (
           <>
             {' ('}

@@ -22,15 +22,8 @@ import type { ProjectListRow } from '../project-actions.ts';
 const projet = (over: Partial<ProjectListRow> & { id: string; name: string }): ProjectListRow => ({
   path: 'D:/Terrain/projet',
   kind: 'code',
-  agentId: 'agent-1',
-  agentName: 'Alfred',
-  agentSlug: 'alfred',
-  registeredFrom: 'spaces',
   registeredAt: new Date('2026-09-01T10:00:00Z'),
   hidden: false,
-  jobsCount: 0,
-  conversationsCount: 0,
-  lastActivityAt: null,
   lastProof: null,
   ...over,
 });
@@ -38,7 +31,6 @@ const projet = (over: Partial<ProjectListRow> & { id: string; name: string }): P
 const session = (over: Partial<WorkspaceSession> = {}): WorkspaceSession => ({
   projectPath: 'D:/Terrain/projet',
   projectName: 'projet',
-  agentName: 'Alfred',
   activityAt: '2026-09-10T09:00:00.000Z',
   ...over,
 });
@@ -51,7 +43,7 @@ const prefs = (over: Partial<WorkspacePrefs> & { projectPath: string }): Workspa
 });
 
 describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
-  it('un dossier détecté DÉJÀ au registre ne fait qu’UNE ligne, enrichie de ses sessions', () => {
+  it('un dossier détecté DÉJÀ au registre ne fait qu’UNE ligne, et garde SA date', () => {
     const view = mergeWorkspaces({
       projects: [projet({ id: 'p-1', name: 'Nodal', path: 'D:/Dev/nodal' })],
       sessions: [
@@ -65,8 +57,9 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
     const ligne = view.rows[0]!;
     expect(ligne.kind).toBe('registered');
     expect(ligne.id).toBe('p-1');
-    expect(ligne.sessions).toBe(2);
-    expect(ligne.lastActivityAt?.toISOString()).toBe('2026-09-12T08:00:00.000Z');
+    // La date affichée est celle de l'ENTRÉE AU REGISTRE, pas la dernière
+    // écriture vue : c'est ce que la ligne promet.
+    expect(ligne.createdAt?.toISOString()).toBe('2026-09-01T10:00:00.000Z');
     expect(view.counts).toMatchObject({ total: 1, registered: 1, detected: 0 });
   });
 
@@ -78,7 +71,6 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
     });
 
     expect(view.rows).toHaveLength(1);
-    expect(view.rows[0]!.sessions).toBe(1);
     // Le chemin AFFICHÉ reste celui du registre — c'est lui que le
     // propriétaire a déclaré.
     expect(view.rows[0]!.path).toBe('C:/Dev/App');
@@ -91,7 +83,12 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
         session({
           projectPath: 'D:/APPS/scratch-tools',
           projectName: 'scratch-tools',
-          agentName: 'Alfred',
+          activityAt: '2026-09-12T08:00:00.000Z',
+        }),
+        session({
+          projectPath: 'D:/APPS/scratch-tools',
+          projectName: 'scratch-tools',
+          activityAt: '2026-09-08T08:00:00.000Z',
         }),
       ],
       prefs: [],
@@ -102,10 +99,9 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(ligne.kind).toBe('detected');
     expect(ligne.id).toBeNull();
     expect(ligne.name).toBe('scratch-tools');
-    expect(ligne.agentName).toBe('Alfred');
-    // Rien n'est COMPTÉ qu'on n'a pas compté : un dossier hors registre ne
-    // porte pas de conversations, et « 0 » laisserait croire à un comptage.
-    expect(ligne.conversations).toBeNull();
+    // La PREMIÈRE écriture vue, pas la dernière : la ligne dit depuis quand ce
+    // dossier existe pour Nodal.
+    expect(ligne.createdAt?.toISOString()).toBe('2026-09-08T08:00:00.000Z');
     expect(ligne.produces).toBeNull();
     expect(view.counts).toMatchObject({ total: 1, registered: 0, detected: 1 });
   });
@@ -163,14 +159,14 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(view.rows[0]!.name).toBe('Client portal');
   });
 
-  it('l’ordre est celui de la dernière activité, registre et détection mêlés', () => {
+  it('l’ordre est celui de la DATE, registre et détection mêlés', () => {
     const view = mergeWorkspaces({
       projects: [
         projet({
           id: 'p-vieux',
           name: 'vieux',
           path: 'D:/Dev/vieux',
-          lastActivityAt: new Date('2026-09-01T00:00:00Z'),
+          registeredAt: new Date('2026-09-01T00:00:00Z'),
         }),
       ],
       sessions: [
@@ -212,13 +208,12 @@ describe('groupSessionsByProject @cap:travailler-sur-des-fichiers/moteur', () =>
     expect(grouped.size).toBe(0);
   });
 
-  it('l’agent retenu est celui de la session la plus RÉCENTE', () => {
+  it('la date retenue est la PLUS ANCIENNE écriture vue, pas la dernière', () => {
     const grouped = groupSessionsByProject([
-      session({ projectPath: 'D:/a', agentName: 'Dernier', activityAt: '2026-09-12T00:00:00Z' }),
-      session({ projectPath: 'D:/a', agentName: 'Premier', activityAt: '2026-09-01T00:00:00Z' }),
+      session({ projectPath: 'D:/a', activityAt: '2026-09-12T00:00:00.000Z' }),
+      session({ projectPath: 'D:/a', activityAt: '2026-09-01T00:00:00.000Z' }),
     ]);
-    expect(grouped.get('d:/a')?.agentName).toBe('Dernier');
-    expect(grouped.get('d:/a')?.sessions).toBe(2);
+    expect(grouped.get('d:/a')?.firstSeenAt?.toISOString()).toBe('2026-09-01T00:00:00.000Z');
   });
 });
 
