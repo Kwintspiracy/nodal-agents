@@ -32,7 +32,7 @@ import type { JobTriggerContext } from '@nodal-agents/db';
 import { buildConversationFeed } from './conversation-feed.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { ROLLUP_MAX_DEPTH } from './coding-rollup.ts';
-import { redactPresented } from './redact-presented.ts';
+import { redactAuditRow } from './redact-presented.ts';
 import type { getDb } from './server.ts';
 
 type Db = ReturnType<typeof getDb>;
@@ -444,15 +444,23 @@ export async function assembleJobFeeds(
           return childFeed === undefined ? child : { ...child, feed: childFeed };
         }),
       },
-      // La sortie brute ET la CARTE, masquées ensemble : la carte est bâtie à
-      // partir de cette même sortie, et `ToolBlock` la rend DE PRÉFÉRENCE à
-      // elle. Rédiger l'une sans l'autre montrait le jeton en clair sur la
-      // carte pendant que la vue brute le masquait (#150).
-      (toolsByJob.get(job.id) ?? []).map((t) => ({
-        ...t,
-        toolOutput: t.toolOutput === null ? null : redactSecretsInText(t.toolOutput),
-        presented: redactPresented(t.presented),
-      })),
+      // La ligne d'audit passe par la PORTE, aux trois endroits où elle se lit
+      // — la carte, la sortie brute, l'entrée (`redactAuditRow`, #165).
+      //
+      // La sortie brute et la carte étaient masquées ensemble depuis #150 : la
+      // carte est bâtie à partir de cette même sortie, et `ToolBlock` la rend
+      // DE PRÉFÉRENCE à elle, si bien que rédiger l'une sans l'autre montrait
+      // le jeton en clair sur la carte pendant que la vue brute le masquait.
+      // `toolInput` voyageait brut (#212) : aucun écran ne le rend
+      // AUJOURD'HUI — le fil affiche l'entrée de la TRANSCRIPTION, déjà
+      // masquée — mais c'est mot pour mot le raisonnement qui avait laissé le
+      // trou de #150. On masque à la porte, pas à l'usage, et par la même
+      // fonction que la page de run : un champ ajouté demain est couvert sans
+      // que personne ait à y penser.
+      //
+      // La ligne STOCKÉE n'est jamais touchée : le runner la relit pour
+      // reprendre un travail (SECRET-001).
+      (toolsByJob.get(job.id) ?? []).map(redactAuditRow),
       llmByJob.get(job.id) ?? [],
       (questionsByJob.get(job.id) ?? []).map((q) => ({
         approvalRequestId: q.approvalRequestId,
