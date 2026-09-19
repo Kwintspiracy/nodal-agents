@@ -62,6 +62,7 @@ export default function ThreadComposer({
   agentName,
   placeholder,
   onBeforeSend,
+  onSent,
   agentId,
   llmKeyId,
   model,
@@ -86,6 +87,13 @@ export default function ThreadComposer({
    * le dit (inv. #4).
    */
   onBeforeSend?: () => Promise<string>;
+  /**
+   * #248 — ce que l'écran fait APRÈS un envoi réussi, quand relire la page où
+   * l'on est n'a pas de sens. L'écran de conversation neuve est ce cas : sa
+   * page n'a pas de fil à relire, elle DEVIENT le fil qui vient de naître
+   * (`/chat/<id>`). Absent, on relit la page, comme un fil ordinaire.
+   */
+  onSent?: (conversationId: string) => void;
   /**
    * #138 — les trois listes « provider / modèle / effort ». Les champs vont
    * ensemble : sans agent (la page d'un projet qui n'en a pas encore), il n'y
@@ -195,7 +203,10 @@ export default function ThreadComposer({
       // avant la relecture ferait clignoter le fil). La relecture est
       // demandée MAINTENANT, avant que le message suivant parte.
       pendingTurn.settle(id);
-      router.refresh();
+      // #248 — l'écran de conversation neuve n'a rien à relire : il s'en va sur
+      // le fil qui vient de naître. Partout ailleurs, on relit la page.
+      if (onSent) onSent(target);
+      else router.refresh();
       // Et on attend que la réponse soit À L'ÉCRAN avant de faire partir le
       // message suivant : l'appel d'une action serveur est une transition
       // React, et React lie les transitions en cours — lancé plus tôt, le
