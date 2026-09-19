@@ -62,7 +62,7 @@ import type {
   ProofResult,
   ReadyConfig,
 } from '../verification/registry.ts';
-import { TERMINAL_STATUSES, completeJob } from './state.ts';
+import { TERMINAL_STATUSES, completeJob, failJob } from './state.ts';
 
 // ─── Codes journalisés ──────────────────────────────────────────────────────
 
@@ -173,6 +173,8 @@ export type PrepareDelivery = (
     readonly channel: string;
     readonly chatId: string;
     readonly payload: string;
+    /** Laisse le préparateur dédupliquer deux notices distinctes du même job. */
+    readonly idempotencyKey?: string;
   },
 ) => Promise<void>;
 
@@ -211,11 +213,31 @@ export interface FinalizeInput {
   readonly stats?: FinalizeStats;
   readonly messages?: unknown[];
   /** Livraison à préparer dans la même transaction (T08). */
-  readonly delivery?: {
-    readonly channel: string;
-    readonly chatId: string;
-    readonly payload: string;
-  };
+  readonly delivery?: TerminalDelivery;
+}
+
+/**
+ * Ce qu'il y a à livrer, posé DANS la transaction terminale — succès comme
+ * échec (issue #116, résidu 3).
+ */
+export interface TerminalDelivery {
+  readonly channel: string;
+  readonly chatId: string;
+  readonly payload: string;
+  readonly idempotencyKey?: string;
+}
+
+/** Ce que la porte terminale d'ÉCHEC demande. */
+export interface FinalizeFailureInput {
+  readonly jobId: string;
+  /** Le code (ou la raison courte) écrit dans `agent_jobs.error`. */
+  readonly errorCode: string;
+  readonly stats?: FinalizeStats;
+  readonly messages?: unknown[];
+  /** L'explication rendue à l'utilisateur, quand l'appelant en a une. */
+  readonly userMessage?: string;
+  /** Livraison à préparer dans la même transaction que l'écriture terminale. */
+  readonly delivery?: TerminalDelivery;
 }
 
 // ─── Interne ────────────────────────────────────────────────────────────────
@@ -610,4 +632,48 @@ export async function finalizeJobSuccess(
   const kind: FinalizeKind = observedOutcome === 'completed' ? 'completed' : 'completed_unverified';
 
   return { kind, observedOutcome, observedDue, decisions };
+}
+
+// ─── La porte terminale d'ÉCHEC ─────────────────────────────────────────────
+
+/**
+ * Écrit l'échec terminal d'un job ET, dans la MÊME transaction, l'intention de
+ * livrer ce que le harnais a à dire (issue #116, résidu 3).
+ *
+ * La couture T08 n'existait que du côté succès : `finalizeJobSuccess` pose la
+ * ligne `job_deliveries` en `prepared` dans la transaction qui pose le statut.
+ * Les chemins d'échec, eux, écrivaient la ligne terminale, PUIS préparaient la
+ * notice. Une panne entre les deux laissait un job fini avec rien à livrer, et
+ * aucune reprise ne pouvait le rattraper : le drain ne réclame que des lignes
+ * `prepared`, et il n'y en avait pas.
+ *
+ * Même refus qu'au succès, et avant toute écriture : demander une livraison
+ * sans fournir le préparateur LÈVE `DELIVERY_PREPARE_UNAVAILABLE` (invariant
+ * #4). Une livraison n'est préparée que si l'écriture terminale a ATTERRI —
+ * un job qu'un autre écrivain a déjà fini n'est pas le nôtre à commenter.
+ *
+ * Rend `true` si cette écriture-ci a posé le statut terminal.
+ */
+export async function finalizeJobFailure(
+  db: AnyDrizzleDb,
+  input: FinalizeFailureInput,
+  deps: Pick<FinalizeDeps, 'prepareDelivery'> = {},
+): Promise<boolean> {
+  if (input.delivery && !deps.prepareDelivery) {
+    throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.delivery.channel}`);
+  }
+  return db.transaction(async (tx) => {
+    const landed = await failJob(
+      tx,
+      input.jobId,
+      input.errorCode,
+      input.stats,
+      input.messages,
+      input.userMessage,
+    );
+    if (landed && input.delivery && deps.prepareDelivery) {
+      await deps.prepareDelivery(tx, { jobId: input.jobId, ...input.delivery });
+    }
+    return landed;
+  });
 }
