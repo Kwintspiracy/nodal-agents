@@ -18,6 +18,7 @@ import {
   agentJobs,
   chatMessages,
   codeProjects,
+  constatedWrites,
   conversations,
   entities,
   jobDeliverableVerificationState,
@@ -466,6 +467,7 @@ beforeAll(async () => {
           stderrTruncated: false,
         },
         riskLevel: 'write',
+        turn: 1,
         toolInput: {},
         toolOutput: 'ok',
         // Les lignes du SECOND sont les plus anciennes : mises en commun,
@@ -473,6 +475,18 @@ beforeAll(async () => {
         createdAt: new Date(Date.UTC(2026, 8, 3, 9, t.audit + k)),
       })),
     );
+    // Chaque travail a bel et bien ÉCRIT. Depuis #197 le verdict chat/travail
+    // lit `constated_writes` : une commande seule ne fait plus un encart, et
+    // sans cette ligne aucun des deux travaux n'en aurait — ce qui priverait
+    // le test de son observation, alors que son sujet est le REGROUPEMENT des
+    // lignes d'audit, pas la frontière chat/travail.
+    await testDb.insert(constatedWrites).values({
+      jobId: j!.id,
+      turn: 1,
+      path: `D:/travaux/${t.rang}.txt`,
+      changeKind: 'added',
+      constatedBy: 'disk',
+    });
   }
 
   // ── Un fil de canal PLUS LONG que le plafond de jobs ──────────────────────

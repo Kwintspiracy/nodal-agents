@@ -43,6 +43,7 @@ import {
   jobDeliveries,
   llmCalls,
   toolCalls,
+  constatedWrites,
   verificationRuns,
   telegramAllowedChats,
   channelAllowedConversations,
@@ -78,7 +79,7 @@ import { buildConversationThread } from './conversation-thread.ts';
 // dernier importe le type des lignes d'ici.
 import { chatKey, LIST_MAX } from './chat-key.ts';
 import type { ThreadJob, ThreadProject, ThreadProofRun } from './conversation-thread.ts';
-import { classifyProduction } from './chat-or-work.ts';
+import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
 import { folderOfWork, MCP_JOB_CHANNELS, RUNNING_JOB_STATUSES } from './chat-folders.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
@@ -1462,7 +1463,7 @@ export async function getConversationThreadAction(
     // Le fil de chaque travail : un assemblage par job, celui de la page d'un
     // espace. Les lignes d'audit de TOUS les jobs (têtes et descendants) sont
     // relues à part, parce que la frontière chat/travail est récursive.
-    const [assembled, classifiableRows, projectRows] = await Promise.all([
+    const [assembled, classifiableRows, projectRows, constatRows] = await Promise.all([
       // Trois requêtes pour TOUS les jobs de tête, pas trois par job : au
       // plafond de cent, l'ancienne version en lançait trois cents pour une
       // seule page (revue Codex, passe 29, doute 2).
@@ -1483,6 +1484,9 @@ export async function getConversationThreadAction(
               toolName: toolCalls.toolName,
               card: toolCalls.card,
               presented: toolCalls.presented,
+              // Le tour : c'est par lui que la ligne rejoint son constat
+              // d'écriture, dont la clé est (job, tour, chemin) — #197.
+              turn: toolCalls.turn,
               riskLevel: toolCalls.riskLevel,
               toolInput: toolCalls.toolInput,
               // L'ISSUE de l'appel : sans elle, un refus d'approbation passait
@@ -1519,7 +1523,22 @@ export async function getConversationThreadAction(
               )
           : Promise.resolve([]);
       })(),
+      // #197 — LES ÉCRITURES CONSTATÉES de ces travaux, ce que le verdict
+      // chat/travail interroge pour trancher une commande. Le job et le tour
+      // suffisent : le verdict demande « ce tour a-t-il écrit ? », jamais
+      // quels fichiers — ceux-là, le récapitulatif les compte ailleurs.
+      // `groupBy` en SQL plutôt qu'une ligne par fichier : un run qui touche
+      // deux mille fichiers n'a pas à les traverser pour rendre un booléen.
+      relevantIds.length > 0
+        ? db
+            .selectDistinct({ jobId: constatedWrites.jobId, turn: constatedWrites.turn })
+            .from(constatedWrites)
+            .where(inArray(constatedWrites.jobId, relevantIds))
+        : Promise.resolve([]),
     ]);
+
+    /** Les tours pour lesquels une écriture a bien été constatée (#197). */
+    const constatedTurns = new Set(constatRows.map((r) => constatedTurnKey(r.jobId, r.turn)));
 
     const projectById = new Map(
       projectRows.map((p) => [
@@ -1710,6 +1729,7 @@ export async function getConversationThreadAction(
       verdict: classifyProduction({
         conversation: conversationRef,
         rows: rowsByRoot.get(r.job.id) ?? [],
+        constatedTurns,
       }),
       project: r.job.projectId !== null ? (projectById.get(r.job.projectId) ?? null) : null,
       proof: proofByRoot.get(r.job.id) ?? [],

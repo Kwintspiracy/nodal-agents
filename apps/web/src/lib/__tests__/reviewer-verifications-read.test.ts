@@ -16,7 +16,14 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentJobs, toolCalls, verificationRuns, eq } from '@nodal-agents/db';
+import {
+  agents,
+  agentJobs,
+  constatedWrites,
+  toolCalls,
+  verificationRuns,
+  eq,
+} from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -141,8 +148,14 @@ beforeAll(async () => {
     .returning();
   reviewerJobId = reviewer!.id;
 
-  // Le travail du run : une commande, pour que le fil le classe comme TRAVAIL
-  // et pose son récapitulatif de livraison.
+  // Le travail du run : une commande QUI A ÉCRIT, pour que le fil le classe
+  // comme TRAVAIL et pose son récapitulatif de livraison.
+  //
+  // L'écriture constatée juste en dessous n'est pas un décor (#197) : depuis
+  // que le verdict lit `constated_writes`, une commande seule ne suffit plus —
+  // sa carte prouve qu'elle a tourné, jamais qu'elle a écrit. Le fait que ce
+  // fichier veut poser est « ce run a livré », et il le pose désormais en
+  // entier.
   await testDb.insert(toolCalls).values({
     entityId: seed.entityId,
     jobId: rootJobId,
@@ -154,6 +167,14 @@ beforeAll(async () => {
     presented: { card: 'terminal', command: 'node --check app.js', exitCode: 0 },
     riskLevel: 'destructive',
     turn: 1,
+  });
+
+  await testDb.insert(constatedWrites).values({
+    jobId: rootJobId,
+    turn: 1,
+    path: 'D:/petite-app/app.js',
+    changeKind: 'modified',
+    constatedBy: 'git',
   });
 
   // Les preuves du RELECTEUR, telles que le runner les écrit : rattachées au

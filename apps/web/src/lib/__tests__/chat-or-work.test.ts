@@ -8,7 +8,7 @@
 // `parsePresented` et le test le verrait.
 
 import { describe, it, expect } from 'vitest';
-import { classifyProduction, PRODUCED_FILES_MAX } from '../chat-or-work.ts';
+import { classifyProduction, constatedTurnKey, PRODUCED_FILES_MAX } from '../chat-or-work.ts';
 import type { ClassifiableRow } from '../chat-or-work.ts';
 
 /** Le fil du dashboard, sauf quand un cas parle d'un canal. */
@@ -17,6 +17,7 @@ const telegram = { channel: 'telegram', chatId: '4242' };
 
 const ligne = (over: Partial<ClassifiableRow>): ClassifiableRow => ({
   jobId: 'job-tete',
+  turn: 1,
   toolName: 'un_outil',
   card: null,
   presented: null,
@@ -31,10 +32,36 @@ const ligne = (over: Partial<ClassifiableRow>): ClassifiableRow => ({
 const echec = (outcome: 'error' | 'blocked' | 'awaiting_approval') =>
   JSON.stringify({ outcome, error: `${outcome}: rien n'est sorti` });
 
+/**
+ * Le tour du job de tête, avec une écriture CONSTATÉE (#197) — ce que le
+ * chargeur bâtit depuis `constated_writes`. Par défaut aucun tour n'a écrit :
+ * un cas qui veut une commande décisive le DIT.
+ */
+const aEcrit = new Set([constatedTurnKey('job-tete', 1)]);
+
+/** Une ligne de commande, la carte que `run_command` remplit vraiment. */
+const commande = (command: string, over: Partial<ClassifiableRow> = {}): ClassifiableRow =>
+  ligne({
+    toolName: 'run_command',
+    card: 'terminal',
+    presented: {
+      card: 'terminal',
+      command,
+      exitCode: 0,
+      timedOut: false,
+      stdoutTail: 'done',
+      stdoutTruncated: false,
+      stderrTail: '',
+      stderrTruncated: false,
+    },
+    ...over,
+  });
+
 const verdict = (
   rows: ClassifiableRow[],
   conversation: { channel: string; chatId: string | null } = dashboard,
-) => classifyProduction({ conversation, rows });
+  constatedTurns: ReadonlySet<string> = new Set<string>(),
+) => classifyProduction({ conversation, rows, constatedTurns });
 
 describe('classifyProduction — ce qui reste du chat', () => {
   it('« bonjour » : aucune ligne, donc rien à montrer', () => {
@@ -249,25 +276,11 @@ describe('classifyProduction — ce qui sort du chat', () => {
     expect(v.items).toEqual([{ kind: 'sent', label: 'bilan.pdf to Slack #ops' }]);
   });
 
-  it('une commande exécutée est du travail', () => {
-    const v = verdict([
-      ligne({
-        toolName: 'run_command',
-        card: 'terminal',
-        presented: {
-          card: 'terminal',
-          command: 'pnpm build',
-          exitCode: 0,
-          timedOut: false,
-          stdoutTail: 'done',
-          stdoutTruncated: false,
-          stderrTail: '',
-          stderrTruncated: false,
-        },
-      }),
-    ]);
+  it('une commande dont une écriture a été CONSTATÉE est du travail', () => {
+    const v = verdict([commande('pnpm build')], dashboard, aEcrit);
     expect(v.isWork).toBe(true);
-    expect(v.items).toEqual([{ kind: 'command', label: 'pnpm build' }]);
+    expect(v.items).toEqual([{ kind: 'command', label: 'pnpm build', certain: true }]);
+    expect(v.uncertain).toBe(0);
   });
 
   it('le harnais de code compte une fois, quelles que soient ses lignes internes', () => {
@@ -282,6 +295,95 @@ describe('classifyProduction — ce qui sort du chat', () => {
   it('le harnais nommé garde son nom', () => {
     const v = verdict([ligne({ toolName: 'cli:codex', card: 'delegation' })]);
     expect(v.items).toEqual([{ kind: 'harness', label: 'Codex' }]);
+  });
+});
+
+// #197 — LA COMMANDE, TRANCHÉE PAR L'ÉCRITURE CONSTATÉE.
+//
+// Une carte `terminal` disait « travail » du seul fait d'exister. La carte
+// prouve qu'une commande a tourné, jamais qu'elle a écrit : depuis #102 le
+// `cwd` d'un shell ne crédite plus rien côté vérification, et #199 range ce qui
+// a VRAIMENT été écrit dans `constated_writes`. Le verdict du fil lit ce même
+// fait, à la granularité (job, tour).
+//
+// Mutation vérifiée : `certain` forcé à `true` dans la branche `terminal` →
+// « un tour shell qui n'a rien produit n'est pas du travail » rougit.
+describe('classifyProduction — la commande, tranchée par l’écriture constatée', () => {
+  it('un tour shell qui n’a RIEN produit n’est pas du travail', () => {
+    // Le cas de l'issue : la commande a tourné, aucune écriture n'a été
+    // constatée sur son tour. Rien ne se dessine comme une production.
+    const v = verdict([commande('ls -la')]);
+    expect(v.isWork).toBe(false);
+    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false }]);
+    // L'absence est DITE, jamais tue : elle est comptée comme incertaine.
+    expect(v.uncertain).toBe(1);
+  });
+
+  it('un tour qui a NOMMÉ un fichier écrit est du travail, constat ou pas', () => {
+    // L'autre moitié de l'issue : la carte `files` porte son propre fait, et
+    // ce correctif ne la touche pas.
+    const v = verdict([
+      ligne({
+        toolName: 'file_write',
+        card: 'files',
+        presented: {
+          card: 'files',
+          files: [{ path: 'rapport.md', action: 'created' }],
+          total: 1,
+          truncated: false,
+        },
+      }),
+    ]);
+    expect(v.isWork).toBe(true);
+    expect(v.items).toEqual([{ kind: 'file', label: 'rapport.md', path: 'rapport.md' }]);
+  });
+
+  it('le constat d’un AUTRE tour ne crédite pas celui-ci', () => {
+    // La granularité est (job, tour) : un tour qui a écrit ne fait pas passer
+    // pour du travail une commande lancée au tour suivant.
+    const v = verdict([commande('ls -la', { turn: 2 })], dashboard, aEcrit);
+    expect(v.isWork).toBe(false);
+    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false }]);
+  });
+
+  it('le constat d’un AUTRE job ne crédite pas celui-ci', () => {
+    const v = verdict([commande('ls -la', { jobId: 'job-delegue' })], dashboard, aEcrit);
+    expect(v.isWork).toBe(false);
+  });
+
+  it('une commande incertaine ne PORTE pas un tour que rien d’autre ne décide', () => {
+    // Deux commandes sans constat restent du chat : l'incertitude ne s'ajoute
+    // pas jusqu'à faire une décision.
+    const v = verdict([commande('ls'), commande('pwd')]);
+    expect(v.isWork).toBe(false);
+    expect(v.uncertain).toBe(2);
+  });
+
+  it('mais elle paraît dans l’encart quand autre chose a décidé', () => {
+    // Un fichier écrit tranche ; la commande incertaine reste listée, avec son
+    // aveu, plutôt que d'être effacée du récapitulatif.
+    const v = verdict([
+      commande('ls -la'),
+      ligne({
+        toolName: 'file_write',
+        card: 'files',
+        presented: {
+          card: 'files',
+          files: [{ path: 'a.md', action: 'created' }],
+          total: 1,
+          truncated: false,
+        },
+      }),
+    ]);
+    expect(v.isWork).toBe(true);
+    expect(v.items).toContainEqual({ kind: 'command', label: 'ls -la', certain: false });
+    expect(v.uncertain).toBe(1);
+  });
+
+  it('une ligne sans job ni tour ne se rapproche d’aucun constat', () => {
+    const v = verdict([commande('ls', { jobId: null, turn: null })], dashboard, aEcrit);
+    expect(v.isWork).toBe(false);
+    expect(v.uncertain).toBe(1);
   });
 });
 
