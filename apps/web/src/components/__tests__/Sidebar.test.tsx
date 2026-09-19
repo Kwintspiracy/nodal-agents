@@ -575,18 +575,30 @@ describe('le dossier Workspaces se déplie @cap:reprendre-conversation/ecran', (
     expect(container.querySelector('[data-testid="folder-threads-workspaces"]')).toBeNull();
   });
 
-  it('montre DIX projets au plus, et « See all » seulement s’il y en a plus', async () => {
-    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: projets(9) });
+  it('montre DIX projets au plus, et garde « See all » TOUJOURS', async () => {
+    // La SEULE différence avec un dossier de canal (décision de
+    // l'orchestrateur, 19/09/2026 au soir) : ailleurs « See all » n'apparaît
+    // qu'au-delà du plafond, parce qu'en dessous tout est déjà sous les yeux.
+    // Ici c'est faux — `/spaces` porte aussi « New project » et sa table — et
+    // comme un dossier ne navigue pas (#206), sans cette ligne la page ne
+    // serait plus atteignable depuis la barre.
+    //
+    // Mutation vérifiée : la ligne remise sous `hasMore` → ce cas rougit à
+    // trois projets, et la page devient inatteignable.
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: projets(3) });
     pathname = '/chat';
     await renderSidebar();
     await click(container.querySelector('[data-testid="inbox-folder-workspaces"]')!);
-    expect(container.querySelectorAll('[data-testid="folder-thread-workspaces"]').length).toBe(9);
-    expect(container.querySelector('[data-testid="folder-see-all-workspaces"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="folder-thread-workspaces"]').length).toBe(3);
+    expect(
+      container.querySelector('[data-testid="folder-see-all-workspaces"]')?.getAttribute('href'),
+    ).toBe('/spaces');
 
     await remonter();
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: projets(11) });
     await renderSidebar();
     await click(container.querySelector('[data-testid="inbox-folder-workspaces"]')!);
+    // Onze lues, DIX dessinées : la onzième n'est pas une ligne.
     expect(container.querySelectorAll('[data-testid="folder-thread-workspaces"]').length).toBe(10);
     expect(
       container.querySelector('[data-testid="folder-see-all-workspaces"]')?.getAttribute('href'),
@@ -602,8 +614,10 @@ describe('le dossier Workspaces se déplie @cap:reprendre-conversation/ecran', (
     pathname = '/chat';
     await renderSidebar();
     await click(container.querySelector('[data-testid="inbox-folder-workspaces"]')!);
+    // Le message, PUIS « See all » : la page reste atteignable même quand la
+    // lecture échoue — c'est justement là qu'on veut pouvoir y aller.
     expect(container.querySelector('[data-testid="folder-threads-workspaces"]')?.textContent).toBe(
-      'Could not list the workspaces',
+      'Could not list the workspacesSee all',
     );
   });
 });

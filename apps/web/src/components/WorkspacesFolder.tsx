@@ -12,8 +12,16 @@
 // de suite.
 //
 // Ce qu'il montre est la liste des PROJETS, les dix derniers par date
-// d'enregistrement, chacun ouvrant sa page. « See all » n'apparaît que s'il y
-// en a d'autres.
+// d'enregistrement, chacun ouvrant sa page.
+//
+// ⚠️ SON « SEE ALL » EST TOUJOURS LÀ, et c'est la seule différence avec un
+// dossier de canal (décision de l'orchestrateur, 19/09/2026 au soir). Ailleurs
+// il n'apparaît qu'au-delà du plafond, parce qu'en dessous tout est déjà sous
+// les yeux et qu'un lien vers « tout » mènerait aux mêmes lignes. Ici c'est
+// faux : `/spaces` porte plus que la liste — le bouton « New project » et sa
+// table — donc il reste quelque chose à y voir même avec deux projets. Et
+// comme un dossier ne navigue pas (#206), sans cette ligne la page ne serait
+// plus atteignable depuis la barre.
 //
 // ⚠️ IL NE VIT PAS DANS `ChatFolderGroup`. Un dossier de Channels est un
 // endroit d'où des conversations ARRIVENT ; un projet est un endroit où l'on
@@ -26,6 +34,12 @@
 // cadence de la barre, pour la même raison que le sous-menu d'un dossier
 // (#223) : un projet enregistré depuis un autre onglet apparaît sans qu'on
 // recharge.
+//
+// ⚠️ SON REPLI N'EST PAS RETENU d'une session à l'autre — état de composant,
+// replié au rechargement. C'est la PARITÉ avec les dossiers de canaux, qui ne
+// le retiennent pas non plus : deux dossiers voisins qui se souviendraient
+// différemment se remarqueraient tout de suite. Le jour où on veut cette
+// mémoire, elle se fait pour les deux.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
@@ -85,8 +99,9 @@ export default function WorkspacesFolder() {
   }, [ouvert, relire, pathname]);
   usePolling(relireSiOuvert, SIDEBAR_POLL_MS, true);
 
-  const { rows, hasMore } =
-    projets === null ? { rows: null, hasMore: false } : unfoldedRows(projets);
+  // Seules les LIGNES sont coupées au plafond : le « See all » de ce dossier
+  // ne dépend pas du nombre, il est toujours rendu.
+  const rows = projets === null ? null : unfoldedRows(projets).rows;
 
   return (
     <div>
@@ -135,23 +150,18 @@ export default function WorkspacesFolder() {
               </SidebarRow>
             ))
           )}
-          {hasMore && (
-            <SidebarRow
-              href={HREF}
-              title="See all"
-              depth="thread"
-              testId="folder-see-all-workspaces"
-            >
-              <span className="h-3.5 w-3.5 shrink-0" />
-              <span className="flex-1 truncate leading-5 font-medium!">See all</span>
-              <ArrowRight
-                size={14}
-                weight="bold"
-                data-testid="see-all-arrow"
-                className="h-3.5 w-3.5 shrink-0 text-ink-4"
-              />
-            </SidebarRow>
-          )}
+          {/* TOUJOURS, et pas seulement au-delà du plafond : voir l'en-tête.
+              `/spaces` porte plus que la liste, et un dossier ne navigue pas. */}
+          <SidebarRow href={HREF} title="See all" depth="thread" testId="folder-see-all-workspaces">
+            <span className="h-3.5 w-3.5 shrink-0" />
+            <span className="flex-1 truncate leading-5 font-medium!">See all</span>
+            <ArrowRight
+              size={14}
+              weight="bold"
+              data-testid="see-all-arrow"
+              className="h-3.5 w-3.5 shrink-0 text-ink-4"
+            />
+          </SidebarRow>
         </div>
       )}
     </div>
