@@ -11,13 +11,19 @@
 // l'entrée qui les porte, et se ferment comme toute carte du produit : au clic
 // dehors, à Échap.
 //
-// La MÊME mécanique que la cloche des approbations (`NotificationsBell`) —
-// `pointerdown` sur le document et `keydown` pour Échap — et non un troisième
-// dialecte de fermeture. AUCUN dialogue natif du navigateur (invariant #10) :
-// c'est un `<div role="dialog">` du design system, d'où sa place ici, dans
+// Le clic dehors suit la cloche des approbations (`NotificationsBell`), et
+// Échap passe par la PILE DES CALQUES (`@/lib/layers.ts`, #233) : la touche va
+// au calque ouvert le plus INTÉRIEUR, qui est cette carte quand elle est
+// ouverte au-dessus du menu mobile. C'est la règle de l'app, pas un dialecte
+// de plus — et c'est elle qui sait dire ce que la phase de capture ne savait
+// pas : « le plus intérieur d'abord ».
+//
+// AUCUN dialogue natif du navigateur (invariant #10) : c'est un
+// `<div role="dialog">` du design system, d'où sa place ici, dans
 // `components/ui`, à côté des autres primitifs.
 
 import { useEffect, useRef, type ReactNode } from 'react';
+import { useLayer } from '@/lib/layers.ts';
 
 type Props = {
   /** Ce que la carte montre, nommé pour un lecteur d'écran. */
@@ -39,24 +45,13 @@ export default function RailPopover({ label, onClose, children }: Props) {
       if (cible?.closest('[data-rail-trigger]') !== null && cible !== null) return;
       onClose();
     }
-    // Voir `DockedPanel.tsx` (#233) : cette carte n'est PAS un calque modal —
-    // elle ne pose aucun voile et la page reste cliquable derrière — donc elle
-    // reste en phase de bulle. Mais elle PREND la touche quand elle se ferme,
-    // sinon le menu mobile qui la porte se fermerait avec elle.
-    function echap(e: KeyboardEvent) {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      e.preventDefault();
-      onClose();
-    }
     document.addEventListener('pointerdown', dehors);
-    // Sur `window`, et pas sur `document` : c'est là que les six calques de
-    // l'app écoutent, et la convention de #233 se lit sur un seul objet.
-    window.addEventListener('keydown', echap);
-    return () => {
-      document.removeEventListener('pointerdown', dehors);
-      window.removeEventListener('keydown', echap);
-    };
+    return () => document.removeEventListener('pointerdown', dehors);
   }, [onClose]);
+
+  // Échap, par la pile : rendue, cette carte EST ouverte — elle n'existe pas
+  // autrement — donc elle s'inscrit sans condition.
+  useLayer(true, onClose);
 
   return (
     <div

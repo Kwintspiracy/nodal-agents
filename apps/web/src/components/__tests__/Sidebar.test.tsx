@@ -929,8 +929,8 @@ describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
       window.dispatchEvent(echap);
     });
     expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
-    // La convention des calques (#233) : celui qui se ferme DIT qu'il a pris
-    // la touche, sinon le calque qui le porte se fermerait avec lui.
+    // La PILE DES CALQUES (#233) : celui qui reçoit la touche la PREND, sinon
+    // le calque qui le porte se fermerait avec lui.
     expect(echap.defaultPrevented).toBe(true);
   });
 
@@ -943,9 +943,43 @@ describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
     await act(async () => {
       window.dispatchEvent(echap);
     });
-    // Un calque n'agit QUE si personne n'a déjà pris la touche : sans cette
+    // La pile n'agit QUE si personne n'a déjà pris la touche : sans cette
     // règle, un seul Échap traverse tous les calques ouverts d'un coup.
     expect(container.querySelector('[data-testid="rail-popover"]')).not.toBeNull();
+  });
+
+  it('se ferme AVANT le menu qui la porte, parce qu’elle est plus intérieure', async () => {
+    // LA règle de la pile (#233), et ce que la phase de capture ne savait pas
+    // dire : le dernier calque ouvert prend la touche, pas le plus « modal ».
+    // Le menu mobile couvre l'écran, la carte non — et c'est pourtant la carte
+    // qui doit se fermer en premier, puisque c'est elle qu'on vient d'ouvrir.
+    //
+    // Mutation vérifiée : `useLayer(true, onClose)` retiré de `RailPopover`
+    // → ce cas rougit, le menu se ferme et emporte la carte avec lui.
+    await renderSidebar();
+    await click(container.querySelector('[aria-label="Open menu"]')!);
+    const menu = container.querySelector('#primary-nav')!;
+    expect(menu.className).toContain('translate-x-0');
+
+    await click(railCell('help'));
+    expect(container.querySelector('[data-testid="rail-popover"]')).not.toBeNull();
+
+    // Premier Échap : la carte, et elle seule.
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
+    expect(menu.className).toContain('translate-x-0');
+
+    // Second Échap : le menu, qui est redevenu le calque du dessus.
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(container.querySelector('#primary-nav')?.className).toContain('-translate-x-full');
   });
 
   it('se referme au clic DEHORS, et pas au clic dedans', async () => {
