@@ -27,6 +27,19 @@ export type VerificationRunView = {
   testedGeneration: number | null;
   testedEpoch: number | null;
   createdAt: string;
+  /**
+   * D'OÙ vient cette commande (#59) : `'job'` quand la finalisation du job l'a
+   * lancée, `'reviewer'` quand un relecteur l'a exécutée pendant sa relecture.
+   * La valeur brute de la colonne — l'écran la libelle, la base ne dit pas de
+   * phrase (invariant #2).
+   */
+  source: string;
+  /**
+   * Le NOM de l'agent qui l'a lancée, quand ce n'est pas le job lui-même.
+   * `null` sur `source = 'job'` et quand l'agent n'a plus de nom — l'écran dit
+   * alors l'origine sans nommer personne, jamais un nom inventé.
+   */
+  sourceAgentName: string | null;
 };
 
 /** Une preuve = une exécution de `runCommandSequence` : N commandes, un verdict. */
@@ -38,6 +51,14 @@ export type VerificationSequenceView = {
   /** Le verdict de la séquence : infra_error > red > green (fail-fast, la première rouge arrête). */
   verdict: string;
   startedAt: string;
+  /**
+   * L'origine de la séquence — celle de sa première commande (#59). Une
+   * séquence est écrite d'un bloc, par un seul exécutant : ses commandes ne
+   * peuvent pas avoir deux origines.
+   */
+  source: string;
+  /** Le nom de l'agent qui l'a lancée, quand l'origine n'est pas le job. */
+  sourceAgentName: string | null;
   /** Triées par `commandRank`. */
   runs: VerificationRunView[];
 };
@@ -128,6 +149,10 @@ export type VerificationRunSource = {
   testedGeneration: number | null;
   testedEpoch: number | null;
   createdAt: Date | null;
+  /** `verification_runs.source` (#59) — 'job' ou 'reviewer'. */
+  source: string;
+  /** Le nom de l'agent du job qui a exécuté la commande, joint à la lecture. */
+  sourceAgentName: string | null;
 };
 
 /**
@@ -170,6 +195,8 @@ export function groupVerificationRuns(
       testedGeneration: r.testedGeneration,
       testedEpoch: r.testedEpoch,
       createdAt: r.createdAt ? r.createdAt.toISOString() : '',
+      source: r.source,
+      sourceAgentName: r.sourceAgentName,
     };
     const existing = bySequence.get(r.sequenceId);
     if (existing) {
@@ -182,6 +209,8 @@ export function groupVerificationRuns(
         canonicalKey: r.canonicalKey,
         verdict: 'infra_error',
         startedAt: view.createdAt,
+        source: view.source,
+        sourceAgentName: view.sourceAgentName,
         runs: [view],
       });
     }

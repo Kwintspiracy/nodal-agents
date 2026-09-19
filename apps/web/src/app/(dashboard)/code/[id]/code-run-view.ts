@@ -14,6 +14,8 @@ import type { CodingActivityItem, CodingProcessDetail, CodingToolCallView } from
 import type { StatusVariant } from '@/components/ui/StatusPill';
 import type { DeliverySummary, Step, TurnUsage } from '@/lib/conversation-feed.ts';
 import { outcomeOfToolOutput } from '@/lib/tool-card-payload.ts';
+import { lastReviewVerdict } from '@/lib/review-state.ts';
+import { reviewBlocksDelivery } from '@nodal-agents/shared';
 import type { ThreadAgent } from '@/app/(dashboard)/spaces/format.ts';
 import { formatMs, formatTokens } from '@/app/(dashboard)/spaces/format.ts';
 import { relativeTime } from '@/lib/format-time';
@@ -202,12 +204,13 @@ export function codeActivityLabel(
  * « Delivered » vide affirmerait une livraison qui n'a pas eu lieu.
  */
 export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | null {
-  const { header, changes, verificationRuns } = detail;
+  const { header, changes, verificationRuns, verdicts } = detail;
   const commands = verificationRuns.flatMap((s) => s.runs);
   if (changes.length === 0 && commands.length === 0) return null;
   const added = changes.reduce((acc, c) => acc + c.addedLines, 0);
   const removed = changes.reduce((acc, c) => acc + c.removedLines, 0);
   const passed = commands.filter((r) => r.verdict === 'green').length;
+  const review = lastReviewVerdict(verdicts);
   return {
     files: changes.length,
     filePaths: changes.map((c) => c.filePath),
@@ -218,6 +221,11 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
     reviews: [],
     checks: commands.map((r) => ({ command: r.command, ok: r.verdict === 'green' })),
     verdict: commands.length === 0 ? null : passed === commands.length ? 'green' : 'red',
+    // #59 — la relecture du pipeline, déjà lue pour la section Review juste
+    // dessous. Le bloc dit « Delivered » quoi qu'il arrive et pose ce verdict à
+    // côté ; c'est là que « Changes requested » ou « Approved » se lit.
+    review,
+    changesRequested: reviewBlocksDelivery(review),
   };
 }
 

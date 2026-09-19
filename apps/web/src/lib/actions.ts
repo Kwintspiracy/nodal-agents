@@ -147,6 +147,8 @@ import {
   type VerificationSequenceView,
   type VerificationUnconfiguredView,
 } from './verification-runs-view.ts';
+import { selectVerificationRuns } from './verification-runs-query.ts';
+import { lastReviewVerdict } from './review-state.ts';
 import { readJobRoots } from './job-lineage.ts';
 import type { JobTriggerContext, AnyDrizzleDb } from '@nodal-agents/db';
 import {
@@ -2528,29 +2530,12 @@ export async function getSpaceConversationAction(
       workspaceRoots,
       reviewVerdicts,
     ] = await Promise.all([
-      db
-        .select({
-          jobId: verificationRuns.jobId,
-          deliverableType: verificationRuns.deliverableType,
-          canonicalKey: verificationRuns.canonicalKey,
-          sequenceId: verificationRuns.sequenceId,
-          commandRank: verificationRuns.commandRank,
-          command: verificationRuns.command,
-          exitCode: verificationRuns.exitCode,
-          outcomeKind: verificationRuns.outcomeKind,
-          durationMs: verificationRuns.durationMs,
-          verdict: verificationRuns.verdict,
-          testedGeneration: verificationRuns.testedGeneration,
-          testedEpoch: verificationRuns.testedEpoch,
-          createdAt: verificationRuns.createdAt,
-        })
-        .from(verificationRuns)
-        .where(
-          and(
-            eq(verificationRuns.entityId, session.entityId),
-            inArray(verificationRuns.jobId, relevantIds),
-          ),
+      selectVerificationRuns(db).where(
+        and(
+          eq(verificationRuns.entityId, session.entityId),
+          inArray(verificationRuns.jobId, relevantIds),
         ),
+      ),
       db
         .select({
           jobId: jobDeliverableVerificationState.jobId,
@@ -2731,6 +2716,11 @@ export async function getSpaceConversationAction(
       // La preuve de la racine ET de ses délégués : un délégué qui fait tourner
       // les tests les fait tourner POUR ce travail (T24).
       proof: verificationRunRows.map((r) => ({ command: r.command, verdict: r.verdict })),
+      // #59 — le dernier verdict de relecture de ce run et de ses délégués,
+      // pris sur la MÊME lecture que la section Review (`reviewVerdicts`,
+      // ordonnée par `seq`). Le bloc de conclusion le pose à côté de
+      // « Delivered », qu'il approuve ou qu'il demande des corrections.
+      reviewVerdict: lastReviewVerdict(reviewVerdicts.views),
       audit: auditRows.map((r) => ({
         toolName: r.toolName,
         toolInput: r.toolInput,
@@ -13750,29 +13740,12 @@ export async function getCodingProcessDetailAction(
       // Les preuves du pipeline — lues par `allRelevantIds`, déjà bornées à
       // l'espace, et re-bornées par entity_id : la preuve d'un délégué remonte
       // à l'écran de la racine, celle d'un voisin jamais (T24).
-      const verificationRunRows = await db
-        .select({
-          jobId: verificationRuns.jobId,
-          deliverableType: verificationRuns.deliverableType,
-          canonicalKey: verificationRuns.canonicalKey,
-          sequenceId: verificationRuns.sequenceId,
-          commandRank: verificationRuns.commandRank,
-          command: verificationRuns.command,
-          exitCode: verificationRuns.exitCode,
-          outcomeKind: verificationRuns.outcomeKind,
-          durationMs: verificationRuns.durationMs,
-          verdict: verificationRuns.verdict,
-          testedGeneration: verificationRuns.testedGeneration,
-          testedEpoch: verificationRuns.testedEpoch,
-          createdAt: verificationRuns.createdAt,
-        })
-        .from(verificationRuns)
-        .where(
-          and(
-            eq(verificationRuns.entityId, entityId),
-            inArray(verificationRuns.jobId, allRelevantIds),
-          ),
-        );
+      const verificationRunRows = await selectVerificationRuns(db).where(
+        and(
+          eq(verificationRuns.entityId, entityId),
+          inArray(verificationRuns.jobId, allRelevantIds),
+        ),
+      );
       const verificationSequences = groupVerificationRuns(verificationRunRows);
       // La mention D8 vient de la TRACE posée sur chaque job du pipeline au
       // moment où il a tourné — jamais d'une relecture d'`entities` : un réglage

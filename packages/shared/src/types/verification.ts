@@ -69,6 +69,64 @@ export const RunVerdictSchema = z.enum(RUN_VERDICTS);
 export type RunVerdict = z.infer<typeof RunVerdictSchema>;
 
 /**
+ * D'OÙ vient une ligne `verification_runs` (#59, migration 0115).
+ *
+ * `job` : la preuve que la finalisation du job a lancée elle-même — le seul
+ * écrivain jusqu'ici, et donc la valeur par défaut de la colonne.
+ *
+ * `reviewer` : une commande qu'un RELECTEUR a réellement exécutée pendant son
+ * job, recopiée sous le travail qu'il relisait. Elle existe parce que la
+ * preuve la plus solide d'un run — six scénarios Playwright lancés par un
+ * relecteur sur l'application livrée — n'était enregistrée nulle part : le
+ * système ne retenait que le `new Function()` du développeur, la plus faible
+ * des deux.
+ *
+ * L'écran s'en sert pour DIRE l'origine d'une preuve. Il ne la juge pas : une
+ * commande rouge lancée par un relecteur est rouge comme les autres.
+ */
+export const VERIFICATION_RUN_SOURCES = ['job', 'reviewer'] as const;
+export const VerificationRunSourceKindSchema = z.enum(VERIFICATION_RUN_SOURCES);
+export type VerificationRunSourceKind = z.infer<typeof VerificationRunSourceKindSchema>;
+
+/**
+ * Le code que porte un résultat de délégation quand la relecture INTERDIT
+ * d'annoncer une livraison (#59).
+ *
+ * Un CODE, jamais une phrase : le harnais pose le fait, l'écran ou le modèle
+ * le dit dans la langue de la personne (invariant #2), comme `JobFailureHint`
+ * à côté.
+ */
+export const REVIEW_CHANGES_REQUESTED = 'review_changes_requested';
+
+/**
+ * Cette relecture demande-t-elle des corrections ?
+ *
+ * UN seul fait, lu par deux lecteurs qui en font deux choses différentes, et
+ * c'est voulu :
+ *   - l'ORCHESTRATION en tire `delivery_blocked` sur le résultat typé — le
+ *     parent ne peut pas conclure que le travail est fini tant que le relecteur
+ *     demande des corrections ;
+ *   - l'ÉCRAN en tire un mot posé à côté de « Delivered », jamais à sa place
+ *     (Quentin, 19/09 au soir) : le travail a bien livré quelque chose, et le
+ *     nier reviendrait à dire que le process n'a pas eu lieu.
+ *
+ * La règle tient en une ligne et vit ICI, dans le paquet que les deux lisent :
+ * une seconde écriture divergerait au premier correctif, et les deux moitiés du
+ * produit ne diraient plus la même chose du même run.
+ *
+ * Un verdict absent ne dit RIEN : un travail sans relecture se conclut comme
+ * avant, sinon toute la plateforme changerait de comportement le jour où cette
+ * fonction est posée. Seul un `request_changes` répond `true`.
+ */
+export function reviewBlocksDelivery(
+  verdict: { verdict: string } | string | null | undefined,
+): boolean {
+  if (verdict === null || verdict === undefined) return false;
+  const value = typeof verdict === 'string' ? verdict : verdict.verdict;
+  return value === 'request_changes';
+}
+
+/**
  * Une commande de preuve. `timeoutSeconds` est entier et borné : une preuve
  * n'est pas un job, elle ne tourne pas une heure.
  */

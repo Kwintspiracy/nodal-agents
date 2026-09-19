@@ -412,6 +412,24 @@ export type DeliverySummary = {
   checks: DeliveryCheck[];
   /** 'green' toutes vertes, 'red' au moins une qui ne l'est pas, null aucune preuve. */
   verdict: 'green' | 'red' | null;
+  /**
+   * Le DERNIER verdict de relecture enregistré sous ce travail (#59), tel
+   * quel : `'approve'`, `'request_changes'`, ou `null` quand personne n'a relu.
+   */
+  review: string | null;
+  /**
+   * Ce verdict demande-t-il des corrections ? Le bloc de conclusion dit
+   * TOUJOURS « Delivered » — le travail a eu lieu — et ce champ décide de ce
+   * qui se lit à côté : le mot de la relecture, la couleur de sa pastille et le
+   * signe de l'en-tête (Quentin, 19/09 au soir).
+   *
+   * Un champ, pas un calcul refait dans le composant : la règle est celle de
+   * `reviewBlocksDelivery` (`@nodal-agents/shared`), la même que celle qui
+   * remplit `delivery_blocked` dans le résultat typé que reçoit le parent. Ce
+   * que l'écran en fait et ce que le parent en fait sont deux décisions
+   * distinctes, prises sur un seul et même fait.
+   */
+  changesRequested: boolean;
 };
 
 export type FeedTotals = {

@@ -135,6 +135,10 @@ describe('ProjectShelf', () => {
               canonicalKey: 'd:/dev/nodal',
               verdict: 'red',
               startedAt: '2026-09-18T10:00:00.000Z',
+              // #59 — l'origine d'une preuve. Celles d'un projet viennent du
+              // job qui les a lancées, jamais d'un relecteur.
+              source: 'job',
+              sourceAgentName: null,
               runs: [],
             },
             {
@@ -144,6 +148,8 @@ describe('ProjectShelf', () => {
               canonicalKey: 'd:/dev/nodal',
               verdict: 'green',
               startedAt: '2026-09-19T10:00:00.000Z',
+              source: 'job',
+              sourceAgentName: null,
               runs: [],
             },
           ],

@@ -151,6 +151,10 @@ import { readFile } from 'node:fs/promises';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
 import { notifyCodeTransition } from '../notify/code-transitions.ts';
+import {
+  recordReviewerVerificationRuns,
+  REVIEWER_VERIFY_PERSISTENCE_FAILED,
+} from '../verification/reviewer-runs.ts';
 import type { RunnerEnv } from '../env.ts';
 import { skillStoreDir } from '../skills/index.ts';
 import { maybeRunReflection } from '../reflection/index.ts';
@@ -4398,6 +4402,27 @@ async function runJob(
             verdict: typeof verdictInput.verdict === 'string' ? verdictInput.verdict : 'recorded',
             agentName: agent.name,
           });
+          // #59 — le verdict d'un relecteur ENREGISTRE ses vérifications. Les
+          // commandes que ce job a réellement exécutées deviennent des lignes
+          // `verification_runs` sous le travail relu ; sans cela, six scénarios
+          // Playwright lancés par un relecteur ne laissaient aucune trace et la
+          // seule preuve retenue du run était celle du développeur.
+          //
+          // ATTENDUE, contrairement à la notification : le parent reprend dès
+          // que ce job se termine, et sa page doit montrer ces preuves. La
+          // panne d'écriture est avalée avec un CODE — la même décision que la
+          // preuve du job (`VERIFY_PERSISTENCE_FAILED`) : l'observabilité ne
+          // fait jamais échouer le travail, et elle ne disparaît jamais en
+          // silence non plus.
+          try {
+            const written = await recordReviewerVerificationRuns(db, jobId as string);
+            trace('reviewer_verifications_recorded', { turn, written });
+          } catch (error) {
+            console.warn(`[verification] ${REVIEWER_VERIFY_PERSISTENCE_FAILED}`, {
+              jobId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
 
         // Guard 1f (S2) — error streak, across the whole job. `toolResult`
