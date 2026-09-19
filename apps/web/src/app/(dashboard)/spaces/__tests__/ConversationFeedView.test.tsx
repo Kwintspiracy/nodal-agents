@@ -1310,13 +1310,19 @@ describe('delegationVerdictLine, la règle seule @cap:verifier-un-livrable/moteu
     expect(delegationVerdictLine({ result: '## Verdict\n\n**ça passe**' })).toBe('ça passe');
   });
 
-  it('le mot seul porte ses DEUX-POINTS, ou son tiret cadratin', () => {
+  it('le mot seul porte son SÉPARATEUR, deux-points ou tiret', () => {
     // Le défaut d'origine de la branche, sur une formulation réelle (Reviewer
     // C, passe 1 de #278) : la forme en ligne exige un contenu après le
     // séparateur, et le mot seul échouait sur le deux-points resté là.
     expect(delegationVerdictLine({ result: 'Verdict:\n\nça passe' })).toBe('ça passe');
     expect(delegationVerdictLine({ result: '## Verdict :\n\nça passe' })).toBe('ça passe');
+    // Les TROIS tirets, ici et ici seulement : sur une ligne qui s'arrête au
+    // tiret, il ne reste rien derrière, donc plus de phrase à découper
+    // (Reviewer C, passe 2 de #278). La forme EN LIGNE les refuse toujours,
+    // et le cas « Verdict - ça passe » du test précédent en témoigne.
     expect(delegationVerdictLine({ result: 'Verdict —\nça passe' })).toBe('ça passe');
+    expect(delegationVerdictLine({ result: 'Verdict -\nça passe' })).toBe('ça passe');
+    expect(delegationVerdictLine({ result: '## Verdict –\n\nça passe' })).toBe('ça passe');
     // Le QUALIFICATIF n'est pas accepté ici, alors que la forme en ligne
     // l'accepte : « Verdict émis. » écrit en deux paragraphes passerait pour
     // le mot seul, et la phrase d'après deviendrait un verdict que personne

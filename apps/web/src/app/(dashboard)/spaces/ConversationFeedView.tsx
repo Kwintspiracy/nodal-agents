@@ -852,9 +852,10 @@ function BlockLabel({ children }: { children: React.ReactNode }) {
  * agents de revue écrivent VRAIMENT, telle qu'elle est dans `agent_jobs.result`
  * (relevé du 17/09) : une première ligne « Verdict », « Verdict global »,
  * « Verdict final », suivie de deux points ou d'un tiret cadratin — ou le mot
- * seul sur sa ligne, le verdict étant alors la ligne suivante. Le séparateur
- * n'accepte PAS le trait d'union : « Verdict - » n'apparaît nulle part, et un
- * tiret est trop banal pour découper une phrase sans risque.
+ * seul sur sa ligne, le verdict étant alors la ligne suivante. La forme EN
+ * LIGNE n'accepte PAS le trait d'union : un tiret est trop banal pour découper
+ * une phrase sans risque. Le mot seul, lui, l'accepte, et la raison est plus
+ * bas — sur une ligne qui s'arrête là, il n'y a plus de phrase à découper.
  *
  * Tout le reste rend `null` et la ligne n'est pas dessinée : inventer un
  * verdict à partir de la première phrase d'un résultat quelconque ferait dire
@@ -881,12 +882,21 @@ function BlockLabel({ children }: { children: React.ReactNode }) {
  * une ligne perdue. La règle lit donc les DEUX premières lignes lisibles du
  * markdown (`plainLines`), blocs traversés.
  *
- * LE MOT SEUL PORTE SES DEUX-POINTS. « Verdict: » sur sa ligne, le verdict en
+ * LE MOT SEUL PORTE SON SÉPARATEUR. « Verdict: » sur sa ligne, le verdict en
  * dessous, rendait `null` : la forme en ligne exige un contenu APRÈS le
  * séparateur, et `/^verdict$/i` échouait sur le deux-points resté là. C'était
  * le défaut d'origine de cette branche, sur une formulation réelle (Reviewer C,
  * passe 1 de la PR #278). Le séparateur est donc optionnel quand il ne reste
  * rien derrière.
+ *
+ * ET LÀ, le TIRET est accepté — les trois, cadratin, demi-cadratin et trait
+ * d'union — alors que la forme en ligne n'en accepte aucun. Ce n'est pas une
+ * incohérence, c'est la même prudence appliquée à deux situations qui ne se
+ * ressemblent pas. En ligne, un tiret sépare des phrases tout le temps, et
+ * « Verdict - ça passe » n'est pas distinguable d'une phrase qui commence par
+ * le mot. Sur une ligne qui s'arrête au tiret, il ne reste RIEN derrière : le
+ * tiret ne peut plus découper quoi que ce soit, il ne fait qu'annoncer la
+ * suite (Reviewer C, passe 2 de la PR #278).
  *
  * Le qualificatif, lui, n'est PAS accepté sur cette branche-là, alors que la
  * forme en ligne l'accepte (« Verdict global : … »). La raison tient en une
@@ -913,7 +923,7 @@ export function delegationVerdict(result: string | null): string | null {
   if (head === undefined) return null;
   const inline = /^verdict(?:\s+[^\s:—]+)?\s*[:—]\s*(.+)$/i.exec(head.text);
   if (inline?.[1] !== undefined) return inline[1];
-  if (/^verdict\s*[:—]?$/i.test(head.text)) {
+  if (/^verdict\s*[:—–-]?$/i.test(head.text)) {
     return next !== undefined && next.block === 'paragraph' ? next.text : null;
   }
   return null;
