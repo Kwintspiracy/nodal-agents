@@ -88,6 +88,9 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
   return (
     <PageShell
       fill
+      // Plein cadre, comme avant #237 : la borne de largeur du PageShell
+      // vaut désormais aussi en mode pleine hauteur, et un fil n'en veut pas.
+      fluid
       toolbarBleed
       header={
         <ThreadHeader

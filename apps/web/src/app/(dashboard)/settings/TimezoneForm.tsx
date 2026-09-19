@@ -17,7 +17,12 @@ import TextInput from '@/components/ui/TextInput';
 
 interface Props {
   initial: string;
-  isExplicit: boolean;
+  isExplicit: boolean; /**
+   * L'`id` du `<form>` quand ce formulaire est rendu dans le panneau ancré
+   * (#231) : le bouton Save du pied le soumet par l'attribut HTML `form`.
+   * Absent ailleurs — le formulaire garde alors ses propres boutons.
+   */
+  formId?: string;
 }
 
 // A short, common subset; the field also accepts any IANA name the user types
@@ -36,7 +41,7 @@ const COMMON_ZONES = [
   'UTC',
 ];
 
-export default function TimezoneForm({ initial, isExplicit }: Props) {
+export default function TimezoneForm({ initial, isExplicit, formId }: Props) {
   const [tz, setTz] = useState(initial);
   const [isPending, startTransition] = useTransition();
 
@@ -75,7 +80,7 @@ export default function TimezoneForm({ initial, isExplicit }: Props) {
   })();
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form id={formId} onSubmit={handleSubmit}>
       <SetForm>
         <div className="space-y-2">
           <p className="text-body-13 leading-[1.5]! text-ink-3">
