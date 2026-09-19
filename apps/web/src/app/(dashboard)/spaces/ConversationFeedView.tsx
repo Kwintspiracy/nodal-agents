@@ -23,7 +23,7 @@ import type {
   Step,
   TurnBlock,
 } from '@/lib/conversation-feed.ts';
-import Markdown, { plainText } from '@/components/Markdown.tsx';
+import Markdown, { plainText, plainLines } from '@/components/Markdown.tsx';
 import { formatClock, truncate } from '@/lib/format-time';
 import ThinkingBlock from './ThinkingBlock.tsx';
 import ToolBlock from './ToolBlock.tsx';
@@ -864,29 +864,37 @@ function BlockLabel({ children }: { children: React.ReactNode }) {
  * La ligne rendue est la PREMIÈRE, parce que le pied du bloc tient sur une
  * ligne. Le reste n'est pas perdu : le corps montre le résultat en entier,
  * juste au-dessus (« Result », ou le fil du délégué qui porte sa réponse).
+ *
+ * CE QU'EST « LA LIGNE SUIVANTE » (#198)
+ * --------------------------------------
+ * La branche « le mot seul, le verdict en dessous » ne s'est jamais déclenchée
+ * jusqu'au 20/09/2026 : la règle lisait `plainText`, qui ne rend que la
+ * première ligne du PREMIER bloc, si bien que « Verdict\nça passe » arrivait
+ * ici comme « Verdict » tout court et que la suite était toujours absente.
+ *
+ * Elle est RÉPARÉE plutôt que supprimée, parce que la famille qu'elle vise
+ * existe vraiment : un relecteur qui titre « ## Verdict » et pose sa phrase en
+ * dessous a dit son verdict, et le taire n'était pas de la prudence, c'était
+ * une ligne perdue. La règle lit donc les DEUX premières lignes lisibles du
+ * markdown (`plainLines`), blocs traversés.
+ *
+ * La ligne suivante ne compte que si elle vient d'un PARAGRAPHE. C'est la
+ * décision pour le milieu ambigu, et elle est explicite : sous « ## Verdict »,
+ * une LISTE de constats n'est pas un verdict d'une ligne, et en promouvoir la
+ * première puce ferait dire au délégué ce qu'il n'a pas dit (invariant #4).
+ * Un tel résultat ne dessine aucune ligne, et le corps montre la liste entière.
+ * Le cas « Verdict\nça passe » passe par la même porte : les deux lignes sont
+ * celles d'un seul paragraphe.
  */
 export function delegationVerdict(result: string | null): string | null {
   if (result === null) return null;
-  const lines = plainText(result)
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l !== '');
-  const [head, next] = lines;
+  const [head, next] = plainLines(result, 2);
   if (head === undefined) return null;
-  const inline = /^verdict(?:\s+[^\s:—]+)?\s*[:—]\s*(.+)$/i.exec(head);
+  const inline = /^verdict(?:\s+[^\s:—]+)?\s*[:—]\s*(.+)$/i.exec(head.text);
   if (inline?.[1] !== undefined) return inline[1];
-  // ⚠️ CETTE BRANCHE NE SE DÉCLENCHE JAMAIS, et le dire vaut mieux que la
-  // laisser promettre. `plainText` ne rend que la PREMIÈRE ligne lisible d'un
-  // markdown (components/Markdown.tsx) : « Verdict\nça passe » arrive ici comme
-  // « Verdict » tout court, et `next` est toujours absent. Constaté le
-  // 18/09/2026 en écrivant les tests de #174.
-  //
-  // Elle n'est pas retirée et le repli n'est pas corrigé ICI : réparer la
-  // lecture changerait ce que le fil affiche pour toute une famille de
-  // résultats — ceux qui titrent « ## Verdict » — et #174 ne porte que sur la
-  // préférence du verdict ENREGISTRÉ. Un correctif de la prose est un sujet à
-  // lui seul, avec son avant/après sous les yeux de quelqu'un.
-  if (/^verdict$/i.test(head)) return next ?? null;
+  if (/^verdict$/i.test(head.text)) {
+    return next !== undefined && next.block === 'paragraph' ? next.text : null;
+  }
   return null;
 }
 

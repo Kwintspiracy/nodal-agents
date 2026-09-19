@@ -545,7 +545,13 @@ describe('ConversationFeedView', () => {
                 agentAvatarUrl: null,
                 status: 'completed',
                 task: 'Audite le correctif de session',
-                result: ['## Verdict', '', 'Le correctif tient, une note mineure.'].join('\n'),
+                result: [
+                  '## Verdict',
+                  '',
+                  'Le correctif tient, une note mineure.',
+                  '',
+                  'Détail : trois fichiers relus.',
+                ].join('\n'),
                 error: null,
                 failureHint: null,
                 createdAt: new Date('2026-09-07T10:00:00Z'),
@@ -578,9 +584,12 @@ describe('ConversationFeedView', () => {
     // c'est lui que le parcours Playwright lit en `span.bg-ok`.
     expect(html2).toMatch(/h-2 w-2 shrink-0 rounded-full bg-ok"/);
     expect(html2).toContain('1 min 12 · 40,200 tokens · $0.14');
-    // Replié : le corps n'est pas dans le HTML initial — ni le résultat du
-    // délégué, ni le lien vers son run.
-    expect(html2).not.toContain('Le correctif tient');
+    // La tête porte AUSSI le verdict de prose, lu sous le titre « ## Verdict »
+    // (#198) : avant, ce titre ne rendait rien et la ligne restait vide.
+    expect(html2).toContain('Le correctif tient, une note mineure.');
+    // Replié : le corps n'est pas dans le HTML initial — ni le reste du
+    // résultat du délégué, ni le lien vers son run.
+    expect(html2).not.toContain('trois fichiers relus');
     expect(html2).not.toContain('Open run');
     // Pleine largeur : plus de gouttière qui rentrerait la délégation par
     // rapport aux blocs d'outil du tour juste au-dessus (#135).
@@ -1291,15 +1300,37 @@ describe('delegationVerdictLine, la règle seule @cap:verifier-un-livrable/moteu
     expect(delegationVerdictLine({ result: null })).toBeNull();
   });
 
-  it('ne lit PAS le verdict posé sur la ligne suivante — constat, pas promesse', () => {
-    // `plainText` ne rend que la PREMIÈRE ligne lisible d'un markdown : la
-    // branche « le mot seul, le verdict en dessous » de `delegationVerdict` ne
-    // peut donc jamais se déclencher. Le test l'écrit tel quel plutôt que de
-    // laisser croire le contraire ; le corriger changerait ce que le fil
-    // affiche pour toute une famille de résultats, ce qui n'est pas le sujet
-    // de #174 (voir le commentaire de `delegationVerdict`).
-    expect(delegationVerdictLine({ result: 'Verdict\nça passe' })).toBeNull();
-    expect(delegationVerdictLine({ result: '## Verdict\n\nça passe' })).toBeNull();
+  it('lit le verdict posé sur la LIGNE SUIVANTE (#198)', () => {
+    // Les deux formes que l'issue nomme. Elles rendaient `null` jusqu'au
+    // 20/09 parce que la règle lisait `plainText`, qui s'arrête au premier
+    // bloc : le mot « Verdict » arrivait seul et la suite était perdue.
+    expect(delegationVerdictLine({ result: 'Verdict\nça passe' })).toBe('ça passe');
+    expect(delegationVerdictLine({ result: '## Verdict\n\nça passe' })).toBe('ça passe');
+    // Le markdown de la ligne suivante est APLATI, comme celui de la première.
+    expect(delegationVerdictLine({ result: '## Verdict\n\n**ça passe**' })).toBe('ça passe');
+  });
+
+  it('ne promeut PAS une puce en verdict — la décision du milieu ambigu', () => {
+    // Sous « ## Verdict », une LISTE de constats n'est pas un verdict d'une
+    // ligne : en prendre la première puce ferait dire au délégué ce qu'il n'a
+    // pas dit. Rien ne se dessine, et le corps montre la liste entière.
+    expect(
+      delegationVerdictLine({ result: '## Verdict\n\n- un bloquant\n- deux mineurs' }),
+    ).toBeNull();
+    // Un bloc de code sous le mot n'est pas une phrase non plus.
+    expect(delegationVerdictLine({ result: '## Verdict\n\n```\npass\n```' })).toBeNull();
+    // Et le mot SEUL, sans rien derrière, ne dessine toujours rien.
+    expect(delegationVerdictLine({ result: 'Verdict' })).toBeNull();
+  });
+
+  it('garde la première ligne quand elle SE SUFFIT, ligne suivante ou pas', () => {
+    // La forme en ligne gagne : la suite du résultat ne la remplace jamais.
+    expect(delegationVerdictLine({ result: 'Verdict : approuvé\n\nDétails ci-dessous.' })).toBe(
+      'approuvé',
+    );
+    // Et une première ligne qui n'est pas une forme de verdict ne va pas
+    // chercher la suivante.
+    expect(delegationVerdictLine({ result: 'Bonjour\nVerdict : approuvé' })).toBeNull();
   });
 });
 

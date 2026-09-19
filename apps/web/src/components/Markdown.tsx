@@ -45,6 +45,51 @@ export function plainText(markdown: string): string {
   return firstLine.replace(/\s+/g, ' ').trim();
 }
 
+/** Une ligne lisible d'un markdown, et le BLOC d'où elle vient. */
+export type PlainLine = {
+  /** Le texte aplati, espaces repliés — jamais les astérisques du source. */
+  text: string;
+  /**
+   * Le type du nœud mdast qui la porte : `paragraph`, `heading`, `list`,
+   * `code`, `table`… Un lecteur qui n'accepte qu'une phrase s'en sert pour
+   * écarter une puce ou un bloc de code SANS relire le markdown lui-même.
+   */
+  block: string;
+};
+
+/**
+ * Les PREMIÈRES lignes lisibles d'un markdown, bloc par bloc, avec leur
+ * provenance.
+ *
+ * Pourquoi cette fonction existe (#198) : `plainText` ne rend que la première
+ * ligne du PREMIER bloc, si bien qu'un lecteur qui cherche quelque chose « à la
+ * ligne suivante » sur son résultat ne trouve jamais rien. La règle du verdict
+ * du fil portait exactement cette branche morte.
+ *
+ * Bloc par bloc, et jamais `mdastToString` sur l'arbre entier : il colle les
+ * blocs sans séparateur, et « # Titre\n\nsuite » rendrait « Titresuite ». Les
+ * sauts DANS un bloc comptent aussi, parce qu'un paragraphe peut porter
+ * plusieurs lignes (« Verdict\nça passe » est un seul paragraphe).
+ *
+ * `max` borne le travail : un lecteur qui veut deux lignes ne paie pas
+ * l'aplatissement d'un résultat de cinq cents lignes.
+ */
+export function plainLines(markdown: string, max: number): PlainLine[] {
+  if (max <= 0) return [];
+  const tree = parse(markdown);
+  const blocks = 'children' in tree ? (tree.children as RootContent[]) : [];
+  const out: PlainLine[] = [];
+  for (const block of blocks) {
+    for (const raw of mdastToString(block).split('\n')) {
+      const text = raw.replace(/\s+/g, ' ').trim();
+      if (text === '') continue;
+      out.push({ text, block: block.type });
+      if (out.length === max) return out;
+    }
+  }
+  return out;
+}
+
 export default function Markdown({
   text,
   tone = 'agent',

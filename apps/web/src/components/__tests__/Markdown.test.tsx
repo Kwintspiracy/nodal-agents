@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import Markdown, { plainText, safeHref } from '../Markdown.tsx';
+import Markdown, { plainText, plainLines, safeHref } from '../Markdown.tsx';
 
 const render = (text: string, tone?: 'agent' | 'user'): string =>
   renderToStaticMarkup(tone ? <Markdown text={text} tone={tone} /> : <Markdown text={text} />);
@@ -165,6 +165,52 @@ describe('plainText', () => {
 
   it('rend une chaîne vide pour un markdown vide', () => {
     expect(plainText('')).toBe('');
+  });
+});
+
+// `plainLines` existe parce que `plainText` s'arrête au premier bloc : un
+// lecteur qui cherche quelque chose « à la ligne suivante » ne trouvait jamais
+// rien (#198). Ce qui se prouve ici : les lignes traversent les blocs, elles
+// disent d'où elles viennent, et elles sont aplaties comme celles de
+// `plainText`.
+describe('plainLines', () => {
+  it('traverse les blocs, sans les coller', () => {
+    // `mdastToString` sur l'arbre entier rendrait « Verdictça passe ».
+    expect(plainLines('## Verdict\n\nça passe', 2)).toEqual([
+      { text: 'Verdict', block: 'heading' },
+      { text: 'ça passe', block: 'paragraph' },
+    ]);
+  });
+
+  it('compte les sauts DANS un bloc — un paragraphe porte plusieurs lignes', () => {
+    expect(plainLines('Verdict\nça passe', 2)).toEqual([
+      { text: 'Verdict', block: 'paragraph' },
+      { text: 'ça passe', block: 'paragraph' },
+    ]);
+  });
+
+  it('nomme le bloc d’une puce et d’un code, pour qu’un lecteur puisse les écarter', () => {
+    expect(plainLines('## Verdict\n\n- un bloquant', 2)[1]).toEqual({
+      text: 'un bloquant',
+      block: 'list',
+    });
+    expect(plainLines('## Verdict\n\n```\npass\n```', 2)[1]).toEqual({
+      text: 'pass',
+      block: 'code',
+    });
+  });
+
+  it('aplatit le balisage, replie les espaces et saute les lignes vides', () => {
+    expect(plainLines('\n\n  Un   titre  `long`  \n\nsuite', 2)).toEqual([
+      { text: 'Un titre long', block: 'paragraph' },
+      { text: 'suite', block: 'paragraph' },
+    ]);
+  });
+
+  it('s’arrête à `max`, et rend une liste vide pour un markdown vide ou un max nul', () => {
+    expect(plainLines('a\n\nb\n\nc', 2)).toHaveLength(2);
+    expect(plainLines('', 2)).toEqual([]);
+    expect(plainLines('a\n\nb', 0)).toEqual([]);
   });
 });
 
