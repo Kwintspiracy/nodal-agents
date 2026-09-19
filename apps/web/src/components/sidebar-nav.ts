@@ -189,7 +189,12 @@ export const DESTINATIONS: readonly Destination[] = [
     key: 'run',
     label: 'Run',
     icon: Pulse,
-    href: '/',
+    // `/dashboard`, et non `/` (issue #248, constaté au rebase). La case du
+    // rail est un LIEN : tant que la racine ÉTAIT le tableau de bord, `/` était
+    // la bonne adresse pour Run. Elle rend un fil vide depuis #248, et cliquer
+    // Run emmenait donc sur Work, qui s'allumait à sa place — un rail qui
+    // répond à côté. L'adresse d'une destination est la première de ses routes.
+    href: '/dashboard',
     routes: [
       '/dashboard',
       '/logs',
