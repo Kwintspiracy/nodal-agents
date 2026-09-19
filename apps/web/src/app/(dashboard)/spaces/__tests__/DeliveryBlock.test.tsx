@@ -31,6 +31,8 @@ const EMPTY: DeliverySummary = {
   reviews: [],
   checks: [],
   verdict: null,
+  review: null,
+  changesRequested: false,
 };
 
 const totals = (costUsd: number | null = null) => ({
@@ -111,6 +113,7 @@ function summaryOf(over: Partial<ThreadJob> & { feed: ConversationFeed }): Deliv
     verdict: travail,
     project: null,
     proof: [],
+    reviewVerdict: null,
     audit: [],
     workspaceRoots: [],
     ...over,
@@ -495,5 +498,110 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     expect(html).toContain('Vega Orin');
     expect(html).not.toContain('Open run');
     expect(html).not.toContain('/scheduled/');
+  });
+});
+
+// ─── #59 — « Delivered toujours, et le verdict à côté » ─────────────────────
+//
+// Quentin, 19/09 au soir, devant le bloc sur la stack. Une première version
+// remplaçait le mot par « Changes requested » : un run relu a pourtant bien
+// livré quelque chose, et effacer « Delivered » revenait à dire que le travail
+// n'avait pas eu lieu. Le bloc dit donc les DEUX faits, côte à côte.
+
+describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran', () => {
+  it('dit « Delivered » ET « Changes requested », jamais l’un à la place de l’autre', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-59"
+        summary={{
+          ...EMPTY,
+          review: 'request_changes',
+          changesRequested: true,
+          files: 2,
+          filePaths: ['src/a.ts', 'src/b.ts'],
+          tests: { passed: 2, total: 2 },
+          verdict: 'green',
+          checks: [{ command: 'pnpm test', ok: true }],
+        }}
+      />,
+    );
+    // Les deux mots, dans cet ordre, sur la même ligne.
+    expect(html).toContain('Delivered');
+    expect(html).toContain('Changes requested');
+    expect(html.indexOf('Delivered')).toBeLessThan(html.indexOf('Changes requested'));
+    // La pastille NOMME qui a tranché, et prend la place de « Verified » : le
+    // fait le plus frais du bloc est la relecture, pas la preuve, qui garde son
+    // sort dans « Proof » juste dessous.
+    expect(html).toContain('By the reviewer');
+    expect(html).not.toContain('Verified');
+    // Le SIGNE, lui, vire : c'est ce qui reste pour dire qu'il y a à reprendre.
+    // Lu sur l'EN-TÊTE seul — les crochets des commandes de preuve, plus bas,
+    // disent autre chose et restent verts.
+    const entete = html.slice(0, html.indexOf('Delivered'));
+    expect(entete).toMatch(/<svg[^>]*class="[^"]*text-warn/);
+    expect(entete).not.toMatch(/<svg[^>]*class="[^"]*text-ok/);
+    // Ce que le travail a fait reste montré — le bloc n'efface rien.
+    expect(html).toContain('src/a.ts');
+    expect(html).toContain('pnpm test');
+  });
+
+  it('un approve se lit « Delivered · Approved », pastille verte', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-59"
+        summary={{ ...EMPTY, review: 'approve', changesRequested: false, verdict: 'green' }}
+      />,
+    );
+    expect(html).toContain('Delivered');
+    expect(html).toContain('Approved');
+    expect(html).toContain('By the reviewer');
+    expect(html).not.toContain('Changes requested');
+    // Approuvé, donc le signe reste vert.
+    const entete = html.slice(0, html.indexOf('Delivered'));
+    expect(entete).toMatch(/<svg[^>]*class="[^"]*text-ok/);
+  });
+
+  it('sans relecture, la ligne n’a qu’un fait et garde « Verified »', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-59" summary={{ ...EMPTY, verdict: 'green' }} />,
+    );
+    expect(html).toContain('Delivered');
+    expect(html).toContain('Verified');
+    expect(html).not.toContain('By the reviewer');
+    expect(html).not.toContain('Approved');
+    expect(html).not.toContain('Changes requested');
+  });
+
+  it('un verdict que l’écran ne connaît pas s’affiche tel quel, jamais avalé', () => {
+    // Invariant #4 : une relecture qu'on ne sait pas nommer a quand même eu
+    // lieu. La taire serait pire que la nommer mal.
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-59"
+        summary={{ ...EMPTY, review: 'abstained', changesRequested: false, verdict: 'green' }}
+      />,
+    );
+    expect(html).toContain('Delivered');
+    expect(html).toContain('abstained');
+    expect(html).toContain('By the reviewer');
+  });
+});
+
+describe('deliverySummary — le verdict de la relecture @cap:verifier-un-livrable/moteur', () => {
+  it('reporte le dernier verdict du travail, et s’il demande des corrections', () => {
+    const bloque = summaryOf({
+      feed: { items: [], totals: totals() },
+      reviewVerdict: 'request_changes',
+    });
+    expect(bloque.review).toBe('request_changes');
+    expect(bloque.changesRequested).toBe(true);
+
+    const passe = summaryOf({ feed: { items: [], totals: totals() }, reviewVerdict: 'approve' });
+    expect(passe.review).toBe('approve');
+    expect(passe.changesRequested).toBe(false);
+
+    const sansRelecture = summaryOf({ feed: { items: [], totals: totals() } });
+    expect(sansRelecture.review).toBeNull();
+    expect(sansRelecture.changesRequested).toBe(false);
   });
 });

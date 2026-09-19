@@ -41,6 +41,14 @@ export interface ReviewVerdictRecord {
   counts: { blocker: number; major: number; minor: number };
 }
 
+/**
+ * La règle « cette relecture interdit-elle d'annoncer livré ? » et le code
+ * qu'elle pose (#59) vivent dans `@nodal-agents/shared` : l'écran l'applique
+ * aussi, et il ne peut pas importer l'orchestration, qui tire la base. Réexportés
+ * d'ici, où vivent les verdicts, pour que les appelants n'aient qu'une adresse.
+ */
+export { reviewBlocksDelivery, REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
+
 function isFinding(value: unknown): value is ReviewVerdictFinding {
   if (!value || typeof value !== 'object') return false;
   const f = value as Record<string, unknown>;

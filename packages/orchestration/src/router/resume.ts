@@ -5,6 +5,7 @@ import { eq, and } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { JobFailureHint } from '@nodal-agents/shared';
 import { OrchestrationError } from '../errors';
+import { reviewBlocksDelivery, REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
 import { readDeliveredReviewVerdict } from './review-verdict';
 import type { ReviewVerdictRecord } from './review-verdict';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
@@ -36,6 +37,16 @@ export interface DelegationOutcomeRecord {
    * `null` sur l'immense majorité des délégations, qui ne sont pas des revues.
    */
   review_verdict?: ReviewVerdictRecord | null;
+  /**
+   * Ce que la relecture INTERDIT (#59). `review_changes_requested` quand
+   * l'enfant a enregistré un verdict `request_changes` : le parent ne peut pas
+   * conclure que le travail est livré, et il reçoit ce fait typé plutôt qu'une
+   * phrase à interpréter dans le résumé.
+   *
+   * `null` partout ailleurs — une délégation ordinaire, ou une relecture qui
+   * approuve, n'interdit rien.
+   */
+  delivery_blocked?: typeof REVIEW_CHANGES_REQUESTED | null;
   /**
    * Le geste que ce code d'échec appelle, quand il en appelle un — un CHAMP,
    * jamais une phrase (#119, revue passe 1). Le harnais n'a pas à écrire
@@ -99,10 +110,11 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
       error: result.error ?? null,
       exit_reason: result.exit_reason ?? null,
       tools_used: result.tools_used ?? [],
-      // Tous deux TOUJOURS présents, `null` quand il n'y a pas eu de revue ou
-      // qu'aucun geste n'est nommé : un champ qui apparaît et disparaît se lit
-      // comme une absence de contrat.
+      // Tous TOUJOURS présents, `null` quand il n'y a pas eu de revue, que
+      // rien n'est interdit ou qu'aucun geste n'est nommé : un champ qui
+      // apparaît et disparaît se lit comme une absence de contrat.
       review_verdict: result.review_verdict ?? null,
+      delivery_blocked: result.delivery_blocked ?? null,
       hint: result.hint ?? null,
     },
     null,
@@ -120,15 +132,22 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
  * serait prévenu (revue de la PR #170, constat 2). La délégation devient donc
  * un ÉCHEC nommé : le parent reçoit le `error-text` des délégations ratées,
  * avec le code, et peut agir. Fort et à la bonne place.
+ *
+ * Le verdict lu POSE AUSSI ce qu'il interdit (#59) : un `request_changes`
+ * remplit `delivery_blocked`, si bien que le parent lit dans un CHAMP — et non
+ * entre les lignes d'un résumé — qu'il ne peut pas conclure à une livraison.
  */
 async function withDeliveredReviewVerdict(
   outcome: DelegationOutcomeRecord,
   childJobId: JobId,
   db: AnyDrizzleDb,
 ): Promise<DelegationOutcomeRecord> {
-  if (outcome.review_verdict) return outcome;
+  if (outcome.review_verdict) return withDeliveryBlock(outcome);
   try {
-    return { ...outcome, review_verdict: await readDeliveredReviewVerdict(db, childJobId) };
+    return withDeliveryBlock({
+      ...outcome,
+      review_verdict: await readDeliveredReviewVerdict(db, childJobId),
+    });
   } catch (err) {
     if (!(err instanceof OrchestrationError) || err.code !== 'review_verdict_malformed') throw err;
     console.error(
@@ -140,8 +159,26 @@ async function withDeliveredReviewVerdict(
       status: 'failed',
       error: 'review_verdict_malformed',
       review_verdict: null,
+      delivery_blocked: null,
     };
   }
+}
+
+/**
+ * Pose sur le record ce que sa relecture interdit — une seule lecture de la
+ * règle (`reviewBlocksDelivery`), partagée avec l'écran.
+ *
+ * Le champ est TOUJOURS écrit, `null` compris : un parent qui reçoit un
+ * résultat sans ce champ ne saurait pas s'il n'y a rien à dire ou si personne
+ * ne l'a regardé.
+ */
+function withDeliveryBlock(outcome: DelegationOutcomeRecord): DelegationOutcomeRecord {
+  return {
+    ...outcome,
+    delivery_blocked: reviewBlocksDelivery(outcome.review_verdict)
+      ? REVIEW_CHANGES_REQUESTED
+      : null,
+  };
 }
 
 /**

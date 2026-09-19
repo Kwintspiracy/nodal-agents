@@ -117,6 +117,28 @@ function verdictTag(verdict: string) {
   return VERDICT_TAG[verdict] ?? { tone: 'warn' as const, label: verdict };
 }
 
+/**
+ * Le RÔLE qui a lancé une séquence, quand ce n'est pas le job lui-même (#59).
+ *
+ * La base ne porte qu'un code (`verification_runs.source`) ; le mot est écrit
+ * ici, comme tout le texte de cette section (invariant #2). Un code que cet
+ * écran ne connaît pas s'affiche TEL QUEL plutôt que de disparaître : une
+ * origine inconnue est une chose à voir, pas à taire (invariant #4).
+ */
+const ORIGIN_ROLES: Record<string, string> = { reviewer: 'reviewer' };
+
+function originOf(
+  sequence: VerificationSequenceView,
+): { role: string; name: string | null } | null {
+  if (sequence.source === 'job') return null;
+  return {
+    role: ORIGIN_ROLES[sequence.source] ?? sequence.source,
+    // Le NOM de qui a relu, quand la base le porte encore. Jamais inventé : un
+    // agent effacé laisse son rôle, pas un nom de remplacement.
+    name: sequence.sourceAgentName,
+  };
+}
+
 function exitLabel(run: { exitCode: number | null; outcomeKind: string }): string {
   if (run.outcomeKind === 'timeout') return 'timeout';
   if (run.outcomeKind === 'spawn_error') return 'spawn error';
@@ -225,10 +247,16 @@ export default function VerificationSection({
  */
 function SequenceBlock({ sequence }: { sequence: VerificationSequenceView }) {
   const tag = verdictTag(sequence.verdict);
+  const origin = originOf(sequence);
   return (
     <div className="border-b border-rule-2 last:border-b-0" data-testid="verification-sequence">
       <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
         <MonoMicroTag tone={tag.tone}>{tag.label}</MonoMicroTag>
+        {origin !== null && (
+          <span data-testid="verification-origin">
+            <MonoMicroTag tone="ink">{origin.role}</MonoMicroTag>
+          </span>
+        )}
         <span
           className="min-w-0 flex-1 truncate text-mono-13 text-ink"
           title={sequence.canonicalKey}
@@ -237,6 +265,7 @@ function SequenceBlock({ sequence }: { sequence: VerificationSequenceView }) {
         </span>
         <span className="shrink-0 text-mono-11 text-ink-4">
           {sequence.runs.length} {sequence.runs.length === 1 ? 'command' : 'commands'}
+          {origin?.name ? ` · ${origin.name}` : ''}
           {sequence.startedAt ? ` · ${relativeTime(sequence.startedAt)}` : ''}
         </span>
       </div>
