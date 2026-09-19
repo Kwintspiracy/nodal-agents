@@ -22,6 +22,7 @@ import 'server-only';
 import { and, asc, eq, inArray, agentJobs, toolCalls } from '@nodal-agents/db';
 import { parseReviewVerdictOutput, REVIEW_VERDICT_TOOL } from '@nodal-agents/orchestration';
 import { redactSecretsInText } from '@nodal-agents/shared';
+import { redactReviewVerdict } from './redact-presented.ts';
 import type { getDb } from './server.ts';
 
 type Db = ReturnType<typeof getDb>;
@@ -99,10 +100,21 @@ export async function readReviewVerdicts(
   const views: ReviewVerdictView[] = [];
   for (const row of rows) {
     if (row.jobId === null || row.toolOutput === null) continue;
+    // `rawByJob` reste BRUT, et ce n'est pas un oubli : personne ne le rend.
+    // Il sert à chercher un marqueur d'approbation dans la sortie
+    // (`actions.ts`, dérivation d'étape) — une décision, pas un affichage. Le
+    // masquer ferait dépendre cette décision d'un texte réécrit.
     const bucket = rawByJob.get(row.jobId) ?? [];
     bucket.push(row.toolOutput);
     rawByJob.set(row.jobId, bucket);
-    const parsed = readVerdict(row.toolOutput, row.jobId);
+    // La VUE, elle, va à l'écran, et passe donc par la porte (#286). Le
+    // `summary` et le `issue` de chaque constat sont écrits par l'agent
+    // relecteur, et la section de relecture d'un run les rend tels quels : un
+    // jeton recopié dans une de ces phrases s'affichait en clair, alors que le
+    // `result` du délégué, quelques lignes plus bas, était masqué depuis
+    // toujours. Après l'analyse, jamais avant : le parseur valide la forme sur
+    // les octets stockés.
+    const parsed = redactReviewVerdict(readVerdict(row.toolOutput, row.jobId));
     views.push({
       jobId: row.jobId,
       verdict: parsed?.verdict ?? null,
