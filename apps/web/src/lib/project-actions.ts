@@ -21,6 +21,7 @@ import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
+import { initGitRepository } from './project-git.ts';
 import type { Dirent } from 'node:fs';
 import {
   eq,
@@ -416,6 +417,12 @@ const createProjectSchema = z.object({
   workspaceId: z.string().uuid(),
   subfolder: z.string().max(200),
   kind: z.enum(['code', 'documents']),
+  /**
+   * « Pose git dans ce dossier » (issue #200). ABSENT = faux : un appelant qui
+   * ne connaît pas encore ce champ ne doit pas se voir poser un dépôt, et
+   * l'option est OFF par défaut partout ailleurs.
+   */
+  initGit: z.boolean().optional().default(false),
 });
 
 /**
@@ -506,6 +513,24 @@ export async function createProjectAction(
     } catch (err) {
       console.error(`[projects] PROJECT_MKDIR_FAILED key=${key}`, err);
       return fail('mkdir_failed', 'Could not create the project folder');
+    }
+
+    // GIT, seulement si on l'a demandé (issue #200). Juste après le dossier,
+    // parce qu'un dépôt posé plus tard raterait tout ce que le projet aurait
+    // déjà reçu, et jamais sans la case : un dossier qui n'est pas versionné
+    // reste un dossier qui n'est pas versionné.
+    //
+    // Un échec de git ne fait PAS échouer la création : le dossier est là, la
+    // ligne va l'être, et le projet est utilisable — il sera simplement
+    // constaté sur le disque. L'interrupteur des réglages permet de réessayer,
+    // et l'écran dira que rien n'a été posé (invariant #4).
+    let gitInitializedAt: Date | null = null;
+    if (input.initGit) {
+      const pose = await initGitRepository(path);
+      if (pose.kind === 'initialised') gitInitializedAt = new Date();
+      else if (pose.kind === 'failed') {
+        console.warn(`[projects] PROJECT_GIT_INIT_FAILED key=${key} reason=${pose.reason}`);
+      }
     }
 
     // TOUT ce qui suit tient dans UNE transaction, sous un verrou consultatif
@@ -619,6 +644,11 @@ export async function createProjectAction(
             registeredAt,
             registeredFrom: 'spaces',
             projectPath: path,
+            initGit: input.initGit,
+            // Écrit seulement si Nodal vient de poser le dépôt : un dossier
+            // qui en était déjà un n'a rien reçu, et lui donner une date de
+            // pose serait faux.
+            ...(gitInitializedAt !== null ? { gitInitializedAt } : {}),
             updatedAt: registeredAt,
           })
           .where(eq(codeProjects.id, existing.id))
@@ -639,6 +669,8 @@ export async function createProjectAction(
           agentId: input.agentId,
           registeredAt,
           registeredFrom: 'spaces',
+          initGit: input.initGit,
+          gitInitializedAt,
         })
         .returning({ id: codeProjects.id });
       if (!inserted) return fail('create_failed', 'Could not register the project');

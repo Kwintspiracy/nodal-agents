@@ -190,8 +190,11 @@ export const CAPACITES = [
     nom: 'Work on my files',
     question: 'Can I hand it a folder and find what it wrote there?',
     exigee: true,
-    ecranAttendu:
-      'That a working folder is picked from the screen and that the file the agent just wrote is found there, in the Code tab.',
+    // La phrase `ecranAttendu` est retirée le 19/09 : l'écran de cette capacité
+    // est prouvé depuis l'option git (#200) — la case du formulaire de création
+    // et l'interrupteur des réglages du projet, chacun avec son refus hors
+    // propriétaire. Une phrase « ce qu'un test devrait vérifier » posée sur un
+    // niveau DÉJÀ prouvé est un plan périmé, et `lib.test.mjs` le refuse.
   },
   {
     slug: 'verifier-un-livrable',

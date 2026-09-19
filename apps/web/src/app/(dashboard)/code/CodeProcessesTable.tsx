@@ -45,6 +45,7 @@ import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import { projectKey } from '@nodal-agents/shared';
 import { relativeTime } from '@/lib/format-time';
 import ProjectVerificationPanel, { type ProjectVerification } from './ProjectVerificationPanel.tsx';
+import ProjectGitPanel, { type ProjectGit } from './ProjectGitPanel.tsx';
 
 const POLL_INTERVAL = 5000;
 
@@ -101,6 +102,19 @@ function verificationByKey(prefs: CodeProjectPrefs[]): Map<string, ProjectVerifi
         verifyStatus: p.verifyStatus,
         verifySource: p.verifySource,
       },
+    ]),
+  );
+}
+
+/**
+ * L'option git par projet (issue #200), indexee comme la verification : par
+ * `projectKey`, jamais par egalite de chemin.
+ */
+function gitByKey(prefs: CodeProjectPrefs[]): Map<string, ProjectGit> {
+  return new Map(
+    prefs.map((p) => [
+      projectKey(p.projectPath),
+      { initGit: p.initGit, gitInitializedAt: p.gitInitializedAt },
     ]),
   );
 }
@@ -180,6 +194,7 @@ export default function CodeProcessesTable({
   const [verification, setVerification] = useState<Map<string, ProjectVerification>>(() =>
     verificationByKey(initialPrefs),
   );
+  const [gitPrefs, setGitPrefs] = useState<Map<string, ProjectGit>>(() => gitByKey(initialPrefs));
   const [selected, setSelected] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   /** Projet en cours de renommage (clé), et le texte saisi. */
@@ -375,6 +390,18 @@ export default function CodeProcessesTable({
             verification={verification.get(openProject.key) ?? null}
             isOwner={isOwner}
             onPrefsReloaded={(prefs) => setVerification(verificationByKey(prefs))}
+          />
+        )}
+
+        {/* L'option git (#200), sous la preuve : les deux sont des reglages du
+            PROJET, et les deux sont reserves au proprietaire. Meme garde que
+            le panneau ci-dessus — pas de chemin, pas de ligne a ecrire. */}
+        {openProject.path && (
+          <ProjectGitPanel
+            projectPath={openProject.path}
+            git={gitPrefs.get(openProject.key) ?? null}
+            isOwner={isOwner}
+            onChanged={(next) => setGitPrefs((m) => new Map(m).set(openProject.key, next))}
           />
         )}
 

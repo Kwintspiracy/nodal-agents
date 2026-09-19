@@ -52,6 +52,7 @@ import {
   type CodingChangeView,
 } from './coding-changes.ts';
 import { faconsDeConstater, rapprocherConstat } from './constated-files.ts';
+import { initGitRepository } from './project-git.ts';
 import {
   entityWorkspaceRoots,
   entityDeclaredCodeRoots,
@@ -14071,6 +14072,17 @@ export interface CodeProjectPrefs {
    * prise.
    */
   verifySource: 'owner' | 'agent' | null;
+  /**
+   * L'option « pose git dans ce dossier » (issue #200). OFF par défaut, et
+   * rien ne touche au dossier sans elle.
+   */
+  initGit: boolean;
+  /**
+   * L'instant où Nodal a effectivement lancé `git init` ici. `null` quand rien
+   * n'a été posé — y compris avec l'option ON, si le dossier était DÉJÀ un
+   * dépôt. L'intention et le fait sont deux choses, et l'écran montre le fait.
+   */
+  gitInitializedAt: Date | null;
 }
 
 export async function listCodeProjectPrefsAction(): Promise<ActionResult<CodeProjectPrefs[]>> {
@@ -14085,6 +14097,8 @@ export async function listCodeProjectPrefsAction(): Promise<ActionResult<CodePro
         verifyApprovedAt: codeProjects.verifyApprovedAt,
         verifyApprovedManifestHash: codeProjects.verifyApprovedManifestHash,
         verifySource: codeProjects.verifySource,
+        initGit: codeProjects.initGit,
+        gitInitializedAt: codeProjects.gitInitializedAt,
       })
       .from(codeProjects)
       .where(eq(codeProjects.entityId, session.entityId));
@@ -14162,6 +14176,9 @@ async function upsertCodeProject(
     /** Qui décide de la séquence de preuve — voir `code_projects.verify_source`. */
     verifySource?: 'owner' | 'agent' | null;
     verifyDeclaredByJobId?: string | null;
+    /** L'option git (#200) et l'instant où Nodal a posé le dépôt. */
+    initGit?: boolean;
+    gitInitializedAt?: Date | null;
   },
 ): Promise<void> {
   const key = projectKey(projectPath);
@@ -14198,6 +14215,83 @@ export async function setCodeProjectHiddenAction(raw: unknown): Promise<ActionRe
     return ok(undefined);
   } catch (err) {
     console.error('[setCodeProjectHiddenAction]', err);
+    return fail('db_error', 'Failed to update the project');
+  }
+}
+
+const SetCodeProjectInitGitSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+  initGit: z.boolean(),
+});
+
+/** Ce que la bascule a donné, pour que l'écran le DISE au lieu de le deviner. */
+export type InitGitResult = {
+  initGit: boolean;
+  /** `initialised` = Nodal vient de poser le dépôt ; `already` = il y en avait un ; `off` = l'option a été éteinte, rien n'est touché. */
+  outcome: 'initialised' | 'already' | 'off' | 'failed';
+  gitInitializedAt: string | null;
+};
+
+/**
+ * L'option « pose git dans ce dossier », et le geste qui va avec (issue #200).
+ *
+ * LE DÉPÔT EST POSÉ AU MOMENT OÙ L'OPTION PASSE À ON, jamais à un autre
+ * moment. Pas à l'ouverture de l'écran, pas au premier run « puisque l'option
+ * est cochée » : `git init` ÉCRIT dans le dossier de quelqu'un, et ce genre
+ * d'écriture appartient au clic qui l'a demandée.
+ *
+ * ÉTEINDRE L'OPTION NE SUPPRIME RIEN. Un dépôt n'est pas un réglage
+ * d'affichage : effacer `.git` emporterait tout l'historique, et personne ne
+ * s'attend à ça en basculant un interrupteur. L'option redevient simplement
+ * fausse, le dépôt reste, et le constat par git continue de fonctionner —
+ * #199 regarde le DOSSIER, pas cette colonne.
+ *
+ * Propriétaire seulement, par la même garde EXACTE que renommer et masquer :
+ * poser un dépôt écrit dans un dossier partagé.
+ */
+export async function setCodeProjectInitGitAction(
+  raw: unknown,
+): Promise<ActionResult<InitGitResult>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCodeProjectInitGitSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can initialise git.');
+
+    const { projectPath, initGit } = parsed.data;
+    if (!initGit) {
+      await upsertCodeProject(db, session.entityId, projectPath, { initGit: false });
+      revalidatePath('/code');
+      return ok({ initGit: false, outcome: 'off', gitInitializedAt: null });
+    }
+
+    const pose = await initGitRepository(projectPath);
+    if (pose.kind === 'failed') {
+      // L'option n'est PAS écrite : elle dirait que ce dossier est versionné
+      // alors qu'il ne l'est pas. L'échec se dit, et l'interrupteur reste où
+      // il était (invariant #4).
+      return fail('git_init_failed', 'Could not initialise git in this folder.');
+    }
+    const gitInitializedAt = pose.kind === 'initialised' ? new Date() : null;
+    await upsertCodeProject(db, session.entityId, projectPath, {
+      initGit: true,
+      // Un dossier qui était DÉJÀ un dépôt n'a rien reçu : on ne lui invente
+      // pas une date de pose, et la colonne garde ce qu'elle avait.
+      ...(gitInitializedAt !== null ? { gitInitializedAt } : {}),
+    });
+    revalidatePath('/code');
+    return ok({
+      initGit: true,
+      outcome: pose.kind === 'initialised' ? 'initialised' : 'already',
+      gitInitializedAt: gitInitializedAt?.toISOString() ?? null,
+    });
+  } catch (err) {
+    console.error('[setCodeProjectInitGitAction]', err);
     return fail('db_error', 'Failed to update the project');
   }
 }

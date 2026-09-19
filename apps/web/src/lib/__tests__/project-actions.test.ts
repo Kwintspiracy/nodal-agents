@@ -25,7 +25,7 @@ import {
 } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, rm, readdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, readdir, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1012,5 +1012,59 @@ describe('listProjectTerrainsAction', () => {
     expect(terrains.map((w) => w.path)).toEqual([terrain.path]);
     expect(terrains[0]!.label).toBe('terrain');
     expect(terrains[0]!.id).toBe(terrain.workspaceId);
+  });
+});
+
+// ─── L'option git (issue #200) ───────────────────────────────────────────────
+//
+// Ce qui se prouve ici : que RIEN n'est posé sans la case, que la case pose un
+// vrai dépôt avec son `.gitignore`, et qu'un dossier déjà versionné n'est pas
+// retouché. Les assertions portent sur le DISQUE (`.git`, le contenu du
+// `.gitignore`) et sur la LIGNE relue, jamais sur `result.ok`.
+
+describe('createProjectAction — l’option git @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('SANS la case, aucun dépôt n’est posé et la ligne le dit', async () => {
+    const { createProjectAction } = await import('../project-actions.ts');
+
+    const result = await createProjectAction({
+      name: 'Sans git',
+      agentId: seed.agentId,
+      workspaceId: terrain.workspaceId,
+      subfolder: 'sans-git',
+      kind: 'code',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(existsSync(join(result.data.path, '.git'))).toBe(false);
+    expect(existsSync(join(result.data.path, '.gitignore'))).toBe(false);
+    const ligne = await ligneDuProjet(result.data.path);
+    expect(ligne?.initGit).toBe(false);
+    expect(ligne?.gitInitializedAt).toBeNull();
+  });
+
+  it('AVEC la case, le dossier devient un dépôt et reçoit son .gitignore', async () => {
+    const { createProjectAction } = await import('../project-actions.ts');
+
+    const result = await createProjectAction({
+      name: 'Avec git',
+      agentId: seed.agentId,
+      workspaceId: terrain.workspaceId,
+      subfolder: 'avec-git',
+      kind: 'code',
+      initGit: true,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(existsSync(join(result.data.path, '.git'))).toBe(true);
+    // Le CONTENU, pas seulement la présence : trois lignes, et celle qui ne se
+    // rattrape pas quand on l'oublie.
+    const ignore = await readFile(join(result.data.path, '.gitignore'), 'utf8');
+    expect(ignore.split('\n').filter((l) => l !== '')).toEqual(['node_modules/', 'dist/', '.env*']);
+
+    const ligne = await ligneDuProjet(result.data.path);
+    expect(ligne?.initGit).toBe(true);
+    expect(ligne?.gitInitializedAt).toBeInstanceOf(Date);
   });
 });

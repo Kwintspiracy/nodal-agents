@@ -546,6 +546,12 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       registered_at timestamptz,
       registered_from text CHECK (registered_from IS NULL OR registered_from IN ('spaces','conversation')),
       registered_job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      -- mirrors migration 0114 (issue #200) — l intention du proprietaire
+      -- (poser git dans ce dossier) et le FAIT (quand Nodal l a pose). Les
+      -- deux ne se deduisent pas l une de l autre : l option peut etre ON sur
+      -- un dossier qui etait deja un depot, et rien n a alors ete pose.
+      init_git boolean NOT NULL DEFAULT false,
+      git_initialized_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (entity_id, project_key)

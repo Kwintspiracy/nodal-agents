@@ -137,6 +137,25 @@ export const codeProjects = pgTable(
     registeredJobId: uuid('registered_job_id').references(() => agentJobs.id, {
       onDelete: 'set null',
     }),
+    /**
+     * « Je veux que ce dossier soit un dépôt git » — l'INTENTION du
+     * propriétaire (0114, issue #200). OFF par défaut : sans ce geste, rien ne
+     * touche au dossier, ni à sa création ni plus tard.
+     *
+     * Elle existe pour le constat par git (#199), qui s'active de lui-même dès
+     * qu'un projet est un dépôt : sans elle, quelqu'un qui démarre un projet
+     * depuis Telegram ou depuis le chat n'aurait jamais le meilleur constat que
+     * le produit sache faire.
+     */
+    initGit: boolean('init_git').notNull().default(false),
+    /**
+     * Le FAIT, distinct de l'intention : l'instant où Nodal a lancé `git init`
+     * dans ce dossier. Les deux ne se déduisent pas l'une de l'autre — l'option
+     * peut être ON sur un dossier qui était DÉJÀ un dépôt, auquel cas rien n'a
+     * été posé et cette colonne reste NULL. C'est elle que l'écran montre, pour
+     * dire ce qui s'est passé plutôt que de le déduire d'un drapeau.
+     */
+    gitInitializedAt: timestamp('git_initialized_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
