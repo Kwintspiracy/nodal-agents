@@ -1,3 +1,15 @@
+/**
+ * /settings — UNE liste de réglages, chacun s'ouvrant dans un panneau ancré à
+ * droite (planches S3 + P1, issue #231).
+ *
+ * Avant : onze blocs empilés en une colonne, sans ordre entre ce qui touche à
+ * l'accès, à la sûreté, et ce qui n'est là que pour être lu. La page ne fait
+ * plus que deux choses : lire, et distribuer. Elle lit les treize valeurs
+ * (`buildSettingRows`, testé à part), et elle passe à la liste les formulaires
+ * EXISTANTS, inchangés — ce sont eux qui enregistrent, chacun avec son action
+ * serveur, exactement comme avant.
+ */
+
 import Link from 'next/link';
 import {
   getSettingsAction,
@@ -24,18 +36,38 @@ import VerificationSurfacesSection from './VerificationSurfacesSection.tsx';
 import McpServerSection from './McpServerSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
+import SettingsList from './SettingsList.tsx';
+import { buildSettingRows, type SettingId } from './settings-rows.ts';
 import PageShell from '@/components/ui/PageShell';
-import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetPane } from '@/components/ui/SetPane.tsx';
 import { SetRow } from '@/components/ui/SetRow.tsx';
 import MonoCode from '@/components/ui/MonoCode';
 import CopyablePath from '@/components/ui/CopyablePath';
-import { TagMini } from '@/components/ui/TagMini.tsx';
-import { CheckOk } from '@/components/ui/CheckOk.tsx';
 
 export const dynamic = 'force-dynamic';
 
-export default async function SettingsPage() {
+const SETTING_IDS: ReadonlySet<string> = new Set<SettingId>([
+  'sign-in',
+  'network',
+  'password',
+  'worker-secret',
+  'auto-run-brake',
+  'verification',
+  'root-agent',
+  'mcp-server',
+  'timezone',
+  'install-notes',
+  'workspaces',
+  'urls',
+  'session',
+]);
+
+type PageProps = {
+  searchParams: Promise<{ open?: string }>;
+};
+
+export default async function SettingsPage({ searchParams }: PageProps) {
+  const sp = await searchParams;
   const [
     result,
     securityResult,
@@ -74,148 +106,131 @@ export default async function SettingsPage() {
   }
 
   const s = result.data;
+  const grants = rootConfigResult.ok ? rootConfigResult.data.grants : DEFAULT_ROOT_GRANTS;
+
+  const rows = buildSettingRows({
+    authMode: s.authMode,
+    workerSecretConfigured: s.workerSecretConfigured,
+    security: securityResult.ok ? securityResult.data : null,
+    network: networkResult.ok ? networkResult.data : null,
+    autoRunPause: autoRunPauseResult.ok ? autoRunPauseResult.data : null,
+    verification: verificationSurfacesResult.ok ? verificationSurfacesResult.data : null,
+    mcpServer: mcpSwitchResult.ok ? mcpSwitchResult.data : null,
+    timezone: tzResult.ok ? tzResult.data : null,
+    installNotes: installNotesResult.ok ? installNotesResult.data : null,
+    workspaces,
+    agents: agentsResult.ok ? agentsResult.data : [],
+    rootAgentId: rootConfigResult.ok ? rootConfigResult.data.rootAgentId : null,
+    rootAutonomy: grants.autonomy,
+  });
+
+  // Les formulaires existants, tels quels : le panneau porte le titre et le
+  // lede, eux gardent leur contenu, leur validation et leur action serveur.
+  const panels: Partial<Record<SettingId, React.ReactNode>> = {
+    'sign-in': securityResult.ok ? <SecurityForm initial={securityResult.data} /> : null,
+    network: networkResult.ok ? <NetworkForm initial={networkResult.data} /> : null,
+    password: s.authMode === 'local-auth' ? <PasswordForm /> : null,
+    'worker-secret': <WorkerSecretPanel configured={s.workerSecretConfigured} />,
+    'auto-run-brake': autoRunPauseResult.ok ? (
+      <AutoRunPauseSection initial={autoRunPauseResult.data} />
+    ) : null,
+    verification: verificationSurfacesResult.ok ? (
+      <VerificationSurfacesSection initial={verificationSurfacesResult.data} />
+    ) : null,
+    'root-agent': (
+      <RootAgentSection
+        agents={agentsResult.ok ? agentsResult.data : []}
+        initialRootAgentId={rootConfigResult.ok ? rootConfigResult.data.rootAgentId : null}
+        initialGrants={grants}
+      />
+    ),
+    'mcp-server': mcpSwitchResult.ok ? <McpServerSection initial={mcpSwitchResult.data} /> : null,
+    timezone: tzResult.ok ? (
+      <TimezoneForm initial={tzResult.data.timezone} isExplicit={tzResult.data.isExplicit} />
+    ) : null,
+    'install-notes': installNotesResult.ok ? (
+      <InstallNotesForm initial={installNotesResult.data} />
+    ) : null,
+    workspaces: <WorkspacesSection initial={workspaces} />,
+    urls: (
+      <SetPane>
+        <SetRow label="App URL">
+          <MonoCode>{s.appUrl}</MonoCode>
+        </SetRow>
+        <SetRow label="Runner URL">
+          <MonoCode>{s.runnerUrl}</MonoCode>
+        </SetRow>
+        <SetRow label="Webhooks" sub="Each automation trigger has its own webhook URL.">
+          <Link
+            href="/automations"
+            className="text-xs text-ink-3 transition-colors hover:text-ink-2"
+          >
+            Manage webhooks in Automations
+          </Link>
+        </SetRow>
+        <SetRow
+          label="Shared workspace"
+          sub="The folder your agents read and write together. Open it to grab generated files."
+        >
+          <CopyablePath
+            display={s.sharedWorkspacePathShort}
+            value={s.sharedWorkspacePath}
+            href={s.sharedWorkspaceUrl}
+          />
+        </SetRow>
+      </SetPane>
+    ),
+    session: (
+      <SetPane>
+        <SetRow label="User ID" sub="Your account identifier in the local DB.">
+          <MonoCode>{s.user.userId}</MonoCode>
+        </SetRow>
+        <SetRow label="Workspace ID" sub="Entity identifier scoped to this install.">
+          <MonoCode>{s.user.entityId}</MonoCode>
+        </SetRow>
+      </SetPane>
+    ),
+  };
+
+  // Une valeur d'URL inconnue n'ouvre rien, et ne casse rien.
+  const wanted = sp.open;
+  const initialOpen =
+    wanted !== undefined && SETTING_IDS.has(wanted) && rows.some((r) => r.id === wanted)
+      ? (wanted as SettingId)
+      : null;
 
   return (
-    <PageShell title="Settings" subtitle="Security mode and network access for this workspace.">
-      <div>
-        <SetBlock label="Auth">
-          <SetPane>
-            <SetRow label="Mode">
-              <MonoCode>{s.authMode}</MonoCode>
-              <AuthTagMini mode={s.authMode} />
-            </SetRow>
-            <SetRow label="Worker secret">
-              {s.workerSecretConfigured ? (
-                <CheckOk>configured</CheckOk>
-              ) : (
-                <span className="text-medium-14 text-warn">missing — runner calls will 403</span>
-              )}
-            </SetRow>
-          </SetPane>
-        </SetBlock>
-
-        {securityResult.ok && (
-          <SetBlock label="Security" lede="Choose how users sign in to this workspace.">
-            <SecurityForm initial={securityResult.data} />
-          </SetBlock>
-        )}
-
-        {networkResult.ok && (
-          <SetBlock label="Network" lede="Control which devices can reach the dashboard.">
-            <NetworkForm initial={networkResult.data} />
-          </SetBlock>
-        )}
-
-        {/* Un mot de passe n'existe qu'en local-auth — la section n'apparaît
-            pas en local-trust (rien à changer) ni en bearer-token. */}
-        {s.authMode === 'local-auth' && (
-          <SetBlock
-            label="Password"
-            lede="Change your sign-in password. Other signed-in devices are signed out."
-          >
-            <PasswordForm />
-          </SetBlock>
-        )}
-
-        {tzResult.ok && (
-          <SetBlock
-            label="Timezone"
-            lede="The zone your agents use to tell the time and schedule automations."
-          >
-            <TimezoneForm initial={tzResult.data.timezone} isExplicit={tzResult.data.isExplicit} />
-          </SetBlock>
-        )}
-
-        {autoRunPauseResult.ok && (
-          <SetBlock
-            label="Auto-run brake"
-            lede="Per-agent Yolo (Autonomy tab of each agent) decides what auto-runs. This is the workspace-wide emergency brake: pause everything at once, release to re-arm."
-          >
-            <AutoRunPauseSection initial={autoRunPauseResult.data} />
-          </SetBlock>
-        )}
-
-        {verificationSurfacesResult.ok && (
-          <SetBlock
-            label="Verification surfaces"
-            lede="Which ways of working get proven by a project's proof commands. Uncheck a surface and its runs are no longer verified, and say so."
-          >
-            <VerificationSurfacesSection initial={verificationSurfacesResult.data} />
-          </SetBlock>
-        )}
-
-        {mcpSwitchResult.ok && (
-          <SetBlock
-            label="MCP server"
-            lede="External clients (your terminal, a coding agent) can hand work to the root agent through Nodal's MCP server. Off by default; MCP jobs never get the configuration tools."
-          >
-            <McpServerSection initial={mcpSwitchResult.data} />
-          </SetBlock>
-        )}
-
-        {installNotesResult.ok && (
-          <SetBlock
-            label="Install notes"
-            lede="Machine-specific context injected into every agent's runtime block. Apply live — no restart needed."
-          >
-            <InstallNotesForm initial={installNotesResult.data} />
-          </SetBlock>
-        )}
-
-        <RootAgentSection
-          agents={agentsResult.ok ? agentsResult.data : []}
-          initialRootAgentId={rootConfigResult.ok ? rootConfigResult.data.rootAgentId : null}
-          initialGrants={rootConfigResult.ok ? rootConfigResult.data.grants : DEFAULT_ROOT_GRANTS}
-        />
-
-        <WorkspacesSection initial={workspaces} />
-
-        <SetBlock label="URLs">
-          <SetPane>
-            <SetRow label="App URL">
-              <MonoCode>{s.appUrl}</MonoCode>
-            </SetRow>
-            <SetRow label="Runner URL">
-              <MonoCode>{s.runnerUrl}</MonoCode>
-            </SetRow>
-            <SetRow label="Webhooks" sub="Each automation trigger has its own webhook URL.">
-              <Link
-                href="/automations"
-                className="text-xs text-ink-3 hover:text-ink-2 transition-colors"
-              >
-                Manage webhooks in Automations
-              </Link>
-            </SetRow>
-            <SetRow
-              label="Shared workspace"
-              sub="The folder your agents read and write together. Open it to grab generated files."
-            >
-              <CopyablePath
-                display={s.sharedWorkspacePathShort}
-                value={s.sharedWorkspacePath}
-                href={s.sharedWorkspaceUrl}
-              />
-            </SetRow>
-          </SetPane>
-        </SetBlock>
-
-        <SetBlock label="Session">
-          <SetPane>
-            <SetRow label="User ID" sub="Your account identifier in the local DB.">
-              <MonoCode>{s.user.userId}</MonoCode>
-            </SetRow>
-            <SetRow label="Workspace ID" sub="Entity identifier scoped to this install.">
-              <MonoCode>{s.user.entityId}</MonoCode>
-            </SetRow>
-          </SetPane>
-        </SetBlock>
-      </div>
+    <PageShell
+      title="Settings"
+      subtitle="One list. Each row shows its current value and opens on the right."
+      fill
+    >
+      <SettingsList rows={rows} panels={panels} initialOpen={initialOpen} />
     </PageShell>
   );
 }
 
-function AuthTagMini({ mode }: { mode: 'local-trust' | 'local-auth' | 'bearer-token' }) {
-  if (mode === 'local-auth') return <TagMini variant="ok">PASSWORD</TagMini>;
-  if (mode === 'bearer-token') return <TagMini variant="ok">TOKEN</TagMini>;
-  return <TagMini variant="warn">NO AUTH</TagMini>;
+/**
+ * Le secret du worker n'a pas de formulaire : il est posé par l'installeur et
+ * ne se change pas depuis le dashboard. Le panneau dit donc ce qu'il est et où
+ * il vit, plutôt que d'ouvrir un champ qui ne mènerait nulle part.
+ */
+function WorkerSecretPanel({ configured }: { configured: boolean }) {
+  return (
+    <SetPane>
+      <SetRow label="Status">
+        {configured ? (
+          <span className="text-medium-14 text-ink-2">Set at install</span>
+        ) : (
+          <span className="text-medium-14 text-warn">missing — runner calls will 403</span>
+        )}
+      </SetRow>
+      <SetRow
+        label="Where it lives"
+        sub="Set by the installer in the environment of the web app and the runner. Restart the stack after changing it."
+      >
+        <MonoCode>WORKER_SECRET</MonoCode>
+      </SetRow>
+    </SetPane>
+  );
 }

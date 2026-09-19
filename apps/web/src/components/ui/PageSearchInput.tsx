@@ -9,6 +9,11 @@ type Props = {
   placeholder?: string;
   /** Min width — defaults to 300px to match the design's `.pg-tb .search`. */
   minWidth?: number;
+  /** Accessible name. The field has no visible label, so a caller whose
+   *  placeholder is not self-explanatory should pass one. */
+  ariaLabel?: string;
+  /** `data-testid` on the input — tests target the field that filters. */
+  testId?: string;
   className?: string;
 };
 
@@ -25,6 +30,8 @@ export default function PageSearchInput({
   onChange,
   placeholder = 'Search…',
   minWidth = 300,
+  ariaLabel,
+  testId,
   className = '',
 }: Props) {
   return (
@@ -38,6 +45,8 @@ export default function PageSearchInput({
         value={value}
         onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
         placeholder={placeholder}
+        aria-label={ariaLabel}
+        data-testid={testId}
         className="flex-1 border-0 bg-transparent text-body-14 leading-none! text-ink outline-none placeholder:text-ink-4"
       />
     </div>
