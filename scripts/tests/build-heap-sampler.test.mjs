@@ -103,6 +103,7 @@ describe('picsDe', () => {
       pidPic: null,
       picArbreMo: 0,
       tPicArbre: null,
+      relevesUtiles: 0,
     });
   });
 });
@@ -174,7 +175,7 @@ describe('verdictPic', () => {
   it('nomme la hausse, la référence et de combien', () => {
     // C'est tout ce qui a manqué le 19/09 : le plancher a doublé et personne
     // ne pouvait dire de combien le besoin, lui, avait bougé.
-    const v = verdictPic(11000, reference);
+    const v = verdictPic({ picProcessusMo: 11000, relevesUtiles: 300 }, reference);
     expect(v.niveau).toBe('hausse');
     expect(v.message).toContain('11000');
     expect(v.message).toContain('8000');
@@ -183,21 +184,31 @@ describe('verdictPic', () => {
   });
 
   it('se tait sur une variation ordinaire', () => {
-    expect(verdictPic(8800, reference).niveau).toBe('ok');
-    expect(verdictPic(6000, reference).niveau).toBe('ok');
+    expect(verdictPic({ picProcessusMo: 8800, relevesUtiles: 300 }, reference).niveau).toBe('ok');
+    expect(verdictPic({ picProcessusMo: 6000, relevesUtiles: 300 }, reference).niveau).toBe('ok');
   });
 
   it('place la frontière exactement au seuil de hausse', () => {
-    expect(verdictPic(10000, reference, 0.25).niveau).toBe('ok');
-    expect(verdictPic(10001, reference, 0.25).niveau).toBe('hausse');
+    expect(verdictPic({ picProcessusMo: 10000, relevesUtiles: 300 }, reference, 0.25).niveau).toBe(
+      'ok',
+    );
+    expect(verdictPic({ picProcessusMo: 10001, relevesUtiles: 300 }, reference, 0.25).niveau).toBe(
+      'hausse',
+    );
   });
 
   it("dit qu'il n'a pas de référence plutôt que de rendre « ok »", () => {
     // Un fichier de référence vide ou absent ne doit pas se lire comme un
     // build sain : c'est un build que personne n'a comparé (invariant #4).
-    expect(verdictPic(9000, null).niveau).toBe('sans-reference');
-    expect(verdictPic(9000, { picProcessusMo: 0 }).niveau).toBe('sans-reference');
-    expect(verdictPic(9000, {}).niveau).toBe('sans-reference');
+    expect(verdictPic({ picProcessusMo: 9000, relevesUtiles: 300 }, null).niveau).toBe(
+      'sans-reference',
+    );
+    expect(
+      verdictPic({ picProcessusMo: 9000, relevesUtiles: 300 }, { picProcessusMo: 0 }).niveau,
+    ).toBe('sans-reference');
+    expect(verdictPic({ picProcessusMo: 9000, relevesUtiles: 300 }, {}).niveau).toBe(
+      'sans-reference',
+    );
   });
 });
 
@@ -215,5 +226,42 @@ describe('nodeOptionsAvecCap', () => {
     expect(nodeOptionsAvecCap('--no-warnings', 12288)).toBe(
       '--no-warnings --max-old-space-size=12288',
     );
+  });
+});
+
+describe('un échantillonnage muet', () => {
+  // Constat 2 de la revue C sur la PR #277. `relever()` avale ses erreurs pour
+  // qu'un relevé raté ne tue pas la mesure ; si TOUS échouent — l'outil de
+  // relevé du système absent, des droits refusés — il ne reste que des
+  // échantillons vides. Le pic vaut alors 0, ce qui se lisait « −100 % sur la
+  // référence » : le meilleur build jamais mesuré, et personne n'avait rien
+  // mesuré du tout.
+
+  it('compte les relevés qui ont vu quelque chose', () => {
+    const echantillons = [
+      { t: 0, processus: [] },
+      { t: 2, processus: [{ pid: 1, rssMo: 900 }] },
+      { t: 4, processus: [] },
+    ];
+
+    expect(picsDe(echantillons).relevesUtiles).toBe(1);
+  });
+
+  it("rend « indisponible », jamais un verdict rassurant, quand aucun relevé n'a vu de processus", () => {
+    const muette = picsDe([
+      { t: 0, processus: [] },
+      { t: 2, processus: [] },
+    ]);
+    expect(muette.picProcessusMo).toBe(0);
+    expect(muette.relevesUtiles).toBe(0);
+
+    const v = verdictPic(muette, { picProcessusMo: 13069, commit: 'dee372ea', machine: 'win32' });
+    expect(v.niveau).toBe('indisponible');
+    expect(v.message).not.toContain('%');
+  });
+
+  it("juge normalement dès qu'un seul relevé a vu quelque chose", () => {
+    const v = verdictPic({ picProcessusMo: 13000, relevesUtiles: 1 }, { picProcessusMo: 13069 });
+    expect(v.niveau).toBe('ok');
   });
 });

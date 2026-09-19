@@ -74,13 +74,23 @@ export function arbreDe(processus, racine) {
  * `picArbreMo` se calcule par échantillon puis se maximise : sommer les pics
  * individuels donnerait un total que la machine n'a jamais porté, puisque les
  * workers ne culminent pas ensemble.
+ *
+ * `relevesUtiles` compte les échantillons qui ont VU quelque chose. Il est là
+ * parce que sans lui un pic de 0 est indiscernable d'un build minuscule :
+ * `relever()` avale ses erreurs pour qu'un relevé raté ne tue pas la mesure, et
+ * si TOUS échouent — PowerShell indisponible, droits refusés — le résultat est
+ * un zéro parfaitement présentable, que le verdict lisait « −100 % sur la
+ * référence, tout va bien ». Un chiffre absent doit se dire absent
+ * (invariant #4). Constat 2 de la revue C sur la PR #277.
  */
 export function picsDe(echantillons) {
   let picProcessusMo = 0;
   let pidPic = null;
   let picArbreMo = 0;
   let tPicArbre = null;
+  let relevesUtiles = 0;
   for (const e of echantillons) {
+    if (e.processus.length > 0) relevesUtiles += 1;
     let total = 0;
     for (const p of e.processus) {
       total += p.rssMo;
@@ -94,7 +104,7 @@ export function picsDe(echantillons) {
       tPicArbre = e.t;
     }
   }
-  return { picProcessusMo, pidPic, picArbreMo, tPicArbre };
+  return { picProcessusMo, pidPic, picArbreMo, tPicArbre, relevesUtiles };
 }
 
 /**
@@ -132,8 +142,25 @@ export function plancherPour(picProcessusMo, margePourCent = 25) {
  * compilation sur le runner de la CI (4 cœurs, Node 22) contre 840 s sur la
  * machine de release (24 cœurs, Node 26.4.0). Faire échouer une release sur un
  * écart pareil serait la faire échouer sur le matériel de celui qui la coupe.
+ *
+ * Il prend la MESURE, pas le seul nombre, parce qu'il a besoin de savoir si le
+ * chiffre existe : `relevesUtiles` à zéro veut dire « personne n'a regardé »,
+ * ce qui n'est pas la même chose qu'un pic bas.
  */
-export function verdictPic(picProcessusMo, reference, seuilHausse = 0.25) {
+export function verdictPic(mesure, reference, seuilHausse = 0.25) {
+  const { picProcessusMo, relevesUtiles } = mesure;
+  if (!relevesUtiles) {
+    // Aucun relevé n'a vu de processus : il n'y a pas de pic à comparer, et
+    // surtout pas un pic de zéro. Le dire, plutôt que de rendre un verdict
+    // rassurant sur un chiffre qui n'existe pas.
+    return {
+      niveau: 'indisponible',
+      message:
+        "Pic non mesuré : aucun relevé n'a vu de processus (échantillonnage muet — " +
+        "l'outil de relevé du système a-t-il répondu ?). Le build a pu se passer très bien ; " +
+        "simplement, personne ne l'a regardé.",
+    };
+  }
   if (!reference || !Number.isFinite(reference.picProcessusMo) || reference.picProcessusMo <= 0) {
     return {
       niveau: 'sans-reference',

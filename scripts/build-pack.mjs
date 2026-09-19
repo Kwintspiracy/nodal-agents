@@ -164,24 +164,33 @@ const mesureWeb = await mesurerCommande('pnpm --filter @nodal-agents/web build',
   env: { ...process.env, NODE_OPTIONS: heapEnv() },
 });
 console.log(
-  `\n  Mémoire du build web — pic d'un processus ${mesureWeb.picProcessusMo} Mo, ` +
-    `pic de l'arbre ${mesureWeb.picArbreMo} Mo, en ${mesureWeb.secondes} s.`,
+  mesureWeb.relevesUtiles
+    ? `\n  Mémoire du build web — pic d'un processus ${mesureWeb.picProcessusMo} Mo, ` +
+        `pic de l'arbre ${mesureWeb.picArbreMo} Mo, sur ${mesureWeb.relevesUtiles} relevés, ` +
+        `en ${mesureWeb.secondes} s.`
+    : `\n  Mémoire du build web — NON MESURÉE : aucun relevé n'a vu de processus, ` +
+        `en ${mesureWeb.secondes} s.`,
 );
 if (mesureWeb.codeSortie !== 0) {
-  // Le message d'erreur dit lequel des deux cas on est dans, parce que les deux
-  // se ressemblent dans un terminal : un build tué par le tas rend un code
-  // Windows opaque (134, ou 3221226505) juste après avoir frôlé son plafond.
+  // Le message d'erreur dit lequel des trois cas on est dans, parce qu'ils se
+  // ressemblent tous dans un terminal : un build tué par le tas rend un code
+  // Windows opaque (134, ou 3221226505) juste après avoir frôlé son plafond,
+  // et un build non mesuré rend un pic de zéro qui ressemble à un build sobre.
   throw new Error(
     `Le build web a échoué (code ${mesureWeb.codeSortie}).\n\n` +
-      `  Pic d'un processus : ${mesureWeb.picProcessusMo} Mo, plafond du tas ${HEAP_FLOOR_MB} Mo.\n` +
-      (mesureWeb.picProcessusMo >= HEAP_FLOOR_MB
-        ? `  Le pic a atteint le plafond : c'est une panne de mémoire.\n` +
-          `  Mesurer un plancher plus haut — node scripts/measure-web-build-heap.mjs --cap ${plancherPour(mesureWeb.picProcessusMo)} —\n` +
-          `  et porter le chiffre dans HEAP_FLOOR_MB avec la mesure (#219).\n`
-        : "  Le pic est resté sous le plafond : la cause n'est pas la mémoire, lire l'erreur ci-dessus.\n"),
+      (!mesureWeb.relevesUtiles
+        ? `  Le pic n'a pas été mesuré : aucun relevé n'a vu de processus.\n` +
+          `  La cause de l'échec est à lire ci-dessus ; la mémoire ne peut ni être\n` +
+          `  accusée ni être mise hors de cause à partir d'ici.\n`
+        : `  Pic d'un processus : ${mesureWeb.picProcessusMo} Mo, plafond du tas ${HEAP_FLOOR_MB} Mo.\n` +
+          (mesureWeb.picProcessusMo >= HEAP_FLOOR_MB
+            ? `  Le pic a atteint le plafond : c'est une panne de mémoire.\n` +
+              `  Mesurer un plancher plus haut — node scripts/measure-web-build-heap.mjs --cap ${plancherPour(mesureWeb.picProcessusMo)} —\n` +
+              `  et porter le chiffre dans HEAP_FLOOR_MB avec la mesure (#219).\n`
+            : "  Le pic est resté sous le plafond : la cause n'est pas la mémoire, lire l'erreur ci-dessus.\n")),
   );
 }
-const verdictWeb = verdictPic(mesureWeb.picProcessusMo, referenceHeap);
+const verdictWeb = verdictPic(mesureWeb, referenceHeap);
 console.log(
   verdictWeb.niveau === 'ok' ? `  ${verdictWeb.message}` : `  ⚠ ${verdictWeb.message} (#219)`,
 );

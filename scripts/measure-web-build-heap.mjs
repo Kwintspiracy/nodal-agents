@@ -111,9 +111,15 @@ async function principal() {
     `sortie              ${mesure.codeSortie === 0 ? 'succès' : `ÉCHEC (code ${mesure.codeSortie})`}`,
   );
   console.log(`durée               ${mesure.secondes} s`);
-  console.log(`pic d'un processus  ${mesure.picProcessusMo} Mo (pid ${mesure.pidPic})`);
-  console.log(`pic de l'arbre      ${mesure.picArbreMo} Mo (à t+${mesure.tPicArbre} s)`);
-  console.log(`plancher justifié   ${plancherPour(mesure.picProcessusMo)} Mo (pic + 25 %)`);
+  if (mesure.relevesUtiles) {
+    console.log(`pic d'un processus  ${mesure.picProcessusMo} Mo (pid ${mesure.pidPic})`);
+    console.log(`pic de l'arbre      ${mesure.picArbreMo} Mo (à t+${mesure.tPicArbre} s)`);
+    console.log(`relevés utiles      ${mesure.relevesUtiles}`);
+    console.log(`plancher justifié   ${plancherPour(mesure.picProcessusMo)} Mo (pic + 25 %)`);
+  } else {
+    // Un pic de zéro ressemble à un build sobre. On dit l'absence, pas le zéro.
+    console.log("pic                 NON MESURÉ — aucun relevé n'a vu de processus");
+  }
   console.log(`plancher en vigueur ${plancher} Mo`);
   console.log('────────────────────────────────────────────────────────');
 
@@ -132,6 +138,8 @@ async function principal() {
       // basse — le build s'est arrêté avant d'avoir tout demandé — et le
       // prochain build crierait à la hausse sans raison.
       console.log("Référence NON écrite : le build a échoué, son pic ne décrit rien d'entier.");
+    } else if (!mesure.relevesUtiles) {
+      console.log("Référence NON écrite : le pic n'a pas été mesuré.");
     } else {
       writeFileSync(
         resolve(repoRoot, 'scripts/build-heap-reference.json'),
