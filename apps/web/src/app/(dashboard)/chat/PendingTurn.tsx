@@ -22,9 +22,16 @@
 // comble ce temps-là, côté client, avec ce qu'on SAIT déjà : les textes
 // envoyés, et le fait qu'on attend.
 //
-// Il ne devine rien de plus : pas de réponse partielle, pas de durée. Et
-// chaque copie s'efface D'ELLE-MÊME dès que le fil rendu par le serveur porte
-// son texte (`requests`) : c'est le fil qui fait foi, jamais cette copie.
+// Il ne devine rien : chaque copie s'efface D'ELLE-MÊME dès que le fil rendu
+// par le serveur porte son texte (`requests`) — c'est le fil qui fait foi,
+// jamais cette copie.
+//
+// Depuis #152, il montre aussi la réponse PENDANT qu'elle s'écrit : le texte
+// que le runner diffuse remplace les trois points dès le premier mot. Ce texte
+// n'est pas une supposition, c'est la réponse elle-même, en train d'arriver ;
+// ce qui n'a pas changé, c'est qui fait foi. Le tour relu prend le relais ; et
+// quand le flux échoue, la copie ENTIÈRE quitte le fil — sa phrase à moitié
+// écrite avec elle, plutôt que figée là comme si c'était la réponse (inv. #4).
 
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import AgentAvatar from '@/components/ui/AgentAvatar';
@@ -40,8 +47,11 @@ type Pending = {
    *  au moment de l'envoi : la copie s'efface quand le fil en porte un de
    *  plus. Deux « ok » de suite s'effacent donc l'un après l'autre. */
   baseline: number;
-  /** L'action serveur a répondu : le tour est joué, le fil va le montrer. */
+  /** L'envoi a répondu : le tour est joué, le fil va le montrer. */
   settled: boolean;
+  /** La réponse telle qu'on la connaît À CET INSTANT (#152). Vide tant que
+   *  rien n'est arrivé — et la copie entière part si le flux échoue. */
+  reply: string;
 };
 
 type Store = {
@@ -51,7 +61,13 @@ type Store = {
   inFlight: boolean;
   /** Le fil rendu se termine sur une demande dont la réponse n'est pas là. */
   awaitingReply: boolean;
+  /** Ce que l'envoi en cours a reçu de sa réponse jusqu'ici — le premier
+   *  envoi non joué, celui que le runner traite. */
+  streamingReply: string;
   begin: (text: string) => number;
+  /** La réponse ENTIÈRE connue à cet instant, pour cet envoi. Pas un
+   *  fragment : l'appelant accumule, ce porteur ne fait qu'afficher. */
+  stream: (id: number, reply: string) => void;
   /** L'envoi a réussi : la copie reste jusqu'à ce que le fil la porte. */
   settle: (id: number) => void;
   /** L'envoi a échoué : la copie quitte le fil. */
@@ -71,7 +87,9 @@ const NOOP: Store = {
   pending: [],
   inFlight: false,
   awaitingReply: false,
+  streamingReply: '',
   begin: () => 0,
+  stream: () => {},
   settle: () => {},
   end: () => {},
   rendered: () => Promise.resolve(),
@@ -124,6 +142,10 @@ export function PendingTurnProvider({
     pending,
     inFlight: all.some((p) => !p.settled),
     awaitingReply,
+    // Celui que le runner traite : le premier envoi dont le tour n'est pas
+    // joué. Lu sur `all` et non sur `pending`, parce qu'une copie peut déjà
+    // avoir quitté l'écran (le fil l'a rendue) pendant que sa réponse arrive.
+    streamingReply: all.find((p) => !p.settled)?.reply ?? '',
     begin: (text) => {
       const id = ++nextId.current;
       const baseline =
@@ -135,10 +157,11 @@ export function PendingTurnProvider({
       // On range en passant ce que le fil a déjà rendu ET dont le tour est joué.
       setAll((prev) => [
         ...prev.filter((p) => !p.settled || countOf(requests, p.text) <= p.baseline),
-        { id, text, baseline, settled: false },
+        { id, text, baseline, settled: false, reply: '' },
       ]);
       return id;
     },
+    stream: (id, reply) => setAll((prev) => prev.map((p) => (p.id === id ? { ...p, reply } : p))),
     settle: (id) => setAll((prev) => prev.map((p) => (p.id === id ? { ...p, settled: true } : p))),
     end: (id) => setAll((prev) => prev.filter((p) => p.id !== id)),
     // Toujours tenue par l'effet, jamais ici : la fermeture d'où l'on appelle
@@ -157,14 +180,17 @@ export function usePendingTurn(): Store {
   return useContext(PendingTurnContext);
 }
 
-/** L'agent, à gauche, qui réfléchit — l'en-tête de tour, et à la place de sa
- *  réponse trois points qui battent. */
+/** L'agent, à gauche : son en-tête, puis sa réponse en train de s'écrire —
+ *  ou, tant qu'aucun mot n'est arrivé, trois points qui battent. */
 function Thinking({
   agentName,
   agentAvatarUrl,
+  reply = '',
 }: {
   agentName: string;
   agentAvatarUrl: string | null;
+  /** Le texte déjà reçu (#152). Vide : l'agent n'a encore rien dit. */
+  reply?: string;
 }) {
   return (
     <div className="min-w-0 pt-6" data-testid="pending-thinking">
@@ -172,14 +198,22 @@ function Thinking({
         <AgentAvatar name={agentName} imageUrl={agentAvatarUrl} size="sm" shape="square" />
         <span className="text-title-15 text-ink">{agentName}</span>
       </div>
-      <div className="flex items-center gap-2 text-mono-11 text-feed-reasoning">
-        <span className="flex items-center gap-1" aria-hidden="true">
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning [animation-delay:150ms]" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning [animation-delay:300ms]" />
-        </span>
-        <span>thinking</span>
-      </div>
+      {reply === '' ? (
+        <div className="flex items-center gap-2 text-mono-11 text-feed-reasoning">
+          <span className="flex items-center gap-1" aria-hidden="true">
+            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning" />
+            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning [animation-delay:150ms]" />
+            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning [animation-delay:300ms]" />
+          </span>
+          <span>thinking</span>
+        </div>
+      ) : (
+        // Rendu comme la réponse le sera une fois le fil relu — même Markdown,
+        // même ton — pour que le texte ne saute pas quand le tour la remplace.
+        <div data-testid="pending-reply">
+          <Markdown text={reply} />
+        </div>
+      )}
     </div>
   );
 }
@@ -191,7 +225,7 @@ export default function PendingTurn({
   agentName: string;
   agentAvatarUrl?: string | null;
 }) {
-  const { pending, inFlight, awaitingReply } = usePendingTurn();
+  const { pending, inFlight, awaitingReply, streamingReply } = usePendingTurn();
   // Le loader est sous le message que le runner traite : celui que le fil
   // rendu porte déjà sans réponse — si un envoi est en vol : un fil qui se
   // termine sur une demande sans réponse (un tour qui a échoué hier) ne fait
@@ -201,7 +235,9 @@ export default function PendingTurn({
 
   return (
     <div className="mx-auto max-w-[760px]" data-testid="pending-turn" aria-live="polite">
-      {thinkingAfterFeed && <Thinking agentName={agentName} agentAvatarUrl={agentAvatarUrl} />}
+      {thinkingAfterFeed && (
+        <Thinking agentName={agentName} agentAvatarUrl={agentAvatarUrl} reply={streamingReply} />
+      )}
       {pending.map((p, i) => (
         <div key={p.id}>
           {/* Le message qui vient de partir, à droite, comme il sera rendu. */}
@@ -221,7 +257,7 @@ export default function PendingTurn({
             </div>
           </div>
           {!thinkingAfterFeed && i === 0 && (
-            <Thinking agentName={agentName} agentAvatarUrl={agentAvatarUrl} />
+            <Thinking agentName={agentName} agentAvatarUrl={agentAvatarUrl} reply={p.reply} />
           )}
         </div>
       ))}

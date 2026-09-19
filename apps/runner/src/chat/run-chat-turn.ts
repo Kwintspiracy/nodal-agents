@@ -251,8 +251,25 @@ export async function runChatTurn(opts: {
   agentId: string;
   conversationId: string;
   message: string;
+  /**
+   * Le texte de la réponse, fragment par fragment, pendant qu'il arrive (#152).
+   *
+   * Absent — le cas de `/api/chat` — le tour se joue exactement comme avant :
+   * un seul appel `generateText`, la réponse d'un bloc. Présent, SEUL l'appel
+   * PRINCIPAL passe en flux : ni le recheck d'escalade, ni la relance sans
+   * outils, ni la génération du titre n'appellent ce rappel. Ce ne sont pas la
+   * réponse, et les diffuser montrerait du texte que personne n'a écrit pour
+   * être lu.
+   *
+   * Ce que ce rappel reçoit n'est jamais la vérité finale : la réponse rendue
+   * par ce tour, et la ligne écrite en base, le sont. Un flux coupé en route
+   * retombe dans la relance sans outils plus bas, dont le texte n'est PAS
+   * diffusé — l'appelant remplace donc ce qu'il a accumulé par `reply`, sans
+   * quoi un texte tronqué passerait pour la réponse (invariant #4).
+   */
+  onTextDelta?: (delta: string) => void;
 }): Promise<ChatTurnResult> {
-  const { deps, entityId, agentId, conversationId, message } = opts;
+  const { deps, entityId, agentId, conversationId, message, onTextDelta } = opts;
   const db = deps.db;
 
   // 1. Load + verify the agent belongs to this entity.
@@ -480,13 +497,28 @@ export async function runChatTurn(opts: {
   let text = '';
   let runTask: { input?: unknown } | undefined;
   try {
-    const response = await llmClient.generateText({
-      system: systemPrompt,
-      messages,
-      tools: CHAT_TOOLS,
-    });
-    text = (response.text ?? '').trim();
-    runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+    if (onTextDelta) {
+      // Le MÊME appel, dit au fur et à mesure (#152). `streamText` rend son
+      // résultat tout de suite ; le texte complet et les appels d'outils ne
+      // sont connus qu'une fois le flux consommé, d'où les `await` après la
+      // boucle. L'escalade se lit donc exactement comme sur l'autre chemin.
+      const streamed = llmClient.streamText({
+        system: systemPrompt,
+        messages,
+        tools: CHAT_TOOLS,
+      });
+      for await (const delta of streamed.textStream) onTextDelta(delta);
+      text = ((await streamed.text) ?? '').trim();
+      runTask = ((await streamed.toolCalls) ?? []).find((tc) => tc.toolName === 'run_task');
+    } else {
+      const response = await llmClient.generateText({
+        system: systemPrompt,
+        messages,
+        tools: CHAT_TOOLS,
+      });
+      text = (response.text ?? '').trim();
+      runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+    }
   } catch (err) {
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,

@@ -14,6 +14,7 @@ import { approveRoute } from './routes/approve.ts';
 import { fileDiffRoute } from './routes/file-diff.ts';
 import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
+import { chatStreamRoute } from './routes/chat-stream.ts';
 import { webhookRoute } from './routes/webhook.ts';
 import { codeTaskDoctorRoute } from './routes/code-task-doctor.ts';
 import {
@@ -213,6 +214,9 @@ export function createApp(
 
   app.use('/api/agent', requireRunnerAuth);
   app.use('/api/chat', requireRunnerAuth);
+  // Le flux (#152) : même garde, chemin distinct — `app.use` de Hono compare
+  // le chemin en entier, donc `/api/chat` ne couvre pas `/api/chat/stream`.
+  app.use('/api/chat/stream', requireRunnerAuth);
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
   // P11 — le diff d'un fichier écrit par un tour. Même garde que /api/approve :
@@ -231,6 +235,8 @@ export function createApp(
   app.post('/api/worker', (c) => workerRoute(c, deps, runnerEnv));
 
   app.post('/api/chat', (c) => chatRoute(c, deps, runnerEnv));
+
+  app.post('/api/chat/stream', (c) => chatStreamRoute(c, deps, runnerEnv));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 
