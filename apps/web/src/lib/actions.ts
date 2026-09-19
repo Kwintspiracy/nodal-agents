@@ -10436,11 +10436,17 @@ export async function listWebhookTriggersAction(): Promise<ActionResult<WebhookT
 
 // ─── La page d'UNE automatisation (#202) ─────────────────────────────────────
 
+// Ces deux valeurs ne sont PAS exportées, et ne peuvent pas l'être : ce fichier
+// est un module `'use server'`, où seule une fonction asynchrone s'exporte (la
+// CI le refuse au build, pas au typecheck). Elles voyagent jusqu'à l'écran dans
+// la donnée qu'il lit — `window.days` porte la fenêtre, la page n'a pas à
+// connaître la constante.
+
 /** Combien de runs la page d'une automatisation liste ; « See all » mène au reste. */
-export const AUTOMATION_RUNS_SHOWN = 10;
+const AUTOMATION_RUNS_SHOWN = 10;
 
 /** La fenêtre du compteur « N runs · $X over 30 days ». */
-export const AUTOMATION_WINDOW_DAYS = 30;
+const AUTOMATION_WINDOW_DAYS = 30;
 
 /** Ce que l'automatisation a coûté et combien de fois elle a tourné, sur la fenêtre. */
 export type AutomationWindow = { runs: number; costUsd: number; days: number };
