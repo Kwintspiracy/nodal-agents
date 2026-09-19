@@ -116,45 +116,28 @@ export function ProjectPanelButton() {
 }
 
 /**
- * UNE rangée sous l'en-tête : le contenu à gauche, le panneau à droite.
+ * Le PANNEAU seul, pour la fente `aside` du `PageShell` (#237).
  *
- * `DockedPanel` est un enfant flex dimensionné en pixels : son parent doit
- * être la rangée qui porte les deux. C'est cette rangée-là, et c'est elle qui
- * donne au panneau sa pleine hauteur, du filet de l'en-tête au bas de l'écran.
- *
- * LA BARRE D'OUTILS EST DANS LA COLONNE DE GAUCHE, et c'est le point (Quentin,
- * 19/09). Passée au `toolbar` du `PageShell`, elle faisait un bandeau pleine
- * largeur AU-DESSUS du panneau : le panneau commençait plus bas que le filet,
- * et le bandeau traînait à gauche des boutons une bande vide qui n'appartenait
- * à rien. Ici elle est alignée sur la liste qu'elle commande, et le panneau
- * monte jusqu'au filet.
- *
- * Elle NE DÉFILE PAS : la liste seule défile sous elle. Les trois gestes d'un
- * projet restent sous la main au bout de cinquante lignes.
+ * Il n'y a plus de rangée maison ici : c'est le `PageShell` qui met la colonne
+ * de contenu et le panneau côte à côte, sous l'en-tête. Une rangée écrite
+ * dans la page vivait FORCÉMENT sous la zone de barre d'outils, donc le
+ * panneau commençait plus bas que le filet, et la barre traînait à gauche de
+ * ses boutons une bande vide qui n'appartenait à rien (Quentin, 19/09).
  */
-export function ProjectPanelLayout({
-  title,
-  toolbar,
-  panel,
-  children,
-}: {
-  title: string;
-  toolbar: ReactNode;
-  panel: ReactNode;
-  children: ReactNode;
-}) {
+export function ProjectFilesPanel({ title, children }: { title: string; children: ReactNode }) {
   const { open, close } = usePanel();
   return (
-    <div className="flex min-h-0 flex-1">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="shrink-0 px-5 pt-4 pb-1 sm:px-8 lg:px-9">{toolbar}</div>
-        <main className="min-w-0 flex-1 overflow-y-auto px-5 pt-3 pb-10 sm:px-8 lg:px-9">
-          {children}
-        </main>
-      </div>
-      <DockedPanel open={open} onClose={close} title={title} testId="project-files-panel">
-        {panel}
-      </DockedPanel>
-    </div>
+    <DockedPanel open={open} onClose={close} title={title} testId="project-files-panel">
+      {children}
+    </DockedPanel>
+  );
+}
+
+/** Le corps qui défile, dans les gouttières de la page. */
+export function ProjectPanelBody({ children }: { children: ReactNode }) {
+  return (
+    <main className="min-w-0 flex-1 overflow-y-auto px-5 pt-5 pb-10 sm:px-8 lg:px-9">
+      {children}
+    </main>
   );
 }

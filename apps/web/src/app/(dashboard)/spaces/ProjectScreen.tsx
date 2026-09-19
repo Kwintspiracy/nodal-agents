@@ -29,13 +29,15 @@ import {
   listCodeProjectPrefsAction,
 } from '@/lib/actions.ts';
 
+import WorkBar from '@/components/ui/WorkBar';
+import ActionRow from '@/components/ui/ActionRow';
 import { projectFactsLine } from './project-header.ts';
 import { activityRows } from './activity-rows.ts';
 import ProjectToolbar from './ProjectToolbar.tsx';
 import ProjectActivity from './ProjectActivity.tsx';
 import ProjectShelf from './ProjectShelf.tsx';
 import ProjectProof from './ProjectProof.tsx';
-import { ProjectPanelLayout, ProjectPanelProvider } from './ProjectPanel.tsx';
+import { ProjectFilesPanel, ProjectPanelBody, ProjectPanelProvider } from './ProjectPanel.tsx';
 import type { ProjectVerification } from './ProjectVerificationPanel.tsx';
 
 export default async function ProjectScreen({
@@ -83,22 +85,41 @@ export default async function ProjectScreen({
 
   return (
     <ProjectPanelProvider forceOpen={forceFilesOpen}>
-      {/* PAS de `toolbar` ici, et c'est le point (Quentin, 19/09) : passée au
-          `PageShell`, la barre faisait un bandeau pleine largeur AU-DESSUS du
-          panneau. Elle vit dans la colonne de gauche, avec la liste qu'elle
-          commande — voir `ProjectPanelLayout`. */}
-      <PageShell fill title={facts.name} subtitle={projectFactsLine(facts)}>
-        <ProjectPanelLayout
-          title="Files & proof"
-          toolbar={
-            <ProjectToolbar
-              projectId={facts.id}
-              projectPath={facts.path}
-              projectName={facts.name}
+      {/* L'ORDRE, et c'est la règle de #242 : l'en-tête (titre, sous-titre), la
+          WorkBar avec le retour dedans, la rangée des actions SOUS la barre,
+          puis la rangée contenu / panneau. Les actions ne sont ni sur la ligne
+          du retour — un retour entouré de boutons n'est plus un retour — ni
+          dans un bandeau pleine largeur au-dessus du panneau.
+          `fluid` : la page d'un projet remplit le cadre. Sa liste est une
+          boîte de réception, et le panneau lui prend déjà 400 px à droite. */}
+      <PageShell
+        fill
+        fluid
+        toolbarBleed
+        title={facts.name}
+        subtitle={projectFactsLine(facts)}
+        toolbar={
+          <>
+            <WorkBar
+              back={{ label: 'Workspaces', parent: '/spaces' }}
+              context={<span className="text-body-13 text-ink-3">{facts.path}</span>}
             />
-          }
-          panel={<FilesAndProof result={pageResult} prefs={prefsResult} owner={ownerResult} />}
-        >
+            <ActionRow className="px-5 pt-4 sm:px-8 lg:px-9">
+              <ProjectToolbar
+                projectId={facts.id}
+                projectPath={facts.path}
+                projectName={facts.name}
+              />
+            </ActionRow>
+          </>
+        }
+        aside={
+          <ProjectFilesPanel title="Files & proof">
+            <FilesAndProof result={pageResult} prefs={prefsResult} owner={ownerResult} />
+          </ProjectFilesPanel>
+        }
+      >
+        <ProjectPanelBody>
           {/* Une activité illisible est DITE, pas remplacée par une liste vide :
               « rien ne s'est passé » et « je n'ai pas pu lire » sont deux choses
               différentes (invariant #4). */}
@@ -114,7 +135,7 @@ export default async function ProjectScreen({
               <ProjectActivity rows={rows} />
             </>
           )}
-        </ProjectPanelLayout>
+        </ProjectPanelBody>
       </PageShell>
     </ProjectPanelProvider>
   );
