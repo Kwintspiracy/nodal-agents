@@ -87,7 +87,12 @@ export {
   readDeliveredReviewVerdict,
   readFinalReviewVerdict,
   parseReviewVerdictOutput,
+  // #59 — la règle qui dit si une relecture interdit d'annoncer « livré »,
+  // et le code qu'elle pose. Une seule lecture, partagée par l'orchestration
+  // et par l'écran.
+  reviewBlocksDelivery,
   REVIEW_VERDICT_TOOL,
+  REVIEW_CHANGES_REQUESTED,
 } from './router/review-verdict';
 export type { ReviewVerdictRecord, ReviewVerdictFinding } from './router/review-verdict';
 

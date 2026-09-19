@@ -69,6 +69,57 @@ export const RunVerdictSchema = z.enum(RUN_VERDICTS);
 export type RunVerdict = z.infer<typeof RunVerdictSchema>;
 
 /**
+ * D'OÙ vient une ligne `verification_runs` (#59, migration 0112).
+ *
+ * `job` : la preuve que la finalisation du job a lancée elle-même — le seul
+ * écrivain jusqu'ici, et donc la valeur par défaut de la colonne.
+ *
+ * `reviewer` : une commande qu'un RELECTEUR a réellement exécutée pendant son
+ * job, recopiée sous le travail qu'il relisait. Elle existe parce que la
+ * preuve la plus solide d'un run — six scénarios Playwright lancés par un
+ * relecteur sur l'application livrée — n'était enregistrée nulle part : le
+ * système ne retenait que le `new Function()` du développeur, la plus faible
+ * des deux.
+ *
+ * L'écran s'en sert pour DIRE l'origine d'une preuve. Il ne la juge pas : une
+ * commande rouge lancée par un relecteur est rouge comme les autres.
+ */
+export const VERIFICATION_RUN_SOURCES = ['job', 'reviewer'] as const;
+export const VerificationRunSourceKindSchema = z.enum(VERIFICATION_RUN_SOURCES);
+export type VerificationRunSourceKind = z.infer<typeof VerificationRunSourceKindSchema>;
+
+/**
+ * Le code que porte un résultat de délégation quand la relecture INTERDIT
+ * d'annoncer une livraison (#59).
+ *
+ * Un CODE, jamais une phrase : le harnais pose le fait, l'écran ou le modèle
+ * le dit dans la langue de la personne (invariant #2), comme `JobFailureHint`
+ * à côté.
+ */
+export const REVIEW_CHANGES_REQUESTED = 'review_changes_requested';
+
+/**
+ * Cette relecture interdit-elle d'annoncer « livré » ?
+ *
+ * La décision du propriétaire, le 19/09/2026 : un `request_changes` empêche de
+ * conclure à une livraison. La règle tient en une ligne et vit ICI, dans le
+ * paquet que l'orchestration ET l'écran lisent tous les deux — une seconde
+ * écriture de la même règle divergerait au premier correctif, et l'écran
+ * dirait « livré » là où le parent recevrait l'inverse.
+ *
+ * Un verdict absent ne bloque RIEN : un travail sans relecture se livre comme
+ * avant, sinon toute la plateforme s'arrêterait le jour où cette fonction est
+ * posée. Seul un `request_changes` bloque, et il le dit.
+ */
+export function reviewBlocksDelivery(
+  verdict: { verdict: string } | string | null | undefined,
+): boolean {
+  if (verdict === null || verdict === undefined) return false;
+  const value = typeof verdict === 'string' ? verdict : verdict.verdict;
+  return value === 'request_changes';
+}
+
+/**
  * Une commande de preuve. `timeoutSeconds` est entier et borné : une preuve
  * n'est pas un job, elle ne tourne pas une heure.
  */

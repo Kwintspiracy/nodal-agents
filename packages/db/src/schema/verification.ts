@@ -177,6 +177,23 @@ export const verificationRuns = pgTable(
     testedGeneration: integer('tested_generation'),
     /** verification_epoch testé — snapshot au moment du run. */
     testedEpoch: integer('tested_epoch'),
+    /**
+     * QUI a lancé cette commande (#59, 0112) : `job` pour la preuve que la
+     * finalisation du job lance elle-même, `reviewer` pour une commande qu'un
+     * relecteur a réellement exécutée et que son verdict a fait enregistrer
+     * sous le travail relu. `'job'` par défaut : toutes les lignes écrites
+     * avant cette colonne viennent de la finalisation.
+     */
+    source: text('source').notNull().default('job'),
+    /**
+     * Le job qui a EXÉCUTÉ la commande, quand ce n'est pas `job_id`. C'est le
+     * job du relecteur : l'écran remonte de là à son agent pour dire d'où
+     * vient la preuve, plutôt que de porter un nom recopié dans la ligne
+     * (invariants #1 et #2). `NULL` sur `source = 'job'`, où l'exécutant EST
+     * `job_id`. `set null` comme `job_id` : une preuve qui a tourné reste un
+     * fait constaté même si le job du relecteur est effacé.
+     */
+    sourceJobId: uuid('source_job_id').references(() => agentJobs.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -185,6 +202,7 @@ export const verificationRuns = pgTable(
       'verification_runs_outcome_kind_check',
       sql`${table.outcomeKind} IN ('exit','timeout','spawn_error')`,
     ),
+    check('verification_runs_source_check', sql`${table.source} IN ('job','reviewer')`),
     check(
       'verification_runs_verdict_check',
       sql`${table.verdict} IN ('green','red','infra_error')`,
