@@ -74,7 +74,7 @@ import {
   createSendVoiceTool,
   createListConversationsTool,
 } from '@nodal-agents/tools';
-import { enabledMetaTools, parseRootGrants } from '@nodal-agents/shared';
+import { metaToolsForAgent, parseRootGrants } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
   createLazyMcpTools,
@@ -150,10 +150,13 @@ export async function resolveAgentToolNames(
     .where(eq(entities.id, agentRow.entityId ?? ''))
     .limit(1);
   const isRootAgent = entityRow?.rootAgentId != null && entityRow.rootAgentId === agentRow.id;
+  // `may_change_team` retire les trois outils d'équipe tant qu'il est à false
+  // (issue #137) — le même retrait qu'execute.ts, au même endroit de
+  // l'assemblage, pour que ce miroir reste fidèle.
   const metaToolNames: string[] = isRootAgent
-    ? enabledMetaTools(parseRootGrants(entityRow?.rootGrants)).filter(
-        (name) => registry.get(name) !== undefined,
-      )
+    ? metaToolsForAgent(parseRootGrants(entityRow?.rootGrants), {
+        mayChangeTeam: agentRow.mayChangeTeam,
+      }).filter((name) => registry.get(name) !== undefined)
     : [];
 
   // ── Connector adapter tool names (mirrors execute.ts:1193-1277) ─────────

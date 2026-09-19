@@ -673,6 +673,13 @@ export type AgentRow = {
    * queries that don't select it stay valid; the edit loader (full row) has it.
    */
   commandAllowlist?: string[] | null;
+  /**
+   * agents.may_change_team (migration 0111, issue #137). `false` = this agent's
+   * tool list carries no create_agent / attach_agent / detach_agent. Optional
+   * for the same reason as commandAllowlist: list queries that do not select it
+   * stay valid, and the edit loader (full row) has it.
+   */
+  mayChangeTeam?: boolean;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
@@ -7382,6 +7389,59 @@ export async function setAgentCommandAllowlistAction(raw: unknown): Promise<Acti
   } catch (err) {
     console.error('[setAgentCommandAllowlistAction]', err);
     return fail('db_error', 'Failed to save the command allowlist');
+  }
+}
+
+// ─── « Modifier sa propre équipe », par agent (#137) ─────────────────────────
+//
+// agents.may_change_team : ce réglage décide si `create_agent`, `attach_agent`
+// et `detach_agent` entrent dans la liste d'outils calculée par job. À false —
+// le défaut, et ce que la migration 0111 a écrit pour tous les agents
+// existants — le modèle ne les voit pas.
+//
+// Réservé au propriétaire, même forme de garde que setCliRuntimeModeAction et
+// setAgentCommandAllowlistAction : il élargit ce qu'un agent peut faire à
+// l'organisation elle-même.
+
+const SetAgentMayChangeTeamSchema = z.object({
+  agentId: z.string().guid(),
+  mayChangeTeam: z.boolean(),
+});
+
+export async function setAgentMayChangeTeamAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentMayChangeTeamSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, mayChangeTeam } = parsed.data;
+
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change who an agent may recruit.');
+      }
+    }
+
+    const db = getDb();
+    const updated = await db
+      .update(agents)
+      .set({ mayChangeTeam, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+      .returning({ id: agents.id });
+    if (updated.length === 0) return fail('not_found', 'Agent not found');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentMayChangeTeamAction]', err);
+    return fail('db_error', 'Failed to save the team setting');
   }
 }
 

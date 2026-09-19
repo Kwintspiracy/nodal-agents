@@ -130,6 +130,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       runtime text NOT NULL DEFAULT 'nodal' CHECK (runtime IN ('nodal', 'claude-code', 'codex')),
       cli_permissions jsonb,
       command_allowlist text[],
+      -- mirrors migration 0111 : OFF par défaut, et OFF pour tous les agents
+      -- existants — les trois outils d'équipe n'entrent pas dans la liste.
+      may_change_team boolean NOT NULL DEFAULT false,
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),

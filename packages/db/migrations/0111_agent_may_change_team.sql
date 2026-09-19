@@ -1,0 +1,20 @@
+-- « Modifier sa propre équipe », par AGENT, et fermé par défaut.
+--
+-- Dans la nuit du 15/09/2026, une demande arrivée par le MCP a réclamé à un
+-- orchestrateur une revue par un relecteur qui n'était pas dans son équipe.
+-- Il a appelé `attach_agent` (02:13), ce qui a rangé ce relecteur dans deux
+-- équipes, puis il a délégué. Le propriétaire a découvert l'organisation
+-- modifiée le lendemain matin. La réponse attendue n'était pas celle-là : un
+-- agent qui ne peut pas faire une chose le DIT et nomme qui le peut, il ne
+-- recâble pas l'organisation pour rendre la demande possible.
+--
+-- La colonne commande l'entrée de `create_agent`, `attach_agent` et
+-- `detach_agent` dans la liste d'outils calculée par job (invariant #9) :
+-- à FALSE, le modèle ne les voit pas du tout.
+--
+-- NOT NULL DEFAULT false : la migration met le réglage à OFF pour TOUS les
+-- agents existants, y compris ceux qui recomposaient leur équipe hier. C'est
+-- la décision du propriétaire (19/09/2026) et elle est dite dans la note de
+-- version — un pouvoir qui se perd en silence serait pire qu'un pouvoir qu'on
+-- reprend en le disant.
+ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "may_change_team" boolean NOT NULL DEFAULT false;
