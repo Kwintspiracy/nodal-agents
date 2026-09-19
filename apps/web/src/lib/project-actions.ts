@@ -178,6 +178,10 @@ export type ProjectPageView = {
     registeredAt: Date;
     jobsCount: number;
     lastActivityAt: Date | null;
+    /** « Pose git dans ce dossier » — l'intention du propriétaire (#200). */
+    initGit: boolean;
+    /** Quand Nodal a posé le dépôt. `null` = il n'a rien posé. */
+    gitInitializedAt: Date | null;
   };
   files: ProjectFilesView;
   proof: ProjectProofView;
@@ -1519,6 +1523,11 @@ async function loadProjectCore(
       agentSlug: agents.slug,
       verifyCommands: codeProjects.verifyCommands,
       verifyApprovedManifestHash: codeProjects.verifyApprovedManifestHash,
+      // L'option git du projet, et le FAIT de sa pose (issue #200). Les deux,
+      // parce qu'ils ne se déduisent pas l'un de l'autre : l'option peut être
+      // ON sur un dossier qui était déjà un dépôt, et rien n'a alors été posé.
+      initGit: codeProjects.initGit,
+      gitInitializedAt: codeProjects.gitInitializedAt,
     })
     .from(codeProjects)
     .leftJoin(agents, eq(agents.id, codeProjects.agentId))
@@ -1618,6 +1627,8 @@ async function loadProjectCore(
       hidden: row.hidden,
       registeredFrom: (row.registeredFrom ?? 'spaces') as 'spaces' | 'conversation',
       registeredAt: row.registeredAt as Date,
+      initGit: row.initGit,
+      gitInitializedAt: row.gitInitializedAt,
     },
     conversations: conversationRows.map(
       (c): ProjectConversationRow => ({

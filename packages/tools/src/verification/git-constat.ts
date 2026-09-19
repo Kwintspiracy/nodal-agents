@@ -69,10 +69,10 @@
 // rien écrire).
 
 import { execFile } from 'node:child_process';
-import { realpath, stat } from 'node:fs/promises';
-import { delimiter as PATH_DELIMITER } from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { normalizePath } from '@nodal-agents/shared';
+import { resolveGitBinary } from './git-binary';
 import type { ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { fingerprint, type FileFingerprint } from './observed';
 
@@ -81,79 +81,14 @@ const run = promisify(execFile);
 /** Une sonde qui pend ne doit pas tenir un appel d'outil. */
 const GIT_TIMEOUT_MS = 5_000;
 
-/**
- * ═══ QUEL `git` EST LANCÉ — un DURCISSEMENT, pas un trou refermé ═══
- *
- * Revue C de la PR #227, constat 3. La crainte : `execFile('git', …, { cwd:
- * <le dossier du projet> })` laisse le système chercher le programme, et la
- * recherche de `CreateProcess` a longtemps regardé le RÉPERTOIRE COURANT avant
- * le PATH. Un `git.exe` déposé dans le dossier d'un projet — par une
- * dépendance, par un dépôt cloné, par l'agent lui-même — aurait alors tourné à
- * la place du git du système, à chaque appel d'outil mutant, et sa sortie
- * fabriquée aurait alimenté la liste des fichiers livrés.
- *
- * CE N'EST PAS CE QUI SE PASSE SUR CE RUNTIME, et le dire autrement serait se
- * vanter d'une réparation qu'on n'a pas faite. Mesuré : un vrai `git.exe` posé
- * dans le dossier du projet, la résolution remise au nom nu, et le cas reste
- * VERT sous Windows avec Node 26.4.0 — libuv ne cherche plus le répertoire
- * courant pour le programme (CVE-2024-24806), et ce Node porte le correctif.
- *
- * Le mécanisme est gardé quand même : il ne coûte rien, il retire une
- * recherche de programme par appel, et il tient sur un runtime — plus ancien,
- * ou un autre — qui chercherait encore. Le binaire est donc résolu UNE FOIS, à
- * partir du PATH du processus runner et de lui seul : aucun sous-processus
- * n'est lancé pour le trouver, sans quoi la recherche se reposerait exactement
- * là où serait le trou. Le chemin ABSOLU obtenu est passé à `execFile`, qui n'a
- * plus rien à chercher.
- *
- * `null` quand il n'y a pas de git sur le PATH : le constat par git décline,
- * le run retombe sur le disque, et le dit.
- */
-let gitBinaire: Promise<string | null> | null = null;
-
-/** Les extensions exécutables à essayer sous Windows, dans l'ordre. */
-const EXTENSIONS_WINDOWS = ['.exe', '.cmd', '.bat', '.com'];
-
-async function estFichier(chemin: string): Promise<boolean> {
-  try {
-    return (await stat(chemin)).isFile();
-  } catch {
-    return false;
-  }
-}
+// QUEL `git` EST LANCÉ : la réponse vit dans `git-binary.ts`, parce que
+// `apps/web` pose git dans le dossier d'un projet (issue #200) et que c'est la
+// même question. Réexporté ici pour les appelants qui l'avaient déjà.
+export { resolveGitBinary, _resetGitBinaryCache } from './git-binary';
 
 /**
- * Le chemin absolu du `git` du système, cherché dans le PATH du runner.
- *
- * Le résultat est mémoïsé : la question est posée à chaque appel d'outil
- * mutant, et sa réponse ne change pas pendant la vie du processus.
- */
-export async function resolveGitBinary(): Promise<string | null> {
-  gitBinaire ??= (async () => {
-    const chemins = (process.env['PATH'] ?? '').split(PATH_DELIMITER).filter((d) => d !== '');
-    const windows = process.platform === 'win32';
-    for (const dossier of chemins) {
-      const base = `${normalizePath(dossier)}/git`;
-      // Sous Windows, `git` nu n'est pas exécutable : ce sont les extensions
-      // de PATHEXT qui le rendent lançable, et c'est `git.exe` qu'on veut.
-      for (const ext of windows ? EXTENSIONS_WINDOWS : ['']) {
-        if (await estFichier(base + ext)) return base + ext;
-      }
-    }
-    console.warn('[verification] GIT_CONSTAT_NO_GIT_ON_PATH');
-    return null;
-  })();
-  return gitBinaire;
-}
-
-/** Pour les tests : oublier le binaire mémoïsé. */
-export function _resetGitBinaryCache(): void {
-  gitBinaire = null;
-}
-
-/**
- * Au-delà, le constat par git décline (borne nº 4 ci-dessus). Mille lignes de
- * statut, c'est déjà un arbre que personne ne relit à l'œil ; en dessous, le
+ * Au-delà, le constat par git décline (borne nº 4 de l'en-tête). Mille lignes
+ * de statut, c'est déjà un arbre que personne ne relit à l'œil ; en dessous, le
  * prix des empreintes est celui de quelques fichiers.
  */
 export const MAX_STATUS_ENTRIES = 1000;

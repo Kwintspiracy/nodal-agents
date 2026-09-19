@@ -1,8 +1,16 @@
 'use client';
 
 /**
- * ProjectGitPanel — l'option « git dans ce dossier », sur l'écran du projet
- * (issue #200).
+ * ProjectGitPanel — l'option « git dans ce dossier », dans les réglages du
+ * projet (issue #200).
+ *
+ * OÙ, ET POURQUOI PAS AILLEURS. Le panneau a d'abord vécu sur l'écran du
+ * projet DÉRIVÉ de l'onglet Code, qui n'a pas d'identité en base : l'écran ne
+ * pouvait donner qu'un CHEMIN, et une action qui pose un dépôt à partir d'un
+ * chemin venu du client est une action qui pose un dépôt n'importe où (revue C
+ * de la PR #244, constat 2). Il vit donc là où un projet a un identifiant :
+ * `/spaces/[id]/files`, ce que Quentin appelle « les réglages de mon projet ».
+ * Et c'est ce que l'issue demandait — « un projet ENREGISTRÉ gagne une option ».
  *
  * POURQUOI ELLE EXISTE. Le constat par git (#199) s'active de lui-même dès
  * qu'un projet est un dépôt : il liste exactement ce qu'un run a écrit, y
@@ -37,35 +45,38 @@ export type ProjectGit = {
 };
 
 export default function ProjectGitPanel({
-  projectPath,
+  projectId,
   git,
   isOwner,
-  onChanged,
 }: {
-  projectPath: string;
-  git: ProjectGit | null;
+  /** L'identité du projet enregistré. Le serveur va chercher SON chemin. */
+  projectId: string;
+  git: ProjectGit;
   isOwner: boolean;
-  onChanged: (next: ProjectGit) => void;
 }) {
   const [busy, startTransition] = useTransition();
+  /** Ce que le serveur a rendu depuis le dernier geste — la ligne relue. */
+  const [etat, setEtat] = useState<ProjectGit>(git);
   /** Ce que le serveur vient de répondre — dit une fois, sous l'interrupteur. */
   const [dernier, setDernier] = useState<'initialised' | 'already' | 'off' | null>(null);
-  const initGit = git?.initGit ?? false;
-  const pose = git?.gitInitializedAt ?? null;
+  const initGit = etat.initGit;
+  const pose = etat.gitInitializedAt;
 
   function basculer(): void {
     if (!isOwner || busy) return;
     const cible = !initGit;
     startTransition(async () => {
-      const r = await setCodeProjectInitGitAction({ projectPath, initGit: cible });
+      const r = await setCodeProjectInitGitAction({ projectId, initGit: cible });
       if (!r.ok) {
         toast.error(r.message);
         return;
       }
       setDernier(r.data.outcome === 'failed' ? null : r.data.outcome);
-      onChanged({
+      // CE QUE LE SERVEUR A RENDU, jamais ce qu'on croyait avoir écrit : la
+      // date de pose vient de la ligne relue (revue C, mineur 6).
+      setEtat({
         initGit: r.data.initGit,
-        gitInitializedAt: r.data.gitInitializedAt ? new Date(r.data.gitInitializedAt) : pose,
+        gitInitializedAt: r.data.gitInitializedAt ? new Date(r.data.gitInitializedAt) : null,
       });
       toast.success(
         r.data.outcome === 'initialised'
@@ -122,7 +133,7 @@ export default function ProjectGitPanel({
         )}
         {dernier === 'off' && (
           <p className="text-body-12 text-ink-3">
-            The repository stays where it is — turning this off never deletes one.
+            The repository stays where it is. Turning this off never deletes one.
           </p>
         )}
         {!isOwner && (

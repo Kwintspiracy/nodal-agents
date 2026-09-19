@@ -29,6 +29,11 @@ import { access, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { normalizePath } from '@nodal-agents/shared';
+// LA MÊME résolution que le constat par git (#227), pas une copie : c'est le
+// même `git`, lancé avec le même `cwd`, donc la même question. Deux copies
+// auraient divergé au premier correctif porté d'un seul côté (revue C de la
+// PR #244, constat bloquant).
+import { resolveGitBinary } from '@nodal-agents/tools/git-binary';
 
 const run = promisify(execFile);
 
@@ -84,8 +89,17 @@ export async function initGitRepository(dir: string): Promise<GitInitOutcome> {
   const cwd = normalizePath(dir);
   if (await existe(`${cwd}/.git`)) return { kind: 'already' };
 
+  // Le chemin ABSOLU, jamais le nom nu : `cwd` est le dossier d'un projet, donc
+  // un dossier où des agents écrivent, et le nom nu le ferait entrer dans la
+  // recherche du programme. Sans git sur le PATH, on ne pose rien et on le dit.
+  const binaire = await resolveGitBinary();
+  if (binaire === null) {
+    console.error(`[projects] GIT_INIT_NO_GIT_ON_PATH path=${cwd}`);
+    return { kind: 'failed', reason: 'git is not on this machine’s PATH' };
+  }
+
   try {
-    await run('git', ['init'], { cwd, timeout: GIT_TIMEOUT_MS, windowsHide: true });
+    await run(binaire, ['init'], { cwd, timeout: GIT_TIMEOUT_MS, windowsHide: true });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`[projects] GIT_INIT_FAILED path=${cwd}`, err);

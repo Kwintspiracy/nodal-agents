@@ -14319,17 +14319,6 @@ export interface CodeProjectPrefs {
    * prise.
    */
   verifySource: 'owner' | 'agent' | null;
-  /**
-   * L'option « pose git dans ce dossier » (issue #200). OFF par défaut, et
-   * rien ne touche au dossier sans elle.
-   */
-  initGit: boolean;
-  /**
-   * L'instant où Nodal a effectivement lancé `git init` ici. `null` quand rien
-   * n'a été posé — y compris avec l'option ON, si le dossier était DÉJÀ un
-   * dépôt. L'intention et le fait sont deux choses, et l'écran montre le fait.
-   */
-  gitInitializedAt: Date | null;
 }
 
 export async function listCodeProjectPrefsAction(): Promise<ActionResult<CodeProjectPrefs[]>> {
@@ -14344,8 +14333,6 @@ export async function listCodeProjectPrefsAction(): Promise<ActionResult<CodePro
         verifyApprovedAt: codeProjects.verifyApprovedAt,
         verifyApprovedManifestHash: codeProjects.verifyApprovedManifestHash,
         verifySource: codeProjects.verifySource,
-        initGit: codeProjects.initGit,
-        gitInitializedAt: codeProjects.gitInitializedAt,
       })
       .from(codeProjects)
       .where(eq(codeProjects.entityId, session.entityId));
@@ -14423,9 +14410,6 @@ async function upsertCodeProject(
     /** Qui décide de la séquence de preuve — voir `code_projects.verify_source`. */
     verifySource?: 'owner' | 'agent' | null;
     verifyDeclaredByJobId?: string | null;
-    /** L'option git (#200) et l'instant où Nodal a posé le dépôt. */
-    initGit?: boolean;
-    gitInitializedAt?: Date | null;
   },
 ): Promise<void> {
   const key = projectKey(projectPath);
@@ -14470,7 +14454,14 @@ export async function setCodeProjectHiddenAction(raw: unknown): Promise<ActionRe
 }
 
 const SetCodeProjectInitGitSchema = z.object({
-  projectPath: z.string().min(1).max(4096),
+  /**
+   * L'IDENTIFIANT du projet enregistré, jamais son chemin (revue C de la PR
+   * #244, constat 2). Le chemin venait du client, et `git init` partait dessus
+   * avant qu'aucune lecture n'ait dit à qui ce dossier appartenait : appeler
+   * l'action avec le dossier personnel du propriétaire y posait un dépôt.
+   * Maintenant le serveur va CHERCHER le chemin dans sa propre table.
+   */
+  projectId: z.string().guid(),
   initGit: z.boolean(),
 });
 
@@ -14479,6 +14470,12 @@ export type InitGitResult = {
   initGit: boolean;
   /** `initialised` = Nodal vient de poser le dépôt ; `already` = il y en avait un ; `off` = l'option a été éteinte, rien n'est touché. */
   outcome: 'initialised' | 'already' | 'off' | 'failed';
+  /**
+   * La date de pose telle que la LIGNE la porte après le geste — jamais ce
+   * qu'on croit avoir écrit (revue C de la PR #244, mineur 6). Éteindre
+   * l'option ne l'efface pas : le dépôt est toujours là, et la date dit quand
+   * Nodal l'a posé.
+   */
   gitInitializedAt: string | null;
 };
 
@@ -14498,6 +14495,18 @@ export type InitGitResult = {
  *
  * Propriétaire seulement, par la même garde EXACTE que renommer et masquer :
  * poser un dépôt écrit dans un dossier partagé.
+ *
+ * ═══ LE CHEMIN NE VIENT JAMAIS DU CLIENT ═══
+ *
+ * Revue C de la PR #244, constat 2. La première version prenait `projectPath`
+ * dans la charge utile et lançait `git init` dessus AVANT toute lecture en
+ * base ; l'upsert qui suivait INSCRIVAIT ce chemin au lieu de le vérifier.
+ * Appeler l'action avec le dossier personnel du propriétaire y posait un dépôt.
+ *
+ * L'action reçoit donc un IDENTIFIANT, lit la ligne du projet ENREGISTRÉ de
+ * l'entité de session, et agit sur LE chemin que cette ligne porte. Un id
+ * inconnu, une autre entité, une ligne de simple comptabilité : `not_found`,
+ * et rien n'a été touché sur le disque — la lecture passe avant l'écriture.
  */
 export async function setCodeProjectInitGitAction(
   raw: unknown,
@@ -14513,32 +14522,67 @@ export async function setCodeProjectInitGitAction(
     if (denied === 'not_found') return fail('not_found', 'Workspace not found');
     if (denied) return fail('forbidden', 'Only the workspace owner can initialise git.');
 
-    const { projectPath, initGit } = parsed.data;
+    const { projectId, initGit } = parsed.data;
+    // LE chemin, lu dans la table, sous les trois conditions qui font de cette
+    // ligne un projet de cette personne : cet id, cette entité, et une ligne
+    // ENREGISTRÉE — pas une ligne de comptabilité née d'une écriture.
+    const [projet] = await db
+      .select({
+        id: codeProjects.id,
+        path: codeProjects.projectPath,
+        gitInitializedAt: codeProjects.gitInitializedAt,
+      })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.id, projectId),
+          eq(codeProjects.entityId, session.entityId),
+          isNotNull(codeProjects.registeredAt),
+        ),
+      )
+      .limit(1);
+    if (!projet) return fail('not_found', 'Project not found');
+
     if (!initGit) {
-      await upsertCodeProject(db, session.entityId, projectPath, { initGit: false });
-      revalidatePath('/code');
-      return ok({ initGit: false, outcome: 'off', gitInitializedAt: null });
+      // Éteindre ne supprime rien : la colonne redevient fausse, le dépôt
+      // reste, et la DATE DE POSE reste aussi — c'est un fait, pas un réglage.
+      await db
+        .update(codeProjects)
+        .set({ initGit: false, updatedAt: new Date() })
+        .where(eq(codeProjects.id, projet.id));
+      revalidatePath(`/spaces/${projet.id}/files`);
+      return ok({
+        initGit: false,
+        outcome: 'off',
+        gitInitializedAt: projet.gitInitializedAt?.toISOString() ?? null,
+      });
     }
 
-    const pose = await initGitRepository(projectPath);
+    const pose = await initGitRepository(projet.path);
     if (pose.kind === 'failed') {
       // L'option n'est PAS écrite : elle dirait que ce dossier est versionné
       // alors qu'il ne l'est pas. L'échec se dit, et l'interrupteur reste où
       // il était (invariant #4).
       return fail('git_init_failed', 'Could not initialise git in this folder.');
     }
-    const gitInitializedAt = pose.kind === 'initialised' ? new Date() : null;
-    await upsertCodeProject(db, session.entityId, projectPath, {
-      initGit: true,
-      // Un dossier qui était DÉJÀ un dépôt n'a rien reçu : on ne lui invente
-      // pas une date de pose, et la colonne garde ce qu'elle avait.
-      ...(gitInitializedAt !== null ? { gitInitializedAt } : {}),
-    });
-    revalidatePath('/code');
+    const posePar = pose.kind === 'initialised' ? new Date() : null;
+    await db
+      .update(codeProjects)
+      .set({
+        initGit: true,
+        // Un dossier qui était DÉJÀ un dépôt n'a rien reçu : on ne lui invente
+        // pas une date de pose, et la colonne garde ce qu'elle avait.
+        ...(posePar !== null ? { gitInitializedAt: posePar } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(codeProjects.id, projet.id));
+    revalidatePath(`/spaces/${projet.id}/files`);
     return ok({
       initGit: true,
       outcome: pose.kind === 'initialised' ? 'initialised' : 'already',
-      gitInitializedAt: gitInitializedAt?.toISOString() ?? null,
+      // La ligne RELUE, jamais ce qu'on croit avoir écrit : sur un dossier déjà
+      // dépôt, la date est celle d'avant, et l'écran doit la garder.
+      gitInitializedAt: (posePar ?? projet.gitInitializedAt)?.toISOString() ?? null,
     });
   } catch (err) {
     console.error('[setCodeProjectInitGitAction]', err);

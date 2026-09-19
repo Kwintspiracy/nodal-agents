@@ -17,6 +17,8 @@ const project: ProjectPageView['project'] = {
   hidden: false,
   registeredFrom: 'spaces',
   registeredAt: new Date('2026-09-01T10:00:00Z'),
+  initGit: false,
+  gitInitializedAt: null,
   jobsCount: 3,
   lastActivityAt: new Date('2026-09-05T10:00:00Z'),
 };

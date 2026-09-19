@@ -9,11 +9,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { normalizePath } from '@nodal-agents/shared';
 import { GITIGNORE_MINIMAL, initGitRepository } from '../project-git.ts';
+import { resolveGitBinary, _resetGitBinaryCache } from '@nodal-agents/tools/git-binary';
 
 const run = promisify(execFile);
 
@@ -26,6 +28,37 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(racine, { recursive: true, force: true });
 });
+
+async function estUnFichier(chemin: string): Promise<boolean> {
+  try {
+    return (await stat(chemin)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Un faux `git` VRAIMENT exécutable, posé dans le dossier du projet.
+ *
+ * Sous Windows il faut un `.exe` : `execFile` sans shell ne lancerait pas un
+ * `.cmd`, donc un `.cmd` ne prouverait rien. On recopie un petit exécutable du
+ * système ; appelé avec les arguments de `git init` il sortirait en erreur, ce
+ * qui suffit — s'il était choisi, le dépôt ne serait pas posé.
+ */
+async function poserUnFauxGit(chemin: string): Promise<boolean> {
+  try {
+    if (process.platform === 'win32') {
+      const source = join(process.env['SystemRoot'] ?? 'C:/Windows', 'System32', 'whoami.exe');
+      if (!(await estUnFichier(source))) return false;
+      await copyFile(source, chemin);
+      return true;
+    }
+    await writeFile(chemin, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function dossier(nom: string): Promise<string> {
   const p = join(racine, nom);
@@ -104,5 +137,47 @@ describe('initGitRepository @cap:travailler-sur-des-fichiers/moteur', () => {
     const out = await initGitRepository(join(racine, 'nulle-part'));
 
     expect(out.kind).toBe('failed');
+  });
+});
+
+describe('quel git est lancé @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Revue C de la PR #244, constat bloquant. `git init` partait par le NOM NU
+  // avec `cwd` = le dossier du projet, c'est-à-dire un dossier où des agents
+  // écrivent. C'est la règle que #227 a posée pour le constat, et c'est le même
+  // `git` lancé de la même façon : la résolution est donc PARTAGÉE
+  // (`@nodal-agents/tools/git-binary`), pas recopiée.
+  //
+  // Ce que ce cas prouve et ce qu'il ne prouve pas : sur ce runtime, `execFile`
+  // ne cherche plus le répertoire courant (mesuré dans #227, Node 26.4.0), donc
+  // le faux ne serait pas pris même sans la résolution. Le cas garde le
+  // mécanisme sous les yeux pour un runtime qui chercherait encore ; ce qui
+  // rougit à la mutation, c'est le chemin absolu lui-même.
+
+  it('le binaire est un chemin ABSOLU, et un faux posé dans le projet ne l’est pas', async () => {
+    const p = await dossier('faux-git');
+    const binaire = await resolveGitBinary();
+    expect(binaire).not.toBeNull();
+    expect(binaire === null || /^([A-Za-z]:\/|\/)/.test(binaire)).toBe(true);
+
+    const faux = join(p, process.platform === 'win32' ? 'git.exe' : 'git');
+    const posé = await poserUnFauxGit(faux);
+    if (!posé) {
+      console.warn(
+        '[tests] CAS SAUTÉ — impossible de fabriquer un faux exécutable ici.\n' +
+          '        Le chemin absolu reste affirmé au-dessus.',
+      );
+      return;
+    }
+
+    _resetGitBinaryCache();
+    expect(await resolveGitBinary()).not.toBe(normalizePath(faux));
+
+    // ET la pose marche encore : si le faux avait été lancé, `git init` aurait
+    // échoué et le dossier n'aurait pas de dépôt.
+    const out = await initGitRepository(p);
+    expect(out.kind).toBe('initialised');
+    expect(existsSync(join(p, '.git'))).toBe(true);
+
+    _resetGitBinaryCache();
   });
 });

@@ -14,20 +14,21 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ProjectGitPanel, { type ProjectGit } from '../ProjectGitPanel.tsx';
 
-function rendu(git: ProjectGit | null, isOwner = true): string {
+const RIEN: ProjectGit = { initGit: false, gitInitializedAt: null };
+
+function rendu(git: ProjectGit, isOwner = true): string {
   return renderToStaticMarkup(
     <ProjectGitPanel
-      projectPath="C:/Users/kwint/Documents/Dev/recipes-app"
+      projectId="11111111-1111-4111-8111-111111111111"
       git={git}
       isOwner={isOwner}
-      onChanged={() => {}}
     />,
   );
 }
 
 describe('ProjectGitPanel — l’option git @cap:travailler-sur-des-fichiers/ecran', () => {
   it('l’interrupteur est ÉTEINT tant que personne ne l’a allumé', () => {
-    const html = rendu(null);
+    const html = rendu(RIEN);
 
     expect(html).toContain('Initialise git in this folder');
     expect(html).toContain('aria-checked="false"');
@@ -37,7 +38,7 @@ describe('ProjectGitPanel — l’option git @cap:travailler-sur-des-fichiers/ec
   });
 
   it('dit ce que l’option apporte, et ce qu’elle ne fait pas', () => {
-    const html = rendu(null);
+    const html = rendu(RIEN);
 
     expect(html).toContain('lists exactly the files each run wrote');
     // Ce que personne ne doit découvrir après coup : Nodal ne commite pas et
@@ -63,7 +64,7 @@ describe('ProjectGitPanel — l’option git @cap:travailler-sur-des-fichiers/ec
   });
 
   it('hors propriétaire : l’interrupteur est désactivé ET la raison est écrite', () => {
-    const html = rendu(null, false);
+    const html = rendu(RIEN, false);
 
     expect(html).toContain('owner only');
     expect(html).toContain('Only the workspace owner can initialise git');
