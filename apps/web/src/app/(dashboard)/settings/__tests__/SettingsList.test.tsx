@@ -248,6 +248,17 @@ describe('SettingsList @cap:installer-et-demarrer/ecran', () => {
     expect(window.location.search).toBe('');
   });
 
+  it('un réglage sans formulaire — sa lecture a échoué — dit pourquoi au lieu de s’ouvrir vide', async () => {
+    // La page ne met aucun formulaire dans `panels` quand l'action a échoué.
+    const sansFormulaire = { ...PANELS, network: null };
+    await render(
+      <SettingsList rows={ROWS} panels={sansFormulaire} initialOpen="network" />, //
+    );
+    const vide = panel()!.querySelector('[data-testid="settings-panel-unread"]');
+    expect(vide).not.toBeNull();
+    expect(vide!.textContent).toContain(ROWS.find((r) => r.id === 'network')!.value);
+  });
+
   it('un lien direct ouvre le panneau au premier rendu', async () => {
     await render(list({ initialOpen: 'verification' }));
     expect(panel()).not.toBeNull();
