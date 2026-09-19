@@ -252,7 +252,10 @@ describe('le groupe de dossiers @cap:reprendre-conversation/ecran', () => {
     expect(folderRow('slack').getAttribute('aria-current')).toBeNull();
   });
 
-  it('sur la page des runs programmés, aucun dossier n’est marqué — Scheduled a son propre lien', async () => {
+  it('hors de /chat, aucun dossier n’est marqué — seule l’URL en désigne un', async () => {
+    // N'importe quelle page qui n'est pas `/chat?folder=…` : rien n'y nomme de
+    // dossier, donc aucun ne s'allume. Le libellé de ce cas nommait « Scheduled
+    // a son propre lien » ; ce lien a disparu du menu (#230), la règle non.
     pathname = '/scheduled';
     await renderGroup({ channels: ['telegram'] });
     expect(folderRow('telegram').getAttribute('aria-current')).toBeNull();

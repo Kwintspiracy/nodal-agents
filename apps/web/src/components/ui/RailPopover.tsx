@@ -1,6 +1,7 @@
 'use client';
 
-// RailPopover — la petite carte qu'une entrée du BAS du rail ouvre (#230).
+// RailPopover — LA petite carte qu'une entrée du BAS du rail ouvre (#230), et
+// il n'y en a qu'une : Help et le compte ouvrent le MÊME composant.
 //
 // Pourquoi elle existe. Le rail fait 72 px de large : le bloc de compte
 // (courriel + Sign out) et les trois liens « À propos » de la 0.8.11 n'y
@@ -12,7 +13,9 @@
 //
 // La MÊME mécanique que la cloche des approbations (`NotificationsBell`) —
 // `pointerdown` sur le document et `keydown` pour Échap — et non un troisième
-// dialecte de fermeture.
+// dialecte de fermeture. AUCUN dialogue natif du navigateur (invariant #10) :
+// c'est un `<div role="dialog">` du design system, d'où sa place ici, dans
+// `components/ui`, à côté des autres primitifs.
 
 import { useEffect, useRef, type ReactNode } from 'react';
 
