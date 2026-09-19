@@ -2742,8 +2742,8 @@ export async function getSpaceConversationAction(
       proof: verificationRunRows.map((r) => ({ command: r.command, verdict: r.verdict })),
       // #59 — le dernier verdict de relecture de ce run et de ses délégués,
       // pris sur la MÊME lecture que la section Review (`reviewVerdicts`,
-      // ordonnée par `seq`). Un `request_changes` empêche le bloc de conclure
-      // « Delivered ».
+      // ordonnée par `seq`). Le bloc de conclusion le pose à côté de
+      // « Delivered », qu'il approuve ou qu'il demande des corrections.
       reviewVerdict: lastReviewVerdict(reviewVerdicts.views),
       audit: auditRows.map((r) => ({
         toolName: r.toolName,

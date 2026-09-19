@@ -264,8 +264,9 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
     // ET le verdict à côté (#59), et montre tout ce que le travail a fait.
     await render(detail());
     const text = container.textContent ?? '';
-    expect(text).toContain('Delivered');
-    expect(text).toContain('Changes requested');
+    // La ligne entière, dans l'ordre où elle se lit : deux `toContain` séparés
+    // passeraient sur une page qui affiche les deux mots sans rapport.
+    expect(text).toContain('Delivered · Changes requested');
     expect(text).toContain('apps/web/src/app/page.tsx');
     expect(text).toContain('1 / 1');
   });
@@ -279,8 +280,7 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
       verdicts: [{ ...approuve.verdicts[0]!, verdict: 'approve', findings: [] }],
     });
     const text = container.textContent ?? '';
-    expect(text).toContain('Delivered');
-    expect(text).toContain('Approved');
+    expect(text).toContain('Delivered · Approved');
     expect(text).not.toContain('Changes requested');
   });
 

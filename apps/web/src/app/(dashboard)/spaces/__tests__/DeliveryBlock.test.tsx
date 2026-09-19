@@ -508,6 +508,16 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
 // livré quelque chose, et effacer « Delivered » revenait à dire que le travail
 // n'avait pas eu lieu. Le bloc dit donc les DEUX faits, côte à côte.
 
+/**
+ * Ce que la ligne DIT, balises retirées : `renderToStaticMarkup` coupe
+ * « Delivered · Approved » en deux par le `<span>` qui porte la couleur du
+ * verdict, si bien qu'aucune assertion sur le texte entier ne tiendrait sur le
+ * HTML brut. C'est pourtant l'ordre des mots qui se lit à l'écran.
+ */
+function ligne(html: string): string {
+  return html.replace(/<[^>]*>/g, '');
+}
+
 describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran', () => {
   it('dit « Delivered » ET « Changes requested », jamais l’un à la place de l’autre', () => {
     const html = renderToStaticMarkup(
@@ -525,10 +535,10 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
         }}
       />,
     );
-    // Les deux mots, dans cet ordre, sur la même ligne.
-    expect(html).toContain('Delivered');
-    expect(html).toContain('Changes requested');
-    expect(html.indexOf('Delivered')).toBeLessThan(html.indexOf('Changes requested'));
+    // La ligne ENTIÈRE, telle qu'elle se lit : les deux mots, dans cet ordre,
+    // séparés par le point médian. Deux `toContain` séparés passeraient sur une
+    // page qui les afficherait à deux endroits sans rapport.
+    expect(ligne(html)).toContain('Delivered · Changes requested');
     // La pastille NOMME qui a tranché, et prend la place de « Verified » : le
     // fait le plus frais du bloc est la relecture, pas la preuve, qui garde son
     // sort dans « Proof » juste dessous.
@@ -552,8 +562,8 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
         summary={{ ...EMPTY, review: 'approve', changesRequested: false, verdict: 'green' }}
       />,
     );
-    expect(html).toContain('Delivered');
-    expect(html).toContain('Approved');
+    // La même assertion que le cas du dessus : la ligne entière, dans l'ordre.
+    expect(ligne(html)).toContain('Delivered · Approved');
     expect(html).toContain('By the reviewer');
     expect(html).not.toContain('Changes requested');
     // Approuvé, donc le signe reste vert.
@@ -565,7 +575,9 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
     const html = renderToStaticMarkup(
       <DeliveryBlock jobId="job-59" summary={{ ...EMPTY, verdict: 'green' }} />,
     );
-    expect(html).toContain('Delivered');
+    expect(ligne(html)).toContain('Delivered');
+    // Rien n'est accroché derrière : pas de point médian après le mot.
+    expect(ligne(html)).not.toContain('Delivered ·');
     expect(html).toContain('Verified');
     expect(html).not.toContain('By the reviewer');
     expect(html).not.toContain('Approved');
@@ -581,8 +593,7 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
         summary={{ ...EMPTY, review: 'abstained', changesRequested: false, verdict: 'green' }}
       />,
     );
-    expect(html).toContain('Delivered');
-    expect(html).toContain('abstained');
+    expect(ligne(html)).toContain('Delivered · abstained');
     expect(html).toContain('By the reviewer');
   });
 });
