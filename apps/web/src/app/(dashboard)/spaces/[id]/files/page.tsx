@@ -9,7 +9,7 @@
 // est, à côté de ses fichiers et de la preuve déjà affichée.
 //
 // Les CONVERSATIONS ne sont plus listées ici : elles sont sur l'onglet
-// Activity, avec les sessions, dans une seule histoire du projet.
+// Conversations, avec les sessions, dans une seule histoire du projet.
 
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
@@ -101,7 +101,7 @@ export default async function ProjectFilesPage({ params }: { params: Promise<{ i
           projectPath={facts.path}
           projectName={facts.name}
           active="files"
-          activityCount={facts.conversations + facts.sessionsWithoutConversation}
+          conversationsCount={facts.conversations + facts.sessionsWithoutConversation}
         />
       }
     >
