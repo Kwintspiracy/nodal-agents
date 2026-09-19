@@ -175,6 +175,40 @@ describe('StatusBar — cache expiry @cap:voir-le-cout/ecran', () => {
     expect(html).not.toContain('cache lost on resume');
   });
 
+  it('une somme PARTIELLE le dit, avec le mot du segment voisin', () => {
+    // Trois reprises, une sur un modèle sans prix de cache : les 0,16 $ sont
+    // vrais mais incomplets. La ligne de coût voisine écrit déjà « · partial »
+    // pour la même raison ; les deux doivent porter le même mot, sinon celle
+    // qui se tait se lit comme un total (revue Reviewer C, passe 1).
+    const html = renderToStaticMarkup(
+      <StatusBar
+        cost={{
+          ...cost,
+          cacheLost: { resumes: 3, tokens: 105_600, costUsd: 0.1584, unpricedResumes: 1 },
+        }}
+        proofVerdict="green"
+        proofSequences={1}
+        pendingDeliveries={0}
+        live={false}
+      />,
+    );
+    expect(html).toContain('of which $0.16 lost to cache expiry (3 resumes) · partial');
+  });
+
+  it('toutes les reprises tarifées : pas de « partial » posé pour rien', () => {
+    const html = renderToStaticMarkup(
+      <StatusBar
+        cost={withLoss}
+        proofVerdict="green"
+        proofSequences={1}
+        pendingDeliveries={0}
+        live={false}
+      />,
+    );
+    expect(html).toContain('of which $0.16 lost to cache expiry (1 resume)');
+    expect(html).not.toContain('cache expiry (1 resume) · partial');
+  });
+
   it('le panneau détaillé nomme les jetons, le montant et la CAUSE', () => {
     const html = renderToStaticMarkup(<CostPanel cost={withLoss} onClose={() => {}} />);
     expect(html).toContain('cache lost on resume');

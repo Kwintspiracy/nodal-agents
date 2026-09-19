@@ -42,13 +42,20 @@ function pct(part: number, total: number): string {
  * le catalogue connaît le prix de cache. Un `$0.0000` afficherait « on a
  * mesuré, c'est nul » là où la vérité est « on ne sait pas » (invariant #4) ;
  * le panneau détaillé, lui, dit les jetons dans les deux cas.
+ *
+ * Quand une PARTIE seulement des reprises est tarifée, le montant est vrai mais
+ * INCOMPLET, et il le dit avec le mot du segment voisin : « · partial », que la
+ * ligne de coût pose déjà pour `unpricedCalls`. Deux sommes partielles côte à
+ * côte doivent porter le même mot, sinon celle qui se tait passe pour entière
+ * (revue Reviewer C, passe 1).
  */
 export function cacheLostLabel(cost: SpaceCostView): string | null {
-  const { resumes, costUsd } = cost.cacheLost;
+  const { resumes, costUsd, unpricedResumes } = cost.cacheLost;
   if (resumes === 0 || costUsd === null || costUsd <= 0) return null;
+  const partial = unpricedResumes > 0 ? ' · partial' : '';
   return `of which ${formatCost(costUsd)} lost to cache expiry (${resumes} ${
     resumes === 1 ? 'resume' : 'resumes'
-  })`;
+  })${partial}`;
 }
 
 export default function StatusBar({
