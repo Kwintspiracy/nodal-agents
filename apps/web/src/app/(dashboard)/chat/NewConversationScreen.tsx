@@ -25,7 +25,9 @@ import { composerPresentation } from '@/lib/project-landing.ts';
 import { EMPTY_SPACE_COST } from '@/lib/space-cost.ts';
 import { threadBackLink } from '@/lib/back-links.ts';
 import { DEFAULT_FEED_DENSITY, type FeedDensity } from '@/lib/feed-density.ts';
+import NewConversationBody from './NewConversationBody.tsx';
 import NewConversationComposer from './NewConversationComposer.tsx';
+import { PendingTurnProvider } from './PendingTurn.tsx';
 import type { ComposerLlmKey } from './ModelEffortChip.tsx';
 import { welcomeLine } from './welcome-line.ts';
 
@@ -100,38 +102,45 @@ export default function NewConversationScreen({
           `ThreadScreen` colle la saisie EN BAS, sous une zone qui défile, parce
           qu'un fil se lit par sa fin. La planche centre l'accueil ET la saisie
           dans le vide — il n'y a rien à faire défiler. La charpente commune
-          reste `PageShell fill` : en-tête, barre de travail, barre d'état. */}
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 px-5 sm:px-8 lg:px-9">
-        {/* Display/28 de la planche, avec l'interlettrage du titre de page —
-            la même paire que `PageHeader`, pas une valeur inventée ici. */}
-        <p className="text-center text-display-28 tracking-[-0.015em] text-ink">
-          {welcomeLine(accountName)}
-        </p>
-        <div className="w-full">
-          {composer.kind === 'blocked' ? (
-            <p className="mx-auto max-w-[760px] text-center text-body-13 text-ink-4">
-              {composer.message}{' '}
-              <Link
-                href={composer.action.href}
-                className="font-medium text-ink underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
-              >
-                {composer.action.label}
-              </Link>
-            </p>
-          ) : (
-            <NewConversationComposer
-              projectId={project?.id ?? null}
-              agentName={root?.name ?? null}
-              agentId={root?.id ?? null}
-              llmKeyId={llmKeyId}
-              model={model}
-              reasoningEffort={reasoningEffort}
-              llmKeys={llmKeys}
-              requireTools={requireTools}
-            />
-          )}
-        </div>
-      </div>
+          reste `PageShell fill` : en-tête, barre de travail, barre d'état.
+
+          Le porteur des envois en cours est le MÊME que celui des deux autres
+          écrans de fil : le message part et paraît TOUT DE SUITE, avec l'agent
+          qui réfléchit, le temps que la réponse vienne et que l'écran s'en
+          aille sur `/chat/<id>`. Son fil rendu est vide — il n'y en a pas
+          encore — donc aucune copie ne s'efface ici : c'est la navigation qui
+          passe la main au vrai fil. */}
+      <PendingTurnProvider requests={[]} awaitingReply={false}>
+        <NewConversationBody
+          greeting={welcomeLine(accountName)}
+          agentName={root?.name ?? 'Agent'}
+          agentAvatarUrl={root?.avatarUrl ?? null}
+          composer={
+            composer.kind === 'blocked' ? (
+              <p className="mx-auto max-w-[760px] text-center text-body-13 text-ink-4">
+                {composer.message}{' '}
+                <Link
+                  href={composer.action.href}
+                  className="font-medium text-ink underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+                >
+                  {composer.action.label}
+                </Link>
+              </p>
+            ) : (
+              <NewConversationComposer
+                projectId={project?.id ?? null}
+                agentName={root?.name ?? null}
+                agentId={root?.id ?? null}
+                llmKeyId={llmKeyId}
+                model={model}
+                reasoningEffort={reasoningEffort}
+                llmKeys={llmKeys}
+                requireTools={requireTools}
+              />
+            )
+          }
+        />
+      </PendingTurnProvider>
       <StatusBar
         cost={EMPTY_SPACE_COST}
         proofVerdict={null}

@@ -9,6 +9,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import NewConversationComposer from '../NewConversationComposer.tsx';
+import NewConversationBody from '../NewConversationBody.tsx';
+import { PendingTurnProvider } from '../PendingTurn.tsx';
+
+const ACCUEIL = 'Hey Quentin, what are we building today?';
 
 const createConversationAction = vi.hoisted(() =>
   vi.fn(async () => ({ ok: true as const, data: { id: 'conv-née' } })),
@@ -137,6 +141,41 @@ describe('NewConversationComposer @cap:parler-a-un-agent/ecran', () => {
     expect(createConversationAction.mock.calls).toEqual([]);
     expect(sendChatMessage.mock.calls[0]?.[0]?.conversationId).toBe('conv-projet');
     expect(replace.mock.calls).toEqual([['/chat/conv-projet']]);
+  });
+
+  it('le message envoyé paraît TOUT DE SUITE, et l’accueil cède la place', async () => {
+    // La réponse ne revient pas : c'est PENDANT ce temps-là que l'écran doit
+    // montrer quelque chose. Sans ça, on clique « Send », la zone se vide, et
+    // il ne se passe plus rien pendant plusieurs secondes.
+    let libere: (r: { ok: true; reply: string; streamed: boolean }) => void = () => {};
+    sendChatMessage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          libere = resolve;
+        }),
+    );
+    await render(
+      <PendingTurnProvider requests={[]} awaitingReply={false}>
+        <NewConversationBody
+          greeting={ACCUEIL}
+          agentName="Alfred"
+          composer={<NewConversationComposer agentName="Alfred" />}
+        />
+      </PendingTurnProvider>,
+    );
+    expect(container.textContent).toContain(ACCUEIL);
+
+    await type('Range le dossier');
+    await press('Enter');
+
+    expect(container.querySelector('[data-testid="pending-turn"]')).not.toBeNull();
+    expect(container.textContent).toContain('Range le dossier');
+    // Une question posée ne se lit pas sous « what are we building today? ».
+    expect(container.textContent).not.toContain(ACCUEIL);
+
+    await act(async () => {
+      libere({ ok: true, reply: 'ok', streamed: false });
+    });
   });
 
   it('création refusée : RIEN n’est envoyé, on le dit, et le texte revient', async () => {
