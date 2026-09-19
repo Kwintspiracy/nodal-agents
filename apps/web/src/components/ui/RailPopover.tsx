@@ -39,14 +39,22 @@ export default function RailPopover({ label, onClose, children }: Props) {
       if (cible?.closest('[data-rail-trigger]') !== null && cible !== null) return;
       onClose();
     }
+    // Voir `DockedPanel.tsx` (#233) : cette carte n'est PAS un calque modal —
+    // elle ne pose aucun voile et la page reste cliquable derrière — donc elle
+    // reste en phase de bulle. Mais elle PREND la touche quand elle se ferme,
+    // sinon le menu mobile qui la porte se fermerait avec elle.
     function echap(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      onClose();
     }
     document.addEventListener('pointerdown', dehors);
-    document.addEventListener('keydown', echap);
+    // Sur `window`, et pas sur `document` : c'est là que les six calques de
+    // l'app écoutent, et la convention de #233 se lit sur un seul objet.
+    window.addEventListener('keydown', echap);
     return () => {
       document.removeEventListener('pointerdown', dehors);
-      document.removeEventListener('keydown', echap);
+      window.removeEventListener('keydown', echap);
     };
   }, [onClose]);
 

@@ -65,13 +65,20 @@ export default function Sidebar({
     if (!open) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    // Voir `DockedPanel.tsx` (#233) : ouvert, ce menu est un calque MODAL — il
+    // couvre l'écran et verrouille le défilement — donc il écoute en CAPTURE et
+    // PREND la touche. Un calque n'agit que si personne ne l'a déjà prise, et
+    // le dit quand il la prend ; sans quoi un seul Échap traverse tous les
+    // calques ouverts.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      setOpen(false);
     };
-    window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
     return () => {
       document.body.style.overflow = prevOverflow;
-      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onKey, true);
     };
   }, [open]);
 
