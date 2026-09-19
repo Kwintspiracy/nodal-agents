@@ -308,7 +308,6 @@ export type ProjectFacts = {
   path: string;
   kind: 'code' | 'documents';
   agentName: string | null;
-  agentAvatarUrl: string | null;
   /** `.git` est là. Un fait lu sur le disque, jamais déduit de la sorte du projet. */
   isGitRepository: boolean;
   conversations: number;
@@ -349,7 +348,6 @@ export async function getProjectFactsAction(id: string): Promise<ActionResult<Pr
         path: codeProjects.projectPath,
         kind: codeProjects.kind,
         agentName: agents.name,
-        agentAvatarUrl: agents.avatarUrl,
       })
       .from(codeProjects)
       .leftJoin(agents, eq(agents.id, codeProjects.agentId))
@@ -388,7 +386,6 @@ export async function getProjectFactsAction(id: string): Promise<ActionResult<Pr
       path: row.path,
       kind: (row.kind === 'documents' ? 'documents' : 'code') as 'code' | 'documents',
       agentName: row.agentName ?? null,
-      agentAvatarUrl: row.agentAvatarUrl ?? null,
       // Lu sur le DISQUE, une fois par ouverture. Un dossier de projet n'est
       // pas forcément un dépôt, et la sorte `code` ne le prouve pas.
       isGitRepository: existsSync(`${normalizePath(row.path)}/.git`),

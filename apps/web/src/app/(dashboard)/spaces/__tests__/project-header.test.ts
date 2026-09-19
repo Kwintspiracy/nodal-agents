@@ -14,7 +14,6 @@ const facts = (over: Partial<ProjectFacts> = {}): ProjectFacts => ({
   path: 'D:/APPS/NodalAI',
   kind: 'code',
   agentName: 'Lead Dev',
-  agentAvatarUrl: null,
   isGitRepository: true,
   conversations: 12,
   sessions: 41,
