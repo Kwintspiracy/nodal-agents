@@ -16,6 +16,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import type { Icon as PhosphorIcon } from '@phosphor-icons/react';
+import AttentionCount from './AttentionCount';
 
 /**
  * La forme d'une case : 56 × 52, coins `xl`. Identique pour les cinq cases à
@@ -50,6 +51,15 @@ type Props = {
   icon: PhosphorIcon;
   /** La case est-elle celle où l'on se trouve, ou celle dont la carte est ouverte ? */
   active?: boolean;
+  /**
+   * Ce qui ATTEND la personne sur cette case. Une pastille rouge posée sur le
+   * coin, et RIEN à zéro : une pastille « 0 » demande d'être lue pour
+   * apprendre qu'il n'y a rien à faire.
+   *
+   * La MÊME pastille que celle des dossiers du menu (`AttentionCount`), et le
+   * même compte : celui d'`ApprovalsProvider`.
+   */
+  pill?: number;
   testId: string;
 };
 
@@ -60,6 +70,7 @@ export default function RailCell({
   label,
   icon: Icon,
   active = false,
+  pill,
   testId,
 }: Props) {
   const contenu = (
@@ -67,12 +78,18 @@ export default function RailCell({
       <Icon size={18} className="h-[18px] w-[18px]" />
       {/* 10 px demi-gras — le pas `micro-10` du DS, celui de la planche. */}
       <span className="text-micro-10 leading-none">{label}</span>
+      {pill !== undefined && pill > 0 && (
+        // Sur le COIN, et non à côté du libellé : une case du rail fait 56 px,
+        // et un nombre posé dans la colonne pousserait l'icône hors de son axe.
+        <AttentionCount count={pill} variant="solid" className="absolute top-1 right-1" />
+      )}
     </>
   );
   const commun = {
     title: label,
     'data-testid': testId,
-    className: railCellClass(active),
+    // `relative` : la pastille se pose sur le coin de la case.
+    className: `relative ${railCellClass(active)}`,
   };
 
   if (href === undefined) {

@@ -29,18 +29,23 @@ import SidebarRail from './SidebarRail';
 import SidebarPanel from './SidebarPanel';
 import ThemeToggle from './ui/ThemeToggle';
 import NotificationsBell from './NotificationsBell';
+import { useApprovals } from './ApprovalsProvider';
 import { destinationForPath, matchedDestination } from './sidebar-nav.ts';
 import type { WorkspaceRow } from '@/lib/actions';
 
 export default function Sidebar({
   workspaces,
   userMenu,
+  initiale,
 }: {
   workspaces?: WorkspaceRow[];
   userMenu?: ReactNode;
+  /** L'initiale du compte, lue par le serveur. `null` = personne à nommer. */
+  initiale?: string | null;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const { pending } = useApprovals();
 
   // La destination se DÉDUIT de la route, et de rien d'autre : aucun état,
   // aucune mémoire. Deux onglets ouverts sur la même adresse montrent le même
@@ -53,6 +58,9 @@ export default function Sidebar({
   const active = matchedDestination(pathname);
   const destination = destinationForPath(pathname);
   const settingsActive = pathname === '/settings' || pathname.startsWith('/settings/');
+  // Approvals n'est pas une destination : sa case s'allume sur sa page, et le
+  // panneau montre alors le repli, comme sur `/settings`.
+  const approvalsActive = pathname === '/approvals' || pathname.startsWith('/approvals/');
 
   // Close mobile menu on route change.
   useEffect(() => {
@@ -126,7 +134,10 @@ export default function Sidebar({
         <SidebarRail
           activeKey={active?.key ?? null}
           settingsActive={settingsActive}
+          approvalsActive={approvalsActive}
+          approvalsCount={pending.length}
           userMenu={userMenu}
+          initiale={initiale ?? null}
         />
 
         <div className="flex min-w-0 flex-1 flex-col border-r border-rule-2 bg-sidebar">

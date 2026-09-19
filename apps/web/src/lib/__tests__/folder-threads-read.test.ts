@@ -292,3 +292,50 @@ describe('la lecture de « Recent » @cap:reprendre-conversation/moteur', () => 
     expect(params).toContain(5);
   });
 });
+
+// ─── Le dernier recours d'un titre, écrit UNE fois (Reviewer C, passe 1 de #235)
+
+describe('un fil que personne n’a nommé @cap:reprendre-conversation/moteur', () => {
+  /** L'identifiant du fil sans titre, semé pour ce bloc seul. */
+  let anonyme = '';
+
+  beforeAll(async () => {
+    // Aucun titre, aucune première demande : ni message, ni job de tête ne se
+    // rattachent à cette conversation. C'est le seul cas où le repli parle.
+    // Posée au plus ANCIEN, pour ne déranger aucun des blocs au-dessus.
+    const [ligne] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        chatId: null,
+        origin: 'user',
+        title: '',
+        updatedAt: quand(0),
+      })
+      .returning({ id: conversations.id });
+    anonyme = ligne?.id ?? '';
+    expect(anonyme, 'le fil anonyme est semé').not.toBe('');
+  });
+
+  it('s’appelle « Untitled », et pareil pour les DEUX lectures', async () => {
+    // Le repli vivait chez chaque appelant — le sous-menu d'un dossier et la
+    // section « Recent » l'écrivaient chacun de son côté. Il vit maintenant
+    // dans le chemin de nommage partagé, donc les deux lectures rendent le
+    // même nom pour le même fil, par construction.
+    //
+    // Mutation vérifiée : le `=== '' ? 'Untitled'` retiré de `nommerLesFils`
+    // → ce test rougit, les deux lectures rendent une chaîne vide.
+    const { listRecentThreadReadsAction, listFolderThreadReadsAction } =
+      await import('../conversation-actions.ts');
+
+    const recent = await listRecentThreadReadsAction(50);
+    if (!recent.ok) throw new Error(recent.message);
+    expect(recent.data.find((c) => c.id === anonyme)?.title).toBe('Untitled');
+
+    const sousMenu = await listFolderThreadReadsAction(50);
+    if (!sousMenu.ok) throw new Error(sousMenu.message);
+    expect(sousMenu.data.conversations.find((c) => c.id === anonyme)?.title).toBe('Untitled');
+  });
+});

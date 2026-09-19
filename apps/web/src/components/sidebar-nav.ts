@@ -1,9 +1,15 @@
 // sidebar-nav.ts — LES TROIS DESTINATIONS DE LA BARRE LATÉRALE (#230).
 //
-// Décision du propriétaire du 19/09/2026, planche Figma « Sidebar propositions
-// · 4a 3b 3c » (GWXBALe90DMFR3XYGccofJ, frames 458:4, 458:88, 458:181) : la
-// colonne unique de 0.8.11 devient un RAIL de trois destinations — Talk,
-// Build, Run — et un PANNEAU qui montre celle qui est active.
+// Décision du propriétaire du 19/09/2026, planches Figma reprises par lui
+// (GWXBALe90DMFR3XYGccofJ, frames 487:5489, 487:5579, 487:5652) : la colonne
+// unique de 0.8.11 devient un RAIL de trois destinations — Work, Agent, Run —
+// et un PANNEAU qui montre celle qui est active.
+//
+// ⚠️ LES NOMS ONT CHANGÉ le 19/09, après une première livraison : « Talk » est
+// devenu « Work » et « Build » est devenu « Agent », au SINGULIER. Work dit
+// l'endroit où l'on travaille, ce qui couvre les conversations ET les espaces
+// de travail que la destination porte maintenant ; Agent dit ce qu'on y monte,
+// et le singulier parce qu'on en règle un à la fois.
 //
 // Le contenu ne change pas : ce sont les MÊMES entrées qu'en 0.8.11, réparties
 // en trois. Rien n'est ajouté, rien n'est retiré — c'est ce que dit l'issue, et
@@ -12,9 +18,12 @@
 //
 // ⚠️ DEUX ÉCARTS ASSUMÉS AVEC LA PLANCHE, et leur raison.
 //
-//   - « LLM Providers » est dessiné sous Build/CONNECT sur la planche, et rangé
-//     dans Run par le texte de l'issue. L'ISSUE GAGNE : c'est elle qui porte la
-//     décision, la planche montrait une liste plus courte, dessinée avant.
+//   - « LLM Providers » ferme Build/CONNECT. Il a d'abord vécu dans Run, sur le
+//     texte de l'issue et sur une décision du 18/09 (« le fournisseur de
+//     modèles ouvre ce qu'on règle »). Les planches que Quentin a reprises le
+//     19/09 (487:5579) le rangent sous CONNECT, après Credentials : c'est ce
+//     qu'on branche au produit, au même titre qu'un connecteur. La planche du
+//     propriétaire est la plus récente, et c'est elle qui décide.
 //   - « Scheduled » (/scheduled) n'apparaît dans AUCUNE des trois listes de
 //     l'issue, et c'est VOULU : la page disparaît (#202, PR #224). Les runs
 //     d'une automatisation se lisent désormais sur SA page, et `/scheduled`
@@ -36,26 +45,32 @@ import {
   Plug,
   PlugsConnected,
   Pulse,
-  ShieldCheck,
   Sparkle,
   UsersThree,
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
 
-/** Une entrée du panneau : une destination interne du tableau de bord. */
+/**
+ * Une entrée du panneau : une destination interne du tableau de bord.
+ *
+ * ⚠️ PLUS DE PASTILLE DE COULEUR. Agents, Skills et les deux connecteurs
+ * portaient la pastille de sens du DS — une couleur par famille d'objets — qui
+ * REMPLAÇAIT leur icône sur grand écran. Les planches du propriétaire
+ * (19/09/2026, Figma 487:5579) dessinent l'icône de chaque entrée, et rien
+ * d'autre : à côté de Credentials et de Memory, qui n'ont jamais eu de
+ * pastille, une ligne sur deux montrait un rond et l'autre un dessin.
+ */
 export type PanelItem = {
   href: string;
   label: string;
   icon: PhosphorIcon;
-  /** La pastille de sens du DS — une couleur par famille d'objets. */
-  dot?: 'agent' | 'skill' | 'conn';
 };
 
 /** Un bloc du panneau, sous son titre en capitales. */
 export type PanelGroup = { section: string; items: readonly PanelItem[] };
 
 /** Laquelle des trois destinations du rail. */
-export type DestinationKey = 'talk' | 'build' | 'run';
+export type DestinationKey = 'work' | 'agent' | 'run';
 
 export type Destination = {
   key: DestinationKey;
@@ -70,22 +85,43 @@ export type Destination = {
    */
   routes: readonly string[];
   /**
-   * Le contenu du panneau. Vide pour Talk : ses lignes sont les dossiers de
-   * canaux, qui n'existent qu'en base et se lisent à l'exécution (#135).
+   * Les blocs FIXES du panneau. Work n'en a qu'un — ses espaces de travail —
+   * parce que le reste de son panneau, les dossiers de canaux et les fils
+   * récents, n'existe qu'en base et se lit à l'exécution (#135, #230).
    */
   groups: readonly PanelGroup[];
 };
 
 /**
- * Le panneau BUILD — ce qu'on monte. Les deux blocs de la planche : l'équipe
+ * Le panneau WORK — là où l'on travaille.
+ *
+ * Un seul bloc écrit ici, WORKSPACES, en TÊTE du panneau : les espaces de
+ * travail ouvrent la destination, avant les canaux d'où les conversations
+ * arrivent (décision du propriétaire, 19/09/2026). Il vivait dans Run, sous
+ * MONITOR, ce qui le rangeait avec ce qu'on surveille alors que c'est ce dans
+ * quoi on travaille.
+ */
+const WORK_GROUPS: readonly PanelGroup[] = [
+  {
+    section: 'Workspaces',
+    items: [
+      // « Workspaces », pas « Spaces » (Quentin, 18/09/2026). La ROUTE ne bouge
+      // pas : `/spaces` est dans les favoris et dans les liens déjà envoyés.
+      { href: '/spaces', label: 'Workspaces', icon: CardsThree },
+    ],
+  },
+];
+
+/**
+ * Le panneau AGENT — ce qu'on monte. Les deux blocs de la planche : l'équipe
  * et ce qu'elle sait faire d'abord, ce à quoi on la branche ensuite.
  */
 const BUILD_GROUPS: readonly PanelGroup[] = [
   {
     section: 'Agents',
     items: [
-      { href: '/agents', label: 'Agents', icon: UsersThree, dot: 'agent' },
-      { href: '/skills', label: 'Skills', icon: BookOpenText, dot: 'skill' },
+      { href: '/agents', label: 'Agents', icon: UsersThree },
+      { href: '/skills', label: 'Skills', icon: BookOpenText },
       { href: '/learned-skills', label: 'Learned Skills', icon: Lightbulb },
       { href: '/memories', label: 'Memory', icon: Brain },
     ],
@@ -93,40 +129,36 @@ const BUILD_GROUPS: readonly PanelGroup[] = [
   {
     section: 'Connect',
     items: [
-      { href: '/connectors', label: 'API Connectors', icon: Plug, dot: 'conn' },
-      { href: '/mcp', label: 'MCP Connectors', icon: PlugsConnected, dot: 'conn' },
+      { href: '/connectors', label: 'API Connectors', icon: Plug },
+      { href: '/mcp', label: 'MCP Connectors', icon: PlugsConnected },
       { href: '/credentials', label: 'Credentials', icon: Key },
+      { href: '/llm-providers', label: 'LLM Providers', icon: Sparkle },
     ],
   },
 ];
 
 /**
- * Le panneau RUN — ce qui tourne, et ce qu'on règle pour que ça tourne.
+ * Le panneau RUN — ce qui tourne, et ce qu'on surveille.
  *
- * « Models » est un TROISIÈME bloc, et il n'est pas sur la planche : celle-ci
- * rangeait le fournisseur de modèles sous Build, l'issue le range ici, et il
- * n'est ni quelque chose qu'on surveille ni quelque chose qu'on programme. Lui
- * donner son titre vaut mieux que le glisser sous un titre qui le décrit mal.
+ * Deux blocs : ce qu'on regarde, ce qu'on programme. « Models » n'existe plus,
+ * le fournisseur de modèles ayant rejoint Agent/CONNECT.
+ *
+ * ⚠️ DEUX ENTRÉES EN SONT PARTIES le 19/09, et aucune n'a disparu du produit :
+ * « Workspaces » ouvre maintenant le panneau Work, où l'on travaille ;
+ * « Approvals » est devenu une CASE DU RAIL, parce que ce qui attend une
+ * réponse doit se voir sans changer de destination.
  */
 const RUN_GROUPS: readonly PanelGroup[] = [
   {
     section: 'Monitor',
     items: [
       { href: '/', label: 'Dashboard', icon: House },
-      // « Workspaces », pas « Spaces » (Quentin, 18/09/2026). La ROUTE ne bouge
-      // pas : `/spaces` est dans les favoris et dans les liens déjà envoyés.
-      { href: '/spaces', label: 'Workspaces', icon: CardsThree },
-      { href: '/approvals', label: 'Approvals', icon: ShieldCheck },
       { href: '/logs', label: 'Logs', icon: ListMagnifyingGlass },
     ],
   },
   {
     section: 'Automate',
     items: [{ href: '/automations', label: 'Automations & Webhooks', icon: ClockCountdown }],
-  },
-  {
-    section: 'Models',
-    items: [{ href: '/llm-providers', label: 'LLM Providers', icon: Sparkle }],
   },
 ];
 
@@ -137,16 +169,19 @@ const RUN_GROUPS: readonly PanelGroup[] = [
  */
 export const DESTINATIONS: readonly Destination[] = [
   {
-    key: 'talk',
-    label: 'Talk',
+    key: 'work',
+    label: 'Work',
     icon: ChatCircleText,
     href: '/chat',
-    routes: ['/chat'],
-    groups: [],
+    // `/spaces` allume Work depuis le 19/09 : les espaces de travail vivent
+    // dans son panneau, et une destination qui ne s'allume pas sur la page
+    // qu'elle porte se lit comme un menu cassé.
+    routes: ['/chat', '/spaces'],
+    groups: WORK_GROUPS,
   },
   {
-    key: 'build',
-    label: 'Build',
+    key: 'agent',
+    label: 'Agent',
     icon: Cube,
     href: '/agents',
     routes: [
@@ -157,6 +192,7 @@ export const DESTINATIONS: readonly Destination[] = [
       '/connectors',
       '/mcp',
       '/credentials',
+      '/llm-providers',
     ],
     groups: BUILD_GROUPS,
   },
@@ -167,11 +203,8 @@ export const DESTINATIONS: readonly Destination[] = [
     href: '/',
     routes: [
       '/',
-      '/spaces',
-      '/approvals',
       '/logs',
       '/automations',
-      '/llm-providers',
       // Les pages d'un run et d'un espace de travail. Elles n'ont PAS d'entrée
       // dans le panneau — on y arrive depuis une liste, jamais depuis le menu
       // (#143 les fusionnera dans Workspaces) — mais elles doivent allumer une

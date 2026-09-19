@@ -2,13 +2,22 @@
 
 // SidebarRail — la colonne de 72 px qui porte les trois destinations (#230).
 //
-// Décision du propriétaire du 19/09/2026 (planche « Sidebar propositions · 4a »,
-// Figma GWXBALe90DMFR3XYGccofJ, frames 458:4 / 458:88 / 458:181) : le logo en
-// haut, Talk / Build / Run au milieu, Settings / Help / le compte en bas.
+// Décisions du propriétaire du 19/09/2026 (Figma GWXBALe90DMFR3XYGccofJ,
+// frames 487:5489 / 487:5579 / 487:5652) : le logo en haut, Work / Agent / Run
+// puis Approvals au milieu, Settings / Help / le compte en bas.
+//
+// ⚠️ APPROVALS EST UNE CASE, PAS UNE DESTINATION. Elle vivait dans le panneau
+// Run, sous MONITOR : ce qui attend une réponse ne se voyait donc qu'en allant
+// dans Run. Sur le rail, sa pastille est visible d'où que l'on soit, et c'est
+// tout l'intérêt — le nombre qu'elle porte est le seul de la barre qu'une
+// personne puisse faire tomber à zéro en répondant.
 //
 // Son fond est le jeton `--c-rail`, UN CRAN plus foncé que celui du panneau :
-// c'est ce qui fait deux colonnes plutôt qu'une colonne avec une marge. Le
-// trait `rule-2` à droite les sépare, comme partout ailleurs dans le produit.
+// c'est ce qui fait deux colonnes plutôt qu'une colonne avec une marge, et
+// c'est la SEULE chose qui les sépare. Il a porté un trait `rule-2` à droite
+// jusqu'au 19/09/2026 ; les planches du propriétaire n'en dessinent pas, et
+// l'écart de fond suffit — un trait par-dessus faisait deux séparations pour
+// une frontière.
 //
 // Les deux entrées du bas qui ne sont pas des destinations — Help et le compte
 // — ouvrent une carte (`RailPopover`) au lieu de naviguer. Le rail ne peut pas
@@ -25,6 +34,7 @@ import {
   GearSix,
   Question,
   SealCheck,
+  ShieldCheck,
   User,
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
@@ -69,14 +79,27 @@ function HelpLink({
 export default function SidebarRail({
   activeKey,
   settingsActive,
+  approvalsActive,
+  approvalsCount,
   userMenu,
+  initiale = null,
 }: {
   /** La destination que la route allume — `null` quand aucune ne l'est. */
   activeKey: DestinationKey | null;
   /** La route est-elle sous `/settings` ? */
   settingsActive: boolean;
+  /** La route est-elle sous `/approvals` ? */
+  approvalsActive: boolean;
+  /** Combien de demandes attendent la personne. 0 = aucune pastille. */
+  approvalsCount: number;
   /** Le bloc de compte rendu par le serveur — courriel et Sign out. */
   userMenu?: ReactNode;
+  /**
+   * L'INITIALE de la personne connectée, lue par le serveur. `null` quand il
+   * n'y a personne à nommer — mode local sans compte, jeton d'API — et le rond
+   * porte alors une silhouette plutôt qu'une lettre inventée.
+   */
+  initiale?: string | null;
 }) {
   // Deux cartes ouvertes en même temps se recouvriraient au bas d'un rail de
   // 72 px : l'état en retient UNE.
@@ -89,7 +112,7 @@ export default function SidebarRail({
     <nav
       aria-label="Sections"
       data-testid="sidebar-rail"
-      className="flex h-full w-[var(--rail-w)] shrink-0 flex-col items-center gap-1 border-r border-rule-2 bg-rail pt-3.5 pb-3"
+      className="flex h-full w-[var(--rail-w)] shrink-0 flex-col items-center gap-1 bg-rail pt-3.5 pb-3"
     >
       {/* Le logo seul : « Nodal-Agents » ne tient pas dans 72 px, et le nom
           reste écrit en toutes lettres au bas du panneau, sur la ligne de
@@ -113,6 +136,17 @@ export default function SidebarRail({
           testId={`rail-${d.key}`}
         />
       ))}
+
+      {/* Approvals ferme le haut du rail : c'est la seule case qui compte
+          quelque chose, et elle se lit depuis n'importe quelle destination. */}
+      <RailCell
+        href="/approvals"
+        label="Approvals"
+        icon={ShieldCheck}
+        active={approvalsActive}
+        pill={approvalsCount}
+        testId="rail-approvals"
+      />
 
       <div className="flex-1" />
 
@@ -154,14 +188,24 @@ export default function SidebarRail({
         )}
       </div>
 
-      {/* Le compte. L'avatar ne porte AUCUNE initiale : le rail ne sait pas qui
-          est connecté — une installation locale n'a parfois personne — et en
-          inventer une afficherait un fait que rien ne vérifie (invariant #4).
-          Le nom vrai est dans la carte, écrit par le serveur. */}
+      {/* Le compte. L'initiale vient du SERVEUR quand il connaît la personne —
+          la planche l'écrit (« Q ») — et le rail retombe sur la silhouette
+          quand il n'y a personne à nommer : une installation locale n'a parfois
+          pas de compte du tout, et inventer une lettre afficherait un fait que
+          rien ne vérifie (invariant #4). */}
       {userMenu !== undefined && (
         <div className="relative mt-1 shrink-0">
           <RailAvatarButton onClick={() => basculer('account')} expanded={carte === 'account'}>
-            <User weight="fill" className="h-3.5 w-3.5" />
+            {initiale === null ? (
+              <User weight="fill" className="h-3.5 w-3.5" />
+            ) : (
+              <span
+                className="font-mono text-legacy-11 font-bold text-ink"
+                data-testid="rail-initial"
+              >
+                {initiale}
+              </span>
+            )}
           </RailAvatarButton>
           {carte === 'account' && (
             <RailPopover label="Account" onClose={fermer}>
