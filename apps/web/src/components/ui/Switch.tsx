@@ -70,8 +70,8 @@ const THUMB_DIM: Record<Size, string> = {
  * propre note. C'est le seul rendu qui ne soit pas un bouton, et il ne change
  * aucune couleur.
  *
- * Les appelants passent `checked`, `onChange`, `disabled`, `size`, `readOnly`
- * et l'aria. Aucune couleur, aucune classe : une nuance qui doit se dire se dit
+ * Les quatorze appels passent `checked`, `onChange`, `disabled`, `size`,
+ * `readOnly` et l'aria. Aucune couleur, aucune classe : ce qui doit se dire se dit
  * À CÔTÉ de l'interrupteur, avec un `MonoMicroTag` ou une phrase, jamais en le
  * teintant (c'est ce que faisait l'état « dormant » de Yolo jusqu'au
  * 19/09/2026). `apps/web/src/tests/one-switch.arch.test.ts` refuse tout autre
