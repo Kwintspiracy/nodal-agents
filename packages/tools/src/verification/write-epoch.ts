@@ -62,6 +62,8 @@ import type { DirtiedDeliverable } from './intent';
 export const WRITE_EPOCH_ROW_MISSING = 'VERIFICATION_WRITE_EPOCH_ROW_MISSING';
 /** La montée d'époque n'a pas pu être écrite — la garde de péremption est aveugle sur ce projet. */
 export const WRITE_EPOCH_BUMP_FAILED = 'VERIFICATION_WRITE_EPOCH_BUMP_FAILED';
+/** Des livrables à faire vieillir, mais pas d'espace pour les retrouver. */
+export const WRITE_EPOCH_NO_ENTITY = 'VERIFICATION_WRITE_EPOCH_NO_ENTITY';
 
 /**
  * Monte `verification_epoch` des projets que CET appel vient d'écrire.
@@ -89,7 +91,18 @@ export async function bumpEpochsAfterWrite(
   entityId: string,
   deliverables: readonly DirtiedDeliverable[],
 ): Promise<number> {
-  if (!entityId || deliverables.length === 0) return 0;
+  if (deliverables.length === 0) return 0;
+  // Les appelants du runner construisent `entityId: job.entityId ?? ''` : une
+  // entité vide ici veut dire qu'il y a des livrables à faire vieillir et
+  // aucun espace pour les retrouver. Sortir sur un `return 0` muet laissait la
+  // garde de péremption aveugle sans que rien ne le dise (invariant #4).
+  if (!entityId) {
+    console.error(
+      `[verification] ${WRITE_EPOCH_NO_ENTITY} ` +
+        `keys=${[...new Set(deliverables.map((d) => d.key))].join(',')}`,
+    );
+    return 0;
+  }
 
   // `verificationEpoch !== null` est ce qui distingue un projet de code d'un
   // fichier bureautique : seuls les premiers ont une ligne `code_projects`, et

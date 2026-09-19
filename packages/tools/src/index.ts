@@ -27,8 +27,14 @@ export { writeMutationIntent, MAX_PROJECTS } from './verification/intent';
 export {
   bumpEpochsAfterWrite,
   WRITE_EPOCH_BUMP_FAILED,
+  WRITE_EPOCH_NO_ENTITY,
   WRITE_EPOCH_ROW_MISSING,
 } from './verification/write-epoch';
+// Le jumeau SANS JOB de la ligne du dessus : un tour de chat CLI écrit sans
+// pouvoir poser d'intention (pas de jobId), donc sans rien faire vieillir —
+// l'autre porte du même trou (#101). Il vit dans `intent.ts` pour emprunter SA
+// résolution de projets, jamais une seconde.
+export { bumpEpochsAfterJoblessWrite } from './verification/intent';
 // La carte d'un outil (P1) : ce que l'écran de conversation lit pour choisir
 // comment montrer un résultat. Résolue ici, jamais devinée depuis un nom.
 export {

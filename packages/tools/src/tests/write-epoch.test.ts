@@ -19,7 +19,11 @@ import { projectKey, normalizePath } from '@nodal-agents/shared';
 import { executeTool } from '../execute';
 import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { fileEditTool } from '../builtin/file-ops/file-edit';
-import { bumpEpochsAfterWrite, WRITE_EPOCH_ROW_MISSING } from '../verification/write-epoch';
+import {
+  bumpEpochsAfterWrite,
+  WRITE_EPOCH_NO_ENTITY,
+  WRITE_EPOCH_ROW_MISSING,
+} from '../verification/write-epoch';
 import type { DirtiedDeliverable } from '../verification/intent';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
 
@@ -224,6 +228,32 @@ describe('bumpEpochsAfterWrite, la règle seule @cap:verifier-un-livrable/moteur
     }
     // Recréer la ligne la remettrait à l'époque 1 et RAJEUNIRAIT le projet.
     expect(await epochOf('c:/projets/disparu')).toBeNull();
+  });
+
+  it('des livrables mais pas d’espace : DIT par un code, jamais un 0 muet', async () => {
+    // Les appelants du runner construisent `entityId: job.entityId ?? ''`.
+    // Sortir en silence laissait la garde de péremption aveugle sur ces
+    // projets sans que rien ne le dise (invariant #4).
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(
+        bumpEpochsAfterWrite(db as unknown as AnyDrizzleDb, '', [livrable(keyOf(ws), 1)]),
+      ).resolves.toBe(0);
+      const dits = error.mock.calls.map((c) => c.map(String).join(' '));
+      expect(dits.some((l) => l.includes(WRITE_EPOCH_NO_ENTITY))).toBe(true);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('aucun livrable et aucune entité : rien à dire, et rien n’est dit', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(bumpEpochsAfterWrite(db as unknown as AnyDrizzleDb, '', [])).resolves.toBe(0);
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it('ne LÈVE jamais : une base en panne se dit par un code et rend 0', async () => {
