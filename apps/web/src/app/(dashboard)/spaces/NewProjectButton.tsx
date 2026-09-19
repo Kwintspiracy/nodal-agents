@@ -21,6 +21,7 @@ import TextInput from '@/components/ui/TextInput';
 import Select from '@/components/ui/Select';
 import SegmentedControl from '@/components/ui/SegmentedControl';
 import FieldLabel from '@/components/ui/FieldLabel';
+import Checkbox from '@/components/ui/Checkbox';
 import {
   createProjectAction,
   listProjectTerrainsAction,
@@ -37,6 +38,8 @@ export default function NewProjectButton() {
   const [name, setName] = useState('');
   const [subfolder, setSubfolder] = useState('');
   const [kind, setKind] = useState<'code' | 'documents'>('code');
+  // OFF par defaut, comme la colonne : l option est proposee, jamais posee.
+  const [initGit, setInitGit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -80,6 +83,7 @@ export default function NewProjectButton() {
     setName('');
     setSubfolder('');
     setKind('code');
+    setInitGit(false);
     setError(null);
   }
 
@@ -98,6 +102,7 @@ export default function NewProjectButton() {
         workspaceId,
         subfolder: subfolder.trim(),
         kind,
+        initGit,
       });
       if (!r.ok) {
         // Un code par cause, un message par code — l'écran doit dire LAQUELLE.
@@ -246,6 +251,25 @@ export default function NewProjectButton() {
               disabled={isPending}
               ariaLabel="What this project produces"
             />
+          </div>
+
+          {/* GIT, PROPOSÉ ET JAMAIS IMPOSÉ (issue #200).
+              Décoché par défaut : `git init` écrit dans le dossier, et on ne
+              pose pas un dépôt chez quelqu'un parce qu'on trouve ça mieux. La
+              ligne dessous dit ce que ça CHANGE pour la personne — la liste
+              des fichiers d'un run devient exacte — plutôt que de nommer une
+              technique dont elle n'a pas à connaître le détail. */}
+          <div>
+            <Checkbox
+              label="Initialise git in this folder"
+              checked={initGit}
+              disabled={isPending}
+              onChange={(e) => setInitGit(e.target.checked)}
+            />
+            <p className="text-body-12 text-ink-4 mt-1">
+              Nodal then lists exactly the files each run wrote, even the ones a command wrote
+              without naming them. Nothing is committed and nothing is pushed.
+            </p>
           </div>
 
           {error !== null && <p className="text-body-13 text-err">{error}</p>}
