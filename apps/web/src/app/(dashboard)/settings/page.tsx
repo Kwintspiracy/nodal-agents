@@ -42,8 +42,10 @@ import McpServerSection from './McpServerSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
 import SettingsList from './SettingsList.tsx';
+import SettingsPanel from './SettingsPanel.tsx';
+import { SettingsScreenProvider } from './SettingsScreen.tsx';
 import { buildSettingRows, type SettingId } from './settings-rows.ts';
-import { dockedFormId } from '@/components/ui/DockedFormCta.tsx';
+import { dockedFormId } from '@/lib/docked-form-id.ts';
 import PageShell from '@/components/ui/PageShell';
 import { SetPane } from '@/components/ui/SetPane.tsx';
 import { SetRow } from '@/components/ui/SetRow.tsx';
@@ -215,14 +217,20 @@ export default async function SettingsPage({ searchParams }: PageProps) {
       ? (wanted as SettingId)
       : null;
 
+  // La liste va dans la colonne de contenu, bornée en largeur comme sur toutes
+  // les pages ; le panneau va dans l'`aside`, hors de cette borne, collé au
+  // bord de l'écran. Ce qu'ils partagent passe par le fournisseur (#237).
   return (
-    <PageShell
-      title="Settings"
-      subtitle="One list. Each row shows its current value and opens on the right."
-      fill
-    >
-      <SettingsList rows={rows} panels={panels} initialOpen={initialOpen} />
-    </PageShell>
+    <SettingsScreenProvider rows={rows} initialOpen={initialOpen}>
+      <PageShell
+        title="Settings"
+        subtitle="One list. Each row shows its current value and opens on the right."
+        fill
+        aside={<SettingsPanel panels={panels} />}
+      >
+        <SettingsList />
+      </PageShell>
+    </SettingsScreenProvider>
   );
 }
 

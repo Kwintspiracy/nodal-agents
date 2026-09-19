@@ -29,8 +29,10 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import SettingsList from '../SettingsList.tsx';
-import { buildSettingRows, type SettingId } from '../settings-rows.ts';
-import { dockedFormId } from '@/components/ui/DockedFormCta.tsx';
+import SettingsPanel from '../SettingsPanel.tsx';
+import { SettingsScreenProvider } from '../SettingsScreen.tsx';
+import { buildSettingRows, type SettingId, type SettingRow } from '../settings-rows.ts';
+import { dockedFormId } from '@/lib/docked-form-id.ts';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
 import TextInput from '@/components/ui/TextInput';
 
@@ -127,8 +129,27 @@ function panel(): HTMLElement | null {
   return container.querySelector<HTMLElement>('[data-testid="settings-panel"]');
 }
 
-function list(props: Partial<React.ComponentProps<typeof SettingsList>> = {}) {
-  return <SettingsList rows={ROWS} panels={PANELS} initialOpen={null} {...props} />;
+/**
+ * L'écran complet, monté comme la page le monte : la liste et le panneau de
+ * part et d'autre de la borne de largeur, autour de l'état qu'ils partagent.
+ * Les deux vivent dans des fentes différentes du `PageShell` (#237), donc les
+ * monter ensemble est la seule façon de prouver qu'ils se parlent.
+ */
+function list(
+  props: {
+    rows?: SettingRow[];
+    panels?: Partial<Record<SettingId, React.ReactNode>>;
+    initialOpen?: SettingId | null;
+  } = {},
+) {
+  return (
+    <SettingsScreenProvider rows={props.rows ?? ROWS} initialOpen={props.initialOpen ?? null}>
+      <div className="flex">
+        <SettingsList />
+        <SettingsPanel panels={props.panels ?? PANELS} />
+      </div>
+    </SettingsScreenProvider>
+  );
 }
 
 describe('SettingsList @cap:installer-et-demarrer/ecran', () => {
@@ -165,6 +186,17 @@ describe('SettingsList @cap:installer-et-demarrer/ecran', () => {
       'Safety',
       'Workspace',
     ]);
+  });
+
+  it('la liste ne borne pas sa largeur : elle prend celle de la page', async () => {
+    // Elle portait `max-w-3xl`, ce qui rendait /settings plus étroite que
+    // toutes les autres pages sans raison. La borne, s'il en faut une, est
+    // celle du PageShell, pas une borne de plus posée ici.
+    await render(list());
+    const colonne = container.querySelector<HTMLElement>('[data-testid="settings-list"]')!;
+    expect(colonne).not.toBeNull();
+    const bornes = [...colonne.classList].filter((c) => c.startsWith('max-w-'));
+    expect(bornes, 'aucune borne de largeur sur la colonne de liste').toEqual([]);
   });
 
   it('Advanced est repliée par défaut, et s’ouvre sur ses deux lignes', async () => {
@@ -261,9 +293,7 @@ describe('SettingsList @cap:installer-et-demarrer/ecran', () => {
   it('un réglage sans formulaire — sa lecture a échoué — dit pourquoi au lieu de s’ouvrir vide', async () => {
     // La page ne met aucun formulaire dans `panels` quand l'action a échoué.
     const sansFormulaire = { ...PANELS, network: null };
-    await render(
-      <SettingsList rows={ROWS} panels={sansFormulaire} initialOpen="network" />, //
-    );
+    await render(list({ panels: sansFormulaire, initialOpen: 'network' }));
     const vide = panel()!.querySelector('[data-testid="settings-panel-unread"]');
     expect(vide).not.toBeNull();
     expect(vide!.textContent).toContain(ROWS.find((r) => r.id === 'network')!.value);
@@ -293,14 +323,13 @@ describe('SettingsList @cap:installer-et-demarrer/ecran', () => {
   it('le pied du panneau porte Cancel et Save, et Save soumet le formulaire ouvert', async () => {
     const onSave = vi.fn();
     await render(
-      <SettingsList
-        rows={ROWS}
-        panels={{
+      list({
+        panels: {
           ...PANELS,
           timezone: <FauxFormulaire id={dockedFormId('timezone')} onSave={onSave} />,
-        }}
-        initialOpen="timezone"
-      />,
+        },
+        initialOpen: 'timezone',
+      }),
     );
 
     // Le formulaire ne porte plus ses propres boutons : ils sont dans le pied.
@@ -336,14 +365,13 @@ describe('SettingsList @cap:installer-et-demarrer/ecran', () => {
 
   it('Cancel remet l’état du formulaire, puis ferme le panneau', async () => {
     await render(
-      <SettingsList
-        rows={ROWS}
-        panels={{
+      list({
+        panels: {
           ...PANELS,
           timezone: <FauxFormulaire id={dockedFormId('timezone')} onSave={() => {}} />,
-        }}
-        initialOpen="timezone"
-      />,
+        },
+        initialOpen: 'timezone',
+      }),
     );
     const champ = panel()!.querySelector<HTMLInputElement>('[data-testid="champ"]')!;
     await act(async () => {
