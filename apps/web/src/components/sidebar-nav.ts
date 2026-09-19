@@ -16,11 +16,11 @@
 //     dans Run par le texte de l'issue. L'ISSUE GAGNE : c'est elle qui porte la
 //     décision, la planche montrait une liste plus courte, dessinée avant.
 //   - « Scheduled » (/scheduled) n'apparaît dans AUCUNE des trois listes de
-//     l'issue. Ce n'est pourtant pas /automations : /automations édite les
-//     automatisations et les webhooks, /scheduled liste leurs RUNS, groupés par
-//     automatisation. Le retirer supprimerait une destination du produit, ce
-//     que l'issue interdit en toutes lettres. Il ouvre donc AUTOMATE, juste
-//     après l'automatisation dont il montre les runs.
+//     l'issue, et c'est VOULU : la page disparaît (#202, PR #224). Les runs
+//     d'une automatisation se lisent désormais sur SA page, et `/scheduled`
+//     redirige vers `/automations`. La table ne la connaît donc ni comme
+//     entrée ni comme route — deux portes vers la même chose obligeaient à
+//     choisir sans rien pour choisir.
 
 import {
   Brain,
@@ -28,7 +28,6 @@ import {
   CardsThree,
   ChatCircleText,
   ClockCountdown,
-  CalendarCheck,
   Cube,
   House,
   Key,
@@ -123,10 +122,7 @@ const RUN_GROUPS: readonly PanelGroup[] = [
   },
   {
     section: 'Automate',
-    items: [
-      { href: '/automations', label: 'Automations & Webhooks', icon: ClockCountdown },
-      { href: '/scheduled', label: 'Scheduled', icon: CalendarCheck },
-    ],
+    items: [{ href: '/automations', label: 'Automations & Webhooks', icon: ClockCountdown }],
   },
   {
     section: 'Models',
@@ -175,7 +171,6 @@ export const DESTINATIONS: readonly Destination[] = [
       '/approvals',
       '/logs',
       '/automations',
-      '/scheduled',
       '/llm-providers',
       // Les pages d'un run et d'un espace de travail. Elles n'ont PAS d'entrée
       // dans le panneau — on y arrive depuis une liste, jamais depuis le menu

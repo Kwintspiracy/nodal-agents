@@ -84,7 +84,6 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
           // « Runs » n'est plus une entree du menu depuis #134 : la liste des
           // runs EST Activity, le premier onglet de Logs.
           'Automations & Webhooks',
-          'Scheduled',
           'LLM Providers',
         ],
       ],
