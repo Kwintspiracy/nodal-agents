@@ -40,6 +40,7 @@ import {
   BookOpenText,
   ChatCircleText,
   Cube,
+  CheckCircle,
   GearSix,
   House,
   Key,
@@ -108,6 +109,16 @@ export type Destination = {
    */
   routes: readonly string[];
   groups: readonly PanelGroup[];
+  /**
+   * La case vit-elle AU BAS du rail, sous la séparation ?
+   *
+   * Settings est le seul cas : c'est une destination comme les quatre autres —
+   * elle ouvre un panneau — mais la planche la range en bas, avec Logs et
+   * Help, parce qu'on y va pour régler le produit et non pour travailler. Le
+   * dire ici plutôt que dans le rail fait que la table décrit le rail EN
+   * ENTIER, et qu'un test peut l'énumérer sans connaître un cas particulier.
+   */
+  foot?: true;
 };
 
 /**
@@ -271,7 +282,9 @@ export const DESTINATIONS: readonly Destination[] = [
   {
     key: 'approvals',
     label: 'Approvals',
-    icon: ShieldCheck,
+    // Un rond COCHÉ, et plus un bouclier (planche v2) : le bouclier disait
+    // « on te protège », alors que ce panneau montre ce que l'on VALIDE.
+    icon: CheckCircle,
     href: '/approvals',
     routes: ['/approvals'],
     groups: APPROVALS_GROUPS,
@@ -283,6 +296,7 @@ export const DESTINATIONS: readonly Destination[] = [
     href: '/settings',
     routes: ['/settings'],
     groups: SETTINGS_GROUPS,
+    foot: true,
   },
 ];
 

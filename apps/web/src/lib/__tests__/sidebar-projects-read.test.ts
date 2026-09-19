@@ -1,8 +1,8 @@
-// sidebar-projects-read.test.ts — LA LECTURE du dossier « Workspaces » (#230,
-// décision du propriétaire du 19/09/2026 au soir).
+// sidebar-projects-read.test.ts — LA LECTURE de la section « Workspaces »
+// (#230, refondue en #258).
 //
-// CE QUE CE FICHIER PROUVE, et pourquoi il vaut la peine d'exister. Le dossier
-// « Workspaces » du panneau Work déplie ses dix derniers projets. La tentation
+// CE QUE CE FICHIER PROUVE, et pourquoi il vaut la peine d'exister. La section
+// « Workspaces » du panneau Work montre ses dix derniers projets. La tentation
 // était de réutiliser `listProjectsAction`, qui alimente la PAGE des espaces :
 // elle joint les travaux pour compter et dater, puis lit l'état de la preuve de
 // chaque dossier, et elle n'a AUCUN plafond. La faire payer à la barre latérale
@@ -14,16 +14,21 @@
 //   1. le plafond est respecté, et il rend UNE ligne de plus que le menu ne
 //      dessine — c'est cette ligne qui répond à « y en a-t-il d'autres ? » ;
 //   2. l'ordre est celui de l'ENREGISTREMENT, le plus récent d'abord ;
-//   3. un projet MASQUÉ n'y est pas, et un dossier jamais enregistré non plus.
+//   3. un projet MASQUÉ n'y est pas, et un dossier jamais enregistré non plus ;
+//   4. le POINT de la planche (#258) se LIT par la chaîne qui existe — un
+//      projet a des travaux, un travail a une conversation, une conversation a
+//      un marqueur de lecture — et jamais par un état que le projet n'a pas.
 //
 // Mutations vérifiées : le `.limit(limit)` retiré → le premier test rougit ;
 // `desc(registeredAt)` passé en ordre croissant → le deuxième ; le filtre
-// `hidden` retiré → le troisième.
+// `hidden` retiré → le troisième ; la comparaison `updated_at > read_at`
+// remplacée par `IS NULL` seul → le quatrième.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { codeProjects } from '@nodal-agents/db';
+import { agentJobs, codeProjects, conversationReads, conversations } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
 
 let testDb: TestDb;
@@ -112,6 +117,92 @@ beforeAll(async () => {
     registeredAt: null,
   });
   await testDb.insert(codeProjects).values(lignes);
+});
+
+/**
+ * Rattache une conversation à un projet, et dit si la personne l'a LUE.
+ *
+ * C'est la chaîne réelle du produit, et la seule : un projet n'a pas de
+ * marqueur de lecture, un travail porte son `project_id`, et le marqueur vit
+ * sur la conversation de ce travail.
+ */
+async function rattacher(projectPath: string, lue: boolean, quandVue: Date): Promise<void> {
+  const [projet] = await testDb
+    .select({ id: codeProjects.id })
+    .from(codeProjects)
+    .where(eq(codeProjects.projectPath, projectPath));
+  if (!projet) throw new Error(`no project at ${projectPath}`);
+
+  const [conv] = await testDb
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'dashboard',
+      origin: 'user',
+      title: `Thread of ${projectPath}`,
+      updatedAt: quand(60),
+    })
+    .returning({ id: conversations.id });
+  if (!conv) throw new Error('no conversation');
+
+  await testDb.insert(agentJobs).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    projectId: projet.id,
+    conversationId: conv.id,
+    task: 'Do the thing',
+    channel: 'dashboard',
+    status: 'completed',
+  });
+
+  if (lue) {
+    await testDb
+      .insert(conversationReads)
+      .values({ userId: seed.userId, conversationId: conv.id, readAt: quandVue });
+  }
+}
+
+describe('le POINT d’un espace de travail @cap:travailler-sur-des-fichiers/moteur', () => {
+  beforeAll(async () => {
+    // Project 12 : une conversation LUE APRÈS sa dernière activité. Rien
+    // n'attend, le point est gris.
+    await rattacher('D:/projects/p12', true, quand(90));
+    // Project 11 : une conversation lue AVANT sa dernière activité. Quelque
+    // chose est arrivé depuis, le point est rouge.
+    await rattacher('D:/projects/p11', true, quand(10));
+    // Project 10 : une conversation JAMAIS ouverte. Rouge aussi.
+    await rattacher('D:/projects/p10', false, quand(0));
+    // Project 09 : AUCUNE conversation du tout. Sans conversation, pas de
+    // non-lu — et surtout pas un point posé par défaut.
+  });
+
+  it('allume le point sur ce qui a bougé depuis la dernière ouverture', async () => {
+    const { listSidebarProjectsAction } = await import('../project-actions.ts');
+    const r = await listSidebarProjectsAction(4);
+    if (!r.ok) throw new Error(r.message);
+    expect(r.data.map((p) => [p.name, p.unread])).toEqual([
+      ['Project 12', false],
+      ['Project 11', true],
+      ['Project 10', true],
+      ['Project 9', false],
+    ]);
+  });
+
+  it('n’invente AUCUN point sur un projet sans conversation', async () => {
+    // La seule table qui porte un état de lecture est `conversation_reads`.
+    // Un projet qu'aucun travail ne relie à une conversation n'a rien à dire,
+    // et le dire quand même serait afficher un fait que rien ne vérifie
+    // (invariant #4).
+    const { listSidebarProjectsAction } = await import('../project-actions.ts');
+    const r = await listSidebarProjectsAction(50);
+    if (!r.ok) throw new Error(r.message);
+    const sansFil = r.data.filter(
+      (p) => !['Project 12', 'Project 11', 'Project 10'].includes(p.name),
+    );
+    expect(sansFil.length).toBeGreaterThan(0);
+    for (const p of sansFil) expect(p.unread, p.name).toBe(false);
+  });
 });
 
 describe('la lecture du dossier Workspaces @cap:travailler-sur-des-fichiers/moteur', () => {

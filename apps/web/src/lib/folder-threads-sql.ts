@@ -142,30 +142,3 @@ export function folderConversationsQuery(db: Db, entityId: string, userId: strin
     .orderBy(desc(conversations.updatedAt), desc(conversations.id))
     .limit(limit);
 }
-
-/**
- * LES DERNIERS FILS, TOUS CANAUX CONFONDUS — la section « Recent » du panneau
- * Talk (#230, 19/09/2026).
- *
- * La MÊME requête que celle de « Nodal chats » ci-dessus, moins son seul
- * filtre : elle ne se limite pas au dossier du tableau de bord. Un fil est un
- * fil, qu'il vienne de Telegram, de Discord ou d'ici ; « Recent » montre les
- * derniers, d'où qu'ils viennent.
- *
- * Bornée en SQL, comme les deux autres : la barre latérale ne lit JAMAIS une
- * liste entière pour en garder cinq lignes (Reviewer C, passe 1 de la PR #206).
- */
-export function recentConversationsQuery(db: Db, entityId: string, userId: string, limit: number) {
-  return db
-    .select({
-      id: conversations.id,
-      title: conversations.title,
-      channel: conversations.channel,
-      unread: unreadColumn,
-    })
-    .from(conversations)
-    .leftJoin(conversationReads, readsOfUser(userId))
-    .where(and(eq(conversations.entityId, entityId), inArray(conversations.origin, [...ORIGINES])))
-    .orderBy(desc(conversations.updatedAt), desc(conversations.id))
-    .limit(limit);
-}

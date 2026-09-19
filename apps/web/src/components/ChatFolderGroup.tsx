@@ -103,9 +103,18 @@ export default function ChatFolderGroup() {
   const { channels, running, externalRuns } = useChatFolders();
 
   // Quels dossiers sont dépliés. Repliés par défaut : le menu montre les
-  // ENDROITS, pas leur contenu, et cinq fils par dossier rendraient la barre
+  // ENDROITS, pas leur contenu, et dix fils par dossier rendraient la barre
   // plus longue que l'écran dès le deuxième canal branché.
-  const [deplies, setDeplies] = useState<Readonly<Record<string, boolean>>>({});
+  //
+  // ⚠️ SAUF « NODAL CHATS » (#258). La planche v2 le dessine OUVERT, ses dix
+  // derniers fils sous les yeux et un « See all » dessous, pendant que
+  // Telegram, Discord, WhatsApp et MCP restent pliés. C'est le seul dossier
+  // dont on vient : les conversations du tableau de bord sont celles qu'on
+  // ouvre en arrivant, et les replier faisait commencer chaque visite par un
+  // clic. Les autres canaux, eux, sont des endroits où l'on va.
+  const [deplies, setDeplies] = useState<Readonly<Record<string, boolean>>>({
+    [DASHBOARD_FOLDER]: true,
+  });
   const [threads, setThreads] = useState<FolderThreadsSnapshot | null>(null);
   /** Ce que la lecture a répondu quand elle a échoué. Jamais un silence. */
   const [erreur, setErreur] = useState<string | null>(null);
