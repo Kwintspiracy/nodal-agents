@@ -99,17 +99,24 @@ export type VerificationRunSourceKind = z.infer<typeof VerificationRunSourceKind
 export const REVIEW_CHANGES_REQUESTED = 'review_changes_requested';
 
 /**
- * Cette relecture interdit-elle d'annoncer « livré » ?
+ * Cette relecture demande-t-elle des corrections ?
  *
- * La décision du propriétaire, le 19/09/2026 : un `request_changes` empêche de
- * conclure à une livraison. La règle tient en une ligne et vit ICI, dans le
- * paquet que l'orchestration ET l'écran lisent tous les deux — une seconde
- * écriture de la même règle divergerait au premier correctif, et l'écran
- * dirait « livré » là où le parent recevrait l'inverse.
+ * UN seul fait, lu par deux lecteurs qui en font deux choses différentes, et
+ * c'est voulu :
+ *   - l'ORCHESTRATION en tire `delivery_blocked` sur le résultat typé — le
+ *     parent ne peut pas conclure que le travail est fini tant que le relecteur
+ *     demande des corrections ;
+ *   - l'ÉCRAN en tire un mot posé à côté de « Delivered », jamais à sa place
+ *     (Quentin, 19/09 au soir) : le travail a bien livré quelque chose, et le
+ *     nier reviendrait à dire que le process n'a pas eu lieu.
  *
- * Un verdict absent ne bloque RIEN : un travail sans relecture se livre comme
- * avant, sinon toute la plateforme s'arrêterait le jour où cette fonction est
- * posée. Seul un `request_changes` bloque, et il le dit.
+ * La règle tient en une ligne et vit ICI, dans le paquet que les deux lisent :
+ * une seconde écriture divergerait au premier correctif, et les deux moitiés du
+ * produit ne diraient plus la même chose du même run.
+ *
+ * Un verdict absent ne dit RIEN : un travail sans relecture se conclut comme
+ * avant, sinon toute la plateforme changerait de comportement le jour où cette
+ * fonction est posée. Seul un `request_changes` répond `true`.
  */
 export function reviewBlocksDelivery(
   verdict: { verdict: string } | string | null | undefined,
