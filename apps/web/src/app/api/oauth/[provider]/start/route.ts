@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { encrypt } from '@nodal-agents/secrets';
 import { getAuthProvider, requireAuth } from '@/lib/server.ts';
 import { getOAuthProvider, getProviderByCredentialType } from '@/lib/oauth-providers.ts';
+import type { CredentialType } from '@nodal-agents/shared';
 import {
   generatePkce,
   generateState,
@@ -49,9 +50,7 @@ export async function POST(
 
   // 2. Resolve provider — slug can be either a catalog connector slug (e.g. 'google-drive')
   // or a credentialType (e.g. 'google-oauth') when the wizard posts directly via type.
-  const provider =
-    getOAuthProvider(slug) ??
-    getProviderByCredentialType(slug as import('@nodal-agents/shared').CredentialType);
+  const provider = getOAuthProvider(slug) ?? getProviderByCredentialType(slug as CredentialType);
   if (!provider) {
     return NextResponse.json({ error: `Unknown OAuth provider: ${slug}` }, { status: 400 });
   }

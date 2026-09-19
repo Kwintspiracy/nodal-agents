@@ -78,6 +78,7 @@ import {
 import { randomBytes } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
+import type { IPv4, IPv6 } from 'ipaddr.js';
 import {
   eq,
   and,
@@ -11581,7 +11582,7 @@ const BLOCKED_SSRF_EXACT_ADDRESSES = new Set(
   ['100.100.100.200', '192.0.0.192', 'fd00:ec2::254'].map((ip) => ipaddr.parse(ip).toString()),
 );
 
-function isLinkLocalOrBlocked(addr: import('ipaddr.js').IPv4 | import('ipaddr.js').IPv6): boolean {
+function isLinkLocalOrBlocked(addr: IPv4 | IPv6): boolean {
   if (BLOCKED_SSRF_EXACT_ADDRESSES.has(addr.toString())) return true;
   return addr.range() === 'linkLocal';
 }
@@ -11595,11 +11596,11 @@ function isLinkLocalOrBlocked(addr: import('ipaddr.js').IPv4 | import('ipaddr.js
  * recognizes the first of the three) catches all of them at once. 6to4
  * (2002::/16) carries it instead in bits 16-47.
  */
-function extractEmbeddedIPv4Candidates(v6: import('ipaddr.js').IPv6): import('ipaddr.js').IPv4[] {
+function extractEmbeddedIPv4Candidates(v6: IPv6): IPv4[] {
   const bytes = v6.toByteArray();
-  const candidates = [ipaddr.fromByteArray(bytes.slice(12, 16)) as import('ipaddr.js').IPv4];
+  const candidates = [ipaddr.fromByteArray(bytes.slice(12, 16)) as IPv4];
   if (bytes[0] === 0x20 && bytes[1] === 0x02) {
-    candidates.push(ipaddr.fromByteArray(bytes.slice(2, 6)) as import('ipaddr.js').IPv4);
+    candidates.push(ipaddr.fromByteArray(bytes.slice(2, 6)) as IPv4);
   }
   return candidates;
 }
@@ -11610,7 +11611,7 @@ function isBlockedSsrfAddress(host: string): boolean {
   if (parsed.kind() === 'ipv4') {
     return isLinkLocalOrBlocked(parsed);
   }
-  const v6 = parsed as import('ipaddr.js').IPv6;
+  const v6 = parsed as IPv6;
   if (isLinkLocalOrBlocked(v6)) return true;
   return extractEmbeddedIPv4Candidates(v6).some((candidate) => isLinkLocalOrBlocked(candidate));
 }
