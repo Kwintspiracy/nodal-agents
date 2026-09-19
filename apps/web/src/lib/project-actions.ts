@@ -981,6 +981,79 @@ export async function registerDetectedProjectAction(
   }
 }
 
+// ─── listSidebarProjectsAction ───────────────────────────────────────────────
+
+/** Un projet, réduit à ce que le sous-menu de la barre latérale en dessine. */
+export type SidebarProjectRow = {
+  id: string;
+  /** `display_name`, ou le nom du dossier — jamais un chemin vide à l'écran. */
+  name: string;
+};
+
+/**
+ * Les derniers projets ENREGISTRÉS, et RIEN DE PLUS (#230, 19/09/2026 au soir).
+ *
+ * Le dossier « Workspaces » du panneau Work se déplie comme un canal : il
+ * montre ses dix derniers projets, puis « See all » s'il y en a d'autres.
+ *
+ * ⚠️ CE N'EST PAS `listProjectsAction`. Celle-là est la matière de la PAGE :
+ * elle joint les travaux pour compter et dater, puis lit l'état de la preuve
+ * de chaque dossier, le tout SANS PLAFOND. La barre latérale n'en dessine ni
+ * le compte, ni la date, ni la preuve, et n'en montre que dix lignes : la lui
+ * faire payer serait la même faute que le sous-menu d'un dossier avant la
+ * passe 1 de la revue de la PR #206.
+ *
+ * ⚠️ L'ORDRE EST CELUI DE L'ENREGISTREMENT (`registered_at desc`), pas celui
+ * de la dernière activité. C'est la demande : « les dix plus récents par date
+ * d'enregistrement ». Le départage par identifiant est nécessaire — sans lui,
+ * deux projets enregistrés dans la même seconde changeraient de place d'un
+ * chargement à l'autre, au gré du plan d'exécution.
+ *
+ * Les projets MASQUÉS sont écartés : masquer est le geste par lequel on les
+ * retire de la vue, et un menu qui les ramènerait défairait ce geste.
+ */
+const SidebarProjectsLimit = z.number().int().min(1).max(50);
+
+export async function listSidebarProjectsAction(
+  limit: number,
+): Promise<ActionResult<SidebarProjectRow[]>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    // Le plafond est VALIDÉ, comme toute entrée d'une action serveur
+    // (Reviewer C, passe 3 de la PR #235). Il vient du menu aujourd'hui, donc
+    // d'un constant, mais une action est une porte publique : un appelant qui
+    // passerait zéro, un nombre négatif ou dix mille ferait soit une requête
+    // absurde, soit une lecture non bornée — exactement ce que cette action
+    // existe pour éviter.
+    const parsed = SidebarProjectsLimit.safeParse(limit);
+    if (!parsed.success) return fail('validation_failed', 'Invalid limit');
+    const rows = await getDb()
+      .select({
+        id: codeProjects.id,
+        displayName: codeProjects.displayName,
+        path: codeProjects.projectPath,
+      })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.entityId, session.entityId),
+          // Un dossier qu'un agent a touché sans qu'on l'ait déclaré n'est pas
+          // un projet : la même règle que la page.
+          isNotNull(codeProjects.registeredAt),
+          eq(codeProjects.hidden, false),
+        ),
+      )
+      .orderBy(desc(codeProjects.registeredAt), desc(codeProjects.id))
+      .limit(parsed.data);
+
+    return ok(rows.map((r) => ({ id: r.id, name: r.displayName ?? basenameOf(r.path) })));
+  } catch (err) {
+    console.error('[projects] SIDEBAR_PROJECTS_FAILED', err);
+    return fail('list_failed', 'Could not list the workspaces');
+  }
+}
+
 // ─── listProjectTerrainsAction ───────────────────────────────────────────────
 
 /**

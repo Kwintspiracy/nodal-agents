@@ -55,6 +55,11 @@ test.describe('UserMenu — sign-out + re-login round-trip @cap:se-connecter/ecr
     await page.waitForURL(/\/(agents|onboarding|stats)(\?|$)/, { timeout: 10_000 });
 
     // ── UserMenu visible with email ──────────────────────────────────────────
+    // Depuis #230 le compte vit au bas du RAIL : l'avatar ouvre la carte qui
+    // porte le courriel et le bouton de déconnexion. Un rail de 72 px ne peut
+    // pas porter ce bloc en pleine largeur, et le retirer aurait supprimé la
+    // déconnexion.
+    await page.locator('[data-testid="rail-account"]').click();
     const userMenu = page.locator('[data-testid="user-menu"]');
     await expect(userMenu).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="user-menu-email"]')).toContainText(E2E_EMAIL);
@@ -72,6 +77,7 @@ test.describe('UserMenu — sign-out + re-login round-trip @cap:se-connecter/ecr
     await page.locator('[data-testid="password-input"]').fill(E2E_PASSWORD);
     await page.locator('[data-testid="login-button"]').click();
     await page.waitForURL(/\/(agents|onboarding|stats)(\?|$)/, { timeout: 10_000 });
+    await page.locator('[data-testid="rail-account"]').click();
     await expect(page.locator('[data-testid="user-menu-email"]')).toContainText(E2E_EMAIL);
   });
 });

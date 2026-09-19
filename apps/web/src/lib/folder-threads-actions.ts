@@ -34,7 +34,7 @@ import 'server-only';
 import { chatKey, chatLabel } from './chat-list.ts';
 import {
   DASHBOARD_FOLDER,
-  FOLDER_THREADS_MAX,
+  FOLDER_THREADS_PROBE,
   MCP_FOLDER,
   folderThreads,
   type FolderThread,
@@ -67,13 +67,15 @@ export type FolderThreadsSnapshot = Readonly<Record<string, readonly FolderThrea
  */
 export async function listFolderThreadsAction(): Promise<ActionResult<FolderThreadsSnapshot>> {
   const [lectures, names, currents, runs, approvals, folders] = await Promise.all([
-    // Deux requêtes BORNÉES à cinq lignes par dossier, le plafond en SQL.
-    listFolderThreadReadsAction(FOLDER_THREADS_MAX),
+    // Deux requêtes BORNÉES par dossier, le plafond en SQL — et UNE LIGNE DE
+    // PLUS que ce que le menu dessine : sa présence est ce qui dit qu'il y en
+    // a d'autres, donc qu'il faut un « See all ».
+    listFolderThreadReadsAction(FOLDER_THREADS_PROBE),
     listChatNamesAction(),
     listCurrentThreadByChatAction(),
-    // Cinq suffisent : c'est tout ce que le sous-menu déplie, et le dossier
-    // MCP n'a pas de « See all » d'une autre forme que les autres.
-    listExternalRunsAction({ limit: FOLDER_THREADS_MAX }),
+    // Le même plafond, sonde comprise : le dossier MCP n'a pas de « See all »
+    // d'une autre forme que les autres.
+    listExternalRunsAction({ limit: FOLDER_THREADS_PROBE }),
     // Ce qui ATTEND la personne, et OÙ ÇA TOURNE — les deux signaux du point
     // de chaque fil (19/09/2026). Les MÊMES lectures que la pastille et le
     // point vert du dossier, rangées par fil au lieu de l'être par dossier :
@@ -140,9 +142,11 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
       folder: DASHBOARD_FOLDER,
       key: c.id,
       // Le MÊME titre que la ligne de la liste (`conversationRows`) : déjà
-      // masqué et coupé par la lecture (#179), « Untitled » quand personne ne
-      // l'a nommé et que l'IA ne l'a pas encore renommé.
-      title: c.title === '' ? 'Untitled' : c.title,
+      // masqué, coupé ET nommé par la lecture (#179), « Untitled » compris.
+      // Le dernier recours vit dans `nommerLesFils`, pas ici : il était écrit
+      // à deux endroits, et deux copies du même repli finissent par diverger
+      // (Reviewer C, passe 1 de la PR #235).
+      title: c.title,
       href: `/chat/${c.id}`,
       waiting: attendSurFil.has(c.id),
       running: tourne.has(c.id),

@@ -12,8 +12,13 @@
  *     'Runs', 'Memory', and gone, respectively
  *
  * The route list and the labels below are read from the real source of truth
- * (`components/Sidebar.tsx` NAV_ITEMS and the `(dashboard)` route folder). When
- * a section is added or renamed, this list is what must move with it.
+ * (`components/sidebar-nav.ts` and the `(dashboard)` route folder). When a
+ * section is added or renamed, this list is what must move with it.
+ *
+ * Realigned again 2026-09-19 (#230): la barre est devenue un RAIL de trois
+ * destinations et un PANNEAU pour celle qui est active. Un seul panneau est
+ * visible à la fois, donc « toutes les entrées visibles sur une page » n'est
+ * plus vrai — et ne doit plus être demandé.
  */
 
 import { test, expect } from '@playwright/test';
@@ -36,38 +41,101 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
   });
 
-  test('sidebar links every dashboard section', async ({ page }) => {
+  test('the rail carries the three destinations on every page', async ({ page }) => {
     await page.goto('/agents');
-
-    // Labels as rendered by Sidebar.tsx NAV_ITEMS (source of truth).
-    for (const label of [
-      // 'Home' et 'Spaces' jusqu'au 18/09/2026 : la barre dit maintenant
-      // 'Dashboard' et 'Workspaces'. Les ROUTES, elles, n'ont pas bouge.
-      'Dashboard',
-      'Channels',
-      'Workspaces',
-      // « Runs » n'est plus une entree du menu depuis #134 : la liste des runs
-      // EST Activity, le premier onglet de Logs, deja verifie plus bas.
-      'LLM Providers',
-      'Agents',
-      'Skills',
-      'Learned Skills',
-      'API Connectors',
-      'MCP Connectors',
-      'Credentials',
-      'Memory',
-      'Automations',
-      'Approvals',
-      'Logs',
-      'Settings',
-    ]) {
-      // Sidebar uses anchor tags. The accessible-name match is loose so
-      // icons-with-labels and bare text both work.
-      await expect(
-        page.getByRole('link', { name: new RegExp(label, 'i') }).first(),
-        `sidebar link "${label}"`,
-      ).toBeVisible();
+    // Depuis #230 la barre est un RAIL de destinations et un PANNEAU pour
+    // celle qui est active. Le rail, lui, est le même partout.
+    for (const key of ['work', 'agent', 'run', 'approvals', 'settings', 'help']) {
+      await expect(page.locator(`[data-testid="rail-${key}"]`), `rail cell "${key}"`).toBeVisible();
     }
+    // Et c'est bien Agent qui est allumee sur /agents.
+    await expect(page.locator('[data-testid="rail-agent"]')).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  test('every dashboard section is one panel away', async ({ page }) => {
+    // Un panneau ne montre que SA destination : la liste plate d'avant #230
+    // aurait demandé que tout soit visible à la fois, ce qui n'est plus vrai.
+    // Les libellés sont ceux de `components/sidebar-nav.ts`, la source.
+    const panneaux: ReadonlyArray<readonly [string, readonly string[]]> = [
+      [
+        '/agents',
+        [
+          'Agents',
+          'Skills',
+          'Learned Skills',
+          'Memory',
+          'API Connectors',
+          'MCP Connectors',
+          'Credentials',
+          'LLM Providers',
+        ],
+      ],
+      [
+        // `/logs`, et PLUS `/` : la racine ouvre le panneau Work depuis
+        // l'issue #248. `/logs` est une route de Run qui EXISTE aujourd'hui —
+        // `/dashboard`, ou la page du tableau de bord demenage, n'arrive
+        // qu'avec la PR de l'ecran d'accueil, et un parcours ne visite pas une
+        // adresse qui n'est pas encore la.
+        '/logs',
+        [
+          // 'Home' jusqu'au 18/09/2026 : la barre dit maintenant 'Dashboard'.
+          // Les ROUTES, elles, n'ont pas bouge.
+          'Dashboard',
+          // « Runs » n'est plus une entree du menu depuis #134 : la liste des
+          // runs EST Activity, le premier onglet de Logs.
+          'Logs',
+          'Automations & Webhooks',
+        ],
+      ],
+    ];
+
+    for (const [route, labels] of panneaux) {
+      await page.goto(route);
+      const panneau = page.locator('[data-testid="sidebar-panel"]');
+      for (const label of labels) {
+        await expect(
+          panneau.getByRole('link', { name: new RegExp(label, 'i') }).first(),
+          `panel link "${label}" on ${route}`,
+        ).toBeVisible();
+      }
+    }
+
+    // Les espaces de travail ne sont PAS un lien : depuis le 19/09/2026 au
+    // soir, « Workspaces » est un DOSSIER du panneau Work, comme un canal. Sa
+    // ligne est un bouton qui plie et deplie ; le chemin vers `/spaces` est le
+    // « See all » de son sous-menu, une fois deplie.
+    await page.goto('/chat');
+    const dossier = page.locator('[data-testid="inbox-folder-workspaces"]');
+    await expect(dossier).toBeVisible();
+    await expect(dossier).toHaveAttribute('aria-expanded', 'false');
+    await dossier.click();
+    await expect(dossier).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('[data-testid="folder-see-all-workspaces"]')).toHaveAttribute(
+      'href',
+      '/spaces',
+    );
+
+    // Settings et Approvals vivent sur le RAIL, pas dans un panneau : ce qui
+    // attend une reponse se voit de n'importe quelle destination.
+    await expect(page.locator('[data-testid="rail-settings"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rail-approvals"]')).toHaveAttribute(
+      'href',
+      '/approvals',
+    );
+  });
+
+  test('the Work panel lists the channels and the recent threads', async ({ page }) => {
+    await page.goto('/chat');
+    const panneau = page.locator('[data-testid="sidebar-panel"]');
+    await expect(panneau).toHaveAttribute('aria-label', 'Work');
+    // « Nodal chats » est une destination permanente du produit : son dossier
+    // est là même sur une base vide. C'est un bouton — il PLIE, il ne navigue
+    // pas (#206) — et « See all » est ce qui ouvre la liste.
+    await expect(page.locator('[data-testid="inbox-folder-dashboard"]')).toBeVisible();
+    await expect(page.locator('[data-testid="recent-see-all"]')).toBeVisible();
   });
 });
 

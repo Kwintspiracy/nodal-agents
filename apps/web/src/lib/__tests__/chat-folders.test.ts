@@ -18,6 +18,8 @@ import {
   folderThreads,
   threadCallsFor,
   FOLDER_THREADS_MAX,
+  FOLDER_THREADS_PROBE,
+  unfoldedRows,
   folderOfJobChannel,
   folderOfWork,
   DASHBOARD_FOLDER,
@@ -412,17 +414,34 @@ function fil(
 }
 
 describe('folderThreads @cap:reprendre-conversation/ecran', () => {
-  it('garde les CINQ premiers fils d’un dossier, et pas le sixième', () => {
-    const rows = Array.from({ length: 7 }, (_, i) => fil('telegram', i + 1));
+  it('garde les ONZE premiers fils d’un dossier, et pas le douzième', () => {
+    // ONZE, et pas dix : la lecture demande une ligne de plus que ce que le
+    // menu dessine, et c'est sa présence qui dit qu'il y en a d'autres
+    // (19/09/2026 au soir). La coupe à dix se fait à l'affichage,
+    // `unfoldedRows`, qui rend aussi ce fait.
+    const rows = Array.from({ length: 15 }, (_, i) => fil('telegram', i + 1));
     const dossiers = folderThreads(rows);
-    expect(FOLDER_THREADS_MAX).toBe(5);
-    expect(dossiers.telegram?.map((t) => t.title)).toEqual([
-      'telegram 1',
-      'telegram 2',
-      'telegram 3',
-      'telegram 4',
-      'telegram 5',
-    ]);
+    expect(FOLDER_THREADS_MAX).toBe(10);
+    expect(FOLDER_THREADS_PROBE).toBe(11);
+    expect(dossiers.telegram).toHaveLength(11);
+
+    const { rows: dessinees, hasMore } = unfoldedRows(dossiers.telegram ?? []);
+    expect(dessinees.map((t) => t.title)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `telegram ${i + 1}`),
+    );
+    expect(hasMore).toBe(true);
+  });
+
+  it('ne promet PAS d’autres fils quand il n’y en a pas', () => {
+    // Neuf fils, tous sous les yeux : « See all » mènerait aux mêmes neuf.
+    const dossiers = folderThreads(Array.from({ length: 9 }, (_, i) => fil('telegram', i + 1)));
+    const { rows, hasMore } = unfoldedRows(dossiers.telegram ?? []);
+    expect(rows).toHaveLength(9);
+    expect(hasMore).toBe(false);
+
+    // Et à la limite EXACTE : dix lues, dix dessinées, rien de plus à voir.
+    const pile = folderThreads(Array.from({ length: 10 }, (_, i) => fil('slack', i + 1)));
+    expect(unfoldedRows(pile.slack ?? []).hasMore).toBe(false);
   });
 
   it('garde l’ORDRE de la liste, qui est celui de la lecture', () => {
@@ -433,15 +452,15 @@ describe('folderThreads @cap:reprendre-conversation/ecran', () => {
   });
 
   it('range chaque fil sous SON dossier, même mêlés', () => {
-    // Les lignes arrivent tous dossiers confondus : le cinquième fil de
+    // Les lignes arrivent tous dossiers confondus : le dixième fil de
     // Telegram peut précéder le premier de Slack.
     const rows = [
-      ...Array.from({ length: 6 }, (_, i) => fil('telegram', i + 1)),
+      ...Array.from({ length: 14 }, (_, i) => fil('telegram', i + 1)),
       fil('slack', 1),
       fil(DASHBOARD_FOLDER, 1),
     ];
     const dossiers = folderThreads(rows);
-    expect(dossiers.telegram).toHaveLength(5);
+    expect(dossiers.telegram).toHaveLength(11);
     expect(dossiers.slack?.map((t) => t.href)).toEqual(['/chat/slack-1']);
     expect(dossiers[DASHBOARD_FOLDER]).toHaveLength(1);
   });

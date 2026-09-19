@@ -277,8 +277,14 @@ function waitingByFolder(waiting: ChatFoldersInput['waiting']): Map<string, numb
 }
 
 /**
- * Un dossier est ACTIF quand l'URL le désigne : le `folder=` de `/chat`. Sur
- * `/scheduled`, aucun ne l'est : Scheduled a son propre lien dans le menu.
+ * Un dossier est ACTIF quand l'URL le DÉSIGNE : le `folder=` de `/chat`, et
+ * rien d'autre. Aucune autre page n'allume de dossier.
+ *
+ * ⚠️ La raison a changé le 19/09/2026 (#230). Elle disait : « sur /scheduled,
+ * aucun ne l'est, Scheduled a son propre lien dans le menu ». Ce lien n'existe
+ * plus — le rail ne porte plus l'entrée, et la page part avec #224. La règle,
+ * elle, n'a pas bougé d'un caractère, parce qu'elle ne tenait pas à ce lien :
+ * un dossier s'allume quand l'URL le nomme, un point.
  *
  * Un fil ouvert (`/chat/<id>`) ne rallume aucun dossier : rien dans son URL ne
  * dit d'où il vient, et deviner le rendrait faux une fois sur deux.
@@ -377,11 +383,49 @@ export function threadCallsFor(
 /**
  * Combien de fils un sous-menu déplie.
  *
- * Cinq (Quentin, 18/09/2026). Assez pour retrouver ce qu'on a ouvert ce
- * matin ; pas assez pour que la barre latérale devienne la liste, qui a sa
- * page et son bouton « See all ».
+ * DIX depuis le 19/09/2026 au soir (Quentin). Cinq d'abord : assez pour
+ * retrouver ce qu'on a ouvert ce matin, pas assez pour que la barre latérale
+ * devienne la liste. Dix depuis, parce que la colonne est passée à 280 px et
+ * que la moitié des dépliages se terminaient par un « See all ».
  */
-export const FOLDER_THREADS_MAX = 5;
+export const FOLDER_THREADS_MAX = 10;
+
+/**
+ * Ce qu'on DEMANDE à la base : un de plus que ce qu'on montre.
+ *
+ * La ligne en trop n'est JAMAIS dessinée. Elle ne sert qu'à répondre à une
+ * question que rien d'autre ne répond : y en a-t-il d'autres ? « See all » ne
+ * s'affiche que si oui — en dessous du plafond, tout est déjà sous les yeux,
+ * et un lien vers « tout » qui mènerait aux mêmes dix lignes ferait promettre
+ * au menu quelque chose qu'il montre déjà.
+ *
+ * Une ligne de plus, et pas un `count(*)` : le compte exact demanderait une
+ * seconde requête, ou un agrégat sur toute la table, pour une information
+ * booléenne.
+ */
+export const FOLDER_THREADS_PROBE = FOLDER_THREADS_MAX + 1;
+
+/**
+ * Ce qu'un sous-menu DESSINE, à partir de ce que la lecture a rendu.
+ *
+ * Les lignes coupées au plafond, et le fait qu'il y en ait d'autres — LU, pas
+ * supposé : la lecture en a demandé une de plus, et sa présence est la réponse.
+ */
+export function unfoldedRows<T>(
+  rows: readonly T[],
+  max: number = FOLDER_THREADS_MAX,
+): { rows: readonly T[]; hasMore: boolean } {
+  return { rows: rows.slice(0, max), hasMore: rows.length > max };
+}
+
+/**
+ * Combien de fils la section « Recent » du panneau Talk montre (#230).
+ *
+ * Cinq, comme un sous-menu : la barre latérale montre la TÊTE des listes, et
+ * deux plafonds différents sous deux titres voisins se liraient comme une règle
+ * de plus à retenir.
+ */
+export const RECENT_THREADS_MAX = 5;
 
 /**
  * Les derniers fils de CHAQUE dossier, dans l'ordre reçu.
@@ -395,7 +439,7 @@ export const FOLDER_THREADS_MAX = 5;
  */
 export function folderThreads(
   rows: readonly FolderThreadSource[],
-  max: number = FOLDER_THREADS_MAX,
+  max: number = FOLDER_THREADS_PROBE,
 ): Record<string, FolderThread[]> {
   const byFolder: Record<string, FolderThread[]> = {};
   for (const r of rows) {
