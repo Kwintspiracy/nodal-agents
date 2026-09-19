@@ -559,10 +559,53 @@ describe('la page d’une routine @cap:planifier-une-tache/ecran', () => {
     const view = await load(digestId);
     await render(<AutomationScreen view={view} agents={[]} />);
 
-    expect(
-      container.querySelector('[data-testid="back-to-automations"]')?.getAttribute('href'),
-    ).toBe('/automations');
+    // Le retour est celui de la BARRE du design system, et il n'y en a qu'un.
+    const retours = [...container.querySelectorAll('a[href="/automations"]')];
+    expect(retours).toHaveLength(1);
+    expect(retours[0]?.textContent).toContain('Automations');
     expect(buttonLabels()).toEqual(['Run now', 'Pause', 'Edit']);
+  });
+
+  it('empile en-tête, barre de travail, actions, réglages — dans cet ordre', async () => {
+    // Quentin, 19/09/2026 : la page dessinait son propre lien de retour au lieu
+    // de la `WorkBar`, et posait ses actions SUR la ligne de ce retour. Une
+    // action n'est pas de la navigation : elle a sa rangée, sous la barre.
+    const view = await load(digestId);
+    await render(<AutomationScreen view={view} agents={[]} />);
+
+    const tous = [...container.querySelectorAll('*')];
+    /** La position d'un élément dans l'ordre du document. */
+    const position = (selecteur: string): number => {
+      const el = container.querySelector(selecteur);
+      expect(el, `« ${selecteur} » est rendu`).not.toBeNull();
+      return tous.indexOf(el as Element);
+    };
+
+    const ordre = [
+      position('h1'),
+      position('a[href="/automations"]'),
+      position('[data-testid="automation-actions-row"]'),
+      position('[data-testid="automation-settings"]'),
+    ];
+    expect(ordre).toEqual([...ordre].sort((a, b) => a - b));
+
+    // Et la rangée d'actions CONTIENT les boutons : sans cela, l'ordre
+    // ci-dessus tiendrait sur une rangée vide.
+    const rangee = container.querySelector('[data-testid="automation-actions-row"]');
+    expect(rangee?.querySelector('[data-testid="automation-actions"]')).not.toBeNull();
+    // Le retour, lui, n'en porte aucun : il est seul sur sa ligne.
+    expect(
+      container.querySelector('a[href="/automations"]')?.parentElement?.querySelector('button'),
+    ).toBeNull();
+  });
+
+  it('montre l’agent et l’état DANS la barre de travail', async () => {
+    const view = await load(digestId);
+    await render(<AutomationScreen view={view} agents={[]} />);
+
+    const barre = container.querySelector('a[href="/automations"]')?.parentElement;
+    expect(barre?.textContent).toContain('1 agent');
+    expect(barre?.textContent).toContain('Active');
   });
 });
 

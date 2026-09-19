@@ -6,12 +6,14 @@
 // que de la mise en page.
 
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight } from '@phosphor-icons/react/dist/ssr';
+import { ArrowRight } from '@phosphor-icons/react/dist/ssr';
 import type { AgentRow, AutomationView } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
-import PageTopBar from '@/components/ui/PageTopBar';
 import EmptyState from '@/components/ui/EmptyState';
 import StatusPill from '@/components/ui/StatusPill';
+// La `WorkBar` va être promue dans `components/ui` par une autre PR ; elle est
+// importée d'ici en attendant, et l'import suivra mécaniquement.
+import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
 import { RoutineState, ScheduleRunList } from './RunLines.tsx';
 import ScheduleActions from '../ScheduleActions.tsx';
 import WebhookPageActions from './WebhookPageActions.tsx';
@@ -58,31 +60,31 @@ export default function AutomationScreen({
     <PageShell
       title={automationName(view)}
       subtitle={automationSubtitle(view)}
+      toolbarBleed
+      // LA barre du design system (Figma 353:3378), celle du fil de chat et de
+      // la page de run : le retour à gauche, le contexte à droite. La page
+      // dessinait son propre lien de retour dans un `PageTopBar` — un motif de
+      // plus pour une chose qui existe déjà (Quentin, 19/09/2026).
       toolbar={
-        <PageTopBar
-          tabs={
-            <Link
-              href="/automations"
-              className="inline-flex items-center gap-1.5 text-body-13 text-ink-3 transition-colors hover:text-ink"
-              data-testid="back-to-automations"
-            >
-              <ArrowLeft size={14} />
-              Automations
-            </Link>
-          }
-          cta={
-            view.kind === 'schedule' ? (
-              <ScheduleActions schedule={view.schedule} agents={agents} layout="page" />
-            ) : (
-              <WebhookPageActions webhook={view.webhook} />
-            )
+        <WorkBar
+          back={{ label: 'Automations', href: '/automations' }}
+          agents={view.agent === null ? [] : [view.agent]}
+          status={
+            <StatusPill variant={active ? 'done' : 'idle'} label={active ? 'Active' : 'Paused'} />
           }
         />
       }
     >
       <div className="space-y-6">
-        <div className="flex items-center gap-2">
-          <StatusPill variant={active ? 'done' : 'idle'} label={active ? 'Active' : 'Paused'} />
+        {/* Les actions ont leur PROPRE rangée, sous la barre : elles agissent
+            sur l'automatisation, et les aligner avec le retour les aurait
+            faites lire comme de la navigation (Quentin, 19/09/2026). */}
+        <div className="flex justify-end" data-testid="automation-actions-row">
+          {view.kind === 'schedule' ? (
+            <ScheduleActions schedule={view.schedule} agents={agents} layout="page" />
+          ) : (
+            <WebhookPageActions webhook={view.webhook} />
+          )}
         </div>
 
         <div

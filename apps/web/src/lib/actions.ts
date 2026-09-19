@@ -10439,6 +10439,15 @@ export type AutomationWindow = { runs: number; costUsd: number; days: number };
 export type ScheduleDetail = ScheduleRow & { timezone: string | null };
 
 /**
+ * L'agent qui exécute l'automatisation, tel que la barre de travail le montre :
+ * une TUILE d'avatar. Distinct des champs `agentName` / `agentSlug` des lignes,
+ * qui servent le texte — la barre veut une image, et `WorkBar` parle en
+ * `ThreadAgent`. `null` quand l'agent a été supprimé : pas de tuile, plutôt
+ * qu'une tuile anonyme.
+ */
+export type AutomationAgent = { key: string; name: string; avatarUrl: string | null };
+
+/**
  * Une automatisation ouverte sur sa page : ses réglages, ses derniers runs, et
  * ce qu'elle a coûté sur la fenêtre. Un schedule et un webhook sont la même
  * chose pour qui la regarde (« une automatisation »), et deux choses pour qui
@@ -10451,6 +10460,8 @@ export type AutomationView =
       schedule: ScheduleDetail;
       runs: SpaceListRow[];
       window: AutomationWindow;
+      /** L'agent en TUILE, pour la barre de travail. */
+      agent: AutomationAgent | null;
       /**
        * Ce que la routine a retenu de ses runs précédents. Vide quand elle n'a
        * rien noté. C'est le seul écran qui le montre depuis le retrait de
@@ -10458,7 +10469,31 @@ export type AutomationView =
        */
       state: RoutineStateRow[];
     }
-  | { kind: 'webhook'; webhook: WebhookTriggerRow; runs: SpaceListRow[]; window: AutomationWindow };
+  | {
+      kind: 'webhook';
+      webhook: WebhookTriggerRow;
+      runs: SpaceListRow[];
+      window: AutomationWindow;
+      /** L'agent en TUILE, pour la barre de travail. */
+      agent: AutomationAgent | null;
+    };
+
+/**
+ * La tuile d'agent d'une automatisation, ou `null` quand il n'y en a plus.
+ *
+ * La CLÉ est le slug, jamais le nom : deux agents peuvent porter le même nom
+ * d'affichage, et le même agent peut changer de nom (c'est la règle de
+ * `threadAgents`, et la barre est la même). Sans slug, le nom sert de clé,
+ * faute de mieux.
+ */
+function toAutomationAgent(
+  name: string | null,
+  slug: string | null,
+  avatarUrl: string | null,
+): AutomationAgent | null {
+  if (name === null || name === '') return null;
+  return { key: slug ?? name, name, avatarUrl: avatarUrl ?? null };
+}
 
 /**
  * Les runs d'UNE automatisation, les plus récents d'abord, et son compteur de
@@ -10536,6 +10571,7 @@ export async function getAutomationAction(id: string): Promise<ActionResult<Auto
         agentId: agentSchedules.agentId,
         agentName: agents.name,
         agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
         name: agentSchedules.name,
         cronExpr: agentSchedules.cronExpr,
         timezone: agentSchedules.timezone,
@@ -10570,17 +10606,19 @@ export async function getAutomationAction(id: string): Promise<ActionResult<Auto
         ),
         readRoutineState(db, id),
       ]);
+      const { agentAvatarUrl, ...scheduleRow } = schedule;
       return ok({
         kind: 'schedule',
         schedule: {
-          ...schedule,
-          active: schedule.active ?? true,
-          notifyOnSuccess: schedule.notifyOnSuccess ?? false,
-          notifyChannel: (schedule.notifyChannel as ChannelKind | null) ?? null,
-          dailyBudgetUsd: schedule.dailyBudgetUsd ?? 5,
+          ...scheduleRow,
+          active: scheduleRow.active ?? true,
+          notifyOnSuccess: scheduleRow.notifyOnSuccess ?? false,
+          notifyChannel: (scheduleRow.notifyChannel as ChannelKind | null) ?? null,
+          dailyBudgetUsd: scheduleRow.dailyBudgetUsd ?? 5,
         },
         runs,
         window,
+        agent: toAutomationAgent(scheduleRow.agentName, scheduleRow.agentSlug, agentAvatarUrl),
         state,
       });
     }
@@ -10590,6 +10628,8 @@ export async function getAutomationAction(id: string): Promise<ActionResult<Auto
         id: webhookTriggers.id,
         agentId: webhookTriggers.agentId,
         agentName: agents.name,
+        agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
         name: webhookTriggers.name,
         slug: webhookTriggers.slug,
         taskTemplate: webhookTriggers.taskTemplate,
@@ -10607,7 +10647,7 @@ export async function getAutomationAction(id: string): Promise<ActionResult<Auto
       .where(and(eq(webhookTriggers.id, id), eq(webhookTriggers.entityId, session.entityId)));
 
     if (webhook) {
-      const { secret, ...rest } = webhook;
+      const { secret, agentSlug, agentAvatarUrl, ...rest } = webhook;
       const { runs, window } = await readAutomationRuns(
         db,
         and(
@@ -10629,6 +10669,7 @@ export async function getAutomationAction(id: string): Promise<ActionResult<Auto
         },
         runs,
         window,
+        agent: toAutomationAgent(rest.agentName, agentSlug, agentAvatarUrl),
       });
     }
 
