@@ -1,7 +1,7 @@
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getSkillByIdAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
+import BackButton from '@/components/ui/BackButton';
 import SkillForm from '../../SkillForm.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -15,9 +15,9 @@ export default async function EditSkillPage({ params }: { params: Promise<{ id: 
     <PageShell title="Edit skill" subtitle={result.data.name}>
       <div className="space-y-6">
         <div>
-          <Link href="/skills" className="text-xs text-ink-3 hover:text-ink-2 transition-colors">
-            ← Skills
-          </Link>
+          {/* #232 — la liste des skills est le PARENT de cette page ; on y
+              retombe seulement quand cet onglet n'a pas de page précédente. */}
+          <BackButton parent="/skills" label="Skills" className="text-xs hover:text-ink-2" />
           <p className="text-sm text-ink-3 mt-2">
             Changes apply to the next LLM call that uses this skill — no cache invalidation needed.
           </p>

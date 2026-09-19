@@ -13,7 +13,8 @@ import SkillForm from '../SkillForm.tsx';
 export default function NewSkillPage() {
   return (
     <PageShell title="New skill" subtitle="Reusable instructions for any agent.">
-      <BackButton href="/skills" label="Back to Skills" />
+      {/* #232 — `parent` est le repli : on revient d'abord d'où l'on vient. */}
+      <BackButton parent="/skills" label="Back to Skills" />
       <div className="mt-5">
         <SkillForm mode="create" defaultOpen />
       </div>

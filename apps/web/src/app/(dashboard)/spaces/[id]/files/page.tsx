@@ -7,9 +7,9 @@
 // conversation ; le bouton « Files » de l'en-tête mène ici, et « ← <projet> »
 // ramène au fil.
 
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
+import BackButton from '@/components/ui/BackButton';
 import EmptyState from '@/components/ui/EmptyState';
 import { getProjectPageAction } from '@/lib/project-actions.ts';
 import type { VerificationUnconfiguredView } from '@/lib/verification-runs-view.ts';
@@ -28,9 +28,7 @@ export default async function ProjectFilesPage({ params }: { params: Promise<{ i
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Project">
-        <Link href="/spaces" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Workspaces
-        </Link>
+        <BackButton parent="/spaces" label="Workspaces" className="text-xs hover:text-ink-2" />
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>
     );
@@ -60,13 +58,13 @@ export default async function ProjectFilesPage({ params }: { params: Promise<{ i
       subtitle={project.path}
       toolbar={
         <div className="flex items-center gap-3">
-          <Link
-            href={`/spaces/${project.id}`}
-            className="inline-flex items-center gap-1.5 text-body-13 text-ink-3 transition-colors hover:text-ink-2"
-          >
-            <span className="text-body-15 leading-none!">‹</span>
-            Back to {project.name}
-          </Link>
+          {/* #232 — le fil du projet est le PARENT de son dossier, pas la seule
+              destination : on revient d'abord à la page d'où l'on vient. */}
+          <BackButton
+            parent={`/spaces/${project.id}`}
+            label={`Back to ${project.name}`}
+            className="text-body-13 hover:text-ink-2"
+          />
           <span className="ml-auto">
             <NewProjectConversationButton projectId={project.id} />
           </span>

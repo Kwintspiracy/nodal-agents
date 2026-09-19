@@ -17,7 +17,13 @@ const setFeedDensityAction = vi.hoisted(() =>
   vi.fn(async (d: unknown) => ({ ok: true as const, data: d })),
 );
 vi.mock('@/lib/actions.ts', () => ({ setFeedDensityAction }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+// #232 — le retour de la barre est désormais `BackButton`, qui lit le chemin
+// courant pour savoir d'où l'on vient. Ce qui se joue ICI est ce que la barre
+// montre ; la règle de retour, elle, se prouve dans `BackButton.test.tsx`.
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), back: vi.fn() }),
+  usePathname: () => '/chat/c-1',
+}));
 import { threadAgents } from '../format.ts';
 import type { FeedItem } from '@/lib/conversation-feed.ts';
 

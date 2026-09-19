@@ -11,9 +11,9 @@
 // La page du FIL D'UN JOB n'est pas ici : /scheduled/[id] pour un run
 // d'automatisation, /chat/[id] pour tout le reste.
 
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
+import BackButton from '@/components/ui/BackButton';
 import StatusPill from '@/components/ui/StatusPill';
 import { getProjectThreadPageAction } from '@/lib/project-actions.ts';
 import { getFeedDensityAction } from '@/lib/actions.ts';
@@ -41,9 +41,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Project">
-        <Link href="/spaces" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Workspaces
-        </Link>
+        {/* #232 — même sur un échec de lecture, le retour ramène d'où l'on vient. */}
+        <BackButton parent="/spaces" label="Workspaces" className="text-xs hover:text-ink-2" />
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>
     );

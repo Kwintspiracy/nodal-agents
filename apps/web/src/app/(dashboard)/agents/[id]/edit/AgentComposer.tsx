@@ -17,6 +17,7 @@ import {
   type CliRuntimeValue,
 } from '@/lib/cli-runtimes.ts';
 import PageShell from '@/components/ui/PageShell';
+import BackButton from '@/components/ui/BackButton';
 import { toast } from 'sonner';
 import {
   Area,
@@ -728,14 +729,10 @@ export default function AgentComposer({
 // ─── Back link ────────────────────────────────────────────────────────────────
 
 function BackLink() {
+  // #232 — la liste des agents est le PARENT de cette page. Quand on y est
+  // arrivé depuis ailleurs (un fil, un run), `BackButton` y ramène plutôt.
   return (
-    <Link
-      href="/agents"
-      className="inline-flex items-center gap-1.5 text-body-13 text-ink-3 transition-colors hover:text-ink-2"
-    >
-      <span className="text-body-15 leading-none!">‹</span>
-      Back to agents
-    </Link>
+    <BackButton parent="/agents" label="Back to agents" className="text-body-13 hover:text-ink-2" />
   );
 }
 

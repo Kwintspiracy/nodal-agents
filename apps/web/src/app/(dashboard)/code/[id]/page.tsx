@@ -10,9 +10,9 @@
 // il se relit tout seul tant que le process court (`CodeProcessDetail`).
 
 import { notFound } from 'next/navigation';
-import Link from 'next/link';
 import { getCodingProcessDetailAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
+import BackButton from '@/components/ui/BackButton';
 import RunScreen from '@/app/(dashboard)/runs/RunScreen.tsx';
 import StatusPill from '@/components/ui/StatusPill';
 import { threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
@@ -55,9 +55,8 @@ export default async function CodeProcessPage({ params }: Props) {
     return (
       <PageShell title="Code">
         <div className="space-y-4">
-          <Link href="/code" className="text-body-13 text-ink-3 hover:text-ink-2">
-            ← Code
-          </Link>
+          {/* #232 — la liste Code est le PARENT de ce détail, pas sa seule issue. */}
+          <BackButton parent="/code" label="Code" className="text-body-13 hover:text-ink-2" />
           <p className="text-body-14 text-err">{result.message}</p>
         </div>
       </PageShell>

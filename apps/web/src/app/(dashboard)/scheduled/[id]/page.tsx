@@ -9,8 +9,8 @@
 // `RunPage`, la page partagée avec /jobs/[id]. Un run est un tableau de bord,
 // pas un fil (décision Quentin) ; l'ordre des blocs vit dans `runs/RunPage.tsx`.
 
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import BackButton from '@/components/ui/BackButton';
 import { getSpaceConversationAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import RunPage from '@/app/(dashboard)/runs/RunPage.tsx';
@@ -26,9 +26,8 @@ export default async function ScheduledRunPage({ params }: { params: Promise<{ i
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Run">
-        <Link href="/scheduled" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Scheduled
-        </Link>
+        {/* #232 — même sur un échec de lecture, le retour ramène d'où l'on vient. */}
+        <BackButton parent="/scheduled" label="Scheduled" className="text-xs hover:text-ink-2" />
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>
     );

@@ -10,8 +10,8 @@
 // sont plus une liste de liens : elles se lisent DANS la chronologie du run,
 // dépliables, là où elles ont eu lieu (décision Quentin, 18/09).
 
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import BackButton from '@/components/ui/BackButton';
 import { getSpaceConversationAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import RunPage from '@/app/(dashboard)/runs/RunPage.tsx';
@@ -29,9 +29,8 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Run">
-        <Link href="/logs" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Activity
-        </Link>
+        {/* #232 — même sur un échec de lecture, le retour ramène d'où l'on vient. */}
+        <BackButton parent="/logs" label="Activity" className="text-xs hover:text-ink-2" />
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>
     );

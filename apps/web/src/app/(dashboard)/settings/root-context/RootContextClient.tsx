@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
+import BackButton from '@/components/ui/BackButton';
 import { toast } from 'sonner';
 import {
   updateRootPersonalityAction,
@@ -94,9 +94,9 @@ export default function RootContextClient({
 
   return (
     <PageShell title="Root context" subtitle="What the ROOT agent sees every turn.">
-      <Link href="/settings" className="text-xs text-ink-3 hover:text-ink-2 transition-colors">
-        ← Settings
-      </Link>
+      {/* #232 — Settings est le PARENT de cette page ; on y retombe seulement
+          quand cet onglet n'a pas de page précédente. */}
+      <BackButton parent="/settings" label="Settings" className="text-xs hover:text-ink-2" />
 
       {!rootName ? (
         <div className="mt-6 rounded-xl border border-rule-2 bg-paper p-5 text-legacy-14 text-ink-3">

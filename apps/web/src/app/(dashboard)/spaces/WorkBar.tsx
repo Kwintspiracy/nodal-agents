@@ -10,8 +10,8 @@
 // cette barre porte ce qui reste — d'où l'on vient, qui a travaillé, le
 // dossier, et l'état.
 
-import Link from 'next/link';
 import type { ReactNode } from 'react';
+import BackButton from '@/components/ui/BackButton';
 import AvatarStack from '@/components/ui/AvatarStack';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import StatusPill from '@/components/ui/StatusPill';
@@ -35,7 +35,11 @@ export default function WorkBar({
   filesHref = null,
   density = null,
 }: {
-  /** D'où l'on vient — le motif de « Back to agents » : un chevron, un mot. */
+  /**
+   * Le PARENT de la page — le motif de « Back to agents » : un chevron, un mot.
+   * Depuis #232 c'est un repli, pas une destination : `BackButton` ramène à la
+   * page d'où l'on vient quand cet onglet en connaît une.
+   */
   back: { label: string; href: string };
   agents: readonly ThreadAgent[];
   /** L'état du travail (Idle, Running…). */
@@ -63,13 +67,10 @@ export default function WorkBar({
     // `shrink-0` : dans la colonne pleine hauteur d'un écran de fil, une barre
     // à hauteur fixe se laisse comprimer par le fil qui pousse sous elle.
     <div className="flex h-[54px] w-full min-w-0 shrink-0 items-center gap-4 border-y border-rule-2 bg-canvas px-5 sm:px-8 lg:px-9">
-      <Link
-        href={back.href}
-        className="inline-flex shrink-0 items-center gap-1.5 text-body-13 text-ink-3 transition-colors hover:text-ink-2"
-      >
-        <span className="text-body-15 leading-none!">‹</span>
-        {back.label}
-      </Link>
+      {/* #232 — le retour ne mène plus au `href` quoi qu'il arrive : c'est le
+          PARENT déterministe de la page, celui qu'on prend faute de mieux.
+          Quand cet onglet a une page précédente, `BackButton` y revient. */}
+      <BackButton parent={back.href} label={back.label} className="text-body-13 hover:text-ink-2" />
       {/* L'ordre de la maquette : qui a travaillé, le dossier, la preuve,
           l'état. La pastille de preuve passe APRÈS « Files » — les deux
           pastilles se suivent, au lieu d'encadrer un bouton. */}

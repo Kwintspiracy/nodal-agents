@@ -6,9 +6,9 @@
 // un coût. Ce que cette page ajoute, c'est la saisie en bas quand la
 // conversation est celle du dashboard.
 
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
+import BackButton from '@/components/ui/BackButton';
 import StatusPill from '@/components/ui/StatusPill';
 import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
 import ConversationFeedView from '@/app/(dashboard)/spaces/ConversationFeedView.tsx';
@@ -37,9 +37,8 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Conversation">
-        <Link href="/chat" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Channels
-        </Link>
+        {/* #232 — même sur un échec de lecture, le retour ramène d'où l'on vient. */}
+        <BackButton parent="/chat" label="Channels" className="text-xs hover:text-ink-2" />
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>
     );

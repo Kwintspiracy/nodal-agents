@@ -18,8 +18,11 @@ import type { ConversationFeed, FeedItem } from '@/lib/conversation-feed.ts';
 // `LiveRefresh` appelle `useRouter`, qui exige un routeur monté ; un rendu
 // statique n'en a pas. Ce qui est en jeu ici est l'ORDRE des blocs, jamais la
 // navigation.
+// #232 — `BackButton` lit en plus le chemin courant : le retour de la page
+// dépend de là d'où l'on vient, plus d'un `href` codé en dur.
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: () => {}, refresh: () => {} }),
+  useRouter: () => ({ push: () => {}, back: () => {}, refresh: () => {} }),
+  usePathname: () => '/scheduled/run-1',
 }));
 
 import RunPage, { RunBody } from '../RunPage.tsx';
