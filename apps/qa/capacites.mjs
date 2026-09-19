@@ -190,8 +190,6 @@ export const CAPACITES = [
     nom: 'Work on my files',
     question: 'Can I hand it a folder and find what it wrote there?',
     exigee: true,
-    ecranAttendu:
-      'That a working folder is picked from the screen and that the file the agent just wrote is found there, in the Code tab.',
   },
   {
     slug: 'verifier-un-livrable',

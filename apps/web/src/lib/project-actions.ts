@@ -21,6 +21,8 @@ import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
+// L'aplatissement LEXICAL d'un chemin (`.` et `..`), par la plateforme.
+import { normalize as posixNormalize } from 'node:path/posix';
 import type { Dirent } from 'node:fs';
 import {
   eq,
@@ -30,6 +32,7 @@ import {
   sql,
   inArray,
   isNotNull,
+  isNull,
   agents,
   agentJobs,
   agentWorkspaces,
@@ -41,6 +44,7 @@ import {
 import {
   normalizePath,
   projectKey,
+  isAbsolutePath,
   isSafeSubfolder,
   projectFolderNameFrom,
   type VerifyCommand,
@@ -67,22 +71,24 @@ function fail(code: string, message: string): ActionResult<never> {
   return { ok: false, code, message };
 }
 
+/**
+ * Un projet du registre, tel que la LISTE le montre.
+ *
+ * Quatre faits et rien d'autre (Quentin, 19/09) : son nom, son dossier, le jour
+ * où il est entré au registre, et sa preuve. Le nom de l'agent responsable, le
+ * compte de travaux et la dernière activité en sont partis — l'agent est
+ * toujours le même orchestrateur, et le reste n'aidait pas à retrouver un
+ * projet dans une liste.
+ */
 export type ProjectListRow = {
   id: string;
   /** `display_name`, ou le nom du dossier — jamais un chemin vide à l'écran. */
   name: string;
   path: string;
   kind: 'code' | 'documents';
-  agentId: string | null;
-  agentName: string | null;
-  agentSlug: string | null;
-  registeredFrom: 'spaces' | 'conversation';
+  /** Le jour où il est entré au registre — la date que la ligne affiche. */
   registeredAt: Date;
   hidden: boolean;
-  /** Les travaux rattachés à ce projet (`agent_jobs.project_id`). */
-  jobsCount: number;
-  /** Le plus récent d'entre eux, ou `null` : un projet neuf n'a pas d'activité. */
-  lastActivityAt: Date | null;
   /**
    * L'état de la PREUVE : le verdict de la commande de vérification la plus
    * récente sur ce dossier, ou `null` — aucune n'a jamais tourné, ou le projet
@@ -213,9 +219,14 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
 
-    // Le compte et la dernière activité en une passe (un LEFT JOIN groupé),
-    // jamais une requête par projet : la liste est le premier écran des
-    // espaces, elle ne doit pas dégrader avec le nombre de projets.
+    // UNE lecture, sans jointure ni agrégat (Quentin, 19/09).
+    //
+    // La ligne portait l'agent responsable, le compte de travaux et la
+    // dernière activité : trois jointures pour trois choses qu'elle n'affiche
+    // plus (Quentin, 19/09). On parle toujours au MÊME orchestrateur, donc son
+    // nom était la même colonne répétée sur toutes les lignes. Ce qui reste
+    // est ce qu'un projet EST : son nom, son dossier, le jour où il est entré
+    // au registre.
     const rows = await db
       .select({
         id: codeProjects.id,
@@ -223,27 +234,13 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         path: codeProjects.projectPath,
         kind: codeProjects.kind,
         hidden: codeProjects.hidden,
-        registeredFrom: codeProjects.registeredFrom,
         registeredAt: codeProjects.registeredAt,
-        agentId: codeProjects.agentId,
-        agentName: agents.name,
-        agentSlug: agents.slug,
-        jobsCount: sql<number>`count(${agentJobs.id})`,
-        lastActivityAt: sql<Date | null>`max(${agentJobs.createdAt})`,
       })
       .from(codeProjects)
-      .leftJoin(agents, eq(agents.id, codeProjects.agentId))
-      .leftJoin(agentJobs, eq(agentJobs.projectId, codeProjects.id))
       .where(and(eq(codeProjects.entityId, session.entityId), isNotNull(codeProjects.registeredAt)))
-      .groupBy(
-        codeProjects.id,
-        agents.name,
-        agents.slug,
-        // `max()` et `count()` imposent de grouper sur tout le reste : Postgres
-        // ne déduit pas que la clé primaire suffit dès qu'une table jointe
-        // apporte ses colonnes.
-      )
-      .orderBy(sql`max(${agentJobs.createdAt}) desc nulls last`, desc(codeProjects.registeredAt));
+      // Le plus récemment ajouté d'abord — la date que la ligne affiche, donc
+      // un ordre que l'œil peut vérifier.
+      .orderBy(desc(codeProjects.registeredAt));
 
     // L'état de la preuve, en UNE requête groupée (`DISTINCT ON` sur la clé,
     // la plus récente d'abord) — pas une par projet : la liste ne doit pas
@@ -284,20 +281,269 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         name: r.displayName ?? basenameOf(r.path),
         path: r.path,
         kind: (r.kind === 'documents' ? 'documents' : 'code') as 'code' | 'documents',
-        agentId: r.agentId,
-        agentName: r.agentName ?? null,
-        agentSlug: r.agentSlug ?? null,
-        registeredFrom: (r.registeredFrom ?? 'spaces') as 'spaces' | 'conversation',
         registeredAt: r.registeredAt as Date,
         hidden: r.hidden,
-        jobsCount: Number(r.jobsCount ?? 0),
-        lastActivityAt: r.lastActivityAt ? new Date(r.lastActivityAt) : null,
         lastProof: r.kind === 'documents' ? null : (lastProofByKey.get(projectKey(r.path)) ?? null),
       })),
     );
   } catch (err) {
     console.error('[projects] PROJECT_LIST_FAILED', err);
     return fail('list_failed', 'Could not list projects');
+  }
+}
+
+// ─── listProofsForPathsAction ────────────────────────────────────────────────
+
+/**
+ * Le dernier verdict de preuve de chemins DONNÉS, en UNE requête.
+ *
+ * `listProjectsAction` fait déjà cette lecture pour les projets du registre.
+ * Les dossiers DÉTECTÉS n'y sont pas, et ils peuvent avoir une preuve : une
+ * séquence se configure par CLÉ de dossier (`verification_runs.canonical_key`),
+ * pas par appartenance au registre. Les laisser tous en « Unverified » ferait
+ * dire à la pastille le contraire de ce que le dossier porte.
+ *
+ * Bornée par liste : un `inArray` sur les clés, jamais un appel par ligne.
+ */
+export async function listProofsForPathsAction(
+  paths: readonly string[],
+): Promise<ActionResult<Array<{ key: string; verdict: 'pass' | 'fail'; at: Date }>>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const keys = [...new Set(paths.filter((p) => p !== '').map((p) => projectKey(p)))];
+    if (keys.length === 0) return ok([]);
+    // Plafond : la liste en montre au plus quelques dizaines, et une requête
+    // dont la taille suit une entrée non bornée n'a pas sa place ici.
+    if (keys.length > 200) return fail('validation_failed', 'Too many paths');
+
+    const rows = await getDb()
+      .selectDistinctOn([verificationRuns.canonicalKey], {
+        canonicalKey: verificationRuns.canonicalKey,
+        verdict: verificationRuns.verdict,
+        createdAt: verificationRuns.createdAt,
+      })
+      .from(verificationRuns)
+      .where(
+        and(
+          eq(verificationRuns.entityId, session.entityId),
+          inArray(verificationRuns.canonicalKey, keys),
+        ),
+      )
+      .orderBy(verificationRuns.canonicalKey, desc(verificationRuns.createdAt));
+
+    return ok(
+      rows.map((r) => ({
+        key: r.canonicalKey,
+        // `green` est le SEUL verdict qui prouve quelque chose — un rouge et
+        // une erreur d'infrastructure disent tous deux « ce n'est pas prouvé ».
+        verdict: (r.verdict === 'green' ? 'pass' : 'fail') as 'pass' | 'fail',
+        at: r.createdAt,
+      })),
+    );
+  } catch (err) {
+    console.error('[projects] PROOF_LOOKUP_FAILED', err);
+    return fail('proofs_failed', 'Could not read the proof state');
+  }
+}
+
+// ─── registerDetectedProjectAction ───────────────────────────────────────────
+
+/**
+ * Le chemin reçu, ramené à sa forme LEXICALE canonique : slashes uniformes,
+ * puis `.` et `..` aplatis.
+ *
+ * Aplati par `node:path/posix` et non par un motif : les règles de `..` au
+ * milieu d'un chemin sont celles de la plateforme, et les réécrire est le
+ * genre de copie qui diverge. `normalizePath` (@nodal-agents/shared) reste
+ * inchangée — elle est la clé d'identité de TOUT le dépôt, et lui faire
+ * aplatir les segments changerait la casse de cas qu'aucun test ne couvre ici.
+ *
+ * Le partage UNC est le seul cas particulier : `//serveur/part` commence par
+ * DEUX slashes, que `posix.normalize` réduit à un. On le met de côté le temps
+ * de l'aplatissement et on le remet ensuite.
+ */
+function flattenPath(raw: string): string {
+  const p = normalizePath(raw);
+  const unc = p.startsWith('//');
+  const flat = posixNormalize(unc ? p.slice(1) : p);
+  return normalizePath(unc ? `/${flat}` : flat);
+}
+
+const registerDetectedSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+  /** L'agent qui a écrit là, tel que la ligne le nomme. Vérifié au serveur. */
+  agentId: z.string().uuid().nullable(),
+});
+
+/**
+ * INSCRIT au registre un dossier que la détection a trouvé (#143).
+ *
+ * Le geste que l'onglet Code n'avait pas : un dossier où un agent a écrit
+ * devient un projet, avec son responsable, sans passer par le formulaire de
+ * création — le dossier existe déjà, il n'y a rien à créer sur le disque.
+ *
+ * LA GARDE : le chemin doit être DANS un dossier attaché à un agent de
+ * l'entité. Sans elle, l'action inscrirait n'importe quel chemin de la machine
+ * au registre, donc dans le contexte injecté aux agents comme endroit où ils
+ * peuvent écrire. La contenance est LEXICALE ici, et c'est suffisant : le
+ * chemin ne vient pas d'une saisie libre mais de la dérivation des écritures
+ * déjà enregistrées, et aucun dossier n'est créé — il n'y a pas de `mkdir` à
+ * détourner par un lien, ce qui est la raison d'être du contrôle physique de
+ * `createProjectAction`.
+ *
+ * L'agent responsable est celui que la ligne nomme, à condition qu'il détienne
+ * un dossier contenant le chemin. À défaut, le détenteur UNIQUE du dossier ;
+ * s'ils sont plusieurs, `null` — l'ordre des lignes `agent_workspaces` n'en
+ * désigne aucun, et en choisir un au hasard serait un repli malin.
+ *
+ * Pas de garde d'imbrication (celle de `createProjectAction`) : c'est le
+ * contrat du registre lui-même, dont les autres écrivains — le backfill au
+ * démarrage et l'outil `register_project` — n'en ont pas non plus. Un dossier
+ * dérivé est par construction un enfant direct d'un terrain.
+ */
+export async function registerDetectedProjectAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string; path: string }>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const parsed = registerDetectedSchema.safeParse(raw);
+    if (!parsed.success) return fail('validation_failed', 'Invalid project input');
+    // Le chemin reçu, APLATI (revue Reviewer C, passe 1). `normalizePath`
+    // uniformise les slashes et retire le slash final : elle n'aplatit NI `..`
+    // NI `.`, et `isUnderPath` compare du texte. Les deux ensemble laissaient
+    // passer `<terrain>/../ailleurs`, qui commence bien par `<terrain>/` — le
+    // dossier entrait au registre, donc dans la liste des endroits où les
+    // agents peuvent écrire, HORS de tout terrain. La même forme brute
+    // produisait un second défaut, silencieux : `<terrain>/./app` a une CLÉ
+    // différente de `<terrain>/app`, donc une seconde ligne de registre pour le
+    // même dossier, que rien n'aurait rapprochée.
+    const demande = flattenPath(parsed.data.projectPath);
+    // Un chemin qui remonte au-dessus de sa racine n'est plus absolu une fois
+    // aplati (`C:/../x` devient `x`) : il ne désigne rien, et il est refusé.
+    if (demande === '' || !isAbsolutePath(demande)) {
+      return fail('validation_failed', 'Invalid project path');
+    }
+
+    const db = getDb();
+    const wsRows = await db
+      .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.entityId, session.entityId));
+
+    // TROIS gardes, dans CET ordre, et l'ordre fait partie de la garde.
+    //
+    // 1. LEXICALE, sur le chemin demandé. Elle passe avant toute lecture du
+    //    disque : un chemin qui ne ressemble à aucun terrain est refusé sans
+    //    qu'on soit allé voir s'il existe. Sinon la réponse dirait, de
+    //    n'importe quel chemin de la machine, s'il est là ou non.
+    //    C'est aussi la seule qui tienne quand un terrain n'est pas encore sur
+    //    le disque : la garde physique remonterait alors le terrain jusqu'à un
+    //    ancêtre existant — parfois la racine du disque — et laisserait tout
+    //    passer.
+    const candidats = wsRows.filter((w) => {
+      const root = normalizePath(w.path);
+      return isUnderPath(demande, root) || projectKey(demande) === projectKey(root);
+    });
+    if (candidats.length === 0) {
+      return fail('not_in_workspace', 'This folder is not inside a workspace of this space.');
+    }
+
+    // 2. LE DOSSIER DOIT EXISTER. Une ligne qui désigne un dossier absent est
+    //    un projet fantôme que chaque écran devra contourner (en-tête de ce
+    //    module), et la détection ne remonte que des dossiers écrits.
+    if ((await realPathIfExists(demande)) === null) {
+      return fail('folder_missing', 'This folder is not there any more.');
+    }
+
+    // 3. PHYSIQUE : les LIENS. L'aplatissement a réglé `..` et `.`, mais un
+    //    lien posé DANS le terrain et pointant dehors passe les deux gardes de
+    //    texte, et les agents se verraient offrir un chemin qui écrit ailleurs.
+    //    `physicallyInside` résout les deux côtés ; ce qu'elle résout sert à
+    //    DÉCIDER, jamais à nommer — voir la note sur le chemin stocké.
+    const holders: string[] = [];
+    for (const w of candidats) {
+      if (!(await physicallyInside(demande, normalizePath(w.path)))) continue;
+      if (!holders.includes(w.agentId)) holders.push(w.agentId);
+    }
+    if (holders.length === 0) {
+      return fail('not_in_workspace', 'This folder is not inside a workspace of this space.');
+    }
+
+    // LE CHEMIN STOCKÉ est celui qu'on a reçu, aplati — JAMAIS le chemin
+    // RÉSOLU (constat de la CI Windows, 19/09). Sur un runner Windows,
+    // `tmpdir()` rend un nom court 8.3 (`C:/Users/RUNNER~1/…`) que `realpath`
+    // détend en `C:/Users/runneradmin/…` : deux écritures du même dossier, donc
+    // deux CLÉS. Le registre serait indexé sur une identité que la détection ne
+    // produit jamais — le projet fraîchement inscrit resterait « Detected »
+    // dans la liste, et ni son masquage ni son nom ne seraient plus retrouvés.
+    const path = demande;
+
+    const asked = parsed.data.agentId;
+    // Le responsable : celui que la ligne nomme s'il détient bien le dossier,
+    // sinon le détenteur UNIQUE. À plusieurs et sans nom, personne.
+    const responsable =
+      asked !== null && holders.includes(asked)
+        ? asked
+        : holders.length === 1
+          ? (holders[0] ?? null)
+          : null;
+
+    const key = projectKey(path);
+    // UPSERT sur la clé d'identité, `setWhere registered_at IS NULL` — la même
+    // règle que `registerCodeProjects` (packages/tools) : un projet DÉJÀ au
+    // registre ne se réinscrit pas, et son nom, son agent et sa date d'ajout
+    // restent ceux qu'il a. L'écriture est ici et non dans ce module partagé
+    // parce que `apps/web` ne dépend pas de `@nodal-agents/tools` ; les deux
+    // écrivent la MÊME forme de ligne, et c'est cette forme que le test fige.
+    const inserted = await db
+      .insert(codeProjects)
+      .values({
+        entityId: session.entityId,
+        projectPath: path,
+        projectKey: key,
+        // Un dossier trouvé par la détection des écritures de CODE : c'est ce
+        // que le scan observe, et rien d'autre.
+        kind: 'code',
+        agentId: responsable,
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .onConflictDoUpdate({
+        target: [codeProjects.entityId, codeProjects.projectKey],
+        set: {
+          kind: 'code',
+          ...(responsable ? { agentId: responsable } : {}),
+          registeredAt: new Date(),
+          registeredFrom: 'spaces',
+          updatedAt: new Date(),
+        },
+        setWhere: isNull(codeProjects.registeredAt),
+      })
+      .returning({ id: codeProjects.id });
+
+    let id = inserted[0]?.id ?? null;
+    if (id === null) {
+      // Rien n'a été écrit : la ligne existe et porte DÉJÀ une inscription. On
+      // rend son id plutôt qu'une erreur — deux onglets ouverts sur la même
+      // liste, et le second clic doit mener au projet, pas à un échec.
+      const [existing] = await db
+        .select({ id: codeProjects.id })
+        .from(codeProjects)
+        .where(and(eq(codeProjects.entityId, session.entityId), eq(codeProjects.projectKey, key)))
+        .limit(1);
+      id = existing?.id ?? null;
+    }
+    if (id === null) return fail('register_failed', 'Could not register this folder');
+
+    console.warn(`[projects] PROJECT_REGISTERED_FROM_SPACES id=${id} key=${key}`);
+    revalidatePath('/spaces');
+    revalidatePath('/code');
+    return ok({ id, path });
+  } catch (err) {
+    console.error('[projects] PROJECT_REGISTER_DETECTED_FAILED', err);
+    return fail('register_failed', 'Could not register this folder');
   }
 }
 

@@ -457,7 +457,7 @@ describe('createProjectAction', () => {
 });
 
 describe('listProjectsAction', () => {
-  it('ne montre QUE les projets enregistrés, avec le compte de travaux et la dernière activité', async () => {
+  it('ne montre QUE les projets enregistrés, et rien de ce que la ligne n’affiche plus', async () => {
     const { listProjectsAction } = await import('../project-actions.ts');
 
     // Une ligne de comptabilité pure — elle ne doit apparaître nulle part.
@@ -503,18 +503,19 @@ describe('listProjectsAction', () => {
 
     const x = result.data.find((p) => p.path === `${terrain.path}/projet-x`);
     expect(x!.name).toBe('Projet X');
-    expect(x!.agentId).toBe(seed.agentId);
-    expect(x!.agentName).toBe('Test Agent');
-    expect(x!.jobsCount).toBe(2);
-    expect(x!.lastActivityAt?.toISOString()).toBe(dernier.toISOString());
+    // La date que la ligne affiche est celle de l'ENTRÉE AU REGISTRE.
+    expect(x!.registeredAt).toBeInstanceOf(Date);
 
-    // Un projet sans travail : compte à zéro, activité nulle — pas une absence.
-    const neuf = result.data.find((p) => p.path === `${terrain.path}/deja-touche`);
-    expect(neuf!.jobsCount).toBe(0);
-    expect(neuf!.lastActivityAt).toBeNull();
+    // Le nom de l'agent, le compte de travaux et la dernière activité ont
+    // quitté la ligne le 19/09 : elle ne les porte plus, et la requête ne les
+    // joint plus. Un test qui les lirait encore ferait revenir les jointures.
+    expect(x).not.toHaveProperty('agentName');
+    expect(x).not.toHaveProperty('jobsCount');
+    expect(x).not.toHaveProperty('lastActivityAt');
 
-    // Le plus actif d'abord.
-    expect(result.data[0]!.path).toBe(`${terrain.path}/projet-x`);
+    // Le plus récemment ajouté d'abord.
+    const dates = result.data.map((p) => p.registeredAt.getTime());
+    expect([...dates].sort((a, b) => b - a)).toEqual(dates);
   });
 });
 
@@ -996,6 +997,259 @@ describe('createProjectConversationAction', () => {
     expect(page.ok).toBe(true);
     if (!page.ok) return;
     expect(page.data.projectConversationId).toBe(result.data.id);
+  });
+});
+
+// ─── #143 : INSCRIRE un dossier détecté ──────────────────────────────────────
+//
+// Le geste que l'onglet Code n'avait pas. Ce qui compte ici est la LIGNE
+// écrite — `registered_at` posé, le responsable, l'origine — et la garde qui
+// refuse un chemin hors des dossiers de l'espace : sans elle, n'importe quel
+// chemin de la machine entrerait au registre, donc dans le contexte injecté
+// aux agents comme endroit où ils peuvent écrire.
+describe('registerDetectedProjectAction @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('refuse un chemin HORS des dossiers de l’espace, et n’écrit rien', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const dehors = join(racine, 'pas-un-terrain', 'app').replace(/\\/g, '/');
+
+    const result = await registerDetectedProjectAction({ projectPath: dehors, agentId: null });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_in_workspace');
+    expect(await ligneDuProjet(dehors)).toBeNull();
+  });
+
+  it('refuse le dossier d’un AUTRE espace', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const chezLeVoisin = `${voisin.path}/leur-app`;
+
+    const result = await registerDetectedProjectAction({
+      projectPath: chezLeVoisin,
+      agentId: voisin.agentId,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_in_workspace');
+    expect(await ligneDuProjet(chezLeVoisin)).toBeNull();
+  });
+
+  it('refuse un chemin qui SORT du terrain par `..`, même s’il commence par lui', async () => {
+    // Revue Reviewer C, passe 1. `normalizePath` n'aplatit pas `..` et
+    // `isUnderPath` compare du texte : `<terrain>/../evade` commence bien par
+    // `<terrain>/` et passait pour un enfant. Le dossier entrait au registre,
+    // donc dans la liste des endroits où les agents peuvent écrire, HORS de
+    // tout terrain.
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const evade = join(racine, 'evade').replace(/\\/g, '/');
+    await mkdir(evade, { recursive: true });
+    const parLeHaut = `${terrain.path}/../evade`;
+
+    const result = await registerDetectedProjectAction({ projectPath: parLeHaut, agentId: null });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_in_workspace');
+    // Ni sous la forme reçue, ni sous la forme résolue.
+    expect(await ligneDuProjet(parLeHaut)).toBeNull();
+    expect(await ligneDuProjet(evade)).toBeNull();
+  });
+
+  it('refuse un LIEN posé dans le terrain qui pointe dehors', async () => {
+    // Le texte du chemin est dans le terrain, le disque non. Sans la garde
+    // physique, les agents se verraient offrir un chemin qui écrit ailleurs.
+    // Une jonction de dossier se crée sans droit particulier, sur Windows
+    // comme ailleurs.
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const dehors = join(racine, 'cible-hors-terrain').replace(/\\/g, '/');
+    await mkdir(dehors, { recursive: true });
+    await mkdir(terrain.path, { recursive: true });
+    const lien = `${terrain.path}/lien-sortant`;
+    await symlink(dehors, lien, 'junction');
+
+    const result = await registerDetectedProjectAction({ projectPath: lien, agentId: null });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_in_workspace');
+    expect(await ligneDuProjet(lien)).toBeNull();
+    expect(await ligneDuProjet(dehors)).toBeNull();
+  });
+
+  it('STOCKE le chemin demandé, jamais le chemin résolu', async () => {
+    // Le constat de la CI Windows (19/09) : `realpath` détend un nom court 8.3
+    // (`C:/Users/RUNNER~1/…` → `C:/Users/runneradmin/…`), donc écrire le chemin
+    // résolu donne une CLÉ que la détection ne produit jamais — le projet
+    // resterait « Detected » et son masquage ne serait plus retrouvé. Prouvé
+    // ici par un lien INTERNE, qui fait diverger les deux formes sur n'importe
+    // quel système.
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const cible = `${terrain.path}/cible-interne`;
+    await mkdir(cible, { recursive: true });
+    const alias = `${terrain.path}/alias-interne`;
+    await symlink(cible, alias, 'junction');
+
+    const result = await registerDetectedProjectAction({ projectPath: alias, agentId: null });
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.path).toBe(alias);
+
+    const ligne = await ligneDuProjet(alias);
+    expect(ligne!.projectPath).toBe(alias);
+    expect(ligne!.projectKey).toBe(projectKey(alias));
+    // Et RIEN sous le nom de la cible : une seconde identité pour le même
+    // dossier est exactement ce qu'on évite.
+    expect(await ligneDuProjet(cible)).toBeNull();
+  });
+
+  it('refuse un dossier qui n’existe PAS : un projet fantôme ne s’inscrit pas', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const disparu = `${terrain.path}/jamais-cree`;
+
+    const result = await registerDetectedProjectAction({ projectPath: disparu, agentId: null });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('folder_missing');
+    expect(await ligneDuProjet(disparu)).toBeNull();
+  });
+
+  it('un `.` et des antislashs désignent le MÊME dossier : une seule ligne, chemin canonique', async () => {
+    // Le second défaut de la forme brute : `<terrain>/./app` a une CLÉ
+    // différente de `<terrain>/app`, donc une seconde ligne de registre pour
+    // le même dossier, que rien n'aurait rapprochée.
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const canonique = `${terrain.path}/canonique`;
+    await mkdir(canonique, { recursive: true });
+
+    const premier = await registerDetectedProjectAction({
+      projectPath: `${terrain.path}/./canonique`,
+      agentId: null,
+    });
+    expect(premier.ok, premier.ok ? '' : premier.message).toBe(true);
+    if (!premier.ok) return;
+    // Le chemin STOCKÉ est le chemin réel, pas la forme reçue.
+    expect(premier.data.path).toBe(canonique);
+    const ligne = await ligneDuProjet(canonique);
+    expect(ligne!.projectPath).toBe(canonique);
+
+    // La même demande écrite autrement ne crée PAS de seconde ligne.
+    const second = await registerDetectedProjectAction({
+      projectPath: `${terrain.path.replace(/\//g, '\\')}\\canonique`,
+      agentId: null,
+    });
+    expect(second.ok, second.ok ? '' : second.message).toBe(true);
+    if (!second.ok) return;
+    expect(second.data.id).toBe(premier.data.id);
+
+    const toutes = await testDb
+      .select({ id: codeProjects.id })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.entityId, seed.entityId),
+          eq(codeProjects.projectKey, projectKey(canonique)),
+        ),
+      );
+    expect(toutes).toHaveLength(1);
+  });
+
+  it('ÉCRIT la ligne du registre : enregistrée, de sorte « code », avec son responsable', async () => {
+    const { registerDetectedProjectAction, listProjectsAction } =
+      await import('../project-actions.ts');
+    const detecte = `${terrain.path}/detecte-app`;
+    // Le dossier EXISTE : la détection ne remonte que des dossiers où quelque
+    // chose a été écrit, et le registre refuse un projet fantôme.
+    await mkdir(detecte, { recursive: true });
+
+    const avant = new Date();
+    const result = await registerDetectedProjectAction({ projectPath: detecte, agentId: null });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const ligne = await ligneDuProjet(detecte);
+    expect(ligne, 'aucune ligne écrite pour le dossier inscrit').toBeTruthy();
+    expect(ligne!.id).toBe(result.data.id);
+    expect(ligne!.projectPath).toBe(detecte);
+    expect(ligne!.kind).toBe('code');
+    expect(ligne!.registeredFrom).toBe('spaces');
+    // `registered_at` est LE discriminant du registre : sans lui, la ligne
+    // resterait une ligne de comptabilité et le projet n'aurait pas de page.
+    expect(ligne!.registeredAt).toBeTruthy();
+    expect(ligne!.registeredAt!.getTime()).toBeGreaterThanOrEqual(avant.getTime() - 1000);
+    // Le détenteur UNIQUE du terrain devient le responsable.
+    expect(ligne!.agentId).toBe(seed.agentId);
+
+    // Et le registre le liste — c'est ce que l'écran relira.
+    const liste = await listProjectsAction();
+    expect(liste.ok).toBe(true);
+    if (!liste.ok) return;
+    expect(liste.data.some((p) => p.id === ligne!.id)).toBe(true);
+  });
+
+  it('un projet DÉJÀ inscrit n’est pas réinscrit : sa date d’ajout et son nom restent', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const dejaLa = `${terrain.path}/deja-inscrit`;
+    await mkdir(dejaLa, { recursive: true });
+    const ancienne = new Date('2026-09-01T10:00:00.000Z');
+    await testDb.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: dejaLa,
+      projectKey: projectKey(dejaLa),
+      kind: 'code',
+      displayName: 'Le nom que j’ai choisi',
+      registeredAt: ancienne,
+      registeredFrom: 'conversation',
+    });
+
+    const result = await registerDetectedProjectAction({ projectPath: dejaLa, agentId: null });
+    // Le second clic mène au projet, jamais à une erreur.
+    expect(result.ok).toBe(true);
+
+    const ligne = await ligneDuProjet(dejaLa);
+    expect(ligne!.registeredAt!.toISOString()).toBe(ancienne.toISOString());
+    expect(ligne!.registeredFrom).toBe('conversation');
+    expect(ligne!.displayName).toBe('Le nom que j’ai choisi');
+  });
+
+  it('une ligne de COMPTABILITÉ (renommée, masquée) devient un projet sans perdre ses gestes', async () => {
+    const { registerDetectedProjectAction } = await import('../project-actions.ts');
+    const range = `${terrain.path}/range-puis-inscrit`;
+    await mkdir(range, { recursive: true });
+    await testDb.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: range,
+      projectKey: projectKey(range),
+      displayName: 'Portail client',
+      hidden: true,
+      // Pas de `registered_at` : c'est une ligne de comptabilité.
+    });
+
+    const result = await registerDetectedProjectAction({ projectPath: range, agentId: null });
+    expect(result.ok).toBe(true);
+
+    const ligne = await ligneDuProjet(range);
+    expect(ligne!.registeredAt, 'la ligne n’a pas été inscrite au registre').toBeTruthy();
+    // Les deux gestes du propriétaire survivent à l'inscription : ranger un
+    // projet n'est pas le désinscrire, et le renommer n'est pas le perdre.
+    expect(ligne!.displayName).toBe('Portail client');
+    expect(ligne!.hidden).toBe(true);
+  });
+});
+
+describe('listProofsForPathsAction @cap:verifier-un-livrable/moteur', () => {
+  it('rend le DERNIER verdict de chaque chemin, et rien pour un chemin sans preuve', async () => {
+    const { listProofsForPathsAction } = await import('../project-actions.ts');
+    const prouve = `${terrain.path}/prouve-pour-la-liste`;
+    const sansPreuve = `${terrain.path}/sans-preuve`;
+
+    await preuve(projectKey(prouve), 'red', new Date('2026-09-10T10:00:00.000Z'));
+    await preuve(projectKey(prouve), 'green', new Date('2026-09-11T10:00:00.000Z'));
+
+    const result = await listProofsForPathsAction([prouve, sansPreuve]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const lu = result.data.filter((p) => p.key === projectKey(prouve));
+    expect(lu).toHaveLength(1);
+    // Le plus RÉCENT gagne : le rouge de la veille ne décrit plus rien.
+    expect(lu[0]!.verdict).toBe('pass');
+    expect(result.data.some((p) => p.key === projectKey(sansPreuve))).toBe(false);
   });
 });
 

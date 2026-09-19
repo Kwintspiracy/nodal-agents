@@ -402,7 +402,6 @@ export async function listCodeProjectsForContext(
 ): Promise<CodeProjectSummary[]> {
   try {
     const raw = await scanProjects(db, entityId);
-    if (raw.length === 0) return [];
 
     // Les DOSSIERS masqués (0087), relus à chaque appel eux aussi — le scan est
     // mis en cache, la visibilité ne doit pas l'être.
@@ -420,13 +419,32 @@ export async function listCodeProjectsForContext(
     // à tout le monde n'avait pas de sens ; c'est la demande de Quentin, mot
     // pour mot : « que ça retire le dossier du contexte et de la mémoire des
     // agents ».
+    // LE REGISTRE, explicitement (#143). Cette lecture servait aux deux gestes
+    // du propriétaire ; elle sert maintenant aussi à la LISTE elle-même.
+    //
+    // Jusqu'ici, la liste annoncée aux agents était le SCAN et rien d'autre :
+    // un projet déclaré depuis Workspaces, mais où aucun agent n'avait encore
+    // écrit, n'existait pas pour eux. Le premier travail devait donc commencer
+    // par chercher un dossier que le produit affichait déjà. Le registre passe
+    // devant, le scan complète — un dossier détecté non masqué reste annoncé
+    // exactement comme avant, c'est la même liste avec les projets déclarés en
+    // plus.
+    //
+    // `kind = 'code'` : ce bloc annonce des projets de CODE. Un dossier de
+    // documents est au registre lui aussi, et il est annoncé ailleurs (le bloc
+    // `## Conversation`, conversation-id.ts) ; le lister ici enverrait un agent
+    // y poser un dépôt.
     const projectRows = await db
       .select({
         projectPath: codeProjects.projectPath,
         displayName: codeProjects.displayName,
         hidden: codeProjects.hidden,
+        kind: codeProjects.kind,
+        registeredAt: codeProjects.registeredAt,
+        agentName: agents.name,
       })
       .from(codeProjects)
+      .leftJoin(agents, eq(agents.id, codeProjects.agentId))
       .where(eq(codeProjects.entityId, entityId));
     const hiddenPaths = new Set(
       projectRows.filter((r) => r.hidden).map((r) => projectKey(r.projectPath)),
@@ -437,26 +455,57 @@ export async function listCodeProjectsForContext(
         .map((r) => [projectKey(r.projectPath), r.displayName!.trim()]),
     );
 
+    /** Masqué par le propriétaire : nulle part. Par projet, ou par dossier entier. */
+    const visible = (path: string): boolean =>
+      !hiddenPaths.has(projectKey(path)) && !sousDossierMasque(path);
+
+    const nomDe = (path: string): string =>
+      namesByPath.get(projectKey(path)) ?? path.split('/').filter(Boolean).pop() ?? path;
+
+    const scanParCle = new Map(raw.map((p) => [projectKey(p.path), p]));
+    const entrees: CodeProjectSummary[] = [];
+    const vues = new Set<string>();
+
+    for (const r of projectRows) {
+      if (r.registeredAt === null || r.kind !== 'code') continue;
+      const cle = projectKey(r.projectPath);
+      if (vues.has(cle) || !visible(r.projectPath)) continue;
+      vues.add(cle);
+      const vu = scanParCle.get(cle);
+      entrees.push({
+        name: nomDe(r.projectPath),
+        path: r.projectPath,
+        // Les détenteurs OBSERVÉS quand le scan a vu ce dossier ; à défaut
+        // l'agent responsable déclaré. Un projet neuf n'a pas encore de
+        // détenteur observé, et laisser la liste vide plutôt que d'inventer.
+        owners: vu?.owners ?? (r.agentName ? [r.agentName] : []),
+        lastActivityAt: vu?.lastActivityAt ?? null,
+      });
+    }
+
+    for (const p of raw) {
+      const cle = projectKey(p.path);
+      if (vues.has(cle) || !visible(p.path)) continue;
+      vues.add(cle);
+      // Le nom choisi par le propriétaire l'emporte : les agents entendent le
+      // projet comme lui l'appelle, sinon « modifie le portail client » ne
+      // désignerait rien pour eux alors que l'écran l'affiche ainsi.
+      entrees.push({
+        name: nomDe(p.path),
+        path: p.path,
+        owners: p.owners,
+        lastActivityAt: p.lastActivityAt,
+      });
+    }
+
     return (
-      raw
-        // Masqué par le propriétaire : nulle part, ni dans la liste, ni dans le
-        // contexte des agents. Par projet, ou par dossier entier.
-        .filter((p) => !hiddenPaths.has(projectKey(p.path)) && !sousDossierMasque(p.path))
+      entrees
+        // La plus récente activité d'abord ; un projet déclaré et encore muet
+        // ferme la marche plutôt que d'évincer un projet vivant.
+        .sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
         // Le plafond s'applique APRÈS le masquage : ranger un projet doit
         // laisser la place au suivant, pas juste faire un trou dans les douze.
         .slice(0, MAX_PROJECTS)
-        .map((p) => ({
-          // Le nom choisi par le propriétaire l'emporte : les agents entendent
-          // le projet comme lui l'appelle, sinon « modifie le portail client »
-          // ne désignerait rien pour eux alors que l'onglet l'affiche ainsi.
-          name:
-            namesByPath.get(projectKey(p.path)) ??
-            p.path.split('/').filter(Boolean).pop() ??
-            p.path,
-          path: p.path,
-          owners: p.owners,
-          lastActivityAt: p.lastActivityAt,
-        }))
     );
   } catch (err) {
     // Un BUG DE PROGRAMMATION n'est pas un incident d'exécution : il remonte.

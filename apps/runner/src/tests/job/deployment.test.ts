@@ -26,12 +26,18 @@ function makeFakeDb(installNotes = ''): Parameters<typeof getDeploymentContext>[
         promise.limit = () => Promise.resolve(installNotes ? [{ value: installNotes }] : []);
         return promise;
       };
-      // `innerJoin` : la liste des projets de code joint des tables. Le mock
-      // l'ignorait, et l'absence passait inaperçue parce que le module avalait
-      // le TypeError et rendait une liste vide. Il ne l'avale plus — un mock
-      // qui ment sur la forme du client fait désormais échouer le test, ce qui
-      // est le but d'un mock.
-      const from = () => ({ where, innerJoin: () => ({ where, innerJoin: () => ({ where }) }) });
+      // `innerJoin` / `leftJoin` : la liste des projets de code joint des
+      // tables. Le mock les ignorait, et l'absence passait inaperçue parce que
+      // le module avalait le TypeError et rendait une liste vide. Il ne l'avale
+      // plus — un mock qui ment sur la forme du client fait désormais échouer
+      // le test, ce qui est le but d'un mock. `leftJoin` depuis #143 : la liste
+      // lit le REGISTRE et l'agent responsable de chaque projet déclaré.
+      const joins = (): Record<string, unknown> => ({
+        where,
+        innerJoin: joins,
+        leftJoin: joins,
+      });
+      const from = joins;
       return { from };
     },
     insert: () => ({
