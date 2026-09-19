@@ -97,6 +97,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   return (
     <PageShell
       fill
+      // Plein cadre, comme avant #237 : la borne de largeur du PageShell
+      // vaut désormais aussi en mode pleine hauteur, et un fil n'en veut pas.
+      fluid
       toolbarBleed
       // #135 — le MÊME en-tête que /chat/[id] et /scheduled/[id] : les trois
       // écrans lisent le même fil, ils ne peuvent pas diverger de géométrie.

@@ -41,6 +41,10 @@ const Context = createContext<Value | null>(null);
  *     ANNONCE ce qu'il aurait affiché : son libellé, son état d'attente, son
  *     geste d'annulation. Le pied les rend.
  *
+ * L'`id` lui-même vit dans `@/lib/docked-form-id.ts`, hors de ce fichier :
+ * celui-ci porte `'use client'` pour son contexte, et une page SERVEUR ne peut
+ * pas appeler ce qu'un module client exporte. Voir la raison en entier là-bas.
+ *
  * Conséquence voulue : un panneau n'a un pied que si son formulaire a des
  * actions. Les sections à interrupteur immédiat (frein d'auto-exécution,
  * serveur MCP, surfaces de vérification) et les panneaux en lecture seule
@@ -54,9 +58,4 @@ export function DockedFormCtaProvider({ value, children }: { value: Value; child
 /** `null` hors d'un panneau ancré — et alors `SetCtaRow` s'affiche comme avant. */
 export function useDockedFormCta(): Value | null {
   return useContext(Context);
-}
-
-/** L'`id` du `<form>` d'un réglage. Une seule source, des deux côtés. */
-export function dockedFormId(settingId: string): string {
-  return `settings-form-${settingId}`;
 }
