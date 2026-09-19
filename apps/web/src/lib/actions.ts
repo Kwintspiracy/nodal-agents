@@ -201,6 +201,7 @@ import {
   isShellProgram,
   redactSecretsInText,
   CLI_WRITE_TOOLS,
+  type JobResultKind,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
@@ -2437,6 +2438,13 @@ export type SpaceConversationView = {
      * et un run revient à la chose qui l'a déclenché.
      */
     scheduleId: string | null;
+    /**
+     * COMMENT le résultat du run a été produit (`agent_jobs.result_kind`,
+     * #154). La page s'en sert pour décider si la réponse se lit sous
+     * l'en-tête ou si le bloc Review la porte (#210). `null` sur un run fini
+     * avant la colonne, et la page retombe alors sur la règle de 0.8.11.
+     */
+    resultKind: JobResultKind | null;
   };
   feed: ConversationFeed;
   /** P3 — ce que la preuve a fait pour ce travail et ses délégués (même lecture que le détail Code). */
@@ -2703,6 +2711,7 @@ export async function getSpaceConversationAction(
       createdAt: job.createdAt,
       completedAt: job.completedAt,
       result: job.result,
+      resultKind: job.resultKind ?? null,
       verdict: classifyProduction({
         conversation: { channel: job.channel, chatId: job.chatId },
         rows: auditRows,
@@ -2755,6 +2764,7 @@ export async function getSpaceConversationAction(
           scheduleId: job.scheduleId,
           triggerContext: job.triggerContext as JobTriggerContext | null,
         }),
+        resultKind: job.resultKind ?? null,
       },
       feed: feedWithDelivery,
       verdicts: reviewVerdicts.views,

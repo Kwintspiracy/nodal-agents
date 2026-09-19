@@ -44,7 +44,10 @@ export const dashboardPublishTool: ToolDefinition<
   execute: async (input, ctx) => {
     await ctx.db
       .update(agentJobs)
-      .set({ result: input.text, updatedAt: new Date() })
+      // `prose` (#154) : ce texte est celui que l'AGENT a écrit pour la
+      // personne. La marque part avec lui, dans la même écriture, pour que le
+      // fil n'ait plus à deviner sa nature à son premier caractère.
+      .set({ result: input.text, resultKind: 'prose', updatedAt: new Date() })
       .where(eq(agentJobs.id, ctx.jobId));
     return { ok: true as const };
   },
