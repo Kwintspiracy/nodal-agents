@@ -178,7 +178,7 @@ export const verificationRuns = pgTable(
     /** verification_epoch testé — snapshot au moment du run. */
     testedEpoch: integer('tested_epoch'),
     /**
-     * QUI a lancé cette commande (#59, 0112) : `job` pour la preuve que la
+     * QUI a lancé cette commande (#59, 0113) : `job` pour la preuve que la
      * finalisation du job lance elle-même, `reviewer` pour une commande qu'un
      * relecteur a réellement exécutée et que son verdict a fait enregistrer
      * sous le travail relu. `'job'` par défaut : toutes les lignes écrites

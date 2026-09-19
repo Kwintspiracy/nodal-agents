@@ -185,7 +185,7 @@ describe('migrations: job_deliverable_verification_state + verification_runs col
     'verdict',
     'tested_generation',
     'tested_epoch',
-    // 0112 (#59) — l'origine d'une preuve et le job qui l'a exécutée.
+    // 0113 (#59) — l'origine d'une preuve et le job qui l'a exécutée.
     'source',
     'source_job_id',
   ];

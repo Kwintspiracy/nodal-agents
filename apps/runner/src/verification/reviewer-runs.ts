@@ -39,7 +39,7 @@ import { randomUUID } from 'node:crypto';
 /** Journalisé quand l'enregistrement échoue — best-effort, jamais fatal, jamais muet. */
 export const REVIEWER_VERIFY_PERSISTENCE_FAILED = 'REVIEWER_VERIFY_PERSISTENCE_FAILED';
 
-/** La valeur de `verification_runs.source` que ce module écrit (migration 0112). */
+/** La valeur de `verification_runs.source` que ce module écrit (migration 0113). */
 export const REVIEWER_SOURCE = 'reviewer' as const;
 
 /**
