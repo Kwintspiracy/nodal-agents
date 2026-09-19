@@ -1233,6 +1233,226 @@ describe('registerDetectedProjectAction @cap:travailler-sur-des-fichiers/moteur'
   });
 });
 
+// ─── #143 : l'ACTIVITÉ d'un projet ───────────────────────────────────────────
+//
+// Une liste à l'écran, deux lectures ici. Ce qui compte : une session SANS
+// conversation ne disparaît pas avec la liste Code, et une conversation dit
+// combien de sessions sont parties d'elle.
+describe('getProjectActivityAction @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('rend les conversations ET les runs sans conversation, chacun dans sa liste', async () => {
+    const { getProjectActivityAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/activite`;
+    const projectId = await enregistre({ path: chemin, name: 'Activity project' });
+
+    // Une conversation ancrée, avec DEUX runs à elle.
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        origin: 'project',
+        title: 'Fix the release check',
+        currentProjectId: projectId,
+        updatedAt: new Date('2026-09-19T14:02:00.000Z'),
+      })
+      .returning({ id: conversations.id });
+    for (const i of [0, 1]) {
+      await testDb.insert(agentJobs).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        projectId,
+        conversationId: conv!.id,
+        channel: 'dashboard',
+        status: i === 0 ? 'completed' : 'processing',
+        task: `tour ${i}`,
+      });
+    }
+
+    // Un run SANS conversation — celui que l'onglet Code listait.
+    const [solo] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        projectId,
+        channel: 'mcp',
+        status: 'awaiting_approval',
+        task: 'approval needed to write 3 files',
+      })
+      .returning({ id: agentJobs.id });
+
+    const result = await getProjectActivityAction(projectId);
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data.conversations).toHaveLength(1);
+    const fil = result.data.conversations[0]!;
+    expect(fil.id).toBe(conv!.id);
+    expect(fil.title).toBe('Fix the release check');
+    // « N sessions inside » : les runs DU PROJET portés par ce fil.
+    expect(fil.sessions).toBe(2);
+    // L'un d'eux avance encore.
+    expect(fil.running).toBe(true);
+
+    expect(result.data.sessions.map((s) => s.id)).toEqual([solo!.id]);
+    const session = result.data.sessions[0]!;
+    expect(session.origin).toBe('mcp');
+    expect(session.status).toBe('awaiting_approval');
+    expect(session.task).toBe('approval needed to write 3 files');
+    // Aucune ligne `cli_runs` : le harnais est INCONNU, pas deviné.
+    expect(session.provider).toBeNull();
+  });
+
+  it('un run DÉLÉGUÉ n’est pas une ligne : c’est le run de tête qui en porte une', async () => {
+    const { getProjectActivityAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/activite-delegation`;
+    const projectId = await enregistre({ path: chemin, name: 'Activity project' });
+
+    const [tete] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        projectId,
+        channel: 'mcp',
+        status: 'awaiting_delegation',
+        task: 'build it',
+      })
+      .returning({ id: agentJobs.id });
+    await testDb.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      projectId,
+      parentJobId: tete!.id,
+      channel: 'internal',
+      status: 'processing',
+      task: 'the delegated half',
+    });
+
+    const result = await getProjectActivityAction(projectId);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.sessions.map((s) => s.id)).toEqual([tete!.id]);
+  });
+
+  it('refuse une ligne de COMPTABILITÉ : ce n’est pas un projet, elle n’a pas de page', async () => {
+    const { getProjectActivityAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/comptabilite-activite`;
+    const [ligne] = await testDb
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: chemin,
+        projectKey: projectKey(chemin),
+        hidden: true,
+      })
+      .returning({ id: codeProjects.id });
+
+    const result = await getProjectActivityAction(ligne!.id);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_found');
+  });
+});
+
+describe('getProjectFactsAction @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('compte les conversations et les sessions, et lit `.git` SUR LE DISQUE', async () => {
+    const { getProjectFactsAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/faits`;
+    const projectId = await enregistre({ path: chemin, name: 'Activity project' });
+    await mkdir(`${chemin}/.git`, { recursive: true });
+
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        origin: 'project',
+        title: 'Un fil',
+        currentProjectId: projectId,
+      })
+      .returning({ id: conversations.id });
+    await testDb.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      projectId,
+      conversationId: conv!.id,
+      channel: 'dashboard',
+      status: 'completed',
+      task: 'un tour',
+    });
+
+    const result = await getProjectFactsAction(projectId);
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversations).toBe(1);
+    expect(result.data.sessions).toBe(1);
+    expect(result.data.isGitRepository).toBe(true);
+  });
+
+  it('compte TOUS les runs de tête du projet, portés par un fil ou non', async () => {
+    const { getProjectFactsAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/faits-compteur`;
+    const projectId = await enregistre({ path: chemin, name: 'Compteur' });
+
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        origin: 'project',
+        title: 'Un fil',
+        currentProjectId: projectId,
+      })
+      .returning({ id: conversations.id });
+    await testDb.insert(agentJobs).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        projectId,
+        conversationId: conv!.id,
+        channel: 'dashboard',
+        status: 'completed',
+        task: 'porté par le fil',
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        projectId,
+        channel: 'mcp',
+        status: 'completed',
+        task: 'tout seul',
+      },
+    ]);
+
+    const result = await getProjectFactsAction(projectId);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // « 2 sessions » sous le nom du projet : les deux ont tourné dedans, que
+    // l'une soit portée par un fil ou non.
+    expect(result.data.sessions).toBe(2);
+    expect(result.data.conversations).toBe(1);
+  });
+
+  it('un dossier SANS `.git` ne se dit pas dépôt, quelle que soit la sorte du projet', async () => {
+    const { getProjectFactsAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/faits-sans-git`;
+    const projectId = await enregistre({ path: chemin, name: 'Activity project' });
+    await mkdir(chemin, { recursive: true });
+
+    const result = await getProjectFactsAction(projectId);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.kind).toBe('code');
+    expect(result.data.isGitRepository).toBe(false);
+    expect(result.data.conversations).toBe(0);
+    expect(result.data.sessions).toBe(0);
+  });
+});
+
 describe('listProofsForPathsAction @cap:verifier-un-livrable/moteur', () => {
   it('rend le DERNIER verdict de chaque chemin, et rien pour un chemin sans preuve', async () => {
     const { listProofsForPathsAction } = await import('../project-actions.ts');

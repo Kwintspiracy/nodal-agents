@@ -20,6 +20,7 @@
 import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 // L'aplatissement LEXICAL d'un chemin (`.` et `..`), par la plateforme.
 import { normalize as posixNormalize } from 'node:path/posix';
@@ -36,7 +37,10 @@ import {
   agents,
   agentJobs,
   agentWorkspaces,
+  chatMessages,
+  cliRuns,
   codeProjects,
+  conversationReads,
   conversations,
   entities,
   verificationRuns,
@@ -47,13 +51,21 @@ import {
   isAbsolutePath,
   isSafeSubfolder,
   projectFolderNameFrom,
+  redactSecretsInText,
   type VerifyCommand,
 } from '@nodal-agents/shared';
+// Le rendu en texte nu d'un message Markdown — la MÊME réduction que la liste
+// des conversations, pour qu'un aperçu ne se lise pas de deux façons.
+import { plainText } from '@/components/Markdown.tsx';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
 import { isUnderPath } from './code-projects.ts';
 
+// L'état de lecture d'un fil — la MÊME règle et la même colonne que la liste
+// des conversations et le sous-menu de la barre latérale (#209). Une seconde
+// définition du « non lu » aurait fini par contredire la première.
+import { readsOfUser, unreadColumn } from './unread.ts';
 import { deriveVerifyStatus, type VerifyStatus } from './verification-display.ts';
 import { groupVerificationRuns, type VerificationSequenceView } from './verification-runs-view.ts';
 
@@ -289,6 +301,428 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
   } catch (err) {
     console.error('[projects] PROJECT_LIST_FAILED', err);
     return fail('list_failed', 'Could not list projects');
+  }
+}
+
+/**
+ * Combien de conversations un projet porte.
+ *
+ * Une conversation lui appartient de deux façons, et il faut les deux : elle y
+ * est ANCRÉE (`conversations.current_project_id`), ou elle porte un travail
+ * rattaché au projet (`agent_jobs.project_id` + `conversation_id`). C'est
+ * l'union exacte que `getProjectActivityAction` liste ; n'en compter qu'une
+ * moitié ferait dire « 2 conversations » à un en-tête dont la liste en montre
+ * cinq.
+ *
+ * L'union se fait en JS sur des identifiants, pas en SQL : deux `group by`
+ * indexés coûtent moins qu'un `UNION` sur une jointure, et le nombre de
+ * conversations d'une entité tient en mémoire. Bornée par LISTE de projets —
+ * un seul aujourd'hui, mais la forme ne change pas si un écran en demande
+ * plusieurs.
+ */
+async function countProjectConversations(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  projectIds: readonly string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (projectIds.length === 0) return counts;
+
+  const [anchored, viaJobs] = await Promise.all([
+    db
+      .select({ projectId: conversations.currentProjectId, id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.entityId, entityId),
+          inArray(conversations.currentProjectId, [...projectIds]),
+        ),
+      ),
+    db
+      .selectDistinct({ projectId: agentJobs.projectId, id: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          inArray(agentJobs.projectId, [...projectIds]),
+          isNotNull(agentJobs.conversationId),
+        ),
+      ),
+  ]);
+
+  const seen = new Map<string, Set<string>>();
+  for (const row of [...anchored, ...viaJobs]) {
+    if (!row.projectId || !row.id) continue;
+    const set = seen.get(row.projectId) ?? new Set<string>();
+    set.add(row.id);
+    seen.set(row.projectId, set);
+  }
+  for (const [projectId, set] of seen) counts.set(projectId, set.size);
+  return counts;
+}
+
+// ─── getProjectFactsAction ───────────────────────────────────────────────────
+
+/** Ce que l'en-tête d'un projet ouvert affirme — et rien de plus (#143). */
+export type ProjectFacts = {
+  id: string;
+  name: string;
+  path: string;
+  kind: 'code' | 'documents';
+  agentName: string | null;
+  /** `.git` est là. Un fait lu sur le disque, jamais déduit de la sorte du projet. */
+  isGitRepository: boolean;
+  conversations: number;
+  /** Les runs DE TÊTE rattachés au projet — ce que la ligne appelle « sessions ». */
+  sessions: number;
+};
+
+/**
+ * Les faits de l'en-tête d'un projet : ce que la phrase sous son nom affirme,
+ * et rien de plus.
+ */
+export async function getProjectFactsAction(id: string): Promise<ActionResult<ProjectFacts>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid project id');
+    }
+    const db = getDb();
+    const entityId = session.entityId;
+
+    const [row] = await db
+      .select({
+        id: codeProjects.id,
+        displayName: codeProjects.displayName,
+        path: codeProjects.projectPath,
+        kind: codeProjects.kind,
+        agentName: agents.name,
+      })
+      .from(codeProjects)
+      .leftJoin(agents, eq(agents.id, codeProjects.agentId))
+      .where(
+        and(
+          eq(codeProjects.id, id),
+          eq(codeProjects.entityId, entityId),
+          isNotNull(codeProjects.registeredAt),
+        ),
+      )
+      .limit(1);
+    if (!row) return fail('not_found', 'Project not found');
+
+    const [conversationsCount, sessionRows] = await Promise.all([
+      countProjectConversations(db, entityId, [id]),
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.entityId, entityId),
+            eq(agentJobs.projectId, id),
+            isNull(agentJobs.parentJobId),
+          ),
+        ),
+    ]);
+
+    return ok({
+      id: row.id,
+      name: row.displayName ?? basenameOf(row.path),
+      path: row.path,
+      kind: (row.kind === 'documents' ? 'documents' : 'code') as 'code' | 'documents',
+      agentName: row.agentName ?? null,
+      // Lu sur le DISQUE, une fois par ouverture. Un dossier de projet n'est
+      // pas forcément un dépôt, et la sorte `code` ne le prouve pas.
+      isGitRepository: existsSync(`${normalizePath(row.path)}/.git`),
+      conversations: conversationsCount.get(id) ?? 0,
+      sessions: Number(sessionRows[0]?.n ?? 0),
+    });
+  } catch (err) {
+    console.error('[projects] PROJECT_FACTS_FAILED', err);
+    return fail('facts_failed', 'Could not load the project');
+  }
+}
+
+// ─── getProjectActivityAction ────────────────────────────────────────────────
+
+/** Une conversation du projet, telle que l'onglet Activity la montre. */
+export type ProjectActivityConversation = {
+  id: string;
+  channel: string;
+  /** Le titre du fil, ou vide — l'écran décide quoi écrire à la place. */
+  title: string;
+  agentName: string | null;
+  agentAvatarUrl: string | null;
+  /** La dernière phrase dite dans le fil. `null` quand rien n'a encore été dit. */
+  lastPreview: string | null;
+  /** Les runs DE CE PROJET portés par cette conversation — « N sessions inside ». */
+  sessions: number;
+  updatedAt: Date | null;
+  /** Un de ces runs avance encore. */
+  running: boolean;
+  /**
+   * Le fil a bougé depuis que cette personne l'a ouvert, ou elle ne l'a jamais
+   * ouvert (#209). Lu dans la MÊME requête que la ligne, jamais par ligne.
+   */
+  unread: boolean;
+};
+
+/** Un run du projet qui n'a AUCUNE conversation — ce que l'onglet Code listait. */
+export type ProjectActivitySession = {
+  /** `agent_jobs.id` : la ligne ouvre la page du run. */
+  id: string;
+  agentName: string | null;
+  agentAvatarUrl: string | null;
+  /** Le harnais qui a tourné (`cli_runs.provider`), ou `null` — rien ne le dit. */
+  provider: string | null;
+  /** D'où le run est parti : `agent_jobs.channel`. */
+  origin: string;
+  status: string | null;
+  task: string;
+  createdAt: Date | null;
+};
+
+export type ProjectActivityView = {
+  conversations: ProjectActivityConversation[];
+  sessions: ProjectActivitySession[];
+};
+
+// Le chiffre de l'onglet n'est PAS ici : il vient de `getProjectFactsAction`,
+// que les deux onglets lisent. Le calculer sur les lignes CHARGÉES le ferait
+// diverger d'un onglet à l'autre — elles sont plafonnées — et un onglet qui
+// annonce deux nombres selon la page qu'on regarde n'annonce rien.
+
+/** Plafond par liste. Une page d'activité se lit, elle ne s'inventorie pas. */
+const ACTIVITY_MAX = 50;
+const ACTIVITY_TITLE_MAX = 60;
+/**
+ * BORNE HAUTE, pas une coupe d'affichage (Quentin, 19/09).
+ *
+ * À 120 signes, l'aperçu tombait au milieu d'une citation (« … ou " ») et la
+ * ligne montrait une phrase estropiée. Ce n'est pas ici que ça se décide : la
+ * ligne tronque par CSS, sur une seule ligne, à la largeur qu'elle a. Ce
+ * plafond ne sert plus qu'à ne pas faire voyager un pavé de mille mots jusqu'au
+ * navigateur.
+ */
+const ACTIVITY_PREVIEW_MAX = 300;
+
+/** La première ligne d'un texte, masquée puis coupée — jamais l'inverse. */
+function firstLineOf(text: string, max: number): string {
+  const line = redactSecretsInText(plainText(text));
+  return line.length <= max ? line : line.slice(0, max);
+}
+
+/** Un run qui avance encore — les statuts VIVANTS de `agent_jobs`. */
+function jobIsRunning(status: string | null): boolean {
+  return status === 'pending' || status === 'processing' || status === 'awaiting_delegation';
+}
+
+/**
+ * L'ACTIVITÉ d'un projet : ses conversations et les runs qui n'en ont pas (#143).
+ *
+ * UNE liste à l'écran, deux lectures ici, parce que ce ne sont pas les mêmes
+ * colonnes. Une conversation se date de son dernier mot et porte des sessions ;
+ * un run parti du CLI, du serveur MCP ou d'un harnais n'a pas de fil — c'est
+ * exactement ce que l'onglet Code listait, et il ne disparaît pas avec lui.
+ *
+ * Tout est BORNÉ par liste : cinq requêtes pour la page, jamais une par ligne.
+ */
+export async function getProjectActivityAction(
+  id: string,
+): Promise<ActionResult<ProjectActivityView>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid project id');
+    }
+    const db = getDb();
+    const entityId = session.entityId;
+
+    // Le projet doit exister, être à cette entité, et être ENREGISTRÉ : une
+    // ligne de comptabilité n'a pas d'activité à montrer.
+    const [projet] = await db
+      .select({ id: codeProjects.id })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.id, id),
+          eq(codeProjects.entityId, entityId),
+          isNotNull(codeProjects.registeredAt),
+        ),
+      )
+      .limit(1);
+    if (!projet) return fail('not_found', 'Project not found');
+
+    // Les runs DE TÊTE du projet. Une seule lecture sert les deux sortes de
+    // lignes : elle compte les sessions de chaque conversation, dit laquelle
+    // tourne, et livre les runs qui n'ont pas de conversation du tout.
+    const jobRows = await db
+      .select({
+        id: agentJobs.id,
+        conversationId: agentJobs.conversationId,
+        channel: agentJobs.channel,
+        status: agentJobs.status,
+        task: agentJobs.task,
+        createdAt: agentJobs.createdAt,
+        agentName: agents.name,
+        agentAvatarUrl: agents.avatarUrl,
+      })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          eq(agentJobs.projectId, id),
+          isNull(agentJobs.parentJobId),
+        ),
+      )
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(200);
+
+    const sessionsParConversation = new Map<string, { count: number; running: boolean }>();
+    const sansConversation: typeof jobRows = [];
+    for (const j of jobRows) {
+      if (j.conversationId === null) {
+        if (sansConversation.length < ACTIVITY_MAX) sansConversation.push(j);
+        continue;
+      }
+      const vu = sessionsParConversation.get(j.conversationId) ?? { count: 0, running: false };
+      vu.count += 1;
+      vu.running = vu.running || jobIsRunning(j.status);
+      sessionsParConversation.set(j.conversationId, vu);
+    }
+
+    // Les conversations du projet : celles qui y sont ANCRÉES, et celles qui
+    // portent un de ses travaux. La même union que la page du projet liste.
+    const conversationIdsOfJobs = db
+      .select({ id: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          eq(agentJobs.projectId, id),
+          isNotNull(agentJobs.conversationId),
+        ),
+      );
+
+    const convRows = await db
+      .select({
+        id: conversations.id,
+        channel: conversations.channel,
+        title: conversations.title,
+        updatedAt: conversations.updatedAt,
+        agentName: agents.name,
+        agentAvatarUrl: agents.avatarUrl,
+        // NON LU, dans la MÊME requête que la ligne (#209) : une jointure de
+        // plus, jamais une lecture par fil.
+        unread: unreadColumn,
+      })
+      .from(conversations)
+      .leftJoin(agents, eq(agents.id, conversations.agentId))
+      .leftJoin(conversationReads, readsOfUser(session.userId))
+      .where(
+        and(
+          eq(conversations.entityId, entityId),
+          or(
+            eq(conversations.currentProjectId, id),
+            inArray(conversations.id, conversationIdsOfJobs),
+          ),
+        ),
+      )
+      .orderBy(sql`${conversations.updatedAt} desc nulls last`, desc(conversations.id))
+      .limit(ACTIVITY_MAX);
+
+    const convIds = convRows.map((c) => c.id);
+
+    // La dernière phrase dite, par conversation. Deux agrégats groupés, comme
+    // la liste des conversations : un fil du tableau de bord porte des
+    // messages, un fil de canal porte des jobs, et le dernier mot ne se lit
+    // pas au même endroit.
+    const [messageStats, replyStats] =
+      convIds.length === 0
+        ? [[], []]
+        : await Promise.all([
+            db
+              .select({
+                conversationId: chatMessages.conversationId,
+                lastReply: sql<
+                  string | null
+                >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt} DESC) FILTER (WHERE ${chatMessages.role} = 'assistant'))[1]`,
+              })
+              .from(chatMessages)
+              .where(inArray(chatMessages.conversationId, convIds))
+              .groupBy(chatMessages.conversationId),
+            db
+              .select({
+                conversationId: agentJobs.conversationId,
+                lastReply: sql<
+                  string | null
+                >`(array_agg(${agentJobs.result} ORDER BY ${agentJobs.createdAt} DESC) FILTER (WHERE ${agentJobs.result} IS NOT NULL))[1]`,
+              })
+              .from(agentJobs)
+              .where(
+                and(
+                  eq(agentJobs.entityId, entityId),
+                  isNull(agentJobs.parentJobId),
+                  inArray(agentJobs.conversationId, convIds),
+                ),
+              )
+              .groupBy(agentJobs.conversationId),
+          ]);
+    const dernierMessage = new Map(messageStats.map((s) => [s.conversationId ?? '', s.lastReply]));
+    const dernierJob = new Map(replyStats.map((s) => [s.conversationId ?? '', s.lastReply]));
+
+    // Le HARNAIS de chaque run sans conversation. `null` quand aucune ligne
+    // `cli_runs` ne le dit : la ligne écrira « session », jamais un nom de
+    // produit deviné.
+    const sessionIds = sansConversation.map((j) => j.id);
+    const providerByJob = new Map<string, string>();
+    if (sessionIds.length > 0) {
+      const providerRows = await db
+        .selectDistinct({ jobId: cliRuns.jobId, provider: cliRuns.provider })
+        .from(cliRuns)
+        .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, sessionIds)));
+      for (const r of providerRows) {
+        if (r.jobId && r.provider && !providerByJob.has(r.jobId)) {
+          providerByJob.set(r.jobId, r.provider);
+        }
+      }
+    }
+
+    return ok({
+      conversations: convRows.map((c): ProjectActivityConversation => {
+        const stats = c.channel === 'dashboard' ? dernierMessage.get(c.id) : dernierJob.get(c.id);
+        const compte = sessionsParConversation.get(c.id);
+        return {
+          id: c.id,
+          channel: c.channel,
+          title: c.title !== '' ? firstLineOf(c.title, ACTIVITY_TITLE_MAX) : '',
+          agentName: c.agentName ?? null,
+          agentAvatarUrl: c.agentAvatarUrl ?? null,
+          lastPreview: stats ? firstLineOf(stats, ACTIVITY_PREVIEW_MAX) || null : null,
+          sessions: compte?.count ?? 0,
+          updatedAt: c.updatedAt,
+          running: compte?.running ?? false,
+          unread: c.unread,
+        };
+      }),
+      sessions: sansConversation.map(
+        (j): ProjectActivitySession => ({
+          id: j.id,
+          agentName: j.agentName ?? null,
+          agentAvatarUrl: j.agentAvatarUrl ?? null,
+          provider: providerByJob.get(j.id) ?? null,
+          origin: j.channel,
+          status: j.status,
+          task: firstLineOf(j.task, ACTIVITY_PREVIEW_MAX),
+          createdAt: j.createdAt,
+        }),
+      ),
+    });
+  } catch (err) {
+    console.error('[projects] PROJECT_ACTIVITY_FAILED', err);
+    return fail('activity_failed', 'Could not load the project activity');
   }
 }
 
@@ -1169,29 +1603,11 @@ async function loadProjectCore(
   };
 }
 
-/** La page du FIL d'un projet (`/spaces/[id]`) : le cœur, rien de plus. */
-export async function getProjectThreadPageAction(
-  id: string,
-): Promise<ActionResult<ProjectThreadPageView>> {
-  try {
-    const session = await getSession();
-    if (!session.entityId) return fail('no_entity', 'No active entity');
-    if (!z.string().guid().safeParse(id).success) {
-      return fail('validation_failed', 'Invalid project id');
-    }
-    const core = await loadProjectCore(getDb(), session.entityId, id);
-    if (core === null) return fail('not_found', 'Project not found');
-    return ok({
-      project: core.project,
-      conversations: core.conversations,
-      projectConversationId: core.projectConversationId,
-      rootAgent: core.rootAgent,
-    });
-  } catch (err) {
-    console.error('[projects] PROJECT_THREAD_PAGE_FAILED', err);
-    return fail('page_failed', 'Could not load the project');
-  }
-}
+// `getProjectThreadPageAction` a disparu avec #143. Ouvrir un projet n'ouvre
+// plus le fil de SA conversation : un projet en a plusieurs, et des sessions
+// qui n'en ont aucune — atterrir dans une seule de ces histoires cachait
+// toutes les autres. La page du projet lit `getProjectActivityAction`, et un
+// fil se lit là où il a toujours été, sur `/chat/<id>`.
 
 /**
  * La page du DOSSIER d'un projet (`/spaces/[id]/files`) : le cœur, plus le
