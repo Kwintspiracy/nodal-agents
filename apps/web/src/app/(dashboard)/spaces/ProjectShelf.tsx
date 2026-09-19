@@ -15,10 +15,45 @@ import { useState } from 'react';
 import CopyablePath from '@/components/ui/CopyablePath';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
-import VerificationSection from '@/app/(dashboard)/code/[id]/VerificationSection.tsx';
-import type { VerificationUnconfiguredView } from '@/lib/verification-runs-view.ts';
 import type { ProjectFilesView, ProjectPageView } from '@/lib/project-actions.ts';
 import { relativeTime } from '@/lib/format-time';
+
+/**
+ * CE QUE LA PREUVE DIT, en une ligne — exporté pour être prouvé sans navigateur.
+ *
+ * Le dernier verdict d'abord (c'est le fait), puis les comptes, puis l'état de
+ * la configuration. Rien d'absent ne s'écrit : un projet où rien n'a tourné ne
+ * dit pas « 0 sequences », il n'en parle pas.
+ */
+export function proofLine(proof: ProjectPageView['proof']): string {
+  const parts: string[] = [];
+  const derniere = proof.sequences.at(-1);
+  if (derniere) {
+    // `green` est le seul verdict qui prouve quelque chose. Les deux autres
+    // disent « pas prouvé », et ils ne disent pas la même chose : un rouge
+    // vient du projet, une erreur d'infrastructure vient d'ici.
+    parts.push(
+      derniere.verdict === 'green'
+        ? 'green'
+        : derniere.verdict === 'red'
+          ? 'failed'
+          : 'could not run',
+    );
+    parts.push(plural(proof.sequences.length, 'run', 'runs'));
+  }
+  if (proof.configured) {
+    parts.push(plural(proof.commands?.length ?? 0, 'command', 'commands'));
+    parts.push(proof.approval === 'approved' ? 'approved' : 'waiting for your approval');
+  } else {
+    parts.push('No command declared.');
+  }
+  return parts.join(' · ');
+}
+
+/** Le singulier et le pluriel, pour ne jamais écrire « 1 commands ». */
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
 
 /** Au-delà, la liste se replie : une étagère se survole, elle ne se lit pas. */
 const FOLDED_AT = 20;
@@ -45,12 +80,10 @@ export default function ProjectShelf({
   project,
   files,
   proof,
-  unconfigured,
 }: {
   project: ProjectPageView['project'];
   files: ProjectPageView['files'];
   proof: ProjectPageView['proof'];
-  unconfigured: VerificationUnconfiguredView[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? files.entries : files.entries.slice(0, FOLDED_AT);
@@ -135,30 +168,22 @@ export default function ProjectShelf({
         )}
       </section>
 
-      {/* La preuve — la configuration déclarée, puis ce qui a tourné. */}
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2 text-body-12 text-ink-3">
-          <span className="text-medium-13 text-ink">Proof</span>
-          {proof.configured ? (
-            <span>
-              {proof.commands?.length} command
-              {(proof.commands?.length ?? 0) === 1 ? '' : 's'} ·{' '}
-              {proof.approval === 'approved' ? 'approved' : 'waiting for your approval'}
-            </span>
-          ) : (
-            <span>No command declared.</span>
-          )}
-          {/* PLUS DE LIEN vers l'écran Code (#143) : le panneau qui écrit ces
-              commandes est juste en dessous, sur cette page. Renvoyer ailleurs
-              ferait quitter l'écran pour y revenir. */}
+      {/* La preuve, en UNE ligne : le dernier verdict et ses comptes. Les
+          COMMANDES sont juste en dessous, dans leur propre carte.
+          Il y avait trois couches ici (Quentin, 19/09) : cette ligne, un bloc
+          replié « VERIFICATION · 2 · GREEN · 2 sequences… » découpé par le
+          bord du panneau, et la carte des commandes. Trois façons de dire le
+          même état, dont deux qu'on ne lisait pas. */}
+      <section className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="shrink-0 text-medium-13 text-ink">Proof</span>
+          <span
+            className="min-w-0 flex-1 truncate text-body-12 text-ink-3"
+            title={proofLine(proof)}
+          >
+            {proofLine(proof)}
+          </span>
         </div>
-        <VerificationSection
-          sequences={proof.sequences}
-          skippedSurfaces={[]}
-          unconfigured={unconfigured}
-          stage="completed"
-          live={false}
-        />
       </section>
     </div>
   );

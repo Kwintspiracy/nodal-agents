@@ -7,6 +7,12 @@
 // Le composant de ligne est celui des boîtes de réception : même boîte, mêmes
 // signes, même géométrie. Ce qui change est ce qu'il y a DEDANS, et c'est
 // `activity-rows.ts` qui le décide — pas ce fichier, qui ne fait que dessiner.
+//
+// Une phrase sous la liste expliquait tout ça à la personne : « two kinds of
+// rows, one list — a conversation row opens the thread, a session row without
+// a conversation opens the run page ». C'était de la documentation affichée
+// (Quentin, 19/09). Une liste qui a besoin d'une légende ne va pas de soi, et
+// la légende ne la répare pas : elle vit ici, où elle sert à qui la modifie.
 
 import ConversationRow from '@/components/ui/ConversationRow';
 import EmptyState from '@/components/ui/EmptyState';
@@ -38,10 +44,6 @@ export default function ProjectActivity({ rows }: { rows: ConversationRowModel[]
           <ConversationRow key={key} rowKey={key} lead="title" {...ligne} />
         ))}
       </div>
-      <p className="mt-3 text-body-12 text-ink-4">
-        Two kinds of rows, one list: a conversation row opens the thread, where its sessions unfold.
-        A session row without a conversation opens the run page.
-      </p>
     </>
   );
 }

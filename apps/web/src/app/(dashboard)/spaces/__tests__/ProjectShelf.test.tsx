@@ -44,14 +44,6 @@ describe('ProjectShelf', () => {
           unreadable: null,
         }}
         proof={proofNonConfiguree}
-        unconfigured={[
-          {
-            deliverableType: 'code_project',
-            canonicalKey: 'd:/dev/nodal',
-            displayPath: 'D:/Dev/nodal',
-            reason: 'not_configured',
-          },
-        ]}
       />,
     );
     expect(html).toContain('apps/');
@@ -77,7 +69,6 @@ describe('ProjectShelf', () => {
         project={project}
         files={{ entries: [], more: 0, ignored: 0, unreadable: 'absent' }}
         proof={proofNonConfiguree}
-        unconfigured={[]}
       />,
     );
     expect(html).toContain('This folder is not there any more.');
@@ -91,7 +82,6 @@ describe('ProjectShelf', () => {
           project={project}
           files={{ entries: [], more: 0, ignored: 0, unreadable }}
           proof={proofNonConfiguree}
-          unconfigured={[]}
         />,
       );
     expect(dire('not_a_directory')).toContain('This path is not a folder.');
@@ -102,6 +92,72 @@ describe('ProjectShelf', () => {
     for (const cause of ['not_a_directory', 'permission', 'error'] as const) {
       expect(dire(cause)).not.toContain('not there any more');
     }
+  });
+
+  it('un chemin LONG est coupé par le CSS, et garde sa valeur entière', () => {
+    // Dans un panneau de 400 px, un chemin de projet dépassait par la droite
+    // (Quentin, 19/09). jsdom ne calcule aucune largeur : ce qui se vérifie
+    // ici est le CONTRAT qui l'empêche — la colonne qui peut rétrécir, la
+    // coupe CSS, et la valeur entière conservée pour la copie et l'infobulle.
+    // La mesure réelle, elle, se fait au navigateur (parcours G de
+    // `code-verification.spec.ts`).
+    const long =
+      'D:/APPS/NodalAI/apps/web/src/app/(dashboard)/spaces/un-dossier-au-nom-interminable';
+    const html = renderToStaticMarkup(
+      <ProjectShelf
+        project={{ ...project, path: long }}
+        files={{ entries: [], more: 0, ignored: 0, unreadable: null }}
+        proof={proofNonConfiguree}
+      />,
+    );
+    expect(html).toContain('truncate');
+    expect(html).toContain('min-w-0');
+    // La valeur entière survit : c'est elle qu'on copie et qu'on survole.
+    expect(html).toContain(long);
+  });
+
+  it('la ligne de preuve se coupe elle aussi, et dit le DERNIER verdict', () => {
+    const html = renderToStaticMarkup(
+      <ProjectShelf
+        project={project}
+        files={{ entries: [], more: 0, ignored: 0, unreadable: null }}
+        proof={{
+          configured: true,
+          commands: [{ command: 'pnpm test', timeoutSeconds: 600 }],
+          approval: 'approved',
+          sequences: [
+            {
+              sequenceId: 's1',
+              jobId: null,
+              deliverableType: 'code_project',
+              canonicalKey: 'd:/dev/nodal',
+              verdict: 'red',
+              startedAt: '2026-09-18T10:00:00.000Z',
+              runs: [],
+            },
+            {
+              sequenceId: 's2',
+              jobId: null,
+              deliverableType: 'code_project',
+              canonicalKey: 'd:/dev/nodal',
+              verdict: 'green',
+              startedAt: '2026-09-19T10:00:00.000Z',
+              runs: [],
+            },
+          ],
+        }}
+      />,
+    );
+    // Le DERNIER verdict, pas le premier : le rouge de la veille ne décrit
+    // plus rien.
+    expect(html).toContain('green');
+    expect(html).not.toContain('failed');
+    expect(html).toContain('2 runs');
+    expect(html).toContain('1 command ');
+    expect(html).toContain('approved');
+    // UNE section, plus trois couches : le bloc replié « VERIFICATION » a
+    // disparu avec elles (Quentin, 19/09).
+    expect(html).not.toContain('VERIFICATION');
   });
 
   it('la configuration de preuve approuvée est résumée en une ligne', () => {
@@ -118,7 +174,6 @@ describe('ProjectShelf', () => {
           approval: 'approved',
           sequences: [],
         }}
-        unconfigured={[]}
       />,
     );
     expect(html).toContain('2 command');

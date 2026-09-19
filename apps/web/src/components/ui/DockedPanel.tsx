@@ -68,7 +68,12 @@ export default function DockedPanel({
       role="complementary"
       aria-label={typeof title === 'string' ? title : undefined}
       data-testid={testId}
-      className={`flex h-full shrink-0 flex-col overflow-hidden border-l border-rule-2 bg-paper ${className}`}
+      // Le trait de gauche porte `rule`, PAS `rule-2` : c'est la seule chose
+      // qui sépare le panneau de la page, et en thème sombre `rule-2` ne se
+      // voyait plus — les deux fonds se touchaient sans frontière (Quentin,
+      // 19/09). Les traits INTÉRIEURS gardent `rule-2` : ils découpent, ils ne
+      // séparent pas deux surfaces.
+      className={`flex h-full shrink-0 flex-col overflow-hidden border-l border-rule bg-paper ${className}`}
       style={{ width }}
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-rule-2 py-3 pr-3 pl-5">
