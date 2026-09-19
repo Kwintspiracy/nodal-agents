@@ -157,6 +157,7 @@ const detail = (): CodingProcessDetail => ({
     },
   ],
   verificationSkippedSurfaces: [],
+  constatedBy: [],
   verificationUnconfigured: [],
 });
 

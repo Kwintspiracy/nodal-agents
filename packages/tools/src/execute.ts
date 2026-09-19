@@ -7,6 +7,7 @@ import {
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   surfaceForTool,
+  type ConstatedWrite,
   type MutationTarget,
 } from '@nodal-agents/shared';
 import type { z } from 'zod';
@@ -31,6 +32,12 @@ import {
   dossiersNonConstates,
   snapshotFileTargets,
 } from './verification/observed';
+import { constatedGitWrites, perimetreGit, snapshotGitAvant } from './verification/git-constat';
+import {
+  fusionnerConstats,
+  kindSurDisque,
+  recordConstatedWrites,
+} from './verification/record-constat';
 import { attachProductionToProject } from './projects/attach';
 import { loadDeclaredCodeRoots, projectRootPredicate } from './projects/declared';
 
@@ -668,6 +675,36 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   const harnaisAvant = auditTool.reportsHarnessWrites
     ? await lignesDeHarnaisDejaLa(ctx.db, ctx.jobId)
     : new Set<string>();
+  // Et, quand les dossiers visés sont des DÉPÔTS GIT, l'état de leur `git
+  // status` AVANT l'appel (issue #199). C'est le seul constat qui voit ce
+  // qu'un shell écrit sans le nommer : le delta avant/après est la liste des
+  // fichiers que ce run a écrits. Lecture seule, aucun jeton, et un dossier
+  // hors dépôt ne rend rien — ce run sera constaté sur le disque, et le dira.
+  //
+  // LE PÉRIMÈTRE PORTE LES DOSSIERS ATTACHÉS, pas seulement les cibles de
+  // l'outil (revue C de la PR #227, constat 1). `run_command` déclare son `cwd`
+  // ET les dossiers de l'agent, mais `code_task` ne déclare que son `cwd` : un
+  // harnais lancé dans `src/` d'un projet dont le dépôt est à la racine se
+  // voyait refuser SA PROPRE racine, parce qu'elle était au-dessus de tout ce
+  // qu'il avait nommé. Le dossier du projet est ce qui borne ; un `cwd` en
+  // dessous de lui est alors couvert par construction.
+  //
+  // SEULEMENT POUR UN OUTIL QUI VISE UN DOSSIER, et c'est le prix qui décide :
+  // git est sondé deux fois par appel, et les empreintes de l'arbre sale avec.
+  // Un `file_write` NOMME son fichier — il est déjà constaté exactement, par
+  // une empreinte avant/après, sans rien demander à git. Sonder le dépôt pour
+  // lui ferait payer l'arbre entier à chaque édition pour une réponse qu'on a
+  // déjà. Ceux qui écrivent sans nommer sont ceux qui visent un dossier.
+  const dossiersVises = (mutationTargets ?? []).filter((t) => t.kind === 'dir');
+  const gitAvant =
+    dossiersVises.length === 0
+      ? []
+      : await snapshotGitAvant(
+          perimetreGit(
+            dossiersVises.map((t) => t.path),
+            (ctx.workspaces ?? []).map((w) => w.path),
+          ),
+        );
   // Ce que le hook a DÉCLARÉ voyage jusqu'à l'outil, sur un contexte dérivé —
   // celui de l'appelant n'est pas modifié. Un outil qui doit connaître le type
   // de ce qu'il écrit (donc la clé que portera sa carte) relit la décision de
@@ -732,10 +769,37 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             `paths=${harnais.toujoursLa.join(',')}`,
         );
       }
+      // Ce qui a été constaté SUR LE DISQUE : les cibles que cet outil a
+      // nommées, et les fichiers qu'un harnais a rapportés. C'est la règle de
+      // #196, et elle reste entière — ce qu'un shell écrit sans le nommer n'y
+      // est pas.
+      const fichiersDisque = [
+        ...(await changedFileTargets(mutationTargets, filesBefore ?? new Map())),
+        ...harnais.constates,
+      ];
+      // ── Le constat par GIT (issue #199) ──────────────────────────────────
+      //
+      // Quand le dossier visé est un dépôt, `git status` relu après l'appel et
+      // comparé à l'état d'avant donne la liste EXACTE des fichiers écrits,
+      // ceux qu'aucun outil n'a nommés compris. Il ne remplace pas le constat
+      // disque, il le complète là où celui-ci est aveugle — et hors d'un
+      // dépôt, il ne rend rien et le run reste constaté sur le disque.
+      //
+      // Les bornes (chemins ignorés non comptés, deux jobs sur le même dépôt,
+      // arbre trop sale) sont écrites dans `git-constat.ts`, pas ici.
+      const git = await constatedGitWrites(gitAvant);
       const aConstater = {
         changedFiles: [
-          ...(await changedFileTargets(mutationTargets, filesBefore ?? new Map())),
-          ...harnais.constates,
+          ...fichiersDisque,
+          // Une écriture vue par git vaut une cible constatée : c'est tout le
+          // point de #199 — un `run_command` qui écrit pour de bon crédite son
+          // projet, au lieu de se faire refuser sa déclaration de preuve.
+          ...git.writes.map((w) => ({
+            kind: 'file' as const,
+            path: w.path,
+            deliverableType: 'code_project' as const,
+            scope: 'addressed' as const,
+          })),
         ],
         dirTargets: mutationTargets.filter((t) => t.kind === 'dir'),
         workspaceRoots: (ctx.workspaces ?? []).map((w) => w.path),
@@ -745,6 +809,30 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         isProjectRoot: projectRootPredicate(await loadDeclaredCodeRoots(ctx.db, ctx.entityId)),
       };
       const observed = observedDeliverableKeys(aConstater);
+
+      // ── Le constat, RANGÉ (issue #199) ───────────────────────────────────
+      //
+      // Jusqu'ici il mourait avec l'appel : le bloc Files le refaisait à
+      // l'affichage en relisant ce que les outils avaient DÉCLARÉ. Chaque
+      // ligne part avec la façon dont elle a été constatée, parce que l'écran
+      // doit le dire — une liste disque ne promet pas ce qu'une liste git
+      // promet.
+      //
+      // Les deux constats s'AJOUTENT, l'un ne remplace jamais l'autre : la
+      // règle et son pourquoi vivent dans `fusionnerConstats` (revue C de la
+      // PR #227, constat 2).
+      const disque: ConstatedWrite[] = [];
+      for (const f of fichiersDisque) {
+        disque.push({ path: f.path, kind: await kindSurDisque(f.path, filesBefore ?? new Map()) });
+      }
+      const lignesDeConstat = fusionnerConstats({ git: git.writes, disque });
+      await recordConstatedWrites({
+        db: ctx.db,
+        jobId: ctx.jobId,
+        turn: ctx.turn,
+        lignes: lignesDeConstat,
+      });
+
       // Un dossier visé dont RIEN n'a été constaté se dit ici, par un code
       // (issue #102, invariant #4). C'est le cas d'un `run_command` : son `cwd`
       // ne crédite plus rien, et le silence serait exactement le faux vert

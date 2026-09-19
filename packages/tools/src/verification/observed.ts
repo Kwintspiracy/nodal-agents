@@ -93,7 +93,16 @@ function estAbsence(error: unknown): boolean {
   return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
-async function fingerprint(path: string): Promise<FileFingerprint> {
+/**
+ * Exportée depuis le 19/09 pour le constat par git (`git-constat.ts`) : les
+ * deux modules posent la MÊME question — ce fichier a-t-il changé ? — et
+ * doivent y répondre par la même empreinte. La recopier aurait fait diverger
+ * les deux constats au premier correctif porté d'un seul côté, et ce sont
+ * justement les trois états de cette empreinte (dont `unreadable`, dont
+ * l'absence avait coûté un faux vert PUIS un faux rouge) qui ont demandé trois
+ * passes de revue.
+ */
+export async function fingerprint(path: string): Promise<FileFingerprint> {
   let size: bigint;
   try {
     const s = await stat(path, { bigint: true });

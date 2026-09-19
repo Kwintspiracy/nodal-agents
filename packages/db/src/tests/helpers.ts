@@ -949,6 +949,26 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       CONSTRAINT job_checkpoints_job_turn_workspace_unique UNIQUE (job_id, turn, workspace)
     );
     CREATE INDEX IF NOT EXISTS idx_job_checkpoints_job ON job_checkpoints (job_id);
+
+    -- constated_writes (migration 0113) — les fichiers LIVRES d un run, tels
+    -- qu ils ont ete constates, et COMMENT : git (delta de git status avant et
+    -- apres) ou disk (les fichiers nommes, relus sur le disque, regle de #196).
+    CREATE TABLE IF NOT EXISTS constated_writes (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      turn integer NOT NULL,
+      path text NOT NULL,
+      change_kind text NOT NULL,
+      constated_by text NOT NULL,
+      renamed_from text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT constated_writes_job_turn_path_unique UNIQUE (job_id, turn, path),
+      CONSTRAINT constated_writes_change_kind_check
+        CHECK (change_kind IN ('added', 'modified', 'deleted', 'renamed')),
+      CONSTRAINT constated_writes_constated_by_check
+        CHECK (constated_by IN ('git', 'disk'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_constated_writes_job ON constated_writes (job_id);
   `);
 
   const db = drizzle(pg, { schema });
