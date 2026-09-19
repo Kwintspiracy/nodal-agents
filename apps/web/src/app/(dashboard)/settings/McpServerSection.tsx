@@ -91,8 +91,6 @@ export default function McpServerSection({ initial }: Props) {
             if (!enabled) setConfirming(true);
             else apply(false);
           }}
-          trackClassName={enabled ? 'border-agent/40 bg-agent/20' : 'border-rule-2 bg-canvas'}
-          thumbClassName={enabled ? 'translate-x-[18px] bg-agent' : 'translate-x-[2px] bg-ink-3'}
         />
       </div>
 

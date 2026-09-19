@@ -70,16 +70,14 @@ export default function TeamChangeSection({
         label="May change its own team"
         hint="Lets this agent create an agent, attach one to itself or detach one, on its own, mid-run."
         right={
-          <Switch
-            checked={enabled}
-            onChange={() => void handleToggle()}
-            disabled={saving || !canEdit}
-            ariaLabel="May change its own team"
-            trackClassName={
-              enabled ? 'mt-0.5 border-warn/40 bg-warn/20' : 'mt-0.5 border-rule-2 bg-canvas'
-            }
-            thumbClassName={enabled ? 'translate-x-[18px] bg-warn' : 'translate-x-[2px] bg-ink-3'}
-          />
+          <div className="mt-0.5">
+            <Switch
+              checked={enabled}
+              onChange={() => void handleToggle()}
+              disabled={saving || !canEdit}
+              ariaLabel="May change its own team"
+            />
+          </div>
         }
       />
 
