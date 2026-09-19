@@ -303,6 +303,17 @@ function fil(
   };
 }
 
+/**
+ * ONZE fils : un de plus que ce que le menu dessine.
+ *
+ * C'est le seul cas où « See all » s'affiche depuis le 19/09/2026 au soir — la
+ * lecture demande une ligne de plus que le plafond, et sa présence est ce qui
+ * dit qu'il y en a d'autres.
+ */
+function onzeFils(): FolderThread[] {
+  return Array.from({ length: 11 }, (_, i) => fil(`t${i + 1}`, `Invoice ${i + 1}`));
+}
+
 /** Ce que la lecture rapporte, dans la forme exacte de l'action. */
 function seedThreads(snapshot: Record<string, FolderThread[]>) {
   vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: snapshot });
@@ -355,13 +366,16 @@ describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', (
   });
 
   it('ferme le sous-menu par « See all », vers la liste du dossier', async () => {
-    seedThreads({ telegram: [fil('t1', 'Invoice for March')] });
+    // ONZE fils : il y en a plus que le menu n'en dessine, donc un « See all ».
+    // Depuis le 19/09/2026 au soir il n'apparaît QUE dans ce cas — en dessous
+    // du plafond, tout est déjà sous les yeux.
+    seedThreads({ telegram: onzeFils() });
     await renderGroup({ channels: ['telegram'] });
     await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
 
     const voirTout = container.querySelector('[data-testid="folder-see-all-telegram"]');
     expect(voirTout?.textContent).toBe('See all');
-    // Le MÊME endroit que le nom du dossier au-dessus : cinq fils ne sont pas
+    // Le MÊME endroit que le nom du dossier au-dessus : dix fils ne sont pas
     // tous les fils, et rien d'autre ne le dirait.
     expect(voirTout?.getAttribute('href')).toBe('/chat?folder=telegram');
     // Il vient APRÈS les fils. La dernière LIGNE du bloc, donc — le lien vit
@@ -403,8 +417,10 @@ describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', (
     await renderGroup({ channels: ['telegram'] });
     await click(container.querySelector('[data-testid="folder-caret-dashboard"]')!);
     expect(threadRows('dashboard')).toHaveLength(0);
+    // La phrase SEULE : un dossier vide n'offre pas « See all », puisqu'il n'y
+    // a rien de plus à voir (19/09/2026 au soir).
     expect(container.querySelector('[data-testid="folder-threads-dashboard"]')?.textContent).toBe(
-      'Nothing here yetSee all',
+      'Nothing here yet',
     );
   });
 
@@ -416,8 +432,10 @@ describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', (
     });
     await renderGroup({ channels: ['telegram'] });
     await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
+    // Le message SEUL : une lecture en échec ne sait pas s'il y a plus de
+    // lignes, donc elle ne promet pas d'en montrer d'autres.
     expect(container.querySelector('[data-testid="folder-threads-telegram"]')?.textContent).toBe(
-      'Failed to load conversationsSee all',
+      'Failed to load conversations',
     );
   });
 });
@@ -444,7 +462,7 @@ describe('la ligne d’un dossier PLIE, elle ne mène nulle part @cap:reprendre-
   });
 
   it('laisse « See all » être le SEUL chemin vers la liste du dossier', async () => {
-    seedThreads({ telegram: [fil('t1', 'Invoice for March')] });
+    seedThreads({ telegram: onzeFils() });
     await renderGroup({ channels: ['telegram'] });
     await click(folderRow('telegram'));
 
@@ -456,7 +474,7 @@ describe('la ligne d’un dossier PLIE, elle ne mène nulle part @cap:reprendre-
   });
 
   it('donne à « See all » une flèche vers la droite', async () => {
-    seedThreads({ telegram: [fil('t1', 'Invoice for March')] });
+    seedThreads({ telegram: onzeFils() });
     await renderGroup({ channels: ['telegram'] });
     await click(folderRow('telegram'));
 

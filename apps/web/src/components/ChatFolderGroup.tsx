@@ -68,7 +68,7 @@ import SidebarRow, { SIDEBAR_NOTE } from './ui/SidebarRow';
 import ThreadDot from './ui/ThreadDot';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
-import { chatFolders, DASHBOARD_FOLDER, MCP_FOLDER } from '@/lib/chat-folders.ts';
+import { chatFolders, unfoldedRows, DASHBOARD_FOLDER, MCP_FOLDER } from '@/lib/chat-folders.ts';
 import {
   listFolderThreadsAction,
   type FolderThreadsSnapshot,
@@ -217,7 +217,12 @@ export default function ChatFolderGroup() {
         const ouvert = deplies[f.key] === true;
         // `null` = la lecture n'a pas encore répondu. Un dossier sans fil, lui,
         // rend un tableau vide : les deux ne se disent pas de la même façon.
-        const fils = threads === null ? null : (threads[f.key] ?? []);
+        //
+        // La lecture a demandé UNE LIGNE DE PLUS que ce qu'on dessine : elle
+        // est coupée ici, et sa présence est ce qui dit qu'il y en a d'autres.
+        const lues = threads === null ? null : (threads[f.key] ?? []);
+        const { rows: fils, hasMore } =
+          lues === null ? { rows: null, hasMore: false } : unfoldedRows(lues);
         return (
           <div key={f.key}>
             {/* Toute la ligne PLIE le dossier, libellé et chevron (Quentin,
@@ -267,28 +272,34 @@ export default function ChatFolderGroup() {
                 )}
                 {/* « See all » mène à la liste ENTIÈRE du dossier — depuis le
                     19/09/2026, c'est la SEULE chose du sous-menu qui y mène,
-                    le nom du dossier ne servant plus qu'à plier. Il est là
-                    parce que cinq fils ne sont pas tous les fils, et que rien
-                    d'autre ne le dirait. */}
-                <SidebarRow
-                  href={f.href}
-                  title="See all"
-                  depth="thread"
-                  testId={`folder-see-all-${f.key}`}
-                >
-                  {/* Une place vide de la largeur d'un point : le libellé
+                    le nom du dossier ne servant plus qu'à plier.
+
+                    ET SEULEMENT S'IL Y EN A D'AUTRES (Quentin, 19/09 au soir) :
+                    en dessous du plafond, tout est déjà sous les yeux, et un
+                    lien vers « tout » qui mènerait aux mêmes lignes ferait
+                    promettre au menu ce qu'il montre déjà. Le fait se LIT — la
+                    lecture a demandé une ligne de plus — il ne se devine pas. */}
+                {hasMore && (
+                  <SidebarRow
+                    href={f.href}
+                    title="See all"
+                    depth="thread"
+                    testId={`folder-see-all-${f.key}`}
+                  >
+                    {/* Une place vide de la largeur d'un point : le libellé
                       s'aligne alors sur les titres des fils au-dessus. */}
-                  <span className="h-3.5 w-3.5 shrink-0" />
-                  <span className="flex-1 truncate leading-5 font-medium!">See all</span>
-                  {/* La flèche dit où l'on va, et elle ferme la ligne comme la
+                    <span className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex-1 truncate leading-5 font-medium!">See all</span>
+                    {/* La flèche dit où l'on va, et elle ferme la ligne comme la
                       flèche d'un lien externe ferme la sienne. */}
-                  <ArrowRight
-                    size={14}
-                    weight="bold"
-                    data-testid="see-all-arrow"
-                    className="h-3.5 w-3.5 shrink-0 text-ink-4"
-                  />
-                </SidebarRow>
+                    <ArrowRight
+                      size={14}
+                      weight="bold"
+                      data-testid="see-all-arrow"
+                      className="h-3.5 w-3.5 shrink-0 text-ink-4"
+                    />
+                  </SidebarRow>
+                )}
               </div>
             )}
           </div>

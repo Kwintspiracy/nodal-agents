@@ -20,6 +20,7 @@ import { Suspense } from 'react';
 import SidebarSection from './ui/SidebarSection';
 import SidebarLink from './ui/SidebarLink';
 import ChatFolderGroup from './ChatFolderGroup';
+import WorkspacesFolder from './WorkspacesFolder';
 import RecentThreads from './RecentThreads';
 import VersionBadge from './VersionBadge';
 import LiveCard from './ui/LiveCard';
@@ -85,6 +86,13 @@ export default function SidebarPanel({
 
         {destination.key === 'work' && (
           <>
+            {/* WORKSPACES — un dossier, exactement comme un canal (décision du
+                propriétaire, 19/09/2026 au soir) : il se plie du même geste et
+                déplie ses derniers projets. Il OUVRE le panneau, avant les
+                canaux : on choisit d'abord où l'on travaille. */}
+            <SidebarSection>Workspaces</SidebarSection>
+            <WorkspacesFolder />
+
             {/* CHANNELS — un dossier par endroit d'où les conversations
                 arrivent. Ce sont les mêmes lignes qu'en 0.8.11 : le titre de
                 section a remplacé la ligne « Channels » qui les portait, et

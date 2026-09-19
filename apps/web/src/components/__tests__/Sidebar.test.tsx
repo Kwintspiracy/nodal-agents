@@ -38,6 +38,7 @@ vi.mock('@/lib/conversation-actions.ts', () => ({
   listRecentThreadReadsAction: vi.fn(),
 }));
 vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
+vi.mock('@/lib/project-actions.ts', () => ({ listSidebarProjectsAction: vi.fn() }));
 vi.mock('../VersionBadge', () => ({ default: () => null }));
 vi.mock('../WorkspaceSwitcher', () => ({ default: () => null }));
 vi.mock('../NotificationsBell', () => ({ default: () => null }));
@@ -53,6 +54,7 @@ import {
   type FolderConversationRead,
 } from '@/lib/conversation-actions.ts';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
+import { listSidebarProjectsAction } from '@/lib/project-actions.ts';
 import {
   SIDEBAR_ROW_BASE,
   SIDEBAR_ROW_H,
@@ -164,6 +166,7 @@ beforeEach(() => {
   pathname = '/agents';
   vi.mocked(listRecentThreadReadsAction).mockResolvedValue({ ok: true, data: [] });
   vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: {} });
+  vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
   // LES DEUX PROVIDERS VOISINS RÉPONDENT, MÊME SI AUCUN TEST NE LES REGARDE.
   // Ils posent chacun un `setInterval` de 15 s ; dès qu'un test fait tourner
   // l'horloge, leurs actions partent aussi. Sans valeur de retour, elles
@@ -307,7 +310,9 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
     // Les espaces de travail ouvrent Work depuis le 19/09 : leur ligne est
     // dans son panneau, et la case doit s'allumer avec elle.
     ['/spaces', 'work', 'Work'],
-    ['/', 'run', 'Run'],
+    // La racine rend un fil vide depuis l'issue #248 : c'est Work, pas Run.
+    ['/', 'work', 'Work'],
+    ['/dashboard', 'run', 'Run'],
     ['/logs', 'run', 'Run'],
     ['/automations', 'run', 'Run'],
     // Une page de run n'a pas d'entrée dans le panneau, mais elle allume bien
@@ -362,7 +367,7 @@ describe('les entrées de 0.8.11, réparties en trois @cap:installer-et-demarrer
   });
 
   it('range Run en DEUX blocs, sans Workspaces ni Approvals', async () => {
-    pathname = '/';
+    pathname = '/dashboard';
     await renderSidebar();
     // Les deux sont PARTIES le 19/09, et aucune n'a disparu du produit :
     // Workspaces ouvre le panneau Work, Approvals est une case du rail.
@@ -371,18 +376,16 @@ describe('les entrées de 0.8.11, réparties en trois @cap:installer-et-demarrer
     expect(container.querySelector('[data-testid="nav-group-Models"]')).toBeNull();
   });
 
-  it('ouvre le panneau Work par ses espaces de travail, avec leur compte', async () => {
+  it('ouvre le panneau Work par son dossier d’espaces de travail', async () => {
     pathname = '/chat';
     await renderSidebar();
-    // Le libellé et son COMPTE, collés dans le texte rendu : deux espaces de
-    // travail sont semés, la ligne en écrit le nombre à droite.
-    expect(groupLabels('Workspaces')).toEqual(['Workspaces2']);
-    const lien = container.querySelector('a[href="/spaces"]');
-    expect(lien, 'la ligne mène bien à /spaces').not.toBeNull();
-    // Le bloc OUVRE le panneau : il précède CHANNELS, où vivent les dossiers.
+    const dossier = container.querySelector('[data-testid="inbox-folder-workspaces"]');
+    expect(dossier, 'le panneau Work porte le dossier Workspaces').not.toBeNull();
+    // Il OUVRE le panneau : son dossier précède ceux des canaux, parce qu'on
+    // choisit d'abord OÙ l'on travaille.
     const panneau = container.querySelector('[data-testid="sidebar-panel"]');
-    const blocs = [...(panneau?.querySelectorAll('[data-testid^="nav-group-"]') ?? [])];
-    expect(blocs[0]?.getAttribute('data-testid')).toBe('nav-group-Workspaces');
+    const dossiers = [...(panneau?.querySelectorAll('[data-testid^="inbox-folder-"]') ?? [])];
+    expect(dossiers[0]?.getAttribute('data-testid')).toBe('inbox-folder-workspaces');
   });
 
   it('ne propose « Scheduled » dans aucun des trois panneaux', async () => {
@@ -401,13 +404,18 @@ describe('les entrées de 0.8.11, réparties en trois @cap:installer-et-demarrer
     await renderSidebar();
   });
 
-  it('nomme la racine « Dashboard », et jamais « Spaces »', async () => {
-    pathname = '/';
+  it('mène « Dashboard » à /dashboard, et jamais la racine', async () => {
+    pathname = '/dashboard';
     await renderSidebar();
-    expect(navLink('Dashboard').getAttribute('href')).toBe('/');
+    // Le tableau de bord a DÉMÉNAGÉ (issue #248) : la racine rend un fil vide,
+    // et le lien du menu doit suivre, sinon il ramène à l'écran de départ.
+    expect(navLink('Dashboard').getAttribute('href')).toBe('/dashboard');
+    // Le PANNEAU ne mène plus à la racine. Le rail, si : c'est l'adresse de
+    // Work depuis que `/` rend un fil vide.
+    const panneau = container.querySelector('[data-testid="sidebar-panel"]');
+    expect(panneau?.querySelector('a[href="/"]')).toBeNull();
+    expect(railCell('work').getAttribute('href')).toBe('/');
     expect(() => navLink('Home')).toThrow();
-    // Le libellé dit « Workspaces », la ROUTE reste `/spaces` : les liens déjà
-    // envoyés et les favoris continuent d'ouvrir la page.
     expect(() => navLink('Spaces')).toThrow();
   });
 
@@ -439,12 +447,20 @@ describe('les entrées de 0.8.11, réparties en trois @cap:installer-et-demarrer
 
 // ─── 3. Le panneau Talk : canaux, fils récents, non-lu ───────────────────────
 
-/** Le panneau Talk, avec un dossier Telegram qui déplie un fil non lu. */
-async function renderTalk(channels: string[] = ['telegram']): Promise<void> {
+/**
+ * Le panneau Work, avec un dossier Telegram qui déplie `fils` fils — le
+ * premier non lu.
+ *
+ * Le NOMBRE compte : la lecture en demande un de plus que le menu n'en
+ * dessine, et c'est ce qui décide si « See all » s'affiche.
+ */
+async function renderTalk(channels: string[] = ['telegram'], fils = 1): Promise<void> {
   vi.mocked(listFolderThreadsAction).mockResolvedValue({
     ok: true,
     data: {
-      telegram: [thread({ key: 't1', title: 'Invoice for March', unread: true })],
+      telegram: Array.from({ length: fils }, (_, i) =>
+        thread({ key: `t${i + 1}`, title: `Invoice ${i + 1}`, unread: i === 0 }),
+      ),
     },
   });
   vi.mocked(listRecentThreadReadsAction).mockResolvedValue({
@@ -482,7 +498,7 @@ describe('le panneau Talk garde les dossiers de 0.8.11 @cap:reprendre-conversati
     expect(dossier.getAttribute('aria-expanded')).toBe('true');
     expect(
       container.querySelector('[data-testid="folder-thread-telegram"]')?.textContent,
-    ).toContain('Invoice for March');
+    ).toContain('Invoice 1');
 
     await click(dossier);
     // Replié, le sous-menu n'est pas seulement caché : il n'est pas rendu, donc
@@ -491,7 +507,8 @@ describe('le panneau Talk garde les dossiers de 0.8.11 @cap:reprendre-conversati
   });
 
   it('ne fait naviguer QUE « See all », jamais le nom du dossier', async () => {
-    await renderTalk();
+    // Onze fils : il y en a plus que le menu n'en dessine, donc « See all ».
+    await renderTalk(['telegram'], 11);
     const dossier = container.querySelector('[data-testid="inbox-folder-telegram"]')!;
     // Le nom d'un dossier est un BOUTON : il plie, il ne mène nulle part.
     expect(dossier.tagName).toBe('BUTTON');
@@ -501,6 +518,93 @@ describe('le panneau Talk garde les dossiers de 0.8.11 @cap:reprendre-conversati
     const seeAll = container.querySelector('[data-testid="folder-see-all-telegram"]');
     expect(seeAll?.tagName).toBe('A');
     expect(seeAll?.getAttribute('href')).toBe('/chat?folder=telegram');
+  });
+
+  it('déplie DIX fils au plus, et dit « See all » seulement s’il y en a plus', async () => {
+    // Le plafond est passé de cinq à dix le 19/09/2026 au soir : la colonne
+    // fait 280 px, et la moitié des dépliages se terminaient par un « See all ».
+    //
+    // Mutation vérifiée : `hasMore` forcé à `true` dans `unfoldedRows` → le
+    // premier cas rougit, « See all » s'affiche sous neuf fils qui sont tous là.
+    await renderTalk(['telegram'], 9);
+    await click(container.querySelector('[data-testid="inbox-folder-telegram"]')!);
+    expect(container.querySelectorAll('[data-testid="folder-thread-telegram"]').length).toBe(9);
+    // Neuf fils, tous sous les yeux : un lien vers « tout » ferait promettre au
+    // menu ce qu'il montre déjà.
+    expect(container.querySelector('[data-testid="folder-see-all-telegram"]')).toBeNull();
+
+    await remonter();
+    await renderTalk(['telegram'], 11);
+    await click(container.querySelector('[data-testid="inbox-folder-telegram"]')!);
+    // Onze lues, DIX dessinées : la onzième n'est pas une ligne, c'est la
+    // réponse à « y en a-t-il d'autres ? ».
+    expect(container.querySelectorAll('[data-testid="folder-thread-telegram"]').length).toBe(10);
+    expect(container.querySelector('[data-testid="folder-see-all-telegram"]')).not.toBeNull();
+  });
+});
+
+describe('le dossier Workspaces se déplie @cap:reprendre-conversation/ecran', () => {
+  /** `n` projets, tels que la lecture bornée les rend. */
+  function projets(n: number) {
+    return Array.from({ length: n }, (_, i) => ({ id: `p${i + 1}`, name: `Project ${i + 1}` }));
+  }
+
+  it('plie et déplie au clic sur son nom, comme un canal', async () => {
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: projets(3) });
+    pathname = '/chat';
+    await renderSidebar();
+
+    const dossier = container.querySelector('[data-testid="inbox-folder-workspaces"]')!;
+    // Le MÊME geste qu'un dossier de canal : un bouton qui plie, pas un lien.
+    expect(dossier.tagName).toBe('BUTTON');
+    expect(dossier.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-testid="folder-threads-workspaces"]')).toBeNull();
+
+    await click(dossier);
+    expect(dossier.getAttribute('aria-expanded')).toBe('true');
+    const lignes = [...container.querySelectorAll('[data-testid="folder-thread-workspaces"]')];
+    expect(lignes.map((l) => l.getAttribute('href'))).toEqual([
+      '/spaces/p1',
+      '/spaces/p2',
+      '/spaces/p3',
+    ]);
+
+    await click(dossier);
+    // Replié, le sous-menu n'est pas seulement caché : il n'est pas rendu, donc
+    // ses lignes ne restent pas dans l'ordre de tabulation.
+    expect(container.querySelector('[data-testid="folder-threads-workspaces"]')).toBeNull();
+  });
+
+  it('montre DIX projets au plus, et « See all » seulement s’il y en a plus', async () => {
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: projets(9) });
+    pathname = '/chat';
+    await renderSidebar();
+    await click(container.querySelector('[data-testid="inbox-folder-workspaces"]')!);
+    expect(container.querySelectorAll('[data-testid="folder-thread-workspaces"]').length).toBe(9);
+    expect(container.querySelector('[data-testid="folder-see-all-workspaces"]')).toBeNull();
+
+    await remonter();
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: projets(11) });
+    await renderSidebar();
+    await click(container.querySelector('[data-testid="inbox-folder-workspaces"]')!);
+    expect(container.querySelectorAll('[data-testid="folder-thread-workspaces"]').length).toBe(10);
+    expect(
+      container.querySelector('[data-testid="folder-see-all-workspaces"]')?.getAttribute('href'),
+    ).toBe('/spaces');
+  });
+
+  it('DIT ce qu’une lecture en échec a répondu, au lieu de se taire', async () => {
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({
+      ok: false,
+      code: 'list_failed',
+      message: 'Could not list the workspaces',
+    });
+    pathname = '/chat';
+    await renderSidebar();
+    await click(container.querySelector('[data-testid="inbox-folder-workspaces"]')!);
+    expect(container.querySelector('[data-testid="folder-threads-workspaces"]')?.textContent).toBe(
+      'Could not list the workspaces',
+    );
   });
 });
 
@@ -721,7 +825,7 @@ describe('un titre long ne pousse pas la colonne @cap:reprendre-conversation/ecr
 
 describe('toutes les lignes du panneau ont la MÊME forme @cap:installer-et-demarrer/ecran', () => {
   it('rend la même classe de ligne pour chacune, quelle que soit sa profondeur', async () => {
-    await renderTalk();
+    await renderTalk(['telegram'], 11);
     await click(container.querySelector('[data-testid="inbox-folder-telegram"]')!);
 
     // Le panneau déplié porte bien les quatre sortes de ligne : sans elles, la
@@ -731,11 +835,11 @@ describe('toutes les lignes du panneau ont la MÊME forme @cap:installer-et-dema
     expect(container.querySelector('[data-testid="folder-see-all-telegram"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="recent-thread"]')).not.toBeNull();
 
-    // La ligne des espaces de travail, deux dossiers, le fil déplié, son
-    // « See all », deux fils récents et le « See all » de la section : huit
+    // Le dossier des espaces, deux dossiers de canaux, dix fils dépliés, leur
+    // « See all », deux fils récents et le « See all » de la section : dix-sept
     // lignes, toutes sortes confondues.
     const lignes = [...container.querySelectorAll<HTMLElement>('[data-sidebar-row]')];
-    expect(lignes.length).toBe(8);
+    expect(lignes.length).toBe(17);
 
     // UNE comparaison, pas quatre assertions : chaque ligne est la forme
     // commune, sa HAUTEUR, puis son état, et rien d'autre. Rayon, fond de

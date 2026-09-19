@@ -34,7 +34,6 @@
 import {
   Brain,
   BookOpenText,
-  CardsThree,
   ChatCircleText,
   ClockCountdown,
   Cube,
@@ -93,26 +92,6 @@ export type Destination = {
 };
 
 /**
- * Le panneau WORK — là où l'on travaille.
- *
- * Un seul bloc écrit ici, WORKSPACES, en TÊTE du panneau : les espaces de
- * travail ouvrent la destination, avant les canaux d'où les conversations
- * arrivent (décision du propriétaire, 19/09/2026). Il vivait dans Run, sous
- * MONITOR, ce qui le rangeait avec ce qu'on surveille alors que c'est ce dans
- * quoi on travaille.
- */
-const WORK_GROUPS: readonly PanelGroup[] = [
-  {
-    section: 'Workspaces',
-    items: [
-      // « Workspaces », pas « Spaces » (Quentin, 18/09/2026). La ROUTE ne bouge
-      // pas : `/spaces` est dans les favoris et dans les liens déjà envoyés.
-      { href: '/spaces', label: 'Workspaces', icon: CardsThree },
-    ],
-  },
-];
-
-/**
  * Le panneau AGENT — ce qu'on monte. Les deux blocs de la planche : l'équipe
  * et ce qu'elle sait faire d'abord, ce à quoi on la branche ensuite.
  */
@@ -152,7 +131,10 @@ const RUN_GROUPS: readonly PanelGroup[] = [
   {
     section: 'Monitor',
     items: [
-      { href: '/', label: 'Dashboard', icon: House },
+      // Le tableau de bord a DÉMÉNAGÉ sur `/dashboard` (issue #248) : la
+      // racine rend désormais un fil vide. Le déménagement de la page vit
+      // dans sa propre PR ; ici, c'est l'adresse du lien qui change.
+      { href: '/dashboard', label: 'Dashboard', icon: House },
       { href: '/logs', label: 'Logs', icon: ListMagnifyingGlass },
     ],
   },
@@ -172,12 +154,19 @@ export const DESTINATIONS: readonly Destination[] = [
     key: 'work',
     label: 'Work',
     icon: ChatCircleText,
-    href: '/chat',
-    // `/spaces` allume Work depuis le 19/09 : les espaces de travail vivent
-    // dans son panneau, et une destination qui ne s'allume pas sur la page
-    // qu'elle porte se lit comme un menu cassé.
-    routes: ['/chat', '/spaces'],
-    groups: WORK_GROUPS,
+    href: '/',
+    // `/` allume WORK depuis le 19/09 au soir (issue #248) : la racine n'est
+    // plus le tableau de bord, c'est un fil vide — « New conversation » — et
+    // c'est donc l'endroit où l'on travaille.
+    //
+    // `/spaces` aussi : les espaces de travail vivent dans ce panneau, et une
+    // destination qui ne s'allume pas sur la page qu'elle porte se lit comme
+    // un menu cassé.
+    routes: ['/', '/chat', '/spaces'],
+    // AUCUN bloc écrit. Le panneau Work n'a que des lignes qui n'existent
+    // qu'en base : son dossier « Workspaces », qui déplie les projets, et ses
+    // dossiers de canaux. Toutes deux se lisent à l'exécution.
+    groups: [],
   },
   {
     key: 'agent',
@@ -202,7 +191,7 @@ export const DESTINATIONS: readonly Destination[] = [
     icon: Pulse,
     href: '/',
     routes: [
-      '/',
+      '/dashboard',
       '/logs',
       '/automations',
       // Les pages d'un run et d'un espace de travail. Elles n'ont PAS d'entrée
@@ -234,6 +223,8 @@ export function matchedDestination(pathname: string): Destination | null {
   let bestLength = -1;
   for (const dest of DESTINATIONS) {
     for (const route of dest.routes) {
+      // `/` ne vaut QUE pour lui-même : en préfixe il couvrirait toutes les
+      // autres routes, et la première destination de la table gagnerait tout.
       const matches = route === '/' ? pathname === '/' : isUnder(pathname, route);
       if (!matches || route.length <= bestLength) continue;
       best = dest;
