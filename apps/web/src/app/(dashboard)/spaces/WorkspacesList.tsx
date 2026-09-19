@@ -3,10 +3,14 @@
 // WorkspacesList — UNE liste de projets, registre et détection confondus (#143).
 //
 // La planche (page « #143 Workspaces are the only projects page », écran
-// 444:210) : une ligne par projet — l'avatar de l'agent responsable, le nom, une
+// 444:210) : une ligne par projet — la marque du dossier, le nom, une
 // sous-ligne qui dit le dossier, l'agent et ce qui s'y est passé, l'heure à
 // droite, et la pastille de preuve. Même géométrie que la boîte de réception
 // d'un dossier de chat : un trait entre les lignes, une seule boîte.
+//
+// La planche dessinait l'AVATAR de l'agent responsable à la place de la marque.
+// Il est systématiquement l'orchestrateur (Quentin, 19/09), donc le même visage
+// répété sur toute la liste — une colonne qui n'apprend rien.
 //
 // Les dossiers DÉTECTÉS — ceux où un agent a écrit sans que personne les ait
 // déclarés — sont dans la MÊME liste, marqués « Detected », avec les deux
@@ -107,7 +111,10 @@ function RowBody({ row }: { row: WorkspaceRow }) {
           `Disc` est la primitive du DS pour une icône dans une case : même
           géométrie et même fond que l'avatar carré qu'elle remplace. */}
       <Disc variant="neutral" size="sm" shape="square">
-        <Folder weight="fill" />
+        {/* DÉCORATIVE : le nom du projet est juste à côté, et un lecteur
+            d'écran qui annoncerait « dossier » avant chaque ligne d'une liste de
+            dossiers ne dirait rien de plus. */}
+        <Folder weight="fill" aria-hidden />
       </Disc>
       {/* min-w-0 : sans lui, un chemin long refuse de se couper et pousse
           l'heure et la pastille hors de la ligne. */}
@@ -254,9 +261,9 @@ export default function WorkspacesList({ view }: { view: WorkspacesView }) {
       </div>
 
       <p className="mt-3 text-body-12 text-ink-4">
-        A row: the responsible agent, the project, its folder, its counts, the last activity, and
-        its proof. Detected folders are projects Nodal found by itself; Register keeps them, Hide
-        removes them from the list
+        A row: the project, its folder, its counts, the last activity, and its proof. Detected
+        folders are projects Nodal found by itself; Register keeps them, Hide removes them from the
+        list
         {hiddenCount > 0 ? (
           <>
             {' ('}
