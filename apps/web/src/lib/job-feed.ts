@@ -265,6 +265,9 @@ export async function assembleJobFeeds(
         task: agentJobs.task,
         result: agentJobs.result,
         error: agentJobs.error,
+        // Le geste que le runner a écrit sur cet échec (#193) : le bloc de la
+        // délégation le DIT, il ne le devine plus du code d'erreur.
+        failureHint: agentJobs.failureHint,
         createdAt: agentJobs.createdAt,
         completedAt: agentJobs.completedAt,
       })
@@ -423,6 +426,9 @@ export async function assembleJobFeeds(
         status: job.status,
         result: redactedText(job.result),
         error: redactedText(job.error),
+        // Pas de masquage : un geste est un slug fermé du harnais, il ne peut
+        // pas porter de secret (#193).
+        failureHint: job.failureHint,
         agentName: input.agentName,
         agentSlug: input.agentSlug,
         agentAvatarUrl: input.agentAvatarUrl,

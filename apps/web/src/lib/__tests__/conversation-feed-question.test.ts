@@ -33,6 +33,7 @@ const job = (): FeedJob => ({
   status: 'awaiting_approval',
   result: null,
   error: null,
+  failureHint: null,
   agentName: 'Alfred',
   agentSlug: 'alfred',
   agentAvatarUrl: null,

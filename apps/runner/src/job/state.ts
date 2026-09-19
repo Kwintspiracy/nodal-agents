@@ -4,6 +4,7 @@
 import { and, eq, notInArray, or, isNull } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { JobFailureHint } from '@nodal-agents/shared';
 import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
@@ -386,6 +387,15 @@ export async function completeJob(
  * earlier in the job (e.g. dashboard_publish) is preserved. This anchors the
  * rule "never leave the user without an explanation after a fail/block" for
  * EVERY fail path (return_result blocked, guards, transport death, orphan reap).
+ *
+ * `hint` nomme LE GESTE que cet échec appelle, quand il en appelle un (#193).
+ * C'est le runner qui le décide — ici il est seulement écrit, tel quel, dans
+ * `agent_jobs.failure_hint`. Un slug typé, jamais une phrase : l'écran la dit
+ * (invariant #2). Omis ⇒ la colonne est mise à NULL, ce qui est le cas normal :
+ * la grande majorité des échecs n'appellent aucun geste nommable. Écrire NULL
+ * plutôt que de laisser la valeur en place est volontaire — cette écriture est
+ * la PREMIÈRE à poser un état terminal sur la ligne (elle est gardée par
+ * « statut non terminal »), donc aucun geste antérieur n'est effacé.
  */
 export async function failJob(
   db: AnyDrizzleDb,
@@ -394,6 +404,7 @@ export async function failJob(
   stats?: RunStats,
   rawMessages?: unknown[],
   userMessage?: string,
+  hint?: JobFailureHint,
 ): Promise<boolean> {
   const now = new Date();
   // Byte-level DB safety (see completeJob) — the fail path is the LAST writer;
@@ -404,6 +415,9 @@ export async function failJob(
     .set({
       status: 'failed',
       error: toDbSafeString(errorCode),
+      // Le mot du runner, posé tel quel (#193) : c'est lui que l'écran lira,
+      // au lieu de le re-déduire du code d'erreur.
+      failureHint: hint ?? null,
       completedAt: now,
       finalizingAt: null,
       updatedAt: now,

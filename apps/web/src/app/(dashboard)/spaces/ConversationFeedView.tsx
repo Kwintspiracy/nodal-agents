@@ -14,7 +14,7 @@ import type { CardPayloadFor, TableEntry } from '@nodal-agents/shared';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 import { deliverableStatusKey, type DeliverableStatusView } from '@/lib/verification-runs-view.ts';
 import { findLineCounts, type LineCounts } from '@/lib/coding-changes.ts';
-import { failureHint, hintSentence } from '@/lib/failure-hint.ts';
+import { hintSentence } from '@/lib/failure-hint.ts';
 import type {
   ConversationFeed,
   FeedChildJob,
@@ -1057,9 +1057,9 @@ function DelegationGroup({
                   </div>
                 )}
                 {job.error !== null && <p className="text-body-13 text-err">{job.error}</p>}
-                {/* Le geste que l'échec du délégué appelle, lu sur le même
-                    code que le fil lit pour un run (#184). */}
-                <HintLine hint={failureHint(job.error)} />
+                {/* Le geste que l'échec du délégué appelle, LU sur sa ligne
+                    comme le fil le lit pour un run (#193). */}
+                <HintLine hint={job.failureHint} />
               </>
             )}
             {/* Le RÉSUMÉ du verdict enregistré, ici et pas dans la tête : la

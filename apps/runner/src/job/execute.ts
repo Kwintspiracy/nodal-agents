@@ -5324,16 +5324,21 @@ async function runJob(
       const livrable = [lastAssistantTextSeen, providerRejectionStopLine(faits)]
         .filter((t) => t !== '')
         .join('\n\n');
+      // Le seul geste que ces faits appellent : ce modèle-là ne passe pas.
+      // Décidé UNE fois, ici, puis posé aux deux endroits qui le portent : la
+      // ligne du job (#193) et le record que le parent reçoit (#119). Une
+      // constante plutôt que deux littéraux, pour qu'ils ne puissent pas
+      // diverger.
+      const geste: JobFailureHint = 'switch_model';
       trace(PROVIDER_REJECTED, { turn, status: refusStatus });
-      await failJob(db, jobId as string, code, runStats(), messages, livrable);
+      await failJob(db, jobId as string, code, runStats(), messages, livrable, geste);
       return {
         status: 'failed',
         error: code,
         result: livrable,
         toolsUsed,
         exitReason: PROVIDER_REJECTED,
-        // Le seul geste que ces faits appellent : ce modèle-là ne passe pas.
-        hint: 'switch_model',
+        hint: geste,
       };
     }
 

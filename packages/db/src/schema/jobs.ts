@@ -145,6 +145,27 @@ export const agentJobs = pgTable(
     turn: integer('turn').default(0),
     result: text('result'),
     error: text('error'),
+    /**
+     * LE GESTE que cet échec appelle, dit par le runner lui-même (#193).
+     *
+     * Un slug typé côté harnais (`JobFailureHint`, `@nodal-agents/shared`),
+     * jamais une phrase : le runner pose un fait, l'écran ou le modèle le dit
+     * dans la langue de la personne (invariant #2). `null` est la réponse
+     * normale — la grande majorité des échecs n'appellent aucun geste nommable.
+     *
+     * POURQUOI UNE COLONNE. Le champ existait déjà en mémoire
+     * (`ExecuteJobResult.hint`, #119) et voyageait jusqu'au parent, mais il
+     * n'atteignait jamais la base : l'écran le re-DÉDUISAIT du code d'erreur
+     * (`apps/web/src/lib/failure-hint.ts`). La correspondance « ce code appelle
+     * ce geste » vivait donc à deux endroits, et un `hint` ajouté côté runner
+     * restait muet à l'écran jusqu'à ce que quelqu'un y ajoute sa phrase.
+     *
+     * Texte libre, sans CHECK : le runner peut nommer un geste que cet écran-là
+     * ne connaît pas encore, et l'écran se tait alors plutôt que d'afficher un
+     * slug brut. Un CHECK aurait fait échouer l'ÉCRITURE de l'échec — donc
+     * perdu le job — pour un mot que l'écran savait déjà ignorer.
+     */
+    failureHint: text('failure_hint'),
     chainCount: integer('chain_count').default(0),
     requestId: text('request_id'),
     parentJobId: uuid('parent_job_id'),

@@ -60,6 +60,7 @@ const child: FeedItem = {
     task: 'relis le digest',
     result: 'rien à redire',
     error: null,
+    failureHint: null,
     createdAt: null,
     completedAt: null,
   },
