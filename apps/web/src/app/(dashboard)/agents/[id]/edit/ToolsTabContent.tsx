@@ -161,15 +161,13 @@ function ToolGroupCard({
           )}
         </div>
 
-        <Switch
-          checked={assigned}
-          onChange={() => onToggle(!assigned)}
-          ariaLabel={`Toggle ${skill.name}`}
-          trackClassName={
-            assigned ? 'mt-0.5 border-ok/40 bg-ok/20' : 'mt-0.5 border-rule-2 bg-canvas'
-          }
-          thumbClassName={assigned ? 'translate-x-[18px] bg-ok' : 'translate-x-[2px] bg-ink-3'}
-        />
+        <div className="mt-0.5">
+          <Switch
+            checked={assigned}
+            onChange={() => onToggle(!assigned)}
+            ariaLabel={`Toggle ${skill.name}`}
+          />
+        </div>
       </div>
 
       <div className="border-t border-rule-2">

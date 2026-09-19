@@ -137,8 +137,6 @@ export function ProviderRow({
               }}
               disabled={toggleLocked}
               ariaLabel={`Allow ${label} for this agent`}
-              trackClassName={enabled ? 'border-ok/40 bg-ok/20' : 'border-rule-2 bg-canvas'}
-              thumbClassName={enabled ? 'translate-x-[18px] bg-ok' : 'translate-x-[2px] bg-ink-3'}
             />
           </div>
         )}

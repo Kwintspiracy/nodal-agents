@@ -99,13 +99,7 @@ export default function AutoRunPauseSection({ initial }: Props) {
 
       {/* Toggle */}
       <div className="mt-0.5">
-        <Switch
-          checked={paused}
-          onChange={handleToggle}
-          disabled={isDisabled}
-          trackClassName={paused ? 'border-err/40 bg-err/20' : 'border-rule-2 bg-canvas'}
-          thumbClassName={paused ? 'translate-x-[18px] bg-err' : 'translate-x-[2px] bg-ink-3'}
-        />
+        <Switch checked={paused} onChange={handleToggle} disabled={isDisabled} />
       </div>
 
       <ConfirmDialog

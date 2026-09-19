@@ -2017,6 +2017,7 @@ function CommandExecutionSection({
               Auto-run commands without approval (Yolo)
             </span>
             <MonoMicroTag tone="err">irreversible</MonoMicroTag>
+            {isDormant && <MonoMicroTag tone="warn">paused</MonoMicroTag>}
           </div>
           <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
             When on, this agent runs any shell command immediately with no approval gate. Commands
@@ -2043,24 +2044,13 @@ function CommandExecutionSection({
         </div>
 
         {/* Toggle */}
-        <Switch
-          checked={yoloEnabled}
-          onChange={() => handleToggle(!yoloEnabled)}
-          disabled={saving || !canToggle}
-          // Dormant (rule exists but the workspace brake is on): show it in the
-          // ON position but neutral grey, not active red — it's inert at runtime.
-          trackClassName={
-            isDormant
-              ? 'mt-0.5 border-ink-4/40 bg-ink-4/20'
-              : yoloEnabled
-                ? 'mt-0.5 border-err/40 bg-err/20'
-                : 'mt-0.5 border-rule-2 bg-canvas'
-          }
-          thumbClassName={[
-            yoloEnabled ? 'translate-x-[18px]' : 'translate-x-[2px]',
-            isDormant ? 'bg-ink-4' : yoloEnabled ? 'bg-err' : 'bg-ink-3',
-          ].join(' ')}
-        />
+        <div className="mt-0.5">
+          <Switch
+            checked={yoloEnabled}
+            onChange={() => handleToggle(!yoloEnabled)}
+            disabled={saving || !canToggle}
+          />
+        </div>
       </div>
 
       {/* Confirm dialog — ESLint bans window.confirm; use ConfirmDialog instead */}
@@ -2212,6 +2202,7 @@ function CodeTaskSection({
               Auto-run coding tasks without approval (Yolo)
             </span>
             <MonoMicroTag tone="err">irreversible</MonoMicroTag>
+            {isDormant && <MonoMicroTag tone="warn">paused</MonoMicroTag>}
           </div>
           <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
             When on, this agent runs coding CLI tasks immediately with no approval gate. Runs are
@@ -2238,22 +2229,13 @@ function CodeTaskSection({
           )}
         </div>
 
-        <Switch
-          checked={yoloEnabled}
-          onChange={() => handleToggle(!yoloEnabled)}
-          disabled={saving || !canToggle}
-          trackClassName={
-            isDormant
-              ? 'mt-0.5 border-ink-4/40 bg-ink-4/20'
-              : yoloEnabled
-                ? 'mt-0.5 border-err/40 bg-err/20'
-                : 'mt-0.5 border-rule-2 bg-canvas'
-          }
-          thumbClassName={[
-            yoloEnabled ? 'translate-x-[18px]' : 'translate-x-[2px]',
-            isDormant ? 'bg-ink-4' : yoloEnabled ? 'bg-err' : 'bg-ink-3',
-          ].join(' ')}
-        />
+        <div className="mt-0.5">
+          <Switch
+            checked={yoloEnabled}
+            onChange={() => handleToggle(!yoloEnabled)}
+            disabled={saving || !canToggle}
+          />
+        </div>
       </div>
 
       <ConfirmDialog
@@ -2414,15 +2396,13 @@ function ReadOnlyAgentSection({
           )}
         </div>
 
-        <Switch
-          checked={enabled}
-          onChange={() => handleToggle(!enabled)}
-          disabled={saving || !canToggle}
-          trackClassName={
-            enabled ? 'mt-0.5 border-ok/40 bg-ok/20' : 'mt-0.5 border-rule-2 bg-canvas'
-          }
-          thumbClassName={enabled ? 'translate-x-[18px] bg-ok' : 'translate-x-[2px] bg-ink-3'}
-        />
+        <div className="mt-0.5">
+          <Switch
+            checked={enabled}
+            onChange={() => handleToggle(!enabled)}
+            disabled={saving || !canToggle}
+          />
+        </div>
       </div>
 
       <ConfirmDialog
@@ -2566,16 +2546,14 @@ function ScriptAuthRow({
       </div>
 
       {/* Toggle */}
-      <Switch
-        checked={authorized}
-        onChange={handleToggle}
-        disabled={saving || !canToggle}
-        ariaLabel={`Allow scripts for ${skill.name}`}
-        trackClassName={
-          authorized ? 'mt-0.5 border-warn/40 bg-warn/20' : 'mt-0.5 border-rule-2 bg-canvas'
-        }
-        thumbClassName={authorized ? 'translate-x-[18px] bg-warn' : 'translate-x-[2px] bg-ink-3'}
-      />
+      <div className="mt-0.5">
+        <Switch
+          checked={authorized}
+          onChange={handleToggle}
+          disabled={saving || !canToggle}
+          ariaLabel={`Allow scripts for ${skill.name}`}
+        />
+      </div>
 
       {/* Confirm dialog — window.confirm is banned; ConfirmDialog is the correct replacement */}
       <ConfirmDialog
@@ -2703,16 +2681,14 @@ function FileWriteAuthRow({
         )}
       </div>
 
-      <Switch
-        checked={writable}
-        onChange={handleToggle}
-        disabled={saving || !canToggle}
-        ariaLabel={`Allow file writes for ${skill.name}`}
-        trackClassName={
-          writable ? 'mt-0.5 border-warn/40 bg-warn/20' : 'mt-0.5 border-rule-2 bg-canvas'
-        }
-        thumbClassName={writable ? 'translate-x-[18px] bg-warn' : 'translate-x-[2px] bg-ink-3'}
-      />
+      <div className="mt-0.5">
+        <Switch
+          checked={writable}
+          onChange={handleToggle}
+          disabled={saving || !canToggle}
+          ariaLabel={`Allow file writes for ${skill.name}`}
+        />
+      </div>
 
       <ConfirmDialog
         open={confirmOpen}
@@ -3894,17 +3870,14 @@ function ClaudeCodeRuntimeCard({
             Read only hides the CLI&apos;s write tools. Write lets it edit files in the workspace.
           </p>
         </div>
-        <Switch
-          checked={mode === 'write'}
-          onChange={() => handleModeToggle(mode === 'write' ? 'read' : 'write')}
-          disabled={savingMode}
-          trackClassName={
-            mode === 'write' ? 'mt-0.5 border-err/40 bg-err/20' : 'mt-0.5 border-rule-2 bg-canvas'
-          }
-          thumbClassName={
-            mode === 'write' ? 'translate-x-[18px] bg-err' : 'translate-x-[2px] bg-ink-3'
-          }
-        />
+        <div className="mt-0.5">
+          <Switch
+            checked={mode === 'write'}
+            onChange={() => handleModeToggle(mode === 'write' ? 'read' : 'write')}
+            disabled={savingMode}
+            ariaLabel="Write mode"
+          />
+        </div>
       </div>
 
       <ConfirmDialog
