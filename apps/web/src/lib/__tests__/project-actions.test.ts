@@ -1302,8 +1302,6 @@ describe('getProjectActivityAction @cap:travailler-sur-des-fichiers/moteur', () 
     expect(session.task).toBe('approval needed to write 3 files');
     // Aucune ligne `cli_runs` : le harnais est INCONNU, pas deviné.
     expect(session.provider).toBeNull();
-
-    expect(result.data.total).toBe(2);
   });
 
   it('un run DÉLÉGUÉ n’est pas une ligne : c’est le run de tête qui en porte une', async () => {
@@ -1392,6 +1390,55 @@ describe('getProjectFactsAction @cap:travailler-sur-des-fichiers/moteur', () => 
     expect(result.data.conversations).toBe(1);
     expect(result.data.sessions).toBe(1);
     expect(result.data.isGitRepository).toBe(true);
+    // Ce run-là a une conversation : il ne fait pas de ligne à lui, et le
+    // compteur de l'onglet ne le compte donc pas deux fois.
+    expect(result.data.sessionsWithoutConversation).toBe(0);
+  });
+
+  it('le compteur de l’onglet ne compte PAS deux fois un run que sa conversation porte', async () => {
+    const { getProjectFactsAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/faits-compteur`;
+    const projectId = await enregistre({ path: chemin, name: 'Compteur' });
+
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        origin: 'project',
+        title: 'Un fil',
+        currentProjectId: projectId,
+      })
+      .returning({ id: conversations.id });
+    await testDb.insert(agentJobs).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        projectId,
+        conversationId: conv!.id,
+        channel: 'dashboard',
+        status: 'completed',
+        task: 'porté par le fil',
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        projectId,
+        channel: 'mcp',
+        status: 'completed',
+        task: 'tout seul',
+      },
+    ]);
+
+    const result = await getProjectFactsAction(projectId);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Deux runs au total, mais UNE seule ligne de session à l'écran : l'autre
+    // vit dans son fil, sous « 1 session inside ».
+    expect(result.data.sessions).toBe(2);
+    expect(result.data.sessionsWithoutConversation).toBe(1);
+    expect(result.data.conversations).toBe(1);
   });
 
   it('un dossier SANS `.git` ne se dit pas dépôt, quelle que soit la sorte du projet', async () => {

@@ -101,7 +101,7 @@ export default async function ProjectFilesPage({ params }: { params: Promise<{ i
           projectPath={facts.path}
           projectName={facts.name}
           active="files"
-          activityCount={facts.conversations + facts.sessions}
+          activityCount={facts.conversations + facts.sessionsWithoutConversation}
         />
       }
     >
