@@ -1,12 +1,12 @@
-// ProjectToolbar — la barre d'un projet ouvert (#143).
+// ProjectToolbar — LES GESTES d'un projet ouvert (#143).
 //
-// Les trois gestes du projet : ouvrir une conversation, le renommer, et montrer
-// ou cacher son dossier et sa preuve.
+// Trois : ouvrir une conversation, le renommer, montrer ou cacher son dossier
+// et sa preuve. Ils vivent dans la rangée d'actions (`ActionRow`), SOUS la
+// `WorkBar` — jamais sur la ligne du retour (#242, constat du 19/09 : un
+// retour entouré de boutons n'est plus un retour), jamais dans un bandeau
+// pleine largeur au-dessus du panneau.
 //
-// PAS de « ‹ Workspaces » ici (Quentin, 19/09). Cette page porte l'en-tête
-// ordinaire du tableau de bord — titre, sous-titre, barre d'outils, et le filet
-// dessous — comme presque toutes les autres. Un bandeau de retour posé au-
-// dessus de la barre en faisait un motif à part, que rien d'autre ne dessine.
+// PAS de retour ici : il est dans la barre, et nulle part ailleurs.
 //
 // PAS D'ONGLETS non plus, depuis le 19/09 : « Files & proof » n'est plus un
 // second écran, c'est un panneau qui s'ouvre À CÔTÉ des conversations.
@@ -25,10 +25,10 @@ export default function ProjectToolbar({
   projectName: string;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2">
+    <>
       <NewProjectConversationButton projectId={projectId} />
       <RenameProjectButton projectPath={projectPath} currentName={projectName} />
       <ProjectPanelButton />
-    </div>
+    </>
   );
 }

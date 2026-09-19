@@ -9,13 +9,15 @@
 //      navigateur, et relu au montage suivant ;
 //   4. `/spaces/<id>/files` (`forceOpen`) l'ouvre malgré un choix « fermé » —
 //      cette adresse veut dire « montre-moi le dossier » ;
-//   5. la STRUCTURE : le panneau est le frère du contenu sous l'en-tête, et la
-//      barre d'outils vit dans la colonne de gauche ;
-//   6. un stockage qui REFUSE de répondre n'emporte pas l'écran : le défaut
+//   5. un stockage qui REFUSE de répondre n'emporte pas l'écran : le défaut
 //      tient, et le bouton continue de marcher.
 //
 // Rendu dans jsdom et MANIPULÉ : les assertions portent sur le DOM produit et
 // sur ce que le stockage CONTIENT, jamais sur un compte d'appels.
+//
+// La STRUCTURE, elle, n'est plus ici : c'est le `PageShell` qui met la colonne
+// de contenu et le panneau côte à côte sous l'en-tête, et c'est
+// `PageShellOrder.test.tsx` qui l'affirme.
 //
 // Mutations vérifiées, chacune remise en place ensuite :
 //   - le défaut de l'effet, `!== 'closed'` → `=== 'open'` : trois cas rougissent,
@@ -29,7 +31,12 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { ProjectPanelButton, ProjectPanelLayout, ProjectPanelProvider } from '../ProjectPanel.tsx';
+import {
+  ProjectFilesPanel,
+  ProjectPanelBody,
+  ProjectPanelButton,
+  ProjectPanelProvider,
+} from '../ProjectPanel.tsx';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -49,13 +56,13 @@ async function render(node: React.ReactElement): Promise<void> {
 function Ecran({ forceOpen = false }: { forceOpen?: boolean }) {
   return (
     <ProjectPanelProvider forceOpen={forceOpen}>
-      <ProjectPanelLayout
-        title="Files & proof"
-        toolbar={<ProjectPanelButton />}
-        panel={<p>LE DOSSIER</p>}
-      >
+      <ProjectPanelButton />
+      <ProjectPanelBody>
         <p>LES CONVERSATIONS</p>
-      </ProjectPanelLayout>
+      </ProjectPanelBody>
+      <ProjectFilesPanel title="Files & proof">
+        <p>LE DOSSIER</p>
+      </ProjectFilesPanel>
     </ProjectPanelProvider>
   );
 }
@@ -116,31 +123,6 @@ describe('ProjectPanel @cap:travailler-sur-des-fichiers/ecran', () => {
     // différemment, c'était le constat (Quentin, 19/09).
     expect(bouton().textContent).toContain('Files & proof');
     expect(bouton().getAttribute('aria-pressed')).toBe('true');
-  });
-
-  it('UNE rangée sous l’en-tête : le panneau est le FRÈRE du contenu, pas son cadet', async () => {
-    // Le constat (Quentin, 19/09) : la barre d'outils, passée au `toolbar` du
-    // `PageShell`, faisait un bandeau pleine largeur AU-DESSUS du panneau — le
-    // panneau commençait plus bas que le filet de l'en-tête, et le bandeau
-    // traînait à gauche des boutons une bande vide. Ce qui se vérifie ici est
-    // la structure qui l'empêche, pas sa peinture.
-    await render(<Ecran />);
-    const p = panneau()!;
-    const rangee = p.parentElement!;
-    const colonne = p.previousElementSibling!;
-
-    // Le panneau et la colonne de contenu sont dans la MÊME rangée.
-    expect(rangee.contains(colonne)).toBe(true);
-    expect(rangee.className).toContain('flex');
-
-    // La barre d'outils est DANS la colonne de gauche — donc au-dessus de la
-    // liste, et jamais au-dessus du panneau.
-    expect(colonne.contains(bouton())).toBe(true);
-    expect(p.contains(bouton())).toBe(false);
-    // Et rien qui contienne la barre ne contient le panneau, sauf la rangée
-    // elle-même et ce qui l'englobe.
-    const barre = bouton().parentElement!;
-    expect(barre.contains(p)).toBe(false);
   });
 
   it('le bouton le ferme, puis le rouvre', async () => {

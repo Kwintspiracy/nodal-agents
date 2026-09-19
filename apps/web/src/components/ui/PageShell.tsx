@@ -13,11 +13,26 @@ type Common = {
    * à gouttières du `toolbar` coupait de chaque côté. Un drapeau plutôt qu'un
    * créneau de plus : les trois écrans de fil passent déjà par `toolbar`.
    *
-   * N'a d'effet que sur un écran `fill` — ailleurs, le `toolbar` vit DANS le
-   * corps à largeur bornée, et le tirer d'un bord à l'autre demanderait de
-   * défaire cette enveloppe. Aucune page de liste ne le demande.
+   * #242 — vaut désormais sur un écran ORDINAIRE aussi. Il ne valait que pour
+   * `fill` parce que seuls les trois écrans de fil le demandaient ; depuis que
+   * TOUTE page de détail porte la `WorkBar` (une page d'agent, de skill, de
+   * réglage, qui défilent normalement), la barre doit y aller d'un bord à
+   * l'autre comme ailleurs — sinon deux barres de retour se ressemblent sans se
+   * superposer, et c'est reparti pour « ce n'est pas un système ». Une page de
+   * liste ne passe pas ce drapeau : son `toolbar` reste dans les gouttières.
    */
   toolbarBleed?: boolean;
+  /**
+   * Un panneau ANCRÉ au bord droit, hors de la colonne de contenu et sous
+   * l'en-tête (#237). Il POUSSE la page au lieu de la couvrir : c'est ce qui
+   * le distingue d'un `Drawer`, et ce qui oblige à le poser ici plutôt que
+   * dans `children` — depuis le corps, il ne pourrait pas sortir de la borne
+   * de largeur ni prendre la hauteur pleine.
+   *
+   * N'a d'effet que sur un écran `fill` : un écran qui défile avec le document
+   * n'a pas de hauteur à donner à un panneau ancré.
+   */
+  aside?: ReactNode;
   /** Page body. */
   children: ReactNode;
   /** Drop the max-width body wrapper (full-bleed body — e.g. full-screen chat). */
@@ -78,6 +93,7 @@ export default function PageShell(props: Props) {
   const {
     toolbar,
     toolbarBleed = false,
+    aside,
     children,
     fluid = false,
     fill = false,
@@ -92,13 +108,35 @@ export default function PageShell(props: Props) {
   if (fill) {
     // L'en-tête ne défile pas, le corps prend le reste de la hauteur, et
     // l'enfant place lui-même ce qui défile et ce qui reste ancré.
+    //
+    // #237 — la colonne de CONTENU porte la même borne de largeur qu'en mode
+    // ordinaire (`max-w-6xl`), et le panneau `aside` vit EN DEHORS d'elle,
+    // collé au bord droit. Sans cette borne, un écran pleine hauteur étalait
+    // son contenu sur toute la largeur pendant que la page d'à côté le bornait
+    // — deux largeurs de lecture dans la même application. `fluid` la retire
+    // pour les écrans qui remplissent vraiment le cadre : un fil de chat, la
+    // page d'un run, la page d'un projet.
     return (
       <div className="flex h-full min-h-0 flex-col">
         {head}
-        <div className={`flex min-h-0 flex-1 flex-col ${bodyClassName}`}>
-          {toolbar &&
-            (toolbarBleed ? toolbar : <div className="px-5 pt-4 sm:px-8 lg:px-9">{toolbar}</div>)}
-          {children}
+        {toolbar && toolbarBleed && toolbar}
+        {/* La rangée : le contenu à gauche, le panneau ancré à droite. Elle
+            existe même sans panneau, pour que la géométrie ne change pas selon
+            qu'il est ouvert ou fermé. */}
+        <div className="flex min-h-0 flex-1">
+          <div className={`flex min-w-0 min-h-0 flex-1 flex-col ${bodyClassName}`}>
+            {toolbar && !toolbarBleed && (
+              <div className={`px-5 pt-4 sm:px-8 lg:px-9 ${fluid ? '' : 'max-w-6xl'}`}>
+                {toolbar}
+              </div>
+            )}
+            {fluid ? (
+              children
+            ) : (
+              <div className="flex min-h-0 w-full max-w-6xl flex-1 flex-col">{children}</div>
+            )}
+          </div>
+          {aside}
         </div>
       </div>
     );
@@ -106,10 +144,14 @@ export default function PageShell(props: Props) {
   return (
     <>
       {head}
+      {/* #242 — une barre qui déborde sort de l'enveloppe à gouttières, sinon
+          ses filets seraient coupés de chaque côté et elle ne tomberait pas où
+          elle tombe sur les écrans de fil. */}
+      {toolbar && toolbarBleed && toolbar}
       <div
         className={`px-5 pt-6 pb-10 sm:px-8 lg:px-9 ${fluid ? '' : 'max-w-6xl'} ${bodyClassName}`}
       >
-        {toolbar && <div className="mb-5">{toolbar}</div>}
+        {toolbar && !toolbarBleed && <div className="mb-5">{toolbar}</div>}
         {children}
       </div>
     </>
