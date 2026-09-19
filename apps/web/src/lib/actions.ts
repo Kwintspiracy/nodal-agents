@@ -91,6 +91,7 @@ import {
   agents,
   agentAssignments,
   agentJobs,
+  chatMessages,
   conversations,
   connectors,
   credentials,
@@ -12264,6 +12265,64 @@ export async function createConversationAction(
   } catch (err) {
     console.error('[createConversationAction]', err);
     return fail('db_error', 'Failed to create conversation');
+  }
+}
+
+/**
+ * Jeter une conversation qui n'a RIEN reçu (#248, revue Reviewer C passe 1).
+ *
+ * Le premier envoi de l'écran de conversation neuve est en deux temps : la
+ * ligne naît, puis le message part. Si le second temps échoue — runner coupé,
+ * modèle absent — la ligne reste, vide : l'orphelin que #248 promet d'éliminer,
+ * déplacé du clic vers l'envoi raté. La saisie appelle donc ceci sur son chemin
+ * d'échec.
+ *
+ * ELLE NE SUPPRIME QUE LE VIDE, et c'est la garde qui compte. Le runner écrit
+ * le tour de la personne AVANT d'appeler le modèle (`run-chat-turn.ts`, 1b) :
+ * un envoi qui échoue APRÈS l'ouverture du flux a déjà son message en base, et
+ * jeter la conversation perdrait ce que la personne a écrit. La condition est
+ * donc relue en base — aucun `chat_messages`, aucun `agent_jobs` — et jamais
+ * supposée depuis le code d'erreur.
+ *
+ * Bornée à l'entité de la session, comme toute suppression ici.
+ *
+ * Rend `discarded: false` sans échouer quand la ligne a du contenu, a déjà
+ * disparu, ou n'est pas de cet espace : ce n'est pas une panne, c'est la garde
+ * qui joue son rôle.
+ */
+export async function discardEmptyConversationAction(
+  id: string,
+): Promise<ActionResult<{ discarded: boolean }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid conversation id');
+    }
+    const db = getDb();
+
+    const [message] = await db
+      .select({ id: chatMessages.id })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, id))
+      .limit(1);
+    if (message) return ok({ discarded: false });
+
+    const [job] = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, id))
+      .limit(1);
+    if (job) return ok({ discarded: false });
+
+    const removed = await db
+      .delete(conversations)
+      .where(and(eq(conversations.id, id), eq(conversations.entityId, session.entityId)))
+      .returning({ id: conversations.id });
+    if (removed.length > 0) revalidatePath('/chat');
+    return ok({ discarded: removed.length > 0 });
+  } catch (err) {
+    console.error('[discardEmptyConversationAction]', err);
+    return fail('db_error', 'Failed to discard the empty conversation');
   }
 }
 

@@ -8,13 +8,26 @@
 //   2. Le PREMIER ENVOI, lui, écrit — la conversation naît, attribuée au ROOT,
 //      et le message part vers ELLE. Les deux moitiés du geste sont ici :
 //      la ligne relue en base, et le corps de la requête faite au runner.
+//   3. Et un premier envoi RATÉ ne laisse rien. Créer puis envoyer fait deux
+//      appels ; entre les deux, le runner peut être coupé. Sans le ménage, la
+//      ligne vide restait, et l'orphelin de #248 changeait simplement de porte
+//      (revue Reviewer C, passe 1). Le ménage ne touche QUE le vide : un envoi
+//      qui échoue après l'ouverture du flux a déjà son message en base.
 //
 // Les comptes sont relus en base avant et après, jamais déduits d'un `ok`.
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agents, conversations, entities, users } from '@nodal-agents/db';
+import {
+  eq,
+  agents,
+  agentJobs,
+  chatMessages,
+  conversations,
+  entities,
+  users,
+} from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -199,6 +212,132 @@ describe('le premier envoi @cap:parler-a-un-agent/moteur', () => {
 
     // Et le geste n'a pas fabriqué de seconde ligne au passage.
     expect(await compteFils()).toBe(1);
+  });
+
+  it('un envoi RATÉ ne laisse aucune ligne : la table relue est vide', async () => {
+    const { createConversationAction, sendChatMessageAction, discardEmptyConversationAction } =
+      await import('../actions.ts');
+    await designeLeRoot(seed.agentId);
+
+    const creation = await createConversationAction();
+    expect(creation.ok).toBe(true);
+    if (!creation.ok) return;
+    expect(await compteFils()).toBe(1);
+
+    // Le runner est coupé : le flux ne s'ouvre pas, rien n'est écrit.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('ECONNREFUSED');
+      }),
+    );
+    const envoi = await sendChatMessageAction({
+      conversationId: creation.data.id,
+      message: 'Range le dossier',
+    });
+    expect(envoi.ok).toBe(false);
+
+    // Le chemin d'échec de la saisie, celui que `onSendFailed` appelle.
+    const jet = await discardEmptyConversationAction(creation.data.id);
+    expect(jet).toEqual({ ok: true, data: { discarded: true } });
+
+    // LA preuve : la table, relue. Pas un `ok`, pas un compteur d'appels.
+    expect(await compteFils()).toBe(0);
+    const restes = await testDb
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.id, creation.data.id));
+    expect(restes).toEqual([]);
+  });
+
+  it('mais un fil qui porte DÉJÀ le message n’est pas jeté — on ne perd pas ce qui est écrit', async () => {
+    const { createConversationAction, discardEmptyConversationAction } =
+      await import('../actions.ts');
+    await designeLeRoot(seed.agentId);
+
+    const creation = await createConversationAction();
+    expect(creation.ok).toBe(true);
+    if (!creation.ok) return;
+
+    // Le runner écrit le tour de la personne AVANT d'appeler le modèle : un
+    // échec passé l'ouverture du flux laisse donc CE message-là.
+    await testDb.insert(chatMessages).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: creation.data.id,
+      role: 'user',
+      content: 'Range le dossier',
+    });
+
+    const jet = await discardEmptyConversationAction(creation.data.id);
+    expect(jet).toEqual({ ok: true, data: { discarded: false } });
+    expect(await compteFils()).toBe(1);
+  });
+
+  it('un fil qui porte un TRAVAIL n’est pas jeté non plus', async () => {
+    const { createConversationAction, discardEmptyConversationAction } =
+      await import('../actions.ts');
+    await designeLeRoot(seed.agentId);
+
+    const creation = await createConversationAction();
+    expect(creation.ok).toBe(true);
+    if (!creation.ok) return;
+
+    await testDb.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: creation.data.id,
+      channel: 'dashboard',
+      task: 'Range le dossier',
+    });
+
+    const jet = await discardEmptyConversationAction(creation.data.id);
+    expect(jet).toEqual({ ok: true, data: { discarded: false } });
+    expect(await compteFils()).toBe(1);
+  });
+
+  it('le jet ne sort pas de l’espace de travail : le fil du voisin reste', async () => {
+    const { discardEmptyConversationAction } = await import('../actions.ts');
+
+    const [voisinUser] = await testDb
+      .insert(users)
+      .values({ email: `voisin-newconv-${Date.now()}@example.com` })
+      .returning();
+    const [voisinEntite] = await testDb
+      .insert(entities)
+      .values({
+        userId: voisinUser!.id,
+        name: 'Espace voisin',
+        slug: `voisin-newconv-${Date.now()}`,
+      })
+      .returning();
+    const [voisinAgent] = await testDb
+      .insert(agents)
+      .values({
+        entityId: voisinEntite!.id,
+        name: 'Agent du voisin',
+        slug: `agent-voisin-newconv-${Date.now()}`,
+        personality: 'Pas le vôtre.',
+      })
+      .returning();
+    const [filVoisin] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: voisinEntite!.id,
+        agentId: voisinAgent!.id,
+        title: '',
+        origin: 'user',
+      })
+      .returning({ id: conversations.id });
+
+    // Vide, donc « jetable » — et pourtant il ne bouge pas : l'entité tranche.
+    const jet = await discardEmptyConversationAction(filVoisin!.id);
+    expect(jet).toEqual({ ok: true, data: { discarded: false } });
+    const restes = await testDb
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.id, filVoisin!.id));
+    expect(restes).toHaveLength(1);
   });
 
   it('sans ROOT, rien ne naît — le refus est dit, la base reste vide', async () => {

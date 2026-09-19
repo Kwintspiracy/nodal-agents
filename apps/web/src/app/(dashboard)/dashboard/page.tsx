@@ -39,7 +39,7 @@ export const dynamic = 'force-dynamic';
  *   7. Per agent — table of job counts + tokens
  *
  * There is no separate /stats page — that route was a leftover from before
- * the merge and is now removed. The dashboard root IS the stats view.
+ * the merge and is now removed. THIS page, `/dashboard`, is the stats view.
  *
  * Numbers not fabricated:
  *   - "+18.2% w/w" deltas omitted (no w/w aggregate)

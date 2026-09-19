@@ -29,11 +29,14 @@ const sendChatMessage = vi.hoisted(() =>
     }),
   ),
 );
+const discardEmptyConversationAction = vi.hoisted(() =>
+  vi.fn(async (_id: string) => ({ ok: true as const, data: { discarded: true } })),
+);
 const replace = vi.hoisted(() => vi.fn());
 const refresh = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/actions.ts', () => ({ createConversationAction }));
+vi.mock('@/lib/actions.ts', () => ({ createConversationAction, discardEmptyConversationAction }));
 vi.mock('@/lib/project-actions.ts', () => ({ createProjectConversationAction }));
 vi.mock('../chat-stream.ts', () => ({ sendChatMessage }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: toastError } }));
@@ -82,6 +85,7 @@ beforeEach(() => {
   createConversationAction.mockClear();
   createProjectConversationAction.mockClear();
   sendChatMessage.mockClear();
+  discardEmptyConversationAction.mockClear();
   replace.mockClear();
   refresh.mockClear();
   toastError.mockClear();
@@ -176,6 +180,57 @@ describe('NewConversationComposer @cap:parler-a-un-agent/ecran', () => {
     await act(async () => {
       libere({ ok: true, reply: 'ok', streamed: false });
     });
+  });
+
+  it('envoi raté : la conversation qui venait de naître est JETÉE', async () => {
+    // Le runner est coupé. Sans ce ménage, la ligne vide resterait, et
+    // l'orphelin de #248 aurait changé de porte (revue Reviewer C, passe 1).
+    sendChatMessage.mockResolvedValueOnce({
+      ok: false,
+      message: 'The agent did not reply',
+    } as never);
+    await render(<NewConversationComposer agentName="Alfred" />);
+    await type('Range le dossier');
+    await press('Enter');
+
+    // C'est bien LA conversation ouverte pour cet envoi qui est jetée.
+    expect(discardEmptyConversationAction.mock.calls).toEqual([['conv-née']]);
+    // L'écran reste où il est, et le texte est revenu.
+    expect(replace.mock.calls).toEqual([]);
+    expect(toastError.mock.calls).toEqual([['The agent did not reply']]);
+    expect(textarea().value).toBe('Range le dossier');
+  });
+
+  it('après un envoi raté, réessayer ouvre une AUTRE conversation', async () => {
+    // La première a été jetée : réécrire dans son identifiant écrirait dans une
+    // ligne qui n'existe plus.
+    sendChatMessage.mockResolvedValueOnce({
+      ok: false,
+      message: 'The agent did not reply',
+    } as never);
+    createConversationAction
+      .mockResolvedValueOnce({ ok: true, data: { id: 'conv-1' } } as never)
+      .mockResolvedValueOnce({ ok: true, data: { id: 'conv-2' } } as never);
+    await render(<NewConversationComposer agentName="Alfred" />);
+    await type('Premier essai');
+    await press('Enter');
+    expect(discardEmptyConversationAction.mock.calls).toEqual([['conv-1']]);
+
+    await type('Second essai');
+    await press('Enter');
+    expect(createConversationAction.mock.calls.length).toBe(2);
+    expect(sendChatMessage.mock.calls.map((c) => c[0]?.conversationId)).toEqual([
+      'conv-1',
+      'conv-2',
+    ]);
+    expect(replace.mock.calls).toEqual([['/chat/conv-2']]);
+  });
+
+  it('un envoi réussi ne jette rien', async () => {
+    await render(<NewConversationComposer agentName="Alfred" />);
+    await type('Range le dossier');
+    await press('Enter');
+    expect(discardEmptyConversationAction.mock.calls).toEqual([]);
   });
 
   it('création refusée : RIEN n’est envoyé, on le dit, et le texte revient', async () => {

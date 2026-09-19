@@ -63,6 +63,7 @@ export default function ThreadComposer({
   placeholder,
   onBeforeSend,
   onSent,
+  onSendFailed,
   agentId,
   llmKeyId,
   model,
@@ -94,6 +95,15 @@ export default function ThreadComposer({
    * (`/chat/<id>`). Absent, on relit la page, comme un fil ordinaire.
    */
   onSent?: (conversationId: string) => void;
+  /**
+   * #248 — ce que l'écran fait quand l'envoi ÉCHOUE, après que `onBeforeSend`
+   * a ouvert une conversation pour lui. La conversation vient de naître et n'a
+   * rien reçu : sans ça, un runner coupé laisserait une ligne vide en base,
+   * l'orphelin même que #248 ferme (revue Reviewer C, passe 1). L'écran de
+   * conversation neuve la jette ; la page d'un projet, non — le sien vaut
+   * d'exister (P8).
+   */
+  onSendFailed?: (conversationId: string) => void;
   /**
    * #138 — les trois listes « provider / modèle / effort ». Les champs vont
    * ensemble : sans agent (la page d'un projet qui n'en a pas encore), il n'y
@@ -195,6 +205,16 @@ export default function ThreadComposer({
         // Le même bloc d'échec qu'avant : le texte revient dans la zone, et
         // rien de partiel ne reste à l'écran (`onText('')` l'a déjà effacé).
         toast.error(r.message);
+        if (onBeforeSend && onSendFailed) {
+          // #248 — la conversation ouverte POUR cet envoi n'a rien reçu :
+          // l'écran la jette (revue Reviewer C, passe 1). Et on l'oublie : un
+          // nouvel essai doit en ouvrir une autre, pas écrire dans une ligne
+          // qui vient peut-être de disparaître. L'oubli est tenu ICI, et pas
+          // dès qu'il y a un `onBeforeSend` : la page d'un projet garde sa
+          // conversation à l'échec, et la rouvrir en créerait une seconde.
+          opening.current = null;
+          onSendFailed(target);
+        }
         giveBack();
         return;
       }
