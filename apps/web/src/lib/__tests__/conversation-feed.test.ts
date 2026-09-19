@@ -985,7 +985,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
     // LA GARDE DE LA BASCULE. Ce job-là portait `hint: 'switch_model'` tant que
     // le fil DÉDUISAIT le geste du préfixe. Il n'en porte plus : le runner n'a
     // rien écrit, donc le fil n'a rien à dire. C'est le cas des jobs échoués
-    // avant la migration 0117 et que son rattrapage n'a pas touchés.
+    // avant la migration 0116 et que son rattrapage n'a pas touchés.
     const refus = `${PROVIDER_REJECTED_PREFIX}openrouter/google/gemini-3.7-flash (http 400, turn 3)`;
     const j: FeedJob = {
       ...job,

@@ -1,4 +1,4 @@
-// job-failure-hint.pg.test.ts — migration 0117 contre un VRAI Postgres.
+// job-failure-hint.pg.test.ts — migration 0116 contre un VRAI Postgres.
 //
 // @cap:suivre-execution/moteur
 //
@@ -15,7 +15,7 @@
 // toucher — celles dont le code d'erreur est le refus de fournisseur, et
 // aucune autre.
 //
-// Mutation vérifiée : l'entrée 117 retirée de `meta/_journal.json` → le second
+// Mutation vérifiée : l'entrée 116 retirée de `meta/_journal.json` → le second
 // test rougit (« failure_hint absente après les vraies migrations »).
 
 import { describe, it, expect, afterAll } from 'vitest';
@@ -37,14 +37,14 @@ function harness(): RealPostgres {
 }
 
 /** Le fichier de migration LUI-MÊME, pour rejouer son rattrapage. */
-const MIGRATION_0117 = fileURLToPath(
-  new URL('../../migrations/0117_job_failure_hint.sql', import.meta.url),
+const MIGRATION_0116 = fileURLToPath(
+  new URL('../../migrations/0116_job_failure_hint.sql', import.meta.url),
 );
 
 /** Les identités semées par le troisième test, relues par les suivants. */
 const seme = { userId: '', entityId: '', agentId: '' };
 
-describe('migration 0117_job_failure_hint @cap:suivre-execution/moteur', () => {
+describe('migration 0116_job_failure_hint @cap:suivre-execution/moteur', () => {
   it('démarre un vrai Postgres et applique les VRAIES migrations', async () => {
     pg = await startRealPostgres();
     expect(pg.url).toMatch(/^postgresql:\/\//);
@@ -135,7 +135,7 @@ describe('migration 0117_job_failure_hint @cap:suivre-execution/moteur', () => {
 
       // Le rattrapage REJOUÉ depuis le fichier de migration lui-même — pas une
       // copie de son SQL, qui pourrait dire autre chose que ce qui s'exécute.
-      const fichier = readFileSync(MIGRATION_0117, 'utf8');
+      const fichier = readFileSync(MIGRATION_0116, 'utf8');
       for (const instruction of fichier.split('--> statement-breakpoint')) {
         if (instruction.trim() === '') continue;
         await db.execute(sql.raw(instruction));

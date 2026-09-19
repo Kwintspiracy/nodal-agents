@@ -179,7 +179,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       turn integer DEFAULT 0,
       result text,
       error text,
-      -- Le geste que l'échec appelle, écrit par le runner (#193, migration 0117).
+      -- Le geste que l'échec appelle, écrit par le runner (#193, migration 0116).
       failure_hint text,
       chain_count integer DEFAULT 0,
       request_id text,
