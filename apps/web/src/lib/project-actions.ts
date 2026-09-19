@@ -313,23 +313,11 @@ export type ProjectFacts = {
   conversations: number;
   /** Les runs DE TÊTE rattachés au projet — ce que la ligne appelle « sessions ». */
   sessions: number;
-  /**
-   * Ceux d'entre eux qui n'ont AUCUNE conversation — les lignes que l'onglet
-   * Activity ajoute aux conversations.
-   *
-   * Compté ici plutôt que déduit de `sessions` : le compteur de l'onglet doit
-   * dire le MÊME nombre depuis les deux onglets, et `sessions` inclut les runs
-   * qu'une conversation porte déjà, lesquels ne font pas de ligne à eux.
-   */
-  sessionsWithoutConversation: number;
 };
 
 /**
- * Les faits de l'en-tête d'un projet, pour ses DEUX onglets.
- *
- * Une seule lecture partagée plutôt qu'une par onglet : les deux écrans
- * affichent la même phrase et le même compteur, et deux lectures auraient
- * fini par afficher deux chiffres.
+ * Les faits de l'en-tête d'un projet : ce que la phrase sous son nom affirme,
+ * et rien de plus.
  */
 export async function getProjectFactsAction(id: string): Promise<ActionResult<ProjectFacts>> {
   try {
@@ -363,13 +351,8 @@ export async function getProjectFactsAction(id: string): Promise<ActionResult<Pr
 
     const [conversationsCount, sessionRows] = await Promise.all([
       countProjectConversations(db, entityId, [id]),
-      // Les deux comptes en UNE requête : tous les runs de tête, et ceux sans
-      // conversation. `count(*) FILTER` plutôt qu'une seconde lecture.
       db
-        .select({
-          n: sql<number>`count(*)::int`,
-          seuls: sql<number>`count(*) FILTER (WHERE ${agentJobs.conversationId} IS NULL)::int`,
-        })
+        .select({ n: sql<number>`count(*)::int` })
         .from(agentJobs)
         .where(
           and(
@@ -391,7 +374,6 @@ export async function getProjectFactsAction(id: string): Promise<ActionResult<Pr
       isGitRepository: existsSync(`${normalizePath(row.path)}/.git`),
       conversations: conversationsCount.get(id) ?? 0,
       sessions: Number(sessionRows[0]?.n ?? 0),
-      sessionsWithoutConversation: Number(sessionRows[0]?.seuls ?? 0),
     });
   } catch (err) {
     console.error('[projects] PROJECT_FACTS_FAILED', err);

@@ -17,7 +17,6 @@ const facts = (over: Partial<ProjectFacts> = {}): ProjectFacts => ({
   isGitRepository: true,
   conversations: 12,
   sessions: 41,
-  sessionsWithoutConversation: 3,
   ...over,
 });
 
