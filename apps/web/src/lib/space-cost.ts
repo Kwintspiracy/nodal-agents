@@ -77,6 +77,8 @@ export const EMPTY_SPACE_COST: SpaceCostView = {
     humanWaitMs: 0,
     proofMs: 0,
   },
+  // #54 — un fil qui n'a rien fait n'a rien repris, donc rien perdu.
+  cacheLost: { resumes: 0, tokens: 0, costUsd: null, unpricedResumes: 0 },
 };
 
 export type CostCallRow = {

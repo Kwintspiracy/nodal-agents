@@ -23,6 +23,10 @@
 //      qu'ils sont dans la même lecture que ceux du parent (la page agrège le
 //      job ET sa descendance).
 //   4. Trois appels rapprochés sur le même job ne perdent rien.
+//   5. LE FIL LE DIT AUSSI. La page d'un run et le fil d'une conversation ont
+//      chacun LEUR lecture de `llm_calls`, dans deux fichiers. Les deux
+//      portent la barre d'état ; les deux devaient gagner les colonnes. Sans
+//      ce cas, un correctif sur une seule des deux passerait.
 //
 // Mutations vérifiées :
 //   - `jobId` retiré du `select` de `getSpaceConversationAction` → le point 2
@@ -34,7 +38,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, llmCalls } from '@nodal-agents/db';
+import { agentJobs, conversations, llmCalls } from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -43,6 +47,8 @@ let seed: Awaited<ReturnType<typeof seedMinimal>>;
 let parentJobId = '';
 /** Un run sans délégation : trois appels en une minute, rien de perdu. */
 let serreJobId = '';
+/** La conversation qui porte le run du ticket — l'AUTRE lecture des mêmes lignes. */
+let conversationId = '';
 
 vi.mock('@/lib/server.ts', () => ({
   getDb: () => testDb,
@@ -84,12 +90,27 @@ beforeAll(async () => {
   testDb = result.db;
   seed = await seedMinimal(testDb);
 
+  const [conv] = await testDb
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      title: 'Prépare la note',
+      origin: 'user',
+      channel: 'dashboard',
+      createdAt: TOUR_1,
+      updatedAt: TOUR_3,
+    })
+    .returning({ id: conversations.id });
+  conversationId = conv!.id;
+
   const [parent] = await testDb
     .insert(agentJobs)
     .values({
       entityId: seed.entityId,
       agentId: seed.agentId,
       channel: 'dashboard',
+      conversationId,
       task: 'Prépare la note et fais-la relire',
       status: 'completed',
       createdAt: TOUR_1,
@@ -260,6 +281,18 @@ describe('getSpaceConversationAction — cache perdu à la reprise @cap:voir-le-
     expect(r.data.cost.cacheLost.costUsd).toBeCloseTo(0.1584, 9);
     const part = r.data.cost.cacheLost.costUsd! / r.data.cost.totals.costUsd!;
     expect(part).toBeCloseTo(0.282, 3);
+  });
+
+  it('le FIL de la conversation dit le même chiffre : c’est une AUTRE lecture', async () => {
+    // `conversation-actions.ts` a sa propre requête sur `llm_calls`, distincte
+    // de celle de la page de run. Les deux nourrissent la même barre d'état.
+    const { getConversationThreadAction } = await import('../conversation-actions.ts');
+    const r = await getConversationThreadAction(conversationId);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.cost.cacheLost.resumes).toBe(1);
+    expect(r.data.cost.cacheLost.tokens).toBe(35_200);
+    expect(r.data.cost.cacheLost.costUsd).toBeCloseTo(0.1584, 9);
   });
 
   it('trois appels rapprochés ne perdent RIEN : la ligne ne s’affiche pas', async () => {
