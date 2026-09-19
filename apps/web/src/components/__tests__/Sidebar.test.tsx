@@ -489,6 +489,57 @@ describe('la section « Recent » se relit @cap:reprendre-conversation/ecran', (
   });
 });
 
+describe('la relecture de « Recent » laisse tomber le périmé @cap:reprendre-conversation/ecran', () => {
+  it('ignore une réponse arrivée APRÈS une plus récente', async () => {
+    // DEUX lectures en vol, et elles reviennent dans le désordre : c'est le
+    // cas réel dès qu'une navigation en lance une pendant qu'un tour
+    // d'horloge en a déjà une. Sans l'âge, la plus vieille réécrit la section
+    // — et rallume le point du fil qu'on venait justement d'ouvrir.
+    //
+    // Le même âge couvre le second cas, une réponse qui revient après le
+    // démontage, qui ne peut pas se prouver seul : sous React 19 une mise à
+    // jour d'état sur un composant démonté ne dit rien.
+    //
+    // Mutation vérifiée : `if (mien !== age.current) return;` retiré de
+    // `relire` → ce test rougit, la section affiche « Ancienne ».
+    type Reponse = { ok: true; data: readonly FolderThread[] };
+    const promesses: Array<(r: Reponse) => void> = [];
+    vi.mocked(listRecentThreadsAction).mockImplementation(
+      () =>
+        new Promise((r) => {
+          promesses.push(r as (typeof promesses)[number]);
+        }) as ReturnType<typeof listRecentThreadsAction>,
+    );
+
+    pathname = '/chat';
+    await renderSidebar();
+    // Une seconde lecture part : la personne ouvre un fil.
+    pathname = '/chat/r1';
+    await act(async () => {
+      root.render(
+        <ApprovalsProvider initial={[]}>
+          <ChatFoldersProvider
+            initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+          >
+            <Sidebar workspaces={[]} />
+          </ChatFoldersProvider>
+        </ApprovalsProvider>,
+      );
+    });
+    expect(promesses, 'deux lectures devraient être en vol').toHaveLength(2);
+
+    // La SECONDE répond d'abord, la PREMIÈRE ensuite.
+    await act(async () => {
+      promesses[1]?.({ ok: true, data: [thread({ key: 'r1', title: 'Récente' })] });
+    });
+    await act(async () => {
+      promesses[0]?.({ ok: true, data: [thread({ key: 'r1', title: 'Ancienne' })] });
+    });
+
+    expect(container.querySelector('[data-testid="recent-thread"]')?.textContent).toBe('Récente');
+  });
+});
+
 describe('le point de non-lu survit au rail @cap:reprendre-conversation/ecran', () => {
   it('rend le point sur un fil de dossier ET sur un fil récent (#209)', async () => {
     await renderTalk();
