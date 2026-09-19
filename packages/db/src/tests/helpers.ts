@@ -916,10 +916,16 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       verdict text NOT NULL CHECK (verdict IN ('green','red','infra_error')),
       tested_generation integer,
       tested_epoch integer,
+      -- 0115 (#59) — d'où vient la preuve, et qui l'a fait tourner.
+      source text NOT NULL DEFAULT 'job'
+        CONSTRAINT verification_runs_source_check CHECK (source IN ('job','reviewer')),
+      source_job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_verification_runs_job_created
       ON verification_runs (job_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_verification_runs_source_job
+      ON verification_runs (source_job_id);
 
     -- job_deliveries (migration 0090) — mirrors migration 0090. L'outbox de la
     -- livraison : la finalisation du job pose 'prepared' dans SA transaction,
