@@ -10,21 +10,30 @@
 // modèle qui redemande quand même repart pour un tour.
 //
 // La règle posée ici ne connaît aucun agent (invariant #3) et ne juge aucun
-// texte : « la même chose », c'est le MÊME AGENT délégué ET la MÊME CIBLE,
-// où la cible est lue dans la tâche par deux formes écrites, jamais par une
-// ressemblance de phrases (voir `extractReviewTarget`). Sans cible
-// reconnaissable, pas de garde — un refus fondé sur rien coûterait plus cher
-// que le doublon qu'il évite.
+// texte. Elle tient en trois conditions, toutes lues sur des lignes :
 //
-// ⚠️ Conséquence assumée : une boucle revue → correction → revue DANS UN MÊME
-// JOB, vers le même relecteur et la même cible, est refusée à la seconde passe.
-// C'est ce que l'issue #173 demande, et le refus le dit en toutes lettres pour
-// que le modèle conclue au lieu de s'entêter — une seconde passe après
-// correction se demande dans un nouveau job, qui a sa propre liste d'enfants.
+//  1. MÊME AGENT délégué que celui qui a livré le verdict ;
+//  2. MÊME CIBLE, lue dans la tâche par deux formes écrites, jamais par une
+//     ressemblance de phrases (voir `extractReviewTarget`) — sans cible
+//     reconnaissable, pas de garde, un refus fondé sur rien coûterait plus
+//     cher que le doublon qu'il évite ;
+//  3. RIEN N'A ABOUTI DEPUIS le verdict : aucune AUTRE délégation de ce job
+//     n'est passée à `completed` après la ligne `review_verdict`.
+//
+// La troisième condition est ce qui sépare le doublon de la boucle de travail.
+// Un orchestrateur qui fait relire, fait CORRIGER par un dev, puis fait relire
+// la même PR demande une seconde passe sur une cible qui a changé : elle est
+// légitime, et la refuser casserait un usage réel de Nodal. La seule
+// redondance CERTAINE est la seconde passe sur une cible que personne n'a
+// touchée entre-temps — le parent n'a rien fait faire, et la relecture rendrait
+// le verdict déjà rendu. « Avoir abouti » se lit sur `status = 'completed'`, et
+// non sur « une délégation a été lancée » : un enfant encore en cours n'a rien
+// changé à la cible, un enfant qui a échoué non plus.
+//
 // Le refus est un résultat d'outil, jamais une exception : le job continue,
 // l'information est DITE (invariant #4).
 
-import { and, desc, eq, agentJobs, agents, toolCalls } from '@nodal-agents/db';
+import { and, desc, eq, gt, isNotNull, ne, agentJobs, agents, toolCalls } from '@nodal-agents/db';
 import { parseReviewVerdictOutput, REVIEW_VERDICT_TOOL } from './review-verdict';
 import type { ReviewVerdictRecord } from './review-verdict';
 import type { AnyDrizzleDb, EntityId, JobId } from '../types';
@@ -93,17 +102,27 @@ export interface DeliveredReviewMatch {
 
 /**
  * L'enfant de CE job qui a déjà livré un verdict sur CETTE cible, par CE
- * relecteur — s'il existe.
+ * relecteur, ET SUR LEQUEL RIEN N'A BOUGÉ DEPUIS — s'il existe.
  *
- * Une seule requête, bornée à l'entité et au job parent : les enfants directs
- * du parent, joints à leur agent (pour le slug) et à leurs lignes
- * `review_verdict`. Le verdict retenu par enfant est celui de sa DERNIÈRE
- * ligne (`seq` décroissant) — la même lecture que
- * `readDeliveredReviewVerdict`, qui fait foi quand un relecteur a corrigé un
- * appel refusé.
+ * Deux lectures, toutes deux bornées à l'entité et au job parent :
  *
- * Le tri par `seq` vaut aussi entre enfants : à cible égale, c'est le verdict
- * écrit en dernier qui est nommé dans le refus.
+ *  - les enfants directs du parent, joints à leur agent (pour le slug) et à
+ *    leurs lignes `review_verdict`. Le verdict retenu par enfant est celui de
+ *    sa DERNIÈRE ligne (`seq` décroissant) — la même lecture que
+ *    `readDeliveredReviewVerdict`, qui fait foi quand un relecteur a corrigé
+ *    un appel refusé. Le tri par `seq` vaut aussi entre enfants : à cible
+ *    égale, c'est le verdict écrit en dernier qui est nommé dans le refus ;
+ *  - la fenêtre depuis ce verdict : un AUTRE enfant du même parent, passé à
+ *    `completed` après l'heure de la ligne du verdict. S'il en existe un,
+ *    quelque chose a été fait entre les deux relectures et la seconde passe
+ *    est légitime — cette fonction rend `null`, la délégation part.
+ *
+ * La fenêtre se lit sur `tool_calls.created_at` et `agent_jobs.completed_at`,
+ * pas sur `seq` : `seq` n'existe que sur les lignes d'outils et ne place pas
+ * un job dans le temps. La comparaison est STRICTE (`>`) et un enfant
+ * `completed` sans `completed_at` (lignes anciennes) ne compte pas : à égalité
+ * d'instant, ou sans instant, rien ne PROUVE que le travail a suivi le
+ * verdict, et la garde reste posée.
  */
 export async function findDeliveredReviewForTarget(
   db: AnyDrizzleDb,
@@ -122,6 +141,7 @@ export async function findDeliveredReviewForTarget(
       childJobId: agentJobs.id,
       childTask: agentJobs.task,
       toolOutput: toolCalls.toolOutput,
+      verdictAt: toolCalls.createdAt,
       seq: toolCalls.seq,
     })
     .from(toolCalls)
@@ -149,6 +169,12 @@ export async function findDeliveredReviewForTarget(
     const verdict = parseReviewVerdictOutput(row.toolOutput);
     if (!verdict) continue;
 
+    // Quelque chose a-t-il abouti depuis ce verdict ? Une correction terminée,
+    // n'importe quel autre délégué passé à `completed` : la cible a bougé, la
+    // relecture n'est plus le même travail.
+    if (row.verdictAt && (await somethingCompletedSince(db, params, row.childJobId, row.verdictAt)))
+      return null;
+
     return {
       childJobId: row.childJobId,
       target,
@@ -158,6 +184,35 @@ export async function findDeliveredReviewForTarget(
   }
 
   return null;
+}
+
+/**
+ * Un AUTRE enfant de ce parent a-t-il abouti après cet instant ?
+ *
+ * Borné au job parent et à l'entité, l'enfant relecteur exclu : c'est lui qui
+ * a écrit le verdict, sa propre fin ne prouve rien sur la cible.
+ */
+async function somethingCompletedSince(
+  db: AnyDrizzleDb,
+  params: { parentJobId: JobId; entityId: EntityId },
+  reviewerChildJobId: string,
+  since: Date,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: agentJobs.id })
+    .from(agentJobs)
+    .where(
+      and(
+        eq(agentJobs.parentJobId, params.parentJobId as string),
+        eq(agentJobs.entityId, params.entityId as string),
+        ne(agentJobs.id, reviewerChildJobId),
+        eq(agentJobs.status, 'completed'),
+        isNotNull(agentJobs.completedAt),
+        gt(agentJobs.completedAt, since),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 /** Le code de refus, tel qu'il apparaît dans le résultat d'outil. */

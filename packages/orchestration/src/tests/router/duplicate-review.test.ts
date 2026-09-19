@@ -42,6 +42,7 @@ interface Fixture {
   reviewerId: string;
   otherReviewerSlug: string;
   otherReviewerId: string;
+  devId: string;
 }
 
 async function seedTeam(): Promise<Fixture> {
@@ -87,6 +88,17 @@ async function seedTeam(): Promise<Fixture> {
       active: true,
     })
     .returning();
+  const [dev] = await db
+    .insert(agents)
+    .values({
+      entityId: entity!.id,
+      name: 'Dev',
+      slug: `dev-${suffix}`,
+      personality: 'p',
+      role: 'agent',
+      active: true,
+    })
+    .returning();
   const [parentJob] = await db
     .insert(agentJobs)
     .values({
@@ -105,8 +117,12 @@ async function seedTeam(): Promise<Fixture> {
     reviewerId: reviewer!.id,
     otherReviewerSlug: otherReviewer!.slug,
     otherReviewerId: otherReviewer!.id,
+    devId: dev!.id,
   };
 }
+
+/** L'instant du verdict dans les scénarios de fenêtre — fixe, jamais « maintenant ». */
+const VERDICT_AT = new Date('2026-09-19T10:00:00.000Z');
 
 /** Un enfant terminé qui a écrit son verdict, comme le runner l'écrit. */
 async function seedDeliveredReview(
@@ -114,6 +130,7 @@ async function seedDeliveredReview(
   agentId: string,
   task: string,
   output: unknown = VERDICT_OUTPUT,
+  verdictAt: Date = VERDICT_AT,
 ): Promise<string> {
   const [child] = await db
     .insert(agentJobs)
@@ -125,6 +142,7 @@ async function seedDeliveredReview(
       status: 'completed',
       parentJobId: fx.parentJobId,
       delegationDepth: 1,
+      completedAt: verdictAt,
     })
     .returning();
   await db.insert(toolCalls).values({
@@ -134,7 +152,32 @@ async function seedDeliveredReview(
     toolInput: {},
     toolOutput: typeof output === 'string' ? output : JSON.stringify(output),
     turn: 3,
+    createdAt: verdictAt,
   });
+  return child!.id;
+}
+
+/** Un autre délégué du même parent, dans l'état et à l'instant voulus. */
+async function seedSiblingDelegation(
+  fx: Fixture,
+  agentId: string,
+  task: string,
+  status: 'completed' | 'processing' | 'failed',
+  completedAt: Date | null,
+): Promise<string> {
+  const [child] = await db
+    .insert(agentJobs)
+    .values({
+      entityId: fx.entityId,
+      agentId,
+      channel: 'internal',
+      task,
+      status,
+      parentJobId: fx.parentJobId,
+      delegationDepth: 1,
+      completedAt,
+    })
+    .returning();
   return child!.id;
 }
 
@@ -195,6 +238,85 @@ describe('findDeliveredReviewForTarget @cap:organiser-equipe/moteur', () => {
     expect(refusal).toContain(childJobId);
     expect(refusal).toContain('request_changes');
     expect(refusal).toContain(VERDICT_OUTPUT.summary);
+  });
+
+  it('LAISSE PASSER la relecture quand une correction a ABOUTI depuis le verdict', async () => {
+    // Boucle de travail réelle : relire → faire corriger → refaire relire. La
+    // cible a changé entre les deux passes, la seconde n'est pas un doublon.
+    const fx = await seedTeam();
+    await seedDeliveredReview(fx, fx.reviewerId, 'Relis la PR #185.');
+    await seedSiblingDelegation(
+      fx,
+      fx.devId,
+      'Corrige les constats de la PR #185.',
+      'completed',
+      new Date(VERDICT_AT.getTime() + 60_000),
+    );
+
+    expect(
+      await findDeliveredReviewForTarget(db, {
+        parentJobId: fx.parentJobId as JobId,
+        entityId: fx.entityId as EntityId,
+        childSlug: fx.reviewerSlug,
+        task: 'Relis la PR #185 après correction.',
+      }),
+    ).toBeNull();
+  });
+
+  it('REFUSE quand rien n’a abouti entre les deux relectures', async () => {
+    const fx = await seedTeam();
+    const childJobId = await seedDeliveredReview(fx, fx.reviewerId, 'Relis la PR #185.');
+    // Une correction lancée AVANT le verdict et terminée avant lui ne dit rien
+    // sur l'état de la cible après le verdict.
+    await seedSiblingDelegation(
+      fx,
+      fx.devId,
+      'Prépare la PR #185.',
+      'completed',
+      new Date(VERDICT_AT.getTime() - 60_000),
+    );
+
+    const match = await findDeliveredReviewForTarget(db, {
+      parentJobId: fx.parentJobId as JobId,
+      entityId: fx.entityId as EntityId,
+      childSlug: fx.reviewerSlug,
+      task: 'Relis la PR #185.',
+    });
+    expect(match?.childJobId).toBe(childJobId);
+  });
+
+  it('une délégation ENCORE EN COURS ne compte pas comme « quelque chose a changé »', async () => {
+    const fx = await seedTeam();
+    const childJobId = await seedDeliveredReview(fx, fx.reviewerId, 'Relis la PR #185.');
+    await seedSiblingDelegation(fx, fx.devId, 'Corrige la PR #185.', 'processing', null);
+
+    const match = await findDeliveredReviewForTarget(db, {
+      parentJobId: fx.parentJobId as JobId,
+      entityId: fx.entityId as EntityId,
+      childSlug: fx.reviewerSlug,
+      task: 'Relis la PR #185.',
+    });
+    expect(match?.childJobId).toBe(childJobId);
+  });
+
+  it('une délégation ÉCHOUÉE depuis le verdict ne compte pas non plus', async () => {
+    const fx = await seedTeam();
+    const childJobId = await seedDeliveredReview(fx, fx.reviewerId, 'Relis la PR #185.');
+    await seedSiblingDelegation(
+      fx,
+      fx.devId,
+      'Corrige la PR #185.',
+      'failed',
+      new Date(VERDICT_AT.getTime() + 60_000),
+    );
+
+    const match = await findDeliveredReviewForTarget(db, {
+      parentJobId: fx.parentJobId as JobId,
+      entityId: fx.entityId as EntityId,
+      childSlug: fx.reviewerSlug,
+      task: 'Relis la PR #185.',
+    });
+    expect(match?.childJobId).toBe(childJobId);
   });
 
   it('laisse passer une AUTRE cible', async () => {

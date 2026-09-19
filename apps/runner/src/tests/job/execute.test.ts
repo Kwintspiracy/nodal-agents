@@ -687,6 +687,157 @@ describe('executeJob', () => {
     expect(transcript).toContain('429 passager');
   });
 
+  it('une relecture APRÈS une correction terminée passe — la boucle revue → correction → revue vit (#173)', async () => {
+    // La garde ne ferme que la redondance CERTAINE : une seconde passe sur une
+    // cible que personne n'a touchée. Ici un dev a livré entre les deux, la
+    // relecture porte sur autre chose que ce que le verdict a vu.
+    const ts = Date.now();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Loop Orchestrator',
+        slug: `loop-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    const reviewerSlug = `loop-reviewer-${ts}`;
+    const [reviewer] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Loop Reviewer',
+        slug: reviewerSlug,
+        personality: 'reviewer',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    const [dev] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Loop Dev',
+        slug: `loop-dev-${ts}`,
+        personality: 'dev',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    await db.insert(agentAssignments).values({
+      orchestratorId: orch!.id,
+      subAgentId: reviewer!.id,
+      entityId: seed.entityId,
+    });
+    const assignTool = `assign_${reviewerSlug.replace(/-/g, '_')}`;
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch!.id,
+        channel: 'api',
+        task: 'Fais relire puis corriger la PR #185.',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create review-loop test job');
+
+    const verdictAt = new Date(ts - 120_000);
+    const [firstChild] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: reviewer!.id,
+        channel: 'internal',
+        task: 'Relis la PR #185.',
+        status: 'completed',
+        parentJobId: job.id,
+        delegationDepth: 1,
+        completedAt: verdictAt,
+      })
+      .returning();
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: firstChild!.id,
+      toolName: 'review_verdict',
+      toolInput: {},
+      toolOutput: JSON.stringify({
+        ok: true,
+        verdict: 'request_changes',
+        summary: 'PR #185 : un 429 passager classé en facturation.',
+        findings: [
+          {
+            file: 'packages/llm/src/retry.ts',
+            line: 99,
+            issue: 'Un 429 passager est classé en facturation.',
+            severity: 'blocker',
+          },
+        ],
+        counts: { blocker: 1, major: 0, minor: 0 },
+      }),
+      turn: 3,
+      createdAt: verdictAt,
+    });
+    // La correction, TERMINÉE après le verdict.
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: dev!.id,
+      channel: 'internal',
+      task: 'Corrige les constats de la PR #185.',
+      status: 'completed',
+      parentJobId: job.id,
+      delegationDepth: 1,
+      completedAt: new Date(ts - 60_000),
+    });
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-again',
+            toolName: assignTool,
+            args: { task: 'Relis la PR #185 après correction.' },
+          },
+        ],
+      },
+      {
+        text: 'Relue.',
+        toolCalls: [
+          { toolCallId: 'tc-child-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      {
+        text: 'Compte rendu.',
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    // La seconde relecture A ÉTÉ LANCÉE : sa ligne existe.
+    const children = await db
+      .select({ id: agentJobs.id, task: agentJobs.task, agentId: agentJobs.agentId })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, job.id));
+    expect(children).toHaveLength(3);
+    expect(children.some((c) => c.task.includes('après correction'))).toBe(true);
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(JSON.stringify(row?.messages ?? [])).not.toContain('duplicate_review_blocked');
+  });
+
   it('une revue d’une AUTRE PR passe — la garde ne ferme pas la délégation (#173)', async () => {
     const ts = Date.now();
     const [orch] = await db
