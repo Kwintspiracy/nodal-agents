@@ -130,6 +130,24 @@ export function codeFilesHref(header: Pick<CodeHeader, 'projectId'>): string | n
 }
 
 /**
+ * D'où l'on vient, depuis la page d'un run de code (#143).
+ *
+ * « Back to Code » ne veut plus rien dire : la liste Code a disparu et sa route
+ * redirige. Le retour mène donc au PROJET quand le run en a un d'enregistré —
+ * c'est de là qu'on a cliqué, son onglet Activity porte cette ligne — et à
+ * Workspaces sinon. Jamais vers une route qui rebondit : une redirection au
+ * retour fait clignoter l'écran et perd la position de défilement.
+ */
+export function codeBackLink(header: Pick<CodeHeader, 'projectId'>): {
+  label: string;
+  href: string;
+} {
+  return header.projectId === null
+    ? { label: 'Back to workspaces', href: '/spaces' }
+    : { label: 'Back to the project', href: `/spaces/${header.projectId}` };
+}
+
+/**
  * Les agents qui ont travaillé : celui du process, puis les délégués nommés
  * par les lignes d'audit, dans l'ordre où ils paraissent. Dédoublonnés par NOM
  * — le détail d'un process ne porte pas de slug. Chacun avec son image quand il

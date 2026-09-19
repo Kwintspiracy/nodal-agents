@@ -20,7 +20,10 @@
 import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
+// L'aplatissement LEXICAL d'un chemin (`.` et `..`), par la plateforme.
+import { normalize as posixNormalize } from 'node:path/posix';
 import type { Dirent } from 'node:fs';
 import {
   eq,
@@ -30,9 +33,12 @@ import {
   sql,
   inArray,
   isNotNull,
+  isNull,
   agents,
   agentJobs,
   agentWorkspaces,
+  chatMessages,
+  cliRuns,
   codeProjects,
   conversations,
   entities,
@@ -41,10 +47,15 @@ import {
 import {
   normalizePath,
   projectKey,
+  isAbsolutePath,
   isSafeSubfolder,
   projectFolderNameFrom,
+  redactSecretsInText,
   type VerifyCommand,
 } from '@nodal-agents/shared';
+// Le rendu en texte nu d'un message Markdown — la MÊME réduction que la liste
+// des conversations, pour qu'un aperçu ne se lise pas de deux façons.
+import { plainText } from '@/components/Markdown.tsx';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
@@ -68,22 +79,24 @@ function fail(code: string, message: string): ActionResult<never> {
   return { ok: false, code, message };
 }
 
+/**
+ * Un projet du registre, tel que la LISTE le montre.
+ *
+ * Quatre faits et rien d'autre (Quentin, 19/09) : son nom, son dossier, le jour
+ * où il est entré au registre, et sa preuve. Le nom de l'agent responsable, le
+ * compte de travaux et la dernière activité en sont partis — l'agent est
+ * toujours le même orchestrateur, et le reste n'aidait pas à retrouver un
+ * projet dans une liste.
+ */
 export type ProjectListRow = {
   id: string;
   /** `display_name`, ou le nom du dossier — jamais un chemin vide à l'écran. */
   name: string;
   path: string;
   kind: 'code' | 'documents';
-  agentId: string | null;
-  agentName: string | null;
-  agentSlug: string | null;
-  registeredFrom: 'spaces' | 'conversation';
+  /** Le jour où il est entré au registre — la date que la ligne affiche. */
   registeredAt: Date;
   hidden: boolean;
-  /** Les travaux rattachés à ce projet (`agent_jobs.project_id`). */
-  jobsCount: number;
-  /** Le plus récent d'entre eux, ou `null` : un projet neuf n'a pas d'activité. */
-  lastActivityAt: Date | null;
   /**
    * L'état de la PREUVE : le verdict de la commande de vérification la plus
    * récente sur ce dossier, ou `null` — aucune n'a jamais tourné, ou le projet
@@ -214,9 +227,14 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
 
-    // Le compte et la dernière activité en une passe (un LEFT JOIN groupé),
-    // jamais une requête par projet : la liste est le premier écran des
-    // espaces, elle ne doit pas dégrader avec le nombre de projets.
+    // UNE lecture, sans jointure ni agrégat (Quentin, 19/09).
+    //
+    // La ligne portait l'agent responsable, le compte de travaux et la
+    // dernière activité : trois jointures pour trois choses qu'elle n'affiche
+    // plus (Quentin, 19/09). On parle toujours au MÊME orchestrateur, donc son
+    // nom était la même colonne répétée sur toutes les lignes. Ce qui reste
+    // est ce qu'un projet EST : son nom, son dossier, le jour où il est entré
+    // au registre.
     const rows = await db
       .select({
         id: codeProjects.id,
@@ -224,27 +242,13 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         path: codeProjects.projectPath,
         kind: codeProjects.kind,
         hidden: codeProjects.hidden,
-        registeredFrom: codeProjects.registeredFrom,
         registeredAt: codeProjects.registeredAt,
-        agentId: codeProjects.agentId,
-        agentName: agents.name,
-        agentSlug: agents.slug,
-        jobsCount: sql<number>`count(${agentJobs.id})`,
-        lastActivityAt: sql<Date | null>`max(${agentJobs.createdAt})`,
       })
       .from(codeProjects)
-      .leftJoin(agents, eq(agents.id, codeProjects.agentId))
-      .leftJoin(agentJobs, eq(agentJobs.projectId, codeProjects.id))
       .where(and(eq(codeProjects.entityId, session.entityId), isNotNull(codeProjects.registeredAt)))
-      .groupBy(
-        codeProjects.id,
-        agents.name,
-        agents.slug,
-        // `max()` et `count()` imposent de grouper sur tout le reste : Postgres
-        // ne déduit pas que la clé primaire suffit dès qu'une table jointe
-        // apporte ses colonnes.
-      )
-      .orderBy(sql`max(${agentJobs.createdAt}) desc nulls last`, desc(codeProjects.registeredAt));
+      // Le plus récemment ajouté d'abord — la date que la ligne affiche, donc
+      // un ordre que l'œil peut vérifier.
+      .orderBy(desc(codeProjects.registeredAt));
 
     // L'état de la preuve, en UNE requête groupée (`DISTINCT ON` sur la clé,
     // la plus récente d'abord) — pas une par projet : la liste ne doit pas
@@ -285,20 +289,681 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         name: r.displayName ?? basenameOf(r.path),
         path: r.path,
         kind: (r.kind === 'documents' ? 'documents' : 'code') as 'code' | 'documents',
-        agentId: r.agentId,
-        agentName: r.agentName ?? null,
-        agentSlug: r.agentSlug ?? null,
-        registeredFrom: (r.registeredFrom ?? 'spaces') as 'spaces' | 'conversation',
         registeredAt: r.registeredAt as Date,
         hidden: r.hidden,
-        jobsCount: Number(r.jobsCount ?? 0),
-        lastActivityAt: r.lastActivityAt ? new Date(r.lastActivityAt) : null,
         lastProof: r.kind === 'documents' ? null : (lastProofByKey.get(projectKey(r.path)) ?? null),
       })),
     );
   } catch (err) {
     console.error('[projects] PROJECT_LIST_FAILED', err);
     return fail('list_failed', 'Could not list projects');
+  }
+}
+
+/**
+ * Combien de conversations un projet porte.
+ *
+ * Une conversation lui appartient de deux façons, et il faut les deux : elle y
+ * est ANCRÉE (`conversations.current_project_id`), ou elle porte un travail
+ * rattaché au projet (`agent_jobs.project_id` + `conversation_id`). C'est
+ * l'union exacte que `getProjectActivityAction` liste ; n'en compter qu'une
+ * moitié ferait dire « 2 conversations » à un en-tête dont la liste en montre
+ * cinq.
+ *
+ * L'union se fait en JS sur des identifiants, pas en SQL : deux `group by`
+ * indexés coûtent moins qu'un `UNION` sur une jointure, et le nombre de
+ * conversations d'une entité tient en mémoire. Bornée par LISTE de projets —
+ * un seul aujourd'hui, mais la forme ne change pas si un écran en demande
+ * plusieurs.
+ */
+async function countProjectConversations(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  projectIds: readonly string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (projectIds.length === 0) return counts;
+
+  const [anchored, viaJobs] = await Promise.all([
+    db
+      .select({ projectId: conversations.currentProjectId, id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.entityId, entityId),
+          inArray(conversations.currentProjectId, [...projectIds]),
+        ),
+      ),
+    db
+      .selectDistinct({ projectId: agentJobs.projectId, id: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          inArray(agentJobs.projectId, [...projectIds]),
+          isNotNull(agentJobs.conversationId),
+        ),
+      ),
+  ]);
+
+  const seen = new Map<string, Set<string>>();
+  for (const row of [...anchored, ...viaJobs]) {
+    if (!row.projectId || !row.id) continue;
+    const set = seen.get(row.projectId) ?? new Set<string>();
+    set.add(row.id);
+    seen.set(row.projectId, set);
+  }
+  for (const [projectId, set] of seen) counts.set(projectId, set.size);
+  return counts;
+}
+
+// ─── getProjectFactsAction ───────────────────────────────────────────────────
+
+/** Ce que l'en-tête d'un projet ouvert affirme — et rien de plus (#143). */
+export type ProjectFacts = {
+  id: string;
+  name: string;
+  path: string;
+  kind: 'code' | 'documents';
+  agentName: string | null;
+  /** `.git` est là. Un fait lu sur le disque, jamais déduit de la sorte du projet. */
+  isGitRepository: boolean;
+  conversations: number;
+  /** Les runs DE TÊTE rattachés au projet — ce que la ligne appelle « sessions ». */
+  sessions: number;
+};
+
+/**
+ * Les faits de l'en-tête d'un projet : ce que la phrase sous son nom affirme,
+ * et rien de plus.
+ */
+export async function getProjectFactsAction(id: string): Promise<ActionResult<ProjectFacts>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid project id');
+    }
+    const db = getDb();
+    const entityId = session.entityId;
+
+    const [row] = await db
+      .select({
+        id: codeProjects.id,
+        displayName: codeProjects.displayName,
+        path: codeProjects.projectPath,
+        kind: codeProjects.kind,
+        agentName: agents.name,
+      })
+      .from(codeProjects)
+      .leftJoin(agents, eq(agents.id, codeProjects.agentId))
+      .where(
+        and(
+          eq(codeProjects.id, id),
+          eq(codeProjects.entityId, entityId),
+          isNotNull(codeProjects.registeredAt),
+        ),
+      )
+      .limit(1);
+    if (!row) return fail('not_found', 'Project not found');
+
+    const [conversationsCount, sessionRows] = await Promise.all([
+      countProjectConversations(db, entityId, [id]),
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.entityId, entityId),
+            eq(agentJobs.projectId, id),
+            isNull(agentJobs.parentJobId),
+          ),
+        ),
+    ]);
+
+    return ok({
+      id: row.id,
+      name: row.displayName ?? basenameOf(row.path),
+      path: row.path,
+      kind: (row.kind === 'documents' ? 'documents' : 'code') as 'code' | 'documents',
+      agentName: row.agentName ?? null,
+      // Lu sur le DISQUE, une fois par ouverture. Un dossier de projet n'est
+      // pas forcément un dépôt, et la sorte `code` ne le prouve pas.
+      isGitRepository: existsSync(`${normalizePath(row.path)}/.git`),
+      conversations: conversationsCount.get(id) ?? 0,
+      sessions: Number(sessionRows[0]?.n ?? 0),
+    });
+  } catch (err) {
+    console.error('[projects] PROJECT_FACTS_FAILED', err);
+    return fail('facts_failed', 'Could not load the project');
+  }
+}
+
+// ─── getProjectActivityAction ────────────────────────────────────────────────
+
+/** Une conversation du projet, telle que l'onglet Activity la montre. */
+export type ProjectActivityConversation = {
+  id: string;
+  channel: string;
+  /** Le titre du fil, ou vide — l'écran décide quoi écrire à la place. */
+  title: string;
+  agentName: string | null;
+  agentAvatarUrl: string | null;
+  /** La dernière phrase dite dans le fil. `null` quand rien n'a encore été dit. */
+  lastPreview: string | null;
+  /** Les runs DE CE PROJET portés par cette conversation — « N sessions inside ». */
+  sessions: number;
+  updatedAt: Date | null;
+  /** Un de ces runs avance encore. */
+  running: boolean;
+};
+
+/** Un run du projet qui n'a AUCUNE conversation — ce que l'onglet Code listait. */
+export type ProjectActivitySession = {
+  /** `agent_jobs.id` : la ligne ouvre la page du run. */
+  id: string;
+  agentName: string | null;
+  agentAvatarUrl: string | null;
+  /** Le harnais qui a tourné (`cli_runs.provider`), ou `null` — rien ne le dit. */
+  provider: string | null;
+  /** D'où le run est parti : `agent_jobs.channel`. */
+  origin: string;
+  status: string | null;
+  task: string;
+  createdAt: Date | null;
+};
+
+export type ProjectActivityView = {
+  conversations: ProjectActivityConversation[];
+  sessions: ProjectActivitySession[];
+};
+
+// Le chiffre de l'onglet n'est PAS ici : il vient de `getProjectFactsAction`,
+// que les deux onglets lisent. Le calculer sur les lignes CHARGÉES le ferait
+// diverger d'un onglet à l'autre — elles sont plafonnées — et un onglet qui
+// annonce deux nombres selon la page qu'on regarde n'annonce rien.
+
+/** Plafond par liste. Une page d'activité se lit, elle ne s'inventorie pas. */
+const ACTIVITY_MAX = 50;
+const ACTIVITY_TITLE_MAX = 60;
+/**
+ * BORNE HAUTE, pas une coupe d'affichage (Quentin, 19/09).
+ *
+ * À 120 signes, l'aperçu tombait au milieu d'une citation (« … ou " ») et la
+ * ligne montrait une phrase estropiée. Ce n'est pas ici que ça se décide : la
+ * ligne tronque par CSS, sur une seule ligne, à la largeur qu'elle a. Ce
+ * plafond ne sert plus qu'à ne pas faire voyager un pavé de mille mots jusqu'au
+ * navigateur.
+ */
+const ACTIVITY_PREVIEW_MAX = 300;
+
+/** La première ligne d'un texte, masquée puis coupée — jamais l'inverse. */
+function firstLineOf(text: string, max: number): string {
+  const line = redactSecretsInText(plainText(text));
+  return line.length <= max ? line : line.slice(0, max);
+}
+
+/** Un run qui avance encore — les statuts VIVANTS de `agent_jobs`. */
+function jobIsRunning(status: string | null): boolean {
+  return status === 'pending' || status === 'processing' || status === 'awaiting_delegation';
+}
+
+/**
+ * L'ACTIVITÉ d'un projet : ses conversations et les runs qui n'en ont pas (#143).
+ *
+ * UNE liste à l'écran, deux lectures ici, parce que ce ne sont pas les mêmes
+ * colonnes. Une conversation se date de son dernier mot et porte des sessions ;
+ * un run parti du CLI, du serveur MCP ou d'un harnais n'a pas de fil — c'est
+ * exactement ce que l'onglet Code listait, et il ne disparaît pas avec lui.
+ *
+ * Tout est BORNÉ par liste : cinq requêtes pour la page, jamais une par ligne.
+ */
+export async function getProjectActivityAction(
+  id: string,
+): Promise<ActionResult<ProjectActivityView>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid project id');
+    }
+    const db = getDb();
+    const entityId = session.entityId;
+
+    // Le projet doit exister, être à cette entité, et être ENREGISTRÉ : une
+    // ligne de comptabilité n'a pas d'activité à montrer.
+    const [projet] = await db
+      .select({ id: codeProjects.id })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.id, id),
+          eq(codeProjects.entityId, entityId),
+          isNotNull(codeProjects.registeredAt),
+        ),
+      )
+      .limit(1);
+    if (!projet) return fail('not_found', 'Project not found');
+
+    // Les runs DE TÊTE du projet. Une seule lecture sert les deux sortes de
+    // lignes : elle compte les sessions de chaque conversation, dit laquelle
+    // tourne, et livre les runs qui n'ont pas de conversation du tout.
+    const jobRows = await db
+      .select({
+        id: agentJobs.id,
+        conversationId: agentJobs.conversationId,
+        channel: agentJobs.channel,
+        status: agentJobs.status,
+        task: agentJobs.task,
+        createdAt: agentJobs.createdAt,
+        agentName: agents.name,
+        agentAvatarUrl: agents.avatarUrl,
+      })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          eq(agentJobs.projectId, id),
+          isNull(agentJobs.parentJobId),
+        ),
+      )
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(200);
+
+    const sessionsParConversation = new Map<string, { count: number; running: boolean }>();
+    const sansConversation: typeof jobRows = [];
+    for (const j of jobRows) {
+      if (j.conversationId === null) {
+        if (sansConversation.length < ACTIVITY_MAX) sansConversation.push(j);
+        continue;
+      }
+      const vu = sessionsParConversation.get(j.conversationId) ?? { count: 0, running: false };
+      vu.count += 1;
+      vu.running = vu.running || jobIsRunning(j.status);
+      sessionsParConversation.set(j.conversationId, vu);
+    }
+
+    // Les conversations du projet : celles qui y sont ANCRÉES, et celles qui
+    // portent un de ses travaux. La même union que la page du projet liste.
+    const conversationIdsOfJobs = db
+      .select({ id: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          eq(agentJobs.projectId, id),
+          isNotNull(agentJobs.conversationId),
+        ),
+      );
+
+    const convRows = await db
+      .select({
+        id: conversations.id,
+        channel: conversations.channel,
+        title: conversations.title,
+        updatedAt: conversations.updatedAt,
+        agentName: agents.name,
+        agentAvatarUrl: agents.avatarUrl,
+      })
+      .from(conversations)
+      .leftJoin(agents, eq(agents.id, conversations.agentId))
+      .where(
+        and(
+          eq(conversations.entityId, entityId),
+          or(
+            eq(conversations.currentProjectId, id),
+            inArray(conversations.id, conversationIdsOfJobs),
+          ),
+        ),
+      )
+      .orderBy(sql`${conversations.updatedAt} desc nulls last`, desc(conversations.id))
+      .limit(ACTIVITY_MAX);
+
+    const convIds = convRows.map((c) => c.id);
+
+    // La dernière phrase dite, par conversation. Deux agrégats groupés, comme
+    // la liste des conversations : un fil du tableau de bord porte des
+    // messages, un fil de canal porte des jobs, et le dernier mot ne se lit
+    // pas au même endroit.
+    const [messageStats, replyStats] =
+      convIds.length === 0
+        ? [[], []]
+        : await Promise.all([
+            db
+              .select({
+                conversationId: chatMessages.conversationId,
+                lastReply: sql<
+                  string | null
+                >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt} DESC) FILTER (WHERE ${chatMessages.role} = 'assistant'))[1]`,
+              })
+              .from(chatMessages)
+              .where(inArray(chatMessages.conversationId, convIds))
+              .groupBy(chatMessages.conversationId),
+            db
+              .select({
+                conversationId: agentJobs.conversationId,
+                lastReply: sql<
+                  string | null
+                >`(array_agg(${agentJobs.result} ORDER BY ${agentJobs.createdAt} DESC) FILTER (WHERE ${agentJobs.result} IS NOT NULL))[1]`,
+              })
+              .from(agentJobs)
+              .where(
+                and(
+                  eq(agentJobs.entityId, entityId),
+                  isNull(agentJobs.parentJobId),
+                  inArray(agentJobs.conversationId, convIds),
+                ),
+              )
+              .groupBy(agentJobs.conversationId),
+          ]);
+    const dernierMessage = new Map(messageStats.map((s) => [s.conversationId ?? '', s.lastReply]));
+    const dernierJob = new Map(replyStats.map((s) => [s.conversationId ?? '', s.lastReply]));
+
+    // Le HARNAIS de chaque run sans conversation. `null` quand aucune ligne
+    // `cli_runs` ne le dit : la ligne écrira « session », jamais un nom de
+    // produit deviné.
+    const sessionIds = sansConversation.map((j) => j.id);
+    const providerByJob = new Map<string, string>();
+    if (sessionIds.length > 0) {
+      const providerRows = await db
+        .selectDistinct({ jobId: cliRuns.jobId, provider: cliRuns.provider })
+        .from(cliRuns)
+        .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, sessionIds)));
+      for (const r of providerRows) {
+        if (r.jobId && r.provider && !providerByJob.has(r.jobId)) {
+          providerByJob.set(r.jobId, r.provider);
+        }
+      }
+    }
+
+    return ok({
+      conversations: convRows.map((c): ProjectActivityConversation => {
+        const stats = c.channel === 'dashboard' ? dernierMessage.get(c.id) : dernierJob.get(c.id);
+        const compte = sessionsParConversation.get(c.id);
+        return {
+          id: c.id,
+          channel: c.channel,
+          title: c.title !== '' ? firstLineOf(c.title, ACTIVITY_TITLE_MAX) : '',
+          agentName: c.agentName ?? null,
+          agentAvatarUrl: c.agentAvatarUrl ?? null,
+          lastPreview: stats ? firstLineOf(stats, ACTIVITY_PREVIEW_MAX) || null : null,
+          sessions: compte?.count ?? 0,
+          updatedAt: c.updatedAt,
+          running: compte?.running ?? false,
+        };
+      }),
+      sessions: sansConversation.map(
+        (j): ProjectActivitySession => ({
+          id: j.id,
+          agentName: j.agentName ?? null,
+          agentAvatarUrl: j.agentAvatarUrl ?? null,
+          provider: providerByJob.get(j.id) ?? null,
+          origin: j.channel,
+          status: j.status,
+          task: firstLineOf(j.task, ACTIVITY_PREVIEW_MAX),
+          createdAt: j.createdAt,
+        }),
+      ),
+    });
+  } catch (err) {
+    console.error('[projects] PROJECT_ACTIVITY_FAILED', err);
+    return fail('activity_failed', 'Could not load the project activity');
+  }
+}
+
+// ─── listProofsForPathsAction ────────────────────────────────────────────────
+
+/**
+ * Le dernier verdict de preuve de chemins DONNÉS, en UNE requête.
+ *
+ * `listProjectsAction` fait déjà cette lecture pour les projets du registre.
+ * Les dossiers DÉTECTÉS n'y sont pas, et ils peuvent avoir une preuve : une
+ * séquence se configure par CLÉ de dossier (`verification_runs.canonical_key`),
+ * pas par appartenance au registre. Les laisser tous en « Unverified » ferait
+ * dire à la pastille le contraire de ce que le dossier porte.
+ *
+ * Bornée par liste : un `inArray` sur les clés, jamais un appel par ligne.
+ */
+export async function listProofsForPathsAction(
+  paths: readonly string[],
+): Promise<ActionResult<Array<{ key: string; verdict: 'pass' | 'fail'; at: Date }>>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const keys = [...new Set(paths.filter((p) => p !== '').map((p) => projectKey(p)))];
+    if (keys.length === 0) return ok([]);
+    // Plafond : la liste en montre au plus quelques dizaines, et une requête
+    // dont la taille suit une entrée non bornée n'a pas sa place ici.
+    if (keys.length > 200) return fail('validation_failed', 'Too many paths');
+
+    const rows = await getDb()
+      .selectDistinctOn([verificationRuns.canonicalKey], {
+        canonicalKey: verificationRuns.canonicalKey,
+        verdict: verificationRuns.verdict,
+        createdAt: verificationRuns.createdAt,
+      })
+      .from(verificationRuns)
+      .where(
+        and(
+          eq(verificationRuns.entityId, session.entityId),
+          inArray(verificationRuns.canonicalKey, keys),
+        ),
+      )
+      .orderBy(verificationRuns.canonicalKey, desc(verificationRuns.createdAt));
+
+    return ok(
+      rows.map((r) => ({
+        key: r.canonicalKey,
+        // `green` est le SEUL verdict qui prouve quelque chose — un rouge et
+        // une erreur d'infrastructure disent tous deux « ce n'est pas prouvé ».
+        verdict: (r.verdict === 'green' ? 'pass' : 'fail') as 'pass' | 'fail',
+        at: r.createdAt,
+      })),
+    );
+  } catch (err) {
+    console.error('[projects] PROOF_LOOKUP_FAILED', err);
+    return fail('proofs_failed', 'Could not read the proof state');
+  }
+}
+
+// ─── registerDetectedProjectAction ───────────────────────────────────────────
+
+/**
+ * Le chemin reçu, ramené à sa forme LEXICALE canonique : slashes uniformes,
+ * puis `.` et `..` aplatis.
+ *
+ * Aplati par `node:path/posix` et non par un motif : les règles de `..` au
+ * milieu d'un chemin sont celles de la plateforme, et les réécrire est le
+ * genre de copie qui diverge. `normalizePath` (@nodal-agents/shared) reste
+ * inchangée — elle est la clé d'identité de TOUT le dépôt, et lui faire
+ * aplatir les segments changerait la casse de cas qu'aucun test ne couvre ici.
+ *
+ * Le partage UNC est le seul cas particulier : `//serveur/part` commence par
+ * DEUX slashes, que `posix.normalize` réduit à un. On le met de côté le temps
+ * de l'aplatissement et on le remet ensuite.
+ */
+function flattenPath(raw: string): string {
+  const p = normalizePath(raw);
+  const unc = p.startsWith('//');
+  const flat = posixNormalize(unc ? p.slice(1) : p);
+  return normalizePath(unc ? `/${flat}` : flat);
+}
+
+const registerDetectedSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+  /** L'agent qui a écrit là, tel que la ligne le nomme. Vérifié au serveur. */
+  agentId: z.string().uuid().nullable(),
+});
+
+/**
+ * INSCRIT au registre un dossier que la détection a trouvé (#143).
+ *
+ * Le geste que l'onglet Code n'avait pas : un dossier où un agent a écrit
+ * devient un projet, avec son responsable, sans passer par le formulaire de
+ * création — le dossier existe déjà, il n'y a rien à créer sur le disque.
+ *
+ * LA GARDE : le chemin doit être DANS un dossier attaché à un agent de
+ * l'entité. Sans elle, l'action inscrirait n'importe quel chemin de la machine
+ * au registre, donc dans le contexte injecté aux agents comme endroit où ils
+ * peuvent écrire. La contenance est LEXICALE ici, et c'est suffisant : le
+ * chemin ne vient pas d'une saisie libre mais de la dérivation des écritures
+ * déjà enregistrées, et aucun dossier n'est créé — il n'y a pas de `mkdir` à
+ * détourner par un lien, ce qui est la raison d'être du contrôle physique de
+ * `createProjectAction`.
+ *
+ * L'agent responsable est celui que la ligne nomme, à condition qu'il détienne
+ * un dossier contenant le chemin. À défaut, le détenteur UNIQUE du dossier ;
+ * s'ils sont plusieurs, `null` — l'ordre des lignes `agent_workspaces` n'en
+ * désigne aucun, et en choisir un au hasard serait un repli malin.
+ *
+ * Pas de garde d'imbrication (celle de `createProjectAction`) : c'est le
+ * contrat du registre lui-même, dont les autres écrivains — le backfill au
+ * démarrage et l'outil `register_project` — n'en ont pas non plus. Un dossier
+ * dérivé est par construction un enfant direct d'un terrain.
+ */
+export async function registerDetectedProjectAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string; path: string }>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const parsed = registerDetectedSchema.safeParse(raw);
+    if (!parsed.success) return fail('validation_failed', 'Invalid project input');
+    // Le chemin reçu, APLATI (revue Reviewer C, passe 1). `normalizePath`
+    // uniformise les slashes et retire le slash final : elle n'aplatit NI `..`
+    // NI `.`, et `isUnderPath` compare du texte. Les deux ensemble laissaient
+    // passer `<terrain>/../ailleurs`, qui commence bien par `<terrain>/` — le
+    // dossier entrait au registre, donc dans la liste des endroits où les
+    // agents peuvent écrire, HORS de tout terrain. La même forme brute
+    // produisait un second défaut, silencieux : `<terrain>/./app` a une CLÉ
+    // différente de `<terrain>/app`, donc une seconde ligne de registre pour le
+    // même dossier, que rien n'aurait rapprochée.
+    const demande = flattenPath(parsed.data.projectPath);
+    // Un chemin qui remonte au-dessus de sa racine n'est plus absolu une fois
+    // aplati (`C:/../x` devient `x`) : il ne désigne rien, et il est refusé.
+    if (demande === '' || !isAbsolutePath(demande)) {
+      return fail('validation_failed', 'Invalid project path');
+    }
+
+    const db = getDb();
+    const wsRows = await db
+      .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.entityId, session.entityId));
+
+    // TROIS gardes, dans CET ordre, et l'ordre fait partie de la garde.
+    //
+    // 1. LEXICALE, sur le chemin demandé. Elle passe avant toute lecture du
+    //    disque : un chemin qui ne ressemble à aucun terrain est refusé sans
+    //    qu'on soit allé voir s'il existe. Sinon la réponse dirait, de
+    //    n'importe quel chemin de la machine, s'il est là ou non.
+    //    C'est aussi la seule qui tienne quand un terrain n'est pas encore sur
+    //    le disque : la garde physique remonterait alors le terrain jusqu'à un
+    //    ancêtre existant — parfois la racine du disque — et laisserait tout
+    //    passer.
+    const candidats = wsRows.filter((w) => {
+      const root = normalizePath(w.path);
+      return isUnderPath(demande, root) || projectKey(demande) === projectKey(root);
+    });
+    if (candidats.length === 0) {
+      return fail('not_in_workspace', 'This folder is not inside a workspace of this space.');
+    }
+
+    // 2. LE DOSSIER DOIT EXISTER. Une ligne qui désigne un dossier absent est
+    //    un projet fantôme que chaque écran devra contourner (en-tête de ce
+    //    module), et la détection ne remonte que des dossiers écrits.
+    if ((await realPathIfExists(demande)) === null) {
+      return fail('folder_missing', 'This folder is not there any more.');
+    }
+
+    // 3. PHYSIQUE : les LIENS. L'aplatissement a réglé `..` et `.`, mais un
+    //    lien posé DANS le terrain et pointant dehors passe les deux gardes de
+    //    texte, et les agents se verraient offrir un chemin qui écrit ailleurs.
+    //    `physicallyInside` résout les deux côtés ; ce qu'elle résout sert à
+    //    DÉCIDER, jamais à nommer — voir la note sur le chemin stocké.
+    const holders: string[] = [];
+    for (const w of candidats) {
+      if (!(await physicallyInside(demande, normalizePath(w.path)))) continue;
+      if (!holders.includes(w.agentId)) holders.push(w.agentId);
+    }
+    if (holders.length === 0) {
+      return fail('not_in_workspace', 'This folder is not inside a workspace of this space.');
+    }
+
+    // LE CHEMIN STOCKÉ est celui qu'on a reçu, aplati — JAMAIS le chemin
+    // RÉSOLU (constat de la CI Windows, 19/09). Sur un runner Windows,
+    // `tmpdir()` rend un nom court 8.3 (`C:/Users/RUNNER~1/…`) que `realpath`
+    // détend en `C:/Users/runneradmin/…` : deux écritures du même dossier, donc
+    // deux CLÉS. Le registre serait indexé sur une identité que la détection ne
+    // produit jamais — le projet fraîchement inscrit resterait « Detected »
+    // dans la liste, et ni son masquage ni son nom ne seraient plus retrouvés.
+    const path = demande;
+
+    const asked = parsed.data.agentId;
+    // Le responsable : celui que la ligne nomme s'il détient bien le dossier,
+    // sinon le détenteur UNIQUE. À plusieurs et sans nom, personne.
+    const responsable =
+      asked !== null && holders.includes(asked)
+        ? asked
+        : holders.length === 1
+          ? (holders[0] ?? null)
+          : null;
+
+    const key = projectKey(path);
+    // UPSERT sur la clé d'identité, `setWhere registered_at IS NULL` — la même
+    // règle que `registerCodeProjects` (packages/tools) : un projet DÉJÀ au
+    // registre ne se réinscrit pas, et son nom, son agent et sa date d'ajout
+    // restent ceux qu'il a. L'écriture est ici et non dans ce module partagé
+    // parce que `apps/web` ne dépend pas de `@nodal-agents/tools` ; les deux
+    // écrivent la MÊME forme de ligne, et c'est cette forme que le test fige.
+    const inserted = await db
+      .insert(codeProjects)
+      .values({
+        entityId: session.entityId,
+        projectPath: path,
+        projectKey: key,
+        // Un dossier trouvé par la détection des écritures de CODE : c'est ce
+        // que le scan observe, et rien d'autre.
+        kind: 'code',
+        agentId: responsable,
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .onConflictDoUpdate({
+        target: [codeProjects.entityId, codeProjects.projectKey],
+        set: {
+          kind: 'code',
+          ...(responsable ? { agentId: responsable } : {}),
+          registeredAt: new Date(),
+          registeredFrom: 'spaces',
+          updatedAt: new Date(),
+        },
+        setWhere: isNull(codeProjects.registeredAt),
+      })
+      .returning({ id: codeProjects.id });
+
+    let id = inserted[0]?.id ?? null;
+    if (id === null) {
+      // Rien n'a été écrit : la ligne existe et porte DÉJÀ une inscription. On
+      // rend son id plutôt qu'une erreur — deux onglets ouverts sur la même
+      // liste, et le second clic doit mener au projet, pas à un échec.
+      const [existing] = await db
+        .select({ id: codeProjects.id })
+        .from(codeProjects)
+        .where(and(eq(codeProjects.entityId, session.entityId), eq(codeProjects.projectKey, key)))
+        .limit(1);
+      id = existing?.id ?? null;
+    }
+    if (id === null) return fail('register_failed', 'Could not register this folder');
+
+    console.warn(`[projects] PROJECT_REGISTERED_FROM_SPACES id=${id} key=${key}`);
+    revalidatePath('/spaces');
+    revalidatePath('/code');
+    return ok({ id, path });
+  } catch (err) {
+    console.error('[projects] PROJECT_REGISTER_DETECTED_FAILED', err);
+    return fail('register_failed', 'Could not register this folder');
   }
 }
 
@@ -924,29 +1589,11 @@ async function loadProjectCore(
   };
 }
 
-/** La page du FIL d'un projet (`/spaces/[id]`) : le cœur, rien de plus. */
-export async function getProjectThreadPageAction(
-  id: string,
-): Promise<ActionResult<ProjectThreadPageView>> {
-  try {
-    const session = await getSession();
-    if (!session.entityId) return fail('no_entity', 'No active entity');
-    if (!z.string().guid().safeParse(id).success) {
-      return fail('validation_failed', 'Invalid project id');
-    }
-    const core = await loadProjectCore(getDb(), session.entityId, id);
-    if (core === null) return fail('not_found', 'Project not found');
-    return ok({
-      project: core.project,
-      conversations: core.conversations,
-      projectConversationId: core.projectConversationId,
-      rootAgent: core.rootAgent,
-    });
-  } catch (err) {
-    console.error('[projects] PROJECT_THREAD_PAGE_FAILED', err);
-    return fail('page_failed', 'Could not load the project');
-  }
-}
+// `getProjectThreadPageAction` a disparu avec #143. Ouvrir un projet n'ouvre
+// plus le fil de SA conversation : un projet en a plusieurs, et des sessions
+// qui n'en ont aucune — atterrir dans une seule de ces histoires cachait
+// toutes les autres. La page du projet lit `getProjectActivityAction`, et un
+// fil se lit là où il a toujours été, sur `/chat/<id>`.
 
 /**
  * La page du DOSSIER d'un projet (`/spaces/[id]/files`) : le cœur, plus le

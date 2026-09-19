@@ -100,8 +100,10 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
       toolbar={
         <WorkBar
           // Le retour ramène dans le DOSSIER du fil (Discord, Telegram, Nodal
-          // chats), pas sur la liste entière (Quentin, 17/09).
-          back={threadBackLink(conversation.channel)}
+          // chats), pas sur la liste entière (Quentin, 17/09) — et au PROJET
+          // quand le fil y est ancré (Quentin, 19/09) : c'est de là qu'on
+          // l'ouvre, et c'est là que ses frères sont listés.
+          back={threadBackLink(conversation.channel, project)}
           agents={threadAgents(feed.items)}
           status={<StatusPill variant={live ? 'run' : 'idle'} />}
           proofVerdict={lastProof?.verdict ?? null}

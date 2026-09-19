@@ -14415,6 +14415,9 @@ export async function setCodeProjectHiddenAction(raw: unknown): Promise<ActionRe
       hidden: parsed.data.hidden,
     });
     revalidatePath('/code');
+    // `/spaces` liste les dossiers détectés depuis #143 : masquer l'un d'eux
+    // doit le retirer de CETTE liste aussi, tout de suite.
+    revalidatePath('/spaces');
     return ok(undefined);
   } catch (err) {
     console.error('[setCodeProjectHiddenAction]', err);
@@ -14447,6 +14450,7 @@ export async function renameCodeProjectAction(raw: unknown): Promise<ActionResul
       displayName: name === '' ? null : name,
     });
     revalidatePath('/code');
+    revalidatePath('/spaces');
     return ok(undefined);
   } catch (err) {
     console.error('[renameCodeProjectAction]', err);

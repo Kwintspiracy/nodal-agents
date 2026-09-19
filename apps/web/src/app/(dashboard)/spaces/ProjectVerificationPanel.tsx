@@ -42,7 +42,7 @@ import {
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import Banner from '@/components/ui/Banner';
-import EdRow, { IcBtn } from '@/components/ui/EdRow';
+import { IcBtn } from '@/components/ui/EdRow';
 import EdAddButton from '@/components/ui/EdAddButton';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -286,19 +286,30 @@ export default function ProjectVerificationPanel({
   return (
     <section
       data-testid="project-verification"
-      className="space-y-3 rounded-xl border border-rule-2 bg-paper px-5 py-4"
+      // `min-w-0` : dans un panneau de 400 px, une carte sans lui prend la
+      // largeur de son contenu le plus long et déborde par la droite, avec sa
+      // propre barre de défilement horizontale (Quentin, 19/09).
+      className="min-w-0 space-y-3 rounded-xl border border-rule-2 bg-paper px-4 py-4"
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-medium-14 text-ink">Proof commands</span>
         <span data-testid="verify-status">{statusTag}</span>
         {!isOwner && <MonoMicroTag tone="err">owner only</MonoMicroTag>}
       </div>
+      {/* UNE ligne, pas un paragraphe (Quentin, 19/09). Les trois étaient des
+          paragraphes de deux ou trois phrases, dans un panneau de 400 px : on
+          ne les lisait pas, et ils repoussaient les commandes hors de l'écran.
+          Ce qu'ils disaient de plus tient ici, où ça sert à qui les modifie :
+          les commandes tournent DANS CE DOSSIER après chaque tâche de code,
+          dans l'ordre ; rien n'est bloqué pour l'instant, les runs sont
+          enregistrés pour être lus ; et le propriétaire n'a jamais à les
+          écrire lui-même — l'agent qui construit déclare les siennes. */}
       <p className="text-body-13 leading-[1.4]! text-ink-3">
         {parLAgent
-          ? 'The agent that built this project declared these commands, and they run in this folder after each coding task. Change them if you want — you never have to write them.'
+          ? 'The agent that built this project declared these commands.'
           : status === 'not_configured'
-            ? 'Nothing to fill in. The agent that builds here declares how to check its own work, and those commands run after each coding task. You can still write your own.'
-            : 'Commands that run in this folder after a coding task, in order. Nothing is blocked yet: the runs are recorded so you can read them.'}
+            ? 'The agent that builds here declares how to check its own work.'
+            : 'They run in this folder after a coding task, in order.'}
       </p>
       {!isOwner && (
         <p className="text-body-12 text-ink-4">
@@ -339,41 +350,45 @@ export default function ProjectVerificationPanel({
       ) : (
         <div className="space-y-2">
           {draft.map((d, i) => (
-            <EdRow
-              // Une commande n'a pas d'identité propre : sa place EST son
-              // identité, et déplacer une ligne doit rendre la nouvelle place.
+            // PAS `EdRow` ici, et c'est délibéré : cette ligne du DS met le nom,
+            // la méta et les actions sur UNE ligne, chacune à sa largeur. Dans
+            // un panneau de 400 px, le champ de commande, le numéro, le délai
+            // et trois boutons ne tiennent pas, et la carte se mettait à
+            // défiler horizontalement (Quentin, 19/09). La commande prend donc
+            // toute la largeur, et ce qui la qualifie passe DESSOUS.
+            //
+            // Une commande n'a pas d'identité propre : sa place EST son
+            // identité, et déplacer une ligne doit rendre la nouvelle place —
+            // d'où l'index en clé.
+            <div
               key={i}
-              name={
+              className="min-w-0 space-y-2 rounded-[10px] border border-rule-2 bg-paper px-3 py-3"
+            >
+              <TextInput
+                value={d.command}
+                disabled={!editable}
+                maxLength={MAX_COMMAND_LENGTH}
+                spellCheck={false}
+                placeholder="pnpm test"
+                aria-label={`Proof command ${i + 1}`}
+                data-testid={`verify-command-${i}`}
+                onChange={(e) => update(i, { command: e.target.value })}
+              />
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-mono-11 tracking-[0.04em] text-ink-4">
+                <span className="shrink-0">#{i + 1}</span>
                 <TextInput
-                  value={d.command}
+                  value={d.timeout}
                   disabled={!editable}
-                  maxLength={MAX_COMMAND_LENGTH}
-                  spellCheck={false}
-                  placeholder="pnpm test"
-                  aria-label={`Proof command ${i + 1}`}
-                  data-testid={`verify-command-${i}`}
-                  onChange={(e) => update(i, { command: e.target.value })}
+                  inputMode="numeric"
+                  maxLength={4}
+                  aria-label={`Timeout in seconds for command ${i + 1}`}
+                  data-testid={`verify-timeout-${i}`}
+                  containerClassName="w-14 shrink-0"
+                  onChange={(e) => update(i, { timeout: e.target.value })}
                 />
-              }
-              meta={
-                <span className="flex items-center gap-1.5">
-                  <span>#{i + 1}</span>
-                  <TextInput
-                    value={d.timeout}
-                    disabled={!editable}
-                    inputMode="numeric"
-                    maxLength={4}
-                    aria-label={`Timeout in seconds for command ${i + 1}`}
-                    data-testid={`verify-timeout-${i}`}
-                    containerClassName="w-14"
-                    onChange={(e) => update(i, { timeout: e.target.value })}
-                  />
-                  <span>s</span>
-                </span>
-              }
-              actions={
-                editable ? (
-                  <>
+                <span className="shrink-0">s</span>
+                {editable && (
+                  <span className="ml-auto flex shrink-0 items-center gap-2">
                     {i > 0 && (
                       <IcBtn
                         title="Move up"
@@ -401,10 +416,10 @@ export default function ProjectVerificationPanel({
                         <X size={12} />
                       </IcBtn>
                     )}
-                  </>
-                ) : undefined
-              }
-            />
+                  </span>
+                )}
+              </div>
+            </div>
           ))}
         </div>
       )}

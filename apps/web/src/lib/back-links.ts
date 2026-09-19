@@ -19,8 +19,21 @@ export type BackLink = { label: string; href: string };
  * Le dossier MCP est EXCLU, bien que `api` et `mcp` y mènent pour un run : il
  * liste des runs, pas des fils. Y renvoyer un fil le déposerait sur une liste
  * où il ne figure pas (invariant #4).
+ *
+ * SAUF s'il appartient à un PROJET (#143). Un fil ancré à un projet appartient
+ * au projet avant d'appartenir à son canal : tous ses frères sont sur la page
+ * du projet, et « Nodal chats » y noyait le seul endroit où on le retrouve.
  */
-export function threadBackLink(channel: string): BackLink {
+export function threadBackLink(
+  channel: string,
+  /**
+   * Le projet auquel le fil est ANCRÉ, quand il l'est. Lu sur la conversation,
+   * que la page du fil a déjà en main : pas de `?from=` à transporter, pas de
+   * requête de plus, et le retour survit au lien copié.
+   */
+  project?: { id: string; name: string } | null,
+): BackLink {
+  if (project) return { label: `Back to ${project.name}`, href: `/spaces/${project.id}` };
   const key = folderOfJobChannel(channel);
   if (key === null || key === MCP_FOLDER) return { label: 'Back to channels', href: '/chat' };
   return { label: `Back to ${folderLabel(key)}`, href: folderHref(key) };
