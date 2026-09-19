@@ -210,3 +210,85 @@ describe('la borne est dans le SQL ÉMIS @cap:reprendre-conversation/moteur', ()
     expect(params).toContain(5);
   });
 });
+
+// ─── « Recent », tous canaux confondus (#230, 19/09/2026) ────────────────────
+//
+// Le panneau Talk montre, sous les dossiers, les cinq derniers fils D'OÙ QU'ILS
+// VIENNENT. C'est la seule lecture de la barre qui traverse les dossiers, et
+// c'est pour cela qu'elle a sa requête : celle de « Nodal chats » écarte tout
+// ce qui porte un `chat_id`, celle des canaux classe DANS un canal.
+//
+// Mutation vérifiée : le `limit` retiré de `recentConversationsQuery` → le
+// premier test rouge ; le filtre du dossier remis (`duDashboard()`) → le second.
+
+describe('la lecture de « Recent » @cap:reprendre-conversation/moteur', () => {
+  beforeAll(async () => {
+    // Six fils PLUS RÉCENTS que tout ce qui précède, sur deux canaux dont
+    // aucun test au-dessus ne dépend. Des horodatages strictement croissants :
+    // l'ordre attendu ne se joue jamais sur un départage.
+    const lignes = [];
+    for (let i = 1; i <= 3; i += 1) {
+      lignes.push({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'discord',
+        chatId: `discord-${i}`,
+        origin: 'user',
+        title: `discord ${i}`,
+        updatedAt: quand(100 + i * 2),
+      });
+      lignes.push({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'slack',
+        chatId: `slack-${i}`,
+        origin: 'user',
+        title: `slack ${i}`,
+        updatedAt: quand(101 + i * 2),
+      });
+    }
+    await testDb.insert(conversations).values(lignes);
+  });
+
+  it('rend les CINQ derniers fils, de plusieurs canaux à la fois', async () => {
+    const { listRecentThreadReadsAction } = await import('../conversation-actions.ts');
+    const r = await listRecentThreadReadsAction(5);
+    if (!r.ok) throw new Error(r.message);
+
+    // Les cinq plus récents de la base, du plus récent au plus ancien — et ils
+    // ne viennent pas tous du même endroit, ce qu'aucune des deux autres
+    // lectures ne sait faire.
+    expect(r.data.map((c) => c.title)).toEqual([
+      'slack 3',
+      'discord 3',
+      'slack 2',
+      'discord 2',
+      'slack 1',
+    ]);
+  });
+
+  it('ne s’arrête PAS au dossier « Nodal chats »', async () => {
+    const { listRecentThreadReadsAction } = await import('../conversation-actions.ts');
+    const r = await listRecentThreadReadsAction(5);
+    if (!r.ok) throw new Error(r.message);
+    // Aucun des cinq ne vient du tableau de bord : la base porte douze
+    // conversations « Nodal chats », toutes plus anciennes, et la lecture ne
+    // les a pas préférées. Si elle gardait le filtre du dossier, elle aurait
+    // rendu « nodal 12 » et les suivantes.
+    expect(r.data.some((c) => c.title.startsWith('nodal'))).toBe(false);
+  });
+
+  it('borne en SQL, et jamais après coup', async () => {
+    const { recentConversationsQuery } = await import('../folder-threads-sql.ts');
+    const { sql, params } = recentConversationsQuery(
+      commeDb(testDb),
+      seed.entityId,
+      seed.userId,
+      5,
+    ).toSQL();
+    const requete = sql.toLowerCase().replace(/\s+/g, ' ');
+    expect(requete).toContain('limit');
+    expect(requete).toContain('order by');
+    expect(params).toContain(5);
+  });
+});

@@ -15,6 +15,11 @@
 [data-theme='light'] {
   --c-canvas: #eaeaea;
   --c-sidebar: #f2f2f2;
+  /* Le fond du RAIL, un cran plus foncé que celui du panneau (#230, planche
+     « Sidebar propositions · 4a », 19/09/2026). C'est ce qui sépare les deux
+     colonnes à l'œil : le trait `rule-2` seul se perd dès que l'écran est mal
+     réglé, et le rail redevenait une marge vide du panneau. */
+  --c-rail: #e6e6e6;
   --c-paper: #ffffff;
   --c-ink: #0a0a0a;
   --c-ink-2: #26262a;
@@ -108,6 +113,9 @@
 [data-theme='dark'] {
   --c-canvas: #0e0e10;
   --c-sidebar: #161618;
+  /* Le rail en sombre : un cran plus SOMBRE que le panneau, comme en clair il
+     est un cran plus foncé. L'écart se lit dans le même sens des deux côtés. */
+  --c-rail: #101012;
   --c-paper: #1c1c20;
   --c-ink: #f5f5f3;
   --c-ink-2: #d8d8d4;
@@ -171,16 +179,24 @@
    éléments doivent partager. Hors des blocs de thème : la mesure ne change
    pas entre le clair et le sombre. */
 :root {
-  /* La largeur du rail, écrite UNE fois : la barre s'y taille
+  /* La barre latérale est faite de DEUX colonnes depuis le 19/09/2026 (#230,
+     proposition 4a) : un RAIL de 72 px qui porte les trois destinations, et un
+     PANNEAU de 226 px qui montre celle qui est active. */
+  --rail-w: 72px;
+  /* Le panneau ne s'élargit JAMAIS. Un titre de fil long se coupe ; s'il
+     poussait la colonne, toute la page se décalerait en ouvrant un dossier. */
+  --panel-w: 226px;
+
+  /* La largeur TOTALE de la barre, écrite UNE fois : la barre s'y taille
      (`lg:w-[var(--sidebar-w)]`) et le contenu s'en écarte d'autant
      (`lg:ml-[var(--sidebar-w)]`). Les deux valeurs vivaient en dur dans deux
      fichiers ; changer l'une sans l'autre laissait une bande vide ou un
      recouvrement.
 
-     244 px jusqu'au 18/09/2026, 300 px depuis (Quentin) : les sous-menus des
-     dossiers de Channels y écrivent des titres de fils, qui se coupaient au
-     troisième mot. */
-  --sidebar-w: 300px;
+     244 px jusqu'au 18/09/2026, 300 px ensuite (Quentin), et 298 px depuis le
+     rail : elle se CALCULE maintenant, pour qu'élargir le panneau ne laisse
+     plus une largeur totale périmée derrière lui. */
+  --sidebar-w: calc(var(--rail-w) + var(--panel-w));
 }
 
 /* --- Tailwind theme bridge ------------------------------------------ */
@@ -188,6 +204,7 @@
   /* Colors — exposed as utility classes (bg-canvas, text-ink-3, ...) */
   --color-canvas: var(--c-canvas);
   --color-sidebar: var(--c-sidebar);
+  --color-rail: var(--c-rail);
   --color-paper: var(--c-paper);
   --color-ink: var(--c-ink);
   --color-ink-2: var(--c-ink-2);
