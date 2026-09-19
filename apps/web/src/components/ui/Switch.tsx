@@ -13,18 +13,23 @@ type Props = {
   ariaLabelledBy?: string;
   ariaDescribedBy?: string;
   /**
-   * L'IMAGE d'un interrupteur, pas un interrupteur : rend un `<span>` inerte
-   * et invisible aux lecteurs d'écran, au lieu du bouton.
+   * L'IMAGE d'un interrupteur, pas un interrupteur : rend un `<span role="img">`
+   * inerte au lieu du bouton.
    *
    * Vient de la PR #237 (la page Settings en liste, issue #231) : la liste
    * montre l'état de deux réglages sur la ligne, et RIEN ne se modifie depuis
    * la liste — le geste vit dans le panneau, avec sa confirmation. Un bouton
    * qu'on ne peut pas actionner est un mensonge, et un bouton imbriqué dans la
-   * ligne cliquable est un HTML invalide. La valeur reste écrite en toutes
-   * lettres à côté, donc rien n'est perdu au clavier ni à la voix. `onChange`
-   * n'est jamais appelé dans ce mode.
+   * ligne cliquable est un HTML invalide. `onChange` n'est jamais appelé dans
+   * ce mode.
    *
-   * L'image porte exactement les couleurs de l'état qu'elle montre, `disabled`
+   * L'image se nomme elle-même : `role="img"` et un `aria-label` — celui de
+   * l'appelant, sinon « On » / « Off ». Elle a d'abord été posée `aria-hidden`,
+   * au motif que la ligne annonçait l'état à côté ; c'était faux dans cet
+   * arbre, où aucun appelant ne passe encore `readOnly` (Reviewer C, passe 2).
+   * Une image muette qui compte sur un voisin qui n'existe pas n'annonce rien.
+   *
+   * Elle porte exactement les couleurs de l'état qu'elle montre, `disabled`
    * compris : une image qui ne ressemblerait pas au contrôle ne servirait à
    * rien. Elle n'a en revanche ni curseur, ni anneau de focus, ni transition —
    * il n'y a rien à actionner, et rien qui bouge.
@@ -99,7 +104,8 @@ export default function Switch({
   if (readOnly) {
     return (
       <span
-        aria-hidden="true"
+        role="img"
+        aria-label={ariaLabel ?? (checked ? 'On' : 'Off')}
         data-state={checked ? 'on' : 'off'}
         className={`${track} ${disabled ? 'opacity-50' : ''}`}
       >

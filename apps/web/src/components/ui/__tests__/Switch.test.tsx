@@ -19,8 +19,11 @@
 //      Espace déclenchent `onChange` via l'activation native.
 //   6. les deux tailles de la planche rendent leurs géométries, et rien d'autre.
 //   7. le mode image (`readOnly`, venu de la PR #237) rend les MÊMES couleurs
-//      que le contrôle sans en être un : pas de bouton, pas de rôle, pas de
-//      focus. Une liste qui montrerait un autre état que son panneau mentirait.
+//      que le contrôle sans en être un : pas de bouton, pas de rôle
+//      d'interrupteur, pas de focus. Une liste qui montrerait un autre état que
+//      son panneau mentirait. L'image se nomme elle-même (`role="img"` et un
+//      `aria-label`) : posée `aria-hidden`, elle comptait sur un voisin qui
+//      annonce l'état, et aucun appelant ne passe encore `readOnly`.
 //
 // Mutations vérifiées (chacune appliquée à Switch.tsx, le test devant rougir) :
 //   - piste allumée repassée à `bg-agent/20` → le cas « allumé » rougit sur la
@@ -144,12 +147,26 @@ describe('Switch — un seul look, sans ambiguïté @cap:regler-autonomie/ecran'
 // s'y prouve, c'est que l'image RESSEMBLE au contrôle — sinon la liste dit
 // autre chose que le panneau — et qu'elle ne prétend PAS être actionnable.
 describe('Switch — le mode image (readOnly) @cap:regler-autonomie/ecran', () => {
-  it("ne rend aucun bouton : ni <button>, ni rôle, ni état pour un lecteur d'écran", () => {
+  it("ne rend aucun contrôle : ni <button>, ni rôle d'interrupteur, ni aria-checked", () => {
     const html = rendu({ checked: true, readOnly: true });
     expect(html).not.toContain('<button');
     expect(html).not.toContain('role=' + '"switch"');
-    expect(html).not.toContain('aria-checked');
-    expect(html).toContain('aria-hidden="true"');
+    expect(html).not.toContain('aria-' + 'checked');
+  });
+
+  it("se nomme elle-même, au lieu de compter sur un voisin qui n'existe pas", () => {
+    // Elle a d'abord été posée `aria-hidden`, au motif que la ligne annonçait
+    // l'état à côté ; c'était faux dans cet arbre, où aucun appelant ne passe
+    // encore `readOnly` (Reviewer C, passe 2).
+    const allumee = rendu({ checked: true, readOnly: true });
+    expect(allumee).not.toContain('aria-hidden');
+    expect(allumee).toContain('role="img"');
+    expect(allumee).toContain('aria-label="On"');
+    expect(rendu({ checked: false, readOnly: true })).toContain('aria-label="Off"');
+    // Un appelant qui sait nommer son réglage le nomme mieux que « On ».
+    expect(rendu({ checked: true, readOnly: true, ariaLabel: 'MCP server enabled' })).toContain(
+      'aria-label="MCP server enabled"',
+    );
   });
 
   it("porte l'état en attribut, pour que la ligne puisse le styler et le test le lire", () => {

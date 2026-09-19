@@ -10,39 +10,64 @@
 // Corriger les neuf ne suffit pas : rien n'empêcherait le dixième. Cette garde
 // est ce qui l'empêche, et elle ne demande la vigilance de personne.
 //
-// La première version ne cherchait que trois littéraux, et Reviewer C a montré
-// qu'elle laissait passer trois façons réalistes de redessiner un interrupteur.
-// Chacune a désormais sa règle ET son cas de test SUR UN FICHIER FABRIQUÉ :
-// une garde dont on n'a jamais vu le rouge ne prouve rien.
+// ─── CE QUE CETTE GARDE NE VOIT PAS ────────────────────────────────────────
 //
-// Ce qui est refusé, et pourquoi chaque règle est écrite ainsi :
+// Elle lit du texte, pas un arbre syntaxique, et elle ne prétend pas être
+// totale. Trois choses lui échappent par construction, et il vaut mieux les
+// écrire que laisser croire à une barrière étanche :
+//
+//   - un interrupteur SANS rôle, SANS `aria-checked` et dont le pouce n'est
+//     positionné par aucune classe qu'elle connaisse. Un tel contrôle n'est de
+//     toute façon pas accessible — ni lecteur d'écran, ni clavier — et c'est le
+//     lint a11y qui le dira, pas cette garde ;
+//   - une classe assemblée à l'exécution (`` `rounded-${forme}` ``) : la garde
+//     lit des chaînes littérales ;
+//   - une balise JSX dont l'attribut contient un `<` ou un `>` autre qu'une
+//     flèche (les flèches sont neutralisées avant le découpage). La balise est
+//     alors coupée, et un `aria-checked` orphelin est signalé PLUTÔT
+//     qu'ignoré — un rouge se voit, un vert de trop ne se voit pas.
+//
+// ─── CE QU'ELLE REFUSE ─────────────────────────────────────────────────────
 //
 //   1. un rôle d'interrupteur ailleurs que dans `ui/Switch.tsx`, QUEL QUE SOIT
-//      le guillemet : guillemets doubles, simples, ou une accolade JSX.
-//      Chercher le seul littéral à guillemets doubles laissait passer les deux
-//      autres.
-//   2. `aria-checked` hors du composant. Un interrupteur dessiné à la main
-//      porte cet attribut même quand son auteur a oublié le rôle. Les rôles qui
-//      le portent légitimement — radio, checkbox et leurs variantes de menu —
-//      sont exemptés, sinon `ui/OptionRadio.tsx` rougirait à tort.
-//   3. la forme, par deux chemins :
-//      a. une même chaîne de classes portant `translate-x` ET `rounded-full` ;
-//      b. le motif `peer` : une case à cocher `appearance-none` habillée en
-//         interrupteur répartit ces classes sur PLUSIEURS chaînes, donc la
-//         règle (a) ne la voit pas. Elle se cherche par FICHIER : `peer` ou
-//         `appearance-none`, avec `rounded-full` et un `translate-x`.
-//      Le tiroir du Sidebar glisse aussi (`-translate-x-full`) mais n'est pas
-//      rond et n'a pas de `peer` : il ne tombe dans aucun des deux, et c'est le
-//      but des ET.
+//      le guillemet : doubles, simples, ou une accolade JSX. Chercher le seul
+//      littéral à guillemets doubles laissait passer les deux autres.
+//   2. `aria-checked` hors du composant, SUR LA BALISE QUI LE PORTE. Un
+//      interrupteur dessiné à la main porte cet attribut même quand son auteur
+//      a oublié le rôle. Les rôles qui le portent légitimement — radio,
+//      checkbox et leurs variantes de menu — exemptent LEUR balise et elle
+//      seule : à la granularité du fichier, un `role="radio"` posé n'importe
+//      où couvrait tous les `aria-checked` du fichier.
+//   3. la forme, par trois chemins, du plus sûr au plus large, et un seul
+//      verdict par fichier :
+//      a. une même chaîne portant `rounded-full` ET `translate-x` ;
+//      b. LE VOYAGE : le fichier a une chaîne `rounded-full` et DEUX positions
+//         horizontales distinctes (`translate-x-*`, `left-[…]`, `right-[…]`,
+//         `ml-[…]`, `mr-[…]`). Deux positions pour une chose ronde, ce sont
+//         les deux bouts d'une course. Ne regarder que `translate-x` laissait
+//         passer le pouce posé en `left-[19px]`, et ne regarder qu'une seule
+//         chaîne laissait passer le ternaire, qui sépare la position de
+//         `rounded-full` ;
+//      c. le motif `peer` : une case à cocher `appearance-none` habillée
+//         n'écrit parfois QUE le bout allumé (`peer-checked:translate-x-…`),
+//         donc une seule position lui suffit pour être suspecte.
+//      Deux leurres disent pourquoi c'est écrit ainsi : le tiroir du Sidebar
+//      voyage entre deux positions mais n'est pas rond, et la pastille de
+//      `IconButton` est ronde mais posée à `right-[7px]` pour toujours. La
+//      première version de (b), qui acceptait UNE position, la signalait.
 //   4. `trackClassName` / `thumbClassName` — la porte par laquelle une couleur
 //      d'appelant revenait dans le composant. Celle-là vaut pour TOUS les
 //      fichiers, le composant compris.
 //
-// Mutations vérifiées, chacune appliquée puis annulée, son cas fabriqué devant
-// rougir : le rôle réduit au seul littéral à guillemets doubles ; la règle
-// `aria-checked` retirée ; le motif `peer` retiré. Vérifié aussi que le ET de
-// la règle 3a remplacé par un OU fait rougir le cas du tiroir du Sidebar — elle
-// distingue donc une forme d'interrupteur d'une simple translation.
+// Chaque règle a son cas SUR UN FICHIER FABRIQUÉ, et chaque leurre le sien :
+// une garde dont on n'a jamais vu le rouge ne prouve rien, et une garde dont
+// on n'a jamais vu le vert se fait désactiver au premier faux positif.
+//
+// Mutations vérifiées, chacune appliquée puis annulée, son cas devant rougir :
+// le rôle réduit au littéral à guillemets doubles ; la règle `aria-checked`
+// retirée ; son exemption ramenée à la granularité fichier ; la règle du
+// voyage retirée ; le motif `peer` retiré ; le voyage abaissé à UNE position
+// (qui fait rougir le leurre de la pastille).
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -64,11 +89,15 @@ const ROLE_INTERRUPTEUR = /role\s*=\s*\{?\s*["'`]switch["'`]/;
 const ROLE_COCHABLE =
   /role\s*=\s*\{?\s*["'`](?:radio|checkbox|menuitemradio|menuitemcheckbox)["'`]/;
 
+const ARIA_COCHE = 'aria-' + 'checked';
+
 /** Les tests parlent DES interrupteurs : ils en citent les classes et le rôle
  *  sans en dessiner. Les inclure ferait rougir la garde sur elle-même. */
 function estUnTest(chemin: string): boolean {
-  return /(^|[\\/])__tests__[\\/]/.test(chemin) || /\.test\.tsx?$/.test(chemin);
+  return /(^|[\\/])__tests__[\\/]/.test(chemin) || /\.test\.[jt]sx?$/.test(chemin);
 }
+
+const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
 
 function sources(dir: string, acc: string[] = []): string[] {
   for (const nom of readdirSync(dir)) {
@@ -78,7 +107,7 @@ function sources(dir: string, acc: string[] = []): string[] {
       sources(p, acc);
       continue;
     }
-    if (extname(p) === '.tsx' || extname(p) === '.ts') acc.push(p);
+    if (EXTENSIONS.has(extname(p))) acc.push(p);
   }
   return acc;
 }
@@ -96,6 +125,51 @@ function chainesDeClasses(texte: string): string[] {
   return [...texte.matchAll(/(["'`])([^"'`\n]*)\1/g)].map((m) => m[2]!);
 }
 
+/** Les balises JSX ouvrantes, attributs compris, sur plusieurs lignes.
+ *  Les flèches `=>` sont neutralisées d'abord : leur `>` fermerait la balise au
+ *  milieu d'une prop et séparerait un `aria-checked` de son rôle. */
+function balisesOuvrantes(texte: string): string[] {
+  return [...texte.replace(/=>/g, '=·').matchAll(/<[A-Za-z][^<>]*>/g)].map((m) => m[0]);
+}
+
+/** Une position horizontale : le pouce glisse (`translate-x`), on le pose
+ *  (`left-[…]` / `right-[…]`) ou on le pousse (`ml-[…]` / `mr-[…]`). Les
+ *  marges ne comptent qu'en valeur arbitraire : `ml-2` est partout et ne dit
+ *  rien. Le préfixe de variante est accepté (`peer-checked:left-[19px]`). */
+const POSITION_X = /(^|[\s:])(-?translate-x-[\w.[\]%/-]+|-?(?:left|right|ml|mr)-\[[^\]\s]+\])/g;
+
+/** Les positions horizontales DISTINCTES d'un fichier. Deux, c'est un voyage :
+ *  les deux bouts d'une course. Une seule, c'est un élément posé une fois pour
+ *  toutes — une pastille de notification, par exemple. */
+function positionsDistinctes(classes: string[]): Set<string> {
+  const vues = new Set<string>();
+  for (const c of classes) for (const m of c.matchAll(POSITION_X)) vues.add(m[2]!);
+  return vues;
+}
+
+/** La forme d'un interrupteur dans les classes d'un fichier, ou `null`.
+ *  Trois chemins, du plus sûr au plus large, et un seul verdict : un fichier
+ *  n'est pas coupable deux fois du même dessin. */
+function formeDInterrupteur(classes: string[]): string | null {
+  if (classes.some((c) => c.includes('rounded-full') && c.includes('translate-x'))) {
+    return "forme d'interrupteur";
+  }
+  if (!classes.some((c) => c.includes('rounded-full'))) return null;
+
+  const positions = positionsDistinctes(classes);
+  // Deux positions pour une chose ronde, c'est une course entre deux bouts.
+  // Une seule, c'est un élément posé une fois — la pastille de `IconButton`
+  // est à `right-[7px]` et n'en bouge jamais.
+  if (positions.size >= 2) return 'pouce rond qui voyage entre deux positions';
+
+  // Le motif `peer` cache la seconde position dans un état CSS : une case à
+  // cocher `appearance-none` habillée n'écrit parfois que le bout allumé.
+  const habillee = classes.some((c) => /(^|\s)peer(\s|$)/.test(c) || c.includes('appearance-none'));
+  if (habillee && positions.size >= 1) return 'case à cocher habillée en interrupteur';
+
+  return null;
+}
+
 /** Les interrupteurs dessinés hors du composant, chacun avec sa raison. */
 function interrupteursDessinesAilleurs(fichiers: Fichier[]): string[] {
   const trouves: string[] = [];
@@ -106,22 +180,19 @@ function interrupteursDessinesAilleurs(fichiers: Fichier[]): string[] {
     if (chemin === LE_COMPOSANT) continue;
 
     if (ROLE_INTERRUPTEUR.test(texte)) trouves.push(`${chemin} — rôle d'interrupteur`);
-    if (texte.includes('aria-checked') && !ROLE_COCHABLE.test(texte)) {
-      trouves.push(`${chemin} — aria-checked sans rôle cochable`);
+
+    if (texte.includes(ARIA_COCHE)) {
+      const porteuses = balisesOuvrantes(texte).filter((b) => b.includes(ARIA_COCHE));
+      // Aucune balise lisible ne le porte : la garde n'a pas su découper, elle
+      // le dit au lieu de se taire.
+      const illisible = porteuses.length === 0;
+      if (illisible || porteuses.some((b) => !ROLE_COCHABLE.test(b))) {
+        trouves.push(`${chemin} — aria-checked sans rôle cochable sur la même balise`);
+      }
     }
 
-    const classes = chainesDeClasses(texte);
-    if (classes.some((c) => c.includes('translate-x') && c.includes('rounded-full'))) {
-      trouves.push(`${chemin} — forme d'interrupteur`);
-    }
-    const habillee = classes.some(
-      (c) => /(^|\s)peer(\s|$)/.test(c) || c.includes('appearance-none'),
-    );
-    const ronde = classes.some((c) => c.includes('rounded-full'));
-    const glisse = classes.some((c) => c.includes('translate-x'));
-    if (habillee && ronde && glisse) {
-      trouves.push(`${chemin} — case à cocher habillée en interrupteur`);
-    }
+    const raison = formeDInterrupteur(chainesDeClasses(texte));
+    if (raison) trouves.push(`${chemin} — ${raison}`);
   }
   return trouves;
 }
@@ -149,7 +220,7 @@ describe('architecture — la garde, sur des fichiers fabriqués', () => {
   // Les littéraux sont assemblés à l'exécution : un scanner qui lirait ce
   // fichier ne doit pas prendre ses exemples pour des déclarations.
   const ROLE = 'role=';
-  const ARIA = 'aria-' + 'checked';
+  const ARIA = ARIA_COCHE;
 
   const REFUSES: Array<{ nom: string; source: string; raison: RegExp }> = [
     {
@@ -168,18 +239,43 @@ describe('architecture — la garde, sur des fichiers fabriqués', () => {
       raison: /sans rôle cochable/,
     },
     {
+      nom: 'aria-checked sur une balise sans rôle, dans un fichier qui en a un ailleurs',
+      source: [
+        'export const Radio = () => <div ' + ROLE + '"radio" ' + ARIA + '={true} />;',
+        'export const T = () => <button ' + ARIA + '={true} />;',
+      ].join('\n'),
+      raison: /sans rôle cochable/,
+    },
+    {
       nom: 'la forme dans une seule chaîne',
       source: `export const T = () => <span className="rounded-full translate-x-4" />;`,
       raison: /forme d'interrupteur/,
     },
     {
-      nom: 'une case à cocher habillée, classes éparpillées',
+      nom: 'un pouce posé en left-[…] au lieu de glisser, avec role="checkbox"',
+      source: [
+        'export const T = ({ on }: { on: boolean }) => (',
+        '  <span className="relative inline-flex h-5 w-9 rounded-full bg-ink-4">',
+        '    <input type="checkbox" ' + ROLE + '"checkbox" className="sr-only" />',
+        '    <span',
+        '      className={[',
+        "        'absolute h-3.5 w-3.5 rounded-full bg-paper',",
+        "        on ? 'left-[19px]' : 'left-[3px]',",
+        "      ].join(' ')}",
+        '    />',
+        '  </span>',
+        ');',
+      ].join('\n'),
+      raison: /voyage entre deux positions/,
+    },
+    {
+      nom: "une case à cocher habillée qui n'écrit que le bout allumé",
       source: [
         'export const T = () => (',
         '  <label className="relative inline-flex">',
         '    <input type="checkbox" className="peer sr-only" />',
         '    <span className="h-5 w-9 rounded-full bg-ink-4" />',
-        '    <span className="absolute translate-x-[3px] peer-checked:translate-x-[19px]" />',
+        '    <span className="absolute h-3.5 w-3.5 peer-checked:translate-x-[19px]" />',
         '  </label>',
         ');',
       ].join('\n'),
@@ -198,12 +294,31 @@ describe('architecture — la garde, sur des fichiers fabriqués', () => {
       source: `export const T = () => <aside className="fixed border-r transition-transform -translate-x-full" />;`,
     },
     {
-      nom: 'OptionRadio, qui porte aria-checked avec un rôle cochable',
-      source: `export const T = () => <div ${ROLE}"radio" ${ARIA}={true} className="rounded-[10px]" />;`,
+      nom: 'OptionRadio, dont le rôle cochable est SUR la balise qui porte aria-checked',
+      source: [
+        'export const T = () => (',
+        '  <div',
+        '    ' + ROLE + '"radio"',
+        '    ' + ARIA + '={active}',
+        '    onKeyDown={(e) => handle(e)}',
+        '    className="rounded-[10px] border mb-2"',
+        '  />',
+        ');',
+      ].join('\n'),
     },
     {
       nom: "le Select, qui a peer sans dessiner d'interrupteur",
       source: `export const T = () => <select className="peer appearance-none rounded-md" />;`,
+    },
+    {
+      nom: 'la pastille de IconButton, ronde et posée à UNE position pour toujours',
+      source: [
+        'export const T = () => (',
+        '  <button className="rounded-full">',
+        '    <span className="absolute top-[6px] right-[7px] h-1.5 w-1.5 rounded-full bg-skill-vivid" />',
+        '  </button>',
+        ');',
+      ].join('\n'),
     },
   ];
 
