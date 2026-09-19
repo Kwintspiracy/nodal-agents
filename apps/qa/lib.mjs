@@ -670,7 +670,7 @@ export function releaseDuHash(hash) {
   if (!m) return '';
   try {
     return decodeURIComponent(m[1]);
-  } catch (e) {
+  } catch {
     return '';
   }
 }
