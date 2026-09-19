@@ -73,10 +73,13 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
           'LLM Providers',
         ],
       ],
-      // Les espaces de travail ouvrent le panneau Work depuis le 19/09/2026.
-      ['/chat', ['Workspaces']],
       [
-        '/',
+        // `/logs`, et PLUS `/` : la racine ouvre le panneau Work depuis
+        // l'issue #248. `/logs` est une route de Run qui EXISTE aujourd'hui —
+        // `/dashboard`, ou la page du tableau de bord demenage, n'arrive
+        // qu'avec la PR de l'ecran d'accueil, et un parcours ne visite pas une
+        // adresse qui n'est pas encore la.
+        '/logs',
         [
           // 'Home' jusqu'au 18/09/2026 : la barre dit maintenant 'Dashboard'.
           // Les ROUTES, elles, n'ont pas bouge.
@@ -99,6 +102,21 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
         ).toBeVisible();
       }
     }
+
+    // Les espaces de travail ne sont PAS un lien : depuis le 19/09/2026 au
+    // soir, « Workspaces » est un DOSSIER du panneau Work, comme un canal. Sa
+    // ligne est un bouton qui plie et deplie ; le chemin vers `/spaces` est le
+    // « See all » de son sous-menu, une fois deplie.
+    await page.goto('/chat');
+    const dossier = page.locator('[data-testid="inbox-folder-workspaces"]');
+    await expect(dossier).toBeVisible();
+    await expect(dossier).toHaveAttribute('aria-expanded', 'false');
+    await dossier.click();
+    await expect(dossier).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('[data-testid="folder-see-all-workspaces"]')).toHaveAttribute(
+      'href',
+      '/spaces',
+    );
 
     // Settings et Approvals vivent sur le RAIL, pas dans un panneau : ce qui
     // attend une reponse se voit de n'importe quelle destination.
