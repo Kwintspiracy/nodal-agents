@@ -27,6 +27,7 @@
 // réglage que la base n'a pas).
 
 import { useEffect, useRef, useState, useTransition } from 'react';
+import { useLayer } from '@/lib/layers.ts';
 import { toast } from 'sonner';
 import InlineSelect, { type InlineSelectRow } from '@/components/ui/InlineSelect';
 import { listKeyModelsAction, setAgentModelAndEffortAction } from '@/lib/actions.ts';
@@ -116,22 +117,20 @@ export default function ModelEffortChip({
     };
   }, [current.llmKeyId, liveModels]);
 
-  // Effet 2 — fermer au clic dehors et à Échap. Il n'appelle pas non plus de
-  // setState synchrone : il pose deux écouteurs, et c'est l'ÉVÉNEMENT qui
-  // ferme, plus tard.
+  // Échap : par la pile des calques (`@/lib/layers.ts`), comme tous les autres.
+  // Calque non modal : le dernier ouvert se ferme le premier.
+  useLayer(open !== null, () => setOpen(null));
+
+  // Effet 2 — fermer au clic dehors. Il n'appelle pas non plus de setState
+  // synchrone : il pose un écouteur, et c'est l'ÉVÉNEMENT qui ferme, plus tard.
   useEffect(() => {
     if (open === null) return;
     function onPointerDown(e: MouseEvent): void {
       if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(null);
     }
-    function onKeyDown(e: KeyboardEvent): void {
-      if (e.key === 'Escape') setOpen(null);
-    }
     document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
     return () => {
       document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
     };
   }, [open]);
 

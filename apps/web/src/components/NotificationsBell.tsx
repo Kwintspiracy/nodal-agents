@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
+import { useLayer } from '@/lib/layers.ts';
 import Link from 'next/link';
 import { Bell, ArrowClockwise } from '@phosphor-icons/react';
 import { toast } from 'sonner';
@@ -92,14 +93,10 @@ function ApprovalsDropdown({
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [onClose]);
 
-  // Close on Escape.
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  // Échap : par la pile des calques (`@/lib/layers.ts`), comme tous les
+  // autres. Ce menu n'est monté que lorsqu'il est ouvert, d'où le `true`.
+  // Calque non modal : le dernier ouvert se ferme le premier.
+  useLayer(true, onClose);
 
   return (
     <div
