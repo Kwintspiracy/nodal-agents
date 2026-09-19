@@ -200,6 +200,43 @@ describe('document — le chemin RÉEL, pas la clé repliée en casse', () => {
     });
     expect(config).toMatchObject({ kind: 'ready', subject: documentVerifier.canonicalize(p) });
   });
+
+  // Constat mineur 3 de la revue C de la PR #66 (dette #88, issue #211) : le
+  // repli reste FAUX sur un volume sensible à la casse. Il ne se retire pas —
+  // les lignes d'état écrites avant `display_path_snapshot` n'ont que la clé,
+  // et sur un volume insensible à la casse, le cas ordinaire sous Windows,
+  // elle ouvre le bon fichier. Ce qui se retire, c'est le SILENCE : un
+  // « not found » sur une adresse repliée accusait le fichier, jamais
+  // l'adresse (invariant #4).
+  it('sur un repli, un « not found » nomme le repli — il n’accuse pas le fichier', async () => {
+    const absent = join(dir, 'Casse', 'JAMAIS-ECRIT.md');
+    const config = await documentVerifier.loadConfig(null as never, {
+      entityId: 'e',
+      canonicalKey: documentVerifier.canonicalize(absent),
+    });
+    const proof = await documentVerifier.runProof(config as ReadyConfig, async () => {});
+    expect(proof.verdict).toBe('red');
+    const exists = proof.records[0];
+    expect(exists?.command).toBe('exists');
+    expect(exists?.stderrTail).toMatch(/not found/i);
+    expect(
+      exists?.stderrTail,
+      'le rouge ne dit pas que l’adresse est la clé repliée, pas un vrai chemin',
+    ).toMatch(/case-folded key/i);
+  });
+
+  it('avec un chemin d’affichage, ce rouge-là n’invoque aucun repli', async () => {
+    const absent = join(dir, 'Casse', 'JAMAIS-ECRIT-NON-PLUS.md');
+    const config = await documentVerifier.loadConfig(null as never, {
+      entityId: 'e',
+      canonicalKey: documentVerifier.canonicalize(absent),
+      displayPath: absent,
+    });
+    const proof = await documentVerifier.runProof(config as ReadyConfig, async () => {});
+    expect(proof.verdict).toBe('red');
+    expect(proof.records[0]?.stderrTail).toMatch(/not found/i);
+    expect(proof.records[0]?.stderrTail).not.toMatch(/case-folded key/i);
+  });
 });
 
 describe('document — bien formé, selon son type', () => {

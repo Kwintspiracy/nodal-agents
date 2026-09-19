@@ -57,6 +57,19 @@ export interface ReadyConfig {
    * `cwd` lui suffit ; un constat sans commande n'a que ça.
    */
   readonly subject?: string;
+  /**
+   * `subject` est la clé REPLIÉE EN CASSE, faute de `displayPath` — pas une
+   * adresse que quelqu'un a écrite.
+   *
+   * Le repli lui-même reste (voir `displayPath` plus haut) : les lignes d'état
+   * antérieures à `display_path_snapshot` n'ont que la clé, et sur un volume
+   * insensible à la casse — le cas ordinaire sous Windows — elle ouvre le bon
+   * fichier. Sur un volume sensible à la casse, elle rate un fichier qui
+   * existe, et le rouge accusait alors le fichier (constat mineur 3 de la
+   * revue C de la PR #66, issue #211). Le vérificateur le DIT désormais dans
+   * la raison du constat : le repli n'est plus silencieux (invariant #4).
+   */
+  readonly subjectIsCanonicalKey?: boolean;
 }
 
 /**
