@@ -34,11 +34,11 @@ Or, without installing anything globally: `npx nodal-agents up`.
 **If npm asks you to approve install scripts.** Recent npm versions print `npm warn allow-scripts …` and skip the install step of the packages they list. Only one of them matters: `@embedded-postgres/<platform>` carries the Postgres binaries Nodal boots. Approve that one, then install again:
 
 ```bash
-npm approve-scripts @embedded-postgres/windows-x64   # or darwin-arm64, darwin-x64, linux-x64, linux-arm64
+npm approve-scripts @embedded-postgres/windows-x64   # the name npm printed: darwin-arm64, darwin-x64, windows-x64, or linux-x64 / arm64 / arm / ia32 / ppc64
 npm install -g nodal-agents@latest
 ```
 
-The other packages npm lists run fine without their scripts. [Full note in the docs](https://kwintspiracy.github.io/nodal-agents/docs/getting-started).
+The other packages npm lists run fine without their scripts. On Windows the gate is harmless: that package ships the executables in its tarball and its install step has nothing to recreate, so if `up` still fails there the cause is elsewhere and the output is worth reporting. [Full note in the docs](https://kwintspiracy.github.io/nodal-agents/docs/getting-started).
 
 ---
 

@@ -159,6 +159,14 @@ describe('embedded Postgres binaries @cap:installer-et-demarrer/moteur', () => {
     if (verdict.ok) return;
     expect(verdict.reason).toBe('UNSUPPORTED_PLATFORM');
     expect(verdict.message).not.toContain('approve-scripts');
+    expect(verdict.message).toContain(
+      'Supported: macOS (arm64, x64), Linux (x64, arm64, arm, ia32, ppc64), Windows (x64)',
+    );
+    // Le message renvoyait vers `NODALAI_DATABASE_URL`, un réglage qui n'existe
+    // nulle part : `buildDatabaseUrl` construit toujours l'URL embarquée, `up`
+    // n'a pas de mode Postgres externe (constat de revue, passe 1). Un geste
+    // inventé coûte plus cher qu'un silence, donc ce cas le tient fermé.
+    expect(verdict.message).not.toContain('DATABASE_URL');
   });
 });
 
@@ -221,12 +229,29 @@ describe('embedded Postgres manifest and layout @cap:installer-et-demarrer/moteu
     expect(platformPackageDir(BINARIES).replace(/\\/g, '/')).toBe(PKG_DIR);
   });
 
-  // Le seul cas qui touche l'installation réelle. Il prouve la résolution du
-  // paquet optionnel, que rien d'autre n'exerce : `embedded-postgres` n'expose
-  // que `dist/index.js`, et `binary.js` se charge par chemin.
-  it('this install is complete, and the probe can see it', async () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // LE SEUL CAS QUI MESURE LA MACHINE, et il est marqué comme tel (constat de
+  // revue, passe 1). Il ne juge pas la règle : celle-ci est tenue par les cas
+  // purs au-dessus. Il prouve le CÂBLAGE, que rien d'autre n'exerce — la
+  // résolution de `@embedded-postgres/<plateforme>`, dépendance OPTIONNELLE
+  // qu'aucun `node_modules` ne hisse jusqu'à `apps/cli`, et le chargement par
+  // chemin de `binary.js` parce que `embedded-postgres` n'exporte que
+  // `dist/index.js`. Une faute de frappe dans ce chemin ferait refuser tout
+  // démarrage, et aucun cas pur ne la verrait.
+  //
+  // Ce qu'il lit donc, c'est CE dépôt-ci : le `node_modules` du poste ou du
+  // runner CI. Il est borné à ce que cette machine peut porter — sur une
+  // plateforme sans paquet, le seul verdict attendu est le refus qui le dit.
+  it('the probe reads THIS machine: a supported platform has a complete install', async () => {
+    const expected = embeddedPostgresPackageName(process.platform, process.arch);
     const verdict = await probeEmbeddedPostgres();
+    if (expected === null) {
+      expect(verdict.ok).toBe(false);
+      if (verdict.ok) return;
+      expect(verdict.reason).toBe('UNSUPPORTED_PLATFORM');
+      return;
+    }
     expect(verdict.ok ? '' : verdict.message).toBe('');
-    expect(verdict.ok).toBe(true);
+    expect(verdict).toEqual({ ok: true, packageName: expected });
   });
 });

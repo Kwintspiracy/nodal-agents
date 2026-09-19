@@ -43,14 +43,26 @@ npm approve-scripts @embedded-postgres/darwin-arm64
 npm install -g nodal-agents@latest
 ```
 
-Use the name for your machine: `darwin-arm64` (Apple Silicon), `darwin-x64`
-(Intel Mac), `linux-x64`, `linux-arm64`, or `windows-x64`. It is the name npm
-printed in the warning.
+Use the name for your machine. It is the one npm printed in the warning, and
+there is exactly one per platform: `darwin-arm64` (Apple Silicon), `darwin-x64`
+(Intel Mac), `windows-x64`, or, on Linux, `linux-x64`, `linux-arm64`,
+`linux-arm`, `linux-ia32`, `linux-ppc64`.
 
 <Callout type="info">
   Skip this if your npm printed no such warning. Older npm has no `approve-scripts` command at all
   (npm 11.5.2, for one), and nothing to approve.
 </Callout>
+
+**On Windows the gate is harmless.** The published
+`@embedded-postgres/windows-x64` ships the Postgres executables inside the
+tarball, and its install step has nothing to do there: the list of links it
+would recreate is empty. Measured on the registry with
+`npm pack @embedded-postgres/windows-x64@18.3.0-beta.17 --dry-run --json`:
+1502 files, `native/bin/postgres.exe` among them, and a `native/pg-symlinks.json`
+of 2 bytes, which is `[]`. The same file weighs 1100 bytes in the Linux package.
+So if `nodal-agents up` still fails on Windows after that warning, the cause is
+elsewhere. Send the output of `nodal-agents up` with your report rather than
+approving scripts and hoping.
 
 ## First run: the setup wizard
 

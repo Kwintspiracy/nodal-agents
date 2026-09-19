@@ -293,6 +293,13 @@ The other packages npm lists (`@whiskeysockets/baileys`, `protobufjs`,
 `tesseract.js`) run fine without their scripts. See
 [Getting Started](/docs/getting-started#if-npm-asks-you-to-approve-install-scripts).
 
+<Callout type="warn">
+  On Windows the gate is harmless. `@embedded-postgres/windows-x64` ships the Postgres executables
+  in its tarball, and the list of links its install step would recreate is empty (2 bytes, `[]`,
+  against 1100 bytes in the Linux package). So a Windows install that fails after that warning fails
+  for another reason: send the output of `nodal-agents up` rather than assuming the gate.
+</Callout>
+
 ## Related
 
 - [Connecting a tool](/docs/guides/connect-a-tool) — the full connector setup flow

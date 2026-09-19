@@ -16,18 +16,29 @@
 // l'erreur qui sort aujourd'hui vient du postmaster, trois couches plus bas,
 // sans jamais nommer la porte qui a mordu.
 //
-// CE QUE LE SCRIPT FAIT VRAIMENT, vérifié dans le paquet 18.3.0-beta.17 plutôt
-// que supposé : son `postinstall` est `node scripts/hydrate-symlinks.js`, qui
-// relit `native/pg-symlinks.json` et recrée les liens que le tarball npm ne
-// peut pas transporter. Les binaires, eux, SONT dans le tarball (`files`
-// contient `/native/**/*`). Donc :
+// CE QUE LE SCRIPT FAIT VRAIMENT, lu dans le paquet PUBLIÉ plutôt que supposé.
+// Son `postinstall` est `node scripts/hydrate-symlinks.js`, qui relit
+// `native/pg-symlinks.json` et recrée les liens qu'un tarball npm ne peut pas
+// transporter. Les binaires, eux, sont DANS le tarball. Mesuré sur le registre,
+// `npm pack <paquet>@18.3.0-beta.17 --dry-run --json` :
+//
+//   @embedded-postgres/windows-x64 : 1502 fichiers, 109 Mo décompressés, dont
+//     native/bin/postgres.exe (10 230 272 o), native/bin/pg_ctl.exe (130 560 o),
+//     native/bin/initdb.exe (243 712 o) et 95 fichiers sous native/lib.
+//     native/pg-symlinks.json y pèse 2 OCTETS — c'est `[]`.
+//   @embedded-postgres/linux-x64 : le même manifeste y pèse 1100 octets.
+//
+// Donc :
 //
 //   · macOS et Linux : le manifeste porte 17 et 14 liens (libpq, libcrypto,
 //     libicu…). Script sauté = liens absents = le postmaster ne charge pas ses
 //     bibliothèques. La porte npm se voit.
-//   · Windows : le manifeste est VIDE. Le script n'y crée rien, donc la porte
-//     npm n'y retire rien non plus. On ne peut pas l'y détecter, et prétendre
-//     le contraire serait un diagnostic inventé (invariant #4).
+//   · Windows : le manifeste est VIDE et les exécutables sont livrés. Le script
+//     n'y crée RIEN, donc la porte npm n'y casse rien et n'y laisse aucune
+//     trace. On ne peut pas l'y détecter, et prétendre le contraire serait un
+//     diagnostic inventé (invariant #4). Si `up` échoue quand même sur Windows
+//     après un `npm warn allow-scripts`, la cause est ailleurs : il faut la
+//     sortie réelle de la commande, pas cette hypothèse.
 //
 // D'où deux constats distincts, jamais fusionnés : des liens promis et absents
 // (la porte, avec certitude), et des binaires absents (installation
@@ -147,9 +158,14 @@ export function inspectEmbeddedPostgres(reading: BinariesReading): BinariesVerdi
       reason: 'UNSUPPORTED_PLATFORM',
       packageName: null,
       missing: [],
+      // AUCUN geste de contournement n'est proposé, parce qu'il n'en existe
+      // aucun : `buildDatabaseUrl` construit toujours l'URL de la base
+      // embarquée, `up` n'a pas de mode « Postgres externe », et inventer un
+      // réglage serait pire que de ne rien dire (constat de revue, passe 1).
       message:
-        'The embedded Postgres has no build for this platform, so Nodal cannot start its database here.\n' +
-        'Point NODALAI_DATABASE_URL at a Postgres you run yourself, or use a supported platform (macOS arm64/x64, Linux, Windows x64).',
+        'Nodal has no embedded Postgres build for this platform, so it cannot start its database here.\n' +
+        'Supported: macOS (arm64, x64), Linux (x64, arm64, arm, ia32, ppc64), Windows (x64).\n' +
+        'If you need this one, please open an issue: https://github.com/Kwintspiracy/nodal-agents/issues',
     };
   }
 
