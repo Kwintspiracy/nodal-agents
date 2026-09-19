@@ -15,7 +15,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { scanForServerUsesOfClientValues } from '../scan-server-uses-client-value.ts';
+import {
+  scanForServerUsesOfClientValues,
+  retirerCommentaires,
+} from '../scan-server-uses-client-value.ts';
 
 let racine: string;
 
@@ -39,6 +42,9 @@ function scanner(): string[] {
 }
 
 const CLIENT = "'use client';\nexport function helper(x: string) {\n  return x;\n}\n";
+
+/** Une CONSTANTE d'un module client — la forme de #240, pas celle de #237. */
+const TABLE_CLIENT = "'use client';\nexport const DOT = { success: 'bg-ok' };\n";
 
 describe('scanForServerUsesOfClientValues — ce qu’elle attrape', () => {
   it('une page serveur qui APPELLE une fonction d’un module client', () => {
@@ -73,6 +79,37 @@ describe('scanForServerUsesOfClientValues — ce qu’elle attrape', () => {
       "import { helper } from './conduit.ts';\nexport default () => <p>{helper('a')}</p>;\n",
     );
     expect(scanner().join('')).toContain('ré-exporte');
+  });
+
+  it('une page serveur qui LIT une constante d’un module client par une clé (#240)', () => {
+    poser('app/thing/Client.tsx', TABLE_CLIENT);
+    poser(
+      'app/thing/page.tsx',
+      "import { DOT } from './Client.tsx';\nexport default ({ o }: { o: string }) => (\n  <span className={DOT[o] ?? 'gris'} />\n);\n",
+    );
+    const v = scanner();
+    expect(v, 'la lecture ne jette pas : elle rend `undefined`, donc le repli').toHaveLength(1);
+    expect(v[0]).toContain('DOT est LU');
+    expect(v[0]).toContain('undefined');
+  });
+
+  it('une page serveur qui LIT un CHAMP d’un objet d’un module client', () => {
+    poser('app/thing/Client.tsx', TABLE_CLIENT);
+    poser(
+      'app/thing/page.tsx',
+      "import { DOT } from './Client.tsx';\nexport default () => <span className={DOT.success} />;\n",
+    );
+    expect(scanner()[0]).toContain('DOT est LU');
+  });
+
+  it('une lecture relayée par un RÉ-EXPORT', () => {
+    poser('app/thing/Client.tsx', TABLE_CLIENT);
+    poser('app/thing/conduit.ts', "export { DOT } from './Client.tsx';\n");
+    poser(
+      'app/thing/page.tsx',
+      "import { DOT } from './conduit.ts';\nexport default () => <span className={DOT.success} />;\n",
+    );
+    expect(scanner()[0]).toContain('ré-exporte');
   });
 
   it('RIEN quand le composant client est seulement RENDU', () => {
@@ -138,12 +175,93 @@ describe('scanForServerUsesOfClientValues — ses angles morts, tenus à jour', 
     expect(scanner(), 'angle mort documenté : entrées hors de SERVER_ENTRY').toEqual([]);
   });
 
-  it('prend un appel écrit dans un COMMENTAIRE pour un vrai appel', () => {
+  it('ne dit rien d’un binding PASSÉ EN VALEUR à un appel', () => {
+    // Angle mort assumé, pas un oubli (Reviewer C, #268) : passer la référence
+    // est légal. Ce qui casse est la lecture, et elle a lieu chez le
+    // destinataire — la voir d'ici demanderait de descendre dans `emballe`.
+    poser('app/thing/Client.tsx', TABLE_CLIENT);
+    poser('app/thing/util.ts', 'export const emballe = (x: unknown) => ({ x });\n');
+    poser(
+      'app/thing/page.tsx',
+      "import { DOT } from './Client.tsx';\nimport { emballe } from './util.ts';\nexport default () => <p>{String(emballe(DOT))}</p>;\n",
+    );
+    expect(scanner(), 'angle mort documenté : le passage en valeur').toEqual([]);
+  });
+
+  it('prend un appel écrit dans une CHAÎNE pour un vrai appel', () => {
+    poser('app/thing/Client.tsx', CLIENT);
+    poser(
+      'app/thing/page.tsx',
+      "import { helper } from './Client.tsx';\nconst phrase = 'appelle helper(x) ailleurs';\nexport default () => <p>{phrase}</p>;\n",
+    );
+    expect(scanner(), 'angle mort documenté : faux rouge sur une chaîne').toHaveLength(1);
+  });
+});
+
+// ─── Les commentaires ne comptent plus (#240) ───────────────────────────────
+//
+// C'était un angle mort assumé tant que la garde ne cherchait qu'un APPEL : une
+// phrase qui en contient un est rare. En cherchant aussi une LECTURE (`X.y`),
+// une phrase qui NOMME le binding suffit — le point final se lit comme un accès
+// à un champ. `retirerCommentaires` les efface avant la recherche.
+
+describe('retirerCommentaires — ce que la garde ne lit plus', () => {
+  it('un appel écrit dans un COMMENTAIRE de ligne ne compte pas', () => {
     poser('app/thing/Client.tsx', CLIENT);
     poser(
       'app/thing/page.tsx',
       "import { helper } from './Client.tsx';\n// on ne fait PAS helper('a') ici\nexport default () => <p>rien</p>;\n",
     );
-    expect(scanner(), 'angle mort documenté : faux rouge sur un commentaire').toHaveLength(1);
+    expect(scanner()).toEqual([]);
+  });
+
+  it('une lecture citée dans un COMMENTAIRE de bloc ne compte pas', () => {
+    poser('app/thing/Client.tsx', TABLE_CLIENT);
+    poser(
+      'app/thing/page.tsx',
+      "import { DOT } from './Client.tsx';\n/**\n * Autrefois `DOT[o]`, aujourd'hui ailleurs.\n */\nexport default () => <p>rien</p>;\n",
+    );
+    expect(scanner()).toEqual([]);
+  });
+
+  it('un nom en FIN DE PHRASE dans un commentaire n’est pas un accès à un champ', () => {
+    // Le seul faux rouge que l'élargissement a produit sur l'arbre réel :
+    // `agents/page.tsx` écrit « the view used by AgentsList. Active jobs… », et
+    // le point de la phrase se lit comme `AgentsList.Active`.
+    poser(
+      'app/thing/Client.tsx',
+      "'use client';\nexport default function Liste() {\n  return null;\n}\n",
+    );
+    poser(
+      'app/thing/page.tsx',
+      "import Liste from './Client.tsx';\n// the view used by Liste. Active jobs feed the badges\nexport default () => <Liste />;\n",
+    );
+    expect(scanner()).toEqual([]);
+  });
+
+  it('un `//` d’URL ou de motif n’efface PAS la suite de la ligne', () => {
+    poser('app/thing/Client.tsx', TABLE_CLIENT);
+    poser(
+      'app/thing/page.tsx',
+      "import { DOT } from './Client.tsx';\nconst u = 'https://exemple.test';\nconst r = /a\\/\\/b/;\nexport default () => <span className={DOT.success} data-u={u} data-r={String(r)} />;\n",
+    );
+    expect(scanner(), 'la lecture qui suit une URL et un motif est toujours vue').toHaveLength(1);
+  });
+
+  it('un commentaire de bloc NON FERMÉ ne rallonge pas le texte', () => {
+    // Le cas ne compile pas, mais un scanner qui écrit hors de son tableau
+    // décale tout ce qui suit : la borne se prouve plutôt qu'elle ne se croit.
+    const texte = 'const a = 1;\n/* ouvert et jamais refermé\nconst b = 2;';
+    expect(retirerCommentaires(texte)).toHaveLength(texte.length);
+  });
+
+  it('les numéros de ligne survivent à l’effacement', () => {
+    poser('app/thing/Client.tsx', TABLE_CLIENT);
+    poser(
+      'app/thing/page.tsx',
+      "/* un cartouche\n   sur trois\n   lignes */\nimport { DOT } from './Client.tsx';\nexport default () => <span className={DOT.success} />;\n",
+    );
+    const v = scanForServerUsesOfClientValues({ srcDir: racine });
+    expect(v[0]?.line, 'la ligne de l’import, pas celle d’avant le cartouche').toBe(4);
   });
 });

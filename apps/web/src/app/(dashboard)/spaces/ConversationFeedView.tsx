@@ -26,12 +26,16 @@ import type {
 import Markdown, { plainText } from '@/components/Markdown.tsx';
 import { formatClock, truncate } from '@/lib/format-time';
 import ThinkingBlock from './ThinkingBlock.tsx';
-import ToolBlock, { DOT } from './ToolBlock.tsx';
+import ToolBlock from './ToolBlock.tsx';
 import FoldableBlock, { FoldableBody } from './FoldableBlock.tsx';
 import ModelCallBlock from './ModelCallBlock.tsx';
 import DeliveryBlock from './DeliveryBlock.tsx';
 import QuestionCard from './QuestionCard.tsx';
-import FileDiff, { FILE_DOT, FileName, LineDelta } from './FileDiff.tsx';
+import FileDiff, { FileName, LineDelta } from './FileDiff.tsx';
+// Les couleurs des pastilles viennent d'un module SANS directive (#240) : ce
+// fichier est rendu côté serveur, qui ne reçoit d'un module `'use client'`
+// qu'une référence par export, jamais la table elle-même.
+import { DOT, FILE_DOT } from './feed-dots.ts';
 import HistoryGroup from './HistoryGroup.tsx';
 import DelegationDisclosure from './DelegationDisclosure.tsx';
 import DelegationBlock from './DelegationBlock.tsx';

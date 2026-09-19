@@ -30,20 +30,12 @@ import CodeBlock from '@/components/ui/CodeBlock';
 import type { Step } from '@/lib/conversation-feed.ts';
 import { prettyJson } from '@/lib/json-tokens.ts';
 import { formatMs, shortToolName } from './format.ts';
+// La pastille de 8 px vit dans `feed-dots.ts` et non ici depuis #240 : le fil,
+// qui est rendu côté serveur, la reprend telle quelle pour sa carte d'envoi, et
+// le serveur ne reçoit d'un module `'use client'` que des références.
+import { DOT } from './feed-dots.ts';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
-
-/**
- * La pastille de 8 px qui dit comment l'appel s'est terminé. Exportée : la
- * carte d'envoi la reprend telle quelle — deux blocs d'un même run ne disent
- * pas leur issue de deux couleurs différentes.
- */
-export const DOT: Readonly<Record<string, string>> = {
-  success: 'bg-ok',
-  error: 'bg-err',
-  blocked: 'bg-err',
-  awaiting_approval: 'bg-run',
-};
 
 /**
  * L'entrée d'un appel, en une ligne : la valeur si elle n'a qu'un champ texte,
