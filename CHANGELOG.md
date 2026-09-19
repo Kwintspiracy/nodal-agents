@@ -10,6 +10,228 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.0 — Sep 20, 2026
+
+A release about the shape of the product. The sidebar became a rail of the
+owner's five boards with a panel for the active one, settings became a list where
+each setting opens beside it, a project opens on its conversations with its folder
+docked to the right, and the screen the product opens on is now an empty
+conversation rather than a dashboard. Back links were taken out everywhere, by
+the owner's decision, because the sidebar already says where you are.
+
+Underneath, a run's delivered files are read from git rather than from what the
+agent said it wrote, a run records how its own result was produced, a reviewer's
+own commands are recorded as proof of the work they reviewed, and two guards were
+added against work the product was paying for twice. Thirty-seven pull requests,
+seven migrations (`0111_agent_may_change_team` through
+`0117_agent_jobs_result_kind`).
+
+**The sidebar, and the screens it opens onto**
+
+- **A rail of five boards, each opening its own panel.** The single column of
+  0.8.11 becomes a rail whose cells are the owner's five boards, Work, Agents,
+  Run, Approvals and Settings, each opening a 300px panel; Logs navigates and Help
+  opens the documentation. The active board is derived from the route and from
+  nothing else, so two tabs on the same address show the same panel and a shared
+  link opens what it promises. The sections that exist only in the database are
+  read through one bounded shared reader on the sidebar's single cadence, and a
+  project in the list says whether it carries an unread conversation. (#235, #279)
+- **"See all" outlives an empty list**, wherever a section carries it permanently:
+  on a fresh install the workspaces page was reachable from nowhere. And a
+  settings row lights up when its own setting is the one open. The four rows point
+  at one path with different query parameters, so comparing on the path lit all
+  four and comparing on the whole address lit none; the rule reads the path, then
+  every parameter the entry writes. (#279)
+- **An inspector docked to the right edge, which pushes the page.** `DockedPanel`
+  is a third pattern next to `Drawer` and `Modal`: no backdrop, no trap. The list
+  on its left stays visible and stays clickable, so a reader walks from one row
+  to the next without closing anything. (#233)
+- **Settings is one list, and each setting opens in the panel.** Eleven stacked
+  blocks become a filterable list in four families, Access, Safety, Workspace and
+  Advanced. Nothing is edited on the page itself. The open setting is carried in
+  the address (`/settings?open=network`), and Cancel and Save sit at the bottom of
+  the panel without a single form changing its logic. (#237)
+- **A new conversation opens a centred empty thread, and that is the default
+  screen.** The root route renders a conversation that has not started. No
+  conversation row is written before the first message, and none survives a failed
+  one, so a thread opened and closed without a word no longer sits in the inbox
+  forever. The Dashboard is unchanged and lives at `/dashboard`. (#250)
+- **Back links are removed everywhere.** The owner's decision of 2026-09-19:
+  "Remove the back buttons EVERYWHERE." The work bar now carries context and
+  actions only, and you move through the product by the sidebar. (#243)
+- **One Switch, one look.** The MCP server toggle read as disabled when it was on,
+  because the component owned the geometry and every caller passed its own colours.
+  Two colour languages coexisted; the component owns the look now. (#238)
+
+**Work is a folder you open**
+
+- **Workspaces is the only projects page.** One list, two kinds of row: a
+  registered project, and a folder an agent wrote in that nobody declared, which
+  can be registered or hidden. The row shows the four facts that help you find a
+  project and nothing else. A registered row is dated by the day it entered the
+  registry, not by the day its row happened to be written. (#225)
+- **A project opens on its activity, and its folder sits beside it.** Opening a
+  project used to land in one conversation and hide every other story, including
+  the runs started from the CLI or from an MCP client. It now opens on one sorted
+  list of conversations and sessions. "Files & proof" stopped being a second
+  screen: it is a docked panel, open by default, and `/code` goes to Workspaces.
+  (#226)
+- **An automation opens on its own page.** One route serves a schedule and a
+  webhook alike. Header, settings card of five rows, the last ten runs with their
+  cost over thirty days, and what a routine has remembered. "Scheduled" leaves the
+  menu. (#224)
+- **Nodal can initialise git in a project folder.** An option, off by default,
+  offered in the New project form and in the project's settings. Nothing touches a
+  folder without it. It exists because the git constat below is the only reading
+  that sees what a command wrote without naming it, and someone who starts a
+  project from Telegram has no repository to read. (#244)
+
+**What a run really wrote, and what really proved it**
+
+- **A run says how its result was produced.** `agent_jobs.result` held the text a
+  run delivered and nothing on the row said where that text came from, so two
+  screens guessed, each in its own way and each wrong in a case already seen. The
+  runner writes the fact when it writes the text, and both screens read it: a
+  `result_kind` column with two values and no default, because the terminal gates
+  do not hand over the same kind of text, and a default would have filed an
+  orchestrator's compiled tasks under the same mark as an agent's own words.
+  Migration 0117. (#276)
+- **Writes are constated by git when the project is a repository.** The runner
+  reads `git status --porcelain` before a shell command or a harness run and again
+  after it, and the delta is the constat. A `run_command` that writes ten files
+  without naming one used to produce, for the product, nothing at all. The Files
+  block shows that list, the constat is stored rather than dying with the call, and
+  the per-file label is git's own word, which can say "deleted" where a tool name
+  could not. (#227)
+- **A reviewer's verifications are recorded, and the verdict sits next to
+  "Delivered".** On one run a reviewer ran six real browser scenarios and
+  `verification_runs` held zero rows for the job; the only proof kept was the
+  developer's own check that the JavaScript parses. A reviewer's commands now carry
+  over to the work they reviewed. (#228)
+- **The failure hint is persisted, so the screen reads the runner's own word.** The
+  runner already named the gesture a failure calls for as a typed field, and it
+  died in memory for want of a column. The screen re-derived it from the error
+  code, which worked while the mapping lived in two places. (#272)
+- **The thread's tool rows go through the audit-row redaction gate.** The run
+  page's rows had gone through it since 0.8.11; the thread masked two fields of
+  three and let the tool input travel raw. The field is masked at the door rather
+  than at the use, so a field added tomorrow is covered without anyone thinking
+  about it. (#270)
+- **Every dot in the thread was grey.** A server-rendered view read its colour
+  tables from two `'use client'` modules, where an export is a client reference and
+  not a value, so the fallback colour took over in silence. The unit tests imported
+  the real modules and rendered green in front of it. (#268)
+- **The thread's chat-or-work verdict reads the constated write.** A terminal card
+  counted a turn as work by the mere fact of existing. A card proves a command ran,
+  never that it wrote anything, and that was the last place this reader still
+  believed a declaration. It reads the constated rows now, and a command with none
+  no longer decides work on its own. (#283)
+- **A review verdict is masked before it reaches a screen.** Both readers of the
+  recorded verdict parsed the tool output raw and let the reviewer's own free text
+  travel unmasked onto four screens, while the same secret in the same row was
+  masked everywhere else. A reviewer who quotes a failing command or a config path
+  had put a bearer token on screen in clear. (#289)
+- **A refused command names the checkpoint's real cause.** A checkpoint that cannot
+  finish still refuses the write, which is the whole contract; what changes is what
+  it tells the reader. The refusal carries a typed code and the facts measured at
+  that moment, the workspace size, its file count and the limit, instead of one
+  sentence for every cause. (#262)
+- **A write raises the project epoch, not only the intent.** A proof was judged
+  stale by comparing a project's epoch and its manifest on both sides of it, and
+  neither witness saw the sequence where one job captures the epoch, proves the
+  tree as it stands, and a second job writes invalid content in between. (#269)
+
+**Threads carry a person, and an answer as it is written**
+
+- **An unread state per person and per thread.** The product kept no read state at
+  all, so the dot in front of a thread could only mean "waits for you, or running".
+  A read belongs to whoever read: the thread the owner just opened is not read by a
+  teammate. The marker is written when a thread is opened on the dashboard, and
+  never because a message went out on a channel. (#223)
+- **The chat reply is shown as it is written.** A dashboard turn returned its whole
+  reply at once; it now appears word by word while the turn runs, through a route
+  handler that repeats the server action's checks, because a server action cannot
+  relay a stream. (#221)
+- **The thread's prose verdict rule reads the line after "Verdict".** The rule
+  claimed to read a verdict written on the line below that word, and read a
+  renderer that returns only the first readable line of the first block, so the
+  branch never fired. A reviewer who titles a section and puts the sentence under
+  it had said their verdict, and hiding it was a lost line, not caution. It is only
+  the fallback for delegates that recorded nothing, so repairing it costs nothing
+  where a typed verdict exists. (#278)
+
+**Two guards against paying twice, and one record that travels whole**
+
+- **The delegation outcome travels typed, not as text.** A delegation record was
+  typed between a parent and its own child and free text everywhere else, so a
+  grandchild's failure reached the grandparent only as prose. The sub-tree's
+  outcome now travels as a map written by the harness from its own bookkeeping,
+  specialist by specialist, and a repair made elsewhere in the tree clears a
+  failure that had travelled up. The sentence a reader sees is a rendering of that
+  map, never a source anyone reads back. (#275)
+- **A second review of the same thing is refused, not run.** A delegation is
+  refused only when the same reviewer is asked for the same target and nothing
+  completed in between. Every condition is read on rows, none on text similarity,
+  and no recognisable target means no guard. An orchestrator that has a PR
+  reviewed, has the findings fixed and asks again is asking about a target that
+  changed, and goes through. (#220)
+- **An agent does not recompose its own team.** A per-agent setting,
+  `may_change_team`, off by default: with it off the three team meta-tools are not
+  in the list the runner computes, so the model never sees them. Every agent that
+  already exists is turned off by the migration, including the orchestrator that
+  rearranged two teams overnight on 2026-09-15. (#222)
+
+**Installing, and building**
+
+- **The install names npm's script gate before it bites.** npm skips the install
+  scripts of `@embedded-postgres/<platform>`, the package carrying the Postgres
+  binaries Nodal boots. The install page, the docs landing, the CLI reference, the
+  self-hosting guide and the README now say what the warning block means and give
+  the command; `up` says it after the fact. (#257)
+- **The web build's heap floor follows a measurement again.** The floor doubled to
+  24 576 MB on 19 September because the build died and the number was raised until
+  it stopped. The need had not doubled: the measured local peak is 13 069 MB, and
+  the whole pack build fits on a 16 GB CI runner with no override at all. Every
+  pack build now reports its own peak, so the next jump is visible the day it
+  happens. (#277)
+- **Delegating expires the parent's cache, and the run says what that costs.** A
+  sequential delegation always outlasts a provider's prompt cache, so the parent
+  re-pays its whole prefix at fresh-input rate on every resume, by construction,
+  about a fifth of a run's bill. Nothing billed changes. The cost is read from the
+  call itself, on six conditions, never estimated, and shown. Resuming a parent
+  without resending its context is a separate ticket. (#266)
+
+**Chores, and the quality portal**
+
+- **The minor findings of the #88 reviews, sorted and closed.** The sixteen minor
+  findings of the fourteen after-the-fact reviews, plus two the owner left as
+  comments. Every line was found again by content on `main` rather than by the line
+  number the report gave: several had moved and two no longer existed. (#273)
+- **`apps/qa` is linted like every other package.** Turbo runs a package's lint task
+  only when the package declares one, and the portal declared none, so it was filed
+  as nonexistent and passed over without a word. It held an ESLint error nobody
+  saw. A guard now requires every workspace package to declare the script. (#253)
+- **The root ESLint config and `apps/web` can no longer say two things.** One is
+  what a person runs by hand, the other is what CI runs, and they disagreed in both
+  directions: the root config found 100 errors on the app where the package's own
+  lint found none. A rule only one of them applies is a rule nobody sees. (#274)
+- **A package left out of the coverage measurement says which, and why.** A
+  deliberate exclusion and a measurement that failed rendered identically, as an
+  empty column. They are now four named states, the exclusion and its reason live in
+  one place, and a failed measurement leaves a marker instead of vanishing. (#259)
+- **The browser journeys hold on to anchors, not to paint.** Thirteen journeys
+  still aimed at a layout class or a rendered word, and on 10 August one rounded
+  corner becoming a rounder one turned eight of them red at once, silently, without
+  a single feature being broken. Every element they aim at now carries a stable
+  anchor, and the gestures that reach them are written once. It also repairs the
+  screen proof of talking to an agent, red since the 19 September measurement.
+  (#293)
+- **The `ci` job gets the same 35-minute budget as `ci-windows`.** It had 25, and
+  spent 23 of them before the build step started, so a run whose unit tests drifted
+  by two minutes died on its own clock with every check green. (#294)
+
+---
+
 ## v0.8.11 — Sep 19, 2026
 
 A release about reading a run without opening a chat. A run now has a page of
