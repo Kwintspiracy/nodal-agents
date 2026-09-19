@@ -47,6 +47,7 @@ const child = (name: string, slug: string | null, nested: FeedItem[] = []): Feed
     task: null,
     result: null,
     error: null,
+    failureHint: null,
     createdAt: null,
     completedAt: null,
     ...(nested.length > 0

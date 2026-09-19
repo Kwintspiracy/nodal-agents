@@ -41,7 +41,7 @@ import {
   isToolCard,
 } from './tool-card-payload.ts';
 import { lineCountsOfCall, type LineCounts } from './coding-changes.ts';
-import { failureHint, type FailureHint } from './failure-hint.ts';
+import { knownHint, type FailureHint } from './failure-hint.ts';
 import type { ProductionVerdict } from './chat-or-work.ts';
 
 // ─── Entrées ──────────────────────────────────────────────────────────────────
@@ -102,6 +102,12 @@ export type FeedChildJob = {
   task: string | null;
   result: string | null;
   error: string | null;
+  /**
+   * Le geste que l'échec de ce délégué appelle, LU sur sa ligne
+   * (`agent_jobs.failure_hint`, #193). Le slug du runner, tel quel : c'est
+   * `hintSentence` qui décide s'il se dit, et comment.
+   */
+  failureHint: string | null;
   createdAt: Date | null;
   completedAt: Date | null;
   /**
@@ -129,6 +135,11 @@ export type FeedJob = {
   status: string | null;
   result: string | null;
   error: string | null;
+  /**
+   * Le geste que l'échec appelle, LU sur la ligne du job et non déduit de son
+   * code d'erreur (`agent_jobs.failure_hint`, #193).
+   */
+  failureHint: string | null;
   agentName: string | null;
   agentSlug: string | null;
   agentAvatarUrl: string | null;
@@ -944,9 +955,10 @@ export function buildConversationFeed(
     items.push({
       kind: 'failure',
       text: job.error ?? job.result ?? '',
-      // Le geste se lit sur le CODE, pas sur le texte affiché : le repli
-      // `job.result` est une prose, elle ne nomme aucun geste.
-      hint: failureHint(job.error),
+      // Le geste est LU, plus déduit (#193) : c'est le mot que le runner a
+      // écrit sur la ligne du job. `knownHint` ne fait que rendre au type ce
+      // que cet écran sait dire — un geste plus récent que lui reste muet.
+      hint: knownHint(job.failureHint),
     });
   }
 

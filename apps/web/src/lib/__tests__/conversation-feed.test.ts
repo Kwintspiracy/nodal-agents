@@ -142,6 +142,7 @@ const job: FeedJob = {
   status: 'completed',
   result: 'No new entries.',
   error: null,
+  failureHint: null,
   agentName: 'Veilleur',
   agentSlug: 'veilleur',
   agentAvatarUrl: null,
@@ -940,6 +941,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
       task: 'compare',
       result: 'ok',
       error: null,
+      failureHint: null,
       createdAt: null,
       completedAt: null,
     };
@@ -963,20 +965,54 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
     });
   });
 
-  it('un refus du fournisseur pose le GESTE sur l’item d’échec (#184)', () => {
-    // Le code exact qu'écrit `providerRejectionCode` (runner), bâti sur LA
-    // constante partagée : c'est le seul fait de ce refus qui atteigne la base,
-    // et c'est donc lui que le modèle du fil relit pour nommer le geste.
+  it('le GESTE de l’item d’échec est celui que le runner a ÉCRIT (#193)', () => {
+    // Le code d'erreur reste sur la ligne pour le diagnostic, mais il n'est
+    // plus la source du geste : c'est `agent_jobs.failure_hint` qui l'est.
     const refus = `${PROVIDER_REJECTED_PREFIX}openrouter/google/gemini-3.7-flash (http 400, turn 3)`;
     const j: FeedJob = {
       ...job,
       status: 'failed',
       result: null,
       error: refus,
+      failureHint: 'switch_model',
       children: [],
     };
     const feed = buildConversationFeed(j, [], []);
     expect(feed.items.at(-1)).toEqual({ kind: 'failure', text: refus, hint: 'switch_model' });
+  });
+
+  it('un échec SANS geste écrit n’en porte aucun, quel que soit son code (#193)', () => {
+    // LA GARDE DE LA BASCULE. Ce job-là portait `hint: 'switch_model'` tant que
+    // le fil DÉDUISAIT le geste du préfixe. Il n'en porte plus : le runner n'a
+    // rien écrit, donc le fil n'a rien à dire. C'est le cas des jobs échoués
+    // avant la migration 0117 et que son rattrapage n'a pas touchés.
+    const refus = `${PROVIDER_REJECTED_PREFIX}openrouter/google/gemini-3.7-flash (http 400, turn 3)`;
+    const j: FeedJob = {
+      ...job,
+      status: 'failed',
+      result: null,
+      error: refus,
+      failureHint: null,
+      children: [],
+    };
+    const feed = buildConversationFeed(j, [], []);
+    expect(feed.items.at(-1)).toEqual({ kind: 'failure', text: refus, hint: null });
+  });
+
+  it('un geste que cet écran ne connaît pas ne passe pas en brut (#193)', () => {
+    // Un runner plus récent peut nommer un geste que cette version de l'écran
+    // ne sait pas dire. Le fil ne le porte pas : il ne se dirait pas, et un
+    // slug dans l'item finirait par être affiché un jour par mégarde.
+    const j: FeedJob = {
+      ...job,
+      status: 'failed',
+      result: null,
+      error: 'quota_exhausted',
+      failureHint: 'rotate_api_key',
+      children: [],
+    };
+    const feed = buildConversationFeed(j, [], []);
+    expect(feed.items.at(-1)).toEqual({ kind: 'failure', text: 'quota_exhausted', hint: null });
   });
 
   // #135 — « Les délégations ne sont jamais imbriquées » (tableau de Quentin).
@@ -992,6 +1028,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
       task: 'relis le correctif',
       result: 'ça tient',
       error: null,
+      failureHint: null,
       createdAt: null,
       completedAt: null,
     };
@@ -1022,6 +1059,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
       task: 'fais relire',
       result: 'revue faite',
       error: null,
+      failureHint: null,
       createdAt: null,
       completedAt: null,
       feed: childFeed,

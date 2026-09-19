@@ -599,6 +599,7 @@ const delegue = (): FeedItem => ({
     task: 'relire le bilan',
     result: 'rien à redire',
     error: null,
+    failureHint: null,
     createdAt: null,
     completedAt: null,
   },
