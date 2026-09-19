@@ -27,7 +27,7 @@ import {
 } from '@nodal-agents/db';
 import type { ApprovalRequestRow, JobTriggerContext } from '@nodal-agents/db';
 import {
-  enabledMetaTools,
+  metaToolsForAgent,
   parseRootGrants,
   modelContextWindow,
   modelCanSeeImages,
@@ -1539,11 +1539,16 @@ async function runJob(
       channel: job.channel ?? null,
       parentJobId: job.parentJobId ?? null,
     });
+    // `may_change_team` (issue #137) retire `create_agent`, `attach_agent` et
+    // `detach_agent` de la liste tant qu'il est à false — c'est-à-dire pour
+    // tout agent existant, que la migration 0111 a mis à OFF. Le modèle ne les
+    // voit alors pas, et dit ce qu'il ne peut pas faire au lieu de recomposer
+    // l'équipe pour y arriver.
     const metaToolNames: string[] =
       isRootAgent && !isMcpChannel
-        ? enabledMetaTools(parseRootGrants(rootEntityRow?.rootGrants)).filter(
-            (name) => registry.get(name) !== undefined,
-          )
+        ? metaToolsForAgent(parseRootGrants(rootEntityRow?.rootGrants), {
+            mayChangeTeam: agentRow.mayChangeTeam,
+          }).filter((name) => registry.get(name) !== undefined)
         : [];
     const metaToolDefs: AnyToolDef[] = metaToolNames
       .map((name) => registry.get(name))

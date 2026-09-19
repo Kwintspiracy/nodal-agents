@@ -140,6 +140,23 @@ export const agents = pgTable(
      * socket et écrit des fichiers. La liste dit quel PROGRAMME démarre.
      */
     commandAllowlist: text('command_allowlist').array(),
+    /**
+     * Cet agent a-t-il le droit de MODIFIER SA PROPRE ÉQUIPE — `create_agent`,
+     * `attach_agent`, `detach_agent` (migration 0111, issue #137).
+     *
+     * FALSE (le défaut, et ce que la migration écrit pour tous les agents
+     * existants) : les trois outils n'entrent PAS dans la liste calculée par
+     * job, donc le modèle ne les voit pas. TRUE : ils entrent, sous les portes
+     * qui existaient déjà (agent racine + `rootGrants`, canal non-MCP).
+     *
+     * Existe à cause de la nuit du 15/09/2026 : on a demandé à un orchestrateur
+     * une revue avec un relecteur qui n'était pas dans son équipe, et il se
+     * l'est attaché au lieu de dire qu'il ne l'avait pas et de nommer
+     * l'orchestrateur qui, lui, l'avait. Le pouvoir de recomposer
+     * l'organisation ne voyageait avec aucun réglage : il suffisait d'être
+     * l'agent racine.
+     */
+    mayChangeTeam: boolean('may_change_team').notNull().default(false),
     // User-controlled order on the /agents page (Brique A, migration 0019).
     // Default 0 — ties are broken by `name ASC` in the list query. Newly
     // created agents land at the front of their group by default; the user

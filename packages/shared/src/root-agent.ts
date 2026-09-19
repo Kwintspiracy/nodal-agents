@@ -144,6 +144,43 @@ export function enabledMetaTools(grants: RootGrants): string[] {
     });
 }
 
+// ─── « Modifier sa propre équipe » — le réglage par agent (issue #137) ────────
+
+/**
+ * Les trois outils qui changent la composition d'une équipe : ils créent un
+ * agent et l'affectent à l'appelant, ou attachent / détachent un agent
+ * existant. Les autres méta-outils touchent des skills, des serveurs MCP, des
+ * connecteurs ou des automations — pas l'organisation elle-même.
+ */
+export const TEAM_CHANGING_META_TOOLS = ['create_agent', 'attach_agent', 'detach_agent'] as const;
+
+const TEAM_CHANGING_SET: ReadonlySet<string> = new Set<string>(TEAM_CHANGING_META_TOOLS);
+
+/** `true` si ce nom d'outil recompose l'équipe de l'agent qui l'appelle. */
+export function isTeamChangingMetaTool(name: string): boolean {
+  return TEAM_CHANGING_SET.has(name);
+}
+
+/**
+ * Les méta-outils réellement servis à UN agent : ceux que ses grants activent,
+ * moins les trois outils d'équipe tant que `agents.may_change_team` est à
+ * `false`.
+ *
+ * Deux portes superposées, et c'est voulu : le grant dit ce que le propriétaire
+ * autorise DANS L'ESPACE DE TRAVAIL, le réglage dit si CET agent-là a le droit
+ * de recomposer sa propre équipe. Le réglage ne peut qu'enlever — il n'ajoute
+ * jamais un outil qu'un grant éteint refusait déjà.
+ *
+ * Le retrait se fait ICI, à la construction de la liste (invariant #9), et pas
+ * au moment de l'appel : un outil absent de la liste n'est pas vu par le
+ * modèle, qui dit alors ce qu'il ne peut pas faire et nomme qui le peut, au
+ * lieu de contourner (issue #137, nuit du 15/09/2026).
+ */
+export function metaToolsForAgent(grants: RootGrants, opts: { mayChangeTeam: boolean }): string[] {
+  const names = enabledMetaTools(grants);
+  return opts.mayChangeTeam ? names : names.filter((n) => !TEAM_CHANGING_SET.has(n));
+}
+
 /**
  * Parse an unknown JSONB value into RootGrants, falling back to
  * DEFAULT_ROOT_GRANTS for missing or invalid fields. Never throws.

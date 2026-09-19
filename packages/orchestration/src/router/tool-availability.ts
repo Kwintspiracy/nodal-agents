@@ -24,7 +24,7 @@ import {
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { ALWAYS_ON_TOOLS, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
-import { enabledMetaTools, parseRootGrants, META_TOOL_NAMES } from '@nodal-agents/shared';
+import { metaToolsForAgent, parseRootGrants, META_TOOL_NAMES } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb, EntityId } from '../types';
 
 /**
@@ -74,7 +74,10 @@ export async function computeAgentToolNames(
   const names = new Set<string>(ALWAYS_ON_TOOLS);
 
   const [agentRow] = await db
-    .select({ telegramBotToken: agents.telegramBotToken })
+    .select({
+      telegramBotToken: agents.telegramBotToken,
+      mayChangeTeam: agents.mayChangeTeam,
+    })
     .from(agents)
     .where(eq(agents.id, agentId as string))
     .limit(1);
@@ -163,7 +166,13 @@ export async function computeAgentToolNames(
     .where(eq(entities.id, entityId as string))
     .limit(1);
   if (entityRow?.rootAgentId === agentId) {
-    for (const n of enabledMetaTools(parseRootGrants(entityRow.rootGrants))) names.add(n);
+    // Même retrait qu'execute.ts : sans `may_change_team`, les trois outils
+    // d'équipe ne sont pas dans la liste (issue #137), donc un brief qui les
+    // nomme doit être signalé comme visant un outil indisponible.
+    const metaNames = metaToolsForAgent(parseRootGrants(entityRow.rootGrants), {
+      mayChangeTeam: agentRow?.mayChangeTeam ?? false,
+    });
+    for (const n of metaNames) names.add(n);
   }
 
   return names;
