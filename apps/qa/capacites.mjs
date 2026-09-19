@@ -222,8 +222,6 @@ export const CAPACITES = [
     nom: 'See what it costs',
     question: 'Can I know what this chat turn just cost me?',
     exigee: true,
-    ecranAttendu:
-      'That the cost and the tokens of the turn that just happened show in the thread, and that they match what the database recorded.',
   },
   {
     slug: 'consulter-l-aide',

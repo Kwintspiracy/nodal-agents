@@ -8,6 +8,11 @@
 // temps de preuve. Tout vient de lignes réelles (llm_calls, approval_requests,
 // verification_runs, job_deliveries) ; rien n'est deviné — un coût inconnu est
 // « n/a », pas 0.
+//
+// #54 — à côté du coût, ce que les REPRISES après délégation ont coûté en
+// cache expiré, quand il y en a. La règle vit dans `lib/cache-expiry.ts` ; la
+// barre ne fait que la dire. Rien ne s'affiche quand la somme est nulle ou
+// inconnue : « $0.0000 lost » ferait croire qu'on a mesuré zéro.
 
 import { useState } from 'react';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -31,6 +36,21 @@ function pct(part: number, total: number): string {
   return `${Math.round((part / total) * 100)} %`;
 }
 
+/**
+ * #54 — « of which $0.16 lost to cache expiry (2 resumes) », ou `null` quand
+ * il n'y a rien à dire : aucune reprise, ou aucune reprise sur un modèle dont
+ * le catalogue connaît le prix de cache. Un `$0.0000` afficherait « on a
+ * mesuré, c'est nul » là où la vérité est « on ne sait pas » (invariant #4) ;
+ * le panneau détaillé, lui, dit les jetons dans les deux cas.
+ */
+export function cacheLostLabel(cost: SpaceCostView): string | null {
+  const { resumes, costUsd } = cost.cacheLost;
+  if (resumes === 0 || costUsd === null || costUsd <= 0) return null;
+  return `of which ${formatCost(costUsd)} lost to cache expiry (${resumes} ${
+    resumes === 1 ? 'resume' : 'resumes'
+  })`;
+}
+
 export default function StatusBar({
   cost,
   proofVerdict,
@@ -44,6 +64,7 @@ export default function StatusBar({
   const cacheShare = t.inputTokens > 0 ? pct(t.cachedTokens, t.inputTokens) : null;
   const models = cost.byAgent.flatMap((a) => a.models);
   const modelLabel = [...new Set(models)].join(', ');
+  const lostLabel = cacheLostLabel(cost);
 
   return (
     <>
@@ -92,6 +113,11 @@ export default function StatusBar({
                 {formatCost(t.costUsd)}
                 {t.unpricedCalls > 0 ? ' · partial' : ''}
               </Seg>
+              {lostLabel !== null && (
+                <Seg title="Input tokens re-billed at full price because the provider's cache expired while a delegate was working">
+                  {lostLabel}
+                </Seg>
+              )}
             </>
           )}
           {/* Le temps que les modèles ont passé à répondre — pas le temps
@@ -179,12 +205,35 @@ function sentences(cost: SpaceCostView): string[] {
   if (t.proofMs > 0) {
     out.push(`${formatMs(t.proofMs)} went to running the proof.`);
   }
+  // #54 — la phrase nomme la CAUSE, pas seulement le montant : le parent
+  // repaie son contexte parce que la délégation a duré plus longtemps que le
+  // cache du fournisseur.
+  const lost = cost.cacheLost;
+  if (lost.resumes > 0) {
+    const what =
+      lost.costUsd !== null && lost.costUsd > 0
+        ? `${formatTokens(lost.tokens)} input tokens, ${formatCost(lost.costUsd)}`
+        : `${formatTokens(lost.tokens)} input tokens`;
+    out.push(
+      `${what} went back to full price on ${lost.resumes} ${lost.resumes === 1 ? 'resume' : 'resumes'}: the provider's cache expired while a delegate was working.${
+        lost.unpricedResumes > 0
+          ? ` ${lost.unpricedResumes} of them ran on a model whose cache price we do not know, so the amount is partial.`
+          : ''
+      }`,
+    );
+  }
   return out;
 }
 
-function CostPanel({ cost, onClose }: { cost: SpaceCostView; onClose: () => void }) {
+/**
+ * Exporté pour être RENDU SEUL par le test d'écran : le panneau ne s'ouvre
+ * que sur un clic, et `apps/web` n'a pas de bibliothèque de rendu
+ * interactif — sans cet export, sa copie ne serait prouvée nulle part.
+ */
+export function CostPanel({ cost, onClose }: { cost: SpaceCostView; onClose: () => void }) {
   const t = cost.totals;
   const fresh = Math.max(0, t.inputTokens - t.cachedTokens - t.cacheCreationTokens);
+  const lost = cost.cacheLost;
   return (
     <div id="space-cost-panel" className="mx-auto mt-8 max-w-[840px]">
       <div className="mb-3 flex items-baseline gap-3">
@@ -248,6 +297,17 @@ function CostPanel({ cost, onClose }: { cost: SpaceCostView; onClose: () => void
         <dd className="text-ink-2">
           {formatTokens(t.cacheCreationTokens)} · {pct(t.cacheCreationTokens, t.inputTokens)}
         </dd>
+        {/* #54 — la ligne n'apparaît que s'il y a eu une reprise : une ligne
+            « 0 » permanente ferait du bruit sur tous les runs sans délégation. */}
+        {lost.resumes > 0 && (
+          <>
+            <dt className="text-ink-4">cache lost on resume</dt>
+            <dd className="text-warn">
+              {formatTokens(lost.tokens)} · {formatCost(lost.costUsd)} · {lost.resumes}{' '}
+              {lost.resumes === 1 ? 'resume' : 'resumes'}
+            </dd>
+          </>
+        )}
         <dt className="text-ink-4">fresh input</dt>
         <dd className="text-ink-2">
           {formatTokens(fresh)} · {pct(fresh, t.inputTokens)}

@@ -5,6 +5,12 @@
 //
 // Un coût inconnu reste `null` — jamais un 0 qui voudrait dire « gratuit » —
 // et le nombre d'appels sans prix est compté, pour que l'écran dise « partial ».
+//
+// #54 — le modèle porte en plus ce que les REPRISES après délégation ont coûté
+// en cache expiré (`cacheLost`). La règle et sa source vivent dans
+// `cache-expiry.ts` ; ici on l'applique aux mêmes lignes que le reste du coût.
+
+import { cacheLostOnResume, type CacheLostView } from './cache-expiry.ts';
 
 // La FORME du coût vit ici, avec sa fonction — pas dans actions.ts, qui
 // l'importait : actions.ts → space-cost.ts → actions.ts faisait un cycle que
@@ -43,6 +49,11 @@ export type SpaceCostView = {
     /** Σ duration_ms des commandes de preuve. */
     proofMs: number;
   };
+  /**
+   * #54 — la part de la facture qui part en cache expiré quand le parent
+   * reprend après une délégation. `resumes === 0` ⇒ rien à montrer.
+   */
+  cacheLost: CacheLostView;
 };
 
 /**
@@ -72,6 +83,12 @@ export type CostCallRow = {
   agentId: string | null;
   agentName: string | null;
   modelEffective: string;
+  /** #54 — le job de l'appel : « le même préfixe » n'a de sens que dans un job. */
+  jobId: string | null;
+  /** #54 — le fournisseur, pour lire le prix de cache au catalogue. */
+  provider: string;
+  /** #54 — l'heure de l'appel : l'écart avec le précédent dit si le cache avait expiré. */
+  createdAt: Date | null;
   inputTokens: number | null;
   outputTokens: number | null;
   cachedTokens: number | null;
@@ -157,5 +174,10 @@ export function aggregateSpaceCost(input: {
     .map(({ modelSet, ...a }) => ({ ...a, models: [...modelSet] }))
     .sort((x, y) => (y.costUsd ?? 0) - (x.costUsd ?? 0) || y.calls - x.calls);
 
-  return { byAgent, totals };
+  // #54 — la même matière, lue une seconde fois pour une seconde question :
+  // combien de ces jetons d'entrée ont été refacturés plein tarif parce que la
+  // délégation a duré plus longtemps que le cache du fournisseur.
+  const cacheLost = cacheLostOnResume(input.calls);
+
+  return { byAgent, totals, cacheLost };
 }

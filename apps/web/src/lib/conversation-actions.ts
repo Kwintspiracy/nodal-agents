@@ -1584,6 +1584,11 @@ export async function getConversationThreadAction(
         agentId: llmCalls.agentId,
         agentName: agents.name,
         modelEffective: llmCalls.modelEffective,
+        // #54 — le job, le fournisseur et l'heure : de quoi dire ce que la
+        // reprise après délégation a repayé en cache expiré.
+        jobId: llmCalls.jobId,
+        provider: llmCalls.provider,
+        createdAt: llmCalls.createdAt,
         inputTokens: llmCalls.inputTokens,
         outputTokens: llmCalls.outputTokens,
         cachedTokens: llmCalls.cachedTokens,
