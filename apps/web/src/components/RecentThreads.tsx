@@ -15,34 +15,63 @@
 // sous-menus : la section est VISIBLE dès que le panneau Talk s'affiche, donc
 // il n'y a rien à attendre. Elle ne part que sur les routes de Talk, puisque
 // c'est le seul panneau qui la porte.
+//
+// ⚠️ ET ELLE SE RELIT, sur la CADENCE DE LA BARRE (`SIDEBAR_POLL_MS`). Ce
+// n'est pas un ajout de confort : le sous-menu d'un dossier se relit depuis
+// #223, exactement pour que son point de non-lu ne mente pas, et une section
+// figée juste en dessous aurait fait dire deux heures différentes à la même
+// barre. Deux déclencheurs, le même hook que partout :
+//
+//   - la NAVIGATION. `pathname` est une dépendance VOULUE de `relireSurRoute`,
+//     et elle ne sert pas au calcul : elle change l'identité de la fonction à
+//     chaque changement d'adresse, ce qui relance l'effet et, avec
+//     `immediate`, refait la lecture sur-le-champ. C'est ce qui éteint le
+//     point du fil qu'on vient d'ouvrir — son marqueur de lecture est écrit
+//     par le rendu serveur de sa page, et ce changement de chemin arrive après ;
+//   - l'HORLOGE, qui allume le point d'un fil qui reçoit pendant qu'on regarde
+//     ailleurs, saute les tours quand l'onglet est caché, et relit dès qu'il
+//     revient.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { ArrowRight } from '@phosphor-icons/react';
 import SidebarSection from './ui/SidebarSection';
 import SidebarRow, { SIDEBAR_NOTE } from './ui/SidebarRow';
 import ThreadDot from './ui/ThreadDot';
 import { listRecentThreadsAction } from '@/lib/recent-threads-actions.ts';
+import { usePolling, SIDEBAR_POLL_MS } from '@/lib/use-polling';
 import type { FolderThread } from '@/lib/chat-folders.ts';
 
 export default function RecentThreads() {
+  const pathname = usePathname();
   /** `null` = la lecture n'a pas encore répondu. Un tableau vide est un fait. */
   const [fils, setFils] = useState<readonly FolderThread[] | null>(null);
   /** Ce que la lecture a répondu quand elle a échoué. Jamais un silence. */
   const [erreur, setErreur] = useState<string | null>(null);
 
-  useEffect(() => {
-    let vivant = true;
-    void listRecentThreadsAction().then((r) => {
-      if (!vivant) return;
-      // Un échec se DIT à la place des lignes : une section vide et une section
-      // illisible se ressemblent trait pour trait (invariant #4).
-      if (r.ok) setFils(r.data);
-      else setErreur(r.message);
-    });
-    return () => {
-      vivant = false;
-    };
+  const relire = useCallback(async (): Promise<void> => {
+    const r = await listRecentThreadsAction();
+    if (r.ok) {
+      setFils(r.data);
+      // Une lecture qui repasse efface le message de la précédente : sinon la
+      // section garderait sous les yeux une panne déjà réparée.
+      setErreur(null);
+      return;
+    }
+    // Un échec se DIT à la place des lignes : une section vide et une section
+    // illisible se ressemblent trait pour trait (invariant #4).
+    setErreur(r.message);
   }, []);
+
+  const relireSurRoute = useCallback(async (): Promise<void> => {
+    await relire();
+    // `pathname` est le DÉCLENCHEUR de la relecture, pas une donnée qu'elle
+    // lit : la règle le voit comme inutile, et il est au contraire tout le
+    // sujet. Le retirer laisserait allumé le point du fil qu'on vient
+    // d'ouvrir, jusqu'au prochain tour d'horloge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [relire, pathname]);
+  usePolling(relireSurRoute, SIDEBAR_POLL_MS, true);
 
   return (
     <div data-testid="recent-threads">
