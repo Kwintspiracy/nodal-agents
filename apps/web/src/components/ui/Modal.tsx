@@ -78,17 +78,29 @@ export default function Modal({
   }, []);
 
   // Esc to close (skipped when non-dismissable) + body scroll lock.
+  //
+  // Échap : la convention entre calques (revue #233, voir `DockedPanel.tsx`).
+  // Un calque MODAL — celui qui pose un voile — écoute en phase de CAPTURE et
+  // PREND la touche (`preventDefault`) dès qu'il est ouvert, qu'il se ferme ou
+  // non. La capture le fait parler avant les calques non modaux, quel que soit
+  // l'ordre d'inscription, et le `preventDefault` empêche un panneau ancré
+  // dessous de se fermer à sa place. Il n'agit pas si quelqu'un a déjà pris la
+  // touche.
   useEffect(() => {
     if (!open) return;
 
     function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape' && dismissable) onClose();
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // Ouverte, la modale PREND la touche même quand elle refuse de se
+      // fermer : sans ça son refus ne protège rien de ce qui est dessous.
+      e.preventDefault();
+      if (dismissable) onClose();
     }
-    window.addEventListener('keydown', handleKey);
+    window.addEventListener('keydown', handleKey, true);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      window.removeEventListener('keydown', handleKey);
+      window.removeEventListener('keydown', handleKey, true);
       document.body.style.overflow = prev;
     };
   }, [open, onClose, dismissable]);

@@ -76,11 +76,15 @@ export default function ConfirmDialog({
   useEffect(() => {
     if (!open) return;
     cancelRef.current?.focus();
+    // Voir `DockedPanel.tsx` : un calque modal écoute en CAPTURE et prend la
+    // touche, pour qu'un panneau ancré dessous ne se ferme pas avec lui.
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onCancel();
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      onCancel();
     }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [open, onCancel]);
 
   if (!open || !mounted) return null;

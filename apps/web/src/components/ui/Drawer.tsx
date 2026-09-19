@@ -38,11 +38,15 @@ export default function Drawer({
 }: Props) {
   useEffect(() => {
     if (!open) return;
+    // Voir `DockedPanel.tsx` : un calque modal — le Drawer pose un voile —
+    // écoute en CAPTURE et prend la touche.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      onClose();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [open, onClose]);
 
   if (!open) return null;

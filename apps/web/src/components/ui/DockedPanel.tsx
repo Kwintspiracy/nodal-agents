@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useId, type ReactNode } from 'react';
 import { X } from '@phosphor-icons/react';
 import IconButton from './IconButton';
 
@@ -41,6 +41,38 @@ type Props = {
  * Nothing here knows about settings, files or any one caller: the title, the
  * body and the footer all come from props, so the same component serves every
  * list that opens a form on the right.
+ *
+ * ─── Échap, et la politesse entre calques (revue #233) ─────────────────────
+ *
+ * Tous les calques de l'app écoutent `keydown` sur `window`. Sans convention,
+ * un seul Échap traverse tout : un panneau sous une `Modal` se ferme avec
+ * elle, et sous une `Modal` `dismissable={false}` il se ferme alors que la
+ * règle produit dit qu'Échap ne fait rien.
+ *
+ * La convention, désormais tenue par les six calques de l'app :
+ *   1. un calque n'agit QUE si personne n'a déjà pris la touche
+ *      (`e.defaultPrevented`) ;
+ *   2. un calque qui a pris la touche le DIT (`e.preventDefault()`) — une
+ *      modale ouverte la prend même quand elle refuse de se fermer, sinon son
+ *      refus ne protège rien de ce qui est dessous ;
+ *   3. les calques MODAUX — ceux qui posent un voile : `Modal`,
+ *      `ConfirmDialog`, `Drawer`, le menu mobile de `Sidebar` — écoutent en
+ *      phase de CAPTURE ; les autres (ce panneau, le popover d'`AvatarPicker`)
+ *      en phase de bulle. C'est ce qui décide QUI parle en premier : sur
+ *      `window` les écouteurs partent dans l'ordre d'inscription, et la
+ *      capture passe avant la bulle quel que soit cet ordre.
+ *
+ * Quand la modale est un ENFANT du panneau — le cas courant, un formulaire
+ * ouvert dedans — l'ordre de bulle suffirait déjà, parce que React exécute les
+ * effets de l'enfant avant ceux du parent. La capture est là pour que la
+ * garantie ne repose PAS sur ce détail : une modale sœur, montée après le
+ * panneau, s'inscrit après lui et n'aurait pas gagné. Le test le prouve par
+ * mutation, cas par cas.
+ *
+ * Limite connue et assumée : entre deux calques modaux, c'est encore l'ordre
+ * d'inscription qui tranche. Le cas réel est une `ConfirmDialog` ouverte
+ * depuis une `Modal` : la `Modal` se ferme la première et emporte la
+ * `ConfirmDialog` avec elle, donc l'écran fait ce qu'il faisait déjà.
  */
 export default function DockedPanel({
   open,
@@ -52,10 +84,15 @@ export default function DockedPanel({
   className = '',
   children,
 }: Props) {
+  const titleId = useId();
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      // Un calque au-dessus a déjà pris cet Échap : ne rien faire.
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      onClose();
+      e.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -63,22 +100,33 @@ export default function DockedPanel({
 
   if (!open) return null;
 
+  // Le repère est nommé par le titre RENDU (`aria-labelledby`) et non par un
+  // `aria-label` calculé : un titre `ReactNode` laissait le repère sans nom.
   return (
     <aside
       role="complementary"
-      aria-label={typeof title === 'string' ? title : undefined}
+      aria-labelledby={titleId}
       data-testid={testId}
       className={`flex h-full shrink-0 flex-col overflow-hidden border-l border-rule-2 bg-paper ${className}`}
       style={{ width }}
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-rule-2 py-3 pr-3 pl-5">
-        <h2 className="min-w-0 truncate text-title-16 text-ink">{title}</h2>
+        <h2 id={titleId} className="min-w-0 truncate text-title-16 text-ink">
+          {title}
+        </h2>
         <IconButton ghost aria-label="Close" onClick={onClose} className="h-7 w-7">
           <X size={16} />
         </IconButton>
       </div>
 
-      <div className="flex min-h-px flex-1 flex-col gap-3.5 overflow-y-auto p-5">{children}</div>
+      {/* `tabIndex={0}` : un corps plus haut que le panneau se fait défiler au
+          clavier même quand il ne contient rien de focalisable. */}
+      <div
+        tabIndex={0}
+        className="flex min-h-px flex-1 flex-col gap-3.5 overflow-y-auto p-5 focus-visible:outline-none"
+      >
+        {children}
+      </div>
 
       {footer !== undefined && (
         <div

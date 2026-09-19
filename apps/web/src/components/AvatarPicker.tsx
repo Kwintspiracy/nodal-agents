@@ -41,8 +41,13 @@ export default function AvatarPicker({ value, onChange, label = 'Avatar' }: Prop
 
   useEffect(() => {
     if (!open) return;
+    // Voir `DockedPanel.tsx` : ce popover n'est pas un calque modal, donc il
+    // reste en phase de bulle — mais il PREND la touche quand il se ferme,
+    // sinon le panneau ou la modale qui le porte se ferme avec lui.
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      setOpen(false);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
