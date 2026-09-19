@@ -14,7 +14,7 @@
  *       (non jouable en local-trust, voir le skip) ;
  *   E — un échec serveur ne ment pas : approbation d'un manifeste modifié
  *       derrière le dos de la page ⇒ toast d'erreur et la pilule ne bouge pas ;
- *   F — `/code` mène à Workspaces, et l'onglet Activity d'un projet ne porte
+ *   F — `/code` mène à Workspaces, et l'onglet Conversations d'un projet ne porte
  *       aucun panneau : la preuve vit sur « Files & proof » (#143).
  *
  * PRÉCONDITIONS semées en base, comme telegram-allowlist.spec.ts : un agent,
@@ -386,7 +386,7 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     await page.goto('/code');
     await expect(page).toHaveURL(/\/spaces$/);
     await expect(page.getByRole('heading', { name: 'Workspaces' })).toBeVisible();
-    // Et sur la page du projet, l'onglet Activity n'en porte AUCUN : la preuve
+    // Et sur la page du projet, l'onglet Conversations n'en porte AUCUN : la preuve
     // vit sur « Files & proof », pas sur l'activité.
     await page.goto(`/spaces/${projectId}`);
     await expect(page.getByTestId('project-verification')).toHaveCount(0);

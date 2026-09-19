@@ -1,6 +1,8 @@
 // ProjectTabs — les deux onglets d'un projet ouvert (#143).
 //
-//   ACTIVITY      — ce qui s'est passé : les conversations et les sessions.
+//   CONVERSATIONS — ce qui s'est passé : les conversations et les sessions.
+//                   Nommé comme le bouton qui en ouvre une (Quentin, 19/09) ;
+//                   « Activity » disait la même chose sans le dire pareil.
 //   FILES & PROOF — le dossier, ses fichiers, et la preuve du projet.
 //
 // Ce sont deux ROUTES, pas deux états : chacune se partage, se met en favori et
@@ -19,33 +21,33 @@ const TAB =
 const ACTIVE = 'bg-ink text-canvas';
 const IDLE = 'text-ink-3 hover:text-ink';
 
-export type ProjectTab = 'activity' | 'files';
+export type ProjectTab = 'conversations' | 'files';
 
 export default function ProjectTabs({
   projectId,
   active,
-  activityCount,
+  conversationsCount,
 }: {
   projectId: string;
   active: ProjectTab;
   /**
-   * Combien de lignes l'onglet Activity porte. `null` quand la lecture a
+   * Combien de lignes l'onglet Conversations porte. `null` quand la lecture a
    * ÉCHOUÉ : l'onglet s'affiche alors SANS chiffre, plutôt qu'avec un zéro
    * qui affirmerait qu'il ne s'est rien passé (invariant #4).
    */
-  activityCount: number | null;
+  conversationsCount: number | null;
 }) {
   return (
     <div className={WELL} role="tablist">
       <Link
         href={`/spaces/${projectId}`}
         role="tab"
-        aria-selected={active === 'activity'}
-        className={`${TAB} ${active === 'activity' ? ACTIVE : IDLE}`}
+        aria-selected={active === 'conversations'}
+        className={`${TAB} ${active === 'conversations' ? ACTIVE : IDLE}`}
       >
-        Activity
-        {activityCount !== null && (
-          <span className="text-mono-11 opacity-70">· {activityCount}</span>
+        Conversations
+        {conversationsCount !== null && (
+          <span className="text-mono-11 opacity-70">· {conversationsCount}</span>
         )}
       </Link>
       <Link

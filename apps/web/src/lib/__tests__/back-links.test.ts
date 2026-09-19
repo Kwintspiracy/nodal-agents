@@ -28,6 +28,32 @@ describe('threadBackLink — un fil revient dans SON dossier', () => {
     expect(threadBackLink('')).toEqual({ label: 'Back to channels', href: '/chat' });
   });
 
+  it('un fil ANCRÉ à un projet revient au PROJET, pas à son canal', () => {
+    // Quentin, 19/09 : une conversation ouverte depuis le workspace doit
+    // revenir au workspace. Tous ses frères y sont listés ; « Nodal chats »
+    // noyait le seul endroit où on la retrouve.
+    expect(threadBackLink('dashboard', { id: 'p-1', name: 'Nodal Agents' })).toEqual({
+      label: 'Back to Nodal Agents',
+      href: '/spaces/p-1',
+    });
+    // Même pour un fil de canal : le projet passe devant le dossier.
+    expect(threadBackLink('telegram', { id: 'p-1', name: 'Nodal Agents' })).toEqual({
+      label: 'Back to Nodal Agents',
+      href: '/spaces/p-1',
+    });
+  });
+
+  it('sans projet, rien ne change : le dossier du canal reprend la main', () => {
+    expect(threadBackLink('discord', null)).toEqual({
+      label: 'Back to Discord',
+      href: '/chat?folder=discord',
+    });
+    expect(threadBackLink('dashboard', undefined)).toEqual({
+      label: 'Back to Nodal chats',
+      href: '/chat?folder=dashboard',
+    });
+  });
+
   it('un FIL ne revient jamais dans le dossier MCP : il n’y liste que des runs', () => {
     // Le dossier existe pour `api` et `mcp` côté RUN (18/09), mais il ne montre
     // aucune conversation : y renvoyer un fil le déposerait sur une liste où il

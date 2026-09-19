@@ -1,4 +1,4 @@
-// activity-rows.ts — LES LIGNES de l'onglet Activity d'un projet (#143).
+// activity-rows.ts — LES LIGNES de l'onglet Conversations d'un projet (#143).
 //
 // Une seule liste, deux sortes de lignes, parce que deux choses différentes se
 // sont passées dans ce dossier :

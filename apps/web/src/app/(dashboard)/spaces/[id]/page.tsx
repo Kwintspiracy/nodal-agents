@@ -12,6 +12,9 @@
 // avant ; une ligne de session sans conversation ouvre la page du run
 // (`/code/<id>`). Le fil n'a pas déménagé : il est là où il a toujours été.
 //
+// L'onglet s'appelle CONVERSATIONS, comme le bouton qui en ouvre une
+// (Quentin, 19/09) : « Activity » disait la même chose sans le dire pareil.
+//
 // Le DOSSIER et la PREUVE sont sur l'autre onglet (`/spaces/[id]/files`).
 
 import { notFound } from 'next/navigation';
@@ -70,11 +73,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           projectId={facts.id}
           projectPath={facts.path}
           projectName={facts.name}
-          active="activity"
+          active="conversations"
           // Le MÊME chiffre que depuis l'autre onglet : il se lit sur les
           // faits du projet, jamais sur les lignes chargées, qui sont
           // plafonnées.
-          activityCount={facts.conversations + facts.sessionsWithoutConversation}
+          conversationsCount={facts.conversations + facts.sessionsWithoutConversation}
         />
       }
     >
