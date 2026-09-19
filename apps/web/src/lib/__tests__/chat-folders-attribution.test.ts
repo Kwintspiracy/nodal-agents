@@ -191,6 +191,15 @@ beforeAll(async () => {
   // Deux runs de tête sans conversation : l'un demandé par le serveur MCP,
   // l'autre par `/api/agent`. Aucun n'a de conversation — c'est exactement ce
   // que dit la base du propriétaire — et c'est le dossier MCP qui les porte.
+  //
+  // ⚠️ LEURS DATES SONT ÉCRITES, et elles ne l'étaient pas (20/09/2026). Les
+  // deux insertions se suivaient en laissant `created_at` valoir `now()` ; sous
+  // charge — la suite entière, quatre processus — elles tombaient dans la même
+  // microseconde, et c'est alors le départage par identifiant qui tranchait.
+  // Un uuid étant tiré au hasard, l'ordre se jouait à pile ou face et le test
+  // « les plus récents d'abord » rougissait une fois sur deux, sans rien dire
+  // du produit. Deux dates distinctes disent ce que le test veut dire.
+  const base = Date.now();
   const [runMcp] = await testDb
     .insert(agentJobs)
     .values({
@@ -201,6 +210,8 @@ beforeAll(async () => {
       // Il a délégué : c'est son enfant qui attend, et lui reste vivant.
       status: 'awaiting_delegation',
       conversationId: null,
+      // APRÈS le job que `seedMinimal` a créé, qui doit rester le plus ancien.
+      createdAt: new Date(base + 1_000),
     })
     .returning({ id: agentJobs.id });
   runDeDehors = runMcp!.id;
@@ -212,6 +223,8 @@ beforeAll(async () => {
     task: 'la tâche envoyée par l’API',
     status: 'completed',
     conversationId: null,
+    // Le plus RÉCENT des trois : c'est lui qui doit ouvrir la liste.
+    createdAt: new Date(base + 2_000),
   });
 
   // L'ENFANT de ce run : `internal`, aucune conversation — il ne dit RIEN de sa
