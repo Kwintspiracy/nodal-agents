@@ -27,7 +27,7 @@ const T2 = new Date('2026-08-21T14:52:57Z'); // 33 min plus tard
 const T3 = new Date('2026-08-21T14:53:06Z'); // 9 s plus tard
 
 const base = {
-  jobId: 'alfred',
+  jobId: 'parent',
   provider: 'anthropic',
   modelEffective: 'claude-opus-5',
 } satisfies Pick<CacheCallRow, 'jobId' | 'provider' | 'modelEffective'>;
@@ -181,7 +181,7 @@ describe('cacheLostOnResume @cap:voir-le-cout/moteur', () => {
       { ...base, createdAt: T1, inputTokens: 35_200, cachedTokens: 0, cacheCreationTokens: 35_200 },
       {
         ...base,
-        jobId: 'analyste',
+        jobId: 'delegue',
         createdAt: T2,
         inputTokens: 35_400,
         cachedTokens: 0,

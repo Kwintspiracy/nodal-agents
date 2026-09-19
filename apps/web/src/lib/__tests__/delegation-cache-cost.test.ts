@@ -1,6 +1,6 @@
 // delegation-cache-cost.test.ts — #54, contre une VRAIE base.
 //
-// Le ticket décrit trois appels d'Alfred, aux heures exactes que ce fichier
+// Le ticket décrit trois appels du parent, aux heures exactes que ce fichier
 // sème : 14:19:15, puis 14:52:57 (33 minutes après, le temps que le délégué
 // travaille), puis 14:53:06 (9 secondes après). À la reprise le cache du
 // fournisseur avait expiré et 35 000 jetons sont repassés au tarif plein.
@@ -39,8 +39,8 @@ import { agentJobs, llmCalls } from '@nodal-agents/db';
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
 
-/** Le run d'Alfred du ticket : trois appels, une délégation au milieu. */
-let alfredJobId = '';
+/** Le run du ticket : trois appels du parent, une délégation au milieu. */
+let parentJobId = '';
 /** Un run sans délégation : trois appels en une minute, rien de perdu. */
 let serreJobId = '';
 
@@ -84,7 +84,7 @@ beforeAll(async () => {
   testDb = result.db;
   seed = await seedMinimal(testDb);
 
-  const [alfred] = await testDb
+  const [parent] = await testDb
     .insert(agentJobs)
     .values({
       entityId: seed.entityId,
@@ -96,7 +96,7 @@ beforeAll(async () => {
       completedAt: TOUR_3,
     })
     .returning();
-  alfredJobId = alfred!.id;
+  parentJobId = parent!.id;
 
   // La DÉLÉGATION : c'est elle qui fait durer 33 minutes l'écart entre le tour
   // 1 et le tour 2 du parent.
@@ -108,7 +108,7 @@ beforeAll(async () => {
       channel: 'internal',
       task: 'Relis la note',
       status: 'completed',
-      parentJobId: alfredJobId,
+      parentJobId: parentJobId,
       createdAt: new Date('2026-08-21T14:19:40Z'),
       completedAt: TOUR_2,
     })
@@ -119,7 +119,7 @@ beforeAll(async () => {
     {
       entityId: seed.entityId,
       agentId: seed.agentId,
-      jobId: alfredJobId,
+      jobId: parentJobId,
       source: 'job',
       turn: 1,
       modelEffective: 'claude-opus-5',
@@ -138,7 +138,7 @@ beforeAll(async () => {
     {
       entityId: seed.entityId,
       agentId: seed.agentId,
-      jobId: alfredJobId,
+      jobId: parentJobId,
       source: 'job',
       turn: 2,
       modelEffective: 'claude-opus-5',
@@ -156,7 +156,7 @@ beforeAll(async () => {
     {
       entityId: seed.entityId,
       agentId: seed.agentId,
-      jobId: alfredJobId,
+      jobId: parentJobId,
       source: 'job',
       turn: 3,
       modelEffective: 'claude-opus-5',
@@ -172,7 +172,7 @@ beforeAll(async () => {
     },
     // Le DÉLÉGUÉ a travaillé pendant l'écart, et ses appels sont dans la même
     // lecture que ceux du parent. Ils ne doivent pas se ranger entre deux
-    // appels d'Alfred.
+    // appels du parent.
     {
       entityId: seed.entityId,
       agentId: seed.agentId,
@@ -229,7 +229,7 @@ beforeAll(async () => {
 describe('getSpaceConversationAction — cache perdu à la reprise @cap:voir-le-cout/moteur', () => {
   it('les trois appels du ticket #54 : UNE reprise, 35 200 jetons, 0,1584 $ de surcoût', async () => {
     const { getSpaceConversationAction } = await actions();
-    const r = await getSpaceConversationAction(alfredJobId);
+    const r = await getSpaceConversationAction(parentJobId);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
@@ -252,7 +252,7 @@ describe('getSpaceConversationAction — cache perdu à la reprise @cap:voir-le-
     // porte, et le surcoût que la règle en extrait. Les afficher ensemble est
     // tout l'objet de cette PR, et sur ces quatre appels la reprise pèse 28 %.
     const { getSpaceConversationAction } = await actions();
-    const r = await getSpaceConversationAction(alfredJobId);
+    const r = await getSpaceConversationAction(parentJobId);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     // 0,2305 + 0,229 + 0,02345 + 0,07875 = 0,5617 $.

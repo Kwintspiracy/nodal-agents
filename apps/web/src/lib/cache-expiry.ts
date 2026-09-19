@@ -1,8 +1,8 @@
 // cache-expiry.ts — ce qu'une REPRISE après délégation a coûté en cache perdu
 // (#54, « Delegating expires the parent's cache: 21% of the bill »).
 //
-// Le constat de l'issue : Alfred fait trois appels, les tours 1 et 2 séparés
-// par 33 minutes pendant que l'équipe travaille. À la reprise le cache du
+// Le constat de l'issue : un agent fait trois appels, les tours 1 et 2 séparés
+// par 33 minutes pendant que son équipe travaille. À la reprise le cache du
 // fournisseur a expiré, et 35 000 jetons déjà mis en cache repassent au tarif
 // plein. Ce n'est pas un accident : toute délégation séquentielle dure plus
 // longtemps que la durée de vie d'un cache, donc le parent paie le plein tarif
