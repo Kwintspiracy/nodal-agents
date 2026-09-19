@@ -20,17 +20,21 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, rm, symlink, writeFile, unlink } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, rm, stat, symlink, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { normalizePath } from '@nodal-agents/shared';
 import {
   constatedGitWrites,
   deltaConstat,
   kindOfStatus,
   parsePorcelainZ,
+  perimetreGit,
   repoRootOf,
+  resolveGitBinary,
   snapshotGitAvant,
   snapshotRepo,
+  _resetGitBinaryCache,
 } from '../verification/git-constat';
 
 const run = promisify(execFile);
@@ -64,6 +68,40 @@ beforeAll(async () => {
 afterAll(async () => {
   await rm(racine, { recursive: true, force: true });
 });
+
+async function estUnFichier(chemin: string): Promise<boolean> {
+  try {
+    return (await stat(chemin)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Un faux `git` VRAIMENT exécutable, posé dans le dossier du projet.
+ *
+ * Sous Windows il faut un `.exe` — un `.cmd` ne serait pas lancé par
+ * `execFile` sans shell, donc ne prouverait rien. On recopie un petit
+ * exécutable du système ; appelé avec les arguments de `git status` il sortira
+ * en erreur, ce qui suffit : s'il était choisi, l'instantané serait nul.
+ *
+ * Rend `false` quand la machine ne permet pas d'en fabriquer un — le cas se
+ * saute alors EN LE DISANT.
+ */
+async function poserUnFauxGit(chemin: string): Promise<boolean> {
+  try {
+    if (process.platform === 'win32') {
+      const source = join(process.env['SystemRoot'] ?? 'C:/Windows', 'System32', 'whoami.exe');
+      if (!(await estUnFichier(source))) return false;
+      await copyFile(source, chemin);
+      return true;
+    }
+    await writeFile(chemin, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
   it('liste EXACTEMENT les fichiers du run, avec leur genre', async () => {
@@ -144,6 +182,31 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     ).toEqual([{ nom: 'garde.ts', kind: 'modified' }]);
   });
 
+  it('un RENOMMAGE fait UNE ligne, pas un ajout plus une suppression', async () => {
+    // Revue C de la PR #227, constat 4. Le nom d'avant n'a pas sa propre ligne
+    // dans le statut d'après : il voyage dans celle du nom d'après. La
+    // relecture du disque le prenait pour une ligne disparue, le trouvait
+    // absent, et en faisait un `deleted` — le bloc Files montrait deux fois le
+    // même déplacement, sous deux noms.
+    //
+    // Le fichier est modifié AVANT d'être renommé : c'est ce qui lui donne une
+    // ligne dans le statut d'avant, donc ce qui déclenchait la relecture.
+    await writeFile(join(depot, 'garde.ts'), 'export const garde = 5;\n');
+    const avant = await snapshotGitAvant([depot]);
+
+    await git(['mv', 'garde.ts', 'renomme.ts']);
+    const constat = await constatedGitWrites(avant);
+
+    expect(
+      constat.writes.map((w) => ({ nom: w.path.slice(w.path.lastIndexOf('/') + 1), kind: w.kind })),
+    ).toEqual([{ nom: 'renomme.ts', kind: 'renamed' }]);
+    // Et le nom d'avant est porté par la ligne, pas perdu.
+    expect(constat.writes[0]?.renamedFrom?.endsWith('/garde.ts')).toBe(true);
+
+    await git(['mv', 'renomme.ts', 'garde.ts']);
+    await git(['checkout', '--', '.']);
+  });
+
   it('un COMMIT pendant le run n’invente aucune écriture', async () => {
     // `git commit` vide `git status` sans toucher un octet du disque. Sans la
     // relecture du contenu, tout ce qu'il committe passerait pour écrit.
@@ -201,15 +264,48 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
     await rm(lien, { recursive: true, force: true });
   });
 
-  it('un dépôt AU-DESSUS du périmètre du run n’est pas retenu', async () => {
-    // Un sous-dossier d'un dépôt, donné SEUL : la racine est au-dessus de tout
-    // ce que le run vise, donc elle n'est pas prise. Le même sous-dossier donné
-    // AVEC sa racine, lui, est constaté — c'est le cas du `cwd` d'un shell.
+  it('le DOSSIER DU PROJET borne, et un cwd en dessous de lui est couvert', async () => {
+    // Revue C de la PR #227, constat 1. Le périmètre est le dossier du projet,
+    // que l'appelant passe TOUJOURS (`execute.ts` ajoute les dossiers attachés
+    // aux cibles de l'outil). Un `cwd` en dessous est alors couvert par
+    // construction, et c'est le cas le plus banal : le dépôt est à la racine du
+    // projet, la commande tourne dans `src/`.
     const sous = join(depot, 'coin');
     await mkdir(sous, { recursive: true });
     expect(await repoRootOf(sous)).toBe(await repoRootOf(depot));
+
+    const avant = await snapshotGitAvant([sous, depot]);
+    expect(avant).toHaveLength(1);
+    expect(avant[0]?.root).toBe(await repoRootOf(depot));
+
+    await rm(sous, { recursive: true, force: true });
+  });
+
+  it('le périmètre d’un appel PORTE les dossiers de l’agent, pas seulement la cible', async () => {
+    // Revue C de la PR #227, constat 1. C'est le cas de `code_task`, qui ne
+    // déclare que son `cwd` : sans les dossiers attachés, la racine de son
+    // propre dépôt est au-dessus de tout ce qu'il a nommé, et le run entier
+    // retombe en silence sur le constat disque.
+    const sous = join(depot, 'src');
+    await mkdir(sous, { recursive: true });
+
+    // Ce qu'un outil comme `code_task` déclare, seul : rien n'est constaté.
+    expect(await snapshotGitAvant(perimetreGit([sous], []))).toEqual([]);
+    // Le même appel, avec le dossier de l'agent : son dépôt est constaté.
+    const avant = await snapshotGitAvant(perimetreGit([sous], [depot]));
+    expect(avant).toHaveLength(1);
+    expect(avant[0]?.root).toBe(await repoRootOf(depot));
+
+    await rm(sous, { recursive: true, force: true });
+  });
+
+  it('un dépôt au-dessus de TOUT ce qui est passé n’est pas retenu', async () => {
+    // Ce que la garde refuse vraiment : une racine qui n'est ni l'un des
+    // dossiers passés, ni sous l'un d'eux. Sans elle, un projet posé sous un
+    // répertoire personnel versionné faisait constater tout le profil.
+    const sous = join(depot, 'coin-seul');
+    await mkdir(sous, { recursive: true });
     expect(await snapshotGitAvant([sous])).toEqual([]);
-    expect(await snapshotGitAvant([sous, depot])).toHaveLength(1);
     await rm(sous, { recursive: true, force: true });
   });
 
@@ -246,6 +342,21 @@ describe('la lecture de git status @cap:travailler-sur-des-fichiers/moteur', () 
     expect(kindOfStatus(' M')).toBe('modified');
     expect(kindOfStatus(' D')).toBe('deleted');
   });
+
+  it('une fusion non résolue qui AJOUTE un fichier est un ajout, des deux côtés', () => {
+    // Revue C de la PR #227, constat 5. Les états de fusion mettent la lettre
+    // tantôt à gauche, tantôt à droite : `AU` ajouté par nous, `UA` ajouté par
+    // eux, `AA` par les deux. Ne lire que la gauche faisait dire « modified »
+    // d'un fichier que ce run venait de créer.
+    expect(kindOfStatus('AU')).toBe('added');
+    expect(kindOfStatus('UA')).toBe('added');
+    expect(kindOfStatus('AA')).toBe('added');
+    expect(kindOfStatus('AM')).toBe('added');
+    // Et les états de fusion qui SUPPRIMENT restent des suppressions.
+    expect(kindOfStatus('DU')).toBe('deleted');
+    expect(kindOfStatus('UD')).toBe('deleted');
+    expect(kindOfStatus('UU')).toBe('modified');
+  });
 });
 
 describe('le delta lui-même @cap:travailler-sur-des-fichiers/moteur', () => {
@@ -277,6 +388,50 @@ describe('le delta lui-même @cap:travailler-sur-des-fichiers/moteur', () => {
     const delta = deltaConstat(avant, apres);
     expect(delta.writes).toEqual([]);
     expect(delta.indecis).toEqual(['/r/a.ts']);
+  });
+});
+
+describe('quel git est lancé @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Revue C de la PR #227, constat 3. `execFile('git', …, { cwd: <dossier du
+  // projet> })` laisse Windows chercher le programme, et `CreateProcess`
+  // regarde le répertoire courant AVANT le PATH. Un `git.exe` déposé dans le
+  // dossier d'un projet — par une dépendance, par un dépôt cloné, par l'agent
+  // lui-même — s'exécutait à la place du git du système, à chaque appel d'outil
+  // mutant, et sa sortie fabriquée alimentait la liste des fichiers livrés.
+
+  it('le binaire est un chemin ABSOLU pris dans le PATH du processus', async () => {
+    const binaire = await resolveGitBinary();
+    expect(binaire).not.toBeNull();
+    // Absolu : `execFile` n'a plus rien à chercher, donc plus de dossier
+    // courant dans la recherche.
+    expect(binaire === null || /^([A-Za-z]:\/|\/)/.test(binaire)).toBe(true);
+    expect(binaire === null || (await estUnFichier(binaire))).toBe(true);
+  });
+
+  it('un faux git POSÉ DANS LE PROJET n’est ni résolu ni appelé', async () => {
+    const faux = join(depot, process.platform === 'win32' ? 'git.exe' : 'git');
+    const posé = await poserUnFauxGit(faux);
+    if (!posé) {
+      console.warn(
+        '[tests] CAS SAUTÉ — impossible de fabriquer un faux exécutable ici.\n' +
+          '        La résolution absolue reste prouvée par le cas au-dessus.',
+      );
+      return;
+    }
+
+    _resetGitBinaryCache();
+    const binaire = await resolveGitBinary();
+    expect(binaire).not.toBe(normalizePath(faux));
+
+    // ET le constat marche encore : si le faux avait été lancé, sa sortie
+    // n'aurait rien d'un `git status`, l'instantané serait nul, et le run
+    // entier retomberait en silence sur le constat disque.
+    const avant = await snapshotGitAvant([depot]);
+    expect(avant).toHaveLength(1);
+    expect(avant[0]?.root).toBe(await repoRootOf(depot));
+
+    await rm(faux, { force: true });
+    _resetGitBinaryCache();
   });
 });
 

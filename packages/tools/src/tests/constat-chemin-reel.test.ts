@@ -16,7 +16,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile, unlink } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { normalizePath } from '@nodal-agents/shared';
-import { cheminConstate } from '../verification/record-constat';
+import { cheminConstate, fusionnerConstats } from '../verification/record-constat';
 
 let racine = '';
 
@@ -69,5 +69,37 @@ describe('cheminConstate @cap:travailler-sur-des-fichiers/moteur', () => {
     const inconnu = join(racine, 'nulle-part', 'x.ts');
 
     expect(await cheminConstate(inconnu)).toBe(normalizePath(inconnu));
+  });
+});
+
+describe('fusionnerConstats @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Revue C de la PR #227, constat 2. Une première version écartait toute ligne
+  // DISQUE tombant sous une racine constatée par git. Un fichier que git ne
+  // voit pas — nommé par un outil ou rapporté par un harnais sous un chemin
+  // ignoré — disparaissait donc du bloc Files dès qu'un AUTRE fichier, suivi
+  // celui-là, avait bougé dans le même run.
+
+  it('garde une ligne disque DANS un dépôt : git ne voit pas tout', () => {
+    const lignes = fusionnerConstats({
+      git: [{ path: 'D:/projet/suivi.ts', kind: 'added' }],
+      disque: [{ path: 'D:/projet/dist/x.js', kind: 'added' }],
+    });
+
+    expect(lignes).toEqual([
+      { path: 'D:/projet/suivi.ts', kind: 'added', constatedBy: 'git' },
+      { path: 'D:/projet/dist/x.js', kind: 'added', constatedBy: 'disk' },
+    ]);
+  });
+
+  it('git passe EN PREMIER : sur un même fichier, c est son mot qui reste', () => {
+    // Le dédoublonnage se fait au rangement, sur le chemin réel, et il garde la
+    // première ligne. L'ordre porte donc la décision « le constat le plus fort
+    // gagne », sans que la liste perde personne.
+    const lignes = fusionnerConstats({
+      git: [{ path: 'D:/projet/a.ts', kind: 'modified' }],
+      disque: [{ path: 'D:/projet/a.ts', kind: 'added' }],
+    });
+
+    expect(lignes.map((l) => l.constatedBy)).toEqual(['git', 'disk']);
   });
 });

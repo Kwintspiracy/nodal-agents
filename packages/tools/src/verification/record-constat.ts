@@ -86,22 +86,30 @@ export async function kindSurDisque(
 }
 
 /**
- * Est-ce que ce chemin tombe sous une racine de dépôt CONSTATÉE ?
+ * LES DEUX CONSTATS S'AJOUTENT — l'un ne remplace jamais l'autre.
  *
- * Sert à une seule décision, et elle compte : dans un dépôt, c'est git qui dit
- * la liste, et une ligne disque du même dossier ferait doublon sous un autre
- * mot. Hors de tout dépôt, le constat disque reste le seul qu'on ait.
+ * Revue C de la PR #227, constat 2. Une première version écartait toute ligne
+ * DISQUE tombant sous une racine constatée par git, au motif que dans un dépôt
+ * c'est git qui dit la liste. C'était faux pour ce que git NE VOIT PAS : un
+ * fichier nommé par un outil ou rapporté par un harnais sous un chemin ignoré
+ * (`dist/x.js`) n'est dans aucune des deux listes dès qu'un autre fichier,
+ * suivi celui-là, a bougé dans le même run — donc présent ou absent du bloc
+ * Files selon ce qu'un AUTRE fichier a fait. La règle de #196 est pourtant
+ * entière : une cible NOMMÉE se constate sur le disque, toujours.
  *
- * La comparaison est faite en casse repliée : sous Windows, le même dossier
- * s'écrit `D:/Apps/x` et `d:/apps/x`, et une comparaison sensible à la casse
- * ferait passer un fichier du dépôt pour un fichier de dehors.
+ * L'ORDRE EST LE FOND : git d'abord. `recordConstatedWrites` range par chemin
+ * réel et garde la première ligne, donc un fichier vu des deux côtés reste UNE
+ * ligne, dite `git` — le constat le plus fort gagne, sans que la liste perde
+ * personne.
  */
-export function sousUneRacine(path: string, roots: readonly string[]): boolean {
-  const p = normalizePath(path).toLowerCase();
-  return roots.some((r) => {
-    const racine = normalizePath(r).toLowerCase();
-    return p === racine || p.startsWith(`${racine}/`);
-  });
+export function fusionnerConstats(input: {
+  readonly git: readonly ConstatedWrite[];
+  readonly disque: ReadonlyArray<ConstatedWrite>;
+}): LigneDeConstat[] {
+  return [
+    ...input.git.map((w) => ({ ...w, constatedBy: 'git' as const })),
+    ...input.disque.map((w) => ({ ...w, constatedBy: 'disk' as const })),
+  ];
 }
 
 /**

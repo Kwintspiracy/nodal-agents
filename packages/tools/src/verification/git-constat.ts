@@ -61,7 +61,8 @@
 // rien écrire).
 
 import { execFile } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
+import { delimiter as PATH_DELIMITER } from 'node:path';
 import { promisify } from 'node:util';
 import { normalizePath } from '@nodal-agents/shared';
 import type { ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
@@ -71,6 +72,67 @@ const run = promisify(execFile);
 
 /** Une sonde qui pend ne doit pas tenir un appel d'outil. */
 const GIT_TIMEOUT_MS = 5_000;
+
+/**
+ * ═══ QUEL `git` EST LANCÉ — et pourquoi ce n'est pas une question oiseuse ═══
+ *
+ * Revue C de la PR #227, constat 3. `execFile('git', …, { cwd: <le dossier du
+ * projet> })` laisse Windows chercher le programme, et `CreateProcess` regarde
+ * le RÉPERTOIRE COURANT avant le PATH. Un `git.exe` déposé dans le dossier d'un
+ * projet — par une dépendance, par un dépôt cloné, par l'agent lui-même —
+ * s'exécutait donc à la place du git du système, à chaque appel d'outil mutant.
+ * « git est lu, jamais écrit » cessait d'être vrai, et une sortie fabriquée
+ * alimentait la liste des fichiers livrés.
+ *
+ * Le binaire est donc résolu UNE FOIS, à partir du PATH du processus runner et
+ * de lui seul — aucun sous-processus n'est lancé pour le trouver, sans quoi la
+ * recherche se reposerait exactement là où est le trou. Le chemin ABSOLU obtenu
+ * est ensuite passé à `execFile`, qui n'a plus rien à chercher.
+ *
+ * `null` quand il n'y a pas de git sur le PATH : le constat par git décline,
+ * le run retombe sur le disque, et le dit.
+ */
+let gitBinaire: Promise<string | null> | null = null;
+
+/** Les extensions exécutables à essayer sous Windows, dans l'ordre. */
+const EXTENSIONS_WINDOWS = ['.exe', '.cmd', '.bat', '.com'];
+
+async function estFichier(chemin: string): Promise<boolean> {
+  try {
+    return (await stat(chemin)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Le chemin absolu du `git` du système, cherché dans le PATH du runner.
+ *
+ * Le résultat est mémoïsé : la question est posée à chaque appel d'outil
+ * mutant, et sa réponse ne change pas pendant la vie du processus.
+ */
+export async function resolveGitBinary(): Promise<string | null> {
+  gitBinaire ??= (async () => {
+    const chemins = (process.env['PATH'] ?? '').split(PATH_DELIMITER).filter((d) => d !== '');
+    const windows = process.platform === 'win32';
+    for (const dossier of chemins) {
+      const base = `${normalizePath(dossier)}/git`;
+      // Sous Windows, `git` nu n'est pas exécutable : ce sont les extensions
+      // de PATHEXT qui le rendent lançable, et c'est `git.exe` qu'on veut.
+      for (const ext of windows ? EXTENSIONS_WINDOWS : ['']) {
+        if (await estFichier(base + ext)) return base + ext;
+      }
+    }
+    console.warn('[verification] GIT_CONSTAT_NO_GIT_ON_PATH');
+    return null;
+  })();
+  return gitBinaire;
+}
+
+/** Pour les tests : oublier le binaire mémoïsé. */
+export function _resetGitBinaryCache(): void {
+  gitBinaire = null;
+}
 
 /**
  * Au-delà, le constat par git décline (borne nº 4 ci-dessus). Mille lignes de
@@ -102,8 +164,13 @@ export interface RepoSnapshot {
 export type GitConstatBefore = readonly RepoSnapshot[];
 
 async function git(cwd: string, args: string[]): Promise<string | null> {
+  // Le chemin ABSOLU, jamais le nom nu : voir `resolveGitBinary`. Sans lui,
+  // `cwd` — le dossier du projet, donc un dossier où des agents écrivent —
+  // entre dans la recherche du programme sous Windows.
+  const binaire = await resolveGitBinary();
+  if (binaire === null) return null;
   try {
-    const { stdout } = await run('git', args, {
+    const { stdout } = await run(binaire, args, {
       cwd,
       timeout: GIT_TIMEOUT_MS,
       windowsHide: true,
@@ -131,6 +198,12 @@ export async function repoRootOf(dir: string): Promise<string | null> {
  * disque) est une SUPPRESSION : le fichier n'est pas là. Tester `A` d'abord en
  * ferait un ajout, et le bloc Files annoncerait un fichier livré qui n'existe
  * pas.
+ *
+ * LES DEUX COLONNES COMPTENT POUR `A` (revue C de la PR #227, constat 5). Les
+ * états de fusion non résolue mettent la lettre tantôt à gauche, tantôt à
+ * droite : `AU` est « ajouté par nous », `UA` « ajouté par eux », `AA` par les
+ * deux. Ne regarder que la gauche faisait dire « modified » à `UA` — donc
+ * « modifié » d'un fichier que ce run venait de créer.
  */
 export function kindOfStatus(status: string | null): ConstatedChangeKind {
   if (status === null) return 'modified';
@@ -138,7 +211,7 @@ export function kindOfStatus(status: string | null): ConstatedChangeKind {
   const y = status[1] ?? ' ';
   if (x === 'D' || y === 'D') return 'deleted';
   if (x === 'R' || y === 'R') return 'renamed';
-  if (x === 'A' || status === '??') return 'added';
+  if (x === 'A' || y === 'A' || status === '??') return 'added';
   return 'modified';
 }
 
@@ -317,6 +390,30 @@ async function cheminReel(dir: string): Promise<string> {
 }
 
 /**
+ * LE PÉRIMÈTRE D'UN APPEL : ce que l'outil vise, ET les dossiers de l'agent.
+ *
+ * Revue C de la PR #227, constat 1. Les deux ne se valent pas selon l'outil.
+ * `run_command` déclare son `cwd` ET les dossiers attachés, donc le dossier du
+ * projet est déjà là ; `code_task` ne déclare que son `cwd`. Un harnais lancé
+ * dans `src/` d'un projet dont le dépôt est à la racine se voyait donc refuser
+ * SA PROPRE racine — au-dessus de tout ce qu'il avait nommé — et le cas le plus
+ * banal de #199 retombait en silence sur le constat disque.
+ *
+ * Le dossier du projet est ce qui borne. Un `cwd` en dessous de lui est couvert
+ * par construction, et la garde ne refuse plus que ce qu'elle doit refuser :
+ * une racine au-dessus du projet lui-même.
+ *
+ * Extrait en fonction pour être prouvable : enfoui dans `executeTool`, ce choix
+ * ne se testait qu'à travers un outil qui déclare déjà tout, donc jamais.
+ */
+export function perimetreGit(
+  dirTargets: readonly string[],
+  workspaces: readonly string[],
+): string[] {
+  return [...dirTargets, ...workspaces];
+}
+
+/**
  * L'état d'AVANT, pris sur les dossiers que l'outil vise.
  *
  * Un dossier est réduit à la RACINE de son dépôt : un `cwd` trois niveaux plus
@@ -333,11 +430,24 @@ async function cheminReel(dir: string): Promise<string> {
  * profil de la personne : chaque fichier qu'un autre programme y touche serait
  * devenu un fichier « livré » par le run.
  *
- * La racine n'est donc retenue que si elle EST l'un des dossiers visés, ou
+ * La racine n'est donc retenue que si elle EST l'un des dossiers passés, ou
  * qu'elle tombe sous l'un d'eux. Un projet posé dans un monorepo dont il n'est
  * pas la racine retombe ainsi sur le constat disque, et le dit : c'est plus
  * pauvre, et c'est le seul repli honnête — Nodal constate le projet qu'on lui
  * a donné, pas la machine autour.
+ *
+ * ═══ LE PÉRIMÈTRE EST LE DOSSIER DU PROJET, PAS LE `cwd` DE LA COMMANDE ═══
+ *
+ * Revue C de la PR #227, constat 1. Passer les seules cibles de l'outil suffit
+ * pour `run_command` — son hook déclare le `cwd` ET les dossiers attachés —
+ * mais pas pour `code_task`, qui ne déclare que son `cwd`. Un harnais lancé
+ * dans `src/` d'un projet dont le dépôt est à la racine se voyait alors refuser
+ * SA PROPRE racine, et le cas le plus banal de #199 retombait en silence sur le
+ * constat disque.
+ *
+ * L'appelant passe donc les dossiers attachés de l'agent EN PLUS des cibles
+ * (`execute.ts`, section 3). C'est le dossier du projet qui borne, et un `cwd`
+ * en dessous de lui est couvert par construction.
  *
  * Ne lève jamais. Une panne de git n'est pas une panne d'écriture.
  */
@@ -382,6 +492,13 @@ export interface GitConstat {
  * vident une ligne de statut — un `git commit`, qui n'écrit rien, et un
  * `git checkout -- <fichier>`, qui réécrit le fichier. Sans elle, le second
  * ne se voyait nulle part.
+ *
+ * UN RENOMMAGE EST UN SEUL GESTE (revue C de la PR #227, constat 4). Le nom
+ * d'AVANT n'a pas sa propre ligne dans le statut d'après : il voyage dans celle
+ * du nom d'après. La relecture ci-dessus le prenait donc pour une ligne
+ * disparue, le trouvait absent du disque et en faisait un `deleted` — le bloc
+ * Files montrait deux fois le même déplacement, sous deux noms. Les noms
+ * d'avant annoncés par git sont écartés de la relecture : ils sont déjà dits.
  */
 export async function constatedGitWrites(before: GitConstatBefore): Promise<GitConstat> {
   const writes: ConstatedWrite[] = [];
@@ -391,8 +508,14 @@ export async function constatedGitWrites(before: GitConstatBefore): Promise<GitC
     const apres = await snapshotRepo(avant.root);
     if (apres === null) continue;
     const entries = new Map<string, GitStatusEntry>(apres.entries);
+    // Les noms d'avant des renommages : déjà portés par la ligne du nom
+    // d'après, jamais une disparition à constater pour eux-mêmes.
+    const renommesDepuis = new Set<string>();
+    for (const e of apres.entries.values()) {
+      if (e.renamedFrom !== undefined) renommesDepuis.add(e.renamedFrom);
+    }
     for (const path of avant.entries.keys()) {
-      if (entries.has(path)) continue;
+      if (entries.has(path) || renommesDepuis.has(path)) continue;
       entries.set(path, { status: null, fingerprint: await fingerprint(path) });
     }
     const delta = deltaConstat(avant, { root: apres.root, entries });

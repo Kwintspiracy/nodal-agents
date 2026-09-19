@@ -66,7 +66,7 @@ async function depotNeuf(nom: string): Promise<string> {
   const ws = join(racine, nom);
   await mkdir(ws, { recursive: true });
   await writeFile(join(ws, 'package.json'), '{}');
-  await writeFile(join(ws, '.gitignore'), 'node_modules/\n');
+  await writeFile(join(ws, '.gitignore'), 'node_modules/\ndist/\n');
   await writeFile(join(ws, 'depart.ts'), 'export const d = 1;\n');
   const git = (args: string[]) => run('git', args, { cwd: ws, windowsHide: true });
   await git(['init', '--initial-branch=main']);
@@ -197,6 +197,66 @@ describe('le seam range le constat @cap:travailler-sur-des-fichiers/moteur', () 
     );
 
     expect(await lignes(jobId)).toEqual([]);
+  });
+
+  it('une commande lancée dans un SOUS-DOSSIER du projet est constatée par git', async () => {
+    // Revue C de la PR #227, constat 1. Le cas le plus banal : le dépôt est à
+    // la racine du projet, la commande tourne dans `src/`. Le périmètre du
+    // constat est le DOSSIER DU PROJET, pas le `cwd` — sans les dossiers
+    // attachés, la racine du dépôt était « au-dessus de la portée » et tout le
+    // run retombait en silence sur le constat disque.
+    const ws = await depotNeuf('depot');
+    const jobId = await jobNeuf();
+    await mkdir(join(ws, 'src'), { recursive: true });
+
+    const res = await executeTool(
+      outil('run_command'),
+      {
+        purpose: 'ecrire',
+        cwd: 'src',
+        command: ecrire(join(ws, 'src', 'sorti.ts'), 'export const s = 1;'),
+      },
+      ctx(ws, jobId),
+      autoApprove(),
+    );
+    expect(res.outcome).toBe('success');
+
+    expect(await lignes(jobId)).toEqual([{ nom: 'sorti.ts', kind: 'added', par: 'git' }]);
+  });
+
+  it('une cible NOMMÉE sous un chemin ignoré reste dans la liste', async () => {
+    // Revue C de la PR #227, constat 2. Une première version écartait toute
+    // ligne disque tombant sous une racine constatée par git. `dist/x.js` —
+    // nommé par l'outil, invisible pour git — disparaissait donc du bloc Files
+    // dès qu'un AUTRE fichier, suivi celui-là, avait bougé dans le même run.
+    const ws = await depotNeuf('depot');
+    const jobId = await jobNeuf();
+    // Le dossier existe déjà — `file_write` ne crée pas les parents, et un
+    // refus rendrait `success` avec une charge d'échec, donc aucune ligne :
+    // le test serait vert pour la mauvaise raison.
+    await mkdir(join(ws, 'dist'), { recursive: true });
+
+    const ecrit = await executeTool(
+      outil('file_write'),
+      { path: 'dist/x.js', content: 'module.exports = 1;\n' },
+      ctx(ws, jobId),
+      autoApprove(),
+    );
+    expect(ecrit.outcome).toBe('success');
+    expect(await lignes(jobId)).toEqual([{ nom: 'x.js', kind: 'added', par: 'disk' }]);
+    // Puis une écriture que git VOIT, dans le même run et le même tour.
+    await executeTool(
+      outil('run_command'),
+      { purpose: 'ecrire', command: ecrire(join(ws, 'suivi.ts'), 'export const s = 1;') },
+      ctx(ws, jobId),
+      autoApprove(),
+    );
+
+    // LES DEUX, chacune sous ce qui la constate.
+    expect(await lignes(jobId)).toEqual([
+      { nom: 'suivi.ts', kind: 'added', par: 'git' },
+      { nom: 'x.js', kind: 'added', par: 'disk' },
+    ]);
   });
 
   it('un dossier SANS dépôt retombe sur le disque, et la ligne le DIT', async () => {
