@@ -269,6 +269,22 @@ describe('la case Approvals du rail @cap:approuver-une-action/ecran', () => {
     // faire : à zéro, la case ne porte que son nom.
     expect(railCell('approvals').textContent?.trim()).toBe('Approvals');
   });
+
+  it('DIT ce que le nombre compte, au lieu de le coller au libellé', async () => {
+    // Sans nom accessible, un lecteur d'écran annonce « Approvals 3 » : le
+    // libellé et le chiffre collés, sans un mot pour dire ce qu'il compte.
+    //
+    // Mutation vérifiée : l'`aria-label` retiré de `RailCell` → ce cas rougit.
+    await renderSidebar([], attente(3));
+    expect(railCell('approvals').getAttribute('aria-label')).toBe('Approvals, 3 pending');
+  });
+
+  it('ne pose AUCUN nom accessible quand il n’y a rien à compter', async () => {
+    await renderSidebar([], []);
+    // Le texte de la case suffit alors, et un `aria-label` qui le répète
+    // masquerait le libellé au lieu de l'expliquer.
+    expect(railCell('approvals').getAttribute('aria-label')).toBeNull();
+  });
 });
 
 describe('la destination active suit la route @cap:installer-et-demarrer/ecran', () => {

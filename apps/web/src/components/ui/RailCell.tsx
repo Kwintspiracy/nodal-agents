@@ -3,10 +3,10 @@
 // RailCell — LA case du rail de la barre latérale, et il n'y en a qu'une
 // (#230, 19/09/2026).
 //
-// Le rail porte six cases de même forme : trois destinations qui naviguent
-// (Talk, Build, Run), Settings qui navigue aussi, Help qui ouvre une carte, et
-// le compte, qui est un rond. Elles se ressemblent toutes parce qu'elles sont
-// la MÊME case : une forme, un état, et un contenu qui varie.
+// Le rail porte des cases de même forme : trois destinations qui naviguent
+// (Work, Agent, Run), Approvals et Settings qui naviguent aussi, Help qui ouvre
+// une carte, et le compte, qui est un rond. Elles se ressemblent toutes parce
+// qu'elles sont la MÊME case : une forme, un état, et un contenu qui varie.
 //
 // Elle vit dans `components/ui` pour la même raison que `SidebarRow` : c'est
 // ici que le design system touche l'élément natif une fois pour toutes. La
@@ -19,7 +19,7 @@ import type { Icon as PhosphorIcon } from '@phosphor-icons/react';
 import AttentionCount from './AttentionCount';
 
 /**
- * La forme d'une case : 56 × 52, coins `xl`. Identique pour les cinq cases à
+ * La forme d'une case : 56 × 52, coins `xl`. Identique pour toutes les cases à
  * libellé, active ou non.
  *
  * Exportée parce qu'un test la compare d'une case à l'autre : c'est ce qui fait
@@ -116,6 +116,15 @@ export default function RailCell({
       // `aria-current="page"` et non `"true"` : c'est bien la page en cours que
       // la case désigne, comme toute ligne de la barre (`SidebarRow`).
       {...(active ? { 'aria-current': 'page' as const } : {})}
+      // LE NOMBRE SE DIT, il ne se laisse pas deviner (Reviewer C, passe 2 de
+      // la PR #235). Sans ce nom, un lecteur d'écran annonce « Approvals 3 » :
+      // le libellé et le chiffre collés, sans un mot pour dire ce que le
+      // chiffre compte. « Approvals, 3 pending » le dit.
+      //
+      // « pending » et pas autre chose : c'est ce que la pastille SIGNIFIE —
+      // ce qui attend une réponse de la personne — et c'est le seul sens
+      // qu'elle ait dans la barre, sur les dossiers comme ici.
+      {...(pill !== undefined && pill > 0 ? { 'aria-label': `${label}, ${pill} pending` } : {})}
       {...commun}
     >
       {contenu}
