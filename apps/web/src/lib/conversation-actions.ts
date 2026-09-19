@@ -37,6 +37,8 @@ import {
   codeProjects,
   conversationReads,
   conversations,
+  entities,
+  users,
   jobDeliverableVerificationState,
   jobDeliveries,
   llmCalls,
@@ -265,6 +267,99 @@ function projectOf(row: {
     name: row.projectDisplayName ?? basenameOf(row.projectPath),
     path: row.projectPath,
   };
+}
+
+// ─── getNewConversationAction ────────────────────────────────────────────────
+
+/** Ce qu'il faut dessiner un fil qui n'a pas commencé (#248). */
+export type NewConversationView = {
+  /**
+   * Le nom de la personne, tel que son compte le porte — `null` quand le
+   * produit n'en connaît pas. La ligne d'accueil s'en passe alors
+   * (`welcome-line.ts`) : elle n'en invente jamais un.
+   */
+  accountName: string | null;
+  /**
+   * L'agent ROOT : celui à qui la conversation sera attribuée au premier
+   * envoi, et dont l'en-tête porte le nom et le visage. `null` quand l'espace
+   * n'en a pas encore — l'écran retire alors la saisie et dit quoi faire,
+   * plutôt qu'offrir un champ dont l'envoi échouerait (invariant #4).
+   */
+  root: { id: string; name: string; avatarUrl: string | null } | null;
+  /** Le projet que l'écran PORTE, quand on est venu du dossier d'un projet. */
+  project: { id: string; name: string } | null;
+};
+
+/**
+ * Le chargement de l'écran de conversation neuve — et il n'ÉCRIT rien.
+ *
+ * C'est tout le sujet de #248 : ouvrir « New conversation » créait une ligne
+ * `conversations` avant qu'un mot soit dit, et la boîte de réception se
+ * remplissait de fils vides. La ligne naît maintenant du premier envoi
+ * (`createConversationAction` / `createProjectConversationAction`, appelées par
+ * la saisie) ; cette lecture-ci ne fait que lire.
+ *
+ * Un `projectId` inconnu ÉCHOUE plutôt que de rendre un écran sans projet :
+ * l'envoi irait alors dans une conversation non ancrée, et personne ne le
+ * saurait.
+ */
+export async function getNewConversationAction(
+  projectId?: string | null,
+): Promise<ActionResult<NewConversationView>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+
+    if (projectId !== undefined && projectId !== null && projectId !== '') {
+      if (!z.string().guid().safeParse(projectId).success) {
+        return fail('validation_failed', 'Invalid project id');
+      }
+    }
+
+    const [personne] = await db
+      .select({ name: users.name })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+
+    const [racine] = await db
+      .select({ id: agents.id, name: agents.name, avatarUrl: agents.avatarUrl })
+      .from(entities)
+      .innerJoin(agents, eq(agents.id, entities.rootAgentId))
+      .where(eq(entities.id, session.entityId))
+      .limit(1);
+
+    let project: NewConversationView['project'] = null;
+    if (projectId !== undefined && projectId !== null && projectId !== '') {
+      const [row] = await db
+        .select({
+          id: codeProjects.id,
+          displayName: codeProjects.displayName,
+          path: codeProjects.projectPath,
+        })
+        .from(codeProjects)
+        .where(
+          and(
+            eq(codeProjects.id, projectId),
+            eq(codeProjects.entityId, session.entityId),
+            isNotNull(codeProjects.registeredAt),
+          ),
+        )
+        .limit(1);
+      if (!row) return fail('not_found', 'Project not found');
+      project = { id: row.id, name: row.displayName ?? basenameOf(row.path) };
+    }
+
+    const nom = (personne?.name ?? '').trim();
+    return ok({
+      accountName: nom === '' ? null : nom,
+      root: racine ? { id: racine.id, name: racine.name, avatarUrl: racine.avatarUrl } : null,
+      project,
+    });
+  } catch (err) {
+    console.error('[getNewConversationAction]', err);
+    return fail('db_error', 'Failed to open a new conversation');
+  }
 }
 
 // ─── listAllConversationsAction ──────────────────────────────────────────────

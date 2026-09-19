@@ -45,6 +45,29 @@ export type SpaceCostView = {
   };
 };
 
+/**
+ * Le coût d'un fil qui n'a RIEN fait encore (#248, l'écran de conversation
+ * neuve). Zéro appel, et un coût `null` — pas `0`, qui se lirait « c'était
+ * gratuit ». La barre d'état le dit d'elle-même : « no proof · no usage
+ * recorded », ce qui est exactement vrai d'un fil qui n'a pas commencé.
+ */
+export const EMPTY_SPACE_COST: SpaceCostView = {
+  byAgent: [],
+  totals: {
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    cacheCreationTokens: 0,
+    costUsd: null,
+    unpricedCalls: 0,
+    llmDurationMs: 0,
+    durationMs: 0,
+    humanWaitMs: 0,
+    proofMs: 0,
+  },
+};
+
 export type CostCallRow = {
   agentId: string | null;
   agentName: string | null;
