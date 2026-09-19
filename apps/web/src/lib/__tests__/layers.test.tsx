@@ -17,11 +17,11 @@
 // Mutations vérifiées :
 //   - la pile lue à l'envers (`stack[0]` au lieu du dernier) → le cas « le
 //     popover dans une modale non-dismissable » rougit ;
-//   - le `preventDefault()` retiré → rien ne rougit ici, et c'est normal :
-//     plus aucun autre écouteur ne lit la touche. Il protège les écouteurs
-//     hors de la pile, pas les calques entre eux.
 //   - une modale non-dismissable qui s'inscrirait avec `onClose` au lieu du
-//     geste vide → le cas « seule, elle ne se ferme pas » rougit.
+//     geste vide → le cas « seule, elle ne se ferme pas » rougit ;
+//   - le `preventDefault()` retiré d'un champ qui gère Échap lui-même → le cas
+//     « un champ qui annule sa saisie » rougit. Un tel champ n'est PAS dans la
+//     pile : c'est `defaultPrevented` qui protège le calque qui le porte.
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { act, useState } from 'react';
@@ -30,6 +30,7 @@ import Modal from '@/components/ui/Modal.tsx';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import DockedPanel from '@/components/ui/DockedPanel.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import TextInput from '@/components/ui/TextInput.tsx';
 import { openLayerCount } from '../layers.ts';
 
 let container: HTMLDivElement;
@@ -194,6 +195,59 @@ describe('Échap va au calque ouvert le plus intérieur', () => {
 
     await pressEscape();
     expect(container.querySelector('[data-testid="panel"]'), 'puis le panneau').toBeNull();
+  });
+
+  it('un champ qui annule sa saisie sur Échap ne ferme pas le calque qui le porte', async () => {
+    // Un champ n'est pas un calque : il ne s'inscrit nulle part, il gère la
+    // touche lui-même. Il doit donc la PRENDRE, sinon la pile la donne ensuite
+    // au panneau — c'est ce qui arrivait au renommage d'un connecteur.
+    function Host() {
+      const [panelOpen, setPanelOpen] = useState(true);
+      const [valeur, setValeur] = useState('Notion');
+      return (
+        <DockedPanel
+          open={panelOpen}
+          onClose={() => setPanelOpen(false)}
+          title="Connector"
+          testId="panel"
+        >
+          <TextInput
+            data-testid="renommage"
+            value={valeur}
+            onChange={(e) => setValeur(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setValeur('Notion');
+              }
+            }}
+          />
+        </DockedPanel>
+      );
+    }
+    await render(<Host />);
+    const champ = container.querySelector<HTMLInputElement>('[data-testid="renommage"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )!.set!;
+      setter.call(champ, 'Notion renommé');
+      champ.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    // Échap part DU CHAMP, comme quand on y tape.
+    await act(async () => {
+      champ.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(
+      container.querySelector<HTMLInputElement>('[data-testid="renommage"]')!.value,
+      'la saisie est annulée',
+    ).toBe('Notion');
+    expect(container.querySelector('[data-testid="panel"]'), 'le panneau reste').not.toBeNull();
   });
 
   it('un calque fermé quitte la pile, et la touche revient à celui du dessous', async () => {

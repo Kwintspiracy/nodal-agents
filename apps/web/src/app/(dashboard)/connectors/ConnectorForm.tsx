@@ -188,6 +188,10 @@ export default function ConnectorForm({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') performRename();
                   if (e.key === 'Escape') {
+                    // Prendre la touche : sans ça, le calque au-dessus (une
+                    // modale, le panneau ancré) se ferme avec le renommage.
+                    // Voir `@/lib/layers.ts`.
+                    e.preventDefault();
                     setRenameValue(instance.name);
                     setIsRenaming(false);
                   }
@@ -307,6 +311,8 @@ export default function ConnectorForm({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') performRotate();
                 if (e.key === 'Escape') {
+                  // Prendre la touche, comme au-dessus (`@/lib/layers.ts`).
+                  e.preventDefault();
                   setNewApiKey('');
                   setRotateOpen(false);
                 }
