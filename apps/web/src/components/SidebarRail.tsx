@@ -29,7 +29,7 @@ import {
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
 import RailCell, { RailAvatarButton } from './ui/RailCell';
-import RailPopover from './RailPopover';
+import RailPopover from './ui/RailPopover';
 import { DESTINATIONS, type DestinationKey } from './sidebar-nav.ts';
 
 /** Quelle carte du bas du rail est ouverte. Une seule à la fois. */

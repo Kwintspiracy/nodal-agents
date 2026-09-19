@@ -190,7 +190,7 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
     ['/', 'run', 'Run'],
     ['/logs', 'run', 'Run'],
     ['/spaces', 'run', 'Run'],
-    ['/scheduled', 'run', 'Run'],
+    ['/automations', 'run', 'Run'],
     // Une page de run n'a pas d'entrée dans le panneau, mais elle allume bien
     // une destination : un rail sans case active se lirait comme cassé.
     ['/jobs/j1', 'run', 'Run'],
@@ -234,15 +234,31 @@ describe('les entrées de 0.8.11, réparties en trois @cap:installer-et-demarrer
     expect(groupLabels('Connect')).toEqual(['API Connectors', 'MCP Connectors', 'Credentials']);
   });
 
-  it('range Run en trois blocs, et n’y perd ni Scheduled ni LLM Providers', async () => {
+  it('range Run en trois blocs, et garde LLM Providers avec lui', async () => {
     pathname = '/';
     await renderSidebar();
     expect(groupLabels('Monitor')).toEqual(['Dashboard', 'Workspaces', 'Approvals', 'Logs']);
-    // « Scheduled » n'est dans aucune liste de l'issue, et ce n'est pourtant
-    // pas /automations : celui-ci ÉDITE les automatisations, celui-là liste
-    // leurs runs. Le retirer aurait supprimé une destination du produit.
-    expect(groupLabels('Automate')).toEqual(['Automations & Webhooks', 'Scheduled']);
+    expect(groupLabels('Automate')).toEqual(['Automations & Webhooks']);
+    // « LLM Providers » est dessiné sous Build/CONNECT sur la planche, et rangé
+    // ici par l'issue : la décision de Quentin du 18/09 (« le fournisseur de
+    // modèles ouvre ce qu'on règle ») est plus récente que la planche.
     expect(groupLabels('Models')).toEqual(['LLM Providers']);
+  });
+
+  it('ne propose « Scheduled » dans aucun des trois panneaux', async () => {
+    for (const route of ['/', '/agents', '/chat']) {
+      pathname = route;
+      await renderSidebar();
+      // La page /scheduled disparaît (#202, PR #224) : les runs d'une
+      // automatisation se lisent sur SA page, et la route redirige vers
+      // /automations. Le menu ne doit donc plus y mener — ni par un libellé,
+      // ni par une adresse.
+      expect(() => navLink('Scheduled'), route).toThrow();
+      expect(container.querySelector('a[href="/scheduled"]'), route).toBeNull();
+      await remonter();
+    }
+    // `afterEach` démonte : on rend une dernière fois pour qu'il ait de quoi.
+    await renderSidebar();
   });
 
   it('nomme la racine « Dashboard », et « Workspaces » ce qui vit sur /spaces', async () => {
@@ -503,6 +519,23 @@ describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
     expect(container.querySelector('[data-testid="rail-popover"]')).not.toBeNull();
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
+  });
+
+  it('se referme au clic DEHORS, et pas au clic dedans', async () => {
+    await renderSidebar();
+    await click(railCell('help'));
+    // Un clic DANS la carte ne la ferme pas : on vient y cliquer un lien.
+    await act(async () => {
+      container
+        .querySelector('[data-testid="rail-popover"]')!
+        .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="rail-popover"]')).not.toBeNull();
+
+    await act(async () => {
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     });
     expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
   });
