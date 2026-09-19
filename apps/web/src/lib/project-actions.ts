@@ -299,6 +299,63 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
   }
 }
 
+/**
+ * Combien de conversations un projet porte.
+ *
+ * Une conversation lui appartient de deux façons, et il faut les deux : elle y
+ * est ANCRÉE (`conversations.current_project_id`), ou elle porte un travail
+ * rattaché au projet (`agent_jobs.project_id` + `conversation_id`). C'est
+ * l'union exacte que `getProjectActivityAction` liste ; n'en compter qu'une
+ * moitié ferait dire « 2 conversations » à un en-tête dont la liste en montre
+ * cinq.
+ *
+ * L'union se fait en JS sur des identifiants, pas en SQL : deux `group by`
+ * indexés coûtent moins qu'un `UNION` sur une jointure, et le nombre de
+ * conversations d'une entité tient en mémoire. Bornée par LISTE de projets —
+ * un seul aujourd'hui, mais la forme ne change pas si un écran en demande
+ * plusieurs.
+ */
+async function countProjectConversations(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  projectIds: readonly string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (projectIds.length === 0) return counts;
+
+  const [anchored, viaJobs] = await Promise.all([
+    db
+      .select({ projectId: conversations.currentProjectId, id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.entityId, entityId),
+          inArray(conversations.currentProjectId, [...projectIds]),
+        ),
+      ),
+    db
+      .selectDistinct({ projectId: agentJobs.projectId, id: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          inArray(agentJobs.projectId, [...projectIds]),
+          isNotNull(agentJobs.conversationId),
+        ),
+      ),
+  ]);
+
+  const seen = new Map<string, Set<string>>();
+  for (const row of [...anchored, ...viaJobs]) {
+    if (!row.projectId || !row.id) continue;
+    const set = seen.get(row.projectId) ?? new Set<string>();
+    set.add(row.id);
+    seen.set(row.projectId, set);
+  }
+  for (const [projectId, set] of seen) counts.set(projectId, set.size);
+  return counts;
+}
+
 // ─── getProjectFactsAction ───────────────────────────────────────────────────
 
 /** Ce que l'en-tête d'un projet ouvert affirme — et rien de plus (#143). */
