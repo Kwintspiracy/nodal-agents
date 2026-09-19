@@ -88,22 +88,32 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   // A resolution failure yields NO target, exactly like computeApproval's
   // catch: no write will leave this call anyway — execute() fails loud on the
   // same error a few lines down, with the message the agent can act on.
+  //
+  // LA RÉSOLUTION SEULE, et rien d'autre (constat de Quentin sur la revue de
+  // #213, dette #88, issue #211). La `catch` couvrait aussi le CLASSEMENT, qui
+  // lit `code_projects` : une panne passagère de la base rendait « aucune
+  // cible », c'est-à-dire la forme réservée à un chemin irrésolu — sauf qu'ici
+  // le chemin est bon, l'écriture partait, `execute` reclassait pour son compte
+  // et la carte repartait avec une clé de livrable qu'aucune ligne d'état ne
+  // réclamait. Un repli silencieux (invariant #4). Un classement qui lève
+  // remonte donc au seam, qui refuse l'appel et le dit.
   resolveMutationTargets: async (input, ctx) => {
+    let path: string;
     try {
-      const path = await resolveAndCheckPath(ctx, input.path);
-      // Ce que cet outil écrit est du CODE s'il tombe sous un projet de code
-      // (manifeste ou déclaration), un DOCUMENT sinon — la règle vit dans
-      // `written-file-type.ts`, mécanique et sans extension (v7-A :
-      // `data/fixtures/x.csv` est du code, `rapport.csv` n'en est pas, et
-      // rien dans le chemin ne les distingue). Les outils Office, eux,
-      // produisent des documents sans ambiguïté : leur hook déclare
-      // `office_file`.
-      return [
-        { kind: 'file', path, deliverableType: await deliverableTypeForWrittenFile(ctx, path) },
-      ];
+      path = await resolveAndCheckPath(ctx, input.path);
     } catch {
       return [];
     }
+    // Ce que cet outil écrit est du CODE s'il tombe sous un projet de code
+    // (manifeste ou déclaration), un DOCUMENT sinon — la règle vit dans
+    // `written-file-type.ts`, mécanique et sans extension (v7-A :
+    // `data/fixtures/x.csv` est du code, `rapport.csv` n'en est pas, et
+    // rien dans le chemin ne les distingue). Les outils Office, eux,
+    // produisent des documents sans ambiguïté : leur hook déclare
+    // `office_file`.
+    return [
+      { kind: 'file', path, deliverableType: await deliverableTypeForWrittenFile(ctx, path) },
+    ];
   },
   // D1: gate ONLY the destructive case — overwriting a file that already
   // exists in the entity-wide SHARED workspace. A brand-new file, or a write
