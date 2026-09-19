@@ -45,7 +45,10 @@ import type { AnyDrizzleDb, EntityId, JobId } from '../types';
  *  - une ou plusieurs références de PR — `#185`, `PR 185`, `pr-185`, `PR/185`
  *    (la casse est ignorée) → `pr:185` ;
  *  - à défaut, un ou plusieurs chemins de paquet — `packages/<...>` ou
- *    `apps/<...>` → `path:packages/orchestration`.
+ *    `apps/<...>`, la casse ignorée là aussi → `path:packages/orchestration`.
+ *    Un chemin est rendu en MINUSCULES : sur Windows `APPS/Web` et `apps/web`
+ *    désignent le même dossier, et deux écritures d'un même chemin ne doivent
+ *    pas faire deux cibles (revue de la PR #220).
  *
  * Les références trouvées sont dédoublonnées et TRIÉES : la cible est un
  * ensemble, pas une phrase. « relis #190 et #185 » et « relis #185 et #190 »
@@ -78,7 +81,7 @@ export function extractReviewTarget(task: string | null | undefined): string | n
   }
 
   const paths = new Set<string>();
-  for (const m of task.matchAll(/\b((?:packages|apps)\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)/g)) {
+  for (const m of task.matchAll(/\b((?:packages|apps)\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)/gi)) {
     if (m[1]) paths.add(m[1].toLowerCase().replace(/[./]+$/, ''));
   }
   if (paths.size > 0) {

@@ -70,8 +70,8 @@ async function seedTeam(): Promise<Fixture> {
     .insert(agents)
     .values({
       entityId: entity!.id,
-      name: 'Reviewer C',
-      slug: `reviewer-c-${suffix}`,
+      name: 'Relecteur Alpha',
+      slug: `relecteur-alpha-${suffix}`,
       personality: 'p',
       role: 'agent',
       active: true,
@@ -81,8 +81,8 @@ async function seedTeam(): Promise<Fixture> {
     .insert(agents)
     .values({
       entityId: entity!.id,
-      name: 'Reviewer D',
-      slug: `reviewer-d-${suffix}`,
+      name: 'Relecteur Bêta',
+      slug: `relecteur-beta-${suffix}`,
       personality: 'p',
       role: 'agent',
       active: true,
@@ -200,7 +200,12 @@ describe('extractReviewTarget @cap:organiser-equipe/moteur', () => {
     expect(extractReviewTarget('Relis packages/orchestration/src/router.')).toBe(
       'path:packages/orchestration/src/router',
     );
-    expect(extractReviewTarget('Relis APPS/Web et packages/db')).toBe('path:packages/db');
+    expect(extractReviewTarget('Relis apps/web et packages/db')).toBe('path:apps/web+packages/db');
+  });
+
+  it('lit le chemin quelle que soit la casse — `APPS/Web` et `apps/web` sont la même cible', () => {
+    expect(extractReviewTarget('Relis APPS/Web.')).toBe('path:apps/web');
+    expect(extractReviewTarget('Relis APPS/Web.')).toBe(extractReviewTarget('Relis apps/web.'));
   });
 
   it('préfère la PR au chemin quand la tâche cite les deux', () => {
@@ -238,6 +243,20 @@ describe('findDeliveredReviewForTarget @cap:organiser-equipe/moteur', () => {
     expect(refusal).toContain(childJobId);
     expect(refusal).toContain('request_changes');
     expect(refusal).toContain(VERDICT_OUTPUT.summary);
+  });
+
+  it('refuse `APPS/Web` après une revue de `apps/web` — deux écritures, une seule cible', async () => {
+    const fx = await seedTeam();
+    const childJobId = await seedDeliveredReview(fx, fx.reviewerId, 'Relis apps/web.');
+
+    const match = await findDeliveredReviewForTarget(db, {
+      parentJobId: fx.parentJobId as JobId,
+      entityId: fx.entityId as EntityId,
+      childSlug: fx.reviewerSlug,
+      task: 'Relis APPS/Web.',
+    });
+    expect(match?.childJobId).toBe(childJobId);
+    expect(match?.target).toBe('path:apps/web');
   });
 
   it('LAISSE PASSER la relecture quand une correction a ABOUTI depuis le verdict', async () => {
