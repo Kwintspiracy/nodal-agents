@@ -194,6 +194,10 @@ export function activityRows(input: ActivityRowsInput): ConversationRowModel[] {
         time: conversationTimeLabel(c.updatedAt, now),
         waiting: strongestWaiting(parConversation.get(c.id) ?? []),
         running: c.running,
+        // Le POIDS du titre dit que le fil a bougé depuis la dernière fois que
+        // cette personne l'a ouvert (#209). L'état est LU avec la ligne, il ne
+        // se devine pas ici.
+        unread: c.unread,
       },
     });
   }
@@ -213,6 +217,10 @@ export function activityRows(input: ActivityRowsInput): ConversationRowModel[] {
         time: conversationTimeLabel(s.createdAt, now),
         waiting: strongestWaiting(parRun.get(s.id) ?? []) ?? statusWaiting(s.status),
         running: jobIsRunning(s.status),
+        // Un run n'a PAS d'état de lecture : rien ne s'y lit, et la table
+        // `conversation_reads` ne porte que des fils. `false` est donc un fait,
+        // pas un repli — un run ne devient jamais « non lu ».
+        unread: false,
       },
     });
   }

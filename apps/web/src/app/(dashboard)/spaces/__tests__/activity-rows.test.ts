@@ -30,6 +30,7 @@ const conversation = (
   sessions: 2,
   updatedAt: new Date('2026-09-19T14:02:00.000Z'),
   running: false,
+  unread: false,
   ...over,
 });
 
@@ -129,6 +130,24 @@ describe('activityRows @cap:travailler-sur-des-fichiers/ecran', () => {
     });
     expect(rows.find((r) => r.key === 'session-j-vivant')!.running).toBe(true);
     expect(rows.find((r) => r.key === 'session-j-fini')!.running).toBe(false);
+  });
+
+  // Mutation : `unread: c.unread` figé à `false` dans `activity-rows.ts` →
+  // ce cas rougit sur la première assertion.
+  it('le NON LU d’un fil arrive jusqu’à la ligne ; un run n’est jamais non lu', () => {
+    const rows = activityRows({
+      conversations: [
+        conversation({ id: 'c-non-lue', unread: true }),
+        conversation({ id: 'c-lue', unread: false }),
+      ],
+      // Un run n'a pas d'état de lecture : la table des marqueurs ne porte que
+      // des fils. Sa ligne le dit en clair plutôt que de l'emprunter ailleurs.
+      sessions: [session({ id: 'j-1' })],
+    });
+
+    expect(rows.find((r) => r.key === 'conversation-c-non-lue')!.unread).toBe(true);
+    expect(rows.find((r) => r.key === 'conversation-c-lue')!.unread).toBe(false);
+    expect(rows.find((r) => r.key === 'session-j-1')!.unread).toBe(false);
   });
 
   it('un fil que personne n’a nommé s’écrit « Untitled », jamais un titre vide', () => {

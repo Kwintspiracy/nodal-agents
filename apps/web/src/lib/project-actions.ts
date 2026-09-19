@@ -40,6 +40,7 @@ import {
   chatMessages,
   cliRuns,
   codeProjects,
+  conversationReads,
   conversations,
   entities,
   verificationRuns,
@@ -61,6 +62,10 @@ import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
 import { isUnderPath } from './code-projects.ts';
 
+// L'état de lecture d'un fil — la MÊME règle et la même colonne que la liste
+// des conversations et le sous-menu de la barre latérale (#209). Une seconde
+// définition du « non lu » aurait fini par contredire la première.
+import { readsOfUser, unreadColumn } from './unread.ts';
 import { deriveVerifyStatus, type VerifyStatus } from './verification-display.ts';
 import { groupVerificationRuns, type VerificationSequenceView } from './verification-runs-view.ts';
 
@@ -455,6 +460,11 @@ export type ProjectActivityConversation = {
   updatedAt: Date | null;
   /** Un de ces runs avance encore. */
   running: boolean;
+  /**
+   * Le fil a bougé depuis que cette personne l'a ouvert, ou elle ne l'a jamais
+   * ouvert (#209). Lu dans la MÊME requête que la ligne, jamais par ligne.
+   */
+  unread: boolean;
 };
 
 /** Un run du projet qui n'a AUCUNE conversation — ce que l'onglet Code listait. */
@@ -604,9 +614,13 @@ export async function getProjectActivityAction(
         updatedAt: conversations.updatedAt,
         agentName: agents.name,
         agentAvatarUrl: agents.avatarUrl,
+        // NON LU, dans la MÊME requête que la ligne (#209) : une jointure de
+        // plus, jamais une lecture par fil.
+        unread: unreadColumn,
       })
       .from(conversations)
       .leftJoin(agents, eq(agents.id, conversations.agentId))
+      .leftJoin(conversationReads, readsOfUser(session.userId))
       .where(
         and(
           eq(conversations.entityId, entityId),
@@ -690,6 +704,7 @@ export async function getProjectActivityAction(
           sessions: compte?.count ?? 0,
           updatedAt: c.updatedAt,
           running: compte?.running ?? false,
+          unread: c.unread,
         };
       }),
       sessions: sansConversation.map(
