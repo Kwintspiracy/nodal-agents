@@ -1561,11 +1561,33 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   // `null` (GitHub sans réponse) ne pose RIEN : une absence de mesure n'est pas
   // une CI gratuite.
   const prix = s.prixCi ?? null;
+
+  // GitHub a répondu, et pas un seul run n'est allé au bout : `runs: 0`, donc
+  // `medianeRecente: null`, donc aucun des deux écarts ci-dessous. La liste se
+  // taisait alors exactement quand le prix compte le plus (constat M1 de la
+  // revue C de la PR #85, issue #211). Le trou se DIT, comme le registre npm
+  // injoignable — et, comme lui, en MOYENNE : c'est une absence de mesure, pas
+  // une panne du produit, que les écarts sur les tests couvrent déjà.
+  if (prix != null && prix.runs === 0) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `The CI price is not measured: no green run in the window`,
+      detail: `Every run collected came back red or cancelled, and a wait is only measured on a run that went all the way. Nothing is claimed about the cost of a pull request until one passes again.`,
+      quoi: [],
+    });
+  }
+
   if (prix?.medianeRecente != null && prix.medianeRecente > SEUIL_PRIX_MIN) {
+    // QUAND, pas seulement combien (constat M3 de la même revue) : la médiane
+    // porte sur les dix derniers runs VERTS, qui peuvent remonter à plusieurs
+    // semaines si les récents sont rouges. Sans sa date, le chiffre se lit
+    // comme le prix d'aujourd'hui.
+    const fenetre = (prix.serie ?? []).slice(-Math.min(prix.runs, 10));
+    const depuis = typeof fenetre[0]?.le === 'string' ? fenetre[0].le.slice(0, 10) : null;
     out.push({
       gravite: 'haute',
       titre: `The CI costs ${prix.medianeRecente} min per pull request`,
-      detail: `Median of the last ${Math.min(prix.runs, 10)} green runs, queue time included. Past twenty minutes or so, the wait stops being bearable and it is the content of the CI that ends up being trimmed, not the time it takes.`,
+      detail: `Median of the last ${Math.min(prix.runs, 10)} green runs${depuis ? `, the oldest of them from ${depuis}` : ''}, queue time included. Past twenty minutes or so, the wait stops being bearable and it is the content of the CI that ends up being trimmed, not the time it takes.`,
       quoi: [],
     });
   }

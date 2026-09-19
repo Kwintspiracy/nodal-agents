@@ -865,3 +865,123 @@ describe('le chemin vers le run, sur une preuve instable', () => {
     expect(html.slice(debut, html.indexOf('</tr>', debut))).not.toContain(RUN);
   });
 });
+
+// ─── Constats m1 et M2 de la revue C de la dette #88 (issue #211) ────────────
+//
+// Ces trois preuves vivaient dans `lib.test.mjs` sous forme de grep du source
+// de `build.mjs`. Elles disaient qu'un texte était écrit quelque part dans le
+// fichier, jamais ce que la page montre. Elles se lisent ici, sur le HTML.
+
+describe('le rendu mène à la cause, et seulement quand elle existe', () => {
+  const casse = (o) => ({
+    cle: `x::${o.titre}`,
+    fichier: 'packages/x/src/tests/x.test.ts',
+    tours: 3,
+    echecs: 3,
+    recents: 'rrr',
+    dernierTourLe: '2026-09-18T00:00:00.000Z',
+    rougeDepuis: '2026-09-10T00:00:00.000Z',
+    tauxEchec: 100,
+    ...o,
+  });
+
+  const MEMOIRE = {
+    total: 2,
+    joues: 2,
+    instables: 0,
+    casses: 2,
+    pires: [],
+    regressions: [],
+    reparations: { durees: [], mediane: null },
+    listeCasses: [
+      casse({
+        titre: 'a test that remembers its run',
+        dernierRougeExecution: 'https://github.com/x/y/actions/runs/111',
+      }),
+      casse({ titre: 'a test that never met the CI', dernierRougeExecution: null }),
+    ],
+  };
+
+  let memoire = '';
+  beforeAll(() => {
+    const html = rendre({
+      ...INSTANTANE,
+      execution: { id: '999', url: 'https://github.com/x/y/actions/runs/999' },
+      memoire: MEMOIRE,
+    });
+    memoire = html.slice(html.indexOf('id="memoire"'), html.indexOf('id="memoire"') + 20000);
+  });
+
+  /** La ligne du tableau de la mémoire qui porte ce titre. */
+  const ligne = (titre) => {
+    const i = memoire.indexOf(titre);
+    expect(i, `« ${titre} » absent de la page`).toBeGreaterThan(-1);
+    return memoire.slice(memoire.lastIndexOf('<tr>', i), memoire.indexOf('</tr>', i));
+  };
+
+  it('une ligne rouge mène à SON dernier run, pas à celui de la collecte', () => {
+    const l = ligne('a test that remembers its run');
+    expect(l).toContain('see the run');
+    expect(l).toContain('actions/runs/111');
+    expect(l, 'la ligne pointe le run de la collecte').not.toContain('actions/runs/999');
+  });
+
+  it('sans adresse, aucun lien n’est rendu — un lien mort coûte plus qu’aucun lien', () => {
+    expect(ligne('a test that never met the CI')).not.toContain('see the run');
+  });
+
+  it('le cadre « Prix d’une PR » dit l’absence de mesure plutôt qu’un zéro', () => {
+    const html = rendre({ ...INSTANTANE, prixCi: null });
+    const i = html.indexOf('Price of a pull request');
+    expect(i, 'le cadre du prix est absent de la page').toBeGreaterThan(-1);
+    const cadre = html.slice(html.lastIndexOf('<article', i), html.indexOf('</article>', i));
+    expect(cadre).toContain('GitHub did not answer');
+    expect(cadre).toContain('prix--absent');
+    expect(cadre, 'un chiffre est rendu alors que rien n’a été mesuré').not.toContain('0.0 min');
+  });
+});
+
+describe('le rendu ne plante pas sur une collecte plus vieille que lui', () => {
+  // Le cas réel : `pnpm --filter @nodal-agents/qa build` sortait en erreur dans
+  // la CI de TOUTE PR de la chaîne, parce que le snapshot committé datait
+  // d'avant les niveaux écran/moteur et que le rendu lisait `c.ecran.etat`
+  // sans regarder si la clé existait.
+  //
+  // Constat m1 de la revue C (issue #211) : le garde ne regardait que
+  // `reg[0]`. Une collecte MIXTE — la première ligne réécrite par une mesure
+  // récente, les suivantes non — passait le garde, puis plantait sur la
+  // première ligne sans niveaux. C'est le cas que ce bloc joue.
+  const capacite = (slug, nom, avecNiveaux) => ({
+    slug,
+    domaine: 'Getting in',
+    nom,
+    question: 'Can I?',
+    exigee: true,
+    nonDit: [],
+    ...(avecNiveaux
+      ? { ecran: { etat: 'passee', preuves: [] }, moteur: { etat: 'passee', preuves: [] } }
+      : {}),
+  });
+
+  const rendreRegistre = (registre) =>
+    rendre({ ...INSTANTANE, capacites: { registre, fautes: [] } });
+
+  it('un registre entièrement sans niveaux est reconnu, et le portail le DIT', () => {
+    const html = rendreRegistre([capacite('a', 'Une capacité', false)]);
+    expect(html).toContain('predates the screen / engine levels');
+  });
+
+  it('une collecte MIXTE ne passe pas le garde sur la foi de sa première ligne', () => {
+    const html = rendreRegistre([
+      capacite('a', 'Une capacité', true),
+      capacite('b', 'Une autre', false),
+    ]);
+    expect(html).toContain('predates the screen / engine levels');
+  });
+
+  it('un registre complet, lui, est bel et bien rendu', () => {
+    const html = rendreRegistre([capacite('a', 'Une capacité', true)]);
+    expect(html).not.toContain('predates the screen / engine levels');
+    expect(html).toContain('Une capacité');
+  });
+});

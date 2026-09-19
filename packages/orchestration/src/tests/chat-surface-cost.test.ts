@@ -26,6 +26,7 @@ import {
   agentWorkspaces,
   eq,
 } from '@nodal-agents/db';
+import { chatSurfaceToolNames } from '@nodal-agents/catalog';
 import { buildSystemPrompt } from '../system-prompt';
 import { buildBaselineBlock } from '../agent-baseline';
 
@@ -159,7 +160,15 @@ describe('la surface chat ne reçoit que ce qu’elle peut obéir', () => {
     expect(c).toContain('run_task');
   });
 
-  it('coûte au moins 40 % de moins qu’un job — mesuré, pas promis', async () => {
+  // EN CARACTÈRES, et le titre le dit (constat mineur 2 de la revue C de la
+  // PR #73, issue #211). La PR annonçait « −47 % » en JETONS (~8 983 → ~4 770)
+  // et ce cas mesurait des caractères : l'écart entre les deux unités dépend de
+  // la langue des blocs et peut passer dix points. Le dépôt n'a pas de
+  // tokenizer, en embarquer un pour un test de régression coûterait plus qu'il
+  // ne prouve, et le rapport en caractères garde la propriété qui compte — le
+  // chat reçoit nettement moins de texte. Ce qui change ici : personne ne peut
+  // plus lire ce vert comme la vérification du chiffre en jetons.
+  it('le prompt du chat pèse au moins 40 % de caractères de moins qu’un job', async () => {
     const c = (await chat()).length;
     const j = (await job()).length;
     expect(c, `chat ${c} car. vs job ${j} car.`).toBeLessThan(j * 0.6);
@@ -175,9 +184,13 @@ describe('la promesse « rien que d’exécutable » se vérifie sur le TEXTE, p
   // « Capitalize what you learn » ordonne `save_memory`, et le renforcement des
   // modèles non frontières ordonne `skill_view` / `run_skill_script`.
   //
-  // La liste ci-dessous est celle du chat, à la source : `CHAT_TOOLS` dans
-  // `apps/runner/src/chat/run-chat-turn.ts` n'a qu'une entrée.
-  const OUTILS_DU_CHAT = new Set(['run_task']);
+  // La liste vient du CATALOGUE, seule source qui la nomme : `CHAT_TOOLS`
+  // (apps/runner/src/chat/run-chat-turn.ts) est typé par elle, et un test du
+  // runner constate l'égalité des clés. Elle était recopiée ici, et un second
+  // outil ajouté au chat aurait donc été déclaré inexécutable par ce test —
+  // un faux rouge, sans rien pour montrer la dérive (constat mineur 1 de la
+  // revue C de la PR #73, issue #211).
+  const OUTILS_DU_CHAT = new Set<string>(chatSurfaceToolNames);
 
   // Les mots en `snake_case` qui ne sont PAS des outils. Le renforcement nommait
   // `skill_view` sans accents graves : chercher les seuls noms entre accents

@@ -14,7 +14,7 @@
 // le runtime (invariant #3).
 
 import { describe, it, expect } from 'vitest';
-import { skillContentOn, systemSkills } from '../index';
+import { chatSurfaceToolNames, skillContentOn, systemSkills } from '../index';
 import type { SystemSkill } from '../types';
 
 const skill = (slug: string): SystemSkill => {
@@ -39,8 +39,9 @@ describe('le texte d’une skill par surface @cap:parler-a-un-agent/moteur', () 
   });
 
   it('et ce texte-là ne prescrit aucun outil — c’est toute la raison de son existence', () => {
-    // Le chat a UN outil (`CHAT_TOOLS`, apps/runner/src/chat/run-chat-turn.ts).
-    const OUTILS_DU_CHAT = new Set(['run_task']);
+    // Les outils du chat, lus dans l'index de ce paquet — la seule liste qui
+    // les nomme, et celle qui type `CHAT_TOOLS` côté runner (issue #211).
+    const OUTILS_DU_CHAT = new Set<string>(chatSurfaceToolNames);
     const PAS_DES_OUTILS = new Set(['tool_result', 'snake_case']);
     for (const s of systemSkills) {
       const texte = skillContentOn(s, 'chat');
