@@ -27,6 +27,22 @@
 //     alors coupée, et un `aria-checked` orphelin est signalé PLUTÔT
 //     qu'ignoré — un rouge se voit, un vert de trop ne se voit pas.
 //
+// ─── CE QU'ELLE SIGNALE À TORT ─────────────────────────────────────────────
+//
+// La contrepartie assumée de ce parti pris. Chacun a son cas plus bas, pour
+// que la machine dise la limite au lieu que ce commentaire la promette :
+//
+//   - la règle du voyage est une conjonction PAR FICHIER, pas par élément. Un
+//     fichier qui porterait un avatar `rounded-full` ET un tiroir qui glisse
+//     entre deux positions serait signalé sans dessiner aucun interrupteur.
+//     Aucun fichier de l'arbre n'est dans ce cas aujourd'hui, et le recours est
+//     de scinder le fichier — ce que la cohabitation des deux suggère de toute
+//     façon ;
+//   - le mot `aria-checked` écrit dans un COMMENTAIRE de fichier source est
+//     signalé « illisible », donc rouge : aucune balise ne le porte. Même parti
+//     pris que le chevron dans un attribut, et même recours qu'ici — assembler
+//     le mot à l'exécution.
+//
 // ─── CE QU'ELLE REFUSE ─────────────────────────────────────────────────────
 //
 //   1. un rôle d'interrupteur ailleurs que dans `ui/Switch.tsx`, QUEL QUE SOIT
@@ -345,4 +361,29 @@ describe('architecture — la garde, sur des fichiers fabriqués', () => {
       expect(scanneUnCas(source)).toEqual([]);
     });
   }
+
+  // Les deux faux positifs annoncés en tête de fichier. Ils sont ici pour que
+  // la limite soit LUE À LA MACHINE : le jour où quelqu'un resserre la garde,
+  // ces deux cas rougissent et lui rappellent de corriger l'en-tête.
+  it('signale à tort un fichier qui porte un avatar rond ET un tiroir qui glisse', () => {
+    const trouves = scanneUnCas(
+      [
+        'export const Avatar = () => <img className="h-8 w-8 rounded-full" />;',
+        'export const Tiroir = ({ ouvert }: { ouvert: boolean }) => (',
+        '  <aside className={ouvert ? "translate-x-0" : "-translate-x-full"} />',
+        ');',
+      ].join('\n'),
+    );
+    expect(trouves).toEqual(['Cas.tsx — pouce rond qui voyage entre deux positions']);
+  });
+
+  it('signale à tort le mot aria-checked écrit dans un commentaire', () => {
+    const trouves = scanneUnCas(
+      [
+        `// Ce composant ne pose jamais ${ARIA} : ce n'est pas un interrupteur.`,
+        'export const T = () => <div />;',
+      ].join('\n'),
+    );
+    expect(trouves).toEqual(['Cas.tsx — aria-checked sans rôle cochable sur la même balise']);
+  });
 });
