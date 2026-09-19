@@ -23,7 +23,8 @@ import {
 } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
-import { runChatTurn } from '../../chat/run-chat-turn.ts';
+import { chatSurfaceToolNames } from '@nodal-agents/catalog';
+import { CHAT_TOOLS, runChatTurn } from '../../chat/run-chat-turn.ts';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 
 // ─── Intercept createLlmClient (same pattern as execute.test.ts) ──────────────
@@ -1184,5 +1185,30 @@ describe('runChatTurn — la relance d’escalade (coût d’un tour, 09/09)', (
     const reponse = taille(captured[0]);
     const relance = taille(captured[1]);
     expect(relance * 5, `réponse=${reponse} caractères, relance=${relance}`).toBeLessThan(reponse);
+  });
+});
+
+// ─── Constat mineur 1 de la revue C de la PR #73 (dette #88, issue #211) ────
+//
+// Deux suites — `chat-surface-cost.test.ts` et `surface-content.test.ts` —
+// vérifient que le texte injecté sur le chat ne prescrit aucun outil que le
+// chat n'a pas. Elles recopiaient la liste à la main : un second outil ajouté
+// ici aurait été déclaré inexécutable par les deux, un faux rouge, et rien
+// n'aurait montré la dérive. Elles lisent désormais `chatSurfaceToolNames`, et
+// c'est ce test qui rattache cette liste à l'objet que le chat envoie vraiment.
+//
+// Le `Record<ChatSurfaceToolName, …>` de `CHAT_TOOLS` le dit déjà au
+// compilateur ; ce cas le dit à l'exécution, et il nomme l'écart.
+describe('la liste des outils du chat n’existe qu’à un seul endroit', () => {
+  it('les clés de `CHAT_TOOLS` sont EXACTEMENT celles que le catalogue nomme', () => {
+    expect([...Object.keys(CHAT_TOOLS)].sort()).toEqual([...chatSurfaceToolNames].sort());
+  });
+
+  it('chaque outil nommé porte une description et un schéma, pas une clé vide', () => {
+    for (const nom of chatSurfaceToolNames) {
+      const outil = CHAT_TOOLS[nom];
+      expect(outil.description.length, `${nom} sans description`).toBeGreaterThan(0);
+      expect(outil.inputSchema, `${nom} sans schéma`).toBeDefined();
+    }
   });
 });

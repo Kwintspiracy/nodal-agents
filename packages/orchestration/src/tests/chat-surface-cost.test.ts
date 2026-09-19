@@ -26,6 +26,7 @@ import {
   agentWorkspaces,
   eq,
 } from '@nodal-agents/db';
+import { chatSurfaceToolNames } from '@nodal-agents/catalog';
 import { buildSystemPrompt } from '../system-prompt';
 import { buildBaselineBlock } from '../agent-baseline';
 
@@ -175,9 +176,13 @@ describe('la promesse « rien que d’exécutable » se vérifie sur le TEXTE, p
   // « Capitalize what you learn » ordonne `save_memory`, et le renforcement des
   // modèles non frontières ordonne `skill_view` / `run_skill_script`.
   //
-  // La liste ci-dessous est celle du chat, à la source : `CHAT_TOOLS` dans
-  // `apps/runner/src/chat/run-chat-turn.ts` n'a qu'une entrée.
-  const OUTILS_DU_CHAT = new Set(['run_task']);
+  // La liste vient du CATALOGUE, seule source qui la nomme : `CHAT_TOOLS`
+  // (apps/runner/src/chat/run-chat-turn.ts) est typé par elle, et un test du
+  // runner constate l'égalité des clés. Elle était recopiée ici, et un second
+  // outil ajouté au chat aurait donc été déclaré inexécutable par ce test —
+  // un faux rouge, sans rien pour montrer la dérive (constat mineur 1 de la
+  // revue C de la PR #73, issue #211).
+  const OUTILS_DU_CHAT = new Set<string>(chatSurfaceToolNames);
 
   // Les mots en `snake_case` qui ne sont PAS des outils. Le renforcement nommait
   // `skill_view` sans accents graves : chercher les seuls noms entre accents
