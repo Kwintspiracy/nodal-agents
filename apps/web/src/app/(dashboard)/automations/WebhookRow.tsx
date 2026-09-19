@@ -1,26 +1,13 @@
 'use client';
 
-import { useState, useTransition } from 'react';
-import { toast } from 'sonner';
-import { Play, Pause, ArrowsClockwise, Trash } from '@phosphor-icons/react';
-import {
-  toggleWebhookTriggerAction,
-  rotateWebhookSecretAction,
-  deleteWebhookTriggerAction,
-  type WebhookTriggerRow as WebhookTriggerRowData,
-} from '@/lib/actions.ts';
-import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import Link from 'next/link';
+import type { WebhookTriggerRow as WebhookTriggerRowData } from '@/lib/actions.ts';
 import StatusPill from '@/components/ui/StatusPill';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
 import { composeWebhookUrl } from './webhook-url.ts';
-import RowActionButton from '@/components/ui/RowActionButton';
 import { CHANNEL_LABELS } from './NotifyChannelFields.tsx';
 import { relativeTime } from '@/lib/format-time';
-
-interface Revealed {
-  secret: string;
-  path: string;
-}
+import WebhookActions, { type Revealed } from './WebhookActions.tsx';
 
 interface Props {
   webhook: WebhookTriggerRowData;
@@ -31,45 +18,18 @@ interface Props {
 }
 
 export default function WebhookRow({ webhook: w, revealed, onRevealed }: Props) {
-  const [isPending, startTransition] = useTransition();
-  const [rotateConfirmOpen, setRotateConfirmOpen] = useState(false);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-
-  function handleToggle() {
-    startTransition(async () => {
-      const r = await toggleWebhookTriggerAction(w.id, !w.active);
-      if (!r.ok) toast.error(r.message);
-      else toast.success(r.data.active ? 'Webhook enabled' : 'Webhook disabled');
-    });
-  }
-
-  function performRotate() {
-    setRotateConfirmOpen(false);
-    startTransition(async () => {
-      const r = await rotateWebhookSecretAction(w.id);
-      if (!r.ok) toast.error(r.message);
-      else {
-        onRevealed(w.id, { secret: r.data.secret, path: r.data.path });
-        toast.success('Secret rotated — the old URL no longer works');
-      }
-    });
-  }
-
-  function performDelete() {
-    setDeleteConfirmOpen(false);
-    startTransition(async () => {
-      const r = await deleteWebhookTriggerAction(w.id);
-      if (!r.ok) toast.error(r.message);
-      else toast.success('Webhook deleted');
-    });
-  }
-
   return (
     <div className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-semibold text-ink">{w.name}</h3>
+            {/* Le nom OUVRE l'automatisation (#202), comme pour une routine, et
+                le lien vit DANS le titre pour la même raison. */}
+            <h3 className="text-base font-semibold text-ink">
+              <Link href={`/automations/${w.id}`} className="hover:underline">
+                {w.name}
+              </Link>
+            </h3>
             <StatusPill
               variant={w.active ? 'done' : 'idle'}
               label={w.active ? 'Active' : 'Paused'}
@@ -98,30 +58,7 @@ export default function WebhookRow({ webhook: w, revealed, onRevealed }: Props) 
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <RowActionButton
-            square
-            icon={w.active ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
-            title={w.active ? 'Pause' : 'Enable'}
-            onClick={handleToggle}
-            disabled={isPending}
-          />
-          <RowActionButton
-            square
-            icon={<ArrowsClockwise size={16} />}
-            title="Rotate secret"
-            onClick={() => setRotateConfirmOpen(true)}
-            disabled={isPending}
-          />
-          <RowActionButton
-            square
-            icon={<Trash size={16} />}
-            title="Delete"
-            tone="danger"
-            onClick={() => setDeleteConfirmOpen(true)}
-            disabled={isPending}
-          />
-        </div>
+        <WebhookActions webhook={w} onRevealed={onRevealed} />
       </div>
 
       {revealed && (
@@ -130,24 +67,6 @@ export default function WebhookRow({ webhook: w, revealed, onRevealed }: Props) 
           url={composeWebhookUrl(revealed.path)}
         />
       )}
-
-      <ConfirmDialog
-        open={rotateConfirmOpen}
-        title="Rotate webhook secret?"
-        message="A new URL is generated immediately and the current one stops working — update the external service before it fires again."
-        confirmLabel="Rotate"
-        destructive={false}
-        onConfirm={performRotate}
-        onCancel={() => setRotateConfirmOpen(false)}
-      />
-      <ConfirmDialog
-        open={deleteConfirmOpen}
-        title="Delete webhook?"
-        message="This webhook trigger is removed. Any service still posting to its URL will get a 404."
-        confirmLabel="Delete"
-        onConfirm={performDelete}
-        onCancel={() => setDeleteConfirmOpen(false)}
-      />
     </div>
   );
 }

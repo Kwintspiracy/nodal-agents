@@ -151,8 +151,18 @@ describe('les entrées du menu @cap:installer-et-demarrer/ecran', () => {
 
   it('ne laisse plus « LLM Providers » ni « Settings » ailleurs', async () => {
     await renderSidebar();
-    expect(groupLabels('Overview')).toEqual(['Dashboard', 'Channels', 'Workspaces', 'Scheduled']);
+    expect(groupLabels('Overview')).toEqual(['Dashboard', 'Channels', 'Workspaces']);
     expect(groupLabels('About Nodal-Agents')).not.toContain('Settings');
+  });
+
+  it('ne propose plus « Scheduled » nulle part dans le rail', async () => {
+    await renderSidebar();
+    // La page /scheduled existe toujours et reste atteignable : la page d'une
+    // automatisation y mène par son « See all », et chaque run garde son
+    // adresse. C'est la DESTINATION du menu qui disparaît (#202), les runs
+    // d'une automatisation se lisant désormais sur sa page.
+    expect(() => navLink('Scheduled')).toThrow();
+    expect(container.querySelector('a[href="/scheduled"]')).toBeNull();
   });
 
   it('ne propose plus « Code » nulle part dans le rail', async () => {

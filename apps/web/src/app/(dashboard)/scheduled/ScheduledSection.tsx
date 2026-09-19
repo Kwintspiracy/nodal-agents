@@ -36,13 +36,28 @@ function statusVariant(status: string | null): StatusVariant {
  * (`/scheduled/<id>` depuis P8 : /spaces/<id> est la page d'un PROJET). Le
  * parent n'a pas d'autre façon de dessiner ses runs.
  */
-export function ScheduleRunList({ runs }: { runs: ScheduleGroup['runs'] }) {
+export function ScheduleRunList({
+  runs,
+  basePath = '/scheduled',
+}: {
+  runs: ScheduleGroup['runs'];
+  /**
+   * Sous quelle route les lignes ouvrent leur run. Par défaut `/scheduled`, la
+   * page d'un run d'automatisation. La page d'UNE automatisation (#202) passe
+   * `/jobs` pour un webhook : les runs d'un webhook ne passent pas par
+   * `/scheduled`, et y mener donnerait un lien mort.
+   *
+   * Une CHAÎNE et non une fonction : un composant serveur ne peut passer que
+   * des valeurs sérialisables à un composant client.
+   */
+  basePath?: string;
+}) {
   return (
     <ul className="border-t border-rule-2 bg-canvas/40 py-1">
       {runs.map((r) => (
         <li key={r.id}>
           <Link
-            href={`/scheduled/${r.id}`}
+            href={`${basePath}/${r.id}`}
             className="flex items-center gap-3 px-4 py-1.5 pl-[44px] text-body-12 text-ink-2 hover:bg-hover"
           >
             <span className="text-mono-11 text-ink-4">

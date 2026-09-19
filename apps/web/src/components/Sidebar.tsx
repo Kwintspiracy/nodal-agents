@@ -6,7 +6,6 @@ import {
   House,
   Tray,
   CardsThree,
-  CalendarCheck,
   Sparkle,
   UsersThree,
   BookOpenText,
@@ -87,8 +86,13 @@ const NAV: Group[] = [
       // « Workspaces », pas « Spaces » (Quentin, 18/09/2026). La ROUTE ne
       // bouge pas : `/spaces` est dans les favoris et dans les liens déjà
       // envoyés, et un libellé n'a jamais besoin de casser une URL.
+      // PAS d'entrée « Scheduled » (Quentin, 19/09/2026, #202). La route
+      // `/scheduled` reste en place et reste atteignable : la page d'une
+      // automatisation y mène par son « See all », et chaque run garde son
+      // adresse. Ce qui disparaît est la DESTINATION dans le rail — les runs
+      // d'une automatisation se lisent désormais SUR SA PAGE, et deux portes
+      // vers la même chose obligeaient à choisir sans rien pour choisir.
       { href: '/spaces', label: 'Workspaces', icon: CardsThree },
-      { href: '/scheduled', label: 'Scheduled', icon: CalendarCheck },
     ],
   },
   {

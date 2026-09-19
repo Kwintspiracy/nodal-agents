@@ -79,6 +79,7 @@ import ipaddr from 'ipaddr.js';
 import {
   eq,
   and,
+  gte,
   isNull,
   isNotNull,
   or,
@@ -10430,6 +10431,202 @@ export async function listWebhookTriggersAction(): Promise<ActionResult<WebhookT
   } catch (err) {
     console.error('[listWebhookTriggersAction]', err);
     return fail('db_error', 'Failed to load webhooks');
+  }
+}
+
+// ─── La page d'UNE automatisation (#202) ─────────────────────────────────────
+
+/** Combien de runs la page d'une automatisation liste ; « See all » mène au reste. */
+export const AUTOMATION_RUNS_SHOWN = 10;
+
+/** La fenêtre du compteur « N runs · $X over 30 days ». */
+export const AUTOMATION_WINDOW_DAYS = 30;
+
+/** Ce que l'automatisation a coûté et combien de fois elle a tourné, sur la fenêtre. */
+export type AutomationWindow = { runs: number; costUsd: number; days: number };
+
+/**
+ * Une routine avec son FUSEAU — la colonne que la liste n'affiche pas.
+ *
+ * La page dit à quelle heure locale le cron se déclenche : « every Monday at
+ * 09:00 » sans fuseau se lit différemment selon d'où on regarde.
+ */
+export type ScheduleDetail = ScheduleRow & { timezone: string | null };
+
+/**
+ * Une automatisation ouverte sur sa page : ses réglages, ses derniers runs, et
+ * ce qu'elle a coûté sur la fenêtre. Un schedule et un webhook sont la même
+ * chose pour qui la regarde (« une automatisation »), et deux choses pour qui
+ * la lit en base — d'où l'union plutôt qu'une ligne aplatie qui aurait porté
+ * la moitié de ses colonnes à `null`.
+ */
+export type AutomationView =
+  | { kind: 'schedule'; schedule: ScheduleDetail; runs: SpaceListRow[]; window: AutomationWindow }
+  | { kind: 'webhook'; webhook: WebhookTriggerRow; runs: SpaceListRow[]; window: AutomationWindow };
+
+/**
+ * Les runs d'UNE automatisation, les plus récents d'abord, et son compteur de
+ * fenêtre. Le `where` est passé par l'appelant parce qu'un schedule et un
+ * webhook ne se reconnaissent pas dans `agent_jobs` de la même façon — mais
+ * tout le reste (les colonnes lues, l'ordre, la limite, l'agrégat) est commun,
+ * et deux copies auraient divergé.
+ */
+async function readAutomationRuns(
+  db: ReturnType<typeof getDb>,
+  where: ReturnType<typeof and>,
+): Promise<{ runs: SpaceListRow[]; window: AutomationWindow }> {
+  const since = new Date(Date.now() - AUTOMATION_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const [rows, totals] = await Promise.all([
+    db
+      .select(SPACE_LIST_SELECT)
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(where)
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(AUTOMATION_RUNS_SHOWN),
+    db
+      .select({
+        runs: sql<number>`count(*)`,
+        costUsd: sql<number>`coalesce(sum(${agentJobs.totalCostUsd}), 0)`,
+      })
+      .from(agentJobs)
+      .where(and(where, gte(agentJobs.createdAt, since))),
+  ]);
+  const totalsRow = totals[0];
+  return {
+    runs: rows.map(toSpaceListRow),
+    window: {
+      // `count(*)` revient en `bigint` : le driver le rend en CHAÎNE, et
+      // « 12 runs » se serait comparé à 12 en échouant.
+      runs: Number(totalsRow?.runs ?? 0),
+      costUsd: Number(totalsRow?.costUsd ?? 0),
+      days: AUTOMATION_WINDOW_DAYS,
+    },
+  };
+}
+
+/**
+ * UNE automatisation par son id — un schedule ou un webhook, la page ne sait
+ * pas lequel avant de lire (#202).
+ *
+ * Les runs listés sont CEUX DE CETTE AUTOMATISATION et d'aucune autre :
+ *
+ *   — un schedule se reconnaît à `agent_jobs.schedule_id`, ou à l'id gardé
+ *     dans la provenance quand la colonne a été mise à NULL par une
+ *     suppression (même règle que `toSpaceListRow`) ;
+ *   — un webhook n'a pas de colonne : ses runs portent son `slug` dans la
+ *     provenance, qui est stable à travers les renommages.
+ *
+ * Un id qui n'est ni l'un ni l'autre — ou qui appartient à une autre entité —
+ * est `not_found`, jamais une page vide (invariant #4).
+ */
+export async function getAutomationAction(id: string): Promise<ActionResult<AutomationView>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid automation id');
+    }
+    const db = getDb();
+
+    const [schedule] = await db
+      .select({
+        id: agentSchedules.id,
+        agentId: agentSchedules.agentId,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        name: agentSchedules.name,
+        cronExpr: agentSchedules.cronExpr,
+        timezone: agentSchedules.timezone,
+        task: agentSchedules.task,
+        active: agentSchedules.active,
+        lastRun: agentSchedules.lastRun,
+        nextRun: agentSchedules.nextRun,
+        lastStatus: agentSchedules.lastStatus,
+        notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        notifyChannel: agentSchedules.notifyChannel,
+        dailyBudgetUsd: agentSchedules.dailyBudgetUsd,
+        createdAt: agentSchedules.createdAt,
+        updatedAt: agentSchedules.updatedAt,
+      })
+      .from(agentSchedules)
+      .leftJoin(agents, eq(agents.id, agentSchedules.agentId))
+      .where(and(eq(agentSchedules.id, id), eq(agentSchedules.entityId, session.entityId)));
+
+    if (schedule) {
+      const { runs, window } = await readAutomationRuns(
+        db,
+        and(
+          eq(agentJobs.entityId, session.entityId),
+          isNull(agentJobs.parentJobId),
+          eq(agentJobs.channel, 'cron'),
+          or(eq(agentJobs.scheduleId, id), sql`${agentJobs.triggerContext}->>'scheduleId' = ${id}`),
+        ),
+      );
+      return ok({
+        kind: 'schedule',
+        schedule: {
+          ...schedule,
+          active: schedule.active ?? true,
+          notifyOnSuccess: schedule.notifyOnSuccess ?? false,
+          notifyChannel: (schedule.notifyChannel as ChannelKind | null) ?? null,
+          dailyBudgetUsd: schedule.dailyBudgetUsd ?? 5,
+        },
+        runs,
+        window,
+      });
+    }
+
+    const [webhook] = await db
+      .select({
+        id: webhookTriggers.id,
+        agentId: webhookTriggers.agentId,
+        agentName: agents.name,
+        name: webhookTriggers.name,
+        slug: webhookTriggers.slug,
+        taskTemplate: webhookTriggers.taskTemplate,
+        active: webhookTriggers.active,
+        secret: webhookTriggers.secret,
+        lastTriggeredAt: webhookTriggers.lastTriggeredAt,
+        triggerCount: webhookTriggers.triggerCount,
+        notifyOnSuccess: webhookTriggers.notifyOnSuccess,
+        notifyChannel: webhookTriggers.notifyChannel,
+        createdAt: webhookTriggers.createdAt,
+        updatedAt: webhookTriggers.updatedAt,
+      })
+      .from(webhookTriggers)
+      .leftJoin(agents, eq(agents.id, webhookTriggers.agentId))
+      .where(and(eq(webhookTriggers.id, id), eq(webhookTriggers.entityId, session.entityId)));
+
+    if (webhook) {
+      const { secret, ...rest } = webhook;
+      const { runs, window } = await readAutomationRuns(
+        db,
+        and(
+          eq(agentJobs.entityId, session.entityId),
+          isNull(agentJobs.parentJobId),
+          eq(agentJobs.channel, 'webhook'),
+          sql`${agentJobs.triggerContext}->>'slug' = ${webhook.slug}`,
+        ),
+      );
+      return ok({
+        kind: 'webhook',
+        webhook: {
+          ...rest,
+          active: rest.active ?? true,
+          triggerCount: rest.triggerCount ?? 0,
+          notifyOnSuccess: rest.notifyOnSuccess ?? false,
+          notifyChannel: (rest.notifyChannel as ChannelKind | null) ?? null,
+          hasSecret: secret != null,
+        },
+        runs,
+        window,
+      });
+    }
+
+    return fail('not_found', 'Automation not found');
+  } catch (err) {
+    console.error('[getAutomationAction]', err);
+    return fail('db_error', 'Failed to load the automation');
   }
 }
 
