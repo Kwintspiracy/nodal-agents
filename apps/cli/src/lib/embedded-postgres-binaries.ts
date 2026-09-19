@@ -121,6 +121,15 @@ export interface BinariesReading {
   readonly exists: (path: string) => boolean;
 }
 
+/**
+ * « 1 library link … was », « 14 library links … were ». Le pluriel est écrit
+ * plutôt que subi : la phrase est ce que la personne lit, et une faute d'accord
+ * dans un message d'installation donne l'air d'une erreur de plus.
+ */
+function count(n: number, singular: string, plural: string): string {
+  return `${String(n)} ${n === 1 ? singular : plural}`;
+}
+
 /** Les deux commandes à taper, identiques dans les deux constats. */
 function remedy(packageName: string): string {
   return `  npm approve-scripts ${packageName}\n  npm install -g nodal-agents@latest`;
@@ -168,7 +177,7 @@ export function inspectEmbeddedPostgres(reading: BinariesReading): BinariesVerdi
       packageName,
       missing: missingBinaries,
       message:
-        `Embedded Postgres cannot start: ${String(missingBinaries.length)} of its binaries are missing from ${packageName}.\n` +
+        `Embedded Postgres cannot start: ${count(missingBinaries.length, 'of its binaries is', 'of its binaries are')} missing from ${packageName}.\n` +
         `Missing: ${missingBinaries.join(', ')}\n` +
         'The install did not finish. Install again, and if npm printed an allow-scripts warning, approve that one package first:\n\n' +
         remedy(packageName) +
@@ -186,7 +195,7 @@ export function inspectEmbeddedPostgres(reading: BinariesReading): BinariesVerdi
       packageName,
       missing: missingLinks,
       message:
-        `npm's install-script gate skipped ${packageName}, so ${String(missingLinks.length)} library links the database needs were never created.\n` +
+        `npm's install-script gate skipped ${packageName}, so ${count(missingLinks.length, 'library link the database needs was', 'library links the database needs were')} never created.\n` +
         'Approve that one package and install again:\n\n' +
         remedy(packageName) +
         '\n\nIt prepares the database binaries and nothing else. The other packages npm lists can stay unapproved.',

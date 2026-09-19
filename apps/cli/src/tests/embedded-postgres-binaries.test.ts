@@ -68,6 +68,7 @@ describe('embedded Postgres binaries @cap:installer-et-demarrer/moteur', () => {
     if (verdict.ok) return;
     expect(verdict.reason).toBe('BINARIES_MISSING');
     expect(verdict.missing).toEqual([BINARIES.postgres]);
+    expect(verdict.message).toContain('1 of its binaries is missing');
     expect(verdict.message).toContain('@embedded-postgres/darwin-arm64');
     expect(verdict.message).toContain('npm approve-scripts @embedded-postgres/darwin-arm64');
     expect(verdict.message).toContain('npm install -g nodal-agents@latest');
@@ -89,6 +90,22 @@ describe('embedded Postgres binaries @cap:installer-et-demarrer/moteur', () => {
     expect(verdict.message).toContain("npm's install-script gate skipped");
     expect(verdict.message).toContain('@embedded-postgres/darwin-arm64');
     expect(verdict.message).toContain('npm approve-scripts @embedded-postgres/darwin-arm64');
+    // Une seule : le message s'accorde, il ne dit pas « 1 library links ».
+    expect(verdict.message).toContain('1 library link the database needs was never created');
+  });
+
+  it('two missing links read as two, in plain plural', () => {
+    const verdict = inspectEmbeddedPostgres({
+      packageName: '@embedded-postgres/linux-x64',
+      binaries: BINARIES,
+      packageDir: PKG_DIR,
+      symlinks: MANIFEST,
+      exists: diskWith(ALL_BINARIES),
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) return;
+    expect(verdict.missing).toHaveLength(2);
+    expect(verdict.message).toContain('2 library links the database needs were never created');
   });
 
   // Le manifeste Windows vaut `[]` dans le paquet publié : le script d'install
