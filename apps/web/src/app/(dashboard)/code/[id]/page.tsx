@@ -19,7 +19,7 @@ import { threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { truncate } from '@/lib/format-time';
 import { plainText } from '@/components/Markdown.tsx';
 import CodeProcessDetail from './CodeProcessDetail.tsx';
-import { codeAgents, codeFilesHref, codeStatus } from './code-run-view.ts';
+import { codeAgents, codeBackLink, codeFilesHref, codeStatus } from './code-run-view.ts';
 
 // Force dynamic — this page reads per-request DB state.
 export const dynamic = 'force-dynamic';
@@ -55,8 +55,8 @@ export default async function CodeProcessPage({ params }: Props) {
     return (
       <PageShell title="Code">
         <div className="space-y-4">
-          <Link href="/code" className="text-body-13 text-ink-3 hover:text-ink-2">
-            ← Code
+          <Link href="/spaces" className="text-body-13 text-ink-3 hover:text-ink-2">
+            ← Workspaces
           </Link>
           <p className="text-body-14 text-err">{result.message}</p>
         </div>
@@ -78,7 +78,7 @@ export default async function CodeProcessPage({ params }: Props) {
       avatarUrl={header.agentAvatarUrl}
       title={agentName !== '' ? `${agentName} · ${title}` : title}
       subtitle={threadSubtitle('code', at)}
-      back={{ label: 'Back to Code', href: '/code' }}
+      back={codeBackLink(header)}
       agents={codeAgents(header, activity)}
       // La barre de la maquette, au complet : le retour, les agents, le
       // dossier, la preuve, l'état. La pastille d'état est rendue par le
