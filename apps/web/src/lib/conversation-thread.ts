@@ -463,9 +463,9 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     // Un `infra_error` n'est pas un succès : tout ce qui n'est pas vert fait
     // « Checks failed ». La section « Checks » montre laquelle a lâché.
     verdict: job.proof.length === 0 ? null : passed === job.proof.length ? 'green' : 'red',
-    // #59 — ce que la relecture a dit, tel quel. L'écran en tire le mot du
-    // bloc : « Delivered » ou « Changes requested ». Le récapitulatif ne
-    // TRADUIT rien ici, il transporte.
+    // #59 — ce que la relecture a dit, tel quel. Le bloc dit toujours
+    // « Delivered » et pose ce verdict À CÔTÉ. Le récapitulatif ne TRADUIT rien
+    // ici, il transporte.
     review: job.reviewVerdict,
     changesRequested: reviewBlocksDelivery(job.reviewVerdict),
   };

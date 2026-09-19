@@ -222,8 +222,8 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
     checks: commands.map((r) => ({ command: r.command, ok: r.verdict === 'green' })),
     verdict: commands.length === 0 ? null : passed === commands.length ? 'green' : 'red',
     // #59 — la relecture du pipeline, déjà lue pour la section Review juste
-    // dessous. Le mot du bloc en dépend : « Changes requested » au lieu de
-    // « Delivered » quand le dernier verdict demande des corrections.
+    // dessous. Le bloc dit « Delivered » quoi qu'il arrive et pose ce verdict à
+    // côté ; c'est là que « Changes requested » ou « Approved » se lit.
     review,
     changesRequested: reviewBlocksDelivery(review),
   };
