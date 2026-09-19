@@ -3,11 +3,16 @@
 //
 // Ce n'est PAS un autre écran : c'est l'état vide de l'écran de fil, et il en
 // porte toute la charpente — le même en-tête (`ThreadHeader`), la même barre de
-// travail (`WorkBar`, règle #242 : le retour dedans, les actions sur la rangée
-// du dessous), la même saisie à 760 px, la même barre d'état. Ce qui change est
-// ce qu'il y a AU MILIEU : rien à lire, donc la ligne d'accueil et la saisie,
-// centrées dans le vide, comme la planche les dessine. Dès le premier message
-// envoyé, l'écran s'en va sur `/chat/<id>` et le fil se comporte comme avant.
+// travail (`ThreadWorkBar`), la même saisie à 760 px, la même barre d'état. Ce
+// qui change est ce qu'il y a AU MILIEU : rien à lire, donc la ligne d'accueil
+// et la saisie, centrées dans le vide, comme la planche les dessine. Dès le
+// premier message envoyé, l'écran s'en va sur `/chat/<id>` et le fil se
+// comporte comme avant.
+//
+// AUCUN RETOUR (#242, décision de Quentin du 19/09 au soir : « retire les
+// boutons retour PARTOUT »). La barre ne porte ici que l'état du fil, qui est
+// « idle » : personne n'a encore travaillé, il n'y a ni visages ni preuve. Le
+// projet, quand l'écran en porte un, ajoute son bouton « Files ».
 //
 // L'en-tête ne dit pas quand le fil a commencé : il n'a pas commencé.
 // `threadSubtitle(origin, null)` laisse donc tomber ce morceau plutôt que de
@@ -18,11 +23,10 @@ import Link from 'next/link';
 import PageShell from '@/components/ui/PageShell';
 import StatusPill from '@/components/ui/StatusPill';
 import ThreadHeader from './[id]/ThreadHeader.tsx';
-import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
+import ThreadWorkBar from '@/app/(dashboard)/spaces/ThreadWorkBar.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
 import { originLabel, threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { EMPTY_SPACE_COST } from '@/lib/space-cost.ts';
-import { threadBackLink } from '@/lib/back-links.ts';
 import { DEFAULT_FEED_DENSITY, type FeedDensity } from '@/lib/feed-density.ts';
 import NewConversationBody from './NewConversationBody.tsx';
 import NewConversationComposer from './NewConversationComposer.tsx';
@@ -96,8 +100,7 @@ export default function NewConversationScreen({
         />
       }
       toolbar={
-        <WorkBar
-          back={threadBackLink('dashboard')}
+        <ThreadWorkBar
           // Personne n'a encore travaillé : pas de pile de visages, et aucune
           // preuve. Les dire vides serait inventer un passé à ce fil.
           agents={[]}
