@@ -99,6 +99,7 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   verdict: chat,
   project: null,
   proof: [],
+  reviewVerdict: null,
   audit: [],
   workspaceRoots: [],
   ...over,

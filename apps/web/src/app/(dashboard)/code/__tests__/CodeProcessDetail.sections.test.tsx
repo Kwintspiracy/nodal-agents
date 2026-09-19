@@ -139,6 +139,8 @@ const detail = (): CodingProcessDetail => ({
       canonicalKey: 'd:/apps/nodalai',
       verdict: 'green',
       startedAt: '2026-09-18T09:58:00.000Z',
+      source: 'job',
+      sourceAgentName: null,
       runs: [
         {
           jobId: JOB_ID,
@@ -151,6 +153,8 @@ const detail = (): CodingProcessDetail => ({
           verdict: 'green',
           testedGeneration: 1,
           testedEpoch: 0,
+          source: 'job',
+          sourceAgentName: null,
           createdAt: '2026-09-18T09:58:00.000Z',
         },
       ],
