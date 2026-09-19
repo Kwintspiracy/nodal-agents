@@ -70,9 +70,18 @@ jobs:
       # lancement racine n'applique pas — 421 tests tombent alors pour une
       # raison qui n'a rien à voir avec le code (constaté le 10/09/2026).
       #
-      # `|| true` par paquet : un paquet qui échoue ne doit pas priver le
-      # portail des 33 autres mesures. Le portail montre l'absence comme une
-      # absence, jamais comme un zéro.
+      # Un paquet qui échoue ne doit pas priver le portail des 32 autres
+      # mesures : la boucle continue. Mais elle ne continue plus EN SILENCE —
+      # elle laisse `coverage/mesure-echouee.json` avec le code de sortie, que
+      # `collect.mjs` relit. Sans ce témoin, une mesure qui échoue et une mesure
+      # que personne n'a lancée donnaient exactement la même ligne vide, et
+      # c'est ce qui a laissé `@nodal-agents/auth` sans cause pendant quatre
+      # semaines (issue #58). Le fichier vit dans `coverage/`, déjà ignoré par
+      # git : il ne part nulle part.
+      #
+      # La liste des paquets volontairement hors mesure est DEMANDÉE au portail
+      # (`collect.mjs --hors-mesure`), pas répétée ici : une seconde copie finit
+      # par diverger de celle que la page affiche.
       #
       # Le second `--reporter=json` écrit `tests-run.json` à côté de la
       # couverture : c'est lui qui alimente la mémoire test par test, donc
@@ -80,12 +89,25 @@ jobs:
       # deux sorties : la mesure ne coûte pas un run de plus.
       - name: Couverture par paquet
         run: |
+          hors_mesure=$(node apps/qa/collect.mjs --hors-mesure)
+          echo "hors mesure (volontaire) : ${hors_mesure:-aucun}"
           for d in packages/* packages/adapters/* apps/*; do
             [ -f "$d/package.json" ] || continue
             name=$(node -p "require('./$d/package.json').name" 2>/dev/null) || continue
-            [ "$name" = "@nodal-agents/docs" ] && continue
+            if printf '%s\n' "$hors_mesure" | grep -qxF "$name"; then
+              echo "  ($name — hors mesure, volontaire)"
+              continue
+            fi
             echo "::group::$name"
-            (cd "$d" && npx vitest run --coverage --coverage.reporter=json-summary --reporter=dot --reporter=json --outputFile=tests-run.json) || echo "  (échec — on continue)"
+            rm -rf "$d/coverage"
+            if (cd "$d" && npx vitest run --coverage --coverage.reporter=json-summary --reporter=dot --reporter=json --outputFile=tests-run.json); then
+              echo "  (mesuré)"
+            else
+              code=$?
+              mkdir -p "$d/coverage"
+              printf '{"code":%s}\n' "$code" > "$d/coverage/mesure-echouee.json"
+              echo "  (échec — code $code — on continue)"
+            fi
             echo "::endgroup::"
           done
 
