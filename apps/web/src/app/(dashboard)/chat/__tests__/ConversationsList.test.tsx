@@ -53,6 +53,7 @@ function ligne(over: Partial<ConversationRowModel> = {}): ConversationRowModel {
     time: '14:02',
     waiting: null,
     running: false,
+    unread: false,
     ...over,
   };
 }

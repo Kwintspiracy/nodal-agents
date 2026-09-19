@@ -24,7 +24,18 @@
 // des fonctions asynchrones, et un test qui veut LIRE la forme du SQL
 // (`.toSQL()`) a besoin d'un constructeur ordinaire.
 
-import { and, conversations, desc, eq, inArray, isNotNull, ne, sql } from '@nodal-agents/db';
+import {
+  and,
+  conversationReads,
+  conversations,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  ne,
+  sql,
+} from '@nodal-agents/db';
+import { readsOfUser, unreadColumn } from './unread.ts';
 import type { getDb } from './server.ts';
 
 type Db = ReturnType<typeof getDb>;
@@ -105,15 +116,21 @@ export function folderChatsQuery(db: Db, entityId: string, perFolder: number) {
  * Pas de fenêtre : c'est un seul dossier, donc un `limit` suffit. Même ordre
  * que la liste — `updated_at` puis `id`, qui départage deux fils posés à la
  * même seconde.
+ *
+ * `userId` n'est là que pour le NON LU (#209) : les marqueurs de lecture
+ * appartiennent à une personne, et la jointure en rapporte le sien. Une
+ * jointure de plus dans la MÊME requête — jamais une lecture par fil.
  */
-export function folderConversationsQuery(db: Db, entityId: string, limit: number) {
+export function folderConversationsQuery(db: Db, entityId: string, userId: string, limit: number) {
   return db
     .select({
       id: conversations.id,
       title: conversations.title,
       channel: conversations.channel,
+      unread: unreadColumn,
     })
     .from(conversations)
+    .leftJoin(conversationReads, readsOfUser(userId))
     .where(
       and(
         eq(conversations.entityId, entityId),

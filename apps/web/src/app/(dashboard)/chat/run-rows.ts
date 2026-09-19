@@ -107,6 +107,12 @@ export function runRows(input: RunRowsInput): ConversationRowModel[] {
     time: conversationTimeLabel(r.createdAt, now),
     waiting: strongestWaiting(byRun.get(r.id) ?? []) ?? statusWaiting(r.status),
     running: runIsRunning(r.status),
+    // JAMAIS non lu (#209). Un run venu de dehors n'a pas de conversation, et
+    // le marqueur de lecture se pose sur une conversation : il n'y a rien à
+    // marquer, et rien à comparer. `false` dit « rien à signaler », ce qui est
+    // la vérité ; l'état de lecture d'un run est un autre sujet, hors du
+    // périmètre de #209.
+    unread: false,
   }));
 }
 
