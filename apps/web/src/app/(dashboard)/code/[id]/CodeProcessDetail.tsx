@@ -33,6 +33,7 @@ import {
   type CodingProcessDetail as CodingProcessDetailData,
   type CodingActivityItem,
 } from '@/lib/actions.ts';
+import { labelDuConstat } from '@/lib/constated-files.ts';
 import ApprovalActions from '@/app/(dashboard)/approvals/ApprovalActions.tsx';
 import VerificationSection from './VerificationSection.tsx';
 import FileChangeBlock from './FileChangeBlock.tsx';
@@ -114,7 +115,7 @@ export default function CodeProcessDetail({
     };
   }, [live]);
 
-  const { header, activity, verdicts, changes } = detail;
+  const { header, activity, verdicts, changes, constatedBy } = detail;
   const status = codeStatus(header.stage);
   const delivered = codeDelivery(detail);
   // Un process TERMINÉ ne montre aucune carte d'approbation — boutons compris
@@ -226,6 +227,18 @@ export default function CodeProcessDetail({
             ))}
           </div>
         )}
+        {/* CE QUI FAIT FOI POUR CETTE LISTE (issue #199), en une ligne.
+            Une liste prise dans `git status` avant et après chaque run ne
+            promet pas la même chose qu'une liste des fichiers que les outils
+            ont nommés, et une liste simplement déclarée ne promet rien du
+            tout. Les confondre en silence serait le faux vert que #102 a
+            retiré, revenu à l'écran (invariant #4). */}
+        <p
+          className="border-t border-rule-2 px-4 py-2 text-body-12 text-ink-4"
+          data-testid="files-constat"
+        >
+          {labelDuConstat(constatedBy)}
+        </p>
       </div>
 
       {/* L'activité, toujours ouverte : c'est ce qu'on vient lire. Pas de

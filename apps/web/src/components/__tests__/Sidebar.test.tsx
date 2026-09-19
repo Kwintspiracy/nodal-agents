@@ -264,7 +264,14 @@ async function renderTout(): Promise<void> {
     ok: true,
     data: {
       telegram: [
-        { key: 't1', title: 'Invoice for March', href: '/chat/t1', waiting: false, running: false },
+        {
+          key: 't1',
+          title: 'Invoice for March',
+          href: '/chat/t1',
+          waiting: false,
+          running: false,
+          unread: false,
+        },
       ],
     },
   });

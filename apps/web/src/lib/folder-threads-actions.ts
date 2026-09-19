@@ -129,6 +129,9 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
       href: `/chat/${id}`,
       waiting: attendSurFil.has(id),
       running: tourne.has(id),
+      // Le non-lu du fil DÉSIGNÉ, lu par la même requête que la désignation :
+      // c'est ce fil-là que le raccourci ouvre (#209).
+      unread: currents.data.unread[key] ?? false,
     });
   }
 
@@ -143,6 +146,7 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
       href: `/chat/${c.id}`,
       waiting: attendSurFil.has(c.id),
       running: tourne.has(c.id),
+      unread: c.unread,
     });
   }
 
@@ -159,6 +163,10 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
       // c'est son STATUT qui dit s'il avance, la même règle que sa ligne dans
       // la liste du dossier.
       running: runIsRunning(r.status),
+      // JAMAIS non lu : un run venu de dehors n'a pas de conversation, donc pas
+      // de marqueur de lecture. Hors du périmètre de #209, comme sa ligne de
+      // liste (`run-rows.ts`).
+      unread: false,
     });
   }
 

@@ -344,6 +344,7 @@ describe('le dossier compte ce que sa ligne affiche @cap:reprendre-conversation/
       kind: 'private',
       currentConversationId: filTelegram,
       conversationCount: 1,
+      unread: false,
       agentName: null,
       agentSlug: null,
       agentAvatarUrl: null,

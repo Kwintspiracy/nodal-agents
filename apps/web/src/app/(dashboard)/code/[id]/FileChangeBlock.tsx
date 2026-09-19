@@ -37,6 +37,23 @@ import { fragmentDiff } from '@nodal-agents/shared';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import type { CodingChangeView } from '@/lib/coding-changes.ts';
 import type { CodingFileChangeGroup } from '@/lib/actions.ts';
+import type { ConstatedChangeKind } from '@nodal-agents/shared';
+
+/**
+ * LE MOT DU GESTE, celui que git emploie.
+ *
+ * L'étiquette portait le nom de l'OUTIL (`file_write`, `file_edit`), ce qui
+ * n'avait de sens que tant que la liste venait des outils. Depuis #199 elle
+ * vient du constat, où un fichier peut avoir été supprimé ou renommé sans
+ * qu'aucun outil l'ait nommé — deux gestes que le vocabulaire d'avant ne
+ * savait pas dire.
+ */
+const GESTE_LIBELLE: Record<ConstatedChangeKind, string> = {
+  added: 'added',
+  modified: 'modified',
+  deleted: 'deleted',
+  renamed: 'renamed',
+};
 
 /**
  * Au-delà, la plaque s'arrête et le dit. La page portait déjà une borne (80
@@ -193,7 +210,13 @@ export default function FileChangeBlock({ group }: { group: CodingFileChangeGrou
   // Le geste porté sur ce fichier, dit dans le vocabulaire du fil. Le groupe
   // rassemble plusieurs appels sur un même chemin : c'est le PREMIER qui le
   // nomme — un fichier écrit puis retouché a bien été écrit.
-  const written = group.edits[0]?.kind === 'write';
+  //
+  // LE CONSTAT PASSE AVANT LA DÉCLARATION (issue #199). `changeKind` vient de
+  // ce que git a vu autour du run ; les appels d'outils, eux, ne disent que ce
+  // qu'ils ont TENTÉ, et ils ne savent pas dire « supprimé ». Un fichier que
+  // git a vu et qu'aucun outil n'a nommé n'a que ce mot-là.
+  const geste: ConstatedChangeKind =
+    group.changeKind ?? (group.edits[0]?.kind === 'write' ? 'added' : 'modified');
 
   return (
     <div className="overflow-hidden rounded-xl border border-rule-2">
@@ -203,8 +226,8 @@ export default function FileChangeBlock({ group }: { group: CodingFileChangeGrou
         inset="tight"
         className="h-[42px] py-0"
       >
-        <span className="shrink-0 text-mono-12 text-feed-tool">
-          {written ? 'file_write' : 'file_edit'}
+        <span className="shrink-0 text-mono-12 text-feed-tool" data-testid="file-change-kind">
+          {GESTE_LIBELLE[geste]}
         </span>
         {/* Le chemin se tronque par la GAUCHE : c'est sa fin qui porte le nom
             du fichier (même règle que `FileName` dans le fil). */}

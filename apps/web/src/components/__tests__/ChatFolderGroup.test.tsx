@@ -10,7 +10,7 @@
 // serveur, un contexte, un rendu.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { createElement, type ReactElement, type ReactNode } from 'react';
+import { cloneElement, createElement, type ReactElement, type ReactNode } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -34,18 +34,38 @@ import { ApprovalsProvider, type PendingApproval } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
 import { chatWaitingTotal, type FolderThread } from '@/lib/chat-folders.ts';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
+import { listApprovalsAction } from '@/lib/actions';
+import { getChatFoldersAction } from '@/lib/conversation-actions.ts';
 
 let pathname = '/chat';
 let search = '';
 let container: HTMLDivElement;
 let root: Root;
 
+/** Le dernier arbre rendu, pour le re-rendre SUR PLACE après une navigation. */
+let dernierArbre: ReactElement | null = null;
+
 async function render(node: ReactElement): Promise<void> {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
+  dernierArbre = node;
   await act(async () => {
     root.render(node);
+  });
+}
+
+/**
+ * Naviguer, du point de vue de la barre latérale : le chemin change et le même
+ * arbre se re-rend. La barre est cliente et SURVIT à la navigation — c'est
+ * exactement la situation qui laissait son sous-menu figé (#223, 19/09/2026).
+ */
+async function naviguer(vers: string): Promise<void> {
+  pathname = vers;
+  await act(async () => {
+    // CLONÉ, et pas le même objet : React court-circuite le rendu d'un élément
+    // référentiellement identique, et la barre resterait sur l'ancien chemin.
+    root.render(cloneElement(dernierArbre!));
   });
 }
 
@@ -76,6 +96,18 @@ async function renderGroup(opts: {
   running?: Record<string, number>;
   externalRuns?: number;
 }): Promise<void> {
+  // Les relectures des deux providers voisins rendent CE QUE LA PAGE A SEMÉ.
+  // Leur `setInterval` de 15 s part dès qu'un test fait tourner l'horloge, et
+  // une réponse vide leur ferait effacer les dossiers sous les yeux du test.
+  vi.mocked(getChatFoldersAction).mockResolvedValue({
+    ok: true,
+    data: {
+      channels: opts.channels ?? [],
+      running: opts.running ?? {},
+      runningConversationIds: [],
+      externalRuns: opts.externalRuns ?? 0,
+    },
+  });
   await render(
     <ApprovalsProvider initial={opts.approvals ?? []}>
       <ChatFoldersProvider
@@ -111,6 +143,19 @@ beforeEach(() => {
   search = '';
   document.body.innerHTML = '';
   vi.mocked(listFolderThreadsAction).mockReset();
+  // LES DEUX PROVIDERS VOISINS RÉPONDENT, MÊME SI AUCUN TEST NE LES REGARDE.
+  // Ils posent chacun un `setInterval` de 15 s ; dès qu'un test fait tourner
+  // l'horloge, leurs actions partent aussi. Sans valeur de retour, elles
+  // rendent `undefined`, et le `result.ok` du provider lève une rejection non
+  // rattrapée qui fait rougir la suite ENTIÈRE sans qu'aucun test n'échoue
+  // (CI de la PR #223 : « 2088 passed, 2 errors »).
+  vi.mocked(listApprovalsAction).mockResolvedValue({ ok: true, data: [] });
+  // `renderGroup` la réarme avec ce que la page sème ; ce défaut ne sert qu'aux
+  // rendus qui ne passent pas par lui.
+  vi.mocked(getChatFoldersAction).mockResolvedValue({
+    ok: true,
+    data: { channels: [], running: {}, runningConversationIds: [], externalRuns: 0 },
+  });
 });
 
 afterEach(async () => {
@@ -243,7 +288,7 @@ describe('le compte porté par le lien « Chat » @cap:reprendre-conversation/ec
 function fil(
   key: string,
   title: string,
-  etat: { waiting?: boolean; running?: boolean } = {},
+  etat: { waiting?: boolean; running?: boolean; unread?: boolean } = {},
 ): FolderThread {
   return {
     key,
@@ -251,6 +296,7 @@ function fil(
     href: `/chat/${key}`,
     waiting: etat.waiting ?? false,
     running: etat.running ?? false,
+    unread: etat.unread ?? false,
   };
 }
 
@@ -455,6 +501,27 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
     expect(container.innerHTML.toLowerCase()).not.toContain('d8153f');
   });
 
+  it('est ROUGE sur un fil NON LU, même sans demande ni run (#209)', async () => {
+    // Le troisième sens du point, ajouté le 19/09/2026 : avant la table
+    // `conversation_reads`, un fil au repos était forcément gris parce que
+    // rien ne savait s'il avait été lu.
+    //
+    // Mutation vérifiée : `unread` retiré de `threadCallsFor` → ce test rougit.
+    seedThreads({
+      telegram: [
+        fil('t1', 'Nobody opened this one', { unread: true }),
+        fil('t2', 'Seen it', { unread: false }),
+      ],
+    });
+    await renderGroup({ channels: ['telegram'] });
+    await click(folderRow('telegram'));
+
+    const dots = threadDots('telegram');
+    expect(dots.map((d) => d.getAttribute('data-calls'))).toEqual(['yes', 'no']);
+    expect(dots[0]?.className).toContain('bg-attention');
+    expect(dots[1]?.className).toContain('bg-ink-4');
+  });
+
   it('pose le point DEVANT le titre, dans la colonne de l’icône du dossier', async () => {
     seedThreads({ telegram: [fil('t1', 'Invoice for March')] });
     await renderGroup({ channels: ['telegram'] });
@@ -468,6 +535,138 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
     expect(ligne?.firstElementChild?.className).toContain('h-3.5 w-3.5');
     // Il ne clignote pas : ce n'est pas un `LiveDot`.
     expect(dot?.className).not.toContain('animate');
+  });
+});
+
+// ─── Le sous-menu SE RELIT (19/09/2026, retour du propriétaire sur #223) ─────
+//
+// CE QUE CE BLOC PROUVE, et pourquoi il vaut la peine d'exister. Le sous-menu
+// lisait UNE FOIS, au premier dépliage, et gardait cet instantané pour la vie
+// de l'onglet. À l'écran : « les états dans la sidebar ne se mettent pas à
+// jour, il faut rafraîchir la page ». Les deux moitiés du défaut se prouvent
+// séparément, parce que ce sont deux déclencheurs différents — une navigation,
+// et une horloge.
+//
+// Mutations vérifiées : l'effet de navigation retiré de `ChatFolderGroup` → le
+// premier test rougit (le point reste rouge après l'ouverture du fil) ;
+// `usePolling` retiré → le second rougit (le point ne s'allume jamais).
+
+describe('le sous-menu se relit @cap:reprendre-conversation/ecran', () => {
+  /** Le point du premier fil d'un dossier : `yes` = il appelle la personne. */
+  function pointDuPremier(folder: string): string | null {
+    const ligne = threadRows(folder)[0];
+    if (!ligne) throw new Error(`no thread row in ${folder}`);
+    return ligne.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls') ?? null;
+  }
+
+  it('éteint le point du fil qu’on OUVRE, sans rechargement', async () => {
+    // Un fil non lu : son point appelle.
+    seedThreads({ telegram: [fil('t1', 'Invoice for March', { unread: true })] });
+    await renderGroup({ channels: ['telegram'] });
+    await click(folderRow('telegram'));
+    expect(pointDuPremier('telegram')).toBe('yes');
+
+    // La personne ouvre le fil. Le rendu serveur de sa page écrit le marqueur
+    // de lecture ; la lecture suivante du sous-menu rend donc le fil LU.
+    seedThreads({ telegram: [fil('t1', 'Invoice for March', { unread: false })] });
+    await naviguer('/chat/t1');
+
+    // Et le point s'éteint tout seul : personne n'a rechargé la page.
+    expect(pointDuPremier('telegram')).toBe('no');
+  });
+
+  it('allume le point d’un fil qui REÇOIT, sur la cadence de la barre', async () => {
+    vi.useFakeTimers();
+    try {
+      // Un fil lu, au repos : rien ne l'appelle.
+      seedThreads({ telegram: [fil('t1', 'Invoice for March', { unread: false })] });
+      await renderGroup({ channels: ['telegram'] });
+      await click(folderRow('telegram'));
+      expect(pointDuPremier('telegram')).toBe('no');
+
+      // Un message arrive pendant qu'on regarde autre chose. Rien ne navigue.
+      seedThreads({ telegram: [fil('t1', 'Invoice for March', { unread: true })] });
+      expect(pointDuPremier('telegram')).toBe('no');
+
+      // Un tour d'horloge de la barre latérale — le même que la pastille
+      // corail et le point vert — et le point s'allume.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(pointDuPremier('telegram')).toBe('yes');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ─── Ce que la relecture NE fait pas (Reviewer C, passe 2 de #223) ───────────
+
+describe('la relecture du sous-menu s’arrête @cap:reprendre-conversation/ecran', () => {
+  it('laisse tomber une réponse PÉRIMÉE, arrivée après une plus récente', async () => {
+    // DEUX lectures en vol, et elles reviennent dans le désordre : c'est le
+    // cas réel dès qu'une navigation en lance une pendant qu'un tour
+    // d'horloge en a déjà une. Sans l'âge, la plus vieille réécrit le menu.
+    //
+    // Le même âge couvre le constat de la revue — une réponse qui revient
+    // après le démontage —, qui ne peut pas se prouver seul : sous React 19
+    // une mise à jour d'état sur un composant démonté ne dit rien.
+    //
+    // Mutation vérifiée : `if (mien !== age.current) return;` retiré de
+    // `relire` → ce test rougit, le menu affiche « Ancienne ».
+    const promesses: Array<(r: { ok: true; data: Record<string, FolderThread[]> }) => void> = [];
+    vi.mocked(listFolderThreadsAction).mockImplementation(
+      () =>
+        new Promise((r) => {
+          promesses.push(r as (typeof promesses)[number]);
+        }) as ReturnType<typeof listFolderThreadsAction>,
+    );
+    await renderGroup({ channels: ['telegram'] });
+    await click(folderRow('telegram'));
+    // Une seconde lecture part : la personne ouvre un fil.
+    await naviguer('/chat/t1');
+    expect(promesses, 'deux lectures devraient être en vol').toHaveLength(2);
+
+    // La SECONDE répond d'abord, la PREMIÈRE ensuite.
+    await act(async () => {
+      promesses[1]?.({ ok: true, data: { telegram: [fil('t1', 'Récente')] } });
+    });
+    await act(async () => {
+      promesses[0]?.({ ok: true, data: { telegram: [fil('t1', 'Ancienne')] } });
+    });
+
+    expect(threadRows('telegram')[0]?.textContent).toBe('Récente');
+  });
+
+  it('s’ARRÊTE quand on replie tout, et repart frais au dépliage suivant', async () => {
+    vi.useFakeTimers();
+    try {
+      seedThreads({ telegram: [fil('t1', 'Invoice for March')] });
+      await renderGroup({ channels: ['telegram'] });
+      await click(folderRow('telegram'));
+      expect(threadRows('telegram')[0]?.textContent).toBe('Invoice for March');
+
+      // Tout replié : il n'y a plus de sous-menu à l'écran. Le compte des
+      // lectures EST le sujet ici — la propriété à prouver est qu'aucune
+      // requête ne part, et cela ne se lit nulle part ailleurs.
+      await click(folderRow('telegram'));
+      const avant = vi.mocked(listFolderThreadsAction).mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(
+        vi.mocked(listFolderThreadsAction).mock.calls.length,
+        'le sondage tourne encore pour un menu que personne ne regarde',
+      ).toBe(avant);
+
+      // Et rouvrir ne ressort pas l'instantané d'il y a un quart d'heure : la
+      // reprise passe par une lecture immédiate.
+      seedThreads({ telegram: [fil('t1', 'Freshly renamed')] });
+      await click(folderRow('telegram'));
+      expect(threadRows('telegram')[0]?.textContent).toBe('Freshly renamed');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

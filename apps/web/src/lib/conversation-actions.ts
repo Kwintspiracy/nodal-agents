@@ -35,6 +35,7 @@ import {
   approvalRequests,
   chatMessages,
   codeProjects,
+  conversationReads,
   conversations,
   jobDeliverableVerificationState,
   jobDeliveries,
@@ -46,6 +47,7 @@ import {
 } from '@nodal-agents/db';
 import { normalizePath, redactSecretsInText, stripGroupPrefix } from '@nodal-agents/shared';
 import { folderChatsQuery, folderConversationsQuery } from './folder-threads-sql.ts';
+import { readsOfUser, unreadColumn } from './unread.ts';
 import { plainText } from '@/components/Markdown.tsx';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
@@ -116,6 +118,12 @@ export type ConversationListRow = {
   /** Les tours de l'utilisateur : messages `user` (dashboard) ou jobs de tête (canal). */
   turns: number;
   lastPreview: string | null;
+  /**
+   * Ce fil a bougé depuis que CETTE personne l'a ouvert — ou elle ne l'a jamais
+   * ouvert (#209). Calculé en base, dans la MÊME requête que la ligne : la
+   * règle vit dans `lib/unread.ts`.
+   */
+  unread: boolean;
 };
 
 /**
@@ -134,6 +142,19 @@ export type CurrentThreadByChat = {
    * silence.
    */
   readonly listable: readonly string[];
+  /**
+   * Les chats dont le fil COURANT est non lu par cette personne (#209) — clé
+   * `chatKey`, comme `current`.
+   *
+   * Lu ICI, et pas ailleurs, parce que c'est ici qu'on sait QUEL fil la ligne
+   * d'un chat ouvre. La ligne de la liste et le raccourci de la barre latérale
+   * mènent tous les deux au fil désigné : leur point dirait autre chose s'il
+   * regardait un autre fil du même chat.
+   *
+   * Un chat absent n'est pas non lu — c'est la même lecture, une clé manquante
+   * veut dire « rien à signaler ».
+   */
+  readonly unread: Readonly<Record<string, boolean>>;
 };
 
 export type ConversationThreadView = {
@@ -284,10 +305,14 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
         projectId: codeProjects.id,
         projectDisplayName: codeProjects.displayName,
         projectPath: codeProjects.projectPath,
+        // NON LU, dans la MÊME requête que la ligne (#209) : une jointure de
+        // plus, jamais une lecture par fil.
+        unread: unreadColumn,
       })
       .from(conversations)
       .leftJoin(agents, eq(agents.id, conversations.agentId))
       .leftJoin(codeProjects, eq(codeProjects.id, conversations.currentProjectId))
+      .leftJoin(conversationReads, readsOfUser(session.userId))
       .where(
         and(
           eq(conversations.entityId, session.entityId),
@@ -372,6 +397,7 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
           turns: stats?.turns ?? 0,
           lastPreview:
             stats?.lastReply != null ? firstLine(stats.lastReply, PREVIEW_MAX) || null : null,
+          unread: r.unread,
         };
       }),
     );
@@ -396,6 +422,8 @@ export type FolderConversationRead = {
   id: string;
   /** Le titre, DÉJÀ rédigé et coupé — vide quand rien ne le nomme. */
   title: string;
+  /** Le fil a bougé depuis que cette personne l'a ouvert, ou jamais ouvert (#209). */
+  unread: boolean;
 };
 
 export type FolderThreadReads = {
@@ -426,7 +454,7 @@ export async function listFolderThreadReadsAction(
 
     const [chatRows, convRows] = await Promise.all([
       folderChatsQuery(db, session.entityId, perFolder),
-      folderConversationsQuery(db, session.entityId, perFolder),
+      folderConversationsQuery(db, session.entityId, session.userId, perFolder),
     ]);
 
     const chats: FolderChatRead[] = chatRows.map((r) => ({
@@ -492,6 +520,7 @@ export async function listFolderThreadReadsAction(
           r.title !== ''
             ? firstLine(r.title, TITLE_MAX)
             : firstLine(stripGroupPrefix(premiereDemande.get(r.id) ?? ''), TITLE_MAX),
+        unread: r.unread,
       })),
     });
   } catch (err) {
@@ -550,8 +579,13 @@ export async function listCurrentThreadByChatAction(): Promise<ActionResult<Curr
         channel: conversations.channel,
         chatId: conversations.chatId,
         id: conversations.id,
+        // Le fil désigné est-il non lu ? La jointure porte sur la ligne que le
+        // `DISTINCT ON` garde, donc sur le fil que la ligne OUVRE, et pas sur
+        // un autre fil du même chat (#209).
+        unread: unreadColumn,
       })
       .from(conversations)
+      .leftJoin(conversationReads, readsOfUser(session.userId))
       .where(
         and(
           eq(conversations.entityId, session.entityId),
@@ -595,16 +629,19 @@ export async function listCurrentThreadByChatAction(): Promise<ActionResult<Curr
       );
 
     const current: Record<string, string> = {};
+    const unread: Record<string, boolean> = {};
     for (const r of rows) {
       if (r.chatId === null) continue;
-      current[chatKey(r.agentId, r.channel, r.chatId)] = r.id;
+      const key = chatKey(r.agentId, r.channel, r.chatId);
+      current[key] = r.id;
+      unread[key] = r.unread;
     }
     const listable: string[] = [];
     for (const r of eligibles) {
       if (r.chatId === null) continue;
       listable.push(chatKey(r.agentId, r.channel, r.chatId));
     }
-    return ok({ current, listable });
+    return ok({ current, listable, unread });
   } catch (err) {
     console.error('[listCurrentThreadByChatAction]', err);
     return fail('db_error', 'Failed to resolve current threads');
@@ -1141,6 +1178,39 @@ export async function listChatNamesAction(): Promise<ActionResult<ChatIdentities
 // ─── getConversationThreadAction ─────────────────────────────────────────────
 
 /**
+ * OUVRIR UN FIL, C'EST LE LIRE (#209).
+ *
+ * Le marqueur est posé ICI, au chargement du fil sur le tableau de bord, et
+ * NULLE PART AILLEURS : une livraison de canal n'a rien fait lire à personne,
+ * et avancer le marqueur depuis le runner ferait disparaître un non-lu que
+ * personne n'a regardé.
+ *
+ * `read_at` est REMPLACÉ à chaque ouverture, jamais empilé : la clé primaire
+ * est (personne, fil), et c'est l'instant de la DERNIÈRE ouverture qui décide.
+ * La page se relit tant qu'un travail tourne (`LiveRefresh`), si bien qu'une
+ * réponse arrivée sous les yeux de la personne repose le marqueur au lieu de
+ * rallumer son propre fil.
+ *
+ * Un échec REMONTE, il n'est pas avalé : le fil se relit à chaque affichage,
+ * et un marqueur qui ne s'écrirait pas en silence laisserait un point rouge
+ * qu'aucun geste ne peut éteindre (invariant #4).
+ */
+async function markConversationRead(
+  db: ReturnType<typeof getDb>,
+  userId: string,
+  conversationId: string,
+): Promise<void> {
+  const readAt = new Date();
+  await db
+    .insert(conversationReads)
+    .values({ userId, conversationId, readAt })
+    .onConflictDoUpdate({
+      target: [conversationReads.userId, conversationReads.conversationId],
+      set: { readAt },
+    });
+}
+
+/**
  * Le fil d'une conversation, prêt à dessiner : ses tours, le fil de chacun de
  * ses travaux (le MÊME assemblage que la page d'un espace, `job-feed.ts`), ce
  * que chaque travail a fait sortir du chat, la preuve, la file d'envoi et le
@@ -1177,6 +1247,10 @@ export async function getConversationThreadAction(
       .where(and(eq(conversations.id, id), eq(conversations.entityId, session.entityId)))
       .limit(1);
     if (!conv) return fail('not_found', 'Conversation not found');
+
+    // Le fil est ouvert : il est lu. APRÈS la garde d'entité — un fil qu'on
+    // n'a pas le droit de voir ne laisse aucune trace de lecture.
+    await markConversationRead(db, session.userId, id);
 
     // LES PLUS RÉCENTS, puis remis dans l'ordre. Le plafond gardait le DÉBUT
     // du fil : au 101e tour d'un canal, la page restait figée sur les cent

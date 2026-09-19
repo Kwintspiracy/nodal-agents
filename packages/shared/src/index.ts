@@ -42,6 +42,7 @@ export * from './project-key';
 export * from './group-prefix';
 export * from './project-roots';
 export * from './cli-write-tools';
+export * from './constated-writes';
 export * from './project-subfolder';
 export * from './verify-command-discovery';
 export * from './types/verification';

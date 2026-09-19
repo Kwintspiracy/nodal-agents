@@ -21,11 +21,14 @@
 // l'essentiel. Les lignes de RUN, elles, reçoivent la tâche entière et masquent
 // chez elles (`runTitle`, run-rows.ts).
 //
-// ⚠️ CE QUI N'EST PAS DESSINÉ. La maquette montre aussi une pastille « Unread ».
-// La base ne porte AUCUN état de lecture — pas de `last_read_at`, nulle part —
-// donc aucune ligne ne peut dire qu'elle n'est pas lue. Elle n'est pas
-// dessinée : l'inventer ferait dire à l'écran un fait que rien ne vérifie
-// (invariant #4). Le jour où la colonne existe, elle s'ajoute ici.
+// NON LU (#209, 19/09/2026). La base porte enfin un état de lecture
+// (`conversation_reads`, migration 0112) : une ligne SAIT si son fil a bougé
+// depuis que cette personne l'a ouvert. Elle le porte donc — mais PAS sous la
+// forme de la planche. La maquette dessinait une pastille « Unread » : c'est un
+// quatrième signe à droite, en concurrence avec les trois qui disent ce que le
+// fil attend, et le propriétaire a tranché autrement (19/09) — c'est le TITRE
+// qui change de poids, comme dans toutes les boîtes de réception. Rien ne
+// s'ajoute à droite, et rien ne se lit en mot.
 
 import { chatLabel, type ChannelChatRow } from '@/lib/chat-list.ts';
 import type { ConversationListRow } from '@/lib/conversation-actions.ts';
@@ -81,6 +84,11 @@ export type ConversationRowModel = {
   time: string | null;
   waiting: RowWaiting;
   running: boolean;
+  /**
+   * Le fil a bougé depuis que cette personne l'a ouvert, ou elle ne l'a jamais
+   * ouvert (#209). La LIGNE le porte, l'écran décide comment il se voit.
+   */
+  unread: boolean;
 };
 
 export type ConversationRowsInput = {
@@ -197,6 +205,9 @@ export function conversationRows(input: ConversationRowsInput): ConversationRowM
       chatName: chatLabel(c),
       preview: c.lastPreview,
       time: conversationTimeLabel(c.updatedAt, now),
+      // Le non-lu du FIL COURANT, celui vers lequel la ligne mène — lu par la
+      // désignation, pas déduit des lignes chargées (voir `groupChatLists`).
+      unread: c.unread,
       ...etat(id),
     });
   }
@@ -221,6 +232,7 @@ export function conversationRows(input: ConversationRowsInput): ConversationRowM
       // ligne à deux étages pour ne rien apprendre.
       preview: null,
       time: conversationTimeLabel(c.updatedAt, now),
+      unread: c.unread,
       ...etat(c.id),
     });
   }

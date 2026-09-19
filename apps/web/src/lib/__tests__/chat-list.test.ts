@@ -22,6 +22,7 @@ const row = (over: Partial<ConversationListRow> & { id: string }): ConversationL
   currentProject: null,
   turns: 3,
   lastPreview: null,
+  unread: false,
   ...over,
 });
 
