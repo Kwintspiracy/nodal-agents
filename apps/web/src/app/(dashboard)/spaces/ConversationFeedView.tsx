@@ -871,12 +871,28 @@ function BlockLabel({ children }: { children: React.ReactNode }) {
  * jusqu'au 20/09/2026 : la règle lisait `plainText`, qui ne rend que la
  * première ligne du PREMIER bloc, si bien que « Verdict\nça passe » arrivait
  * ici comme « Verdict » tout court et que la suite était toujours absente.
+ * C'est #195 qui l'a constaté, en écrivant les tests de #174 : la branche y a
+ * été documentée et son comportement réel épinglé, plutôt que réparé dans une
+ * PR qui portait sur autre chose.
  *
  * Elle est RÉPARÉE plutôt que supprimée, parce que la famille qu'elle vise
  * existe vraiment : un relecteur qui titre « ## Verdict » et pose sa phrase en
  * dessous a dit son verdict, et le taire n'était pas de la prudence, c'était
  * une ligne perdue. La règle lit donc les DEUX premières lignes lisibles du
  * markdown (`plainLines`), blocs traversés.
+ *
+ * LE MOT SEUL PORTE SES DEUX-POINTS. « Verdict: » sur sa ligne, le verdict en
+ * dessous, rendait `null` : la forme en ligne exige un contenu APRÈS le
+ * séparateur, et `/^verdict$/i` échouait sur le deux-points resté là. C'était
+ * le défaut d'origine de cette branche, sur une formulation réelle (Reviewer C,
+ * passe 1 de la PR #278). Le séparateur est donc optionnel quand il ne reste
+ * rien derrière.
+ *
+ * Le qualificatif, lui, n'est PAS accepté sur cette branche-là, alors que la
+ * forme en ligne l'accepte (« Verdict global : … »). La raison tient en une
+ * ligne de la base : « Verdict émis. Je clos la tâche. » Écrite en deux
+ * paragraphes, « Verdict émis. » passerait pour le mot seul et la phrase
+ * suivante deviendrait un verdict que personne n'a rendu.
  *
  * La ligne suivante ne compte que si elle vient d'un PARAGRAPHE. C'est la
  * décision pour le milieu ambigu, et elle est explicite : sous « ## Verdict »,
@@ -885,6 +901,11 @@ function BlockLabel({ children }: { children: React.ReactNode }) {
  * Un tel résultat ne dessine aucune ligne, et le corps montre la liste entière.
  * Le cas « Verdict\nça passe » passe par la même porte : les deux lignes sont
  * celles d'un seul paragraphe.
+ *
+ * Un SOUS-TITRE (« ### Approve ») et une CITATION (« > approve ») sous le mot
+ * sont écartés par la même règle, et c'est voulu : ni l'un ni l'autre n'est la
+ * phrase d'un relecteur. Le second est d'ordinaire une consigne recopiée, et
+ * la prendre pour un verdict serait lire la question comme la réponse.
  */
 export function delegationVerdict(result: string | null): string | null {
   if (result === null) return null;
@@ -892,7 +913,7 @@ export function delegationVerdict(result: string | null): string | null {
   if (head === undefined) return null;
   const inline = /^verdict(?:\s+[^\s:—]+)?\s*[:—]\s*(.+)$/i.exec(head.text);
   if (inline?.[1] !== undefined) return inline[1];
-  if (/^verdict$/i.test(head.text)) {
+  if (/^verdict\s*[:—]?$/i.test(head.text)) {
     return next !== undefined && next.block === 'paragraph' ? next.text : null;
   }
   return null;

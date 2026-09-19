@@ -1310,6 +1310,21 @@ describe('delegationVerdictLine, la règle seule @cap:verifier-un-livrable/moteu
     expect(delegationVerdictLine({ result: '## Verdict\n\n**ça passe**' })).toBe('ça passe');
   });
 
+  it('le mot seul porte ses DEUX-POINTS, ou son tiret cadratin', () => {
+    // Le défaut d'origine de la branche, sur une formulation réelle (Reviewer
+    // C, passe 1 de #278) : la forme en ligne exige un contenu après le
+    // séparateur, et le mot seul échouait sur le deux-points resté là.
+    expect(delegationVerdictLine({ result: 'Verdict:\n\nça passe' })).toBe('ça passe');
+    expect(delegationVerdictLine({ result: '## Verdict :\n\nça passe' })).toBe('ça passe');
+    expect(delegationVerdictLine({ result: 'Verdict —\nça passe' })).toBe('ça passe');
+    // Le QUALIFICATIF n'est pas accepté ici, alors que la forme en ligne
+    // l'accepte : « Verdict émis. » écrit en deux paragraphes passerait pour
+    // le mot seul, et la phrase d'après deviendrait un verdict que personne
+    // n'a rendu.
+    expect(delegationVerdictLine({ result: 'Verdict émis.\n\nJe clos la tâche.' })).toBeNull();
+    expect(delegationVerdictLine({ result: 'Verdict global :\n\nça passe' })).toBeNull();
+  });
+
   it('ne promeut PAS une puce en verdict — la décision du milieu ambigu', () => {
     // Sous « ## Verdict », une LISTE de constats n'est pas un verdict d'une
     // ligne : en prendre la première puce ferait dire au délégué ce qu'il n'a
@@ -1321,6 +1336,16 @@ describe('delegationVerdictLine, la règle seule @cap:verifier-un-livrable/moteu
     expect(delegationVerdictLine({ result: '## Verdict\n\n```\npass\n```' })).toBeNull();
     // Et le mot SEUL, sans rien derrière, ne dessine toujours rien.
     expect(delegationVerdictLine({ result: 'Verdict' })).toBeNull();
+  });
+
+  it('écarte aussi un SOUS-TITRE et une CITATION sous le mot — le choix, écrit', () => {
+    // Ni l'un ni l'autre n'est la phrase d'un relecteur, et la règle du
+    // paragraphe les écarte déjà. Le choix est défendable mais il n'était
+    // prouvé nulle part (Reviewer C, passe 1 de #278) : il l'est ici.
+    expect(delegationVerdictLine({ result: '## Verdict\n\n### Approve' })).toBeNull();
+    // Une citation est d'ordinaire une consigne recopiée : la prendre pour un
+    // verdict serait lire la question comme la réponse.
+    expect(delegationVerdictLine({ result: '## Verdict\n\n> approve' })).toBeNull();
   });
 
   it('garde la première ligne quand elle SE SUFFIT, ligne suivante ou pas', () => {
