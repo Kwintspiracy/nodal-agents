@@ -63,9 +63,12 @@ describe('ProjectShelf', () => {
     // Le reste est COMPTÉ, jamais escamoté.
     expect(html).toContain('and 5 more, not read');
     expect(html).toContain('D:/Dev/nodal');
-    // La preuve non configurée est dite, et l'écran de configuration nommé.
+    // La preuve non configurée est DITE. Plus de renvoi vers l'écran Code
+    // (#143) : le panneau qui écrit ces commandes est sur la même page, juste
+    // en dessous, et un lien ferait quitter l'écran pour y revenir.
     expect(html).toContain('No command declared.');
-    expect(html).toContain('Configure proof in Code');
+    expect(html).not.toContain('Configure proof in Code');
+    expect(html).not.toContain('href="/code"');
   });
 
   it('un dossier disparu est DIT, pas dessiné comme un projet vide', () => {

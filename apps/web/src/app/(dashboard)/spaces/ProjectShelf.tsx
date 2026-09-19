@@ -12,7 +12,6 @@
 // props, déjà lues côté serveur.
 
 import { useState } from 'react';
-import Link from 'next/link';
 import CopyablePath from '@/components/ui/CopyablePath';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -149,14 +148,9 @@ export default function ProjectShelf({
           ) : (
             <span>No command declared.</span>
           )}
-          {project.kind === 'code' && (
-            // Il n'existe pas de route dédiée à la configuration : le panneau
-            // vit sur l'écran Code, dans la carte du projet. On y renvoie, sans
-            // promettre une page qui n'existe pas.
-            <Link href="/code" className="text-xs text-ink-3 underline hover:text-ink-2">
-              Configure proof in Code
-            </Link>
-          )}
+          {/* PLUS DE LIEN vers l'écran Code (#143) : le panneau qui écrit ces
+              commandes est juste en dessous, sur cette page. Renvoyer ailleurs
+              ferait quitter l'écran pour y revenir. */}
         </div>
         <VerificationSection
           sequences={proof.sequences}

@@ -58,6 +58,19 @@ type Props = {
   waiting: 'question' | 'approval' | null;
   /** Un run tourne dessus. Un point, JAMAIS un nombre. */
   running: boolean;
+  /**
+   * QUI mène la ligne (#143). `agent` — le défaut, la planche des boîtes de
+   * réception : le nom de l'agent en tête, le nom du chat en étiquette.
+   * `title` — le TITRE en tête, l'avatar conservé, tout le reste dans la
+   * sous-ligne.
+   *
+   * La seconde forme existe pour l'activité d'un PROJET, où les deux faits se
+   * contredisent : l'agent CHANGE d'une ligne à l'autre — son avatar distingue
+   * donc les lignes, à la différence de « Nodal chats » où il se répète — mais
+   * ce qui identifie une ligne est ce qui a été DEMANDÉ, pas qui l'a fait.
+   * `agent: null` répondait à la seconde moitié en perdant la première.
+   */
+  lead?: 'agent' | 'title';
 };
 
 /** Hauteur, gouttière et marges de la planche. Identiques avec ou sans lien. */
@@ -73,6 +86,7 @@ export default function ConversationRow({
   time,
   waiting,
   running,
+  lead = 'agent',
 }: Props) {
   // L'état est DIT sur la ligne, pas seulement suggéré par l'absence de lien :
   // sur cinquante lignes, il fallait sinon deviner laquelle n'ouvre rien
@@ -92,10 +106,11 @@ export default function ConversationRow({
           l'heure et la pastille hors de la ligne. */}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex items-center gap-2">
-          {agent === null ? (
-            // Sans agent, le titre EST la ligne : il prend la place, la graisse
-            // et la couleur qu'occupait le nom, et se coupe par le CSS plutôt
-            // que dans une étiquette qui ne s'étire pas.
+          {agent === null || lead === 'title' ? (
+            // Le titre EST la ligne : il prend la place, la graisse et la
+            // couleur qu'occupait le nom, et se coupe par le CSS plutôt que
+            // dans une étiquette qui ne s'étire pas. Sans agent (« Nodal
+            // chats ») ou avec, quand c'est le titre qui mène (#143).
             <span className="truncate text-medium-14 text-ink">{chatName}</span>
           ) : (
             <>

@@ -1,42 +1,61 @@
-// /spaces/[id]/files — LE DOSSIER D'UN PROJET : où il est, ce qu'il contient,
-// sa preuve, et les conversations qui y ont travaillé (P8, sorti de la page du
-// projet le 07/09).
+// /spaces/[id]/files — L'ONGLET « FILES & PROOF » d'un projet (#143).
 //
-// Ce que Quentin appelle « les réglages de mon projet » : ça se consulte, ça
-// ne se lit pas en ouvrant le projet. La page du projet (/spaces/[id]) est sa
-// conversation ; le bouton « Files » de l'en-tête mène ici, et « ← <projet> »
-// ramène au fil.
+// Ce que Quentin appelle « les réglages de mon projet » : où le dossier est, ce
+// qu'il contient, ce que la preuve en dit, et les commandes qui la produisent.
+//
+// Le PANNEAU DE PREUVE arrive ici avec #143. Il vivait sur l'onglet Code, dans
+// la branche « projet ouvert » d'une table de sessions — le seul écran qui fût
+// celui du projet, faute de mieux. Le projet a maintenant sa page : sa preuve y
+// est, à côté de ses fichiers et de la preuve déjà affichée.
+//
+// Les CONVERSATIONS ne sont plus listées ici : elles sont sur l'onglet
+// Activity, avec les sessions, dans une seule histoire du projet.
 
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
-import EmptyState from '@/components/ui/EmptyState';
-import { getProjectPageAction } from '@/lib/project-actions.ts';
+import { getProjectFactsAction, getProjectPageAction } from '@/lib/project-actions.ts';
+import { getCodeTabOwnerAction, listCodeProjectPrefsAction } from '@/lib/actions.ts';
+import { projectKey } from '@nodal-agents/shared';
 import type { VerificationUnconfiguredView } from '@/lib/verification-runs-view.ts';
 
+import { projectFactsLine } from '../../project-header.ts';
+import ProjectToolbar from '../../ProjectToolbar.tsx';
 import ProjectShelf from '../../ProjectShelf.tsx';
-import ProjectConversations from '../../ProjectConversations.tsx';
-import NewProjectConversationButton from '../../NewProjectConversationButton.tsx';
+import ProjectProof from '../../ProjectProof.tsx';
+import type { ProjectVerification } from '../../ProjectVerificationPanel.tsx';
 
 // Force dynamic — le dossier est relu à chaque requête.
 export const dynamic = 'force-dynamic';
 
 export default async function ProjectFilesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const result = await getProjectPageAction(id);
-  if (!result.ok) {
-    if (result.code === 'not_found') notFound();
+
+  const [factsResult, pageResult, prefsResult, ownerResult] = await Promise.all([
+    getProjectFactsAction(id),
+    getProjectPageAction(id),
+    listCodeProjectPrefsAction(),
+    getCodeTabOwnerAction(),
+  ]);
+
+  if (!factsResult.ok) {
+    if (factsResult.code === 'not_found') notFound();
     return (
       <PageShell title="Project">
-        <Link href="/spaces" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Workspaces
-        </Link>
-        <p className="mt-4 text-sm text-err">{result.message}</p>
+        <p className="text-sm text-err">{factsResult.message}</p>
+      </PageShell>
+    );
+  }
+  if (!pageResult.ok) {
+    if (pageResult.code === 'not_found') notFound();
+    return (
+      <PageShell title={factsResult.data.name}>
+        <p className="text-sm text-err">{pageResult.message}</p>
       </PageShell>
     );
   }
 
-  const { project, files, proof, conversations } = result.data;
+  const facts = factsResult.data;
+  const { project, files, proof } = pageResult.data;
 
   // Ce que la preuve n'a pas pu éprouver, dans la forme que `VerificationSection`
   // attend. Le type de livrable suit la SORTE du projet : dire « pas de
@@ -54,42 +73,60 @@ export default async function ProjectFilesPage({ params }: { params: Promise<{ i
           },
         ];
 
+  // L'état de la séquence de preuve, retrouvé par CLÉ d'identité — jamais par
+  // égalité de texte sur le chemin. `null` quand aucune ligne n'existe encore,
+  // ou quand la lecture a échoué : le panneau dit alors « rien de configuré »,
+  // le repli sûr — il ne prétend jamais qu'une séquence est approuvée.
+  const cle = projectKey(project.path);
+  const prefs = prefsResult.ok
+    ? (prefsResult.data.find((p) => projectKey(p.projectPath) === cle) ?? null)
+    : null;
+  const verification: ProjectVerification | null = prefs
+    ? {
+        verifyCommands: prefs.verifyCommands,
+        verifyApprovedAt: prefs.verifyApprovedAt,
+        verifyManifestHash: prefs.verifyManifestHash,
+        verifyStatus: prefs.verifyStatus,
+        verifySource: prefs.verifySource,
+      }
+    : null;
+
   return (
     <PageShell
-      title={project.name}
-      subtitle={project.path}
+      title={facts.name}
+      subtitle={projectFactsLine(facts)}
       toolbar={
-        <div className="flex items-center gap-3">
-          <Link
-            href={`/spaces/${project.id}`}
-            className="inline-flex items-center gap-1.5 text-body-13 text-ink-3 transition-colors hover:text-ink-2"
-          >
-            <span className="text-body-15 leading-none!">‹</span>
-            Back to {project.name}
-          </Link>
-          <span className="ml-auto">
-            <NewProjectConversationButton projectId={project.id} />
-          </span>
-        </div>
+        <ProjectToolbar
+          projectId={facts.id}
+          projectPath={facts.path}
+          projectName={facts.name}
+          active="files"
+          activityCount={facts.conversations + facts.sessions}
+        />
       }
     >
       <ProjectShelf project={project} files={files} proof={proof} unconfigured={unconfigured} />
 
-      {/* Les conversations qui portent un travail du projet, la plus récente
-          en tête : la page du projet ouvre sur la première, les autres se
-          lisent d'ici. */}
-      <div className="mx-auto mt-8 max-w-[840px]">
-        <p className="mb-2 text-label-11 uppercase tracking-wider text-ink-4">Conversations</p>
-        {conversations.length === 0 ? (
-          <EmptyState
-            title="No conversation yet"
-            description="Open the project and write: it gets its own."
-            compact
+      {/* Les commandes qui PRODUISENT la preuve, sous ce qu'elles ont donné.
+          Un projet de DOCUMENTS n'en a pas : il n'exécute rien, et lui offrir
+          un champ de commandes serait un réglage sans effet. */}
+      {project.kind !== 'documents' && (
+        <div className="mx-auto mt-8 max-w-[840px]">
+          {!prefsResult.ok && (
+            <p className="mb-2 text-body-12 text-err">
+              The proof commands could not be read: {prefsResult.message}
+            </p>
+          )}
+          <ProjectProof
+            projectPath={project.path}
+            initialVerification={verification}
+            // La lecture en échec vaut NON-propriétaire : un panneau éditable
+            // sur une lecture ratée offrirait un geste que le serveur
+            // refuserait ensuite.
+            isOwner={ownerResult.ok ? ownerResult.data.isOwner : false}
           />
-        ) : (
-          <ProjectConversations rows={conversations} />
-        )}
-      </div>
+        </div>
+      )}
     </PageShell>
   );
 }
