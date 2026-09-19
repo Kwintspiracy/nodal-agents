@@ -39,6 +39,22 @@ import { randomUUID } from 'node:crypto';
 /** Journalisé quand l'enregistrement échoue — best-effort, jamais fatal, jamais muet. */
 export const REVIEWER_VERIFY_PERSISTENCE_FAILED = 'REVIEWER_VERIFY_PERSISTENCE_FAILED';
 
+/**
+ * Le job relu n'appartient pas à l'entité du relecteur — ou son entité ne se
+ * lit pas (Reviewer C, mineur 1).
+ *
+ * Aucune ligne n'est écrite. Une ligne porterait alors l'`entity_id` du
+ * relecteur sous le `job_id` d'un autre espace : aucun écran ne la montrerait
+ * — tous filtrent par l'entité de la session — mais elle existerait, et une
+ * trace qu'on ne peut rattacher à personne n'est pas une preuve. Le cas ne se
+ * produit pas aujourd'hui (une délégation reste dans son espace) ; rien dans ce
+ * module ne le rendait impossible, et c'est ce trou-là qui est fermé.
+ */
+export const REVIEWER_VERIFY_ENTITY_MISMATCH = 'REVIEWER_VERIFY_ENTITY_MISMATCH';
+
+/** Le job relu a disparu entre la délégation et le verdict — rien à rattacher. */
+export const REVIEWER_VERIFY_ANCHOR_NOT_FOUND = 'REVIEWER_VERIFY_ANCHOR_NOT_FOUND';
+
 /** La valeur de `verification_runs.source` que ce module écrit (migration 0115). */
 export const REVIEWER_SOURCE = 'reviewer' as const;
 
@@ -217,6 +233,11 @@ const REVIEW_DELIVERABLE_TYPE = 'other';
  *
  * Rend le nombre de lignes écrites : l'appelant le journalise, et le test le
  * lit sans avoir à rejouer la requête.
+ *
+ * Lève, AVANT toute écriture, quand le job relu n'est pas de l'entité du
+ * relecteur (Reviewer C, mineur 1). L'appelant attrape et journalise le code :
+ * l'observabilité ne fait jamais échouer un travail, mais un refus ne se tait
+ * pas (invariant #4).
  */
 export async function recordReviewerVerificationRuns(
   db: AnyDrizzleDb,
@@ -232,6 +253,36 @@ export async function recordReviewerVerificationRuns(
     .limit(1);
   const job = jobRows[0];
   if (!job) return 0;
+
+  const anchor = anchorJobId(reviewerJobId, job.parentJobId);
+  // L'ancrage traverse une frontière d'espace ? On le VÉRIFIE plutôt que de
+  // s'en remettre au fait qu'une délégation reste dans son espace. Rien ici ne
+  // le garantissait : `parent_job_id` est un identifiant, pas une promesse.
+  // Fermé avant la suppression comme avant l'insertion — un refus ne doit pas
+  // effacer la trace d'une relecture précédente au passage.
+  if (anchor !== reviewerJobId) {
+    const anchorRows = await db
+      .select({ entityId: agentJobs.entityId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, anchor))
+      .limit(1);
+    const anchorJob = anchorRows[0];
+    if (!anchorJob) {
+      throw new Error(`${REVIEWER_VERIFY_ANCHOR_NOT_FOUND}: reviewer ${reviewerJobId} → ${anchor}`);
+    }
+    // Deux entités NULLES ne prouvent pas la même entité : une ligne qu'on ne
+    // peut rattacher à personne n'est pas une preuve, elle est un déchet.
+    if (
+      job.entityId === null ||
+      anchorJob.entityId === null ||
+      anchorJob.entityId !== job.entityId
+    ) {
+      throw new Error(
+        `${REVIEWER_VERIFY_ENTITY_MISMATCH}: reviewer ${reviewerJobId} (entity ${job.entityId}) → ` +
+          `job ${anchor} (entity ${anchorJob.entityId})`,
+      );
+    }
+  }
 
   const calls = await db
     .select({
@@ -259,7 +310,6 @@ export async function recordReviewerVerificationRuns(
   await db.delete(verificationRuns).where(eq(verificationRuns.sourceJobId, reviewerJobId));
   if (records.length === 0) return 0;
 
-  const anchor = anchorJobId(reviewerJobId, job.parentJobId);
   const sequenceId = randomUUID();
   await db.insert(verificationRuns).values(
     records.map((r, i) => ({
