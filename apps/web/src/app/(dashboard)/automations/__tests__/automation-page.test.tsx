@@ -570,6 +570,11 @@ describe('la page d’une routine @cap:planifier-une-tache/ecran', () => {
     // Quentin, 19/09/2026 : la page dessinait son propre lien de retour au lieu
     // de la `WorkBar`, et posait ses actions SUR la ligne de ce retour. Une
     // action n'est pas de la navigation : elle a sa rangée, sous la barre.
+    //
+    // La règle appliquée est l'issue #242 — toute page de détail porte la
+    // barre, le retour vit dedans, les actions en dessous. Ce cas en est la
+    // garde pour CETTE page ; #242 prévoit une vérification par la machine
+    // pour les huit autres.
     const view = await load(digestId);
     await render(<AutomationScreen view={view} agents={[]} />);
 

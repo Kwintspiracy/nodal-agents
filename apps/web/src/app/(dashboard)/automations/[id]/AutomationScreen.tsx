@@ -11,8 +11,11 @@ import type { AgentRow, AutomationView } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import EmptyState from '@/components/ui/EmptyState';
 import StatusPill from '@/components/ui/StatusPill';
-// La `WorkBar` va être promue dans `components/ui` par une autre PR ; elle est
-// importée d'ici en attendant, et l'import suivra mécaniquement.
+// PONT vers l'issue #243, qui promeut la `WorkBar` dans `components/ui` avec
+// son fichier Code Connect. Elle vit encore sous un dossier de page, ce qui est
+// précisément le constat de #242 : une barre rangée là ne se lit pas comme un
+// composant du système. Cet import croisé est délibéré et temporaire — il sera
+// déplacé mécaniquement au merge de #243, et rien d'autre n'est à changer ici.
 import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
 import { RoutineState, ScheduleRunList } from './RunLines.tsx';
 import ScheduleActions from '../ScheduleActions.tsx';
@@ -65,6 +68,11 @@ export default function AutomationScreen({
       // la page de run : le retour à gauche, le contexte à droite. La page
       // dessinait son propre lien de retour dans un `PageTopBar` — un motif de
       // plus pour une chose qui existe déjà (Quentin, 19/09/2026).
+      //
+      // La RÈGLE que cela applique est l'issue #242 : toute page de détail
+      // porte cette barre sous l'en-tête, le retour vit DEDANS et nulle part
+      // ailleurs, et les actions de la page ont leur rangée EN DESSOUS. Cette
+      // page est la première à s'y conformer ; les huit autres suivent.
       toolbar={
         <WorkBar
           back={{ label: 'Automations', href: '/automations' }}
