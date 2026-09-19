@@ -25,10 +25,14 @@
 // remplacée par `IS NULL` seul → le quatrième.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, codeProjects, conversationReads, conversations } from '@nodal-agents/db';
+// `eq` vient de `@nodal-agents/db`, qui le REEXPORTE, et jamais de
+// `drizzle-orm` : seul `packages/db` importe l'ORM (regle de couche), et
+// l'application web ne le porte pas dans son manifeste. Un worktree le
+// resolvait quand meme par sa jonction `node_modules` ; la CI, elle, installe
+// pour de bon et l'a dit.
+import { agentJobs, codeProjects, conversationReads, conversations, eq } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
 
 let testDb: TestDb;
