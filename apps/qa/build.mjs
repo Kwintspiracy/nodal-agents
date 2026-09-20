@@ -1002,7 +1002,13 @@ function cadreDeploiement() {
   const suite = depuis.length
     ? ` Since then: ${depuis.join(', ')}.${d.depuis.annules + d.depuis.echoues > 0 ? ' The run that rendered this page is the one that replaces them.' : ''}`
     : ' Nothing queued since.';
-  return `<p class="ligne-deploiement"><b>Docs and portal deployed</b> ${esc(dateFr(d.dernierSucces.le))} (<a href="${esc(d.dernierSucces.url ?? '#')}">${esc(d.dernierSucces.evenement)}</a>, main at <code>${esc((d.dernierSucces.sha ?? '').slice(0, 8) || '·')}</code>).${suite} Read at ${esc(dateFr(s.tableauLe ?? s.genereLe))}.</p>`;
+  // Le commit n'est nommé que pour un run `push` : c'est le seul événement
+  // dont le SHA est celui qui a été construit (voir `etatDuDeploiement`). Pour
+  // les autres, le run a construit `main` HEAD de l'instant, sans le dire.
+  const commit = d.dernierSucces.sha
+    ? `, main at <code>${esc(d.dernierSucces.sha.slice(0, 8))}</code>`
+    : ', main as it was then';
+  return `<p class="ligne-deploiement"><b>Docs and portal deployed</b> ${esc(dateFr(d.dernierSucces.le))} (<a href="${esc(d.dernierSucces.url ?? '#')}">${esc(d.dernierSucces.evenement)}</a>${commit}).${suite} Read at ${esc(dateFr(s.tableauLe ?? s.genereLe))}.</p>`;
 }
 
 /**

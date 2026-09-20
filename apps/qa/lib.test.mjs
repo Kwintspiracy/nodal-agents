@@ -3431,13 +3431,40 @@ describe('etatDuDeploiement — ce que les runs de docs.yml disent du site', () 
         '7e5a6477',
       ),
     ]);
+    // Le `headSha` d'un `pull_request_target` est la tête de la PR, pas ce qui
+    // a été déployé (le run construit `main` HEAD) : aucun commit n'est nommé.
+    // La page publiée avait affiché « main at 3650638a », une tête de PR.
     expect(e.dernierSucces).toEqual({
       le: '2026-09-20T11:27:01Z',
       evenement: 'pull_request_target',
-      sha: '0cfda360',
+      sha: null,
       url: 'https://github.com/x/y/actions/runs/35507779973',
     });
     expect(e.depuis).toEqual({ enCours: 0, annules: 0, echoues: 0 });
+  });
+
+  it('un run push nomme son commit : c’est le seul événement dont le SHA est celui construit', () => {
+    const e = etatDuDeploiement([
+      run(
+        2,
+        'completed',
+        'success',
+        'push',
+        '2026-09-20T11:24:08Z',
+        '2026-09-20T11:25:09Z',
+        '7e5a6477',
+      ),
+      run(
+        1,
+        'completed',
+        'success',
+        'issues',
+        '2026-09-20T11:20:00Z',
+        '2026-09-20T11:22:00Z',
+        'deadbeef',
+      ),
+    ]);
+    expect(e.dernierSucces.sha).toBe('7e5a6477');
   });
 
   it('un run annulé APRÈS le dernier succès est compté, et le dernier succès reste le bon', () => {
