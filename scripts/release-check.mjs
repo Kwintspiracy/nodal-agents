@@ -21,10 +21,10 @@
 // Chaque contrôle dit ce qu'il vérifie, ce qu'il a trouvé, et quoi faire.
 
 import { execSync, spawnSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { configHoteDepuis, portsDeLaStack, verdictStackVivante } from './lib/live-stack.mjs';
 import { sonderUnPort } from './lib/sonde.mjs';
 
@@ -33,6 +33,52 @@ const skipSlow = process.argv.includes('--fast');
 
 let failed = 0;
 const started = Date.now();
+
+// ─── Ce qui dit au portail que cette commande TOURNE (issue #296) ────────────
+//
+// `release:check` dure quarante minutes et ne laisse AUCUNE trace qu'un autre
+// programme puisse lire : c'est une commande locale, elle n'a ni run GitHub ni
+// ligne en base. Le 20/09/2026 au matin, c'est précisément elle qui tournait
+// pendant que le portail montrait un Kanban vide et que le propriétaire
+// demandait pourquoi rien n'était actif.
+//
+// D'où ce fichier, et rien de plus : posé ici, effacé à la fin, quelle que soit
+// l'issue. Le portail ne fait que le lire ; son absence est la réponse « elle
+// ne tourne pas ».
+//
+// DANS LE DÉPÔT, pas dans le dossier personnel : le portail se collecte depuis
+// la racine du dépôt, et un chemin absolu vers un autre disque ne se lit pas
+// depuis une machine de CI. Ignoré par git (voir `.gitignore`) — c'est un
+// fichier de travail, pas un fait à publier.
+const FICHIER_EN_VOL = join(repoRoot, 'apps', 'qa', 'data', 'release-check.running.json');
+
+function poserLetatEnVol() {
+  try {
+    writeFileSync(
+      FICHIER_EN_VOL,
+      JSON.stringify({ depuis: new Date().toISOString(), ou: basename(repoRoot) }, null, 2),
+      'utf8',
+    );
+  } catch {
+    // Un portail qui ne saura pas que cette commande tourne est un confort
+    // perdu ; refuser la release pour ça serait hors de proportion.
+  }
+}
+
+function retirerLetatEnVol() {
+  try {
+    rmSync(FICHIER_EN_VOL, { force: true });
+  } catch {
+    // Idem : le fichier restera, et le portail montrera une commande qui ne
+    // tourne plus. Désagréable, jamais bloquant.
+  }
+}
+
+poserLetatEnVol();
+// TOUTES les sorties l'effacent, y compris les `process.exit` des contrôles qui
+// refusent tôt : sans cela, un refus au premier contrôle laisserait le portail
+// annoncer un `release:check` de quarante minutes pour toujours.
+process.on('exit', retirerLetatEnVol);
 
 // ─── 0. Personne ne sert sur les ports de la stack ───────────────────────────
 //

@@ -1012,6 +1012,64 @@ function cadreDeploiement() {
 }
 
 /**
+ * CE QUI TOURNE EN CE MOMENT, au-dessus du Kanban (issue #296).
+ *
+ * POURQUOI CETTE BANDE. Le 20/09/2026 au matin, le propriétaire a regardé ce
+ * tableau et dit : « je ne vois plus rien d'actif sur le Kanban, et pourtant tu
+ * as des processus qui tournent ». Le Kanban avait raison — toutes les cartes
+ * fermées — et ne servait à rien : `release:check`, la CI de `main` et trois
+ * passes de revue tournaient au même instant. Rien de tout cela n'est une issue
+ * ni une PR, donc rien n'en avait de carte.
+ *
+ * LA RÈGLE ENTIÈRE DE CETTE BANDE tient en une phrase : une source qui n'a pas
+ * répondu se DIT injoignable, jamais « rien en cours » (invariant #4). Une
+ * bande vide ne veut dire « la machine dort » que lorsque les trois sources ont
+ * parlé, et la page l'écrit noir sur blanc dans les deux cas.
+ *
+ * Elle ne propose AUCUN geste : arrêter un run est une affaire du produit
+ * (#252), pas d'une page publiée en lecture seule.
+ */
+function bandeEnVol() {
+  const v = s.enVol;
+  if (v === undefined || v === null) {
+    return `<p class="en-vol en-vol--absent"><b>Jobs in flight: not collected.</b> This measurement predates the check.</p>`;
+  }
+  const lu = v.le ? ` Read at ${esc(dateFr(v.le))}.` : '';
+  const muettes = (v.muettes ?? []).map((m) => esc(String(m.raison ?? 'unreachable')));
+  const silence = muettes.length
+    ? `<p class="en-vol__silence"><b>${muettes.length} source${muettes.length > 1 ? 's' : ''} did not answer</b>: ${muettes.join('; ')}. Something may be running there without showing here.</p>`
+    : '';
+  const lignes = v.lignes ?? [];
+  if (lignes.length === 0) {
+    // Les deux phrases du vide, et elles ne disent pas la même chose : l'une
+    // est un constat, l'autre un aveu.
+    const phrase = v.complet
+      ? '<b>Nothing running.</b> Every source answered.'
+      : '<b>Nothing running in what could be read.</b>';
+    return `<div class="en-vol en-vol--vide"><p>${phrase}${lu}</p>${silence}</div>`;
+  }
+  const rang = (l) => {
+    const quoi = l.url ? `<a href="${esc(l.url)}">${esc(l.quoi)}</a>` : `<b>${esc(l.quoi)}</b>`;
+    const depuis = l.depuis
+      ? `<span class="en-vol__depuis">since ${esc(dateFr(l.depuis))}</span>`
+      : '';
+    const attend = l.attend
+      ? `<span class="en-vol__attend">waiting for ${esc(l.attend)}</span>`
+      : '';
+    return `<li class="en-vol__rang en-vol__rang--${esc(l.genre ?? 'other')}">
+      <span class="en-vol__quoi">${quoi}</span>
+      <span class="en-vol__ou">${esc(l.ou ?? '')}</span>
+      ${depuis}${attend}
+    </li>`;
+  };
+  return `<div class="en-vol">
+    <p class="en-vol__titre"><b>Running now: ${lignes.length}</b>${lu}</p>
+    <ul class="en-vol__liste">${lignes.map(rang).join('')}</ul>
+    ${silence}
+  </div>`;
+}
+
+/**
  * Ce que npm sert, face à ce que le dépôt porte.
  *
  * Le bloc qui manquait le 12/09/2026, quand une issue « Publish 0.8.9 » a vécu
@@ -1061,7 +1119,7 @@ function vueChantiers() {
   const cartes = s.chantiers?.cartes ?? null;
   if (!cartes) {
     return `<section id="chantiers" class="vue actif">${entete('chantiers', 'Work in flight')}
-      ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}
+      ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}${bandeEnVol()}
       <div class="alerte">GitHub did not answer, the portal shows nothing rather than a stale list.</div></section>`;
   }
 
@@ -1172,7 +1230,7 @@ function vueChantiers() {
   return `
 <section id="chantiers" class="vue actif">
   ${entete('chantiers', 'Work in flight')}
-  ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}
+  ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}${bandeEnVol()}
   ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} decision${aFaire > 1 ? 's' : ''} waiting on you</b>: they block the rest until they are settled.${enReview > 0 ? ` And ${enReview} pull request${enReview > 1 ? 's are' : ' is'} waiting for your merge.` : ''}</div>` : ''}
   ${filtre}
   <div class="kanban">${colonnes}</div>
@@ -1488,6 +1546,19 @@ tr:last-child td{border-bottom:0}
 .ligne-deploiement{margin:10px 0 0;font-size:13px;line-height:1.5}
 .ligne-deploiement b{font-family:Archivo,sans-serif}
 .ligne-deploiement--absent{padding:10px 12px;border:1px solid var(--regle);border-radius:6px}
+
+/* ── Running now (#296) ── */
+.en-vol{margin:12px 0 0;padding:12px 14px;border:1px solid var(--regle);border-radius:8px;
+  font-size:13px;line-height:1.5}
+.en-vol--absent{color:var(--encre-3)}
+.en-vol__titre{margin:0}
+.en-vol__titre b,.en-vol b{font-family:Archivo,sans-serif}
+.en-vol__liste{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
+.en-vol__rang{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;
+  padding:6px 0 0;border-top:1px solid var(--regle)}
+.en-vol__ou,.en-vol__depuis,.en-vol__attend{color:var(--encre-3);font-size:12px}
+.en-vol__attend{font-family:Archivo,sans-serif}
+.en-vol__silence{margin:8px 0 0;font-size:12px;color:var(--encre-3)}
 
 /* ── Kanban ── */
 .rappel{border-left:3px solid var(--accent);padding:2px 0 2px 18px;margin:0 0 30px;

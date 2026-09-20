@@ -2431,6 +2431,11 @@ export function fusionnerTableauGitHub(mesure, frais) {
     // qui affirmerait « déployé à telle heure » sans avoir regardé.
     deploiement:
       frais?.deploiement === undefined ? (mesure.deploiement ?? null) : frais.deploiement,
+    // Ce qui TOURNE, relu à chaque rendu comme le déploiement (#296). Une bande
+    // reposée sur la mesure nocturne dirait ce que la machine faisait à 03:17 :
+    // c'est l'inverse de ce qu'on lui demande. `undefined` — un vieux snapshot
+    // d'avant la bande — garde ce qu'il portait, c'est-à-dire rien.
+    enVol: frais?.enVol === undefined ? (mesure.enVol ?? null) : frais.enVol,
   };
   if (!frais?.chantiers) return socle;
   return {
@@ -2599,4 +2604,154 @@ export function etatDuDeploiement(runs) {
     }
   }
   return { runsLus: runs.length, dernierSucces, depuis };
+}
+
+// ─── Ce qui TOURNE en ce moment (issue #296) ──────────────────────────────────
+//
+// POURQUOI CETTE BANDE EXISTE. Le 20/09/2026 au matin, le propriétaire a
+// regardé le Kanban et dit : « je ne vois plus rien d'actif sur le Kanban, et
+// pourtant tu as des processus qui tournent ». Le tableau avait raison et ne
+// servait à rien : toutes les issues de la 0.9.0 étaient fermées, trente-sept
+// PR fusionnées, une seule carte ouverte. Pendant ce temps la session lançait
+// `release:check` (douze contrôles, quarante minutes), la CI de `main`, trois
+// passes de Reviewer C et six surveillances de CI. Rien de tout cela n'a de
+// carte : le Kanban est DÉDUIT des issues et des PR, et ces travaux ne sont ni
+// l'un ni l'autre.
+//
+// TROIS SOURCES, ET CHACUNE DIT SI ELLE A RÉPONDU. C'est la règle entière de
+// cette bande : une source injoignable se DIT injoignable, elle ne se rend
+// jamais « rien en cours » (invariant #4). Un portail qui montre « idle » parce
+// qu'il n'a pas pu regarder est pire que pas de bande du tout — il ferait
+// croire que la machine dort.
+//
+// CE QU'ELLE NE FAIT PAS : lancer ou arrêter quoi que ce soit. Le portail
+// regarde ; le geste d'arrêt est dans le produit (#252).
+
+/** Les états d'une source, et il n'y en a que deux. */
+const SOURCE_LUE = 'read';
+const SOURCE_MUETTE = 'unreachable';
+
+/**
+ * Une source qui a répondu, avec ses lignes.
+ *
+ * `lignes` VIDE est un fait — « rien ne tourne ici » — et c'est pour cela qu'il
+ * faut le distinguer de `null`, qui veut dire « on n'a pas pu regarder ».
+ */
+function sourceLue(lignes) {
+  return { etat: SOURCE_LUE, lignes };
+}
+
+/** Une source qui n'a pas répondu, et POURQUOI. */
+function sourceMuette(raison) {
+  return { etat: SOURCE_MUETTE, raison, lignes: [] };
+}
+
+/**
+ * Les runs GitHub Actions EN COURS, réduits à une ligne chacun.
+ *
+ * `null` en entrée = `gh` n'a pas répondu. Un tableau vide = il a répondu, et
+ * rien ne tourne.
+ *
+ * Seuls `in_progress` et `queued` entrent : ce sont les deux états où GitHub
+ * tient un travail. Un run `completed` a fini, et sa conclusion appartient à la
+ * carte de sa PR, pas à cette bande.
+ */
+export function runsEnCours(runs) {
+  if (!Array.isArray(runs)) return sourceMuette('GitHub did not answer');
+  const vivants = runs.filter((r) => r?.status === 'in_progress' || r?.status === 'queued');
+  return sourceLue(
+    vivants
+      .map((r) => ({
+        genre: 'ci',
+        // Le nom du workflow, et la branche sur laquelle il tourne : c'est ce
+        // qui permet de reconnaître « la CI de ma PR » d'un coup d'œil.
+        quoi: r.displayTitle || r.name || 'GitHub Actions run',
+        ou: r.headBranch ? `branch ${r.headBranch}` : 'GitHub Actions',
+        depuis: r.createdAt ?? null,
+        // Ce qu'il attend : une file d'attente n'est pas un travail qui avance,
+        // et les confondre ferait croire la machine occupée quand elle patiente.
+        attend: r.status === 'queued' ? 'a runner' : null,
+        url: r.url ?? null,
+      }))
+      .sort((a, b) => String(a.depuis ?? '').localeCompare(String(b.depuis ?? ''))),
+  );
+}
+
+/**
+ * Les passes de revue que Nodal fait tourner, lues sur ses propres travaux.
+ *
+ * `null` en entrée = la base n'était pas joignable. C'est le cas ORDINAIRE
+ * quand le portail est rendu par GitHub Actions : Nodal tourne sur la machine
+ * du propriétaire, pas dans le runner. La bande le dit, plutôt que d'affirmer
+ * qu'aucune revue ne tourne.
+ */
+export function revuesEnCours(jobs) {
+  if (!Array.isArray(jobs)) return sourceMuette('Nodal was not reachable from here');
+  return sourceLue(
+    jobs
+      .map((j) => ({
+        genre: 'review',
+        quoi: j.pr ? `Review pass on #${j.pr}` : 'Review pass',
+        ou: j.agent ? `Nodal, ${j.agent}` : 'Nodal',
+        depuis: j.depuis ?? null,
+        attend: j.statut === 'awaiting_approval' ? 'your approval' : null,
+        url: null,
+      }))
+      .sort((a, b) => String(a.depuis ?? '').localeCompare(String(b.depuis ?? ''))),
+  );
+}
+
+/**
+ * Le `release:check` en cours, lu sur le fichier d'état que le script pose.
+ *
+ * Il n'a aucune autre source : c'est une commande locale, elle ne laisse ni run
+ * GitHub ni ligne en base. Le script écrit ce fichier au début et l'efface à la
+ * fin ; le portail ne fait que le lire.
+ *
+ * `null` = pas de fichier, donc rien en cours. C'est une LECTURE, pas une
+ * absence de source : le fichier manquant est la réponse « il ne tourne pas ».
+ */
+export function releaseCheckEnCours(etat) {
+  if (etat === null || etat === undefined) return sourceLue([]);
+  if (typeof etat !== 'object' || !etat.depuis) {
+    return sourceMuette('the release:check state file could not be read');
+  }
+  return sourceLue([
+    {
+      genre: 'release',
+      quoi: 'release:check',
+      ou: etat.ou ? `this machine, ${etat.ou}` : 'this machine',
+      depuis: etat.depuis,
+      attend: null,
+      url: null,
+    },
+  ]);
+}
+
+/**
+ * CE QUI TOURNE, toutes sources confondues, prêt à rendre.
+ *
+ * Les lignes des sources LUES, les plus anciennes d'abord — une tâche partie il
+ * y a quarante minutes est celle qu'on veut voir en premier. Et, à côté, ce que
+ * chaque source a répondu : c'est la moitié qui interdit de lire une bande vide
+ * comme « la machine dort ».
+ */
+export function cequiTourne({ ci, revues, release, le }) {
+  const sources = { ci, revues, release };
+  const lignes = [];
+  for (const s of Object.values(sources)) {
+    if (s?.etat === SOURCE_LUE) lignes.push(...(s.lignes ?? []));
+  }
+  lignes.sort((a, b) => String(a.depuis ?? '').localeCompare(String(b.depuis ?? '')));
+  const muettes = Object.entries(sources)
+    .filter(([, s]) => s?.etat === SOURCE_MUETTE)
+    .map(([nom, s]) => ({ source: nom, raison: s.raison ?? 'unreachable' }));
+  return {
+    lignes,
+    muettes,
+    // TOUTES les sources ont-elles répondu ? Sans cela, « rien en cours » ne
+    // veut rien dire, et la page doit écrire autre chose.
+    complet: muettes.length === 0,
+    le: le ?? null,
+  };
 }
