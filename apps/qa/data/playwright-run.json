@@ -12,24 +12,24 @@
     "maxFailures": 0,
     "metadata": {
       "ci": {
-        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/01354ea4a84bf384e321dc1ac3ac328320cb847c",
-        "commitHash": "01354ea4a84bf384e321dc1ac3ac328320cb847c",
-        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35430921122"
+        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
+        "commitHash": "74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
+        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35499935339"
       },
       "gitCommit": {
-        "shortHash": "01354ea4",
-        "hash": "01354ea4a84bf384e321dc1ac3ac328320cb847c",
-        "subject": "A second review of the same thing is refused, not run (#173) (#220)",
-        "body": "A second review of the same thing is refused, not run (#173) (#220)\n\n* fix(orchestration): a second review of the same thing is refused, not run (#173)\n\nSince #170 the recorded `review_verdict` of a child travels typed to its\nparent. That is information for the model, not a guard: nothing stopped the\nparent from delegating a second review of the same PR to the same specialist\nin the same job, and paying for it (incident #124, PRs #113 and #120, 30 to\n40 minutes each).\n\nThe runner now refuses that duplicate before the child job row is created,\nwith a typed tool result that names the existing verdict (verdict, summary,\ncounts, child job id), so the parent model concludes on it. It is a tool\nresult, never an exception: the job keeps running and the refusal is said,\nnot silent (invariant #4).\n\nThe same thing is decided on rows, never on text similarity: the same\ndelegated agent AND the same target written in the task. A target is a set of\nPR references (`#185`, `PR 185`, `pr-185`, `pull request 185`), or, when none\nis written, a set of `packages/...` / `apps/...` paths. No recognizable\ntarget means no guard.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01W6osS96miieErLgAnseq9F\n\n* fix(orchestration): the guard only fires when nothing completed since the verdict (#173)\n\nThe first cut refused any second review of the same target by the same\nreviewer in one job. That broke a real Nodal workflow: an orchestrator has a\nPR reviewed, has a dev fix the findings, and has the same PR reviewed again.\nThe target changed between the two passes, so the second one is work, not a\nduplicate.\n\nThe guard now also requires that NOTHING completed since: no other child of\nthis job moved to `completed` after the `review_verdict` row. That is the only\ncertain redundancy — a second pass on a target nobody touched.\n\nThe window is read on `tool_calls.created_at` and `agent_jobs.completed_at`,\nstrictly after, and only on `status = 'completed'`: a child still running has\nnot changed the target, and neither has one that failed. A completed child\nwith no `completed_at` cannot be placed in time and does not count, so the\nguard stays on.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01W6osS96miieErLgAnseq9F\n\n* fix(orchestration): a package path is one target whatever its case (#173)\n\nReview of #220, two minor findings, both closed here.\n\nThe path pattern had no `i` flag, so `APPS/Web` was not recognised as a\ntarget at all and a second review of it, after one of `apps/web`, went\nthrough unguarded. The pattern is now case-insensitive and the target stays\nlowercased, so both spellings are `path:apps/web`.\n\nThe test fixtures were named after a reviewer of this deployment; they are\nfictional names now.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01W6osS96miieErLgAnseq9F\n\n---------\n\nCo-authored-by: Claude Opus 5 <noreply@anthropic.com>",
+        "shortHash": "74fc97ed",
+        "hash": "74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
+        "subject": "Merge pull request #281 from Kwintspiracy/release/0.9.0",
+        "body": "Merge pull request #281 from Kwintspiracy/release/0.9.0\n\nRelease 0.9.0",
         "author": {
           "name": "Quentin Beau de Loménie",
           "email": "quentinbeau@gmail.com",
-          "time": 1789792364000
+          "time": 1789876509000
         },
         "committer": {
           "name": "GitHub",
           "email": "noreply@github.com",
-          "time": 1789792364000
+          "time": 1789876509000
         },
         "branch": "main"
       },
@@ -43,24 +43,24 @@
         "retries": 2,
         "metadata": {
           "ci": {
-            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/01354ea4a84bf384e321dc1ac3ac328320cb847c",
-            "commitHash": "01354ea4a84bf384e321dc1ac3ac328320cb847c",
-            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35430921122"
+            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
+            "commitHash": "74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
+            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35499935339"
           },
           "gitCommit": {
-            "shortHash": "01354ea4",
-            "hash": "01354ea4a84bf384e321dc1ac3ac328320cb847c",
-            "subject": "A second review of the same thing is refused, not run (#173) (#220)",
-            "body": "A second review of the same thing is refused, not run (#173) (#220)\n\n* fix(orchestration): a second review of the same thing is refused, not run (#173)\n\nSince #170 the recorded `review_verdict` of a child travels typed to its\nparent. That is information for the model, not a guard: nothing stopped the\nparent from delegating a second review of the same PR to the same specialist\nin the same job, and paying for it (incident #124, PRs #113 and #120, 30 to\n40 minutes each).\n\nThe runner now refuses that duplicate before the child job row is created,\nwith a typed tool result that names the existing verdict (verdict, summary,\ncounts, child job id), so the parent model concludes on it. It is a tool\nresult, never an exception: the job keeps running and the refusal is said,\nnot silent (invariant #4).\n\nThe same thing is decided on rows, never on text similarity: the same\ndelegated agent AND the same target written in the task. A target is a set of\nPR references (`#185`, `PR 185`, `pr-185`, `pull request 185`), or, when none\nis written, a set of `packages/...` / `apps/...` paths. No recognizable\ntarget means no guard.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01W6osS96miieErLgAnseq9F\n\n* fix(orchestration): the guard only fires when nothing completed since the verdict (#173)\n\nThe first cut refused any second review of the same target by the same\nreviewer in one job. That broke a real Nodal workflow: an orchestrator has a\nPR reviewed, has a dev fix the findings, and has the same PR reviewed again.\nThe target changed between the two passes, so the second one is work, not a\nduplicate.\n\nThe guard now also requires that NOTHING completed since: no other child of\nthis job moved to `completed` after the `review_verdict` row. That is the only\ncertain redundancy — a second pass on a target nobody touched.\n\nThe window is read on `tool_calls.created_at` and `agent_jobs.completed_at`,\nstrictly after, and only on `status = 'completed'`: a child still running has\nnot changed the target, and neither has one that failed. A completed child\nwith no `completed_at` cannot be placed in time and does not count, so the\nguard stays on.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01W6osS96miieErLgAnseq9F\n\n* fix(orchestration): a package path is one target whatever its case (#173)\n\nReview of #220, two minor findings, both closed here.\n\nThe path pattern had no `i` flag, so `APPS/Web` was not recognised as a\ntarget at all and a second review of it, after one of `apps/web`, went\nthrough unguarded. The pattern is now case-insensitive and the target stays\nlowercased, so both spellings are `path:apps/web`.\n\nThe test fixtures were named after a reviewer of this deployment; they are\nfictional names now.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01W6osS96miieErLgAnseq9F\n\n---------\n\nCo-authored-by: Claude Opus 5 <noreply@anthropic.com>",
+            "shortHash": "74fc97ed",
+            "hash": "74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
+            "subject": "Merge pull request #281 from Kwintspiracy/release/0.9.0",
+            "body": "Merge pull request #281 from Kwintspiracy/release/0.9.0\n\nRelease 0.9.0",
             "author": {
               "name": "Quentin Beau de Loménie",
               "email": "quentinbeau@gmail.com",
-              "time": 1789792364000
+              "time": 1789876509000
             },
             "committer": {
               "name": "GitHub",
               "email": "noreply@github.com",
-              "time": 1789792364000
+              "time": 1789876509000
             },
             "branch": "main"
           },
@@ -119,12 +119,12 @@
                   "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4035,
+                  "duration": 2872,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:20:48.612Z",
+                  "startTime": "2026-09-20T08:52:00.443Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -155,12 +155,12 @@
                   "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 10797,
+                  "duration": 7013,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:20:53.155Z",
+                  "startTime": "2026-09-20T08:52:03.569Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -206,12 +206,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2600,
+                      "duration": 2454,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:04.252Z",
+                      "startTime": "2026-09-20T08:52:10.673Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -242,12 +242,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1548,
+                      "duration": 1135,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:07.122Z",
+                      "startTime": "2026-09-20T08:52:13.341Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -274,7 +274,7 @@
         {
           "title": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran",
           "file": "agent-tool-assignment.spec.ts",
-          "line": 310,
+          "line": 305,
           "column": 6,
           "specs": [
             {
@@ -295,12 +295,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 11071,
+                      "duration": 8385,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:08.707Z",
+                      "startTime": "2026-09-20T08:52:14.494Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -310,7 +310,7 @@
               ],
               "id": "4efd2b25efb5acaabe2a-7492a509ddd25aa8c127",
               "file": "agent-tool-assignment.spec.ts",
-              "line": 313,
+              "line": 308,
               "column": 3
             },
             {
@@ -331,12 +331,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2635,
+                      "duration": 2424,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:19.977Z",
+                      "startTime": "2026-09-20T08:52:23.171Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -346,7 +346,7 @@
               ],
               "id": "4efd2b25efb5acaabe2a-684a9bfcdd102b13611b",
               "file": "agent-tool-assignment.spec.ts",
-              "line": 330,
+              "line": 325,
               "column": 3
             },
             {
@@ -367,12 +367,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2480,
+                      "duration": 2145,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:22.621Z",
+                      "startTime": "2026-09-20T08:52:25.609Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -382,7 +382,7 @@
               ],
               "id": "4efd2b25efb5acaabe2a-1eb9b658cfa26521abe3",
               "file": "agent-tool-assignment.spec.ts",
-              "line": 360,
+              "line": 355,
               "column": 3
             },
             {
@@ -403,12 +403,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3769,
+                      "duration": 3398,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:25.123Z",
+                      "startTime": "2026-09-20T08:52:27.763Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -418,7 +418,7 @@
               ],
               "id": "4efd2b25efb5acaabe2a-2ede656414a1acd984a5",
               "file": "agent-tool-assignment.spec.ts",
-              "line": 371,
+              "line": 366,
               "column": 3
             }
           ]
@@ -435,7 +435,7 @@
         {
           "title": "Agents page redesign @cap:organiser-equipe/ecran",
           "file": "agents-redesign.spec.ts",
-          "line": 154,
+          "line": 165,
           "column": 6,
           "specs": [
             {
@@ -453,7 +453,7 @@
                       "description": "Aucun orchestrateur n'a de worker sur cette installation : il n'y a rien à déplacer, et le vivier de « Add worker » est vide. Ce parcours demande une équipe déjà constituée (orchestrateur + au moins un worker).",
                       "location": {
                         "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/agents-redesign.spec.ts",
-                        "line": 205,
+                        "line": 216,
                         "column": 10
                       }
                     }
@@ -466,19 +466,19 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 960,
+                      "duration": 901,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:28.950Z",
+                      "startTime": "2026-09-20T08:52:31.203Z",
                       "annotations": [
                         {
                           "type": "skip",
                           "description": "Aucun orchestrateur n'a de worker sur cette installation : il n'y a rien à déplacer, et le vivier de « Add worker » est vide. Ce parcours demande une équipe déjà constituée (orchestrateur + au moins un worker).",
                           "location": {
                             "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/agents-redesign.spec.ts",
-                            "line": 205,
+                            "line": 216,
                             "column": 10
                           }
                         }
@@ -491,7 +491,7 @@
               ],
               "id": "cea0bca49d54c19f69d0-f911a11b55a947956f66",
               "file": "agents-redesign.spec.ts",
-              "line": 155,
+              "line": 166,
               "column": 3
             }
           ]
@@ -508,7 +508,7 @@
         {
           "title": "Airtable OAuth flow (wizard-driven)",
           "file": "airtable-oauth.spec.ts",
-          "line": 36,
+          "line": 37,
           "column": 6,
           "specs": [
             {
@@ -527,12 +527,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 9804,
+                      "duration": 7767,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:29.935Z",
+                      "startTime": "2026-09-20T08:52:32.127Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -542,7 +542,7 @@
               ],
               "id": "a511bc8aaf5f42c12305-9ab422b33ea056be2c45",
               "file": "airtable-oauth.spec.ts",
-              "line": 37,
+              "line": 38,
               "column": 3
             }
           ]
@@ -578,12 +578,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3963,
+                      "duration": 3659,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:40.016Z",
+                      "startTime": "2026-09-20T08:52:40.121Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -629,12 +629,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3027,
+                      "duration": 2776,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:44.035Z",
+                      "startTime": "2026-09-20T08:52:43.827Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -671,12 +671,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3937,
+                      "duration": 3594,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:47.093Z",
+                      "startTime": "2026-09-20T08:52:46.631Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -694,7 +694,7 @@
         {
           "title": "Scenario C — Notify persistence: checkbox survives edit + save",
           "file": "automations-notify-runnow.spec.ts",
-          "line": 206,
+          "line": 204,
           "column": 6,
           "specs": [
             {
@@ -713,12 +713,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4455,
+                      "duration": 4192,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:51.042Z",
+                      "startTime": "2026-09-20T08:52:50.232Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -728,7 +728,7 @@
               ],
               "id": "09f48f9f29efd599dd99-433246c340b0d803a67e",
               "file": "automations-notify-runnow.spec.ts",
-              "line": 207,
+              "line": 205,
               "column": 3
             }
           ]
@@ -766,12 +766,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1360,
+                      "duration": 1205,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:55.517Z",
+                      "startTime": "2026-09-20T08:52:54.438Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -802,12 +802,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1935,
+                      "duration": 1675,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:56.915Z",
+                      "startTime": "2026-09-20T08:52:55.669Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -838,12 +838,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2138,
+                      "duration": 1823,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:21:58.862Z",
+                      "startTime": "2026-09-20T08:52:57.352Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -884,12 +884,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 2139,
+                      "duration": 1817,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:01.016Z",
+                      "startTime": "2026-09-20T08:52:59.191Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -945,12 +945,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3378,
+                      "duration": 2161,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:03.185Z",
+                      "startTime": "2026-09-20T08:53:01.028Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -989,12 +989,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2880,
+                      "duration": 2108,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:06.617Z",
+                      "startTime": "2026-09-20T08:53:03.217Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1041,12 +1041,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 271,
+                      "duration": 226,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:09.511Z",
+                      "startTime": "2026-09-20T08:53:05.333Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -1093,12 +1093,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 16310,
+                      "duration": 14547,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:09.798Z",
+                      "startTime": "2026-09-20T08:53:05.568Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1135,12 +1135,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2310,
+                      "duration": 1855,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:26.122Z",
+                      "startTime": "2026-09-20T08:53:20.126Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1165,9 +1165,9 @@
       "specs": [],
       "suites": [
         {
-          "title": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran",
+          "title": "Proof commands — la page du projet @cap:verifier-un-livrable/ecran",
           "file": "code-verification.spec.ts",
-          "line": 246,
+          "line": 256,
           "column": 6,
           "specs": [
             {
@@ -1187,23 +1187,82 @@
                     {
                       "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 3014,
-                      "errors": [],
+                      "status": "failed",
+                      "duration": 6769,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/5c4f2ce0-e42a-4f37-9167-059c176d3bd2$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/5c4f2ce0-e42a-4f37-9167-059c176d3bd2$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19",
+                        "location": {
+                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                          "column": 22,
+                          "line": 242
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 240 |\u001b[39m     \u001b[33m.\u001b[39mfirst()\n \u001b[90m 241 |\u001b[39m     \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 242 |\u001b[39m   \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[36mnew\u001b[39m \u001b[33mRegExp\u001b[39m(\u001b[32m`/spaces/${projectId}$`\u001b[39m))\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                      \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 243 |\u001b[39m   \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByTestId(\u001b[32m'project-files-panel'\u001b[39m))\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\n \u001b[90m 244 |\u001b[39m   \u001b[36mconst\u001b[39m panel \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mgetByTestId(\u001b[32m'project-verification'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 245 |\u001b[39m   \u001b[36mawait\u001b[39m expect(panel)\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                            "column": 22,
+                            "line": 242
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/5c4f2ce0-e42a-4f37-9167-059c176d3bd2$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n\n  240 |     .first()\n  241 |     .click();\n> 242 |   await expect(page).toHaveURL(new RegExp(`/spaces/${projectId}$`));\n      |                      ^\n  243 |   await expect(page.getByTestId('project-files-panel')).toBeVisible();\n  244 |   const panel = page.getByTestId('project-verification');\n  245 |   await expect(panel).toBeVisible();\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19"
+                        }
+                      ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:28.461Z",
+                      "startTime": "2026-09-20T08:53:22.001Z",
                       "annotations": [],
-                      "attachments": []
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-72d66-pprouver-hash-écrit-EN-BASE-chromium/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-72d66-pprouver-hash-écrit-EN-BASE-chromium/error-context.md"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-72d66-pprouver-hash-écrit-EN-BASE-chromium/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                        "column": 22,
+                        "line": 242
+                      }
+                    },
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4216,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 1,
+                      "startTime": "2026-09-20T08:53:31.403Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-72d66-pprouver-hash-écrit-EN-BASE-chromium-retry1/trace.zip"
+                        }
+                      ]
                     }
                   ],
-                  "status": "expected"
+                  "status": "flaky"
                 }
               ],
-              "id": "fa1e367866636d827f1b-5520f8dffa073aeb59fd",
+              "id": "fa1e367866636d827f1b-67eff62f77a9cb3b09ae",
               "file": "code-verification.spec.ts",
-              "line": 247,
+              "line": 257,
               "column": 3
             },
             {
@@ -1221,15 +1280,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2259,
+                      "duration": 3481,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:31.561Z",
+                      "startTime": "2026-09-20T08:53:37.555Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1237,9 +1296,9 @@
                   "status": "expected"
                 }
               ],
-              "id": "fa1e367866636d827f1b-6f4559d43e5966fa818f",
+              "id": "fa1e367866636d827f1b-dc8c4c148e168d2de3b7",
               "file": "code-verification.spec.ts",
-              "line": 292,
+              "line": 302,
               "column": 3
             },
             {
@@ -1257,15 +1316,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1151,
+                      "duration": 1897,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:33.831Z",
+                      "startTime": "2026-09-20T08:53:41.047Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1273,9 +1332,9 @@
                   "status": "expected"
                 }
               ],
-              "id": "fa1e367866636d827f1b-233ae6801e78829160a0",
+              "id": "fa1e367866636d827f1b-b9bdbce189e8bafa4334",
               "file": "code-verification.spec.ts",
-              "line": 313,
+              "line": 323,
               "column": 3
             },
             {
@@ -1293,7 +1352,7 @@
                       "description": "La session est propriétaire (le cas normal, et le seul en local-trust où isWorkspaceOwner rend true pour tout le monde). Le cas non-owner est prouvé unitairement par getCodeTabOwnerAction.",
                       "location": {
                         "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
-                        "line": 328,
+                        "line": 338,
                         "column": 10
                       }
                     }
@@ -1303,22 +1362,22 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 778,
+                      "duration": 1068,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:34.994Z",
+                      "startTime": "2026-09-20T08:53:42.953Z",
                       "annotations": [
                         {
                           "type": "skip",
                           "description": "La session est propriétaire (le cas normal, et le seul en local-trust où isWorkspaceOwner rend true pour tout le monde). Le cas non-owner est prouvé unitairement par getCodeTabOwnerAction.",
                           "location": {
                             "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
-                            "line": 328,
+                            "line": 338,
                             "column": 10
                           }
                         }
@@ -1329,9 +1388,9 @@
                   "status": "skipped"
                 }
               ],
-              "id": "fa1e367866636d827f1b-9abb2581c5e6fe612a84",
+              "id": "fa1e367866636d827f1b-338248c1218a6174bc0f",
               "file": "code-verification.spec.ts",
-              "line": 323,
+              "line": 333,
               "column": 3
             },
             {
@@ -1349,15 +1408,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1265,
+                      "duration": 2406,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:35.784Z",
+                      "startTime": "2026-09-20T08:53:44.030Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1365,13 +1424,200 @@
                   "status": "expected"
                 }
               ],
-              "id": "fa1e367866636d827f1b-c424d469226925f21be1",
+              "id": "fa1e367866636d827f1b-f0b82903484cbdd9aef8",
               "file": "code-verification.spec.ts",
-              "line": 345,
+              "line": 355,
               "column": 3
             },
             {
-              "title": "F — le tiroir Other sessions n’a aucun panneau",
+              "title": "G — RIEN ne déborde du panneau, chemin long et commande longue comprises",
+              "ok": false,
+              "tags": [
+                "cap:verifier-un-livrable/ecran"
+              ],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 2043,
+                      "error": {
+                        "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
+                        "stack": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
+                        "location": {
+                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                          "column": 52,
+                          "line": 428
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 426 |\u001b[39m       \u001b[36mreturn\u001b[39m trop\u001b[33m;\u001b[39m\n \u001b[90m 427 |\u001b[39m     })\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 428 |\u001b[39m     expect(debordements\u001b[33m,\u001b[39m debordements\u001b[33m.\u001b[39mjoin(\u001b[32m' | '\u001b[39m))\u001b[33m.\u001b[39mtoEqual([])\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 429 |\u001b[39m\n \u001b[90m 430 |\u001b[39m     \u001b[90m// Et le panneau ne pousse pas la page hors de l'écran.\u001b[39m\n \u001b[90m 431 |\u001b[39m     \u001b[36mconst\u001b[39m pageDeborde \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mevaluate(\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                            "column": 52,
+                            "line": 428
+                          },
+                          "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n\n  426 |       return trop;\n  427 |     });\n> 428 |     expect(debordements, debordements.join(' | ')).toEqual([]);\n      |                                                    ^\n  429 |\n  430 |     // Et le panneau ne pousse pas la page hors de l'écran.\n  431 |     const pageDeborde = await page.evaluate(\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-20T08:53:46.446Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium/error-context.md"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                        "column": 52,
+                        "line": 428
+                      }
+                    },
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 2439,
+                      "error": {
+                        "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
+                        "stack": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
+                        "location": {
+                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                          "column": 52,
+                          "line": 428
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 426 |\u001b[39m       \u001b[36mreturn\u001b[39m trop\u001b[33m;\u001b[39m\n \u001b[90m 427 |\u001b[39m     })\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 428 |\u001b[39m     expect(debordements\u001b[33m,\u001b[39m debordements\u001b[33m.\u001b[39mjoin(\u001b[32m' | '\u001b[39m))\u001b[33m.\u001b[39mtoEqual([])\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 429 |\u001b[39m\n \u001b[90m 430 |\u001b[39m     \u001b[90m// Et le panneau ne pousse pas la page hors de l'écran.\u001b[39m\n \u001b[90m 431 |\u001b[39m     \u001b[36mconst\u001b[39m pageDeborde \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mevaluate(\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                            "column": 52,
+                            "line": 428
+                          },
+                          "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n\n  426 |       return trop;\n  427 |     });\n> 428 |     expect(debordements, debordements.join(' | ')).toEqual([]);\n      |                                                    ^\n  429 |\n  430 |     // Et le panneau ne pousse pas la page hors de l'écran.\n  431 |     const pageDeborde = await page.evaluate(\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 1,
+                      "startTime": "2026-09-20T08:53:49.834Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium-retry1/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium-retry1/error-context.md"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium-retry1/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium-retry1/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                        "column": 52,
+                        "line": 428
+                      }
+                    },
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 2051,
+                      "error": {
+                        "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
+                        "stack": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
+                        "location": {
+                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                          "column": 52,
+                          "line": 428
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 426 |\u001b[39m       \u001b[36mreturn\u001b[39m trop\u001b[33m;\u001b[39m\n \u001b[90m 427 |\u001b[39m     })\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 428 |\u001b[39m     expect(debordements\u001b[33m,\u001b[39m debordements\u001b[33m.\u001b[39mjoin(\u001b[32m' | '\u001b[39m))\u001b[33m.\u001b[39mtoEqual([])\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 429 |\u001b[39m\n \u001b[90m 430 |\u001b[39m     \u001b[90m// Et le panneau ne pousse pas la page hors de l'écran.\u001b[39m\n \u001b[90m 431 |\u001b[39m     \u001b[36mconst\u001b[39m pageDeborde \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mevaluate(\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                            "column": 52,
+                            "line": 428
+                          },
+                          "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n\n  426 |       return trop;\n  427 |     });\n> 428 |     expect(debordements, debordements.join(' | ')).toEqual([]);\n      |                                                    ^\n  429 |\n  430 |     // Et le panneau ne pousse pas la page hors de l'écran.\n  431 |     const pageDeborde = await page.evaluate(\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 2,
+                      "startTime": "2026-09-20T08:53:53.913Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium-retry2/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium-retry2/error-context.md"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-e78df-t-commande-longue-comprises-chromium-retry2/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                        "column": 52,
+                        "line": 428
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "fa1e367866636d827f1b-03fc3b82be85763f3e15",
+              "file": "code-verification.spec.ts",
+              "line": 393,
+              "column": 3
+            },
+            {
+              "title": "F — /code mène à Workspaces : la liste a disparu, le panneau est sur le projet",
               "ok": true,
               "tags": [
                 "cap:verifier-un-livrable/ecran"
@@ -1385,15 +1631,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 734,
+                      "duration": 10463,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:37.063Z",
+                      "startTime": "2026-09-20T08:53:57.475Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1401,9 +1647,9 @@
                   "status": "expected"
                 }
               ],
-              "id": "fa1e367866636d827f1b-6b7ea9c94f87aa47aea5",
+              "id": "fa1e367866636d827f1b-819ee4eb0f0c8c92cfe9",
               "file": "code-verification.spec.ts",
-              "line": 383,
+              "line": 437,
               "column": 3
             }
           ]
@@ -1431,15 +1677,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 7518,
+                  "duration": 7575,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:22:37.877Z",
+                  "startTime": "2026-09-20T08:54:08.883Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -1465,15 +1711,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4491,
+                  "duration": 3987,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:22:45.450Z",
+                  "startTime": "2026-09-20T08:54:16.519Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -1499,15 +1745,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 1843,
+                  "duration": 1430,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:22:49.957Z",
+                  "startTime": "2026-09-20T08:54:20.532Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -1548,15 +1794,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 9450,
+                      "duration": 8736,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:22:51.851Z",
+                      "startTime": "2026-09-20T08:54:21.999Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1601,10 +1847,10 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1464,
+                      "duration": 1307,
                       "errors": [],
                       "stdout": [
                         {
@@ -1613,7 +1859,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:01.365Z",
+                      "startTime": "2026-09-20T08:54:30.793Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1641,10 +1887,10 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3053,
+                      "duration": 2772,
                       "errors": [],
                       "stdout": [
                         {
@@ -1656,7 +1902,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:02.865Z",
+                      "startTime": "2026-09-20T08:54:32.135Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1684,10 +1930,10 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1470,
+                      "duration": 1311,
                       "errors": [],
                       "stdout": [
                         {
@@ -1696,7 +1942,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:05.928Z",
+                      "startTime": "2026-09-20T08:54:34.915Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1724,15 +1970,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1456,
+                      "duration": 1323,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:07.411Z",
+                      "startTime": "2026-09-20T08:54:36.234Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1775,15 +2021,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8944,
+                      "duration": 8031,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:08.890Z",
+                      "startTime": "2026-09-20T08:54:37.582Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1828,15 +2074,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 7912,
+                      "duration": 6224,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:18.100Z",
+                      "startTime": "2026-09-20T08:54:45.797Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1864,15 +2110,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1339,
+                      "duration": 1618,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:26.113Z",
+                      "startTime": "2026-09-20T08:54:52.097Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1882,7 +2128,7 @@
               ],
               "id": "685673995e320d7b3899-e4eee0b7eae53c148174",
               "file": "delegation-outcome.spec.ts",
-              "line": 274,
+              "line": 277,
               "column": 3
             }
           ]
@@ -1917,15 +2163,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2198,
+                      "duration": 1913,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:27.526Z",
+                      "startTime": "2026-09-20T08:54:53.781Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1961,15 +2207,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1866,
+                      "duration": 1531,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:29.899Z",
+                      "startTime": "2026-09-20T08:54:55.864Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2012,15 +2258,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3281,
+                      "duration": 2970,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:31.787Z",
+                      "startTime": "2026-09-20T08:54:57.412Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2046,15 +2292,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3457,
+                      "duration": 3080,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:35.099Z",
+                      "startTime": "2026-09-20T08:55:00.415Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2080,15 +2326,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5361,
+                      "duration": 4829,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:38.571Z",
+                      "startTime": "2026-09-20T08:55:03.509Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2114,15 +2360,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5303,
+                      "duration": 5294,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:43.948Z",
+                      "startTime": "2026-09-20T08:55:08.354Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2149,7 +2395,7 @@
         {
           "title": "learned-skills page @cap:apprendre-une-skill/ecran",
           "file": "learned-skills.spec.ts",
-          "line": 10,
+          "line": 43,
           "column": 6,
           "specs": [
             {
@@ -2167,15 +2413,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3457,
+                      "duration": 2627,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:49.322Z",
+                      "startTime": "2026-09-20T08:55:13.669Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2185,7 +2431,7 @@
               ],
               "id": "2a1e444660fe6fb6734c-f8b9fffcb1336bc8a0d0",
               "file": "learned-skills.spec.ts",
-              "line": 11,
+              "line": 44,
               "column": 3
             },
             {
@@ -2203,15 +2449,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1071,
+                      "duration": 819,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:52.817Z",
+                      "startTime": "2026-09-20T08:55:16.451Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2221,7 +2467,7 @@
               ],
               "id": "2a1e444660fe6fb6734c-62ad1aafbde30698a3e4",
               "file": "learned-skills.spec.ts",
-              "line": 20,
+              "line": 53,
               "column": 3
             },
             {
@@ -2239,15 +2485,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 926,
+                      "duration": 467,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:53.903Z",
+                      "startTime": "2026-09-20T08:55:17.289Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2257,7 +2503,7 @@
               ],
               "id": "2a1e444660fe6fb6734c-21c2d40a2badc5adb953",
               "file": "learned-skills.spec.ts",
-              "line": 35,
+              "line": 68,
               "column": 3
             },
             {
@@ -2275,15 +2521,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 797,
+                      "duration": 1157,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:54.845Z",
+                      "startTime": "2026-09-20T08:55:17.765Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2293,7 +2539,7 @@
               ],
               "id": "2a1e444660fe6fb6734c-c27b5961f81978a9cdc4",
               "file": "learned-skills.spec.ts",
-              "line": 52,
+              "line": 85,
               "column": 3
             }
           ]
@@ -2326,15 +2572,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3025,
+                      "duration": 2592,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:55.662Z",
+                      "startTime": "2026-09-20T08:55:18.941Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2360,15 +2606,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1257,
+                      "duration": 1142,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:23:58.867Z",
+                      "startTime": "2026-09-20T08:55:21.691Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2413,15 +2659,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3679,
+                      "duration": 3944,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:00.174Z",
+                      "startTime": "2026-09-20T08:55:22.873Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2449,15 +2695,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1475,
+                      "duration": 1364,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:04.038Z",
+                      "startTime": "2026-09-20T08:55:26.975Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2510,15 +2756,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 2705,
+                      "duration": 2720,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:05.709Z",
+                      "startTime": "2026-09-20T08:55:28.524Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -2546,7 +2792,7 @@
         {
           "title": "Scenario 2 — Webhook form: Notify via + Auto persists, badge on the row",
           "file": "notify-channel.spec.ts",
-          "line": 203,
+          "line": 201,
           "column": 6,
           "specs": [
             {
@@ -2562,15 +2808,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5080,
+                      "duration": 5339,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:08.460Z",
+                      "startTime": "2026-09-20T08:55:31.279Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2580,7 +2826,7 @@
               ],
               "id": "89dbb4eee00d34cdb87b-1d82adc5ba19cdf6ed56",
               "file": "notify-channel.spec.ts",
-              "line": 204,
+              "line": 202,
               "column": 3
             }
           ]
@@ -2588,7 +2834,7 @@
         {
           "title": "Scenario 3 — Agent switch: \"no channel connected\" warning for a channel-less agent",
           "file": "notify-channel.spec.ts",
-          "line": 279,
+          "line": 273,
           "column": 6,
           "specs": [
             {
@@ -2604,15 +2850,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1772,
+                      "duration": 1710,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:13.551Z",
+                      "startTime": "2026-09-20T08:55:36.625Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2622,7 +2868,7 @@
               ],
               "id": "89dbb4eee00d34cdb87b-072671f65a3133370c0c",
               "file": "notify-channel.spec.ts",
-              "line": 280,
+              "line": 274,
               "column": 3
             }
           ]
@@ -2630,7 +2876,7 @@
         {
           "title": "Scenario 4 — Dark mode: notify controls stay theme-aware",
           "file": "notify-channel.spec.ts",
-          "line": 345,
+          "line": 339,
           "column": 6,
           "specs": [
             {
@@ -2646,15 +2892,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2178,
+                      "duration": 2143,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:15.335Z",
+                      "startTime": "2026-09-20T08:55:38.342Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2664,7 +2910,7 @@
               ],
               "id": "89dbb4eee00d34cdb87b-95cb36df2f53cecd3400",
               "file": "notify-channel.spec.ts",
-              "line": 346,
+              "line": 340,
               "column": 3
             }
           ]
@@ -2697,15 +2943,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4950,
+                      "duration": 4975,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:17.532Z",
+                      "startTime": "2026-09-20T08:55:40.500Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2750,15 +2996,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4322,
+                      "duration": 3947,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:22.523Z",
+                      "startTime": "2026-09-20T08:55:45.519Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2803,15 +3049,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4298,
+                      "duration": 3887,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:27.222Z",
+                      "startTime": "2026-09-20T08:55:49.820Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2856,15 +3102,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1666,
+                      "duration": 1539,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:31.798Z",
+                      "startTime": "2026-09-20T08:55:53.953Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2892,15 +3138,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4210,
+                      "duration": 3991,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:33.499Z",
+                      "startTime": "2026-09-20T08:55:55.524Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2945,15 +3191,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2064,
+                      "duration": 2272,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:37.728Z",
+                      "startTime": "2026-09-20T08:55:59.530Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2981,15 +3227,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 931,
+                      "duration": 669,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:39.827Z",
+                      "startTime": "2026-09-20T08:56:01.830Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2999,7 +3245,7 @@
               ],
               "id": "80618a83b75fae03c325-9e359c7ddc993e00cb4c",
               "file": "settings-network.spec.ts",
-              "line": 81,
+              "line": 82,
               "column": 3
             },
             {
@@ -3017,15 +3263,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1533,
+                      "duration": 1127,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:40.772Z",
+                      "startTime": "2026-09-20T08:56:02.506Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3035,7 +3281,7 @@
               ],
               "id": "80618a83b75fae03c325-0e4af0aa07cd62071794",
               "file": "settings-network.spec.ts",
-              "line": 180,
+              "line": 181,
               "column": 3
             },
             {
@@ -3053,15 +3299,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2567,
+                      "duration": 1880,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:42.318Z",
+                      "startTime": "2026-09-20T08:56:03.641Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3071,7 +3317,7 @@
               ],
               "id": "80618a83b75fae03c325-d19cd2fc8743e0ad9966",
               "file": "settings-network.spec.ts",
-              "line": 203,
+              "line": 204,
               "column": 3
             }
           ]
@@ -3088,7 +3334,7 @@
         {
           "title": "Verification surfaces — /settings",
           "file": "settings-verification-surfaces.spec.ts",
-          "line": 28,
+          "line": 35,
           "column": 6,
           "specs": [
             {
@@ -3104,15 +3350,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 750,
+                      "duration": 583,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:44.906Z",
+                      "startTime": "2026-09-20T08:56:05.537Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3122,7 +3368,7 @@
               ],
               "id": "604158b009904e508e7a-145a9ce69b1da9bf4bea",
               "file": "settings-verification-surfaces.spec.ts",
-              "line": 29,
+              "line": 36,
               "column": 3
             },
             {
@@ -3138,15 +3384,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 956,
+                      "duration": 703,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:45.690Z",
+                      "startTime": "2026-09-20T08:56:06.156Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3156,7 +3402,7 @@
               ],
               "id": "604158b009904e508e7a-20cfa5215314730f201e",
               "file": "settings-verification-surfaces.spec.ts",
-              "line": 39,
+              "line": 44,
               "column": 3
             },
             {
@@ -3172,15 +3418,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1149,
+                      "duration": 861,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:46.657Z",
+                      "startTime": "2026-09-20T08:56:06.865Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3190,7 +3436,7 @@
               ],
               "id": "604158b009904e508e7a-7c014102c3db8363996e",
               "file": "settings-verification-surfaces.spec.ts",
-              "line": 59,
+              "line": 63,
               "column": 3
             }
           ]
@@ -3207,11 +3453,11 @@
         {
           "title": "dashboard navigation @cap:installer-et-demarrer/ecran",
           "file": "smoke.spec.ts",
-          "line": 26,
+          "line": 37,
           "column": 6,
           "specs": [
             {
-              "title": "the root page IS the dashboard — no login form, no redirect away",
+              "title": "the root page IS a new conversation, with no login form and no redirect away",
               "ok": true,
               "tags": [
                 "cap:installer-et-demarrer/ecran"
@@ -3225,15 +3471,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 786,
+                      "duration": 551,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:47.829Z",
+                      "startTime": "2026-09-20T08:56:07.744Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3241,13 +3487,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "4219922fea2e2bd3c691-20538585980401829a51",
+              "id": "4219922fea2e2bd3c691-12547b3f7f0ec7d0b40d",
               "file": "smoke.spec.ts",
-              "line": 27,
+              "line": 38,
               "column": 3
             },
             {
-              "title": "sidebar links every dashboard section",
+              "title": "the dashboard moved to /dashboard, and nothing redirects back to the root",
               "ok": true,
               "tags": [
                 "cap:installer-et-demarrer/ecran"
@@ -3261,15 +3507,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 819,
+                      "duration": 2111,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:48.645Z",
+                      "startTime": "2026-09-20T08:56:08.328Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3277,9 +3523,117 @@
                   "status": "expected"
                 }
               ],
-              "id": "4219922fea2e2bd3c691-df3914451ac9c68ac20a",
+              "id": "4219922fea2e2bd3c691-c38ebb5fc601bced4e8d",
               "file": "smoke.spec.ts",
-              "line": 39,
+              "line": 61,
+              "column": 3
+            },
+            {
+              "title": "the rail carries the five destinations on every page",
+              "ok": true,
+              "tags": [
+                "cap:installer-et-demarrer/ecran"
+              ],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 4,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 611,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-20T08:56:10.447Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4219922fea2e2bd3c691-ff57fb44d74e6421d3e4",
+              "file": "smoke.spec.ts",
+              "line": 71,
+              "column": 3
+            },
+            {
+              "title": "every dashboard section is one panel away",
+              "ok": true,
+              "tags": [
+                "cap:installer-et-demarrer/ecran"
+              ],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 4,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 5372,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-20T08:56:11.064Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4219922fea2e2bd3c691-671f3f11cb01f309d2fe",
+              "file": "smoke.spec.ts",
+              "line": 85,
+              "column": 3
+            },
+            {
+              "title": "the Work panel opens on Nodal chats, already unfolded",
+              "ok": true,
+              "tags": [
+                "cap:installer-et-demarrer/ecran"
+              ],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 4,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 565,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-20T08:56:16.446Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4219922fea2e2bd3c691-a496648011127c20046a",
+              "file": "smoke.spec.ts",
+              "line": 179,
               "column": 3
             }
           ]
@@ -3287,7 +3641,7 @@
         {
           "title": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran",
           "file": "smoke.spec.ts",
-          "line": 74,
+          "line": 193,
           "column": 6,
           "specs": [
             {
@@ -3306,15 +3660,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2650,
+                      "duration": 2770,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:49.475Z",
+                      "startTime": "2026-09-20T08:56:17.019Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3324,7 +3678,7 @@
               ],
               "id": "4219922fea2e2bd3c691-5575c1a2c2ef7d0fe69e",
               "file": "smoke.spec.ts",
-              "line": 75,
+              "line": 194,
               "column": 3
             }
           ]
@@ -3332,7 +3686,7 @@
         {
           "title": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran",
           "file": "smoke.spec.ts",
-          "line": 171,
+          "line": 290,
           "column": 6,
           "specs": [
             {
@@ -3350,15 +3704,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 11696,
+                      "duration": 7418,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:24:52.136Z",
+                      "startTime": "2026-09-20T08:56:19.798Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3368,7 +3722,7 @@
               ],
               "id": "4219922fea2e2bd3c691-562095c7be08cb71b6d6",
               "file": "smoke.spec.ts",
-              "line": 172,
+              "line": 291,
               "column": 3
             },
             {
@@ -3386,15 +3740,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3029,
+                      "duration": 2548,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:25:03.842Z",
+                      "startTime": "2026-09-20T08:56:27.227Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3404,7 +3758,7 @@
               ],
               "id": "4219922fea2e2bd3c691-ef090b343b2518f2bf4f",
               "file": "smoke.spec.ts",
-              "line": 204,
+              "line": 325,
               "column": 3
             }
           ]
@@ -3432,15 +3786,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 10914,
+                  "duration": 7978,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:25:06.910Z",
+                  "startTime": "2026-09-20T08:56:29.805Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3466,15 +3820,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 5054,
+                  "duration": 18482,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:25:17.908Z",
+                  "startTime": "2026-09-20T08:56:37.883Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3500,15 +3854,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4247,
+                  "duration": 3883,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:25:22.992Z",
+                  "startTime": "2026-09-20T08:56:56.383Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3554,15 +3908,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 816,
+                  "duration": 750,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:25:27.311Z",
+                  "startTime": "2026-09-20T08:57:00.328Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -3608,15 +3962,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 733,
+                  "duration": 629,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:25:28.260Z",
+                  "startTime": "2026-09-20T08:57:01.261Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -3662,15 +4016,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 620,
+                  "duration": 584,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:25:29.005Z",
+                  "startTime": "2026-09-20T08:57:01.899Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -3718,15 +4072,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 618,
+                  "duration": 540,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:25:29.636Z",
+                  "startTime": "2026-09-20T08:57:02.491Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -3761,12 +4115,12 @@
         {
           "title": "déplier un bloc du fil @cap:parler-a-un-agent/ecran",
           "file": "thread-unfold-keeps-scroll.spec.ts",
-          "line": 440,
+          "line": 454,
           "column": 6,
           "specs": [
             {
               "title": "C — déplier DEPUIS LE BAS ne fait pas filer la zone visible",
-              "ok": false,
+              "ok": true,
               "tags": [
                 "cap:parler-a-un-agent/ecran"
               ],
@@ -3779,176 +4133,25 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 0,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 2054,
-                      "error": {
-                        "message": "Error: le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m64\u001b[39m\nReceived:   \u001b[31m4266\u001b[39m",
-                        "stack": "Error: le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m64\u001b[39m\nReceived:   \u001b[31m4266\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:453:7",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                          "column": 7,
-                          "line": 453
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 451 |\u001b[39m       distanceToBottom(before)\u001b[33m,\u001b[39m\n \u001b[90m 452 |\u001b[39m       \u001b[32m'le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien'\u001b[39m\u001b[33m,\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 453 |\u001b[39m     )\u001b[33m.\u001b[39mtoBeLessThan(\u001b[33mAT_BOTTOM_SLACK_PX\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 454 |\u001b[39m     \u001b[36mconst\u001b[39m beforeBox \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m runRow\u001b[33m.\u001b[39mboundingBox()\u001b[33m;\u001b[39m\n \u001b[90m 455 |\u001b[39m     expect(beforeBox\u001b[33m,\u001b[39m \u001b[32m'la dernière ligne de run n’est pas à l’écran'\u001b[39m)\u001b[33m.\u001b[39mnot\u001b[33m.\u001b[39mtoBeNull()\u001b[33m;\u001b[39m\n \u001b[90m 456 |\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                            "column": 7,
-                            "line": 453
-                          },
-                          "message": "Error: le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m64\u001b[39m\nReceived:   \u001b[31m4266\u001b[39m\n\n  451 |       distanceToBottom(before),\n  452 |       'le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien',\n> 453 |     ).toBeLessThan(AT_BOTTOM_SLACK_PX);\n      |       ^\n  454 |     const beforeBox = await runRow.boundingBox();\n  455 |     expect(beforeBox, 'la dernière ligne de run n’est pas à l’écran').not.toBeNull();\n  456 |\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:453:7"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 2130,
+                      "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:25:30.274Z",
+                      "startTime": "2026-09-20T08:57:03.052Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium/error-context.md"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                        "column": 7,
-                        "line": 453
-                      }
-                    },
-                    {
-                      "workerIndex": 1,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 2303,
-                      "error": {
-                        "message": "Error: le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m64\u001b[39m\nReceived:   \u001b[31m4266\u001b[39m",
-                        "stack": "Error: le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m64\u001b[39m\nReceived:   \u001b[31m4266\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:453:7",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                          "column": 7,
-                          "line": 453
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 451 |\u001b[39m       distanceToBottom(before)\u001b[33m,\u001b[39m\n \u001b[90m 452 |\u001b[39m       \u001b[32m'le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien'\u001b[39m\u001b[33m,\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 453 |\u001b[39m     )\u001b[33m.\u001b[39mtoBeLessThan(\u001b[33mAT_BOTTOM_SLACK_PX\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 454 |\u001b[39m     \u001b[36mconst\u001b[39m beforeBox \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m runRow\u001b[33m.\u001b[39mboundingBox()\u001b[33m;\u001b[39m\n \u001b[90m 455 |\u001b[39m     expect(beforeBox\u001b[33m,\u001b[39m \u001b[32m'la dernière ligne de run n’est pas à l’écran'\u001b[39m)\u001b[33m.\u001b[39mnot\u001b[33m.\u001b[39mtoBeNull()\u001b[33m;\u001b[39m\n \u001b[90m 456 |\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                            "column": 7,
-                            "line": 453
-                          },
-                          "message": "Error: le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m64\u001b[39m\nReceived:   \u001b[31m4266\u001b[39m\n\n  451 |       distanceToBottom(before),\n  452 |       'le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien',\n> 453 |     ).toBeLessThan(AT_BOTTOM_SLACK_PX);\n      |       ^\n  454 |     const beforeBox = await runRow.boundingBox();\n  455 |     expect(beforeBox, 'la dernière ligne de run n’est pas à l’écran').not.toBeNull();\n  456 |\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:453:7"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 1,
-                      "startTime": "2026-09-19T08:25:34.327Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium-retry1/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium-retry1/error-context.md"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium-retry1/error-context.md"
-                        },
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium-retry1/trace.zip"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                        "column": 7,
-                        "line": 453
-                      }
-                    },
-                    {
-                      "workerIndex": 2,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 1772,
-                      "error": {
-                        "message": "Error: le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m64\u001b[39m\nReceived:   \u001b[31m4266\u001b[39m",
-                        "stack": "Error: le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m64\u001b[39m\nReceived:   \u001b[31m4266\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:453:7",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                          "column": 7,
-                          "line": 453
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 451 |\u001b[39m       distanceToBottom(before)\u001b[33m,\u001b[39m\n \u001b[90m 452 |\u001b[39m       \u001b[32m'le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien'\u001b[39m\u001b[33m,\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 453 |\u001b[39m     )\u001b[33m.\u001b[39mtoBeLessThan(\u001b[33mAT_BOTTOM_SLACK_PX\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 454 |\u001b[39m     \u001b[36mconst\u001b[39m beforeBox \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m runRow\u001b[33m.\u001b[39mboundingBox()\u001b[33m;\u001b[39m\n \u001b[90m 455 |\u001b[39m     expect(beforeBox\u001b[33m,\u001b[39m \u001b[32m'la dernière ligne de run n’est pas à l’écran'\u001b[39m)\u001b[33m.\u001b[39mnot\u001b[33m.\u001b[39mtoBeNull()\u001b[33m;\u001b[39m\n \u001b[90m 456 |\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                            "column": 7,
-                            "line": 453
-                          },
-                          "message": "Error: le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m64\u001b[39m\nReceived:   \u001b[31m4266\u001b[39m\n\n  451 |       distanceToBottom(before),\n  452 |       'le fil doit s’ouvrir EN BAS, sinon le suivi est déjà éteint et ce cas ne prouve rien',\n> 453 |     ).toBeLessThan(AT_BOTTOM_SLACK_PX);\n      |       ^\n  454 |     const beforeBox = await runRow.boundingBox();\n  455 |     expect(beforeBox, 'la dernière ligne de run n’est pas à l’écran').not.toBeNull();\n  456 |\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:453:7"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 2,
-                      "startTime": "2026-09-19T08:25:38.808Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium-retry2/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium-retry2/error-context.md"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-9399e-t-pas-filer-la-zone-visible-chromium-retry2/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                        "column": 7,
-                        "line": 453
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "1e511fcf741ecc03de59-bd5a6fd6f970d0e44def",
               "file": "thread-unfold-keeps-scroll.spec.ts",
-              "line": 441,
+              "line": 455,
               "column": 3
             },
             {
@@ -3966,84 +4169,25 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 6890,
-                      "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  locator('[data-testid^=\"run-summary-\"]').first()\nExpected: \u001b[32m\"\u001b[7mtru\u001b[27me\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7mfals\u001b[27me\"\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid^=\"run-summary-\"]').first()\u001b[22m\n\u001b[2m    14 × locator resolved to <button type=\"button\" aria-expanded=\"false\" data-testid=\"run-summary-41b71d36-ea14-427a-a737-551e31f8ce9c\" class=\"flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-hover h-8 gap-2\">…</button>\u001b[22m\n\u001b[2m       - unexpected value \"false\"\u001b[22m\n",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  locator('[data-testid^=\"run-summary-\"]').first()\nExpected: \u001b[32m\"\u001b[7mtru\u001b[27me\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7mfals\u001b[27me\"\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid^=\"run-summary-\"]').first()\u001b[22m\n\u001b[2m    14 × locator resolved to <button type=\"button\" aria-expanded=\"false\" data-testid=\"run-summary-41b71d36-ea14-427a-a737-551e31f8ce9c\" class=\"flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-hover h-8 gap-2\">…</button>\u001b[22m\n\u001b[2m       - unexpected value \"false\"\u001b[22m\n\n    at openTheFoldedToolRowInTheMiddle (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:422:24)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:486:21",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                          "column": 24,
-                          "line": 422
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 420 |\u001b[39m     \u001b[36mawait\u001b[39m runRow\u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 421 |\u001b[39m   }\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 422 |\u001b[39m   \u001b[36mawait\u001b[39m expect(runRow)\u001b[33m.\u001b[39mtoHaveAttribute(\u001b[32m'aria-expanded'\u001b[39m\u001b[33m,\u001b[39m \u001b[32m'true'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 423 |\u001b[39m\n \u001b[90m 424 |\u001b[39m   \u001b[36mconst\u001b[39m toolRow \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mgetByRole(\u001b[32m'button'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mRegExp\u001b[39m(\u001b[32m`${TOOL_NAME}.*probe 1`\u001b[39m) })\u001b[33m;\u001b[39m\n \u001b[90m 425 |\u001b[39m   \u001b[36mawait\u001b[39m expect(toolRow\u001b[33m,\u001b[39m \u001b[32m`aucune ligne d’outil « ${TOOL_NAME} » pour le premier run`\u001b[39m)\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                            "column": 24,
-                            "line": 422
-                          },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  locator('[data-testid^=\"run-summary-\"]').first()\nExpected: \u001b[32m\"\u001b[7mtru\u001b[27me\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7mfals\u001b[27me\"\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid^=\"run-summary-\"]').first()\u001b[22m\n\u001b[2m    14 × locator resolved to <button type=\"button\" aria-expanded=\"false\" data-testid=\"run-summary-41b71d36-ea14-427a-a737-551e31f8ce9c\" class=\"flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-hover h-8 gap-2\">…</button>\u001b[22m\n\u001b[2m       - unexpected value \"false\"\u001b[22m\n\n\n  420 |     await runRow.click();\n  421 |   }\n> 422 |   await expect(runRow).toHaveAttribute('aria-expanded', 'true');\n      |                        ^\n  423 |\n  424 |   const toolRow = page.getByRole('button', { name: new RegExp(`${TOOL_NAME}.*probe 1`) });\n  425 |   await expect(toolRow, `aucune ligne d’outil « ${TOOL_NAME} » pour le premier run`).toBeVisible();\n    at openTheFoldedToolRowInTheMiddle (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:422:24)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:486:21"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-09-19T08:25:42.686Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-811c0-randit-SOUS-la-zone-visible-chromium/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-811c0-randit-SOUS-la-zone-visible-chromium/error-context.md"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-811c0-randit-SOUS-la-zone-visible-chromium/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                        "column": 24,
-                        "line": 422
-                      }
-                    },
-                    {
                       "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2550,
+                      "duration": 1492,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
-                      "retry": 1,
-                      "startTime": "2026-09-19T08:25:51.772Z",
+                      "retry": 0,
+                      "startTime": "2026-09-20T08:57:05.514Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-811c0-randit-SOUS-la-zone-visible-chromium-retry1/trace.zip"
-                        }
-                      ]
+                      "attachments": []
                     }
                   ],
-                  "status": "flaky"
+                  "status": "expected"
                 }
               ],
               "id": "1e511fcf741ecc03de59-a0e89e1bc5b69667ea39",
               "file": "thread-unfold-keeps-scroll.spec.ts",
-              "line": 483,
+              "line": 497,
               "column": 3
             },
             {
@@ -4063,82 +4207,23 @@
                     {
                       "workerIndex": 4,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 6333,
-                      "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  locator('[data-testid^=\"run-summary-\"]').first()\nExpected: \u001b[32m\"\u001b[7mtru\u001b[27me\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7mfals\u001b[27me\"\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid^=\"run-summary-\"]').first()\u001b[22m\n\u001b[2m    14 × locator resolved to <button type=\"button\" aria-expanded=\"false\" data-testid=\"run-summary-d206fc6b-5898-4a72-a8de-c332d0da3322\" class=\"flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-hover h-8 gap-2\">…</button>\u001b[22m\n\u001b[2m       - unexpected value \"false\"\u001b[22m\n",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  locator('[data-testid^=\"run-summary-\"]').first()\nExpected: \u001b[32m\"\u001b[7mtru\u001b[27me\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7mfals\u001b[27me\"\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid^=\"run-summary-\"]').first()\u001b[22m\n\u001b[2m    14 × locator resolved to <button type=\"button\" aria-expanded=\"false\" data-testid=\"run-summary-d206fc6b-5898-4a72-a8de-c332d0da3322\" class=\"flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-hover h-8 gap-2\">…</button>\u001b[22m\n\u001b[2m       - unexpected value \"false\"\u001b[22m\n\n    at openTheFoldedToolRowInTheMiddle (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:422:24)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:528:21",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                          "column": 24,
-                          "line": 422
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 420 |\u001b[39m     \u001b[36mawait\u001b[39m runRow\u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 421 |\u001b[39m   }\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 422 |\u001b[39m   \u001b[36mawait\u001b[39m expect(runRow)\u001b[33m.\u001b[39mtoHaveAttribute(\u001b[32m'aria-expanded'\u001b[39m\u001b[33m,\u001b[39m \u001b[32m'true'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                        \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 423 |\u001b[39m\n \u001b[90m 424 |\u001b[39m   \u001b[36mconst\u001b[39m toolRow \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mgetByRole(\u001b[32m'button'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mRegExp\u001b[39m(\u001b[32m`${TOOL_NAME}.*probe 1`\u001b[39m) })\u001b[33m;\u001b[39m\n \u001b[90m 425 |\u001b[39m   \u001b[36mawait\u001b[39m expect(toolRow\u001b[33m,\u001b[39m \u001b[32m`aucune ligne d’outil « ${TOOL_NAME} » pour le premier run`\u001b[39m)\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                            "column": 24,
-                            "line": 422
-                          },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  locator('[data-testid^=\"run-summary-\"]').first()\nExpected: \u001b[32m\"\u001b[7mtru\u001b[27me\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7mfals\u001b[27me\"\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid^=\"run-summary-\"]').first()\u001b[22m\n\u001b[2m    14 × locator resolved to <button type=\"button\" aria-expanded=\"false\" data-testid=\"run-summary-d206fc6b-5898-4a72-a8de-c332d0da3322\" class=\"flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-hover h-8 gap-2\">…</button>\u001b[22m\n\u001b[2m       - unexpected value \"false\"\u001b[22m\n\n\n  420 |     await runRow.click();\n  421 |   }\n> 422 |   await expect(runRow).toHaveAttribute('aria-expanded', 'true');\n      |                        ^\n  423 |\n  424 |   const toolRow = page.getByRole('button', { name: new RegExp(`${TOOL_NAME}.*probe 1`) });\n  425 |   await expect(toolRow, `aucune ligne d’outil « ${TOOL_NAME} » pour le premier run`).toBeVisible();\n    at openTheFoldedToolRowInTheMiddle (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:422:24)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts:528:21"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-09-19T08:25:55.832Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-4c61a-ecteur-est-de-nouveau-suivi-chromium/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-4c61a-ecteur-est-de-nouveau-suivi-chromium/error-context.md"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-4c61a-ecteur-est-de-nouveau-suivi-chromium/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/thread-unfold-keeps-scroll.spec.ts",
-                        "column": 24,
-                        "line": 422
-                      }
-                    },
-                    {
-                      "workerIndex": 5,
-                      "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4345,
+                      "duration": 3100,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
-                      "retry": 1,
-                      "startTime": "2026-09-19T08:26:03.597Z",
+                      "retry": 0,
+                      "startTime": "2026-09-20T08:57:07.020Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/thread-unfold-keeps-scroll-4c61a-ecteur-est-de-nouveau-suivi-chromium-retry1/trace.zip"
-                        }
-                      ]
+                      "attachments": []
                     }
                   ],
-                  "status": "flaky"
+                  "status": "expected"
                 }
               ],
               "id": "1e511fcf741ecc03de59-11ae426e0c24ce929994",
               "file": "thread-unfold-keeps-scroll.spec.ts",
-              "line": 527,
+              "line": 541,
               "column": 3
             }
           ]
@@ -4155,7 +4240,7 @@
         {
           "title": "déplier une PETITE boîte @cap:parler-a-un-agent/ecran",
           "file": "thread-unfold-small-block.spec.ts",
-          "line": 343,
+          "line": 349,
           "column": 6,
           "specs": [
             {
@@ -4173,15 +4258,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 5,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5649,
+                      "duration": 5501,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:26:08.469Z",
+                      "startTime": "2026-09-20T08:57:10.213Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4191,7 +4276,7 @@
               ],
               "id": "07eaf4a4c56f7c038e34-7e2881ce6b7e04f62c86",
               "file": "thread-unfold-small-block.spec.ts",
-              "line": 344,
+              "line": 350,
               "column": 3
             },
             {
@@ -4209,15 +4294,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 5,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5239,
+                      "duration": 5566,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:26:14.304Z",
+                      "startTime": "2026-09-20T08:57:15.908Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4227,7 +4312,7 @@
               ],
               "id": "07eaf4a4c56f7c038e34-7b95247fa3885cf55e2e",
               "file": "thread-unfold-small-block.spec.ts",
-              "line": 390,
+              "line": 396,
               "column": 3
             }
           ]
@@ -4255,15 +4340,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 5,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3900,
+                  "duration": 4307,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:26:19.656Z",
+                  "startTime": "2026-09-20T08:57:21.562Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4289,15 +4374,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 5,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3297,
+                  "duration": 3147,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:26:23.603Z",
+                  "startTime": "2026-09-20T08:57:25.916Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4323,15 +4408,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 5,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3429,
+                  "duration": 3469,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:26:26.912Z",
+                  "startTime": "2026-09-20T08:57:29.073Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4357,15 +4442,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 5,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3578,
+                  "duration": 3117,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:26:30.357Z",
+                  "startTime": "2026-09-20T08:57:32.552Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4391,15 +4476,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 5,
+                  "workerIndex": 4,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4861,
+                  "duration": 4460,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-19T08:26:33.952Z",
+                  "startTime": "2026-09-20T08:57:35.678Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4452,15 +4537,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 5,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 7456,
+                      "duration": 9040,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:26:38.838Z",
+                      "startTime": "2026-09-20T08:57:40.155Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -4515,15 +4600,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 5,
+                      "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5138,
+                      "duration": 5816,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-19T08:26:46.360Z",
+                      "startTime": "2026-09-20T08:57:49.242Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4543,11 +4628,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-09-19T08:20:36.221Z",
-    "duration": 375485.895,
-    "expected": 81,
+    "startTime": "2026-09-20T08:51:50.453Z",
+    "duration": 364746.097,
+    "expected": 86,
     "skipped": 10,
     "unexpected": 1,
-    "flaky": 2
+    "flaky": 1
   }
 }
