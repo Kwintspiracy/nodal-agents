@@ -2569,6 +2569,11 @@ export function etatDuDeploiement(runs) {
         // toujours `main` HEAD à son checkout, mais ce SHA-là n'est pas dans ses
         // métadonnées. La page publiée a affiché « main at 3650638a » (une tête
         // de PR) le 21/09 : on ne nomme un commit que quand on le connaît.
+        // Reste une imprécision dans le sens sûr (revue C, #321) : deux push
+        // en rafale, le run du premier fait `checkout main` alors que le second
+        // est déjà arrivé, et déploie donc un `main` plus NEUF que son
+        // `headSha`. La ligne nomme alors un commit plus vieux que le déployé :
+        // le lecteur croit le site en retard, jamais en avance.
         sha: succes.event === 'push' ? (succes.headSha ?? null) : null,
         url: succes.url ?? null,
       }
