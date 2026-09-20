@@ -321,12 +321,17 @@ function classify(status: DecisionStatus): {
 /**
  * Combien de maillons la remontée vers le job de tête suit, au plus.
  *
- * C'est une GARDE, pas une règle métier : le produit borne déjà la délégation
- * à trois niveaux (`maxDelegationDepth`, packages/orchestration), et soixante-
- * quatre est loin au-dessus de tout ce qu'une chaîne légitime peut valoir. Il
- * n'est pas DÉRIVÉ de ce plafond exprès — une chaîne écrite hier sous un autre
- * plafond doit encore remonter, et cette borne-ci ne doit jamais être la raison
- * pour laquelle un run légitime rate sa tête.
+ * C'est une GARDE, pas une règle métier, et elle n'est pas DÉRIVÉE du plafond
+ * de délégation exprès.
+ *
+ * `maxDelegationDepth` (3, packages/orchestration) borne les chaînes que
+ * l'ORCHESTRATION crée, et elle seules. `POST /api/agent` accepte un
+ * `parentJobId` fourni par l'appelant — vérifié comme appartenant à la même
+ * entité (F-2 de l'audit #2), pas comme respectant une profondeur
+ * (apps/runner/src/routes/agent.ts). Une chaîne plus longue que trois est donc
+ * constructible, et une borne recopiée du plafond ferait rater sa tête à un run
+ * parfaitement légitime. Soixante-quatre est au-dessus de tout ce qui s'écrit
+ * en pratique, plafond d'hier compris.
  *
  * Ce qu'elle empêche est précis : `parent_job_id` boucle, et aucun
  * `statement_timeout` ne l'arrête (choix assumé de
@@ -430,6 +435,14 @@ async function poseDeliverableCheck(
         .where(eq(agentJobs.id, maillon.id))
         .returning({ id: agentJobs.id });
       if (poses.length === 0) {
+        // ⚠️ AUCUN TEST NE COUVRE CETTE BRANCHE, et c'est assumé : il faudrait
+        // que la tête disparaisse ENTRE le `select` juste au-dessus et cet
+        // `update`, dans la transaction qui tient déjà son propre verrou. Elle
+        // reste parce qu'un `update` qui ne touche rien après un `select` qui a
+        // rendu une ligne est précisément ce qu'on ne veut jamais taire
+        // (invariant #4). Un mutant qui la retirerait ne ferait donc rougir
+        // personne — il n'enlèverait pas non plus un comportement prouvé
+        // (revue C, passe 2, constat C2).
         log(DELIVERABLE_CHECK_NO_ROOT, { jobId, cause: 'tete_disparue', maillon: maillon.id });
       }
       return;

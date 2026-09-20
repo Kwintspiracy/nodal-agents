@@ -106,8 +106,16 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
   const attendSurRun = new Set([
     ...approvals.data.map((a) => a.rootJobId).filter((id): id is string => id !== null),
     // Même chose pour un run venu de dehors : son livrable attend, sa ligne le
-    // dit. Le fait n'est posé que sur des jobs de TÊTE, donc ces
-    // identifiants-là sont déjà ceux des lignes du dossier MCP.
+    // dit.
+    //
+    // ⚠️ CETTE LISTE EST PLUS LARGE QUE LE DOSSIER MCP, et c'est sans effet.
+    // Elle porte TOUT job de tête qui attend un regard, y compris ceux qui ont
+    // une conversation — lesquels ne sont jamais des lignes de ce dossier
+    // (`runsFromOutside` exige `conversation_id IS NULL`). Leur identifiant ne
+    // rencontre donc aucune ligne, et il est inerte. Le commentaire disait
+    // l'inverse — « ces identifiants sont déjà ceux des lignes du dossier
+    // MCP » — ce qui énonçait une règle que le code n'applique pas (revue C,
+    // passe 2, constat C5).
     ...folders.data.deliverableCheckJobIds,
   ]);
   const tourne = new Set(folders.data.runningConversationIds);

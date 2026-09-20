@@ -20,8 +20,9 @@
 //      côté, ouvrir un run n'éteint pas celui de son voisin.
 //   6. LA LECTURE EST BORNÉE. Elle repart toutes les 15 secondes sur toutes les
 //      pages du tableau de bord : une pastille n'est pas une raison de balayer
-//      une table. Ce cas vient EN DERNIER — il sème 205 runs en attente, qui
-//      repousseraient les autres hors du plafond.
+//      une table. Ce cas sème 205 runs en attente, qui repousseraient les
+//      autres hors du plafond : il vient en dernier ET il les efface lui-même
+//      en sortant, pour ne rien devoir à l'ordre d'exécution.
 //
 // Mutations vérifiées :
 //   - l'`UPDATE` retiré de `markConversationRead` → le point 3 rougit (le run
@@ -34,7 +35,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, conversations, eq } from '@nodal-agents/db';
+import { agentJobs, conversations, eq, inArray } from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -247,19 +248,38 @@ describe('la lecture de la pastille est BORNÉE @cap:verifier-un-livrable/moteur
     // Sans ce test, retirer le `limit` ne rougirait rien (constat mineur 11b de
     // la revue C, passe 1).
     const trop = 205;
-    await testDb.insert(agentJobs).values(
-      Array.from({ length: trop }, (_, i) => ({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'dashboard',
-        task: `run de masse ${i}`,
-        status: 'completed',
-        deliverableCheckDueAt: new Date(),
-      })),
-    );
+    const masse = await testDb
+      .insert(agentJobs)
+      .values(
+        Array.from({ length: trop }, (_, i) => ({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'dashboard',
+          task: `run de masse ${i}`,
+          status: 'completed',
+          deliverableCheckDueAt: new Date(),
+        })),
+      )
+      .returning({ id: agentJobs.id });
 
-    const vu = await menu();
-    expect(vu.deliverablesToCheck.length).toBe(200);
-    expect(vu.deliverableCheckJobIds.length).toBe(200);
+    try {
+      const vu = await menu();
+      expect(vu.deliverablesToCheck.length).toBe(200);
+      expect(vu.deliverableCheckJobIds.length).toBe(200);
+    } finally {
+      // CE CAS REPART DE LA BASE QU'IL A TROUVÉE, quoi qu'il arrive.
+      //
+      // Il vient en dernier, et son commentaire le disait — mais l'ordre des
+      // `describe` d'un fichier est un DÉFAUT de Vitest (`sequence.shuffle`),
+      // pas une garantie que ce fichier écrit. Et un cas ajouté après lui
+      // hériterait de deux cents runs en attente, donc échouerait pour une
+      // raison qui n'est pas la sienne (revue C, passe 2, constat C4).
+      await testDb.delete(agentJobs).where(
+        inArray(
+          agentJobs.id,
+          masse.map((r) => r.id),
+        ),
+      );
+    }
   });
 });

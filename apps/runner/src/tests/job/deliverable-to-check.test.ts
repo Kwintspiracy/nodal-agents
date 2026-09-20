@@ -215,6 +215,14 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
     // Ce cas a aussi révélé le second : la branche de journalisation lisait le
     // retour d'un `tx.execute`, dont la FORME dépend du pilote, et ne partait
     // donc jamais sous PGlite. La remontée passe désormais par l'API typée.
+    //
+    // ⚠️ CE QUE CE CAS SEUL NE PROUVE PAS : que la remontée a réellement MARCHÉ
+    // ses soixante-cinq pas. `maillons` est la constante répercutée, pas le
+    // nombre de pas (revue C, passe 2, constat C3). C'est le cas d'à côté —
+    // « remonte la chaîne sur DEUX niveaux » — qui prouve la marche, et le
+    // premier cas qui prouve qu'elle s'arrête sur une tête immédiate. Les trois
+    // ensemble attrapent le mutant qui journalise sans remonter : il ferait
+    // rougir les deux autres.
     const a = await insertJob();
     const b = await insertJob(a);
     await db.update(agentJobs).set({ parentJobId: b }).where(eq(agentJobs.id, a));
