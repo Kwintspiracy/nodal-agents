@@ -35,6 +35,7 @@ import {
   PILLARS,
   PRACTICES,
   PRINCIPLES,
+  PROOF_RECORDS,
   ROADMAP,
   SECTIONS,
   VERSION,
@@ -200,7 +201,13 @@ export default function Home() {
       <header className="home-bar">
         <div className="home-wrap home-bar-inner">
           <a className="home-mark" href={`${BASE_PATH}/`}>
-            <span className="home-mark-dot" aria-hidden="true" />
+            <img
+              src={`${BASE_PATH}/home/logo-128.png`}
+              width={32}
+              height={32}
+              alt=""
+              decoding="async"
+            />
             Nodal-Agents
           </a>
           <nav className="home-bar-nav" aria-label="Main">
@@ -250,7 +257,7 @@ export default function Home() {
             src={`${BASE_PATH}/home/dashboard-light.webp`}
             width={1393}
             height={1040}
-            alt="The Nodal-Agents dashboard home in the light theme, showing agent, skill and connector counts, job totals, weekly activity and a per-agent token table."
+            alt="The Nodal-Agents dashboard in the light theme, showing agent, skill and connector counts, job totals, weekly activity and a per-agent token table."
             loading="lazy"
             decoding="async"
           />
@@ -277,6 +284,8 @@ export default function Home() {
           <p className="home-intro">
             A platform you install, not a service you sign up for. It brings its own database, its
             own dashboard and its own runner, and it talks to whichever model you already pay for.
+            The dashboard is five boards: your work, your agents, what runs on its own, what waits
+            for your approval, and the settings.
           </p>
           <div className="home-grid-2">
             {PILLARS.map((p) => (
@@ -359,9 +368,11 @@ export default function Home() {
             ))}
           </div>
           <p className="home-figures-note">
-            Counted from the catalogs themselves at build time, not typed by hand. You can also run
-            several instances of one connector side by side, a personal Gmail and a work Gmail on
-            the same install, each with its own credential.
+            Counted from the catalogs themselves at build time, not typed by hand. Of the built-in
+            tools, {CATALOG.alwaysOnTools} are on for every agent and the rest unlock through a
+            skill, a grant or a per-agent authorisation. You can also run several instances of one
+            connector side by side, a personal Gmail and a work Gmail on the same install, each with
+            its own credential.
           </p>
 
           <IconWall
@@ -408,6 +419,23 @@ export default function Home() {
               </article>
             ))}
           </div>
+
+          <p className="home-mono" style={{ marginTop: '48px' }}>
+            When an agent says it is done
+          </p>
+          <dl className="home-defs">
+            {PROOF_RECORDS.map((r) => (
+              <div key={r.term}>
+                <dt>{r.term}</dt>
+                <dd>{r.body}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="home-figures-note">
+            Four records, kept apart on purpose. The first three sit on the run page and in the
+            project panel. The fourth stays in the command line, because deciding that a run went
+            wrong is your call, and an agent able to roll itself back could roll back the evidence.
+          </p>
 
           <figure className="home-diagram">
             <FlowDiagram />

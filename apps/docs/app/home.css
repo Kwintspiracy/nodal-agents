@@ -124,11 +124,9 @@
   color: var(--home-ink);
   text-decoration: none;
 }
-.home-mark-dot {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--home-flame);
+.home-mark img {
+  width: 32px;
+  height: 32px;
   flex: none;
 }
 .home-bar-nav {
@@ -193,8 +191,12 @@
   color: var(--home-hero-ink);
 }
 
+/* A hero: it fills the viewport on load, whatever the screen. The bar above
+   it is 62px plus its 1px rule; `svh` keeps a phone's browser chrome out of
+   the count, `vh` is the fallback. */
 .home-hero {
-  min-height: clamp(520px, 72vh, 760px);
+  min-height: calc(100vh - 63px);
+  min-height: calc(100svh - 63px);
   padding-block: clamp(56px, 8vw, 96px) clamp(72px, 9vw, 120px);
   display: flex;
   justify-content: flex-end;

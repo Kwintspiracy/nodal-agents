@@ -72,7 +72,7 @@ export const PILLARS: readonly Pillar[] = [
   },
   {
     title: 'One model per agent',
-    body: 'Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter, DeepSeek, MiniMax, Moonshot, or a local model in LM Studio or Ollama. One key per provider, and each agent picks its own.',
+    body: 'Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek, MiniMax, Moonshot, OpenRouter, or a local model in Ollama, LM Studio, Jan, llama.cpp or vLLM. One key per provider, and each agent picks its own.',
   },
   {
     title: 'Your keys, your disk',
@@ -81,6 +81,14 @@ export const PILLARS: readonly Pillar[] = [
   {
     title: 'Any surface',
     body: 'The dashboard chat, Telegram, Discord, Slack and WhatsApp. Approvals, images and files travel over all of them, with a fallback where a channel has no buttons.',
+  },
+  {
+    title: 'Proof, not a claim',
+    body: 'What a run wrote is read back from the disk, never taken from its own summary. In a git folder Nodal compares the status before and after each command, so a script that writes ten files without naming one still shows up, deletions included.',
+  },
+  {
+    title: 'An undo you did not plan for',
+    body: 'Before any tool that can change a folder, Nodal snapshots it into a store of its own, never into your git history. A snapshot it cannot take refuses the write. Restoring is a command you run, not a tool an agent can call.',
   },
 ];
 
@@ -313,8 +321,12 @@ export interface Principle {
  */
 export const PRINCIPLES: readonly Principle[] = [
   {
-    title: 'The thread is the screen',
-    body: 'The conversation is the interface. You do not fill in a form to start work. You say what you want, and what the agent did shows up in the thread it happened in.',
+    title: 'You land in a conversation, not a form',
+    body: 'Nodal opens on an empty thread. You say what you want, and no row is written until your first message lands. A run that came from a schedule, the CLI or another tool gets its own page rather than a thread it never had.',
+  },
+  {
+    title: 'A project is a folder you open',
+    body: 'Its page is one list of everything that happened in it, conversations and runs together, with the folder docked beside it: what recent runs wrote, and the commands that proved it works. Nodal offers to run git init and never does it behind your back.',
   },
   {
     title: 'An agent is a row, not a file',
@@ -322,11 +334,15 @@ export const PRINCIPLES: readonly Principle[] = [
   },
   {
     title: 'Guards against running away',
-    body: 'A token budget per job on every provider, a no-progress detector, an atomic job claim so the same job never runs twice, and hard caps on chained resumes, tool calls and delegation depth.',
+    body: 'A token budget and a cost ceiling per job on every provider, a no-progress detector, an atomic job claim so the same job never runs twice, and hard caps on chained resumes, tool calls and delegation depth.',
   },
   {
     title: 'Guards against a false win',
-    body: 'A run that failed is never reported as done. Every failed job keeps its transcript, the real upstream error and a short specific reason, propagated back up through delegation.',
+    body: 'A run that failed is never reported as done. Every failed job keeps its transcript, the real upstream error and a short specific reason, propagated back up through delegation. A reviewer verdict is a typed record, never the first line of its prose.',
+  },
+  {
+    title: 'The agent says how to check its own work',
+    body: 'When it finishes it declares the commands it already ran to check itself: a build, a test suite, a request against a server it started. Nodal runs them in order and records each exit code with its output. A proof whose project changed since is marked stale, not green.',
   },
   {
     title: 'You approve before it bites',
@@ -343,6 +359,34 @@ export const PRINCIPLES: readonly Principle[] = [
   {
     title: 'Nothing to lock you in',
     body: 'One command installs it, an embedded Postgres comes with it, and the data sits in a folder you own. Swap the model, swap the machine, or walk away with the directory.',
+  },
+];
+
+/**
+ * The four records a run leaves behind, one line each.
+ *
+ * Source: `apps/docs/content/docs/concepts/proof.mdx`, which is itself written
+ * against the runtime. They are four and not one on purpose: "it wrote these
+ * files", "this command says it works", "a reviewer read it" and "here is the
+ * folder before it started" are four different questions, and a product that
+ * answers them with a single green tick is answering none of them.
+ */
+export const PROOF_RECORDS: readonly Definition[] = [
+  {
+    term: 'What it wrote',
+    body: 'The files the run really changed, read back from the disk. In a repository each one carries the word git itself used: added, modified, deleted or renamed. Outside one, only files a tool named are credited, and the page says so rather than showing an empty list.',
+  },
+  {
+    term: 'What proves it works',
+    body: 'The commands the agent declared when it finished, run in order, each with its exit code and its output. The project turns green or red with the command that decided it. Declaring is gated by approval exactly like running.',
+  },
+  {
+    term: 'What a second agent found',
+    body: 'The verdict a reviewer recorded: approved, or changes requested with a count per severity. The commands the reviewer itself ran are kept as proof of the work it read. A second review of an unchanged target is refused rather than paid for.',
+  },
+  {
+    term: 'What it looked like before',
+    body: 'A snapshot of every workspace the agent holds, taken before anything could write, in a shadow store and never in your own history. When the snapshot cannot be taken the write is refused, with a typed code and the figures measured right then.',
   },
 ];
 
@@ -452,7 +496,7 @@ export const PRACTICES: readonly Practice[] = [
   },
   {
     title: 'Reviewed by another engine',
-    body: 'A pull request is reviewed by an outside tool, never by a second instance of the same model, because two copies of one model share one blind spot. Review, fix, review again, until it asks for no further change.',
+    body: 'A pull request is reviewed by an outside tool, never by a second instance of the same model, because two copies of one model share one blind spot. Review, fix, review again, until a pass comes back with nothing blocking and nothing important. Four passes at most: a request still blocked on the fourth has a shape problem, not a bug.',
   },
   {
     title: 'A fix is proven by mutation',
@@ -478,7 +522,7 @@ export const CI_JOBS: readonly CiJob[] = [
   },
   {
     name: 'End to end',
-    body: 'The stack boots for real, then Playwright drives two journeys through the dashboard in a browser.',
+    body: 'The stack boots for real, then Playwright drives five journeys through the dashboard in a browser: navigation, the autonomy tab, delegation outcomes, memory, and the runs list.',
   },
 ];
 

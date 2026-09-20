@@ -24,12 +24,20 @@ import {
   CATALOG,
   CATALOG_FIGURES,
   CHANNEL_ICONS,
+  CI_JOBS,
   CONNECTOR_ICONS,
+  DEFINITIONS,
   EXAMPLES,
   FEATURE_SLUGS,
   FIGURES,
+  FORMULA,
   MCP_ICONS,
   INVARIANTS,
+  PILLARS,
+  PRACTICES,
+  PRINCIPLES,
+  PROOF_RECORDS,
+  ROADMAP,
   CAPABILITIES,
   CAPABILITIES_VERIFIED,
   MEASURED_COMMIT,
@@ -103,6 +111,44 @@ describe('homepage rendering', () => {
     expect(markup).not.toContain('—');
   });
 
+  // Every copy block declared in `home-content.ts` has to reach the page. A
+  // block can be written, reviewed and merged while nothing renders it, and
+  // nothing else here would notice: the page would simply be missing a claim
+  // its own source file says it makes.
+  it('renders every copy block it declares, not just the ones a case names', () => {
+    const blocks: ReadonlyArray<readonly [string, readonly string[]]> = [
+      ['pillars', PILLARS.flatMap((p) => [p.title, p.body])],
+      ['formula', FORMULA.flatMap((f) => [f.term, f.body])],
+      ['definitions', DEFINITIONS.flatMap((d) => [d.term, d.body])],
+      ['principles', PRINCIPLES.flatMap((p) => [p.title, p.body])],
+      ['proof records', PROOF_RECORDS.flatMap((r) => [r.term, r.body])],
+      ['practices', PRACTICES.flatMap((p) => [p.title, p.body])],
+      ['CI jobs', CI_JOBS.flatMap((j) => [j.name, j.body])],
+      ['roadmap', ROADMAP],
+    ];
+    for (const [name, texts] of blocks) {
+      expect(texts.length, `${name} declares nothing`).toBeGreaterThan(0);
+      const missing = texts.filter((t) => !markup.includes(t));
+      expect(missing, `${name}: not rendered`).toEqual([]);
+    }
+  });
+
+  // The four records are the product's answer to "the agent said it was done".
+  // Stated as four because they answer four different questions: collapsing
+  // them into one line is how a page ends up claiming a green tick proves work.
+  it('names the four separate records a run leaves behind', () => {
+    expect(PROOF_RECORDS).toHaveLength(4);
+    expect(PROOF_RECORDS.map((r) => r.term)).toEqual([
+      'What it wrote',
+      'What proves it works',
+      'What a second agent found',
+      'What it looked like before',
+    ]);
+    // And says where each one is read, which is the part that differs: the
+    // snapshot is deliberately not in the product.
+    expect(markup).toContain('The fourth stays in the command line');
+  });
+
   it('opens on a hero band whose background is the illustration shipped with the site', () => {
     // The band sets the picture inline (the base path is home-content's), and
     // the file must really be in `public/`: a static export serves nothing else.
@@ -144,6 +190,16 @@ describe('the catalog section only shows what the product actually ships', () =>
     expect(value('built-in tools')).toBe(String(CATALOG.builtinTools));
     expect(value('models pre-configured')).toBe(String(CATALOG.models));
     for (const f of CATALOG_FIGURES) expect(markup).toContain(f.label);
+  });
+
+  // The page states how many built-in tools an agent gets before it holds a
+  // single skill. Typing that number would put a second source of truth next
+  // to the generator, which is the drift `catalog-facts.json` exists to close.
+  it('splits the built-in tools with the counted figure, not a typed one', () => {
+    expect(CATALOG.alwaysOnTools).toBeGreaterThan(0);
+    expect(CATALOG.alwaysOnTools).toBeLessThan(CATALOG.builtinTools);
+    expect(CATALOG.alwaysOnTools + CATALOG.gatedTools).toBe(CATALOG.builtinTools);
+    expect(markup).toContain(`${CATALOG.alwaysOnTools} are on for every agent`);
   });
 
   it('offers a wide, unordered scatter of examples rather than a short menu', () => {
