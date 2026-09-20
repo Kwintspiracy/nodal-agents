@@ -18,6 +18,7 @@ import {
   EXAMPLES,
   FORMULA,
   FORMULA_RESULT,
+  HERO,
   MCP_ICONS,
   CI_JOBS,
   FIGURES,
@@ -27,6 +28,7 @@ import {
   LINK_GITHUB,
   LINK_NPM,
   LINK_QA,
+  LINK_START,
   CAPABILITIES,
   CAPABILITIES_VERIFIED,
   MEASURED_COMMIT,
@@ -198,53 +200,76 @@ export default function Home() {
 
   return (
     <main className="home">
-      <header className="home-bar">
-        <div className="home-wrap home-bar-inner">
-          <a className="home-mark" href={`${BASE_PATH}/`}>
-            <img
-              src={`${BASE_PATH}/home/logo-128.png`}
-              width={32}
-              height={32}
-              alt=""
-              decoding="async"
-            />
-            Nodal-Agents
-          </a>
-          <nav className="home-bar-nav" aria-label="Main">
-            <a href={LINK_DOCS}>Docs</a>
-            <a href={LINK_QA}>Quality</a>
-            <a href={LINK_CHANGELOG}>Changelog</a>
-            <a href={LINK_GITHUB}>GitHub</a>
-          </nav>
-        </div>
-      </header>
-
       {/* ── Hero ─────────────────────────────────────────────────────── */}
       {/* The band carries the illustration as a full-bleed background (a dog
           walking a conveyor of data toward the racks). It is dark in both
-          themes, so the copy on it is always white; a gradient keeps the
-          left column readable and fades the bottom edge into the page. */}
+          themes, so the copy on it is always white; two gradients keep the
+          left column readable and darken the strip the nav sits on.
+
+          The nav rides on the picture rather than in a bar of its own: that is
+          the composition of the redesign, which puts the whole first screen on
+          the illustration. The same four links are repeated in the footer, so
+          nothing is only reachable at the top of the page. */}
       <section
         className="home-hero-band"
         style={{ backgroundImage: `url(${BASE_PATH}/home/hero.webp)` }}
       >
-        <div className="home-wrap home-hero">
-          {/* One column, set to the right: the dog and the conveyor live in
-              the left half of the picture and stay uncovered. */}
-          {/* Three things and nothing else on the picture (Quentin, 20/09):
-              the name, the line, the command. */}
+        <header className="home-bar">
+          <div className="home-bar-inner">
+            <a className="home-mark" href={`${BASE_PATH}/`}>
+              <img
+                src={`${BASE_PATH}/home/logo-128.png`}
+                width={34}
+                height={34}
+                alt=""
+                decoding="async"
+              />
+              Nodal-Agents
+            </a>
+            <nav className="home-bar-nav" aria-label="Main">
+              <a href={LINK_DOCS}>Docs</a>
+              <a href={LINK_QA}>Quality</a>
+              <a href={LINK_CHANGELOG}>Changelog</a>
+              <a href={LINK_GITHUB}>GitHub</a>
+            </nav>
+          </div>
+        </header>
+
+        <div className="home-hero">
+          {/* One column, held to the left edge of the band exactly as the
+              design does, so the racks and the conveyor on the right half of
+              the picture stay uncovered. */}
           <div className="home-hero-copy">
-            <h1 className="home-display">
-              Nodal. <span className="home-tagline">Herding agents is what we're built for.</span>
+            <p className="home-hero-pill">
+              <span className="dot" aria-hidden="true" />v{VERSION} · {HERO.pillSuffix}
+            </p>
+            <h1 className="home-hero-title">
+              {HERO.titleLines[0]}
+              <br />
+              {HERO.titleLines[1]}
             </h1>
-            <div className="home-install">
-              <div>
-                <span className="p">$ </span>
-                <span className="c">npm install -g nodal-agents</span>
+            <p className="home-hero-lede">{HERO.lede}</p>
+            <div className="home-hero-actions">
+              <a className="home-hero-btn home-hero-btn-primary" href={LINK_START}>
+                {HERO.primaryCta}
+              </a>
+              <a className="home-hero-btn home-hero-btn-ghost" href={LINK_GITHUB}>
+                {HERO.secondaryCta}
+              </a>
+            </div>
+            <div className="home-term">
+              <div className="home-term-bar">
+                <span className="d r" aria-hidden="true" />
+                <span className="d y" aria-hidden="true" />
+                <span className="d g" aria-hidden="true" />
+                <span className="home-term-title">{HERO.terminalTitle}</span>
               </div>
-              <div>
-                <span className="p">$ </span>
-                <span className="c">nodal-agents up</span>
+              <div className="home-term-body">
+                {HERO.commands.map((command) => (
+                  <div key={command}>
+                    <span className="p">$</span> <span className="c">{command}</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
