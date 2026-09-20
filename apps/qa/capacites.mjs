@@ -229,8 +229,6 @@ export const CAPACITES = [
     nom: 'Find out how',
     question: 'When I get stuck, can the product explain it to me?',
     exigee: true,
-    preuveAttendue:
-      'That a guide served to the client really describes the connector asked for, its steps, its fields and its scopes read from the catalogue, and not a hardcoded page.',
   },
 ];
 

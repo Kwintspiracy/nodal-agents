@@ -31,7 +31,7 @@ A **job** is one unit of work — a chat message, a cron tick, an API call, or a
 
 ### Always-on built-in tools
 
-Every agent gets these 19 tools on every job, regardless of skills (`ALWAYS_ON_TOOLS` in `packages/tools/src/builtin/index.ts`):
+Every agent gets these tools on every job, regardless of skills (`ALWAYS_ON_TOOLS` in `packages/tools/src/builtin/index.ts`). The count used to be written out here and went stale the first time a tool was added, so it is gone: the [built-in tools reference](/docs/reference/builtin-tools) is generated from the runtime and is the one that counts.
 
 - `return_result` — set the job's final answer.
 - `ask_user` — stop and ask you a question the agent cannot answer on its own.
@@ -40,6 +40,7 @@ Every agent gets these 19 tools on every job, regardless of skills (`ALWAYS_ON_T
 - `list_schedules` — list the agent's cron automations.
 - `save_memory`, `query_memory`, `mark_memory_helpful`, `mark_memory_outdated` — the [memory](/docs/concepts/memory) tools (write, recall, and rate persistent facts).
 - `search_history` — full-text recall across all of this workspace's past jobs and conversations, including ones run by other agents.
+- `nodal_docs` — search this documentation: what Nodal-Agents can do and where in the dashboard it is done. Offline, no model, no network.
 - `web_search` — search the web, using the agent's configured Tavily/Firecrawl provider if any, otherwise a free best-effort search.
 - `dashboard_publish` — publish the agent's substantive output to the dashboard (it becomes the job's `result`).
 - `file_read`, `file_write`, `file_edit`, `file_list`, `file_search` — read and edit files in the agent's workspaces.

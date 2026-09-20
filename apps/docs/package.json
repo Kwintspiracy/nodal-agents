@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "gen": "tsx scripts/gen-reference.ts",
-    "dev": "tsx scripts/gen-reference.ts && next dev",
-    "build": "tsx scripts/gen-reference.ts && next build",
+    "gen": "tsx scripts/gen-reference.ts && tsx scripts/gen-docs-index.ts",
+    "dev": "tsx scripts/gen-reference.ts && tsx scripts/gen-docs-index.ts && next dev",
+    "build": "tsx scripts/gen-reference.ts && tsx scripts/gen-docs-index.ts && next build",
     "start": "next start",
     "postinstall": "fumadocs-mdx",
     "lint": "eslint app lib",

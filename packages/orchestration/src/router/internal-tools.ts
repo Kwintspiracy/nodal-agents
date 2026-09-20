@@ -6,10 +6,10 @@
 // `description` field), so a tool whose wording changes cannot drift from what
 // the owner reads before switching it off. apps/web already depends on this
 // package and not on `@nodal-agents/tools`, which pulls in the Office document
-// libraries — no reason to drag those into the dashboard for sixteen labels.
+// libraries — no reason to drag those into the dashboard for its labels.
 //
 // Why this exists at all: the Autonomy screen only ever listed OUTWARD tools
-// (connector operations, Telegram, MCP servers). The sixteen internal ones were
+// (connector operations, Telegram, MCP servers). The internal ones were
 // always on and invisible, so an owner could not say "this agent may read files
 // but never search the web" without reaching for the blunt read-only preset.
 
@@ -31,6 +31,7 @@ const LABELS: Readonly<Record<string, string>> = {
   list_schedules: 'List its schedules',
   save_memory: 'Remember a fact',
   query_memory: 'Recall a fact',
+  nodal_docs: 'Look up how Nodal-Agents works',
   search_history: 'Search past conversations',
   mark_memory_helpful: 'Mark a memory useful',
   mark_memory_outdated: 'Mark a memory outdated',

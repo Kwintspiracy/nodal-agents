@@ -124,6 +124,10 @@ const EXPECTED_CARDS: Record<string, ToolCard> = {
   list_schedules: 'text',
   mark_memory_helpful: 'text',
   mark_memory_outdated: 'text',
+  // Chercher dans la documentation du produit est une RECHERCHE, comme
+  // `query_memory` : des correspondances repliées avec leur URL, pas un
+  // tableau de longs textes.
+  nodal_docs: 'search',
   pptx_append_slides: 'files',
   pptx_create: 'files',
   pptx_read: 'read',
