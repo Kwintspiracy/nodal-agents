@@ -992,7 +992,8 @@ function cadreDeploiement() {
     return `<p class="ligne-deploiement ligne-deploiement--absent"><b>Docs and portal: no successful deploy</b> among the last ${n(d.runsLus)} runs, read at ${esc(dateFr(s.tableauLe ?? s.genereLe))}.</p>`;
   }
   const depuis = [];
-  if (d.depuis.enCours) depuis.push(`${d.depuis.enCours} in progress`);
+  if (d.depuis.enCours)
+    depuis.push(`${d.depuis.enCours} in progress (the run rendering this page is one of them)`);
   if (d.depuis.annules) depuis.push(`${d.depuis.annules} cancelled (superseded by a later run)`);
   if (d.depuis.echoues) depuis.push(`${d.depuis.echoues} failed`);
   // Le run qui rend cette page est l'un des « en cours » : c'est lui qui
@@ -1001,7 +1002,7 @@ function cadreDeploiement() {
   const suite = depuis.length
     ? ` Since then: ${depuis.join(', ')}.${d.depuis.annules + d.depuis.echoues > 0 ? ' The run that rendered this page is the one that replaces them.' : ''}`
     : ' Nothing queued since.';
-  return `<p class="ligne-deploiement"><b>Docs and portal deployed</b> ${esc(dateFr(d.dernierSucces.le))} (<a href="${esc(d.dernierSucces.url ?? '#')}">${esc(d.dernierSucces.evenement)}</a>, main at <code>${esc((d.dernierSucces.sha ?? '').slice(0, 8) || '·')}</code>).${suite}</p>`;
+  return `<p class="ligne-deploiement"><b>Docs and portal deployed</b> ${esc(dateFr(d.dernierSucces.le))} (<a href="${esc(d.dernierSucces.url ?? '#')}">${esc(d.dernierSucces.evenement)}</a>, main at <code>${esc((d.dernierSucces.sha ?? '').slice(0, 8) || '·')}</code>).${suite} Read at ${esc(dateFr(s.tableauLe ?? s.genereLe))}.</p>`;
 }
 
 /**
