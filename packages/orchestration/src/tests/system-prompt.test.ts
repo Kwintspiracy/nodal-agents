@@ -18,6 +18,8 @@ import { buildSystemPrompt } from '../system-prompt';
 import type { JobContext, ConversationContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
+import { ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
+import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
 
 let db: TestDb;
 
@@ -709,6 +711,107 @@ describe('buildSystemPrompt — Messaging channels block', () => {
     expect(prompt).not.toContain('slack —');
     expect(prompt).toContain('list_conversations');
     expect(prompt).toContain('optional `channel`');
+  });
+});
+
+// ─── The platform an agent runs in ───────────────────────────────────────────
+//
+// 2026-09-21, fresh install: the owner asked the root agent whether Telegram
+// could be configured. It answered that Telegram was not supported and offered
+// to build an MCP server. These tests cover the two things missing from its
+// prompt: the reflex to look something up, and the words "Telegram" and "cron"
+// appearing in it at all.
+
+describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-aide/moteur', () => {
+  async function seedPlatformAgent(name: string) {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name,
+        slug: `test-sp-platform-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        personality: 'You help.',
+        role: 'agent',
+      })
+      .returning();
+    return { entityId, agentRow: agentRow! };
+  }
+
+  it('carries the reflex block on a job, where the agent holds nodal_docs', async () => {
+    const { entityId, agentRow } = await seedPlatformAgent('SP Platform Agent');
+    const agent = makeAgent(agentRow.id, entityId, agentRow.personality);
+
+    const prompt = await buildSystemPrompt(agent, db);
+
+    expect(prompt).toContain('## The platform you are running in');
+    expect(prompt).toContain('`nodal_docs`');
+    expect(prompt).toContain('Look before you say no');
+    // The tool the block promises really is in the set the runner builds.
+    expect(ALWAYS_ON_TOOLS).toContain('nodal_docs');
+  });
+
+  it('drops the reflex block on a surface that has no builtins', async () => {
+    const { entityId, agentRow } = await seedPlatformAgent('SP Platform CLI Agent');
+    const agent = makeAgent(agentRow.id, entityId, agentRow.personality);
+
+    const chat = await buildSystemPrompt(agent, db, { origin: 'dashboard', surface: 'chat' });
+    const cli = await buildSystemPrompt(agent, db, { origin: 'api', surface: 'cli-runtime' });
+
+    expect(chat).not.toContain('## The platform you are running in');
+    expect(cli).not.toContain('## The platform you are running in');
+  });
+
+  it('follows the whitelist it is given, not a constant', async () => {
+    const { entityId, agentRow } = await seedPlatformAgent('SP Platform Whitelist Agent');
+    const agent = makeAgent(agentRow.id, entityId, agentRow.personality);
+
+    const without = await buildSystemPrompt(agent, db, {
+      origin: 'api',
+      availableToolNames: ['query_memory'],
+    });
+    const withIt = await buildSystemPrompt(agent, db, {
+      origin: 'api',
+      availableToolNames: ['query_memory', 'nodal_docs'],
+    });
+
+    expect(without).not.toContain('## The platform you are running in');
+    expect(withIt).toContain('## The platform you are running in');
+  });
+
+  it('names every channel the agent could be given, and both automations', async () => {
+    const { entityId, agentRow } = await seedPlatformAgent('SP Platform Channels Agent');
+    const agent = makeAgent(agentRow.id, entityId, agentRow.personality);
+
+    const prompt = await buildSystemPrompt(agent, db);
+
+    for (const channel of CHANNELS) expect(prompt, channel).toContain(`\`${channel}\``);
+    expect(prompt).toContain("the agent's settings, Channels tab");
+    for (const automation of AUTOMATION_KINDS) {
+      expect(prompt, automation.kind).toContain(automation.where);
+    }
+  });
+
+  it('stops offering a channel once the agent is bound to it', async () => {
+    const { entityId, agentRow } = await seedPlatformAgent('SP Platform Bound Agent');
+    await db.insert(channelBindings).values({
+      entityId,
+      agentId: agentRow.id,
+      channel: 'telegram',
+      credentials: JSON.stringify({ botToken: 'fake-token' }),
+      botIdentity: { username: 'already_bound_bot' },
+      enabled: true,
+    });
+    const agent = makeAgent(agentRow.id, entityId, agentRow.personality);
+
+    const prompt = await buildSystemPrompt(agent, db);
+
+    // Described as connected, not offered as something still to set up.
+    expect(prompt).toContain('## Messaging channels');
+    expect(prompt).toContain('telegram — bot @already_bound_bot');
+    const offers = prompt.slice(prompt.indexOf('Messaging channels you can be given'));
+    expect(offers).not.toContain('`telegram`');
+    expect(offers).toContain('`discord`');
   });
 });
 

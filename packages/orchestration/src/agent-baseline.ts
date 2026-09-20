@@ -16,6 +16,7 @@
 import { systemSkills, skillKind, skillContentOn } from '@nodal-agents/catalog';
 import type { PromptSurface } from '@nodal-agents/catalog';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
 
 /**
  * Open/mid models that need firmer execution discipline — weaker instruction-
@@ -38,11 +39,38 @@ const NEEDS_FIRMER_VERIFY = /deepseek|minimax|qwen|glm|gemma|kimi|mistral|llama/
  * PLUS enclin à affirmer sans preuve (revue Codex de la dette de la PR #73,
  * constat 1). Les deux vivent dans le CATALOGUE (invariant #3).
  */
-const contentOfKind = (kind: 'baseline' | 'channel', surface: PromptSurface = 'job'): string[] =>
+const contentOfKind = (
+  kind: 'baseline' | 'channel',
+  surface: PromptSurface = 'job',
+  availableTools?: readonly string[],
+): string[] =>
   systemSkills
     .filter((s) => skillKind(s) === kind)
+    .filter((s) => hasRequiredBuiltins(s, availableTools))
     .map((s) => skillContentOn(s, surface))
     .filter((text): text is string => text !== null);
+
+/**
+ * Une skill de socle peut DÉPENDRE d'un outil — `platform-support` ne dit que
+ * « appelle `nodal_docs` ». Elle le déclare dans `requiredBuiltins`, le même
+ * champ qui sert déjà à ouvrir un builtin gaté pour un worker ; ici il sert à
+ * ne PAS injecter un texte qui promettrait un outil absent.
+ *
+ * FERMÉ PAR DÉFAUT : sans liste d'outils connue, une skill qui en exige un
+ * reste dehors. L'inverse — l'injecter dans le doute — redonnerait à l'agent
+ * des ordres inexécutables, ce que les trois passes de revue sur `surfaces`
+ * ont déjà payé une fois. Une skill sans `requiredBuiltins` n'est jamais
+ * concernée, donc rien de ce qui existait ne change.
+ */
+const hasRequiredBuiltins = (
+  skill: { requiredBuiltins?: string[] },
+  availableTools?: readonly string[],
+): boolean => {
+  const needed = skill.requiredBuiltins ?? [];
+  if (needed.length === 0) return true;
+  if (availableTools === undefined) return false;
+  return needed.every((tool) => availableTools.includes(tool));
+};
 
 /**
  * Memory discipline — every agent, orchestrator or worker. Injected as a
@@ -150,12 +178,19 @@ export function buildBaselineBlock(
      * tour de chat, retirés par la même règle que pour `cli-runtime`.
      */
     surface?: PromptSurface;
+    /**
+     * Les outils que cet agent a RÉELLEMENT pour ce job. Sert à une seule
+     * chose ici : décider si une skill de socle qui EXIGE un outil est
+     * injectée (voir `hasRequiredBuiltins`). Omis = aucune skill exigeante
+     * n'est injectée, jamais l'inverse.
+     */
+    availableTools?: readonly string[];
   } = {},
 ): string {
   const nodalTools = opts.nodalTools !== false;
   if (!nodalTools) return '';
   const surface = opts.surface ?? 'job';
-  const parts = contentOfKind('baseline', surface);
+  const parts = contentOfKind('baseline', surface, opts.availableTools);
   // Le renforcement nomme `skill_view` et `run_skill_script` : deux outils de
   // plus que le chat n'a pas, et deux ordres de plus qu'il ne peut pas suivre
   // (revue Codex de la dette de la PR #73, constat 2). Sa moitié portable —
@@ -240,6 +275,18 @@ export interface DiscoverabilityInput {
   /** MCP servers CONFIGURED in the workspace — slug + name. */
   workspaceMcps: { slug: string; name: string }[];
   /**
+   * Messaging channels this agent is ALREADY bound to, by slug. The rest of
+   * `CHANNELS` is what it can be given, and saying so is the whole point: the
+   * agent that answered "Telegram is not supported" (2026-09-21) was bound to
+   * none of them and had never been told any existed.
+   *
+   * Omitted rather than defaulted to empty on purpose — a caller that does not
+   * know the bindings would otherwise offer the owner a channel they have
+   * already set up, which is the exact failure the three-state connector logic
+   * below exists to avoid.
+   */
+  boundChannelSlugs?: string[];
+  /**
    * False sur une surface sans les builtins de Nodal. Ce que le bloc ANNONCE —
    * « ceci est configuré chez toi, il suffit de te l'attacher » — reste : c'est
    * le fait qui évite un « je ne peux pas » devant une capacité qui existe. Le
@@ -258,6 +305,15 @@ export interface DiscoverabilityInput {
  *     "it's set up — just needs to be assigned to you" (NO new key required);
  *   - a capability with no connector configured at all → "needs <setup>";
  *   - capability skills not assigned → can be assigned.
+ *
+ * It also names two whole families the prompt used to be silent about, and that
+ * silence is what produced the 2026-09-21 incident: MESSAGING CHANNELS and
+ * AUTOMATIONS. An agent asked whether Telegram could be set up answered that it
+ * was not supported, because nothing in its prompt had ever said the word.
+ * Both lists are read from the product's own registries — `CHANNELS`, which is
+ * the source of the `channel_bindings` CHECK constraint, and `AUTOMATION_KINDS`,
+ * which names the two tables a trigger lives in — never from a table written
+ * here by hand.
  */
 export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
   const assignedSkills = new Set(input.assignedSkillSlugs);
@@ -280,21 +336,27 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
       slug in ADAPTER_REGISTRY && !attachedConn.has(slug) && !configuredConnSlugs.has(slug),
   );
 
-  if (
-    skills.length === 0 &&
-    readyConnectors.length === 0 &&
-    readyMcps.length === 0 &&
-    notSetUp.length === 0
-  ) {
-    return '';
-  }
+  // Channels the agent is not bound to. Omitted bindings mean "unknown", and an
+  // unknown binding must not become an offer to set up what is already set up.
+  const freeChannels =
+    input.boundChannelSlugs === undefined
+      ? []
+      : CHANNELS.filter((c) => !input.boundChannelSlugs?.includes(c));
 
+  // No early return any more. It used to fire when an agent already had every
+  // skill and connector, and the block vanished — which was right while the
+  // block only listed things an agent can RUN OUT OF. Automations are not like
+  // that: any agent can be put on a schedule at any time, so there is no state
+  // in which naming them is wrong, and an agent that has never heard of them
+  // answers "I cannot run on a schedule" to a question with a screen behind it.
+  // The cost is about seventy tokens on a prompt that is cached across an
+  // agent's jobs.
   const lines: string[] = [
     '## Capabilities you can request',
     '',
-    'These are NOT active for YOU yet. Use the right one below — do NOT pretend you ' +
-      'already can, do NOT refuse flatly, and do NOT ask the user to set up something ' +
-      'that is already configured.',
+    'These are NOT active for YOU yet, or not set up for you yet. Use the right one ' +
+      'below — do NOT pretend you already can, do NOT refuse flatly, and do NOT ask the ' +
+      'user to set up something that is already configured.',
   ];
 
   if (skills.length > 0) {
@@ -321,6 +383,29 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
   if (notSetUp.length > 0) {
     lines.push('', 'Not set up in this workspace yet — would need the user to add:');
     for (const [, cap] of notSetUp) lines.push(`- ${cap.label} — needs ${cap.setup}`);
+  }
+
+  if (freeChannels.length > 0) {
+    lines.push(
+      '',
+      'Messaging channels you can be given. Each is a real feature of this product, ' +
+        "set up per agent by the owner on the agent's settings, Channels tab:",
+    );
+    for (const channel of freeChannels) lines.push(`- \`${channel}\``);
+  }
+
+  // Automations are not "not yet active" the way a connector is — any agent can
+  // be given one at any time — but they belong in the same block for the same
+  // reason: an agent that has never heard of them answers "I cannot run on a
+  // schedule" to a question the product has a screen for.
+  lines.push(
+    '',
+    'Automations. You do not have to be asked in a message to run: the owner can start ' +
+      'a job for you from either of these, and you can suggest one when a request is ' +
+      'really a recurring need:',
+  );
+  for (const automation of AUTOMATION_KINDS) {
+    lines.push(`- \`${automation.kind}\` — ${automation.summary}. Created in ${automation.where}.`);
   }
 
   return lines.join('\n');
