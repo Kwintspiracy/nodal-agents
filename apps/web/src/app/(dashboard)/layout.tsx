@@ -150,7 +150,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
               ici c'en est un exprès, et le collant s'y réfère, ce qui est
               justement voulu.
             */}
-              <div className="min-h-0 flex-1 overflow-x-clip overflow-y-auto">{children}</div>
+              {/*
+              `flex flex-col` en plus (20/09) : un écran `fill` (un fil, un run)
+              prenait sa hauteur par `h-full`, un POURCENTAGE de ce bloc. Sur
+              Safari, le pourcentage ne se résout pas à l'intérieur d'un
+              élément flex dimensionné par `flex-1` : la page prenait la hauteur
+              de son contenu, la saisie et la barre d'état descendaient sous le
+              bord de l'écran, et il fallait défiler (Quentin, sur iPad). En
+              colonne flex, l'écran prend le reste par `flex-1`, sans pourcentage,
+              et Safari le calcule comme les autres.
+            */}
+              <div className="flex min-h-0 flex-1 flex-col overflow-x-clip overflow-y-auto">
+                {children}
+              </div>
             </main>
 
             <ThemedToaster />

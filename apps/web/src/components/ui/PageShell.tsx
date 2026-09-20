@@ -124,7 +124,11 @@ export default function PageShell(props: Props) {
     // pour les écrans qui remplissent vraiment le cadre : un fil de chat, la
     // page d'un run, la page d'un projet.
     return (
-      <div className="flex h-full min-h-0 flex-col">
+      // `flex-1` ET `h-full` : la zone de défilement de la disposition est une
+      // colonne flex, et `flex-1` y donne le reste de la hauteur sans passer
+      // par un pourcentage — celui que Safari ne résout pas (20/09, iPad).
+      // `h-full` reste pour un conteneur qui ne serait pas une colonne flex.
+      <div className="flex h-full min-h-0 flex-1 flex-col">
         {head}
         {toolbar && toolbarBleed && toolbar}
         {/* La rangée : le contenu à gauche, le panneau ancré à droite. Elle
