@@ -257,7 +257,10 @@ test.describe('what the thread says when a delegation ends @cap:organiser-equipe
     await expect(delegation.getByText(parentName)).toBeVisible();
     await expect(delegation.getByText('delegated to')).toBeVisible();
     await expect(delegation.getByText(childName)).toBeVisible();
-    await expect(delegation.locator('span.bg-err')).toBeVisible();
+    // Par ce que la pastille DIT, pas par sa couleur : `span.bg-err` désignait
+    // un jeton de thème, et un renommage de jeton aurait rendu ce test muet
+    // sans que rien ne casse à l'écran (issue #55).
+    await expect(delegation.locator('[data-outcome="failed"]')).toBeVisible();
 
     // 3. The reason itself is one click away, and it is the reason — not the
     //    "(no output)" placeholder that made #107 look like an answer.
@@ -297,7 +300,7 @@ test.describe('what the thread says when a delegation ends @cap:organiser-equipe
     await expect(delegation.getByText(parentName)).toBeVisible();
     await expect(delegation.getByText('delegated to')).toBeVisible();
     await expect(delegation.getByText(childName)).toBeVisible();
-    await expect(delegation.locator('span.bg-ok').first()).toBeVisible();
+    await expect(delegation.locator('[data-outcome="ok"]').first()).toBeVisible();
 
     // Closed, the row says what the sub-agent was ASKED (#135): the head is the
     // task, the deliverable is one click away.

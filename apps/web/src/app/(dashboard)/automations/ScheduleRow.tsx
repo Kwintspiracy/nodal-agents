@@ -13,7 +13,17 @@ interface Props {
 
 export default function ScheduleRow({ schedule: s, agents }: Props) {
   return (
-    <div className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5">
+    /* Ancre stable (issue #55). Quatre parcours désignaient cette carte par
+       `.rounded-xl`, une classe de mise en forme : le jour où un `rounded-xl`
+       est devenu `rounded-2xl`, huit parcours sont passés au rouge d'un coup,
+       en silence, sans qu'une seule fonctionnalité soit cassée. Le genre vit à
+       côté de l'ancre pour qu'un lecteur du DOM sache de quelle carte il
+       s'agit sans avoir à lire son titre. */
+    <div
+      data-testid="automation-card"
+      data-automation-kind="schedule"
+      className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5"
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">

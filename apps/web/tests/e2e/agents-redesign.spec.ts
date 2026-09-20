@@ -77,10 +77,21 @@ async function firstOrchestratorWithWorker(
   });
 }
 
+/**
+ * La poignée de la ligne de ce worker.
+ *
+ * Passait par un xpath qui remontait au premier ancêtre `rounded-[10px]` : un
+ * RAYON DE BORDURE pris pour une structure, qu'il suffisait de retoucher pour
+ * rendre ce parcours muet (issue #55). `data-worker-row` porte l'identifiant de
+ * l'agent, donc la ligne se désigne sans lire ni classe ni prose.
+ */
 function workerDragHandle(page: Page, workerName: string) {
-  return page.locator(
-    `xpath=//p[normalize-space(text())=${JSON.stringify(workerName)}]/ancestor::div[contains(@class,"rounded-[10px]")][1]//span[@aria-label="Drag row"]`,
-  );
+  return page
+    .locator('[data-worker-row]')
+    .filter({ hasText: workerName })
+    .first()
+    .locator('[aria-label="Drag row"]')
+    .first();
 }
 
 /** Pointer-simulated drag fallback (used only when the keyboard fallback
@@ -324,11 +335,26 @@ test.describe('Agents page redesign @cap:organiser-equipe/ecran', () => {
     // ── 4. MODAL ADD WORKER (non-dismissable) ───────────────────────────
     // `workerName` now sits in Unassigned, so it's a real, visible candidate
     // in Alfred's picker.
-    const orchestratorEyebrow2 = page.getByText('Orchestrator', { exact: true }).first();
-    const orchestratorCard2 = orchestratorEyebrow2.locator(
-      'xpath=ancestor::div[contains(@class,"rounded-2xl")][1]',
-    );
-    await orchestratorCard2.getByRole('button', { name: 'Add worker' }).click();
+    // Par l'ANCRE de la carte, et son bouton PROPRE. Remonter d'un « Orchestrator »
+    // jusqu'au premier ancêtre `rounded-2xl` tenait deux prises fragiles à la
+    // fois : le libellé, qui porte maintenant le moteur (« Orchestrator · codex »),
+    // et le rayon de bordure. Le bouton, lui, existe aussi dans chaque
+    // orchestrateur imbriqué de la carte, d'où l'ancre qui porte l'identifiant
+    // (issue #55).
+    //
+    // ⚠️ L'exclusion de « Unassigned » se fait DANS le sélecteur, pas par un
+    // `filter({ hasNot })` : `hasNot` regarde les DESCENDANTS, et l'attribut
+    // qui distingue cette carte est sur la carte ELLE-MÊME. Le filtre
+    // n'excluait donc rien, et le cas ne passait que par l'ordre du DOM — les
+    // orchestrateurs sont rendus avant « Unassigned », et `.first()` tombait
+    // du bon côté par chance (revue de la PR #293).
+    const orchestratorCard2 = page
+      .locator('[data-orchestrator-card]:not([data-testid$="unassigned"])')
+      .first();
+    const cardId2 = await orchestratorCard2.getAttribute('data-testid');
+    await orchestratorCard2
+      .getByTestId(String(cardId2).replace('orchestrator-card-', 'add-worker-'))
+      .click();
     const modal = page.getByRole('dialog');
     await expect(modal).toBeVisible();
     await expect(modal.getByText(/^Add worker to /)).toBeVisible();
@@ -358,10 +384,12 @@ test.describe('Agents page redesign @cap:organiser-equipe/ecran', () => {
       // Drop onto an existing worker row in the origin card (not the card's
       // outer bounding box) so dnd-kit's collision detection has a concrete
       // sortable item to resolve `over` against.
+      // Par l'ANCRE de la carte qui contient ce nom, pas par un ancêtre choisi
+      // sur son rayon de bordure (issue #55).
       const originCard = page
-        .getByText(orchestratorName, { exact: true })
-        .first()
-        .locator('xpath=ancestor::div[contains(@class,"rounded-2xl")][1]');
+        .locator('[data-orchestrator-card]')
+        .filter({ hasText: orchestratorName })
+        .first();
       await pointerDragWorkerOnto(
         page,
         workerName,

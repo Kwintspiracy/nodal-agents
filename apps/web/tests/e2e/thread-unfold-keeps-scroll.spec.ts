@@ -407,6 +407,20 @@ async function openThread(page: Page): Promise<Locator> {
   const runRows = page.locator('[data-testid^="run-summary-"]');
   await expect(runRows.first(), 'le fil semé ne porte aucune ligne de run').toBeVisible();
   await expect(runRows, 'le fil semé porte deux travaux').toHaveCount(2);
+  // ON ATTEND QUE LE FIL SOIT BRANCHÉ, pas seulement qu'il soit à l'écran
+  // (issue #71). Les lignes ci-dessus viennent du SERVEUR : elles sont visibles
+  // avant que `ThreadScroller` n'existe. Mesurer ou cliquer à cet instant-là,
+  // c'est lire un fil dont la position est encore 0 et dont les boutons ne
+  // répondent pas — ce qui a rendu ce fichier rouge sur le runner du 19/09
+  // (4266 px sous la zone visible pour le cas C, `aria-expanded` figé à
+  // « false » pour A et B) alors qu'il passait sur toute machine rapide.
+  //
+  // Aucune assertion n'est affaiblie : ce qui suit mesure exactement la même
+  // chose, sur un fil qui a fini de se poser au lieu d'un fil à moitié rendu.
+  await expect(
+    page.locator('[data-thread-scroller][data-scroller-ready]'),
+    'le fil n’a jamais été branché : `ThreadScroller` n’a pas posé son marqueur de montage',
+  ).toBeAttached({ timeout: 15_000 });
   return runRows;
 }
 

@@ -17,7 +17,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { requireLiveStack, testSlugSuffix } from './helpers.ts';
+import { requireLiveStack, testSlugSuffix, automationCard } from './helpers.ts';
 
 const WEBHOOK_NAME = `Webhook E2E ${testSlugSuffix()}`;
 const SCREENSHOT_DIR =
@@ -104,9 +104,7 @@ test.describe('Webhooks section — full click flow @cap:declencher-sur-evenemen
     await successPanel.getByRole('button', { name: /^done$/i }).click();
 
     // ── The row now appears in the list, still revealing the URL this session ──
-    const webhookCard = page.locator('.rounded-xl').filter({
-      has: page.getByRole('heading', { name: WEBHOOK_NAME }),
-    });
+    const webhookCard = automationCard(page, WEBHOOK_NAME);
     await expect(webhookCard).toBeVisible({ timeout: 10_000 });
     await expect(webhookCard.getByText(/webhook url/i)).toBeVisible({ timeout: 5_000 });
     await expect(webhookCard.getByRole('button', { name: /^copy$/i })).toBeVisible();
@@ -182,7 +180,7 @@ async function deleteWebhookIfPresent(page: Page, name: string): Promise<void> {
     await page.goto('/automations');
     await page.waitForLoadState('networkidle');
 
-    const card = page.locator('.rounded-xl').filter({ has: page.getByRole('heading', { name }) });
+    const card = automationCard(page, name);
     if (!(await card.isVisible().catch(() => false))) return;
 
     await card.getByRole('button', { name: /^delete$/i }).click();

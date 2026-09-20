@@ -25,7 +25,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { requireLiveStack } from './helpers.ts';
+import { requireLiveStack, automationCard } from './helpers.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCREENSHOT_DIR = path.join(__dirname, '..', '..', 'test-results', 'notify-channel');
@@ -172,9 +172,7 @@ test.describe("Scenario 1 — Schedule form: Notify via lists only the agent's r
       timeout: 10_000,
     });
 
-    const card = page
-      .locator('.rounded-xl')
-      .filter({ has: page.getByRole('heading', { name: SCHEDULE_NAME }) });
+    const card = automationCard(page, SCHEDULE_NAME);
     // "Notifies" badge should be present on the row itself.
     await expect(card.getByText(/notifies/i)).toBeVisible({ timeout: 5_000 });
 
@@ -256,17 +254,13 @@ test.describe('Scenario 2 — Webhook form: Notify via + Auto persists, badge on
     await expect(page.getByRole('heading', { name: WEBHOOK_NAME })).toBeVisible({
       timeout: 10_000,
     });
-    const card = page
-      .locator('.rounded-xl')
-      .filter({ has: page.getByRole('heading', { name: WEBHOOK_NAME }) });
+    const card = automationCard(page, WEBHOOK_NAME);
     await expect(card.getByText(/notifies/i)).toBeVisible({ timeout: 5_000 });
 
     // ── Reload persistence check ───────────────────────────────────────
     await page.reload();
     await page.waitForLoadState('networkidle');
-    const cardAfterReload = page
-      .locator('.rounded-xl')
-      .filter({ has: page.getByRole('heading', { name: WEBHOOK_NAME }) });
+    const cardAfterReload = automationCard(page, WEBHOOK_NAME);
     await expect(cardAfterReload.getByText(/notifies/i)).toBeVisible({ timeout: 10_000 });
 
     // ── Cleanup (delete — never fire it) ───────────────────────────────
@@ -434,7 +428,7 @@ async function deleteScheduleIfPresent(page: Page, name: string): Promise<void> 
     await page.goto('/automations');
     await page.waitForLoadState('networkidle');
 
-    const card = page.locator('.rounded-xl').filter({ has: page.getByRole('heading', { name }) });
+    const card = automationCard(page, name);
     if (!(await card.isVisible().catch(() => false))) return;
 
     const deleteBtn = card.getByRole('button', { name: /^delete$/i });
@@ -456,7 +450,7 @@ async function deleteWebhookIfPresent(page: Page, name: string): Promise<void> {
     await page.goto('/automations');
     await page.waitForLoadState('networkidle');
 
-    const card = page.locator('.rounded-xl').filter({ has: page.getByRole('heading', { name }) });
+    const card = automationCard(page, name);
     if (!(await card.isVisible().catch(() => false))) return;
 
     const deleteBtn = card.getByRole('button', { name: /^delete$/i });

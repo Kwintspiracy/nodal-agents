@@ -262,12 +262,14 @@ export default function LearnedSkillsClient({
             onClick={() => handleModeChange('auto')}
             name="Auto-assign to the agent"
             description="The skill is immediately available to the agent that authored it."
+            testId="assign-mode-auto"
           />
           <OptionRadio
             active={mode === 'approval'}
             onClick={() => handleModeChange('approval')}
             name="Require my approval"
             description="New skills are created unassigned - you assign them manually from this page."
+            testId="assign-mode-approval"
           />
         </div>
       </div>

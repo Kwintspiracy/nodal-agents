@@ -8,7 +8,7 @@
 //     remonter devient impossible.
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { act, createElement } from 'react';
+import { act, createElement, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import ThreadScroller, {
   staysAtBottom,
@@ -17,6 +17,7 @@ import ThreadScroller, {
   scrollPolicy,
   AT_BOTTOM_SLACK_PX,
   READER_GESTURE_WINDOW_MS,
+  type ThreadFollow,
 } from '../ThreadScroller.tsx';
 
 /** Un fil de 3000 px dans une fenêtre de 800 px : 2200 px de course. */
@@ -351,5 +352,66 @@ describe('ThreadScroller — ouvrir une boîte éteint le suivi @cap:parler-a-un
       geometry.scrollTop(),
       'le lecteur était en bas et n’a pas été suivi : la queue du dépliage a éteint le suivi',
     ).toBe(4000);
+  });
+});
+
+// ─── Le marqueur de montage (issue #71) ──────────────────────────────────────
+//
+// Le fil est rendu par le SERVEUR : ses lignes sont à l'écran, et cliquables à
+// l'œil, avant que ce composant n'existe. Un parcours qui mesure la position ou
+// qui clique dès qu'une ligne est visible lit donc un fil pas encore branché —
+// position 0, boutons inertes. Sur une machine rapide cela ne se voit jamais ;
+// sur le runner du 19/09, `thread-unfold-keeps-scroll` a mesuré 4266 px sous la
+// zone visible d'un fil qui devait s'ouvrir en bas, et ses deux autres cas ont
+// cliqué une ligne qui n'a pas bougé.
+//
+// La zone dit donc quand elle est vivante, et les parcours attendent ce mot.
+describe('ThreadScroller — la zone dit quand elle est branchée @cap:parler-a-un-agent/ecran', () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(async () => {
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+    container = null;
+    root = null;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function render(follow: ThreadFollow = 'bottom'): Promise<HTMLElement> {
+    captureResizeObserver();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      // Les props dans une VARIABLE typée : `createElement` ne compte pas
+      // l'enfant passé en troisième argument, donc un objet littéral
+      // `{ follow }` ne satisfait pas `children`, requis par le composant.
+      const props: ComponentProps<typeof ThreadScroller> = {
+        follow,
+        children: createElement('p', null, 'le fil'),
+      };
+      root!.render(createElement(ThreadScroller, props));
+    });
+    const el = container.querySelector<HTMLElement>('[data-thread-scroller]');
+    if (!el) throw new Error('aucune zone de défilement rendue');
+    return el;
+  }
+
+  it('un fil monté porte le marqueur', async () => {
+    const el = await render();
+    expect(el.hasAttribute('data-scroller-ready')).toBe(true);
+  });
+
+  it('un tableau aussi : le marqueur dit MONTÉ, pas SUIVI', async () => {
+    const el = await render('never');
+    expect(el.hasAttribute('data-scroller-ready')).toBe(true);
+  });
+
+  it('le marqueur désigne la zone elle-même, celle que les parcours interrogent', async () => {
+    const el = await render();
+    const found = document.querySelector('[data-thread-scroller][data-scroller-ready]');
+    expect(found).toBe(el);
   });
 });

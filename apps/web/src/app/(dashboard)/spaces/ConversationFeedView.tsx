@@ -1021,7 +1021,14 @@ function DelegationGroup({
             {/* La pastille dit d'un coup d'œil si la passe a atterri ; elle ne
                 se dessine pas tant que le délégué court (rien à dire encore). */}
             {(done || failed) && (
-              <span className={`h-2 w-2 shrink-0 rounded-full ${done ? 'bg-ok' : 'bg-err'}`} />
+              /* `data-outcome` dit CE QUE la pastille annonce ; la classe dit
+                 seulement de quelle couleur elle est. Le parcours de #55 lisait
+                 `span.bg-err`, donc un jeton de thème : le renommer aurait rendu
+                 muet le test qui prouve qu'une délégation ratée se voit. */
+              <span
+                data-outcome={done ? 'ok' : 'failed'}
+                className={`h-2 w-2 shrink-0 rounded-full ${done ? 'bg-ok' : 'bg-err'}`}
+              />
             )}
             <StatusPill
               variant={done ? 'done' : failed ? 'warn' : 'run'}

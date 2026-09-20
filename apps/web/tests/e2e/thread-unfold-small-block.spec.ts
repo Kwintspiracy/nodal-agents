@@ -316,6 +316,12 @@ async function openAtTheSmallBlock(page: Page): Promise<Locator> {
   await page.goto(`/chat/${seeded.conversationId}`);
   const runRow = page.locator('[data-testid^="run-summary-"]').first();
   await expect(runRow, 'le fil semé ne porte aucune ligne de run').toBeVisible();
+  // Le fil est rendu par le SERVEUR : ses lignes sont visibles avant que
+  // `ThreadScroller` n'existe, et un clic posé là ne bascule rien (issue #71).
+  await expect(
+    page.locator('[data-thread-scroller][data-scroller-ready]'),
+    'le fil n’a jamais été branché : `ThreadScroller` n’a pas posé son marqueur de montage',
+  ).toBeAttached({ timeout: 15_000 });
   if ((await runRow.getAttribute('aria-expanded')) !== 'true') {
     await runRow.click();
   }
