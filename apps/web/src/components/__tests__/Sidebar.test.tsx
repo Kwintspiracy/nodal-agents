@@ -86,7 +86,8 @@ import {
   SIDEBAR_ROW_IDLE,
   SIDEBAR_ROW_IDLE_CONTENT,
 } from '../ui/SidebarRow';
-import { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
+import RailCell, { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
+import { ListMagnifyingGlass } from '@phosphor-icons/react';
 import { SIDEBAR_POLL_MS } from '@/lib/use-polling';
 import { DESTINATIONS, RAIL_FOOT } from '../sidebar-nav.ts';
 import type { FolderThread } from '@/lib/chat-folders.ts';
@@ -110,11 +111,23 @@ const ESPACES = [
 async function renderSidebar(
   channels: string[] = [],
   attentes: PendingApproval[] = [],
+  /**
+   * CE QUI TOURNE, tel que le provider le porte (#300, #303). Ce que le test
+   * ne dit pas vaut zero : une barre ou rien ne tourne est l'etat courant.
+   */
+  tourne: { runsInProgress?: number; workConversationsInProgress?: number } = {},
 ): Promise<void> {
   await render(
     <ApprovalsProvider initial={attentes}>
       <ChatFoldersProvider
-        initial={{ channels, running: {}, runningConversationIds: [], externalRuns: 0 }}
+        initial={{
+          channels,
+          running: {},
+          runningConversationIds: [],
+          externalRuns: 0,
+          runsInProgress: tourne.runsInProgress ?? 0,
+          workConversationsInProgress: tourne.workConversationsInProgress ?? 0,
+        }}
       >
         <Sidebar workspaces={ESPACES} />
       </ChatFoldersProvider>
@@ -208,7 +221,14 @@ beforeEach(() => {
   vi.mocked(listApprovalsAction).mockResolvedValue({ ok: true, data: [] });
   vi.mocked(getChatFoldersAction).mockResolvedValue({
     ok: true,
-    data: { channels: [], running: {}, runningConversationIds: [], externalRuns: 0 },
+    data: {
+      channels: [],
+      running: {},
+      runningConversationIds: [],
+      externalRuns: 0,
+      runsInProgress: 0,
+      workConversationsInProgress: 0,
+    },
   });
 });
 
@@ -775,7 +795,14 @@ describe('les listes du panneau se lisent en base @cap:installer-et-demarrer/ecr
       root.render(
         <ApprovalsProvider initial={[]}>
           <ChatFoldersProvider
-            initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+            initial={{
+              channels: [],
+              running: {},
+              runningConversationIds: [],
+              externalRuns: 0,
+              runsInProgress: 0,
+              workConversationsInProgress: 0,
+            }}
           >
             <Sidebar workspaces={[]} />
           </ChatFoldersProvider>
@@ -1173,7 +1200,14 @@ describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
     await render(
       <ApprovalsProvider initial={[]}>
         <ChatFoldersProvider
-          initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+          initial={{
+            channels: [],
+            running: {},
+            runningConversationIds: [],
+            externalRuns: 0,
+            runsInProgress: 0,
+            workConversationsInProgress: 0,
+          }}
         >
           <Sidebar workspaces={[]} userMenu={<p>quentin@example.com</p>} />
         </ChatFoldersProvider>
@@ -1216,7 +1250,14 @@ describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
     await render(
       <ApprovalsProvider initial={[]}>
         <ChatFoldersProvider
-          initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+          initial={{
+            channels: [],
+            running: {},
+            runningConversationIds: [],
+            externalRuns: 0,
+            runsInProgress: 0,
+            workConversationsInProgress: 0,
+          }}
         >
           <Sidebar workspaces={[]} userMenu={<p>quentin@example.com</p>} />
         </ChatFoldersProvider>
@@ -1305,5 +1346,125 @@ describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
       document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     });
     expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
+  });
+});
+
+// ─── Ce qui TOURNE, dit par le rail (#300, #303) ──────────────────────────────
+//
+// Deux cases du rail portent un point qui bat quand quelque chose avance : Logs
+// pour les runs, Work pour les conversations de sa section. Le fait vient de
+// l'INSTANTANE du provider que la barre sonde deja (`ChatFoldersProvider`), et
+// d'aucune seconde lecture : ces cas montent la barre avec l'instantane voulu et
+// lisent ce que le rail en fait.
+//
+// Le point est `aria-hidden` : ce qu'il montre, le nom de la case le DIT, et
+// c'est ce nom que ces cas verifient a cote du point.
+
+/** Le point « ca tourne » d'une case du rail, ou `null` s'il n'y en a pas. */
+function pointQuiTourne(key: string): HTMLElement | null {
+  return container.querySelector<HTMLElement>(`[data-testid="rail-${key}-running"]`);
+}
+
+describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    document.body.innerHTML = '';
+  });
+
+  it('allume la case Logs quand un run tourne, et le NOMBRE se dit', async () => {
+    pathname = '/agents';
+    await renderSidebar([], [], { runsInProgress: 2 });
+    const point = pointQuiTourne('logs');
+    expect(point).not.toBeNull();
+    // Le MEME point que partout ailleurs dans le produit : lime, avec son halo
+    // qui bat. Un point vert immobile dirait « fini », pas « en cours ».
+    const rond = point!.querySelector('span');
+    expect(rond?.className).toContain('bg-agent-vivid');
+    expect(rond?.className).toContain('animate-[blip-lime');
+    // La TAILLE du point est celle du reste de la barre : 7 px. Un point plus
+    // gros dans une case de 52 se lirait comme une pastille.
+    expect(rond?.className).toContain('h-[7px]');
+    // Le point ne s'annonce pas deux fois : la case le dit en toutes lettres.
+    expect(point!.getAttribute('aria-hidden')).toBe('true');
+    expect(railCell('logs').getAttribute('aria-label')).toBe('Logs, 2 runs in progress');
+  });
+
+  it('n’allume rien sur Logs quand aucun run ne tourne', async () => {
+    pathname = '/agents';
+    await renderSidebar([], [], { runsInProgress: 0 });
+    expect(pointQuiTourne('logs')).toBeNull();
+    // Et la case ne se renomme pas pour dire qu'il ne se passe rien : son
+    // libelle suffit.
+    expect(railCell('logs').getAttribute('aria-label')).toBeNull();
+  });
+
+  it('allume la case Work quand UNE conversation de sa section tourne', async () => {
+    pathname = '/agents';
+    await renderSidebar([], [], { workConversationsInProgress: 1 });
+    expect(pointQuiTourne('work')).not.toBeNull();
+    // Au SINGULIER : une conversation, pas « 1 conversations ».
+    expect(railCell('work').getAttribute('aria-label')).toBe('Work, 1 conversation in progress');
+    // Et Logs reste eteint : les deux cases comptent deux choses differentes,
+    // et rien ne les fait s'allumer ensemble.
+    expect(pointQuiTourne('logs')).toBeNull();
+  });
+
+  it('n’allume rien sur Work quand aucune conversation ne tourne', async () => {
+    pathname = '/agents';
+    await renderSidebar([], [], { workConversationsInProgress: 0, runsInProgress: 3 });
+    expect(pointQuiTourne('work')).toBeNull();
+    expect(railCell('work').getAttribute('aria-label')).toBeNull();
+    // Un run tourne pourtant : il n'est simplement dans aucune conversation de
+    // Work - une automatisation, un webhook. Logs le montre, Work non.
+    expect(pointQuiTourne('logs')).not.toBeNull();
+  });
+
+  it('laisse a Approvals son coin : la ou il y a une pastille, rien ne tourne', async () => {
+    pathname = '/agents';
+    const uneAttente: PendingApproval[] = [
+      {
+        id: 'a0',
+        jobId: 'j0',
+        toolName: 'send_message',
+        agentName: null,
+        toolInput: {},
+        requestedAt: null,
+        jobChannel: 'dashboard',
+        conversationChannel: 'dashboard',
+      },
+    ];
+    await renderSidebar([], uneAttente, { runsInProgress: 4 });
+    // La pastille tient le coin DROIT, et le point de Logs le coin GAUCHE :
+    // deux coins, donc aucun recouvrement possible, quelle que soit la case.
+    const pastille = railCell('approvals').querySelector('span[class*="bg-err"]');
+    expect(pastille).not.toBeNull();
+    expect(pastille!.className).toContain('right-1');
+    expect(pointQuiTourne('logs')!.className).toContain('left-1');
+    expect(pointQuiTourne('approvals')).toBeNull();
+    expect(railCell('approvals').getAttribute('aria-label')).toBe('Approvals, 1 pending');
+  });
+
+  it('pose le point et la pastille dans DEUX coins, meme sur une seule case', async () => {
+    // La regle se lit sur le composant, pas sur le cablage du jour (Reviewer C,
+    // passe 1) : aucune case ne porte les deux aujourd'hui, et celle qui le
+    // ferait demain ne doit pas poser le point SUR le chiffre.
+    await render(
+      <RailCell
+        href="/logs"
+        label="Logs"
+        icon={ListMagnifyingGlass}
+        pill={3}
+        running={{ count: 2, noun: 'run' }}
+        testId="rail-deux"
+      />,
+    );
+    const cellule = container.querySelector('[data-testid="rail-deux"]')!;
+    expect(cellule.querySelector('span[class*="bg-err"]')!.className).toContain('right-1');
+    const point = container.querySelector('[data-testid="rail-deux-running"]')!;
+    expect(point.className).toContain('left-1');
+    expect(point.className).not.toContain('right-1');
+    // Et le nom dit les DEUX, dans cet ordre : ce qui attend, puis ce qui
+    // avance.
+    expect(cellule.getAttribute('aria-label')).toBe('Logs, 3 pending, 2 runs in progress');
   });
 });

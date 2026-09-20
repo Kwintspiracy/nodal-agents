@@ -122,6 +122,8 @@ async function renderGroup(opts: {
       running: opts.running ?? {},
       runningConversationIds: [],
       externalRuns: opts.externalRuns ?? 0,
+      runsInProgress: 0,
+      workConversationsInProgress: 0,
     },
   });
   await render(
@@ -134,6 +136,8 @@ async function renderGroup(opts: {
           // dossier, elles, s'en servent (#135).
           runningConversationIds: [],
           externalRuns: opts.externalRuns ?? 0,
+          runsInProgress: 0,
+          workConversationsInProgress: 0,
         }}
       >
         <ChatFolderGroup />
@@ -180,7 +184,14 @@ beforeEach(() => {
   // rendus qui ne passent pas par lui.
   vi.mocked(getChatFoldersAction).mockResolvedValue({
     ok: true,
-    data: { channels: [], running: {}, runningConversationIds: [], externalRuns: 0 },
+    data: {
+      channels: [],
+      running: {},
+      runningConversationIds: [],
+      externalRuns: 0,
+      runsInProgress: 0,
+      workConversationsInProgress: 0,
+    },
   });
 });
 

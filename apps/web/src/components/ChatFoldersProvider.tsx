@@ -48,6 +48,8 @@ const FALLBACK: ChatFoldersContextValue = {
   running: {},
   runningConversationIds: [],
   externalRuns: 0,
+  runsInProgress: 0,
+  workConversationsInProgress: 0,
 };
 
 export function useChatFolders(): ChatFoldersContextValue {
