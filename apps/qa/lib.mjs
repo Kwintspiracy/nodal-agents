@@ -2426,6 +2426,11 @@ export function fusionnerTableauGitHub(mesure, frais) {
     // de figer l'état de publication, et c'est le rafraîchissement horaire qui
     // fait qu'une publication est vue dans l'heure et non la nuit suivante.
     release: frais?.release ?? mesure.release ?? null,
+    // Le déploiement vient des runs de GitHub, relus à chaque rendu (#306).
+    // GitHub muet → `null`, DIT comme tel par la page ; jamais l'ancien état,
+    // qui affirmerait « déployé à telle heure » sans avoir regardé.
+    deploiement:
+      frais?.deploiement === undefined ? (mesure.deploiement ?? null) : frais.deploiement,
   };
   if (!frais?.chantiers) return socle;
   return {
@@ -2532,4 +2537,49 @@ export function repartitionDeLaMesure(paquets = []) {
     out[bacs[e.etat]].push({ nom: p?.nom ?? null, raison: e.raison });
   }
   return out;
+}
+
+/**
+ * Ce que les derniers runs de `docs.yml` disent du site (#306).
+ *
+ * GitHub ne garde qu'UN run en attente par groupe de concurrence et annule le
+ * plus ancien quand un second arrive. Chaque run construit `main` HEAD, donc
+ * un run annulé est REMPLACÉ par celui qui l'a annulé — s'il finit. Ce que la
+ * page doit dire : quand le site a été déployé pour la dernière fois, ce qui
+ * est arrivé aux runs partis depuis, et si l'un d'eux est tombé sans qu'un
+ * autre ait pris le relais (`enRetard`) : c'est le seul cas où le site est en
+ * retard sur `main` et où personne ne le sait.
+ *
+ * « Depuis » se lit sur `createdAt`, STRICTEMENT après le dernier succès : deux
+ * runs mis en file la même seconde (le cas du 20/09) se remplacent l'un
+ * l'autre, et celui qui a réussi a lu un `main` au moins aussi neuf.
+ *
+ * `null` pour `null` : GitHub muet n'est pas un site jamais déployé.
+ */
+export function etatDuDeploiement(runs) {
+  if (!Array.isArray(runs)) return null;
+  const succes = runs
+    .filter((r) => r?.conclusion === 'success' && r.createdAt)
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))[0];
+  const dernierSucces = succes
+    ? {
+        le: succes.updatedAt ?? succes.createdAt,
+        evenement: succes.event ?? null,
+        sha: succes.headSha ?? null,
+        url: succes.url ?? null,
+      }
+    : null;
+  const apres = succes ? runs.filter((r) => r?.createdAt && r.createdAt > succes.createdAt) : runs;
+  const depuis = { enCours: 0, annules: 0, echoues: 0 };
+  for (const r of apres) {
+    if (r?.status === 'in_progress' || r?.status === 'queued' || r?.status === 'waiting') {
+      depuis.enCours++;
+    } else if (r?.conclusion === 'cancelled') {
+      depuis.annules++;
+    } else if (r?.conclusion && r.conclusion !== 'success') {
+      depuis.echoues++;
+    }
+  }
+  const enRetard = depuis.enCours === 0 && depuis.annules + depuis.echoues > 0;
+  return { runsLus: runs.length, dernierSucces, depuis, enRetard };
 }

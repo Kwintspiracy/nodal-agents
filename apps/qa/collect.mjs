@@ -37,6 +37,7 @@ import {
   etatDeLaRelease,
   lectureDeNpm,
   commitsDepuisLeTag,
+  etatDuDeploiement,
   HORS_MESURE,
   etatDeMesure,
   repartitionDeLaMesure,
@@ -400,6 +401,39 @@ function prixCi() {
   return prixDeLaCi(runs);
 }
 
+// ─── 7 quater. Le déploiement des docs et du portail ──────────────────────────
+
+/**
+ * Les trente derniers runs de `docs.yml`, réduits à ce qu'ils disent du site :
+ * quand il a été déployé pour la dernière fois, et ce qui est arrivé aux runs
+ * partis depuis.
+ *
+ * Le 20/09/2026 le déploiement de `main` a été ANNULÉ par GitHub — un second
+ * run mis en file la même seconde, dans le même groupe — et rien ne l'a dit
+ * (#306). Chaque run construit `main` HEAD, donc un run annulé est remplacé
+ * par celui qui l'a annulé ; ce qui reste à voir, c'est un remplacement qui
+ * n'a pas eu lieu. La lecture est ici, l'arithmétique dans `lib.mjs`.
+ *
+ * `null` — jamais un état inventé — quand `gh` n'a pas répondu, et DIT.
+ */
+function deploiement() {
+  const champs = 'databaseId,status,conclusion,event,createdAt,updatedAt,headSha,url';
+  const out = sh(`gh run list --workflow docs.yml --limit 30 --json ${champs}`);
+  let runs = null;
+  if (out) {
+    try {
+      runs = JSON.parse(out);
+    } catch {
+      runs = null;
+    }
+  }
+  if (!runs) {
+    console.warn('[qa] GitHub did not answer on the docs deploys, the deploy state is MISSING.');
+    return null;
+  }
+  return etatDuDeploiement(runs);
+}
+
 /**
  * L'exécution qui a produit cette collecte, et son adresse.
  *
@@ -561,6 +595,7 @@ function rafraichirGitHub() {
     chantiers: chantiers(),
     prixCi: prixCi(),
     release: release(),
+    deploiement: deploiement(),
     le: new Date().toISOString(),
   };
   const snapshot = fusionnerTableauGitHub(lireJson(chemin), frais);
@@ -678,6 +713,9 @@ function main() {
     // Ce que npm sert VRAIMENT, face à ce que le dépôt porte. Le seul fait qui
     // pouvait contredire l'issue #68, et qui manquait.
     release: release(),
+    // Quand le site a été déployé pour la dernière fois, et ce qui est arrivé
+    // aux runs depuis (#306).
+    deploiement: deploiement(),
   };
 
   writeFileSync(join(DATA, 'snapshot.json'), JSON.stringify(snapshot, null, 2));
