@@ -233,7 +233,7 @@ import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts
 // P2bis — le récapitulatif de livraison d'un run est posé par la fonction du
 // fil d'une conversation, jamais par une seconde lecture des mêmes lignes.
 import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
-import { classifyProduction } from './chat-or-work.ts';
+import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
 import { probeContextWindow } from '@nodal-agents/llm';
 import {
   systemSkillSlugs,
@@ -2536,6 +2536,7 @@ export async function getSpaceConversationAction(
       costRows,
       approvalRows,
       classifiableRows,
+      constatRows,
       projectRows,
       workspaceRoots,
       reviewVerdicts,
@@ -2632,6 +2633,9 @@ export async function getSpaceConversationAction(
           toolName: toolCalls.toolName,
           card: toolCalls.card,
           presented: toolCalls.presented,
+          // Le tour : c'est par lui que la ligne rejoint son constat
+          // d'écriture, dont la clé est (job, tour, chemin) — #197.
+          turn: toolCalls.turn,
           riskLevel: toolCalls.riskLevel,
           toolInput: toolCalls.toolInput,
           toolOutput: toolCalls.toolOutput,
@@ -2639,6 +2643,14 @@ export async function getSpaceConversationAction(
         .from(toolCalls)
         .where(and(eq(toolCalls.entityId, session.entityId), inArray(toolCalls.jobId, relevantIds)))
         .orderBy(toolCalls.createdAt),
+      // #197 — LES ÉCRITURES CONSTATÉES de ce travail et de sa descendance,
+      // ce que le verdict chat/travail interroge pour trancher une commande.
+      // Le job et le tour suffisent : le verdict demande « ce tour a-t-il
+      // écrit ? », jamais quels fichiers.
+      db
+        .selectDistinct({ jobId: constatedWrites.jobId, turn: constatedWrites.turn })
+        .from(constatedWrites)
+        .where(inArray(constatedWrites.jobId, relevantIds)),
       // Le projet du travail, quand il en a un : le récapitulatif dit d'où
       // sort ce qu'il a produit.
       job.projectId !== null
@@ -2720,6 +2732,8 @@ export async function getSpaceConversationAction(
       verdict: classifyProduction({
         conversation: { channel: job.channel, chatId: job.chatId },
         rows: auditRows,
+        // #197 — le MÊME fait constaté que la primitive de vérification.
+        constatedTurns: new Set(constatRows.map((r) => constatedTurnKey(r.jobId, r.turn))),
       }),
       project:
         projectRow === undefined

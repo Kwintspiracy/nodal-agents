@@ -32,6 +32,30 @@
 // aucun. La carte `delegation` elle-même ne compte pas — déléguer n'est pas
 // produire — et `checks` non plus : la preuve est faite PAR le runner, sur ce
 // qui a déjà été produit.
+//
+// LA COMMANDE EST LA SEULE CARTE QUE LA CARTE NE SUFFIT PAS À TRANCHER (#197)
+// ----------------------------------------------------------------------------
+// Une carte `terminal` disait « travail » du seul fait d'exister. C'était le
+// dernier endroit où ce fil croyait une DÉCLARATION : la carte prouve qu'une
+// commande a tourné, jamais qu'elle a écrit quoi que ce soit. La primitive de
+// vérification a cessé de le croire en #102 — le `cwd` d'un shell ne crédite
+// plus rien — et #199 a rangé ce qui a VRAIMENT été écrit dans
+// `constated_writes`, une ligne par fichier constaté, sur le disque ou par git.
+// Le verdict du fil lit désormais ce MÊME fait.
+//
+// La granularité est (job, tour), la plus fine que la table offre : sa clé est
+// (job, tour, chemin), et aucune ligne ne dit QUEL appel a écrit. Un tour qui
+// écrit un fichier ET lance un `ls` crédite donc les deux ; on le dit plutôt
+// que de laisser croire à une précision qu'on n'a pas.
+//
+// LE MILIEU AMBIGU, DÉCIDÉ : un shell qui a écrit sans nommer de fichier. Dans
+// un dépôt, le constat par git le voit et la commande est certaine. Hors dépôt,
+// rien n'est observé, et la commande sort INCERTAINE — comptée dans
+// `uncertain`, jamais décisive à elle seule. C'est la règle du connecteur tiers
+// sans risque déclaré, mot pour mot : on ne tranche pas, on le dit
+// (invariant #4). La retomber d'office en « chat » peindrait en vert un travail
+// réel ; la garder en « travail » est précisément le faux vert que #196 vient
+// de retirer de l'autre côté.
 
 import { parsePresented, outcomeOfToolOutput } from './tool-card-payload.ts';
 
@@ -39,6 +63,11 @@ import { parsePresented, outcomeOfToolOutput } from './tool-card-payload.ts';
 export type ClassifiableRow = {
   /** Le job qui a fait l'appel : celui de tête, ou l'un de ses descendants. */
   jobId: string | null;
+  /**
+   * Le tour du runner qui a fait l'appel. Il sert à rapprocher la ligne du
+   * constat d'écriture, dont la clé est (job, tour, chemin) — #197.
+   */
+  turn: number | null;
   toolName: string;
   card: string | null;
   presented: unknown;
@@ -57,14 +86,22 @@ export type ClassifiableRow = {
 export type ProducedItem =
   | { kind: 'file'; label: string; path: string | null }
   | { kind: 'sent'; label: string }
-  | { kind: 'command'; label: string }
+  /**
+   * Une commande. `certain` dit si une écriture a été CONSTATÉE sur son tour
+   * (#197) : à faux, elle ne décide pas à elle seule qu'il y a eu travail.
+   */
+  | { kind: 'command'; label: string; certain: boolean }
   | { kind: 'harness'; label: string }
   | { kind: 'external'; label: string; certain: boolean };
 
 export type ProductionVerdict = {
   isWork: boolean;
   items: ProducedItem[];
-  /** Combien de classements reposent sur un risque NON déclaré. */
+  /**
+   * Combien de classements ne reposent sur aucun fait qui tranche : un
+   * connecteur tiers sans risque déclaré, une commande dont aucune écriture
+   * n'a été constatée (#197).
+   */
   uncertain: number;
   /** Combien de fichiers l'encart ne nomme pas (plafond). */
   more: number;
@@ -79,6 +116,20 @@ export type ProductionVerdict = {
 
 /** Le plafond de fichiers nommés dans un encart — au-delà, il compte. */
 export const PRODUCED_FILES_MAX = 8;
+
+/**
+ * La clé d'un TOUR dans l'ensemble des écritures constatées (#197).
+ *
+ * UNE seule définition, pour le chargeur qui bâtit l'ensemble depuis
+ * `constated_writes` comme pour la règle qui l'interroge : deux façons de
+ * composer la même clé divergeraient au premier chemin exotique, et une
+ * commande bel et bien constatée ressortirait incertaine sans que personne le
+ * voie. C'est la discipline d'`observedDeliverableKeys`, qui exige des deux
+ * côtés le même prédicat de projet.
+ */
+export function constatedTurnKey(jobId: string, turn: number): string {
+  return `${jobId}#${turn}`;
+}
 
 /** La commande, coupée : l'encart la reconnaît, il ne l'archive pas. */
 const COMMAND_MAX = 80;
@@ -158,6 +209,17 @@ export function classifyProduction(input: {
    * récursion est faite par l'appelant qui les charge.
    */
   rows: readonly ClassifiableRow[];
+  /**
+   * Les tours pour lesquels une écriture a été CONSTATÉE — les clés de
+   * `constatedTurnKey`, bâties sur `constated_writes` (#197, #199).
+   *
+   * OBLIGATOIRE, et sans repli. Un appelant qui l'oublierait retrouverait EN
+   * SILENCE la règle d'avant ce correctif — toute commande comptée comme
+   * travail — et le désaccord ne se verrait nulle part. L'oubli est une erreur
+   * du compilateur, pas un faux vert en production (même raison que le
+   * prédicat obligatoire d'`observedDeliverableKeys`).
+   */
+  constatedTurns: ReadonlySet<string>;
 }): ProductionVerdict {
   const items: ProducedItem[] = [];
   const harnessSeen = new Set<string>();
@@ -244,7 +306,18 @@ export function classifyProduction(input: {
         payload !== null && payload.card === 'terminal'
           ? truncate(payload.command, COMMAND_MAX)
           : row.toolName;
-      items.push({ kind: 'command', label });
+      // #197 — la carte prouve qu'une commande a tourné, jamais qu'elle a
+      // écrit. Une écriture constatée sur SON tour la tranche ; sans elle, la
+      // commande est dite incertaine et ne décide rien à elle seule.
+      //
+      // Une ligne sans job ni tour ne peut être rapprochée d'aucun constat :
+      // elle est incertaine par la même règle, jamais créditée par défaut.
+      const certain =
+        row.jobId !== null &&
+        row.turn !== null &&
+        input.constatedTurns.has(constatedTurnKey(row.jobId, row.turn));
+      if (!certain) uncertain += 1;
+      items.push({ kind: 'command', label, certain });
       continue;
     }
 
@@ -266,7 +339,9 @@ export function classifyProduction(input: {
   }
 
   // Un classement incertain ne DÉCIDE jamais qu'il y a eu travail — il n'est
-  // dit que lorsque autre chose l'a déjà décidé.
-  const isWork = items.some((i) => i.kind !== 'external' || i.certain);
+  // dit que lorsque autre chose l'a déjà décidé. La règle porte sur le CHAMP
+  // `certain`, pas sur la sorte d'item : une sorte de plus qui arriverait avec
+  // ce champ est couverte sans que personne y pense (#197).
+  const isWork = items.some((i) => !('certain' in i) || i.certain);
   return { isWork, items, uncertain, more, unclassified };
 }
