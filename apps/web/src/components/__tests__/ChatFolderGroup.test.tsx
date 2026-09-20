@@ -142,7 +142,17 @@ beforeEach(() => {
   pathname = '/chat';
   search = '';
   document.body.innerHTML = '';
+  // REMISE À ZÉRO, PUIS UNE RÉPONSE PAR DÉFAUT — les deux, et dans cet ordre.
+  //
+  // Le compte des appels doit repartir de zéro : deux cas le lisent. Mais
+  // depuis #258 « Nodal chats » arrive DÉPLIÉ, donc une lecture part au montage
+  // de chaque rendu, y compris dans les cas qui ne sèment rien. Un faux remis à
+  // zéro rend `undefined`, le `r.ok` de la relecture lève, et la rejection non
+  // rattrapée fait rougir la suite ENTIÈRE sans qu'aucun test n'échoue — le
+  // piège que la CI de la PR #223 a déjà attrapé une fois, et celle de #279 une
+  // seconde.
   vi.mocked(listFolderThreadsAction).mockReset();
+  vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: {} });
   // LES DEUX PROVIDERS VOISINS RÉPONDENT, MÊME SI AUCUN TEST NE LES REGARDE.
   // Ils posent chacun un `setInterval` de 15 s ; dès qu'un test fait tourner
   // l'horloge, leurs actions partent aussi. Sans valeur de retour, elles
@@ -326,13 +336,28 @@ function threadRows(folder: string): HTMLAnchorElement[] {
 }
 
 describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', () => {
-  it('ne montre RIEN tant que personne n’a déplié — et ne lit rien non plus', async () => {
+  it('ne montre RIEN d’un CANAL tant que personne ne l’a déplié', async () => {
     seedThreads({});
     await renderGroup({ channels: ['telegram'] });
     expect(container.querySelector('[data-testid="folder-threads-telegram"]')).toBeNull();
-    // Replié par défaut : la barre latérale de toutes les pages du tableau de
-    // bord ne paie pas la lecture d'un menu que personne n'a ouvert.
-    expect(listFolderThreadsAction).not.toHaveBeenCalled();
+    // Replié, le sous-menu n'est pas seulement caché : il n'est pas rendu,
+    // donc ses lignes ne restent pas dans l'ordre de tabulation.
+    expect(folderRow('telegram').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('OUVRE « Nodal chats » au chargement, et lui SEUL', async () => {
+    // ⚠️ LA LECTURE PART DONC AU MONTAGE depuis #258, et elle ne partait pas
+    // avant. La planche v2 dessine « Nodal chats » déplié, ses derniers fils
+    // sous les yeux : c'est le seul dossier dont on VIENT, et le replier
+    // faisait commencer chaque visite par un clic. Les canaux, eux, sont des
+    // endroits où l'on va, et ils restent pliés — ce qui borne la dépense à
+    // UNE lecture, la même qui remplit déjà tous les dossiers d'un coup.
+    seedThreads({ dashboard: [fil('d1', 'Draft the plan')] });
+    await renderGroup({ channels: ['telegram'] });
+    expect(folderRow('dashboard').getAttribute('aria-expanded')).toBe('true');
+    expect(folderRow('telegram').getAttribute('aria-expanded')).toBe('false');
+    expect(threadRows('dashboard').map((a) => a.textContent)).toEqual(['Draft the plan']);
+    expect(listFolderThreadsAction).toHaveBeenCalledTimes(1);
   });
 
   it('déplie CINQ fils, dans l’ordre de la liste, chacun vers son fil', async () => {
@@ -403,8 +428,8 @@ describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', (
       dashboard: [fil('d1', 'Draft the plan')],
     });
     await renderGroup({ channels: ['telegram'] });
+    // « Nodal chats » est déjà ouvert (#258) ; on ne déplie que le canal.
     await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
-    await click(container.querySelector('[data-testid="folder-caret-dashboard"]')!);
 
     // Une requête par dossier redeviendrait un N+1 au premier canal ajouté.
     expect(listFolderThreadsAction).toHaveBeenCalledTimes(1);
@@ -413,9 +438,10 @@ describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', (
   });
 
   it('dit qu’un dossier est vide, plutôt que de le laisser muet', async () => {
+    // Rien pour « Nodal chats », qui est ouvert au chargement : c'est donc là
+    // que la phrase se lit, sans avoir à cliquer.
     seedThreads({ telegram: [fil('t1', 'Invoice for March')] });
     await renderGroup({ channels: ['telegram'] });
-    await click(container.querySelector('[data-testid="folder-caret-dashboard"]')!);
     expect(threadRows('dashboard')).toHaveLength(0);
     // La phrase SEULE : un dossier vide n'offre pas « See all », puisqu'il n'y
     // a rien de plus à voir (19/09/2026 au soir).
@@ -667,10 +693,13 @@ describe('la relecture du sous-menu s’arrête @cap:reprendre-conversation/ecra
       await click(folderRow('telegram'));
       expect(threadRows('telegram')[0]?.textContent).toBe('Invoice for March');
 
-      // Tout replié : il n'y a plus de sous-menu à l'écran. Le compte des
-      // lectures EST le sujet ici — la propriété à prouver est qu'aucune
-      // requête ne part, et cela ne se lit nulle part ailleurs.
+      // TOUT replié, « Nodal chats » compris — il arrive ouvert depuis #258,
+      // et le laisser ouvert prouverait le contraire de ce qu'on cherche. Il
+      // n'y a alors plus de sous-menu à l'écran. Le compte des lectures EST le
+      // sujet ici : la propriété à prouver est qu'aucune requête ne part, et
+      // cela ne se lit nulle part ailleurs.
       await click(folderRow('telegram'));
+      await click(folderRow('dashboard'));
       const avant = vi.mocked(listFolderThreadsAction).mock.calls.length;
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000);

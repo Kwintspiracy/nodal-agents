@@ -419,15 +419,6 @@ export function unfoldedRows<T>(
 }
 
 /**
- * Combien de fils la section « Recent » du panneau Talk montre (#230).
- *
- * Cinq, comme un sous-menu : la barre latérale montre la TÊTE des listes, et
- * deux plafonds différents sous deux titres voisins se liraient comme une règle
- * de plus à retenir.
- */
-export const RECENT_THREADS_MAX = 5;
-
-/**
  * Les derniers fils de CHAQUE dossier, dans l'ordre reçu.
  *
  * L'ordre est celui de la lecture — le plus récent d'abord — et il n'est pas

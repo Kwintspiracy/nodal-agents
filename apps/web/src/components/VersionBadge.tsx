@@ -11,13 +11,26 @@ import { getVersionInfoAction, type VersionInfo } from '@/lib/actions.ts';
 const UPDATE_CMD = 'nodal-agents update';
 
 /**
- * VersionBadge — sidebar footer. Shows the running Nodal-Agents version and,
- * when a newer one is published on npm, a clickable "Update available" badge
- * that opens a modal reminding the user of the one-line update command.
- * Renders nothing until the version is known (and nothing at all if the
- * launcher didn't inject NODAL_VERSION — e.g. a bare `next dev`).
+ * VersionBadge — the running Nodal-Agents version and, when a newer one is
+ * published on npm, a clickable "Update available" badge that opens a modal
+ * reminding the user of the one-line update command. Renders nothing until the
+ * version is known (and nothing at all if the launcher didn't inject
+ * NODAL_VERSION — e.g. a bare `next dev`).
+ *
+ * ⚠️ DEUX ENDROITS, UNE SEULE SOURCE (#258). Il fermait le PANNEAU ; la
+ * planche v2 l'écrit au pied du RAIL, sous le compte, où il reste visible
+ * quelle que soit la destination ouverte. Le rail fait 72 px : la phrase y
+ * tient en « v0.8.11 » sans le mot « Nodal », et la proposition de mise à jour
+ * y tient en une pastille plutôt qu'en une ligne à deux étages. Ce qui ne
+ * change pas est ce qui compte : la même lecture, la même fenêtre, la même
+ * commande.
  */
-export default function VersionBadge() {
+export default function VersionBadge({
+  variant = 'panel',
+}: {
+  /** `rail` : la forme étroite du pied de rail. `panel` : la ligne d'origine. */
+  variant?: 'panel' | 'rail';
+} = {}) {
   const [info, setInfo] = useState<VersionInfo | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -36,9 +49,31 @@ export default function VersionBadge() {
   if (!info?.current) return null;
   const { current, latest, updateAvailable } = info;
 
+  const rail = variant === 'rail';
+
   return (
-    <div className="mt-1">
-      {updateAvailable ? (
+    <div className={rail ? 'mt-1.5 shrink-0' : 'mt-1'}>
+      {rail ? (
+        updateAvailable ? (
+          // Dans 72 px, la proposition de mise à jour est une PASTILLE : le
+          // numéro courant, en couleur d'agent, cliquable. La fenêtre qui
+          // s'ouvre dit le reste — les deux numéros et la commande.
+          <IconTextButton
+            onClick={() => setOpen(true)}
+            className="gap-1 rounded border border-agent-vivid/40 bg-agent-vivid/10 px-1.5 py-0.5 hover:bg-agent-vivid/20"
+            icon={<ArrowClockwise size={10} weight="bold" className="text-ink-2" />}
+            titleClassName="font-mono text-legacy-10 leading-tight! text-ink-2"
+            title={`v${current}`}
+            // Le nombre SE DIT : sans ce nom, un lecteur d'écran annonce
+            // « v0.8.11 » sans rien pour dire qu'il y a mieux à installer.
+            aria-label={`Update available, v${current} to v${latest}`}
+          />
+        ) : (
+          <div data-testid="rail-version" className="font-mono text-legacy-10 text-ink-4">
+            v{current}
+          </div>
+        )
+      ) : updateAvailable ? (
         <IconTextButton
           onClick={() => setOpen(true)}
           className="gap-2 rounded-lg border border-agent-vivid/40 bg-agent-vivid/10 px-2.5 py-1.5 hover:bg-agent-vivid/20"
