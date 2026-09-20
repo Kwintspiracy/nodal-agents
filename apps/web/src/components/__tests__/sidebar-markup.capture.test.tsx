@@ -224,15 +224,20 @@ afterEach(async () => {
 });
 
 describe.runIf(ACTIF)('capture du markup de la barre latérale', () => {
-  const cas: ReadonlyArray<readonly [string, string, string[]]> = [
-    ['work', '/chat', ['telegram', 'discord', 'whatsapp', 'mcp']],
-    ['agents', '/agents', []],
-    ['run', '/automations', []],
-    ['approvals', '/approvals', []],
-    ['settings', '/settings', []],
+  //
+  // Le dernier cas n'est pas une destination de plus : c'est le MEME rail avec
+  // quelque chose qui tourne (#300, #303). Les deux points ne se voient que
+  // dans cet etat, et une planche du rail au repos ne les montrerait jamais.
+  const cas: ReadonlyArray<readonly [string, string, string[], number, number]> = [
+    ['work', '/chat', ['telegram', 'discord', 'whatsapp', 'mcp'], 0, 0],
+    ['agents', '/agents', [], 0, 0],
+    ['run', '/automations', [], 0, 0],
+    ['approvals', '/approvals', [], 0, 0],
+    ['settings', '/settings', [], 0, 0],
+    ['work-running', '/chat', ['telegram', 'discord', 'whatsapp', 'mcp'], 2, 1],
   ];
 
-  for (const [nom, route, channels] of cas) {
+  for (const [nom, route, channels, runsInProgress, workConversationsInProgress] of cas) {
     it(`écrit ${nom}.html`, async () => {
       pathname = route;
       await render(
@@ -250,6 +255,8 @@ describe.runIf(ACTIF)('capture du markup de la barre latérale', () => {
               deliverablesToCheck: [],
               deliverableCheckJobIds: [],
               deliverableCheckConversationIds: [],
+              runsInProgress,
+              workConversationsInProgress,
             }}
           >
             <Sidebar workspaces={ESPACES} userMenu={<p>quentinbeau@gmail.com</p>} initiale="Q" />

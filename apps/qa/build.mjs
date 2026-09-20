@@ -966,6 +966,46 @@ const TONS_REVUE = {
 };
 
 /**
+ * Le déploiement des docs et du portail (#306).
+ *
+ * GitHub ne garde qu'UN run en attente par groupe de concurrence : quand un
+ * second se met en file, le plus ancien est annulé, quel que soit son
+ * événement. Le 20/09/2026 c'est le déploiement de `main` qui y est passé, et
+ * rien ne l'a dit. Chaque run construit `main` HEAD, donc un run annulé est
+ * remplacé par celui qui l'a annulé ; ce cadre montre le dernier succès et ce
+ * qui est arrivé depuis (annulés, échoués, en cours). Il ne peut PAS dire « le
+ * site est en retard » : il est rendu par le run de déploiement lui-même, qui
+ * est alors le remplaçant. Ce qu'il donne au lecteur, c'est la date et le
+ * commit du dernier déploiement, à comparer à `main` si la page paraît vieille.
+ *
+ * GitHub muet : le cadre le DIT, avec l'heure de la lecture. Jamais « idle ».
+ */
+function cadreDeploiement() {
+  const d = s.deploiement;
+  if (d === undefined) {
+    return `<p class="ligne-deploiement dim">Deploy state not collected: this measurement predates the check.</p>`;
+  }
+  if (d === null) {
+    return `<p class="ligne-deploiement ligne-deploiement--absent"><b>Docs and portal deploy: GitHub did not answer</b> at ${esc(dateFr(s.tableauLe ?? s.genereLe))}. Nothing is known about when the site was last deployed.</p>`;
+  }
+  if (!d.dernierSucces) {
+    return `<p class="ligne-deploiement ligne-deploiement--absent"><b>Docs and portal: no successful deploy</b> among the last ${n(d.runsLus)} runs, read at ${esc(dateFr(s.tableauLe ?? s.genereLe))}.</p>`;
+  }
+  const depuis = [];
+  if (d.depuis.enCours)
+    depuis.push(`${d.depuis.enCours} in progress (the run rendering this page is one of them)`);
+  if (d.depuis.annules) depuis.push(`${d.depuis.annules} cancelled (superseded by a later run)`);
+  if (d.depuis.echoues) depuis.push(`${d.depuis.echoues} failed`);
+  // Le run qui rend cette page est l'un des « en cours » : c'est lui qui
+  // remplace les runs tombés, et la page le dit. Un verdict « le site est en
+  // retard » serait toujours faux ici (voir `etatDuDeploiement`).
+  const suite = depuis.length
+    ? ` Since then: ${depuis.join(', ')}.${d.depuis.annules + d.depuis.echoues > 0 ? ' The run that rendered this page is the one that replaces them.' : ''}`
+    : ' Nothing queued since.';
+  return `<p class="ligne-deploiement"><b>Docs and portal deployed</b> ${esc(dateFr(d.dernierSucces.le))} (<a href="${esc(d.dernierSucces.url ?? '#')}">${esc(d.dernierSucces.evenement)}</a>, main at <code>${esc((d.dernierSucces.sha ?? '').slice(0, 8) || '·')}</code>).${suite} Read at ${esc(dateFr(s.tableauLe ?? s.genereLe))}.</p>`;
+}
+
+/**
  * Ce que npm sert, face à ce que le dépôt porte.
  *
  * Le bloc qui manquait le 12/09/2026, quand une issue « Publish 0.8.9 » a vécu
@@ -1015,7 +1055,7 @@ function vueChantiers() {
   const cartes = s.chantiers?.cartes ?? null;
   if (!cartes) {
     return `<section id="chantiers" class="vue actif">${entete('chantiers', 'Work in flight')}
-      ${repere('chantiers', 'release')}${cadreRelease()}
+      ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}
       <div class="alerte">GitHub did not answer, the portal shows nothing rather than a stale list.</div></section>`;
   }
 
@@ -1126,7 +1166,7 @@ function vueChantiers() {
   return `
 <section id="chantiers" class="vue actif">
   ${entete('chantiers', 'Work in flight')}
-  ${repere('chantiers', 'release')}${cadreRelease()}
+  ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}
   ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} decision${aFaire > 1 ? 's' : ''} waiting on you</b>: they block the rest until they are settled.${enReview > 0 ? ` And ${enReview} pull request${enReview > 1 ? 's are' : ' is'} waiting for your merge.` : ''}</div>` : ''}
   ${filtre}
   <div class="kanban">${colonnes}</div>
@@ -1439,6 +1479,9 @@ tr:last-child td{border-bottom:0}
 .avertissement-release{margin:16px 0 0;padding-top:14px;border-top:1px solid var(--regle);
   font-size:14px;color:var(--ko);line-height:1.6}
 .avertissement-release b{font-family:Archivo,sans-serif}
+.ligne-deploiement{margin:10px 0 0;font-size:13px;line-height:1.5}
+.ligne-deploiement b{font-family:Archivo,sans-serif}
+.ligne-deploiement--absent{padding:10px 12px;border:1px solid var(--regle);border-radius:6px}
 
 /* ── Kanban ── */
 .rappel{border-left:3px solid var(--accent);padding:2px 0 2px 18px;margin:0 0 30px;

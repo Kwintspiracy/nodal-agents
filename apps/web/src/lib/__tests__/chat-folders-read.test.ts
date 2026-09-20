@@ -90,6 +90,9 @@ async function jobAvecAttente(
 /** La conversation Telegram listable — celle que les lignes dessinent. */
 let filTelegram = '';
 
+/** L'entretien d'accueil sur Slack - une conversation que Work ne liste PAS. */
+let filAccueil = '';
+
 beforeAll(async () => {
   const result = await spinUpTestDb();
   testDb = result.db;
@@ -132,6 +135,7 @@ beforeAll(async () => {
     ])
     .returning({ id: conversations.id, chatId: conversations.chatId });
   filTelegram = fils.find((f) => f.chatId === '42')!.id;
+  filAccueil = fils.find((f) => f.chatId === 'C0FEE')!.id;
 
   // Une QUESTION en attente, posée sur ce fil-là. C'est ce que la ligne du
   // dossier doit porter — et elle ne le peut que si la lecture rend la
@@ -167,6 +171,27 @@ beforeAll(async () => {
       task: 'un run fini',
       status: 'completed',
       conversationId: filTelegram,
+    },
+    // UN RUN QU'AUCUN DOSSIER NE RANGE (#300) : une automatisation tourne, son
+    // canal `cron` ne designe aucun dossier de chat, et `running` l'oublie
+    // donc en route. C'est precisement ce que la case Logs doit montrer.
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'cron',
+      task: 'une automatisation en cours',
+      status: 'processing',
+    },
+    // UN RUN SUR UNE CONVERSATION QUE WORK NE LISTE PAS (#303) : l'entretien
+    // d'accueil tourne - un agent delegue, donc `internal` - et aucune ligne
+    // de la section Work ne peut le montrer.
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'internal',
+      task: 'un run sur l accueil',
+      status: 'processing',
+      conversationId: filAccueil,
     },
   ]);
 });
@@ -215,10 +240,40 @@ describe('les dossiers lus en base @cap:reprendre-conversation/moteur', () => {
     const { getChatFoldersAction } = await import('../conversation-actions.ts');
     const result = await getChatFoldersAction();
     if (!result.ok) throw new Error(result.message);
-    expect(result.data.runningConversationIds).toEqual([filTelegram]);
+    // Les DEUX fils sur lesquels un run tourne, l'accueil compris : cette
+    // liste dit ce qui tourne, pas ce que la barre sait montrer. C'est la case
+    // Work qui trie ensuite sur ce qu'elle peut lister (#303).
+    expect([...result.data.runningConversationIds].sort()).toEqual(
+      [filTelegram, filAccueil].sort(),
+    );
     // Le run TERMINÉ sur ce même fil n'y ajoute rien, et le `processing`
     // rattaché à aucune conversation n'y met pas de `null`.
     expect(result.data.runningConversationIds).not.toContain(null);
+  });
+
+  it('compte TOUS les runs vivants, y compris ceux qu’aucun dossier ne range', async () => {
+    const { getChatFoldersAction } = await import('../conversation-actions.ts');
+    const result = await getChatFoldersAction();
+    if (!result.ok) throw new Error(result.message);
+    // Cinq jobs vivants : deux `processing` sur Telegram, le job `api` de la
+    // fixture, l'automatisation `cron` et le run de l'accueil. Les quatre
+    // `awaiting_approval` n'en sont pas : ils attendent la personne.
+    expect(result.data.runsInProgress).toBe(5);
+    // Et c'est bien PLUS que ce que les dossiers savent ranger : `running`
+    // perd le `cron` et l'`internal`, qui ne designent aucun dossier de chat.
+    const parDossier = Object.values(result.data.running).reduce((t, n) => t + n, 0);
+    expect(parDossier).toBe(3);
+  });
+
+  it('ne compte pour Work que les conversations que la section peut lister', async () => {
+    const { getChatFoldersAction } = await import('../conversation-actions.ts');
+    const result = await getChatFoldersAction();
+    if (!result.ok) throw new Error(result.message);
+    // Deux fils tournent, un seul est listable : l'entretien d'accueil
+    // (`origin: 'onboarding'`) n'a aucune ligne dans Work, et un point qui
+    // designerait une ligne introuvable serait pire que pas de point.
+    expect(result.data.runningConversationIds).toHaveLength(2);
+    expect(result.data.workConversationsInProgress).toBe(1);
   });
 });
 

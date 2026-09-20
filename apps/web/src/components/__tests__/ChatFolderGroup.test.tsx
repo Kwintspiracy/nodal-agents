@@ -127,6 +127,8 @@ async function renderGroup(opts: {
       deliverablesToCheck: opts.deliverables ?? [],
       deliverableCheckJobIds: [],
       deliverableCheckConversationIds: [],
+      runsInProgress: 0,
+      workConversationsInProgress: 0,
     },
   });
   await render(
@@ -142,6 +144,8 @@ async function renderGroup(opts: {
           deliverablesToCheck: opts.deliverables ?? [],
           deliverableCheckJobIds: [],
           deliverableCheckConversationIds: [],
+          runsInProgress: 0,
+          workConversationsInProgress: 0,
         }}
       >
         <ChatFolderGroup />
@@ -196,6 +200,8 @@ beforeEach(() => {
       deliverablesToCheck: [],
       deliverableCheckJobIds: [],
       deliverableCheckConversationIds: [],
+      runsInProgress: 0,
+      workConversationsInProgress: 0,
     },
   });
 });

@@ -85,6 +85,8 @@ function HelpLink({
 export default function SidebarRail({
   activeKey,
   approvalsCount,
+  runsInProgress,
+  workConversationsInProgress,
   logsActive,
   userMenu,
   initiale = null,
@@ -93,6 +95,20 @@ export default function SidebarRail({
   activeKey: DestinationKey | null;
   /** Combien de demandes attendent la personne. 0 = aucune pastille. */
   approvalsCount: number;
+  /**
+   * COMBIEN DE RUNS TOURNENT, tous canaux confondus — ce que la case Logs
+   * montre (#300). 0 = aucun point.
+   *
+   * Passé par la barre, qui le lit dans `ChatFoldersProvider`, plutôt que lu
+   * ici : le rail reste une vue, et un test le monte avec l'instantané qu'il
+   * veut sans câbler un provider.
+   */
+  runsInProgress: number;
+  /**
+   * COMBIEN DE CONVERSATIONS DE LA SECTION WORK tournent — ce que la case Work
+   * montre (#303). 0 = aucun point.
+   */
+  workConversationsInProgress: number;
   /** La route est-elle sous `/logs` ? Logs navigue, il n'a pas de panneau. */
   logsActive: boolean;
   /** Le bloc de compte rendu par le serveur — courriel et Sign out. */
@@ -145,6 +161,15 @@ export default function SidebarRail({
           // compte quelque chose, et c'est le seul nombre de la barre qu'une
           // personne puisse faire tomber à zéro en répondant.
           pill={d.key === 'approvals' ? approvalsCount : undefined}
+          // Le point ne bat que sur Work, et il compte des CONVERSATIONS :
+          // c'est ce que cette destination liste (#303). Les autres cases du
+          // haut ne montrent rien qui tourne — Agents montre ce qu'on monte,
+          // Run ce qu'on programme, Approvals ce qui attend une réponse.
+          running={
+            d.key === 'work'
+              ? { count: workConversationsInProgress, noun: 'conversation' as const }
+              : undefined
+          }
           testId={`rail-${d.key}`}
         />
       ))}
@@ -158,6 +183,9 @@ export default function SidebarRail({
         label={RAIL_FOOT.logs.label}
         icon={ListMagnifyingGlass}
         active={logsActive}
+        // Le point de Logs compte des RUNS, et tous les runs : on y va pour
+        // voir ce que la machine fait, d'où que la demande vienne (#300).
+        running={{ count: runsInProgress, noun: 'run' as const }}
         testId="rail-logs"
       />
 

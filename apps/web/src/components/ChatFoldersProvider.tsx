@@ -51,6 +51,8 @@ const FALLBACK: ChatFoldersContextValue = {
   deliverablesToCheck: [],
   deliverableCheckJobIds: [],
   deliverableCheckConversationIds: [],
+  runsInProgress: 0,
+  workConversationsInProgress: 0,
 };
 
 export function useChatFolders(): ChatFoldersContextValue {

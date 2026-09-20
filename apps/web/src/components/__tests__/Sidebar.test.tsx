@@ -11,7 +11,7 @@
 //   4. les listes du panneau se LISENT en base, bornées, et disent leurs trois
 //      absences différemment — « ça charge », l'échec, et le vide ;
 //   5. les points rouges et gris ne sont dessinés QUE là où la planche en met ;
-//   6. le « + » n'existe que sur CRON et WEBHOOKS ;
+//   6. le « + » n'existe que sur PROJECTS, CRON et WEBHOOKS ;
 //   7. un titre long se COUPE, il n'élargit pas la colonne.
 //
 // Les blocs qui ne sont pas le sujet (version, sélecteur d'espace, cloche,
@@ -86,7 +86,8 @@ import {
   SIDEBAR_ROW_IDLE,
   SIDEBAR_ROW_IDLE_CONTENT,
 } from '../ui/SidebarRow';
-import { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
+import RailCell, { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
+import { ListMagnifyingGlass } from '@phosphor-icons/react';
 import { SIDEBAR_POLL_MS } from '@/lib/use-polling';
 import { DESTINATIONS, RAIL_FOOT } from '../sidebar-nav.ts';
 import type { FolderThread } from '@/lib/chat-folders.ts';
@@ -110,6 +111,11 @@ const ESPACES = [
 async function renderSidebar(
   channels: string[] = [],
   attentes: PendingApproval[] = [],
+  /**
+   * CE QUI TOURNE, tel que le provider le porte (#300, #303). Ce que le test
+   * ne dit pas vaut zero : une barre ou rien ne tourne est l'etat courant.
+   */
+  tourne: { runsInProgress?: number; workConversationsInProgress?: number } = {},
 ): Promise<void> {
   await render(
     <ApprovalsProvider initial={attentes}>
@@ -122,6 +128,8 @@ async function renderSidebar(
           deliverablesToCheck: [],
           deliverableCheckJobIds: [],
           deliverableCheckConversationIds: [],
+          runsInProgress: tourne.runsInProgress ?? 0,
+          workConversationsInProgress: tourne.workConversationsInProgress ?? 0,
         }}
       >
         <Sidebar workspaces={ESPACES} />
@@ -224,6 +232,8 @@ beforeEach(() => {
       deliverablesToCheck: [],
       deliverableCheckJobIds: [],
       deliverableCheckConversationIds: [],
+      runsInProgress: 0,
+      workConversationsInProgress: 0,
     },
   });
 });
@@ -610,8 +620,8 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
 // ─── 3. Le « + », seulement où la planche en dessine un ──────────────────────
 
 describe('le « + » d’un titre de section @cap:planifier-une-tache/ecran', () => {
-  it('n’existe QUE sur CRON et WEBHOOKS', async () => {
-    // Mutation vérifiée : un `add` posé sur la section WORKSPACES → ce cas
+  it('n’existe QUE sur CRON et WEBHOOKS dans le panneau Run', async () => {
+    // Mutation vérifiée : un `add` posé sur la section RECENTS → ce cas
     // rougit, le menu promet une création qui n'existe pas là.
     pathname = '/automations';
     await renderSidebar();
@@ -627,12 +637,32 @@ describe('le « + » d’un titre de section @cap:planifier-une-tache/ecran', ()
       '/automations?new=webhook',
     ]);
 
-    for (const route of ['/chat', '/agents', '/approvals', '/settings']) {
+    for (const route of ['/agents', '/approvals', '/settings']) {
       await remonter();
       pathname = route;
       await renderSidebar();
       expect(container.querySelector('[data-testid="section-add"]'), route).toBeNull();
     }
+  });
+
+  it('PROJECTS en porte un, vers /spaces, et le panneau Work n’en a pas d’autre', async () => {
+    // #301 : la section vide ne finit plus par « See all », donc le chemin
+    // vers `/spaces` passe par ce « + ». Il DIT le geste — « New project » —
+    // là où « See all » ne disait rien, et il est là que la liste soit vide
+    // ou pleine.
+    //
+    // Mutation vérifiée : `add` retiré de WORK_GROUPS → ce cas rougit, et
+    // `/spaces` redevient inatteignable depuis la barre sur une base neuve.
+    pathname = '/chat';
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
+    await renderSidebar();
+    const plus = [...container.querySelectorAll('[data-testid="section-add"]')];
+    expect(plus.map((a) => a.getAttribute('aria-label'))).toEqual(['New project']);
+    expect(plus[0]?.getAttribute('href')).toBe('/spaces');
+    // Il est bien SUR le titre PROJECTS, et pas sur celui des canaux.
+    expect(plus[0]?.closest('[data-testid^="nav-group-"]')?.getAttribute('data-testid')).toBe(
+      'nav-group-Projects',
+    );
   });
 
   it('DIT le geste, et pas le signe', async () => {
@@ -779,6 +809,8 @@ describe('les listes du panneau se lisent en base @cap:installer-et-demarrer/ecr
               deliverablesToCheck: [],
               deliverableCheckJobIds: [],
               deliverableCheckConversationIds: [],
+              runsInProgress: 0,
+              workConversationsInProgress: 0,
             }}
           >
             <Sidebar workspaces={[]} />
@@ -943,21 +975,21 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     expect(container.querySelector('[data-testid="inbox-folder-workspaces"]')).toBeNull();
   });
 
-  it('garde « See all » même sous le plafond, parce que /spaces porte plus', async () => {
+  it('garde « See all » sous le plafond, mais JAMAIS sur une section vide', async () => {
     // La planche ne le dessine pas : elle montre cinq espaces, c'est-à-dire un
     // cas où il n'y a rien de plus à voir. Il est gardé parce que `/spaces`
     // porte aussi « New project » et sa table, et que sans lui la page ne
     // serait plus atteignable depuis la barre — le raisonnement que le
     // propriétaire a retenu pour « Dashboard » le 19/09 au soir.
     //
-    // ⚠️ ET IL SURVIT AUX TROIS ABSENCES : aucune ligne, une lecture qui n'a
-    // pas répondu, une lecture en échec. C'est justement sur une installation
-    // NEUVE — zéro projet — qu'on a besoin d'aller créer le premier, et la
-    // ligne disparaissait alors avec la liste. Le parcours Playwright l'a dit
-    // avant un humain.
+    // ⚠️ MAIS PAS SUR UNE SECTION VIDE (#301) : « No Project Yet » suivi de
+    // « See all » annonçait tout voir de rien. Le vide, c'est la lecture qui
+    // a RÉPONDU « aucune ligne » ; « ça charge » et un échec gardent la
+    // ligne, puisqu'on ne sait justement pas ce qu'il y a. Sur une base neuve,
+    // c'est le « + » du titre qui mène à `/spaces`.
     //
     // Mutation vérifiée : `seeAllAlways` retiré → ce cas rougit à un seul
-    // espace, et la page devient inatteignable.
+    // espace ; `sectionVide` forcé à `false` → le cas du vide rougit.
     pathname = '/chat';
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({
       ok: true,
@@ -971,10 +1003,16 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     await remonter();
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
     await renderSidebar();
-    // Le cadre du vide, PUIS la ligne : les deux, et pas l'un ou l'autre.
-    expect(container.querySelector('[data-testid="sidebar-empty"]')?.textContent?.trim()).toBe(
+    // Le cadre du vide, et RIEN d'autre : la section s'arrête sur lui.
+    expect(container.querySelector('[data-testid="sidebar-list-workspaces"]')?.textContent).toBe(
       'No Project Yet',
     );
+    expect(container.querySelector('[data-testid="see-all-workspaces"]')).toBeNull();
+
+    await remonter();
+    // « Ça charge » n'est pas le vide : on ne sait rien encore.
+    vi.mocked(listSidebarProjectsAction).mockReturnValue(new Promise<never>(() => {}));
+    await renderSidebar();
     expect(
       container.querySelector('[data-testid="see-all-workspaces"]')?.getAttribute('href'),
     ).toBe('/spaces');
@@ -1179,6 +1217,8 @@ describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
             deliverablesToCheck: [],
             deliverableCheckJobIds: [],
             deliverableCheckConversationIds: [],
+            runsInProgress: 0,
+            workConversationsInProgress: 0,
           }}
         >
           <Sidebar workspaces={[]} userMenu={<p>quentin@example.com</p>} />
@@ -1230,6 +1270,8 @@ describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
             deliverablesToCheck: [],
             deliverableCheckJobIds: [],
             deliverableCheckConversationIds: [],
+            runsInProgress: 0,
+            workConversationsInProgress: 0,
           }}
         >
           <Sidebar workspaces={[]} userMenu={<p>quentin@example.com</p>} />
@@ -1319,5 +1361,125 @@ describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
       document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     });
     expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
+  });
+});
+
+// ─── Ce qui TOURNE, dit par le rail (#300, #303) ──────────────────────────────
+//
+// Deux cases du rail portent un point qui bat quand quelque chose avance : Logs
+// pour les runs, Work pour les conversations de sa section. Le fait vient de
+// l'INSTANTANE du provider que la barre sonde deja (`ChatFoldersProvider`), et
+// d'aucune seconde lecture : ces cas montent la barre avec l'instantane voulu et
+// lisent ce que le rail en fait.
+//
+// Le point est `aria-hidden` : ce qu'il montre, le nom de la case le DIT, et
+// c'est ce nom que ces cas verifient a cote du point.
+
+/** Le point « ca tourne » d'une case du rail, ou `null` s'il n'y en a pas. */
+function pointQuiTourne(key: string): HTMLElement | null {
+  return container.querySelector<HTMLElement>(`[data-testid="rail-${key}-running"]`);
+}
+
+describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    document.body.innerHTML = '';
+  });
+
+  it('allume la case Logs quand un run tourne, et le NOMBRE se dit', async () => {
+    pathname = '/agents';
+    await renderSidebar([], [], { runsInProgress: 2 });
+    const point = pointQuiTourne('logs');
+    expect(point).not.toBeNull();
+    // Le MEME point que partout ailleurs dans le produit : lime, avec son halo
+    // qui bat. Un point vert immobile dirait « fini », pas « en cours ».
+    const rond = point!.querySelector('span');
+    expect(rond?.className).toContain('bg-agent-vivid');
+    expect(rond?.className).toContain('animate-[blip-lime');
+    // La TAILLE du point est celle du reste de la barre : 7 px. Un point plus
+    // gros dans une case de 52 se lirait comme une pastille.
+    expect(rond?.className).toContain('h-[7px]');
+    // Le point ne s'annonce pas deux fois : la case le dit en toutes lettres.
+    expect(point!.getAttribute('aria-hidden')).toBe('true');
+    expect(railCell('logs').getAttribute('aria-label')).toBe('Logs, 2 runs in progress');
+  });
+
+  it('n’allume rien sur Logs quand aucun run ne tourne', async () => {
+    pathname = '/agents';
+    await renderSidebar([], [], { runsInProgress: 0 });
+    expect(pointQuiTourne('logs')).toBeNull();
+    // Et la case ne se renomme pas pour dire qu'il ne se passe rien : son
+    // libelle suffit.
+    expect(railCell('logs').getAttribute('aria-label')).toBeNull();
+  });
+
+  it('allume la case Work quand UNE conversation de sa section tourne', async () => {
+    pathname = '/agents';
+    await renderSidebar([], [], { workConversationsInProgress: 1 });
+    expect(pointQuiTourne('work')).not.toBeNull();
+    // Au SINGULIER : une conversation, pas « 1 conversations ».
+    expect(railCell('work').getAttribute('aria-label')).toBe('Work, 1 conversation in progress');
+    // Et Logs reste eteint : les deux cases comptent deux choses differentes,
+    // et rien ne les fait s'allumer ensemble.
+    expect(pointQuiTourne('logs')).toBeNull();
+  });
+
+  it('n’allume rien sur Work quand aucune conversation ne tourne', async () => {
+    pathname = '/agents';
+    await renderSidebar([], [], { workConversationsInProgress: 0, runsInProgress: 3 });
+    expect(pointQuiTourne('work')).toBeNull();
+    expect(railCell('work').getAttribute('aria-label')).toBeNull();
+    // Un run tourne pourtant : il n'est simplement dans aucune conversation de
+    // Work - une automatisation, un webhook. Logs le montre, Work non.
+    expect(pointQuiTourne('logs')).not.toBeNull();
+  });
+
+  it('laisse a Approvals son coin : la ou il y a une pastille, rien ne tourne', async () => {
+    pathname = '/agents';
+    const uneAttente: PendingApproval[] = [
+      {
+        id: 'a0',
+        jobId: 'j0',
+        toolName: 'send_message',
+        agentName: null,
+        toolInput: {},
+        requestedAt: null,
+        jobChannel: 'dashboard',
+        conversationChannel: 'dashboard',
+      },
+    ];
+    await renderSidebar([], uneAttente, { runsInProgress: 4 });
+    // La pastille tient le coin DROIT, et le point de Logs le coin GAUCHE :
+    // deux coins, donc aucun recouvrement possible, quelle que soit la case.
+    const pastille = railCell('approvals').querySelector('span[class*="bg-err"]');
+    expect(pastille).not.toBeNull();
+    expect(pastille!.className).toContain('right-1');
+    expect(pointQuiTourne('logs')!.className).toContain('left-1');
+    expect(pointQuiTourne('approvals')).toBeNull();
+    expect(railCell('approvals').getAttribute('aria-label')).toBe('Approvals, 1 pending');
+  });
+
+  it('pose le point et la pastille dans DEUX coins, meme sur une seule case', async () => {
+    // La regle se lit sur le composant, pas sur le cablage du jour (Reviewer C,
+    // passe 1) : aucune case ne porte les deux aujourd'hui, et celle qui le
+    // ferait demain ne doit pas poser le point SUR le chiffre.
+    await render(
+      <RailCell
+        href="/logs"
+        label="Logs"
+        icon={ListMagnifyingGlass}
+        pill={3}
+        running={{ count: 2, noun: 'run' }}
+        testId="rail-deux"
+      />,
+    );
+    const cellule = container.querySelector('[data-testid="rail-deux"]')!;
+    expect(cellule.querySelector('span[class*="bg-err"]')!.className).toContain('right-1');
+    const point = container.querySelector('[data-testid="rail-deux-running"]')!;
+    expect(point.className).toContain('left-1');
+    expect(point.className).not.toContain('right-1');
+    // Et le nom dit les DEUX, dans cet ordre : ce qui attend, puis ce qui
+    // avance.
+    expect(cellule.getAttribute('aria-label')).toBe('Logs, 3 pending, 2 runs in progress');
   });
 });

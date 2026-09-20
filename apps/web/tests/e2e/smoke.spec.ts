@@ -125,15 +125,18 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
     await expect(dossierAgents).toHaveAttribute('aria-expanded', 'true');
 
     // Les espaces de travail ne se deplient plus (#258) : ce sont les lignes
-    // memes de leur section. Le chemin vers `/spaces` est le « See all » qui
-    // les ferme, et il est la meme quand il n'y a aucun projet — la page porte
-    // « New project » et sa table.
+    // memes de leur section. Sur une stack neuve la section est VIDE, donc
+    // elle ne finit plus par « See all » (#301) : le chemin vers `/spaces`
+    // est le « + » de son titre, qui dit « New project ».
     await page.goto('/chat');
     await expect(page.locator('[data-testid="inbox-folder-workspaces"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="see-all-workspaces"]')).toHaveAttribute(
+    const groupeProjects = page.locator('[data-testid="nav-group-Projects"]');
+    await expect(groupeProjects.locator('[data-testid="section-add"]')).toHaveAttribute(
       'href',
       '/spaces',
     );
+    await groupeProjects.locator('[data-testid="section-add"]').click();
+    await expect(page).toHaveURL(/\/spaces$/);
 
     // Approvals et Settings OUVRENT un panneau depuis #258 : la case allumee
     // et le panneau montre disent enfin la meme chose.

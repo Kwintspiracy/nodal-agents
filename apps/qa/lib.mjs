@@ -2426,6 +2426,11 @@ export function fusionnerTableauGitHub(mesure, frais) {
     // de figer l'état de publication, et c'est le rafraîchissement horaire qui
     // fait qu'une publication est vue dans l'heure et non la nuit suivante.
     release: frais?.release ?? mesure.release ?? null,
+    // Le déploiement vient des runs de GitHub, relus à chaque rendu (#306).
+    // GitHub muet → `null`, DIT comme tel par la page ; jamais l'ancien état,
+    // qui affirmerait « déployé à telle heure » sans avoir regardé.
+    deploiement:
+      frais?.deploiement === undefined ? (mesure.deploiement ?? null) : frais.deploiement,
   };
   if (!frais?.chantiers) return socle;
   return {
@@ -2532,4 +2537,55 @@ export function repartitionDeLaMesure(paquets = []) {
     out[bacs[e.etat]].push({ nom: p?.nom ?? null, raison: e.raison });
   }
   return out;
+}
+
+/**
+ * Ce que les derniers runs de `docs.yml` disent du site (#306).
+ *
+ * GitHub ne garde qu'UN run en attente par groupe de concurrence et annule le
+ * plus ancien quand un second arrive. Chaque run construit `main` HEAD, donc
+ * un run annulé est REMPLACÉ par celui qui l'a annulé — s'il finit. Ce que la
+ * page doit dire : quand le site a été déployé pour la dernière fois, et ce
+ * qui est arrivé aux runs partis depuis (en cours, annulés, échoués).
+ *
+ * « Depuis » se lit sur `createdAt`, STRICTEMENT après le dernier succès : deux
+ * runs mis en file la même seconde (le cas du 20/09) se remplacent l'un
+ * l'autre, et celui qui a réussi a lu un `main` au moins aussi neuf.
+ *
+ * `null` pour `null` : GitHub muet n'est pas un site jamais déployé.
+ */
+export function etatDuDeploiement(runs) {
+  if (!Array.isArray(runs)) return null;
+  const succes = runs
+    .filter((r) => r?.conclusion === 'success' && r.createdAt)
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))[0];
+  const dernierSucces = succes
+    ? {
+        le: succes.updatedAt ?? succes.createdAt,
+        evenement: succes.event ?? null,
+        sha: succes.headSha ?? null,
+        url: succes.url ?? null,
+      }
+    : null;
+  const apres = succes ? runs.filter((r) => r?.createdAt && r.createdAt > succes.createdAt) : runs;
+  // Pas de verdict « en retard » ici, et c'est délibéré (revue C de cette PR,
+  // passe 1) : le portail est rendu PAR le run de déploiement, qui est alors
+  // lui-même « en cours » et postérieur au dernier succès. Un tel verdict
+  // serait toujours faux sur la page publiée, et un texte qu'aucune page ne
+  // peut montrer est un mensonge en attente. La page dit les comptes, et que
+  // le run qui la rend est celui qui remplace les runs tombés.
+  const depuis = { enCours: 0, annules: 0, echoues: 0 };
+  for (const r of apres) {
+    if (r?.status === 'in_progress' || r?.status === 'queued' || r?.status === 'waiting') {
+      depuis.enCours++;
+    } else if (r?.conclusion === 'cancelled') {
+      depuis.annules++;
+    } else if (r?.status === 'completed' && r.conclusion !== 'success') {
+      // `failure`, `skipped`, `timed_out`, et une conclusion absente sur un run
+      // terminé : rien de tout cela n'a déployé, et un `skipped` est
+      // précisément l'ancien trou (revue C, P1.4).
+      depuis.echoues++;
+    }
+  }
+  return { runsLus: runs.length, dernierSucces, depuis };
 }

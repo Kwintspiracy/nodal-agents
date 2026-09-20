@@ -17,6 +17,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import type { Icon as PhosphorIcon } from '@phosphor-icons/react';
 import AttentionCount from './AttentionCount';
+import LiveDot from './LiveDot';
 
 /**
  * La forme d'une case : 64 × 52, coins de 4 px. Identique pour toutes les
@@ -84,8 +85,56 @@ type Props = {
    * même compte : celui d'`ApprovalsProvider`.
    */
   pill?: number;
+  /**
+   * CE QUI TOURNE derrière la case, quand quelque chose tourne (#300, #303).
+   *
+   * Le MÊME point que partout ailleurs dans le produit — `LiveDot` lime, avec
+   * son halo qui bat — parce que « ça avance » se dit d'une seule façon : sur
+   * une ligne d'agent de la barre, sur une ligne de conversation, et ici.
+   *
+   * `count` à zéro ne dessine RIEN, comme la pastille : un point éteint se
+   * lirait comme un point, et il faudrait s'approcher pour apprendre qu'il n'y
+   * a rien. `noun` est ce que le compte compte, et il part dans le nom
+   * accessible : la case Logs compte des runs, la case Work des conversations,
+   * et les deux ne veulent pas dire la même chose.
+   */
+  running?: RailCellRunning;
   testId: string;
 };
+
+/** Ce qui tourne derrière une case : combien, et de quoi il s'agit. */
+export type RailCellRunning = {
+  count: number;
+  noun: 'run' | 'conversation';
+};
+
+/**
+ * LE NOM QUE LA CASE ANNONCE, quand il ne suffit pas de lire son libellé.
+ *
+ * Exporté parce qu'un test le compare au texte attendu sans monter le rail
+ * entier, et parce que les trois cas — rien, un compte en attente, un compte
+ * qui tourne — tiennent dans une seule fonction qu'on peut lire d'un coup.
+ *
+ * `undefined` quand le libellé se suffit : une case sans chiffre n'a pas
+ * besoin d'un `aria-label` qui répète son texte.
+ */
+export function railCellName(
+  label: string,
+  pill: number | undefined,
+  running: RailCellRunning | undefined,
+): string | undefined {
+  const parts: string[] = [];
+  // « pending » et pas autre chose : c'est ce que la pastille SIGNIFIE — ce qui
+  // attend une réponse de la personne — et c'est le seul sens qu'elle ait dans
+  // la barre, sur les dossiers comme ici.
+  if (pill !== undefined && pill > 0) parts.push(`${pill} pending`);
+  if (running !== undefined && running.count > 0) {
+    const noun = running.count === 1 ? running.noun : `${running.noun}s`;
+    parts.push(`${running.count} ${noun} in progress`);
+  }
+  if (parts.length === 0) return undefined;
+  return `${label}, ${parts.join(', ')}`;
+}
 
 export default function RailCell({
   href,
@@ -96,8 +145,10 @@ export default function RailCell({
   icon: Icon,
   active = false,
   pill,
+  running,
   testId,
 }: Props) {
+  const nom = railCellName(label, pill, running);
   const contenu = (
     <>
       <Icon size={18} className="h-[18px] w-[18px]" />
@@ -108,12 +159,35 @@ export default function RailCell({
         // et un nombre posé dans la colonne pousserait l'icône hors de son axe.
         <AttentionCount count={pill} variant="solid" className="absolute top-1 right-1" />
       )}
+      {running !== undefined && running.count > 0 && (
+        // LE COIN GAUCHE, et la pastille garde le droit (Reviewer C, passe 1).
+        // Les deux tenaient le même coin, et rien ne les en empêchait : aucune
+        // case n'en porte deux aujourd'hui, mais celle qui le ferait demain
+        // aurait posé le point SUR le chiffre, sans qu'un test le voie. Une
+        // règle sans condition — chacun son coin — ne peut pas se croiser.
+        //
+        // `aria-hidden` : ce que le point dit, le nom de la case le dit déjà
+        // en toutes lettres. Annoncé deux fois, il deviendrait un bruit.
+        <span
+          aria-hidden="true"
+          data-testid={`${testId}-running`}
+          className="absolute top-1 left-1 flex h-2 w-2 items-center justify-center"
+        >
+          <LiveDot variant="lime" size="sm" />
+        </span>
+      )}
     </>
   );
   const commun = {
     title: label,
     'data-testid': testId,
-    // `relative` : la pastille se pose sur le coin de la case.
+    // LE NOMBRE SE DIT, il ne se laisse pas deviner (Reviewer C, passe 2 de la
+    // PR #235). Sans ce nom, un lecteur d'écran annonce « Approvals 3 » : le
+    // libellé et le chiffre collés, sans un mot pour dire ce que le chiffre
+    // compte. « Approvals, 3 pending » le dit, et « Logs, 2 runs in progress »
+    // aussi — un point coloré, lui, ne s'annonce pas du tout.
+    ...(nom !== undefined ? { 'aria-label': nom } : {}),
+    // `relative` : la pastille et le point se posent sur le coin de la case.
     className: `relative ${railCellClass(active)}`,
   };
 
@@ -149,15 +223,6 @@ export default function RailCell({
       // `aria-current="page"` et non `"true"` : c'est bien la page en cours que
       // la case désigne, comme toute ligne de la barre (`SidebarRow`).
       {...(active ? { 'aria-current': 'page' as const } : {})}
-      // LE NOMBRE SE DIT, il ne se laisse pas deviner (Reviewer C, passe 2 de
-      // la PR #235). Sans ce nom, un lecteur d'écran annonce « Approvals 3 » :
-      // le libellé et le chiffre collés, sans un mot pour dire ce que le
-      // chiffre compte. « Approvals, 3 pending » le dit.
-      //
-      // « pending » et pas autre chose : c'est ce que la pastille SIGNIFIE —
-      // ce qui attend une réponse de la personne — et c'est le seul sens
-      // qu'elle ait dans la barre, sur les dossiers comme ici.
-      {...(pill !== undefined && pill > 0 ? { 'aria-label': `${label}, ${pill} pending` } : {})}
       {...commun}
     >
       {contenu}

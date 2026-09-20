@@ -1,0 +1,86 @@
+name: CI Windows
+
+# Quentin développe et fait tourner Nodal sur Windows ; la CI ne voyait que
+# Linux. Les pièges qui lui coûtent le plus — arbres de processus, ports
+# tenus, séparateurs de chemin, casse du système de fichiers — n'étaient donc
+# vus par personne avant lui.
+#
+# BLOQUANT depuis le 11/08, sur décision de Quentin. Il a été vert dès son
+# premier passage utile — après avoir rendu deux défauts réels de comparaison
+# de chemins, dont un qui cassait la livraison de fichiers temporaires sur
+# macOS. Si ce job se met à flaker, la réponse n'est PAS de remettre
+# `continue-on-error` mais de traiter la cause.
+#
+# Sur `main` et chaque nuit, PLUS sur les pull requests (#291, 2026-09-21) :
+# en 29 min par PR il n'a jamais trouvé un défaut Windows que le job Linux
+# avait laissé passer, et il doublait le temps d'attente de chaque PR. Un
+# rouge ici se corrige par une PR de suite, et le portail le montre.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 04:47 UTC : hors de la vague de l'heure, et après la mesure nocturne de
+    # `qa.yml` (03:17), pour ne pas se disputer les runners avec elle.
+    - cron: '47 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci-windows:
+    runs-on: windows-latest
+    # 35 min, et non 25. Mesure sur les 15 derniers runs du job (13/09) :
+    # médiane 7,7 min, pire cas 24,8 min (run 34763241321). L'écart n'est pas
+    # une suite qui grossit, c'est le cache turbo : à chaud « Unit tests » dure
+    # 248 s et « Typecheck » 27 s (run 34774241407, 5,9 min au total) ; à froid,
+    # 1125 s et 270 s (24,8 min). Les deux étapes sont les seules qui comptent,
+    # tout le reste du job tient en ~80 s. Un plafond à 25 min coupait donc les
+    # runs à cache froid — c'est ce qui a annulé le job de #87 à 24 min sans
+    # qu'aucun test ne soit rouge (issue #89). 24,8 + 30 % = 32,2, arrondi à 35.
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+
+      # No `version:` here on purpose — pnpm/action-setup@v4 reads the
+      # version from the `packageManager` field in the root package.json.
+      # Specifying both causes ERR_PNPM_BAD_PM_VERSION.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      # Turborepo's own cache, persisted between runs, keyed per OS because
+      # Linux and Windows artefacts are not interchangeable. The key carries
+      # the SHA so each run writes its own entry; restore-keys falls back to
+      # the most recent one, which is what makes an unchanged package a cache
+      # hit. ~100 KB on Windows (typecheck/test declare no outputs, so only
+      # logs and the up-to-date markers are stored — all that is needed to
+      # SKIP them).
+      - uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Typecheck et tests seulement : lint et format ne dépendent pas de l'OS,
+      # les refaire ici doublerait le coût sans rien apprendre.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Le plafond de concurrence turbo (3) vit dans `turbo.json` depuis #292 :
+      # `--concurrency` est un drapeau TURBO, et le passer par `pnpm test -- …`
+      # le transmettait à vitest, qui le refusait. Plus de drapeau à copier.
+      - name: Unit tests
+        run: pnpm test
