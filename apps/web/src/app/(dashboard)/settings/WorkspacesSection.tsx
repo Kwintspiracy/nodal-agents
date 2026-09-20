@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -11,6 +11,11 @@ import {
   switchWorkspaceAction,
   type WorkspaceRow,
 } from '@/lib/actions.ts';
+import {
+  listWorkspaceFootprintsAction,
+  type WorkspaceFootprint,
+} from '@/lib/workspace-footprint-actions.ts';
+import { footprintSizeText, footprintSnapshotText } from '@/lib/workspace-footprint.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { SetForm } from '@/components/ui/SetForm.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
@@ -48,6 +53,32 @@ export default function WorkspacesSection({ initial, formId }: Props) {
   // Delete confirm
   const [deleteTarget, setDeleteTarget] = useState<WorkspaceRow | null>(null);
   const [isDeleting, startDeleteTransition] = useTransition();
+
+  // CE QUE PÈSE CHAQUE ESPACE, ET CE QU'A COÛTÉ SA DERNIÈRE PHOTO (#261).
+  //
+  // APRÈS LE MONTAGE, jamais pendant le rendu de la page : la mesure parcourt
+  // le disque et s'arrête à trois secondes par espace. La liste s'affiche
+  // d'abord, les deux faits arrivent ensuite — comme la liste des fichiers
+  // d'un dossier d'agent.
+  //
+  // `null` = la lecture n'a pas répondu, et l'écran le DIT. Un tableau vide
+  // dirait « aucun espace ne pèse rien », ce qui n'est pas la même chose
+  // (invariant #4).
+  const [footprints, setFootprints] = useState<WorkspaceFootprint[] | null>(null);
+  const [footprintError, setFootprintError] = useState<string | null>(null);
+  useEffect(() => {
+    let vivant = true;
+    void listWorkspaceFootprintsAction().then((res) => {
+      if (!vivant) return;
+      if (res.ok) setFootprints(res.data);
+      // Un échec se DIT sous la ligne : une taille absente en silence se
+      // lirait comme un dossier vide.
+      else setFootprintError(res.message);
+    });
+    return () => {
+      vivant = false;
+    };
+  }, []);
 
   async function reload() {
     const res = await listWorkspacesAction();
@@ -186,6 +217,24 @@ export default function WorkspacesSection({ initial, formId }: Props) {
                     <span className="text-medium-14 text-ink leading-none!">{ws.name}</span>
                   )}
                   <span className="text-mono-11 text-ink-4 leading-none! mt-0.5">{ws.role}</span>
+                  {/* La taille du dossier partagé et la durée de la dernière
+                      photo. Deux faits LUS, jamais estimés : c'est ce qui rend
+                      visible un espace devenu trop gros pour le filet, avant
+                      qu'une écriture ne soit refusée (#261). */}
+                  <span
+                    className="text-mono-11 text-ink-4 leading-none! mt-1"
+                    data-testid={`workspace-footprint-${ws.id}`}
+                  >
+                    {footprintError !== null
+                      ? footprintError
+                      : footprints === null
+                        ? 'Measuring shared folder…'
+                        : (() => {
+                            const f = footprints.find((x) => x.workspaceId === ws.id);
+                            if (f === undefined) return 'Shared folder not measured';
+                            return `${footprintSizeText(f)} · ${footprintSnapshotText(f)}`;
+                          })()}
+                  </span>
                 </span>
 
                 {/* Tags + actions */}

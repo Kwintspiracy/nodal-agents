@@ -970,7 +970,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       workspace text NOT NULL,
       sha text NOT NULL,
       taken_at timestamptz NOT NULL DEFAULT now(),
-      CONSTRAINT job_checkpoints_job_turn_workspace_unique UNIQUE (job_id, turn, workspace)
+      -- mirrors migration 0119 (#261) : combien de temps la photo a pris.
+      -- NULL = pas mesuree, jamais un zero qui se lirait « instantane ».
+      snapshot_ms integer,
+      CONSTRAINT job_checkpoints_job_turn_workspace_unique UNIQUE (job_id, turn, workspace),
+      CONSTRAINT job_checkpoints_snapshot_ms_check CHECK (snapshot_ms IS NULL OR snapshot_ms >= 0)
     );
     CREATE INDEX IF NOT EXISTS idx_job_checkpoints_job ON job_checkpoints (job_id);
 

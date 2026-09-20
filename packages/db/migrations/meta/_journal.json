@@ -827,6 +827,13 @@
       "when": 1786001160000,
       "tag": "0118_agent_jobs_deliverable_check_due",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1786001220000,
+      "tag": "0119_job_checkpoints_snapshot_ms",
+      "breakpoints": true
     }
   ]
 }

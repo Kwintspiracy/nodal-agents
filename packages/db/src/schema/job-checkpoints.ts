@@ -10,7 +10,8 @@
 // Une ligne par (travail, tour, dossier) — voir la migration 0099 pour le
 // pourquoi de cette clé et pourquoi le dossier est du texte libre.
 
-import { pgTable, text, uuid, integer, timestamp, index, unique } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, integer, timestamp, index, unique, check } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { agentJobs } from './jobs.ts';
 
 export const jobCheckpoints = pgTable(
@@ -27,6 +28,22 @@ export const jobCheckpoints = pgTable(
     /** Le commit dans le magasin fantôme — l'état d'avant de ce tour. */
     sha: text('sha').notNull(),
     takenAt: timestamp('taken_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * COMBIEN DE TEMPS LA PHOTO A PRIS, en millisecondes (#261, migration 0119).
+     *
+     * Mesurée autour du seul appel de `snapshot`, aux deux endroits qui
+     * photographient : le seam de `packages/tools` et le harnais CLI du runner.
+     *
+     * Elle existe pour que la montée d'un dossier SE VOIE avant qu'elle ne
+     * refuse quoi que ce soit : `git add` est borné à 30 secondes, et jusqu'ici
+     * la durée ne vivait que sur le chemin d'ÉCHEC, en mémoire, le temps de
+     * rendre la phrase du refus. Une photo qui réussit en 24 secondes ne
+     * laissait aucune trace — le cas qu'il faut justement voir venir.
+     *
+     * NULL = pas mesurée (une ligne d'avant la colonne). L'écran le dit ; il
+     * n'affiche jamais un zéro, qui se lirait « instantané » (invariant #4).
+     */
+    snapshotMs: integer('snapshot_ms'),
   },
   (table) => [
     unique('job_checkpoints_job_turn_workspace_unique').on(
@@ -35,6 +52,13 @@ export const jobCheckpoints = pgTable(
       table.workspace,
     ),
     index('idx_job_checkpoints_job').on(table.jobId),
+    // La durée est un CONSTAT, jamais négative. Pas de borne supérieure : une
+    // photo peut légitimement durer plus que le budget de `git add`, et une
+    // borne inventée refuserait la ligne au moment où elle intéresse le plus.
+    check(
+      'job_checkpoints_snapshot_ms_check',
+      sql`${table.snapshotMs} IS NULL OR ${table.snapshotMs} >= 0`,
+    ),
   ],
 );
 

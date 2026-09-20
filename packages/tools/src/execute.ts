@@ -1306,7 +1306,13 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
     if (checkpointedTurns.has(turnKey)) continue;
 
     try {
+      // L'HORLOGE AUTOUR DE LA PHOTO, et rien d'autre entre les deux (#261).
+      // C'est ce chiffre que l'écran des workspaces montre monter vers la
+      // borne de 30 s de `git add` ; le mesurer plus large dirait le temps
+      // d'autre chose.
+      const debutPhoto = Date.now();
       const cp = await snapshot(store, workspace, `before ${toolName} (job ${ctx.jobId})`);
+      const dureePhoto = Date.now() - debutPhoto;
       if (checkpointedTurns.size >= MAX_REMEMBERED_TURNS) {
         const oldest = checkpointedTurns.values().next().value;
         if (oldest !== undefined) checkpointedTurns.delete(oldest);
@@ -1315,7 +1321,7 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
       if (cp) console.info(`[checkpoints] ${cp.sha.slice(0, 8)} ${workspace} before ${toolName}`);
       // P11 — la photo devient RETROUVABLE : une ligne (travail, tour, dossier,
       // sha). Ne refuse jamais l'écriture, voir recordTurnCheckpoint.
-      await recordTurnCheckpoint(store, workspace, cp?.sha ?? null, ctx);
+      await recordTurnCheckpoint(store, workspace, cp?.sha ?? null, ctx, dureePhoto);
     } catch (err) {
       // One workspace that cannot be snapshotted is enough to refuse: we have
       // no way to tell it is not the one about to be written.
@@ -1367,6 +1373,13 @@ async function recordTurnCheckpoint(
   workspace: string,
   sha: string | null,
   ctx: ToolContext,
+  /**
+   * Les millisecondes qu'a prises la photo (#261) — mesurées par l'appelant,
+   * autour du seul appel de `snapshot`. La ligne les porte pour que l'écran
+   * des workspaces voie la durée MONTER vers la borne de `git add`, au lieu de
+   * ne l'apprendre que le jour où elle la dépasse.
+   */
+  snapshotMs: number,
 ): Promise<void> {
   if (ctx.turn === undefined || !ctx.jobId) return;
   try {
@@ -1374,7 +1387,7 @@ async function recordTurnCheckpoint(
     if (!resolved) return;
     await ctx.db
       .insert(jobCheckpoints)
-      .values({ jobId: ctx.jobId, turn: ctx.turn, workspace, sha: resolved })
+      .values({ jobId: ctx.jobId, turn: ctx.turn, workspace, sha: resolved, snapshotMs })
       // La deuxième écriture du même tour retombe sur la même photo : la base
       // tranche, plutôt qu'un mémo de plus à tenir côté processus.
       .onConflictDoNothing({
