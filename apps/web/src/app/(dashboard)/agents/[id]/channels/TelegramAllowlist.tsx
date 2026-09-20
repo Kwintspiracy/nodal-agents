@@ -99,8 +99,14 @@ export default function TelegramAllowlist({
           ))}
 
           {active.map((c) => (
+            /* Ancre stable (issue #55), la même que dans `ChannelAllowlist` :
+               le parcours d'autorisation cherchait
+               `div.flex.items-center.justify-between`, c'est-à-dire la mise en
+               page, et il aurait désigné n'importe quelle ligne de n'importe
+               quel écran. */
             <div
               key={c.id}
+              data-testid="allowlist-row"
               className="flex items-center justify-between gap-3 rounded-lg border border-rule-2 px-3 py-2"
             >
               <div className="min-w-0">

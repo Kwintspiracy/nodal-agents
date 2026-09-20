@@ -8,7 +8,7 @@
 //     remonter devient impossible.
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { act, createElement } from 'react';
+import { act, createElement, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import ThreadScroller, {
   staysAtBottom,
@@ -17,6 +17,7 @@ import ThreadScroller, {
   scrollPolicy,
   AT_BOTTOM_SLACK_PX,
   READER_GESTURE_WINDOW_MS,
+  type ThreadFollow,
 } from '../ThreadScroller.tsx';
 
 /** Un fil de 3000 px dans une fenêtre de 800 px : 2200 px de course. */
@@ -378,19 +379,20 @@ describe('ThreadScroller — la zone dit quand elle est branchée @cap:parler-a-
     vi.restoreAllMocks();
   });
 
-  async function render(follow?: 'bottom' | 'never'): Promise<HTMLElement> {
+  async function render(follow: ThreadFollow = 'bottom'): Promise<HTMLElement> {
     captureResizeObserver();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     await act(async () => {
-      root!.render(
-        createElement(
-          ThreadScroller,
-          follow ? { follow } : null,
-          createElement('p', null, 'le fil'),
-        ),
-      );
+      // Les props dans une VARIABLE typée : `createElement` ne compte pas
+      // l'enfant passé en troisième argument, donc un objet littéral
+      // `{ follow }` ne satisfait pas `children`, requis par le composant.
+      const props: ComponentProps<typeof ThreadScroller> = {
+        follow,
+        children: createElement('p', null, 'le fil'),
+      };
+      root!.render(createElement(ThreadScroller, props));
     });
     const el = container.querySelector<HTMLElement>('[data-thread-scroller]');
     if (!el) throw new Error('aucune zone de défilement rendue');
