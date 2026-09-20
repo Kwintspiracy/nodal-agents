@@ -102,6 +102,13 @@ describe('homepage rendering', () => {
   it('uses no em dash, which the product copy rules forbid', () => {
     expect(markup).not.toContain('—');
   });
+
+  it('opens on a hero band whose background is the illustration shipped with the site', () => {
+    // The band sets the picture inline (the base path is home-content's), and
+    // the file must really be in `public/`: a static export serves nothing else.
+    expect(markup).toContain(`background-image:url(${BASE_PATH}/home/hero.webp)`);
+    expect(existsSync(join(docsRoot, 'public', 'home', 'hero.webp'))).toBe(true);
+  });
 });
 
 describe('the catalog section only shows what the product actually ships', () => {
@@ -203,8 +210,15 @@ describe('homepage assets and configuration', () => {
   });
 
   it('ships every screenshot it references, each under 250 KB', () => {
-    const sources = [...markup.matchAll(/src="([^"]+)"/g)].map((m) => m[1]);
+    // `src` attributes, and the pictures set as backgrounds (the hero): a
+    // guard that reads only `src` would let a full-bleed background weigh
+    // anything.
+    const sources = [
+      ...[...markup.matchAll(/src="([^"]+)"/g)].map((m) => m[1]),
+      ...[...markup.matchAll(/background-image:url\(([^)]+)\)/g)].map((m) => m[1]),
+    ];
     expect(sources.length).toBeGreaterThan(0);
+    expect(sources).toContain(`${BASE_PATH}/home/hero.webp`);
     for (const src of sources) {
       expect(src.startsWith(`${BASE_PATH}/`)).toBe(true);
       const onDisk = join(docsRoot, 'public', src.slice(BASE_PATH.length + 1));

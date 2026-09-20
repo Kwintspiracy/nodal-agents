@@ -24,7 +24,6 @@ import {
   INVARIANTS,
   LINK_CHANGELOG,
   LINK_DOCS,
-  LINK_GETTING_STARTED,
   LINK_GITHUB,
   LINK_NPM,
   LINK_QA,
@@ -214,43 +213,36 @@ export default function Home() {
       </header>
 
       {/* ── Hero ─────────────────────────────────────────────────────── */}
-      <div className="home-wrap home-hero">
-        <div>
-          <p className="home-mono">Self-hosted agent platform · v{VERSION}</p>
-          <h1 className="home-display">
-            Your AI agents. Your data. <em>Your machine.</em>
-          </h1>
-          <p className="home-lead">
-            Nodal-Agents runs a team of AI agents on your own hardware. Each one has its own model,
-            tools, memory and personality. They research, write files, call your connectors, and
-            hand work to each other until the job is done.
-          </p>
-          <div className="home-actions">
-            <a className="home-btn home-btn-primary" href={LINK_GETTING_STARTED}>
-              Get started
-            </a>
-            <a className="home-btn home-btn-ghost" href={LINK_GITHUB}>
-              View the source
-            </a>
+      {/* The band carries the illustration as a full-bleed background (a dog
+          walking a conveyor of data toward the racks). It is dark in both
+          themes, so the copy on it is always white; a gradient keeps the
+          left column readable and fades the bottom edge into the page. */}
+      <section
+        className="home-hero-band"
+        style={{ backgroundImage: `url(${BASE_PATH}/home/hero.webp)` }}
+      >
+        <div className="home-wrap home-hero">
+          {/* One column, set to the right: the dog and the conveyor live in
+              the left half of the picture and stay uncovered. */}
+          {/* Three things and nothing else on the picture (Quentin, 20/09):
+              the name, the line, the command. */}
+          <div className="home-hero-copy">
+            <h1 className="home-display">
+              Nodal. <span className="home-tagline">Herding agents is what we're built for.</span>
+            </h1>
+            <div className="home-install">
+              <div>
+                <span className="p">$ </span>
+                <span className="c">npm install -g nodal-agents</span>
+              </div>
+              <div>
+                <span className="p">$ </span>
+                <span className="c">nodal-agents up</span>
+              </div>
+            </div>
           </div>
         </div>
-        <aside className="home-hero-aside">
-          <div className="home-install">
-            <div>
-              <span className="p">$ </span>
-              <span className="c">npm install -g nodal-agents</span>
-            </div>
-            <div>
-              <span className="p">$ </span>
-              <span className="c">nodal-agents up</span>
-            </div>
-          </div>
-          <p className="home-install-note">
-            Node 22 or newer. No config file, no account, nothing to answer in the terminal. Your
-            browser opens on a guided setup. Data lives in <code>~/.nodalai</code>.
-          </p>
-        </aside>
-      </div>
+      </section>
 
       <div className="home-wrap home-screens">
         <figure className="home-shot">

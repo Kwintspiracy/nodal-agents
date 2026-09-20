@@ -504,7 +504,6 @@ export const LINK_DOCS = `${BASE_PATH}/docs`;
  * site, so it is linked by path and never with `next/link`.
  */
 export const LINK_QA = `${BASE_PATH}/qa/`;
-export const LINK_GETTING_STARTED = `${BASE_PATH}/docs/getting-started`;
 export const LINK_CHANGELOG = `${BASE_PATH}/docs/changelog`;
 export const LINK_GITHUB = 'https://github.com/Kwintspiracy/nodal-agents';
 export const LINK_NPM = 'https://www.npmjs.com/package/nodal-agents';
