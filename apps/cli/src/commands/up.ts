@@ -10,6 +10,8 @@ import { readConfig, writeConfig, LOG_DIR, PG_DATA_DIR, type Config } from '../l
 import {
   startEmbeddedPostgres,
   runMigrations,
+  findMigrationGaps,
+  repairMigrations,
   stopOrphanPostgres,
   livePostmasterPid,
   postgresProcessesForDataDir,
@@ -102,6 +104,37 @@ function printLogTail(service: 'runner' | 'web' | string, lines: number): void {
   }
 }
 
+/**
+ * Ce que le lanceur dit quand il REFUSE de servir une base à trous (#298).
+ *
+ * Écrit à part pour une raison : c'est la seule chose que la personne verra,
+ * et `runUp` est trop grosse pour qu'un test la joue. Ici, un test peut
+ * vérifier que chaque migration manquante est NOMMÉE et que la commande de
+ * réparation REND LE DÉMARRAGE QU'ON AVAIT. Les deux drapeaux comptent :
+ * `--dev` pour ne pas renvoyer un poste de développement sur un build de
+ * production, et `--detach` parce que le planificateur de tâches qui relance
+ * Nodal après un redémarrage appelle précisément `up --detach` — une commande
+ * sans lui rendrait la stack au terminal, et elle mourrait avec lui.
+ */
+export function migrationGapRefusal(
+  gaps: readonly { tag: string }[],
+  opts: { dev: boolean; detach: boolean },
+): string {
+  const combien = `${gaps.length} migration${gaps.length === 1 ? '' : 's'}`;
+  return [
+    `The database is missing ${combien} the journal announces:`,
+    '',
+    ...gaps.map((g) => `    ${g.tag}`),
+    '',
+    '  Tables are short of columns the code expects, so writes to them will fail.',
+    '  Nodal-Agents will not serve a database in that state.',
+    '',
+    '  Apply them with:',
+    '',
+    `    nodal-agents up --repair-migrations${opts.dev ? ' --dev' : ''}${opts.detach ? ' --detach' : ''}`,
+  ].join('\n');
+}
+
 export interface RunUpOptions {
   /**
    * Use `next dev` (HMR) for the web app instead of `next start`.
@@ -123,6 +156,17 @@ export interface RunUpOptions {
    * puts Nodal back after a restart, and it can call `up --detach` to do it.
    */
   detach?: boolean;
+  /**
+   * Apply the migrations the journal announces and the database never got,
+   * instead of refusing to serve because of them (issue #298).
+   *
+   * The gesture lives HERE, and not in a `db repair` of its own, because a
+   * repair needs the embedded Postgres already running and `up` is the only
+   * command in the CLI that starts it. A standalone command would have had to
+   * duplicate the whole cluster lifecycle — start, wait, stop, orphan
+   * detection — to do the same three statements.
+   */
+  repairMigrations?: boolean;
 }
 
 export async function runUp(opts: RunUpOptions = {}): Promise<void> {
@@ -759,6 +803,52 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     await pg.stop();
     throw err;
   }
+
+  // ── 3.2 A migration the migrator SKIPPED (issue #298) ─────────────────────
+  //
+  // `migrate()` only applies entries whose `when` is past the LAST applied
+  // one, so a migration merged after a more recent one is skipped in silence,
+  // for good. On 2026-09-20 that left the owner's database without
+  // `code_projects.init_git`: every write to that table failed, and nothing at
+  // boot said why. A launcher that serves a database it knows to be short of a
+  // migration is a silent smart fallback (invariant #4), so it refuses.
+  //
+  // The check reads the journal against `drizzle.__drizzle_migrations` BY
+  // TIMESTAMP, never by hash: with `patchVectorAsText` the applied files are
+  // rewritten, so the recorded hashes are those of the patched copies.
+  const vectorPatched = { patchVectorAsText: !pg.vectorAvailable };
+  const gapSpinner = ora('Checking the migration journal…').start();
+  let gaps = await findMigrationGaps(databaseUrl, vectorPatched).catch(async (err: unknown) => {
+    gapSpinner.fail('Could not read the migration journal');
+    await pg.stop();
+    throw err;
+  });
+
+  if (gaps.length > 0 && opts.repairMigrations === true) {
+    gapSpinner.text = `Repairing ${gaps.length} skipped migration${gaps.length === 1 ? '' : 's'}…`;
+    try {
+      const repaired = await repairMigrations(databaseUrl, vectorPatched);
+      gapSpinner.succeed(chalk.green(`Repaired: ${repaired.map((g) => g.tag).join(', ')}`));
+    } catch (err) {
+      gapSpinner.fail('Repair failed');
+      await pg.stop();
+      throw err;
+    }
+    // Relu, jamais déduit : une réparation qui a rendu sans lever ne prouve
+    // pas que la base est complète.
+    gaps = await findMigrationGaps(databaseUrl, vectorPatched);
+  }
+
+  if (gaps.length > 0) {
+    gapSpinner.fail(
+      `${gaps.length} migration${gaps.length === 1 ? '' : 's'} in the journal never reached this database`,
+    );
+    await pg.stop();
+    throw new Error(
+      migrationGapRefusal(gaps, { dev: opts.dev === true, detach: opts.detach === true }),
+    );
+  }
+  gapSpinner.succeed(chalk.green('Migration journal complete'));
 
   // ── 3.5 Master-key sanity check (I-6) ─────────────────────────────────────
   // Before anything touches encrypted rows: if ~/.nodalai/secrets.key is

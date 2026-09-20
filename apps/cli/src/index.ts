@@ -62,10 +62,21 @@ program
   .description('Start Postgres, runner, and web — open browser when ready')
   .option('--dev', 'Run web in `next dev` mode (HMR, no prebuild required)')
   .option('-d, --detach', 'Return to the prompt once healthy — services keep running')
-  .action(async (opts: { dev?: boolean; detach?: boolean }) => {
+  // Le geste de réparation vit sur `up` et non dans une commande à lui : il
+  // demande le Postgres embarqué DÉJÀ démarré, et `up` est le seul endroit du
+  // CLI qui le démarre (issue #298).
+  .option(
+    '--repair-migrations',
+    'Apply migrations the journal announces and this database never got',
+  )
+  .action(async (opts: { dev?: boolean; detach?: boolean; repairMigrations?: boolean }) => {
     const { runUp } = await import('./commands/up.ts');
     try {
-      await runUp({ dev: opts.dev, detach: opts.detach });
+      await runUp({
+        dev: opts.dev,
+        detach: opts.detach,
+        repairMigrations: opts.repairMigrations,
+      });
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);
