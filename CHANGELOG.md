@@ -10,6 +10,165 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.1 — Sep 21, 2026
+
+A release about the product knowing itself. Asked on a fresh install whether
+Telegram could be configured, the agent answered that Telegram was not supported
+and offered to build an MCP server, while Telegram ships with its own tab in that
+agent's settings. The documentation is now a knowledge base every agent can read,
+with the reflex to read it before calling anything impossible, and the prompt
+names the four messaging channels and the two kinds of automation.
+
+The rest is about seeing what is happening and being able to stop it. A Stop
+button sits on the three screens where a person actually watches a run, the rail
+carries a dot while something is live, a delivered file waiting for an eye is
+counted in the attention pill, and a command that left nothing observable is said
+rather than passed over in silence. Settings shows what a workspace weighs and
+how long its last safety snapshot took, before a refusal rather than after, and
+the launcher refuses to serve a database a migration was skipped on and can
+repair it. Twenty-one pull requests, two migrations
+(`0118_agent_jobs_deliverable_check_due` and `0119_job_checkpoints_snapshot_ms`).
+
+**The agent knows the platform it runs in**
+
+- **The documentation ships with the product, and a tool reads it.** `nodal_docs`
+  answers a question with the two or three sections of the manual that address
+  it, each with its page, its heading and a link. The index is built from the
+  committed pages and travels inside the package next to the migrations, so a
+  fresh clone answers without building anything first. The match is lexical,
+  offline and deterministic, because this runs inside a model turn. The Telegram
+  guide is corrected on the way: the bot token goes on the Channels tab, and the
+  page that could not say where to click was the one the question was about.
+  (#319)
+- **The reflex to consult it, and channels and automations in the prompt.** A
+  baseline skill, `platform-support`, tells an agent that it runs inside
+  Nodal-Agents and to read the documentation before declaring anything
+  unsupported, impossible or in need of being built. It is injected only when the
+  agent actually holds the tool it names, and it fails closed. The
+  discoverability block now lists the messaging channels the agent is not yet
+  bound to and the two kinds of automation, so "I cannot run on a schedule" stops
+  being the answer to a question that has a screen behind it. An existing install
+  needs nothing but a restart. (#329)
+
+**Watching a run, and stopping it**
+
+- **A Stop button where a person watches a run.** Cancelling used to mean finding
+  `/jobs/[id]`, which is not where anyone watches work. One button now sits on
+  the run page, on the thread while a turn is running and on a code session. It
+  confirms in the product's own dialog and says what stopping means rather than
+  promising a kill: the run and everything it delegated stop at the next check,
+  and a model call already in flight finishes on its own. (#325)
+- **The rail says what is running.** Logs carries a beating dot while any run is
+  live, Work carries one while any conversation it lists is live, and the cell's
+  name carries the count for a reader who does not see colour. Both read the
+  snapshot the sidebar already polls, on its own cadence: no second query, and no
+  second truth. (#314)
+- **A deliverable waiting for a look is counted in the attention pill.** The pill
+  counted an approval pending and a question asked, and stopped there, because no
+  column said that a deliverable awaited a human eye. One does now, written by
+  the runner in the same transaction as the terminal status, so a crash cannot
+  leave a run that delivered with nothing saying so. The wait is carried by the
+  head of the chain, the run a person opens, and only opening that run or its
+  thread clears it: a message that left on Telegram made nobody look at anything.
+  Migration 0118. (#317)
+- **A command nobody saw is said.** A turn whose only action was a shell command
+  with no constated write rendered nothing at all: no delivery inset, because it
+  is not work, and no note, because nothing was unclassified. The inset now
+  follows that turn too, names the command and marks it `nothing observed`, and
+  its header reads Ran instead of Delivered. Not "did nothing": what is missing
+  is the observation, and the wording says that. (#327)
+
+**The product carries its own marks**
+
+- **One logo, everywhere.** The collie on the N replaces the letter tile of the
+  rail and the mobile bar, the diamond of the first-run screen, and the terminal
+  prompt on the login page, which told a person arriving at the product that it
+  was a command-line tool. Three marks for one product became one, drawn by one
+  component from one file, and the browser tab points at that same file. (#322)
+- **An empty section never ends with "See all", and PROJECTS gets a "+".** "No
+  Project Yet" followed by "See all" announced seeing all of nothing. The row is
+  dropped only when the read answered that there are no rows; loading and a
+  failed read keep it, which is exactly when opening the page by hand helps. The
+  path to create is the "+" on the section title, the same one CRON and WEBHOOKS
+  carry. (#315)
+- **The "+" on CRON and WEBHOOKS opens the creation form.** It pointed at the
+  page one was already looking at, so the click changed nothing. It now says
+  which form to open, the page opens it on arrival, and closing the form drops
+  the parameter so a reload does not reopen it. (#302)
+- **A row folds when it is narrow.** In the "Skills attached" grid of an agent's
+  Overview tab, a two-word name overflowed its column and drew its second line
+  over the slug and the Open button; the connector rows of the same tab ran into
+  the "on" pill the same way. The rule belongs to the row component rather than
+  to each caller, and a browser journey measures the boxes. (#318)
+
+**What the owner sees before a refusal**
+
+- **A workspace says what it weighs, and how long its last snapshot took.** On
+  the evening of 19 September a shared folder reached 3.3 GB, the safety snapshot
+  blew its budget, every write was refused, and nothing on any screen had said
+  the folder was growing. Both facts now sit under each workspace name in
+  Settings, from the same measure the refusal uses, never a second one. A
+  snapshot that succeeds leaves its duration behind now, which is the case worth
+  seeing coming. A folder that does not exist yet, one that cannot be read and a
+  snapshot that was never timed each get their own sentence instead of a zero.
+  Migration 0119. (#324)
+- **The launcher refuses to serve a database a migration was skipped on.**
+  Drizzle's migrator compares each entry against the last applied row, so a
+  migration merged after a more recent one is skipped in silence and for good.
+  That is how a table lost a column on 20 September with nothing at boot saying
+  why. At every boot the journal is now read against the applied history: any gap
+  is named, Postgres is stopped, and the refusal carries the exact command to
+  repair. `nodal-agents up --repair-migrations` applies the missing entries in
+  order, each in its own transaction, and reads the check again rather than
+  assuming it worked. (#323)
+
+**The site, and the documentation**
+
+- **The homepage opens on a hero band.** The illustration fills a full-bleed
+  section, with the version pill, the two-line title, the install terminal and
+  the two buttons held to the left so the picture keeps its right half, and the
+  nav sitting on the illustration as the handed-over design composes it. Every
+  value that design states lands at 1440 and travels by `clamp()` on other
+  widths. The version on the pill is read from the published package and never
+  typed. The site also took the new logo, and the two product screenshots were
+  retaken on 0.9.0 at the same size. (#305, #307, #309, #320)
+- **The documentation is brought back up to the product.** It had not moved since
+  0.8.6, and six releases had landed since. Thirty-one hand-written pages were
+  read sentence by sentence against the code, twenty-seven were corrected, and
+  two concept pages were added for what was documented nowhere: what proves a
+  run, and what a project is. Five reference sections that answered 404 now have
+  an index, written by the generator from its own output, so the list cannot go
+  stale. (#304)
+
+**The CI, and the quality portal**
+
+- **The CI is split, and a pull request answers in eight minutes.** One
+  sequential job needed twenty-three minutes to reach the build and was then
+  cancelled by its own budget on a green tree. It becomes checks, five test
+  shards and a build, each with its own cache lineage and a budget set at twice
+  its measurement, so "the build broke" and "the suite grew" are two different
+  red marks. The Windows job moves to pushes on `main` and a nightly, having cost
+  twenty-nine minutes on every pull request without ever finding a fault the
+  Linux job had missed. Wall clock, first job started to last job finished: eight
+  minutes twenty. (#312)
+- **A deploy of `main` is never dropped, and the portal says when the site was
+  last deployed.** GitHub keeps one pending run per concurrency group, so the
+  deploy of a merge was cancelled by the run of that same pull request closing,
+  and nothing said so. The one gate that could lose a deploy for good is removed,
+  with the reasoning written beside it. The portal now carries a line saying when
+  the site was last deployed, from which commit and by which event, and what
+  happened to the runs since. The commit is named only for a push run, the only
+  event whose recorded head is the commit that was built. (#313, #321)
+- **The quality portal shows the jobs in flight.** The board is derived from
+  issues and pull requests, so a morning with every issue closed showed nothing
+  while three review passes, six CI watchers and a forty-minute `release:check`
+  were running. A strip above the Kanban now names each job, where it runs, since
+  when and what it waits for. A source that did not answer says so, and is never
+  rendered as nothing running: an empty strip means the machine is idle only when
+  every source spoke. (#326)
+
+---
+
 ## v0.9.0 — Sep 20, 2026
 
 A release about the shape of the product. The sidebar became a rail of the
