@@ -88,6 +88,28 @@ permissions:
   issues: read
   pull-requests: read
 
+# Un seul groupe pour tous les événements, parce qu'un seul site se déploie.
+#
+# GitHub ne garde qu'UN run EN ATTENTE par groupe : quand un second se met en
+# file pendant qu'un premier attend encore, le plus ancien des deux est annulé,
+# quel que soit son événement. Le 20/09/2026 c'est le déploiement de `main`
+# (la fusion de #304) qui y est passé, annulé par le `pull_request_target` de la
+# fermeture de cette même PR, mis en file la même seconde (#306).
+#
+# C'est SANS PERTE, à une condition tenue ci-dessous : chaque run construit
+# `main` HEAD (le `ref: main` du checkout), jamais le commit de son événement.
+# Le run qui en annule un autre déploie donc au moins ce que l'annulé aurait
+# déployé, et le seul cas où le site prend du retard est un run qui échoue —
+# ce qui se voit en rouge. Le portail montre le dernier déploiement réussi et
+# ce qui s'est passé depuis (`cadreDeploiement`, apps/qa/build.mjs).
+#
+# Le job `build` n'a PLUS de `if` sur la conclusion de la mesure nocturne :
+# la mesure ne committe ses données qu'après que chaque étape avant le commit
+# a réussi (`qa.yml`, « Enregistrer la mesure »), donc `main` ne porte jamais
+# une mesure à moitié écrite, et cette porte ne protégeait rien. Elle creusait
+# en revanche le trou : un run `workflow_run` d'une mesure ratée annulait le
+# run de `main` en attente, puis se sautait lui-même — plus personne ne
+# déployait avant le filet horaire.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -96,13 +118,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Publier ce qu'une mesure RATÉE a laissé derrière elle donnerait un portail
-    # à moitié écrit, présenté comme l'état du jour.
-    # Une mesure RATÉE laisse des données à moitié écrites ; les publier les
-    # présenterait comme l'état du jour.
-    if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v5
         with:

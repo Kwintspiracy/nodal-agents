@@ -325,15 +325,20 @@ describe('homepage assets and configuration', () => {
     expect(checkout[0].with?.ref).toBe('main');
   });
 
-  // A measurement that FAILED leaves `apps/qa/data` half written. Publishing it
-  // would present those leftovers as the state of the day, so the build job is
-  // gated on the conclusion of the run that triggered it — while staying open
-  // to every other event, which carries no `workflow_run` at all.
-  it('refuses to publish what a failed measurement left behind', () => {
-    const gate = BUILD_JOB.if ?? '';
-    expect(gate).toContain("github.event_name != 'workflow_run'");
-    expect(gate).toContain("github.event.workflow_run.conclusion == 'success'");
-    expect(gate).toMatch(/\|\|/);
+  // GitHub keeps ONE pending run per concurrency group and cancels the older
+  // one when a second is queued, whatever its event. On 2026-09-20 the deploy
+  // of main was the one cancelled (#306). That is harmless only because every
+  // run builds main HEAD, so the survivor deploys at least what the cancelled
+  // run would have: the build job must check out `main` (asserted above) and
+  // must never skip itself. The former `if` on the measurement's conclusion
+  // did exactly that: a failed nightly cancelled the pending deploy of main,
+  // then skipped its own, and nobody deployed until the hourly net. It guarded
+  // nothing, since the measurement commits its data only after every earlier
+  // step succeeded, so main never carries a half-written measurement.
+  it('never skips a deploy: every run publishes main HEAD, whatever queued it', () => {
+    expect(BUILD_JOB.if).toBeUndefined();
+    const checkout = BUILD_JOB.steps.filter((s) => (s.uses ?? '').startsWith('actions/checkout@'));
+    expect(checkout[0].with?.ref).toBe('main');
   });
 
   it('announces the version that is actually published', () => {
