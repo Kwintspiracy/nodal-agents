@@ -104,8 +104,12 @@ export type SidebarApprovalRow = SidebarNamedRow & {
    * pas de quoi il s'agissait) ; l'agent et l'outil passent en infobulle.
    */
   what: string;
-  /** Le fil où la demande a été posée, quand le job en a un : où la ligne mène. */
-  conversationId: string | null;
+  /** Ce qui a été décidé : `approved`, `rejected` ou `expired`. */
+  status: 'approved' | 'rejected' | 'expired';
+  /** Quand, en ISO — `null` si la base ne l'a pas noté. */
+  resolvedAt: string | null;
+  /** La réponse donnée, pour une QUESTION ; `null` pour une approbation. */
+  answer: string | null;
 };
 
 // ─── Les agents ───────────────────────────────────────────────────────────────
@@ -224,11 +228,12 @@ export async function listSidebarRecentApprovalsAction(
         agentName: agents.name,
         toolName: approvalRequests.toolName,
         toolInput: approvalRequests.toolInput,
-        conversationId: agentJobs.conversationId,
+        status: approvalRequests.status,
+        resolvedAt: approvalRequests.resolvedAt,
+        answer: approvalRequests.answer,
       })
       .from(approvalRequests)
       .leftJoin(agents, eq(agents.id, approvalRequests.agentId))
-      .leftJoin(agentJobs, eq(agentJobs.id, approvalRequests.jobId))
       .where(
         and(
           eq(approvalRequests.entityId, session.entityId),
@@ -254,7 +259,10 @@ export async function listSidebarRecentApprovalsAction(
           name: r.agentName ?? r.toolName,
           toolName: r.toolName,
           what,
-          conversationId: r.conversationId ?? null,
+          // `<> 'pending'` dans la requête : il ne reste que ces trois-là.
+          status: (r.status ?? 'expired') as 'approved' | 'rejected' | 'expired',
+          resolvedAt: r.resolvedAt === null ? null : r.resolvedAt.toISOString(),
+          answer: r.answer ?? null,
         };
       }),
     );

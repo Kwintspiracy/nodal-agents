@@ -839,7 +839,9 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
           name: 'Researcher',
           toolName: 'web_search',
           what: 'Search the web for « nodal »',
-          conversationId: 'c1',
+          status: 'approved',
+          resolvedAt: '2026-09-20T10:00:00.000Z',
+          answer: null,
         },
       ],
     });
@@ -869,11 +871,22 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     // l'agent et l'outil sont en infobulle, et la ligne mène au fil concerné.
     expect(rendues.map((l) => l.textContent?.trim())).toEqual(['Search the web for « nodal »']);
     expect(rendues[0]?.getAttribute('title')).toBe('Researcher · web_search');
-    expect(rendues[0]?.getAttribute('href')).toBe('/chat/c1');
     // Gris : plus rien n'attend là. C'est tout ce qui sépare les deux sections.
     expect(
       rendues[0]?.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls'),
     ).toBe('no');
+    // Une ligne rendue NE NAVIGUE PAS et ne s'allume pas (Quentin, 20/09) :
+    // c'est un bouton, qui déplie le RÉSUMÉ de la demande sous elle.
+    expect(rendues[0]?.tagName).toBe('BUTTON');
+    expect(rendues[0]?.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-testid="recent-summary"]')).toBeNull();
+    await click(rendues[0]!);
+    const resume = container.querySelector('[data-testid="recent-summary"]');
+    expect(resume?.textContent).toContain('Search the web for « nodal »');
+    expect(resume?.textContent).toContain('Researcher · web_search');
+    expect(resume?.textContent).toContain('Approved');
+    await click(rendues[0]!);
+    expect(container.querySelector('[data-testid="recent-summary"]')).toBeNull();
   });
 
   it('ne lit PAS les approbations en attente une seconde fois', async () => {
