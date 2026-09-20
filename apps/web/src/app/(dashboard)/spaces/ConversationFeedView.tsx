@@ -23,7 +23,7 @@ import type {
   Step,
   TurnBlock,
 } from '@/lib/conversation-feed.ts';
-import Markdown, { plainText } from '@/components/Markdown.tsx';
+import Markdown, { plainText, plainLines } from '@/components/Markdown.tsx';
 import { formatClock, truncate } from '@/lib/format-time';
 import ThinkingBlock from './ThinkingBlock.tsx';
 import ToolBlock from './ToolBlock.tsx';
@@ -852,9 +852,10 @@ function BlockLabel({ children }: { children: React.ReactNode }) {
  * agents de revue écrivent VRAIMENT, telle qu'elle est dans `agent_jobs.result`
  * (relevé du 17/09) : une première ligne « Verdict », « Verdict global »,
  * « Verdict final », suivie de deux points ou d'un tiret cadratin — ou le mot
- * seul sur sa ligne, le verdict étant alors la ligne suivante. Le séparateur
- * n'accepte PAS le trait d'union : « Verdict - » n'apparaît nulle part, et un
- * tiret est trop banal pour découper une phrase sans risque.
+ * seul sur sa ligne, le verdict étant alors la ligne suivante. La forme EN
+ * LIGNE n'accepte PAS le trait d'union : un tiret est trop banal pour découper
+ * une phrase sans risque. Le mot seul, lui, l'accepte, et la raison est plus
+ * bas — sur une ligne qui s'arrête là, il n'y a plus de phrase à découper.
  *
  * Tout le reste rend `null` et la ligne n'est pas dessinée : inventer un
  * verdict à partir de la première phrase d'un résultat quelconque ferait dire
@@ -864,29 +865,67 @@ function BlockLabel({ children }: { children: React.ReactNode }) {
  * La ligne rendue est la PREMIÈRE, parce que le pied du bloc tient sur une
  * ligne. Le reste n'est pas perdu : le corps montre le résultat en entier,
  * juste au-dessus (« Result », ou le fil du délégué qui porte sa réponse).
+ *
+ * CE QU'EST « LA LIGNE SUIVANTE » (#198)
+ * --------------------------------------
+ * La branche « le mot seul, le verdict en dessous » ne s'est jamais déclenchée
+ * jusqu'au 20/09/2026 : la règle lisait `plainText`, qui ne rend que la
+ * première ligne du PREMIER bloc, si bien que « Verdict\nça passe » arrivait
+ * ici comme « Verdict » tout court et que la suite était toujours absente.
+ * C'est #195 qui l'a constaté, en écrivant les tests de #174 : la branche y a
+ * été documentée et son comportement réel épinglé, plutôt que réparé dans une
+ * PR qui portait sur autre chose.
+ *
+ * Elle est RÉPARÉE plutôt que supprimée, parce que la famille qu'elle vise
+ * existe vraiment : un relecteur qui titre « ## Verdict » et pose sa phrase en
+ * dessous a dit son verdict, et le taire n'était pas de la prudence, c'était
+ * une ligne perdue. La règle lit donc les DEUX premières lignes lisibles du
+ * markdown (`plainLines`), blocs traversés.
+ *
+ * LE MOT SEUL PORTE SON SÉPARATEUR. « Verdict: » sur sa ligne, le verdict en
+ * dessous, rendait `null` : la forme en ligne exige un contenu APRÈS le
+ * séparateur, et `/^verdict$/i` échouait sur le deux-points resté là. C'était
+ * le défaut d'origine de cette branche, sur une formulation réelle (Reviewer C,
+ * passe 1 de la PR #278). Le séparateur est donc optionnel quand il ne reste
+ * rien derrière.
+ *
+ * ET LÀ, le TIRET est accepté — les trois, cadratin, demi-cadratin et trait
+ * d'union — alors que la forme en ligne n'en accepte aucun. Ce n'est pas une
+ * incohérence, c'est la même prudence appliquée à deux situations qui ne se
+ * ressemblent pas. En ligne, un tiret sépare des phrases tout le temps, et
+ * « Verdict - ça passe » n'est pas distinguable d'une phrase qui commence par
+ * le mot. Sur une ligne qui s'arrête au tiret, il ne reste RIEN derrière : le
+ * tiret ne peut plus découper quoi que ce soit, il ne fait qu'annoncer la
+ * suite (Reviewer C, passe 2 de la PR #278).
+ *
+ * Le qualificatif, lui, n'est PAS accepté sur cette branche-là, alors que la
+ * forme en ligne l'accepte (« Verdict global : … »). La raison tient en une
+ * ligne de la base : « Verdict émis. Je clos la tâche. » Écrite en deux
+ * paragraphes, « Verdict émis. » passerait pour le mot seul et la phrase
+ * suivante deviendrait un verdict que personne n'a rendu.
+ *
+ * La ligne suivante ne compte que si elle vient d'un PARAGRAPHE. C'est la
+ * décision pour le milieu ambigu, et elle est explicite : sous « ## Verdict »,
+ * une LISTE de constats n'est pas un verdict d'une ligne, et en promouvoir la
+ * première puce ferait dire au délégué ce qu'il n'a pas dit (invariant #4).
+ * Un tel résultat ne dessine aucune ligne, et le corps montre la liste entière.
+ * Le cas « Verdict\nça passe » passe par la même porte : les deux lignes sont
+ * celles d'un seul paragraphe.
+ *
+ * Un SOUS-TITRE (« ### Approve ») et une CITATION (« > approve ») sous le mot
+ * sont écartés par la même règle, et c'est voulu : ni l'un ni l'autre n'est la
+ * phrase d'un relecteur. Le second est d'ordinaire une consigne recopiée, et
+ * la prendre pour un verdict serait lire la question comme la réponse.
  */
 export function delegationVerdict(result: string | null): string | null {
   if (result === null) return null;
-  const lines = plainText(result)
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l !== '');
-  const [head, next] = lines;
+  const [head, next] = plainLines(result, 2);
   if (head === undefined) return null;
-  const inline = /^verdict(?:\s+[^\s:—]+)?\s*[:—]\s*(.+)$/i.exec(head);
+  const inline = /^verdict(?:\s+[^\s:—]+)?\s*[:—]\s*(.+)$/i.exec(head.text);
   if (inline?.[1] !== undefined) return inline[1];
-  // ⚠️ CETTE BRANCHE NE SE DÉCLENCHE JAMAIS, et le dire vaut mieux que la
-  // laisser promettre. `plainText` ne rend que la PREMIÈRE ligne lisible d'un
-  // markdown (components/Markdown.tsx) : « Verdict\nça passe » arrive ici comme
-  // « Verdict » tout court, et `next` est toujours absent. Constaté le
-  // 18/09/2026 en écrivant les tests de #174.
-  //
-  // Elle n'est pas retirée et le repli n'est pas corrigé ICI : réparer la
-  // lecture changerait ce que le fil affiche pour toute une famille de
-  // résultats — ceux qui titrent « ## Verdict » — et #174 ne porte que sur la
-  // préférence du verdict ENREGISTRÉ. Un correctif de la prose est un sujet à
-  // lui seul, avec son avant/après sous les yeux de quelqu'un.
-  if (/^verdict$/i.test(head)) return next ?? null;
+  if (/^verdict\s*[:—–-]?$/i.test(head.text)) {
+    return next !== undefined && next.block === 'paragraph' ? next.text : null;
+  }
   return null;
 }
 
