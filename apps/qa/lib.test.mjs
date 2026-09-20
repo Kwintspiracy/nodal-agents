@@ -60,6 +60,9 @@ import {
   SANS_RELEASE,
   pileDuneColonne,
   ORDRE_DES_BACS,
+  HORS_MESURE,
+  etatDeMesure,
+  repartitionDeLaMesure,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -2418,6 +2421,52 @@ describe('ecartsDe — le prix d’une PR décide du sort des tests', () => {
       ecartsDe(SNAP(prixDe({ runs: 0 })), [{}, {}]).some((x) => /costs|grew/.test(x.titre)),
     ).toBe(false);
   });
+
+  // Constat M1 de la revue C de la PR #85 (dette #88, issue #211). Trente runs
+  // rouges d'affilée donnent `runs: 0` : ni écart « costs », ni écart « grew »,
+  // et la liste se taisait. Or c'est le moment où le prix compte le plus — une
+  // CI qui ne passe plus est aussi une CI dont personne ne mesure l'attente.
+  // Une absence de mesure se DIT, elle ne se déduit pas d'un silence
+  // (invariant #4, la même règle que « npm was unreachable »).
+  it('aucun run vert : le trou de mesure est DIT, et aucun prix n’est affirmé', () => {
+    const liste = ecartsDe(SNAP(prixDe({ runs: 0 })), [{}, {}]);
+    const e = liste.find((x) => /not measured/.test(x.titre));
+    expect(e, 'rien ne dit que le prix n’a pas pu être mesuré').toBeTruthy();
+    expect(e.gravite).toBe('moyenne');
+    expect(e.detail).toContain('red');
+    // Moyenne, donc hors des alertes : c'est un trou de mesure, pas une panne.
+    expect(alertes(liste)).not.toContain(e);
+  });
+
+  it('un seul run vert suffit : le trou n’est plus dit', () => {
+    expect(
+      ecartsDe(SNAP(prixDe({ runs: 1, medianeRecente: 10 })), [{}, {}]).some((x) =>
+        /not measured/.test(x.titre),
+      ),
+    ).toBe(false);
+  });
+
+  it('`prixCi` absent ⇒ pas non plus de trou de mesure : GitHub n’a rien dit du tout', () => {
+    expect(ecartsDe(SNAP(null), [{}, {}]).some((x) => /not measured/.test(x.titre))).toBe(false);
+  });
+
+  // Constat M3 de la même revue. « Median of the last 10 green runs » ne dit
+  // pas QUAND : dix verts peuvent remonter à des semaines si les récents sont
+  // rouges, et le chiffre se lit alors comme le prix d'aujourd'hui.
+  it('le prix nomme la DATE du plus ancien run de sa fenêtre', () => {
+    const serie = [
+      { le: '2026-07-31T00:00:00.000Z', valeur: 30 },
+      ...Array.from({ length: 10 }, (_, i) => ({
+        le: `2026-08-0${i + 1}T00:00:00.000Z`,
+        valeur: 32,
+      })),
+    ];
+    const e = ecartsDe(SNAP(prixDe({ runs: 11, medianeRecente: 32, serie })), [{}, {}]).find((x) =>
+      /costs/.test(x.titre),
+    );
+    expect(e.detail).toContain('2026-08-01');
+    expect(e.detail, 'un run HORS fenêtre est nommé').not.toContain('2026-07-31');
+  });
 });
 
 // Un nom de test rouge dans un tableau est un cul-de-sac : on sait QUE ça
@@ -2467,54 +2516,21 @@ describe('fusionnerEssais — chaque rouge garde l’adresse du run qui l’a vu
 // Le lien n'existe que s'il mène quelque part. Un lien mort coûte plus cher que
 // pas de lien : il use la seule chose qui fait qu'on clique.
 
-describe('le rendu mène à la cause, et seulement quand elle existe', () => {
-  const source = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
-  /** Le corps d'une fonction de vue, du `function vueX()` à la suivante. */
-  const vue = (nom) => {
-    const i = source.indexOf(`function ${nom}(`);
-    const j = source.indexOf('\nfunction ', i + 1);
-    return source.slice(i, j < 0 ? undefined : j);
-  };
-
-  it('« voir le run » est posé dans la Mémoire, les Capacités et les Parcours', () => {
-    expect(vue('vueMemoire')).toContain('lienRun(');
-    expect(vue('vueCapacites')).toContain('lienRun(');
-    expect(vue('vueParcours')).toContain('lienRun(');
-  });
-
-  it('la Mémoire suit le test, pas la collecte : chaque ligne pointe SON dernier rouge', () => {
-    expect(vue('vueMemoire')).toContain('lienRun(e.dernierRougeExecution)');
-  });
-
-  it('le lien est CONDITIONNEL — sans adresse, il n’est pas rendu du tout', () => {
-    expect(source).toMatch(/const lienRun = \(url\) =>\s*\n?\s*url\s*\n?\s*\?/);
-  });
-
-  // « Un parcours vert ne porte pas de lien » se lit désormais SUR LA PAGE,
-  // dans `rendu.test.mjs` : cherché dans le source, il ne disait que la forme
-  // d'une condition, et il est tombé le jour où cette condition a dû accepter
-  // un cas instable — un parcours qui a vacillé est le seul dont le run porte
-  // une trace, et la page n'y menait pas.
-
-  it('le cadre « Prix d’une PR » dit l’absence plutôt qu’un zéro', () => {
-    const cadre = vue('cadrePrix');
-    expect(cadre).toContain('GitHub did not answer');
-    expect(cadre).toContain('prix--absent');
-  });
-});
-
-describe('le rendu ne plante pas sur une collecte plus vieille que lui', () => {
-  // Le cas réel : `pnpm --filter @nodal-agents/qa build` sortait en erreur dans
-  // la CI de TOUTE PR de la chaîne, parce que le snapshot committé datait
-  // d'avant les niveaux écran/moteur et que le rendu lisait `c.ecran.etat`
-  // sans regarder si la clé existait.
-  const build = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
-
-  it('un registre sans niveaux est reconnu, et le portail le DIT', () => {
-    expect(build).toContain('!reg[0]?.ecran || !reg[0]?.moteur');
-    expect(build).toContain('predates the screen / engine levels');
-  });
-});
+// « Le rendu mène à la cause » et « le rendu ne plante pas sur une collecte
+// plus vieille que lui » vivaient ICI, sous forme de grep du source de
+// `build.mjs` : `vue('vueMemoire')).toContain('lienRun(')`, et
+// `build).toContain('!reg[0]?.ecran || !reg[0]?.moteur')`.
+//
+// Constat M2 de la revue C de la PR #85 (dette #88, issue #211) : ces
+// assertions prouvaient la PRÉSENCE D'UN TEXTE dans un fichier, jamais ce que
+// la page affiche. Déplacer une expression, réécrire une condition à
+// l'identique ou changer la forme du garde les faisait rougir sans qu'aucun
+// rendu ne bouge ; à l'inverse, un HTML privé de son lien les laissait vertes
+// tant que la chaîne cherchée subsistait ailleurs dans le fichier. Le second
+// bloc allait plus loin : il figeait `!reg[0]?.ecran` comme LA forme correcte
+// du garde, alors que c'était précisément le défaut (m1 de la même revue).
+//
+// Les deux se lisent désormais SUR LA PAGE RENDUE, dans `rendu.test.mjs`.
 
 describe('intentionDunParcours — la description d’un parcours, pas son bandeau', () => {
   // Le cas réel (Quentin, 13/09) : sur la page Parcours, chaque description
@@ -3218,5 +3234,126 @@ describe('le repli compte à part ce qu’on ne sait pas dater (revue C de #188)
     expect(pile.plusAnciennes).toBe(6);
     expect(pile.sansDate).toBe(1);
     expect(pile.replies).toBe(7);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #58 — « deux paquets sont hors de la mesure de couverture ».
+//
+// Le titre de l'issue mettait les deux dans le même sac, et le portail aussi :
+// `@nodal-agents/docs` est un site qu'on a DÉCIDÉ de ne pas instrumenter,
+// `@nodal-agents/auth` était un vrai trou. Une seule phrase pour les deux
+// (« never been instrumented ») et une colonne vide dans les deux cas : il n'y
+// avait aucun moyen de savoir lequel appelait un geste.
+//
+// Chaque test ci-dessous a été éprouvé PAR MUTATION : la ligne de `lib.mjs`
+// qu'il garde a été cassée, et il a rougi.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('etatDeMesure — une exclusion assumée n’est pas un trou de mesure (#58)', () => {
+  const docs = { nom: '@nodal-agents/docs', couverture: null };
+  const trou = { nom: '@nodal-agents/inconnu', couverture: null };
+
+  it('un paquet volontairement hors mesure porte son état ET sa raison', () => {
+    expect(etatDeMesure(docs)).toEqual({
+      etat: 'exclue',
+      raison: HORS_MESURE['@nodal-agents/docs'],
+    });
+    // Pas une phrase vide : c'est la raison qui fait la différence entre
+    // « on a choisi » et « on ne sait pas ».
+    expect(etatDeMesure(docs).raison.length).toBeGreaterThan(20);
+  });
+
+  it('un paquet sans couverture et hors de la liste reste un trou, sans raison inventée', () => {
+    expect(etatDeMesure(trou)).toEqual({ etat: 'absente', raison: null });
+  });
+
+  it('une mesure TENTÉE qui échoue se distingue d’une mesure jamais lancée', () => {
+    const echoue = { nom: '@nodal-agents/auth', couverture: null, mesureEchouee: { code: 1 } };
+    expect(etatDeMesure(echoue).etat).toBe('echouee');
+    expect(etatDeMesure(echoue).raison).toContain('code 1');
+    // Le même paquet sans témoin : personne ne sait, et le portail le dit.
+    expect(etatDeMesure({ nom: '@nodal-agents/auth', couverture: null }).etat).toBe('absente');
+  });
+
+  it('un code de sortie illisible ne fabrique pas un faux numéro', () => {
+    const flou = { nom: '@nodal-agents/x', couverture: null, mesureEchouee: { code: null } };
+    expect(etatDeMesure(flou)).toEqual({ etat: 'echouee', raison: 'the measurement run failed' });
+  });
+
+  it('un paquet MESURÉ reste mesuré, même s’il figurait dans la liste', () => {
+    // Un fait mesuré l'emporte sur une intention. Effacer un chiffre au nom
+    // d'une liste, ce serait l'inverse de ce portail.
+    const mesure = { nom: '@nodal-agents/docs', couverture: { lignes: 42 } };
+    expect(etatDeMesure(mesure)).toEqual({ etat: 'mesuree', raison: null });
+  });
+});
+
+describe('repartitionDeLaMesure — les trous sont COMPTÉS à part, et NOMMÉS (#58)', () => {
+  const paquets = [
+    { nom: '@nodal-agents/db', couverture: { lignes: 63.2 } },
+    { nom: '@nodal-agents/docs', couverture: null },
+    { nom: '@nodal-agents/auth', couverture: null, mesureEchouee: { code: 1 } },
+    { nom: '@nodal-agents/orphelin', couverture: null },
+  ];
+
+  it('un paquet exclu volontairement ne compte pas dans les jamais mesurés', () => {
+    const r = repartitionDeLaMesure(paquets);
+    expect(r.exclues.map((p) => p.nom)).toEqual(['@nodal-agents/docs']);
+    // LE point de l'issue : `docs` n'est NI dans les absents, NI dans les échecs.
+    expect(r.absentes.map((p) => p.nom)).toEqual(['@nodal-agents/orphelin']);
+    expect(r.echouees.map((p) => p.nom)).toEqual(['@nodal-agents/auth']);
+    expect(r.mesurees.map((p) => p.nom)).toEqual(['@nodal-agents/db']);
+  });
+
+  it('chaque bac nomme ses paquets — un compteur seul n’a jamais fait aller voir', () => {
+    const r = repartitionDeLaMesure(paquets);
+    for (const bac of ['mesurees', 'exclues', 'echouees', 'absentes']) {
+      for (const p of r[bac]) expect(typeof p.nom).toBe('string');
+    }
+    expect(r.exclues[0].raison).toBe(HORS_MESURE['@nodal-agents/docs']);
+  });
+
+  it('une liste vide rend quatre bacs vides, jamais `undefined`', () => {
+    expect(repartitionDeLaMesure()).toEqual({
+      mesurees: [],
+      exclues: [],
+      echouees: [],
+      absentes: [],
+    });
+  });
+});
+
+describe('la liste des exclusions vit à UN seul endroit (#58)', () => {
+  it('le paquet d’authentification n’y est pas, et n’a pas à y entrer', () => {
+    // L'angle mort de l'issue #58 se refermait aussi en déclarant `auth`
+    // « exclu ». Ce test interdit ce raccourci : c'est le paquet qui porte
+    // l'authentification, le moins souhaitable des paquets non mesurés.
+    expect(Object.keys(HORS_MESURE)).not.toContain('@nodal-agents/auth');
+  });
+
+  it('`collect.mjs --hors-mesure` rend EXACTEMENT la liste de `lib.mjs`', () => {
+    const sortie = execSync('node collect.mjs --hors-mesure', {
+      cwd: join(RACINE, 'apps', 'qa'),
+      encoding: 'utf8',
+    });
+    expect(sortie.trim().split('\n').filter(Boolean)).toEqual(Object.keys(HORS_MESURE));
+  });
+
+  it('la mesure nocturne DEMANDE la liste au lieu d’en tenir une copie', () => {
+    const yml = readFileSync(join(RACINE, '.github', 'workflows', 'qa.yml'), 'utf8');
+    const etape = yml.slice(yml.indexOf('Couverture par paquet'));
+    const boucle = etape.slice(0, etape.indexOf('- name:', 1));
+    expect(boucle).toContain('--hors-mesure');
+    // Aucun nom de paquet écrit en dur dans la boucle : c'est la seconde copie
+    // qui diverge, et c'est alors la page qui ment.
+    for (const nom of Object.keys(HORS_MESURE)) expect(boucle).not.toContain(nom);
+  });
+
+  it('un échec de mesure laisse un témoin que le collecteur sait lire', () => {
+    const yml = readFileSync(join(RACINE, '.github', 'workflows', 'qa.yml'), 'utf8');
+    expect(yml).toContain('coverage/mesure-echouee.json');
+    const collect = readFileSync(join(RACINE, 'apps', 'qa', 'collect.mjs'), 'utf8');
+    expect(collect).toContain('mesure-echouee.json');
   });
 });

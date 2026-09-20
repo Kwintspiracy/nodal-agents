@@ -689,6 +689,122 @@ export async function writeMutationIntent(
 }
 
 /**
+ * L'ÉPOQUE D'UNE SURFACE SANS JOB, montée APRÈS l'écriture (issue #101).
+ *
+ * LE CAS, et pourquoi il ne ressemble à aucun autre. Un tour de CHAT du runtime
+ * CLI écrit dans un projet sans avoir de job (`run-chat.ts` passe `jobId: null`,
+ * la ligne d'état ayant une FK NOT NULL vers `agent_jobs`). `writeMutationIntent`
+ * sort donc en `skipped` AVANT même de résoudre un livrable : ce tour ne pose
+ * pas d'intention, ne salit rien — et, jusqu'ici, ne faisait pas vieillir
+ * l'époque du projet non plus. Une preuve lancée par un AUTRE job pendant ce
+ * tour capturait une époque que rien ne bougeait, prouvait l'arbre d'avant, et
+ * reposait un VERT PÉRIMÉ. Le trou de #101 par une autre porte : là-bas une
+ * intention précédait l'écriture, ici il n'y a aucune intention du tout.
+ *
+ * CE QUE CETTE FONCTION FAIT, ET CE QU'ELLE NE FAIT PAS. Elle monte l'époque,
+ * et rien d'autre : pas de ligne d'état (il n'y a pas de job à qui la
+ * rattacher), donc pas de « sale avant l'écriture ». C'est suffisant POUR CE
+ * DÉFAUT-LÀ — ce qui périme une preuve, c'est qu'un témoin bouge APRÈS qu'elle
+ * a lu l'arbre. Donner au tour de chat une vraie intention est un autre sujet,
+ * qui demande de décider où vit l'état d'un travail sans job.
+ *
+ * Elle emprunte la MÊME résolution que l'intention (`resolveDeliverables`) et
+ * le MÊME ordre de verrous (`codeProjectLockOrder`) : une seconde dérivation de
+ * l'identité d'un projet est précisément ce que le §2 de #101 reproche déjà au
+ * dépôt, et ce n'est pas ici qu'on en ajoutera une.
+ *
+ * ELLE CRÉE LA LIGNE `code_projects` SI ELLE MANQUE, et son jumeau
+ * `write-epoch.ts` REFUSE de la créer. Les deux règles sont justes parce que
+ * les deux helpers n'arrivent pas au même moment (revue C de cette PR, passe 2,
+ * mineur nº 1).
+ *
+ *   - `bumpEpochsAfterWrite` court APRÈS une intention, et une intention crée
+ *     toujours la ligne. Ne plus la trouver veut dire qu'on l'a effacée entre
+ *     les deux : la recréer la remettrait à l'époque 1 et RAJEUNIRAIT le projet,
+ *     donc elle est dite (`WRITE_EPOCH_ROW_MISSING`) et rien n'est écrit.
+ *   - celle-ci court SANS intention, et c'est le seul geste du tour. Au premier
+ *     tour de chat sur un projet que personne n'a encore sali, la ligne n'existe
+ *     pas et n'a jamais existé : refuser de la créer, c'est ne rien faire
+ *     vieillir du tout, donc laisser le trou ouvert. Elle passe par
+ *     `bumpProjectEpoch`, le MÊME geste que l'intention — insert à 0, verrou,
+ *     +1 — et une ligne neuve naît donc à l'époque 1, jamais en dessous de ce
+ *     qu'elle valait.
+ *
+ * D8 RESPECTÉ : surface décochée ⇒ rien. La trace `agent_jobs` ne peut pas être
+ * posée (pas de job) ; le refus est dit par un code.
+ *
+ * NE LÈVE JAMAIS — appelée depuis le `finally` d'un tour de CLI, où une
+ * exception masquerait le résultat du tour.
+ *
+ * Rend les clés dont l'époque a monté.
+ */
+export async function bumpEpochsAfterJoblessWrite(
+  ctx: Omit<MutationIntentContext, 'jobId'>,
+  args: WriteMutationIntentArgs,
+): Promise<readonly string[]> {
+  const { surface, targets } = args;
+
+  if (!ctx.entityId) {
+    console.error(`[verification] VERIFICATION_JOBLESS_EPOCH_NO_ENTITY surface=${surface}`);
+    return [];
+  }
+
+  try {
+    const surfaces = await getVerificationSurfaces(ctx.db, ctx.entityId);
+    if (!surfaces[surface]) {
+      console.warn(`[verification] VERIFICATION_SURFACE_DISABLED surface=${surface}`);
+      return [];
+    }
+  } catch (err) {
+    // Aucun repli sur « tout activé » : on ne SAIT pas ce que l'owner a réglé.
+    console.error(
+      `[verification] VERIFICATION_JOBLESS_EPOCH_SURFACES_UNREADABLE surface=${surface} ` +
+        `entity=${ctx.entityId} error=${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
+
+  let deliverables: readonly ResolvedDeliverable[];
+  try {
+    deliverables = await resolveDeliverables(
+      targets,
+      (ctx.workspaces ?? []).map((w) => normalizePath(w.path)),
+      projectRootPredicate(await loadDeclaredCodeRoots(ctx.db, ctx.entityId)),
+    );
+  } catch (err) {
+    console.error(
+      `[verification] VERIFICATION_JOBLESS_EPOCH_RESOLVE_FAILED surface=${surface} ` +
+        `error=${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
+
+  const projets = codeProjectLockOrder(deliverables);
+  if (projets.length === 0) return [];
+
+  const entityId = ctx.entityId;
+  try {
+    return await ctx.db.transaction(async (tx) => {
+      const montees: string[] = [];
+      for (const projet of projets) {
+        await bumpProjectEpoch(tx, entityId, projet);
+        montees.push(projet.key);
+      }
+      return montees;
+    });
+  } catch (err) {
+    // Sans cette montée, une preuve concurrente peut se croire fraîche sur ce
+    // projet. On le dit fort plutôt que de le taire (invariant #4).
+    console.error(
+      `[verification] VERIFICATION_JOBLESS_EPOCH_FAILED surface=${surface} entity=${entityId} ` +
+        `keys=${projets.map((p) => p.key).join(',')} ` +
+        `error=${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
+}
+
+/**
  * Panne typée LEVÉE à l'intérieur de la transaction — la seule façon de la
  * faire ROULER EN ARRIÈRE tout en gardant un code exploitable dehors. Un
  * `return` d'échec committerait les projets déjà salis de la même liste.

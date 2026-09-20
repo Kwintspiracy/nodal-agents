@@ -12,6 +12,7 @@ import {
   check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+import type { JobResultKind } from '@nodal-agents/shared';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
 import { agentSchedules } from './schedules.ts';
@@ -144,7 +145,48 @@ export const agentJobs = pgTable(
       .default(sql`'{}'::text[]`),
     turn: integer('turn').default(0),
     result: text('result'),
+    /**
+     * COMMENT `result` a été produit (migration 0117, issues #154 et #210) —
+     * la provenance du texte, à côté du texte.
+     *
+     * Écrite par le runner là où le résultat est finalisé, jamais devinée :
+     * `prose` quand ce sont les mots de l'agent (son texte final, son dernier
+     * texte repris, ce qu'il a publié par `dashboard_publish`), `relay` quand
+     * le runner a recompilé le texte d'AUTRES jobs (les résultats des enfants,
+     * ceux des tâches d'un root de tableau). Le sens complet de chaque valeur
+     * vit avec le type, dans `@nodal-agents/shared` — un seul exemplaire.
+     *
+     * NULL dit « pas de marque », et cela couvre exactement deux cas : un job
+     * fini AVANT cette colonne, et un job qui a échoué — `failJob` écrit une
+     * EXPLICATION dans `result`, pas une réponse, et aucun des deux écrans ne
+     * la lit comme telle (le fil saute `answerOutsideTheRun` dès qu'un item
+     * `failure` existe, la page d'un run rend `reply: null`). Les écrans
+     * retombent sur l'ancienne heuristique quand la marque manque, et ils le
+     * disent.
+     */
+    resultKind: text('result_kind').$type<JobResultKind>(),
     error: text('error'),
+    /**
+     * LE GESTE que cet échec appelle, dit par le runner lui-même (#193).
+     *
+     * Un slug typé côté harnais (`JobFailureHint`, `@nodal-agents/shared`),
+     * jamais une phrase : le runner pose un fait, l'écran ou le modèle le dit
+     * dans la langue de la personne (invariant #2). `null` est la réponse
+     * normale — la grande majorité des échecs n'appellent aucun geste nommable.
+     *
+     * POURQUOI UNE COLONNE. Le champ existait déjà en mémoire
+     * (`ExecuteJobResult.hint`, #119) et voyageait jusqu'au parent, mais il
+     * n'atteignait jamais la base : l'écran le re-DÉDUISAIT du code d'erreur
+     * (`apps/web/src/lib/failure-hint.ts`). La correspondance « ce code appelle
+     * ce geste » vivait donc à deux endroits, et un `hint` ajouté côté runner
+     * restait muet à l'écran jusqu'à ce que quelqu'un y ajoute sa phrase.
+     *
+     * Texte libre, sans CHECK : le runner peut nommer un geste que cet écran-là
+     * ne connaît pas encore, et l'écran se tait alors plutôt que d'afficher un
+     * slug brut. Un CHECK aurait fait échouer l'ÉCRITURE de l'échec — donc
+     * perdu le job — pour un mot que l'écran savait déjà ignorer.
+     */
+    failureHint: text('failure_hint'),
     chainCount: integer('chain_count').default(0),
     requestId: text('request_id'),
     parentJobId: uuid('parent_job_id'),
@@ -297,6 +339,14 @@ export const agentJobs = pgTable(
     check(
       'agent_jobs_channel_check',
       sql`${table.channel} IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook','mcp')`,
+    ),
+    // La marque de provenance (#154, #210) : les DEUX seules valeurs que le
+    // runner pose, ou rien. Une troisième valeur écrite par erreur serait lue
+    // par les écrans comme « pas de marque » et retomberait en silence sur
+    // l'heuristique — la contrainte la refuse à l'écriture (invariant #4).
+    check(
+      'agent_jobs_result_kind_check',
+      sql`${table.resultKind} IS NULL OR ${table.resultKind} IN ('prose','relay')`,
     ),
   ],
 );

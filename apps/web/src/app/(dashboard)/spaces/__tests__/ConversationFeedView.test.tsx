@@ -547,6 +547,7 @@ describe('ConversationFeedView', () => {
                 task: 'Audite le correctif de session',
                 result: ['## Verdict', '', 'Le correctif tient, une note mineure.'].join('\n'),
                 error: null,
+                failureHint: null,
                 createdAt: new Date('2026-09-07T10:00:00Z'),
                 completedAt: new Date('2026-09-07T10:01:12Z'),
                 feed: {
@@ -600,6 +601,7 @@ describe('ConversationFeedView', () => {
       task: 'relis',
       result: 'ça tient',
       error: null,
+      failureHint: null,
       createdAt: null,
       completedAt: null,
     };
@@ -617,6 +619,7 @@ describe('ConversationFeedView', () => {
             task: 'fais relire',
             result: 'revue faite',
             error: null,
+            failureHint: null,
             createdAt: null,
             completedAt: null,
             feed: {
@@ -677,6 +680,7 @@ describe('ConversationFeedView', () => {
                 task: 'Audite le correctif',
                 result: null,
                 error: null,
+                failureHint: null,
                 createdAt: new Date('2026-09-07T10:00:00Z'),
                 completedAt: null,
               },
@@ -765,6 +769,7 @@ describe('ConversationFeedView', () => {
                 task: 'relis',
                 result: 'fait',
                 error: null,
+                failureHint: null,
                 createdAt: null,
                 completedAt: null,
               },
@@ -791,6 +796,7 @@ describe('ConversationFeedView', () => {
       task: `tâche de ${name}`,
       result: 'fait',
       error: null,
+      failureHint: null,
       createdAt: null,
       completedAt: null,
     });
@@ -859,6 +865,7 @@ describe('ConversationFeedView', () => {
                 task: 'relis le correctif',
                 result: null,
                 error: null,
+                failureHint: null,
                 createdAt: new Date('2026-09-07T10:00:00Z'),
                 completedAt: null,
                 // Le fil est ASSEMBLÉ : les totaux existent, tous à zéro.
@@ -913,6 +920,7 @@ describe('ConversationFeedView', () => {
                   task: 'relis',
                   result: verdict,
                   error: null,
+                  failureHint: null,
                   createdAt: null,
                   completedAt: null,
                 },
@@ -1109,6 +1117,7 @@ const delegation = (job: Partial<FeedChildJob>): ConversationFeed => ({
         task: 'Relis la PR',
         result: null,
         error: null,
+        failureHint: null,
         createdAt: new Date('2026-09-18T10:00:00Z'),
         completedAt: new Date('2026-09-18T10:02:00Z'),
         ...job,
@@ -1343,6 +1352,9 @@ describe('ConversationFeedView — le geste qu’un échec appelle @cap:suivre-e
             task: 'compare les deux rapports',
             result: null,
             error: refus,
+            // Le mot du runner, LU sur la ligne du délégué (#193) — il n'est
+            // plus déduit du code d'erreur, qui reste là pour le diagnostic.
+            failureHint: 'switch_model',
             createdAt: null,
             completedAt: null,
           },
@@ -1368,6 +1380,55 @@ describe('ConversationFeedView — le geste qu’un échec appelle @cap:suivre-e
     });
     expect(container.textContent).toContain(refus);
     expect(container.textContent).toContain('Try another model for this agent');
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('un délégué SANS geste écrit reste muet, même si son code dit le refus (#193)', async () => {
+    // La garde de la bascule, côté écran. Tant que le bloc DÉDUISAIT le geste
+    // du code d'erreur, ce cas affichait la phrase. Il ne doit plus : le seul
+    // auteur du geste est le runner, et ici il n'en a écrit aucun.
+    const refus = `${PROVIDER_REJECTED_PREFIX}openrouter/google/gemini-3.7-flash (http 400, turn 3)`;
+    const feedAvecEnfant: ConversationFeed = {
+      items: [
+        {
+          kind: 'child',
+          job: {
+            id: 'child-2',
+            agentName: 'Analyste',
+            agentSlug: 'analyste',
+            agentAvatarUrl: null,
+            status: 'failed',
+            task: 'compare les deux rapports',
+            result: null,
+            error: refus,
+            failureHint: null,
+            createdAt: null,
+            completedAt: null,
+          },
+          from: { name: 'Veilleur', slug: 'veilleur', avatarUrl: null },
+        },
+      ],
+      totals: { toolCalls: 0, costUsd: null, durationMs: 0 } as never,
+    };
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<ConversationFeedView feed={feedAvecEnfant} />);
+    });
+    const tete = container.querySelector<HTMLButtonElement>('[data-delegation] button');
+    if (!tete) throw new Error('la délégation n’a pas dessiné sa tête');
+    await act(async () => {
+      tete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    // Déplié, le code est là — donc le bloc est bien ouvert, et le silence
+    // qu'on mesure est celui du geste, pas celui d'un corps resté fermé.
+    expect(container.textContent).toContain(refus);
+    expect(container.textContent).not.toContain('Try another model');
 
     await act(async () => {
       root.unmount();

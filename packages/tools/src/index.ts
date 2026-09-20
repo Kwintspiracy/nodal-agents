@@ -21,6 +21,19 @@ export type {
 // d'exécution ; exportée pour les surfaces qui n'y passent PAS (le runtime CLI
 // écrit sans jamais traverser executeTool).
 export { writeMutationIntent, MAX_PROJECTS } from './verification/intent';
+// La SECONDE montée d'époque, celle de l'ÉCRITURE (issue #101) — exportée pour
+// les mêmes surfaces et pour la même raison : le runtime CLI écrit hors du
+// seam, donc il porte cette discipline lui-même.
+//
+// Les CODES que ce module journalise ne sortent pas d'ici : personne hors du
+// paquet ne les lit, et les tests les prennent à leur module. Un export que
+// rien ne consomme est une promesse d'API qu'aucun appelant ne tient.
+export { bumpEpochsAfterWrite } from './verification/write-epoch';
+// Le jumeau SANS JOB de la ligne du dessus : un tour de chat CLI écrit sans
+// pouvoir poser d'intention (pas de jobId), donc sans rien faire vieillir —
+// l'autre porte du même trou (#101). Il vit dans `intent.ts` pour emprunter SA
+// résolution de projets, jamais une seconde.
+export { bumpEpochsAfterJoblessWrite } from './verification/intent';
 // La carte d'un outil (P1) : ce que l'écran de conversation lit pour choisir
 // comment montrer un résultat. Résolue ici, jamais devinée depuis un nom.
 export {

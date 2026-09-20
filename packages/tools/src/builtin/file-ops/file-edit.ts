@@ -89,17 +89,22 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
   // The ONE file this edit is about to change — same contract, same reasons
   // as file_write's hook (declared target, resolved twice, empty on a
   // resolution failure that execute() will report properly).
+  //
+  // Et, comme lui, la `catch` ne couvre QUE la résolution : un classement qui
+  // lève remonte au seam plutôt que de se déguiser en « aucune cible »
+  // (issue #211, voir le commentaire de `file-write.ts`).
   resolveMutationTargets: async (input, ctx) => {
+    let path: string;
     try {
-      const path = await resolveAndCheckPath(ctx, input.path);
-      // Même règle que file_write : code sous un projet de code, document
-      // sinon (`written-file-type.ts`). Aucune reconnaissance d'extension.
-      return [
-        { kind: 'file', path, deliverableType: await deliverableTypeForWrittenFile(ctx, path) },
-      ];
+      path = await resolveAndCheckPath(ctx, input.path);
     } catch {
       return [];
     }
+    // Même règle que file_write : code sous un projet de code, document
+    // sinon (`written-file-type.ts`). Aucune reconnaissance d'extension.
+    return [
+      { kind: 'file', path, deliverableType: await deliverableTypeForWrittenFile(ctx, path) },
+    ];
   },
   // D1: an edit always targets an EXISTING file (file_edit fails loud on a
   // missing one — see execute() below), so the only thing left to check is

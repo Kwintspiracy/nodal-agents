@@ -11,6 +11,7 @@ import { getOAuthProvider, getProviderByCredentialType } from '@/lib/oauth-provi
 import { verifyStateCookie, STATE_COOKIE_NAME } from '@/lib/oauth-state.ts';
 import { persistCredentialFromOauthFlow } from '@/lib/credentials-internal.ts';
 import type { CredentialType } from '@nodal-agents/shared';
+import type { OAuthProvider } from '@/lib/oauth-providers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -106,9 +107,7 @@ export async function GET(
 
   // 1. Resolve provider — slug can be either a catalog connector slug (e.g. 'google-drive')
   // or a credentialType (e.g. 'google-oauth') when wizard-initiated via credential type.
-  const provider =
-    getOAuthProvider(slug) ??
-    getProviderByCredentialType(slug as import('@nodal-agents/shared').CredentialType);
+  const provider = getOAuthProvider(slug) ?? getProviderByCredentialType(slug as CredentialType);
   if (!provider) {
     return redirectError(origin, 'unknown_provider');
   }
@@ -300,7 +299,7 @@ export async function GET(
 // ─── Token exchange helper ────────────────────────────────────────────────────
 
 async function exchangeCode(opts: {
-  provider: import('@/lib/oauth-providers.ts').OAuthProvider;
+  provider: OAuthProvider;
   code: string;
   redirectUri: string;
   codeVerifier: string;

@@ -29,6 +29,10 @@ import DisclosureButton from '@/components/ui/DisclosureButton';
 import { fragmentDiff } from '@nodal-agents/shared';
 import type { LineCounts } from '@/lib/coding-changes.ts';
 import { getFileDiffAction, type FileDiffView } from '@/lib/file-diff-actions.ts';
+// La pastille de 6 px vit dans `feed-dots.ts` et non ici depuis #240 : le fil,
+// qui est rendu côté serveur, la lit pour ses lignes sans chevron, et le serveur
+// ne reçoit d'un module `'use client'` que des références.
+import { FILE_DOT } from './feed-dots.ts';
 
 /** Les raisons du runner, dites en une ligne lisible. */
 const NO_DIFF: Readonly<Record<string, string>> = {
@@ -40,17 +44,6 @@ const NO_DIFF: Readonly<Record<string, string>> = {
   // qu'il ne l'est pas (#262, passe 2).
   checkpoint_store_unreadable: 'snapshot history could not be read',
   not_in_snapshot: "file is ignored by the folder's .gitignore",
-};
-
-/**
- * Ce qu'un fichier a subi, en une pastille de 6 px (P2bis). Écrit vert, touché
- * ambre, seulement listé gris : le design du fil ne met pas de mot là où une
- * couleur suffit, et le mot (`created`, `modified`) revenait sur chaque ligne.
- */
-export const FILE_DOT: Readonly<Record<string, string>> = {
-  created: 'bg-ok',
-  modified: 'bg-warn',
-  listed: 'bg-ink-4',
 };
 
 /**

@@ -14,7 +14,7 @@ import type { CardPayloadFor, TableEntry } from '@nodal-agents/shared';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 import { deliverableStatusKey, type DeliverableStatusView } from '@/lib/verification-runs-view.ts';
 import { findLineCounts, type LineCounts } from '@/lib/coding-changes.ts';
-import { failureHint, hintSentence } from '@/lib/failure-hint.ts';
+import { hintSentence } from '@/lib/failure-hint.ts';
 import type {
   ConversationFeed,
   FeedChildJob,
@@ -26,12 +26,16 @@ import type {
 import Markdown, { plainText } from '@/components/Markdown.tsx';
 import { formatClock, truncate } from '@/lib/format-time';
 import ThinkingBlock from './ThinkingBlock.tsx';
-import ToolBlock, { DOT } from './ToolBlock.tsx';
+import ToolBlock from './ToolBlock.tsx';
 import FoldableBlock, { FoldableBody } from './FoldableBlock.tsx';
 import ModelCallBlock from './ModelCallBlock.tsx';
 import DeliveryBlock from './DeliveryBlock.tsx';
 import QuestionCard from './QuestionCard.tsx';
-import FileDiff, { FILE_DOT, FileName, LineDelta } from './FileDiff.tsx';
+import FileDiff, { FileName, LineDelta } from './FileDiff.tsx';
+// Les couleurs des pastilles viennent d'un module SANS directive (#240) : ce
+// fichier est rendu côté serveur, qui ne reçoit d'un module `'use client'`
+// qu'une référence par export, jamais la table elle-même.
+import { DOT, FILE_DOT } from './feed-dots.ts';
 import HistoryGroup from './HistoryGroup.tsx';
 import DelegationDisclosure from './DelegationDisclosure.tsx';
 import DelegationBlock from './DelegationBlock.tsx';
@@ -1057,9 +1061,9 @@ function DelegationGroup({
                   </div>
                 )}
                 {job.error !== null && <p className="text-body-13 text-err">{job.error}</p>}
-                {/* Le geste que l'échec du délégué appelle, lu sur le même
-                    code que le fil lit pour un run (#184). */}
-                <HintLine hint={failureHint(job.error)} />
+                {/* Le geste que l'échec du délégué appelle, LU sur sa ligne
+                    comme le fil le lit pour un run (#193). */}
+                <HintLine hint={job.failureHint} />
               </>
             )}
             {/* Le RÉSUMÉ du verdict enregistré, ici et pas dans la tête : la

@@ -96,6 +96,7 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   createdAt: null,
   completedAt: null,
   result: null,
+  resultKind: null,
   verdict: chat,
   project: null,
   proof: [],
@@ -599,6 +600,7 @@ const delegue = (): FeedItem => ({
     task: 'relire le bilan',
     result: 'rien à redire',
     error: null,
+    failureHint: null,
     createdAt: null,
     completedAt: null,
   },
@@ -737,19 +739,98 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
     expect(items.map((i) => i.kind)).toEqual(['request', 'run']);
   });
 
-  it('un résultat machine (du JSON) ne sort pas brut : la dernière prose reste la réponse', () => {
-    // Reviewer C, passe 1 : un `return_result` structuré sorti tel quel
-    // cachait la vraie réponse, repliée.
-    const { items } = buildConversationThread({
-      conversation,
-      messages: [],
-      jobs: [job({ ...travailFini(), result: '{"files": 3, "ok": true}' })],
+  // La provenance LUE sur la ligne, plutôt que devinée au premier caractère
+  // (#154). Le fil montre alors la bonne chose : c'est un fait d'écran.
+  describe('la provenance du résultat @cap:suivre-execution/ecran', () => {
+    it('un résultat machine (du JSON) ne sort pas brut : la dernière prose reste la réponse', () => {
+      // Reviewer C, passe 1 : un résultat structuré sorti tel quel cachait la
+      // vraie réponse, repliée. Depuis #154 l'heuristique du premier caractère
+      // ne tourne plus que sur un travail fini AVANT la colonne `result_kind` :
+      // c'est ce repli-là que ce test tient, et il est DIT, pas silencieux.
+      const { items } = buildConversationThread({
+        conversation,
+        messages: [],
+        jobs: [job({ ...travailFini(), result: '{"files": 3, "ok": true}', resultKind: null })],
+      });
+      expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+      const reponse = items[1];
+      expect(reponse?.kind === 'turn' && reponse.blocks).toEqual([
+        { kind: 'prose', text: 'Voilà le bilan.' },
+      ]);
     });
-    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
-    const reponse = items[1];
-    expect(reponse?.kind === 'turn' && reponse.blocks).toEqual([
-      { kind: 'prose', text: 'Voilà le bilan.' },
-    ]);
+
+    it('marqué prose, un résultat en JSON lisible EST la réponse (#154)', () => {
+      // LE TROU QUE #154 FERME. L'agent a publié sa réponse sous forme de
+      // tableau JSON, puis annoncé qu'il la publiait. L'heuristique refusait la
+      // réponse et montrait l'annonce ; la marque dit que ce texte est le sien.
+      const { items } = buildConversationThread({
+        conversation,
+        messages: [],
+        jobs: [
+          job({
+            jobId: 'j1',
+            createdAt: new Date('2026-09-17T12:00:00Z'),
+            completedAt: new Date('2026-09-17T12:00:12Z'),
+            result: '["3 constats, aucun bloquant"]',
+            resultKind: 'prose',
+            feed: {
+              items: [
+                demande,
+                tourDeTravail([
+                  { kind: 'prose', text: 'Je publie la revue sur le dashboard.' },
+                  { kind: 'steps', steps: [outil('dashboard_publish')] },
+                ]),
+              ],
+              totals: totals({ toolCalls: 1, costUsd: 0.01 }),
+            },
+          }),
+        ],
+      });
+      expect(items.map((i) => i.kind)).toEqual(['request', 'answer', 'run']);
+      expect(items[1]).toEqual({ kind: 'answer', text: '["3 constats, aucun bloquant"]' });
+    });
+
+    it('marqué relay, le texte des délégués sort aussi : c’est ce qui a été livré', () => {
+      // `relay` dit d'où vient le texte, pas qu'il faut le cacher. Dans le fil,
+      // c'est ce que la personne a reçu. La distinction sert à la page d'un run,
+      // où le bloc Review porte déjà ce rapport (#210).
+      const compile = '## alfred\nTrois constats.\n\n---\n\n## reviewer\nAucun bloquant.';
+      const { items } = buildConversationThread({
+        conversation,
+        messages: [],
+        jobs: [
+          job({
+            jobId: 'j1',
+            createdAt: new Date('2026-09-17T12:00:00Z'),
+            completedAt: new Date('2026-09-17T12:00:12Z'),
+            result: compile,
+            resultKind: 'relay',
+            feed: {
+              items: [demande, tourDeTravail([{ kind: 'prose', text: 'Je délègue la revue.' }])],
+              totals: totals(),
+            },
+          }),
+        ],
+      });
+      expect(items.map((i) => i.kind)).toEqual(['request', 'answer', 'run']);
+      expect(items[1]).toEqual({ kind: 'answer', text: compile });
+    });
+
+    it('marqué prose, un résultat égal à la prose ne la double pas', () => {
+      // La marque ne remplace QUE le reniflage du premier caractère. Les deux
+      // autres refus — même phrase, début tronqué — sont d'une autre nature :
+      // ils évitent un doublon, pas une méprise sur le genre du texte.
+      const { items } = buildConversationThread({
+        conversation,
+        messages: [],
+        jobs: [job({ ...travailFini(), result: 'Voilà le bilan.', resultKind: 'prose' })],
+      });
+      expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+      const reponse = items[1];
+      expect(reponse?.kind === 'turn' && reponse.blocks).toEqual([
+        { kind: 'prose', text: 'Voilà le bilan.' },
+      ]);
+    });
   });
 
   it('un résultat qui n’est qu’un début tronqué de la prose ne la remplace pas', () => {

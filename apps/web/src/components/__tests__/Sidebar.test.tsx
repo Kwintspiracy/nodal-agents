@@ -419,6 +419,18 @@ describe('les entrées de 0.8.11, réparties en trois @cap:installer-et-demarrer
     expect(() => navLink('Spaces')).toThrow();
   });
 
+  it('la case Run du rail MÈNE au tableau de bord, pas à la racine', async () => {
+    pathname = '/logs';
+    await renderSidebar();
+    // Une case du rail est un LIEN. Tant que `/` était le tableau de bord, Run
+    // y menait juste ; depuis #248 la racine rend un fil vide, et cliquer Run
+    // emmenait donc sur Work, qui s'allumait à sa place. Chaque case mène chez
+    // elle, et les deux sont vérifiées ensemble : les confondre est justement
+    // la faute qu'on vient de corriger.
+    expect(railCell('run').getAttribute('href')).toBe('/dashboard');
+    expect(railCell('work').getAttribute('href')).toBe('/');
+  });
+
   it('ne propose « Code » dans aucun des trois panneaux', async () => {
     for (const route of ['/', '/agents', '/chat']) {
       pathname = route;

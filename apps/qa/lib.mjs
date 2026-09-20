@@ -1561,11 +1561,33 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   // `null` (GitHub sans réponse) ne pose RIEN : une absence de mesure n'est pas
   // une CI gratuite.
   const prix = s.prixCi ?? null;
+
+  // GitHub a répondu, et pas un seul run n'est allé au bout : `runs: 0`, donc
+  // `medianeRecente: null`, donc aucun des deux écarts ci-dessous. La liste se
+  // taisait alors exactement quand le prix compte le plus (constat M1 de la
+  // revue C de la PR #85, issue #211). Le trou se DIT, comme le registre npm
+  // injoignable — et, comme lui, en MOYENNE : c'est une absence de mesure, pas
+  // une panne du produit, que les écarts sur les tests couvrent déjà.
+  if (prix != null && prix.runs === 0) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `The CI price is not measured: no green run in the window`,
+      detail: `Every run collected came back red or cancelled, and a wait is only measured on a run that went all the way. Nothing is claimed about the cost of a pull request until one passes again.`,
+      quoi: [],
+    });
+  }
+
   if (prix?.medianeRecente != null && prix.medianeRecente > SEUIL_PRIX_MIN) {
+    // QUAND, pas seulement combien (constat M3 de la même revue) : la médiane
+    // porte sur les dix derniers runs VERTS, qui peuvent remonter à plusieurs
+    // semaines si les récents sont rouges. Sans sa date, le chiffre se lit
+    // comme le prix d'aujourd'hui.
+    const fenetre = (prix.serie ?? []).slice(-Math.min(prix.runs, 10));
+    const depuis = typeof fenetre[0]?.le === 'string' ? fenetre[0].le.slice(0, 10) : null;
     out.push({
       gravite: 'haute',
       titre: `The CI costs ${prix.medianeRecente} min per pull request`,
-      detail: `Median of the last ${Math.min(prix.runs, 10)} green runs, queue time included. Past twenty minutes or so, the wait stops being bearable and it is the content of the CI that ends up being trimmed, not the time it takes.`,
+      detail: `Median of the last ${Math.min(prix.runs, 10)} green runs${depuis ? `, the oldest of them from ${depuis}` : ''}, queue time included. Past twenty minutes or so, the wait stops being bearable and it is the content of the CI that ends up being trimmed, not the time it takes.`,
       quoi: [],
     });
   }
@@ -2423,4 +2445,91 @@ export function fusionnerTableauGitHub(mesure, frais) {
     prixCi: frais.prixCi ?? socle.prixCi ?? null,
     tableauLe: frais.le,
   };
+}
+
+// ─── Ce qui est HORS de la mesure de couverture, et pourquoi ──────────────────
+//
+// Un paquet sans couverture l'est pour des raisons qui n'ont rien à voir entre
+// elles : soit on a DÉCIDÉ de ne pas le mesurer, soit la mesure n'a pas eu
+// lieu. Le portail les rendait pareil, un tiret dans la colonne et une phrase
+// qui disait « never been instrumented » des deux.
+//
+// C'est de cette confusion qu'est née l'issue #58 : `@nodal-agents/docs`, dont
+// l'exclusion est un choix assumé, y figurait comme un angle mort, à côté de
+// `@nodal-agents/auth` qui, lui, en était un vrai. Deux lignes identiques à
+// l'écran, deux situations opposées, et personne pour savoir laquelle appelait
+// un geste.
+//
+// La liste vit ICI et nulle part ailleurs : la mesure nocturne la LIT
+// (`node apps/qa/collect.mjs --hors-mesure`) au lieu d'en tenir une seconde
+// copie dans le workflow. Deux listes finissent par diverger, et c'est alors la
+// page qui ment.
+
+/**
+ * Les paquets volontairement hors mesure, et la raison rendue à l'écran.
+ *
+ * La raison ne porte NI deux-points NI tiret : elle est recomposée dans une
+ * phrase (« left out on purpose: <raison> »), et une ponctuation de plus la
+ * rendrait illisible.
+ */
+export const HORS_MESURE = Object.freeze({
+  '@nodal-agents/docs':
+    'a documentation site, its pages are content and there is no application code to instrument',
+});
+
+/** Les mots anglais de chaque état, pour que le portail et la console disent la même chose. */
+export const MOT_MESURE = Object.freeze({
+  mesuree: 'measured',
+  exclue: 'left out on purpose',
+  echouee: 'measurement failed',
+  absente: 'not measured',
+});
+
+/**
+ * L'état de mesure d'UN paquet, avec sa raison quand il y en a une.
+ *
+ * Quatre états, et la nuance entre les deux derniers est tout l'intérêt :
+ *
+ *  - `mesuree` — un `coverage-summary.json` a été lu ;
+ *  - `exclue` — le paquet est dans `HORS_MESURE`, avec sa raison ;
+ *  - `echouee` — la mesure a été TENTÉE et le processus est sorti en erreur.
+ *    C'est la mesure nocturne qui laisse le témoin (`coverage/mesure-echouee.json`) ;
+ *  - `absente` — rien de tout ça. Un trou dont personne ne connaît la cause.
+ *
+ * Ne calcule RIEN d'autre que ce qu'il lit : un paquet mesuré reste mesuré même
+ * s'il figure dans `HORS_MESURE`, parce que le chiffre existe et qu'effacer un
+ * fait mesuré au nom d'une liste serait exactement l'inverse de ce portail.
+ */
+export function etatDeMesure(paquet) {
+  if (paquet?.couverture) return { etat: 'mesuree', raison: null };
+  const raison = HORS_MESURE[paquet?.nom] ?? null;
+  if (raison) return { etat: 'exclue', raison };
+  const echec = paquet?.mesureEchouee;
+  if (echec) {
+    return {
+      etat: 'echouee',
+      raison:
+        typeof echec.code === 'number'
+          ? `the measurement run exited with code ${echec.code}`
+          : 'the measurement run failed',
+    };
+  }
+  return { etat: 'absente', raison: null };
+}
+
+/**
+ * La répartition des paquets par état de mesure, chacun NOMMÉ.
+ *
+ * Rend des listes et pas des compteurs : « 2 packages » ne dit pas lesquels, et
+ * c'est précisément ce qui a laissé `auth` hors mesure pendant que la carte
+ * affichait un nombre rassurant.
+ */
+export function repartitionDeLaMesure(paquets = []) {
+  const bacs = { mesuree: 'mesurees', exclue: 'exclues', echouee: 'echouees', absente: 'absentes' };
+  const out = { mesurees: [], exclues: [], echouees: [], absentes: [] };
+  for (const p of paquets) {
+    const e = etatDeMesure(p);
+    out[bacs[e.etat]].push({ nom: p?.nom ?? null, raison: e.raison });
+  }
+  return out;
 }

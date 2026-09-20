@@ -195,6 +195,10 @@ describe('le portail se lit en anglais', () => {
       for (const e of c.etiquettes ?? []) dire(`carte #${c.numero}.etiquette`, e);
     }
     for (const p of s.parcours ?? []) dire(`${p.nom}.cadence`, p.cadence);
+    // La raison pour laquelle un paquet reste hors mesure s'AFFICHE dans le
+    // tableau de couverture : c'est une donnée, et elle se lit en anglais
+    // comme le reste (#58).
+    for (const p of s.paquets ?? []) dire(`${p.nom}.mesure.raison`, p.mesure?.raison);
     for (const w of s.ci ?? []) {
       dire('workflow.nom', w.nom);
       for (const d of w.declencheurs ?? []) dire(`${w.fichier}.declencheur`, d);

@@ -521,6 +521,8 @@ describe('parent receives a typed delegation record @cap:organiser-equipe/moteur
   // `delivery_blocked` s'y ajoute avec #59 : un verdict de relecture ne voyage
   // plus seulement comme information, il pose un INTERDIT — et le parent le lit
   // dans un CHAMP, pas entre les lignes d'un résumé.
+  // `sub_delegations` y est entrée avec #116 : l'issue du sous-arbre, que le
+  // grand-parent ne recevait qu'en prose.
   const CLES_DU_CONTRAT = [
     'delivery_blocked',
     'error',
@@ -528,6 +530,7 @@ describe('parent receives a typed delegation record @cap:organiser-equipe/moteur
     'hint',
     'review_verdict',
     'status',
+    'sub_delegations',
     'summary',
     'tools_used',
   ];

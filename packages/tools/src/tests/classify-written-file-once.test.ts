@@ -25,7 +25,7 @@
 // d'état relue en base, et la sortie de l'outil — jamais sur un compte d'appels.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -51,7 +51,11 @@ import type * as WrittenFileType from '../verification/written-file-type';
  * si l'outil classait trois fois, le troisième classement verrait le même état
  * que le second, et le test resterait honnête.
  */
-const course = vi.hoisted(() => ({ apres: null as null | (() => Promise<void>) }));
+const course = vi.hoisted(() => ({
+  apres: null as null | (() => Promise<void>),
+  /** Une panne de la base, armée pour le PROCHAIN classement et un seul. */
+  leveUneFois: null as null | string,
+}));
 
 vi.mock('../verification/written-file-type', async (importOriginal) => {
   const reel = await importOriginal<typeof WrittenFileType>();
@@ -60,6 +64,9 @@ vi.mock('../verification/written-file-type', async (importOriginal) => {
     deliverableTypeForWrittenFile: async (
       ...args: Parameters<typeof reel.deliverableTypeForWrittenFile>
     ) => {
+      const panne = course.leveUneFois;
+      course.leveUneFois = null;
+      if (panne !== null) throw new Error(panne);
       const type = await reel.deliverableTypeForWrittenFile(...args);
       const geste = course.apres;
       course.apres = null;
@@ -86,6 +93,7 @@ beforeEach(async () => {
   ws = join(root, 'ws');
   await mkdir(ws, { recursive: true });
   course.apres = null;
+  course.leveUneFois = null;
 
   const [job] = await db
     .insert(agentJobs)
@@ -266,5 +274,82 @@ describe('un fichier écrit est classé une seule fois @cap:verifier-un-livrable
       etat: [['code_project', keyOf(projet)]],
       carte: null,
     });
+  });
+});
+
+// ─── Constat de Quentin sur la revue de #213, porté par #211 ─────────────────
+//
+// Le hook rattrapait TOUT : sa `catch` couvrait la résolution du chemin ET le
+// classement, qui lit `code_projects`. Une panne passagère de la base faisait
+// donc rendre AUCUNE cible — la forme documentée d'un chemin irrésolu, où
+// `execute` échoue quelques lignes plus bas sur la même erreur et où il n'y a
+// donc rien à ranger. Ici, rien n'échouait : l'écriture partait, `execute`
+// reclassait pour son compte, et la carte repartait avec une clé de livrable
+// qu'aucune ligne d'état ne réclamait. Un repli silencieux (invariant #4), et
+// la seule variante de la course de #66 que ce fichier ne couvrait pas.
+//
+// La `catch` ne couvre plus que la résolution du chemin. Un classement qui
+// lève REMONTE, le seam refuse l'appel (`intent_targets_failed`) et le dit.
+describe('un classement qui LÈVE au hook ne devient pas une écriture sans état', () => {
+  it('file_write — la base tombe au hook : l’appel est refusé et rien n’est écrit', async () => {
+    const cible = join(ws, 'rapport.md');
+    course.leveUneFois = 'PANNE_PASSAGERE_CODE_PROJECTS';
+
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'rapport.md', content: '# Rapport\n' },
+      ctx(),
+      opts,
+    );
+
+    expect(res.outcome).toBe('error');
+    expect(res.outcome === 'error' ? res.error : '').toContain(
+      'verification_intent_failed: intent_targets_failed',
+    );
+    expect(await etats(), 'une ligne d’état a été posée sur un appel refusé').toEqual([]);
+    await expect(
+      readFile(cible, 'utf8'),
+      'le fichier a été écrit alors que l’intention a échoué',
+    ).rejects.toThrow();
+  });
+
+  it('file_edit — même panne, même refus : le fichier garde son contenu', async () => {
+    const projet = join(ws, 'depot');
+    await mkdir(projet, { recursive: true });
+    await writeFile(join(projet, 'z.ts'), 'const z = 0;\n', 'utf8');
+    course.leveUneFois = 'PANNE_PASSAGERE_CODE_PROJECTS';
+
+    const res = await executeTool(
+      fileEditTool as never,
+      { path: 'depot/z.ts', old_string: 'const z = 0;', new_string: 'const z = 1;' },
+      ctx(),
+      autoApprove('file_edit'),
+    );
+
+    expect(res.outcome).toBe('error');
+    expect(await etats()).toEqual([]);
+    expect(await readFile(join(projet, 'z.ts'), 'utf8')).toBe('const z = 0;\n');
+  });
+
+  // L'autre moitié, et la raison pour laquelle la `catch` existe : un chemin
+  // hors périmètre ne rend toujours aucune cible, sans lever. `execute` rend
+  // alors l'erreur que l'agent peut lire, au lieu d'un code d'intention.
+  it('un chemin hors périmètre ne rend toujours aucune cible, et échoue à l’exécution', async () => {
+    // Absolu et hors de tout dossier attaché : `resolveAndCheckPath` lève, et
+    // c'est le seul cas que la `catch` du hook doit encore avaler.
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: join(root, 'dehors.md'), content: 'x' },
+      ctx(),
+      opts,
+    );
+
+    // L'outil, lui, RÉPOND — et sa réponse est un échec déclaré, porteur du
+    // message que l'agent peut lire. Ce n'est pas un code d'intention.
+    expect(res.outcome).toBe('success');
+    const sortie = (res as { output?: { ok?: boolean; reason?: string } }).output;
+    expect(sortie?.ok).toBe(false);
+    expect(sortie?.reason ?? '').not.toContain('verification_intent_failed');
+    expect(await etats()).toEqual([]);
   });
 });

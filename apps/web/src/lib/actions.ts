@@ -78,6 +78,7 @@ import {
 import { randomBytes } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
+import type { IPv4, IPv6 } from 'ipaddr.js';
 import {
   eq,
   and,
@@ -93,6 +94,7 @@ import {
   agents,
   agentAssignments,
   agentJobs,
+  chatMessages,
   conversations,
   connectors,
   credentials,
@@ -199,6 +201,7 @@ import {
   isShellProgram,
   redactSecretsInText,
   CLI_WRITE_TOOLS,
+  type JobResultKind,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
@@ -2435,6 +2438,13 @@ export type SpaceConversationView = {
      * et un run revient à la chose qui l'a déclenché.
      */
     scheduleId: string | null;
+    /**
+     * COMMENT le résultat du run a été produit (`agent_jobs.result_kind`,
+     * #154). La page s'en sert pour décider si la réponse se lit sous
+     * l'en-tête ou si le bloc Review la porte (#210). `null` sur un run fini
+     * avant la colonne, et la page retombe alors sur la règle de 0.8.11.
+     */
+    resultKind: JobResultKind | null;
   };
   feed: ConversationFeed;
   /** P3 — ce que la preuve a fait pour ce travail et ses délégués (même lecture que le détail Code). */
@@ -2701,6 +2711,7 @@ export async function getSpaceConversationAction(
       createdAt: job.createdAt,
       completedAt: job.completedAt,
       result: job.result,
+      resultKind: job.resultKind ?? null,
       verdict: classifyProduction({
         conversation: { channel: job.channel, chatId: job.chatId },
         rows: auditRows,
@@ -2753,6 +2764,7 @@ export async function getSpaceConversationAction(
           scheduleId: job.scheduleId,
           triggerContext: job.triggerContext as JobTriggerContext | null,
         }),
+        resultKind: job.resultKind ?? null,
       },
       feed: feedWithDelivery,
       verdicts: reviewVerdicts.views,
@@ -11580,7 +11592,7 @@ const BLOCKED_SSRF_EXACT_ADDRESSES = new Set(
   ['100.100.100.200', '192.0.0.192', 'fd00:ec2::254'].map((ip) => ipaddr.parse(ip).toString()),
 );
 
-function isLinkLocalOrBlocked(addr: import('ipaddr.js').IPv4 | import('ipaddr.js').IPv6): boolean {
+function isLinkLocalOrBlocked(addr: IPv4 | IPv6): boolean {
   if (BLOCKED_SSRF_EXACT_ADDRESSES.has(addr.toString())) return true;
   return addr.range() === 'linkLocal';
 }
@@ -11594,11 +11606,11 @@ function isLinkLocalOrBlocked(addr: import('ipaddr.js').IPv4 | import('ipaddr.js
  * recognizes the first of the three) catches all of them at once. 6to4
  * (2002::/16) carries it instead in bits 16-47.
  */
-function extractEmbeddedIPv4Candidates(v6: import('ipaddr.js').IPv6): import('ipaddr.js').IPv4[] {
+function extractEmbeddedIPv4Candidates(v6: IPv6): IPv4[] {
   const bytes = v6.toByteArray();
-  const candidates = [ipaddr.fromByteArray(bytes.slice(12, 16)) as import('ipaddr.js').IPv4];
+  const candidates = [ipaddr.fromByteArray(bytes.slice(12, 16)) as IPv4];
   if (bytes[0] === 0x20 && bytes[1] === 0x02) {
-    candidates.push(ipaddr.fromByteArray(bytes.slice(2, 6)) as import('ipaddr.js').IPv4);
+    candidates.push(ipaddr.fromByteArray(bytes.slice(2, 6)) as IPv4);
   }
   return candidates;
 }
@@ -11609,7 +11621,7 @@ function isBlockedSsrfAddress(host: string): boolean {
   if (parsed.kind() === 'ipv4') {
     return isLinkLocalOrBlocked(parsed);
   }
-  const v6 = parsed as import('ipaddr.js').IPv6;
+  const v6 = parsed as IPv6;
   if (isLinkLocalOrBlocked(v6)) return true;
   return extractEmbeddedIPv4Candidates(v6).some((candidate) => isLinkLocalOrBlocked(candidate));
 }
@@ -12502,6 +12514,64 @@ export async function createConversationAction(
   } catch (err) {
     console.error('[createConversationAction]', err);
     return fail('db_error', 'Failed to create conversation');
+  }
+}
+
+/**
+ * Jeter une conversation qui n'a RIEN reçu (#248, revue Reviewer C passe 1).
+ *
+ * Le premier envoi de l'écran de conversation neuve est en deux temps : la
+ * ligne naît, puis le message part. Si le second temps échoue — runner coupé,
+ * modèle absent — la ligne reste, vide : l'orphelin que #248 promet d'éliminer,
+ * déplacé du clic vers l'envoi raté. La saisie appelle donc ceci sur son chemin
+ * d'échec.
+ *
+ * ELLE NE SUPPRIME QUE LE VIDE, et c'est la garde qui compte. Le runner écrit
+ * le tour de la personne AVANT d'appeler le modèle (`run-chat-turn.ts`, 1b) :
+ * un envoi qui échoue APRÈS l'ouverture du flux a déjà son message en base, et
+ * jeter la conversation perdrait ce que la personne a écrit. La condition est
+ * donc relue en base — aucun `chat_messages`, aucun `agent_jobs` — et jamais
+ * supposée depuis le code d'erreur.
+ *
+ * Bornée à l'entité de la session, comme toute suppression ici.
+ *
+ * Rend `discarded: false` sans échouer quand la ligne a du contenu, a déjà
+ * disparu, ou n'est pas de cet espace : ce n'est pas une panne, c'est la garde
+ * qui joue son rôle.
+ */
+export async function discardEmptyConversationAction(
+  id: string,
+): Promise<ActionResult<{ discarded: boolean }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid conversation id');
+    }
+    const db = getDb();
+
+    const [message] = await db
+      .select({ id: chatMessages.id })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, id))
+      .limit(1);
+    if (message) return ok({ discarded: false });
+
+    const [job] = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, id))
+      .limit(1);
+    if (job) return ok({ discarded: false });
+
+    const removed = await db
+      .delete(conversations)
+      .where(and(eq(conversations.id, id), eq(conversations.entityId, session.entityId)))
+      .returning({ id: conversations.id });
+    if (removed.length > 0) revalidatePath('/chat');
+    return ok({ discarded: removed.length > 0 });
+  } catch (err) {
+    console.error('[discardEmptyConversationAction]', err);
+    return fail('db_error', 'Failed to discard the empty conversation');
   }
 }
 

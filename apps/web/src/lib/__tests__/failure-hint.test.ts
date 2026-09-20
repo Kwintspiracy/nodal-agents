@@ -1,54 +1,55 @@
 // failure-hint.test.ts — le geste qu'un échec appelle, et le silence quand il
-// n'en appelle aucun (#184).
+// n'en appelle aucun (#184, #193).
 //
 // Ce que ce fichier garde, c'est le SILENCE autant que la phrase. Un écran qui
 // conseille au hasard après un échec ordinaire est pire qu'un écran muet : il
 // envoie la personne changer un réglage qui n'y est pour rien. Et un geste que
 // le runner nomme dans un mot plus récent que cet écran ne doit pas s'afficher
 // en slug brut.
+//
+// CE QUI A CHANGÉ AVEC #193. L'écran ne DÉDUIT plus le geste du code d'erreur :
+// il lit `agent_jobs.failure_hint`, le mot que le runner a écrit. Le test qui
+// gardait la lecture du préfixe a donc disparu d'ici — il vit maintenant côté
+// runner (`apps/runner/src/job/tests/fail-job-hint.test.ts`), là où la décision
+// se prend. Ce qui reste ici est la seule chose que l'écran décide : quel geste
+// il sait dire, et ce qu'il en dit.
+//
+// Mutation vérifiée : `knownHint` renvoyant `hint as FailureHint` sans son test
+// d'appartenance → « un geste inconnu n'est pas rendu au type » rougit.
 
 import { describe, it, expect } from 'vitest';
-import { PROVIDER_REJECTED, PROVIDER_REJECTED_PREFIX } from '@nodal-agents/shared';
-import { failureHint, hintSentence } from '../failure-hint.ts';
+import { knownHint, hintSentence } from '../failure-hint.ts';
 
-// Le code exact que `providerRejectionCode` écrit dans `agent_jobs.error`,
-// bâti sur LA constante partagée et non sur une copie de la chaîne : un
-// renommage du préfixe doit faire rougir ce fichier, au lieu de le laisser vert
-// sur un code que plus personne n'écrit (#194, revue passe 1).
-const REFUS = `${PROVIDER_REJECTED_PREFIX}openrouter/google/gemini-3.7-flash (http 400, turn 3)`;
-
-describe('failureHint — le geste se lit sur ce qui est persisté @cap:suivre-execution/ecran', () => {
-  it('la constante partagée vaut CE qu’elle doit valoir', () => {
-    // Épinglée en clair, une fois (revue passe 2). Tout le reste du fichier est
-    // bâti SUR elle : si la jonction `node_modules` d'un worktree la résout vers
-    // un autre paquet, elle vaut `undefined` et la suite passe au vert sur du
-    // vide — c'est arrivé. Cette ligne-là le dit tout de suite.
-    expect(PROVIDER_REJECTED_PREFIX).toBe('provider_rejected_request:');
-    expect(PROVIDER_REJECTED).toBe('provider_rejected_request');
+describe('knownHint — le geste lu en base, rendu au type @cap:suivre-execution/ecran', () => {
+  it('« switch_model » est un geste que cet écran connaît', () => {
+    expect(knownHint('switch_model')).toBe('switch_model');
   });
 
-  it('un refus du fournisseur appelle un changement de modèle', () => {
-    expect(failureHint(REFUS)).toBe('switch_model');
+  it('aucun geste écrit : rien à rendre', () => {
+    expect(knownHint(null)).toBeNull();
+    expect(knownHint(undefined)).toBeNull();
+    expect(knownHint('')).toBeNull();
   });
 
-  it('tout autre échec n’appelle rien, et l’absence de code non plus', () => {
-    expect(failureHint('delivery_spam_guard')).toBeNull();
-    expect(failureHint('max_turns_reached')).toBeNull();
-    expect(failureHint('')).toBeNull();
-    expect(failureHint(null)).toBeNull();
-    expect(failureHint(undefined)).toBeNull();
+  it('un geste inconnu n’est pas rendu au type — il vaut le silence', () => {
+    // Le jour où un runner plus récent que cet écran nommera un geste de plus,
+    // le fil ne portera RIEN pour lui, jamais son slug.
+    expect(knownHint('rotate_api_key')).toBeNull();
   });
 
-  it('le code est lu au DÉBUT : un message qui cite le refus n’en est pas un', () => {
-    expect(failureHint(`the child said ${PROVIDER_REJECTED} happened`)).toBeNull();
+  it('un code d’erreur n’est pas un geste : l’écran ne déduit plus (#193)', () => {
+    // La garde de la bascule. Tant que l'écran lisait le code, cette entrée
+    // rendait `switch_model` ; elle ne le rend plus, parce que ce n'est pas ce
+    // que le runner a écrit dans `failure_hint`.
+    expect(knownHint('provider_rejected_request:openrouter/x (http 400, turn 3)')).toBeNull();
   });
 
-  it('les DEUX-POINTS font partie du code : un voisin de nom n’est pas ce refus', () => {
-    // Sans eux, un futur `provider_rejected_request_upstream` serait lu comme
-    // un refus de ce modèle-là, et l'écran enverrait changer un réglage qui
-    // n'y est pour rien (revue passe 1, constat C3).
-    expect(failureHint(`${PROVIDER_REJECTED}_upstream:openrouter/x (http 500, turn 1)`)).toBeNull();
-    expect(failureHint(PROVIDER_REJECTED)).toBeNull();
+  it('les héritages de `Object.prototype` ne sont pas des gestes', () => {
+    // `hint in HINT_SENTENCE` verrait `toString` sur la chaîne de prototypes si
+    // la table n'était pas lue avec soin — et l'écran chercherait à dire un
+    // geste qui n'existe pas.
+    expect(knownHint('toString')).toBeNull();
+    expect(knownHint('constructor')).toBeNull();
   });
 });
 
@@ -66,5 +67,13 @@ describe('hintSentence — ce que l’écran DIT @cap:suivre-execution/ecran', (
     // Le jour où le runner nommera un geste de plus, cet écran restera muet
     // jusqu'à ce que quelqu'un lui donne sa phrase. Muet, jamais bavard à tort.
     expect(hintSentence('rotate_api_key')).toBeNull();
+  });
+
+  it('« toString » ne rend pas la méthode héritée', () => {
+    // Lu à l'index sans garde, `HINT_SENTENCE['toString']` rendait la fonction
+    // d'`Object.prototype`, typée `string` par la signature d'index : l'écran
+    // aurait affiché du code source sous un échec.
+    expect(hintSentence('toString')).toBeNull();
+    expect(hintSentence('valueOf')).toBeNull();
   });
 });

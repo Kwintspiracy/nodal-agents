@@ -1,0 +1,306 @@
+import {
+  getEntityStatsAction,
+  getActiveJobsByAgentAction,
+  getWeeklyActivityAction,
+  getDailyActivityAction,
+  listSkillsAction,
+  listConnectorsAction,
+  listMcpServersAction,
+} from '@/lib/actions.ts';
+import VividStatCard from '@/components/ui/VividStatCard';
+import MetricCard from '@/components/ui/MetricCard';
+import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
+import AgentAvatar from '@/components/ui/AgentAvatar';
+import PageShell from '@/components/ui/PageShell';
+import ActiveAgentsPanel from './ActiveAgentsPanel.tsx';
+import WeeklyActivityChart from './WeeklyActivityChart.tsx';
+import { UsersThree, Star, PlugsConnected } from '@phosphor-icons/react/dist/ssr';
+
+export const dynamic = 'force-dynamic';
+
+/**
+ * Dashboard — merged Home + Stats surface.
+ *
+ * Il vivait sur la racine `/` jusqu'au 19/09 (#248). La racine est désormais la
+ * conversation neuve : ce pour quoi on ouvre Nodal, c'est PARLER à son agent,
+ * pas lire un tableau de chiffres. Le tableau n'a pas changé d'une ligne, il a
+ * changé d'adresse — et rien ne redirige `/` vers ici, sinon la racine
+ * reprendrait ce que la décision vient de lui donner.
+ *
+ * Layout, top to bottom:
+ *   1. Greeting + one-line lede
+ *   2. Three vivid section cards (Agents lime, Skills coral, Connectors blue)
+ *   3. Six white MetricCards (Total jobs, Success rate, Tool calls,
+ *      Input tokens, Output tokens, Tokens / job)
+ *   4. Agents at work — live-polled panel of in-flight agents
+ *   5. Weekly activity — 12-week stacked-bar chart of jobs by status
+ *   6. Job status — breakdown by status
+ *   7. Per agent — table of job counts + tokens
+ *
+ * There is no separate /stats page — that route was a leftover from before
+ * the merge and is now removed. THIS page, `/dashboard`, is the stats view.
+ *
+ * Numbers not fabricated:
+ *   - "+18.2% w/w" deltas omitted (no w/w aggregate)
+ *   - "uptime %" omitted (no health log)
+ *   - "needs auth" tally on Connectors meta omitted (no per-instance status)
+ *   Cards keep their headline values; gaps stay honest.
+ */
+export default async function DashboardPage() {
+  const [statsRes, activeRes, weeklyRes, dailyRes, skillsRes, connsRes, mcpRes] = await Promise.all(
+    [
+      getEntityStatsAction(),
+      getActiveJobsByAgentAction(),
+      getWeeklyActivityAction(),
+      getDailyActivityAction(),
+      listSkillsAction(),
+      listConnectorsAction(),
+      listMcpServersAction(),
+    ],
+  );
+
+  if (!statsRes.ok) {
+    return (
+      <PageShell title="Home">
+        <div className="rounded-xl border border-warn/40 bg-warn-bg p-5 text-sm text-warn">
+          {statsRes.message}
+        </div>
+      </PageShell>
+    );
+  }
+
+  const s = statsRes.data;
+  const active = activeRes.ok ? activeRes.data : [];
+  const weekly = weeklyRes.ok ? weeklyRes.data : { rows: [], models: [] };
+  const daily = dailyRes.ok ? dailyRes.data : { rows: [], models: [] };
+  const skills = skillsRes.ok ? skillsRes.data : [];
+  const connectors = connsRes.ok ? connsRes.data.instances : [];
+  const mcp = mcpRes.ok ? mcpRes.data.instances : [];
+
+  // Derived metrics — all from real aggregates, no synthesis.
+  const runningCount = active.length;
+  // Count INSTALLED skills — the ones added to this workspace (custom +
+  // community), excluding the always-present built-in library. This mirrors the
+  // connectors card, which counts installed instances; both tiles say "installed"
+  // so the number's meaning is explicit and the two cards are consistent.
+  const skillCount = skills.filter((sk) => !sk.isSystem).length;
+  const connectorCount = connectors.length + mcp.length;
+  const totalTokens = s.totalInputTokens + s.totalOutputTokens;
+  const successRate =
+    s.totalJobs > 0 ? Math.round(((s.statusCounts['completed'] ?? 0) / s.totalJobs) * 100) : null;
+  const tokensPerJob = s.totalJobs > 0 ? Math.round(totalTokens / s.totalJobs) : null;
+
+  // Greeting — local time-of-day.
+  const greet = getGreeting();
+  const todayLabel = new Date().toLocaleDateString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+
+  return (
+    <PageShell
+      title={
+        <span className="inline-flex flex-wrap items-baseline gap-3">
+          {greet}
+          <span className="text-medium-14 leading-none! text-ink-3">{todayLabel}</span>
+        </span>
+      }
+      subtitle={
+        s.totalJobs > 0
+          ? `${s.totalJobs.toLocaleString()} ${s.totalJobs === 1 ? 'job' : 'jobs'} run so far`
+          : 'No jobs yet — spin up an agent.'
+      }
+    >
+      {/* 1 — Three vivid stat cards ------------------------------------ */}
+      <div className="grid grid-cols-1 gap-3.5 md:grid-cols-3">
+        <VividStatCard
+          variant="agent"
+          label="Agents"
+          value={s.agentCount}
+          icon={<UsersThree size={13} weight="regular" />}
+          href="/agents"
+          meta={
+            runningCount > 0
+              ? `${runningCount} ${runningCount === 1 ? 'agent' : 'agents'} active now`
+              : 'All agents idle'
+          }
+        />
+        <VividStatCard
+          variant="skill"
+          label="Skills"
+          value={skillCount}
+          icon={<Star size={13} weight="regular" />}
+          href="/skills"
+          meta="installed"
+        />
+        <VividStatCard
+          variant="conn"
+          label="Connectors"
+          value={connectorCount}
+          icon={<PlugsConnected size={13} weight="regular" />}
+          href="/connectors"
+          meta={
+            mcp.length > 0
+              ? `installed · ${connectors.length} API · ${mcp.length} MCP`
+              : `installed · ${connectors.length} API`
+          }
+        />
+      </div>
+
+      {/* 2 — Six white metric cards ------------------------------------ */}
+      <div className="mt-3.5 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+        <MetricCard label="Total jobs" value={formatNumber(s.totalJobs)} />
+        <MetricCard
+          label="Success rate"
+          value={successRate === null ? '—' : String(successRate)}
+          unit={successRate === null ? undefined : '%'}
+          subtle={
+            s.totalJobs > 0 ? `${s.statusCounts['completed'] ?? 0} / ${s.totalJobs}` : undefined
+          }
+        />
+        <MetricCard label="Tool calls" value={formatNumber(s.totalToolCalls)} />
+        <MetricCard
+          label="Input tokens"
+          value={formatTokens(s.totalInputTokens).value}
+          unit={formatTokens(s.totalInputTokens).unit}
+        />
+        <MetricCard
+          label="Output tokens"
+          value={formatTokens(s.totalOutputTokens).value}
+          unit={formatTokens(s.totalOutputTokens).unit}
+        />
+        <MetricCard
+          label="Tokens / job"
+          value={tokensPerJob === null ? '—' : formatNumber(tokensPerJob)}
+        />
+      </div>
+
+      {/* 3 — Agents at work (live-polled) ------------------------------ */}
+      <div className="mt-7">
+        <ActiveAgentsPanel initial={active} />
+      </div>
+
+      {/* 4 — Weekly activity ------------------------------------------ */}
+      <div className="mt-7">
+        <WeeklyActivityChart weekly={weekly} daily={daily} />
+      </div>
+
+      {/* 5 — Job status breakdown -------------------------------------- */}
+      {Object.keys(s.statusCounts).length > 0 && (
+        <div className="mt-7">
+          <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">Job status</h2>
+          <Table>
+            <tbody>
+              {Object.entries(s.statusCounts)
+                .sort((a, b) => b[1] - a[1])
+                .map(([status, count]) => (
+                  <Tr key={status} hover={false}>
+                    <Td>
+                      <StatusPill
+                        variant={statusToVariant(status)}
+                        label={STATUS_LABEL[status] ?? status}
+                      />
+                    </Td>
+                    <Td align="right" className="font-mono tabular-nums text-ink-2">
+                      {count}
+                    </Td>
+                  </Tr>
+                ))}
+            </tbody>
+          </Table>
+        </div>
+      )}
+
+      {/* 6 — Per agent ------------------------------------------------- */}
+      {s.perAgent.length > 0 && (
+        <div className="mt-7">
+          <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">Per agent</h2>
+          <Table>
+            <THead>
+              <Th>Agent</Th>
+              <Th align="right">Jobs</Th>
+              <Th align="right" className="hidden md:table-cell">
+                Input tk
+              </Th>
+              <Th align="right" className="hidden md:table-cell">
+                Output tk
+              </Th>
+            </THead>
+            <tbody>
+              {s.perAgent.map((a) => (
+                <Tr key={a.agentId} hover={false}>
+                  <Td>
+                    <div className="flex items-center gap-2.5">
+                      <AgentAvatar name={a.agentName} size="md" shape="round" />
+                      <div className="min-w-0">
+                        <span className="text-ink">{a.agentName}</span>
+                        <span className="ml-2 font-mono text-xs text-ink-4">{a.agentSlug}</span>
+                      </div>
+                    </div>
+                  </Td>
+                  <Td align="right" className="font-mono tabular-nums text-ink-2">
+                    {a.jobCount}
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums text-ink-3 md:table-cell"
+                  >
+                    {formatNumber(a.inputTokens)}
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums text-ink-3 md:table-cell"
+                  >
+                    {formatNumber(a.outputTokens)}
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+        </div>
+      )}
+    </PageShell>
+  );
+}
+
+// ─── Small helpers ─────────────────────────────────────────────────────
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: 'Pending',
+  processing: 'Processing',
+  completed: 'Completed',
+  failed: 'Failed',
+  awaiting_approval: 'Awaiting approval',
+  awaiting_delegation: 'Awaiting delegation',
+  cancelled: 'Cancelled',
+};
+
+function statusToVariant(status: string): StatusVariant {
+  if (status === 'completed') return 'done';
+  if (status === 'failed' || status === 'cancelled') return 'warn';
+  if (status.startsWith('awaiting') || status === 'processing' || status === 'pending')
+    return 'run';
+  return 'idle';
+}
+
+function formatNumber(n: number): string {
+  if (n < 1_000) return String(n);
+  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+function formatTokens(n: number): { value: string; unit?: string } {
+  if (n < 1_000) return { value: String(n) };
+  if (n < 1_000_000) return { value: (n / 1_000).toFixed(1), unit: 'k' };
+  return { value: (n / 1_000_000).toFixed(1), unit: 'M' };
+}
+
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 5) return 'Up late';
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}

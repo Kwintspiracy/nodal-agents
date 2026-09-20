@@ -169,6 +169,28 @@ export const toolGroupSkillSlugs: string[] = systemSkills
   .filter((s) => s.toolGroup === true)
   .map((s) => s.slug);
 
+/**
+ * Les outils que la surface `chat` expose, et la SEULE liste qui les nomme.
+ *
+ * Elle vit ici parce que trois endroits en ont besoin et qu'un seul les
+ * possédait : `CHAT_TOOLS`, dans `apps/runner/src/chat/run-chat-turn.ts`,
+ * porte les schémas, et deux suites recopiaient ses clés à la main pour
+ * vérifier que le texte injecté sur le chat ne prescrit aucun outil absent
+ * (`chat-surface-cost.test.ts`, `surface-content.test.ts`).
+ *
+ * Constat mineur 1 de la revue C de la PR #73 (dette #88, issue #211) : un
+ * second outil ajouté au chat aurait été déclaré INEXÉCUTABLE par ces deux
+ * suites, qui l'ignoraient — un faux rouge, et une dérive que rien n'aurait
+ * montrée. `CHAT_TOOLS` est désormais typé par cette liste, donc une clé en
+ * trop ou en moins ne compile plus, et un test du runner le constate aussi à
+ * l'exécution.
+ *
+ * Ce ne sont pas des métadonnées d'agent (invariant #1) : c'est la surface de
+ * la plateforme, de la même nature que `PromptSurface` juste à côté.
+ */
+export const chatSurfaceToolNames = ['run_task'] as const;
+export type ChatSurfaceToolName = (typeof chatSurfaceToolNames)[number];
+
 // `devTeamSkillSlugs` a existé ici du 25 au 26/08 : les skills `dev` et
 // `code-review` désignaient alors les agents dont le travail entrait dans
 // l'onglet Code. Retiré — cette identité ne marchait que si l'utilisateur

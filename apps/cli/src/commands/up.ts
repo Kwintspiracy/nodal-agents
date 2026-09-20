@@ -15,6 +15,10 @@ import {
   postgresProcessesForDataDir,
   LEGACY_PG_PASSWORD,
 } from '../lib/postgres.ts';
+import {
+  probeEmbeddedPostgres,
+  EmbeddedPostgresUnavailableError,
+} from '../lib/embedded-postgres-binaries.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
 import {
   buildEnvForRunner,
@@ -122,6 +126,18 @@ export interface RunUpOptions {
 }
 
 export async function runUp(opts: RunUpOptions = {}): Promise<void> {
+  // ── 0. Are the database binaries actually there? (issue #247) ─────────────
+  //
+  // Demandé AVANT tout le reste, config comprise : sans binaires il n'y a rien
+  // à démarrer, et l'erreur qui sortait jusqu'ici venait du postmaster, trois
+  // couches plus bas, sans jamais nommer la porte `allowScripts` des npm
+  // récents ni la commande qui la lève. Le détail du constat est dans
+  // lib/embedded-postgres-binaries.ts.
+  const binaries = await probeEmbeddedPostgres();
+  if (!binaries.ok) {
+    throw new EmbeddedPostgresUnavailableError(binaries.reason, binaries.message);
+  }
+
   // ── 1. Load config (write a no-friction default if missing) ───────────────
 
   let config = readConfig();
@@ -814,9 +830,12 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
 
   const healthSpinner = ora('Waiting for services to be healthy…').start();
   // First run on a CLEAN machine is heavy and slow, and this is where a too-tight
-  // budget bites hardest: embedded-postgres fetches its ~70MB binary at runtime
-  // (its postinstall may be blocked by npm script-approval), the runner loads a
-  // large module graph (googleapis et al.) off a cold disk cache, and seeds 19
+  // budget bites hardest: the first boot runs initdb on a cold disk (the ~70MB
+  // of Postgres binaries SHIP inside @embedded-postgres/<platform>, they are
+  // not fetched at runtime — checked in 18.3.0-beta.17, whose install script
+  // only rehydrates symlinks; see lib/embedded-postgres-binaries.ts and #247),
+  // the runner loads a large module graph (googleapis et al.) off a cold disk
+  // cache, and seeds 19
   // system skills — all before it answers /api/health. On a warm machine this is
   // quick (<20s); on a fresh install it routinely blows past a minute, which is
   // exactly what tore the stack down for fresh installers (runner "did not become

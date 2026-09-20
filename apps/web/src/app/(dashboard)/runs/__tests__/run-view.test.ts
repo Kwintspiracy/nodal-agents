@@ -39,7 +39,7 @@ const turn = (over: Partial<Extract<FeedItem, { kind: 'turn' }>> = {}): FeedItem
   index: 1,
   turn: 1,
   turnSource: 'audit',
-  agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+  agent: { name: 'Nestor', slug: 'nestor', avatarUrl: null },
   model: 'z-ai/glm-5.3',
   blocks: [{ kind: 'prose', text: 'Digest posted.' }],
   usage: null,
@@ -75,8 +75,8 @@ function view(over: {
       task: 'Weekly digest of the open GitHub issues',
       channel: 'cron',
       status: 'completed',
-      agentName: 'Alfred',
-      agentSlug: 'alfred',
+      agentName: 'Nestor',
+      agentSlug: 'nestor',
       agentAvatarUrl: null,
       createdAt: new Date('2026-09-18T09:00:00Z'),
       completedAt: new Date('2026-09-18T09:00:41Z'),
@@ -84,6 +84,7 @@ function view(over: {
       parentJobId: null,
       scheduleName: 'every Monday 09:00',
       scheduleId: 'schedule-1',
+      resultKind: null,
       ...over.job,
     },
     feed: { items: over.items ?? [turn()], totals },
@@ -293,10 +294,18 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
     expect(lifted.items[0]).toMatchObject({ kind: 'turn' });
   });
 
-  it('un `result` en JSON est pour une machine : c’est la prose qui sort', () => {
+  it('SANS marque, un `result` en JSON est pour une machine : c’est la prose qui sort', () => {
+    // Le repli de #154 : sans `result_kind`, l'heuristique du premier
+    // caractère reprend la main, pour les runs d'avant la colonne.
     const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Fourteen issues.' }] })];
     const lifted = liftReply(items, { ...done, result: '{"issues":14}' });
     expect(lifted.reply).toBe('Fourteen issues.');
+  });
+
+  it('marqué prose, un `result` en JSON lisible sort quand même (#154)', () => {
+    const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Je publie.' }] })];
+    const lifted = liftReply(items, { ...done, result: '["14 issues"]' }, false, 'prose');
+    expect(lifted.reply).toBe('["14 issues"]');
   });
 
   it('un run RELU n’a pas de réponse en haut : le bloc Review est sa réponse', () => {
@@ -325,7 +334,7 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
   });
 
   it('sans verdict, la réponse sort comme avant', () => {
-    const propre = 'Reviewer C a fermé les deux majeurs. Je livre.';
+    const propre = 'Second Reader a fermé les deux majeurs. Je livre.';
     const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: propre }] })];
     expect(liftReply(items, done, false).reply).toBe(propre);
     // Et le défaut du paramètre est « pas relu » : un appelant qui l'ignore
@@ -342,6 +351,60 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
 
   it('rien ne sort tant que le run court : sa dernière phrase est une étape', () => {
     expect(liftReply([turn()], { completedAt: null }).reply).toBeNull();
+  });
+
+  // #210 — ce que la marque change pour un run relu. La règle de 0.8.11 était
+  // large : TOUT verdict enregistré cachait la réponse, y compris celle d'un
+  // run de code qui avait fait son propre travail. La marque tranche.
+  describe('#210 — un run relu, sa réponse et son bloc Review @cap:suivre-execution/ecran', () => {
+    const RELAI = '## reviewer-c\nDeux majeurs fermés, un mineur reste.';
+
+    it('marqué relay, la réponse reste cachée : le bloc Review la porte déjà', () => {
+      // Le cas de Quentin, 18/09 : l'orchestrateur n'a rien écrit de sa main,
+      // son résultat EST le rapport de son délégué. L'afficher en haut le
+      // ferait lire deux fois.
+      const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Je délègue.' }] })];
+      const lifted = liftReply(items, { ...done, result: RELAI }, true, 'relay');
+      expect(lifted.reply).toBeNull();
+      // Et la chronologie garde tout : la prose reste DANS son tour.
+      expect(lifted.items).toHaveLength(1);
+      const reste = lifted.items[0];
+      expect(reste?.kind === 'turn' && reste.blocks).toEqual([
+        { kind: 'prose', text: 'Je délègue.' },
+      ]);
+    });
+
+    it('marqué prose, un run de code relu GARDE sa phrase finale en haut', () => {
+      // CE QUE #210 DEMANDAIT DE RÉCUPÉRER. Le run a fait le travail, un
+      // délégué l'a relu, et la dernière phrase de l'agent est la sienne —
+      // pas le rapport. Elle se lit sous l'en-tête, au-dessus de Review.
+      const sienne = 'J’ai corrigé les deux majeurs et ajouté un test.';
+      const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: sienne }] })];
+      const lifted = liftReply(items, { ...done, result: sienne }, true, 'prose');
+      expect(lifted.reply).toBe(sienne);
+    });
+
+    it('marqué relay, la réponse est cachée MÊME sans verdict enregistré', () => {
+      // La marque suffit : elle dit que ce texte n'est pas de l'agent. Elle ne
+      // dépend pas d'un verdict, qui peut manquer sur un run qui a seulement
+      // délégué.
+      const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Je délègue.' }] })];
+      expect(liftReply(items, { ...done, result: RELAI }, false, 'relay').reply).toBeNull();
+    });
+
+    it('marqué relay, un item `answer` quitte le fil sans être affiché', () => {
+      const items: FeedItem[] = [turn(), { kind: 'answer', text: RELAI }];
+      const lifted = liftReply(items, done, true, 'relay');
+      expect(lifted.reply).toBeNull();
+      expect(lifted.items.some((i) => i.kind === 'answer')).toBe(false);
+    });
+
+    it('SANS marque, la règle de 0.8.11 s’applique encore : un verdict cache la réponse', () => {
+      // Le repli, DIT et tenu : un run fini avant la colonne n'a pas de
+      // provenance, et on ne lui en invente pas une.
+      const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Je livre.' }] })];
+      expect(liftReply(items, done, true, null).reply).toBeNull();
+    });
   });
 
   it('rien ne sort d’un run qui a ÉCHOUÉ : la carte d’échec dit ce qui s’est passé', () => {
@@ -384,7 +447,7 @@ describe('run-view — le résumé de l’activité @cap:suivre-execution/ecran'
     const items: FeedItem[] = [
       turn(),
       turn({ index: 2 }),
-      turn({ index: 3, agent: { name: 'Reviewer C', slug: 'reviewer-c', avatarUrl: null } }),
+      turn({ index: 3, agent: { name: 'Second Reader', slug: 'second-reader', avatarUrl: null } }),
     ];
     const summary = activitySummary(items, {
       createdAt: new Date('2026-09-18T09:00:00Z'),

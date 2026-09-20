@@ -178,7 +178,12 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       tools_used text[] DEFAULT '{}',
       turn integer DEFAULT 0,
       result text,
+      -- mirrors migration 0117 (#154, #210) : la provenance du résultat, à
+      -- côté du résultat. NULL = pas de marque, jamais une valeur inventée.
+      result_kind text CHECK (result_kind IS NULL OR result_kind IN ('prose','relay')),
       error text,
+      -- Le geste que l'échec appelle, écrit par le runner (#193, migration 0116).
+      failure_hint text,
       chain_count integer DEFAULT 0,
       request_id text,
       parent_job_id uuid REFERENCES agent_jobs(id),

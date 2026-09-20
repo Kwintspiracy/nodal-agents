@@ -4,6 +4,7 @@
 import { and, eq, notInArray, or, isNull } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
 import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
@@ -211,7 +212,11 @@ async function fillResultFromChildrenIfEmpty(db: AnyDrizzleDb, jobId: string): P
   if (!compiled) return;
   await db
     .update(agentJobs)
-    .set({ result: compiled, updatedAt: new Date() })
+    // `relay` (#154, #210) : ce texte n'est pas de la main de l'agent, c'est
+    // celui de ses délégués recompilé ici. La marque part AVEC le texte — deux
+    // écritures séparées laisseraient une fenêtre où la ligne porte un résultat
+    // sans provenance, et un écran qui la lirait retomberait sur l'heuristique.
+    .set({ result: compiled, resultKind: 'relay', updatedAt: new Date() })
     .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
 }
 
@@ -267,7 +272,10 @@ async function fillResultFromFinalTextIfEmpty(
   if (!text) return;
   await db
     .update(agentJobs)
-    .set({ result: text, updatedAt: new Date() })
+    // `prose` (#154, #210) : c'est le dernier texte que l'AGENT a écrit,
+    // repris parce qu'il n'a appelé aucun outil de livraison. Sa forme ne
+    // change rien — du JSON écrit par l'agent reste sa réponse.
+    .set({ result: text, resultKind: 'prose', updatedAt: new Date() })
     .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
 }
 
@@ -297,6 +305,22 @@ export async function completeJob(
   toolsUsed: string[] = [],
   stats?: RunStats,
   rawMessages?: unknown[],
+  /**
+   * COMMENT `rawResult` a été produit (#154, #210). La marque voyage avec le
+   * TEXTE : elle n'est écrite que quand `rawResult` est non vide, exactement
+   * comme la colonne `result`. Un `rawResult` vide n'écrit rien et laisse donc
+   * la marque posée plus tôt (par `dashboard_publish`) ou celle que les deux
+   * remplissages ci-dessous poseront.
+   *
+   * Optionnel par la FORME seulement — il suit des paramètres optionnels, et
+   * TypeScript n'accepte pas un requis après eux. Le contrat, lui, est que
+   * l'unique appelante (`finalizeJobSuccess`, garanti sans autre appelant par
+   * `scanForCompleteJobCallers`) le passe toujours : `FinalizeInput.resultKind`
+   * est requis, lui. Absent, on n'écrit AUCUNE marque plutôt qu'une marque par
+   * défaut — un défaut `prose` aurait marqué « les mots de l'agent » le
+   * résultat recompilé du cron sans que personne ne s'en aperçoive.
+   */
+  resultKind?: JobResultKind,
 ): Promise<boolean> {
   // Byte-level DB safety: model/tool output can carry raw NULs or lone
   // surrogates that Postgres rejects at write time, failing the whole UPDATE
@@ -312,8 +336,10 @@ export async function completeJob(
       // finalisation ».
       finalizingAt: null,
       // Brique 33: preserve existing result (e.g. set by dashboard_publish
-      // earlier in this job) when no new text is provided.
-      ...(result.length > 0 ? { result } : {}),
+      // earlier in this job) when no new text is provided. La MARQUE suit la
+      // même règle et la même condition : elle décrit CE texte-là, donc elle
+      // n'est posée que lorsqu'il est écrit (#154, #210).
+      ...(result.length > 0 ? { result, ...(resultKind ? { resultKind } : {}) } : {}),
       toolsUsed,
       // Clear stale error from any prior failed attempt — the docstring already
       // promised this; without it, a resumed/retried job ends up `completed` with
@@ -386,6 +412,15 @@ export async function completeJob(
  * earlier in the job (e.g. dashboard_publish) is preserved. This anchors the
  * rule "never leave the user without an explanation after a fail/block" for
  * EVERY fail path (return_result blocked, guards, transport death, orphan reap).
+ *
+ * `hint` nomme LE GESTE que cet échec appelle, quand il en appelle un (#193).
+ * C'est le runner qui le décide — ici il est seulement écrit, tel quel, dans
+ * `agent_jobs.failure_hint`. Un slug typé, jamais une phrase : l'écran la dit
+ * (invariant #2). Omis ⇒ la colonne est mise à NULL, ce qui est le cas normal :
+ * la grande majorité des échecs n'appellent aucun geste nommable. Écrire NULL
+ * plutôt que de laisser la valeur en place est volontaire — cette écriture est
+ * la PREMIÈRE à poser un état terminal sur la ligne (elle est gardée par
+ * « statut non terminal »), donc aucun geste antérieur n'est effacé.
  */
 export async function failJob(
   db: AnyDrizzleDb,
@@ -394,6 +429,7 @@ export async function failJob(
   stats?: RunStats,
   rawMessages?: unknown[],
   userMessage?: string,
+  hint?: JobFailureHint,
 ): Promise<boolean> {
   const now = new Date();
   // Byte-level DB safety (see completeJob) — the fail path is the LAST writer;
@@ -404,6 +440,9 @@ export async function failJob(
     .set({
       status: 'failed',
       error: toDbSafeString(errorCode),
+      // Le mot du runner, posé tel quel (#193) : c'est lui que l'écran lira,
+      // au lieu de le re-déduire du code d'erreur.
+      failureHint: hint ?? null,
       completedAt: now,
       finalizingAt: null,
       updatedAt: now,
@@ -466,6 +505,9 @@ export async function cancelRootJob(
     .set({
       status: 'cancelled',
       result: toDbSafeString(compiledResult),
+      // `relay` : ce root n'a rien écrit lui-même, son résultat est la
+      // compilation de ses tâches (#154, #210).
+      resultKind: 'relay',
       completedAt: now,
       finalizingAt: null,
       updatedAt: now,

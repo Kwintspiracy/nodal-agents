@@ -31,6 +31,7 @@ import {
 } from '../job/task-ledger.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 import { TITLE_SYSTEM_PROMPT, cleanTitle, titlePrompt } from './conversation-title.ts';
+import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
@@ -74,7 +75,16 @@ function provisionalTitle(userMessage: string): string {
 // an ACTION, the agent calls run_task → we spawn an agent_jobs row that the
 // agent then executes with its full toolset (delegating to sub-agents as
 // needed). That spawned job — not the chat turn — is the unit that does work.
-const CHAT_TOOLS = {
+//
+// Les NOMS viennent du catalogue (`chatSurfaceToolNames`), et le `Record`
+// ci-dessous les impose : une clé en trop ou en moins ne compile pas. Deux
+// suites de tests lisaient cette liste en la recopiant à la main, et un second
+// outil les aurait fait rougir à tort (constat mineur 1 de la revue C de la
+// PR #73, issue #211).
+export const CHAT_TOOLS: Record<
+  ChatSurfaceToolName,
+  { description: string; inputSchema: z.ZodTypeAny }
+> = {
   run_task: {
     description:
       'Your gateway to EVERY capability you have. Calling this runs a tracked job with your ' +

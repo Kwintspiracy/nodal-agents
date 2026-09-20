@@ -28,6 +28,7 @@ import { dirname, resolve } from 'node:path';
 import { scanServerChunks, formatMissingChunks } from './lib/next-chunk-integrity.mjs';
 import { pinToInstalledVersions, formatUnresolved } from './lib/pin-runtime-deps.mjs';
 import { shouldPackMigrationFile } from './lib/migration-pack-filter.mjs';
+import { mesurerCommande, verdictPic, plancherPour } from './lib/build-heap-sampler.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -49,7 +50,28 @@ const packDir = resolve(repoRoot, 'pack');
 // a encore grossi (page de run, sidebar, dossiers), mais un doublement en trois
 // jours se mesure avant de se justifier : une issue porte le pic réel et ce
 // qui le fait monter. Le plancher suit la mesure, pas l'inverse.
-const HEAP_FLOOR_MB = 24576;
+//
+// 20/09 (#219) — MESURÉ, et le besoin n'avait pas doublé : le plancher, si.
+//
+//   • Sur le runner de la CI, matériel identique d'une fois sur l'autre
+//     (4 cœurs, 16 Go, Node 22), la compilation web passe de 69 s à la 0.8.10
+//     à 76 s sur l'arbre de la 0.8.11. Le pack entier y tient sans NODE_OPTIONS.
+//   • Sur la machine de release (24 cœurs, 64 Go, Node 26.4.0), même commit,
+//     même plafond de 12288, `.next` purgé, une seule variable — les deux
+//     réglages posés dans apps/web/next.config.ts :
+//
+//         sans : pic d'un processus 15 223 Mo, pic de l'arbre 15 487 Mo
+//         avec : pic d'un processus 13 069 Mo, pic de l'arbre 13 603 Mo
+//
+//     Les deux builds passent toutes les phases qui demandent de la mémoire
+//     sous 12288 : webpack, TypeScript, données de page, pages statiques.
+//
+// 12288 suffit donc. Le plancher est posé un cran au-dessus, 13 069 + 25 %
+// arrondi au Go : ce que la mesure justifie, plus de quoi tenir sur une machine
+// qui n'est pas celle-ci. Sans les deux réglages il faudrait 19 456 — c'est ce
+// qu'ils achètent. Et ce chiffre ne se repose plus à l'aveugle : chaque pack
+// mesure son pic et le compare à build-heap-reference.json.
+const HEAP_FLOOR_MB = 16384;
 
 function heapEnv() {
   const inherited = process.env['NODE_OPTIONS'] ?? '';
@@ -125,7 +147,53 @@ if (existsSync(webNext)) {
 
 run('pnpm --filter @nodal-agents/runner build');
 run('pnpm --filter nodal-agents build');
-run('pnpm --filter @nodal-agents/web build');
+
+// Le build web est MESURÉ, pas seulement lancé (#219).
+//
+// Le plancher ci-dessus est un chiffre que personne ne recalcule une fois posé :
+// il ne redescend jamais, et le jour où le besoin monte pour de bon, le seul
+// signal est un SIGABRT sans cause, trois jours plus tard, sur la machine de
+// quelqu'un d'autre. Le build de release est le seul moment où ce build tourne
+// de toute façon — donc le seul endroit où la mesure ne coûte rien.
+const referenceHeap = JSON.parse(
+  readFileSync(resolve(__dirname, 'build-heap-reference.json'), 'utf8'),
+);
+console.log('\n▶ pnpm --filter @nodal-agents/web build (mesuré)');
+const mesureWeb = await mesurerCommande('pnpm --filter @nodal-agents/web build', {
+  cwd: repoRoot,
+  env: { ...process.env, NODE_OPTIONS: heapEnv() },
+});
+console.log(
+  mesureWeb.relevesUtiles
+    ? `\n  Mémoire du build web — pic d'un processus ${mesureWeb.picProcessusMo} Mo, ` +
+        `pic de l'arbre ${mesureWeb.picArbreMo} Mo, sur ${mesureWeb.relevesUtiles} relevés, ` +
+        `en ${mesureWeb.secondes} s.`
+    : `\n  Mémoire du build web — NON MESURÉE : aucun relevé n'a vu de processus, ` +
+        `en ${mesureWeb.secondes} s.`,
+);
+if (mesureWeb.codeSortie !== 0) {
+  // Le message d'erreur dit lequel des trois cas on est dans, parce qu'ils se
+  // ressemblent tous dans un terminal : un build tué par le tas rend un code
+  // Windows opaque (134, ou 3221226505) juste après avoir frôlé son plafond,
+  // et un build non mesuré rend un pic de zéro qui ressemble à un build sobre.
+  throw new Error(
+    `Le build web a échoué (code ${mesureWeb.codeSortie}).\n\n` +
+      (!mesureWeb.relevesUtiles
+        ? `  Le pic n'a pas été mesuré : aucun relevé n'a vu de processus.\n` +
+          `  La cause de l'échec est à lire ci-dessus ; la mémoire ne peut ni être\n` +
+          `  accusée ni être mise hors de cause à partir d'ici.\n`
+        : `  Pic d'un processus : ${mesureWeb.picProcessusMo} Mo, plafond du tas ${HEAP_FLOOR_MB} Mo.\n` +
+          (mesureWeb.picProcessusMo >= HEAP_FLOOR_MB
+            ? `  Le pic a atteint le plafond : c'est une panne de mémoire.\n` +
+              `  Mesurer un plancher plus haut — node scripts/measure-web-build-heap.mjs --cap ${plancherPour(mesureWeb.picProcessusMo)} —\n` +
+              `  et porter le chiffre dans HEAP_FLOOR_MB avec la mesure (#219).\n`
+            : "  Le pic est resté sous le plafond : la cause n'est pas la mémoire, lire l'erreur ci-dessus.\n")),
+  );
+}
+const verdictWeb = verdictPic(mesureWeb, referenceHeap);
+console.log(
+  verdictWeb.niveau === 'ok' ? `  ${verdictWeb.message}` : `  ⚠ ${verdictWeb.message} (#219)`,
+);
 
 // ─── 3. Stage CLI ───────────────────────────────────────────────────────────
 cpSync(resolve(repoRoot, 'apps/cli/dist/index.js'), resolve(packDir, 'cli.js'));

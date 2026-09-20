@@ -536,6 +536,9 @@ export const documentVerifier: DeliverableVerifier = {
     const path = target.displayPath ?? target.canonicalKey;
     return {
       kind: 'ready',
+      // L'adresse vient-elle d'un chemin écrit, ou de la clé repliée ? La
+      // preuve en a besoin pour nommer le repli si elle ne trouve rien.
+      ...(target.displayPath ? {} : { subjectIsCanonicalKey: true }),
       // Les règles ET l'état du fichier : c'est lui, la configuration d'un
       // document (constat C1). Une écriture pendant la preuve change cette
       // empreinte, et la primitive refuse alors le vert.
@@ -556,6 +559,12 @@ export const documentVerifier: DeliverableVerifier = {
   async runProof(config: ReadyConfig, onCommandDone: OnCommandDone): Promise<ProofResult> {
     const path = config.subject;
     if (path === undefined) throw new Error(`DOCUMENT_CONFIG_WITHOUT_SUBJECT: ${config.cwd}`);
+    // Ce que le premier rouge doit ajouter quand l'adresse est un repli : sans
+    // ça, « not found » accuse le fichier alors que c'est l'ADRESSE qui est
+    // approximative (issue #211, constat mineur 3 de la revue C de la PR #66).
+    const repli = config.subjectIsCanonicalKey
+      ? ' — this address is the case-folded key, not a path anyone wrote: the state row carries no display path, and on a case-sensitive volume the key misses a file that exists'
+      : '';
     const records: ProofCommandRecord[] = [];
     const emit = async (c: Constat): Promise<void> => {
       const record: ProofCommandRecord = { rank: records.length + 1, ...c };
@@ -593,13 +602,13 @@ export const documentVerifier: DeliverableVerifier = {
     try {
       const s = await stat(path);
       if (!s.isFile()) {
-        await emit(ko('exists', `${path} is not a file`, Date.now() - t0));
+        await emit(ko('exists', `${path} is not a file${repli}`, Date.now() - t0));
         return done();
       }
       bytes = await readFile(path);
       provedManifestHash = `${DOCUMENT_MANIFEST_HASH}:${createHash('sha256').update(bytes).digest('hex')}`;
     } catch {
-      await emit(ko('exists', `${path} not found`, Date.now() - t0));
+      await emit(ko('exists', `${path} not found${repli}`, Date.now() - t0));
       return done();
     }
     const size = bytes.byteLength;

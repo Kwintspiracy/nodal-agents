@@ -37,6 +37,9 @@ import {
   etatDeLaRelease,
   lectureDeNpm,
   commitsDepuisLeTag,
+  HORS_MESURE,
+  etatDeMesure,
+  repartitionDeLaMesure,
 } from './lib.mjs';
 import { ciDuDepot, parcoursDuDepot } from './depot.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -47,6 +50,16 @@ import { revendicationsDuDepot } from './porte.mjs';
 // issue et à chaque pull request, pour que le tableau ne date pas de 03:17.
 // Il n'écrit NI l'historique NI la mémoire des tests : aucun test n'a tourné.
 const GITHUB_SEUL = process.argv.includes('--github-only');
+
+// `--hors-mesure` : imprime les paquets volontairement hors de la mesure de
+// couverture, un par ligne, et sort. C'est la mesure nocturne qui l'appelle
+// pour les sauter. Sans ce chemin, le workflow tiendrait sa propre liste en
+// dur et rien ne garantirait qu'elle dise la même chose que le portail (#58).
+if (process.argv.includes('--hors-mesure')) {
+  const noms = Object.keys(HORS_MESURE);
+  if (noms.length > 0) console.log(noms.join('\n'));
+  process.exit(0);
+}
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const RACINE = join(ICI, '..', '..');
@@ -156,6 +169,29 @@ function couverture(listePaquets) {
       lignesTotal: s.total.lines?.total ?? null,
       fichiersMesures: Object.keys(s).filter((k) => k !== 'total').length,
     };
+  }
+  return out;
+}
+
+/**
+ * Les mesures qui ont ÉTÉ TENTÉES et qui ont échoué.
+ *
+ * La mesure nocturne lance un `vitest --coverage` par paquet et continue sur
+ * échec — sinon un paquet cassé priverait le portail des trente-trois autres
+ * chiffres. Mais jusqu'ici elle continuait EN SILENCE : le paquet disparaissait
+ * de la couverture exactement comme s'il n'avait jamais été instrumenté, et
+ * l'issue #58 a mis quatre semaines à poser la question « pourquoi auth ».
+ *
+ * Elle laisse désormais un témoin dans `coverage/mesure-echouee.json`, à côté
+ * de la couverture et donc ignoré par git. Un témoin trouvé ici, c'est une
+ * panne qui a un nom et un code de sortie, plus un trou anonyme.
+ */
+function echecsDeMesure(listePaquets) {
+  const out = {};
+  for (const p of listePaquets) {
+    const m = lireJson(join(RACINE, p.chemin, 'coverage', 'mesure-echouee.json'));
+    if (!m) continue;
+    out[p.nom] = { code: typeof m.code === 'number' ? m.code : null };
   }
   return out;
 }
@@ -545,6 +581,7 @@ function main() {
   const listePaquets = paquets();
   const parPaquet = tests(listePaquets, fichiers);
   const cov = couverture(listePaquets);
+  const echecs = echecsDeMesure(listePaquets);
   const nomsParcours = fichiers
     .filter((f) => f.startsWith('apps/web/tests/e2e/') && f.endsWith('.spec.ts'))
     .map((f) => f.split('/').pop());
@@ -560,11 +597,20 @@ function main() {
   const exec = execution();
   const mem = memoire(essais, genereLe, exec?.url ?? null);
 
-  const paquetsEnrichis = listePaquets.map((p) => ({
-    ...p,
-    tests: parPaquet.get(p.chemin) ?? { fichiers: 0, cas: 0, e2e: 0, casE2e: 0 },
-    couverture: cov[p.nom] ?? null,
-  }));
+  // `mesure` porte POURQUOI la couverture manque, quand elle manque. Sans
+  // elle, une exclusion assumée et un trou de mesure sont la même ligne vide,
+  // et c'est ce que le portail affichait (#58).
+  const paquetsEnrichis = listePaquets.map((p) => {
+    const echec = echecs[p.nom] ?? null;
+    const base = {
+      ...p,
+      tests: parPaquet.get(p.chemin) ?? { fichiers: 0, cas: 0, e2e: 0, casE2e: 0 },
+      couverture: cov[p.nom] ?? null,
+      ...(echec ? { mesureEchouee: echec } : {}),
+    };
+    return { ...base, mesure: etatDeMesure(base) };
+  });
+  const repMesure = repartitionDeLaMesure(paquetsEnrichis);
 
   const totalCas = paquetsEnrichis.reduce((n, p) => n + p.tests.cas, 0);
   const totalFichiers = paquetsEnrichis.reduce((n, p) => n + p.tests.fichiers, 0);
@@ -593,6 +639,11 @@ function main() {
       casE2e: e2e.reduce((n, s) => n + s.cas, 0),
       specsE2eJoueesParLaCi: e2e.filter((s) => s.jouParLaCi).length,
       paquetsMesures: mesures.length,
+      // Deux clés NEUVES à côté de `paquetsMesures`, qui garde son sens pour
+      // l'historique. La différence `paquets - paquetsMesures` ne disait pas
+      // si le reste était un choix ou une panne.
+      paquetsExclus: repMesure.exclues.length,
+      paquetsSansMesure: repMesure.echouees.length + repMesure.absentes.length,
       lignesCouvertes,
       lignesTotal,
       couvertureLignes:
@@ -649,8 +700,11 @@ function main() {
   console.log(
     `snapshot: ${r.paquets} packages · ${r.casDeTest} cases · ${r.specsE2e} journeys (${r.specsE2eJoueesParLaCi} in CI)`,
   );
+  const nomme = (liste) => (liste.length > 0 ? ` (${liste.map((p) => p.nom).join(', ')})` : '');
   console.log(
-    `coverage: ${r.paquetsMesures}/${r.paquets} packages measured · ${r.couvertureLignes ?? '·'}% of the measured lines`,
+    `coverage: ${r.paquetsMesures}/${r.paquets} packages measured · ${r.couvertureLignes ?? '·'}% of the measured lines · ` +
+      `${r.paquetsExclus} left out on purpose${nomme(repMesure.exclues)} · ` +
+      `${r.paquetsSansMesure} with no measurement${nomme([...repMesure.echouees, ...repMesure.absentes])}`,
   );
   console.log(
     `capabilities: ${r.capacites} named · ${r.capacitesVerifiees} verified at both levels · ${r.capacitesSansMoteur} without an engine · ${r.capacitesSansPreuve} with no proof at all`,

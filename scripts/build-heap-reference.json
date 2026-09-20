@@ -1,0 +1,11 @@
+{
+  "_pourquoi": "Le dernier pic mesuré du build web (#219). scripts/build-pack.mjs le compare à ce qu'il vient de mesurer et le dit quand il monte. Le ré-enregistrer après une mesure délibérée (node scripts/measure-web-build-heap.mjs --enregistrer), jamais pour faire taire l'alerte.",
+  "_note": "CETTE RÉFÉRENCE EST PROVISOIRE, et la première alerte se lit avec ça en tête. Deux choses. (1) Elle vient d'un build ARRÊTÉ à sa toute dernière étape, Collecting build traces, pour une raison qui n'est pas la mémoire — le pic était tombé 300 s plus tôt et sur la fenêtre du traçage l'arbre ne dépasse pas 6 191 Mo, donc le chiffre décrit bien tout ce que ce build demande au tas, mais il n'a pas été écrit par --enregistrer, qui refuse un build non terminé. (2) Elle a été relevée sous un plafond de 12 288 Mo, alors que le pack en pose 16 384 : V8 ramasse plus tôt quand il a moins de marge, donc un pack complet mesurera un peu plus HAUT sans que rien n'ait grossi. À ré-enregistrer au premier pack complet vert sur cette machine, avec node scripts/measure-web-build-heap.mjs --enregistrer.",
+  "commit": "dee372ea",
+  "date": "2026-09-20",
+  "machine": "win32 24 cœurs, node 26.4.0, 64 Go",
+  "capMo": 12288,
+  "picProcessusMo": 13069,
+  "picArbreMo": 13603,
+  "secondes": 1193
+}

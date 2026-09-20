@@ -31,6 +31,7 @@ import {
 import { stat } from 'node:fs/promises';
 import { writeMutationIntent, type DirtiedDeliverable } from './verification/intent';
 import { markDeliverablesProduced } from './verification/produced';
+import { bumpEpochsAfterWrite } from './verification/write-epoch';
 import { constatedHarnessWrites, lignesDeHarnaisDejaLa } from './verification/harness';
 import {
   changedFileTargets,
@@ -721,7 +722,26 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   const execCtx: ToolContext =
     mutationTargets === null ? ctx : { ...ctx, declaredMutationTargets: mutationTargets };
   try {
-    const output = await tool.execute(validatedInput, execCtx);
+    // ── L'ÉCRITURE MONTE L'ÉPOQUE, elle aussi (issue #101) ──────────────────
+    //
+    // Collée à `tool.execute` et non rangée dans la section 3.5 ci-dessous : la
+    // fenêtre que cette montée referme est celle qui sépare le dernier octet
+    // écrit de sa constatation en base, et le constat qui suit (git, empreintes,
+    // registre) prend du temps. Plus tard, c'est autant de temps pendant lequel
+    // la finalisation d'un AUTRE job peut encore poser un vert sur ce qu'il
+    // vient de prouver.
+    //
+    // Dans un `finally` : une tentative qui échoue a pu écrire à moitié, et le
+    // contrat est conservatif de bout en bout — voir `write-epoch.ts` pour le
+    // pourquoi des deux montées, et pour ce qui reste ouvert.
+    let output: TOutput;
+    try {
+      output = await tool.execute(validatedInput, execCtx);
+    } finally {
+      if (mutationDeliverables.length > 0) {
+        await bumpEpochsAfterWrite(ctx.db, ctx.entityId, mutationDeliverables);
+      }
+    }
     const durationMs = Date.now() - startMs;
     await _writeToolCall(ctx, auditTool, validatedInput, JSON.stringify(output), durationMs, {
       value: output,
