@@ -54,6 +54,8 @@ export type DynamicRow = {
   title?: string;
   /** Le chemin d'un projet — ce que ses actions de ligne demandent. */
   path?: string;
+  /** L'adresse de la ligne quand elle ne se déduit pas de son id (RECENTS). */
+  href?: string;
 };
 
 export default function SidebarDynamicList({

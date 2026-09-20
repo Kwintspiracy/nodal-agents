@@ -177,10 +177,34 @@ beforeEach(() => {
   vi.mocked(listSidebarRecentApprovalsAction).mockResolvedValue({
     ok: true,
     data: [
-      { id: 'r1', name: 'Researcher', toolName: 'web_search' },
-      { id: 'r2', name: 'Researcher', toolName: 'web_search' },
-      { id: 'r3', name: 'Researcher', toolName: 'web_search' },
-      { id: 'r4', name: 'Researcher', toolName: 'web_search' },
+      {
+        id: 'r1',
+        name: 'Researcher',
+        toolName: 'web_search',
+        what: 'Search the web for « nodal »',
+        conversationId: 'c1',
+      },
+      {
+        id: 'r2',
+        name: 'Researcher',
+        toolName: 'web_search',
+        what: 'Search the web for « nodal »',
+        conversationId: 'c1',
+      },
+      {
+        id: 'r3',
+        name: 'Researcher',
+        toolName: 'web_search',
+        what: 'Search the web for « nodal »',
+        conversationId: 'c1',
+      },
+      {
+        id: 'r4',
+        name: 'Researcher',
+        toolName: 'web_search',
+        what: 'Search the web for « nodal »',
+        conversationId: 'c1',
+      },
     ],
   });
 });

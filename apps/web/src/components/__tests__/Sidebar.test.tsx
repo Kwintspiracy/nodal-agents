@@ -833,7 +833,15 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     pathname = '/approvals';
     vi.mocked(listSidebarRecentApprovalsAction).mockResolvedValue({
       ok: true,
-      data: [{ id: 'r1', name: 'Researcher', toolName: 'web_search' }],
+      data: [
+        {
+          id: 'r1',
+          name: 'Researcher',
+          toolName: 'web_search',
+          what: 'Search the web for « nodal »',
+          conversationId: 'c1',
+        },
+      ],
     });
     await renderSidebar(
       [],
@@ -857,7 +865,11 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     ).toBe('yes');
 
     const rendues = listRows('recents');
-    expect(rendues.map((l) => l.textContent?.trim())).toEqual(['Researcher']);
+    // La ligne dit CE QUE la demande voulait faire, pas qui la posait (20/09) ;
+    // l'agent et l'outil sont en infobulle, et la ligne mène au fil concerné.
+    expect(rendues.map((l) => l.textContent?.trim())).toEqual(['Search the web for « nodal »']);
+    expect(rendues[0]?.getAttribute('title')).toBe('Researcher · web_search');
+    expect(rendues[0]?.getAttribute('href')).toBe('/chat/c1');
     // Gris : plus rien n'attend là. C'est tout ce qui sépare les deux sections.
     expect(
       rendues[0]?.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls'),

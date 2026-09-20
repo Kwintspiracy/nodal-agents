@@ -41,6 +41,7 @@ import {
   webhookTriggers,
 } from '@nodal-agents/db';
 import { requireAuth } from '@nodal-agents/auth';
+import { explainApproval } from '@nodal-agents/shared';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 
 export type ActionResult<T = void> =
@@ -94,8 +95,17 @@ export type SidebarNamedRow = {
  * jamais vide, et c'est pour cela qu'il n'est pas nullable.
  */
 export type SidebarApprovalRow = SidebarNamedRow & {
-  /** L'outil dont l'appel est en jeu. L'infobulle de la ligne. */
+  /** L'outil dont l'appel est en jeu. */
   toolName: string;
+  /**
+   * CE QUE la demande voulait faire, en une phrase — la même que la page des
+   * approbations écrit en titre de sa carte (`explainApproval`). C'est ce que
+   * la ligne montre depuis le 20/09 (Quentin : le nom de l'agent seul ne dit
+   * pas de quoi il s'agissait) ; l'agent et l'outil passent en infobulle.
+   */
+  what: string;
+  /** Le fil où la demande a été posée, quand le job en a un : où la ligne mène. */
+  conversationId: string | null;
 };
 
 // ─── Les agents ───────────────────────────────────────────────────────────────
@@ -213,9 +223,12 @@ export async function listSidebarRecentApprovalsAction(
         id: approvalRequests.id,
         agentName: agents.name,
         toolName: approvalRequests.toolName,
+        toolInput: approvalRequests.toolInput,
+        conversationId: agentJobs.conversationId,
       })
       .from(approvalRequests)
       .leftJoin(agents, eq(agents.id, approvalRequests.agentId))
+      .leftJoin(agentJobs, eq(agentJobs.id, approvalRequests.jobId))
       .where(
         and(
           eq(approvalRequests.entityId, session.entityId),
@@ -227,12 +240,23 @@ export async function listSidebarRecentApprovalsAction(
       .orderBy(desc(approvalRequests.resolvedAt), desc(approvalRequests.id))
       .limit(parsed.data);
     return ok(
-      rows.map((r) => ({
-        id: r.id,
-        // L'agent quand on le connaît, l'outil sinon. Jamais un nom inventé.
-        name: r.agentName ?? r.toolName,
-        toolName: r.toolName,
-      })),
+      rows.map((r) => {
+        // La même phrase que la carte de la page des approbations, calculée
+        // sans le contexte MCP (quatre lignes d'un menu ne résolvent pas un
+        // serveur par outil) : l'outil et ses arguments suffisent à la dire.
+        const what = explainApproval({
+          toolName: r.toolName,
+          toolInput: (r.toolInput ?? {}) as Record<string, unknown>,
+        }).what;
+        return {
+          id: r.id,
+          // L'agent quand on le connaît, l'outil sinon. Jamais un nom inventé.
+          name: r.agentName ?? r.toolName,
+          toolName: r.toolName,
+          what,
+          conversationId: r.conversationId ?? null,
+        };
+      }),
     );
   } catch (err) {
     console.error('[listSidebarRecentApprovalsAction]', err);
