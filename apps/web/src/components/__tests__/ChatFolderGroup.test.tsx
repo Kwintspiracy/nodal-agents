@@ -48,7 +48,7 @@ import ChatFolderGroup from '../ChatFolderGroup.tsx';
 import SidebarLink from '../ui/SidebarLink';
 import { ApprovalsProvider, type PendingApproval } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
-import { chatWaitingTotal, type FolderThread } from '@/lib/chat-folders.ts';
+import { chatWaitingTotal, type FolderThread, type WorkOrigin } from '@/lib/chat-folders.ts';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
 import { listApprovalsAction } from '@/lib/actions';
 import { getChatFoldersAction } from '@/lib/conversation-actions.ts';
@@ -111,6 +111,8 @@ async function renderGroup(opts: {
   channels?: string[];
   running?: Record<string, number>;
   externalRuns?: number;
+  /** Les runs dont un livrable attend un regard, d'où qu'ils viennent (#255). */
+  deliverables?: WorkOrigin[];
 }): Promise<void> {
   // Les relectures des deux providers voisins rendent CE QUE LA PAGE A SEMÉ.
   // Leur `setInterval` de 15 s part dès qu'un test fait tourner l'horloge, et
@@ -122,6 +124,9 @@ async function renderGroup(opts: {
       running: opts.running ?? {},
       runningConversationIds: [],
       externalRuns: opts.externalRuns ?? 0,
+      deliverablesToCheck: opts.deliverables ?? [],
+      deliverableCheckJobIds: [],
+      deliverableCheckConversationIds: [],
     },
   });
   await render(
@@ -134,6 +139,9 @@ async function renderGroup(opts: {
           // dossier, elles, s'en servent (#135).
           runningConversationIds: [],
           externalRuns: opts.externalRuns ?? 0,
+          deliverablesToCheck: opts.deliverables ?? [],
+          deliverableCheckJobIds: [],
+          deliverableCheckConversationIds: [],
         }}
       >
         <ChatFolderGroup />
@@ -180,7 +188,15 @@ beforeEach(() => {
   // rendus qui ne passent pas par lui.
   vi.mocked(getChatFoldersAction).mockResolvedValue({
     ok: true,
-    data: { channels: [], running: {}, runningConversationIds: [], externalRuns: 0 },
+    data: {
+      channels: [],
+      running: {},
+      runningConversationIds: [],
+      externalRuns: 0,
+      deliverablesToCheck: [],
+      deliverableCheckJobIds: [],
+      deliverableCheckConversationIds: [],
+    },
   });
 });
 
@@ -247,6 +263,31 @@ describe('le groupe de dossiers @cap:reprendre-conversation/ecran', () => {
       approvals: pending('task-board', 2, 'telegram'),
     });
     expect(folderRow('telegram').textContent).toContain('2');
+    expect(folderRow('dashboard').textContent).toBe('Nodal chats');
+  });
+
+  it('compte un LIVRABLE À VÉRIFIER dans la même pastille qu’une approbation', async () => {
+    // #255 — la quatrième chose qu'énumère la décision 2 de #135, et la
+    // dernière à avoir reçu sa colonne (`agent_jobs.deliverable_check_due_at`,
+    // migration 0118). Elle arrive par une autre lecture que les approbations,
+    // et elle atterrit dans LA MÊME pastille : une personne ne lit pas deux
+    // chiffres côte à côte pour savoir combien de choses l'attendent.
+    await renderGroup({
+      channels: ['telegram'],
+      approvals: pending('telegram', 1),
+      deliverables: [{ jobChannel: 'telegram', conversationChannel: null }],
+    });
+    expect(folderRow('telegram').textContent).toContain('2');
+  });
+
+  it('range un livrable à vérifier par le canal de son FIL, comme une approbation', async () => {
+    // Un run lancé depuis le tableau des tâches porte `task-board`, qui n'est
+    // le dossier de personne ; c'est sa conversation qui dit où il se range.
+    await renderGroup({
+      channels: ['telegram'],
+      deliverables: [{ jobChannel: 'task-board', conversationChannel: 'telegram' }],
+    });
+    expect(folderRow('telegram').textContent).toContain('1');
     expect(folderRow('dashboard').textContent).toBe('Nodal chats');
   });
 

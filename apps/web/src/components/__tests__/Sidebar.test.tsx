@@ -114,7 +114,15 @@ async function renderSidebar(
   await render(
     <ApprovalsProvider initial={attentes}>
       <ChatFoldersProvider
-        initial={{ channels, running: {}, runningConversationIds: [], externalRuns: 0 }}
+        initial={{
+          channels,
+          running: {},
+          runningConversationIds: [],
+          externalRuns: 0,
+          deliverablesToCheck: [],
+          deliverableCheckJobIds: [],
+          deliverableCheckConversationIds: [],
+        }}
       >
         <Sidebar workspaces={ESPACES} />
       </ChatFoldersProvider>
@@ -208,7 +216,15 @@ beforeEach(() => {
   vi.mocked(listApprovalsAction).mockResolvedValue({ ok: true, data: [] });
   vi.mocked(getChatFoldersAction).mockResolvedValue({
     ok: true,
-    data: { channels: [], running: {}, runningConversationIds: [], externalRuns: 0 },
+    data: {
+      channels: [],
+      running: {},
+      runningConversationIds: [],
+      externalRuns: 0,
+      deliverablesToCheck: [],
+      deliverableCheckJobIds: [],
+      deliverableCheckConversationIds: [],
+    },
   });
 });
 
@@ -755,7 +771,15 @@ describe('les listes du panneau se lisent en base @cap:installer-et-demarrer/ecr
       root.render(
         <ApprovalsProvider initial={[]}>
           <ChatFoldersProvider
-            initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+            initial={{
+              channels: [],
+              running: {},
+              runningConversationIds: [],
+              externalRuns: 0,
+              deliverablesToCheck: [],
+              deliverableCheckJobIds: [],
+              deliverableCheckConversationIds: [],
+            }}
           >
             <Sidebar workspaces={[]} />
           </ChatFoldersProvider>
@@ -1147,7 +1171,15 @@ describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
     await render(
       <ApprovalsProvider initial={[]}>
         <ChatFoldersProvider
-          initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+          initial={{
+            channels: [],
+            running: {},
+            runningConversationIds: [],
+            externalRuns: 0,
+            deliverablesToCheck: [],
+            deliverableCheckJobIds: [],
+            deliverableCheckConversationIds: [],
+          }}
         >
           <Sidebar workspaces={[]} userMenu={<p>quentin@example.com</p>} />
         </ChatFoldersProvider>
@@ -1190,7 +1222,15 @@ describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
     await render(
       <ApprovalsProvider initial={[]}>
         <ChatFoldersProvider
-          initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+          initial={{
+            channels: [],
+            running: {},
+            runningConversationIds: [],
+            externalRuns: 0,
+            deliverablesToCheck: [],
+            deliverableCheckJobIds: [],
+            deliverableCheckConversationIds: [],
+          }}
         >
           <Sidebar workspaces={[]} userMenu={<p>quentin@example.com</p>} />
         </ChatFoldersProvider>

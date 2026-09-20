@@ -101,7 +101,7 @@ export default function ChatFolderGroup() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { pending } = useApprovals();
-  const { channels, running, externalRuns } = useChatFolders();
+  const { channels, running, externalRuns, deliverablesToCheck } = useChatFolders();
 
   // Quels dossiers sont dépliés. Repliés par défaut : le menu montre les
   // ENDROITS, pas leur contenu, et dix fils par dossier rendraient la barre
@@ -213,7 +213,12 @@ export default function ChatFolderGroup() {
 
   const folders = chatFolders({
     channels,
-    waiting: pending,
+    // CE QUI ATTEND LA PERSONNE, ses trois sources mises bout à bout (#255) :
+    // une approbation en attente, une question posée, et désormais un livrable
+    // qui attend un regard. La règle qui range chaque entrée dans un dossier
+    // est la même pour les trois — `folderOfWork`, dans chat-folders.ts — et
+    // c'est pour cela qu'une simple concaténation suffit ici.
+    waiting: [...pending, ...deliverablesToCheck],
     running,
     externalRuns,
     pathname,

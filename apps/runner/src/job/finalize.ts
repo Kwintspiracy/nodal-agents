@@ -96,6 +96,13 @@ export const FINALIZING_STALE_MS = 10 * 60_000;
  * plutôt que vérifié contre rien.
  */
 export const FINALIZE_JOB_WITHOUT_ENTITY = 'FINALIZE_JOB_WITHOUT_ENTITY';
+/**
+ * Un livrable attend un regard, mais la chaîne de délégation ne remonte à
+ * AUCUN job de tête — un maillon manquant. Le fait n'est alors posé nulle
+ * part, plutôt que sur un run choisi au hasard (invariant #4). Journalisé,
+ * jamais opposé au job : la finalisation n'est pas l'affaire de la pastille.
+ */
+export const DELIVERABLE_CHECK_NO_ROOT = 'DELIVERABLE_CHECK_NO_ROOT';
 
 // ─── Types de retour ────────────────────────────────────────────────────────
 
@@ -307,6 +314,77 @@ function classify(status: DecisionStatus): {
   if (status === 'green') return { settled: true, unverifiable: false, due: false };
   if (status === 'not_configured') return { settled: false, unverifiable: true, due: false };
   return { settled: false, unverifiable: false, due: true };
+}
+
+// ─── « Un livrable attend un regard » (#255) ─────────────────────────────────
+
+/**
+ * Pose `agent_jobs.deliverable_check_due_at` sur le JOB DE TÊTE de ce run,
+ * quand le job qui finit a produit au moins un livrable.
+ *
+ * CE QUI COMPTE COMME « A LIVRÉ » : une ligne de
+ * `job_deliverable_verification_state` à la fois `addressed` ET `produced`.
+ * Les deux, jamais l'une :
+ *
+ *   `addressed` est posé AVANT l'exécution de l'outil, et une écriture qui
+ *   échoue laisse l'intention en place — compter là-dessus ferait attendre un
+ *   regard sur un livrable que personne n'a produit ;
+ *
+ *   `produced` seul compterait aussi ce que l'écran ne montre pas : un
+ *   périmètre marqué par précaution, qu'un shell peut salir en entier.
+ *
+ * SUR LA TÊTE DE LA CHAÎNE, pas sur le délégué qui a produit. C'est le run que
+ * la personne ouvre, et sa page remonte déjà les livrables de toute sa
+ * descendance (`collectDescendants`, côté web). Poser le fait sur un délégué
+ * le rendrait invisible : un délégué porte `internal` et aucune conversation,
+ * donc aucun dossier du menu Chat ne le compterait, et ouvrir le fil ne
+ * l'effacerait jamais.
+ *
+ * La remontée est BORNÉE par la profondeur de délégation du produit ; le
+ * `WITH RECURSIVE` la suit sans la supposer. Une chaîne qui ne remonte à aucun
+ * job sans parent ne pose RIEN et le dit (`DELIVERABLE_CHECK_NO_ROOT`) —
+ * jamais un fait posé sur un run choisi au hasard (invariant #4).
+ *
+ * Une panne ici n'est PAS avalée : l'écriture vit dans la transaction du
+ * statut terminal, et une pastille muette après un run qui a livré est
+ * exactement ce que l'issue #255 corrige. Elle roule donc la transaction, qui
+ * sera reprise — plutôt que de finir le job en taisant le fait.
+ */
+async function poseDeliverableCheck(
+  tx: AnyDrizzleDb,
+  jobId: string,
+  log: (code: string, data: Record<string, unknown>) => void,
+): Promise<void> {
+  const produits = await tx
+    .select({ id: jobDeliverableVerificationState.id })
+    .from(jobDeliverableVerificationState)
+    .where(
+      and(
+        eq(jobDeliverableVerificationState.jobId, jobId),
+        eq(jobDeliverableVerificationState.addressed, true),
+        eq(jobDeliverableVerificationState.produced, true),
+      ),
+    )
+    .limit(1);
+  if (produits.length === 0) return;
+
+  const poses = (await tx.execute(sql`
+    WITH RECURSIVE chaine AS (
+      SELECT id, parent_job_id FROM agent_jobs WHERE id = ${jobId}
+      UNION ALL
+      SELECT parent.id, parent.parent_job_id
+      FROM agent_jobs parent
+      INNER JOIN chaine enfant ON parent.id = enfant.parent_job_id
+    )
+    UPDATE agent_jobs
+    SET deliverable_check_due_at = now(), updated_at = now()
+    WHERE id = (SELECT id FROM chaine WHERE parent_job_id IS NULL)
+    RETURNING id
+  `)) as unknown as Array<{ id: string }>;
+
+  if (poses.length === 0) {
+    log(DELIVERABLE_CHECK_NO_ROOT, { jobId });
+  }
 }
 
 // ─── La primitive ───────────────────────────────────────────────────────────
@@ -613,6 +691,12 @@ export async function finalizeJobSuccess(
         log(VERIFY_TERMINAL_WRITE_LOST, { jobId });
         throw new Error(`${VERIFY_TERMINAL_WRITE_LOST}: ${jobId}`);
       }
+
+      // LE RUN A LIVRÉ : un livrable attend un regard (#255). Dans la MÊME
+      // transaction que le statut terminal, comme la ligne `job_deliveries`
+      // juste en dessous — un crash entre les deux laisserait sinon un run
+      // livré dont aucune pastille ne dit qu'il attend.
+      await poseDeliverableCheck(tx, jobId, log);
 
       if (input.delivery && deps.prepareDelivery) {
         await deps.prepareDelivery(tx, { jobId, ...input.delivery });

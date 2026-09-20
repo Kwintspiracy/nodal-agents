@@ -204,6 +204,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- FK est ajoutée par un ALTER TABLE juste après cette table, comme pour
       -- schedule_id ci-dessus.
       project_id uuid,
+      -- mirrors migration 0118 (#255) : un livrable de ce run attend le regard
+      -- de la personne. NULL = rien n'attend.
+      deliverable_check_due_at timestamptz,
       completed_at timestamptz,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
@@ -583,6 +586,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
 
     CREATE INDEX IF NOT EXISTS idx_agent_jobs_project
       ON agent_jobs(project_id) WHERE project_id IS NOT NULL;
+
+    -- mirrors migration 0118 (#255)
+    CREATE INDEX IF NOT EXISTS idx_agent_jobs_deliverable_check_due
+      ON agent_jobs(entity_id) WHERE deliverable_check_due_at IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS agent_assignments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -2510,6 +2510,23 @@ export async function getSpaceConversationAction(
     if (!row) return fail('not_found', 'Job not found');
     const job = row.job;
 
+    // OUVRIR LE RUN, C'EST REGARDER SON LIVRABLE (#255). C'est cette page qui
+    // MONTRE les livrables du run et de toute sa descendance ; le fait « un
+    // livrable attend un regard » n'a plus lieu d'être une fois qu'elle est
+    // sous les yeux.
+    //
+    // APRÈS la garde d'entité, comme le marqueur de lecture d'un fil : un run
+    // qu'on n'a pas le droit de voir ne laisse aucune trace. Le fait ne se
+    // pose que sur un job de TÊTE, donc ouvrir un délégué n'efface rien — et
+    // c'est juste : la page d'un délégué ne montre pas ce que son parent a
+    // livré.
+    if (job.deliverableCheckDueAt !== null) {
+      await db
+        .update(agentJobs)
+        .set({ deliverableCheckDueAt: null })
+        .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
+    }
+
     // Le fil du job : extrait dans `job-feed.ts` (P7) et partagé avec le fil
     // d'une conversation, qui en assemble un par job de tête.
     const { feed, displayTask, scheduleName } = await assembleJobFeed(db, session.entityId, {

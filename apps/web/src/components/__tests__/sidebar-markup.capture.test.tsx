@@ -247,6 +247,9 @@ describe.runIf(ACTIF)('capture du markup de la barre latérale', () => {
               running: {},
               runningConversationIds: [],
               externalRuns: 1,
+              deliverablesToCheck: [],
+              deliverableCheckJobIds: [],
+              deliverableCheckConversationIds: [],
             }}
           >
             <Sidebar workspaces={ESPACES} userMenu={<p>quentinbeau@gmail.com</p>} initiale="Q" />
