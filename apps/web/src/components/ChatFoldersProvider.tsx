@@ -48,6 +48,9 @@ const FALLBACK: ChatFoldersContextValue = {
   running: {},
   runningConversationIds: [],
   externalRuns: 0,
+  deliverablesToCheck: [],
+  deliverableCheckJobIds: [],
+  deliverableCheckConversationIds: [],
   runsInProgress: 0,
   workConversationsInProgress: 0,
 };

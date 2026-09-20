@@ -252,6 +252,9 @@ describe.runIf(ACTIF)('capture du markup de la barre latérale', () => {
               running: {},
               runningConversationIds: [],
               externalRuns: 1,
+              deliverablesToCheck: [],
+              deliverableCheckJobIds: [],
+              deliverableCheckConversationIds: [],
               runsInProgress,
               workConversationsInProgress,
             }}

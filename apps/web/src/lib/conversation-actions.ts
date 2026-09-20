@@ -77,6 +77,7 @@ import { chatKey, LIST_MAX } from './chat-key.ts';
 import type { ThreadJob, ThreadProject, ThreadProofRun } from './conversation-thread.ts';
 import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
 import { folderOfWork, MCP_JOB_CHANNELS, RUNNING_JOB_STATUSES } from './chat-folders.ts';
+import type { WorkOrigin } from './chat-folders.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import {
@@ -831,6 +832,29 @@ export type ChatFoldersSnapshot = {
    */
   externalRuns: number;
   /**
+   * LES RUNS DONT UN LIVRABLE ATTEND UN REGARD (#255) — une entrée par run,
+   * avec d'où il vient, exactement comme une approbation en attente. C'est la
+   * quatrième chose que la pastille compte, et la dernière des quatre
+   * qu'énumérait la décision 2 de #135.
+   *
+   * Lus ICI, dans la lecture qui porte déjà les autres signaux du menu, et non
+   * dans une seconde source : la pastille d'un dossier doit rester le nombre
+   * de lignes qui le désignent, à la lettre.
+   */
+  deliverablesToCheck: WorkOrigin[];
+  /**
+   * Les RUNS dont un livrable attend un regard, par identifiant — ce qu'allume
+   * la ligne d'un run du dossier MCP, là où `deliverablesToCheck` allume la
+   * pastille du dossier. La même lecture, rangée par ligne.
+   */
+  deliverableCheckJobIds: string[];
+  /**
+   * Les CONVERSATIONS dont un run attend un regard sur son livrable. La même
+   * lecture encore, rangée par fil : sans elle, la pastille d'un dossier
+   * afficherait « 1 » au-dessus de lignes toutes éteintes.
+   */
+  deliverableCheckConversationIds: string[];
+  /**
    * COMBIEN DE RUNS TOURNENT, tous canaux confondus (#300).
    *
    * Ce que `running` ne peut pas dire : il range par dossier de chat, et le
@@ -913,6 +937,18 @@ const EXTERNAL_RUNS_PAGE = 50;
 const EXTERNAL_RUNS_DELETE_MAX = 200;
 
 /**
+ * Combien de runs « un livrable attend un regard » la barre latérale lit d'un
+ * coup (#255).
+ *
+ * Deux cents, comme la liste d'un dossier : la colonne ne porte que ce qui
+ * n'a pas encore été regardé, donc ce nombre ne monte que si la personne
+ * laisse filer. Un plafond est nécessaire tout de même — cette lecture repart
+ * toutes les 15 secondes sur toutes les pages du tableau de bord, et une
+ * pastille n'est pas une raison de balayer une table.
+ */
+const DELIVERABLE_CHECK_MAX = 200;
+
+/**
  * Ce qui fait d'un job un RUN VENU DE DEHORS, écrit à UN seul endroit : le
  * compte qui fait exister le dossier, la liste qu'il ouvre et la suppression
  * doivent dire la même chose, sinon le dossier s'affiche vide ou disparaît en
@@ -939,7 +975,7 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
 
-    const [channelRows, runningRows, runningConvRows, externalRows] = await Promise.all([
+    const [channelRows, runningRows, runningConvRows, externalRows, dueRows] = await Promise.all([
       db
         .selectDistinct({ channel: conversations.channel })
         .from(conversations)
@@ -1017,6 +1053,42 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
         .select({ n: sql<number>`count(*)::int` })
         .from(agentJobs)
         .where(runsFromOutside(session.entityId)),
+      // LES LIVRABLES QUI ATTENDENT UN REGARD (#255). La colonne est posée par
+      // la porte terminale du runner sur le job de TÊTE, et effacée par les
+      // deux gestes qui sont des regards — ouvrir le run, ouvrir le fil.
+      //
+      // La même jointure et la même frontière que le point vert juste
+      // au-dessus : seule une conversation que la liste MONTRE range le
+      // travail, sinon la pastille compterait une attente qu'aucune ligne
+      // n'affiche (Reviewer C, #157).
+      //
+      // Aucun canal de TÊTE n'est lu ici, et il n'y en a pas à lire : le fait
+      // ne se pose QUE sur un job sans parent. Son propre canal est donc celui
+      // de la tête, par construction.
+      //
+      // BORNÉE comme le reste du menu : au-delà de ce plafond, la pastille
+      // dirait un nombre que le sous-menu ne peut pas détailler.
+      db
+        .select({
+          id: agentJobs.id,
+          conversationId: agentJobs.conversationId,
+          jobChannel: agentJobs.channel,
+          conversationChannel: conversations.channel,
+        })
+        .from(agentJobs)
+        .leftJoin(
+          conversations,
+          and(
+            eq(conversations.id, agentJobs.conversationId),
+            eq(conversations.entityId, session.entityId),
+            inArray(conversations.origin, ['user', 'project']),
+          ),
+        )
+        .where(
+          and(eq(agentJobs.entityId, session.entityId), isNotNull(agentJobs.deliverableCheckDueAt)),
+        )
+        .orderBy(desc(agentJobs.deliverableCheckDueAt))
+        .limit(DELIVERABLE_CHECK_MAX),
     ]);
 
     // Le total AVANT le rangement par dossier : `running` perd en route tout
@@ -1051,6 +1123,17 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
         .map((r) => r.conversationId)
         .filter((id): id is string => id !== null),
       externalRuns: externalRows[0]?.n ?? 0,
+      // Les trois formes de la MÊME lecture : la pastille du dossier, la ligne
+      // d'un run, la ligne d'un fil. Une seconde requête pour l'une des trois
+      // ferait trois chiffres qui se contredisent le temps d'un tour d'horloge.
+      deliverablesToCheck: dueRows.map((r) => ({
+        jobChannel: r.jobChannel,
+        conversationChannel: r.conversationChannel,
+      })),
+      deliverableCheckJobIds: dueRows.map((r) => r.id),
+      deliverableCheckConversationIds: dueRows
+        .map((r) => r.conversationId)
+        .filter((id): id is string => id !== null),
       runsInProgress,
       // Une conversation que la section Work ne liste pas n'allume pas sa
       // case. `origin` est `null` quand la jointure n'a rien trouvé — un job
@@ -1404,6 +1487,7 @@ export async function listChatNamesAction(): Promise<ActionResult<ChatIdentities
 async function markConversationRead(
   db: ReturnType<typeof getDb>,
   userId: string,
+  entityId: string,
   conversationId: string,
 ): Promise<void> {
   const readAt = new Date();
@@ -1414,6 +1498,28 @@ async function markConversationRead(
       target: [conversationReads.userId, conversationReads.conversationId],
       set: { readAt },
     });
+  // OUVRIR LE FIL, C'EST AUSSI REGARDER CE QU'IL A LIVRÉ (#255). Le fil montre
+  // les livrables de chacun de ses runs ; les laisser réclamer un regard après
+  // qu'on vient de les voir ferait une pastille qu'aucun geste n'éteint.
+  //
+  // PAR ESPACE et non par personne, au contraire du marqueur juste au-dessus :
+  // c'est la règle de la pastille, où une approbation résolue par l'un tombe
+  // pour tous. Les deux gestes vivent quand même dans la MÊME fonction, parce
+  // qu'ils répondent au même clic et qu'un seul des deux écrit serait un
+  // écran à moitié à jour.
+  //
+  // Les runs de TÊTE seuls portent la colonne (le runner la pose sur eux), et
+  // eux seuls portent un `conversation_id` : aucune descendance à parcourir.
+  await db
+    .update(agentJobs)
+    .set({ deliverableCheckDueAt: null })
+    .where(
+      and(
+        eq(agentJobs.entityId, entityId),
+        eq(agentJobs.conversationId, conversationId),
+        isNotNull(agentJobs.deliverableCheckDueAt),
+      ),
+    );
 }
 
 /**
@@ -1456,7 +1562,7 @@ export async function getConversationThreadAction(
 
     // Le fil est ouvert : il est lu. APRÈS la garde d'entité — un fil qu'on
     // n'a pas le droit de voir ne laisse aucune trace de lecture.
-    await markConversationRead(db, session.userId, id);
+    await markConversationRead(db, session.userId, session.entityId, id);
 
     // LES PLUS RÉCENTS, puis remis dans l'ordre. Le plafond gardait le DÉBUT
     // du fil : au 101e tour d'un canal, la page restait figée sur les cent

@@ -94,14 +94,30 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
   // Les conversations sur lesquelles quelque chose attend. Une demande sans
   // conversation ne se pose sur AUCUN fil : elle vient d'une tâche de l'API ou
   // d'une automation, et lui choisir une ligne inventerait sa provenance.
-  const attendSurFil = new Set(
-    approvals.data.map((a) => a.conversationId).filter((id): id is string => id !== null),
-  );
+  const attendSurFil = new Set([
+    ...approvals.data.map((a) => a.conversationId).filter((id): id is string => id !== null),
+    // ET LES FILS DONT UN LIVRABLE ATTEND UN REGARD (#255). La pastille du
+    // dossier les compte ; sans cette ligne, elle afficherait un nombre
+    // au-dessus de fils tous éteints, et rien ne dirait lequel ouvrir.
+    ...folders.data.deliverableCheckConversationIds,
+  ]);
   // Et les runs de tête sur lesquels quelque chose attend : une question posée
   // par un délégué remonte à la ligne du run qui l'a lancé.
-  const attendSurRun = new Set(
-    approvals.data.map((a) => a.rootJobId).filter((id): id is string => id !== null),
-  );
+  const attendSurRun = new Set([
+    ...approvals.data.map((a) => a.rootJobId).filter((id): id is string => id !== null),
+    // Même chose pour un run venu de dehors : son livrable attend, sa ligne le
+    // dit.
+    //
+    // ⚠️ CETTE LISTE EST PLUS LARGE QUE LE DOSSIER MCP, et c'est sans effet.
+    // Elle porte TOUT job de tête qui attend un regard, y compris ceux qui ont
+    // une conversation — lesquels ne sont jamais des lignes de ce dossier
+    // (`runsFromOutside` exige `conversation_id IS NULL`). Leur identifiant ne
+    // rencontre donc aucune ligne, et il est inerte. Le commentaire disait
+    // l'inverse — « ces identifiants sont déjà ceux des lignes du dossier
+    // MCP » — ce qui énonçait une règle que le code n'applique pas (revue C,
+    // passe 2, constat C5).
+    ...folders.data.deliverableCheckJobIds,
+  ]);
   const tourne = new Set(folders.data.runningConversationIds);
 
   const rows: FolderThreadSource[] = [];

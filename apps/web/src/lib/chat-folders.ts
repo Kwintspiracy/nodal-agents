@@ -23,9 +23,19 @@
 // compte ce que la personne peut faire tomber à zéro en RÉPONDANT, et un fil
 // non lu tombe à zéro en étant simplement ouvert. Mélanger les deux ferait un
 // chiffre qui ne veut plus dire une seule chose (décision du propriétaire,
-// 19/09). Même chose pour « un livrable à vérifier » : aucune colonne ne dit
-// qu'un livrable attend un œil. Le jour où elle existe, elle s'ajoute à
-// `waiting` sans rien changer d'autre.
+// 19/09).
+//
+// « UN LIVRABLE À VÉRIFIER » EST COMPTÉ DEPUIS LE 20/09/2026 (#255). La note
+// qui vivait ici disait qu'aucune colonne ne pouvait le dire, et qu'elle
+// s'ajouterait à `waiting` sans rien changer d'autre le jour où elle
+// existerait. Elle existe — `agent_jobs.deliverable_check_due_at`, migration
+// 0118, posée par la porte terminale du runner quand le run a produit un
+// livrable, effacée quand la personne ouvre le run ou son fil — et c'est
+// exactement ce qui a été fait : une troisième liste concaténée à `waiting`
+// par `ChatFolderGroup`, et pas une ligne de plus dans ce fichier.
+//
+// Elle appartient bien à la PASTILLE et non au point : regarder ce qui a été
+// livré est une réponse, pas la simple ouverture d'un fil qu'on n'a pas lu.
 
 import { LIVE_JOB_STATUSES } from '@nodal-agents/shared';
 import { CHANNEL_LABELS } from './activity-runs.ts';

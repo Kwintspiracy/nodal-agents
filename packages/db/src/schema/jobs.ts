@@ -290,6 +290,35 @@ export const agentJobs = pgTable(
      * référence déjà agent_jobs pour `registered_job_id`.
      */
     projectId: uuid('project_id'),
+    /**
+     * UN LIVRABLE DE CE RUN ATTEND LE REGARD DE LA PERSONNE (#255, migration
+     * 0118). L'instant où le run a livré ; NULL = rien n'attend.
+     *
+     * POSÉ par la porte terminale de succès (`finalizeJobSuccess`), dans la
+     * MÊME transaction que le statut terminal, quand le run a produit au moins
+     * un livrable `addressed AND produced` — nommé par un outil, ET réellement
+     * écrit. Les deux ensemble : `addressed` seul est une intention, qu'une
+     * écriture ratée laisse en place.
+     *
+     * EFFACÉ par le seul côté web, et par les deux gestes qui sont des
+     * regards : ouvrir le run (`getSpaceConversationAction`, la page qui
+     * MONTRE les livrables) ou ouvrir le fil (`markConversationRead`, au même
+     * endroit que le marqueur de lecture). Le runner ne l'efface jamais : une
+     * livraison de canal ne fait rien regarder à personne, exactement comme
+     * pour `conversation_reads`.
+     *
+     * PORTÉ PAR LE JOB DE TÊTE, jamais par le délégué qui a produit : c'est le
+     * run que la personne ouvre, et la page d'un run remonte déjà les
+     * livrables de toute sa descendance (`collectDescendants`). La chaîne est
+     * remontée à l'écriture, bornée par la profondeur de délégation.
+     *
+     * PAR ESPACE, pas par personne — au contraire de `conversation_reads`.
+     * C'est la règle de la PASTILLE d'attention, à laquelle ce fait s'ajoute :
+     * une approbation résolue par l'un tombe pour tous, et un livrable regardé
+     * par l'un aussi. Une colonne unique dit donc ici la même chose que les
+     * deux autres sources de la pastille.
+     */
+    deliverableCheckDueAt: timestamp('deliverable_check_due_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
@@ -332,6 +361,14 @@ export const agentJobs = pgTable(
     index('idx_agent_jobs_project')
       .on(table.projectId)
       .where(sql`${table.projectId} IS NOT NULL`),
+    // 0118 (#255) : la pastille d'attention relit « quels runs de cet espace
+    // attendent un regard » toutes les 15 secondes, sur toutes les pages du
+    // tableau de bord. PARTIEL : la colonne est NULL sur presque tous les
+    // jobs, et elle le redevient dès que la personne a regardé — l'index reste
+    // donc de la taille de ce qui attend, pas de celle de la table.
+    index('idx_agent_jobs_deliverable_check_due')
+      .on(table.entityId)
+      .where(sql`${table.deliverableCheckDueAt} IS NOT NULL`),
     check(
       'agent_jobs_status_check',
       sql`${table.status} IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')`,

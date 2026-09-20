@@ -1,0 +1,53 @@
+-- UN LIVRABLE DE CE RUN ATTEND LE REGARD DE LA PERSONNE (issue #255).
+--
+-- La décision 2 de #135 énumère quatre choses que la pastille d'attention
+-- compte. Trois avaient une colonne : une approbation en attente et une
+-- question posée (`approval_requests`), le non-lu (`conversation_reads`, 0112,
+-- exclu de la pastille le 19/09/2026 parce qu'il tombe à zéro en OUVRANT, pas
+-- en répondant). La quatrième — « un livrable à vérifier » — n'en avait
+-- aucune, et `apps/web/src/lib/chat-folders.ts` le disait en toutes lettres :
+-- « aucune colonne ne dit qu'un livrable attend un œil ».
+--
+-- Voici la colonne. L'instant où le run a livré ; NULL = rien n'attend.
+--
+-- CE QUI L'ÉCRIT, et à quel moment. La porte terminale de succès du runner
+-- (`finalizeJobSuccess`), dans la MÊME transaction que le statut terminal —
+-- au même endroit que `job_deliveries`, qui commet l'intention de livrer avec
+-- la décision de finir. Un crash entre les deux ne peut donc pas laisser un
+-- run livré dont rien ne dit qu'il attend un regard.
+--
+-- La condition est `addressed AND produced` sur
+-- `job_deliverable_verification_state`. Les deux, jamais l'une :
+--   `addressed` est posé AVANT l'exécution — une écriture ratée laisse
+--   l'intention en place, et compter là-dessus ferait attendre un regard sur
+--   un livrable que personne n'a produit ;
+--   `produced` seul compterait des livrables que l'écran ne montre pas (un
+--   périmètre marqué sale par précaution — vingt lignes dont `shared/_archive`,
+--   constaté le 08/09/2026).
+--
+-- SUR LE JOB DE TÊTE, jamais sur le délégué qui a produit. C'est le run que la
+-- personne ouvre, et sa page remonte déjà les livrables de toute sa
+-- descendance. La chaîne est remontée à l'écriture ; une chaîne cassée ne pose
+-- rien et le dit par un code (invariant #4), plutôt que de poser le fait sur un
+-- run choisi au hasard.
+--
+-- CE QUI L'EFFACE : le web, et lui seul, sur les deux gestes qui sont des
+-- regards — ouvrir le run (la page qui MONTRE les livrables) ou ouvrir le fil
+-- (au même endroit que le marqueur de lecture de 0112). Le runner n'efface
+-- jamais : une livraison partie sur Telegram n'a rien fait regarder à personne.
+--
+-- PAR ESPACE, pas par personne, au contraire de `conversation_reads`. C'est la
+-- règle de la pastille à laquelle ce fait s'ajoute : une approbation résolue
+-- par l'un tombe pour tous. Une colonne par personne ferait dire à la pastille
+-- deux choses à la fois.
+--
+-- NULLABLE ET SANS DÉFAUT : les runs déjà finis en base n'ont livré à personne
+-- et ne reçoivent pas un regard en attente inventé après coup.
+ALTER TABLE "agent_jobs" ADD COLUMN IF NOT EXISTS "deliverable_check_due_at" timestamptz;
+
+-- La pastille relit « ce qui attend dans cet espace » toutes les 15 secondes,
+-- sur toutes les pages du tableau de bord. PARTIEL : la colonne est NULL sur
+-- presque tous les jobs, et elle le redevient dès que la personne a regardé.
+CREATE INDEX IF NOT EXISTS "idx_agent_jobs_deliverable_check_due"
+  ON "agent_jobs" ("entity_id")
+  WHERE "deliverable_check_due_at" IS NOT NULL;
