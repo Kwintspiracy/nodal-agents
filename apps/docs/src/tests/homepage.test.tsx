@@ -214,9 +214,20 @@ describe('homepage rendering', () => {
       expect(css).toContain(`var(${variable})`);
     }
     // Scoped to the hero: the docs pages and the rest of the homepage keep
-    // Public Sans and Inter, so neither variable may reach `.home` itself.
-    const shell = css.slice(css.indexOf('.home {'), css.indexOf('.home-wrap {'));
-    expect(shell).not.toContain('--font-instrument');
+    // Public Sans and Inter. Checked rule by rule rather than on one slice of
+    // the file, because a slice leaves every other rule free to pick the
+    // variable up (Reviewer C, pass 1). Every innermost block that mentions
+    // one of the two has to be selected by a hero class, media queries
+    // included: the pattern matches inner blocks only, since a rule body
+    // cannot itself contain a brace.
+    const heroSelector = /(^|[\s,])\.home-(hero|term|bar|mark)/;
+    const offenders = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter(
+        ([, , body]) => body.includes('--font-instrument') || body.includes('--font-plexmono'),
+      )
+      .map(([, selector]) => selector.trim())
+      .filter((selector) => !selector.split(',').every((one) => heroSelector.test(one.trim())));
+    expect(offenders, 'hero typeface used outside the hero').toEqual([]);
   });
 });
 
