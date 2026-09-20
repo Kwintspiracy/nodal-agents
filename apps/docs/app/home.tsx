@@ -200,7 +200,13 @@ export default function Home() {
       <header className="home-bar">
         <div className="home-wrap home-bar-inner">
           <a className="home-mark" href={`${BASE_PATH}/`}>
-            <span className="home-mark-dot" aria-hidden="true" />
+            <img
+              src={`${BASE_PATH}/home/logo-128.png`}
+              width={32}
+              height={32}
+              alt=""
+              decoding="async"
+            />
             Nodal-Agents
           </a>
           <nav className="home-bar-nav" aria-label="Main">
