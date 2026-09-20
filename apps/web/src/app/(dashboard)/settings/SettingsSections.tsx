@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * SettingsSections — les réglages d'UNE page, chacun dans la page (20/09).
  *
@@ -8,7 +10,9 @@
  * formulaire EN PLACE — les formulaires existants, inchangés : hors d'un
  * panneau ancré, `SetCtaRow` rend ses propres Cancel et Save.
  *
- * Aucun état, aucun hook : c'est un composant serveur, et la page lui donne
+ * Aucun état, aucun hook — mais `'use client'` quand même : les icônes
+ * Phosphor tiennent un contexte React, ce qu'un composant serveur ne peut pas
+ * charger (la stack l'a dit à la première ouverture). La page serveur lui donne
  * les lignes de SA catégorie et les formulaires déjà rendus.
  */
 
