@@ -266,9 +266,9 @@ export default function Home() {
         <figure className="home-shot">
           <img
             src={`${BASE_PATH}/home/agent-dark.webp`}
-            width={1383}
-            height={800}
-            alt="An agent detail page in the dark theme, showing its model, role, skill and connector counts, success rate, and a chart of its runs over seven days."
+            width={1393}
+            height={1040}
+            alt="An agent detail page in the dark theme, showing its model, role, skill and connector counts, success rate, a chart of its runs over seven days, and its attached skills."
             loading="lazy"
             decoding="async"
           />
