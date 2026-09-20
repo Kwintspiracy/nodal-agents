@@ -45,7 +45,13 @@ export type FileDiffView =
   | { kind: 'binary'; path: string }
   | {
       kind: 'unavailable';
-      reason: 'no_checkpoint' | 'path_unresolved' | 'workspace_unreachable' | 'not_in_snapshot';
+      reason:
+        | 'no_checkpoint'
+        | 'path_unresolved'
+        | 'workspace_unreachable'
+        /** Le magasin de checkpoints n'a pas répondu — voir la route du runner (#262, passe 2). */
+        | 'checkpoint_store_unreadable'
+        | 'not_in_snapshot';
     };
 
 const InputSchema = z.object({

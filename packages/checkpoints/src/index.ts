@@ -25,5 +25,30 @@ export {
   DIFF_MAX_BYTES,
   type Checkpoint,
   type FileDiff,
+  type SnapshotOptions,
 } from './checkpoints';
 export { checkpointsRoot } from './root';
+// Pourquoi un instantané a échoué, avec ses chiffres — issue #245. Exporté
+// parce que les DEUX points de refus (le seam de packages/tools, le harnais CLI
+// du runner) doivent rendre LA MÊME phrase : deux copies auraient divergé au
+// premier correctif, et c'est celle de l'écran qui serait restée générique.
+export {
+  CheckpointError,
+  isCheckpointError,
+  asCheckpointError,
+  measureWorkspace,
+  describeCheckpointFailure,
+  checkpointRefusalMessage,
+  checkpointFailureLogLine,
+  formatBytes,
+  formatCount,
+  formatDuration,
+  checkpointFailureCode,
+  MEASURE_MAX_FILES,
+  MEASURE_MAX_MS,
+  type CheckpointFailureCause,
+  type CheckpointFailureCode,
+  type CheckpointFailureFacts,
+  type CheckpointOperation,
+  type WorkspaceMeasure,
+} from './failure';

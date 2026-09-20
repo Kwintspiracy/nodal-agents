@@ -265,7 +265,106 @@ describe('le câblage dans executeTool', () => {
 
     expect(res.outcome, "l'écriture est passée alors que l'instantané a échoué").toBe('error');
     if (res.outcome !== 'error') return;
-    expect(res.error).toMatch(/checkpoint_failed/);
+    // Un magasin cassé n'est pas un dossier trop gros : le code le dit (#245).
+    expect(res.error).toMatch(/^snapshot_failed: /);
+    expect(res.error).toContain('"file_write" was refused rather than run without a way back.');
+  });
+});
+
+describe('le refus NOMME sa cause @cap:executer-une-commande/moteur', () => {
+  // Issue #245. Le 19/09/2026, `run_command` était refusé pour chaque agent
+  // délégué avec `checkpoint_failed: ... Cause: git add timed out after 30000
+  // ms`. Personne ne pouvait en déduire que 83 paquets de relecture (3,3 Go)
+  // avaient été déballés dans le dossier partagé : les agents sont partis
+  // chercher une panne, puis ont rendu la main sur un `ask_user`.
+  //
+  // La borne est injectée par l'environnement et l'arbre est RÉEL : le
+  // dépassement est vrai, pas simulé. Un faux `execFile` prouverait que le
+  // message se met en forme, et resterait vert le jour où la borne cesse de se
+  // déclencher.
+
+  /** Les règles qui laissent passer `run_command` jusqu'au filet. */
+  const autoApprouve = (id: string): ExecuteOptions =>
+    ({
+      approvalRules: [
+        {
+          id,
+          toolName: 'run_command',
+          action: 'auto_approve',
+          agentId: seed.agentId,
+          entityId: seed.entityId,
+        },
+      ] as ApprovalRule[],
+      onApprovalRequired: async () => {},
+    }) as ExecuteOptions;
+
+  it('un run_command refusé rend le code, les chiffres mesurés et le geste', async () => {
+    const cible = join(root, 'shared');
+    await mkdir(cible, { recursive: true });
+    await writeFile(join(cible, 'gros.bin'), 'x'.repeat(4096));
+
+    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
+    try {
+      const outil = registry.get('run_command');
+      expect(outil, "run_command n'est pas dans le registre").toBeDefined();
+
+      const res = await executeTool(
+        outil as never,
+        { purpose: 'test', command: 'echo ok' },
+        ctx({ workspaces: [{ label: 'shared', path: cible }] as never, turn: 501 }),
+        autoApprouve('rule-run-command-245') as never,
+      );
+
+      expect(res.outcome, 'la commande est passée alors que le filet a échoué').toBe('error');
+      if (res.outcome !== 'error') return;
+
+      // La phrase ENTIÈRE. Un `toContain('snapshot_timeout')` laisserait passer
+      // un message redevenu générique après les deux premiers mots.
+      expect(res.error).toBe(
+        `snapshot_timeout: the "shared" workspace (${cible}) holds 4 KB / 1 file, ` +
+          `the safety snapshot cannot finish in 1 ms; move or ignore the heavy folders. ` +
+          `"run_command" was refused rather than run without a way back.`,
+      );
+    } finally {
+      delete process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'];
+    }
+  });
+
+  it('écrit UNE ligne de journal avec le code et les mesures', async () => {
+    // Le journal est la moitié du correctif : sans lui, un refus vu en
+    // production reste un « ça échoue » qu'il faut reproduire pour comprendre.
+    const cible = join(root, 'shared-journal');
+    await mkdir(cible, { recursive: true });
+    await writeFile(join(cible, 'a.txt'), 'x'.repeat(1024));
+
+    const lignes: string[] = [];
+    const erreurAvant = console.error;
+    console.error = (...args: unknown[]) => {
+      lignes.push(args.map(String).join(' '));
+    };
+    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
+    try {
+      await executeTool(
+        registry.get('run_command') as never,
+        { purpose: 'test', command: 'echo ok' },
+        ctx({ workspaces: [{ label: 'shared', path: cible }] as never, turn: 502 }),
+        autoApprouve('rule-run-command-245-log') as never,
+      );
+    } finally {
+      console.error = erreurAvant;
+      delete process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'];
+    }
+
+    const refus = lignes.filter((l) => l.includes('CHECKPOINT_REFUSED'));
+    expect(refus, 'aucune ligne de journal pour un refus de checkpoint').toHaveLength(1);
+    expect(refus[0]).toContain('code=snapshot_timeout');
+    expect(refus[0]).toContain('limit_ms=1');
+    expect(refus[0]).toContain('bytes=1024');
+    expect(refus[0]).toContain('files=1');
+    expect(refus[0]).toContain('files_capped=false');
+    expect(refus[0]).toContain('tool=run_command');
+    expect(refus[0]).toContain(`job=${seed.jobId}`);
+    expect(refus[0]).toContain('turn=502');
   });
 });
 

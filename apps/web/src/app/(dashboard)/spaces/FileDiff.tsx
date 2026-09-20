@@ -39,6 +39,10 @@ const NO_DIFF: Readonly<Record<string, string>> = {
   no_checkpoint: 'written before snapshots were kept',
   path_unresolved: 'file could not be located',
   workspace_unreachable: 'folder no longer reachable',
+  // Ni « pas photographié » ni « dossier parti » : le magasin n'a pas répondu.
+  // Confondre les trois disait au lecteur que son fichier était ignoré alors
+  // qu'il ne l'est pas (#262, passe 2).
+  checkpoint_store_unreadable: 'snapshot history could not be read',
   not_in_snapshot: "file is ignored by the folder's .gitignore",
 };
 

@@ -49,7 +49,14 @@ import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
 import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
-import { snapshot, headCheckpoint, checkpointsRoot } from '@nodal-agents/checkpoints';
+import {
+  snapshot,
+  headCheckpoint,
+  checkpointsRoot,
+  asCheckpointError,
+  checkpointRefusalMessage,
+  checkpointFailureLogLine,
+} from '@nodal-agents/checkpoints';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
 import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 
@@ -261,8 +268,10 @@ async function harnessEdits(
  *
  * ÉCHOUER REFUSE LE TOUR — même contrat que le seam : un filet qui n'est pas là
  * est pire que pas de filet, parce que c'est celui que le propriétaire croyait
- * avoir. Levé avec un CODE (`checkpoint_failed:<cause>`), sous le même filet que
- * l'intention de mutation, donc les verrous sont rendus.
+ * avoir. Levé avec un CODE TYPÉ (`snapshot_timeout`, `git_missing`,
+ * `snapshot_failed`) et, sur un dépassement de borne, la taille et le nombre de
+ * fichiers MESURÉS du dossier (issue #245), sous le même filet que l'intention
+ * de mutation, donc les verrous sont rendus.
  *
  * La LIGNE, elle, ne refuse rien : c'est un confort de lecture (le fil montrera
  * le diff), pas le filet. Une panne se dit par `CHECKPOINT_ROW_FAILED`.
@@ -296,8 +305,25 @@ export async function takeCliTurnCheckpoints(
       // de ce tour EST ce commit-là.
       sha = cp?.sha ?? (await headCheckpoint(store, w.path));
     } catch (err) {
-      const cause = err instanceof Error ? err.message.split('\n')[0] : String(err);
-      throw new Error(`checkpoint_failed:${cause}`.slice(0, 300));
+      // LE REFUS NOMME SA CAUSE (issue #245) — même phrase que le seam de
+      // `packages/tools`, construite au même endroit. Le harnais de code est
+      // précisément celui qui écrit le plus dans le dossier partagé, donc
+      // celui qui rencontre le premier un dossier devenu trop gros pour le
+      // filet ; lui laisser dire `checkpoint_failed:git add timed out` était
+      // ce qui a envoyé les agents en chasse le soir du 19/09.
+      const failure = asCheckpointError(err, w.path);
+      console.error(
+        checkpointFailureLogLine(failure, { harness: 'cli-runtime', job: jobId, turn }),
+      );
+      // AUCUNE coupe ici (revue #262, passe 1). La borne était de 300, puis de
+      // 600 caractères, et sur un chemin profond elle tombait dans la FIN de la
+      // phrase : elle mangeait « move or ignore the heavy folders », la seule
+      // partie sur laquelle quelqu'un peut agir. Le message est désormais borné
+      // par construction dans `describeCheckpointFailure` (chemin raccourci par
+      // le milieu, sortie de git coupée, chacun le disant), et couper une
+      // seconde fois ici ne ferait que reprendre au lecteur ce que la première
+      // borne a préservé.
+      throw new Error(checkpointRefusalMessage(failure, 'the code harness turn'));
     }
     if (!sha) continue;
     try {

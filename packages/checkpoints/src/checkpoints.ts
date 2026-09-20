@@ -36,25 +36,198 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import {
+  CheckpointError,
+  checkpointFailureCode,
+  isCheckpointError,
+  measureWorkspace,
+  SKIPPED_DIRS,
+  SKIPPED_FILE_SUFFIXES,
+  type CheckpointFailureCause,
+  type CheckpointOperation,
+} from './failure';
+
 const run = promisify(execFile);
 
 /** A snapshot that hangs must not hold a tool call. */
 const GIT_TIMEOUT_MS = 30_000;
 
 /**
+ * La borne de temps de TOUTE commande git du magasin, surchargeable — issue
+ * #245, étendue aux lectures par la revue #262 passe 2 (une lecture qui ne
+ * répond pas doit le dire, donc elle doit d'abord pouvoir être bornée).
+ *
+ * Deux raisons, et aucune n'est le confort :
+ *
+ *   - les tests ont besoin d'un dépassement RÉEL sur un arbre réel. Simuler un
+ *     « timed out » avec un faux `execFile` prouverait que le message se met en
+ *     forme, pas que la borne se déclenche ;
+ *   - un propriétaire dont le dossier est gros mais légitime doit pouvoir
+ *     relever la borne plutôt que de perdre son filet.
+ *
+ * Une valeur d'environnement illisible ne retombe pas en silence sur le défaut
+ * (invariant #4) : elle est dite, une fois, puis ignorée.
+ */
+let badTimeoutSaid = false;
+function storeTimeoutMs(explicit?: number): number {
+  if (explicit !== undefined) {
+    if (Number.isFinite(explicit) && explicit > 0) return explicit;
+    throw new Error(`invalid snapshot timeout: ${explicit}`);
+  }
+  const raw = process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'];
+  if (raw === undefined || raw === '') return GIT_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  if (!badTimeoutSaid) {
+    badTimeoutSaid = true;
+    console.warn(
+      `[checkpoints] NODALAI_CHECKPOINT_TIMEOUT_MS=${JSON.stringify(raw)} is not a positive ` +
+        `number of milliseconds. Using ${GIT_TIMEOUT_MS} ms.`,
+    );
+  }
+  return GIT_TIMEOUT_MS;
+}
+
+/**
+ * `execFile` tue l'enfant quand la borne tombe et rejette avec `killed`. Un
+ * `ETIMEDOUT` est la même chose dite autrement selon la plateforme, d'où les
+ * deux. Aucun appel du chemin d'instantané ne tue l'enfant qu'il lance, donc
+ * `killed` ne peut venir que de la borne.
+ */
+function isTimeoutError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { killed?: boolean; code?: unknown };
+  return e.killed === true || e.code === 'ETIMEDOUT';
+}
+
+/** `git` introuvable : l'`ENOENT` vient du spawn, pas d'un fichier du dossier. */
+function isGitMissingError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { code?: unknown; syscall?: unknown };
+  return e.code === 'ENOENT' && typeof e.syscall === 'string' && e.syscall.startsWith('spawn');
+}
+
+/**
+ * git A RÉPONDU, et sa réponse est « non ».
+ *
+ * `err.code` est alors le CODE DE SORTIE, un nombre, et l'enfant n'a pas été
+ * tué. Un `ENOENT` porte une chaîne, un dépassement de borne porte `killed` :
+ * ni l'un ni l'autre n'est une réponse, et les confondre avec « non » est
+ * exactement le défaut que `gitAllowingMiss` existe pour interdire.
+ */
+function isOrdinaryExitFailure(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { killed?: boolean; code?: unknown };
+  return e.killed !== true && typeof e.code === 'number';
+}
+
+/**
+ * Comme `git`, mais une réponse NÉGATIVE de git rend `''` au lieu de lever.
+ *
+ * Ce que ce nom protège (revue de la PR #262, passe 1). Les deux lectures de
+ * l'instantané — « ce dossier a-t-il déjà une photo ? » et « son arbre est-il
+ * celui d'aujourd'hui ? » — portaient un `.catch(() => '')` nu. Après l'ajout
+ * de la borne de temps (#245), un `rev-parse` TUÉ par cette borne se lisait
+ * donc « pas de parent » : `commit-tree` repartait sans `-p`, `update-ref`
+ * posait un commit RACINE, et la chaîne des checkpoints était coupée en
+ * silence — la photo d'avant devenait irretrouvable, sans une ligne nulle part.
+ *
+ * Un `catch` qui avale tout ne distingue pas un refus d'une panne. Celui-ci ne
+ * garde que le refus : une sortie non nulle ordinaire. Un dépassement de
+ * borne, un `git` absent, un magasin illisible remontent, et le refus qui en
+ * découle dit lequel.
+ *
+ * Exporté pour son test : c'est la distinction elle-même qui doit être
+ * épinglée, et un dépassement de borne ne peut pas être provoqué SUR CET
+ * APPEL-LÀ depuis l'extérieur (chaque commande a sa propre borne, et `add -A`
+ * est toujours plus lent que `rev-parse` : aucune valeur ne tue le second sans
+ * tuer le premier).
+ */
+export async function gitAllowingMiss(
+  store: string,
+  workspace: string,
+  args: string[],
+  opts: { indexFile?: string; timeoutMs?: number } = {},
+): Promise<string> {
+  try {
+    return await git(store, workspace, args, opts.indexFile, opts.timeoutMs ?? storeTimeoutMs());
+  } catch (err) {
+    if (isOrdinaryExitFailure(err)) return '';
+    throw err;
+  }
+}
+
+/**
+ * Qualifie un échec du magasin : un CODE, et les faits qui vont avec.
+ *
+ * LA MESURE N'EST FAITE QUE SUR UN DÉPASSEMENT DE BORNE EN PHOTOGRAPHIANT,
+ * parce que c'est le seul cas où elle répond à la question posée. Photographier
+ * parcourt le dossier de l'utilisateur, donc sa taille EST la cause et le geste
+ * suit. Relire ne touche que le magasin : compter le dossier y nommerait un
+ * coupable au hasard, et le compter sur le chemin d'un clic qui vient d'échouer
+ * ferait payer une seconde attente pour un chiffre faux (revue #262, passe 2).
+ * Sur un `git` absent, il n'y a rien à mesurer non plus.
+ */
+async function qualifyFailure(
+  err: unknown,
+  operation: CheckpointOperation,
+  workspace: string,
+  limitMs: number | null,
+  elapsedMs: number | null,
+): Promise<CheckpointError> {
+  const gitMessage =
+    err instanceof Error ? (err.message.split('\n')[0] ?? err.message) : String(err);
+  const cause: CheckpointFailureCause = isGitMissingError(err)
+    ? 'git_missing'
+    : isTimeoutError(err)
+      ? 'timeout'
+      : 'other';
+  const code = checkpointFailureCode(cause, operation);
+  const measure =
+    code === 'snapshot_timeout' ? await measureWorkspace(workspace).catch(() => null) : null;
+  return new CheckpointError({
+    code,
+    operation,
+    workspace,
+    limitMs,
+    elapsedMs,
+    measure,
+    gitMessage,
+  });
+}
+
+/**
+ * Le `try` de toute LECTURE du magasin (revue #262, passe 2).
+ *
+ * `listCheckpoints` et `diffFile` avalaient chaque panne dans une réponse vide :
+ * « aucun checkpoint » sur un magasin qui en a, « pas dans l'instantané » sur un
+ * chemin photographié. Le même silence que ce lot supprime ailleurs, sur les
+ * magasins qui grossissent — donc le même traitement, à un endroit.
+ *
+ * Une erreur déjà qualifiée passe telle quelle : une lecture imbriquée dans une
+ * autre ne doit pas être requalifiée en boucle.
+ */
+async function readingStore<T>(workspace: string, lire: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await lire();
+  } catch (err) {
+    if (isCheckpointError(err)) throw err;
+    throw await qualifyFailure(err, 'read', workspace, storeTimeoutMs(), Date.now() - startedAt);
+  }
+}
+
+/**
  * Never snapshotted. Dependency trees and build output are large, regenerable,
  * and are exactly what makes a naive `add -A` take minutes on a real project.
+ *
+ * La liste vient de `failure.ts`, que la MESURE d'un refus utilise aussi : deux
+ * listes auraient dérivé, et un refus aurait alors annoncé une taille que git
+ * n'avait jamais eu à enregistrer (#245, revue passe 1).
  */
 const EXCLUDES = [
-  'node_modules/',
-  '.git/',
-  '.next/',
-  'dist/',
-  'build/',
-  '__pycache__/',
-  '.venv/',
-  'target/',
-  '*.log',
+  ...SKIPPED_DIRS.map((dir) => `${dir}/`),
+  ...SKIPPED_FILE_SUFFIXES.map((suffixe) => `*${suffixe}`),
 ];
 
 /**
@@ -127,9 +300,11 @@ async function git(
   workspace: string,
   args: string[],
   indexFile?: string,
+  /** La borne de CET appel. Seul l'instantané la surcharge — voir storeTimeoutMs. */
+  timeoutMs: number = storeTimeoutMs(),
 ): Promise<string> {
   const { stdout } = await run('git', args, {
-    timeout: GIT_TIMEOUT_MS,
+    timeout: timeoutMs,
     windowsHide: true,
     env: gitEnv(store, workspace, indexFile),
   });
@@ -149,7 +324,7 @@ async function gitRaw(
   indexFile?: string,
 ): Promise<string> {
   const { stdout } = await run('git', args, {
-    timeout: GIT_TIMEOUT_MS,
+    timeout: storeTimeoutMs(),
     windowsHide: true,
     maxBuffer: 8 * 1024 * 1024,
     env: gitEnv(store, workspace, indexFile),
@@ -203,12 +378,13 @@ function gitRawCapped(
     let truncated = false;
     let timedOut = false;
     let settled = false;
+    const limitMs = storeTimeoutMs();
     const timer = setTimeout(() => {
       if (settled || timedOut) return;
       timedOut = true;
       // L'arrêt est demandé ; la promesse se règle à `close`, pas avant.
       child.kill();
-    }, GIT_TIMEOUT_MS);
+    }, limitMs);
     child.stdout.on('data', (chunk: Buffer) => {
       if (truncated) return;
       chunks.push(chunk);
@@ -230,7 +406,7 @@ function gitRawCapped(
       settled = true;
       clearTimeout(timer);
       if (timedOut) {
-        reject(new Error(`git ${args[0]} timed out after ${GIT_TIMEOUT_MS} ms`));
+        reject(new Error(`git ${args[0]} timed out after ${limitMs} ms`));
         return;
       }
       if (!truncated && code !== 0 && code !== null) {
@@ -251,6 +427,9 @@ export async function ensureStore(store: string): Promise<void> {
   await writeFile(join(store, 'gitconfig'), '', { flag: 'a' });
   if (!existsSync(join(gitDir, 'HEAD'))) {
     await mkdir(gitDir, { recursive: true });
+    // LA CONSTANTE, pas la borne surchargeable : créer un dépôt nu vide ne
+    // dépend d'aucun arbre, donc rien ne justifie qu'une borne serrée posée
+    // pour un gros dossier empêche le magasin d'exister (#262, passe 2).
     await run('git', ['init', '--bare', '--quiet', gitDir], {
       timeout: GIT_TIMEOUT_MS,
       windowsHide: true,
@@ -262,18 +441,46 @@ export async function ensureStore(store: string): Promise<void> {
   }
 }
 
+export interface SnapshotOptions {
+  /**
+   * Borne de temps de chaque commande git de cet instantané, en millisecondes.
+   * Par défaut `NODALAI_CHECKPOINT_TIMEOUT_MS`, sinon 30 s.
+   */
+  timeoutMs?: number;
+}
+
 /**
  * Snapshot `workspace` as it is right now. Returns the checkpoint, or null when
  * there was nothing to record (an unchanged tree since the last snapshot).
  *
- * Throws on a real failure. The caller is expected to refuse the write rather
- * than proceed without a net — a checkpoint that fails quietly is worse than no
- * checkpoint at all, because it is the one the owner thought they had.
+ * Throws on a real failure, and depuis #245 il lève TOUJOURS une
+ * `CheckpointError` : un code (`snapshot_timeout`, `git_missing`,
+ * `snapshot_failed`) et, sur un dépassement de borne, la taille et le nombre de
+ * fichiers mesurés. L'appelant refuse l'écriture plutôt que d'avancer sans
+ * filet — un checkpoint qui échoue en silence est pire que pas de checkpoint,
+ * parce que c'est celui que le propriétaire croyait avoir — mais il peut
+ * désormais DIRE pourquoi, au lieu d'envoyer les agents en chasse.
  */
 export async function snapshot(
   store: string,
   workspace: string,
   label: string,
+  options: SnapshotOptions = {},
+): Promise<Checkpoint | null> {
+  const limitMs = storeTimeoutMs(options.timeoutMs);
+  const startedAt = Date.now();
+  try {
+    return await takeSnapshot(store, workspace, label, limitMs);
+  } catch (err) {
+    throw await qualifyFailure(err, 'snapshot', workspace, limitMs, Date.now() - startedAt);
+  }
+}
+
+async function takeSnapshot(
+  store: string,
+  workspace: string,
+  label: string,
+  limitMs: number,
 ): Promise<Checkpoint | null> {
   await ensureStore(store);
   const key = workspaceKey(workspace);
@@ -293,26 +500,32 @@ export async function snapshot(
   // secret gets a second, unmanaged copy", the first is the smaller harm. But
   // it is only acceptable while it is SAID: see CHECKPOINT_COVERAGE_NOTE and
   // the test that pins this behaviour, so nobody discovers it from a lost file.
-  await git(store, workspace, ['add', '-A']);
-  const tree = await git(store, workspace, ['write-tree']);
+  await git(store, workspace, ['add', '-A'], undefined, limitMs);
+  const tree = await git(store, workspace, ['write-tree'], undefined, limitMs);
 
   // Nothing changed since the last checkpoint — recording it again would bury
   // the useful ones under identical noise.
-  const parent = await git(store, workspace, ['rev-parse', '--verify', '--quiet', ref]).catch(
-    () => '',
+  // `gitAllowingMiss`, jamais un `.catch(() => '')` nu : une ref absente est
+  // une RÉPONSE de git, un dépassement de borne est une PANNE, et lire la
+  // seconde comme la première pose un commit racine (revue #262, passe 1).
+  const parent = await gitAllowingMiss(
+    store,
+    workspace,
+    ['rev-parse', '--verify', '--quiet', ref],
+    { timeoutMs: limitMs },
   );
   if (parent) {
-    const parentTree = await git(store, workspace, ['rev-parse', `${parent}^{tree}`]).catch(
-      () => '',
-    );
+    const parentTree = await gitAllowingMiss(store, workspace, ['rev-parse', `${parent}^{tree}`], {
+      timeoutMs: limitMs,
+    });
     if (parentTree === tree) return null;
   }
 
   const at = new Date().toISOString();
   const args = ['commit-tree', tree, '-m', `${label} — ${at}`];
   if (parent) args.push('-p', parent);
-  const sha = await git(store, workspace, args);
-  await git(store, workspace, ['update-ref', ref, sha]);
+  const sha = await git(store, workspace, args, undefined, limitMs);
+  await git(store, workspace, ['update-ref', ref, sha], undefined, limitMs);
 
   return { sha, workspace, at, label };
 }
@@ -328,11 +541,15 @@ export async function snapshot(
 export async function headCheckpoint(store: string, workspace: string): Promise<string | null> {
   if (!existsSync(join(store, 'store', 'HEAD'))) return null;
   const ref = `refs/nodal/${workspaceKey(workspace)}`;
-  // `--verify --quiet` : ref absente ⇒ sortie vide et code 1, donc rejet — d'où
-  // le `catch`. C'est la même forme que dans `snapshot`.
-  const sha = await git(store, workspace, ['rev-parse', '--verify', '--quiet', ref]).catch(
-    () => '',
-  );
+  // `--verify --quiet` : ref absente ⇒ sortie vide et code 1, donc rejet, d'où
+  // `gitAllowingMiss`. Comme dans `snapshot`, une PANNE remonte au lieu d'être
+  // lue comme une absence (revue #262, passe 1).
+  //
+  // Ce que ça change pour l'appelant, et c'est VOULU : `takeCliTurnCheckpoints`
+  // entoure cet appel du `try` qui refuse le tour. Une lecture qui panne y
+  // refusera donc, comme un instantané qui panne — mieux que d'inscrire, ou de
+  // ne pas inscrire, une ligne d'audit sur une réponse qu'on n'a pas eue.
+  const sha = await gitAllowingMiss(store, workspace, ['rev-parse', '--verify', '--quiet', ref]);
   return sha === '' ? null : sha;
 }
 
@@ -379,8 +596,23 @@ export type FileDiff =
  * du propriétaire n'est jamais touché (le magasin est un git fantôme).
  *
  * `relPath` est relatif au dossier, en forme slash.
+ *
+ * LÈVE une `CheckpointError` si le magasin ne répond pas (revue #262, passe 2).
+ * Rendre `not_in_snapshot` sur un dépassement de borne disait « ce fichier n'a
+ * jamais été photographié » d'un fichier qui l'est. Un chemin réellement absent
+ * des deux états rend toujours `not_in_snapshot`, lui.
  */
-export async function diffFile(
+export function diffFile(
+  store: string,
+  workspace: string,
+  fromSha: string,
+  toSha: string | null,
+  relPath: string,
+): Promise<FileDiff> {
+  return readingStore(workspace, () => readFileDiff(store, workspace, fromSha, toSha, relPath));
+}
+
+async function readFileDiff(
   store: string,
   workspace: string,
   fromSha: string,
@@ -389,10 +621,19 @@ export async function diffFile(
 ): Promise<FileDiff> {
   if (!existsSync(join(store, 'store', 'HEAD'))) return { kind: 'not_in_snapshot' };
 
+  // `gitAllowingMiss` partout dans cette lecture, jamais un `.catch(() => '')`
+  // nu (revue #262, passe 2) : un chemin absent de l'arbre est une RÉPONSE de
+  // git, un dépassement de borne est une PANNE, et rendre `not_in_snapshot`
+  // pour la seconde ment sur un fichier qui EST photographié.
   const inTree = async (sha: string): Promise<boolean> =>
-    (await git(store, workspace, ['ls-tree', '-r', '--name-only', sha, '--', relPath]).catch(
-      () => '',
-    )) !== '';
+    (await gitAllowingMiss(store, workspace, [
+      'ls-tree',
+      '-r',
+      '--name-only',
+      sha,
+      '--',
+      relPath,
+    ])) !== '';
 
   const inFrom = await inTree(fromSha);
 
@@ -412,11 +653,13 @@ export async function diffFile(
       // de tout l'arbre à chaque clic (revue Codex, passe 43). Un chemin ignoré
       // par le `.gitignore` du dossier fait échouer `add` — c'est exactement
       // l'information qu'on cherche, pas une panne.
-      await git(store, workspace, ['add', '-A', '--', relPath], scratch).catch(() => '');
+      await gitAllowingMiss(store, workspace, ['add', '-A', '--', relPath], {
+        indexFile: scratch,
+      });
       inTo =
-        (await git(store, workspace, ['ls-files', '--cached', '--', relPath], scratch).catch(
-          () => '',
-        )) !== '';
+        (await gitAllowingMiss(store, workspace, ['ls-files', '--cached', '--', relPath], {
+          indexFile: scratch,
+        })) !== '';
     } else {
       inTo = await inTree(toSha as string);
     }
@@ -449,20 +692,41 @@ export async function diffFile(
   }
 }
 
-/** Checkpoints for a workspace, newest first. */
-export async function listCheckpoints(
+/**
+ * Checkpoints for a workspace, newest first.
+ *
+ * LÈVE une `CheckpointError` si le magasin ne répond pas (revue #262, passe 2).
+ * Rendre `[]` sur un dépassement de borne affichait « aucun checkpoint » à une
+ * personne dont le magasin en contient des centaines — la forme que `root.ts`
+ * appelle la pire qu'un filet puisse prendre : ça n'a pas l'air cassé, ça a
+ * l'air de ne jamais être arrivé. Un dossier réellement jamais photographié
+ * rend toujours `[]`, lui, parce que c'est ce que git a répondu.
+ */
+export function listCheckpoints(
   store: string,
   workspace: string,
   limit = 20,
 ): Promise<Checkpoint[]> {
+  return readingStore(workspace, () => readCheckpointList(store, workspace, limit));
+}
+
+async function readCheckpointList(
+  store: string,
+  workspace: string,
+  limit: number,
+): Promise<Checkpoint[]> {
   if (!existsSync(join(store, 'store', 'HEAD'))) return [];
   const ref = `refs/nodal/${workspaceKey(workspace)}`;
-  const out = await git(store, workspace, [
+  // Une ref absente est une RÉPONSE (« ce dossier n'a jamais été photographié »),
+  // un dépassement de borne est une PANNE. Les confondre affichait « aucun
+  // checkpoint » sur un magasin qui en a — exactement la forme que root.ts
+  // appelle la pire qu'un filet puisse prendre (revue #262, passe 2).
+  const out = await gitAllowingMiss(store, workspace, [
     'log',
     ref,
     `--max-count=${limit}`,
     '--format=%H%x00%aI%x00%s',
-  ]).catch(() => '');
+  ]);
   if (!out) return [];
   return out
     .split('\n')

@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
@@ -244,7 +244,8 @@ describe('run-job : l’instantané AVANT binding.run (P11)', () => {
     const jobId = await newJob();
     fakeRun.mockResolvedValue(greenTurn());
 
-    await expect(runJob(jobId, 'write', [alpha])).rejects.toThrow(/checkpoint_failed/);
+    // Un magasin cassé n'est pas un dossier trop gros : le code le dit (#245).
+    await expect(runJob(jobId, 'write', [alpha])).rejects.toThrow(/^snapshot_failed: /);
 
     // La CLI n'a rien reçu : le refus est AVANT le spawn.
     expect(fakeRun.mock.calls).toEqual([]);
@@ -253,6 +254,33 @@ describe('run-job : l’instantané AVANT binding.run (P11)', () => {
       await db.select({ path: workspaceLocks.workspacePath }).from(workspaceLocks),
       'les verrous sont restés pris après un refus',
     ).toEqual([]);
+  });
+
+  it('un tour refusé par la BORNE nomme la taille du dossier et le geste @cap:executer-une-commande/moteur', async () => {
+    // Issue #245 : le harnais de code est celui qui écrit le plus dans le
+    // dossier partagé, donc le premier à rencontrer un dossier devenu trop
+    // gros pour le filet. Il doit dire la même phrase que le seam, construite
+    // au même endroit — deux copies auraient divergé au premier correctif.
+    //
+    // Borne injectée à 1 ms sur l'arbre RÉEL du fixture (`alpha/code.txt`,
+    // 12 octets) : le dépassement est vrai, et les chiffres rendus sont ceux
+    // qui sont sur le disque.
+    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
+
+    const jobId = await newJob();
+    fakeRun.mockResolvedValue(greenTurn());
+
+    try {
+      await expect(runJob(jobId, 'write', [alpha])).rejects.toThrow(
+        `snapshot_timeout: the "${basename(alpha)}" workspace (${alpha}) holds 12 B / 1 file, ` +
+          `the safety snapshot cannot finish in 1 ms; move or ignore the heavy folders. ` +
+          `the code harness turn was refused rather than run without a way back.`,
+      );
+    } finally {
+      delete process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'];
+    }
+
+    expect(fakeRun.mock.calls, 'la CLI a été lancée malgré le refus').toEqual([]);
   });
 });
 
