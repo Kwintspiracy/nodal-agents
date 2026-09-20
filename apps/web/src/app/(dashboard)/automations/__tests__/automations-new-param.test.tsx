@@ -106,6 +106,10 @@ describe('le « + » de la barre ouvre le formulaire @cap:planifier-une-tache/ec
       }),
     );
     expect(titre()).not.toContain('New schedule');
+    // … et le paramètre part de l'adresse tout de suite (revue #302, C2) :
+    // laissé là, il rouvrirait le formulaire au premier rechargement après la
+    // création d'un agent, sans que personne ne l'ait redemandé.
+    expect(replace.mock.calls[0]?.[0]).toBe('/automations');
   });
 
   it('sans paramètre, rien ne s’ouvre', async () => {

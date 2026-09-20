@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
@@ -62,6 +62,13 @@ export default function AutomationsClient({
     setWebhookFormOpen(open);
     if (!open && initialNew === 'webhook') router.replace('/automations');
   };
+  // Sans agent, le paramètre n'a rien ouvert et personne ne le fermera : il
+  // part tout de suite, sinon il resterait dans l'adresse et rouvrirait le
+  // formulaire, sans qu'on l'ait redemandé, au premier rechargement après la
+  // création d'un agent (revue #302, C2).
+  useEffect(() => {
+    if (initialNew !== null && !peutCreer) router.replace('/automations');
+  }, [initialNew, peutCreer, router]);
   const [revealedWebhooks, setRevealedWebhooks] = useState<
     Record<string, { secret: string; path: string }>
   >({});
