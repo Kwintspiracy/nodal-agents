@@ -50,6 +50,18 @@ import { formatCost, formatMs, shortToolName } from './format.ts';
 const FILES_SHOWN = 12;
 
 /**
+ * Au-delà, la liste de commandes cesse d'être lisible — même règle que les
+ * fichiers, et pour la même raison (Reviewer C, passe 1 de la PR #327).
+ *
+ * `classifyProduction` pousse un item par ligne `terminal` réussie, sans
+ * plafond : une session de code qui lance cent cinquante appels shell rendait
+ * un encart de cent cinquante lignes, plus long que le fil qu'il conclut. Le
+ * modèle les porte toutes, comme pour les fichiers ; l'écran en montre douze
+ * et COMPTE le reste, il ne le jette pas.
+ */
+const COMMANDS_SHOWN = 12;
+
+/**
  * Le mot que la relecture ajoute à côté de « Delivered » (#59). `null` quand
  * personne n'a relu : le bloc n'a alors qu'un fait à dire.
  *
@@ -121,6 +133,8 @@ export default function DeliveryBlock({
 
   const shownFiles = summary.filePaths.slice(0, FILES_SHOWN);
   const hiddenFiles = summary.filePaths.length - shownFiles.length;
+  const shownCommands = summary.commands.slice(0, COMMANDS_SHOWN);
+  const hiddenCommands = summary.commands.length - shownCommands.length;
   // Le pied ne se dessine que s'il a quelque chose à dire : personne n'a relu
   // ET aucun run à ouvrir, il n'y a pas de pied.
   const showFoot = summary.reviews.length > 0 || jobId !== null;
@@ -222,7 +236,7 @@ export default function DeliveryBlock({
         <div className="border-t border-rule-2 px-4 pt-2.5 pb-3">
           <p className="mb-1 text-mono-11 text-ink-4">Commands</p>
           <ul className="flex flex-col gap-1">
-            {summary.commands.map((c, i) => (
+            {shownCommands.map((c, i) => (
               <li
                 key={i}
                 className="flex min-w-0 items-center gap-2"
@@ -236,6 +250,9 @@ export default function DeliveryBlock({
               </li>
             ))}
           </ul>
+          {hiddenCommands > 0 && (
+            <p className="mt-1 text-mono-11 text-ink-4">… and {hiddenCommands} more</p>
+          )}
         </div>
       )}
 

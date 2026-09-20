@@ -666,6 +666,28 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     // « Delivered » au-dessus de cette liste dirait le contraire du verdict.
     expect(html).toContain('>Ran');
     expect(html).not.toContain('Delivered');
+    // ET LE SIGNE S'ÉTEINT au lieu de virer au rouge : une absence est grise et
+    // se dit, jamais rouge. Sans cette assertion, la couleur du crochet était
+    // la seule mutation du lot qui restait verte (Reviewer C, passe 1).
+    expect(html).toContain('text-ink-4');
+    expect(html).not.toContain('text-ok');
+  });
+
+  it('montre douze commandes au plus, et COMPTE le reste', () => {
+    // `classifyProduction` pousse un item par ligne terminal réussie, sans
+    // plafond : une session de code de cent cinquante appels shell rendait un
+    // encart plus long que le fil qu'il conclut (Reviewer C, passe 1).
+    const quinze = Array.from({ length: 15 }, (_, i) => ({
+      label: `commande-${i}`,
+      observed: i % 2 === 0,
+    }));
+    const html = renderToStaticMarkup(
+      <DeliveryBlock summary={{ ...EMPTY, commands: quinze }} jobId={null} />,
+    );
+    expect(html).toContain('commande-11');
+    expect(html).not.toContain('commande-12');
+    // Les trois qui restent sont COMPTÉES, pas jetées.
+    expect(html).toContain('… and 3 more');
   });
 
   it('dit « Delivered » et tait l’aveu quand la commande a été constatée', () => {
