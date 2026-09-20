@@ -23,6 +23,7 @@
 // telle quelle plutôt que réinventée.
 
 import { useCallback, type ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
 import { ArrowRight } from '@phosphor-icons/react';
 import SidebarRow, { SIDEBAR_NOTE } from '../ui/SidebarRow';
 import SidebarEmpty from '../ui/SidebarEmpty';
@@ -107,6 +108,11 @@ export default function SidebarDynamicList({
 }) {
   const lire = useCallback(() => read(FOLDER_THREADS_PROBE), [read]);
   const { rows, erreur } = useSidebarRead<DynamicRow>(lire, active);
+  // La ligne de l'endroit où l'on EST s'allume comme une entrée de menu
+  // (Quentin, 20/09 : « la sélection se fait, mais rien ne le montre »). Le
+  // même repère que `SidebarLink` : la route égale l'adresse de la ligne, ou
+  // commence par elle.
+  const pathname = usePathname();
 
   const { rows: lignes, hasMore } =
     rows === null ? { rows: null, hasMore: false } : unfoldedRows(rows);
@@ -139,6 +145,8 @@ export default function SidebarDynamicList({
             href={hrefOf(r)}
             title={r.title ?? r.name}
             depth="thread"
+            active={pathname === hrefOf(r) || pathname.startsWith(`${hrefOf(r)}/`)}
+            markCurrent
             testId={`sidebar-row-${testId}`}
           >
             {dot && r.running === true ? (

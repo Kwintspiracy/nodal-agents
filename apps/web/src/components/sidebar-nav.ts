@@ -44,7 +44,6 @@ import {
   CheckCircle,
   DiscordLogo,
   GearSix,
-  House,
   Key,
   Lightbulb,
   Plug,
@@ -175,10 +174,6 @@ const AGENTS_GROUPS: readonly PanelGroup[] = [
  * crée un.
  */
 const RUN_GROUPS: readonly PanelGroup[] = [
-  // SANS TITRE, et au-dessus de tout : la planche ne dessine ni cette ligne ni
-  // une section pour elle. Lui en inventer une nommerait un bloc d'un seul
-  // élément ; la laisser nue la met là où l'œil la cherche, tout en haut.
-  { items: [{ href: '/dashboard', label: 'Dashboard', icon: House }] },
   {
     section: 'Cron',
     dynamic: 'cron',
@@ -273,7 +268,7 @@ export const DESTINATIONS: readonly Destination[] = [
     // 19/09 au soir. Tant que la racine ÉTAIT le tableau de bord, `/` faisait
     // l'affaire ; elle rend un fil vide depuis #248, et cliquer Run emmenait
     // alors sur Work, qui s'allumait à sa place — un rail qui répond à côté.
-    href: '/dashboard',
+    href: '/automations',
     routes: [
       // Le tableau de bord OUVRE la liste : c'est la première ligne du
       // panneau, donc l'adresse de la destination.

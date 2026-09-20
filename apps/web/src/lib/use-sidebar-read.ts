@@ -42,6 +42,12 @@ export type SidebarRead<T> = {
   rows: readonly T[] | null;
   /** Ce que la lecture a répondu quand elle a échoué. Jamais un silence. */
   erreur: string | null;
+  /**
+   * Relit TOUT DE SUITE, sans attendre le tour d'horloge : ce qu'une ligne
+   * appelle après avoir renommé ou supprimé ce qu'elle porte (20/09), pour que
+   * le menu dise le nouvel état au moment où la personne le regarde.
+   */
+  relire: () => Promise<void>;
 };
 
 export function useSidebarRead<T>(
@@ -89,5 +95,5 @@ export function useSidebarRead<T>(
 
   usePolling(relire, SIDEBAR_POLL_MS, true);
 
-  return { rows, erreur };
+  return { rows, erreur, relire };
 }

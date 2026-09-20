@@ -434,17 +434,17 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     expect(groupLabels('Connect')).toEqual(['API Connectors', 'MCP Connectors', 'Credentials']);
   });
 
-  it('Run : Dashboard en tête, puis CRON et WEBHOOKS', async () => {
+  it('Run : CRON puis WEBHOOKS, et rien au-dessus', async () => {
     pathname = '/automations';
     await renderSidebar();
     expect(sectionTitles()).toEqual(['Cron', 'Webhooks']);
-    // ⚠️ « Dashboard » N'EST PAS SUR LA PLANCHE. Les cinq cadres l'omettent
-    // sans dire de le retirer, et une page qu'on n'atteint plus que par son
-    // adresse est le constat que la revue a déjà posé ailleurs. Le
-    // propriétaire a tranché le 19/09 au soir : elle revient, en tête du
-    // panneau, dans le seul groupe SANS titre.
-    expect(groupLabels('0')).toEqual(['Dashboard']);
-    expect(navLink('Dashboard').getAttribute('href')).toBe('/dashboard');
+    // « Dashboard » N'EST PLUS DANS LE PANNEAU (Quentin, 20/09 : « je l'ai
+    // enlevé »). La page `/dashboard` existe encore, sans lien vers elle ;
+    // le panneau ne porte que ce que la planche dessine.
+    expect(container.querySelector('[data-testid="nav-group-0"]')).toBeNull();
+    expect(
+      [...container.querySelectorAll('a')].some((a) => a.textContent?.trim() === 'Dashboard'),
+    ).toBe(false);
   });
 
   it('la case Run du rail MÈNE au tableau de bord, pas à la racine', async () => {
@@ -455,7 +455,9 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     // juste ; depuis #248 la racine rend un fil vide, et cliquer Run emmenait
     // donc sur Work, qui s'allumait à sa place. Les deux cases sont vérifiées
     // ensemble : les confondre est justement la faute qu'on a corrigée.
-    expect(railCell('run').getAttribute('href')).toBe('/dashboard');
+    // Depuis le 20/09 la première ligne de Run est CRON, dont le « + » mène aux
+    // automatisations : la case y mène aussi.
+    expect(railCell('run').getAttribute('href')).toBe('/automations');
     expect(railCell('work').getAttribute('href')).toBe('/');
   });
 

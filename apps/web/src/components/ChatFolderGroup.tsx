@@ -272,6 +272,10 @@ export default function ChatFolderGroup() {
                       href={t.href}
                       title={t.title}
                       depth="thread"
+                      // Le fil OUVERT s'allume (Quentin, 20/09) : la route est
+                      // son adresse, ou commence par elle.
+                      active={pathname === t.href || pathname.startsWith(`${t.href}/`)}
+                      markCurrent
                       testId={`folder-thread-${f.key}`}
                     >
                       <ThreadDot thread={t} />
