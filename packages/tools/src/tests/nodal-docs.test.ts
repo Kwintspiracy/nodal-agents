@@ -113,16 +113,14 @@ describe('nodal_docs @cap:consulter-l-aide/moteur', () => {
     expect(hits[0]?.url).toBe('/a#webhook-triggers');
   });
 
-  it('settles a near-tie in favour of the section that answers MORE of the question', () => {
-    // Reviewer C, pass 1, P2-11(a): nothing asserted that the coverage bonus
-    // did anything, so setting its weight to zero passed unnoticed.
-    //
-    // A near-tie is the only place it CAN matter, because every field weight is
-    // larger than it: a section that wins a field outright wins regardless.
-    // So the tie is built on purpose. `/heading` answers half the question in
-    // its heading and nothing else; `/both` answers the whole question in its
-    // prose. Their field scores land within a point of each other, and what
-    // separates them is that one of them addresses what was actually asked.
+  it('prefers a section that answers the WHOLE question over one that answers half of it loudly', () => {
+    // Reviewer C, pass 1 P2-11(a) then pass 2 C3. The first version of this
+    // test passed with a fixture that repeated one word six times, and the
+    // reviewer showed why: coverage was a bonus of at most three points against
+    // a heading weight of six, so it decided nothing outside a band that only
+    // repetition could reach. Coverage now SCALES the score, and the rule holds
+    // without a thumb on the scale: `/heading` says one of the two words, in
+    // the strongest field there is; `/both` says both, in the weakest.
     const index = {
       generator: 'test',
       sections: [
@@ -138,11 +136,33 @@ describe('nodal_docs @cap:consulter-l-aide/moteur', () => {
           pageTitle: 'P',
           heading: 'Elsewhere',
           url: '/both',
-          text: 'Connect it: telegram, telegram, telegram, telegram, telegram, telegram.',
+          text: 'Connect a telegram bot here.',
         },
       ],
     };
     expect(searchDocs(index, 'connect telegram', 2)[0]?.url).toBe('/both');
+  });
+
+  it('never serves one index the words of another', () => {
+    // The split words are memoised per index (Reviewer C, pass 2, P2-10), so
+    // the wrong key would answer a question about one index out of another's
+    // vocabulary. Keyed by identity, and proven by asking two in a row.
+    const first = {
+      generator: 'test',
+      sections: [
+        { page: 'a', pageTitle: 'A', heading: 'Webhooks', url: '/a', text: 'About webhooks.' },
+      ],
+    };
+    const second = {
+      generator: 'test',
+      sections: [
+        { page: 'b', pageTitle: 'B', heading: 'Schedules', url: '/b', text: 'About schedules.' },
+      ],
+    };
+    expect(searchDocs(first, 'webhooks', 2).map((h) => h.url)).toEqual(['/a']);
+    expect(searchDocs(second, 'webhooks', 2)).toEqual([]);
+    expect(searchDocs(second, 'schedules', 2).map((h) => h.url)).toEqual(['/b']);
+    expect(searchDocs(first, 'schedules', 2)).toEqual([]);
   });
 
   it('breaks a tie on the URL, never on the order the index was written in', () => {

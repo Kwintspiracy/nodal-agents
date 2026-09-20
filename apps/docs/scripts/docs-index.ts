@@ -173,17 +173,26 @@ export function stripMdx(body: string): string {
   // 1. Fenced blocks. Their newlines are folded into spaces on the way in:
   //    restored at the end they would otherwise reintroduce lines, and one of
   //    them starting with `##` would open a section that does not exist.
-  work = work.replace(/^[ \t]*```[^\n]*\n([\s\S]*?)^[ \t]*```[ \t]*$/gm, (_all, inner: string) =>
-    keep(
-      inner
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l !== '')
-        .join(' ')
-        // A shell comment opens with `#`. Restored at the start of a line it
-        // would be read as a heading, so the marker goes and the comment stays.
-        .replace(/^#+\s*/, ''),
-    ),
+  //
+  //    A fence is closed by AT LEAST as many backticks as opened it, which is
+  //    CommonMark's own rule and the reason the opening run is captured and fed
+  //    back into the pattern. Hard-coding three (Reviewer C, pass 2, C1) meant
+  //    a four-backtick block, the way one writes a fence that itself contains a
+  //    fence, would open a capture and run to the next three-backtick line
+  //    somewhere else on the page.
+  work = work.replace(
+    /^[ \t]*(`{3,})[^\n]*\n([\s\S]*?)^[ \t]*\1`*[ \t]*$/gm,
+    (_all, _open: string, inner: string) =>
+      keep(
+        inner
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l !== '')
+          .join(' ')
+          // A shell comment opens with `#`. Restored at the start of a line it
+          // would be read as a heading, so the marker goes and the comment stays.
+          .replace(/^#+\s*/, ''),
+      ),
   );
 
   // 2. Inline code spans, before anything can look inside them.
@@ -209,6 +218,14 @@ export function stripMdx(body: string): string {
   //    lines matches. `[^<>]` rather than `[^>]` keeps a malformed tag from
   //    swallowing the rest of the page.
   work = work.replace(/<\/?[A-Za-z][^<>]*>/g, ' ');
+
+  // 4b. MDX comments. None exist in the pages today (Reviewer C, pass 2, C2 —
+  //     every `{…}` in the corpus sits inside code, and is therefore already a
+  //     placeholder by now), and one written tomorrow would otherwise reach the
+  //     index as prose. A bare `{expression}` is deliberately LEFT alone: the
+  //     pages use braces as ordinary punctuation far more often than as MDX,
+  //     and removing them would be the C1 mistake in a third costume.
+  work = work.replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ');
 
   // 5. Links and images: the label stays, the target goes.
   work = work.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');

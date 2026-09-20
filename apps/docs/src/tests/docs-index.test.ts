@@ -256,6 +256,61 @@ describe('the documentation index @cap:consulter-l-aide/moteur', () => {
     expect(install).toContain('Text after the fence.');
   });
 
+  it('closes a fence with as many backticks as opened it', () => {
+    // Reviewer C, pass 2, C1. The closing pattern was hard-coded to three, so a
+    // four-backtick block (how one writes a fence that itself contains a fence)
+    // opened a capture that ran to the next three-backtick line somewhere else
+    // on the page, swallowing everything in between.
+    const page = [
+      '---',
+      'title: Nested',
+      '---',
+      '',
+      '## Writing a fence',
+      '',
+      '````md',
+      '```bash',
+      'npm i',
+      '```',
+      '````',
+      '',
+      'Prose after the outer fence.',
+      '',
+      '## A later section',
+      '',
+      'Still indexed.',
+    ].join('\n');
+
+    const sections = sectionsOfPage('sample.mdx', page);
+    expect(sections.map((s) => s.heading)).toEqual(['Writing a fence', 'A later section']);
+    // Exact, because the tell is the INNER closing fence: closed at three, the
+    // outer block ends early and that ``` is consumed as the outer terminator,
+    // so the example loses the line that makes it an example.
+    expect(sections[0]?.text).toBe('```bash npm i ``` Prose after the outer fence.');
+    expect(sections[1]?.text).toBe('Still indexed.');
+  });
+
+  it('removes an MDX comment, and leaves ordinary braces alone', () => {
+    // Reviewer C, pass 2, C2. No page carries an MDX comment today; one written
+    // tomorrow would have reached the index as prose. A bare `{expression}` is
+    // deliberately left: the pages use braces as punctuation far more often
+    // than as MDX, and eating them would be C1 in a third costume.
+    const page = [
+      '---',
+      'title: Braces',
+      'description: Placeholders.',
+      '---',
+      '',
+      '{/* a note to the author, not to the reader */}',
+      '',
+      'The template resolves `{field.subfield}` against the incoming JSON.',
+    ].join('\n');
+
+    const text = sectionsOfPage('sample.mdx', page)[0]?.text ?? '';
+    expect(text).not.toContain('a note to the author');
+    expect(text).toContain('{field.subfield}');
+  });
+
   it('ships no leftover markup anywhere in the index', () => {
     // Swept over the whole index rather than one page: both findings above
     // were "one page nobody looked at".

@@ -190,14 +190,36 @@ const WEIGHT_BODY = 2;
 /** Repeats count, but with sharply diminishing returns — never as a new field. */
 const WEIGHT_BODY_REPEAT = 0.2;
 const BODY_REPEAT_CAP = 1;
-/** Matching MORE of the question beats matching one of its words loudly. */
-const WEIGHT_COVERAGE = 3;
+/**
+ * Coverage — the share of the question's terms a section addresses at all —
+ * SCALES the field score instead of being added to it.
+ *
+ * It used to be a bonus of at most 3 points, and Reviewer C showed that was no
+ * rule at all: a heading match is worth 6, so on a two-word question a section
+ * answering half of it in its heading beat a section answering all of it in its
+ * prose, and the bonus only decided a band so narrow that the test pinning it
+ * had to repeat a word six times to land inside it. Proportional, the rule is
+ * the one the ranking wants: answering half the question is worth about half as
+ * much, whichever field the half was found in.
+ *
+ * The floor keeps a partial match from collapsing: a long question about one
+ * topic still points at that topic. With two terms, matching one scales to 0.6
+ * rather than 0.5.
+ */
+const COVERAGE_FLOOR = 0.2;
 
 export interface DocsHit extends DocsSection {
   score: number;
 }
 
-/** A section's fields, pre-normalized. Built once per search, not per term. */
+/**
+ * A section's fields, split into words once.
+ *
+ * Built per INDEX, not per search: the words of a section never change, and an
+ * agent asks the manual more than once in a job. Doing it inside the search
+ * loop re-split every section's prose on every question (Reviewer C, pass 2,
+ * P2-10) — the only part of the cost that grew with use.
+ */
 interface Indexed {
   section: DocsSection;
   heading: string[];
@@ -214,6 +236,24 @@ function indexSection(section: DocsSection): Indexed {
     pagePath: normalizeWords(section.page),
     body: normalizeWords(section.text),
   };
+}
+
+/**
+ * The split words of an index, memoised on the index object itself.
+ *
+ * Keyed by identity rather than stored in a module variable so a test that
+ * passes a literal index gets the same treatment as the shipped one, and two
+ * different indexes never see each other's words. A WeakMap so a discarded
+ * index is collected with its words.
+ */
+const indexedCache = new WeakMap<DocsIndex, Indexed[]>();
+
+function indexedSections(index: DocsIndex): Indexed[] {
+  const hit = indexedCache.get(index);
+  if (hit !== undefined) return hit;
+  const built = index.sections.map(indexSection);
+  indexedCache.set(index, built);
+  return built;
 }
 
 function scoreSection(entry: Indexed, terms: readonly string[]): number {
@@ -241,7 +281,8 @@ function scoreSection(entry: Indexed, terms: readonly string[]): number {
     if (hit) matched += 1;
   }
   if (matched === 0) return 0;
-  return score + (matched / terms.length) * WEIGHT_COVERAGE;
+  const coverage = matched / terms.length;
+  return score * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * coverage);
 }
 
 /**
@@ -257,9 +298,9 @@ export function searchDocs(index: DocsIndex, question: string, limit: number): D
   if (terms.length === 0) return [];
 
   const scored: DocsHit[] = [];
-  for (const section of index.sections) {
-    const score = scoreSection(indexSection(section), terms);
-    if (score > 0) scored.push({ ...section, score });
+  for (const entry of indexedSections(index)) {
+    const score = scoreSection(entry, terms);
+    if (score > 0) scored.push({ ...entry.section, score });
   }
 
   scored.sort((a, b) => (b.score !== a.score ? b.score - a.score : a.url.localeCompare(b.url)));
