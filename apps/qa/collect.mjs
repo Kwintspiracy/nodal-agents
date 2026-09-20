@@ -41,7 +41,7 @@ import {
   HORS_MESURE,
   etatDeMesure,
   repartitionDeLaMesure,
-  runsEnCours,
+  runsEnCoursDeDeuxLectures,
   revuesEnCours,
   releaseCheckEnCours,
   cequiTourne,
@@ -596,25 +596,42 @@ function memoire(essais, le, execution) {
 // dit si elle a répondu. Le calcul, lui, est PUR et vit dans `lib.mjs` — c'est
 // là que se prouve qu'une source muette ne devient jamais « rien en cours ».
 
-/** Les runs GitHub Actions en cours. `null` quand `gh` n'a pas répondu. */
+/**
+ * Les runs GitHub Actions en cours.
+ *
+ * DEUX APPELS, UNE SEULE SOURCE. GitHub ne rend pas les runs qui avancent et
+ * ceux qui attendent un runner dans la même requête ; la bande, elle, n'a qu'une
+ * ligne pour dire si elle a vu GitHub.
+ *
+ * ⚠️ IL SUFFIT QU'UN SEUL DES DEUX SE TAISE POUR QUE LA SOURCE SOIT MUETTE, et
+ * c'est un constat de la revue C de cette PR. `sh` avale toute erreur et rend la
+ * chaîne vide : si le premier appel répond et que le second tombe (jeton
+ * expiré, réseau coupé entre les deux), les runs en file disparaissaient en
+ * silence pendant que la bande affirmait avoir tout lu. Une réponse à moitié
+ * n'est pas une réponse (invariant #4).
+ */
 function runsGitHubEnCours() {
   const champs = 'databaseId,status,name,displayTitle,headBranch,createdAt,url';
-  const out = sh(`gh run list --status in_progress --limit 20 --json ${champs}`);
-  const enFile = sh(`gh run list --status queued --limit 20 --json ${champs}`);
-  if (!out && !enFile) {
-    console.warn('[qa] GitHub did not answer on the runs in flight, that source is MISSING.');
-    return runsEnCours(null);
-  }
-  const lire = (texte) => {
-    if (!texte) return [];
+  const lire = (statut) => {
+    const texte = sh(`gh run list --status ${statut} --limit 20 --json ${champs}`);
+    if (!texte) return null;
     try {
       const v = JSON.parse(texte);
-      return Array.isArray(v) ? v : [];
+      // Un `gh` qui répond autre chose que du JSON n'a pas répondu non plus :
+      // le rendre « lu, vide » serait la même approximation.
+      return Array.isArray(v) ? v : null;
     } catch {
-      return [];
+      return null;
     }
   };
-  return runsEnCours([...lire(out), ...lire(enFile)]);
+  const enCours = lire('in_progress');
+  const enFile = lire('queued');
+  if (enCours === null || enFile === null) {
+    console.warn('[qa] GitHub did not answer on the runs in flight, that source is MISSING.');
+  }
+  // La RÈGLE vit dans `lib.mjs`, où elle se teste : ici il ne reste que les deux
+  // lectures et le message.
+  return runsEnCoursDeDeuxLectures(enCours, enFile);
 }
 
 /**

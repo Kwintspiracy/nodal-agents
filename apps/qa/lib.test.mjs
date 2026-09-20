@@ -65,6 +65,7 @@ import {
   repartitionDeLaMesure,
   etatDuDeploiement,
   runsEnCours,
+  runsEnCoursDeDeuxLectures,
   revuesEnCours,
   releaseCheckEnCours,
   cequiTourne,
@@ -3578,9 +3579,34 @@ describe('ce qui tourne en ce moment (#296)', () => {
     expect(s.lignes[0].quoi).toBe('CI on #2');
     expect(s.lignes[0].ou).toBe('branch feat/x');
     expect(s.lignes[0].attend, 'un run qui avance attend quelque chose').toBeNull();
+    // L'ADRESSE du run : c'est par elle qu'on va voir ce qui tourne. Sans cette
+    // assertion, la perdre ne rougissait rien (revue C de cette PR).
+    expect(s.lignes[0].url).toBe('https://example.test/2');
     // Une file d'attente n'est pas un travail qui avance : le dire évite de
     // croire la machine occupée quand elle patiente.
     expect(s.lignes[1].attend).toBe('a runner');
+  });
+
+  it('UNE des deux lectures de GitHub qui se tait suffit à taire la source', () => {
+    // ⚠️ LE CAS QUI A FAIT RATER LA PREMIÈRE VERSION (revue C de la PR #326).
+    // GitHub ne rend pas dans la même requête ce qui avance et ce qui attend un
+    // runner. Rendre « lu » dès que l'UNE des deux répond faisait disparaître
+    // les runs en file en silence, pendant que la bande affirmait avoir tout lu.
+    const avance = [runCi(1, 'in_progress', 'main', '2026-09-20T09:00:00Z')];
+
+    expect(runsEnCoursDeDeuxLectures(avance, null).etat, 'la file muette a été ignorée').toBe(
+      'unreachable',
+    );
+    expect(runsEnCoursDeDeuxLectures(null, []).etat).toBe('unreachable');
+    // Un `gh` qui répond autre chose qu'un tableau n'a pas répondu non plus.
+    expect(runsEnCoursDeDeuxLectures(avance, 'pas du json').etat).toBe('unreachable');
+
+    // Les deux ont parlé : la source est lue, et les deux listes se rejoignent.
+    const lu = runsEnCoursDeDeuxLectures(avance, [
+      runCi(2, 'queued', 'feat/z', '2026-09-20T09:05:00Z'),
+    ]);
+    expect(lu.etat).toBe('read');
+    expect(lu.lignes.map((l) => l.quoi)).toEqual(['CI on #1', 'CI on #2']);
   });
 
   it('Nodal injoignable se DIT, et une passe de revue nomme sa PR', () => {

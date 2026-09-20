@@ -2678,6 +2678,28 @@ export function runsEnCours(runs) {
 }
 
 /**
+ * Les runs en cours à partir des DEUX lectures que GitHub impose.
+ *
+ * GitHub ne rend pas dans la même requête ce qui avance et ce qui attend un
+ * runner ; la bande, elle, n'a qu'une ligne pour dire si elle a vu GitHub.
+ *
+ * ⚠️ IL SUFFIT QU'UNE SEULE DES DEUX SE TAISE POUR QUE LA SOURCE SOIT MUETTE,
+ * et c'est un constat de la revue C de la PR #326. La première version rendait
+ * « lu » dès que l'une des deux répondait : les runs en file disparaissaient en
+ * silence pendant que la bande affirmait avoir tout lu. Une réponse à moitié
+ * n'est pas une réponse (invariant #4).
+ *
+ * `null` pour une lecture = elle n'a pas répondu, ou n'a pas répondu du JSON.
+ */
+export function runsEnCoursDeDeuxLectures(enCours, enFile) {
+  // UNE SEULE CONDITION, et c'est voulu : `null` n'est pas un tableau, donc un
+  // test séparé pour lui serait mort. Les deux lectures doivent avoir rendu une
+  // liste, sinon la source n'a pas répondu.
+  if (!Array.isArray(enCours) || !Array.isArray(enFile)) return runsEnCours(null);
+  return runsEnCours([...enCours, ...enFile]);
+}
+
+/**
  * Les passes de revue que Nodal fait tourner, lues sur ses propres travaux.
  *
  * `null` en entrée = la base n'était pas joignable. C'est le cas ORDINAIRE

@@ -1029,6 +1029,9 @@ describe('la bande « Running now », sur la page', () => {
       le: '2026-09-20T09:40:00Z',
     });
     expect(html).toContain('Running now: 2');
+    // L'HEURE DE LA LECTURE, sur la bande elle-même : sans elle, « running »
+    // est une affirmation sans date (revue C de cette PR).
+    expect(html).toContain('Read at 20 Sept 2026, 09:40Z');
     expect(html).toContain('release:check');
     expect(html).toContain('this machine, wt-proof');
     expect(html).toContain('CI on #317');
