@@ -684,10 +684,30 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     const html = renderToStaticMarkup(
       <DeliveryBlock summary={{ ...EMPTY, commands: quinze }} jobId={null} />,
     );
+    // LES DOUZE PREMIÈRES, DANS L'ORDRE. Sans la borne basse, un découpage
+    // arbitraire gardant douze items dont le onzième serait resté vert
+    // (Reviewer C, passe 2).
+    expect(html).toContain('commande-0');
     expect(html).toContain('commande-11');
     expect(html).not.toContain('commande-12');
-    // Les trois qui restent sont COMPTÉES, pas jetées.
+    // Les trois qui restent sont COMPTÉES, pas jetées — et la phrase est celle
+    // des COMMANDES, pas celle des fichiers, qui est la même au mot près.
+    expect(html).toContain('data-testid="commands-more"');
     expect(html).toContain('… and 3 more');
+  });
+
+  it('ne compte rien quand la liste de commandes tient en entier', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{ ...EMPTY, commands: [{ label: 'ls -la', observed: false }] }}
+        jobId={null}
+      />,
+    );
+    // « … and 0 more » demande d'être lu pour apprendre qu'il n'y a rien de
+    // plus. Les fichiers avaient déjà ce garde-fou ; les commandes ne l'avaient
+    // pas (Reviewer C, passe 2).
+    expect(html).not.toContain('commands-more');
+    expect(html).not.toContain('more');
   });
 
   it('dit « Delivered » et tait l’aveu quand la commande a été constatée', () => {

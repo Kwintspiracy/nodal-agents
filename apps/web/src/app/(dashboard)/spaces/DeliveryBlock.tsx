@@ -250,8 +250,13 @@ export default function DeliveryBlock({
               </li>
             ))}
           </ul>
+          {/* La MÊME phrase que sous les fichiers, quelques lignes plus haut :
+              une étiquette la distingue, sinon un test qui la cherche ne dit
+              pas de quelle liste il parle (Reviewer C, passe 2). */}
           {hiddenCommands > 0 && (
-            <p className="mt-1 text-mono-11 text-ink-4">… and {hiddenCommands} more</p>
+            <p data-testid="commands-more" className="mt-1 text-mono-11 text-ink-4">
+              … and {hiddenCommands} more
+            </p>
           )}
         </div>
       )}
