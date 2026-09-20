@@ -989,11 +989,24 @@ export async function registerDetectedProjectAction(
 
 // ─── listSidebarProjectsAction ───────────────────────────────────────────────
 
-/** Un projet, réduit à ce que le sous-menu de la barre latérale en dessine. */
+/** Un projet, réduit à ce que la section WORKSPACES de la barre en dessine. */
 export type SidebarProjectRow = {
   id: string;
   /** `display_name`, ou le nom du dossier — jamais un chemin vide à l'écran. */
   name: string;
+  /**
+   * Au moins UNE conversation rattachée à ce projet a bougé depuis que cette
+   * personne l'a ouverte, ou n'a jamais été ouverte (#258, décision de
+   * l'orchestrateur du 19/09 au soir).
+   *
+   * ⚠️ CE N'EST PAS UN ÉTAT DU PROJET. Un projet n'a pas de marqueur de
+   * lecture : la seule table qui en porte est `conversation_reads`. Le point
+   * de la planche est donc LU par la chaîne qui existe — un projet a des
+   * travaux (`agent_jobs.project_id`), un travail a une conversation, une
+   * conversation a un marqueur — et jamais inventé (invariant #4). Sans
+   * conversation non lue, pas de point.
+   */
+  unread: boolean;
 };
 
 /**
@@ -1053,7 +1066,39 @@ export async function listSidebarProjectsAction(
       .orderBy(desc(codeProjects.registeredAt), desc(codeProjects.id))
       .limit(parsed.data);
 
-    return ok(rows.map((r) => ({ id: r.id, name: r.displayName ?? basenameOf(r.path) })));
+    // Les projets sur lesquels QUELQUE CHOSE n'a pas été lu, en UNE requête
+    // groupée et BORNÉE aux projets qu'on vient de retenir : jamais une
+    // lecture par ligne, et jamais sur toute la table.
+    const nonLus = new Set<string>();
+    if (rows.length > 0) {
+      const vus = await getDb()
+        .selectDistinct({ projectId: agentJobs.projectId })
+        .from(agentJobs)
+        .innerJoin(conversations, eq(conversations.id, agentJobs.conversationId))
+        .leftJoin(conversationReads, readsOfUser(session.userId))
+        .where(
+          and(
+            inArray(
+              agentJobs.projectId,
+              rows.map((r) => r.id),
+            ),
+            // La MÊME colonne que les trois autres lectures de non-lu, et pas
+            // une quatrième écriture du même SQL (`lib/unread.ts`) : deux
+            // copies de cette comparaison finiraient par se contredire, et la
+            // barre dirait deux choses du même fil.
+            unreadColumn,
+          ),
+        );
+      for (const v of vus) if (v.projectId !== null) nonLus.add(v.projectId);
+    }
+
+    return ok(
+      rows.map((r) => ({
+        id: r.id,
+        name: r.displayName ?? basenameOf(r.path),
+        unread: nonLus.has(r.id),
+      })),
+    );
   } catch (err) {
     console.error('[projects] SIDEBAR_PROJECTS_FAILED', err);
     return fail('list_failed', 'Could not list the workspaces');
