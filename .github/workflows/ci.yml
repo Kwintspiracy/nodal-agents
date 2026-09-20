@@ -306,9 +306,10 @@ jobs:
   #
   # Si ce job flake, la cause est à traiter — pas le drapeau à remettre.
   #
-  # Deux parcours seulement : l'app démarre et se navigue, l'onglet Autonomie
-  # répond. Lancer tous les fichiers ici coûterait un ordre de grandeur de plus
-  # que ce que ça rapporte ; la mesure nocturne (`qa.yml`) les joue TOUS.
+  # Cinq parcours seulement (deux à l'origine : l'app démarre et se navigue,
+  # l'onglet Autonomie répond ; trois ajoutés depuis, nommés à l'étape). Lancer
+  # tous les fichiers ici coûterait un ordre de grandeur de plus que ce que ça
+  # rapporte ; la mesure nocturne (`qa.yml`) les joue TOUS.
   e2e-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25
