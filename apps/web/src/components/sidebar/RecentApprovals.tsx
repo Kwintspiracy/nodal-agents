@@ -46,6 +46,9 @@ export default function RecentApprovals() {
       isActive={(r) => pathname === '/approvals' && show === r.id}
       dot
       empty="No Recent Decision"
+      // « See all » sous les dix (Quentin, 20/09), quand la lecture a rendu la
+      // ligne de trop : toutes les décisions, sur la page des approbations.
+      seeAll="/approvals?status=all"
     />
   );
 }

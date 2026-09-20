@@ -82,22 +82,26 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
           </>
         )
       }
+      // Les onglets ne servent qu'à la LISTE : une demande ouverte seule n'en a
+      // pas besoin au-dessus d'elle (Quentin, 20/09).
       toolbar={
-        <div className="flex gap-1.5 text-xs">
-          {TABS.map((s) => (
-            <Link
-              key={s}
-              href={s === 'pending' ? '/approvals' : `/approvals?status=${s}`}
-              className={`rounded-md px-3 py-1.5 font-medium capitalize transition-colors ${
-                status === s
-                  ? 'bg-ink text-canvas'
-                  : 'border border-rule-2 text-ink-3 hover:border-rule hover:text-ink'
-              }`}
-            >
-              {s}
-            </Link>
-          ))}
-        </div>
+        show !== null ? undefined : (
+          <div className="flex gap-1.5 text-xs">
+            {TABS.map((s) => (
+              <Link
+                key={s}
+                href={s === 'pending' ? '/approvals' : `/approvals?status=${s}`}
+                className={`rounded-md px-3 py-1.5 font-medium capitalize transition-colors ${
+                  status === s
+                    ? 'bg-ink text-canvas'
+                    : 'border border-rule-2 text-ink-3 hover:border-rule hover:text-ink'
+                }`}
+              >
+                {s}
+              </Link>
+            ))}
+          </div>
+        )
       }
     >
       {result.data.length === 0 ? (
