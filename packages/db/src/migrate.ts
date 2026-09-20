@@ -78,10 +78,28 @@ function sourceMigrationsFolder(): string {
   return existsSync(sibling) ? sibling : join(here, '../migrations');
 }
 
+/**
+ * Le dossier patché de CE processus, s'il en a déjà fait un.
+ *
+ * ⚠️ SANS CE CACHE, CHAQUE APPEL LAISSE UN DOSSIER TEMPORAIRE DERRIÈRE LUI.
+ * `patchMigrationsForNoVector` fait un `mkdtempSync` et recopie les 118
+ * fichiers ; personne ne les efface. Tant que seul `runMigrations` appelait,
+ * c'était un dossier par démarrage. Le contrôle de trous (#298) en ajoute un,
+ * et la réparation deux de plus : quatre par démarrage sur une machine sans
+ * pgvector, à chaque fois. Le contenu ne dépend que du dossier source, qui ne
+ * bouge pas pendant un processus : une copie suffit (passe 1 de la revue).
+ */
+const dossiersPatches = new Map<string, string>();
+
 /** The folder Drizzle is actually pointed at — patched when pgvector is absent. */
 function effectiveMigrationsFolder(opts: RunMigrationsOptions): string {
   const source = sourceMigrationsFolder();
-  return opts.patchVectorAsText ? patchMigrationsForNoVector(source) : source;
+  if (opts.patchVectorAsText !== true) return source;
+  const deja = dossiersPatches.get(source);
+  if (deja !== undefined) return deja;
+  const patche = patchMigrationsForNoVector(source);
+  dossiersPatches.set(source, patche);
+  return patche;
 }
 
 /**

@@ -110,12 +110,15 @@ function printLogTail(service: 'runner' | 'web' | string, lines: number): void {
  * Écrit à part pour une raison : c'est la seule chose que la personne verra,
  * et `runUp` est trop grosse pour qu'un test la joue. Ici, un test peut
  * vérifier que chaque migration manquante est NOMMÉE et que la commande de
- * réparation est exacte — y compris le `--dev` de celui qui tournait en dev,
- * pour qu'un copier-coller ne le renvoie pas en production.
+ * réparation REND LE DÉMARRAGE QU'ON AVAIT. Les deux drapeaux comptent :
+ * `--dev` pour ne pas renvoyer un poste de développement sur un build de
+ * production, et `--detach` parce que le planificateur de tâches qui relance
+ * Nodal après un redémarrage appelle précisément `up --detach` — une commande
+ * sans lui rendrait la stack au terminal, et elle mourrait avec lui.
  */
 export function migrationGapRefusal(
   gaps: readonly { tag: string }[],
-  opts: { dev: boolean },
+  opts: { dev: boolean; detach: boolean },
 ): string {
   const combien = `${gaps.length} migration${gaps.length === 1 ? '' : 's'}`;
   return [
@@ -128,7 +131,7 @@ export function migrationGapRefusal(
     '',
     '  Apply them with:',
     '',
-    `    nodal-agents up --repair-migrations${opts.dev ? ' --dev' : ''}`,
+    `    nodal-agents up --repair-migrations${opts.dev ? ' --dev' : ''}${opts.detach ? ' --detach' : ''}`,
   ].join('\n');
 }
 
@@ -841,7 +844,9 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       `${gaps.length} migration${gaps.length === 1 ? '' : 's'} in the journal never reached this database`,
     );
     await pg.stop();
-    throw new Error(migrationGapRefusal(gaps, { dev: opts.dev === true }));
+    throw new Error(
+      migrationGapRefusal(gaps, { dev: opts.dev === true, detach: opts.detach === true }),
+    );
   }
   gapSpinner.succeed(chalk.green('Migration journal complete'));
 
