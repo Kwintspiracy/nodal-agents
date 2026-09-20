@@ -245,6 +245,14 @@ function indexSection(section: DocsSection): Indexed {
  * passes a literal index gets the same treatment as the shipped one, and two
  * different indexes never see each other's words. A WeakMap so a discarded
  * index is collected with its words.
+ *
+ * The contract that follows from keying on identity, and that Reviewer C asked
+ * to see written down (pass 3, C1): an index is IMMUTABLE once searched.
+ * Pushing a section onto `index.sections` after a first search does not
+ * invalidate anything, and the second search answers out of the old
+ * vocabulary. That is sound for the only index this ships with, which is read
+ * once from a file that cannot change under a running process; a caller
+ * building one by hand must pass a new object rather than edit the old one.
  */
 const indexedCache = new WeakMap<DocsIndex, Indexed[]>();
 
@@ -287,6 +295,9 @@ function scoreSection(entry: Indexed, terms: readonly string[]): number {
 
 /**
  * The best sections for a question, best first.
+ *
+ * `index` must be IMMUTABLE once passed here: its words are split once and
+ * memoised against the object (see `indexedSections`).
  *
  * Ties break on the URL, so the result never depends on the order the index
  * happened to be written in. A question whose every word is a stopword, or
