@@ -126,7 +126,7 @@ export function ProjectFilesPanel({ title, children }: { title: string; children
       // (marge négative de sa largeur plus l'écart) et le contenu reste au
       // milieu de la page. En dessous, elle prend sa place dans la rangée et
       // le contenu se recentre dans ce qui reste, donc glisse vers la gauche.
-      className="mx-5 mt-6 flex max-h-[70vh] flex-col overflow-hidden rounded-xl border border-rule bg-paper shadow-[0_12px_32px_rgba(0,0,0,0.28)] sm:mx-8 lg:sticky lg:top-6 lg:mx-0 lg:mt-0 lg:max-h-[calc(100vh-48px)] lg:w-[400px] lg:shrink-0 lg:self-start min-[2372px]:-ml-[424px]"
+      className="mt-6 flex max-h-[70vh] flex-col overflow-hidden rounded-xl border border-rule bg-paper shadow-[0_12px_32px_rgba(0,0,0,0.28)] lg:sticky lg:top-6 lg:mt-0 lg:max-h-[calc(100vh-48px)] lg:w-[400px] lg:shrink-0 lg:self-start min-[2372px]:-ml-[424px]"
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-rule-2 py-3 pr-3 pl-5">
         <h2 id={titleId} className="min-w-0 truncate text-title-16 text-ink">
@@ -166,12 +166,18 @@ export function ProjectPanelBody({
   children: ReactNode;
 }) {
   return (
+    // Les gouttières sont celles du `PageShell` (la page est `fluid`, son corps
+    // garde `px-5 sm:px-8 lg:px-9`) : la colonne n'en remet PAS, et sa largeur
+    // maximale est celle du CONTENU des autres pages — leur boîte de 1152 px
+    // moins ses deux gouttières de 36 — pour que la liste fasse exactement la
+    // largeur d'une liste ailleurs (Quentin, 20/09 : « pas la même taille que
+    // les autres pages »).
     <div
       data-testid="project-body"
-      className="flex flex-col items-stretch pt-6 pb-10 lg:flex-row lg:items-start lg:gap-6 lg:pr-6"
+      className="flex flex-col items-stretch lg:flex-row lg:items-start lg:gap-6"
     >
       <div className="min-w-0 flex-1">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-5 sm:px-8 lg:px-9">
+        <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-4">
           {actions}
           {children}
         </div>

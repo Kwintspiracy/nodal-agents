@@ -111,7 +111,7 @@ describe('ProjectScreen — l’ordre de la page @cap:travailler-sur-des-fichier
     // Une rangée : la colonne de contenu, puis le panneau collant à droite.
     expect(corps).toContain('lg:flex-row');
     // La colonne aux mesures de `PageShell` : `max-w-6xl` GOUTTIÈRES COMPRISES.
-    expect(html.slice(iCorps)).toContain('mx-auto flex w-full max-w-6xl flex-col gap-4 px-5');
+    expect(html.slice(iCorps)).toContain('mx-auto flex w-full max-w-[1080px] flex-col gap-4');
     const iPanneau = html.indexOf('data-testid="project-files-panel"');
     const panneau = html.slice(iPanneau, html.indexOf('>', iPanneau));
     expect(panneau).toContain('lg:sticky lg:top-6');
