@@ -171,6 +171,29 @@ describe('the documentation index @cap:consulter-l-aide/moteur', () => {
     expect(text).toContain('--port <n>');
   });
 
+  it('protects a code span that wraps across the line break', () => {
+    // The pages wrap prose at 80 columns, so a span lands across the wrap four
+    // times today. Matched only within a line, those four are unprotected and
+    // C1 comes back in a corner. One break is allowed, and no more: an
+    // unmatched backtick must not swallow the rest of the page.
+    const page = [
+      '---',
+      'title: Wrapped',
+      '---',
+      '',
+      'Approve `@embedded-postgres/',
+      '<platform>` and install again.',
+      '',
+      'A stray ` backtick opens nothing it cannot close within a line or two,',
+      'and the rest of this paragraph is still here, with <Callout> gone.',
+    ].join('\n');
+
+    const text = sectionsOfPage('sample.mdx', page)[0]?.text ?? '';
+    expect(text).toContain('@embedded-postgres/ <platform>');
+    expect(text).toContain('the rest of this paragraph is still here');
+    expect(text).not.toContain('<Callout>');
+  });
+
   it('removes a JSX tag that spans several lines', () => {
     // Reviewer C, pass 1, C2. The tag removal ran line by line, so a `<Card>`
     // written across five lines never matched and was shipped verbatim in the

@@ -187,7 +187,17 @@ export function stripMdx(body: string): string {
   );
 
   // 2. Inline code spans, before anything can look inside them.
-  work = work.replace(/`([^`\n]+)`/g, (_all, inner: string) => keep(inner));
+  //
+  //    ONE line break is allowed inside a span, because the pages wrap prose at
+  //    80 columns and a span lands across the wrap four times today. Matching
+  //    only single-line spans would leave those four unprotected, which is C1
+  //    again in a corner; matching any number of line breaks would let a stray
+  //    backtick swallow the rest of the page. The break folds to a space, for
+  //    the same reason a fence does: restored at the start of a line, code can
+  //    otherwise be read as markup.
+  work = work.replace(/`([^`\n]*\n?[^`\n]*)`/g, (_all, inner: string) =>
+    keep(inner.replace(/\s*\n\s*/g, ' ')),
+  );
 
   // 3. `import { Callout } from 'fumadocs-ui/components/callout';`
   work = work
