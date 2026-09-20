@@ -1,36 +1,30 @@
 // failure.test.ts — un refus de checkpoint NOMME sa cause (issue #245).
 //
-// Ce qui est prouvé ici n'est pas qu'un message se met en forme : c'est qu'une
-// borne de temps DÉPASSÉE sur un vrai arbre, par un vrai `git add -A`, produit
-// un code typé et des chiffres mesurés. D'où la borne injectée à 1 ms plutôt
-// qu'un faux `execFile` : un faux prouverait la mise en forme et rien d'autre,
-// exactement le test qui reste vert le jour où la borne cesse de se déclencher.
-//
 // Le 19/09/2026, le refus disait `checkpoint_failed: ... Cause: git add timed
 // out after 30000 ms`. Les agents ont cherché une panne du dossier pendant des
 // heures, alors que la cause tenait en une phrase : 3,3 Go de paquets de
 // relecture y avaient été déballés.
+//
+// CE FICHIER NE FAIT JAMAIS DÉPENDRE UN VERDICT DU TEMPS. Tout ce qui exige
+// qu'une borne TOMBE vit dans `failure-timeout.test.ts`, où un enfant détourné
+// pend vraiment ; ces cas-là y étaient forcés par une borne de 1 ms sur un vrai
+// git, c'est-à-dire par une course, et la CI l'a gagnée le 20/09 : verte sous
+// Windows où lancer git est lent, rouge sous Linux où `rev-parse` rend la main
+// avant le minuteur. Ici, chaque cas s'appuie sur une RÉPONSE de git (une ref
+// absente, un chemin hors de l'arbre), sur le système de fichiers, ou sur du
+// calcul pur.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  snapshot,
-  headCheckpoint,
-  gitAllowingMiss,
-  listCheckpoints,
-  diffFile,
-} from './checkpoints';
+import { snapshot, gitAllowingMiss, listCheckpoints, diffFile } from './checkpoints';
 import {
   CheckpointError,
   isCheckpointError,
   measureWorkspace,
   SKIPPED_DIRS,
   SKIPPED_FILE_SUFFIXES,
-  PATH_MAX_CHARS,
-  checkpointFailureLogLine,
-  checkpointRefusalMessage,
   formatBytes,
   formatCount,
   formatDuration,
@@ -78,82 +72,6 @@ async function refusDe(promesse: Promise<unknown>): Promise<CheckpointError> {
   throw new Error("l'instantané a réussi alors que le test attendait un refus");
 }
 
-describe('un instantané qui dépasse la borne @cap:executer-une-commande/moteur', () => {
-  it('rend le code `snapshot_timeout` ET les faits mesurés du dossier', async () => {
-    await remplirLeDossier();
-
-    const err = await refusDe(snapshot(store, ws, 'before run_command', { timeoutMs: 1 }));
-
-    expect(err.code).toBe('snapshot_timeout');
-    expect(err.workspace).toBe(ws);
-    expect(err.limitMs).toBe(1);
-    // Les mesures sont RÉELLES : 40 fichiers de 1 Ko viennent d'être écrits.
-    expect(err.measure).not.toBeNull();
-    expect(err.measure?.files).toBe(40);
-    expect(err.measure?.bytes).toBe(40 * 1024);
-    expect(err.measure?.capped).toBe(false);
-  });
-
-  it('dit la phrase actionnable : la taille, le nombre de fichiers, la borne, le geste', async () => {
-    await remplirLeDossier();
-
-    const err = await refusDe(snapshot(store, ws, 'before run_command', { timeoutMs: 1 }));
-
-    // La phrase ENTIÈRE, pas un fragment : c'est elle que l'agent lit et que le
-    // fil affiche. Un test sur « contient snapshot_timeout » laisserait passer
-    // un message redevenu générique après les deux premiers mots.
-    expect(err.message).toBe(
-      `snapshot_timeout: the "shared" workspace (${ws}) holds 40 KB / 40 files, ` +
-        `the safety snapshot cannot finish in 1 ms; move or ignore the heavy folders.`,
-    );
-  });
-
-  it('le message du refus ajoute la conséquence, jamais une deuxième version de la cause', async () => {
-    await remplirLeDossier();
-
-    const err = await refusDe(snapshot(store, ws, 'before run_command', { timeoutMs: 1 }));
-
-    expect(checkpointRefusalMessage(err, '"run_command"')).toBe(
-      `${err.message} "run_command" was refused rather than run without a way back.`,
-    );
-  });
-
-  it('la ligne de journal porte le code et chaque mesure', async () => {
-    await remplirLeDossier();
-
-    const err = await refusDe(snapshot(store, ws, 'before run_command', { timeoutMs: 1 }));
-    const ligne = checkpointFailureLogLine(err, { tool: 'run_command', job: 'job-1', turn: 3 });
-
-    expect(ligne).toContain('CHECKPOINT_REFUSED');
-    expect(ligne).toContain('code=snapshot_timeout');
-    expect(ligne).toContain('limit_ms=1');
-    expect(ligne).toContain(`bytes=${40 * 1024}`);
-    expect(ligne).toContain('files=40');
-    expect(ligne).toContain('files_capped=false');
-    expect(ligne).toContain('tool=run_command');
-    expect(ligne).toContain('job=job-1');
-    expect(ligne).toContain('turn=3');
-    // Une ligne, jamais deux : un journal qui se coupe en deux ne se grep plus.
-    expect(ligne.split('\n')).toHaveLength(1);
-  });
-
-  it('la borne vient aussi de l’environnement, pour un dossier gros mais légitime', async () => {
-    await remplirLeDossier(4);
-    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
-
-    const err = await refusDe(snapshot(store, ws, 'before run_command'));
-
-    expect(err.code).toBe('snapshot_timeout');
-    expect(err.limitMs).toBe(1);
-  });
-});
-
-/** Les parents d'un commit du magasin, lus sur le magasin lui-même. */
-async function parentsDe(sha: string): Promise<string[]> {
-  const ligne = await gitAllowingMiss(store, ws, ['rev-list', '--parents', '-n', '1', sha]);
-  return ligne.split(/\s+/).filter(Boolean).slice(1);
-}
-
 describe('une PANNE n’est jamais lue comme une réponse @cap:executer-une-commande/moteur', () => {
   // Revue de la PR #262, passe 1. Les deux lectures de l'instantané portaient
   // un `.catch(() => '')` nu. Depuis que la borne de temps existe (#245), un
@@ -161,13 +79,10 @@ describe('une PANNE n’est jamais lue comme une réponse @cap:executer-une-comm
   // `commit-tree` repartait sans `-p`, `update-ref` posait un commit RACINE et
   // la chaîne des checkpoints se coupait en silence.
   //
-  // POURQUOI LA DISTINCTION EST ÉPINGLÉE ICI, et pas par un instantané entier
-  // calibré pour frapper le `rev-parse` : chaque commande git a SA borne, et
-  // `add -A` parcourt l'arbre quand `rev-parse` lit un fichier. `add -A` est
-  // donc toujours le plus lent, et aucune valeur de borne ne tue le second
-  // sans avoir tué le premier. Un test qui prétendrait le contraire serait
-  // instable. C'est donc `gitAllowingMiss` — la fonction que l'instantané
-  // utilise, sur un vrai magasin — qui est épinglée, avec de VRAIES erreurs.
+  // ICI, LE CÔTÉ « RÉPONSE » de la distinction : une ref absente doit rester
+  // une chaîne vide. Le côté « panne » demande qu'une borne tombe, et vit donc
+  // dans `failure-timeout.test.ts`. Les deux se tiennent : sans ce contrôle,
+  // « lève sur une panne » pourrait devenir « lève ».
 
   it('une ref absente est une RÉPONSE : la lecture rend une chaîne vide', async () => {
     await writeFile(join(ws, 'a.txt'), 'bonjour');
@@ -182,43 +97,6 @@ describe('une PANNE n’est jamais lue comme une réponse @cap:executer-une-comm
 
     expect(absente).toBe('');
   });
-
-  it('une borne dépassée est une PANNE : la lecture REJETTE au lieu de rendre une chaîne vide', async () => {
-    await writeFile(join(ws, 'a.txt'), 'bonjour');
-    const premier = await snapshot(store, ws, 'premier');
-    const cible = premier!.sha;
-
-    // La même lecture, sans borne serrée, répond bien.
-    expect(await gitAllowingMiss(store, ws, ['rev-parse', '--verify', '--quiet', cible])).toBe(
-      cible,
-    );
-
-    // Avec une borne de 1 ms, elle ne répond pas : elle doit le DIRE.
-    await expect(
-      gitAllowingMiss(store, ws, ['rev-parse', '--verify', '--quiet', cible], { timeoutMs: 1 }),
-    ).rejects.toThrow();
-  });
-
-  it('la chaîne des instantanés ne repart JAMAIS d’un commit racine', async () => {
-    // Le dommage que tout ça évite, constaté sur le magasin : chaque photo a
-    // la précédente pour parent, donc l'état d'avant reste retrouvable.
-    await writeFile(join(ws, 'a.txt'), 'un');
-    const premier = await snapshot(store, ws, 'premier');
-    await writeFile(join(ws, 'a.txt'), 'deux');
-    const second = await snapshot(store, ws, 'second');
-
-    // Une tentative qui PANNE entre les deux ne bouge pas la ref.
-    await writeFile(join(ws, 'a.txt'), 'trois');
-    const err = await refusDe(snapshot(store, ws, 'tue par la borne', { timeoutMs: 1 }));
-    expect(err.code).toBe('snapshot_timeout');
-    expect(await headCheckpoint(store, ws)).toBe(second!.sha);
-
-    // Puis un instantané qui réussit reprend la chaîne où elle était.
-    const troisieme = await snapshot(store, ws, 'troisieme');
-    expect(await parentsDe(troisieme!.sha)).toEqual([second!.sha]);
-    expect(await parentsDe(second!.sha)).toEqual([premier!.sha]);
-    expect(await parentsDe(premier!.sha)).toEqual([]);
-  });
 });
 
 describe('une LECTURE du magasin ne ment pas non plus @cap:executer-une-commande/moteur', () => {
@@ -228,29 +106,8 @@ describe('une LECTURE du magasin ne ment pas non plus @cap:executer-une-commande
   // classe de silence que celui que ce lot supprime côté écriture, et il frappe
   // exactement les magasins qui grossissent.
   //
-  // Le dépassement est provoqué par `NODALAI_CHECKPOINT_TIMEOUT_MS`, comme pour
-  // l'instantané, et il est RÉEL : le magasin contient vraiment des photos, et
-  // la lecture ordinaire vient de les rendre juste avant.
-
-  it('`listCheckpoints` LÈVE au lieu de rendre une liste vide', async () => {
-    await writeFile(join(ws, 'a.txt'), 'un');
-    await snapshot(store, ws, 'premier');
-    await writeFile(join(ws, 'a.txt'), 'deux');
-    await snapshot(store, ws, 'second');
-    expect(await listCheckpoints(store, ws)).toHaveLength(2);
-
-    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
-    const err = await refusDe(listCheckpoints(store, ws));
-
-    expect(err.code).toBe('checkpoint_read_timeout');
-    expect(err.operation).toBe('read');
-    // Aucune mesure : relire ne parcourt pas le dossier, donc sa taille ne
-    // serait pas la cause et le geste de l'instantané ne s'applique pas.
-    expect(err.measure).toBeNull();
-    expect(err.message).toContain('reading the checkpoint history');
-    expect(err.message).toContain('no history is shown rather than an empty one');
-    expect(err.message).not.toContain('move or ignore the heavy folders');
-  });
+  // ICI, LES CONTRÔLES : une vraie réponse de git reste une réponse. Les cas
+  // où la lecture PANNE vivent dans `failure-timeout.test.ts`.
 
   it('un dossier jamais photographié rend TOUJOURS une liste vide', async () => {
     // Le contrôle du correctif trop large : une vraie réponse de git reste une
@@ -263,20 +120,6 @@ describe('une LECTURE du magasin ne ment pas non plus @cap:executer-une-commande
     expect(await listCheckpoints(store, jamais)).toEqual([]);
   });
 
-  it('`diffFile` LÈVE au lieu de dire qu’un fichier photographié est hors instantané', async () => {
-    await writeFile(join(ws, 'a.txt'), 'avant');
-    const premier = await snapshot(store, ws, 'premier');
-    await writeFile(join(ws, 'a.txt'), 'apres');
-    expect((await diffFile(store, ws, premier!.sha, null, 'a.txt')).kind).toBe('diff');
-
-    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
-    const err = await refusDe(diffFile(store, ws, premier!.sha, null, 'a.txt'));
-
-    expect(err.code).toBe('checkpoint_read_timeout');
-    expect(err.operation).toBe('read');
-    expect(err.message).toContain('reading the checkpoint history');
-  });
-
   it('un chemin réellement absent des deux états rend TOUJOURS `not_in_snapshot`', async () => {
     await writeFile(join(ws, 'a.txt'), 'avant');
     const premier = await snapshot(store, ws, 'premier');
@@ -284,20 +127,6 @@ describe('une LECTURE du magasin ne ment pas non plus @cap:executer-une-commande
     expect((await diffFile(store, ws, premier!.sha, null, 'jamais-ecrit.txt')).kind).toBe(
       'not_in_snapshot',
     );
-  });
-
-  it('la ligne de journal d’une lecture dit son opération', async () => {
-    await writeFile(join(ws, 'a.txt'), 'un');
-    await snapshot(store, ws, 'premier');
-    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
-
-    const err = await refusDe(listCheckpoints(store, ws));
-    const ligne = checkpointFailureLogLine(err, { route: 'file-diff' });
-
-    expect(ligne).toContain('code=checkpoint_read_timeout');
-    expect(ligne).toContain('operation=read');
-    expect(ligne).toContain('bytes=unmeasured');
-    expect(ligne).toContain('route=file-diff');
   });
 });
 
@@ -463,26 +292,9 @@ describe('la phrase est bornée SANS perdre son geste @cap:executer-une-commande
   // sur un chemin profond la coupe tombait dans la fin de la phrase — elle
   // mangeait « move or ignore the heavy folders », la seule partie sur
   // laquelle quelqu'un peut agir. Ce sont les parties VARIABLES qui sont
-  // bornées désormais, chacune en le disant.
-
-  it('un chemin très long est raccourci PAR LE MILIEU et la phrase finit toujours par le geste', async () => {
-    const profond = join(ws, ...Array.from({ length: 14 }, (_, i) => `un-dossier-assez-long-${i}`));
-    await mkdir(profond, { recursive: true });
-    await writeFile(join(profond, 'a.txt'), 'bonjour');
-    expect(profond.length).toBeGreaterThan(PATH_MAX_CHARS);
-
-    const err = await refusDe(snapshot(store, profond, 'before run_command', { timeoutMs: 1 }));
-
-    expect(err.message).toContain('…');
-    expect(err.message).toContain(profond.slice(0, 40));
-    expect(err.message.endsWith('move or ignore the heavy folders.')).toBe(true);
-    // Et la conséquence survit elle aussi : c'est ce que l'appelant coupait.
-    expect(
-      checkpointRefusalMessage(err, 'the code harness turn').endsWith(
-        'the code harness turn was refused rather than run without a way back.',
-      ),
-    ).toBe(true);
-  });
+  // bornées désormais, chacune en le disant. Le chemin raccourci se constate
+  // sur un vrai refus, donc dans `failure-timeout.test.ts` ; ici, la coupe de
+  // la sortie de git, qui ne demande aucune borne.
 
   it('une sortie de git interminable est coupée, et le dit', () => {
     const err = new CheckpointError({
