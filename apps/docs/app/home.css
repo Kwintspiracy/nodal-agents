@@ -173,10 +173,11 @@
   background:
     linear-gradient(180deg, rgba(4, 12, 40, 0) 88%, var(--home-bg) 100%),
     linear-gradient(
-      90deg,
-      rgba(4, 12, 40, 0.86) 0%,
-      rgba(4, 12, 40, 0.62) 42%,
-      rgba(4, 12, 40, 0.18) 100%
+      270deg,
+      rgba(4, 12, 40, 0.88) 0%,
+      rgba(4, 12, 40, 0.8) 40%,
+      rgba(4, 12, 40, 0.3) 62%,
+      rgba(4, 12, 40, 0.06) 100%
     );
 }
 .home-hero-band .home-mono {
@@ -218,10 +219,13 @@
 .home-hero {
   min-height: clamp(520px, 72vh, 760px);
   padding-block: clamp(56px, 8vw, 96px) clamp(72px, 9vw, 120px);
-  display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
-  gap: clamp(28px, 5vw, 64px);
+  display: flex;
+  justify-content: flex-end;
   align-items: center;
+}
+.home-hero-copy {
+  width: 100%;
+  max-width: 600px;
 }
 .home-hero h1 {
   font-size: clamp(40px, 7vw, 74px);
@@ -238,7 +242,18 @@
   margin: 22px 0 0;
 }
 .home-hero-aside {
-  padding-bottom: 6px;
+  margin-top: 32px;
+}
+/* Narrow screens: one column over the whole picture, so the veil covers it
+   all, evenly. */
+@media (max-width: 900px) {
+  .home-hero-band::before {
+    background:
+      linear-gradient(180deg, rgba(4, 12, 40, 0) 88%, var(--home-bg) 100%), rgba(4, 12, 40, 0.74);
+  }
+  .home-hero-copy {
+    max-width: none;
+  }
 }
 
 .home-install {

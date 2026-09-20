@@ -223,7 +223,9 @@ export default function Home() {
         style={{ backgroundImage: `url(${BASE_PATH}/home/hero.webp)` }}
       >
         <div className="home-wrap home-hero">
-          <div>
+          {/* One column, set to the right: the dog and the conveyor live in
+              the left half of the picture and stay uncovered. */}
+          <div className="home-hero-copy">
             <p className="home-mono">Self-hosted agent platform · v{VERSION}</p>
             <h1 className="home-display">
               Your AI agents. Your data. <em>Your machine.</em>
@@ -241,23 +243,23 @@ export default function Home() {
                 View the source
               </a>
             </div>
+            <aside className="home-hero-aside">
+              <div className="home-install">
+                <div>
+                  <span className="p">$ </span>
+                  <span className="c">npm install -g nodal-agents</span>
+                </div>
+                <div>
+                  <span className="p">$ </span>
+                  <span className="c">nodal-agents up</span>
+                </div>
+              </div>
+              <p className="home-install-note">
+                Node 22 or newer. No config file, no account, nothing to answer in the terminal.
+                Your browser opens on a guided setup. Data lives in <code>~/.nodalai</code>.
+              </p>
+            </aside>
           </div>
-          <aside className="home-hero-aside">
-            <div className="home-install">
-              <div>
-                <span className="p">$ </span>
-                <span className="c">npm install -g nodal-agents</span>
-              </div>
-              <div>
-                <span className="p">$ </span>
-                <span className="c">nodal-agents up</span>
-              </div>
-            </div>
-            <p className="home-install-note">
-              Node 22 or newer. No config file, no account, nothing to answer in the terminal. Your
-              browser opens on a guided setup. Data lives in <code>~/.nodalai</code>.
-            </p>
-          </aside>
         </div>
       </section>
 
