@@ -66,6 +66,7 @@ import InboxFolder from './ui/InboxFolder';
 import SidebarCaret from './ui/SidebarCaret';
 import SidebarRow, { SIDEBAR_NOTE } from './ui/SidebarRow';
 import ThreadDot from './ui/ThreadDot';
+import RowActions from './sidebar/RowActions';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
 import { chatFolders, unfoldedRows, DASHBOARD_FOLDER, MCP_FOLDER } from '@/lib/chat-folders.ts';
@@ -220,7 +221,7 @@ export default function ChatFolderGroup() {
   });
 
   return (
-    <div className="flex flex-col gap-0.5" data-testid="chat-folders">
+    <div className="flex flex-col gap-0" data-testid="chat-folders">
       {folders.map((f) => {
         const Icon = FOLDER_ICON[f.key] ?? PaperPlaneTilt;
         const ouvert = deplies[f.key] === true;
@@ -258,7 +259,7 @@ export default function ChatFolderGroup() {
               }
             />
             {ouvert && (
-              <div className="flex flex-col gap-0.5 pt-0.5" data-testid={`folder-threads-${f.key}`}>
+              <div className="flex flex-col gap-0 pt-0" data-testid={`folder-threads-${f.key}`}>
                 {erreur !== null ? (
                   <p className={SIDEBAR_NOTE}>{erreur}</p>
                 ) : fils === null ? (
@@ -272,6 +273,23 @@ export default function ChatFolderGroup() {
                       href={t.href}
                       title={t.title}
                       depth="thread"
+                      // Le fil OUVERT s'allume (Quentin, 20/09) : la route est
+                      // son adresse, ou commence par elle.
+                      active={pathname === t.href || pathname.startsWith(`${t.href}/`)}
+                      markCurrent
+                      // Les trois points, sur un FIL seulement (20/09) : un run
+                      // (`/jobs/<id>`) ne se renomme ni ne se supprime d'ici.
+                      menu={
+                        t.href.startsWith('/chat/') ? (
+                          <RowActions
+                            kind="conversation"
+                            id={t.href.slice('/chat/'.length)}
+                            name={t.title}
+                            href={t.href}
+                            onDone={relire}
+                          />
+                        ) : undefined
+                      }
                       testId={`folder-thread-${f.key}`}
                     >
                       <ThreadDot thread={t} />

@@ -90,31 +90,19 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
       [
         // « Agents » n'est PAS dans cette liste : depuis #258 c'est un dossier
         // qui plie, donc un bouton, et il est verifie plus bas comme tel.
+        // « LLM Providers » n'est plus ici : depuis le 20/09 (PR #297) il vit
+        // dans le panneau Settings, entre Workspace et Install.
         '/agents',
-        [
-          'Skills',
-          'Learned Skills',
-          'Memory',
-          'API Connectors',
-          'MCP Connectors',
-          'Credentials',
-          'LLM Providers',
-        ],
+        ['Skills', 'Learned Skills', 'Memory', 'API Connectors', 'MCP Connectors', 'Credentials'],
       ],
+      // `/automations` n'est plus dans cette table : le panneau Run n'a PLUS
+      // d'entree ECRITE depuis le 20/09 (la ligne Dashboard est retiree) —
+      // CRON et WEBHOOKS sont des listes lues en base, vides sur une stack
+      // neuve, et « une section a un lien » n'y est donc pas un fait a tester.
       [
-        // `/automations`, et PLUS `/logs` : depuis #258, Logs vit sur le RAIL
-        // et n'ouvre aucun panneau. `/automations` est la route de Run.
-        '/automations',
-        [
-          // La seule entree ECRITE du panneau Run : CRON et WEBHOOKS sont des
-          // listes lues en base, vides sur une stack neuve.
-          'Dashboard',
-        ],
-      ],
-      [
-        // Les quatre familles de reglages, chacune ouvrant un reglage REEL.
+        // Les cinq entrees de Settings, chacune une PAGE de reglages.
         '/settings',
-        ['Access', 'Safety', 'Workspace', 'Install'],
+        ['Access', 'Safety', 'Workspace', 'LLM Providers', 'Install'],
       ],
     ];
 

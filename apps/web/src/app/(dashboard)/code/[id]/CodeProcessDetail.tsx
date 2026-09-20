@@ -125,9 +125,13 @@ export default function CodeProcessDetail({
 
   return (
     // LA BOÎTE DE `PageShell`, à l'identique — largeur maximale ET gouttières
-    // sur le même élément, comme le corps d'un run d'agent : c'est ce qui donne
+    // sur le même élément, centrée (`mx-auto`, 20/09), comme le corps d'un run
+    // d'agent : c'est ce qui donne
     // la largeur de contenu de toutes les autres pages.
-    <div className="max-w-6xl min-w-0 space-y-4 px-5 sm:px-8 lg:px-9" data-testid="run-body">
+    <div
+      className="mx-auto w-full max-w-6xl min-w-0 space-y-4 px-5 sm:px-8 lg:px-9"
+      data-testid="run-body"
+    >
       {refresh && <LiveRefresh live={live} everyMs={POLL_INTERVAL} />}
 
       <RunHeaderCard

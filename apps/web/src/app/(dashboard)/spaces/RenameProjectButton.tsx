@@ -44,7 +44,7 @@ export default function RenameProjectButton({
 
   return (
     <>
-      <PrimaryButton variant="neutral" size="sm" onClick={() => setOpen(true)}>
+      <PrimaryButton variant="neutral" onClick={() => setOpen(true)}>
         Rename
       </PrimaryButton>
       <Modal

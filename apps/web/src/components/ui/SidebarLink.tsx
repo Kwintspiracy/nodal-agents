@@ -14,6 +14,12 @@ type Props = {
   /** Coloured dot that replaces the icon. Used to mark Agent/Skill/Connector
    *  links per the design's "one colour per meaning" system. */
   dot?: DotVariant;
+  /**
+   * La TEINTE de l'icône quand la planche en donne une (25:1062, 20/09) :
+   * corail sur Skills et Learned Skills, bleu sur les connecteurs. Le libellé
+   * ne change pas ; seule l'icône dit de quelle famille la ligne est.
+   */
+  tone?: DotVariant;
   /** Tiny right-aligned mono count, e.g. number of skills installed. */
   count?: number | string;
   /** Coral attention pill — renders a rounded badge with the given count
@@ -40,6 +46,13 @@ const DOT_BG: Record<DotVariant, string> = {
   conn: 'bg-conn-vivid',
 };
 
+/** La même famille de couleurs, posée sur une ICÔNE plutôt que sur un point. */
+const TONE_TEXT: Record<DotVariant, string> = {
+  agent: 'text-agent-vivid',
+  skill: 'text-skill-vivid',
+  conn: 'text-conn-vivid',
+};
+
 /**
  * SidebarLink — single nav row. Maps to `.side-link` in the design.
  *
@@ -53,6 +66,7 @@ export default function SidebarLink({
   label,
   icon,
   dot,
+  tone,
   count,
   pill,
   isActive,
@@ -93,7 +107,13 @@ export default function SidebarLink({
         <span
           data-testid="nav-leading-icon"
           className={`flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5 ${
-            tint !== undefined ? '' : active ? 'text-ink' : 'text-ink-3 group-hover:text-ink-2'
+            tint !== undefined
+              ? ''
+              : tone !== undefined
+                ? TONE_TEXT[tone]
+                : active
+                  ? 'text-ink'
+                  : 'text-ink-3 group-hover:text-ink-2'
           }`}
         >
           {icon}

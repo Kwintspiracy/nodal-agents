@@ -11,6 +11,7 @@
 
 import { listSidebarCronAction } from '@/lib/sidebar-actions.ts';
 import SidebarDynamicList from './SidebarDynamicList';
+import RowActions from './RowActions';
 
 export default function CronList() {
   return (
@@ -20,6 +21,15 @@ export default function CronList() {
       hrefOf={(r) => `/automations/${r.id}`}
       empty="No Existing Automation"
       seeAll="/automations"
+      menu={(r, relire) => (
+        <RowActions
+          kind="cron"
+          id={r.id}
+          name={r.name}
+          href={`/automations/${r.id}`}
+          onDone={relire}
+        />
+      )}
     />
   );
 }

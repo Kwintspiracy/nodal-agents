@@ -1,18 +1,13 @@
 /**
- * /settings — UNE liste de réglages, chacun s'ouvrant dans un panneau ancré à
- * droite (planches S3 + P1, issue #231).
+ * /settings — UNE page par famille de réglages (`?page=access|safety|workspace|
+ * install`, Quentin 20/09), les formulaires EN PLACE dans la page.
  *
- * Avant : onze blocs empilés en une colonne, sans ordre entre ce qui touche à
- * l'accès, à la sûreté, et ce qui n'est là que pour être lu. La page ne fait
- * plus que deux choses : lire, et distribuer. Elle lit les treize valeurs
- * (`buildSettingRows`, testé à part), et elle passe à la liste les formulaires
- * EXISTANTS, inchangés — ce sont eux qui enregistrent, chacun avec son action
- * serveur, exactement comme avant.
- *
- * Chacun reçoit en plus un `formId`, et rien d'autre : c'est par lui que le
- * bouton Save posé au bas du panneau soumet le bon formulaire (attribut HTML
- * `form`, voir `DockedFormCta.tsx`). Les sections à interrupteur immédiat n'en
- * reçoivent pas — elles n'ont rien à soumettre.
+ * Le panneau ancré de #231 est parti : il fallait ouvrir chaque réglage un par
+ * un. La page ne fait toujours que deux choses : lire, et distribuer. Elle lit
+ * les treize valeurs (`buildSettingRows`, testé à part), et elle donne à la
+ * page demandée les formulaires EXISTANTS, inchangés — ce sont eux qui
+ * enregistrent, chacun avec son action serveur et ses propres Cancel / Save
+ * (`SetCtaRow`, hors de tout pied ancré).
  */
 
 import Link from 'next/link';
@@ -41,11 +36,9 @@ import VerificationSurfacesSection from './VerificationSurfacesSection.tsx';
 import McpServerSection from './McpServerSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
-import SettingsList from './SettingsList.tsx';
-import SettingsPanel from './SettingsPanel.tsx';
-import { SettingsScreenProvider } from './SettingsScreen.tsx';
+import SettingsSections from './SettingsSections.tsx';
+import { resolveSettingsPage } from './settings-pages.ts';
 import { buildSettingRows, type SettingId } from './settings-rows.ts';
-import { dockedFormId } from '@/lib/docked-form-id.ts';
 import PageShell from '@/components/ui/PageShell';
 import { SetPane } from '@/components/ui/SetPane.tsx';
 import { SetRow } from '@/components/ui/SetRow.tsx';
@@ -71,7 +64,8 @@ const SETTING_IDS: ReadonlySet<string> = new Set<SettingId>([
 ]);
 
 type PageProps = {
-  searchParams: Promise<{ open?: string }>;
+  /** `?page=` choisit la page ; `?open=<réglage>` (liens d'avant le 20/09) y mène aussi. */
+  searchParams: Promise<{ page?: string; open?: string }>;
 };
 
 export default async function SettingsPage({ searchParams }: PageProps) {
@@ -135,14 +129,9 @@ export default async function SettingsPage({ searchParams }: PageProps) {
   // Les formulaires existants, tels quels : le panneau porte le titre et le
   // lede, eux gardent leur contenu, leur validation et leur action serveur.
   const panels: Partial<Record<SettingId, React.ReactNode>> = {
-    'sign-in': securityResult.ok ? (
-      <SecurityForm initial={securityResult.data} formId={dockedFormId('sign-in')} />
-    ) : null,
-    network: networkResult.ok ? (
-      <NetworkForm initial={networkResult.data} formId={dockedFormId('network')} />
-    ) : null,
-    password:
-      s.authMode === 'local-auth' ? <PasswordForm formId={dockedFormId('password')} /> : null,
+    'sign-in': securityResult.ok ? <SecurityForm initial={securityResult.data} /> : null,
+    network: networkResult.ok ? <NetworkForm initial={networkResult.data} /> : null,
+    password: s.authMode === 'local-auth' ? <PasswordForm /> : null,
     'worker-secret': <WorkerSecretPanel configured={s.workerSecretConfigured} />,
     'auto-run-brake': autoRunPauseResult.ok ? (
       <AutoRunPauseSection initial={autoRunPauseResult.data} />
@@ -155,21 +144,16 @@ export default async function SettingsPage({ searchParams }: PageProps) {
         agents={agentsResult.ok ? agentsResult.data : []}
         initialRootAgentId={rootConfigResult.ok ? rootConfigResult.data.rootAgentId : null}
         initialGrants={grants}
-        formId={dockedFormId('root-agent')}
       />
     ),
     'mcp-server': mcpSwitchResult.ok ? <McpServerSection initial={mcpSwitchResult.data} /> : null,
     timezone: tzResult.ok ? (
-      <TimezoneForm
-        initial={tzResult.data.timezone}
-        isExplicit={tzResult.data.isExplicit}
-        formId={dockedFormId('timezone')}
-      />
+      <TimezoneForm initial={tzResult.data.timezone} isExplicit={tzResult.data.isExplicit} />
     ) : null,
     'install-notes': installNotesResult.ok ? (
-      <InstallNotesForm initial={installNotesResult.data} formId={dockedFormId('install-notes')} />
+      <InstallNotesForm initial={installNotesResult.data} />
     ) : null,
-    workspaces: <WorkspacesSection initial={workspaces} formId={dockedFormId('workspaces')} />,
+    workspaces: <WorkspacesSection initial={workspaces} />,
     urls: (
       <SetPane>
         <SetRow label="App URL">
@@ -210,27 +194,17 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     ),
   };
 
-  // Une valeur d'URL inconnue n'ouvre rien, et ne casse rien.
-  const wanted = sp.open;
-  const initialOpen =
-    wanted !== undefined && SETTING_IDS.has(wanted) && rows.some((r) => r.id === wanted)
-      ? (wanted as SettingId)
-      : null;
+  // UNE page par entrée du menu (20/09) : ses réglages, dans l'ordre de la
+  // planche, chacun avec son formulaire en place. Une valeur d'URL inconnue
+  // ouvre Access, et ne casse rien.
+  const page = resolveSettingsPage(sp);
+  const ids = new Set<string>(page.ids);
+  const pageRows = rows.filter((r) => SETTING_IDS.has(r.id) && ids.has(r.id));
 
-  // La liste va dans la colonne de contenu, bornée en largeur comme sur toutes
-  // les pages ; le panneau va dans l'`aside`, hors de cette borne, collé au
-  // bord de l'écran. Ce qu'ils partagent passe par le fournisseur (#237).
   return (
-    <SettingsScreenProvider rows={rows} initialOpen={initialOpen}>
-      <PageShell
-        title="Settings"
-        subtitle="One list. Each row shows its current value and opens on the right."
-        fill
-        aside={<SettingsPanel panels={panels} />}
-      >
-        <SettingsList />
-      </PageShell>
-    </SettingsScreenProvider>
+    <PageShell title={page.label} subtitle={page.lede}>
+      <SettingsSections rows={pageRows} panels={panels} />
+    </PageShell>
   );
 }
 

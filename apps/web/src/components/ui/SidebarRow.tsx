@@ -44,7 +44,10 @@ export const SIDEBAR_ROW_BASE =
 export const SIDEBAR_ROW_H: Record<SidebarDepth, string> = {
   nav: 'h-12 lg:h-[30px]',
   folder: 'h-12 lg:h-[30px]',
-  thread: 'h-12 lg:h-[30px]',
+  // 28 px depuis le 20/09 (planche 25:1062) : une ligne de CONTENU — un fil,
+  // un projet, un agent — est plus basse qu'une entrée de menu, comme celles
+  // de « Recent » l'étaient déjà.
+  thread: 'h-12 lg:h-7',
   recent: 'h-12 lg:h-7',
 };
 
@@ -62,9 +65,19 @@ export const SIDEBAR_ROW_ACTIVE = 'bg-paper text-ink shadow-[0_1px_2px_rgba(0,0,
 /** La ligne au repos, et son survol. */
 export const SIDEBAR_ROW_IDLE = 'text-ink-2 hover:bg-hover';
 
+/**
+ * Une ligne de CONTENU au repos : le gris d'un cran plus loin (`ink-3`). La
+ * planche 25:1062 (20/09) écrit les entrées de menu en `ink-2` Medium 13 et
+ * ce qu'elles contiennent — fils, projets, agents — en `ink-3` Regular 12 :
+ * deux couleurs de police, et c'est ce qui sépare le menu de son contenu.
+ */
+export const SIDEBAR_ROW_IDLE_CONTENT = 'text-ink-3 hover:bg-hover hover:text-ink-2';
+
 /** La classe complète d'une ligne — forme, hauteur, puis état. Dans cet ordre. */
 export function sidebarRowClass(active = false, depth: SidebarDepth = 'nav'): string {
-  return `${SIDEBAR_ROW_BASE} ${SIDEBAR_ROW_H[depth]} ${active ? SIDEBAR_ROW_ACTIVE : SIDEBAR_ROW_IDLE}`;
+  const idle =
+    depth === 'thread' || depth === 'recent' ? SIDEBAR_ROW_IDLE_CONTENT : SIDEBAR_ROW_IDLE;
+  return `${SIDEBAR_ROW_BASE} ${SIDEBAR_ROW_H[depth]} ${active ? SIDEBAR_ROW_ACTIVE : idle}`;
 }
 
 /**
@@ -98,7 +111,9 @@ const DEPTH: Record<SidebarDepth, string> = {
   // Le MÊME retrait que `folder` : le point d'un fil se pose dans la colonne
   // de l'icône de son dossier, et son titre commence là où commence le nom du
   // dossier (Quentin, 19/09/2026).
-  thread: 'gap-2 pr-2.5 pl-7 text-body-13',
+  // Regular 12 depuis le 20/09 : le contenu se lit un cran plus petit que le
+  // menu qui le porte (planche 25:1062).
+  thread: 'gap-2 pr-2.5 pl-7 text-body-13 lg:text-body-12',
   // Un fil de « Recent » : une place vide de 14 px là où les autres ont une
   // icône, puis le titre en Inter Regular 12, gris `ink-3`. Il ne porte AUCUN
   // point — la planche n'en dessine pas — et c'est la seule ligne du panneau
@@ -130,6 +145,12 @@ type Props = {
   /** Le chevron. Frère du lien, dans le conteneur qui porte le survol. */
   caret?: ReactNode;
   /**
+   * Les trois points en bout de ligne et leur menu (`RowMenu`, 20/09) — pour
+   * une ligne qui se renomme ou se supprime. Frère du lien, comme le chevron,
+   * et pour la même raison : un bouton ne vit pas dans un lien.
+   */
+  menu?: ReactNode;
+  /**
    * Une teinte de marque qui REMPLACE le fond d'état — le bouton Discord et
    * son bleu. Elle change la couleur, jamais la forme : marges, hauteur et
    * rayon restent ceux de toutes les autres lignes.
@@ -150,6 +171,7 @@ export default function SidebarRow({
   depth = 'nav',
   external = false,
   caret,
+  menu,
   tint,
   testId,
   children,
@@ -202,6 +224,7 @@ export default function SidebarRow({
           {children}
         </Link>
       )}
+      {menu}
       {caret}
     </div>
   );

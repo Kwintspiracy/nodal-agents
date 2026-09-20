@@ -165,14 +165,16 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
     expect(page).not.toContain('data-follow="bottom"');
   });
 
-  it('le corps garde la largeur d’une page Nodal, calée à gauche', () => {
+  it('le corps garde la largeur d’une page Nodal, et il est centré', () => {
     // La BOÎTE de `PageShell`, à l'identique : la largeur maximale ET les
-    // gouttières sur le MÊME élément, sans `mx-auto`. Portées séparément — les
+    // gouttières sur le MÊME élément, et `mx-auto` (20/09). Portées séparément — les
     // gouttières sur la zone de défilement, la largeur ici — elles donnaient
     // un contenu de 1152 px au lieu de 1080, soit 72 px de plus que toutes les
     // autres pages (Quentin, deux fois).
-    expect(html).toContain('class="max-w-6xl min-w-0 space-y-4 px-5 sm:px-8 lg:px-9"');
-    expect(html).not.toContain('mx-auto');
+    expect(html).toContain(
+      'class="mx-auto w-full max-w-6xl min-w-0 space-y-4 px-5 sm:px-8 lg:px-9"',
+    );
+    expect(html).toContain('mx-auto');
   });
 
   it('la zone de défilement ne pousse plus rien sur les côtés', () => {

@@ -5,7 +5,7 @@
 // fichier prouve les sept choses que cette refonte pouvait casser sans qu'on
 // le voie :
 //
-//   1. le rail porte CINQ destinations, plus Logs et Help, et Settings en bas ;
+//   1. le rail porte CINQ destinations, plus Logs et Help, et Settings juste sous Approvals ;
 //   2. la destination active se DÉDUIT de la route, et rien d'autre ;
 //   3. chaque panneau porte les sections de SA planche, dans l'ordre ;
 //   4. les listes du panneau se LISENT en base, bornées, et disent leurs trois
@@ -24,18 +24,34 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 let pathname = '/agents';
-/** Les paramètres de la route — `?open=` des réglages. Sans le « ? ». */
+/** Les paramètres de la route — `?page=` des réglages. Sans le « ? ». */
 let search = '';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => pathname,
+  // Les menus de ligne (RowActions) rafraîchissent la page après un geste.
+  useRouter: () => ({ refresh: () => {}, push: () => {} }),
   useSearchParams: () => new URLSearchParams(search),
 }));
 vi.mock('next/link', () => ({
   default: ({ children, href, ...rest }: { children: ReactNode; href: string }) =>
     createElement('a', { href, ...rest }, children),
 }));
-vi.mock('@/lib/actions', () => ({ listApprovalsAction: vi.fn() }));
+vi.mock('@/lib/actions', () => ({
+  listApprovalsAction: vi.fn(),
+  deleteAgentAction: vi.fn(),
+  deleteConversationAction: vi.fn(),
+  deleteScheduleAction: vi.fn(),
+  deleteWebhookTriggerAction: vi.fn(),
+  renameCodeProjectAction: vi.fn(),
+  setCodeProjectHiddenAction: vi.fn(),
+}));
+vi.mock('@/lib/row-actions.ts', () => ({
+  renameAgentAction: vi.fn(),
+  renameConversationAction: vi.fn(),
+  renameScheduleAction: vi.fn(),
+  renameWebhookTriggerAction: vi.fn(),
+}));
 vi.mock('@/lib/conversation-actions.ts', () => ({ getChatFoldersAction: vi.fn() }));
 vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
 vi.mock('@/lib/project-actions.ts', () => ({ listSidebarProjectsAction: vi.fn() }));
@@ -68,6 +84,7 @@ import {
   SIDEBAR_ROW_H,
   SIDEBAR_ROW_ACTIVE,
   SIDEBAR_ROW_IDLE,
+  SIDEBAR_ROW_IDLE_CONTENT,
 } from '../ui/SidebarRow';
 import { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
 import { SIDEBAR_POLL_MS } from '@/lib/use-polling';
@@ -204,7 +221,7 @@ afterEach(async () => {
 // ─── 1. Le rail : cinq destinations, Logs, Help ──────────────────────────────
 
 describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () => {
-  it('rend Work, Agents, Run, Approvals, puis Logs, Settings et Help', async () => {
+  it('rend Work, Agents, Run, Approvals, Settings, puis Logs et Help', async () => {
     await renderSidebar();
     for (const key of ['work', 'agents', 'run', 'approvals', 'logs', 'settings', 'help']) {
       expect(railCell(key), `le rail porte « ${key} »`).not.toBeNull();
@@ -221,14 +238,14 @@ describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () 
     expect(() => navLink('Agent')).toThrow();
   });
 
-  it('range Settings EN BAS, et le dit dans la table', async () => {
-    // Settings est une destination comme les autres — elle ouvre un panneau —
-    // mais la planche la met sous la séparation, avec Logs et Help. Le fait
-    // vit dans `sidebar-nav`, pas dans le rendu du rail.
+  it('range Settings juste SOUS Approvals, dans le groupe du haut', async () => {
+    // Quentin, 20/09 : « mets l'onglet Settings juste sous Approvals ». Plus
+    // aucune destination sous la séparation ; il n'y reste que Logs et Help.
+    // Le fait vit dans `sidebar-nav`, pas dans le rendu du rail.
     //
-    // Mutation vérifiée : `foot: true` retiré de la destination Settings →
-    // ce cas rougit, la case remonte dans le groupe du haut.
-    expect(DESTINATIONS.filter((d) => d.foot === true).map((d) => d.key)).toEqual(['settings']);
+    // Mutation vérifiée : `foot: true` remis sur Settings → ce cas rougit, la
+    // case redescend sous Logs.
+    expect(DESTINATIONS.filter((d) => d.foot === true).map((d) => d.key)).toEqual([]);
 
     await renderSidebar();
     const cases = [...container.querySelectorAll('[data-testid^="rail-"]')].map((el) =>
@@ -239,8 +256,8 @@ describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () 
       'rail-agents',
       'rail-run',
       'rail-approvals',
-      'rail-logs',
       'rail-settings',
+      'rail-logs',
       'rail-help',
     ]);
   });
@@ -370,7 +387,7 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
     ['/agents/a1', 'agents', 'Agents'],
     ['/memories', 'agents', 'Agents'],
     ['/mcp', 'agents', 'Agents'],
-    ['/llm-providers', 'agents', 'Agents'],
+    ['/llm-providers', 'settings', 'Settings'],
     ['/chat', 'work', 'Work'],
     ['/chat/abc', 'work', 'Work'],
     ['/spaces', 'work', 'Work'],
@@ -417,9 +434,9 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
   it('Work : WORKSPACES puis CHANNELS, et rien d’écrit', async () => {
     pathname = '/chat';
     await renderSidebar();
-    expect(sectionTitles()).toEqual(['Workspaces', 'Channels']);
+    expect(sectionTitles()).toEqual(['Projects', 'Channels']);
     // Aucune entrée ÉCRITE : les deux blocs sont lus en base de bout en bout.
-    expect(groupLabels('Workspaces').filter((l) => l !== 'See all')).toEqual([]);
+    expect(groupLabels('Projects').filter((l) => l !== 'See all')).toEqual([]);
   });
 
   it('Agents : le dossier des agents, puis CONNECT', async () => {
@@ -430,28 +447,20 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     // entrée de menu, et c'est pour cela qu'il ne figure pas dans cette liste.
     expect(container.querySelector('[data-testid="inbox-folder-agents"]')).not.toBeNull();
     expect(groupLabels('Agents')).toEqual(['Skills', 'Learned Skills', 'Memory']);
-    // « LLM Providers » ferme CONNECT : il a vécu dans Run sur le texte de
-    // l'issue #230, et le propriétaire l'a redessiné ici, avec ce qu'on
-    // branche au produit.
-    expect(groupLabels('Connect')).toEqual([
-      'API Connectors',
-      'MCP Connectors',
-      'Credentials',
-      'LLM Providers',
-    ]);
+    expect(groupLabels('Connect')).toEqual(['API Connectors', 'MCP Connectors', 'Credentials']);
   });
 
-  it('Run : Dashboard en tête, puis CRON et WEBHOOKS', async () => {
+  it('Run : CRON puis WEBHOOKS, et rien au-dessus', async () => {
     pathname = '/automations';
     await renderSidebar();
     expect(sectionTitles()).toEqual(['Cron', 'Webhooks']);
-    // ⚠️ « Dashboard » N'EST PAS SUR LA PLANCHE. Les cinq cadres l'omettent
-    // sans dire de le retirer, et une page qu'on n'atteint plus que par son
-    // adresse est le constat que la revue a déjà posé ailleurs. Le
-    // propriétaire a tranché le 19/09 au soir : elle revient, en tête du
-    // panneau, dans le seul groupe SANS titre.
-    expect(groupLabels('0')).toEqual(['Dashboard']);
-    expect(navLink('Dashboard').getAttribute('href')).toBe('/dashboard');
+    // « Dashboard » N'EST PLUS DANS LE PANNEAU (Quentin, 20/09 : « je l'ai
+    // enlevé »). La page `/dashboard` existe encore, sans lien vers elle ;
+    // le panneau ne porte que ce que la planche dessine.
+    expect(container.querySelector('[data-testid="nav-group-0"]')).toBeNull();
+    expect(
+      [...container.querySelectorAll('a')].some((a) => a.textContent?.trim() === 'Dashboard'),
+    ).toBe(false);
   });
 
   it('la case Run du rail MÈNE au tableau de bord, pas à la racine', async () => {
@@ -462,7 +471,9 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     // juste ; depuis #248 la racine rend un fil vide, et cliquer Run emmenait
     // donc sur Work, qui s'allumait à sa place. Les deux cases sont vérifiées
     // ensemble : les confondre est justement la faute qu'on a corrigée.
-    expect(railCell('run').getAttribute('href')).toBe('/dashboard');
+    // Depuis le 20/09 la première ligne de Run est CRON, dont le « + » mène aux
+    // automatisations : la case y mène aussi.
+    expect(railCell('run').getAttribute('href')).toBe('/automations');
     expect(railCell('work').getAttribute('href')).toBe('/');
   });
 
@@ -490,21 +501,24 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     pathname = '/settings';
     await renderSidebar();
     expect(sectionTitles()).toEqual(['Settings']);
-    expect(groupLabels('Settings')).toEqual(['Access', 'Safety', 'Workspace', 'Install']);
-    // ⚠️ « INSTALL » N'EST PAS UNE FAMILLE de réglages : les familles sont
-    // access, safety, workspace et advanced, et « Install notes » est une
-    // LIGNE de workspace. Chaque entrée ouvre donc la PREMIÈRE entrée de sa
-    // famille, parce que la page ouvre un RÉGLAGE et pas une famille : on
-    // atterrit dans la bonne famille, et jamais sur une page qui ignorerait
-    // ce qu'on a cliqué.
-    expect(navLink('Access').getAttribute('href')).toBe('/settings?open=sign-in');
-    expect(navLink('Safety').getAttribute('href')).toBe('/settings?open=auto-run-brake');
-    expect(navLink('Workspace').getAttribute('href')).toBe('/settings?open=timezone');
-    expect(navLink('Install').getAttribute('href')).toBe('/settings?open=install-notes');
+    expect(groupLabels('Settings')).toEqual([
+      'Access',
+      'Safety',
+      'Workspace',
+      'LLM Providers',
+      'Install',
+    ]);
+    // Depuis le 20/09 chaque entrée est une PAGE de réglages (`?page=`), ses
+    // formulaires en place et sans panneau ; « Install » est la page de la
+    // seule ligne « Install notes », et LLM Providers a la sienne.
+    expect(navLink('Access').getAttribute('href')).toBe('/settings?page=access');
+    expect(navLink('Safety').getAttribute('href')).toBe('/settings?page=safety');
+    expect(navLink('Workspace').getAttribute('href')).toBe('/settings?page=workspace');
+    expect(navLink('Install').getAttribute('href')).toBe('/settings?page=install');
   });
 
   it('n’allume QUE le réglage ouvert, et aucun sur /settings nu', async () => {
-    // Les quatre mènent à `/settings` avec un `?open=` différent. Comparer sur
+    // Les quatre mènent à `/settings` avec un `?page=` différent. Comparer sur
     // le CHEMIN seul les allumait toutes les quatre — quatre lignes qui se
     // disent « la page où vous êtes » (passe 1 de la revue de la PR #279) ;
     // comparer sur la chaîne entière n'en allumait aucune, même la bonne,
@@ -514,7 +528,7 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     // Mutation vérifiée : le `href.split('?')[0]` de la v1 remis dans
     // `isPanelItemActive` → ce cas rougit, les quatre s'allument d'un coup.
     pathname = '/settings';
-    search = 'open=timezone';
+    search = 'page=workspace';
     await renderSidebar();
     const allumees = () => {
       const panneau = container.querySelector('[data-testid="sidebar-panel"]');
@@ -525,19 +539,19 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     expect(allumees()).toEqual(['Workspace']);
 
     await remonter();
-    search = 'open=install-notes';
+    search = 'page=install';
     await renderSidebar();
     expect(allumees()).toEqual(['Install']);
 
     await remonter();
-    // UN RÉGLAGE QUE LE PANNEAU N'ÉCRIT PAS. `open=network` est un réglage
+    // UN RÉGLAGE QUE LE PANNEAU N'ÉCRIT PAS. `page=advanced` est une valeur
     // réel de la page, qu'aucune des quatre lignes n'ouvre : la CLÉ est la
     // bonne, la VALEUR n'est celle d'aucune. Comparer la seule présence de
     // `open` les allumerait toutes les quatre ici.
     //
     // Mutation vérifiée : `courants.get(cle) !== valeur` remplacé par
     // `!courants.has(cle)` → ce cas rougit, les quatre s'allument.
-    search = 'open=network';
+    search = 'page=advanced';
     await renderSidebar();
     expect(allumees()).toEqual([]);
 
@@ -771,8 +785,8 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({
       ok: true,
       data: [
-        { id: 'p1', name: 'Suivis Candidatures', unread: true },
-        { id: 'p2', name: 'Recipes', unread: false },
+        { id: 'p1', name: 'Suivis Candidatures', path: 'D:/p1', unread: true },
+        { id: 'p2', name: 'Recipes', path: 'D:/p2', unread: false },
       ],
     });
     await renderSidebar();
@@ -783,17 +797,27 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     ).toEqual(['yes', 'no']);
   });
 
-  it('n’en met AUCUN sur les agents, ni sur les automatisations', async () => {
-    // La planche laisse ces lignes NUES : un agent n'a rien de non lu, et une
-    // tâche planifiée n'attend rien de personne. Un point gris par défaut
-    // aurait mis une puce devant elles.
+  it('en met un d’ACTIVITÉ sur les agents, et aucun sur les automatisations', async () => {
+    // Le point d'un agent dit « il travaille » (planche 25:1062, 20/09) : lime
+    // et battant quand un de ses jobs est en vol, gris au repos. Une tâche
+    // planifiée, elle, n'attend rien de personne et reste nue.
     pathname = '/agents';
-    vi.mocked(listSidebarAgentsAction).mockResolvedValue({ ok: true, data: nommees(2, 'Agent') });
+    vi.mocked(listSidebarAgentsAction).mockResolvedValue({
+      ok: true,
+      data: [
+        { id: 'a1', name: 'Alfred (Root)', running: true },
+        { id: 'a2', name: 'Researcher', running: false },
+      ],
+    });
     await renderSidebar();
-    expect(listRows('agents').length).toBe(2);
-    for (const l of listRows('agents')) {
-      expect(l.querySelector('[data-testid="thread-dot"]')).toBeNull();
-    }
+    const agents = listRows('agents');
+    expect(agents.length).toBe(2);
+    expect(agents[0]!.querySelector('[data-testid="running-dot"]')).not.toBeNull();
+    expect(agents[0]!.querySelector('[data-testid="thread-dot"]')).toBeNull();
+    expect(agents[1]!.querySelector('[data-testid="running-dot"]')).toBeNull();
+    expect(agents[1]!.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls')).toBe(
+      'no',
+    );
 
     await remonter();
     pathname = '/automations';
@@ -809,7 +833,17 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     pathname = '/approvals';
     vi.mocked(listSidebarRecentApprovalsAction).mockResolvedValue({
       ok: true,
-      data: [{ id: 'r1', name: 'Researcher', toolName: 'web_search' }],
+      data: [
+        {
+          id: 'r1',
+          name: 'Researcher',
+          toolName: 'web_search',
+          what: 'Search the web for « nodal »',
+          status: 'approved',
+          resolvedAt: '2026-09-20T10:00:00.000Z',
+          answer: null,
+        },
+      ],
     });
     await renderSidebar(
       [],
@@ -833,11 +867,25 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     ).toBe('yes');
 
     const rendues = listRows('recents');
-    expect(rendues.map((l) => l.textContent?.trim())).toEqual(['Researcher']);
+    // La ligne dit CE QUE la demande voulait faire, pas qui la posait (20/09) ;
+    // l'agent et l'outil sont en infobulle, et la ligne mène au fil concerné.
+    expect(rendues.map((l) => l.textContent?.trim())).toEqual(['Search the web for « nodal »']);
+    expect(rendues[0]?.getAttribute('title')).toBe('Researcher · web_search');
     // Gris : plus rien n'attend là. C'est tout ce qui sépare les deux sections.
     expect(
       rendues[0]?.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls'),
     ).toBe('no');
+    // Une ligne rendue ouvre la CARTE de la demande dans la vue principale
+    // (Quentin, 20/09) — pas le fil, pas un résumé dans la barre — et seule
+    // celle dont la carte est ouverte s'allume.
+    expect(rendues[0]?.getAttribute('href')).toBe('/approvals?show=r1');
+    expect(rendues[0]?.className).not.toContain(SIDEBAR_ROW_ACTIVE.split(' ')[0]!);
+
+    await remonter();
+    search = 'show=r1';
+    await renderSidebar();
+    const ouverte = listRows('recents')[0]!;
+    expect(ouverte.closest('[data-sidebar-row]')?.className).toContain(SIDEBAR_ROW_ACTIVE);
   });
 
   it('ne lit PAS les approbations en attente une seconde fois', async () => {
@@ -884,7 +932,7 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     pathname = '/chat';
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({
       ok: true,
-      data: [{ id: 'p1', name: 'Recipes', unread: false }],
+      data: [{ id: 'p1', name: 'Recipes', path: 'D:/p1', unread: false }],
     });
     await renderSidebar();
     expect(
@@ -896,7 +944,7 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     await renderSidebar();
     // Le cadre du vide, PUIS la ligne : les deux, et pas l'un ou l'autre.
     expect(container.querySelector('[data-testid="sidebar-empty"]')?.textContent?.trim()).toBe(
-      'No Workspace Yet',
+      'No Project Yet',
     );
     expect(
       container.querySelector('[data-testid="see-all-workspaces"]')?.getAttribute('href'),
@@ -977,8 +1025,8 @@ describe('le dossier « Agents » @cap:creer-agent/ecran', () => {
     expect(dossier.tagName).toBe('BUTTON');
     expect(dossier.getAttribute('aria-expanded')).toBe('true');
     expect(listRows('agents').map((l) => l.getAttribute('href'))).toEqual([
-      '/agents/a1',
-      '/agents/a2',
+      '/agents/a1/edit',
+      '/agents/a2/edit',
     ]);
 
     await click(dossier);
@@ -1009,6 +1057,7 @@ describe('toutes les lignes du panneau ont la MÊME forme @cap:installer-et-dema
     const attendues = new Set(
       [SIDEBAR_ROW_H.nav, SIDEBAR_ROW_H.recent].flatMap((h) => [
         `${SIDEBAR_ROW_BASE} ${h} ${SIDEBAR_ROW_IDLE}`,
+        `${SIDEBAR_ROW_BASE} ${h} ${SIDEBAR_ROW_IDLE_CONTENT}`,
         `${SIDEBAR_ROW_BASE} ${h} ${SIDEBAR_ROW_ACTIVE}`,
       ]),
     );
@@ -1025,6 +1074,7 @@ describe('toutes les lignes du panneau ont la MÊME forme @cap:installer-et-dema
         {
           id: 'p1',
           name: 'Crée-moi une application de suivi de candidatures assez simple',
+          path: 'D:/p1',
           unread: false,
         },
       ],

@@ -44,7 +44,6 @@ import {
   CheckCircle,
   DiscordLogo,
   GearSix,
-  House,
   Key,
   Lightbulb,
   Plug,
@@ -61,6 +60,12 @@ export type PanelItem = {
   href: string;
   label: string;
   icon: PhosphorIcon;
+  /**
+   * La TEINTE de l'icône, quand la planche en donne une (25:1062, 20/09) :
+   * lime pour ce qui touche aux agents, corail pour les skills, bleu pour ce
+   * qu'on branche. Absente, l'icône est grise comme le libellé.
+   */
+  tone?: 'agent' | 'skill' | 'conn';
 };
 
 /**
@@ -131,7 +136,7 @@ export type Destination = {
  * d'où les conversations arrivent. Aucune entrée écrite.
  */
 const WORK_GROUPS: readonly PanelGroup[] = [
-  { section: 'Workspaces', dynamic: 'workspaces', items: [] },
+  { section: 'Projects', dynamic: 'workspaces', items: [] },
   { section: 'Channels', dynamic: 'channels', items: [] },
 ];
 
@@ -146,18 +151,17 @@ const AGENTS_GROUPS: readonly PanelGroup[] = [
     section: 'Agents',
     dynamic: 'agents',
     items: [
-      { href: '/skills', label: 'Skills', icon: BookOpenText },
-      { href: '/learned-skills', label: 'Learned Skills', icon: Lightbulb },
+      { href: '/skills', label: 'Skills', icon: BookOpenText, tone: 'skill' },
+      { href: '/learned-skills', label: 'Learned Skills', icon: Lightbulb, tone: 'skill' },
       { href: '/memories', label: 'Memory', icon: Brain },
     ],
   },
   {
     section: 'Connect',
     items: [
-      { href: '/connectors', label: 'API Connectors', icon: Plug },
-      { href: '/mcp', label: 'MCP Connectors', icon: PlugsConnected },
+      { href: '/connectors', label: 'API Connectors', icon: Plug, tone: 'conn' },
+      { href: '/mcp', label: 'MCP Connectors', icon: PlugsConnected, tone: 'conn' },
       { href: '/credentials', label: 'Credentials', icon: Key },
-      { href: '/llm-providers', label: 'LLM Providers', icon: Sparkle },
     ],
   },
 ];
@@ -167,13 +171,11 @@ const AGENTS_GROUPS: readonly PanelGroup[] = [
  *
  * Les deux façons de déclencher un agent sans lui parler : une horloge, ou un
  * appel venu de dehors. Chaque titre porte un « + » vers la page où l'on en
- * crée un.
+ * crée un. Aucune entrée écrite : la ligne « Dashboard » qui ouvrait le
+ * panneau est retirée depuis le 20/09 (Quentin) ; `/dashboard` existe encore,
+ * sans lien vers elle.
  */
 const RUN_GROUPS: readonly PanelGroup[] = [
-  // SANS TITRE, et au-dessus de tout : la planche ne dessine ni cette ligne ni
-  // une section pour elle. Lui en inventer une nommerait un bloc d'un seul
-  // élément ; la laisser nue la met là où l'œil la cherche, tout en haut.
-  { items: [{ href: '/dashboard', label: 'Dashboard', icon: House }] },
   {
     section: 'Cron',
     dynamic: 'cron',
@@ -204,19 +206,19 @@ const APPROVALS_GROUPS: readonly PanelGroup[] = [
  * côté. Décision de l'orchestrateur du 19/09 au soir : les quatre lignes de la
  * planche, chacune menant à quelque chose de RÉEL.
  *
- * Chaque ligne ouvre la PREMIÈRE entrée de sa famille (`/settings?open=…`),
- * parce que c'est le seul point d'entrée que la page connaisse : elle ouvre un
- * RÉGLAGE, pas une famille. On atterrit donc dans la bonne famille, sur son
- * premier réglage, et jamais sur une page qui ignorerait ce qu'on a cliqué.
+ * Chaque ligne ouvre SA page de réglages (`/settings?page=…`, 20/09) : les
+ * réglages d'une famille sont EN PLACE dans la page, sans panneau, et une
+ * entrée du menu est une page. LLM Providers a la sienne.
  */
 const SETTINGS_GROUPS: readonly PanelGroup[] = [
   {
     section: 'Settings',
     items: [
-      { href: '/settings?open=sign-in', label: 'Access', icon: Key },
-      { href: '/settings?open=auto-run-brake', label: 'Safety', icon: ShieldCheck },
-      { href: '/settings?open=timezone', label: 'Workspace', icon: Cube },
-      { href: '/settings?open=install-notes', label: 'Install', icon: PlugsConnected },
+      { href: '/settings?page=access', label: 'Access', icon: Key },
+      { href: '/settings?page=safety', label: 'Safety', icon: ShieldCheck },
+      { href: '/settings?page=workspace', label: 'Workspace', icon: Cube },
+      { href: '/llm-providers', label: 'LLM Providers', icon: Sparkle },
+      { href: '/settings?page=install', label: 'Install', icon: PlugsConnected },
     ],
   },
 ];
@@ -254,7 +256,6 @@ export const DESTINATIONS: readonly Destination[] = [
       '/connectors',
       '/mcp',
       '/credentials',
-      '/llm-providers',
     ],
     groups: AGENTS_GROUPS,
   },
@@ -268,7 +269,7 @@ export const DESTINATIONS: readonly Destination[] = [
     // 19/09 au soir. Tant que la racine ÉTAIT le tableau de bord, `/` faisait
     // l'affaire ; elle rend un fil vide depuis #248, et cliquer Run emmenait
     // alors sur Work, qui s'allumait à sa place — un rail qui répond à côté.
-    href: '/dashboard',
+    href: '/automations',
     routes: [
       // Le tableau de bord OUVRE la liste : c'est la première ligne du
       // panneau, donc l'adresse de la destination.
@@ -296,10 +297,9 @@ export const DESTINATIONS: readonly Destination[] = [
     key: 'settings',
     label: 'Settings',
     icon: GearSix,
-    href: '/settings',
-    routes: ['/settings'],
+    href: '/llm-providers',
+    routes: ['/settings', '/llm-providers'],
     groups: SETTINGS_GROUPS,
-    foot: true,
   },
 ];
 

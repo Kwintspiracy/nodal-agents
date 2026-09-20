@@ -109,14 +109,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
           s'arrêtait (Quentin, 07/09 : « le champ de texte est en plein
           milieu, il descend au fur et à mesure que j'écris »).
         */}
-          {/* `dvh`, pas `vh` : sur Safari iOS, `100vh` compte la barre d'adresse
-            comme si elle n'était pas là — l'écran déborde et la saisie passe
-            dessous (revue Codex, passe 65). `dvh` suit la hauteur réellement
-            visible. Repli `h-screen` pour un navigateur qui l'ignore. */}
+          {/* `fixed inset-0`, et plus `h-[100dvh]` (20/09, Quentin sur iPad) :
+            la coquille prend les QUATRE bords de la fenêtre visible, sans
+            passer par une hauteur en unités de fenêtre. `100vh` compte la
+            barre d'adresse de Safari comme absente (revue Codex, passe 65), et
+            `100dvh`, qui devait suivre la hauteur visible, laissait encore sur
+            l'iPad une bande de la hauteur de la barre d'état sous le bord :
+            la saisie et la barre passaient dessous. Une boîte fixée aux bords
+            est la seule mesure que Safari donne juste dans tous les cas. */}
           {/* #242 — le greffier du fil de navigation de #232 est parti avec les
               retours eux-mêmes : plus personne ne lui demande d'où l'on vient.
               On se déplace par la barre latérale, qui reste visible. */}
-          <div className="flex h-screen h-[100dvh] overflow-hidden bg-canvas text-ink">
+          <div className="fixed inset-0 flex overflow-hidden bg-canvas text-ink">
             <Sidebar
               workspaces={workspaces}
               userMenu={<UserMenu email={email} />}
@@ -150,7 +154,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
               ici c'en est un exprès, et le collant s'y réfère, ce qui est
               justement voulu.
             */}
-              <div className="min-h-0 flex-1 overflow-x-clip overflow-y-auto">{children}</div>
+              {/*
+              `flex flex-col` en plus (20/09) : un écran `fill` (un fil, un run)
+              prenait sa hauteur par `h-full`, un POURCENTAGE de ce bloc. Sur
+              Safari, le pourcentage ne se résout pas à l'intérieur d'un
+              élément flex dimensionné par `flex-1` : la page prenait la hauteur
+              de son contenu, la saisie et la barre d'état descendaient sous le
+              bord de l'écran, et il fallait défiler (Quentin, sur iPad). En
+              colonne flex, l'écran prend le reste par `flex-1`, sans pourcentage,
+              et Safari le calcule comme les autres.
+            */}
+              <div className="flex min-h-0 flex-1 flex-col overflow-x-clip overflow-y-auto">
+                {children}
+              </div>
             </main>
 
             <ThemedToaster />

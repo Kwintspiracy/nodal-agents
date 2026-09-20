@@ -31,9 +31,16 @@ type Common = {
    * n'a pas de hauteur à donner à un panneau ancré.
    */
   aside?: ReactNode;
+  /**
+   * Une barre PLEINE LARGEUR tout en bas, hors de la colonne de contenu et
+   * du panneau — l'exact pendant de l'en-tête (Quentin, 20/09 : la barre
+   * d'état d'un fil était DANS le conteneur, elle doit prendre toute la
+   * largeur de la vue). N'a d'effet que sur un écran `fill`.
+   */
+  footer?: ReactNode;
   /** Page body. */
   children: ReactNode;
-  /** Drop the max-width body wrapper (full-bleed body — e.g. full-screen chat). */
+  /** Drop the max-width body wrapper (full-bleed body, e.g. full-screen chat). */
   fluid?: boolean;
   /** Extra classes on the body wrapper. */
   bodyClassName?: string;
@@ -50,7 +57,7 @@ type Common = {
 
 type Props =
   | (Common & {
-      /** Page title — shown as the h1 in the full-width header. */
+      /** Page title, shown as the h1 in the full-width header. */
       title: ReactNode;
       /** One-line lede under the title. Keep it to a single short sentence. */
       subtitle?: ReactNode;
@@ -69,22 +76,23 @@ type Props =
     });
 
 /**
- * PageShell — THE single layout wrapper every dashboard page uses. There is no
+ * PageShell is THE single layout wrapper every dashboard page uses. There is no
  * per-page header markup anywhere else: a page renders exactly one `<PageShell>`
  * and everything below the header goes in `children`. This guarantees every
  * screen shares the identical full-width header (title + lede + search +
- * notifications + theme) and the same bottom rule — change the look once here
+ * notifications + theme) and the same bottom rule: change the look once here
  * and the whole product tracks.
  *
  * The navbar carries NO create button (per the design). A page's "+ New …" CTA
- * goes in the `toolbar` (right side), or in the body. The body is LEFT-aligned
- * (max-width, no auto-centering).
+ * goes in the `toolbar` (right side), or in the body. The body is CENTERED
+ * (max-width, auto margins on both sides, since 20/09: the feeds were centered
+ * and the lists left-aligned, two reading widths in one product).
  *
  * Structure:
  *   ┌──────────────────────────────────────────────┐
  *   │ PageHeader (full-width, bottom rule)          │  ← title · global controls
  *   ├──────────────────────────────────────────────┤
- *   │ body (max-w-6xl, left):  [toolbar] + children │  ← filters/CTA, then content
+ *   │ body (max-w-6xl, centered):  [toolbar] + children │  ← filters/CTA, then content
  *   └──────────────────────────────────────────────┘
  */
 export default function PageShell(props: Props) {
@@ -92,6 +100,7 @@ export default function PageShell(props: Props) {
     toolbar,
     toolbarBleed = false,
     aside,
+    footer,
     children,
     fluid = false,
     fill = false,
@@ -115,7 +124,11 @@ export default function PageShell(props: Props) {
     // pour les écrans qui remplissent vraiment le cadre : un fil de chat, la
     // page d'un run, la page d'un projet.
     return (
-      <div className="flex h-full min-h-0 flex-col">
+      // `flex-1` ET `h-full` : la zone de défilement de la disposition est une
+      // colonne flex, et `flex-1` y donne le reste de la hauteur sans passer
+      // par un pourcentage — celui que Safari ne résout pas (20/09, iPad).
+      // `h-full` reste pour un conteneur qui ne serait pas une colonne flex.
+      <div className="flex h-full min-h-0 flex-1 flex-col">
         {head}
         {toolbar && toolbarBleed && toolbar}
         {/* La rangée : le contenu à gauche, le panneau ancré à droite. Elle
@@ -124,18 +137,25 @@ export default function PageShell(props: Props) {
         <div className="flex min-h-0 flex-1">
           <div className={`flex min-w-0 min-h-0 flex-1 flex-col ${bodyClassName}`}>
             {toolbar && !toolbarBleed && (
-              <div className={`px-5 pt-4 sm:px-8 lg:px-9 ${fluid ? '' : 'max-w-6xl'}`}>
+              <div
+                className={`w-full px-5 pt-4 sm:px-8 lg:px-9 ${fluid ? '' : 'mx-auto max-w-6xl'}`}
+              >
                 {toolbar}
               </div>
             )}
             {fluid ? (
               children
             ) : (
-              <div className="flex min-h-0 w-full max-w-6xl flex-1 flex-col">{children}</div>
+              <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
+                {children}
+              </div>
             )}
           </div>
           {aside}
         </div>
+        {/* Le pied : après la rangée, donc d'un bord à l'autre, comme l'en-tête
+            avant elle. */}
+        {footer}
       </div>
     );
   }
@@ -146,7 +166,7 @@ export default function PageShell(props: Props) {
           gouttières et va d'un bord à l'autre, comme sous l'en-tête d'un fil. */}
       {toolbar && toolbarBleed && toolbar}
       <div
-        className={`px-5 pt-6 pb-10 sm:px-8 lg:px-9 ${fluid ? '' : 'max-w-6xl'} ${bodyClassName}`}
+        className={`w-full px-5 pt-6 pb-10 sm:px-8 lg:px-9 ${fluid ? '' : 'mx-auto max-w-6xl'} ${bodyClassName}`}
       >
         {toolbar && !toolbarBleed && <div className="mb-5">{toolbar}</div>}
         {children}

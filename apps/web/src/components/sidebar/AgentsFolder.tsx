@@ -19,10 +19,10 @@
 // conversations qui se comptent par centaines ; une entité a une poignée
 // d'agents.
 //
-// ⚠️ SES LIGNES NE PORTENT AUCUN POINT (planche, et décision du propriétaire
-// du 19/09 au soir) : un agent n'a rien de non lu. Elles ont une place vide à
-// la largeur d'un point, pour que leurs noms s'alignent sur ceux des autres
-// sous-menus.
+// ⚠️ SES LIGNES PORTENT UN POINT D'ACTIVITÉ (planche 25:1062, demande du
+// propriétaire du 20/09) : lime et battant quand l'agent a un job en vol, gris
+// sinon. Pas un point de lecture — un agent n'a rien de non lu — mais le même
+// « ça tourne » que le reste du produit, lu en base par `listSidebarAgentsAction`.
 
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
@@ -30,6 +30,7 @@ import { UsersThree } from '@phosphor-icons/react';
 import InboxFolder from '../ui/InboxFolder';
 import SidebarCaret from '../ui/SidebarCaret';
 import SidebarDynamicList from './SidebarDynamicList';
+import RowActions from './RowActions';
 import { listSidebarAgentsAction } from '@/lib/sidebar-actions.ts';
 
 /** Où mène le dossier, et son « See all » : la page des agents. */
@@ -44,7 +45,9 @@ export default function AgentsFolder() {
       <InboxFolder
         folderKey="agents"
         label="Agents"
-        icon={<UsersThree size={14} className="h-3.5 w-3.5" />}
+        // Lime : la couleur des agents dans tout le produit, et celle que la
+        // planche 25:1062 donne à cette icône (20/09).
+        icon={<UsersThree size={14} className="h-3.5 w-3.5 text-agent-vivid" />}
         waiting={0}
         running={false}
         // ACTIF sur la page des agents et sur celle d'un agent : c'est ce que
@@ -62,13 +65,23 @@ export default function AgentsFolder() {
         }
       />
       {ouvert && (
-        <div className="pt-0.5" data-testid="folder-threads-agents">
+        <div data-testid="folder-threads-agents">
           <SidebarDynamicList
             testId="agents"
             read={listSidebarAgentsAction}
-            hrefOf={(r) => `${HREF}/${r.id}`}
+            hrefOf={(r) => `${HREF}/${r.id}/edit`}
+            dot
             empty="No Agent Yet"
             seeAll={HREF}
+            menu={(r, relire) => (
+              <RowActions
+                kind="agent"
+                id={r.id}
+                name={r.name}
+                href={`${HREF}/${r.id}`}
+                onDone={relire}
+              />
+            )}
           />
         </div>
       )}

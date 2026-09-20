@@ -5,12 +5,12 @@
 //   1. OUVERT PAR DÉFAUT — c'est la promesse ; un panneau qu'il faut ouvrir à
 //      chaque visite est un onglet déguisé ;
 //   2. le bouton le ferme ET le rouvre, et le panneau quitte vraiment le DOM ;
-//   3. le choix TIENT d'une visite à l'autre : il est écrit dans le stockage du
-//      navigateur, et relu au montage suivant ;
-//   4. `/spaces/<id>/files` (`forceOpen`) l'ouvre malgré un choix « fermé » —
+//   3. le choix ne TIENT PAS d'une visite à l'autre : rien n'est écrit dans le
+//      stockage du navigateur, et la visite suivante repart ouverte (20/09) ;
+//   4. `/spaces/<id>/files` rend la même page, panneau ouvert comme partout —
 //      cette adresse veut dire « montre-moi le dossier » ;
-//   5. un stockage qui REFUSE de répondre n'emporte pas l'écran : le défaut
-//      tient, et le bouton continue de marcher.
+//   5. un stockage absent ne change rien : personne ne le lit, le bouton
+//      continue de marcher.
 //
 // Rendu dans jsdom et MANIPULÉ : les assertions portent sur le DOM produit et
 // sur ce que le stockage CONTIENT, jamais sur un compte d'appels.
@@ -19,14 +19,11 @@
 // de contenu et le panneau côte à côte sous l'en-tête, et c'est
 // `PageShellOrder.test.tsx` qui l'affirme.
 //
-// Mutations vérifiées, chacune remise en place ensuite :
-//   - le défaut de l'effet, `!== 'closed'` → `=== 'open'` : trois cas rougissent,
-//     dont « ouvert par défaut ». C'est LÀ que vit la promesse, et pas dans
-//     l'état initial : `useState(true)` → `false` ne fait PAS rougir ce cas-là,
-//     l'effet rouvrant le panneau au montage. Il rougit les deux cas où l'effet
-//     ne décide pas — `forceOpen` et le stockage absent ;
-//   - l'écriture dans `localStorage` retirée : « le choix tient » rougit ;
-//   - `if (forceOpen) return` retiré de l'effet : le cas `forceOpen` rougit.
+// Mutations vérifiées, chacune remise en place ensuite (20/09, sans souvenir) :
+//   - `useState(true)` → `false` : « ouvert par défaut », « ouvert de nouveau »
+//     et `/files` rougissent — c'est là que vit la promesse désormais ;
+//   - une écriture dans `localStorage` remise dans `close` : « ne se souvient
+//     pas » rougit sur `getItem(KEY)`.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { act } from 'react';
@@ -53,9 +50,9 @@ async function render(node: React.ReactElement): Promise<void> {
 }
 
 /** L'écran, réduit à ce que ce test regarde : le bouton et le panneau. */
-function Ecran({ forceOpen = false }: { forceOpen?: boolean }) {
+function Ecran() {
   return (
-    <ProjectPanelProvider forceOpen={forceOpen}>
+    <ProjectPanelProvider>
       <ProjectPanelButton />
       <ProjectPanelBody>
         <p>LES CONVERSATIONS</p>
@@ -140,33 +137,30 @@ describe('ProjectPanel @cap:travailler-sur-des-fichiers/ecran', () => {
     expect(panneau()).not.toBeNull();
   });
 
-  it('le choix TIENT d’une visite à l’autre', async () => {
+  it('ne se souvient PAS d’une visite à l’autre : ouvert de nouveau, sans flash', async () => {
+    // Quentin, 20/09 : le choix mémorisé s'appliquait après le montage, et le
+    // panneau rendu ouvert se refermait une image plus tard à chaque projet
+    // cliqué. Il n'écrit donc plus rien, et la visite suivante repart ouverte.
     await render(<Ecran />);
     await clic(bouton());
-    expect(window.localStorage.getItem(KEY)).toBe('closed');
+    expect(panneau()).toBeNull();
+    expect(window.localStorage.getItem(KEY)).toBeNull();
 
-    // La visite suivante : un montage neuf, qui relit le choix.
     await act(async () => root.unmount());
     container.remove();
     await render(<Ecran />);
-    expect(panneau()).toBeNull();
-
-    await clic(bouton());
-    expect(window.localStorage.getItem(KEY)).toBe('open');
-  });
-
-  it('`/files` ouvre le panneau MALGRÉ un choix « fermé »', async () => {
-    window.localStorage.setItem(KEY, 'closed');
-    await render(<Ecran forceOpen />);
     expect(panneau()).not.toBeNull();
   });
 
-  it('un stockage qui refuse ne ferme rien : le défaut tient', async () => {
+  it('`/files` ouvre le panneau, comme toute autre adresse', async () => {
+    await render(<Ecran />);
+    expect(panneau()).not.toBeNull();
+  });
+
+  it('un stockage qui refuse ne change rien : rien ne le lit', async () => {
     vi.stubGlobal('localStorage', undefined);
     await render(<Ecran />);
     expect(panneau()).not.toBeNull();
-    // Et le bouton continue de marcher : l'écran obéit, seul le souvenir
-    // manque.
     await clic(bouton());
     expect(panneau()).toBeNull();
   });

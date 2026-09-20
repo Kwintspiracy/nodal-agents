@@ -67,9 +67,9 @@ describe('NewConversationScreen @cap:parler-a-un-agent/ecran', () => {
     const html = renderToStaticMarkup(
       <NewConversationScreen accountName="Quentin" root={alfred} />,
     );
-    // La colonne du milieu : centrée sur les deux axes, et c'est elle qui
-    // prend la place libre.
-    expect(html).toMatch(/class="[^"]*flex-1[^"]*items-center[^"]*justify-center/);
+    // La colonne du milieu : centrée en largeur, posée au tiers de la hauteur
+    // (`pt-[30vh]`, 20/09), et c'est elle qui prend la place libre.
+    expect(html).toMatch(/class="[^"]*flex-1[^"]*items-center[^"]*justify-start[^"]*pt-\[30vh\]/);
     // Display/28 de la planche pour l'accueil.
     expect(html).toContain('text-display-28');
   });

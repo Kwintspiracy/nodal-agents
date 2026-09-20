@@ -91,6 +91,16 @@ export default function NewConversationScreen({
     <PageShell
       fill
       toolbarBleed
+      // La barre d'état PLEINE LARGEUR, comme l'en-tête (Quentin, 20/09).
+      footer={
+        <StatusBar
+          cost={EMPTY_SPACE_COST}
+          proofVerdict={null}
+          proofSequences={0}
+          pendingDeliveries={0}
+          live={false}
+        />
+      }
       header={
         <ThreadHeader
           avatarName={agentName}
@@ -154,13 +164,6 @@ export default function NewConversationScreen({
           }
         />
       </PendingTurnProvider>
-      <StatusBar
-        cost={EMPTY_SPACE_COST}
-        proofVerdict={null}
-        proofSequences={0}
-        pendingDeliveries={0}
-        live={false}
-      />
     </PageShell>
   );
 }

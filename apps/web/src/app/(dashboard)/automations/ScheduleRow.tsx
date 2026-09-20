@@ -62,7 +62,12 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
               </>
             )}
           </div>
-          <div className="flex items-center gap-3 text-legacy-11 text-ink-4">
+          {/* Heures LOCALES du navigateur : rendues par le serveur dans la sienne, relues
+              au montage sans avertissement (même garde que CronBuilder). */}
+          <div
+            className="flex items-center gap-3 text-legacy-11 text-ink-4"
+            suppressHydrationWarning
+          >
             {s.nextRun && s.active && <span>Next run {new Date(s.nextRun).toLocaleString()}</span>}
             {s.lastRun && (
               <span>

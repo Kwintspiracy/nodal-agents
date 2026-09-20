@@ -78,8 +78,11 @@ export default function StatusBar({
       {open && <CostPanel cost={cost} onClose={() => setOpen(false)} />}
       {/* Ancrée en bas de l'écran et PLEINE LARGEUR, comme l'en-tête en haut :
           elle s'arrêtait à la largeur du contenu et flottait au milieu quand le
-          fil était court (Quentin, 07/09). */}
-      <div className="flex h-7 shrink-0 items-center gap-1 border-t border-rule-2 bg-sidebar px-5 text-mono-11 text-ink-3">
+          fil était court (Quentin, 07/09). `sticky bottom-0` en plus (20/09) :
+          quand l'écran déborde malgré tout — Safari sur iPad calculait la hauteur
+          d'un fil plus grande que la fenêtre — la barre reste collée au bas de
+          ce qui est visible au lieu de passer sous le bord. */}
+      <div className="sticky bottom-0 z-10 flex h-7 shrink-0 items-center gap-1 border-t border-rule-2 bg-sidebar px-5 text-mono-11 text-ink-3">
         <Seg>
           {proofSequences === 0 ? (
             <span>no proof</span>

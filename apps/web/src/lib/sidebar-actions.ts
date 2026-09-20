@@ -33,12 +33,15 @@ import {
   desc,
   eq,
   ne,
+  sql,
   agents,
+  agentJobs,
   agentSchedules,
   approvalRequests,
   webhookTriggers,
 } from '@nodal-agents/db';
 import { requireAuth } from '@nodal-agents/auth';
+import { explainApproval } from '@nodal-agents/shared';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 
 export type ActionResult<T = void> =
@@ -73,6 +76,12 @@ const SidebarLimit = z.number().int().min(1).max(50);
 export type SidebarNamedRow = {
   id: string;
   name: string;
+  /**
+   * Cette ligne TRAVAILLE en ce moment. Lu, jamais deviné : un agent est
+   * actif quand un de ses jobs est en vol (`pending`, `processing`,
+   * `awaiting_delegation`). Absent sur les sections qui ne le lisent pas.
+   */
+  running?: boolean;
 };
 
 /**
@@ -86,8 +95,21 @@ export type SidebarNamedRow = {
  * jamais vide, et c'est pour cela qu'il n'est pas nullable.
  */
 export type SidebarApprovalRow = SidebarNamedRow & {
-  /** L'outil dont l'appel est en jeu. L'infobulle de la ligne. */
+  /** L'outil dont l'appel est en jeu. */
   toolName: string;
+  /**
+   * CE QUE la demande voulait faire, en une phrase — la même que la page des
+   * approbations écrit en titre de sa carte (`explainApproval`). C'est ce que
+   * la ligne montre depuis le 20/09 (Quentin : le nom de l'agent seul ne dit
+   * pas de quoi il s'agissait) ; l'agent et l'outil passent en infobulle.
+   */
+  what: string;
+  /** Ce qui a été décidé : `approved`, `rejected` ou `expired`. */
+  status: 'approved' | 'rejected' | 'expired';
+  /** Quand, en ISO — `null` si la base ne l'a pas noté. */
+  resolvedAt: string | null;
+  /** La réponse donnée, pour une QUESTION ; `null` pour une approbation. */
+  answer: string | null;
 };
 
 // ─── Les agents ───────────────────────────────────────────────────────────────
@@ -106,13 +128,21 @@ export async function listSidebarAgentsAction(
     const session = await getSession();
     const parsed = SidebarLimit.safeParse(limit);
     if (!parsed.success) return fail('validation_failed', 'Invalid limit');
+    // Le POINT d'activité de la planche 25:1062 (20/09) : un agent est allumé
+    // quand un de ses jobs est en vol. Lu dans la même requête, en une
+    // sous-requête corrélée, bornée aux agents affichés — pas une lecture par
+    // ligne, pas un compteur tenu à part qui finirait par mentir.
     const rows = await getDb()
-      .select({ id: agents.id, name: agents.name })
+      .select({
+        id: agents.id,
+        name: agents.name,
+        running: sql<boolean>`exists (select 1 from ${agentJobs} where ${agentJobs.agentId} = ${agents.id} and ${agentJobs.status} in ('pending', 'processing', 'awaiting_delegation'))`,
+      })
       .from(agents)
       .where(eq(agents.entityId, session.entityId))
       .orderBy(agents.position, agents.name, desc(agents.id))
       .limit(parsed.data);
-    return ok(rows);
+    return ok(rows.map((r) => ({ id: r.id, name: r.name, running: r.running === true })));
   } catch (err) {
     console.error('[listSidebarAgentsAction]', err);
     return fail('db_error', 'Failed to load agents');
@@ -197,6 +227,10 @@ export async function listSidebarRecentApprovalsAction(
         id: approvalRequests.id,
         agentName: agents.name,
         toolName: approvalRequests.toolName,
+        toolInput: approvalRequests.toolInput,
+        status: approvalRequests.status,
+        resolvedAt: approvalRequests.resolvedAt,
+        answer: approvalRequests.answer,
       })
       .from(approvalRequests)
       .leftJoin(agents, eq(agents.id, approvalRequests.agentId))
@@ -211,12 +245,26 @@ export async function listSidebarRecentApprovalsAction(
       .orderBy(desc(approvalRequests.resolvedAt), desc(approvalRequests.id))
       .limit(parsed.data);
     return ok(
-      rows.map((r) => ({
-        id: r.id,
-        // L'agent quand on le connaît, l'outil sinon. Jamais un nom inventé.
-        name: r.agentName ?? r.toolName,
-        toolName: r.toolName,
-      })),
+      rows.map((r) => {
+        // La même phrase que la carte de la page des approbations, calculée
+        // sans le contexte MCP (quatre lignes d'un menu ne résolvent pas un
+        // serveur par outil) : l'outil et ses arguments suffisent à la dire.
+        const what = explainApproval({
+          toolName: r.toolName,
+          toolInput: (r.toolInput ?? {}) as Record<string, unknown>,
+        }).what;
+        return {
+          id: r.id,
+          // L'agent quand on le connaît, l'outil sinon. Jamais un nom inventé.
+          name: r.agentName ?? r.toolName,
+          toolName: r.toolName,
+          what,
+          // `<> 'pending'` dans la requête : il ne reste que ces trois-là.
+          status: (r.status ?? 'expired') as 'approved' | 'rejected' | 'expired',
+          resolvedAt: r.resolvedAt === null ? null : r.resolvedAt.toISOString(),
+          answer: r.answer ?? null,
+        };
+      }),
     );
   } catch (err) {
     console.error('[listSidebarRecentApprovalsAction]', err);

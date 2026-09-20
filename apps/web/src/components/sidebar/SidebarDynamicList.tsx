@@ -23,10 +23,12 @@
 // telle quelle plutôt que réinventée.
 
 import { useCallback, type ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
 import { ArrowRight } from '@phosphor-icons/react';
 import SidebarRow, { SIDEBAR_NOTE } from '../ui/SidebarRow';
 import SidebarEmpty from '../ui/SidebarEmpty';
 import ThreadDot from '../ui/ThreadDot';
+import LiveDot from '../ui/LiveDot';
 import { useSidebarRead } from '@/lib/use-sidebar-read.ts';
 import { FOLDER_THREADS_PROBE, unfoldedRows } from '@/lib/chat-folders.ts';
 
@@ -42,8 +44,16 @@ export type DynamicRow = {
    * demandes ont déjà reçu une réponse.
    */
   calls?: boolean;
+  /**
+   * Cette ligne TRAVAILLE en ce moment : le point devient lime et bat, comme
+   * partout où le produit dit « ça tourne » (`LiveDot`). C'est le point des
+   * agents sur la planche 25:1062 (20/09).
+   */
+  running?: boolean;
   /** L'infobulle, quand elle dit plus que le nom. */
   title?: string;
+  /** Le chemin d'un projet — ce que ses actions de ligne demandent. */
+  path?: string;
 };
 
 export default function SidebarDynamicList({
@@ -55,6 +65,8 @@ export default function SidebarDynamicList({
   seeAllAlways = false,
   dot = false,
   active = true,
+  menu,
+  isActive,
 }: {
   /** Nomme la section pour les tests et les parcours. */
   testId: string;
@@ -88,17 +100,34 @@ export default function SidebarDynamicList({
   /**
    * La section dessine-t-elle un POINT devant ses lignes ?
    *
-   * La planche en met sur WORKSPACES et sur RECENTS, et n'en met AUCUN sur
-   * CRON, WEBHOOKS ni sur les agents. C'est une propriété de la section, pas
-   * de la ligne : un point gris par défaut aurait mis une puce devant des
-   * lignes que la planche laisse nues.
+   * La planche en met sur PROJECTS, sur RECENTS et sur les AGENTS (celui des
+   * agents dit « il travaille », en lime), et n'en met AUCUN sur CRON ni sur
+   * WEBHOOKS. C'est une propriété de la section, pas de la ligne : un point
+   * gris par défaut aurait mis une puce devant des lignes que la planche
+   * laisse nues.
    */
   dot?: boolean;
   /** La section est-elle dépliée ? À faux, aucune requête ne part. */
   active?: boolean;
+  /**
+   * Les trois points d'une ligne et leur menu (20/09) : rendu par la section,
+   * qui seule sait ce que sa ligne accepte. `relire` relit la liste tout de
+   * suite après un geste, sans attendre le tour d'horloge.
+   */
+  menu?: (row: DynamicRow, relire: () => Promise<void>) => ReactNode;
+  /**
+   * La ligne où l'on EST, quand elle ne se déduit pas du chemin seul — les
+   * lignes de RECENTS ne diffèrent que par un paramètre (`?show=`).
+   */
+  isActive?: (row: DynamicRow) => boolean;
 }) {
   const lire = useCallback(() => read(FOLDER_THREADS_PROBE), [read]);
-  const { rows, erreur } = useSidebarRead<DynamicRow>(lire, active);
+  const { rows, erreur, relire } = useSidebarRead<DynamicRow>(lire, active);
+  // La ligne de l'endroit où l'on EST s'allume comme une entrée de menu
+  // (Quentin, 20/09 : « la sélection se fait, mais rien ne le montre »). Le
+  // même repère que `SidebarLink` : la route égale l'adresse de la ligne, ou
+  // commence par elle.
+  const pathname = usePathname();
 
   const { rows: lignes, hasMore } =
     rows === null ? { rows: null, hasMore: false } : unfoldedRows(rows);
@@ -117,7 +146,7 @@ export default function SidebarDynamicList({
   );
 
   return (
-    <div className="flex flex-col gap-0.5" data-testid={`sidebar-list-${testId}`}>
+    <div className="flex flex-col gap-0" data-testid={`sidebar-list-${testId}`}>
       {erreur !== null ? (
         <p className={SIDEBAR_NOTE}>{erreur}</p>
       ) : lignes === null ? (
@@ -131,9 +160,23 @@ export default function SidebarDynamicList({
             href={hrefOf(r)}
             title={r.title ?? r.name}
             depth="thread"
+            active={
+              isActive !== undefined
+                ? isActive(r)
+                : pathname === hrefOf(r) || pathname.startsWith(`${hrefOf(r)}/`)
+            }
+            markCurrent
+            menu={menu?.(r, relire)}
             testId={`sidebar-row-${testId}`}
           >
-            {dot ? (
+            {dot && r.running === true ? (
+              <span
+                className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                data-testid="running-dot"
+              >
+                <LiveDot variant="lime" size="md" />
+              </span>
+            ) : dot ? (
               <ThreadDot thread={{ waiting: r.calls ?? false, running: false, unread: false }} />
             ) : (
               // Une place vide de la largeur d'un point : les noms s'alignent

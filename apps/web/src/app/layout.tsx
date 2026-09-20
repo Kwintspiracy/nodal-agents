@@ -21,6 +21,11 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'Nodal-Agents',
   description: 'Multi-agent platform',
+  // Safari iOS transforme tout nombre qui ressemble à un téléphone en lien
+  // `tel:` et COUPE le nœud de texte autour — l'argument `"seed": 8472910452`
+  // d'une carte d'approbation faisait échouer l'hydratation sur l'iPad
+  // (Quentin, 20/09). Le produit n'affiche jamais un numéro à composer.
+  formatDetection: { telephone: false, email: false, address: false },
 };
 
 // Inline theme bootstrap. Reads localStorage and applies data-theme BEFORE

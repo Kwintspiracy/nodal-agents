@@ -28,7 +28,10 @@ export default function ThreadDot({
       <span
         data-testid="thread-dot"
         data-calls={appelle ? 'yes' : 'no'}
-        className={`h-1.5 w-1.5 rounded-full ${appelle ? 'bg-attention' : 'bg-ink-4'}`}
+        // 8 px, et le gris est celui d'un filet (`rule-2`), pas d'un texte : la
+        // planche 25:1062 (20/09) dessine le point au repos à peine plus clair
+        // que le fond, pour que seul le rouge se voie.
+        className={`h-2 w-2 rounded-full ${appelle ? 'bg-attention' : 'bg-rule-2'}`}
       />
     </span>
   );

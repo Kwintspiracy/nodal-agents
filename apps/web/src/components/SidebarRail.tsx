@@ -5,7 +5,7 @@
 //
 // Planche du propriétaire du 19/09/2026 au soir : Figma
 // `WPLtjoJjXJBEqDyCpLy9xc`, nœud `25:1062`, cinq cadres côte à côte. Le logo en
-// haut, puis Work / Agents / Run / Approvals ; en bas, Logs, Settings, Help, le
+// haut, puis Work / Agents / Run / Approvals / Settings ; en bas, Logs, Help, le
 // compte, et la version du produit.
 //
 // ⚠️ CE QUI A CHANGÉ DEPUIS #230 :

@@ -27,6 +27,7 @@
 import { useCallback } from 'react';
 import { listSidebarProjectsAction } from '@/lib/project-actions.ts';
 import SidebarDynamicList from './SidebarDynamicList';
+import RowActions from './RowActions';
 
 export default function WorkspacesList() {
   // La lecture rend `unread` ; la liste dessine `calls`. La traduction est
@@ -36,7 +37,7 @@ export default function WorkspacesList() {
     if (!r.ok) return r;
     return {
       ok: true as const,
-      data: r.data.map((p) => ({ id: p.id, name: p.name, calls: p.unread })),
+      data: r.data.map((p) => ({ id: p.id, name: p.name, path: p.path, calls: p.unread })),
     };
   }, []);
 
@@ -46,9 +47,19 @@ export default function WorkspacesList() {
       read={lire}
       hrefOf={(r) => `/spaces/${r.id}`}
       dot
-      empty="No Workspace Yet"
+      empty="No Project Yet"
       seeAll="/spaces"
       seeAllAlways
+      menu={(r, relire) => (
+        <RowActions
+          kind="project"
+          id={r.id}
+          name={r.name}
+          href={`/spaces/${r.id}`}
+          path={r.path}
+          onDone={relire}
+        />
+      )}
     />
   );
 }

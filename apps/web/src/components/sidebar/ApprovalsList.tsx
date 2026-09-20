@@ -31,7 +31,7 @@ export default function ApprovalsList() {
   const lignes = pending.slice(0, FOLDER_THREADS_MAX);
 
   return (
-    <div className="flex flex-col gap-0.5" data-testid="sidebar-list-approvals">
+    <div className="flex flex-col gap-0" data-testid="sidebar-list-approvals">
       {lignes.map((a) => (
         <SidebarRow
           key={a.id}

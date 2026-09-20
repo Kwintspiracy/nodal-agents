@@ -59,6 +59,8 @@ export default function RunScreen({
       // pas pour elle.
       fluid
       toolbarBleed
+      // La barre d'état PLEINE LARGEUR, comme l'en-tête (Quentin, 20/09).
+      footer={statusBar}
       header={
         <ThreadHeader
           avatarName={avatarName}
@@ -80,7 +82,7 @@ export default function RunScreen({
           run, sur la même boîte que sa largeur maximale — c'est ainsi que
           `PageShell` construit le corps de toutes les autres pages, et c'est la
           seule façon d'avoir la même largeur de contenu qu'elles. */}
-      <ThreadScreen follow="never" sidePadding={false} statusBar={statusBar}>
+      <ThreadScreen follow="never" sidePadding={false}>
         {children}
       </ThreadScreen>
     </PageShell>

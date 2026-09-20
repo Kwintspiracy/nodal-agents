@@ -93,13 +93,17 @@ export function RunBody({
 
   return (
     // LA BOÎTE DE `PageShell`, à l'identique : largeur maximale ET gouttières
-    // sur le MÊME élément (`px-5 sm:px-8 lg:px-9 max-w-6xl`), calée à gauche.
+    // sur le MÊME élément (`px-5 sm:px-8 lg:px-9 max-w-6xl`), et CENTRÉE
+    // (`mx-auto`, 20/09 : toutes les pages le sont, celle-ci restait à gauche).
     // C'est ce qui donne la largeur de contenu de toutes les autres pages :
     // 1152 − 2 × 36 = 1080 px au-delà de `lg`. Les porter séparément — les
     // gouttières sur la zone de défilement, la largeur ici — faisait deux
     // boîtes emboîtées et un contenu de 1152 px, soit 72 px de plus que partout
     // ailleurs (Quentin, deux fois : « plus large que toutes les autres pages »).
-    <div className="max-w-6xl min-w-0 space-y-4 px-5 sm:px-8 lg:px-9" data-testid="run-body">
+    <div
+      className="mx-auto w-full max-w-6xl min-w-0 space-y-4 px-5 sm:px-8 lg:px-9"
+      data-testid="run-body"
+    >
       <LiveRefresh live={view.live} />
 
       <RunHeaderCard

@@ -13,5 +13,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function ProjectFilesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <ProjectScreen id={id} forceFilesOpen />;
+  // Le panneau est ouvert par défaut partout depuis le 20/09 : cette adresse
+  // rend la même page, et reste pour les liens déjà envoyés.
+  return <ProjectScreen id={id} />;
 }

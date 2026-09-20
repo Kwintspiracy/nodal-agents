@@ -16,6 +16,8 @@ import { createRoot, type Root } from 'react-dom/client';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => pathname,
+  // Les menus de ligne (RowActions) rafraîchissent la page après un geste.
+  useRouter: () => ({ refresh: () => {}, push: () => {} }),
   useSearchParams: () => new URLSearchParams(search),
 }));
 // `next/link` demande un routeur qui n'existe pas dans jsdom : une ancre suffit
@@ -24,7 +26,21 @@ vi.mock('next/link', () => ({
   default: ({ children, href, ...rest }: { children: ReactNode; href: string }) =>
     createElement('a', { href, ...rest }, children),
 }));
-vi.mock('@/lib/actions', () => ({ listApprovalsAction: vi.fn() }));
+vi.mock('@/lib/actions', () => ({
+  listApprovalsAction: vi.fn(),
+  deleteAgentAction: vi.fn(),
+  deleteConversationAction: vi.fn(),
+  deleteScheduleAction: vi.fn(),
+  deleteWebhookTriggerAction: vi.fn(),
+  renameCodeProjectAction: vi.fn(),
+  setCodeProjectHiddenAction: vi.fn(),
+}));
+vi.mock('@/lib/row-actions.ts', () => ({
+  renameAgentAction: vi.fn(),
+  renameConversationAction: vi.fn(),
+  renameScheduleAction: vi.fn(),
+  renameWebhookTriggerAction: vi.fn(),
+}));
 vi.mock('@/lib/conversation-actions.ts', () => ({ getChatFoldersAction: vi.fn() }));
 vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
 
@@ -542,7 +558,7 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
     expect(dots[0]?.className).toContain('bg-attention');
     expect(dots[1]?.className).toContain('bg-attention');
     expect(dots[2]?.className).toContain('bg-attention');
-    expect(dots[3]?.className).toContain('bg-ink-4');
+    expect(dots[3]?.className).toContain('bg-rule-2');
     expect(dots[3]?.className).not.toContain('bg-attention');
     // Aucun `#D8153F` en dur dans le rendu : le jeton est la seule source.
     expect(container.innerHTML.toLowerCase()).not.toContain('d8153f');
@@ -566,7 +582,7 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
     const dots = threadDots('telegram');
     expect(dots.map((d) => d.getAttribute('data-calls'))).toEqual(['yes', 'no']);
     expect(dots[0]?.className).toContain('bg-attention');
-    expect(dots[1]?.className).toContain('bg-ink-4');
+    expect(dots[1]?.className).toContain('bg-rule-2');
   });
 
   it('pose le point DEVANT le titre, dans la colonne de l’icône du dossier', async () => {

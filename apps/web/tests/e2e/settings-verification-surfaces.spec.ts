@@ -25,7 +25,7 @@ test.beforeAll(async () => {
 /** Le panneau ancré, ouvert sur le réglage — et rien d'autre de la page. */
 async function openSurfacesPanel(page: Page): Promise<Locator> {
   await page.goto('/settings?open=verification');
-  const panel = page.getByTestId('settings-panel');
+  const panel = page.getByTestId('setting-section-verification');
   await expect(panel.getByRole('heading', { name: 'Verification surfaces', level: 2 })).toBeVisible(
     { timeout: 10_000 },
   );

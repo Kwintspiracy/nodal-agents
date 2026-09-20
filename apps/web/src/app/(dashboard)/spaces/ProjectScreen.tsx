@@ -5,15 +5,11 @@
 // sessions se déplient comme avant ; une ligne de session sans conversation
 // ouvre la page du run (`/code/<id>`).
 //
-// À droite son DOSSIER et sa PREUVE, dans un panneau ancré qui pousse la page
-// au lieu de la couvrir (Quentin, 19/09). C'était un second onglet : il fallait
-// quitter les conversations pour voir le dossier, et les quitter de nouveau
-// pour revenir. Côte à côte, on lit les deux.
-//
-// Deux routes rendent cet écran, et c'est le seul écart entre elles :
-// `/spaces/[id]` respecte le choix de la personne, `/spaces/[id]/files` ouvre
-// le panneau d'office — cette adresse est dans des liens déjà envoyés et dans
-// la barre d'un run, et elle veut dire « montre-moi le dossier ».
+// À droite son DOSSIER et sa PREUVE, dans une carte flottante posée au bord
+// droit (planche 498:5776, Quentin 20/09), ouverte à chaque visite : on lit
+// les deux côte à côte. Deux routes rendent cet écran, `/spaces/[id]` et
+// `/spaces/[id]/files` — la seconde est dans des liens déjà envoyés et dans
+// la barre d'un run ; le panneau étant ouvert partout, elle rend la même page.
 
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
@@ -29,9 +25,7 @@ import {
   listCodeProjectPrefsAction,
 } from '@/lib/actions.ts';
 
-import WorkBar from '@/components/ui/WorkBar';
 import ActionRow from '@/components/ui/ActionRow';
-import { projectFactsLine } from './project-header.ts';
 import { activityRows } from './activity-rows.ts';
 import ProjectToolbar from './ProjectToolbar.tsx';
 import ProjectActivity from './ProjectActivity.tsx';
@@ -41,13 +35,7 @@ import ProjectProof from './ProjectProof.tsx';
 import { ProjectFilesPanel, ProjectPanelBody, ProjectPanelProvider } from './ProjectPanel.tsx';
 import type { ProjectVerification } from './ProjectVerificationPanel.tsx';
 
-export default async function ProjectScreen({
-  id,
-  forceFilesOpen = false,
-}: {
-  id: string;
-  forceFilesOpen?: boolean;
-}) {
+export default async function ProjectScreen({ id }: { id: string }) {
   const [factsResult, activityResult, approvals, pageResult, prefsResult, ownerResult] =
     await Promise.all([
       getProjectFactsAction(id),
@@ -85,39 +73,38 @@ export default async function ProjectScreen({
     : [];
 
   return (
-    <ProjectPanelProvider forceOpen={forceFilesOpen}>
-      {/* L'ORDRE, et c'est la règle de #242 : l'en-tête (titre, sous-titre), la
-          WorkBar avec le retour dedans, la rangée des actions SOUS la barre,
-          puis la rangée contenu / panneau. Les actions ne sont ni sur la ligne
-          du retour — un retour entouré de boutons n'est plus un retour — ni
-          dans un bandeau pleine largeur au-dessus du panneau.
-          `fluid` : la page d'un projet remplit le cadre. Sa liste est une
-          boîte de réception, et le panneau lui prend déjà 400 px à droite. */}
+    <ProjectPanelProvider>
+      {/* La planche 498:5776 (Quentin, 20/09) : l'en-tête porte le nom et le
+          CHEMIN du projet ; dessous, la page est une page comme les autres —
+          contenu centré, rangée d'actions alignée à droite au-dessus de la
+          liste, boutons à la taille standard — et le panneau « Files & proof »
+          FLOTTE au bord droit, ouvert par défaut. Plus de WorkBar : le chemin
+          est dans l'en-tête, et rien d'autre n'y était dit.
+          `fluid` : la colonne se centre ELLE-MÊME dans `ProjectPanelBody`,
+          parce qu'elle doit se recentrer dans la place que le panneau laisse. */}
       <PageShell
-        fill
         fluid
-        toolbarBleed
         title={facts.name}
-        subtitle={projectFactsLine(facts)}
-        toolbar={
-          <>
-            <WorkBar context={<span className="text-body-13 text-ink-3">{facts.path}</span>} />
-            <ActionRow className="px-5 pt-4 sm:px-8 lg:px-9">
+        // Le CHEMIN, et rien d'autre, sous le nom (Quentin, 20/09) : la ligne
+        // « agent · chemin · n conversations » est retirée.
+        subtitle={facts.path}
+      >
+        <ProjectPanelBody
+          actions={
+            <ActionRow>
               <ProjectToolbar
                 projectId={facts.id}
                 projectPath={facts.path}
                 projectName={facts.name}
               />
             </ActionRow>
-          </>
-        }
-        aside={
-          <ProjectFilesPanel title="Files & proof">
-            <FilesAndProof result={pageResult} prefs={prefsResult} owner={ownerResult} />
-          </ProjectFilesPanel>
-        }
-      >
-        <ProjectPanelBody>
+          }
+          panel={
+            <ProjectFilesPanel title="Files & proof">
+              <FilesAndProof result={pageResult} prefs={prefsResult} owner={ownerResult} />
+            </ProjectFilesPanel>
+          }
+        >
           {/* L'OPTION GIT DU PROJET (issue #200), dans la colonne et pas dans
               le panneau : le panneau montre ce que le dossier CONTIENT et ce
               que la preuve en dit, tandis que poser un dépôt est un geste qu'on
