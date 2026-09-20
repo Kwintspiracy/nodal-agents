@@ -37,6 +37,7 @@ import {
   Check,
   CheckCircle,
   PencilSimple,
+  Terminal,
   Warning,
   X,
 } from '@phosphor-icons/react/dist/ssr';
@@ -139,20 +140,30 @@ export default function DeliveryBlock({
             Une relecture qui demande des corrections fait le même effet sur le
             signe, et sur lui seul : le mot, lui, ne bouge plus (#59, décision
             du 19/09 au soir). */}
+        {/* UNE ABSENCE SE DESSINE EN GRIS, jamais en rouge (#282) : un tour
+            dont la seule commande n'a rien laissé voir n'est pas en panne, il
+            est indéterminé. Le crochet reste, sa couleur s'éteint. */}
         {changesRequested ? (
           <Warning size={16} className="text-warn" aria-hidden />
         ) : (
           <CheckCircle
             size={16}
-            className={verdict === 'red' ? 'text-warn' : 'text-ok'}
+            className={
+              !summary.produced ? 'text-ink-4' : verdict === 'red' ? 'text-warn' : 'text-ok'
+            }
             aria-hidden
           />
         )}
         {/* Le mot du résultat, puis ce que la relecture en dit — deux faits,
             jamais l'un à la place de l'autre. Sans relecture, il n'y a qu'un
             fait et la ligne s'arrête là. */}
+        {/* « DELIVERED » SE MÉRITE (#282). L'encart paraît désormais aussi pour
+            un tour dont la seule commande n'a rien laissé voir ; écrire
+            « Delivered » au-dessus de cette liste dirait le contraire de ce que
+            le verdict a mesuré. Le mot devient alors « Ran » : quelque chose a
+            bien tourné, et c'est tout ce qu'on sait. */}
         <span className="text-title-15 text-ink">
-          Delivered
+          {summary.produced ? 'Delivered' : 'Ran'}
           {reviewLabel !== null && <span className="text-ink-3"> · {reviewLabel}</span>}
         </span>
         {/* La pastille suit le mot, à trente pixels — pas poussée au bord
@@ -196,6 +207,35 @@ export default function DeliveryBlock({
           {hiddenFiles > 0 && (
             <p className="mt-1 text-mono-11 text-ink-4">… and {hiddenFiles} more</p>
           )}
+        </div>
+      )}
+
+      {/* LES COMMANDES DU TRAVAIL, et ce qu'on a vu de chacune (#282). Une
+          commande dont aucune écriture n'a été constatée sur son tour le DIT,
+          au lieu de disparaître de l'écran : c'est l'absence que le verdict a
+          mesurée, et l'invariant #4 demande qu'elle se dise.
+
+          « nothing observed », et pas « rien fait » : dans un dépôt, le constat
+          par git aurait vu l'écriture. Ce qui manque est le CONSTAT, pas
+          forcément l'effet. */}
+      {summary.commands.length > 0 && (
+        <div className="border-t border-rule-2 px-4 pt-2.5 pb-3">
+          <p className="mb-1 text-mono-11 text-ink-4">Commands</p>
+          <ul className="flex flex-col gap-1">
+            {summary.commands.map((c, i) => (
+              <li
+                key={i}
+                className="flex min-w-0 items-center gap-2"
+                data-testid="delivery-command"
+              >
+                <Terminal size={12} className="shrink-0 text-ink-4" aria-hidden />
+                <span className="min-w-0 truncate text-mono-12 text-ink-2">{c.label}</span>
+                {!c.observed && (
+                  <span className="shrink-0 text-mono-11 text-ink-4">nothing observed</span>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

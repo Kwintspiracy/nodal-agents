@@ -84,6 +84,8 @@ const delivered: FeedItem = {
     verdict: null,
     review: null,
     changesRequested: false,
+    commands: [],
+    produced: true,
   },
 };
 

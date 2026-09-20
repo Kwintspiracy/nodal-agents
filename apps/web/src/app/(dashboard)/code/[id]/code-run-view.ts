@@ -226,6 +226,14 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
     // côté ; c'est là que « Changes requested » ou « Approved » se lit.
     review,
     changesRequested: reviewBlocksDelivery(review),
+    // LE DÉTAIL D'UN PROCESS DE CODE NE PORTE AUCUNE COMMANDE de ce genre
+    // (#282) : il porte les commandes de PREUVE (`verificationRuns`, déjà
+    // rendues dans `checks`), jamais les appels shell du travail ni le constat
+    // d'écriture de leur tour. Une liste vide, donc — pas une invention.
+    commands: [],
+    // Cette fonction ne rend `null` que si rien n'a été écrit ET rien n'a été
+    // prouvé : arrivé ici, le run a bien produit quelque chose.
+    produced: true,
   };
 }
 

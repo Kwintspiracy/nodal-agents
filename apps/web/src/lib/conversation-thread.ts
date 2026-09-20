@@ -42,7 +42,7 @@ import {
 import type { JobResultKind } from '@nodal-agents/shared';
 import { canonicalChangePath, lineCountsOfCall, sumLineCounts } from './coding-changes.ts';
 import { callHappened, outcomeOfToolOutput, parsePresented } from './tool-card-payload.ts';
-import type { ProductionVerdict } from './chat-or-work.ts';
+import type { ProducedItem, ProductionVerdict } from './chat-or-work.ts';
 // La règle « une relecture interdit-elle d'annoncer livré ? » vit dans
 // `@nodal-agents/shared` (#59) : l'orchestration la lit pour poser son champ
 // typé, l'écran pour choisir son mot. Une seule écriture, deux lecteurs.
@@ -506,13 +506,38 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     // ici, il transporte.
     review: job.reviewVerdict,
     changesRequested: reviewBlocksDelivery(job.reviewVerdict),
+    // LES COMMANDES, lues dans le verdict déjà calculé (#282) — pas une
+    // seconde lecture des lignes d'audit. `certain` à faux veut dire qu'aucune
+    // écriture n'a été constatée sur le tour de cette commande (#197).
+    commands: job.verdict.items
+      .filter((i): i is Extract<ProducedItem, { kind: 'command' }> => i.kind === 'command')
+      .map((i) => ({ label: i.label, observed: i.certain })),
+    produced: job.verdict.isWork,
   };
 }
 
 /**
- * Ce qui suit les items d'un job : l'encart quand il a produit, sinon l'aveu
- * d'ignorance quand ses lignes ne se classent pas. Jamais les deux — l'encart
- * porte déjà son propre compte d'incertitude.
+ * CE TOUR A-T-IL FAIT TOURNER UNE COMMANDE SANS QU'ON VOIE RIEN ? (#282)
+ *
+ * Depuis #197 une commande dont aucune écriture n'est constatée sort
+ * `certain: false` : elle ne décide plus à elle seule qu'il y a eu travail,
+ * et elle est comptée dans `uncertain`. Ce compte n'atteignait AUCUN écran :
+ * un tour dont c'était la seule action ne rendait ni encart (`isWork` est
+ * faux) ni note (`unclassified` est à zéro), et le fil ne disait rien du tout.
+ *
+ * Le verdict, lui, ne s'est jamais trompé : il n'a rien inventé. Mais
+ * l'absence qu'il a mesurée n'était pas dite non plus, et c'est la moitié que
+ * l'invariant #4 réclame.
+ */
+function ranWithoutBeingSeen(job: ThreadJob): boolean {
+  return job.verdict.items.some((i) => i.kind === 'command' && !i.certain);
+}
+
+/**
+ * Ce qui suit les items d'un job : l'encart quand il a produit OU quand une de
+ * ses commandes n'a rien laissé voir (#282), sinon l'aveu d'ignorance quand
+ * ses lignes ne se classent pas. Jamais les deux — l'encart porte déjà son
+ * propre compte d'incertitude.
  *
  * Exportée pour le chargeur d'UN run (`getSpaceConversationAction`), qui la
  * pose sur son job de tête : la page d'un run doit dire de ce run EXACTEMENT
@@ -520,7 +545,12 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
  * divergé au premier correctif.
  */
 export function afterJobItems(job: ThreadJob): FeedItem[] {
-  if (job.verdict.isWork) {
+  // L'ENCART PARAÎT AUSSI POUR UNE COMMANDE QU'ON N'A PAS VUE (#282, décision
+  // de Quentin du 21/09). Il ne disait rien de ces tours-là : ni encart, ni
+  // note. C'est bien l'encart qui s'affiche, et pas une note neutre — une
+  // phrase seule dirait « une commande n'a rien laissé voir » sans dire
+  // LAQUELLE, et c'est justement la commande qu'on veut lire.
+  if (job.verdict.isWork || ranWithoutBeingSeen(job)) {
     return [
       {
         kind: 'produced',

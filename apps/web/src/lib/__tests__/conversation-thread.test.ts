@@ -196,8 +196,82 @@ describe('buildConversationThread — une conversation de canal', () => {
         // n'interdit rien.
         review: null,
         changesRequested: false,
+        // #282 — ce travail n'a fait tourner aucune commande, et il a produit
+        // quelque chose : la liste est vide et l'encart se dit une livraison.
+        commands: [],
+        produced: true,
       },
     });
+  });
+
+  // ─── #282 ── une commande qu'on n'a pas vue se DIT ───────────────────
+  //
+  // Depuis #197 une commande dont aucune écriture n'est constatée sort
+  // `certain: false` : elle ne décide plus qu'il y a eu travail, et elle est
+  // comptée dans `uncertain`. Ce compte n'atteignait aucun écran — ni encart
+  // (`isWork` est faux), ni note (`unclassified` est à zéro). Décision de
+  // Quentin du 21/09 : l'encart, avec la commande marquée.
+
+  /** Un tour dont la SEULE action est une commande dont rien n'a été vu. */
+  const commandeNonConstatee: ProductionVerdict = {
+    isWork: false,
+    items: [{ kind: 'command', label: 'ls -la', certain: false }],
+    uncertain: 1,
+    more: 0,
+    unclassified: 0,
+  };
+
+  it('l’encart paraît pour une commande dont rien n’a été constaté, et le dit', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1', verdict: commandeNonConstatee })],
+    });
+    const produits = items.filter((i) => i.kind === 'produced');
+    expect(produits).toHaveLength(1);
+    const e = produits[0] as Extract<FeedItem, { kind: 'produced' }>;
+    // La commande est NOMMÉE, et marquée : c'est elle qu'on vient lire.
+    expect(e.summary.commands).toEqual([{ label: 'ls -la', observed: false }]);
+    // Et l'encart ne se dit PAS une livraison : le verdict n'a rien constaté,
+    // et le mot de l'en-tête en dépend.
+    expect(e.summary.produced).toBe(false);
+    // Aucune note neutre à côté : l'encart et l'aveu ne paraissent jamais
+    // ensemble, et c'est l'encart qui gagne ici.
+    expect(items.filter((i) => i.kind === 'note')).toHaveLength(0);
+  });
+
+  it('une commande CONSTATÉE ne porte aucun aveu', () => {
+    const constatee: ProductionVerdict = {
+      isWork: true,
+      items: [{ kind: 'command', label: 'pnpm build', certain: true }],
+      uncertain: 0,
+      more: 0,
+      unclassified: 0,
+    };
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1', verdict: constatee })],
+    });
+    const e = items.find((i) => i.kind === 'produced') as Extract<FeedItem, { kind: 'produced' }>;
+    expect(e.summary.commands).toEqual([{ label: 'pnpm build', observed: true }]);
+    expect(e.summary.produced).toBe(true);
+  });
+
+  it('un tour SANS commande et sans production ne rend toujours aucun encart', () => {
+    const rien: ProductionVerdict = {
+      isWork: false,
+      items: [],
+      uncertain: 0,
+      more: 0,
+      unclassified: 0,
+    };
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1', verdict: rien })],
+    });
+    expect(items.filter((i) => i.kind === 'produced')).toHaveLength(0);
   });
 
   it('le récapitulatif compte un fichier UNE fois, quelle que soit son orthographe, et somme ses lignes', () => {
