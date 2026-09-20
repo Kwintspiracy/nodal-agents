@@ -45,10 +45,22 @@ vi.mock('next/link', () => ({
 // `vi.mock` se remplacent l'un l'autre, et celui qui perd emporte ses
 // fonctions — c'est ce qui a fait tomber la capture le jour où le rail a pris
 // la ligne de version (#258).
+vi.mock('@/lib/row-actions.ts', () => ({
+  renameAgentAction: vi.fn(),
+  renameConversationAction: vi.fn(),
+  renameScheduleAction: vi.fn(),
+  renameWebhookTriggerAction: vi.fn(),
+}));
 vi.mock('@/lib/actions', () => ({
   listApprovalsAction: vi.fn(),
   switchWorkspaceAction: vi.fn(),
   createWorkspaceAction: vi.fn(),
+  deleteAgentAction: vi.fn(),
+  deleteConversationAction: vi.fn(),
+  deleteScheduleAction: vi.fn(),
+  deleteWebhookTriggerAction: vi.fn(),
+  renameCodeProjectAction: vi.fn(),
+  setCodeProjectHiddenAction: vi.fn(),
   getVersionInfoAction: vi.fn(async () => ({
     ok: true as const,
     data: { current: '0.8.11', latest: '0.8.11', updateAvailable: false },
@@ -138,11 +150,11 @@ beforeEach(() => {
   vi.mocked(listSidebarProjectsAction).mockResolvedValue({
     ok: true,
     data: [
-      { id: 'p1', name: 'Suivis Candidatures', unread: true },
-      { id: 'p2', name: 'Recipes', unread: false },
-      { id: 'p3', name: 'Drink Water App', unread: false },
-      { id: 'p4', name: 'Calories Count', unread: false },
-      { id: 'p5', name: 'Suivis Candidatures', unread: false },
+      { id: 'p1', name: 'Suivis Candidatures', path: 'D:/p1', unread: true },
+      { id: 'p2', name: 'Recipes', path: 'D:/p2', unread: false },
+      { id: 'p3', name: 'Drink Water App', path: 'D:/p3', unread: false },
+      { id: 'p4', name: 'Calories Count', path: 'D:/p4', unread: false },
+      { id: 'p5', name: 'Suivis Candidatures', path: 'D:/p5', unread: false },
     ],
   });
   vi.mocked(listSidebarAgentsAction).mockResolvedValue({

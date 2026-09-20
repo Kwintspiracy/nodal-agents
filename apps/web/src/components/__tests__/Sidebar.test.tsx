@@ -29,13 +29,29 @@ let search = '';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => pathname,
+  // Les menus de ligne (RowActions) rafraîchissent la page après un geste.
+  useRouter: () => ({ refresh: () => {}, push: () => {} }),
   useSearchParams: () => new URLSearchParams(search),
 }));
 vi.mock('next/link', () => ({
   default: ({ children, href, ...rest }: { children: ReactNode; href: string }) =>
     createElement('a', { href, ...rest }, children),
 }));
-vi.mock('@/lib/actions', () => ({ listApprovalsAction: vi.fn() }));
+vi.mock('@/lib/actions', () => ({
+  listApprovalsAction: vi.fn(),
+  deleteAgentAction: vi.fn(),
+  deleteConversationAction: vi.fn(),
+  deleteScheduleAction: vi.fn(),
+  deleteWebhookTriggerAction: vi.fn(),
+  renameCodeProjectAction: vi.fn(),
+  setCodeProjectHiddenAction: vi.fn(),
+}));
+vi.mock('@/lib/row-actions.ts', () => ({
+  renameAgentAction: vi.fn(),
+  renameConversationAction: vi.fn(),
+  renameScheduleAction: vi.fn(),
+  renameWebhookTriggerAction: vi.fn(),
+}));
 vi.mock('@/lib/conversation-actions.ts', () => ({ getChatFoldersAction: vi.fn() }));
 vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
 vi.mock('@/lib/project-actions.ts', () => ({ listSidebarProjectsAction: vi.fn() }));
@@ -772,8 +788,8 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({
       ok: true,
       data: [
-        { id: 'p1', name: 'Suivis Candidatures', unread: true },
-        { id: 'p2', name: 'Recipes', unread: false },
+        { id: 'p1', name: 'Suivis Candidatures', path: 'D:/p1', unread: true },
+        { id: 'p2', name: 'Recipes', path: 'D:/p2', unread: false },
       ],
     });
     await renderSidebar();
@@ -895,7 +911,7 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     pathname = '/chat';
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({
       ok: true,
-      data: [{ id: 'p1', name: 'Recipes', unread: false }],
+      data: [{ id: 'p1', name: 'Recipes', path: 'D:/p1', unread: false }],
     });
     await renderSidebar();
     expect(
@@ -1037,6 +1053,7 @@ describe('toutes les lignes du panneau ont la MÊME forme @cap:installer-et-dema
         {
           id: 'p1',
           name: 'Crée-moi une application de suivi de candidatures assez simple',
+          path: 'D:/p1',
           unread: false,
         },
       ],

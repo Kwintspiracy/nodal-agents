@@ -52,6 +52,8 @@ export type DynamicRow = {
   running?: boolean;
   /** L'infobulle, quand elle dit plus que le nom. */
   title?: string;
+  /** Le chemin d'un projet — ce que ses actions de ligne demandent. */
+  path?: string;
 };
 
 export default function SidebarDynamicList({
@@ -63,6 +65,7 @@ export default function SidebarDynamicList({
   seeAllAlways = false,
   dot = false,
   active = true,
+  menu,
 }: {
   /** Nomme la section pour les tests et les parcours. */
   testId: string;
@@ -105,9 +108,15 @@ export default function SidebarDynamicList({
   dot?: boolean;
   /** La section est-elle dépliée ? À faux, aucune requête ne part. */
   active?: boolean;
+  /**
+   * Les trois points d'une ligne et leur menu (20/09) : rendu par la section,
+   * qui seule sait ce que sa ligne accepte. `relire` relit la liste tout de
+   * suite après un geste, sans attendre le tour d'horloge.
+   */
+  menu?: (row: DynamicRow, relire: () => Promise<void>) => ReactNode;
 }) {
   const lire = useCallback(() => read(FOLDER_THREADS_PROBE), [read]);
-  const { rows, erreur } = useSidebarRead<DynamicRow>(lire, active);
+  const { rows, erreur, relire } = useSidebarRead<DynamicRow>(lire, active);
   // La ligne de l'endroit où l'on EST s'allume comme une entrée de menu
   // (Quentin, 20/09 : « la sélection se fait, mais rien ne le montre »). Le
   // même repère que `SidebarLink` : la route égale l'adresse de la ligne, ou
@@ -147,6 +156,7 @@ export default function SidebarDynamicList({
             depth="thread"
             active={pathname === hrefOf(r) || pathname.startsWith(`${hrefOf(r)}/`)}
             markCurrent
+            menu={menu?.(r, relire)}
             testId={`sidebar-row-${testId}`}
           >
             {dot && r.running === true ? (

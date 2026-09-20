@@ -145,6 +145,12 @@ type Props = {
   /** Le chevron. Frère du lien, dans le conteneur qui porte le survol. */
   caret?: ReactNode;
   /**
+   * Les trois points en bout de ligne et leur menu (`RowMenu`, 20/09) — pour
+   * une ligne qui se renomme ou se supprime. Frère du lien, comme le chevron,
+   * et pour la même raison : un bouton ne vit pas dans un lien.
+   */
+  menu?: ReactNode;
+  /**
    * Une teinte de marque qui REMPLACE le fond d'état — le bouton Discord et
    * son bleu. Elle change la couleur, jamais la forme : marges, hauteur et
    * rayon restent ceux de toutes les autres lignes.
@@ -165,6 +171,7 @@ export default function SidebarRow({
   depth = 'nav',
   external = false,
   caret,
+  menu,
   tint,
   testId,
   children,
@@ -217,6 +224,7 @@ export default function SidebarRow({
           {children}
         </Link>
       )}
+      {menu}
       {caret}
     </div>
   );

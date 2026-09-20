@@ -994,6 +994,8 @@ export type SidebarProjectRow = {
   id: string;
   /** `display_name`, ou le nom du dossier — jamais un chemin vide à l'écran. */
   name: string;
+  /** Le chemin du projet, que ses actions de ligne prennent à la place de l'id. */
+  path: string;
   /**
    * Au moins UNE conversation rattachée à ce projet a bougé depuis que cette
    * personne l'a ouverte, ou n'a jamais été ouverte (#258, décision de
@@ -1096,6 +1098,10 @@ export async function listSidebarProjectsAction(
       rows.map((r) => ({
         id: r.id,
         name: r.displayName ?? basenameOf(r.path),
+        // Le chemin voyage avec la ligne : c'est ce que « Rename » et « Remove
+        // from list » demandent (20/09), les actions du projet n'ayant jamais
+        // pris d'id.
+        path: r.path,
         unread: nonLus.has(r.id),
       })),
     );

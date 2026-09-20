@@ -30,6 +30,7 @@ import { UsersThree } from '@phosphor-icons/react';
 import InboxFolder from '../ui/InboxFolder';
 import SidebarCaret from '../ui/SidebarCaret';
 import SidebarDynamicList from './SidebarDynamicList';
+import RowActions from './RowActions';
 import { listSidebarAgentsAction } from '@/lib/sidebar-actions.ts';
 
 /** Où mène le dossier, et son « See all » : la page des agents. */
@@ -72,6 +73,15 @@ export default function AgentsFolder() {
             dot
             empty="No Agent Yet"
             seeAll={HREF}
+            menu={(r, relire) => (
+              <RowActions
+                kind="agent"
+                id={r.id}
+                name={r.name}
+                href={`${HREF}/${r.id}`}
+                onDone={relire}
+              />
+            )}
           />
         </div>
       )}

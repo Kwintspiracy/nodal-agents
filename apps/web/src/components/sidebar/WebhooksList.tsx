@@ -12,6 +12,7 @@
 
 import { listSidebarWebhooksAction } from '@/lib/sidebar-actions.ts';
 import SidebarDynamicList from './SidebarDynamicList';
+import RowActions from './RowActions';
 
 export default function WebhooksList() {
   return (
@@ -21,6 +22,15 @@ export default function WebhooksList() {
       hrefOf={(r) => `/automations/${r.id}`}
       empty="No Existing Webhook"
       seeAll="/automations"
+      menu={(r, relire) => (
+        <RowActions
+          kind="webhook"
+          id={r.id}
+          name={r.name}
+          href={`/automations/${r.id}`}
+          onDone={relire}
+        />
+      )}
     />
   );
 }

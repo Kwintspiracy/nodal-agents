@@ -66,6 +66,7 @@ import InboxFolder from './ui/InboxFolder';
 import SidebarCaret from './ui/SidebarCaret';
 import SidebarRow, { SIDEBAR_NOTE } from './ui/SidebarRow';
 import ThreadDot from './ui/ThreadDot';
+import RowActions from './sidebar/RowActions';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
 import { chatFolders, unfoldedRows, DASHBOARD_FOLDER, MCP_FOLDER } from '@/lib/chat-folders.ts';
@@ -276,6 +277,19 @@ export default function ChatFolderGroup() {
                       // son adresse, ou commence par elle.
                       active={pathname === t.href || pathname.startsWith(`${t.href}/`)}
                       markCurrent
+                      // Les trois points, sur un FIL seulement (20/09) : un run
+                      // (`/jobs/<id>`) ne se renomme ni ne se supprime d'ici.
+                      menu={
+                        t.href.startsWith('/chat/') ? (
+                          <RowActions
+                            kind="conversation"
+                            id={t.href.slice('/chat/'.length)}
+                            name={t.title}
+                            href={t.href}
+                            onDone={relire}
+                          />
+                        ) : undefined
+                      }
                       testId={`folder-thread-${f.key}`}
                     >
                       <ThreadDot thread={t} />
