@@ -503,7 +503,12 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                               wrapping once this box stops growing. */}
                         <div className="min-w-0 max-w-[170px]">
                           <MemoryFact fact={m.fact} />
-                          <div className="mt-0.5 break-words text-mono-11 text-ink-4">
+                          {/* Heure LOCALE du navigateur : le serveur la rend dans la sienne, et
+                              React relit la bonne au montage sans crier (même garde que CronBuilder). */}
+                          <div
+                            className="mt-0.5 break-words text-mono-11 text-ink-4"
+                            suppressHydrationWarning
+                          >
                             {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
                             {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
                           </div>
