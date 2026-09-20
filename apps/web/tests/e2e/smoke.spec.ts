@@ -159,6 +159,14 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
       'No Approval Requests',
     );
 
+    // Help n'ouvre pas de panneau non plus : il ouvre une CARTE de trois liens
+    // externes, ceux que la 0.8.11 proposait deja.
+    await page.goto('/chat');
+    await page.locator('[data-testid="rail-help"]').click();
+    const carte = page.locator('[data-testid="rail-popover"]');
+    await expect(carte).toBeVisible();
+    await expect(carte.getByRole('link')).toHaveText(['Docs', 'Discord', 'Quality portal']);
+
     // Logs, lui, NAVIGUE et n'ouvre rien : le panneau montre alors le repli.
     await page.goto('/logs');
     await expect(page.locator('[data-testid="rail-logs"]')).toHaveAttribute('aria-current', 'page');
