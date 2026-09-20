@@ -814,10 +814,12 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
     expect(offers).toContain('`discord`');
   });
 
-  it('treats a switched-off channel as configured, not as one to set up', async () => {
-    // Reviewer C on #329, C1: a disabled binding used to fall back into the
-    // "you can be given" list, so the agent told an owner who had already
-    // pasted a token to go and paste it again. It is a switch, not a setup.
+  it('never offers to set up a channel whose binding exists but is disabled', async () => {
+    // Reviewer C on #329, passes 1 and 2. A disabled binding used to fall back
+    // into the "you can be given" list, so the agent told an owner who had
+    // already pasted a Slack token to go and paste it again. It is now silent
+    // about it instead: no screen produces `enabled: false` and none turns it
+    // back on, so a sentence describing the state would invent a journey.
     const { entityId, agentRow } = await seedPlatformAgent('SP Platform Disabled Agent');
     await db.insert(channelBindings).values({
       entityId,
@@ -830,7 +832,8 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
 
     const prompt = await buildSystemPrompt(agent, db);
 
-    expect(prompt).toContain('set up but switched off');
+    // Not described as connected either: the runner does not poll it.
+    expect(prompt).not.toContain('slack — bot');
     const offers = prompt.slice(prompt.indexOf('Messaging channels you can be given'));
     expect(offers).not.toContain('`slack`');
     expect(offers).toContain('`telegram`');

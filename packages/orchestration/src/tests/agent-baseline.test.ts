@@ -261,24 +261,22 @@ describe('Layer 2bis — channels and automations @cap:parler-par-canal-externe/
     expect(block).toContain('`discord`');
   });
 
-  it('does not send the owner to set up a channel they have merely switched off', () => {
-    // Reviewer C on #329, C1. A disabled binding used to count as "not bound",
-    // so the agent offered to configure Telegram to an owner who had set it up
-    // and turned it off. That is the header's own prohibition, verbatim: do NOT
-    // ask the user to set up something that is already configured. It is a
-    // third state, like a connector that is configured but unattached.
+  it('does not offer a channel that already has a binding, enabled or not', () => {
+    // Reviewer C on #329, passes 1 and 2. A disabled binding used to count as
+    // "not bound", so the agent offered to configure Telegram to an owner who
+    // had already pasted a token. That is the header's own prohibition,
+    // verbatim. It is also not described: `enabled: false` is produced by no
+    // screen, and a sentence about turning it back on would point at a switch
+    // that does not exist.
     const block = buildDiscoverabilityBlock({
       ...empty,
       boundChannelSlugs: [],
-      disabledChannelSlugs: ['telegram'],
+      configuredChannelSlugs: ['telegram'],
     });
 
-    const offers = block.slice(block.indexOf('Messaging channels you can be given'));
-    expect(offers).not.toContain('`telegram`');
-    expect(offers).toContain('`discord`');
-    // And it says the true thing about it instead of going quiet.
-    expect(block).toContain('set up but switched off');
-    expect(block).toContain('`telegram`');
+    expect(block).not.toContain('`telegram`');
+    expect(block).toContain('`discord`');
+    expect(block).not.toContain('switched off');
   });
 
   it('says nothing about channels when the bindings are unknown', () => {

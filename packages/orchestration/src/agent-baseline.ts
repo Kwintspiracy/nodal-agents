@@ -287,13 +287,22 @@ export interface DiscoverabilityInput {
    */
   boundChannelSlugs?: string[];
   /**
-   * Canaux CONFIGURÉS mais désactivés — la liaison existe, le propriétaire l'a
-   * éteinte. Troisième état, exactement comme un connecteur configuré mais non
-   * attaché, et pour la même raison : proposer de « configurer Telegram » à
-   * quelqu'un qui a déjà collé son jeton et coupé l'interrupteur est
-   * précisément ce que l'en-tête de ce bloc interdit (revue de la PR #329).
+   * Canaux qui ont une LIAISON, active ou non. Surensemble de
+   * `boundChannelSlugs` : une liaison désactivée porte quand même son jeton, et
+   * proposer de « configurer Telegram » à quelqu'un qui l'a déjà collé est
+   * exactement ce que l'en-tête de ce bloc interdit (revue de la PR #329,
+   * constat 1).
+   *
+   * Pourquoi ces canaux-là sont TUS plutôt que décrits : `enabled: false` n'est
+   * produit par aucun écran (`grep -rn "enabled: false"` ne trouve, hors tests,
+   * que du manifeste Slack et un réglage OpenRouter ; se déconnecter SUPPRIME
+   * la ligne, `disconnectAgentChannelAction`), et l'onglet Channels rend une
+   * telle liaison comme `disconnected`. Lui écrire une phrase reviendrait à
+   * envoyer le propriétaire vers un interrupteur qui n'existe pas — la classe
+   * d'erreur que la PR précédente vient de corriger dans le guide Telegram.
+   * Omis = inconnu, et un inconnu ne vaut jamais une proposition.
    */
-  disabledChannelSlugs?: string[];
+  configuredChannelSlugs?: string[];
   /**
    * False sur une surface sans les builtins de Nodal. Ce que le bloc ANNONCE —
    * « ceci est configuré chez toi, il suffit de te l'attacher » — reste : c'est
@@ -344,20 +353,15 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
       slug in ADAPTER_REGISTRY && !attachedConn.has(slug) && !configuredConnSlugs.has(slug),
   );
 
-  // Channels, in the same three states as a connector. Omitted bindings mean
-  // "unknown", and an unknown binding must not become an offer to set up what
-  // is already set up.
-  const knownChannels = input.boundChannelSlugs !== undefined;
-  const disabledChannels = knownChannels
-    ? CHANNELS.filter((c) => input.disabledChannelSlugs?.includes(c) === true)
-    : [];
-  const freeChannels = knownChannels
-    ? CHANNELS.filter(
-        (c) =>
-          input.boundChannelSlugs?.includes(c) !== true &&
-          input.disabledChannelSlugs?.includes(c) !== true,
-      )
-    : [];
+  // Channels with no binding at all. Omitted bindings mean "unknown", and an
+  // unknown binding must not become an offer to set up what is already set up.
+  // A channel that HAS a binding is simply not offered, whether or not that
+  // binding is enabled (see `configuredChannelSlugs`).
+  const configured = input.configuredChannelSlugs ?? input.boundChannelSlugs;
+  const freeChannels =
+    input.boundChannelSlugs === undefined
+      ? []
+      : CHANNELS.filter((c) => configured?.includes(c) !== true);
 
   // No early return any more. It used to fire when an agent already had every
   // skill and connector, and the block vanished — which was right while the
@@ -405,16 +409,6 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
   if (notSetUp.length > 0) {
     lines.push('', 'Not set up in this workspace yet — would need the user to add:');
     for (const [, cap] of notSetUp) lines.push(`- ${cap.label} — needs ${cap.setup}`);
-  }
-
-  if (disabledChannels.length > 0) {
-    lines.push(
-      '',
-      'Messaging channels already set up but switched off for you. Nothing to configure ' +
-        "and no token to ask for: the owner turns it back on from the agent's settings, " +
-        'Channels tab:',
-    );
-    for (const channel of disabledChannels) lines.push(`- \`${channel}\``);
   }
 
   if (freeChannels.length > 0) {
