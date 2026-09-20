@@ -144,6 +144,10 @@ describe('le fil d’une conversation @cap:suivre-execution/ecran', () => {
     );
     expect(html).toContain(STOP);
     expect(html).toContain(RANGEE);
+    // ET C'EST BIEN CE JOB-LÀ qu'il arrêterait (Reviewer C, passe 1) : une
+    // inversion d'identifiant entre deux écrans laissait le bouton en place et
+    // n'était vue par aucun test.
+    expect(html).toContain('data-job-id="job-du-fil"');
     // SOUS la barre et AVANT le fil : c'est la place de la rangée d'actions
     // (#242), et la seule où elle reste sous les yeux pendant que ça travaille.
     expect(html.indexOf('data-testid="work-bar"')).toBeLessThan(html.indexOf(RANGEE));
@@ -168,6 +172,7 @@ describe('la page d’une session de code @cap:suivre-execution/ecran', () => {
     );
     expect(html).toContain(STOP);
     expect(html).toContain(RANGEE);
+    expect(html).toContain('data-job-id="job-code"');
   });
 
   it('ne le dessine PAS pour une session de chat de la CLI', async () => {

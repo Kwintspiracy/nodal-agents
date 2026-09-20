@@ -91,7 +91,15 @@ export default function RunScreen({
           run, sur la même boîte que sa largeur maximale — c'est ainsi que
           `PageShell` construit le corps de toutes les autres pages, et c'est la
           seule façon d'avoir la même largeur de contenu qu'elles. */}
-      <ThreadScreen follow="never" sidePadding={false} actions={actions}>
+      <ThreadScreen
+        follow="never"
+        sidePadding={false}
+        actions={actions}
+        // LA BOÎTE DU CORPS D'UN RUN, à l'identique : `mx-auto max-w-6xl`. Le
+        // bouton tombe alors sur le bord droit de la carte qu'il arrête, et
+        // plus sur celui de l'écran (Reviewer C, passe 1 de #325).
+        actionsBox="mx-auto max-w-6xl"
+      >
         {children}
       </ThreadScreen>
     </PageShell>

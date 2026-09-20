@@ -149,6 +149,10 @@ describe('le bouton Stop @cap:suivre-execution/ecran', () => {
     expect(dialogue!.textContent).toContain('Stop this run?');
     expect(dialogue!.textContent).toContain('at the next check');
     expect(dialogue!.textContent).toContain('delegated');
+    // ET RIEN QUE ÇA. Le texte a promis un moment que « le fil dit que le run
+    // a été arrêté » : personne ne l'écrit, et le fil ne rend un bloc que si le
+    // job porte une erreur ou un résultat, qu'une annulation ne pose pas.
+    expect(dialogue!.textContent).not.toContain('the thread says');
     // Rien n'a encore été annulé : ouvrir la confirmation n'arrête rien.
     expect(annuler).not.toHaveBeenCalled();
 
@@ -180,7 +184,10 @@ describe('le bouton Stop @cap:suivre-execution/ecran', () => {
 describe('la rangée d’actions d’un écran de fil @cap:suivre-execution/ecran', () => {
   it('porte le bouton HORS de la zone qui défile', () => {
     const html = renderToStaticMarkup(
-      <ThreadScreen actions={<span data-testid="une-action">Stop</span>}>
+      <ThreadScreen
+        actions={<span data-testid="une-action">Stop</span>}
+        actionsBox="mx-auto max-w-[760px]"
+      >
         <p>le fil</p>
       </ThreadScreen>,
     );
@@ -190,8 +197,12 @@ describe('la rangée d’actions d’un écran de fil @cap:suivre-execution/ecra
     // AVANT le contenu qui défile : un fil s'ouvre par sa fin, et une rangée
     // posée en tête du contenu serait déjà remontée hors de l'écran.
     expect(html.indexOf('data-testid="action-row"')).toBeLessThan(html.indexOf('le fil'));
-    // Et SANS borne de largeur : les trois écrans de fil passent `fluid` pour
-    // ne pas en avoir (#237), et en poser une ici la ferait rentrer.
+    // Et DANS LA BOÎTE QUE L'APPELANT DONNE (Reviewer C, passe 1). Sans elle,
+    // le bouton tenait le bord droit de l'écran pendant que le corps d'un run
+    // s'arrêtait 384 px plus à gauche sur un écran de 1920.
+    expect(html).toContain('max-w-[760px]');
+    // Jamais la borne du mode ordinaire : les trois écrans de fil passent
+    // `fluid` pour ne pas l'avoir (#237), et elle rentrerait par ici.
     expect(html).not.toContain('max-w-6xl');
   });
 

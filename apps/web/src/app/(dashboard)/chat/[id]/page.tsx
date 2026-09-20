@@ -133,6 +133,10 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
         awaitingReply={feedAwaitsReply(feed.items)}
       >
         <ThreadScreen
+          // LA COLONNE DU FIL, 760 px centrés — la boîte de
+          // `ConversationFeedView`. Le bouton tombe sur le bord droit des
+          // messages, pas sur celui de l'écran.
+          actionsBox="mx-auto max-w-[760px]"
           // ARRÊTER LE TOUR QUI COURT (#252). Un seul bouton, pour le travail
           // de TÊTE : annuler la tête annule ses délégués, et un bouton par
           // travail ferait une rangée qui s'allonge pendant qu'on la regarde.

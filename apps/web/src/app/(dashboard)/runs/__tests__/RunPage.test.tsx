@@ -350,6 +350,8 @@ describe('RunPage — arrêter un run @cap:suivre-execution/ecran', () => {
     const html = renderToStaticMarkup(<RunPage data={data(true)} />);
     expect(html).toContain('data-testid="stop-run"');
     expect(html).toContain('>Stop<');
+    // Le job de TÊTE de ce run, et pas un autre.
+    expect(html).toContain('data-job-id="job-1"');
     // DANS la rangée d'actions, jamais dans la barre : c'est la règle de #242,
     // et une action posée sur la ligne de faits du run en faisait un fait.
     expect(html).toContain('data-testid="action-row"');

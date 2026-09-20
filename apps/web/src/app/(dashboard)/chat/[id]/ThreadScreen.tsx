@@ -18,6 +18,7 @@ export default function ThreadScreen({
   children,
   composer,
   actions = null,
+  actionsBox = '',
   follow = 'bottom',
   sidePadding = true,
 }: {
@@ -37,6 +38,20 @@ export default function ThreadScreen({
    * `null` : aucune rangée, pas une rangée vide.
    */
   actions?: ReactNode;
+  /**
+   * LA BOÎTE de la rangée d'actions — la même que le contenu qu'elle commande
+   * (Reviewer C, passe 1 de la PR #325).
+   *
+   * Elle n'en avait aucune, et le bouton Stop tenait le bord droit de l'écran
+   * pendant que le corps d'un run s'arrêtait à 1080 px : 384 px d'écart sur un
+   * écran de 1920, entre le bouton et ce qu'il arrête. Une rangée d'actions
+   * s'aligne sur ce qu'elle commande, c'est la règle d'`ActionRow`.
+   *
+   * L'appelant la donne parce qu'elle diffère d'un écran à l'autre : le corps
+   * d'un run fait 1152 px de boîte, la colonne d'un fil 760. La déduire ici
+   * demanderait à cette charpente de connaître ses trois pages.
+   */
+  actionsBox?: string;
   /**
    * Ce que l'écran fait du bas de son contenu (voir `ThreadFollow`). Un fil se
    * lit par sa fin : il s'ouvre en bas et suit ce qui arrive. La page d'un run
@@ -63,13 +78,9 @@ export default function ThreadScreen({
   return (
     <>
       {actions !== null && (
-        // LES GOUTTIÈRES DE LA PAGE, ET AUCUNE BORNE DE LARGEUR. Les trois
-        // écrans de fil passent `fluid` à `PageShell` pour n'avoir PAS de
-        // `max-w-6xl` (#237, et son garde-fou `FullHeightWidth.test.tsx`) ; en
-        // poser une ici la ferait rentrer par la fenêtre dès qu'un run tourne.
-        // La rangée tient donc le bord droit de l'écran, comme la barre au-dessus
-        // d'elle, qui va elle aussi d'un bord à l'autre.
-        <div className="w-full min-w-0 shrink-0 px-5 pt-4 sm:px-8 lg:px-9">
+        // Les gouttières de la page, et la boîte que l'appelant donne : c'est ce
+        // qui aligne le bouton sur le bord droit de ce qu'il arrête.
+        <div className={`w-full min-w-0 shrink-0 px-5 pt-4 sm:px-8 lg:px-9 ${actionsBox}`}>
           <ActionRow>{actions}</ActionRow>
         </div>
       )}

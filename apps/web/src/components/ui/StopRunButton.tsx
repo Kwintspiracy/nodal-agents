@@ -78,7 +78,10 @@ export default function StopRunButton({
       {/* L'étiquette de test est sur l'enveloppe : `RowActionButton` a une
           liste de propriétés fermée, et lui en ouvrir une pour un test
           l'ouvrirait pour tout le reste. */}
-      <span data-testid="stop-run">
+      {/* L'identifiant VOYAGE dans le marquage (Reviewer C, passe 1) : sans
+          lui, une inversion de job entre deux écrans n'aurait été vue par
+          aucun test — le bouton était là, il arrêtait autre chose. */}
+      <span data-testid="stop-run" data-job-id={jobId}>
         <RowActionButton tone="danger" onClick={() => setOpen(true)} disabled={isPending}>
           {isPending ? 'Stopping…' : 'Stop'}
         </RowActionButton>
@@ -89,7 +92,16 @@ export default function StopRunButton({
         // CE QUI VA SE PASSER, en toutes lettres : l'arrêt est coopératif, et
         // promettre mieux ferait passer les quelques secondes qui suivent pour
         // une panne.
-        message="The run and everything it delegated stop at the next check. A model call already in flight finishes on its own, and the thread says the run was stopped."
+        //
+        // ⚠️ ET RIEN DE PLUS (Reviewer C, passe 1). La première écriture
+        // promettait que « le fil dit que le run a été arrêté » : personne ne
+        // l'écrit. `cancelJob` (`runner/src/job/state.ts`) pose la date de fin
+        // et le transcrit, sans message ; et le fil ne rend un bloc d'échec que
+        // si le job porte un `error` ou un `result`
+        // (`conversation-feed.ts`), ce qu'une annulation ne pose pas. Ce qui
+        // change vraiment à l'écran est la pastille d'état, qui passe à
+        // « Cancelled » (`runs/run-view.ts`). C'est donc ce que la phrase dit.
+        message="The run and everything it delegated stop at the next check. A model call already in flight finishes on its own, and the run then reads Cancelled."
         confirmLabel="Stop run"
         cancelLabel="Keep running"
         destructive
