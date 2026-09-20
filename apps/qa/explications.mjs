@@ -206,7 +206,7 @@ export const EXPLICATIONS = {
         titre: 'How to read it',
         texte: `<p>Journeys are grouped by <b>cadence</b>: how often the CI plays them.</p>
 <ul>
-<li><b>Every pull request</b>: played before every merge: it BLOCKS a regression. Two journeys only (the smoke test).</li>
+<li><b>Every pull request</b>: played before every merge: it BLOCKS a regression. Five journeys only (the smoke test).</li>
 <li><b>Every night</b>: played by the nightly measurement: it OBSERVES a regression after the fact, without blocking it.</li>
 <li><b>By hand</b>: versioned, played by no CI. It only exists on paper.</li>
 <li><b>Never played</b>: no workflow names it at all. The portal marks these <b>red</b>, not grey: a file nobody runs guards nothing, and a grey badge asks nothing of anyone. <code>agent-flows.spec.ts</code> sat there for a year expecting a local model server, looking exactly like a healthy journey whose report was missing.</li>
@@ -280,9 +280,10 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'How to read it',
-        texte: `<p>A <b>workflow</b> = a file in <code>.github/workflows/</code>, a list of steps GitHub runs on a fresh machine. Nodal has three:</p>
+        texte: `<p>A <b>workflow</b> = a file in <code>.github/workflows/</code>, a list of steps GitHub runs on a fresh machine. Nodal has four:</p>
 <ul>
-<li><b>CI</b>: on every pull request and every push to main: unit tests, architecture, bench, two smoke journeys, the published package installed from scratch. This is the gate: red = no merge.</li>
+<li><b>CI</b>: on every pull request and every push to main: the static checks, the unit suite in five parallel slices, the build, five smoke journeys, the published package installed from scratch. This is the gate: red = no merge.</li>
+<li><b>CI Windows</b>: on every push to main and every night: typecheck and the unit suite on windows-latest. Not on pull requests: it never found a Windows-only fault the Linux job had missed, and it cost half an hour on each.</li>
 <li><b>Quality, full measurement</b>: every night at 03:17 UTC (and by hand): coverage of the 34 packages, bench, the 29 journeys, then it writes its data to main and opens or closes the alert issue. This is what feeds this portal.</li>
 <li><b>Deploy Docs</b>: the public documentation, and this portal with it under <code>/qa/</code>. It also fires after every measurement, so a night of work reaches the page it feeds.</li>
 </ul>
