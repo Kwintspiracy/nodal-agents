@@ -57,6 +57,40 @@ export const SECTIONS: readonly Section[] = [
   { id: 'where-it-stands', index: '06', label: 'Status', title: 'Where it stands' },
 ];
 
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+
+/**
+ * The hero, word for word, from the redesign handed over on 2026-09-21
+ * (`design/inbound/hero-redesign/Hero Redesigns.dc.html`).
+ *
+ * It sits here rather than inside `home.tsx` for the same reason as every other
+ * block on this page: the copy is data, and a test reads it back out of the
+ * rendered markup. The version printed on the pill is never typed: it is
+ * `VERSION`, which is itself checked against `apps/cli/package.json`.
+ */
+export interface HeroCopy {
+  /** Two lines on purpose: the design breaks the title after the first word. */
+  readonly titleLines: readonly [string, string];
+  readonly lede: string;
+  readonly primaryCta: string;
+  readonly secondaryCta: string;
+  /** What follows the version on the pill, after a middle dot. */
+  readonly pillSuffix: string;
+  /** The shell name the design prints on the right of the terminal chrome. */
+  readonly terminalTitle: string;
+  readonly commands: readonly string[];
+}
+
+export const HERO: HeroCopy = {
+  titleLines: ['Herd your', 'agents.'],
+  lede: 'Nodal orchestrates, monitors and keeps your autonomous agents in line, from the first command to production.',
+  primaryCta: 'Get started',
+  secondaryCta: 'GitHub →',
+  pillSuffix: 'open source',
+  terminalTitle: 'zsh',
+  commands: ['npm install -g nodal-agents', 'nodal-agents up'],
+};
+
 /* ── Section 01 ─────────────────────────────────────────────────────────── */
 
 export interface Pillar {
@@ -542,6 +576,8 @@ export const ROADMAP: readonly string[] = [
 /* ── Links ──────────────────────────────────────────────────────────────── */
 
 export const LINK_DOCS = `${BASE_PATH}/docs`;
+/** Where "Get started" lands: the install page, not the docs index. */
+export const LINK_START = `${BASE_PATH}/docs/getting-started`;
 /**
  * The quality portal, published under `/qa/` by the same workflow that
  * publishes these docs. It is a standalone HTML document, not a route of this

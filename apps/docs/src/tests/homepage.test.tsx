@@ -31,6 +31,9 @@ import {
   FEATURE_SLUGS,
   FIGURES,
   FORMULA,
+  HERO,
+  LINK_GITHUB,
+  LINK_START,
   MCP_ICONS,
   INVARIANTS,
   PILLARS,
@@ -124,6 +127,10 @@ describe('homepage rendering', () => {
       ['proof records', PROOF_RECORDS.flatMap((r) => [r.term, r.body])],
       ['practices', PRACTICES.flatMap((p) => [p.title, p.body])],
       ['CI jobs', CI_JOBS.flatMap((j) => [j.name, j.body])],
+      [
+        'hero',
+        [...HERO.titleLines, HERO.lede, HERO.primaryCta, HERO.secondaryCta, ...HERO.commands],
+      ],
       ['roadmap', ROADMAP],
     ];
     for (const [name, texts] of blocks) {
@@ -154,6 +161,62 @@ describe('homepage rendering', () => {
     // the file must really be in `public/`: a static export serves nothing else.
     expect(markup).toContain(`background-image:url(${BASE_PATH}/home/hero.webp)`);
     expect(existsSync(join(docsRoot, 'public', 'home', 'hero.webp'))).toBe(true);
+    // And the nav is inside that band rather than in a bar above it, which is
+    // the composition of the redesign. Asserted on the markup and not on the
+    // stylesheet: a `position:absolute` on a header that sits outside the
+    // section would put the picture behind nothing.
+    const band = markup.slice(markup.indexOf('home-hero-band'));
+    const bandEnd = band.indexOf('home-screens');
+    expect(bandEnd).toBeGreaterThan(0);
+    expect(band.slice(0, bandEnd)).toContain('class="home-bar"');
+  });
+
+  // Every word of the hero comes from `HERO`, so the page and the handoff
+  // cannot drift apart without this going red.
+  it('renders the hero copy it declares, both title lines included', () => {
+    for (const line of HERO.titleLines) expect(markup).toContain(line);
+    expect(markup).toContain(HERO.lede);
+    expect(markup).toContain(HERO.primaryCta);
+    expect(markup).toContain(HERO.secondaryCta);
+    expect(markup).toContain(HERO.terminalTitle);
+    for (const command of HERO.commands) expect(markup).toContain(command);
+  });
+
+  // The pill is the one place on the page where a version could be typed by
+  // hand next to the one the release publishes. It reads `VERSION`, which the
+  // case below checks against `apps/cli/package.json`.
+  it('prints the published version on the hero pill, never a typed one', () => {
+    expect(markup).toContain(`v${VERSION} · ${HERO.pillSuffix}`);
+  });
+
+  it('sends "Get started" to the install page, and the second button to GitHub', () => {
+    expect(markup).toContain(`href="${LINK_START}">${HERO.primaryCta}</a>`);
+    expect(existsSync(join(docsRoot, 'content', 'docs', 'getting-started.mdx'))).toBe(true);
+    expect(markup).toContain(`href="${LINK_GITHUB}">${HERO.secondaryCta}</a>`);
+  });
+
+  // The redesign names Instrument Sans and IBM Plex Mono outright. They are
+  // loaded through `next/font`, which a statically rendered page cannot show,
+  // so this reads the two files that have to agree: the layout declares the
+  // variable, the stylesheet uses it.
+  it('loads the two hero typefaces and uses them in the hero only', () => {
+    const layout = readFileSync(join(docsRoot, 'app', 'layout.tsx'), 'utf8');
+    const css = readFileSync(join(docsRoot, 'app', 'home.css'), 'utf8');
+    for (const [font, variable] of [
+      ['Instrument_Sans', '--font-instrument'],
+      ['IBM_Plex_Mono', '--font-plexmono'],
+    ]) {
+      expect(layout).toContain(font);
+      expect(layout).toContain(`variable: '${variable}'`);
+      expect(layout).toContain(
+        `\${${font === 'Instrument_Sans' ? 'instrumentSans' : 'plexMono'}.variable}`,
+      );
+      expect(css).toContain(`var(${variable})`);
+    }
+    // Scoped to the hero: the docs pages and the rest of the homepage keep
+    // Public Sans and Inter, so neither variable may reach `.home` itself.
+    const shell = css.slice(css.indexOf('.home {'), css.indexOf('.home-wrap {'));
+    expect(shell).not.toContain('--font-instrument');
   });
 });
 
