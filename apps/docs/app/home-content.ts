@@ -512,10 +512,21 @@ export interface CiJob {
 /** Source: .github/workflows/ci.yml, job by job. */
 export const CI_JOBS: readonly CiJob[] = [
   {
-    name: 'Linux',
-    body: 'Typecheck, lint, format check, secret scan, commit hygiene, architecture check, the capability gate, unit tests, script tests, the bench, a dependency audit, and the build.',
+    name: 'Checks',
+    body: 'Typecheck, lint, format check, secret scan, commit hygiene, architecture check, the capability gate, script tests, the bench, and a dependency audit.',
   },
-  { name: 'Windows', body: 'Typecheck and the unit suite again, on windows-latest.' },
+  {
+    name: 'Unit tests',
+    body: 'The whole suite in five parallel slices: the dashboard and the runner each cut in two by file, and every other package together.',
+  },
+  {
+    name: 'Build',
+    body: 'The production build on its own, so a broken build and a slow suite are two different red marks.',
+  },
+  {
+    name: 'Windows',
+    body: 'Typecheck and the unit suite again, on windows-latest, on every merge to main and every night.',
+  },
   {
     name: 'Pack smoke',
     body: 'The real tarball is packed, installed into a clean directory, and booted. A published package that does not start is caught here, not by you.',
