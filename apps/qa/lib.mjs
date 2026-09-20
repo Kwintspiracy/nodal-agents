@@ -2545,10 +2545,8 @@ export function repartitionDeLaMesure(paquets = []) {
  * GitHub ne garde qu'UN run en attente par groupe de concurrence et annule le
  * plus ancien quand un second arrive. Chaque run construit `main` HEAD, donc
  * un run annulé est REMPLACÉ par celui qui l'a annulé — s'il finit. Ce que la
- * page doit dire : quand le site a été déployé pour la dernière fois, ce qui
- * est arrivé aux runs partis depuis, et si l'un d'eux est tombé sans qu'un
- * autre ait pris le relais (`enRetard`) : c'est le seul cas où le site est en
- * retard sur `main` et où personne ne le sait.
+ * page doit dire : quand le site a été déployé pour la dernière fois, et ce
+ * qui est arrivé aux runs partis depuis (en cours, annulés, échoués).
  *
  * « Depuis » se lit sur `createdAt`, STRICTEMENT après le dernier succès : deux
  * runs mis en file la même seconde (le cas du 20/09) se remplacent l'un
@@ -2570,16 +2568,24 @@ export function etatDuDeploiement(runs) {
       }
     : null;
   const apres = succes ? runs.filter((r) => r?.createdAt && r.createdAt > succes.createdAt) : runs;
+  // Pas de verdict « en retard » ici, et c'est délibéré (revue C de cette PR,
+  // passe 1) : le portail est rendu PAR le run de déploiement, qui est alors
+  // lui-même « en cours » et postérieur au dernier succès. Un tel verdict
+  // serait toujours faux sur la page publiée, et un texte qu'aucune page ne
+  // peut montrer est un mensonge en attente. La page dit les comptes, et que
+  // le run qui la rend est celui qui remplace les runs tombés.
   const depuis = { enCours: 0, annules: 0, echoues: 0 };
   for (const r of apres) {
     if (r?.status === 'in_progress' || r?.status === 'queued' || r?.status === 'waiting') {
       depuis.enCours++;
     } else if (r?.conclusion === 'cancelled') {
       depuis.annules++;
-    } else if (r?.conclusion && r.conclusion !== 'success') {
+    } else if (r?.status === 'completed' && r.conclusion !== 'success') {
+      // `failure`, `skipped`, `timed_out`, et une conclusion absente sur un run
+      // terminé : rien de tout cela n'a déployé, et un `skipped` est
+      // précisément l'ancien trou (revue C, P1.4).
       depuis.echoues++;
     }
   }
-  const enRetard = depuis.enCours === 0 && depuis.annules + depuis.echoues > 0;
-  return { runsLus: runs.length, dernierSucces, depuis, enRetard };
+  return { runsLus: runs.length, dernierSucces, depuis };
 }

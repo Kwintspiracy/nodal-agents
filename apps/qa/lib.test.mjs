@@ -3379,16 +3379,29 @@ describe('etatDuDeploiement — ce que les runs de docs.yml disent du site', () 
     expect(etatDuDeploiement(undefined)).toBeNull();
   });
 
-  it('aucun run : aucun succès, rien depuis, pas de retard inventé', () => {
+  it('aucun run : aucun succès, rien depuis, rien d’inventé', () => {
     expect(etatDuDeploiement([])).toEqual({
       runsLus: 0,
       dernierSucces: null,
       depuis: { enCours: 0, annules: 0, echoues: 0 },
-      enRetard: false,
     });
   });
 
-  it('le 20/09 : le push annulé la même seconde que le succès qui l’a remplacé n’est PAS un retard', () => {
+  // Le portail est rendu PAR le run de déploiement : au moment du rendu, ce
+  // run est « en cours » et postérieur au dernier succès. Un verdict « le site
+  // est en retard » serait donc toujours faux sur la page publiée (revue C,
+  // passe 1). La fonction rend les comptes, jamais ce verdict.
+  it('ne rend aucun verdict de retard : le run qui rend la page serait toujours le remplaçant', () => {
+    const e = etatDuDeploiement([
+      run(3, 'in_progress', null, 'push', '2026-09-20T11:30:00Z', '2026-09-20T11:30:00Z'),
+      run(2, 'completed', 'cancelled', 'push', '2026-09-20T11:29:50Z', '2026-09-20T11:29:52Z'),
+      run(1, 'completed', 'success', 'issues', '2026-09-20T11:27:00Z', '2026-09-20T11:29:00Z'),
+    ]);
+    expect(e.depuis).toEqual({ enCours: 1, annules: 1, echoues: 0 });
+    expect(Object.keys(e)).toEqual(['runsLus', 'dernierSucces', 'depuis']);
+  });
+
+  it('le 20/09 : le push annulé la même seconde que le succès qui l’a remplacé ne compte pas « depuis »', () => {
     const e = etatDuDeploiement([
       run(
         35507780053,
@@ -3425,10 +3438,9 @@ describe('etatDuDeploiement — ce que les runs de docs.yml disent du site', () 
       url: 'https://github.com/x/y/actions/runs/35507779973',
     });
     expect(e.depuis).toEqual({ enCours: 0, annules: 0, echoues: 0 });
-    expect(e.enRetard).toBe(false);
   });
 
-  it('un run annulé APRÈS le dernier succès, sans remplaçant en cours, met le site en retard', () => {
+  it('un run annulé APRÈS le dernier succès est compté, et le dernier succès reste le bon', () => {
     const e = etatDuDeploiement([
       run(3, 'completed', 'cancelled', 'push', '2026-09-20T11:30:00Z', '2026-09-20T11:30:02Z'),
       run(2, 'completed', 'success', 'issues', '2026-09-20T11:27:00Z', '2026-09-20T11:29:00Z'),
@@ -3436,25 +3448,31 @@ describe('etatDuDeploiement — ce que les runs de docs.yml disent du site', () 
     ]);
     expect(e.dernierSucces.le).toBe('2026-09-20T11:29:00Z');
     expect(e.depuis).toEqual({ enCours: 0, annules: 1, echoues: 0 });
-    expect(e.enRetard).toBe(true);
   });
 
-  it('le même run annulé, avec un remplaçant en file, n’est pas un retard : il sera remplacé', () => {
+  it('un run en file après un annulé est compté « en cours », à part de l’annulé', () => {
     const e = etatDuDeploiement([
       run(4, 'queued', null, 'issues', '2026-09-20T11:30:00Z', '2026-09-20T11:30:00Z'),
       run(3, 'completed', 'cancelled', 'push', '2026-09-20T11:30:00Z', '2026-09-20T11:30:02Z'),
       run(2, 'completed', 'success', 'issues', '2026-09-20T11:27:00Z', '2026-09-20T11:29:00Z'),
     ]);
     expect(e.depuis).toEqual({ enCours: 1, annules: 1, echoues: 0 });
-    expect(e.enRetard).toBe(false);
   });
 
-  it('un run en échec après le dernier succès compte comme un retard, et se distingue d’une annulation', () => {
+  it('échec, sauté, et un run terminé sans conclusion : rien de tout cela n’a déployé, tous comptés « échoués »', () => {
     const e = etatDuDeploiement([
+      run(5, 'completed', null, 'issues', '2026-09-20T12:50:00Z', '2026-09-20T12:51:00Z'),
+      run(
+        4,
+        'completed',
+        'skipped',
+        'workflow_run',
+        '2026-09-20T12:45:00Z',
+        '2026-09-20T12:45:01Z',
+      ),
       run(3, 'completed', 'failure', 'schedule', '2026-09-20T12:41:00Z', '2026-09-20T12:45:00Z'),
       run(2, 'completed', 'success', 'issues', '2026-09-20T11:27:00Z', '2026-09-20T11:29:00Z'),
     ]);
-    expect(e.depuis).toEqual({ enCours: 0, annules: 0, echoues: 1 });
-    expect(e.enRetard).toBe(true);
+    expect(e.depuis).toEqual({ enCours: 0, annules: 0, echoues: 3 });
   });
 });
