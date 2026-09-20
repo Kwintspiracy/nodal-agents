@@ -276,7 +276,26 @@ describe('Layer 2bis — channels and automations @cap:parler-par-canal-externe/
 
     expect(block).not.toContain('`telegram`');
     expect(block).toContain('`discord`');
+    // Regression guard, and it is meant to be unfalsifiable today: no code in
+    // the repository produces this sentence, and the point is to keep it that
+    // way. It described a switch the dashboard does not have.
     expect(block).not.toContain('switched off');
+  });
+
+  it('answers from the bindings it is given, whichever field carries them', () => {
+    // Either field alone says which channels have no binding. Gating on the
+    // narrower one left a caller that knew ALL the bindings saying nothing
+    // (Reviewer C, pass 3).
+    const fromConfigured = buildDiscoverabilityBlock({
+      ...empty,
+      configuredChannelSlugs: ['telegram'],
+    });
+    expect(fromConfigured).toContain('`discord`');
+    expect(fromConfigured).not.toContain('`telegram`');
+
+    const fromBound = buildDiscoverabilityBlock({ ...empty, boundChannelSlugs: ['telegram'] });
+    expect(fromBound).toContain('`discord`');
+    expect(fromBound).not.toContain('`telegram`');
   });
 
   it('says nothing about channels when the bindings are unknown', () => {

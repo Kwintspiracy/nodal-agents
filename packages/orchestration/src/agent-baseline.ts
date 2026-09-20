@@ -357,11 +357,15 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
   // unknown binding must not become an offer to set up what is already set up.
   // A channel that HAS a binding is simply not offered, whether or not that
   // binding is enabled (see `configuredChannelSlugs`).
+  //
+  // The gate is on `configured`, not on `boundChannelSlugs`. Either field on
+  // its own is enough to answer the only question asked here — which channels
+  // have no binding — and gating on the narrower one left a caller that knew
+  // ALL the bindings unable to say anything (Reviewer C, pass 3, mutation B:
+  // the most conservative gate was also the one that threw away the most).
   const configured = input.configuredChannelSlugs ?? input.boundChannelSlugs;
   const freeChannels =
-    input.boundChannelSlugs === undefined
-      ? []
-      : CHANNELS.filter((c) => configured?.includes(c) !== true);
+    configured === undefined ? [] : CHANNELS.filter((c) => !configured.includes(c));
 
   // No early return any more. It used to fire when an agent already had every
   // skill and connector, and the block vanished — which was right while the
