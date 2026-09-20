@@ -257,7 +257,7 @@ export default function Home() {
             src={`${BASE_PATH}/home/dashboard-light.webp`}
             width={1393}
             height={1040}
-            alt="The Nodal-Agents dashboard home in the light theme, showing agent, skill and connector counts, job totals, weekly activity and a per-agent token table."
+            alt="The Nodal-Agents dashboard in the light theme, showing agent, skill and connector counts, job totals, weekly activity and a per-agent token table."
             loading="lazy"
             decoding="async"
           />
