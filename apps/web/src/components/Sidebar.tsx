@@ -31,6 +31,7 @@ import ThemeToggle from './ui/ThemeToggle';
 import NotificationsBell from './NotificationsBell';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
+import { ProductLogo, PRODUCT_NAME } from './ui/BrandMark';
 import { destinationForPath, matchedDestination } from './sidebar-nav.ts';
 import type { WorkspaceRow } from '@/lib/actions';
 
@@ -104,11 +105,12 @@ export default function Sidebar({
         >
           <List size={26} />
         </IconButton>
+        {/* La MEME marque que le rail, en plus petit (#308) : la barre mobile
+            remplace le rail sur un telephone, et deux dessins differents pour
+            le meme produit se voient d'un ecran a l'autre. */}
         <div className="flex min-w-0 items-center gap-2 pl-1 text-medium-15 tracking-[-0.005em] text-ink">
-          <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-ink font-mono text-label-11 text-canvas">
-            N
-          </span>
-          <span className="truncate">Nodal-Agents</span>
+          <ProductLogo size={22} />
+          <span className="truncate">{PRODUCT_NAME}</span>
         </div>
         <div className="flex-1" />
         <div className="flex items-center gap-1">

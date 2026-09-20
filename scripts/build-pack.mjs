@@ -206,7 +206,8 @@ cpSync(resolve(repoRoot, 'apps/runner/dist/server.js'), resolve(packDir, 'runner
 //   .next/standalone/apps/web/    → server.js + minimal node_modules
 //   .next/standalone/node_modules → hoisted deps (also needed)
 //   .next/static/                  → static assets (NOT auto-copied)
-//   public/                        → NOT auto-copied (no public/ in our app)
+//   public/                        → NOT auto-copied (copied below; apps/web
+//                                    has one since #308, the product logo)
 //
 // We flatten apps/web/ into pack/web/ to drop the monorepo-ish nesting.
 const standaloneRoot = resolve(repoRoot, 'apps/web/.next/standalone');
@@ -236,7 +237,9 @@ cpSync(resolve(repoRoot, 'apps/web/.next/server'), resolve(webOut, '.next/server
 cpSync(resolve(repoRoot, 'apps/web/.next/static'), resolve(webOut, '.next/static'), {
   recursive: true,
 });
-// public/: copy if present (currently none in our app, future-proofs)
+// public/: copied whole. `apps/web/public` holds the product logo since #308
+// (the rail's mark, the login page, the tab icon) plus the avatar and icon
+// folders; a pack without it serves broken images on the first screen.
 const publicSrc = resolve(repoRoot, 'apps/web/public');
 if (existsSync(publicSrc)) {
   cpSync(publicSrc, resolve(webOut, 'public'), { recursive: true });

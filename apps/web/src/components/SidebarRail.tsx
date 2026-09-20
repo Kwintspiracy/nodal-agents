@@ -45,6 +45,7 @@ import {
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
 import RailCell, { RailAvatarButton } from './ui/RailCell';
+import { ProductLogo, PRODUCT_NAME } from './ui/BrandMark';
 import RailPopover from './ui/RailPopover';
 import VersionBadge from './VersionBadge';
 import { DESTINATIONS, RAIL_FOOT, type DestinationKey } from './sidebar-nav.ts';
@@ -140,13 +141,25 @@ export default function SidebarRail({
       // 72, c'est-à-dire pleine largeur au sens de la planche.
       className="flex h-full w-[var(--rail-w)] shrink-0 flex-col items-center gap-1 bg-rail px-1 pt-3.5 pb-3"
     >
-      {/* Le logo seul : « Nodal-Agents » ne tient pas dans 72 px. */}
+      {/* LE LOGO, et plus la lettre (#308). « Nodal-Agents » ne tient pas dans
+          72 px, et la marque du produit est désormais une image : le colley sur
+          le N, le même fichier que le site (`public/logo-128.png`).
+
+          Plus de carré d'encre derrière, et pas de carré du tout : le FICHIER
+          porte le sien. Le PNG est une plaque blanche à coins arrondis, opaque
+          sur 99 % de sa surface — c'est le dessin tel que le propriétaire l'a
+          livré, et c'est celui du site. En rajouter un dessous aurait fait deux
+          plaques l'une sur l'autre.
+
+          `alt=""` : le lien porte déjà son nom (`aria-label`), et une image
+          décrite en plus le ferait annoncer deux fois. */}
       <Link
         href="/"
-        title="Nodal-Agents"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ink font-mono text-legacy-12 font-semibold tracking-[0.04em] text-canvas"
+        title={PRODUCT_NAME}
+        aria-label={PRODUCT_NAME}
+        className="flex h-8 w-8 shrink-0 items-center justify-center"
       >
-        N
+        <ProductLogo size={32} priority />
       </Link>
       <div className="h-2 shrink-0" />
 
