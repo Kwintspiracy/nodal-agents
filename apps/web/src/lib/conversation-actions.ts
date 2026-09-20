@@ -49,11 +49,7 @@ import {
   channelAllowedConversations,
 } from '@nodal-agents/db';
 import { normalizePath, redactSecretsInText, stripGroupPrefix } from '@nodal-agents/shared';
-import {
-  folderChatsQuery,
-  folderConversationsQuery,
-  recentConversationsQuery,
-} from './folder-threads-sql.ts';
+import { folderChatsQuery, folderConversationsQuery } from './folder-threads-sql.ts';
 import { readsOfUser, unreadColumn } from './unread.ts';
 import { plainText } from '@/components/Markdown.tsx';
 import { requireAuth } from '@nodal-agents/auth';
@@ -577,29 +573,6 @@ export async function listFolderThreadReadsAction(
   } catch (err) {
     console.error('[listFolderThreadReadsAction]', err);
     return fail('db_error', 'Failed to load the folder threads');
-  }
-}
-
-/**
- * LES DERNIERS FILS, TOUS CANAUX CONFONDUS — la section « Recent » du panneau
- * Talk (#230, 19/09/2026).
- *
- * Une seule requête, bornée en SQL, et la MÊME reprise de titre que le
- * sous-menu d'un dossier : un fil que personne n'a nommé porte ici le nom qu'il
- * porte partout ailleurs, jamais un autre.
- */
-export async function listRecentThreadReadsAction(
-  limit: number,
-): Promise<ActionResult<FolderConversationRead[]>> {
-  try {
-    const session = await getSession();
-    if (!session.entityId) return fail('no_entity', 'No active entity');
-    const db = getDb();
-    const rows = await recentConversationsQuery(db, session.entityId, session.userId, limit);
-    return ok(await nommerLesFils(db, session.entityId, rows));
-  } catch (err) {
-    console.error('[listRecentThreadReadsAction]', err);
-    return fail('db_error', 'Failed to load the recent threads');
   }
 }
 
