@@ -15,22 +15,18 @@
 // le contexte — les deux sont rendus par des branches différentes de l'arbre,
 // et se passer l'état par props demanderait de le faire traverser `PageShell`.
 //
-// OUVERT PAR DÉFAUT, et la personne décide ensuite. Son choix tient dans son
-// navigateur (`localStorage`) : c'est une préférence d'affichage, elle ne
-// concerne qu'elle et elle n'a pas besoin de voyager. Le serveur rend donc
-// toujours l'état par défaut, et le choix s'applique après le montage — un
-// panneau fermé s'affiche une image avant de se replier. C'est le prix d'une
-// préférence qui ne fait pas d'aller-retour, et il est payé une fois par
-// ouverture de page.
+// OUVERT PAR DÉFAUT, À CHAQUE OUVERTURE DE PAGE, et la personne le referme si
+// elle veut, pour cette page-là. Le choix ne tient PLUS d'une visite à l'autre
+// (Quentin, 20/09) : mémorisé dans le navigateur, il s'appliquait après le
+// montage, et un panneau rendu ouvert par le serveur se refermait sous les
+// yeux une image plus tard, à chaque projet cliqué. Un flash à chaque
+// navigation coûte plus qu'un clic pour refermer.
 
-import { createContext, useContext, useEffect, useId, useState, type ReactNode } from 'react';
+import { createContext, useContext, useId, useState, type ReactNode } from 'react';
 import { FolderOpen, X } from '@phosphor-icons/react';
 import IconButton from '@/components/ui/IconButton';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import { useLayer } from '@/lib/layers.ts';
-
-/** La clé du choix, une seule pour tous les projets : c'est une habitude de lecture. */
-const STORAGE_KEY = 'nodal.project-panel-open';
 
 type PanelState = { open: boolean; toggle: () => void; close: () => void };
 
@@ -46,10 +42,10 @@ function usePanel(): PanelState {
 
 export function ProjectPanelProvider({
   /**
-   * Force l'ouverture, quel que soit le choix mémorisé. C'est ce que rend
-   * `/spaces/[id]/files` : cette adresse est dans des liens déjà envoyés et
-   * dans la barre d'un run, et elle veut dire « montre-moi le dossier ». La
-   * personne peut refermer ensuite, et son choix redevient le sien.
+   * `/spaces/[id]/files` — cette adresse est dans des liens déjà envoyés et
+   * dans la barre d'un run, et elle veut dire « montre-moi le dossier ». Le
+   * panneau étant ouvert par défaut partout, elle ne change plus rien ; elle
+   * reste acceptée pour que ces liens continuent de mener quelque part.
    */
   forceOpen = false,
   children,
@@ -58,31 +54,11 @@ export function ProjectPanelProvider({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(true);
-
-  useEffect(() => {
-    if (forceOpen) return;
-    try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setOpen(window.localStorage.getItem(STORAGE_KEY) !== 'closed');
-    } catch {
-      // Un navigateur qui refuse le stockage (navigation privée, réglage) ne
-      // doit pas emporter l'écran : on reste sur le défaut.
-    }
-  }, [forceOpen]);
-
-  function remember(next: boolean): void {
-    setOpen(next);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, next ? 'open' : 'closed');
-    } catch {
-      // Le choix ne survivra pas au rechargement, et c'est tout : l'écran, lui,
-      // obéit tout de suite.
-    }
-  }
+  void forceOpen;
 
   return (
     <PanelContext.Provider
-      value={{ open, toggle: () => remember(!open), close: () => remember(false) }}
+      value={{ open, toggle: () => setOpen((o) => !o), close: () => setOpen(false) }}
     >
       {children}
     </PanelContext.Provider>
@@ -138,7 +114,10 @@ export function ProjectFilesPanel({ title, children }: { title: string; children
       role="complementary"
       aria-labelledby={titleId}
       data-testid="project-files-panel"
-      className="mt-6 flex max-h-[70vh] flex-col overflow-hidden rounded-xl border border-rule bg-paper shadow-[0_12px_32px_rgba(0,0,0,0.28)] lg:fixed lg:top-[96px] lg:right-6 lg:bottom-6 lg:mt-0 lg:max-h-none lg:w-[400px]"
+      // Une COLONNE à côté du contenu, collante : son haut s'aligne sur la
+      // rangée d'actions (même `pt-6` que le corps), jamais sur l'en-tête, et
+      // elle suit le défilement. Sur un écran étroit elle passe sous la liste.
+      className="mx-5 mt-6 flex max-h-[70vh] flex-col overflow-hidden rounded-xl border border-rule bg-paper shadow-[0_12px_32px_rgba(0,0,0,0.28)] sm:mx-8 lg:sticky lg:top-6 lg:mx-0 lg:mt-0 lg:max-h-[calc(100vh-48px)] lg:w-[400px] lg:shrink-0 lg:self-start"
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-rule-2 py-3 pr-3 pl-5">
         <h2 id={titleId} className="min-w-0 truncate text-title-16 text-ink">
@@ -159,30 +138,36 @@ export function ProjectFilesPanel({ title, children }: { title: string; children
 }
 
 /**
- * Le CORPS de la page : la rangée d'actions, puis le contenu, centrés comme
- * sur toute autre page — et décalés vers la gauche de la largeur du panneau
- * quand celui-ci flotte, pour que la colonne reste centrée dans la place qui
- * lui reste (c'est ce que la planche dessine : la liste au milieu de l'espace
- * à gauche de la carte).
+ * Le CORPS de la page : à gauche la colonne de contenu — la rangée d'actions
+ * puis la liste — EXACTEMENT aux mesures des autres pages (la boîte de
+ * `PageShell` : `max-w-6xl` gouttières comprises, centrée) ; à droite, quand
+ * il est ouvert, le panneau en colonne collante. La colonne de contenu se
+ * centre dans la place qui lui reste (planche 498:5776 : la liste au milieu
+ * de l'espace à gauche de la carte).
  */
 export function ProjectPanelBody({
   actions,
+  panel,
   children,
 }: {
   /** La rangée d'actions de la page, au-dessus du contenu, alignée à droite. */
   actions?: ReactNode;
+  /** Le panneau « Files & proof », rendu à côté de la colonne. */
+  panel?: ReactNode;
   children: ReactNode;
 }) {
-  const { open } = usePanel();
   return (
     <div
       data-testid="project-body"
-      className={`px-5 pt-6 pb-10 transition-[padding] sm:px-8 lg:px-9 ${open ? 'lg:pr-[440px]' : ''}`}
+      className="flex flex-col items-stretch pt-6 pb-10 lg:flex-row lg:items-start lg:gap-6 lg:pr-6"
     >
-      <div className="mx-auto flex max-w-6xl flex-col gap-4">
-        {actions}
-        {children}
+      <div className="min-w-0 flex-1">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-5 sm:px-8 lg:px-9">
+          {actions}
+          {children}
+        </div>
       </div>
+      {panel}
     </div>
   );
 }

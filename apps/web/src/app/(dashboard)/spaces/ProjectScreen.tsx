@@ -30,7 +30,6 @@ import {
 } from '@/lib/actions.ts';
 
 import ActionRow from '@/components/ui/ActionRow';
-import { projectFactsLine } from './project-header.ts';
 import { activityRows } from './activity-rows.ts';
 import ProjectToolbar from './ProjectToolbar.tsx';
 import ProjectActivity from './ProjectActivity.tsx';
@@ -96,12 +95,9 @@ export default async function ProjectScreen({
       <PageShell
         fluid
         title={facts.name}
-        subtitle={
-          <span className="flex flex-col gap-0.5">
-            <span className="font-mono text-mono-11 text-ink-3">{facts.path}</span>
-            <span>{projectFactsLine(facts)}</span>
-          </span>
-        }
+        // Le CHEMIN, et rien d'autre, sous le nom (Quentin, 20/09) : la ligne
+        // « agent · chemin · n conversations » est retirée.
+        subtitle={facts.path}
       >
         <ProjectPanelBody
           actions={
@@ -112,6 +108,11 @@ export default async function ProjectScreen({
                 projectName={facts.name}
               />
             </ActionRow>
+          }
+          panel={
+            <ProjectFilesPanel title="Files & proof">
+              <FilesAndProof result={pageResult} prefs={prefsResult} owner={ownerResult} />
+            </ProjectFilesPanel>
           }
         >
           {/* L'OPTION GIT DU PROJET (issue #200), dans la colonne et pas dans
@@ -153,12 +154,6 @@ export default async function ProjectScreen({
               <ProjectActivity rows={rows} />
             </>
           )}
-
-          {/* Le panneau vit DANS le corps : fixé au bord droit sur un grand
-              écran, posé sous la liste sur un petit. */}
-          <ProjectFilesPanel title="Files & proof">
-            <FilesAndProof result={pageResult} prefs={prefsResult} owner={ownerResult} />
-          </ProjectFilesPanel>
         </ProjectPanelBody>
       </PageShell>
     </ProjectPanelProvider>

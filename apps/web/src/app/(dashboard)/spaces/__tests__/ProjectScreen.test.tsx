@@ -105,12 +105,20 @@ describe('ProjectScreen — l’ordre de la page @cap:travailler-sur-des-fichier
     if (iListe > -1) expect(iPanneau).toBeGreaterThan(iListe);
   });
 
-  it('le corps est centré comme les autres pages, et laisse sa place au panneau', () => {
+  it('le corps a la largeur des autres pages, et le panneau est une colonne à côté', () => {
     const iCorps = html.indexOf('data-testid="project-body"');
     const corps = html.slice(iCorps, html.indexOf('>', iCorps));
-    // Ouvert par défaut : la colonne se recentre dans l'espace à gauche.
-    expect(corps).toContain('lg:pr-[440px]');
-    expect(html.slice(iCorps)).toContain('mx-auto flex max-w-6xl');
+    // Une rangée : la colonne de contenu, puis le panneau collant à droite.
+    expect(corps).toContain('lg:flex-row');
+    // La colonne aux mesures de `PageShell` : `max-w-6xl` GOUTTIÈRES COMPRISES.
+    expect(html.slice(iCorps)).toContain('mx-auto flex w-full max-w-6xl flex-col gap-4 px-5');
+    const iPanneau = html.indexOf('data-testid="project-files-panel"');
+    const panneau = html.slice(iPanneau, html.indexOf('>', iPanneau));
+    expect(panneau).toContain('lg:sticky lg:top-6');
+    expect(panneau).toContain('lg:w-[400px]');
+    // Le sous-titre est le CHEMIN seul : pas d'agent, pas de compte.
+    expect(html).not.toContain('1 conversation');
+    expect(html).not.toContain('2 conversations');
   });
 
   it('AUCUN retour, et les gestes sont à la taille standard', () => {
