@@ -210,8 +210,15 @@ describe('homepage assets and configuration', () => {
   });
 
   it('ships every screenshot it references, each under 250 KB', () => {
-    const sources = [...markup.matchAll(/src="([^"]+)"/g)].map((m) => m[1]);
+    // `src` attributes, and the pictures set as backgrounds (the hero): a
+    // guard that reads only `src` would let a full-bleed background weigh
+    // anything.
+    const sources = [
+      ...[...markup.matchAll(/src="([^"]+)"/g)].map((m) => m[1]),
+      ...[...markup.matchAll(/background-image:url\(([^)]+)\)/g)].map((m) => m[1]),
+    ];
     expect(sources.length).toBeGreaterThan(0);
+    expect(sources).toContain(`${BASE_PATH}/home/hero.webp`);
     for (const src of sources) {
       expect(src.startsWith(`${BASE_PATH}/`)).toBe(true);
       const onDisk = join(docsRoot, 'public', src.slice(BASE_PATH.length + 1));

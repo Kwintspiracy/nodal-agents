@@ -180,9 +180,6 @@
       rgba(4, 12, 40, 0.06) 100%
     );
 }
-.home-hero-band .home-mono {
-  color: var(--home-hero-ink-soft);
-}
 .home-hero-band .home-install .p {
   color: var(--home-hero-ink-soft);
 }
@@ -194,18 +191,6 @@
 }
 .home-hero-band .home-install .c {
   color: var(--home-hero-ink);
-}
-.home-hero-band .home-btn-ghost {
-  border-color: var(--home-hero-line);
-  color: var(--home-hero-ink);
-}
-.home-hero-band .home-btn-ghost:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-.home-hero-band .home-btn-primary:hover {
-  background: #ffffff;
-  border-color: #ffffff;
-  color: #0a1f5c;
 }
 
 .home-hero {
