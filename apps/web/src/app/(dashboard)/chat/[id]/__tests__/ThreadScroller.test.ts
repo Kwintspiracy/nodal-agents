@@ -353,3 +353,63 @@ describe('ThreadScroller — ouvrir une boîte éteint le suivi @cap:parler-a-un
     ).toBe(4000);
   });
 });
+
+// ─── Le marqueur de montage (issue #71) ──────────────────────────────────────
+//
+// Le fil est rendu par le SERVEUR : ses lignes sont à l'écran, et cliquables à
+// l'œil, avant que ce composant n'existe. Un parcours qui mesure la position ou
+// qui clique dès qu'une ligne est visible lit donc un fil pas encore branché —
+// position 0, boutons inertes. Sur une machine rapide cela ne se voit jamais ;
+// sur le runner du 19/09, `thread-unfold-keeps-scroll` a mesuré 4266 px sous la
+// zone visible d'un fil qui devait s'ouvrir en bas, et ses deux autres cas ont
+// cliqué une ligne qui n'a pas bougé.
+//
+// La zone dit donc quand elle est vivante, et les parcours attendent ce mot.
+describe('ThreadScroller — la zone dit quand elle est branchée @cap:parler-a-un-agent/ecran', () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(async () => {
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+    container = null;
+    root = null;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function render(follow?: 'bottom' | 'never'): Promise<HTMLElement> {
+    captureResizeObserver();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        createElement(
+          ThreadScroller,
+          follow ? { follow } : null,
+          createElement('p', null, 'le fil'),
+        ),
+      );
+    });
+    const el = container.querySelector<HTMLElement>('[data-thread-scroller]');
+    if (!el) throw new Error('aucune zone de défilement rendue');
+    return el;
+  }
+
+  it('un fil monté porte le marqueur', async () => {
+    const el = await render();
+    expect(el.hasAttribute('data-scroller-ready')).toBe(true);
+  });
+
+  it('un tableau aussi : le marqueur dit MONTÉ, pas SUIVI', async () => {
+    const el = await render('never');
+    expect(el.hasAttribute('data-scroller-ready')).toBe(true);
+  });
+
+  it('le marqueur désigne la zone elle-même, celle que les parcours interrogent', async () => {
+    const el = await render();
+    const found = document.querySelector('[data-thread-scroller][data-scroller-ready]');
+    expect(found).toBe(el);
+  });
+});

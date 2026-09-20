@@ -288,7 +288,22 @@ export default function ThreadScroller({
   // d'autre.
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el && policy.jumpOnMount) scrollToBottom(el);
+    if (!el) return;
+    if (policy.jumpOnMount) scrollToBottom(el);
+    // LA ZONE DIT QU'ELLE EST VIVANTE (issue #71).
+    //
+    // Le fil est rendu par le SERVEUR : ses lignes sont à l'écran, et
+    // cliquables à l'œil, avant que ce composant n'existe. Un parcours qui
+    // mesure `scrollTop` ou qui clique dès que la première ligne est visible
+    // lit donc un fil pas encore branché — position 0, boutons inertes. Sur la
+    // machine d'un développeur cela ne se voit jamais ; sur le runner du
+    // 19/09, le cas « déplier DEPUIS LE BAS » a mesuré 4266 px sous la zone
+    // visible d'un fil qui devait s'ouvrir en bas, et les deux autres cas ont
+    // cliqué une ligne qui n'a pas bougé, puis sont passés au rejeu.
+    //
+    // Une écriture DOM, hors de React : aucun rendu de plus, et l'attribut
+    // apparaît exactement quand le saut du montage a eu lieu.
+    el.dataset['scrollerReady'] = '';
     // `policy` est dérivé d'une prop qui ne change pas d'un rendu à l'autre sur
     // un écran donné ; l'effet reste à l'ouverture, comme avant.
     // eslint-disable-next-line react-hooks/exhaustive-deps
