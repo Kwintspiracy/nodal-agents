@@ -9,7 +9,6 @@
 // « pas de pastilles grises ») : ils se lisent comme le modèle et l'heure d'un
 // en-tête de tour, où la différence entre les choses est la COULEUR.
 
-import type { ReactNode } from 'react';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import CopyButton from '@/components/ui/CopyButton';
@@ -26,7 +25,6 @@ export default function RunHeaderCard({
   statusVariant,
   statusLabel,
   stats,
-  actions = null,
 }: {
   /**
    * L'identifiant du run. Il est à l'écran depuis le 18/09 : sans lui, rien
@@ -44,8 +42,6 @@ export default function RunHeaderCard({
   statusVariant: StatusVariant;
   statusLabel?: string;
   stats: readonly RunStat[];
-  /** Ce que la route ajoute au bout de la première ligne (annuler un run vivant). */
-  actions?: ReactNode;
 }) {
   // Le titre est la PREMIÈRE LIGNE de la demande, à plat et COUPÉE à soixante
   // caractères — la règle que les trois routes appliquent déjà à l'en-tête de
@@ -68,8 +64,10 @@ export default function RunHeaderCard({
         {model !== null && model !== '' && (
           <span className="text-mono-11 text-feed-model">{model}</span>
         )}
+        {/* PLUS D'ACTION ICI (#252). Le bouton d'arrêt tenait le bout de cette
+            ligne de faits ; il vit désormais dans la rangée d'actions sous la
+            barre, avec tout ce qu'une page permet de faire (règle de #242). */}
         <StatusPill variant={statusVariant} label={statusLabel} />
-        {actions !== null && <span className="ml-auto shrink-0">{actions}</span>}
       </div>
       {/* L'IDENTITÉ du run, sous sa ligne de faits : l'identifiant entier, à
           copier d'un clic. C'est ce qu'on colle dans une commande, dans une

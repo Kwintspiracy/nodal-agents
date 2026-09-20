@@ -1144,6 +1144,64 @@ describe('executeJob', () => {
     expect(row?.result ?? '').toBe('');
   });
 
+  // ─── ARRÊTER UN RUN (#252) ─────────────────────────────────────────────────
+  //
+  // Le bouton Stop de l'écran passe le job à `cancelled` (`cancelJobAction`).
+  // Ce qui se passe ENSUITE est ici : le runner lit ce statut au début de
+  // chaque tour et rend la main. Sans ce contrôle, le bouton ne serait qu'une
+  // ligne changée en base pendant que la boucle continue de brûler des tours.
+  //
+  // Ce que ce cas prouve, et que « le statut est cancelled » ne prouve pas :
+  // l'appel d'outil du tour SUIVANT n'a pas lieu, et la ligne du job n'est pas
+  // réécrite par-dessus l'annulation.
+  it('un job annulé s’arrête AVANT son prochain appel d’outil, et n’écrit plus rien @cap:suivre-execution/moteur', async () => {
+    const job = await createTestJob(db, seed);
+
+    // Deux tours étaient prévus. Le premier appelle un outil ; l'annulation
+    // tombe pendant qu'il répond — c'est ce que fait une personne qui clique
+    // Stop en regardant le run travailler. Le second ne doit jamais être joué.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [{ toolCallId: 'c1', toolName: 'save_memory', args: {} }],
+        beforeRespond: async () => {
+          await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, job.id));
+        },
+      },
+      {
+        // Le tour que l'arrêt doit empêcher. S'il est joué, la table des
+        // appels d'outil portera DEUX lignes au lieu d'une.
+        toolCalls: [{ toolCallId: 'c2', toolName: 'save_memory', args: {} }],
+      },
+      { text: 'Je ne devrais jamais parler.' },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('cancelled');
+
+    // UN SEUL appel d'outil : celui du tour qui tournait déjà. Le second,
+    // que le modèle avait préparé, n'a pas eu lieu.
+    const appels = await db
+      .select({ toolName: toolCalls.toolName })
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, job.id));
+    expect(appels).toHaveLength(1);
+
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        result: agentJobs.result,
+        error: agentJobs.error,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    // La ligne reste annulée : le runner ne repasse pas par-dessus pour
+    // écrire `completed`, et il n'invente pas d'erreur.
+    expect(row?.status).toBe('cancelled');
+    expect(row?.error ?? '').toBe('');
+    // Et l'agent n'a rien répondu : la réponse du troisième tour n'existe pas.
+    expect(row?.result ?? '').not.toContain('jamais parler');
+  });
+
   it('chemin texte ⇒ completed via la primitive, ZÉRO ligne job_deliveries (le canal est servi par l’outil pendant le run)', async () => {
     const job = await createTestJob(db, seed);
     const llmClient = makeMockLlmClient([{ text: 'Réponse en texte.' }]);

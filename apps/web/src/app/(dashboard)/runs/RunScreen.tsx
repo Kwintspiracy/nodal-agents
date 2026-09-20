@@ -30,6 +30,7 @@ export default function RunScreen({
   proofVerdict = null,
   filesHref = null,
   statusBar = null,
+  actions = null,
   children,
 }: {
   /** De quoi tirer les initiales quand l'agent n'a pas d'image. */
@@ -49,6 +50,14 @@ export default function RunScreen({
   filesHref?: string | null;
   /** La barre du bas, quand la page en a une. */
   statusBar?: ReactNode;
+  /**
+   * CE QUE LA PAGE PERMET DE FAIRE — arrêter un run qui court (#252).
+   *
+   * Passée telle quelle à `ThreadScreen`, qui la pose hors de la zone qui
+   * défile : la règle de #242, et UNE seule géométrie pour les trois écrans de
+   * fil. `null` — un run terminé — et aucune rangée n'est dessinée.
+   */
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -82,7 +91,15 @@ export default function RunScreen({
           run, sur la même boîte que sa largeur maximale — c'est ainsi que
           `PageShell` construit le corps de toutes les autres pages, et c'est la
           seule façon d'avoir la même largeur de contenu qu'elles. */}
-      <ThreadScreen follow="never" sidePadding={false}>
+      <ThreadScreen
+        follow="never"
+        sidePadding={false}
+        actions={actions}
+        // LA BOÎTE DU CORPS D'UN RUN, à l'identique : `mx-auto max-w-6xl`. Le
+        // bouton tombe alors sur le bord droit de la carte qu'il arrête, et
+        // plus sur celui de l'écran (Reviewer C, passe 1 de #325).
+        actionsBox="mx-auto max-w-6xl"
+      >
         {children}
       </ThreadScreen>
     </PageShell>

@@ -337,3 +337,39 @@ describe('RunPage — un run qui court @cap:suivre-execution/ecran', () => {
     expect(html).not.toContain('2 steps · 1 agent ·');
   });
 });
+
+// ─── Arrêter le run, depuis sa page (#252) ───────────────────────────────────
+//
+// Le geste n'existait que sur `/jobs/[id]`, passé par la route. Les DEUX routes
+// qui rendent cette page le portent maintenant, parce que la page le dessine
+// elle-même : `/scheduled/[id]` montrait le même run sans aucun moyen de
+// l'arrêter.
+
+describe('RunPage — arrêter un run @cap:suivre-execution/ecran', () => {
+  it('porte le bouton Stop tant que le run court', () => {
+    const html = renderToStaticMarkup(<RunPage data={data(true)} />);
+    expect(html).toContain('data-testid="stop-run"');
+    expect(html).toContain('>Stop<');
+    // Le job de TÊTE de ce run, et pas un autre.
+    expect(html).toContain('data-job-id="job-1"');
+    // ET DANS LA BOÎTE DU CORPS (Reviewer C, passe 2). Sans cette assertion,
+    // échanger les deux boîtes entre le run et le fil laissait tout vert et
+    // ramenait les 384 px d'écart que la passe 1 avait fait corriger.
+    const rangee = html.slice(html.indexOf('data-testid="action-row"') - 400);
+    expect(rangee).toContain('max-w-6xl');
+    expect(rangee).not.toContain('max-w-[760px]');
+    // DANS la rangée d'actions, jamais dans la barre : c'est la règle de #242,
+    // et une action posée sur la ligne de faits du run en faisait un fait.
+    expect(html).toContain('data-testid="action-row"');
+    expect(html.indexOf('data-testid="action-row"')).toBeLessThan(
+      html.indexOf('data-testid="run-body"'),
+    );
+  });
+
+  it('ne le porte plus une fois le run terminé', () => {
+    const html = renderToStaticMarkup(<RunPage data={data(false)} />);
+    expect(html).not.toContain('data-testid="stop-run"');
+    // Et aucune rangée vide à la place.
+    expect(html).not.toContain('data-testid="action-row"');
+  });
+});
