@@ -56,7 +56,15 @@ export default function DelegationDisclosure({
         >
           {avatar}
           <span className="min-w-0 flex-1 truncate text-left text-body-13 text-ink">{title}</span>
-          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ok ? 'bg-ok' : 'bg-err'}`} />
+          {/* `data-outcome` dit CE QUE la pastille annonce ; la classe dit
+              seulement de quelle couleur elle est. Le parcours de #55 lisait
+              `span.bg-err`, donc une couleur : un thème qui renomme son jeton
+              d'erreur rendait muet le test qui prouve qu'une délégation ratée
+              se voit (issue #55). */}
+          <span
+            data-outcome={ok ? 'ok' : 'failed'}
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${ok ? 'bg-ok' : 'bg-err'}`}
+          />
           {aside !== undefined && aside !== '' && (
             <span className="shrink-0 text-mono-11 text-ink-4">{aside}</span>
           )}

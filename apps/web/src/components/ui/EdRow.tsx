@@ -38,7 +38,13 @@ export default function EdRow({
   className = '',
 }: Props) {
   return (
-    <div className={`overflow-hidden rounded-[10px] border border-rule-2 bg-paper ${className}`}>
+    /* Ancre stable (issue #55). Deux parcours remontaient à cette ligne par
+       `[class*="rounded-[10px]"]` — un rayon de bordure pris pour une
+       structure. Il suffisait de changer le rayon pour les rendre muets. */
+    <div
+      data-testid="ed-row"
+      className={`overflow-hidden rounded-[10px] border border-rule-2 bg-paper ${className}`}
+    >
       <div className="flex items-center gap-3.5 px-4 py-3.5">
         {glyph && <div className="flex-shrink-0">{glyph}</div>}
         <div className="min-w-0 flex-1">

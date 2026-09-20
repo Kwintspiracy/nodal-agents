@@ -23,7 +23,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack } from './helpers.ts';
+import { requireLiveStack, automationCard } from './helpers.ts';
 
 const SCHEDULE_NAME_B = 'RunNow Validation e2e';
 const SCHEDULE_NAME_C = 'NotifyPersist Validation e2e';
@@ -180,9 +180,7 @@ test.describe('Scenario B — Run now button shows success toast', () => {
 
     // ── Click "▶ Run now" on that card ───────────────────────────────────────
     // Scope to the card that has the schedule name as heading.
-    const scheduleCard = page.locator('.rounded-xl').filter({
-      has: page.getByRole('heading', { name: SCHEDULE_NAME_B }),
-    });
+    const scheduleCard = automationCard(page, SCHEDULE_NAME_B);
     await expect(scheduleCard).toBeVisible({ timeout: 5_000 });
 
     const runNowBtn = scheduleCard.getByRole('button', { name: /run now/i });
@@ -249,9 +247,7 @@ test.describe('Scenario C — Notify persistence: checkbox survives edit + save'
     });
 
     // ── Edit: open edit form, enable notify, save ─────────────────────────────
-    const scheduleCard = page.locator('.rounded-xl').filter({
-      has: page.getByRole('heading', { name: SCHEDULE_NAME_C }),
-    });
+    const scheduleCard = automationCard(page, SCHEDULE_NAME_C);
 
     const editBtn = scheduleCard.getByRole('button', { name: /^edit$/i });
     await editBtn.click();
@@ -275,9 +271,7 @@ test.describe('Scenario C — Notify persistence: checkbox survives edit + save'
     await expect(page.getByText(/schedule updated/i)).toBeVisible({ timeout: 10_000 });
 
     // ── Re-open edit form and assert notify is still checked ──────────────────
-    const updatedCard = page.locator('.rounded-xl').filter({
-      has: page.getByRole('heading', { name: SCHEDULE_NAME_C }),
-    });
+    const updatedCard = automationCard(page, SCHEDULE_NAME_C);
     const editBtn2 = updatedCard.getByRole('button', { name: /^edit$/i });
     await editBtn2.click();
 
@@ -311,9 +305,7 @@ async function deleteScheduleIfPresent(
     await page.waitForLoadState('networkidle');
 
     // Look for the card heading.
-    const card = page.locator('.rounded-xl').filter({
-      has: page.getByRole('heading', { name }),
-    });
+    const card = automationCard(page, name);
 
     if (!(await card.isVisible().catch(() => false))) return;
 

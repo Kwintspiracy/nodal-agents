@@ -20,8 +20,8 @@
  * Requires a running Nodal-Agents stack (port 3000). Skipped automatically if not reachable.
  */
 
-import { test, expect, type Page, type Locator } from '@playwright/test';
-import { requireLiveStack, makeDbClient, pollDb, resolveActingUser } from './helpers.ts';
+import { test, expect, type Page } from '@playwright/test';
+import { requireLiveStack, makeDbClient, pollDb, resolveActingUser, edRow } from './helpers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -262,11 +262,6 @@ async function pollAssignmentOperations<T>(
  * `locator('label').filter({ hasText: 'Tools' }).first()` → element(s) not
  * found, puis `getByText('E2E Google Drive')` → element(s) not found.
  */
-
-/** La ligne `EdRow` qui porte ce nom, dans la page ou dans la modale. */
-function edRow(scope: Page | Locator, name: string): Locator {
-  return scope.locator('[class*="rounded-[10px]"]').filter({ hasText: name });
-}
 
 /** Ouvre l'onglet Connecteurs de l'agent de test. */
 async function openConnectorsTab(page: Page): Promise<void> {

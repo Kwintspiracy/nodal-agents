@@ -164,6 +164,43 @@ export async function wizardStepTwo(page: Page, type: string): Promise<void> {
   ).toBeVisible({ timeout: 10_000 });
 }
 
+// ─── Les ancres partagées (issue #55) ────────────────────────────────────────
+//
+// Une classe de mise en forme n'est pas une prise. Le 10/08, un `rounded-xl`
+// devenu `rounded-2xl` a rendu huit parcours rouges d'un coup, en silence, sans
+// qu'une seule fonctionnalité soit cassée : le test disait « la carte » et le
+// navigateur entendait « ce qui a ce rayon de bordure ». Les gestes qui
+// suivent sont donc écrits UNE fois, sur les ancres que le produit porte
+// maintenant, et un parcours qui les recopierait redeviendrait fragile.
+
+/**
+ * La carte d'une automatisation sur `/automations`, routine ou déclencheur,
+ * désignée par son TITRE.
+ *
+ * Le titre, lui, est stable par construction : c'est le parcours qui vient de
+ * le créer, avec son suffixe de run. Ce qui ne l'était pas, c'est le
+ * `.rounded-xl` qui portait la carte.
+ */
+export function automationCard(page: Page, name: string | RegExp): Locator {
+  return page.getByTestId('automation-card').filter({ has: page.getByRole('heading', { name }) });
+}
+
+/**
+ * La ligne `EdRow` qui porte ce nom, dans une page ou dans une modale.
+ *
+ * `scope` plutôt que `page` parce que la même ligne existe des deux côtés du
+ * picker de connecteurs, et qu'un parcours doit pouvoir dire laquelle des deux
+ * il regarde.
+ */
+export function edRow(scope: Page | Locator, name: string | RegExp): Locator {
+  return scope.getByTestId('ed-row').filter({ hasText: name });
+}
+
+/** La ligne d'une conversation autorisée, dans l'onglet Canaux d'un agent. */
+export function allowlistRow(page: Page, name: string | RegExp): Locator {
+  return page.getByTestId('allowlist-row').filter({ hasText: name });
+}
+
 export async function openedConnectorDialog(page: Page): Promise<ConnectorDialogKind> {
   if (await page.getByTestId('credential-wizard-dialog').isVisible()) return 'wizard';
   if (await page.getByTestId('connector-add-dialog').isVisible()) return 'add-form';

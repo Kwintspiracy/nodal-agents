@@ -17,7 +17,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, makeDbClient } from './helpers.ts';
+import { requireLiveStack, makeDbClient, automationCard } from './helpers.ts';
 
 const SCHEDULE_NAME = 'DailyBudget Validation e2e';
 const TASK_TEXT = 'watch for new rows';
@@ -49,7 +49,7 @@ async function deleteScheduleIfPresent(
   try {
     await page.goto('/automations');
     await page.waitForLoadState('networkidle');
-    const card = page.locator('.rounded-xl').filter({ has: page.getByRole('heading', { name }) });
+    const card = automationCard(page, name);
     if (!(await card.isVisible().catch(() => false))) return;
     const deleteBtn = card.getByRole('button', { name: /^delete$/i });
     if (!(await deleteBtn.isVisible().catch(() => false))) return;
@@ -125,9 +125,7 @@ test.describe('Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran
     }
 
     // ── Edit: change the budget and save ─────────────────────────────────────
-    const scheduleCard = page.locator('.rounded-xl').filter({
-      has: page.getByRole('heading', { name: SCHEDULE_NAME }),
-    });
+    const scheduleCard = automationCard(page, SCHEDULE_NAME);
     await scheduleCard.getByRole('button', { name: /^edit$/i }).click();
     await expect(page.getByRole('heading', { name: /edit schedule/i })).toBeVisible({
       timeout: 5_000,

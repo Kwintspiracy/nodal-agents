@@ -22,7 +22,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, makeDbClient, pollDb, testSlugSuffix } from './helpers.ts';
+import { requireLiveStack, makeDbClient, pollDb, testSlugSuffix, allowlistRow } from './helpers.ts';
 
 const E2E_EMAIL = 'e2e-playwright@nodalai.local';
 
@@ -200,9 +200,10 @@ test('C — Revoke a member deletes the row (via ConfirmDialog)', async ({ page 
   await page.goto(`/agents/${agentId}/telegram`);
   // Scope to the "Member Person" row — test B approved the pending chat, so more
   // than one active member (each with a Revoke button) can be present now.
-  const row = page
-    .locator('div.flex.items-center.justify-between')
-    .filter({ hasText: 'Member Person' });
+  // Par l'ANCRE de la ligne : `div.flex.items-center.justify-between` désignait
+  // une mise en page, donc n'importe quelle ligne de n'importe quel écran
+  // (issue #55).
+  const row = allowlistRow(page, 'Member Person');
   await row.getByRole('button', { name: 'Revoke' }).click();
 
   // The design-system ConfirmDialog (never a native dialog) appears; confirm it.

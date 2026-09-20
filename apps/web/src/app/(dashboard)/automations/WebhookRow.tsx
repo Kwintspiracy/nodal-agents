@@ -19,7 +19,14 @@ interface Props {
 
 export default function WebhookRow({ webhook: w, revealed, onRevealed }: Props) {
   return (
-    <div className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5">
+    /* Ancre stable (issue #55), la même que pour une routine : les deux cartes
+       de `/automations` se désignent par `automation-card`, et leur genre par
+       `data-automation-kind`. */
+    <div
+      data-testid="automation-card"
+      data-automation-kind="webhook"
+      className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5"
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
