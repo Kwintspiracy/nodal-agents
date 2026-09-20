@@ -24,12 +24,18 @@
 //      ouvrir le fil ne l'effacerait jamais.
 //   4. UN RUN SANS AUCUN LIVRABLE NE LE POSE PAS. La pastille ne compte pas
 //      les runs, elle compte les livrables qui attendent.
+//   5. UNE CHAÎNE QUI BOUCLE NE POSE RIEN, LE DIT, ET LAISSE LE RUN FINIR.
+//      `parent_job_id` est une auto-référence qu'aucune contrainte n'empêche de
+//      boucler, et le pilote ne pose aucun `statement_timeout` : une remontée
+//      non bornée tournerait sans fin en tenant le verrou du job.
 //
 // Mutations vérifiées :
 //   - `poseDeliverableCheck` retiré de `finalizeJobSuccess` → les tests 1 et 3
 //     rougissent (la colonne reste nulle après un run qui a livré) ;
 //   - `eq(..., produced, true)` retiré du prédicat → le test 2 rougit (un
-//     livrable seulement visé réclame un regard).
+//     livrable seulement visé réclame un regard) ;
+//   - le dernier `log(DELIVERABLE_CHECK_NO_ROOT, …)` retiré → le test 5 rougit
+//     (la chaîne cassée passe en silence).
 //
 // Le type de livrable est `code_project` SANS ligne `code_projects` : sa
 // configuration est alors `not_configured`, aucune preuve ne tourne et aucun
@@ -122,7 +128,11 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
     const jobId = await insertJob();
     await insertLivrable(jobId, { produced: true });
 
-    const out = await finalizeJobSuccess(asDb(), { jobId, result: 'fait' }, deps());
+    const out = await finalizeJobSuccess(
+      asDb(),
+      { jobId, resultKind: 'prose', result: 'fait' },
+      deps(),
+    );
     // Le run FINIT : le fait accompagne la décision terminale, il ne la
     // remplace pas et ne l'empêche pas.
     expect(out.kind).toBe('completed_unverified');
@@ -140,7 +150,7 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
     // et `produced` est resté faux. Rien n'a été livré.
     await insertLivrable(jobId, { produced: false });
 
-    await finalizeJobSuccess(asDb(), { jobId, result: 'rien écrit' }, deps());
+    await finalizeJobSuccess(asDb(), { jobId, resultKind: 'prose', result: 'rien écrit' }, deps());
 
     expect(
       await attend(jobId),
@@ -155,7 +165,11 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
     // pas les compter non plus.
     await insertLivrable(jobId, { produced: true, addressed: false });
 
-    await finalizeJobSuccess(asDb(), { jobId, result: 'un shell a tourné' }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId, resultKind: 'prose', result: 'un shell a tourné' },
+      deps(),
+    );
 
     expect(await attend(jobId), 'un livrable non visé réclame un regard').toBeNull();
   });
@@ -163,7 +177,11 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
   it('un run SANS aucun livrable ne pose rien', async () => {
     const jobId = await insertJob();
 
-    await finalizeJobSuccess(asDb(), { jobId, result: 'juste une réponse' }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId, resultKind: 'prose', result: 'juste une réponse' },
+      deps(),
+    );
 
     expect(await attend(jobId), 'un run qui n’a rien livré réclame un regard').toBeNull();
   });
@@ -173,7 +191,11 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
     const delegue = await insertJob(tete);
     await insertLivrable(delegue, { produced: true });
 
-    await finalizeJobSuccess(asDb(), { jobId: delegue, result: 'rapport écrit' }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId: delegue, resultKind: 'prose', result: 'rapport écrit' },
+      deps(),
+    );
 
     expect(
       await attend(tete),
@@ -184,13 +206,55 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
     expect(await attend(delegue), 'le délégué porte le fait à la place de sa tête').toBeNull();
   });
 
+  it('une chaîne qui BOUCLE ne pose rien, le DIT, et laisse le run finir', async () => {
+    // `parent_job_id` est une auto-référence qu'aucune contrainte n'empêche de
+    // boucler. Sans la borne `CHAIN_WALK_MAX`, la remontée tournerait SANS FIN
+    // dans la transaction qui tient le verrou du job — le pilote ne pose aucun
+    // `statement_timeout` (constat majeur de la revue C, passe 1).
+    //
+    // Ce cas a aussi révélé le second : la branche de journalisation lisait le
+    // retour d'un `tx.execute`, dont la FORME dépend du pilote, et ne partait
+    // donc jamais sous PGlite. La remontée passe désormais par l'API typée.
+    const a = await insertJob();
+    const b = await insertJob(a);
+    await db.update(agentJobs).set({ parentJobId: b }).where(eq(agentJobs.id, a));
+    await insertLivrable(a, { produced: true });
+
+    const out = await finalizeJobSuccess(
+      asDb(),
+      { jobId: a, resultKind: 'prose', result: 'fait' },
+      deps(),
+    );
+
+    // Le run FINIT quand même : la pastille n'est pas l'affaire de la
+    // finalisation.
+    expect(out.kind).toBe('completed_unverified');
+    // Rien n'est posé — surtout pas sur un run choisi au hasard.
+    expect(await attend(a)).toBeNull();
+    expect(await attend(b)).toBeNull();
+    // Et le silence est dit : un code, des données, jamais une phrase.
+    expect(
+      logs.map((l) => l.code),
+      'la chaîne cassée n’a pas été journalisée',
+    ).toContain('DELIVERABLE_CHECK_NO_ROOT');
+    expect(logs.find((l) => l.code === 'DELIVERABLE_CHECK_NO_ROOT')!.data).toEqual({
+      jobId: a,
+      cause: 'chaine_sans_tete',
+      maillons: 64,
+    });
+  });
+
   it('remonte la chaîne sur DEUX niveaux de délégation', async () => {
     const tete = await insertJob();
     const milieu = await insertJob(tete);
     const feuille = await insertJob(milieu);
     await insertLivrable(feuille, { produced: true });
 
-    await finalizeJobSuccess(asDb(), { jobId: feuille, result: 'rapport écrit' }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId: feuille, resultKind: 'prose', result: 'rapport écrit' },
+      deps(),
+    );
 
     expect(await attend(tete), 'la chaîne n’a pas été remontée jusqu’à sa tête').not.toBeNull();
     expect(await attend(milieu)).toBeNull();

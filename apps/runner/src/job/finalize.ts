@@ -319,6 +319,23 @@ function classify(status: DecisionStatus): {
 // ─── « Un livrable attend un regard » (#255) ─────────────────────────────────
 
 /**
+ * Combien de maillons la remontée vers le job de tête suit, au plus.
+ *
+ * C'est une GARDE, pas une règle métier : le produit borne déjà la délégation
+ * à trois niveaux (`maxDelegationDepth`, packages/orchestration), et soixante-
+ * quatre est loin au-dessus de tout ce qu'une chaîne légitime peut valoir. Il
+ * n'est pas DÉRIVÉ de ce plafond exprès — une chaîne écrite hier sous un autre
+ * plafond doit encore remonter, et cette borne-ci ne doit jamais être la raison
+ * pour laquelle un run légitime rate sa tête.
+ *
+ * Ce qu'elle empêche est précis : `parent_job_id` boucle, et aucun
+ * `statement_timeout` ne l'arrête (choix assumé de
+ * `packages/db/src/client.ts`). Sans ce compteur, une seule ligne malformée
+ * suffirait à faire tourner une finalisation sans fin, en tenant son verrou.
+ */
+const CHAIN_WALK_MAX = 64;
+
+/**
  * Pose `agent_jobs.deliverable_check_due_at` sur le JOB DE TÊTE de ce run,
  * quand le job qui finit a produit au moins un livrable.
  *
@@ -340,10 +357,19 @@ function classify(status: DecisionStatus): {
  * donc aucun dossier du menu Chat ne le compterait, et ouvrir le fil ne
  * l'effacerait jamais.
  *
- * La remontée est BORNÉE par la profondeur de délégation du produit ; le
- * `WITH RECURSIVE` la suit sans la supposer. Une chaîne qui ne remonte à aucun
- * job sans parent ne pose RIEN et le dit (`DELIVERABLE_CHECK_NO_ROOT`) —
- * jamais un fait posé sur un run choisi au hasard (invariant #4).
+ * La remontée est BORNÉE PAR LE CODE (`CHAIN_WALK_MAX`), et pas seulement par
+ * la profondeur de délégation du produit. La raison est un constat de la revue
+ * C de cette PR : `parent_job_id` est une auto-référence qu'aucune contrainte
+ * n'empêche de boucler, et le pilote ne pose délibérément AUCUN
+ * `statement_timeout` (packages/db/src/client.ts). Une remontée non bornée
+ * tournerait sans fin sur un cycle, DANS la transaction qui tient le
+ * `FOR UPDATE` du job — la finalisation n'aurait plus de fin. La borne la
+ * ferme, quoi qu'il y ait en base.
+ *
+ * Une chaîne qui ne remonte à aucun job sans parent — un cycle, ou plus de
+ * `CHAIN_WALK_MAX` maillons — ne pose RIEN et le dit
+ * (`DELIVERABLE_CHECK_NO_ROOT`), jamais un fait posé sur un run choisi au
+ * hasard (invariant #4).
  *
  * Une panne ici n'est PAS avalée : l'écriture vit dans la transaction du
  * statut terminal, et une pastille muette après un run qui a livré est
@@ -368,23 +394,54 @@ async function poseDeliverableCheck(
     .limit(1);
   if (produits.length === 0) return;
 
-  const poses = (await tx.execute(sql`
-    WITH RECURSIVE chaine AS (
-      SELECT id, parent_job_id FROM agent_jobs WHERE id = ${jobId}
-      UNION ALL
-      SELECT parent.id, parent.parent_job_id
-      FROM agent_jobs parent
-      INNER JOIN chaine enfant ON parent.id = enfant.parent_job_id
-    )
-    UPDATE agent_jobs
-    SET deliverable_check_due_at = now(), updated_at = now()
-    WHERE id = (SELECT id FROM chaine WHERE parent_job_id IS NULL)
-    RETURNING id
-  `)) as unknown as Array<{ id: string }>;
+  // La remontée, maillon par maillon, en TypeScript et non en SQL récursif.
+  //
+  // POURQUOI PAS UN `WITH RECURSIVE` (revue C de cette PR, passe 1). Il aurait
+  // fallu le lire par `tx.execute`, dont la FORME du retour dépend du pilote :
+  // postgres.js rend un tableau, PGlite un objet `{ rows }`. Le `length` d'une
+  // branche d'erreur y était donc `undefined` en test et un nombre en
+  // production — un code de diagnostic qui ne se serait jamais journalisé là où
+  // les tests tournent. Ici tout passe par l'API typée de Drizzle : un `select`
+  // et un `update … returning` rendent des tableaux, quel que soit le pilote.
+  //
+  // Le coût est celui de `CHAIN_WALK_MAX` lectures par clé primaire AU PIRE ;
+  // en pratique une seule (un run de tête) ou trois (le plafond de délégation
+  // du produit).
+  let courant = jobId;
+  for (let pas = 0; pas <= CHAIN_WALK_MAX; pas += 1) {
+    const [maillon] = await tx
+      .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, courant))
+      .limit(1);
 
-  if (poses.length === 0) {
-    log(DELIVERABLE_CHECK_NO_ROOT, { jobId });
+    if (!maillon) {
+      // Impossible tant que la clé étrangère tient : on le dit plutôt que de
+      // choisir un run au hasard.
+      log(DELIVERABLE_CHECK_NO_ROOT, { jobId, cause: 'maillon_absent', maillon: courant });
+      return;
+    }
+
+    if (maillon.parentJobId === null) {
+      const now = new Date();
+      const poses = await tx
+        .update(agentJobs)
+        .set({ deliverableCheckDueAt: now, updatedAt: now })
+        .where(eq(agentJobs.id, maillon.id))
+        .returning({ id: agentJobs.id });
+      if (poses.length === 0) {
+        log(DELIVERABLE_CHECK_NO_ROOT, { jobId, cause: 'tete_disparue', maillon: maillon.id });
+      }
+      return;
+    }
+
+    courant = maillon.parentJobId;
   }
+
+  // Plus de `CHAIN_WALK_MAX` maillons sans atteindre de job sans parent : la
+  // chaîne boucle, ou elle est plus longue que tout ce que le produit sait
+  // créer. Rien n'est posé.
+  log(DELIVERABLE_CHECK_NO_ROOT, { jobId, cause: 'chaine_sans_tete', maillons: CHAIN_WALK_MAX });
 }
 
 // ─── La primitive ───────────────────────────────────────────────────────────

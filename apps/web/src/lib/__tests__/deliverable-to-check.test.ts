@@ -18,12 +18,18 @@
 //   4. OUVRIR LE RUN L'ÉTEINT AUSSI. C'est la page qui MONTRE les livrables.
 //   5. LES DEUX GESTES SONT PRÉCIS : ouvrir un fil n'éteint pas le run d'à
 //      côté, ouvrir un run n'éteint pas celui de son voisin.
+//   6. LA LECTURE EST BORNÉE. Elle repart toutes les 15 secondes sur toutes les
+//      pages du tableau de bord : une pastille n'est pas une raison de balayer
+//      une table. Ce cas vient EN DERNIER — il sème 205 runs en attente, qui
+//      repousseraient les autres hors du plafond.
 //
 // Mutations vérifiées :
 //   - l'`UPDATE` retiré de `markConversationRead` → le point 3 rougit (le run
 //      attend encore après que son fil a été ouvert) ;
 //   - l'`UPDATE` retiré de `getSpaceConversationAction` → le point 4 rougit ;
-//   - `deliverablesToCheck` rendu comme tableau vide → le point 1 rougit.
+//   - `deliverablesToCheck` rendu comme tableau vide → le point 1 rougit ;
+//   - le `limit(DELIVERABLE_CHECK_MAX)` retiré de la lecture → le point 6
+//      rougit (205 lignes rendues au lieu de 200).
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -229,5 +235,31 @@ describe('regarder éteint l’attente @cap:verifier-un-livrable/moteur', () => 
     const apres = await attendentEncore();
     expect(apres.has(runDehors.id), 'le run attend encore après avoir été ouvert').toBe(false);
     expect(apres.has(runTelegram.id), 'ouvrir un run a éteint celui d’à côté').toBe(true);
+  });
+});
+
+// ─── Le plafond de la lecture ────────────────────────────────────────────────
+
+describe('la lecture de la pastille est BORNÉE @cap:verifier-un-livrable/moteur', () => {
+  it('ne rapporte jamais plus que son plafond, même avec plus de runs en attente', async () => {
+    // Cette lecture repart toutes les 15 secondes sur toutes les pages du
+    // tableau de bord : une pastille n'est pas une raison de balayer une table.
+    // Sans ce test, retirer le `limit` ne rougirait rien (constat mineur 11b de
+    // la revue C, passe 1).
+    const trop = 205;
+    await testDb.insert(agentJobs).values(
+      Array.from({ length: trop }, (_, i) => ({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        task: `run de masse ${i}`,
+        status: 'completed',
+        deliverableCheckDueAt: new Date(),
+      })),
+    );
+
+    const vu = await menu();
+    expect(vu.deliverablesToCheck.length).toBe(200);
+    expect(vu.deliverableCheckJobIds.length).toBe(200);
   });
 });
