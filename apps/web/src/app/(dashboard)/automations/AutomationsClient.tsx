@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -19,6 +20,8 @@ interface Props {
   agents: AgentRow[];
   schedules: ScheduleRowData[];
   webhooks: WebhookTriggerRowData[];
+  /** Le formulaire à ouvrir en arrivant, demandé par l'adresse (`?new=`). */
+  initialNew?: 'schedule' | 'webhook' | null;
 }
 
 /**
@@ -33,11 +36,39 @@ interface Props {
  * THIS session lives here and is handed down to both WebhookForm (on create)
  * and WebhookRow (on rotate) — a page reload naturally drops back to hidden.
  */
-export default function AutomationsClient({ agents, schedules, webhooks }: Props) {
-  const [formOpen, setFormOpen] = useState(false);
+export default function AutomationsClient({
+  agents,
+  schedules,
+  webhooks,
+  initialNew = null,
+}: Props) {
+  const router = useRouter();
+  // Ouvert dès l'arrivée quand l'adresse le demande (`?new=`, le « + » de la
+  // barre latérale) — sauf sans agent, où le bouton lui-même est désactivé :
+  // un formulaire qui s'ouvrirait sur rien dirait le contraire de la page.
+  const peutCreer = agents.length > 0;
+  const [formOpen, setFormOpen] = useState(initialNew === 'schedule' && peutCreer);
   const active = schedules.filter((s) => s.active).length;
 
-  const [webhookFormOpen, setWebhookFormOpen] = useState(false);
+  const [webhookFormOpen, setWebhookFormOpen] = useState(initialNew === 'webhook' && peutCreer);
+  // À la fermeture d'un formulaire ouvert par l'adresse, le paramètre part avec
+  // lui : sinon un rechargement le rouvrirait, et le « + » suivant (même
+  // adresse) ne naviguerait plus.
+  const fermerSchedule = (open: boolean): void => {
+    setFormOpen(open);
+    if (!open && initialNew === 'schedule') router.replace('/automations');
+  };
+  const fermerWebhook = (open: boolean): void => {
+    setWebhookFormOpen(open);
+    if (!open && initialNew === 'webhook') router.replace('/automations');
+  };
+  // Sans agent, le paramètre n'a rien ouvert et personne ne le fermera : il
+  // part tout de suite, sinon il resterait dans l'adresse et rouvrirait le
+  // formulaire, sans qu'on l'ait redemandé, au premier rechargement après la
+  // création d'un agent (revue #302, C2).
+  useEffect(() => {
+    if (initialNew !== null && !peutCreer) router.replace('/automations');
+  }, [initialNew, peutCreer, router]);
   const [revealedWebhooks, setRevealedWebhooks] = useState<
     Record<string, { secret: string; path: string }>
   >({});
@@ -77,7 +108,7 @@ export default function AutomationsClient({ agents, schedules, webhooks }: Props
             (title + footer composed via the Modal component's props), same
             pattern as Edit (ScheduleRow). Rendered only while open so its
             state initializes fresh each time. */}
-        {formOpen && <ScheduleForm agents={agents} open={formOpen} onOpenChange={setFormOpen} />}
+        {formOpen && <ScheduleForm agents={agents} open={formOpen} onOpenChange={fermerSchedule} />}
 
         {schedules.length === 0 ? (
           <EmptyState
@@ -108,7 +139,7 @@ export default function AutomationsClient({ agents, schedules, webhooks }: Props
         <WebhookForm
           agents={agents}
           open={webhookFormOpen}
-          onOpenChange={setWebhookFormOpen}
+          onOpenChange={fermerWebhook}
           onCreated={(id, revealed) => setRevealedWebhooks((prev) => ({ ...prev, [id]: revealed }))}
         />
 

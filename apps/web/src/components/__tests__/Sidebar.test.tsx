@@ -604,7 +604,12 @@ describe('le « + » d’un titre de section @cap:planifier-une-tache/ecran', ()
       'New automation',
       'New webhook',
     ]);
-    for (const a of plus) expect(a.getAttribute('href')).toBe('/automations');
+    // Chaque « + » OUVRE son formulaire en arrivant (20/09) : un lien vers la
+    // page nue ne faisait rien quand on y était déjà.
+    expect(plus.map((a) => a.getAttribute('href'))).toEqual([
+      '/automations?new=schedule',
+      '/automations?new=webhook',
+    ]);
 
     for (const route of ['/chat', '/agents', '/approvals', '/settings']) {
       await remonter();

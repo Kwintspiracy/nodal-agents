@@ -180,13 +180,13 @@ const RUN_GROUPS: readonly PanelGroup[] = [
     section: 'Cron',
     dynamic: 'cron',
     items: [],
-    add: { href: '/automations', label: 'New automation' },
+    add: { href: '/automations?new=schedule', label: 'New automation' },
   },
   {
     section: 'Webhooks',
     dynamic: 'webhooks',
     items: [],
-    add: { href: '/automations', label: 'New webhook' },
+    add: { href: '/automations?new=webhook', label: 'New webhook' },
   },
 ];
 
