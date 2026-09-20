@@ -301,6 +301,9 @@ importers:
       '@nodal-agents/catalog':
         specifier: workspace:*
         version: link:../../packages/catalog
+      '@nodal-agents/checkpoints':
+        specifier: workspace:*
+        version: link:../../packages/checkpoints
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../../packages/db

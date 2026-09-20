@@ -299,8 +299,15 @@ export async function takeCliTurnCheckpoints(
 
   for (const w of workspaces) {
     let sha: string | null;
+    // Les millisecondes de la photo (#261). Mesurées autour du seul appel de
+    // `snapshot`, exactement comme dans le seam de `packages/tools` : l'écran
+    // des workspaces lit la plus récente, d'où qu'elle vienne, et deux façons
+    // de chronométrer donneraient deux chiffres pour la même chose.
+    let snapshotMs = 0;
     try {
+      const debutPhoto = Date.now();
       const cp = await snapshot(store, w.path, `before cli turn (job ${jobId})`);
+      snapshotMs = Date.now() - debutPhoto;
       // `null` = l'arbre n'a pas bougé depuis la dernière photo : l'état d'avant
       // de ce tour EST ce commit-là.
       sha = cp?.sha ?? (await headCheckpoint(store, w.path));
@@ -329,7 +336,7 @@ export async function takeCliTurnCheckpoints(
     try {
       await db
         .insert(jobCheckpoints)
-        .values({ jobId, turn, workspace: w.path, sha })
+        .values({ jobId, turn, workspace: w.path, sha, snapshotMs })
         .onConflictDoNothing({
           target: [jobCheckpoints.jobId, jobCheckpoints.turn, jobCheckpoints.workspace],
         });

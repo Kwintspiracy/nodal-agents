@@ -481,6 +481,35 @@ describe('job_checkpoints — la ligne du tour (P11)', () => {
     expect(lignes[0]!.sha, 'la ligne ne pointe pas l instantané réellement pris').toBe(cps[0]!.sha);
   });
 
+  it('la ligne porte COMBIEN DE TEMPS la photo a pris (#261)', async () => {
+    // Sans cette durée, la montée d'un dossier vers la borne de 30 s de
+    // `git add` n'existait nulle part : elle n'était calculée que sur le chemin
+    // d'ÉCHEC, en mémoire, le temps de rendre la phrase du refus. Une photo qui
+    // réussit en 24 secondes ne laissait aucune trace.
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'chrono.txt', content: '1' },
+      ctx({ turn: 71 }),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+
+    const lignes = await db
+      .select()
+      .from(jobCheckpoints)
+      .where(and(eq(jobCheckpoints.jobId, seed.jobId), eq(jobCheckpoints.turn, 71)));
+    expect(lignes).toHaveLength(1);
+
+    const ms = lignes[0]!.snapshotMs;
+    // MESURÉE, pas laissée à NULL : c'est tout l'objet de la colonne. Un vrai
+    // `git add` a tourné, donc la durée est un entier positif ou nul, et
+    // largement sous la minute pour un dossier de test.
+    expect(ms, 'la photo n’a pas été chronométrée').not.toBeNull();
+    expect(Number.isInteger(ms)).toBe(true);
+    expect(ms!).toBeGreaterThanOrEqual(0);
+    expect(ms!).toBeLessThan(60_000);
+  });
+
   it('une seule ligne pour trois écritures du même tour', async () => {
     await executeTool(
       fileWriteTool as never,
