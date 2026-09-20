@@ -738,15 +738,22 @@ async function buildMessagingChannelsBlock(
    * (revue Codex de la dette de la PR #73, passe 2, constat 1).
    */
   nodalTools = true,
-): Promise<{ text: string; boundChannels: string[] }> {
-  const bindings = (await listChannelBindings(db, agentId)).filter((b) => b.enabled);
-  // Les canaux liés servent DEUX blocs : celui-ci, qui les décrit, et la couche
-  // de découverte, qui annonce ceux qui restent. Rendus ici pour que la requête
-  // reste unique — une seconde lecture des mêmes lignes aurait pu en donner une
-  // autre réponse, et le prompt aurait proposé de configurer un canal déjà
-  // configuré.
+): Promise<{ text: string; boundChannels: string[]; disabledChannels: string[] }> {
+  const all = await listChannelBindings(db, agentId);
+  const bindings = all.filter((b) => b.enabled);
+  // Les liaisons servent DEUX blocs : celui-ci, qui décrit les canaux ACTIFS,
+  // et la couche de découverte, qui annonce les autres. Rendues ici pour que la
+  // requête reste unique — une seconde lecture des mêmes lignes aurait pu en
+  // donner une autre réponse, et le prompt aurait proposé de configurer un
+  // canal déjà configuré.
+  //
+  // Les DEUX listes voyagent, parce qu'une liaison désactivée n'est ni l'un ni
+  // l'autre : elle existe, jeton compris, et l'agent qui l'ignorerait enverrait
+  // le propriétaire recoller un jeton qu'il a déjà (revue de la PR #329,
+  // constat 1). C'est un interrupteur, pas une configuration à refaire.
   const boundChannels = bindings.map((b) => b.channel);
-  if (bindings.length === 0) return { text: '', boundChannels };
+  const disabledChannels = all.filter((b) => !b.enabled).map((b) => b.channel);
+  if (bindings.length === 0) return { text: '', boundChannels, disabledChannels };
 
   const lines = await Promise.all(
     bindings.map(async (b) => {
@@ -785,6 +792,7 @@ async function buildMessagingChannelsBlock(
         `new one approved, the owner mentions you there (or messages you from it) and ` +
         `approves the card that appears.`,
       boundChannels,
+      disabledChannels,
     };
   }
 
@@ -797,6 +805,7 @@ async function buildMessagingChannelsBlock(
       `and approve the resulting card. Send tools accept an optional \`channel\` to target a ` +
       `platform other than the current conversation's.`,
     boundChannels,
+    disabledChannels,
   };
 }
 
@@ -1175,6 +1184,7 @@ export async function buildSystemPrompt(
     // `CHANNELS` est ce qu'on peut lui donner, et c'est exactement ce que le
     // prompt ne disait nulle part le 21/09.
     boundChannelSlugs: messagingChannels.boundChannels,
+    disabledChannelSlugs: messagingChannels.disabledChannels,
     nodalTools: hasNodalTools,
   });
 

@@ -287,6 +287,14 @@ export interface DiscoverabilityInput {
    */
   boundChannelSlugs?: string[];
   /**
+   * Canaux CONFIGURÉS mais désactivés — la liaison existe, le propriétaire l'a
+   * éteinte. Troisième état, exactement comme un connecteur configuré mais non
+   * attaché, et pour la même raison : proposer de « configurer Telegram » à
+   * quelqu'un qui a déjà collé son jeton et coupé l'interrupteur est
+   * précisément ce que l'en-tête de ce bloc interdit (revue de la PR #329).
+   */
+  disabledChannelSlugs?: string[];
+  /**
    * False sur une surface sans les builtins de Nodal. Ce que le bloc ANNONCE —
    * « ceci est configuré chez toi, il suffit de te l'attacher » — reste : c'est
    * le fait qui évite un « je ne peux pas » devant une capacité qui existe. Le
@@ -336,12 +344,20 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
       slug in ADAPTER_REGISTRY && !attachedConn.has(slug) && !configuredConnSlugs.has(slug),
   );
 
-  // Channels the agent is not bound to. Omitted bindings mean "unknown", and an
-  // unknown binding must not become an offer to set up what is already set up.
-  const freeChannels =
-    input.boundChannelSlugs === undefined
-      ? []
-      : CHANNELS.filter((c) => !input.boundChannelSlugs?.includes(c));
+  // Channels, in the same three states as a connector. Omitted bindings mean
+  // "unknown", and an unknown binding must not become an offer to set up what
+  // is already set up.
+  const knownChannels = input.boundChannelSlugs !== undefined;
+  const disabledChannels = knownChannels
+    ? CHANNELS.filter((c) => input.disabledChannelSlugs?.includes(c) === true)
+    : [];
+  const freeChannels = knownChannels
+    ? CHANNELS.filter(
+        (c) =>
+          input.boundChannelSlugs?.includes(c) !== true &&
+          input.disabledChannelSlugs?.includes(c) !== true,
+      )
+    : [];
 
   // No early return any more. It used to fire when an agent already had every
   // skill and connector, and the block vanished — which was right while the
@@ -351,12 +367,18 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
   // answers "I cannot run on a schedule" to a question with a screen behind it.
   // The cost is about seventy tokens on a prompt that is cached across an
   // agent's jobs.
+  // L'en-tête ne dit plus ce qu'est chaque famille : il ne pouvait pas. Il
+  // disait « ceci n'est pas actif pour toi », ce qui est faux d'une
+  // automatisation — elle n'est à personne, le propriétaire la crée quand il
+  // veut (revue de la PR #329, constat 2). Chaque section porte donc sa propre
+  // phrase, et l'en-tête ne garde que ce qui vaut pour toutes : ne fais pas
+  // semblant, ne refuse pas sec, ne fais pas reconfigurer ce qui existe.
   const lines: string[] = [
     '## Capabilities you can request',
     '',
-    'These are NOT active for YOU yet, or not set up for you yet. Use the right one ' +
-      'below — do NOT pretend you already can, do NOT refuse flatly, and do NOT ask the ' +
-      'user to set up something that is already configured.',
+    'What this workspace can do for you, beyond what is wired to you right now. Read ' +
+      'the section that fits before you answer — do NOT pretend you already can, do NOT ' +
+      'refuse flatly, and do NOT ask the user to set up something that is already there.',
   ];
 
   if (skills.length > 0) {
@@ -383,6 +405,16 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
   if (notSetUp.length > 0) {
     lines.push('', 'Not set up in this workspace yet — would need the user to add:');
     for (const [, cap] of notSetUp) lines.push(`- ${cap.label} — needs ${cap.setup}`);
+  }
+
+  if (disabledChannels.length > 0) {
+    lines.push(
+      '',
+      'Messaging channels already set up but switched off for you. Nothing to configure ' +
+        "and no token to ask for: the owner turns it back on from the agent's settings, " +
+        'Channels tab:',
+    );
+    for (const channel of disabledChannels) lines.push(`- \`${channel}\``);
   }
 
   if (freeChannels.length > 0) {

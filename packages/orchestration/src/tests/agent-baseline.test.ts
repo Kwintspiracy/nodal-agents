@@ -55,6 +55,19 @@ describe('Layer 1 — baseline discipline', () => {
     expect(unknown).not.toContain('## The platform you are running in');
   });
 
+  it('stays off a surface the skill does not declare, even when the tool is there', () => {
+    // Reviewer C on #329, P2-9: the tool gate MASKED the `surfaces` field,
+    // because chat has no builtins either way. Holding the tool and being on
+    // chat is the one case that tells the two apart, and `surfaces: ['job']` is
+    // what must decide it.
+    expect(toolDependent[0]?.surfaces).toEqual(['job']);
+    const chat = buildBaselineBlock('anthropic/claude-sonnet-4.6', {
+      surface: 'chat',
+      availableTools: ['nodal_docs'],
+    });
+    expect(chat).not.toContain('## The platform you are running in');
+  });
+
   it('names the incident it exists for, in the words someone would type', () => {
     // The answer the agent must stop giving. Asserted on the shipped content so
     // a rewrite that loses the concrete example is visible.
@@ -246,6 +259,26 @@ describe('Layer 2bis — channels and automations @cap:parler-par-canal-externe/
     const block = buildDiscoverabilityBlock({ ...empty, boundChannelSlugs: ['telegram'] });
     expect(block).not.toContain('`telegram`');
     expect(block).toContain('`discord`');
+  });
+
+  it('does not send the owner to set up a channel they have merely switched off', () => {
+    // Reviewer C on #329, C1. A disabled binding used to count as "not bound",
+    // so the agent offered to configure Telegram to an owner who had set it up
+    // and turned it off. That is the header's own prohibition, verbatim: do NOT
+    // ask the user to set up something that is already configured. It is a
+    // third state, like a connector that is configured but unattached.
+    const block = buildDiscoverabilityBlock({
+      ...empty,
+      boundChannelSlugs: [],
+      disabledChannelSlugs: ['telegram'],
+    });
+
+    const offers = block.slice(block.indexOf('Messaging channels you can be given'));
+    expect(offers).not.toContain('`telegram`');
+    expect(offers).toContain('`discord`');
+    // And it says the true thing about it instead of going quiet.
+    expect(block).toContain('set up but switched off');
+    expect(block).toContain('`telegram`');
   });
 
   it('says nothing about channels when the bindings are unknown', () => {

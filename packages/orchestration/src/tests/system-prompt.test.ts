@@ -813,6 +813,28 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
     expect(offers).not.toContain('`telegram`');
     expect(offers).toContain('`discord`');
   });
+
+  it('treats a switched-off channel as configured, not as one to set up', async () => {
+    // Reviewer C on #329, C1: a disabled binding used to fall back into the
+    // "you can be given" list, so the agent told an owner who had already
+    // pasted a token to go and paste it again. It is a switch, not a setup.
+    const { entityId, agentRow } = await seedPlatformAgent('SP Platform Disabled Agent');
+    await db.insert(channelBindings).values({
+      entityId,
+      agentId: agentRow.id,
+      channel: 'slack',
+      credentials: JSON.stringify({ botToken: 'fake-slack-token' }),
+      enabled: false,
+    });
+    const agent = makeAgent(agentRow.id, entityId, agentRow.personality);
+
+    const prompt = await buildSystemPrompt(agent, db);
+
+    expect(prompt).toContain('set up but switched off');
+    const offers = prompt.slice(prompt.indexOf('Messaging channels you can be given'));
+    expect(offers).not.toContain('`slack`');
+    expect(offers).toContain('`telegram`');
+  });
 });
 
 // ─── INJECT-001 : l'inventaire du workspace partagé ──────────────────────────
