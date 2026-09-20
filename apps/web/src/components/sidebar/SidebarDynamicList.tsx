@@ -95,6 +95,8 @@ export default function SidebarDynamicList({
    * liste — le bouton « New project » et sa table — donc il reste quelque
    * chose à y voir avec deux projets. Partout ailleurs, sous le plafond, tout
    * est déjà sous les yeux et un lien vers « tout » mènerait aux mêmes lignes.
+   *
+   * ⚠️ CE DRAPEAU NE SURVIT PAS AU VIDE : voir la règle ci-dessous.
    */
   seeAllAlways?: boolean;
   /**
@@ -132,12 +134,19 @@ export default function SidebarDynamicList({
   const { rows: lignes, hasMore } =
     rows === null ? { rows: null, hasMore: false } : unfoldedRows(rows);
 
-  // ⚠️ « SEE ALL » SURVIT AUX TROIS ABSENCES quand la section en a un en
-  // permanence. C'est tout l'intérêt du cas : `/spaces` n'est plus atteignable
-  // que par cette ligne, et elle disparaissait avec la liste sur une base
-  // vide — c'est-à-dire précisément sur l'installation neuve où l'on va
-  // créer son premier projet. Le parcours Playwright l'a dit avant un humain.
-  const voirTout = seeAll !== undefined && (hasMore || seeAllAlways) && (
+  // ⚠️ UNE SECTION VIDE NE FINIT JAMAIS PAR « SEE ALL », quel que soit son
+  // drapeau (#301, demande du propriétaire du 20/09). « No Project Yet »
+  // suivi de « tout voir » annonçait tout voir de rien.
+  //
+  // Le vide, c'est la lecture qui a RÉPONDU « aucune ligne » — pas « ça
+  // charge », pas un échec. Sur ces deux-là « See all » reste : on ne sait
+  // justement pas ce qu'il y a, et une lecture en échec est précisément le
+  // moment où l'on veut aller voir la page par soi-même.
+  //
+  // Ce qui rendait `/spaces` atteignable sur une base neuve est désormais le
+  // « + » du titre PROJECTS (`sidebar-nav.ts`), pas cette ligne.
+  const sectionVide = lignes !== null && lignes.length === 0;
+  const voirTout = seeAll !== undefined && !sectionVide && (hasMore || seeAllAlways) && (
     <SidebarRow href={seeAll} title="See all" depth="thread" testId={`see-all-${testId}`}>
       <span className="h-3.5 w-3.5 shrink-0" />
       <span className="flex-1 truncate leading-5 italic">See all</span>

@@ -96,7 +96,9 @@ export type PanelGroup = {
   items: readonly PanelItem[];
   /**
    * Le « + » du titre de section : où il mène, et ce qu'il promet. La planche
-   * le dessine sur CRON et sur WEBHOOKS, et nulle part ailleurs.
+   * le dessine sur CRON et sur WEBHOOKS ; PROJECTS l'a reçu le 20/09 (#301),
+   * parce qu'une section VIDE ne porte plus « See all » et que `/spaces`
+   * doit rester atteignable depuis la barre sur une installation neuve.
    */
   add?: { href: string; label: string };
 };
@@ -136,7 +138,17 @@ export type Destination = {
  * d'où les conversations arrivent. Aucune entrée écrite.
  */
 const WORK_GROUPS: readonly PanelGroup[] = [
-  { section: 'Projects', dynamic: 'workspaces', items: [] },
+  {
+    section: 'Projects',
+    dynamic: 'workspaces',
+    items: [],
+    // Le « + » de PROJECTS (#301). La planche ne le dessine pas ; il est là
+    // parce que le vide ne porte plus de « See all » (une section vide qui
+    // finit par « tout voir » ne veut rien dire), et que `/spaces` doit
+    // rester atteignable sur une base neuve. Le titre dit alors où aller
+    // créer, et le cadre en pointillés dit qu'il n'y en a pas encore.
+    add: { href: '/spaces', label: 'New project' },
+  },
   { section: 'Channels', dynamic: 'channels', items: [] },
 ];
 
