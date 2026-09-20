@@ -366,7 +366,12 @@ jobs:
       # NEW (issue #134) and it is the only screen proof that Activity lists
       # runs. A journey nobody plays proves nothing, and the nightly comes too
       # late to tell the PR that opened the screen.
-      - name: Five journeys — boot/navigation, the autonomy tab, delegation outcomes, memory, the runs list
+      # edrow-narrow.spec.ts joins for the same reason the two above did: it
+      # is NEW (issue #310), it needs no stack of its own (it mounts the
+      # component and the real stylesheet in the browser), and it is the only
+      # proof that a narrow row does not draw over itself. The nightly would
+      # tell us a day after the screen shipped.
+      - name: Six journeys — boot/navigation, the autonomy tab, delegation outcomes, memory, the runs list, a narrow row
         run: >
           pnpm --filter @nodal-agents/web exec playwright test
           tests/e2e/smoke.spec.ts
@@ -374,6 +379,7 @@ jobs:
           tests/e2e/delegation-outcome.spec.ts
           tests/e2e/memory-kept.spec.ts
           tests/e2e/activity-runs.spec.ts
+          tests/e2e/edrow-narrow.spec.ts
 
       - name: Upload the report on failure
         if: failure()
