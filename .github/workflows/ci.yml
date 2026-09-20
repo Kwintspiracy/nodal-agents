@@ -16,21 +16,45 @@ concurrency:
 permissions:
   contents: read
 
+# ── Pourquoi plusieurs jobs (#291, 2026-09-21) ──────────────────────────────
+#
+# Jusqu'au 20/09 un seul job `ci` enchaînait tout : typecheck, lint, format,
+# scans, la suite unitaire, le banc, puis le build. À froid il mettait 23 min à
+# ATTEINDRE le build et se faisait couper par son propre délai sur un arbre
+# vert (run 105953811231 : 25 min 15 s contre 25 de budget). La suite seule
+# pesait 16 min 43 s, dont `apps/web` 760 s et `apps/runner` 764 s, chacun
+# plus long que la cible d'une PR entière.
+#
+# Découpage :
+#   - `checks` : tout ce qui n'est ni la suite ni le build (~6 min à froid) ;
+#   - `test`   : la suite en CINQ tranches parallèles — `web` et `runner`
+#                coupés en deux par fichier (`vitest --shard`), et tous les
+#                autres paquets ensemble ;
+#   - `build`  : le build seul, pour que « le build casse » et « la suite a
+#                grossi » soient deux rouges distincts.
+# Les trois partagent l'install par le cache pnpm ; chacun a SA lignée de
+# cache turbo (voir le commentaire du cache), parce qu'une clé partagée
+# n'aurait gardé que les sorties du premier job fini.
+#
+# `ci-windows` a quitté ce fichier : il ne tourne plus sur les PR mais sur
+# `main` et chaque nuit (`ci-windows.yml`). En 29 min par PR, il n'a jamais
+# trouvé un défaut Windows que le job Linux avait laissé passer.
+#
+# Budgets : deux fois la durée mesurée à froid, la mesure écrite à côté. Un
+# job qui double est coupé ; un job qui dérive de deux minutes ne l'est pas.
+#
+# Hors périmètre : le cache turbo distant (payant, décision de Quentin) et
+# rendre les tests eux-mêmes plus rapides (#280, dette 0.9.2).
+
 jobs:
-  ci:
+  # ── Contrôles statiques ─────────────────────────────────────────────────────
+  # Typecheck 3 min 56 s à froid, lint 1 min 04 s, format 30 s, les scans et
+  # le banc moins d'une minute à eux tous (job 105953811231, 19/09) : environ
+  # 6 min 30 s. Budget = 2 × la mesure de la PR de #291, notée ci-dessous.
+  # MESURE_CHECKS
+  checks:
     runs-on: ubuntu-latest
-    # 15 → 20 (2026-08-19): the job crept up to 14-15 min as the codebase grew
-    # (code_task + runtime agents + Code tab) and a slow runner tipped the
-    # Build step over the cap with every check already green.
-    # 25, pas 20 : le 06/09 le job a fini son Build puis a été coupé trois
-    # secondes plus tard par le délai — le dernier run vert prenait déjà
-    # 19 min 45. Le poste qui grossit est la suite de tests (turbo à 3) ;
-    # le délai suit, le budget des suites se surveille à part.
-    # 35, pas 25 (20/09, #291) : la suite prend 16 min à elle seule, le job
-    # arrive au Build à 23 min et se fait couper à 25 sur un arbre vert, y
-    # compris sur main (run 35479691974). Même budget que ci-windows, le
-    # temps de mesurer si le Build doit devenir un job à part (#291).
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -46,43 +70,32 @@ jobs:
 
       # Turborepo's own cache, persisted between runs.
       #
-      # Without it, every push re-ran every task for all ~26 packages — even
-      # the 25 nobody had touched. Measured on the run for PR #42, where only
+      # Without it, every push re-ran every task for all ~34 packages — even
+      # the 33 nobody had touched. Measured on the run for PR #42, where only
       # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
       # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
       #
-      # ONLY on the jobs that actually invoke turbo (this one and ci-windows).
       # GitHub caches are immutable: the first job to finish claims the key.
-      # pack-smoke and e2e-smoke run in parallel, finish in 4 and 2 minutes
-      # against this job's 18, and go through `pnpm --filter … build` / `tsx`
-      # rather than turbo — so caching there let a job with nothing new to
-      # contribute re-save the PREVIOUS commit's cache under this commit's key,
-      # locking `ci` out of persisting the entries it had just produced. Found
-      # by codex review.
+      # Since #291 several jobs of this workflow run turbo at once, so each
+      # one has ITS OWN lineage (`turbo-<os>-<job>-<shard>-<sha>`) and falls
+      # back to the most recent entry of that lineage. A shared key would have
+      # kept only the outputs of whichever job finished first and locked the
+      # others out — the same trap pack-smoke and e2e-smoke fell into before
+      # they lost their cache step (found by codex review).
       #
-      # The key carries the SHA so each run writes its own entry; restore-keys
-      # falls back to the most recent one for this OS, which is what makes an
-      # unchanged package a cache hit. Keyed per-OS because Linux and Windows
-      # artefacts are not interchangeable, and those two never collide.
-      #
-      # Measured on PR #44, warm cache: `ci` 18min → 56s, `ci-windows`
-      # 19min → 1m26. That is the BEST case (same commit, exact key hit); a
-      # commit that touches a package replays that package and its dependants,
-      # so expect minutes, not seconds. The floor for a whole run is now
-      # pack-smoke at ~3min30, which genuinely builds the tarball.
-      #
-      # Cache sizes: ~176 MB on Linux (the `build` task declares outputs),
-      # ~100 KB on Windows (typecheck/test declare none, so only logs and the
-      # up-to-date markers are stored — which is all that is needed to SKIP
-      # them). GitHub caps a repository at 10 GB and evicts least-recently-used
-      # entries on its own; if busy branches ever start missing, narrow the key
-      # to main rather than growing the budget.
+      # Sizes: ~176 MB for the `build` lineage (the `build` task declares
+      # outputs), a few hundred KB for the others (typecheck/test declare
+      # none, so only logs and the up-to-date markers are stored — which is
+      # all that is needed to SKIP them). GitHub caps a repository at 10 GB
+      # and evicts least-recently-used entries on its own; if busy branches
+      # ever start missing, narrow the key to main rather than growing the
+      # budget.
       - uses: actions/cache@v4
         with:
           path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ github.sha }}
+          key: turbo-${{ runner.os }}-checks-${{ github.sha }}
           restore-keys: |
-            turbo-${{ runner.os }}-
+            turbo-${{ runner.os }}-checks-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -122,14 +135,6 @@ jobs:
       - name: Capacités du produit
         run: pnpm capacites:check
 
-      - name: Unit tests
-        # Cap turbo concurrency: running all ~26 package suites at once (each with
-        # its own vitest worker pool) oversubscribes the shared runner and starves
-        # individual tests into per-test timeouts. 3 at a time + the 60s global
-        # timeout keeps it reliable. (--concurrency is a TURBO flag — pass it to
-        # turbo directly, NOT via `pnpm test -- …` which forwards it to vitest.)
-        run: pnpm exec turbo run test --concurrency=3
-
       # scripts/ lives outside the workspace, so `turbo run test` never sees it.
       # Its suites were effectively dead code until 0.8.0 shipped a broken pack.
       - name: Script tests
@@ -161,11 +166,96 @@ jobs:
       - name: Dependency audit (advisory)
         run: pnpm audit --audit-level=high || true
 
-      # Audit finding: CI never actually built the apps (typecheck/lint catch
-      # type/style errors but not a broken `next build` — e.g. a bad server
-      # action boundary, an invalid import only webpack's build graph catches).
-      # Full production build via turbo so a broken build fails CI instead of
-      # only surfacing on deploy.
+  # ── La suite unitaire, en cinq tranches ─────────────────────────────────────
+  # Durées à froid sous turbo à 3 (job 105953811231, 19/09) : web 760 s,
+  # runner 764 s, tools 170 s, orchestration 131 s, db 103 s, memory 55 s,
+  # cli 52 s, tout le reste sous 30 s chacun (≈ 200 s cumulés). `web` et
+  # `runner` sont donc coupés en deux par fichier (`vitest run --shard=k/2`,
+  # passé à vitest à travers turbo, qui l'inclut dans sa clé de cache), et
+  # les autres paquets tournent ensemble.
+  #
+  # Le plafond de concurrence turbo (3) vit dans `turbo.json` depuis #292 :
+  # `pnpm test`, `release:check` et ce job lancent exactement la même chose.
+  # Budget = 2 × la tranche la plus lente de la PR de #291, notée ci-dessous.
+  # MESURE_TEST
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: web-1
+            run: pnpm exec turbo run test --filter=@nodal-agents/web -- --shard=1/2
+          - shard: web-2
+            run: pnpm exec turbo run test --filter=@nodal-agents/web -- --shard=2/2
+          - shard: runner-1
+            run: pnpm exec turbo run test --filter=@nodal-agents/runner -- --shard=1/2
+          - shard: runner-2
+            run: pnpm exec turbo run test --filter=@nodal-agents/runner -- --shard=2/2
+          - shard: packages
+            run: pnpm exec turbo run test --filter=!@nodal-agents/web --filter=!@nodal-agents/runner
+    name: test (${{ matrix.shard }})
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      # Une lignée de cache par tranche (voir le commentaire du job `checks`).
+      - uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-test-${{ matrix.shard }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-test-${{ matrix.shard }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests (${{ matrix.shard }})
+        run: ${{ matrix.run }}
+
+  # ── Le build seul ───────────────────────────────────────────────────────────
+  # Audit finding: CI never actually built the apps (typecheck/lint catch
+  # type/style errors but not a broken `next build` — e.g. a bad server
+  # action boundary, an invalid import only webpack's build graph catches).
+  # Full production build via turbo so a broken build fails CI instead of
+  # only surfacing on deploy.
+  #
+  # Son propre job depuis #291 : avant, il venait en DERNIER d'un job de
+  # 23 min et c'est lui que le délai coupait. Budget = 2 × la mesure de la PR
+  # de #291, notée ci-dessous.
+  # MESURE_BUILD
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      # La lignée `build` est la seule qui pèse (~176 MB : la tâche `build`
+      # déclare ses sorties, et c'est ce qui rend un paquet intouché instantané).
+      - uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-build-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-build-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Build
         run: pnpm build
 
@@ -180,101 +270,9 @@ jobs:
   # assertWebRenders makes `up` exit non-zero when the dashboard does not render,
   # so a broken tarball fails here instead of on a user's machine.
   #
-  # Its own job, in parallel with `ci`: it runs a full `next build` plus a real
-  # Postgres boot (~15 min), and folding that into `ci` would double the feedback
-  # loop for every typo-level failure.
-  # Quentin développe et fait tourner Nodal sur Windows ; la CI ne voyait que
-  # Linux. Les pièges qui lui coûtent le plus — arbres de processus, ports
-  # tenus, séparateurs de chemin, casse du système de fichiers — n'étaient donc
-  # vus par personne avant lui.
-  #
-  # BLOQUANT depuis le 11/08, sur décision de Quentin. Il a été vert dès son
-  # premier passage utile — après avoir rendu deux défauts réels de comparaison
-  # de chemins, dont un qui cassait la livraison de fichiers temporaires sur
-  # macOS. La série est courte : si ce job se met à flaker, la réponse n'est PAS
-  # de remettre `continue-on-error` mais de traiter la cause, sinon on retombe
-  # dans l'angle mort qu'il vient de fermer.
-  ci-windows:
-    runs-on: windows-latest
-    # 35 min, et non 25. Mesure sur les 15 derniers runs du job (13/09) :
-    # médiane 7,7 min, pire cas 24,8 min (run 34763241321). L'écart n'est pas
-    # une suite qui grossit, c'est le cache turbo : à chaud « Unit tests » dure
-    # 248 s et « Typecheck » 27 s (run 34774241407, 5,9 min au total) ; à froid,
-    # 1125 s et 270 s (24,8 min). Les deux étapes sont les seules qui comptent,
-    # tout le reste du job tient en ~80 s. Un plafond à 25 min coupait donc les
-    # runs à cache froid — c'est ce qui a annulé le job de #87 à 24 min sans
-    # qu'aucun test ne soit rouge (issue #89). 24,8 + 30 % = 32,2, arrondi à 35.
-    #
-    # Rien d'évident à gagner dans le job lui-même : pas de Playwright ici, le
-    # cache pnpm et le cache turbo sont déjà en place, lint et format ne sont
-    # pas rejoués, et turbo tourne déjà à --concurrency=3. La piste réelle
-    # reste le montage des bases de test par fichier, hors de ce lot.
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      # Turborepo's own cache, persisted between runs.
-      #
-      # Without it, every push re-ran every task for all ~26 packages — even
-      # the 25 nobody had touched. Measured on the run for PR #42, where only
-      # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
-      # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
-      #
-      # ONLY on the jobs that actually invoke turbo (this one and ci-windows).
-      # GitHub caches are immutable: the first job to finish claims the key.
-      # pack-smoke and e2e-smoke run in parallel, finish in 4 and 2 minutes
-      # against this job's 18, and go through `pnpm --filter … build` / `tsx`
-      # rather than turbo — so caching there let a job with nothing new to
-      # contribute re-save the PREVIOUS commit's cache under this commit's key,
-      # locking `ci` out of persisting the entries it had just produced. Found
-      # by codex review.
-      #
-      # The key carries the SHA so each run writes its own entry; restore-keys
-      # falls back to the most recent one for this OS, which is what makes an
-      # unchanged package a cache hit. Keyed per-OS because Linux and Windows
-      # artefacts are not interchangeable, and those two never collide.
-      #
-      # Measured on PR #44, warm cache: `ci` 18min → 56s, `ci-windows`
-      # 19min → 1m26. That is the BEST case (same commit, exact key hit); a
-      # commit that touches a package replays that package and its dependants,
-      # so expect minutes, not seconds. The floor for a whole run is now
-      # pack-smoke at ~3min30, which genuinely builds the tarball.
-      #
-      # Cache sizes: ~176 MB on Linux (the `build` task declares outputs),
-      # ~100 KB on Windows (typecheck/test declare none, so only logs and the
-      # up-to-date markers are stored — which is all that is needed to SKIP
-      # them). GitHub caps a repository at 10 GB and evicts least-recently-used
-      # entries on its own; if busy branches ever start missing, narrow the key
-      # to main rather than growing the budget.
-      - uses: actions/cache@v4
-        with:
-          path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # Typecheck et tests seulement : lint et format ne dépendent pas de l'OS,
-      # les refaire ici doublerait le coût sans rien apprendre.
-      - name: Typecheck
-        run: pnpm typecheck
-
-      # `--concurrency` est un drapeau TURBO : le passer par `pnpm test -- …`
-      # le transmet à vitest, qui le refuse (`Unknown option --concurrency`).
-      # Le job Linux le dit déjà en commentaire ; j'ai copié la ligne sans le
-      # lire, et le premier passage Windows est mort là-dessus.
-      - name: Unit tests
-        run: pnpm exec turbo run test --concurrency=3
-
+  # Its own job, in parallel with the others: it runs a full `next build` plus
+  # a real Postgres boot, and folding that into another job would double the
+  # feedback loop for every typo-level failure.
   pack-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30
