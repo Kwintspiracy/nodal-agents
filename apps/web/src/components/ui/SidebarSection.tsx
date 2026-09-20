@@ -21,11 +21,12 @@ export default function SidebarSection({
   /**
    * Le « + » du titre, et où il mène (#258).
    *
-   * La planche des cinq panneaux ne le dessine que sur CRON et sur WEBHOOKS,
-   * et nulle part ailleurs : ce sont les deux seules sections où l'on CRÉE
-   * quelque chose depuis le menu. Une section qui n'en a pas n'en porte pas —
-   * un « + » sur WORKSPACES ou sur RECENTS promettrait un geste qui n'existe
-   * pas là.
+   * La planche des cinq panneaux ne le dessine que sur CRON et sur WEBHOOKS ;
+   * PROJECTS l'a reçu le 20/09 (#301), parce que sa section vide ne porte plus
+   * « See all » et qu'il faut bien un chemin vers `/spaces`. Trois sections,
+   * donc, et trois seulement : celles où l'on CRÉE quelque chose depuis le
+   * menu. Un « + » sur RECENTS ou sur APPROVALS promettrait un geste qui
+   * n'existe pas là.
    *
    * C'est un LIEN, et pas un bouton : il mène à la page où l'on crée, il a
    * donc une adresse, et on peut l'ouvrir dans un onglet comme n'importe

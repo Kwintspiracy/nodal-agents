@@ -17,12 +17,16 @@
 // La lecture vit dans `listSidebarProjectsAction`, en une requête groupée et
 // bornée aux projets affichés.
 //
-// ⚠️ « SEE ALL » RESTE, et la planche ne le dessine pas : elle montre cinq
-// espaces, c'est-à-dire un cas où il n'y a rien de plus à voir. Il est gardé
-// parce que `/spaces` porte plus que la liste — le bouton « New project » et
-// sa table — et que sans lui la page ne serait plus atteignable depuis la
-// barre. C'est le raisonnement que le propriétaire a retenu pour « Dashboard »
-// le 19/09 au soir, appliqué au même cas.
+// ⚠️ « SEE ALL » RESTE DÈS QU'IL Y A UN PROJET, et la planche ne le dessine
+// pas : elle montre cinq espaces, c'est-à-dire un cas où il n'y a rien de plus
+// à voir. Il est gardé parce que `/spaces` porte plus que la liste — le bouton
+// « New project » et sa table.
+//
+// ⚠️ MAIS IL DISPARAÎT SUR UNE SECTION VIDE (#301) : « No Project Yet » suivi
+// de « See all » annonçait tout voir de rien. Ce qui rend `/spaces`
+// atteignable sur une installation neuve est le « + » du titre PROJECTS
+// (`sidebar-nav.ts`), qui DIT le geste — « New project » — là où « See all »
+// ne disait rien.
 
 import { useCallback } from 'react';
 import { listSidebarProjectsAction } from '@/lib/project-actions.ts';

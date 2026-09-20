@@ -11,7 +11,7 @@
 //   4. les listes du panneau se LISENT en base, bornées, et disent leurs trois
 //      absences différemment — « ça charge », l'échec, et le vide ;
 //   5. les points rouges et gris ne sont dessinés QUE là où la planche en met ;
-//   6. le « + » n'existe que sur CRON et WEBHOOKS ;
+//   6. le « + » n'existe que sur PROJECTS, CRON et WEBHOOKS ;
 //   7. un titre long se COUPE, il n'élargit pas la colonne.
 //
 // Les blocs qui ne sont pas le sujet (version, sélecteur d'espace, cloche,
@@ -594,8 +594,8 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
 // ─── 3. Le « + », seulement où la planche en dessine un ──────────────────────
 
 describe('le « + » d’un titre de section @cap:planifier-une-tache/ecran', () => {
-  it('n’existe QUE sur CRON et WEBHOOKS', async () => {
-    // Mutation vérifiée : un `add` posé sur la section WORKSPACES → ce cas
+  it('n’existe QUE sur CRON et WEBHOOKS dans le panneau Run', async () => {
+    // Mutation vérifiée : un `add` posé sur la section RECENTS → ce cas
     // rougit, le menu promet une création qui n'existe pas là.
     pathname = '/automations';
     await renderSidebar();
@@ -611,12 +611,32 @@ describe('le « + » d’un titre de section @cap:planifier-une-tache/ecran', ()
       '/automations?new=webhook',
     ]);
 
-    for (const route of ['/chat', '/agents', '/approvals', '/settings']) {
+    for (const route of ['/agents', '/approvals', '/settings']) {
       await remonter();
       pathname = route;
       await renderSidebar();
       expect(container.querySelector('[data-testid="section-add"]'), route).toBeNull();
     }
+  });
+
+  it('PROJECTS en porte un, vers /spaces, et le panneau Work n’en a pas d’autre', async () => {
+    // #301 : la section vide ne finit plus par « See all », donc le chemin
+    // vers `/spaces` passe par ce « + ». Il DIT le geste — « New project » —
+    // là où « See all » ne disait rien, et il est là que la liste soit vide
+    // ou pleine.
+    //
+    // Mutation vérifiée : `add` retiré de WORK_GROUPS → ce cas rougit, et
+    // `/spaces` redevient inatteignable depuis la barre sur une base neuve.
+    pathname = '/chat';
+    vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
+    await renderSidebar();
+    const plus = [...container.querySelectorAll('[data-testid="section-add"]')];
+    expect(plus.map((a) => a.getAttribute('aria-label'))).toEqual(['New project']);
+    expect(plus[0]?.getAttribute('href')).toBe('/spaces');
+    // Il est bien SUR le titre PROJECTS, et pas sur celui des canaux.
+    expect(plus[0]?.closest('[data-testid^="nav-group-"]')?.getAttribute('data-testid')).toBe(
+      'nav-group-Projects',
+    );
   });
 
   it('DIT le geste, et pas le signe', async () => {
@@ -919,21 +939,21 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     expect(container.querySelector('[data-testid="inbox-folder-workspaces"]')).toBeNull();
   });
 
-  it('garde « See all » même sous le plafond, parce que /spaces porte plus', async () => {
+  it('garde « See all » sous le plafond, mais JAMAIS sur une section vide', async () => {
     // La planche ne le dessine pas : elle montre cinq espaces, c'est-à-dire un
     // cas où il n'y a rien de plus à voir. Il est gardé parce que `/spaces`
     // porte aussi « New project » et sa table, et que sans lui la page ne
     // serait plus atteignable depuis la barre — le raisonnement que le
     // propriétaire a retenu pour « Dashboard » le 19/09 au soir.
     //
-    // ⚠️ ET IL SURVIT AUX TROIS ABSENCES : aucune ligne, une lecture qui n'a
-    // pas répondu, une lecture en échec. C'est justement sur une installation
-    // NEUVE — zéro projet — qu'on a besoin d'aller créer le premier, et la
-    // ligne disparaissait alors avec la liste. Le parcours Playwright l'a dit
-    // avant un humain.
+    // ⚠️ MAIS PAS SUR UNE SECTION VIDE (#301) : « No Project Yet » suivi de
+    // « See all » annonçait tout voir de rien. Le vide, c'est la lecture qui
+    // a RÉPONDU « aucune ligne » ; « ça charge » et un échec gardent la
+    // ligne, puisqu'on ne sait justement pas ce qu'il y a. Sur une base neuve,
+    // c'est le « + » du titre qui mène à `/spaces`.
     //
     // Mutation vérifiée : `seeAllAlways` retiré → ce cas rougit à un seul
-    // espace, et la page devient inatteignable.
+    // espace ; `sectionVide` forcé à `false` → le cas du vide rougit.
     pathname = '/chat';
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({
       ok: true,
@@ -947,10 +967,16 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     await remonter();
     vi.mocked(listSidebarProjectsAction).mockResolvedValue({ ok: true, data: [] });
     await renderSidebar();
-    // Le cadre du vide, PUIS la ligne : les deux, et pas l'un ou l'autre.
-    expect(container.querySelector('[data-testid="sidebar-empty"]')?.textContent?.trim()).toBe(
+    // Le cadre du vide, et RIEN d'autre : la section s'arrête sur lui.
+    expect(container.querySelector('[data-testid="sidebar-list-workspaces"]')?.textContent).toBe(
       'No Project Yet',
     );
+    expect(container.querySelector('[data-testid="see-all-workspaces"]')).toBeNull();
+
+    await remonter();
+    // « Ça charge » n'est pas le vide : on ne sait rien encore.
+    vi.mocked(listSidebarProjectsAction).mockReturnValue(new Promise<never>(() => {}));
+    await renderSidebar();
     expect(
       container.querySelector('[data-testid="see-all-workspaces"]')?.getAttribute('href'),
     ).toBe('/spaces');
