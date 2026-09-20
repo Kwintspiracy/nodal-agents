@@ -36,30 +36,42 @@ via chat that it is waiting — so you are not left wondering why it went quiet.
 Yolo mode skips the per-command approval gate. The agent runs commands
 immediately. Commands are still logged.
 
-### Local-trust mode (single-user loopback)
+### Turning it on
 
-If you run Nodal-Agents on `localhost` with no auth (`AUTH_MODE=local-trust`,
-the default), Yolo is available immediately on each agent:
+Yolo is set per agent, in every auth mode:
 
 1. Open the agent's edit page and go to the **Autonomy** tab.
 2. Toggle **Auto-run commands without approval (Yolo)** on.
-3. Save. Commands now run without asking.
+3. Confirm. Commands now run without asking.
 
-### LAN / multi-user mode
+**Only the workspace owner can toggle it**, both in the dashboard and on the
+approval card. That was already true on both sides, which is why the separate
+LAN-only master switch was removed in 0.8.7: it was a second lock for the same
+key, and it only existed outside `local-trust` — a red button that works in one
+auth mode is not a red button.
 
-When Nodal-Agents runs in `local-auth` or `bearer-token` mode (shared or LAN
-install), an extra workspace-level gate applies:
+### The brake: Settings → Safety → Auto-run brake
 
-1. The workspace **owner** must enable the master switch first: **Settings →
-   Allow command auto-run (Yolo) in LAN / multi-user mode**.
-2. After that, the owner can toggle Yolo per agent on the **Autonomy** tab.
+What survived, and became its only job, is the **emergency brake**. It is
+workspace-wide, inactive by default, and it applies in **every** auth mode.
 
-The runtime enforces this master-switch on every job — it is not just a UI
-guard. Even if a per-agent auto-approve rule exists in the database, the runner
-strips it at execution time when the workspace has not opted in. Disabling the
-workspace switch makes all agent Yolo rules dormant instantly.
+While it is engaged, on every job:
 
-Only the workspace owner can change the workspace-level switch.
+- any `auto_approve` rule on a code-execution tool is dropped, and
+- if no tool-specific rule then remains, an explicit `require_approval` rule is
+  injected, so a blanket wildcard (`*`) auto-approve cannot sweep the tool back
+  in.
+
+Nothing is deleted from the database: releasing the brake re-arms your rules
+exactly as they were. The brake also outranks the agent's autonomy level — a
+`fully_autonomous` ROOT cannot auto-approve past it.
+
+The tools it covers are the ones that can end up spawning something on your
+machine: `run_command`, `run_skill_script`, `skill_file_write`, `code_task`,
+`create_mcp` and `attach_mcp` (a stdio server _is_ a local subprocess), and
+`declare_verification` — because declaring a proof command is causing it to run
+later, at finalisation, outside any approval flow. The list lives in one place in
+the code, so a tool added to the autonomy guard cannot be forgotten here.
 
 ## The safety floor — commands that never auto-run
 
@@ -152,6 +164,7 @@ double-checking wastes approvals and adds latency.
 
 ## Related
 
-- [Skills reference: command-execution](/docs/reference/skills/command-execution)
+- [Skill reference: Command execution](/docs/reference/system-skills/command-execution)
 - [Concepts: Agents](/docs/concepts/agents)
+- [Concepts: Proof](/docs/concepts/proof) — the snapshot taken before a command writes
 - [Concepts: Connectors & MCP](/docs/concepts/connectors-and-mcp)

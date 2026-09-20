@@ -33,6 +33,9 @@ again: that package prepares the database binaries. When they are not usable,
 | `nodal-agents init` | Interactive setup wizard (LLM, ports, bind mode). |
 | `nodal-agents update` | Update to the latest npm version and restart. |
 | `nodal-agents logs [service]` | Tail logs for `web`, `runner`, or `postgres`. |
+| `nodal-agents checkpoints` | List the snapshots taken before an agent wrote in a folder. |
+| `nodal-agents checkpoints restore <sha>` | Put a workspace back to a snapshot. |
+| `nodal-agents mcp serve` | Serve this install as an MCP server on stdio (your client launches it). |
 | `nodal-agents reset` | Delete **all** data and config at `~/.nodalai`. |
 
 ### `nodal-agents up`
@@ -111,6 +114,54 @@ nodal-agents logs             # print all three (no follow)
 
 The valid service names are `web`, `runner`, and `postgres`. With no argument it prints all three and exits; with a single service it follows that log until you press Ctrl+C. An unknown service name exits with an error.
 
+<Callout type="info" title="The cluster's own log is a directory, not a file">
+  `nodal-agents logs` reads `~/.nodalai/logs/<service>.log`. Postgres also keeps
+  its **own** log, written by the cluster itself, in
+  `~/.nodalai/logs/postgres/<data-dir-name>-<digest>/postgresql-YYYY-MM-DD.log` —
+  one subdirectory per data directory, one file per day, rotated. That is where a
+  backend crash is written (`server process (PID …) was terminated by signal …`),
+  and it is the file to read when Postgres will not start. The subdirectory is
+  per data directory on purpose: two clusters pointed at one directory would
+  write the same day-named file and blank each other's history.
+</Callout>
+
+### `nodal-agents checkpoints`
+
+Before any tool that can modify a workspace runs, Nodal snapshots that workspace
+into a shadow git store at `~/.nodalai/checkpoints/`. The model never sees them,
+cannot call them and cannot skip them. This command is the other half — a net
+nobody can reach is not a net.
+
+```bash
+nodal-agents checkpoints                        # the current directory
+nodal-agents checkpoints list /path/to/project  # a given workspace
+nodal-agents checkpoints restore 4f3a9c21       # sha, or its first characters
+nodal-agents checkpoints restore 4f3a9c21 /path/to/project
+```
+
+`list` is the default subcommand, so `nodal-agents checkpoints` and
+`nodal-agents checkpoints list` are the same thing. Each row prints the short
+sha, how long ago it was taken, and what was about to happen (the tool name and
+the job it belonged to).
+
+**Restoring is deliberately a human gesture.** Deciding that a run went wrong is
+a judgement, and an agent able to roll itself back could roll back the evidence
+of what it did. A restore snapshots the state it is about to replace first, so it
+is itself undoable.
+
+<Callout type="warn">
+  Checkpoints cover files tracked by an ordinary `git add`: anything the
+  project's own `.gitignore` excludes (`.env`, local data, caches) is **not**
+  snapshotted and cannot be restored. Copying ignored secrets into a second,
+  unmanaged store would be worse than the gap.
+</Callout>
+
+`NODALAI_CHECKPOINTS_ROOT` moves the store. Both the runner and this command read
+it from the same place, so overriding it on one side only is not possible.
+
+Full picture, including what a refused write tells you:
+[Proof](/docs/concepts/proof#checkpoints--the-snapshot-taken-before-a-write).
+
 ### `nodal-agents mcp serve`
 
 Starts Nodal's MCP server on stdio, so an external MCP client — your terminal,
@@ -128,10 +179,13 @@ fails loud if no config exists (`nodal-agents init` first), and it refuses to
 serve while the **MCP server** switch in Settings is off.
 
 The server exposes a single tool, `run_task`, which creates a tracked job for
-the workspace's root agent (or a chosen agent by slug). Jobs land on the Runs
-page with channel `mcp`, run under the agent's own approval rules and budgets,
-and can never use the configuration tools. When the client disconnects, the
-process exits cleanly.
+the workspace's root agent (or a chosen agent by slug). Jobs run under the
+agent's own approval rules and budgets, and can never use the configuration
+tools. When the client disconnects, the process exits cleanly.
+
+These runs have no conversation — nobody typed them — so they land in their own
+**MCP folder** under Channels (`/chat?folder=mcp`), whose rows open the run page
+directly. They also appear in **Logs → Activity** like any other run.
 
 | Env variable | Effect |
 | ---- | ------ |
@@ -160,6 +214,8 @@ These environment variables change CLI behavior:
 | -------- | ------ |
 | `NODALAI_NO_BROWSER=1` | Skip opening the browser after `up`. Useful on headless servers and CI runners with no desktop. |
 | `NODALAI_PG_LOG=1` | Verbose embedded-Postgres logging during startup — surfaces the real Postgres error instead of a generic failure. Use when Postgres won't start. |
+| `NODALAI_CHECKPOINTS_ROOT` | Move the shadow checkpoint store away from `~/.nodalai/checkpoints/`. Read by the runner and by `nodal-agents checkpoints` alike. |
+| `NODALAI_WORKSPACES_ROOT` | Move the per-workspace file tree away from `~/.nodalai/workspaces/`. |
 
 Ports and bind mode are **not** environment variables — they live in `~/.nodalai/config.json` (defaults: web `3000`, runner `3001`, Postgres `25432`). Change them via `nodal-agents init` or by editing the config file. `up` automatically rotates any occupied or OS-reserved port to a free neighbour and persists the new value.
 
@@ -169,10 +225,13 @@ All persistent state lives under `~/.nodalai/`:
 
 ```
 ~/.nodalai/
-  config.json   # ports, bind mode, worker secret, LLM preset
-  pg-data/      # embedded Postgres data files (your agents, jobs, memory, keys)
-  pids/         # PID files for runner + web (used by `down`)
-  logs/         # web.log, runner.log, postgres.log
+  config.json     # ports, bind mode, worker secret, LLM preset
+  pg-data/        # embedded Postgres data files (your agents, jobs, memory, keys)
+  pids/           # PID files for runner + web (used by `down`)
+  logs/           # web.log, runner.log — what `nodal-agents logs` tails
+  logs/postgres/  # the cluster's own log, one subdirectory per data directory
+  workspaces/     # one subtree per workspace: shared/, skills/<slug>/, channel media
+  checkpoints/    # the shadow git store: store/, indexes/, gitconfig
 ```
 
 To wipe everything, use `nodal-agents reset` (preferred — it stops services first) rather than deleting the folder by hand.

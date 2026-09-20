@@ -12,7 +12,9 @@ An automation is a named cron schedule that fires an agent on a recurring basis.
 
 ## Create an automation
 
-1. Go to **Automations** in the left navigation.
+1. Open the **Run** board in the sidebar rail. Its panel has two sections,
+   **Cron** and **Webhooks**, each with a `+` on its title; either one, or the
+   board's own cell, opens the Automations page.
 2. Click **+ New schedule**.
 3. Fill in:
    - **Agent** — which agent runs this automation.
@@ -42,6 +44,26 @@ Each schedule row shows the next scheduled run, last run time, and last status (
 - **Duplicate** — creates a paused copy of the schedule. Enable it when ready.
 - **Pause / Enable** — toggle the schedule on or off without deleting it.
 - **Delete** — removes the schedule. Past job runs are kept for audit.
+
+### Its own page
+
+Clicking a schedule opens **`/automations/<id>`** — one route that serves a
+schedule and a webhook alike, because both are "an automation" to whoever is
+looking at one:
+
+- a header saying which kind it is,
+- a settings card of five rows,
+- its **last ten runs**, with what they cost over the last thirty days,
+- and what the routine has **remembered**.
+
+That last block is worth knowing about. A routine keeps **state it owns**, read
+and written without a model. Before 0.8.9 a schedule stored "what I last
+announced" as a memory and searched it back in plain language; a memory that got
+cleaned up made one routine announce a release twice on a public Discord.
+
+Opening a run from that list gives you [the run
+page](/docs/reference/dashboard#a-run--jobsid-scheduledid-codeid). `/scheduled`
+now redirects here; `/scheduled/<id>` still opens the run it always did.
 
 ## How the runner fires schedules
 

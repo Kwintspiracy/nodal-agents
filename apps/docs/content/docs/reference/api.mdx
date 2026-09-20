@@ -22,13 +22,23 @@ The runner's auth depends on `AUTH_MODE`:
 | `POST /api/worker` | `WORKER_SECRET` (self) | Execute a job (the LLM loop). |
 | `POST /api/agent` | runner auth | Submit a task to an agent. |
 | `POST /api/chat` | runner auth | Chat-turn endpoint (dashboard chat). |
+| `POST /api/chat/stream` | runner auth | The same turn, streamed token by token. |
 | `POST /api/approve` | runner auth | Resolve a pending approval (resume the job). |
 | `POST /api/cron` | runner auth | Trigger a cron tick. |
+| `GET /api/jobs/:jobId/file-diff` | runner auth | The diff of one file a turn wrote. |
+| `POST /api/code-task/doctor` | runner auth | Probe whether a coding CLI is installed and signed in. |
 | `POST /api/skills/install` | `WORKER_SECRET` | Install a community skill. |
 | `POST /api/skills/uninstall` | `WORKER_SECRET` | Uninstall a community skill. |
+| `POST /api/skills/update` | `WORKER_SECRET` | Pull the latest version of an installed community skill. |
+| `POST /api/skills/preview-update` | `WORKER_SECRET` | Show what an update would change, without applying it. |
+| `POST /api/skills/acknowledge-update` | `WORKER_SECRET` | Mark an available update as seen. |
 | `GET /api/whatsapp/pairing` | runner auth | WhatsApp QR pairing status for an agent. |
 | `POST /api/whatsapp/pairing` | runner auth | Start WhatsApp QR pairing for an agent. |
 | `POST /webhooks/:slug/:secret` | slug + secret (in the path) | Fire a configured webhook trigger's job. |
+
+The auth gate is a **literal-path** middleware, so `/api/chat` does not cover
+`/api/chat/stream`: each path is listed on its own. The five skill routes check
+`WORKER_SECRET` inside their own handlers instead.
 
 "runner auth" = pass-through in `local-trust`, else `WORKER_SECRET` bearer (or a session in `bearer-token` mode).
 

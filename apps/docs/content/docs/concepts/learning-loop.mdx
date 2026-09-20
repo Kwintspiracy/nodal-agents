@@ -8,9 +8,11 @@ time. After a qualifying job completes, a lightweight reflection pass reviews th
 transcript and either patches an existing skill or, as a last resort, creates a new
 one. A separate curator periodically consolidates the growing skill library.
 
-The feature is off by default and must be enabled per entity in the dashboard
-(**Settings → Entity**). There is also a global kill-switch (`REFLECTION_ENABLED=false`)
-that disables it for every entity regardless of their flag.
+The feature is off by default and must be enabled per workspace, on the
+dashboard's **Learned Skills** page (**Agents → Learned Skills**). The same page
+carries the **assignment mode**: auto-assign what an agent writes, or hold it for
+your approval. There is also a global kill-switch (`REFLECTION_ENABLED=false`)
+that disables it for every workspace regardless of their flag.
 
 ## Tier 1 — Reflection
 

@@ -49,6 +49,9 @@ All persistent data lives at `~/.nodalai/`:
   pg-data/         # Embedded Postgres data files
   pids/            # PID files for runner + web (used by `down`)
   logs/            # Runner and web log files
+  logs/postgres/   # The cluster's own log, one subdirectory per data directory
+  workspaces/      # One subtree per workspace: shared files, community skills
+  checkpoints/     # Shadow git store — snapshots taken before an agent writes
 ```
 
 To wipe everything and start fresh:
@@ -81,7 +84,7 @@ Services bind to `127.0.0.1`. No authentication is required — the dashboard is
 
 Services bind to `0.0.0.0`, making the dashboard accessible to other devices on your network. LAN mode **requires sign-in** — the toggle enables email+password auth in the same write, so the config always stays bootable.
 
-The recommended path is the dashboard: **Settings → Network → LAN**, then restart:
+The recommended path is the dashboard: **Settings → Access → Network access → LAN**, then restart:
 
 ```bash
 nodal-agents down && nodal-agents up
@@ -96,7 +99,7 @@ Who owns the account depends on the install:
 
 ### Auth modes
 
-The runner supports three auth modes (`AUTH_MODE` in `apps/runner/src/env.ts`); all three are selectable from **Settings → Security**:
+The runner supports three auth modes (`AUTH_MODE` in `apps/runner/src/env.ts`); all three are selectable from **Settings → Access → Sign-in**:
 
 | Mode           | Behaviour                                                                                                                                                                           |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

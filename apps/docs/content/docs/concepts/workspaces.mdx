@@ -49,7 +49,8 @@ alongside it.
 
 ## Creating and switching workspaces
 
-The **workspace switcher** lives in the sidebar. Use it to:
+The **workspace switcher** is the capsule on the right of the sidebar panel's
+header, next to the name of whichever board is open. Use it to:
 
 - **Switch** — pick another workspace. The dashboard reloads scoped to that
   workspace's agents, skills, memory, and connectors. Your choice is remembered
@@ -84,8 +85,19 @@ root _inside_ an agent, not the top-level tenant boundary this page is about. A
 top-level workspace (entity) contains agents; an agent workspace is a folder one
 agent uses.
 
+Every agent also keeps the **shared workspace**, the hand-off area between
+agents. It is named for what it is — a place agents pass work through, not the
+place your deliverables go. Taking it away from an agent that has its own folder
+would cut it off from the rest of the team.
+
+A third thing lives inside an agent workspace: a **[project](/docs/concepts/projects)**,
+which is the folder a piece of work actually happens in. Confusingly, the page
+that lists projects is called Workspaces. The distinction that matters: a
+workspace (entity) scopes _who and what_; a project is _where the files are_.
+
 ## Related
 
 - [Agents](/docs/concepts/agents)
+- [Projects](/docs/concepts/projects) — the folders agents work in
 - [Connecting a tool](/docs/guides/connect-a-tool) — connectors and credentials
 - [Connectors & MCP](/docs/concepts/connectors-and-mcp)

@@ -3,11 +3,13 @@
   "pages": [
     "agents",
     "workspaces",
+    "projects",
     "orchestrators",
     "skills",
     "memory",
     "models",
     "connectors-and-mcp",
+    "proof",
     "learning-loop"
   ]
 }

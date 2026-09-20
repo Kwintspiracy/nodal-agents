@@ -16,7 +16,8 @@ tool, anything that can POST JSON) a URL that fires an agent job.
 
 ### Create one
 
-1. Go to **Automations** in the left navigation.
+1. Open the **Run** board in the sidebar rail, then the `+` on its **Webhooks**
+   section (or the Automations page itself).
 2. Click **+ New webhook** in the toolbar (next to **+ New schedule**).
 3. Fill in:
    - **Agent**: which agent the fired job goes to.
@@ -48,8 +49,8 @@ curl -X POST https://your-host:3001/webhooks/gh-pr-opened-a1b2c3/1f2e3d4c5b6a...
   -d '{"pull_request": {"title": "Fix login bug"}}'
 ```
 
-A valid POST returns `202 { ok: true, jobId }` and the agent's job appears on
-the Jobs page within a moment.
+A valid POST returns `202 { ok: true, jobId }` and the agent's job appears under
+**Logs → Activity** within a moment. Its own page is at `/jobs/<jobId>`.
 
 ### How it works, and its limits
 
