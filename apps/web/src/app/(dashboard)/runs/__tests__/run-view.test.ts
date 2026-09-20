@@ -92,6 +92,8 @@ function view(over: {
     verification: { sequences: [], skippedSurfaces: [], unconfigured: [], deliverables: [] },
     cost: {
       byAgent: [],
+      // #54 — ce run n'a pas de reprise sur cache expiré : la barre n'en dit rien.
+      cacheLost: { resumes: 0, tokens: 0, costUsd: null, unpricedResumes: 0 },
       totals: {
         calls: 0,
         inputTokens: 0,

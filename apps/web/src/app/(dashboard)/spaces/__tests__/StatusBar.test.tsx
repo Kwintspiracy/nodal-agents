@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import StatusBar from '../StatusBar.tsx';
+import StatusBar, { CostPanel } from '../StatusBar.tsx';
 import type { SpaceCostView } from '@/lib/space-cost.ts';
 
 const cost: SpaceCostView = {
@@ -47,6 +47,9 @@ const cost: SpaceCostView = {
     humanWaitMs: 192_000,
     proofMs: 401_000,
   },
+  // Le cas ordinaire : aucune reprise sur cache expiré. La barre ne doit alors
+  // rien en dire du tout — c'est ce que le dernier cas de ce fichier prouve.
+  cacheLost: { resumes: 0, tokens: 0, costUsd: null, unpricedResumes: 0 },
 };
 
 describe('StatusBar', () => {
@@ -94,6 +97,7 @@ describe('StatusBar', () => {
             costUsd: null,
             unpricedCalls: 0,
           },
+          cacheLost: { resumes: 0, tokens: 0, costUsd: null, unpricedResumes: 0 },
         }}
         proofVerdict={null}
         proofSequences={0}
@@ -111,5 +115,142 @@ describe('StatusBar', () => {
     expect(empty).toContain('running…');
     expect(empty).not.toContain('$0');
     expect(empty).not.toContain('cached');
+  });
+});
+
+// #54 — LE CACHE PERDU À LA REPRISE, tel que l'écran le dit. Le calcul est
+// prouvé ailleurs (`cache-expiry.test.ts` pour la règle,
+// `delegation-cache-cost.test.ts` contre une vraie base) ; ici, uniquement ce
+// qu'un œil voit : la ligne apparaît quand il y a eu une reprise, avec le
+// montant, le nombre de reprises et la cause, et elle DISPARAÎT sinon.
+describe('StatusBar — cache expiry @cap:voir-le-cout/ecran', () => {
+  const withLoss: SpaceCostView = {
+    ...cost,
+    cacheLost: { resumes: 1, tokens: 35_200, costUsd: 0.1584, unpricedResumes: 0 },
+  };
+
+  it('dit le montant perdu et le nombre de reprises, à côté du coût', () => {
+    const html = renderToStaticMarkup(
+      <StatusBar
+        cost={withLoss}
+        proofVerdict="green"
+        proofSequences={1}
+        pendingDeliveries={0}
+        live={false}
+      />,
+    );
+    expect(html).toContain('$1.09 · partial');
+    expect(html).toContain('of which $0.16 lost to cache expiry (1 resume)');
+    // La cause est lisible au survol, pas seulement le chiffre.
+    expect(html).toContain('the provider&#x27;s cache expired while a delegate was working');
+  });
+
+  it('deux reprises se disent au PLURIEL, et le détail nomme les jetons', () => {
+    const html = renderToStaticMarkup(
+      <StatusBar
+        cost={{
+          ...cost,
+          cacheLost: { resumes: 2, tokens: 70_400, costUsd: 0.3168, unpricedResumes: 0 },
+        }}
+        proofVerdict="green"
+        proofSequences={1}
+        pendingDeliveries={0}
+        live={false}
+      />,
+    );
+    expect(html).toContain('of which $0.32 lost to cache expiry (2 resumes)');
+  });
+
+  it('aucune reprise : la barre n’en dit RIEN — pas de ligne à zéro', () => {
+    const html = renderToStaticMarkup(
+      <StatusBar
+        cost={cost}
+        proofVerdict="green"
+        proofSequences={1}
+        pendingDeliveries={0}
+        live={false}
+      />,
+    );
+    expect(html).not.toContain('cache expiry');
+    expect(html).not.toContain('cache lost on resume');
+  });
+
+  it('une somme PARTIELLE le dit, avec le mot du segment voisin', () => {
+    // Trois reprises, une sur un modèle sans prix de cache : les 0,16 $ sont
+    // vrais mais incomplets. La ligne de coût voisine écrit déjà « · partial »
+    // pour la même raison ; les deux doivent porter le même mot, sinon celle
+    // qui se tait se lit comme un total (revue Reviewer C, passe 1).
+    const html = renderToStaticMarkup(
+      <StatusBar
+        cost={{
+          ...cost,
+          cacheLost: { resumes: 3, tokens: 105_600, costUsd: 0.1584, unpricedResumes: 1 },
+        }}
+        proofVerdict="green"
+        proofSequences={1}
+        pendingDeliveries={0}
+        live={false}
+      />,
+    );
+    expect(html).toContain('of which $0.16 lost to cache expiry (3 resumes) · partial');
+  });
+
+  it('toutes les reprises tarifées : pas de « partial » posé pour rien', () => {
+    const html = renderToStaticMarkup(
+      <StatusBar
+        cost={withLoss}
+        proofVerdict="green"
+        proofSequences={1}
+        pendingDeliveries={0}
+        live={false}
+      />,
+    );
+    expect(html).toContain('of which $0.16 lost to cache expiry (1 resume)');
+    expect(html).not.toContain('cache expiry (1 resume) · partial');
+  });
+
+  it('le panneau détaillé nomme les jetons, le montant et la CAUSE', () => {
+    const html = renderToStaticMarkup(<CostPanel cost={withLoss} onClose={() => {}} />);
+    expect(html).toContain('cache lost on resume');
+    expect(html).toContain('35,200 · $0.16 · 1 resume');
+    expect(html).toContain(
+      '35,200 input tokens, $0.16 went back to full price on 1 resume: the provider&#x27;s cache expired while a delegate was working.',
+    );
+  });
+
+  it('le panneau compte les jetons même quand le montant est inconnu, et le DIT', () => {
+    const html = renderToStaticMarkup(
+      <CostPanel
+        cost={{
+          ...cost,
+          cacheLost: { resumes: 1, tokens: 35_200, costUsd: null, unpricedResumes: 1 },
+        }}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain('35,200 input tokens went back to full price on 1 resume');
+    expect(html).toContain('whose cache price we do not know, so the amount is partial');
+    // Le montant reste « n/a » dans la grille : jamais un 0 qui se lirait « gratuit ».
+    expect(html).toContain('35,200 · n/a · 1 resume');
+  });
+
+  it('un surcoût inconnu ne s’affiche pas en dollars : les jetons sont comptés, le montant est tu', () => {
+    // Un modèle dont le catalogue ignore le prix de lecture de cache : on sait
+    // combien de jetons sont repassés plein tarif, pas ce qu'ils ont coûté de
+    // plus. « $0.0000 » dirait « on a mesuré, c'est nul » (invariant #4).
+    const html = renderToStaticMarkup(
+      <StatusBar
+        cost={{
+          ...cost,
+          cacheLost: { resumes: 1, tokens: 35_200, costUsd: null, unpricedResumes: 1 },
+        }}
+        proofVerdict="green"
+        proofSequences={1}
+        pendingDeliveries={0}
+        live={false}
+      />,
+    );
+    expect(html).not.toContain('cache expiry');
+    expect(html).not.toContain('$0.0000');
   });
 });

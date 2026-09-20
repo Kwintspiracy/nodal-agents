@@ -59,6 +59,8 @@ const fil = {
   verification: { sequences: [], skippedSurfaces: [], unconfigured: [], deliverables: [] },
   cost: {
     byAgent: [],
+    // #54 — aucune reprise sur cache expiré : la barre n'en dit rien.
+    cacheLost: { resumes: 0, tokens: 0, costUsd: null, unpricedResumes: 0 },
     totals: {
       calls: 0,
       inputTokens: 0,
