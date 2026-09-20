@@ -1005,3 +1005,28 @@ export async function runMigrations(
   const { runMigrations: migrate } = await import('@nodal-agents/db/migrate');
   await migrate(databaseUrl, opts);
 }
+
+/**
+ * Les migrations que le journal annonce et que cette base n'a jamais reçues.
+ *
+ * Le migrateur de drizzle saute en silence une migration mergée après une
+ * plus récente (issue #298) ; c'est ce contrôle qui le dit. La règle et sa
+ * raison vivent dans `@nodal-agents/db/migrate` — seul `packages/db` importe
+ * le pilote Postgres.
+ */
+export async function findMigrationGaps(
+  databaseUrl: string,
+  opts: { patchVectorAsText?: boolean } = {},
+): Promise<{ idx: number; tag: string; when: number }[]> {
+  const { findMigrationGaps: chercher } = await import('@nodal-agents/db/migrate');
+  return chercher(databaseUrl, opts);
+}
+
+/** Applique les migrations manquantes, dans l'ordre du journal. Rend la liste. */
+export async function repairMigrations(
+  databaseUrl: string,
+  opts: { patchVectorAsText?: boolean } = {},
+): Promise<{ idx: number; tag: string; when: number }[]> {
+  const { repairMigrations: reparer } = await import('@nodal-agents/db/migrate');
+  return reparer(databaseUrl, opts);
+}
