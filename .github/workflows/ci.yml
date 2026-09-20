@@ -50,11 +50,11 @@ jobs:
   # ── Contrôles statiques ─────────────────────────────────────────────────────
   # Typecheck 3 min 56 s à froid, lint 1 min 04 s, format 30 s, les scans et
   # le banc moins d'une minute à eux tous (job 105953811231, 19/09) : environ
-  # 6 min 30 s. Budget = 2 × la mesure de la PR de #291, notée ci-dessous.
-  # MESURE_CHECKS
+  # 6 min 30 s. Mesuré à 6 min 51 s sur la PR de #291 (run 35517309819,
+  # cache turbo froid pour cette lignée) → budget 14.
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 14
     steps:
       - uses: actions/checkout@v5
 
@@ -176,11 +176,12 @@ jobs:
   #
   # Le plafond de concurrence turbo (3) vit dans `turbo.json` depuis #292 :
   # `pnpm test`, `release:check` et ce job lancent exactement la même chose.
-  # Budget = 2 × la tranche la plus lente de la PR de #291, notée ci-dessous.
-  # MESURE_TEST
+  # Mesuré sur la PR de #291 (run 35517309819, cache froid) : web 3 min 45 s
+  # et 3 min 20 s, runner 3 min 37 s et 3 min 16 s, packages 4 min 45 s,
+  # install et builds des dépendances compris → budget 10.
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -228,12 +229,11 @@ jobs:
   # only surfacing on deploy.
   #
   # Son propre job depuis #291 : avant, il venait en DERNIER d'un job de
-  # 23 min et c'est lui que le délai coupait. Budget = 2 × la mesure de la PR
-  # de #291, notée ci-dessous.
-  # MESURE_BUILD
+  # 23 min et c'est lui que le délai coupait. Mesuré à 3 min 25 s sur la PR de
+  # #291 (run 35517309819, cache froid) → budget 7.
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 7
     steps:
       - uses: actions/checkout@v5
 
