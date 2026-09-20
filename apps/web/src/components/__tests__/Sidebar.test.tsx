@@ -245,18 +245,17 @@ describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () 
     ]);
   });
 
-  it('fait NAVIGUER Logs, et fait SORTIR Help', async () => {
+  it('fait NAVIGUER Logs, et fait OUVRIR une carte à Help', async () => {
     await renderSidebar();
     // Logs mène à sa page et n'ouvre aucun panneau : c'est la seule case du
     // rail que la table des destinations ne connaît pas.
     expect(railCell('logs').getAttribute('href')).toBe('/logs');
     expect(railCell('logs').getAttribute('target')).toBeNull();
 
-    // Help ouvre la documentation, qui est DEHORS — l'adresse que
-    // l'application utilise déjà, jamais une seconde.
-    expect(railCell('help').getAttribute('href')).toBe(RAIL_FOOT.docs);
-    expect(railCell('help').getAttribute('target')).toBe('_blank');
-    expect(railCell('help').getAttribute('rel')).toBe('noopener noreferrer');
+    // Help ne MÈNE nulle part : c'est un bouton, et il ouvre une carte.
+    expect(railCell('help').tagName).toBe('BUTTON');
+    expect(railCell('help').getAttribute('href')).toBeNull();
+    expect(railCell('help').getAttribute('aria-expanded')).toBe('false');
   });
 
   it('donne la MÊME forme aux cases, active ou non', async () => {
@@ -1035,7 +1034,89 @@ describe('toutes les lignes du panneau ont la MÊME forme @cap:installer-et-dema
   });
 });
 
-// ─── 9. Le compte, et la pile des calques ────────────────────────────────────
+// ─── 9. La carte « Help » : trois endroits, tous dehors ─────────────────────
+
+describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
+  it('reste fermée tant qu’on ne l’ouvre pas', async () => {
+    await renderSidebar();
+    expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
+    expect(railCell('help').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('ouvre les TROIS liens du produit, chacun dans un nouvel onglet', async () => {
+    // ⚠️ LA PLANCHE NE DESSINE QUE LA CASE, jamais ce qu'elle ouvre. En faire
+    // un raccourci vers la documentation seule aurait retiré du produit le
+    // serveur Discord et le portail qualité, que la 0.8.11 proposait déjà —
+    // une perte que la planche ne demande pas (décision du propriétaire,
+    // 20/09/2026).
+    //
+    // Mutation vérifiée : une des trois lignes retirée de `RAIL_FOOT.help` →
+    // ce cas rougit.
+    await renderSidebar();
+    await click(railCell('help'));
+    const carte = container.querySelector('[data-testid="rail-popover"]');
+    expect(carte?.getAttribute('aria-label')).toBe('Help');
+
+    const liens = [...(carte?.querySelectorAll('a') ?? [])];
+    expect(liens.map((a) => a.textContent?.trim())).toEqual(['Docs', 'Discord', 'Quality portal']);
+    // Les adresses sont celles de la table, et la table est la source.
+    expect(liens.map((a) => a.getAttribute('href'))).toEqual(RAIL_FOOT.help.map((l) => l.href));
+    for (const lien of liens) {
+      expect(lien.getAttribute('target'), lien.textContent ?? '').toBe('_blank');
+      expect(lien.getAttribute('rel'), lien.textContent ?? '').toBe('noopener noreferrer');
+      // La flèche dit qu'on quitte l'application, et elle FERME la ligne.
+      const fleche = lien.querySelector('[data-testid="external-arrow"]');
+      expect(fleche, lien.textContent ?? '').not.toBeNull();
+      expect(lien.lastElementChild, lien.textContent ?? '').toBe(fleche);
+    }
+  });
+
+  it('n’ouvre qu’UNE carte à la fois, Help ou le compte', async () => {
+    // Deux cartes ouvertes en même temps se recouvriraient au bas d'un rail de
+    // 72 px.
+    //
+    // Mutation vérifiée : l'état `Carte` remplacé par deux booléens
+    // indépendants → ce cas rougit, les deux cartes coexistent.
+    await render(
+      <ApprovalsProvider initial={[]}>
+        <ChatFoldersProvider
+          initial={{ channels: [], running: {}, runningConversationIds: [], externalRuns: 0 }}
+        >
+          <Sidebar workspaces={[]} userMenu={<p>quentin@example.com</p>} />
+        </ChatFoldersProvider>
+      </ApprovalsProvider>,
+    );
+    await click(railCell('help'));
+    expect(container.querySelector('[data-testid="user-menu"]')).toBeNull();
+
+    await click(container.querySelector('[data-testid="rail-account"]')!);
+    expect(container.querySelector('[data-testid="user-menu"]')).not.toBeNull();
+    // Celle de Help s'est refermée : une seule carte est rendue.
+    expect(container.querySelectorAll('[data-testid="rail-popover"]').length).toBe(1);
+    expect(railCell('help').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('se referme à Échap, et PREND la touche en le faisant', async () => {
+    await renderSidebar();
+    await click(railCell('help'));
+    expect(container.querySelector('[data-testid="rail-popover"]')).not.toBeNull();
+
+    const echap = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      // `cancelable`, sinon `preventDefault()` ne marque rien et l'assertion
+      // ci-dessous passerait pour une raison qui n'est pas la bonne.
+      cancelable: true,
+    });
+    await act(async () => {
+      window.dispatchEvent(echap);
+    });
+    expect(container.querySelector('[data-testid="rail-popover"]')).toBeNull();
+    expect(echap.defaultPrevented).toBe(true);
+  });
+});
+
+// ─── 10. Le compte, et la pile des calques ────────────────────────────────────
 
 describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
   async function renderAvecCompte(): Promise<void> {

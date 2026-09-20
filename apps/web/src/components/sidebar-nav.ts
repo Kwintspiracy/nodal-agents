@@ -36,11 +36,13 @@
 // dessine aucune section (décision de l'orchestrateur, 19/09 au soir).
 
 import {
+  BookOpen,
   Brain,
   BookOpenText,
   ChatCircleText,
   Cube,
   CheckCircle,
+  DiscordLogo,
   GearSix,
   House,
   Key,
@@ -48,6 +50,7 @@ import {
   Plug,
   PlugsConnected,
   Pulse,
+  SealCheck,
   ShieldCheck,
   Sparkle,
   type Icon as PhosphorIcon,
@@ -305,12 +308,31 @@ export const DESTINATIONS: readonly Destination[] = [
  * panneau.
  *
  * Logs NAVIGUE — sa page est une liste, elle n'a rien à déplier dans une
- * colonne de 300 px. Help ouvre la documentation, qui est dehors.
+ * colonne de 300 px. Help ouvre une CARTE de trois liens, tous dehors.
+ *
+ * ⚠️ POURQUOI UNE CARTE, ET PAS UN LIEN. La planche ne dessine que la CASE,
+ * jamais ce qu'elle ouvre : elle ne dit donc rien du nombre de liens, et en
+ * faire un raccourci vers la documentation seule aurait retiré du produit le
+ * serveur Discord et le portail qualité, qui vivaient dans le groupe « About
+ * Nodal-Agents » de la 0.8.11 puis dans la carte Help de #230. Décision du
+ * propriétaire, 20/09/2026 : les trois restent, dans la carte.
  */
 export const RAIL_FOOT = {
   logs: { href: '/logs', label: 'Logs' },
-  /** L'adresse que l'application utilise déjà pour sa documentation. */
-  docs: 'https://kwintspiracy.github.io/nodal-agents/',
+  /**
+   * Les trois endroits qui parlent DU PRODUIT, et qui sont tous hors de
+   * l'application. Les adresses sont celles que la 0.8.11 utilisait déjà ;
+   * aucune n'est inventée ici.
+   */
+  help: [
+    { href: 'https://kwintspiracy.github.io/nodal-agents/', label: 'Docs', icon: BookOpen },
+    { href: 'https://discord.gg/7UZsvZPgU', label: 'Discord', icon: DiscordLogo },
+    {
+      href: 'https://kwintspiracy.github.io/nodal-agents/qa/',
+      label: 'Quality portal',
+      icon: SealCheck,
+    },
+  ],
 } as const;
 
 /**

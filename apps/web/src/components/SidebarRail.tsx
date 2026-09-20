@@ -18,9 +18,11 @@
 //   - LOGS ARRIVE, et il NAVIGUE. Sa page est une liste ; il n'y a rien à
 //     déplier dans une colonne de 300 px, et lui inventer un panneau aurait
 //     fait un menu qui ne mène qu'à lui-même.
-//   - HELP OUVRE LA DOCUMENTATION, directement. Il ouvrait une carte de trois
-//     liens en #230 ; la planche v2 en fait une case comme les autres, et
-//     l'adresse est celle que l'application utilise déjà.
+//   - HELP GARDE SA CARTE de trois liens (Docs, Discord, portail qualité). La
+//     planche ne dessine que la CASE, jamais ce qu'elle ouvre : en faire un
+//     raccourci vers la documentation seule aurait retiré deux adresses du
+//     produit sans que la planche le demande (décision du propriétaire,
+//     20/09/2026). Les trois vivent dans `RAIL_FOOT`, avec le reste du pied.
 //   - LA VERSION DESCEND ICI, sous le compte. Elle fermait le panneau ; la
 //     planche l'écrit au pied du rail, où elle est visible quelle que soit la
 //     destination ouverte.
@@ -29,17 +31,56 @@
 // panneau : c'est ce qui fait deux colonnes plutôt qu'une colonne avec une
 // marge, et c'est la SEULE chose qui les sépare.
 //
-// Le compte reste une carte (`RailPopover`) : le rail ne peut pas porter en
-// pleine largeur le bloc courriel + Sign out, et le supprimer retirerait une
-// fonction du produit.
+// Le compte reste une carte lui aussi (`RailPopover`) : le rail ne peut pas
+// porter en pleine largeur le bloc courriel + Sign out, et le supprimer
+// retirerait une fonction du produit.
 
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ListMagnifyingGlass, Question, User } from '@phosphor-icons/react';
+import {
+  ArrowSquareOut,
+  ListMagnifyingGlass,
+  Question,
+  User,
+  type Icon as PhosphorIcon,
+} from '@phosphor-icons/react';
 import RailCell, { RailAvatarButton } from './ui/RailCell';
 import RailPopover from './ui/RailPopover';
 import VersionBadge from './VersionBadge';
 import { DESTINATIONS, RAIL_FOOT, type DestinationKey } from './sidebar-nav.ts';
+
+/** Quelle carte du bas du rail est ouverte. UNE seule à la fois. */
+type Carte = 'help' | 'account' | null;
+
+/** Une ligne de la carte « Help » : un lien qui QUITTE l'application. */
+function HelpLink({
+  href,
+  label,
+  icon: Icon,
+}: {
+  href: string;
+  label: string;
+  icon: PhosphorIcon;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-body-13 text-ink-2 hover:bg-hover"
+    >
+      <Icon size={14} className="h-3.5 w-3.5 shrink-0 text-ink-3" />
+      <span className="flex-1 truncate">{label}</span>
+      {/* La flèche dit qu'on QUITTE l'application, et elle ferme la ligne. */}
+      <ArrowSquareOut
+        size={12}
+        weight="bold"
+        data-testid="external-arrow"
+        className="h-3 w-3 shrink-0 text-ink-4"
+      />
+    </a>
+  );
+}
 
 export default function SidebarRail({
   activeKey,
@@ -63,9 +104,12 @@ export default function SidebarRail({
    */
   initiale?: string | null;
 }) {
-  // La carte du compte. Une seule chose s'ouvre au bas du rail depuis que Help
-  // navigue : elle tient donc dans un booléen.
-  const [compte, setCompte] = useState(false);
+  // Deux cartes ouvertes en même temps se recouvriraient au bas d'un rail de
+  // 72 px : l'état en retient UNE.
+  const [carte, setCarte] = useState<Carte>(null);
+  const basculer = (quelle: Exclude<Carte, null>) =>
+    setCarte((ouverte) => (ouverte === quelle ? null : quelle));
+  const fermer = () => setCarte(null);
 
   // Le HAUT et le BAS se lisent dans la table, jamais réécrits ici : une case
   // qui changerait de groupe ne se déplacerait que dans `sidebar-nav`.
@@ -128,9 +172,26 @@ export default function SidebarRail({
         />
       ))}
 
-      {/* Help QUITTE l'application : la documentation est dehors. C'est donc
-          un lien en cible neuve, et pas un lien de routeur. */}
-      <RailCell href={RAIL_FOOT.docs} external label="Help" icon={Question} testId="rail-help" />
+      {/* Help ouvre les trois endroits qui parlent DU PRODUIT, et qui sont
+          tous dehors. La planche ne dessine que la case ; ce qu'elle ouvre
+          reste ce que la 0.8.11 proposait déjà. */}
+      <div className="relative shrink-0">
+        <RailCell
+          label="Help"
+          icon={Question}
+          onClick={() => basculer('help')}
+          expanded={carte === 'help'}
+          active={carte === 'help'}
+          testId="rail-help"
+        />
+        {carte === 'help' && (
+          <RailPopover label="Help" onClose={fermer}>
+            {RAIL_FOOT.help.map((lien) => (
+              <HelpLink key={lien.href} href={lien.href} label={lien.label} icon={lien.icon} />
+            ))}
+          </RailPopover>
+        )}
+      </div>
 
       {/* Le compte. L'initiale vient du SERVEUR quand il connaît la personne ;
           le rail retombe sur la silhouette quand il n'y a personne à nommer —
@@ -138,7 +199,7 @@ export default function SidebarRail({
           inventer une lettre afficherait un fait que rien ne vérifie. */}
       {userMenu !== undefined && (
         <div className="relative mt-1 shrink-0">
-          <RailAvatarButton onClick={() => setCompte((o) => !o)} expanded={compte}>
+          <RailAvatarButton onClick={() => basculer('account')} expanded={carte === 'account'}>
             {initiale === null ? (
               <User weight="fill" className="h-3.5 w-3.5" />
             ) : (
@@ -150,8 +211,8 @@ export default function SidebarRail({
               </span>
             )}
           </RailAvatarButton>
-          {compte && (
-            <RailPopover label="Account" onClose={() => setCompte(false)}>
+          {carte === 'account' && (
+            <RailPopover label="Account" onClose={fermer}>
               <div data-testid="user-menu">{userMenu}</div>
             </RailPopover>
           )}
