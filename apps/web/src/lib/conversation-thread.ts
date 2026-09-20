@@ -39,6 +39,7 @@ import {
   type Origin,
   type RunSummary,
 } from './conversation-feed.ts';
+import type { JobResultKind } from '@nodal-agents/shared';
 import { canonicalChangePath, lineCountsOfCall, sumLineCounts } from './coding-changes.ts';
 import { callHappened, outcomeOfToolOutput, parsePresented } from './tool-card-payload.ts';
 import type { ProductionVerdict } from './chat-or-work.ts';
@@ -87,6 +88,13 @@ export type ThreadJob = {
    * du groupe quand la dernière prose de l'agent n'est pas sa réponse.
    */
   result: string | null;
+  /**
+   * COMMENT `result` a été produit, tel que le runner l'a écrit sur la ligne
+   * (`agent_jobs.result_kind`, #154) : `prose` pour les mots de l'agent,
+   * `relay` pour le texte de ses délégués recompilé. `null` sur un travail
+   * fini avant cette colonne, et sur un travail qui a échoué.
+   */
+  resultKind: JobResultKind | null;
   verdict: ProductionVerdict;
   project: ThreadProject | null;
   /**
@@ -262,7 +270,7 @@ function answerOutsideTheRun(job: ThreadJob, work: FeedItem[]): FeedItem | null 
   // En vue DÉPLIÉE, la réponse sortie et la carte d'envoi qui porte le même
   // texte se voient toutes deux : c'est assumé — l'une est ce qui a été dit,
   // l'autre l'acte de l'envoyer.
-  if (result !== '' && readsAsReply(result, lastProse?.text ?? null)) {
+  if (result !== '' && readsAsReply(result, lastProse?.text ?? null, job.resultKind)) {
     return { kind: 'answer', text: job.result ?? '' };
   }
   if (lastProse === null || turn === undefined || turn.kind !== 'turn') return null;
@@ -276,22 +284,52 @@ function answerOutsideTheRun(job: ThreadJob, work: FeedItem[]): FeedItem | null 
 
 /**
  * `result` se lit-il comme une réponse à la personne — plutôt que la dernière
- * prose de l'agent ? Non quand c'est du JSON (un `return_result` structuré,
- * pour une machine), non quand c'est la même phrase (la prose sort alors avec
+ * prose de l'agent ? Non quand c'est la même phrase (la prose sort alors avec
  * son en-tête d'agent), non quand ce n'est qu'un début tronqué de la prose.
  *
  * Exporté depuis la page d'un run (`runs/run-view.ts`), qui sort la réponse de
  * la chronologie avec la MÊME règle : deux lectures de « qu'est-ce qu'une
  * réponse » auraient divergé au premier cas ajouté.
+ *
+ * LA NATURE DU TEXTE EST LUE, PLUS DEVINÉE (#154)
+ * ----------------------------------------------
+ * Jusqu'à la marque `result_kind`, cette fonction lisait le PREMIER CARACTÈRE
+ * du résultat : `{` ou `[` suivi d'un JSON valide voulait dire « texte
+ * machine », et la prose sortait à sa place. Reviewer C l'avait dit sur la
+ * PR #153 (passe 2) : une réponse légitime que l'agent a rendue en tableau
+ * JSON lisible tombait dans ce trou, et le fil montrait l'annonce (« je publie
+ * la revue ») plutôt que la revue.
+ *
+ * Le runner écrit désormais la provenance sur la ligne. Une marque `prose` ou
+ * `relay` dit que le texte a été rendu à une PERSONNE — sa forme ne change
+ * rien, du JSON écrit par l'agent reste sa réponse —, et le reniflage du
+ * premier caractère ne tourne plus.
+ *
+ * REPLI EXPLICITE quand la marque manque (`null`) : un travail fini avant la
+ * colonne n'a aucune provenance, et l'ancienne heuristique reprend la main
+ * pour lui. C'est un repli DIT, pas un silence — il vaut pour les lignes
+ * écrites avant la migration 0116 et pour rien d'autre.
  */
-export function readsAsReply(result: string, lastProse: string | null): boolean {
-  const first = result[0];
-  if (first === '{' || first === '[') {
-    try {
-      JSON.parse(result);
-      return false;
-    } catch {
-      // Pas du JSON : une phrase qui commence par une accolade se lit.
+export function readsAsReply(
+  result: string,
+  lastProse: string | null,
+  /**
+   * La marque de la ligne. REQUISE, sans valeur par défaut : un défaut `null`
+   * aurait rendu le repli invisible à l'appel, et un écran qui aurait oublié
+   * de lire la colonne serait retombé sur l'heuristique sans que rien ne le
+   * dise (invariant #4).
+   */
+  resultKind: JobResultKind | null,
+): boolean {
+  if (resultKind === null) {
+    const first = result[0];
+    if (first === '{' || first === '[') {
+      try {
+        JSON.parse(result);
+        return false;
+      } catch {
+        // Pas du JSON : une phrase qui commence par une accolade se lit.
+      }
     }
   }
   if (lastProse === null) return true;

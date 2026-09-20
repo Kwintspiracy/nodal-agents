@@ -183,7 +183,7 @@ const jobStatus = async (jobId: string): Promise<string | null> => {
   return row?.status ?? null;
 };
 
-describe('run-job : l’intention AVANT binding.run', () => {
+describe('run-job : l’intention AVANT binding.run @cap:verifier-un-livrable/moteur', () => {
   it('write : le binding LÈVE, la ligne d’état existe quand même (dirty 1, verified NULL) et les verrous sont rendus', async () => {
     const jobId = await newJob();
     fakeRun.mockRejectedValueOnce(new Error('binding exploded'));
@@ -243,6 +243,52 @@ describe('run-job : l’intention AVANT binding.run', () => {
     expect(await locksHeld()).toEqual([]);
   });
 
+  // ── L'ÉPOQUE MONTE AUSSI À LA SORTIE DE LA CLI (issue #101) ───────────────
+  //
+  // Le runtime CLI écrit hors du seam des outils : il porte donc en propre la
+  // seconde montée d'époque. Sans elle, une preuve lancée par un AUTRE job
+  // pendant la session CLI capture l'époque de l'intention, prouve l'arbre
+  // d'avant, et repose un vert que rien ne périme. La garde est ici une
+  // DIFFÉRENCE d'époque, relue en base, jamais un compte d'appels.
+  const epochOf = async (path: string): Promise<number | null> => {
+    const [row] = await db
+      .select({ verificationEpoch: codeProjects.verificationEpoch })
+      .from(codeProjects)
+      .where(eq(codeProjects.projectKey, keyOf(path)));
+    return row?.verificationEpoch ?? null;
+  };
+
+  it('write : l’époque du projet monte DEUX fois — à l’intention, puis à la sortie de la CLI (#101)', async () => {
+    const jobId = await newJob();
+    fakeRun.mockResolvedValueOnce(greenTurn());
+
+    const outcome = await runJob(jobId, 'write', [alpha]);
+
+    expect(outcome.status).toBe('completed');
+    // L'intention crée la ligne à 0 et la monte à 1 ; la sortie de la CLI la
+    // monte à 2. Une seule montée laisserait 1 — c'est exactement le trou
+    // que #101 décrit.
+    expect(await epochOf(alpha)).toBe(2);
+  });
+
+  it('write : le binding LÈVE — l’époque monte quand même, la CLI a pu écrire avant de tomber', async () => {
+    const jobId = await newJob();
+    fakeRun.mockRejectedValueOnce(new Error('binding exploded'));
+
+    await expect(runJob(jobId, 'write', [alpha])).rejects.toThrow('binding exploded');
+
+    expect(await epochOf(alpha)).toBe(2);
+  });
+
+  it('read : aucune intention, donc aucune montée — la ligne code_projects n’existe même pas', async () => {
+    const jobId = await newJob();
+    fakeRun.mockResolvedValueOnce(greenTurn());
+
+    await runJob(jobId, 'read', [alpha]);
+
+    expect(await epochOf(alpha)).toBeNull();
+  });
+
   it('job déjà terminal (annulé) ⇒ le CLI ne démarre pas', async () => {
     const jobId = await newJob();
     await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, jobId));
@@ -257,7 +303,7 @@ describe('run-job : l’intention AVANT binding.run', () => {
   });
 });
 
-describe('run-chat : le jumeau, sans jobId', () => {
+describe('run-chat : le jumeau, sans jobId @cap:verifier-un-livrable/moteur', () => {
   it('pas de jobId ⇒ aucune ligne, code journalisé, et le tour va quand même jusqu’à binding.run', async () => {
     await db.insert(agentWorkspaces).values({
       agentId: seed.agentId,
@@ -298,9 +344,80 @@ describe('run-chat : le jumeau, sans jobId', () => {
     expect(await db.select().from(jobDeliverableVerificationState)).toEqual([]);
     expect(await locksHeld()).toEqual([]);
   });
+
+  // ── L'AUTRE PORTE DU TROU DE #101 ────────────────────────────────────────
+  //
+  // Sans jobId, l'intention sort en `skipped` AVANT de résoudre un livrable :
+  // ce tour ne salit rien, et ne faisait donc rien vieillir non plus. Une
+  // preuve lancée par un autre job pendant ce tour capturait une époque figée,
+  // prouvait l'arbre d'avant, et reposait un vert périmé. Ce qui ferme ce
+  // défaut, c'est la montée qui SUIT l'écriture — une seule, il n'y a pas
+  // d'intention à doubler.
+  //
+  // La ligne d'état reste absente dans tous les cas : donner une intention à
+  // un tour sans job demande de décider où vit l'état d'un travail sans job,
+  // et ce n'est pas ce ticket.
+  async function tourDeChat(mode: 'read' | 'write'): Promise<void> {
+    await db.insert(agentWorkspaces).values({
+      agentId: seed.agentId,
+      label: 'alpha',
+      path: alpha,
+      position: 0,
+    });
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, origin: 'user' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('insert conversation');
+    await runCliRuntimeChatTurn({
+      db: db as unknown as Parameters<typeof runCliRuntimeChatTurn>[0]['db'],
+      entityId: seed.entityId,
+      agentRow: { ...baseAgent, cliPermissions: { mode } },
+      conversationId: conv.id,
+      message: 'écris',
+    }).catch(() => {
+      /* le sort du tour n'est pas ce que ces cas examinent */
+    });
+  }
+
+  const epochOfChat = async (path: string): Promise<number | null> => {
+    const [row] = await db
+      .select({ verificationEpoch: codeProjects.verificationEpoch })
+      .from(codeProjects)
+      .where(eq(codeProjects.projectKey, keyOf(path)));
+    return row?.verificationEpoch ?? null;
+  };
+
+  it('write : le tour fait vieillir le projet (époque 1) bien qu’aucune intention ne soit posée (#101)', async () => {
+    fakeRun.mockResolvedValueOnce({ ...greenTurn(), isError: true, errorDetail: 'stop' });
+
+    await tourDeChat('write');
+
+    // La ligne est créée à 0 puis montée à 1 par la sortie du tour. `null`
+    // signifierait que rien n'a bougé — le vert périmé de #101.
+    expect(await epochOfChat(alpha)).toBe(1);
+    // Et toujours aucune ligne d'état : ce tour n'a pas de job.
+    expect(await db.select().from(jobDeliverableVerificationState)).toEqual([]);
+  });
+
+  it('write : le binding LÈVE — le projet vieillit quand même, la CLI a pu écrire avant de tomber', async () => {
+    fakeRun.mockRejectedValueOnce(new Error('binding exploded'));
+
+    await tourDeChat('write');
+
+    expect(await epochOfChat(alpha)).toBe(1);
+  });
+
+  it('read : rien n’est écrit, donc rien ne vieillit — pas même une ligne code_projects', async () => {
+    fakeRun.mockResolvedValueOnce({ ...greenTurn(), isError: true, errorDetail: 'stop' });
+
+    await tourDeChat('read');
+
+    expect(await epochOfChat(alpha)).toBeNull();
+  });
 });
 
-describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)', () => {
+describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27) @cap:travailler-sur-des-fichiers/moteur', () => {
   /** `alpha` déclaré comme projet ENREGISTRÉ (P5) : c'est à lui qu'un tour réussi se rattache. */
   async function alphaEnregistre(): Promise<string> {
     const [row] = await db
@@ -414,7 +531,7 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
   });
 });
 
-describe('run-job : le registre se remplit tout seul (P5b)', () => {
+describe('run-job : le registre se remplit tout seul (P5b) @cap:travailler-sur-des-fichiers/moteur', () => {
   const ligneDeclaree = async (path: string) => {
     const [row] = await db
       .select({
@@ -518,7 +635,7 @@ describe('run-job : le registre se remplit tout seul (P5b)', () => {
   });
 });
 
-describe('run-job : les écritures d’audit en vol sont attendues avant de lire les chemins (passe 33)', () => {
+describe('run-job : les écritures d’audit en vol sont attendues avant de lire les chemins (passe 33) @cap:travailler-sur-des-fichiers/moteur', () => {
   const ligneDeclaree = async (path: string) => {
     const [row] = await db
       .select({ id: codeProjects.id, registeredAt: codeProjects.registeredAt })
