@@ -341,9 +341,15 @@ test.describe('Agents page redesign @cap:organiser-equipe/ecran', () => {
     // et le rayon de bordure. Le bouton, lui, existe aussi dans chaque
     // orchestrateur imbriqué de la carte, d'où l'ancre qui porte l'identifiant
     // (issue #55).
+    //
+    // ⚠️ L'exclusion de « Unassigned » se fait DANS le sélecteur, pas par un
+    // `filter({ hasNot })` : `hasNot` regarde les DESCENDANTS, et l'attribut
+    // qui distingue cette carte est sur la carte ELLE-MÊME. Le filtre
+    // n'excluait donc rien, et le cas ne passait que par l'ordre du DOM — les
+    // orchestrateurs sont rendus avant « Unassigned », et `.first()` tombait
+    // du bon côté par chance (revue de la PR #293).
     const orchestratorCard2 = page
-      .locator('[data-orchestrator-card]')
-      .filter({ hasNot: page.locator('[data-testid$="unassigned"]') })
+      .locator('[data-orchestrator-card]:not([data-testid$="unassigned"])')
       .first();
     const cardId2 = await orchestratorCard2.getAttribute('data-testid');
     await orchestratorCard2

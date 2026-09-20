@@ -146,7 +146,11 @@ export async function wizardStepTwo(page: Page, type: string): Promise<void> {
   // BRANCHE 1 — le formulaire d'ajout s'est ouvert parce qu'un identifiant
   // compatible existe déjà (celui d'un run précédent, ou celui d'un humain).
   // « or create new » est le geste qui mène quand même à l'assistant.
-  const createNew = dialog.getByRole('button', { name: /or create new/i });
+  //
+  // `.first()` : rien ne garantit qu'un seul bouton porte cette phrase, et une
+  // violation du mode strict ferait mourir le parcours sur sa branche de repli
+  // plutôt que sur ce qu'il éprouve (revue de la PR #293).
+  const createNew = dialog.getByRole('button', { name: /or create new/i }).first();
   if (await createNew.isVisible()) {
     await createNew.click();
   }

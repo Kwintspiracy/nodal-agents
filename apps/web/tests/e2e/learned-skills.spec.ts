@@ -1,11 +1,44 @@
 // An owner sees the skills an agent learned on its own, and chooses whether it keeps learning.
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack } from './helpers.ts';
+import { makeDbClient, pollDb, requireLiveStack, resolveActingUser } from './helpers.ts';
+
+/** L'espace au nom duquel le dashboard agit : c'est SA ligne qui porte le réglage. */
+let entityId: string;
 
 test.beforeAll(async () => {
   await requireLiveStack();
+  ({ entityId } = await resolveActingUser());
 });
+
+/**
+ * Le mode d'affectation ENREGISTRÉ, attendu jusqu'à ce qu'il vaille `expected`.
+ *
+ * L'écran bascule de façon optimiste : il montre le nouveau choix avant que le
+ * serveur ne l'ait écrit. Recharger la page juste après le clic court donc
+ * après l'écriture et lit l'ancienne valeur — c'est ce qui a fait rougir ce cas
+ * au rejeu de la PR #293. La base est la seule chose qui dise si le réglage a
+ * vraiment changé.
+ */
+async function assignmentModeBecomes(expected: 'auto' | 'approval'): Promise<void> {
+  const { entities, eq } = await import('@nodal-agents/db');
+  const { db, close } = makeDbClient();
+  try {
+    await pollDb(
+      async () => {
+        const [row] = await db
+          .select({ mode: entities.skillAssignmentMode })
+          .from(entities)
+          .where(eq(entities.id, entityId))
+          .limit(1);
+        return row?.mode === expected ? row.mode : null;
+      },
+      { timeoutMs: 15_000, intervalMs: 250 },
+    );
+  } finally {
+    await close();
+  }
+}
 
 test.describe('learned-skills page @cap:apprendre-une-skill/ecran', () => {
   test('renders the Learned Skills page at /learned-skills', async ({ page }) => {
@@ -57,23 +90,34 @@ test.describe('learned-skills page @cap:apprendre-une-skill/ecran', () => {
       timeout: 10_000,
     });
 
-    // Les deux options, par leur ANCRE et non par leur prose : le nom
-    // accessible d'une OptionRadio est son libellé SUIVI de sa description, et
-    // ce parcours se cassait à la première reformulation (issue #55).
-    const autoOption = page.getByTestId('assign-mode-auto');
-    const approvalOption = page.getByTestId('assign-mode-approval');
+    // Les deux options, par leur RÔLE **et** par leur ANCRE.
+    //
+    // Le rôle, parce que c'est la promesse d'accessibilité du contrôle : un
+    // `<div>` qui perdrait son `role="radio"` doit faire rougir ce parcours.
+    // L'ancre, parce que le nom accessible d'une `OptionRadio` est sa PROSE —
+    // son libellé suivi de sa description — et que désigner l'option par ce
+    // texte casse à la première reformulation (issue #55). `and()` exige les
+    // deux à la fois : c'est bien un radio, et c'est bien celui-là.
+    const autoOption = page.getByRole('radio').and(page.getByTestId('assign-mode-auto'));
+    const approvalOption = page.getByRole('radio').and(page.getByTestId('assign-mode-approval'));
     await expect(autoOption).toBeVisible();
     await expect(approvalOption).toBeVisible();
 
-    // ⚠️ AUCUNE assertion sur l'option cochée AU DÉPART. C'est un réglage de la
-    // personne, pas une promesse du produit : sur une installation où il vaut
-    // « auto », ce cas rougissait en affirmant « approval » — et il rougissait
-    // sur l'installation, pas sur un défaut. Ce qui se prouve ici, c'est que
-    // le contrôle EST un choix exclusif et qu'il répond.
-    const startedOn = (await approvalOption.getAttribute('aria-checked')) === 'true';
-    const [first, second] = startedOn ? [autoOption, approvalOption] : [approvalOption, autoOption];
+    // L'ÉTAT DE DÉPART EST UNE PROMESSE DU PRODUIT : une installation neuve
+    // attend l'accord de la personne avant d'affecter une skill apprise. C'est
+    // le défaut sûr, et il se vérifie ici — sans quoi le changer passerait sans
+    // que rien ne rougisse (revue de la PR #293, constat bloquant).
+    //
+    // La base de ce parcours est neuve par construction, donc le défaut y
+    // tient. Sur une installation VIVANTE réglée sur « auto », ce cas rougit :
+    // c'est alors l'installation qu'il décrit, pas un défaut du produit.
+    await expect(
+      approvalOption,
+      'une installation neuve doit demander l’accord avant d’affecter une skill apprise',
+    ).toHaveAttribute('aria-checked', 'true');
+    await expect(autoOption).toHaveAttribute('aria-checked', 'false');
 
-    // Une seule option cochée à la fois, avant tout geste.
+    // Une seule option cochée à la fois : le groupe est un choix EXCLUSIF.
     expect(
       [
         await autoOption.getAttribute('aria-checked'),
@@ -83,14 +127,25 @@ test.describe('learned-skills page @cap:apprendre-une-skill/ecran', () => {
     ).toHaveLength(1);
 
     // Le geste bascule (UI optimiste)…
-    await first.click();
-    await expect(first).toHaveAttribute('aria-checked', 'true');
-    await expect(second).toHaveAttribute('aria-checked', 'false');
+    await autoOption.click();
+    await expect(autoOption).toHaveAttribute('aria-checked', 'true');
+    await expect(approvalOption).toHaveAttribute('aria-checked', 'false');
 
-    // …et le geste inverse revient à l'état trouvé : ce parcours ne laisse pas
-    // derrière lui un réglage qu'il a changé.
-    await second.click();
-    await expect(second).toHaveAttribute('aria-checked', 'true');
-    await expect(first).toHaveAttribute('aria-checked', 'false');
+    // …et il est ENREGISTRÉ. L'écran bascule de façon optimiste, donc l'état à
+    // l'écran ne dit rien de ce qui a été écrit : la base le dit. Ce cas
+    // n'avait jusqu'ici aucune preuve d'enregistrement, et l'attendre est
+    // aussi ce qui rend le geste suivant possible — une action serveur
+    // appelée du client est une transition React, et React LIE les transitions
+    // en cours, si bien que deux clics enchaînés n'écrivaient que le premier.
+    // Ce parcours affirmait rendre le réglage à la personne et la laissait sur
+    // « auto » (constaté en base au rejeu de la PR #293).
+    await assignmentModeBecomes('auto');
+
+    // Le geste inverse, et la même preuve : le réglage est RENDU tel qu'il
+    // était. Un parcours ne laisse pas derrière lui un choix qu'il a changé.
+    await approvalOption.click();
+    await expect(approvalOption).toHaveAttribute('aria-checked', 'true');
+    await expect(autoOption).toHaveAttribute('aria-checked', 'false');
+    await assignmentModeBecomes('approval');
   });
 });
