@@ -11,6 +11,7 @@ import {
 } from '@nodal-agents/shared';
 import { ModelToolsLegend } from '@/components/ui/ModelToolsBadge.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import { ProductLogo, PRODUCT_NAME } from '@/components/ui/BrandMark.tsx';
 import TextInput from '@/components/ui/TextInput.tsx';
 import TextArea from '@/components/ui/TextArea.tsx';
 import Select from '@/components/ui/Select.tsx';
@@ -622,11 +623,15 @@ export default function OnboardingFlow() {
         <div className="rounded-2xl border border-rule-2 bg-paper px-7 py-8 shadow-sm">
           {step === 0 && (
             <div className="text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-ink text-legacy-22 text-canvas">
-                ◆
+              {/* LE LOGO, et plus le losange (#308). Un `◆` sur un carre
+                  d'encre etait un marqueur de mise en page, pas une marque :
+                  la premiere chose qu'une personne voit du produit montre
+                  maintenant le meme dessin que le site et que le rail. */}
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center">
+                <ProductLogo size={48} priority />
               </div>
               <h1 className="text-display-22 tracking-[-0.01em] text-ink">
-                Welcome to Nodal-Agents
+                Welcome to {PRODUCT_NAME}
               </h1>
               <p className="mx-auto mt-2 max-w-sm text-body-14 leading-[1.6]! text-ink-3">
                 Let&apos;s set up your first AI agent. It takes about a minute: connect a model,
@@ -1041,11 +1046,11 @@ export default function OnboardingFlow() {
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-canvas">
           <div className="relative mb-6 flex h-20 w-20 items-center justify-center">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-2xl bg-ink/10" />
-            <span className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-ink text-legacy-30 text-canvas">
-              ◆
+            <span className="relative flex h-16 w-16 items-center justify-center">
+              <ProductLogo size={64} />
             </span>
           </div>
-          <div className="text-title-15 tracking-[-0.01em] text-ink">Entering Nodal-Agents</div>
+          <div className="text-title-15 tracking-[-0.01em] text-ink">Entering {PRODUCT_NAME}</div>
           <div className="mt-1 text-body-13 text-ink-3">Waking up {agentName || 'your agent'}…</div>
           <div className="mt-6 h-1 w-52 overflow-hidden rounded-full bg-rule-2">
             <div

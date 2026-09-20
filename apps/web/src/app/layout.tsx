@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
+import { LOGO_SRC, PRODUCT_NAME } from '@/components/ui/BrandMark';
 
 // Self-hosted via next/font — no external CDN, no FOUT. Exposes the fonts as
 // CSS variables so globals.css can fall them into --font-sans / --font-mono.
@@ -19,8 +20,17 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Nodal-Agents',
+  title: PRODUCT_NAME,
   description: 'Multi-agent platform',
+  // L'ONGLET PORTE LA MARQUE (#308). Le produit n'avait aucune icone : le
+  // navigateur affichait la page blanche par defaut, et un onglet sans dessin
+  // ne se retrouve pas dans une rangee de vingt.
+  //
+  // Le MEME fichier que le rail, pointe depuis `public/`, plutot qu'un
+  // `app/icon.png` que Next servirait a son propre chemin : la convention de
+  // fichier aurait demande une SECONDE copie du meme dessin dans le depot, et
+  // deux copies d'une image finissent par diverger.
+  icons: { icon: LOGO_SRC },
   // Safari iOS transforme tout nombre qui ressemble à un téléphone en lien
   // `tel:` et COUPE le nœud de texte autour — l'argument `"seed": 8472910452`
   // d'une carte d'approbation faisait échouer l'hydratation sur l'iPad

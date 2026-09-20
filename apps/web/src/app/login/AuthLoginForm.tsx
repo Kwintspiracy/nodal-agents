@@ -7,6 +7,7 @@ import PillTabs from '@/components/ui/PillTabs';
 import TextInput from '@/components/ui/TextInput';
 import IconButton from '@/components/ui/IconButton';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import { ProductLogo, PRODUCT_NAME } from '@/components/ui/BrandMark';
 import { claimOwnerAccountAction } from '@/lib/actions.ts';
 import type { AuthSetupState } from '@nodal-agents/auth';
 
@@ -149,11 +150,13 @@ export default function AuthLoginForm({ setup, openSignup }: Props) {
     <div className="flex min-h-screen w-full items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="inline-flex items-center gap-1.5 mb-6">
-            <span className="text-ok font-mono text-sm">$</span>
-            <span className="text-sm font-mono font-bold text-ink tracking-tight">
-              nodal-agents
-            </span>
+          {/* LA MARQUE DU PRODUIT (#308), et plus une invite de terminal.
+              Le `$ nodal-agents` disait « un outil en ligne de commande » sur
+              la premiere page qu'une personne voit du produit ; le site et le
+              rail montrent le colley sur le N, et c'est la meme porte. */}
+          <div className="mb-6 inline-flex items-center gap-2">
+            <ProductLogo size={28} priority />
+            <span className="text-medium-15 tracking-[-0.005em] text-ink">{PRODUCT_NAME}</span>
           </div>
           <h1 className="text-2xl font-bold text-ink tracking-tight">
             {isClaim ? 'Create your account' : 'Welcome'}

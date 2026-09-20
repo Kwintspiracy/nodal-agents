@@ -87,6 +87,7 @@ import {
   SIDEBAR_ROW_IDLE_CONTENT,
 } from '../ui/SidebarRow';
 import RailCell, { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
+import { LOGO_SRC } from '../ui/BrandMark';
 import { ListMagnifyingGlass } from '@phosphor-icons/react';
 import { SIDEBAR_POLL_MS } from '@/lib/use-polling';
 import { DESTINATIONS, RAIL_FOOT } from '../sidebar-nav.ts';
@@ -1466,5 +1467,59 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
     // Et le nom dit les DEUX, dans cet ordre : ce qui attend, puis ce qui
     // avance.
     expect(cellule.getAttribute('aria-label')).toBe('Logs, 3 pending, 2 runs in progress');
+  });
+});
+
+// ─── La marque du produit (#308) ──────────────────────────────────────────────
+//
+// Pas d'etiquette `@cap:` ici, et c'est deliberе : un logo n'est pas une
+// capacite du produit. Tagger ce cas ferait passer un dessin pour la preuve
+// d'un parcours, ce qui est exactement le faux vert que le registre existe
+// pour empecher.
+
+describe('la marque du rail', () => {
+  // LE CHEMIN ECRIT EN TOUTES LETTRES, et pas `LOGO_SRC`. Compare a la
+  // constante, le test se comparait a lui-meme : changer le fichier dans
+  // `BrandMark` changeait les deux cotes de l'assertion, et la mutation
+  // restait verte. Le dessin du produit est un FAIT, il s'ecrit ici aussi.
+  const FICHIER = '/logo-128.png';
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    document.body.innerHTML = '';
+  });
+
+  it('est une IMAGE du logo, et plus une lettre', async () => {
+    pathname = '/agents';
+    await renderSidebar();
+    const lien = [...container.querySelectorAll('a')].find(
+      (a) => a.getAttribute('aria-label') === 'Nodal-Agents',
+    );
+    expect(lien).toBeDefined();
+    expect(lien!.getAttribute('href')).toBe('/');
+    const image = lien!.querySelector('img');
+    expect(image).not.toBeNull();
+    // `next/image` reecrit la source ; le fichier d'origine y reste, encode.
+    expect(decodeURIComponent(image!.getAttribute('src') ?? '')).toContain(FICHIER);
+    // La lettre est PARTIE : un « N » reste dans le lien et la marque se lit
+    // deux fois, une fois dessinee et une fois ecrite.
+    expect(lien!.textContent?.trim()).toBe('');
+    // Le nom du lien porte le produit ; l'image ne se decrit pas une seconde
+    // fois par-dessus.
+    expect(image!.getAttribute('alt')).toBe('');
+    // Et la constante partagee designe bien ce fichier-la : les autres ecrans
+    // s'en servent, et un test qui ne la regarde pas les laisserait deriver.
+    expect(LOGO_SRC).toBe(FICHIER);
+  });
+
+  it('est la MEME marque sur la barre mobile', async () => {
+    pathname = '/agents';
+    await renderSidebar();
+    const entete = container.querySelector('header')!;
+    const image = entete.querySelector('img');
+    expect(image).not.toBeNull();
+    expect(decodeURIComponent(image!.getAttribute('src') ?? '')).toContain(FICHIER);
+    // Le nom ECRIT reste a cote : la barre mobile a la place, le rail non.
+    expect(entete.textContent).toContain('Nodal-Agents');
   });
 });
