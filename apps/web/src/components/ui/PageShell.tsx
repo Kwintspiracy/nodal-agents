@@ -166,7 +166,7 @@ export default function PageShell(props: Props) {
           gouttières et va d'un bord à l'autre, comme sous l'en-tête d'un fil. */}
       {toolbar && toolbarBleed && toolbar}
       <div
-        className={`px-5 pt-6 pb-10 sm:px-8 lg:px-9 ${fluid ? '' : 'mx-auto max-w-6xl'} ${bodyClassName}`}
+        className={`w-full px-5 pt-6 pb-10 sm:px-8 lg:px-9 ${fluid ? '' : 'mx-auto max-w-6xl'} ${bodyClassName}`}
       >
         {toolbar && !toolbarBleed && <div className="mb-5">{toolbar}</div>}
         {children}
