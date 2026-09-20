@@ -195,6 +195,18 @@ export type ConversationThreadView = {
   /** Un travail du fil n'est pas terminé : l'écran se rafraîchit. */
   live: boolean;
   /**
+   * LES TRAVAUX DE TÊTE QU'ON PEUT ENCORE ARRÊTER, avec leur statut (#252).
+   *
+   * `live` dit QUE quelque chose court ; l'écran, lui, a besoin de savoir QUOI
+   * pour proposer de l'arrêter. Les deux sortent des mêmes lignes, lues une
+   * seule fois : un second chargement aurait pu désigner un job déjà fini.
+   *
+   * De TÊTE seulement : annuler la tête annule ses délégués
+   * (`cancelJobAction`), et proposer d'arrêter un délégué à part ferait deux
+   * gestes pour un seul travail. Vide quand rien ne court.
+   */
+  liveJobs: Array<{ id: string; status: string | null }>;
+  /**
    * Le fil ne montre que sa FIN : les plafonds ont mordu. Le feed porte déjà
    * la note qui le dit ; ce drapeau existe pour qu'un appelant puisse en faire
    * autre chose (une pagination, un jour).
@@ -2005,6 +2017,10 @@ export async function getConversationThreadAction(
       cost,
       deliveries: deliveryRows,
       live: !allTerminal,
+      // Les mêmes lignes que `allTerminal`, filtrées plutôt que recomptées.
+      liveJobs: headRows
+        .filter((r) => !TERMINAL_STATUSES.has(r.job.status ?? ''))
+        .map((r) => ({ id: r.job.id, status: r.job.status })),
       truncated,
       canReply: conv.channel === 'dashboard',
     });

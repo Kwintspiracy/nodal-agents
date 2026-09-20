@@ -11,11 +11,13 @@
 // géométrie ne doit pas diverger d'un écran à l'autre.
 
 import type { ReactNode } from 'react';
+import ActionRow from '@/components/ui/ActionRow';
 import ThreadScroller, { type ThreadFollow } from './ThreadScroller.tsx';
 
 export default function ThreadScreen({
   children,
   composer,
+  actions = null,
   follow = 'bottom',
   sidePadding = true,
 }: {
@@ -23,6 +25,18 @@ export default function ThreadScreen({
   children: ReactNode;
   /** La saisie, ou ce qui la remplace (un mot quand on ne peut pas écrire). */
   composer?: ReactNode;
+  /**
+   * CE QUE L'ÉCRAN PERMET DE FAIRE — arrêter ce qui court (#252).
+   *
+   * HORS DE LA ZONE QUI DÉFILE, juste sous la barre : un fil s'ouvre par sa
+   * fin, et une rangée posée en tête du contenu serait déjà remontée hors de
+   * l'écran au moment où l'on cherche à s'en servir. C'est la place que la
+   * règle de #242 lui donne — sa propre rangée, sous la barre — et c'est la
+   * seule où elle reste sous les yeux pendant que le travail avance.
+   *
+   * `null` : aucune rangée, pas une rangée vide.
+   */
+  actions?: ReactNode;
   /**
    * Ce que l'écran fait du bas de son contenu (voir `ThreadFollow`). Un fil se
    * lit par sa fin : il s'ouvre en bas et suit ce qui arrive. La page d'un run
@@ -48,6 +62,17 @@ export default function ThreadScreen({
 }) {
   return (
     <>
+      {actions !== null && (
+        // LES GOUTTIÈRES DE LA PAGE, ET AUCUNE BORNE DE LARGEUR. Les trois
+        // écrans de fil passent `fluid` à `PageShell` pour n'avoir PAS de
+        // `max-w-6xl` (#237, et son garde-fou `FullHeightWidth.test.tsx`) ; en
+        // poser une ici la ferait rentrer par la fenêtre dès qu'un run tourne.
+        // La rangée tient donc le bord droit de l'écran, comme la barre au-dessus
+        // d'elle, qui va elle aussi d'un bord à l'autre.
+        <div className="w-full min-w-0 shrink-0 px-5 pt-4 sm:px-8 lg:px-9">
+          <ActionRow>{actions}</ActionRow>
+        </div>
+      )}
       {/* `scrollbar-gutter: stable` : la gouttière de la barre est réservée
           même quand le fil tient dans l'écran, sinon le fil se recentre d'une
           demi-barre au premier message qui le fait déborder. */}

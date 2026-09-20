@@ -13,6 +13,8 @@ import { notFound } from 'next/navigation';
 import { getCodingProcessDetailAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import RunScreen from '@/app/(dashboard)/runs/RunScreen.tsx';
+import StopRunButton from '@/components/ui/StopRunButton';
+import { canStopRun } from '@/lib/job-live.ts';
 import StatusPill from '@/components/ui/StatusPill';
 import { threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { truncate } from '@/lib/format-time';
@@ -85,6 +87,15 @@ export default async function CodeProcessPage({ params }: Props) {
       // jamais déclaré n'a pas de page : pas de bouton plutôt qu'un lien mort.
       filesHref={codeFilesHref(header)}
       proofVerdict={lastProof?.verdict ?? null}
+      // ARRÊTER CE PROCESS, tant qu'il court (#252). Seulement quand la page
+      // regarde un JOB : une session de chat de la CLI n'a pas de job à
+      // annuler, et le harnais qui tourne dehors n'est pas à nous (hors
+      // périmètre). `StopRunButton` se tait de lui-même hors statut vivant.
+      actions={
+        header.kind === 'job' && canStopRun(header.status) ? (
+          <StopRunButton jobId={header.id} status={header.status} />
+        ) : null
+      }
     >
       <CodeProcessDetail detail={result.data} />
     </RunScreen>

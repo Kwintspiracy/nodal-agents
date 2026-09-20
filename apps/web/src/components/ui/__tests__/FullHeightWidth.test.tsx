@@ -77,6 +77,8 @@ const fil = {
   },
   deliveries: [],
   live: false,
+  // Rien ne court : pas de rangée d'actions, donc pas de bouton d'arrêt (#252).
+  liveJobs: [],
   canReply: false,
 };
 

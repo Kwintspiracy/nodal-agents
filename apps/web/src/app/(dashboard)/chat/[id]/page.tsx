@@ -9,6 +9,8 @@
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
 import StatusPill from '@/components/ui/StatusPill';
+import StopRunButton from '@/components/ui/StopRunButton';
+import { canStopRun } from '@/lib/job-live.ts';
 import ThreadWorkBar from '@/app/(dashboard)/spaces/ThreadWorkBar.tsx';
 import ConversationFeedView from '@/app/(dashboard)/spaces/ConversationFeedView.tsx';
 import LiveRefresh from '@/app/(dashboard)/spaces/LiveRefresh.tsx';
@@ -40,7 +42,8 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
     );
   }
 
-  const { conversation, feed, verification, cost, deliveries, live, canReply } = result.data;
+  const { conversation, feed, verification, cost, deliveries, live, liveJobs, canReply } =
+    result.data;
   const lastProof = verification.sequences.at(-1) ?? null;
   // #138 — ce que les trois listes du composeur montrent : la clé de l'agent,
   // son modèle, son effort, et les clés actives de l'espace. Un agent disparu
@@ -130,6 +133,20 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
         awaitingReply={feedAwaitsReply(feed.items)}
       >
         <ThreadScreen
+          // ARRÊTER LE TOUR QUI COURT (#252). Un seul bouton, pour le travail
+          // de TÊTE : annuler la tête annule ses délégués, et un bouton par
+          // travail ferait une rangée qui s'allonge pendant qu'on la regarde.
+          // Le plus récent — c'est celui dont on attend la réponse.
+          actions={(() => {
+            // Le plus récent des travaux vivants — c'est celui dont on attend la
+            // réponse. `canStopRun` tranche une seconde fois parce que
+            // `liveJobs` dit « non terminé » et que le bouton, lui, exige un
+            // statut VIVANT connu : les deux listes se rejoignent aujourd'hui,
+            // et rien ne garantit qu'elles le feront toujours.
+            const dernier = liveJobs.at(-1);
+            if (dernier === undefined || !canStopRun(dernier.status)) return null;
+            return <StopRunButton jobId={dernier.id} status={dernier.status} />;
+          })()}
           composer={
             canReply ? (
               <ThreadComposer

@@ -18,9 +18,10 @@
 // l'agent est invisible ») ; ce sont pourtant les deux seules choses qu'on vient
 // lire quand le run est fini.
 
-import type { ReactNode } from 'react';
 import type { SpaceConversationView } from '@/lib/actions.ts';
 import StatusPill from '@/components/ui/StatusPill';
+import StopRunButton from '@/components/ui/StopRunButton';
+import { canStopRun } from '@/lib/job-live.ts';
 import Markdown, { plainText } from '@/components/Markdown.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
 import LiveRefresh from '@/app/(dashboard)/spaces/LiveRefresh.tsx';
@@ -38,11 +39,9 @@ import { activityLabel, runView } from './run-view.ts';
 
 export type RunPageProps = {
   data: SpaceConversationView;
-  /** Ce que la route ajoute dans la carte de tête (annuler un run vivant). */
-  actions?: ReactNode;
 };
 
-export default function RunPage({ data, actions = null }: RunPageProps) {
+export default function RunPage({ data }: RunPageProps) {
   const { job, feed, verification, cost } = data;
   const view = runView(data);
   const lastProof = verification.sequences.at(-1) ?? null;
@@ -58,6 +57,11 @@ export default function RunPage({ data, actions = null }: RunPageProps) {
       agents={threadAgents(feed.items)}
       status={<StatusPill variant={view.status.variant} label={view.status.label} />}
       proofVerdict={lastProof?.verdict ?? null}
+      // ARRÊTER CE RUN, tant qu'il court (#252). La page le décide elle-même :
+      // elle a le job et son statut, et deux routes la rendent — leur demander
+      // à chacune de passer le bouton en faisait une décision à deux endroits,
+      // et `/scheduled/[id]` ne l'avait jamais prise.
+      actions={canStopRun(job.status) ? <StopRunButton jobId={job.id} status={job.status} /> : null}
       statusBar={
         <StatusBar
           cost={cost}
@@ -71,7 +75,7 @@ export default function RunPage({ data, actions = null }: RunPageProps) {
         />
       }
     >
-      <RunBody data={data} actions={actions} />
+      <RunBody data={data} />
     </RunScreen>
   );
 }
@@ -81,13 +85,7 @@ export default function RunPage({ data, actions = null }: RunPageProps) {
  * (en-tête de page, barres) pour que cet ordre se prouve en test sans monter un
  * routeur : c'est l'ordre qui est la décision produit, pas la charpente.
  */
-export function RunBody({
-  data,
-  actions = null,
-}: {
-  data: SpaceConversationView;
-  actions?: ReactNode;
-}) {
+export function RunBody({ data }: { data: SpaceConversationView }) {
   const { job, verification } = data;
   const view = runView(data);
 
@@ -115,7 +113,6 @@ export function RunBody({
         statusVariant={view.status.variant}
         statusLabel={view.status.label}
         stats={view.stats}
-        actions={actions}
       />
 
       {/* Pas de liens vers le run parent ni vers les délégués : les délégations
