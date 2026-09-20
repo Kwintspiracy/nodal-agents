@@ -9,6 +9,9 @@ receives inbound messages as jobs and sends replies back to the same chat.
 The binding is per-agent and per-bot: one bot token, one agent. You can have
 multiple agents each with their own bot.
 
+You configure it in the dashboard, on the agent's **Channels** tab — the same
+place as Discord, Slack and WhatsApp.
+
 ## Prerequisites
 
 - A Telegram bot token. Create one with
@@ -16,11 +19,11 @@ multiple agents each with their own bot.
 
 ## Set up the bot
 
-1. Open the agent's edit page in the dashboard.
-2. Go to the **Settings** tab and paste the bot token into the
-   **Telegram bot token** field.
-3. Save the agent. The runner picks up the new token within 30 seconds and
-   starts long-polling for updates automatically. No restart needed.
+1. Open the agent's edit page in the dashboard → **Channels** tab → Telegram
+   card.
+2. Paste the bot token into the **Bot token** field → **Connect**.
+3. The runner picks up the new token within 30 seconds and starts long-polling
+   for updates automatically. No restart needed.
 
 That's it — send a message to the bot and the agent responds.
 

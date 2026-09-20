@@ -7,6 +7,7 @@ import { askUserTool } from './ask-user';
 import { registerProjectTool } from './register-project';
 import { saveMemoryTool } from './save-memory';
 import { queryMemoryTool } from './query-memory';
+import { nodalDocsTool } from './nodal-docs';
 import { searchHistoryTool } from './search-history';
 import { markMemoryHelpfulTool } from './mark-memory-helpful';
 import { markMemoryOutdatedTool } from './mark-memory-outdated';
@@ -47,6 +48,15 @@ export { listSchedulesTool } from './list-schedules';
 export { createListConversationsTool } from './list-conversations';
 export { saveMemoryTool } from './save-memory';
 export { queryMemoryTool } from './query-memory';
+export { nodalDocsTool, NodalDocsInputSchema } from './nodal-docs';
+export {
+  loadDocsIndex,
+  searchDocs,
+  resetDocsIndexCache,
+  docsIndexCandidatePaths,
+  DocsIndexUnavailableError,
+} from './docs-index';
+export type { DocsIndex, DocsSection, DocsHit } from './docs-index';
 export { searchHistoryTool } from './search-history';
 export { markMemoryHelpfulTool } from './mark-memory-helpful';
 export { markMemoryOutdatedTool } from './mark-memory-outdated';
@@ -154,6 +164,7 @@ export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(listSchedulesTool);
   registry.register(saveMemoryTool);
   registry.register(queryMemoryTool);
+  registry.register(nodalDocsTool);
   registry.register(searchHistoryTool);
   registry.register(markMemoryHelpfulTool);
   registry.register(markMemoryOutdatedTool);
@@ -241,6 +252,15 @@ export const ALWAYS_ON_TOOLS = [
   'list_schedules',
   'save_memory',
   'query_memory',
+  // nodal_docs — TOUJOURS disponible, comme `ask_user`, et pour la même raison :
+  // un agent qui ne peut pas consulter le manuel de la plateforme dans laquelle
+  // il tourne invente ce qu'elle sait faire. Le 21/09, le root agent a répondu
+  // que Telegram n'était pas supporté et a proposé de construire un serveur MCP.
+  // Le gating par skill (`requiredBuiltins`) n'est PAS une option ici : la
+  // branche orchestrateur d'`executeJob` ne lit pas `requiredBuiltins`, donc
+  // l'outil n'aurait jamais atteint l'agent ROOT, qui est précisément celui à
+  // qui l'on parle.
+  'nodal_docs',
   'search_history',
   'mark_memory_helpful',
   'mark_memory_outdated',
@@ -294,6 +314,7 @@ export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<{ name: string; description: str
   { name: listSchedulesTool.name, description: listSchedulesTool.description },
   { name: saveMemoryTool.name, description: saveMemoryTool.description },
   { name: queryMemoryTool.name, description: queryMemoryTool.description },
+  { name: nodalDocsTool.name, description: nodalDocsTool.description },
   { name: searchHistoryTool.name, description: searchHistoryTool.description },
   { name: markMemoryHelpfulTool.name, description: markMemoryHelpfulTool.description },
   { name: markMemoryOutdatedTool.name, description: markMemoryOutdatedTool.description },
