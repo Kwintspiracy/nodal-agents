@@ -166,7 +166,7 @@ describe('finalisation sous vraie concurrence', () => {
     // A : transaction 1 commise, puis bloqué DANS sa preuve.
     const aRun = finalizeJobSuccess(
       h.a,
-      { jobId, result: 'par A' },
+      { jobId, result: 'par A', resultKind: 'prose' },
       {
         getVerifier: () =>
           stub('A', async () => {
@@ -182,7 +182,7 @@ describe('finalisation sous vraie concurrence', () => {
     const bStarted = Date.now();
     const bOutcome = await finalizeJobSuccess(
       h.b,
-      { jobId, result: 'par B' },
+      { jobId, result: 'par B', resultKind: 'prose' },
       {
         getVerifier: () =>
           stub('B', async () => {
@@ -265,7 +265,7 @@ describe('finalisation sous vraie concurrence', () => {
 
     const aRun = finalizeJobSuccess(
       h.a,
-      { jobId, result: 'par A' },
+      { jobId, result: 'par A', resultKind: 'prose' },
       { getVerifier: () => verifier, log: logger(logs) },
     );
     await waitFor(() => inProof);

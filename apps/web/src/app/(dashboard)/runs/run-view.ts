@@ -10,6 +10,7 @@
 // (un 0 qui voudrait dire « rien », une durée devinée) serait pire que son
 // absence (invariant #4).
 
+import type { JobResultKind } from '@nodal-agents/shared';
 import type { SpaceConversationView } from '@/lib/actions.ts';
 import type { StatusVariant } from '@/components/ui/StatusPill';
 import { normalizeText, type ConversationFeed, type FeedItem } from '@/lib/conversation-feed.ts';
@@ -260,39 +261,74 @@ export function dropTaskRequest(items: readonly FeedItem[], task: string): FeedI
  * recopie jamais octet pour octet, et un seuil de similarité serait une
  * heuristique — donc une invention (invariant #4).
  *
- * La règle est désormais un FAIT, pas une comparaison : dès que le run porte
- * au moins un verdict de relecture enregistré — le sien ou celui d'un délégué
- * —, le bloc Review EST la réponse de ce run, et rien ne sort sous l'en-tête.
- * L'item `answer` quitte quand même la chronologie : il y serait un doublon de
- * plus.
+ * La règle de 0.8.11 était donc un FAIT et non une comparaison : dès qu'un
+ * verdict de relecture existait — le sien ou celui d'un délégué —, rien ne
+ * sortait sous l'en-tête. Quentin l'a acceptée en disant son coût, et a
+ * demandé #210 pour y revenir.
  *
- * Le compromis est assumé : sur un run de code relu par un délégué, la phrase
- * finale de l'agent ne se lit plus en haut. Ce que le run a donné se lit dans
- * Review, dans Delivered et dans Files, et la chronologie garde tout — la
- * prose reste dans son tour, elle n'est pas sortie pour être jetée.
+ * CE QUE LA MARQUE CHANGE (#210, option 3 de la fiche)
+ * ---------------------------------------------------
+ * `agent_jobs.result_kind` (#154) dit désormais d'où vient le texte rendu. La
+ * réponse ne se cache plus que lorsqu'elle n'est PAS de la main de l'agent :
+ *
+ *   `relay` — le résultat est le texte des délégués, recompilé par le runner.
+ *      Le bloc Review porte déjà le rapport du relecteur en entier ; le
+ *      remettre en haut serait la même lecture deux fois. Rien ne sort.
+ *   `prose` — les mots de l'agent sur son propre travail. Un run de code relu
+ *      après coup GARDE sa phrase finale en haut, quel que soit le verdict :
+ *      c'est exactement ce que #210 demandait de récupérer.
+ *   `null` — un run fini avant la colonne. La règle de 0.8.11 s'applique
+ *      telle quelle, comme repli explicite : un verdict enregistré cache la
+ *      réponse.
+ *
+ * L'option 2 de la fiche — cacher seulement quand le verdict vient d'un
+ * délégué DONT LA TÂCHE ÉTAIT la revue — n'est pas retenue, faute d'un fait
+ * qui la porte : un relecteur mandaté et un relecteur qui relit le travail du
+ * run laissent la MÊME trace, un job enfant qui a émis `review_verdict`. Les
+ * départager aurait demandé de lire la tâche du délégué au jugé, ce qui est
+ * précisément l'invention que #154 retire d'ici (invariant #4).
+ *
+ * Le coût restant est dit : un orchestrateur qui RECOPIE le rapport de son
+ * relecteur dans son propre texte final porte `prose`, et sa copie se relit
+ * donc en haut, au-dessus du bloc Review. La marque rattrape le même
+ * orchestrateur quand il n'écrit aucun texte de sa main — son résultat est
+ * alors la compilation de ses enfants, donc `relay`.
+ *
+ * Dans tous les cas, l'item `answer` quitte la chronologie : il y serait un
+ * doublon de ce qui se lit en haut, ou de ce que Review porte déjà.
  */
 export function liftReply(
   items: readonly FeedItem[],
   job: Pick<RunJob, 'completedAt'> & { result?: string | null },
   /**
    * Le run porte-t-il au moins UN verdict de relecture enregistré — le sien ou
-   * celui d'un délégué ? Alors le bloc Review EST la réponse de ce run, et
-   * rien ne sort sous l'en-tête (voir la règle ci-dessus).
+   * celui d'un délégué ? Lu SEULEMENT quand la marque manque (voir ci-dessus).
    */
   hasReview = false,
+  /**
+   * La marque de provenance du résultat (`agent_jobs.result_kind`, #154).
+   * `null` quand la ligne n'en porte pas.
+   */
+  resultKind: JobResultKind | null = null,
 ): { reply: string | null; items: FeedItem[] } {
+  // La réponse est-elle cachée derrière le bloc Review ? `relay` le dit à lui
+  // seul ; sans marque, la règle de 0.8.11 reprend la main.
+  const hiddenByReview = resultKind === 'relay' || (resultKind === null && hasReview);
   const out = [...items];
   if (job.completedAt === null) return { reply: null, items: out };
   const answerAt = out.findIndex((i) => i.kind === 'answer');
   if (answerAt >= 0) {
     const answer = out[answerAt];
     out.splice(answerAt, 1);
-    return { reply: hasReview ? null : answer?.kind === 'answer' ? answer.text : null, items: out };
+    return {
+      reply: hiddenByReview ? null : answer?.kind === 'answer' ? answer.text : null,
+      items: out,
+    };
   }
-  // Relu ⇒ rien d'autre ne sort, et la chronologie garde tout : la prose du
+  // Caché ⇒ rien d'autre ne sort, et la chronologie garde tout : la prose du
   // dernier tour reste DANS son tour. La sortir pour ne pas l'afficher aurait
   // fait disparaître le texte des deux endroits.
-  if (hasReview) return { reply: null, items: out };
+  if (hiddenByReview) return { reply: null, items: out };
   if (out.some((i) => i.kind === 'failure')) return { reply: null, items: out };
 
   const result = job.result?.trim() ?? '';
@@ -305,7 +341,7 @@ export function liftReply(
   const block = turn !== undefined && turn.kind === 'turn' ? turn.blocks[proseAt] : undefined;
   const lastProse = block !== undefined && block.kind === 'prose' ? block : null;
 
-  if (result !== '' && readsAsReply(result, lastProse?.text ?? null)) {
+  if (result !== '' && readsAsReply(result, lastProse?.text ?? null, resultKind)) {
     return { reply: job.result ?? '', items: out };
   }
   if (lastProse === null || turn === undefined || turn.kind !== 'turn') {
@@ -394,13 +430,14 @@ export type RunView = {
 export function runView(data: SpaceConversationView): RunView {
   // Dans l'ordre : la demande s'en va (elle titre la page), puis la réponse et
   // le récapitulatif montent au-dessus de la chronologie.
-  // Un run RELU n'a pas de réponse en haut : le bloc Review est sa réponse
-  // (Quentin, 18/09). Un verdict enregistré suffit à le dire — le sien ou celui
-  // d'un délégué.
+  // La réponse ne se cache derrière le bloc Review que lorsqu'elle n'est pas
+  // des mots de l'agent (`relay`, #210) — ou, sur un run d'avant la marque,
+  // dès qu'un verdict est enregistré (la règle de 0.8.11, Quentin, 18/09).
   const lifted = liftReply(
     dropTaskRequest(data.feed.items, data.job.task),
     data.job,
     data.verdicts.length > 0,
+    data.job.resultKind,
   );
   const { delivered, items } = liftDelivered(lifted.items);
   return {

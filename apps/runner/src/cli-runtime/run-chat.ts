@@ -23,6 +23,7 @@ import {
   assertRuntimeSessionKey,
   SHARED_WORKSPACE_LABEL,
   writeMutationIntent,
+  bumpEpochsAfterJoblessWrite,
   attachProductionToProject,
 } from '@nodal-agents/tools';
 import { resolveWorkspaceList, ensureSharedWorkspace } from '../lib/workspace-list.ts';
@@ -253,6 +254,32 @@ export async function runCliRuntimeChatTurn(args: {
     }
     throw err;
   } finally {
+    // ── L'ÉCRITURE FAIT VIEILLIR LE PROJET, ICI AUSSI (issue #101) ──────────
+    //
+    // Le chemin job monte l'époque deux fois : à l'intention, puis à la sortie
+    // de la CLI. Un tour de CHAT n'a pas de jobId — l'intention ci-dessus sort
+    // en `skipped` avant même de résoudre un livrable —, donc RIEN ne bougeait
+    // ici : une preuve lancée par un autre job pendant ce tour capturait une
+    // époque figée, prouvait l'arbre d'avant, et reposait un vert périmé.
+    // C'est le même trou par une autre porte, et il se ferme par la montée qui
+    // SUIT l'écriture, la seule dont ce défaut dépende.
+    //
+    // Dans le `finally`, donc y compris quand le binding lève ou que la CLI
+    // n'a pas démarré : même contrat conservatif que partout ailleurs, et une
+    // époque montée pour rien ne fait jamais qu'un `dirty` de trop.
+    if (mode === 'write') {
+      await bumpEpochsAfterJoblessWrite(
+        { db, entityId, workspaces: wsRows },
+        {
+          surface: 'cliRuntime',
+          targets: wsRows.map((w) => ({
+            kind: 'dir' as const,
+            path: w.path,
+            deliverableType: 'code_project' as const,
+          })),
+        },
+      );
+    }
     await locks.release();
   }
 

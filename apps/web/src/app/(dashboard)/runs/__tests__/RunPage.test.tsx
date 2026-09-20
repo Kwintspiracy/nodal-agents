@@ -108,6 +108,7 @@ function data(live: boolean): SpaceConversationView {
       parentJobId: null,
       scheduleName: 'every Monday 09:00',
       scheduleId: 'schedule-1',
+      resultKind: null,
     },
     feed: { items: [turn(1, STEP), turn(2, REPLY), delivered], totals },
     verdicts: [],

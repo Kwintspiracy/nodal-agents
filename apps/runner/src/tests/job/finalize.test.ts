@@ -285,7 +285,7 @@ describe('finalizeJobSuccess — phase d’observation (v5-C)', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'fini', toolsUsed: ['return_result'] },
+      { jobId: jobId, result: 'fini', resultKind: 'prose', toolsUsed: ['return_result'] },
       deps(),
     );
 
@@ -324,7 +324,7 @@ describe('finalizeJobSuccess — phase d’observation (v5-C)', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
       deps(),
     );
 
@@ -364,7 +364,11 @@ describe('finalizeJobSuccess — phase d’observation (v5-C)', () => {
     const jobId = await insertJob('processing');
     const stateId = await insertState(jobId, 'code_project', key, 1);
 
-    await finalizeJobSuccess(asDb(), { jobId: jobId, result: 'ok', toolsUsed: [] }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      deps(),
+    );
 
     const runs = await runsOf(jobId);
     expect(runs.map((r) => r.commandRank)).toEqual([0, 1]);
@@ -396,7 +400,7 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'classeur écrit', toolsUsed: ['xlsx_create'] },
+      { jobId: jobId, result: 'classeur écrit', resultKind: 'prose', toolsUsed: ['xlsx_create'] },
       deps(),
     );
 
@@ -424,7 +428,7 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
       deps(),
     );
 
@@ -468,7 +472,7 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
       deps(),
     );
 
@@ -499,7 +503,11 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
       },
     );
 
-    await finalizeJobSuccess(asDb(), { jobId: jobId, result: 'ok', toolsUsed: [] }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      deps(),
+    );
 
     const runs = await runsOf(jobId);
     expect(runs).toHaveLength(1);
@@ -523,7 +531,7 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
       deps(),
     );
 
@@ -538,7 +546,7 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
     const jobId = await insertJob('processing');
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'sans livrable', toolsUsed: [] },
+      { jobId: jobId, result: 'sans livrable', resultKind: 'prose', toolsUsed: [] },
       deps(),
     );
     expect(outcome.kind).toBe('completed');
@@ -559,7 +567,7 @@ describe('finalizeJobSuccess — déjà terminal', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'trop tard', toolsUsed: [] },
+      { jobId: jobId, result: 'trop tard', resultKind: 'prose', toolsUsed: [] },
       deps(),
     );
 
@@ -581,12 +589,12 @@ describe('finalizeJobSuccess — déjà terminal', () => {
 
     const first = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'premier', toolsUsed: [] },
+      { jobId: jobId, result: 'premier', resultKind: 'prose', toolsUsed: [] },
       deps(),
     );
     const second = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'second', toolsUsed: [] },
+      { jobId: jobId, result: 'second', resultKind: 'prose', toolsUsed: [] },
       deps(),
     );
 
@@ -642,7 +650,7 @@ describe('finalizeJobSuccess — déjà terminal', () => {
           bOutcome = (
             await finalizeJobSuccess(
               asDb(),
-              { jobId: jobId, result: 'par B', toolsUsed: [] },
+              { jobId: jobId, result: 'par B', resultKind: 'prose', toolsUsed: [] },
               deps(),
             )
           ).kind;
@@ -652,7 +660,7 @@ describe('finalizeJobSuccess — déjà terminal', () => {
 
       const a = await finalizeJobSuccess(
         asDb(),
-        { jobId, result: 'par A' },
+        { jobId, result: 'par A', resultKind: 'prose' },
         deps({ getVerifier: () => verifierA }),
       );
 
@@ -710,7 +718,7 @@ describe('finalizeJobSuccess — génération périmée et persistance', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok' },
+      { jobId, result: 'ok', resultKind: 'prose' },
       deps({ getVerifier: () => bumping }),
     );
 
@@ -742,7 +750,7 @@ describe('finalizeJobSuccess — génération périmée et persistance', () => {
     try {
       outcome = await finalizeJobSuccess(
         asDb(),
-        { jobId: jobId, result: 'ok', toolsUsed: [] },
+        { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
         deps(),
       );
     } finally {
@@ -769,7 +777,11 @@ describe('finalizeJobSuccess — génération périmée et persistance', () => {
     const jobId = await insertJob('processing');
     await insertState(jobId, 'code_project', key, 1);
 
-    await finalizeJobSuccess(asDb(), { jobId: jobId, result: 'ok', toolsUsed: [] }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      deps(),
+    );
 
     const runs = await runsOf(jobId);
     expect(runs).toHaveLength(1);
@@ -795,7 +807,7 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', toolsUsed: ['file_write'] },
+      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: ['file_write'] },
       deps(),
     );
     expect(outcome.kind).toBe('completed');
@@ -831,7 +843,11 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
       doc,
     );
 
-    await finalizeJobSuccess(asDb(), { jobId, result: 'ok', toolsUsed: [] }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      deps(),
+    );
 
     expect((await runsOf(jobId)).map((r) => r.verdict)).toEqual([
       'green',
@@ -868,7 +884,7 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', toolsUsed: [] },
+      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
       deps({ getVerifier: () => apresLaPreuve }),
     );
 
@@ -904,7 +920,7 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', toolsUsed: [] },
+      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
       deps({ getVerifier: () => aba }),
     );
 
@@ -918,7 +934,11 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
     const jobId = await insertJob('processing');
     const stateId = await insertState(jobId, 'document', projectKey(doc), 1, true);
 
-    await finalizeJobSuccess(asDb(), { jobId, result: 'ok', toolsUsed: [] }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      deps(),
+    );
 
     const runs = await runsOf(jobId);
     expect(runs.map((r) => r.verdict)).toEqual(['green', 'green', 'green', 'red']);
@@ -940,7 +960,11 @@ describe('finalizeJobSuccess — le registre décide, pas la primitive', () => {
     const stateId = await insertState(jobId, 'other', '/srv/rapport.bin', 1);
 
     await expect(
-      finalizeJobSuccess(asDb(), { jobId: jobId, result: 'ok', toolsUsed: [] }, deps()),
+      finalizeJobSuccess(
+        asDb(),
+        { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+        deps(),
+      ),
     ).rejects.toThrow('DELIVERABLE_TYPE_UNSUPPORTED');
 
     const job = await jobRow(jobId);
@@ -968,7 +992,11 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
       });
     }
 
-    await finalizeJobSuccess(asDb(), { jobId: parentId, result: '', toolsUsed: [] }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId: parentId, result: '', resultKind: 'prose', toolsUsed: [] },
+      deps(),
+    );
 
     const job = await jobRow(parentId);
     expect(job.status).toBe('completed');
@@ -981,7 +1009,12 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
     await expect(
       finalizeJobSuccess(
         asDb(),
-        { jobId, result: 'ok', delivery: { channel: 'telegram', chatId: '42', payload: 'ok' } },
+        {
+          jobId,
+          result: 'ok',
+          resultKind: 'prose',
+          delivery: { channel: 'telegram', chatId: '42', payload: 'ok' },
+        },
         deps(),
       ),
     ).rejects.toThrow(DELIVERY_PREPARE_UNAVAILABLE);
@@ -993,7 +1026,12 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
     await expect(
       finalizeJobSuccess(
         asDb(),
-        { jobId, result: 'ok', delivery: { channel: 'telegram', chatId: '42', payload: 'ok' } },
+        {
+          jobId,
+          result: 'ok',
+          resultKind: 'prose',
+          delivery: { channel: 'telegram', chatId: '42', payload: 'ok' },
+        },
         deps({
           prepareDelivery: async () => {
             throw new Error('canal indisponible');
@@ -1010,7 +1048,12 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
     const jobId = await insertJob('processing');
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', delivery: { channel: 'telegram', chatId: '42', payload: 'à livrer' } },
+      {
+        jobId,
+        result: 'ok',
+        resultKind: 'prose',
+        delivery: { channel: 'telegram', chatId: '42', payload: 'à livrer' },
+      },
       deps({
         prepareDelivery: async (tx, input) => {
           await tx.insert(jobDeliveries).values({
@@ -1200,7 +1243,7 @@ describe('la réclamation du marqueur finalizing_at', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'par le second' },
+      { jobId, result: 'par le second', resultKind: 'prose' },
       deps({ getVerifier: () => stubVerifier(() => proofs++) }),
     );
 
@@ -1219,7 +1262,7 @@ describe('la réclamation du marqueur finalizing_at', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'par le cron', claim: { finalizingAt: mine } },
+      { jobId, result: 'par le cron', resultKind: 'prose', claim: { finalizingAt: mine } },
       deps(),
     );
 
@@ -1239,7 +1282,11 @@ describe('la réclamation du marqueur finalizing_at', () => {
       .set({ finalizingAt: new Date(Date.now() - FINALIZING_STALE_MS - 1_000) })
       .where(eq(agentJobs.id, jobId));
 
-    const outcome = await finalizeJobSuccess(asDb(), { jobId, result: 'repris' }, deps());
+    const outcome = await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'repris', resultKind: 'prose' },
+      deps(),
+    );
 
     expect(outcome.kind).toBe('completed');
     expect((await jobRow(jobId)).status).toBe('completed');
@@ -1267,7 +1314,7 @@ describe('la réclamation du marqueur finalizing_at', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok' },
+      { jobId, result: 'ok', resultKind: 'prose' },
       deps({ getVerifier: () => bumping }),
     );
 

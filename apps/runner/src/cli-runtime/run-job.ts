@@ -32,7 +32,9 @@ import {
   recordCliRun,
   assertRuntimeSessionKey,
   writeMutationIntent,
+  bumpEpochsAfterWrite,
   attachProductionToProject,
+  type DirtiedDeliverable,
 } from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
@@ -510,6 +512,9 @@ export async function runCliRuntimeJob(args: {
   // annulé qui laisse partir une CLI n'est pas annulé. Levé avec un CODE :
   // run-job ne marque pas le job lui-même, l'appelant décide.
   let systemPrompt: string;
+  // Les livrables salis par l'intention ci-dessous, gardés jusqu'à la fin du
+  // tour : c'est sur EUX que l'époque remonte une fois la CLI sortie (#101).
+  let dirtied: readonly DirtiedDeliverable[] = [];
   try {
     if (mode === 'write') {
       const intent = await writeMutationIntent(
@@ -530,6 +535,7 @@ export async function runCliRuntimeJob(args: {
       if (intent.kind === 'already_terminal') {
         throw new Error('verification_intent_failed:intent_already_terminal');
       }
+      if (intent.kind === 'written') dirtied = intent.deliverables;
 
       // P11 — l'état d'avant du tour, AVANT que la CLI touche au disque. Même
       // place et même filet que l'intention ci-dessus : un échec relâche les
@@ -593,11 +599,22 @@ export async function runCliRuntimeJob(args: {
     });
   } catch (err) {
     clearInterval(heartbeat);
+    // La CLI a pu écrire avant de tomber — même contrat conservatif que
+    // l'intention, et même raison qu'au seam des outils (#101).
+    await bumpEpochsAfterWrite(db, job.entityId ?? '', dirtied);
     await releaseHeld();
     if (isCliSetupError(err)) return fail(err.message.slice(0, 300));
     throw err;
   }
   clearInterval(heartbeat);
+  // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
+  //
+  // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce
+  // runtime écrit sans jamais traverser le seam des outils, donc il porte la
+  // même discipline en propre — l'intention dit « une CLI s'apprête à écrire »,
+  // cette ligne-ci dit « le disque vient peut-être de changer ». Sans elle, une
+  // preuve lancée par un AUTRE job pendant la session CLI reste vert périmé.
+  await bumpEpochsAfterWrite(db, job.entityId ?? '', dirtied);
   await releaseHeld();
 
   // Audit — one cli_runs row per turn, success or failure (the cost is real).
@@ -750,7 +767,15 @@ export async function runCliRuntimeJob(args: {
 
   const outcome = await finalizeJobSuccess(
     db,
-    { jobId, result: turn.finalText, toolsUsed: [binding.toolLabel], delivery },
+    // `prose` : le texte final du CLI est celui de l'agent, relayé verbatim
+    // (#154, #210).
+    {
+      jobId,
+      result: turn.finalText,
+      resultKind: 'prose',
+      toolsUsed: [binding.toolLabel],
+      delivery,
+    },
     {
       prepareDelivery: async (tx, input) => {
         await prepareDelivery(tx, {

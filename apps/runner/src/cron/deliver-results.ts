@@ -272,6 +272,9 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         {
           jobId: rootJobId,
           result: compiledResult,
+          // `relay` : ce root n'a pas écrit ce texte, il compile les résultats
+          // de ses tâches — chacune un job à part (#154, #210).
+          resultKind: 'relay',
           toolsUsed: [],
           delivery,
           // Le marqueur posé à l'étape 1 est le NÔTRE : la primitive l'accepte.

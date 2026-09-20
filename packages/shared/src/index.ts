@@ -50,3 +50,4 @@ export * from './verification-manifest';
 export * from './verification-surfaces';
 export * from './fragment-diff';
 export * from './failure-codes';
+export * from './job-result-kind';

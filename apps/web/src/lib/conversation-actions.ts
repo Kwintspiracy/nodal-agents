@@ -1712,6 +1712,9 @@ export async function getConversationThreadAction(
       createdAt: r.job.createdAt,
       completedAt: r.job.completedAt,
       result: r.job.result,
+      // La provenance du résultat, lue sur la ligne plutôt que devinée à son
+      // premier caractère (#154).
+      resultKind: r.job.resultKind ?? null,
       verdict: classifyProduction({
         conversation: conversationRef,
         rows: rowsByRoot.get(r.job.id) ?? [],
