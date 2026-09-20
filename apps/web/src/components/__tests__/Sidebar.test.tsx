@@ -86,7 +86,8 @@ import {
   SIDEBAR_ROW_IDLE,
   SIDEBAR_ROW_IDLE_CONTENT,
 } from '../ui/SidebarRow';
-import { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
+import RailCell, { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
+import { ListMagnifyingGlass } from '@phosphor-icons/react';
 import { SIDEBAR_POLL_MS } from '@/lib/use-polling';
 import { DESTINATIONS, RAIL_FOOT } from '../sidebar-nav.ts';
 import type { FolderThread } from '@/lib/chat-folders.ts';
@@ -1354,6 +1355,9 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
     const rond = point!.querySelector('span');
     expect(rond?.className).toContain('bg-agent-vivid');
     expect(rond?.className).toContain('animate-[blip-lime');
+    // La TAILLE du point est celle du reste de la barre : 7 px. Un point plus
+    // gros dans une case de 52 se lirait comme une pastille.
+    expect(rond?.className).toContain('h-[7px]');
     // Le point ne s'annonce pas deux fois : la case le dit en toutes lettres.
     expect(point!.getAttribute('aria-hidden')).toBe('true');
     expect(railCell('logs').getAttribute('aria-label')).toBe('Logs, 2 runs in progress');
@@ -1404,10 +1408,37 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
       },
     ];
     await renderSidebar([], uneAttente, { runsInProgress: 4 });
-    // La pastille et le point se posent au MEME endroit. Aucune case n'en
-    // porte deux : c'est ce qui rend ce coin lisible.
-    expect(railCell('approvals').querySelector('span[class*="bg-err"]')).not.toBeNull();
+    // La pastille tient le coin DROIT, et le point de Logs le coin GAUCHE :
+    // deux coins, donc aucun recouvrement possible, quelle que soit la case.
+    const pastille = railCell('approvals').querySelector('span[class*="bg-err"]');
+    expect(pastille).not.toBeNull();
+    expect(pastille!.className).toContain('right-1');
+    expect(pointQuiTourne('logs')!.className).toContain('left-1');
     expect(pointQuiTourne('approvals')).toBeNull();
     expect(railCell('approvals').getAttribute('aria-label')).toBe('Approvals, 1 pending');
+  });
+
+  it('pose le point et la pastille dans DEUX coins, meme sur une seule case', async () => {
+    // La regle se lit sur le composant, pas sur le cablage du jour (Reviewer C,
+    // passe 1) : aucune case ne porte les deux aujourd'hui, et celle qui le
+    // ferait demain ne doit pas poser le point SUR le chiffre.
+    await render(
+      <RailCell
+        href="/logs"
+        label="Logs"
+        icon={ListMagnifyingGlass}
+        pill={3}
+        running={{ count: 2, noun: 'run' }}
+        testId="rail-deux"
+      />,
+    );
+    const cellule = container.querySelector('[data-testid="rail-deux"]')!;
+    expect(cellule.querySelector('span[class*="bg-err"]')!.className).toContain('right-1');
+    const point = container.querySelector('[data-testid="rail-deux-running"]')!;
+    expect(point.className).toContain('left-1');
+    expect(point.className).not.toContain('right-1');
+    // Et le nom dit les DEUX, dans cet ordre : ce qui attend, puis ce qui
+    // avance.
+    expect(cellule.getAttribute('aria-label')).toBe('Logs, 3 pending, 2 runs in progress');
   });
 });

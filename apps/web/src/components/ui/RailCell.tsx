@@ -160,16 +160,18 @@ export default function RailCell({
         <AttentionCount count={pill} variant="solid" className="absolute top-1 right-1" />
       )}
       {running !== undefined && running.count > 0 && (
-        // Le MÊME coin que la pastille : c'est là qu'on regarde pour savoir ce
-        // qu'une case a de particulier. Les deux ne s'y croisent pas — seule
-        // Approvals porte une pastille, et rien n'y tourne (`SidebarRail`).
+        // LE COIN GAUCHE, et la pastille garde le droit (Reviewer C, passe 1).
+        // Les deux tenaient le même coin, et rien ne les en empêchait : aucune
+        // case n'en porte deux aujourd'hui, mais celle qui le ferait demain
+        // aurait posé le point SUR le chiffre, sans qu'un test le voie. Une
+        // règle sans condition — chacun son coin — ne peut pas se croiser.
         //
         // `aria-hidden` : ce que le point dit, le nom de la case le dit déjà
         // en toutes lettres. Annoncé deux fois, il deviendrait un bruit.
         <span
           aria-hidden="true"
           data-testid={`${testId}-running`}
-          className="absolute top-1 right-1 flex h-2 w-2 items-center justify-center"
+          className="absolute top-1 left-1 flex h-2 w-2 items-center justify-center"
         >
           <LiveDot variant="lime" size="sm" />
         </span>

@@ -844,11 +844,18 @@ export type ChatFoldersSnapshot = {
    * ne regarde pas `status`). Il fait exister le dossier MCP ; il ne dit rien
    * de ce qui avance.
    *
-   * Le total compte les JOBS vivants, délégations comprises : c'est ce que la
-   * page Logs liste, une ligne par job, et un chiffre qui ne compterait que
-   * les têtes ne correspondrait plus à ce qu'on trouve en cliquant. Tiré de la
-   * MÊME requête que `running`, avant le rangement par dossier : pas une
-   * lecture de plus.
+   * Le total compte les JOBS, délégations comprises : la page Logs rend une
+   * ligne par job (`listActivityRunsAction`), et un chiffre qui ne compterait
+   * que les têtes ne correspondrait plus à ce qu'on trouve en cliquant.
+   *
+   * ⚠️ CE QUI AVANCE, et non « tout ce que Logs affiche » (Reviewer C, passe 1
+   * de la PR #314). `RUNNING_JOB_STATUSES` retire `awaiting_approval` des
+   * statuts vivants ; la page, elle, liste aussi ces lignes-là. Un job arrêté
+   * sur une approbation n'avance pas, il attend la personne, et c'est la
+   * pastille d'Approvals qui le dit — le point le compterait une seconde fois.
+   *
+   * Tiré de la MÊME requête que `running`, avant le rangement par dossier :
+   * pas une lecture de plus.
    */
   runsInProgress: number;
   /**
