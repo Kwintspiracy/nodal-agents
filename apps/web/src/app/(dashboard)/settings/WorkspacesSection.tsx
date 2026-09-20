@@ -77,6 +77,11 @@ export default function WorkspacesSection({ initial, formId }: Props) {
         else setFootprintError(res.message);
       })
       .catch(() => {
+        // ⚠️ CE `catch` ATTRAPE AUSSI CE QUE LE `then` POURRAIT LEVER, et
+        // l'appellerait « serveur injoignable » (revue C, passe 2). Le `then`
+        // ne fait que deux `setState` aujourd'hui ; le jour où de la logique y
+        // entre, il faudra distinguer les deux causes.
+        //
         // ⚠️ L'ACTION ATTRAPE SES PROPRES ERREURS, PAS CELLES DU TRANSPORT
         // (revue C de cette PR). Un réseau coupé, un serveur qui ne répond
         // plus : la promesse est REJETÉE, et sans ce `catch` la ligne restait

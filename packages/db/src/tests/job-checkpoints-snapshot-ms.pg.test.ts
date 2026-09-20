@@ -18,13 +18,17 @@
 //      nombre négatif ne dirait rien qu'un écran puisse rendre ;
 //   3. zéro est ACCEPTÉ, et ce n'est pas la même chose que NULL. Une photo peut
 //      légitimement tomber sous la milliseconde ; c'est l'écran qui distingue
-//      « instantanée » de « pas mesurée ».
+//      « instantanée » de « pas mesurée » ;
+//   4. l'index qui sert « la dernière photo de cet espace » existe, et il est
+//      DÉCROISSANT — c'est ce sens-là qui rend la ligne la plus récente en une
+//      sonde, y compris pour un espace silencieux.
 //
 // Mutations vérifiées :
 //   - l'entrée 119 retirée de `meta/_journal.json` → le deuxième test rougit
 //     (« snapshot_ms absente après les vraies migrations ») ;
-//   - la contrainte retirée de la migration → le troisième test rougit (une
-//     durée négative s'écrit au lieu d'être refusée).
+//   - la contrainte retirée de la migration → le quatrième test rougit (une
+//     durée négative s'écrit au lieu d'être refusée) ;
+//   - le `DESC` retiré du CREATE INDEX → le troisième test rougit.
 
 import { describe, it, expect, afterAll } from 'vitest';
 import { startRealPostgres, type RealPostgres } from '@nodal-agents/test-kit';
@@ -85,6 +89,26 @@ describe('migration 0119_job_checkpoints_snapshot_ms @cap:travailler-sur-des-fic
       // « instantanée ».
       expect(colonne.is_nullable).toBe('YES');
       expect(colonne.column_default).toBeNull();
+    } finally {
+      await close();
+    }
+  });
+
+  it('l’index qui sert « la dernière photo de cet espace » existe, en DESC', async () => {
+    const { db, close } = createClient(harness().url, { max: 1 });
+    try {
+      const index = (await db.execute(
+        sql`SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'job_checkpoints'
+              AND indexname = 'idx_job_checkpoints_taken_at'`,
+      )) as unknown as Array<{ indexdef: string }>;
+
+      expect(index, 'idx_job_checkpoints_taken_at absent').toHaveLength(1);
+      // DESC, et pas l'ordre par défaut : la lecture demande la ligne la plus
+      // RÉCENTE d'un espace, et c'est ce sens-là qui la sert en une sonde.
+      expect(index[0]!.indexdef, 'l’index n’est pas décroissant').toContain('taken_at DESC');
     } finally {
       await close();
     }

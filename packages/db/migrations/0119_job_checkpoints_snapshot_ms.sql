@@ -37,3 +37,15 @@ ALTER TABLE "job_checkpoints" DROP CONSTRAINT IF EXISTS "job_checkpoints_snapsho
 
 ALTER TABLE "job_checkpoints" ADD CONSTRAINT "job_checkpoints_snapshot_ms_check"
   CHECK ("snapshot_ms" IS NULL OR "snapshot_ms" >= 0);
+
+-- L'ÉCRAN DEMANDE « LA DERNIÈRE PHOTO DE CET ESPACE », et rien d'autre : un
+-- `ORDER BY taken_at DESC LIMIT 1` par espace, joint sur le job.
+--
+-- Sans cet index, le planificateur n'a le choix qu'entre trier toutes les
+-- photos de l'entité et parcourir la table à l'envers en sondant `agent_jobs`.
+-- Le second dégénère précisément pour un espace SILENCIEUX — celui dont la
+-- dernière photo est la plus ancienne, donc la plus loin dans le parcours
+-- (revue C, passe 2). C'est le cas que l'écran doit servir vite, puisque c'est
+-- celui qu'on n'ouvre que pour voir s'il a grossi.
+CREATE INDEX IF NOT EXISTS "idx_job_checkpoints_taken_at"
+  ON "job_checkpoints" ("taken_at" DESC);

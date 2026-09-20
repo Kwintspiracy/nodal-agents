@@ -166,6 +166,12 @@ export async function listWorkspaceFootprintsAction(): Promise<ActionResult<Work
         .innerJoin(agentJobs, eq(agentJobs.id, jobCheckpoints.jobId))
         .where(eq(agentJobs.entityId, id))
         .orderBy(desc(jobCheckpoints.takenAt))
+        // ⚠️ AUCUN TEST NE PROUVE CE `limit`, et c'est assumé : `const [photo]`
+        // prendrait de toute façon la première ligne, et l'ordre garantit que
+        // c'est la bonne. Il est là pour que la base n'en rende qu'UNE au lieu
+        // de tout l'historique d'un espace, ce qu'un test sur le résultat ne
+        // peut pas voir (revue C, passe 2, constat 6). L'index
+        // `idx_job_checkpoints_taken_at` est ce qui le rend efficace.
         .limit(1);
 
       const path = sharedWorkspacePath(id);

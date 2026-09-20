@@ -52,6 +52,11 @@ export const jobCheckpoints = pgTable(
       table.workspace,
     ),
     index('idx_job_checkpoints_job').on(table.jobId),
+    // 0119 (#261) : « la dernière photo de cet espace », un `ORDER BY taken_at
+    // DESC LIMIT 1` par espace. Sans lui, le parcours dégénère pour un espace
+    // SILENCIEUX — dont la dernière photo est justement la plus ancienne, donc
+    // la plus loin (revue C, passe 2 de la PR #324).
+    index('idx_job_checkpoints_taken_at').on(sql`${table.takenAt} DESC`),
     // La durée est un CONSTAT, jamais négative. Pas de borne supérieure : une
     // photo peut légitimement durer plus que le budget de `git add`, et une
     // borne inventée refuserait la ligne au moment où elle intéresse le plus.

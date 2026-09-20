@@ -977,6 +977,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       CONSTRAINT job_checkpoints_snapshot_ms_check CHECK (snapshot_ms IS NULL OR snapshot_ms >= 0)
     );
     CREATE INDEX IF NOT EXISTS idx_job_checkpoints_job ON job_checkpoints (job_id);
+    -- mirrors migration 0119 (#261) : « la derniere photo de cet espace ».
+    CREATE INDEX IF NOT EXISTS idx_job_checkpoints_taken_at
+      ON job_checkpoints (taken_at DESC);
 
     -- constated_writes (migration 0113) — les fichiers LIVRES d un run, tels
     -- qu ils ont ete constates, et COMMENT : git (delta de git status avant et
