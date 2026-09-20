@@ -40,21 +40,12 @@ function usePanel(): PanelState {
   return ctx;
 }
 
-export function ProjectPanelProvider({
-  /**
-   * `/spaces/[id]/files` — cette adresse est dans des liens déjà envoyés et
-   * dans la barre d'un run, et elle veut dire « montre-moi le dossier ». Le
-   * panneau étant ouvert par défaut partout, elle ne change plus rien ; elle
-   * reste acceptée pour que ces liens continuent de mener quelque part.
-   */
-  forceOpen = false,
-  children,
-}: {
-  forceOpen?: boolean;
-  children: ReactNode;
-}) {
+export function ProjectPanelProvider({ children }: { children: ReactNode }) {
+  // Toujours ouvert au montage. `/spaces/[id]/files` — une adresse qui est dans
+  // des liens déjà envoyés et dans la barre d'un run, et qui veut dire
+  // « montre-moi le dossier » — n'a donc plus rien à forcer : elle rend la
+  // même page, panneau ouvert.
   const [open, setOpen] = useState(true);
-  void forceOpen;
 
   return (
     <PanelContext.Provider
@@ -90,9 +81,6 @@ export function ProjectPanelButton() {
     </PrimaryButton>
   );
 }
-
-/** La largeur du panneau flottant, et la place qu'il prend au contenu. */
-export const PROJECT_PANEL_W = 400;
 
 /**
  * Le PANNEAU, FLOTTANT (planche 498:5776, Quentin 20/09) : une carte posée au

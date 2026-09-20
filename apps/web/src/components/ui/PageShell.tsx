@@ -40,7 +40,7 @@ type Common = {
   footer?: ReactNode;
   /** Page body. */
   children: ReactNode;
-  /** Drop the max-width body wrapper (full-bleed body — e.g. full-screen chat). */
+  /** Drop the max-width body wrapper (full-bleed body, e.g. full-screen chat). */
   fluid?: boolean;
   /** Extra classes on the body wrapper. */
   bodyClassName?: string;
@@ -57,7 +57,7 @@ type Common = {
 
 type Props =
   | (Common & {
-      /** Page title — shown as the h1 in the full-width header. */
+      /** Page title, shown as the h1 in the full-width header. */
       title: ReactNode;
       /** One-line lede under the title. Keep it to a single short sentence. */
       subtitle?: ReactNode;
@@ -76,11 +76,11 @@ type Props =
     });
 
 /**
- * PageShell — THE single layout wrapper every dashboard page uses. There is no
+ * PageShell is THE single layout wrapper every dashboard page uses. There is no
  * per-page header markup anywhere else: a page renders exactly one `<PageShell>`
  * and everything below the header goes in `children`. This guarantees every
  * screen shares the identical full-width header (title + lede + search +
- * notifications + theme) and the same bottom rule — change the look once here
+ * notifications + theme) and the same bottom rule: change the look once here
  * and the whole product tracks.
  *
  * The navbar carries NO create button (per the design). A page's "+ New …" CTA

@@ -5,15 +5,11 @@
 // sessions se déplient comme avant ; une ligne de session sans conversation
 // ouvre la page du run (`/code/<id>`).
 //
-// À droite son DOSSIER et sa PREUVE, dans un panneau ancré qui pousse la page
-// au lieu de la couvrir (Quentin, 19/09). C'était un second onglet : il fallait
-// quitter les conversations pour voir le dossier, et les quitter de nouveau
-// pour revenir. Côte à côte, on lit les deux.
-//
-// Deux routes rendent cet écran, et c'est le seul écart entre elles :
-// `/spaces/[id]` respecte le choix de la personne, `/spaces/[id]/files` ouvre
-// le panneau d'office — cette adresse est dans des liens déjà envoyés et dans
-// la barre d'un run, et elle veut dire « montre-moi le dossier ».
+// À droite son DOSSIER et sa PREUVE, dans une carte flottante posée au bord
+// droit (planche 498:5776, Quentin 20/09), ouverte à chaque visite : on lit
+// les deux côte à côte. Deux routes rendent cet écran, `/spaces/[id]` et
+// `/spaces/[id]/files` — la seconde est dans des liens déjà envoyés et dans
+// la barre d'un run ; le panneau étant ouvert partout, elle rend la même page.
 
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
@@ -39,13 +35,7 @@ import ProjectProof from './ProjectProof.tsx';
 import { ProjectFilesPanel, ProjectPanelBody, ProjectPanelProvider } from './ProjectPanel.tsx';
 import type { ProjectVerification } from './ProjectVerificationPanel.tsx';
 
-export default async function ProjectScreen({
-  id,
-  forceFilesOpen = false,
-}: {
-  id: string;
-  forceFilesOpen?: boolean;
-}) {
+export default async function ProjectScreen({ id }: { id: string }) {
   const [factsResult, activityResult, approvals, pageResult, prefsResult, ownerResult] =
     await Promise.all([
       getProjectFactsAction(id),
@@ -83,7 +73,7 @@ export default async function ProjectScreen({
     : [];
 
   return (
-    <ProjectPanelProvider forceOpen={forceFilesOpen}>
+    <ProjectPanelProvider>
       {/* La planche 498:5776 (Quentin, 20/09) : l'en-tête porte le nom et le
           CHEMIN du projet ; dessous, la page est une page comme les autres —
           contenu centré, rangée d'actions alignée à droite au-dessus de la

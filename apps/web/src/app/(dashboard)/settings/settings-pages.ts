@@ -51,11 +51,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
 
 export const DEFAULT_SETTINGS_PAGE: SettingsPageKey = 'access';
 
-/** L'adresse d'une page : ce que la barre latérale écrit dans ses liens. */
-export function settingsPageHref(key: SettingsPageKey): string {
-  return `/settings?page=${key}`;
-}
-
 /**
  * La page demandée par l'URL. `?page=` d'abord ; `?open=<réglage>` ensuite,
  * parce que les liens d'avant le 20/09 en portaient un et qu'un lien qui

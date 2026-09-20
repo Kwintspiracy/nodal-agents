@@ -171,7 +171,9 @@ const AGENTS_GROUPS: readonly PanelGroup[] = [
  *
  * Les deux façons de déclencher un agent sans lui parler : une horloge, ou un
  * appel venu de dehors. Chaque titre porte un « + » vers la page où l'on en
- * crée un.
+ * crée un. Aucune entrée écrite : la ligne « Dashboard » qui ouvrait le
+ * panneau est retirée depuis le 20/09 (Quentin) ; `/dashboard` existe encore,
+ * sans lien vers elle.
  */
 const RUN_GROUPS: readonly PanelGroup[] = [
   {

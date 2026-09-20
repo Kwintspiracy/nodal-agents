@@ -5,12 +5,12 @@
 //   1. OUVERT PAR DÉFAUT — c'est la promesse ; un panneau qu'il faut ouvrir à
 //      chaque visite est un onglet déguisé ;
 //   2. le bouton le ferme ET le rouvre, et le panneau quitte vraiment le DOM ;
-//   3. le choix TIENT d'une visite à l'autre : il est écrit dans le stockage du
-//      navigateur, et relu au montage suivant ;
-//   4. `/spaces/<id>/files` (`forceOpen`) l'ouvre malgré un choix « fermé » —
+//   3. le choix ne TIENT PAS d'une visite à l'autre : rien n'est écrit dans le
+//      stockage du navigateur, et la visite suivante repart ouverte (20/09) ;
+//   4. `/spaces/<id>/files` rend la même page, panneau ouvert comme partout —
 //      cette adresse veut dire « montre-moi le dossier » ;
-//   5. un stockage qui REFUSE de répondre n'emporte pas l'écran : le défaut
-//      tient, et le bouton continue de marcher.
+//   5. un stockage absent ne change rien : personne ne le lit, le bouton
+//      continue de marcher.
 //
 // Rendu dans jsdom et MANIPULÉ : les assertions portent sur le DOM produit et
 // sur ce que le stockage CONTIENT, jamais sur un compte d'appels.
@@ -50,9 +50,9 @@ async function render(node: React.ReactElement): Promise<void> {
 }
 
 /** L'écran, réduit à ce que ce test regarde : le bouton et le panneau. */
-function Ecran({ forceOpen = false }: { forceOpen?: boolean }) {
+function Ecran() {
   return (
-    <ProjectPanelProvider forceOpen={forceOpen}>
+    <ProjectPanelProvider>
       <ProjectPanelButton />
       <ProjectPanelBody>
         <p>LES CONVERSATIONS</p>
@@ -153,7 +153,7 @@ describe('ProjectPanel @cap:travailler-sur-des-fichiers/ecran', () => {
   });
 
   it('`/files` ouvre le panneau, comme toute autre adresse', async () => {
-    await render(<Ecran forceOpen />);
+    await render(<Ecran />);
     expect(panneau()).not.toBeNull();
   });
 

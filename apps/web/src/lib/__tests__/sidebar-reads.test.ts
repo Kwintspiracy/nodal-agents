@@ -211,7 +211,7 @@ describe('la lecture du dossier Agents @cap:creer-agent/moteur', () => {
     expect(r.data.map((a) => a.name)).toEqual(['Test Agent', 'Agent 01', 'Agent 02', 'Agent 03']);
   });
 
-  it('ne rend QUE l’identifiant et le nom, jamais le jeton du bot', async () => {
+  it('ne rend QUE l’identifiant, le nom et l’activité, jamais le jeton du bot', async () => {
     // La ligne complète d'un agent porte son jeton Telegram et sa chaîne de
     // repli. Elle traverserait le réseau jusqu'au navigateur pour dessiner un
     // nom dans une colonne de 300 px.
@@ -221,7 +221,7 @@ describe('la lecture du dossier Agents @cap:creer-agent/moteur', () => {
     const { listSidebarAgentsAction } = await import('../sidebar-actions.ts');
     const r = await listSidebarAgentsAction(1);
     if (!r.ok) throw new Error(r.message);
-    expect(Object.keys(r.data[0] ?? {}).sort()).toEqual(['id', 'name']);
+    expect(Object.keys(r.data[0] ?? {}).sort()).toEqual(['id', 'name', 'running']);
     expect(JSON.stringify(r.data)).not.toContain('secret-bot-token');
   });
 });
