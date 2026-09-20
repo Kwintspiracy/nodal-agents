@@ -220,7 +220,7 @@ export default function ChatFolderGroup() {
   });
 
   return (
-    <div className="flex flex-col gap-0.5" data-testid="chat-folders">
+    <div className="flex flex-col gap-0" data-testid="chat-folders">
       {folders.map((f) => {
         const Icon = FOLDER_ICON[f.key] ?? PaperPlaneTilt;
         const ouvert = deplies[f.key] === true;
@@ -258,7 +258,7 @@ export default function ChatFolderGroup() {
               }
             />
             {ouvert && (
-              <div className="flex flex-col gap-0.5 pt-0.5" data-testid={`folder-threads-${f.key}`}>
+              <div className="flex flex-col gap-0 pt-0" data-testid={`folder-threads-${f.key}`}>
                 {erreur !== null ? (
                   <p className={SIDEBAR_NOTE}>{erreur}</p>
                 ) : fils === null ? (

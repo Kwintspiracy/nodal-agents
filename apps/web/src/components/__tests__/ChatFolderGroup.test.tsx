@@ -542,7 +542,7 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
     expect(dots[0]?.className).toContain('bg-attention');
     expect(dots[1]?.className).toContain('bg-attention');
     expect(dots[2]?.className).toContain('bg-attention');
-    expect(dots[3]?.className).toContain('bg-ink-4');
+    expect(dots[3]?.className).toContain('bg-rule-2');
     expect(dots[3]?.className).not.toContain('bg-attention');
     // Aucun `#D8153F` en dur dans le rendu : le jeton est la seule source.
     expect(container.innerHTML.toLowerCase()).not.toContain('d8153f');
@@ -566,7 +566,7 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
     const dots = threadDots('telegram');
     expect(dots.map((d) => d.getAttribute('data-calls'))).toEqual(['yes', 'no']);
     expect(dots[0]?.className).toContain('bg-attention');
-    expect(dots[1]?.className).toContain('bg-ink-4');
+    expect(dots[1]?.className).toContain('bg-rule-2');
   });
 
   it('pose le point DEVANT le titre, dans la colonne de l’icône du dossier', async () => {

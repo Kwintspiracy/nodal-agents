@@ -33,7 +33,9 @@ import {
   desc,
   eq,
   ne,
+  sql,
   agents,
+  agentJobs,
   agentSchedules,
   approvalRequests,
   webhookTriggers,
@@ -73,6 +75,12 @@ const SidebarLimit = z.number().int().min(1).max(50);
 export type SidebarNamedRow = {
   id: string;
   name: string;
+  /**
+   * Cette ligne TRAVAILLE en ce moment. Lu, jamais deviné : un agent est
+   * actif quand un de ses jobs est en vol (`pending`, `processing`,
+   * `awaiting_delegation`). Absent sur les sections qui ne le lisent pas.
+   */
+  running?: boolean;
 };
 
 /**
@@ -106,13 +114,21 @@ export async function listSidebarAgentsAction(
     const session = await getSession();
     const parsed = SidebarLimit.safeParse(limit);
     if (!parsed.success) return fail('validation_failed', 'Invalid limit');
+    // Le POINT d'activité de la planche 25:1062 (20/09) : un agent est allumé
+    // quand un de ses jobs est en vol. Lu dans la même requête, en une
+    // sous-requête corrélée, bornée aux agents affichés — pas une lecture par
+    // ligne, pas un compteur tenu à part qui finirait par mentir.
     const rows = await getDb()
-      .select({ id: agents.id, name: agents.name })
+      .select({
+        id: agents.id,
+        name: agents.name,
+        running: sql<boolean>`exists (select 1 from ${agentJobs} where ${agentJobs.agentId} = ${agents.id} and ${agentJobs.status} in ('pending', 'processing', 'awaiting_delegation'))`,
+      })
       .from(agents)
       .where(eq(agents.entityId, session.entityId))
       .orderBy(agents.position, agents.name, desc(agents.id))
       .limit(parsed.data);
-    return ok(rows);
+    return ok(rows.map((r) => ({ id: r.id, name: r.name, running: r.running === true })));
   } catch (err) {
     console.error('[listSidebarAgentsAction]', err);
     return fail('db_error', 'Failed to load agents');

@@ -1,7 +1,9 @@
 'use client';
 
 // NewConversationBody — le milieu de l'écran de conversation neuve (#248) :
-// l'accueil et la saisie, centrés dans le vide.
+// l'accueil et la saisie, posés au TIERS de la hauteur (`pt-[30vh]`, 20/09 :
+// environ 350 px sur un écran de bureau, et la même proportion sur un écran
+// plus petit, plutôt qu'un pixel figé), pas au centre du vide.
 //
 // Pourquoi un composant client pour si peu : parce que l'accueil doit CÉDER LA
 // PLACE dès qu'un message part. Le premier envoi crée la conversation, la
@@ -38,7 +40,7 @@ export default function NewConversationBody({
   return (
     // `overflow-y-auto` : un premier message long ne doit pas pousser la saisie
     // hors de l'écran — la colonne défile, la saisie reste.
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 overflow-y-auto px-5 sm:px-8 lg:px-9">
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-start gap-8 overflow-y-auto px-5 pt-[30vh] sm:px-8 lg:px-9">
       {parti ? (
         <div className="w-full">
           <PendingTurn agentName={agentName} agentAvatarUrl={agentAvatarUrl} />

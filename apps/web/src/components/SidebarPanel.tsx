@@ -88,6 +88,7 @@ function PanelItems({
           href={it.href}
           label={it.label}
           icon={<it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />}
+          tone={it.tone}
           isActive={isPanelItemActive(it.href, pathname, search)}
         />
       ))}

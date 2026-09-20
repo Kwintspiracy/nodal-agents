@@ -2,7 +2,7 @@
 // P2bis). Ce qui se prouve : c'est une ZONE de texte (un collage multi-ligne
 // garde ses retours, Maj+Entrée en ajoute un), Entrée envoie le texte tel
 // quel à l'action, et le champ redevient vide après l'envoi — vide ET encore
-// haut de trois lignes, sur sa propre surface, depuis #135.
+// haut d'une ligne, sur sa propre surface, depuis #135.
 //
 // Rendu dans jsdom et TAPÉ, pas seulement rendu : l'assertion porte sur
 // l'ARGUMENT reçu par l'action mockée (invariant #5).
@@ -88,10 +88,10 @@ beforeEach(() => {
 });
 
 describe('ThreadComposer', () => {
-  it('est une zone de texte de trois lignes à vide, qui nomme l’agent', async () => {
+  it('est une zone de texte d’une ligne à vide, qui nomme l’agent', async () => {
     await render(<ThreadComposer conversationId="conv-1" agentName="Alfred" />);
     const el = textarea();
-    expect(el.rows).toBe(3);
+    expect(el.rows).toBe(1);
     expect(el.placeholder).toBe('Reply to Alfred…');
     // Pas de champ d'une ligne : il aplatirait un collage (revue Codex, passe 56).
     expect(container.querySelector('input')).toBeNull();
@@ -108,27 +108,27 @@ describe('ThreadComposer', () => {
     expect(el.className).toContain('text-body-14');
     expect(el.className).not.toContain('text-body-15');
     // Plancher et plafond du cadre, tenus en CSS avant toute mesure.
-    expect(el.className).toContain('min-h-[60px]');
+    expect(el.className).toContain('min-h-[20px]');
     expect(el.className).toContain('max-h-[200px]');
     // L'indication se lit sur la surface : `ink-4` n'y fait que ~2,6:1
     // (revue Reviewer C).
     expect(el.className).toContain('placeholder:text-ink-2/70');
   });
 
-  it('après un envoi, la zone vidée garde ses trois lignes', async () => {
+  it('après un envoi, la zone vidée garde sa ligne', async () => {
     await render(<ThreadComposer conversationId="conv-1" agentName="Alfred" />);
     await type('une ligne\ndeux\ntrois\nquatre\ncinq');
     await press('Enter');
     const el = textarea();
     expect(el.value).toBe('');
-    expect(el.rows).toBe(3);
+    expect(el.rows).toBe(1);
     // jsdom ne met aucune hauteur au contenu : `scrollHeight` vaut 0, et c'est
     // donc le PLANCHER qui décide. Sans lui, la zone vidée retombait à 0 px.
-    // Le chiffre est écrit ici EN DUR — trois lignes de 20 px : lu depuis les
+    // Le chiffre est écrit ici EN DUR — une ligne de 20 px : lu depuis les
     // constantes du composant, le test suivrait un plancher qu'on abaisserait.
     const measured = Number.parseInt(el.style.height, 10);
     expect(Number.isNaN(measured)).toBe(false);
-    expect(measured).toBeGreaterThanOrEqual(60);
+    expect(measured).toBeGreaterThanOrEqual(20);
   });
 
   it('Entrée envoie le texte TEL QUEL, retours à la ligne compris, puis vide le champ', async () => {

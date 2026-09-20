@@ -68,6 +68,7 @@ import {
   SIDEBAR_ROW_H,
   SIDEBAR_ROW_ACTIVE,
   SIDEBAR_ROW_IDLE,
+  SIDEBAR_ROW_IDLE_CONTENT,
 } from '../ui/SidebarRow';
 import { RAIL_CELL, RAIL_CELL_ACTIVE, RAIL_CELL_IDLE } from '../ui/RailCell';
 import { SIDEBAR_POLL_MS } from '@/lib/use-polling';
@@ -370,7 +371,7 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
     ['/agents/a1', 'agents', 'Agents'],
     ['/memories', 'agents', 'Agents'],
     ['/mcp', 'agents', 'Agents'],
-    ['/llm-providers', 'agents', 'Agents'],
+    ['/llm-providers', 'settings', 'Settings'],
     ['/chat', 'work', 'Work'],
     ['/chat/abc', 'work', 'Work'],
     ['/spaces', 'work', 'Work'],
@@ -417,9 +418,9 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
   it('Work : WORKSPACES puis CHANNELS, et rien d’écrit', async () => {
     pathname = '/chat';
     await renderSidebar();
-    expect(sectionTitles()).toEqual(['Workspaces', 'Channels']);
+    expect(sectionTitles()).toEqual(['Projects', 'Channels']);
     // Aucune entrée ÉCRITE : les deux blocs sont lus en base de bout en bout.
-    expect(groupLabels('Workspaces').filter((l) => l !== 'See all')).toEqual([]);
+    expect(groupLabels('Projects').filter((l) => l !== 'See all')).toEqual([]);
   });
 
   it('Agents : le dossier des agents, puis CONNECT', async () => {
@@ -430,15 +431,7 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     // entrée de menu, et c'est pour cela qu'il ne figure pas dans cette liste.
     expect(container.querySelector('[data-testid="inbox-folder-agents"]')).not.toBeNull();
     expect(groupLabels('Agents')).toEqual(['Skills', 'Learned Skills', 'Memory']);
-    // « LLM Providers » ferme CONNECT : il a vécu dans Run sur le texte de
-    // l'issue #230, et le propriétaire l'a redessiné ici, avec ce qu'on
-    // branche au produit.
-    expect(groupLabels('Connect')).toEqual([
-      'API Connectors',
-      'MCP Connectors',
-      'Credentials',
-      'LLM Providers',
-    ]);
+    expect(groupLabels('Connect')).toEqual(['API Connectors', 'MCP Connectors', 'Credentials']);
   });
 
   it('Run : Dashboard en tête, puis CRON et WEBHOOKS', async () => {
@@ -490,7 +483,13 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     pathname = '/settings';
     await renderSidebar();
     expect(sectionTitles()).toEqual(['Settings']);
-    expect(groupLabels('Settings')).toEqual(['Access', 'Safety', 'Workspace', 'Install']);
+    expect(groupLabels('Settings')).toEqual([
+      'Access',
+      'Safety',
+      'Workspace',
+      'LLM Providers',
+      'Install',
+    ]);
     // ⚠️ « INSTALL » N'EST PAS UNE FAMILLE de réglages : les familles sont
     // access, safety, workspace et advanced, et « Install notes » est une
     // LIGNE de workspace. Chaque entrée ouvre donc la PREMIÈRE entrée de sa
@@ -783,17 +782,27 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     ).toEqual(['yes', 'no']);
   });
 
-  it('n’en met AUCUN sur les agents, ni sur les automatisations', async () => {
-    // La planche laisse ces lignes NUES : un agent n'a rien de non lu, et une
-    // tâche planifiée n'attend rien de personne. Un point gris par défaut
-    // aurait mis une puce devant elles.
+  it('en met un d’ACTIVITÉ sur les agents, et aucun sur les automatisations', async () => {
+    // Le point d'un agent dit « il travaille » (planche 25:1062, 20/09) : lime
+    // et battant quand un de ses jobs est en vol, gris au repos. Une tâche
+    // planifiée, elle, n'attend rien de personne et reste nue.
     pathname = '/agents';
-    vi.mocked(listSidebarAgentsAction).mockResolvedValue({ ok: true, data: nommees(2, 'Agent') });
+    vi.mocked(listSidebarAgentsAction).mockResolvedValue({
+      ok: true,
+      data: [
+        { id: 'a1', name: 'Alfred (Root)', running: true },
+        { id: 'a2', name: 'Researcher', running: false },
+      ],
+    });
     await renderSidebar();
-    expect(listRows('agents').length).toBe(2);
-    for (const l of listRows('agents')) {
-      expect(l.querySelector('[data-testid="thread-dot"]')).toBeNull();
-    }
+    const agents = listRows('agents');
+    expect(agents.length).toBe(2);
+    expect(agents[0]!.querySelector('[data-testid="running-dot"]')).not.toBeNull();
+    expect(agents[0]!.querySelector('[data-testid="thread-dot"]')).toBeNull();
+    expect(agents[1]!.querySelector('[data-testid="running-dot"]')).toBeNull();
+    expect(agents[1]!.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls')).toBe(
+      'no',
+    );
 
     await remonter();
     pathname = '/automations';
@@ -896,7 +905,7 @@ describe('le panneau Work @cap:reprendre-conversation/ecran', () => {
     await renderSidebar();
     // Le cadre du vide, PUIS la ligne : les deux, et pas l'un ou l'autre.
     expect(container.querySelector('[data-testid="sidebar-empty"]')?.textContent?.trim()).toBe(
-      'No Workspace Yet',
+      'No Project Yet',
     );
     expect(
       container.querySelector('[data-testid="see-all-workspaces"]')?.getAttribute('href'),
@@ -977,8 +986,8 @@ describe('le dossier « Agents » @cap:creer-agent/ecran', () => {
     expect(dossier.tagName).toBe('BUTTON');
     expect(dossier.getAttribute('aria-expanded')).toBe('true');
     expect(listRows('agents').map((l) => l.getAttribute('href'))).toEqual([
-      '/agents/a1',
-      '/agents/a2',
+      '/agents/a1/edit',
+      '/agents/a2/edit',
     ]);
 
     await click(dossier);
@@ -1009,6 +1018,7 @@ describe('toutes les lignes du panneau ont la MÊME forme @cap:installer-et-dema
     const attendues = new Set(
       [SIDEBAR_ROW_H.nav, SIDEBAR_ROW_H.recent].flatMap((h) => [
         `${SIDEBAR_ROW_BASE} ${h} ${SIDEBAR_ROW_IDLE}`,
+        `${SIDEBAR_ROW_BASE} ${h} ${SIDEBAR_ROW_IDLE_CONTENT}`,
         `${SIDEBAR_ROW_BASE} ${h} ${SIDEBAR_ROW_ACTIVE}`,
       ]),
     );

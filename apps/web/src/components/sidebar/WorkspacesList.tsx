@@ -46,7 +46,7 @@ export default function WorkspacesList() {
       read={lire}
       hrefOf={(r) => `/spaces/${r.id}`}
       dot
-      empty="No Workspace Yet"
+      empty="No Project Yet"
       seeAll="/spaces"
       seeAllAlways
     />

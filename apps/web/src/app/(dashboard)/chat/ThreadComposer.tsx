@@ -3,7 +3,7 @@
 // ThreadComposer — la saisie en bas d'un fil du dashboard (P7).
 //
 // Sa forme depuis #135 : un cadre à DEUX rangées — la zone de texte en haut,
-// pleine largeur, trois lignes à vide et grandissant avec le texte ; sous elle
+// pleine largeur, une ligne à vide et grandissant avec le texte ; sous elle
 // une rangée d'actions avec l'envoi à droite. Texte à 14 px, sur sa propre
 // surface (`bg-feed-composer`), pas sur le papier du fil.
 //
@@ -33,16 +33,16 @@ const COMPOSER_MAX_HEIGHT_PX = 200;
 const COMPOSER_LINE_HEIGHT_PX = 20;
 
 /** Le nombre de lignes du cadre à vide (#135). */
-export const COMPOSER_ROWS = 3;
+export const COMPOSER_ROWS = 1;
 
 /**
- * Le plancher : la zone ne redescend JAMAIS sous ses trois lignes, même vide.
+ * Le plancher : la zone ne redescend JAMAIS sous sa ligne, même vide (une ligne depuis le 20/09, trois avant).
  * `fitToContent` remesure la zone vidée après un envoi, et sans ce plancher
  * elle retombait à une ligne.
  */
 export const COMPOSER_MIN_HEIGHT_PX = COMPOSER_ROWS * COMPOSER_LINE_HEIGHT_PX;
 
-/** La zone épouse son texte : trois lignes à vide, autant qu'il en faut ensuite. */
+/** La zone épouse son texte : une ligne à vide, autant qu'il en faut ensuite. */
 /** Combien de temps, au plus, un envoi attend que sa réponse soit à l'écran
  *  avant de laisser partir le suivant. */
 const RENDER_WAIT_MS = 15_000;
@@ -239,7 +239,7 @@ export default function ThreadComposer({
 
   // P2bis — un CADRE, pas un champ posé à côté d'un bouton : le design pose
   // la saisie sur sa propre surface, collée en bas de la zone de contenu,
-  // juste au-dessus de la barre d'état. Trois lignes à vide, comme la
+  // juste au-dessus de la barre d'état. Une ligne à vide, comme la
   // maquette — et une ZONE de texte, pas un champ : un collage multi-ligne
   // garde ses retours, Maj+Entrée en ajoute un, et la zone grandit avec le
   // texte (revue Codex, passe 56 : le champ d'une ligne aplatissait tout).
@@ -274,12 +274,12 @@ export default function ThreadComposer({
         containerClassName="min-w-0"
         // `block` : en ligne, la zone laisse 5 px de descente sous elle dans
         // son conteneur, et la rangée d'actions se calait sur CE bas-là.
-        // `min-h-[60px]` = COMPOSER_MIN_HEIGHT_PX, le plancher de trois lignes
+        // `min-h-[20px]` = COMPOSER_MIN_HEIGHT_PX, le plancher d'une ligne
         // tenu aussi en CSS, avant que `fitToContent` ait mesuré quoi que ce soit.
         // `placeholder:text-ink-2/70` : `ink-4`, l'indication par défaut de
         // `TextArea bare`, ne fait que ~2,6:1 sur la surface feed/composer
         // (revue Reviewer C) ; aucun token ne se tient entre ink-4 et ink-2.
-        className="block max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14 placeholder:text-ink-2/70"
+        className="block max-h-[200px] min-h-[20px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14 placeholder:text-ink-2/70"
       />
       {/* La rangée d'actions, telle que Quentin l'a dessinée (Figma
           `ThreadComposer` 355:2928) : la pastille « provider · modèle ·

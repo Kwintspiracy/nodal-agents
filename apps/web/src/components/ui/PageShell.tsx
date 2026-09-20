@@ -77,14 +77,15 @@ type Props =
  * and the whole product tracks.
  *
  * The navbar carries NO create button (per the design). A page's "+ New …" CTA
- * goes in the `toolbar` (right side), or in the body. The body is LEFT-aligned
- * (max-width, no auto-centering).
+ * goes in the `toolbar` (right side), or in the body. The body is CENTERED
+ * (max-width, auto margins on both sides, since 20/09: the feeds were centered
+ * and the lists left-aligned, two reading widths in one product).
  *
  * Structure:
  *   ┌──────────────────────────────────────────────┐
  *   │ PageHeader (full-width, bottom rule)          │  ← title · global controls
  *   ├──────────────────────────────────────────────┤
- *   │ body (max-w-6xl, left):  [toolbar] + children │  ← filters/CTA, then content
+ *   │ body (max-w-6xl, centered):  [toolbar] + children │  ← filters/CTA, then content
  *   └──────────────────────────────────────────────┘
  */
 export default function PageShell(props: Props) {
@@ -124,14 +125,18 @@ export default function PageShell(props: Props) {
         <div className="flex min-h-0 flex-1">
           <div className={`flex min-w-0 min-h-0 flex-1 flex-col ${bodyClassName}`}>
             {toolbar && !toolbarBleed && (
-              <div className={`px-5 pt-4 sm:px-8 lg:px-9 ${fluid ? '' : 'max-w-6xl'}`}>
+              <div
+                className={`w-full px-5 pt-4 sm:px-8 lg:px-9 ${fluid ? '' : 'mx-auto max-w-6xl'}`}
+              >
                 {toolbar}
               </div>
             )}
             {fluid ? (
               children
             ) : (
-              <div className="flex min-h-0 w-full max-w-6xl flex-1 flex-col">{children}</div>
+              <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
+                {children}
+              </div>
             )}
           </div>
           {aside}
@@ -146,7 +151,7 @@ export default function PageShell(props: Props) {
           gouttières et va d'un bord à l'autre, comme sous l'en-tête d'un fil. */}
       {toolbar && toolbarBleed && toolbar}
       <div
-        className={`px-5 pt-6 pb-10 sm:px-8 lg:px-9 ${fluid ? '' : 'max-w-6xl'} ${bodyClassName}`}
+        className={`px-5 pt-6 pb-10 sm:px-8 lg:px-9 ${fluid ? '' : 'mx-auto max-w-6xl'} ${bodyClassName}`}
       >
         {toolbar && !toolbarBleed && <div className="mb-5">{toolbar}</div>}
         {children}

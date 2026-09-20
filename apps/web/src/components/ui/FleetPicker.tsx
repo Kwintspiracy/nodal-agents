@@ -84,15 +84,16 @@ export default function FleetPicker({
         }
       >
         {compact ? (
-          // Une PASTILLE de 8 px, et pas le carré à initiales : à cette taille
-          // deux lettres ne se lisent plus, et la planche ne dessine qu'un
-          // point. Il garde la couleur de l'espace, qui est ce qui le
-          // distingue d'un coup d'œil.
+          // L'ICÔNE de l'espace (son emoji), et pas une pastille de couleur : la
+          // planche 25:1062 (20/09) dessine l'emoji devant le nom. La couleur ne
+          // dit rien à cette taille ; l'emoji, si. Sans emoji, ses deux lettres.
           <span
-            className="h-2 w-2 shrink-0 rounded-full"
-            style={{ background: active.color }}
+            className="shrink-0 text-legacy-12 leading-none!"
+            data-testid="workspace-pill-icon"
             aria-hidden="true"
-          />
+          >
+            {active.icon ?? active.tag.slice(0, 2)}
+          </span>
         ) : (
           <span
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-legacy-12 font-semibold leading-none! tracking-[0.04em] text-[#0a0a0a] lg:h-[22px] lg:w-[22px] lg:rounded-[5px] lg:text-micro-10"
