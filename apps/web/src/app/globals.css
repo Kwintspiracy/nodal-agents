@@ -188,10 +188,10 @@
 
      280 px depuis les planches de Quentin du 19/09/2026 (Figma 487:5489,
      487:5652), et non 226 : à 226 les titres de fils de « Recent » se
-     coupaient au deuxième mot. La planche de Build en dessine 260 ; c'est 280
-     partout, parce qu'une colonne qui change de largeur selon l'onglet
-     décalerait la page à chaque changement de destination. */
-  --panel-w: 280px;
+     coupaient au deuxième mot. Puis 300 px le soir même, sur les planches
+     qu'il a reprises (WPLtjoJjXJBEqDyCpLy9xc, 25:1062) : le panneau y porte
+     des noms d'agents et d'automatisations, plus longs qu'un nom de canal. */
+  --panel-w: 300px;
 
   /* La largeur TOTALE de la barre, écrite UNE fois : la barre s'y taille
      (`lg:w-[var(--sidebar-w)]`) et le contenu s'en écarte d'autant
@@ -199,10 +199,10 @@
      fichiers ; changer l'une sans l'autre laissait une bande vide ou un
      recouvrement.
 
-     244 px jusqu'au 18/09/2026, 300 px ensuite (Quentin), puis 298 px avec le
-     rail, et 352 px depuis que la planche fixe le panneau à 280 : elle se
-     CALCULE, pour qu'élargir le panneau ne laisse plus une largeur totale
-     périmée derrière lui. */
+     244 px jusqu'au 18/09/2026, 300 px ensuite (Quentin), 298 px avec le rail,
+     352 px quand le panneau est passé à 280, et 372 px depuis qu'il fait 300 :
+     elle se CALCULE, pour qu'élargir le panneau ne laisse plus une largeur
+     totale périmée derrière lui. */
   --sidebar-w: calc(var(--rail-w) + var(--panel-w));
 }
 

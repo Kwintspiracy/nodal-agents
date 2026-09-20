@@ -1,13 +1,13 @@
 // sidebar-markup.capture.test.tsx — le MARKUP RÉEL de la barre, écrit sur
-// disque pour être comparé à la planche (#230, 19/09/2026).
+// disque pour être comparé à la planche (#230, refondu en #258).
 //
-// POURQUOI CE FICHIER EXISTE. Les planches de Quentin (Figma 487:5489,
-// 487:5579, 487:5652) sont la spécification, et « ça devrait ressembler » n'est
-// pas une vérification. Comparer demande une IMAGE du rendu ; or la stack de
-// développement ne m'est pas accessible, et un test jsdom ne sait pas
-// dessiner.
+// POURQUOI CE FICHIER EXISTE. Les planches du propriétaire (Figma
+// `WPLtjoJjXJBEqDyCpLy9xc`, nœud `25:1062`) sont la spécification, et « ça
+// devrait ressembler » n'est pas une vérification. Comparer demande une IMAGE
+// du rendu ; or la stack de développement ne m'est pas accessible, et un test
+// jsdom ne sait pas dessiner.
 //
-// Ce test rend donc les trois panneaux avec les VRAIS composants, dans les
+// Ce test rend donc les CINQ panneaux avec les VRAIS composants, dans les
 // VRAIS providers, et écrit le HTML obtenu. Un script à côté
 // (`scripts/capture-sidebar.mjs`) compile la feuille de style de
 // l'application, pose ce HTML dedans et le photographie avec le navigateur de
@@ -40,30 +40,43 @@ vi.mock('next/link', () => ({
   default: ({ children, href, ...rest }: { children: ReactNode; href: string }) =>
     createElement('a', { href, ...rest }, children),
 }));
+// UN SEUL faux pour ce module, et il porte TOUT ce que la barre lui demande.
+// `@/lib/actions` et `@/lib/actions.ts` désignent le même fichier : deux
+// `vi.mock` se remplacent l'un l'autre, et celui qui perd emporte ses
+// fonctions — c'est ce qui a fait tomber la capture le jour où le rail a pris
+// la ligne de version (#258).
 vi.mock('@/lib/actions', () => ({
   listApprovalsAction: vi.fn(),
   switchWorkspaceAction: vi.fn(),
   createWorkspaceAction: vi.fn(),
-}));
-vi.mock('@/lib/conversation-actions.ts', () => ({
-  getChatFoldersAction: vi.fn(),
-  listRecentThreadReadsAction: vi.fn(),
-}));
-vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
-vi.mock('../NotificationsBell', () => ({ default: () => null }));
-vi.mock('../ui/ThemeToggle', () => ({ default: () => null }));
-vi.mock('@/lib/actions.ts', () => ({
   getVersionInfoAction: vi.fn(async () => ({
     ok: true as const,
     data: { current: '0.8.11', latest: '0.8.11', updateAvailable: false },
   })),
 }));
+vi.mock('@/lib/conversation-actions.ts', () => ({ getChatFoldersAction: vi.fn() }));
+vi.mock('@/lib/folder-threads-actions.ts', () => ({ listFolderThreadsAction: vi.fn() }));
+vi.mock('@/lib/project-actions.ts', () => ({ listSidebarProjectsAction: vi.fn() }));
+vi.mock('@/lib/sidebar-actions.ts', () => ({
+  listSidebarAgentsAction: vi.fn(),
+  listSidebarCronAction: vi.fn(),
+  listSidebarWebhooksAction: vi.fn(),
+  listSidebarRecentApprovalsAction: vi.fn(),
+}));
+vi.mock('../NotificationsBell', () => ({ default: () => null }));
+vi.mock('../ui/ThemeToggle', () => ({ default: () => null }));
 
 import Sidebar from '../Sidebar.tsx';
 import { ApprovalsProvider } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
-import { listRecentThreadReadsAction } from '@/lib/conversation-actions.ts';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
+import { listSidebarProjectsAction } from '@/lib/project-actions.ts';
+import {
+  listSidebarAgentsAction,
+  listSidebarCronAction,
+  listSidebarWebhooksAction,
+  listSidebarRecentApprovalsAction,
+} from '@/lib/sidebar-actions.ts';
 
 const SORTIE = process.env['NODAL_CAPTURE_DIR'] ?? '';
 const ACTIF = process.env['NODAL_CAPTURE'] === '1' && SORTIE !== '';
@@ -91,21 +104,71 @@ const ESPACES = [
   },
 ] as unknown as Parameters<typeof Sidebar>[0]['workspaces'];
 
+/** Les fils du dossier « Nodal chats », tels que la planche les écrit. */
+const FILS = [
+  ['d1', 'Suivis Candidatures', true],
+  ['d2', 'Recipes', true],
+  ['d3', 'Crée-moi une app assez simple', false],
+  ['d4', 'Créer un skill avec CSS et HTML', false],
+  ['d5', 'Explication du cache de prompt', false],
+  ['d6', 'Explication du cache de prompt', false],
+  ['d7', 'Explication du cache de prompt', false],
+  ['d8', 'Explication du cache de prompt', false],
+  ['d9', 'Explication du cache de prompt', false],
+  ['d10', 'Explication du cache de prompt', false],
+  // La ONZIÈME : jamais dessinée, elle est ce qui fait apparaître « See all ».
+  ['d11', 'Explication du cache de prompt', false],
+] as const;
+
 beforeEach(() => {
   document.body.innerHTML = '';
-  vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: {} });
-  vi.mocked(listRecentThreadReadsAction).mockResolvedValue({
+  vi.mocked(listFolderThreadsAction).mockResolvedValue({
+    ok: true,
+    data: {
+      dashboard: FILS.map(([key, title, unread]) => ({
+        key,
+        title,
+        href: `/chat/${key}`,
+        waiting: false,
+        running: false,
+        unread,
+      })),
+    },
+  });
+  vi.mocked(listSidebarProjectsAction).mockResolvedValue({
     ok: true,
     data: [
-      { id: 'r1', title: 'Suivis Candidatures', unread: false },
-      { id: 'r2', title: 'Recipes', unread: false },
-      {
-        id: 'r3',
-        title: 'Crée-moi une app assez simple pour suivre mes candidatures',
-        unread: false,
-      },
-      { id: 'r4', title: 'Créer un skill avec CSS et HTML', unread: false },
-      { id: 'r5', title: 'Explication du cache de prompt', unread: false },
+      { id: 'p1', name: 'Suivis Candidatures', unread: true },
+      { id: 'p2', name: 'Recipes', unread: false },
+      { id: 'p3', name: 'Drink Water App', unread: false },
+      { id: 'p4', name: 'Calories Count', unread: false },
+      { id: 'p5', name: 'Suivis Candidatures', unread: false },
+    ],
+  });
+  vi.mocked(listSidebarAgentsAction).mockResolvedValue({
+    ok: true,
+    data: [
+      { id: 'a1', name: 'Alfred (Root)' },
+      { id: 'a2', name: 'Researcher' },
+      { id: 'a3', name: 'Lead-Dev' },
+      { id: 'a4', name: 'Dev-A' },
+      { id: 'a5', name: 'Reviewer-A' },
+    ],
+  });
+  vi.mocked(listSidebarCronAction).mockResolvedValue({
+    ok: true,
+    data: [{ id: 'c1', name: 'Cortex All' }],
+  });
+  // VIDE, et c'est le sujet : la planche dessine le cadre en pointillés de
+  // WEBHOOKS et celui d'APPROVALS, et il n'y a que là qu'on peut les voir.
+  vi.mocked(listSidebarWebhooksAction).mockResolvedValue({ ok: true, data: [] });
+  vi.mocked(listSidebarRecentApprovalsAction).mockResolvedValue({
+    ok: true,
+    data: [
+      { id: 'r1', name: 'Researcher', toolName: 'web_search' },
+      { id: 'r2', name: 'Researcher', toolName: 'web_search' },
+      { id: 'r3', name: 'Researcher', toolName: 'web_search' },
+      { id: 'r4', name: 'Researcher', toolName: 'web_search' },
     ],
   });
 });
@@ -118,29 +181,22 @@ afterEach(async () => {
 
 describe.runIf(ACTIF)('capture du markup de la barre latérale', () => {
   const cas: ReadonlyArray<readonly [string, string, string[]]> = [
-    ['talk', '/chat', ['telegram', 'discord', 'whatsapp']],
-    ['build', '/agents', []],
-    ['run', '/', []],
+    ['work', '/chat', ['telegram', 'discord', 'whatsapp', 'mcp']],
+    ['agents', '/agents', []],
+    ['run', '/automations', []],
+    ['approvals', '/approvals', []],
+    ['settings', '/settings', []],
   ];
 
   for (const [nom, route, channels] of cas) {
     it(`écrit ${nom}.html`, async () => {
       pathname = route;
       await render(
-        <ApprovalsProvider
-          initial={[
-            {
-              id: 'a1',
-              jobId: 'j1',
-              toolName: 'send_message',
-              agentName: null,
-              toolInput: {},
-              requestedAt: null,
-              jobChannel: 'dashboard',
-              conversationChannel: 'dashboard',
-            },
-          ]}
-        >
+        // AUCUNE demande en attente : la planche dessine le cadre
+        // « No Approval Requests », et la pastille du rail n'apparaît donc pas
+        // non plus. C'est l'état qu'elle montre, et c'est celui qu'on
+        // photographie.
+        <ApprovalsProvider initial={[]}>
           <ChatFoldersProvider
             initial={{
               channels,

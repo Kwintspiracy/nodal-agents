@@ -32,7 +32,7 @@ import type { JobTriggerContext } from '@nodal-agents/db';
 import { buildConversationFeed } from './conversation-feed.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { ROLLUP_MAX_DEPTH } from './coding-rollup.ts';
-import { redactAuditRow } from './redact-presented.ts';
+import { redactAuditRow, redactReviewVerdict } from './redact-presented.ts';
 import type { getDb } from './server.ts';
 
 type Db = ReturnType<typeof getDb>;
@@ -236,7 +236,12 @@ async function lireVerdictsLivres(
     tranches.add(row.jobId);
     try {
       const verdict = parseReviewVerdictOutput(row.toolOutput);
-      if (verdict !== null) parJob.set(row.jobId, verdict);
+      // Masqué À LA PORTE, comme la ligne d'audit juste à côté (#286). Le
+      // `summary` et le `issue` de chaque constat sont écrits par l'agent
+      // relecteur et rendus tels quels par le fil : un jeton recopié dans une
+      // de ces phrases s'affichait en clair. Après l'analyse, jamais avant :
+      // le parseur valide la forme sur les octets stockés.
+      if (verdict !== null) parJob.set(row.jobId, redactReviewVerdict(verdict));
     } catch (err) {
       console.warn(`[job-feed] job ${row.jobId} carries an unreadable review_verdict:`, err);
     }
