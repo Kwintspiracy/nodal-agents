@@ -7,13 +7,13 @@ The ROOT agent is the single top-level orchestrator in your workspace. It has ac
 
 ## How ROOT designation works
 
-You do not pick the ROOT manually. The **first orchestrator agent you create** in a workspace is automatically designated ROOT. Go to **Settings → ROOT agent** to see which agent that is and configure its powers.
+You do not pick the ROOT manually. The **first orchestrator agent you create** in a workspace is automatically designated ROOT. Open **Settings → Safety → ROOT agent** to see which agent that is and configure its powers.
 
-If you have not created an orchestrator yet, the Settings block shows an empty state with a link to **Agents** to create one.
+The row itself states the answer before you open it: the ROOT's name and its autonomy level, or **No ROOT agent yet** when you have not created an orchestrator.
 
 ## Configure the ROOT's powers
 
-ROOT powers are **all off by default** on a freshly auto-designated agent. Go to **Settings → ROOT agent** to opt in:
+ROOT powers are **all off by default** on a freshly auto-designated agent. Open **Settings → Safety → ROOT agent** to opt in:
 
 ### Allowed actions
 
@@ -53,7 +53,15 @@ Click **Save** after adjusting grants and autonomy. Changes take effect on the n
 
 ## Approvals queue
 
-When the ROOT runs in **Propose and confirm** mode, each meta-tool call appears as a pending approval in **Jobs → Approvals**. You can approve or reject each call individually. The ROOT resumes immediately after approval.
+When the ROOT runs in **Propose and confirm** mode, each meta-tool call appears as a pending approval on the **Approvals** board in the rail. You can approve or reject each call individually, with a note. The ROOT resumes immediately after approval.
+
+## The second gate: an agent's own team
+
+A grant says what the **workspace** allows. A separate per-agent setting, **`may_change_team`**, says whether _that_ agent may rearrange its own team, and it is **off by default** — including for the ROOT, and including for every agent that already existed when the setting shipped.
+
+While it is off, the three team meta-tools (`create_agent`, `attach_agent`, `detach_agent`) are not in the list the runner computes for the job, so the model never sees them. It is not a refusal at call time.
+
+The setting can only take away. It never grants a tool that a disabled grant already refused.
 
 ## Example: a self-extending orchestrator
 

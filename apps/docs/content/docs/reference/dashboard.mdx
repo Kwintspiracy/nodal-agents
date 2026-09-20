@@ -1,119 +1,343 @@
 ---
 title: Dashboard reference
-description: Every page in the Nodal-Agents dashboard — what it's for and the actions it offers.
+description: The Nodal-Agents dashboard, screen by screen — the sidebar rail, its five panels, and every page they open.
 ---
 
-The dashboard is the web UI served at `http://localhost:3000` (or your rotated web port). Every page lives under the `(dashboard)` route group; the folder name maps directly to the URL path.
+The dashboard is the web UI served at `http://localhost:3000` (or your rotated
+web port). This page describes it as it stands in **0.9.0**, where the sidebar
+became a rail of five boards and a project became a folder you open.
 
-## Home — `/`
+## The sidebar
 
-Workspace overview. Shows a greeting, headline stats (agents, skills, connectors), a weekly activity chart, job-status breakdown, success rate, token usage, and per-agent activity. The stat cards link through to Agents, Skills, and Connectors.
+The sidebar has two parts: a **rail** of icon cells on the left, and a **panel**
+of 300 px that shows whichever board is active. The active board is derived from
+the address and from nothing else, so two tabs on the same URL show the same
+panel, and a link you send opens what it promises.
 
-## Runs — `/jobs`
+The panel's own header carries the board's name and, on its right, the
+[workspace switcher](/docs/concepts/workspaces).
 
-The job-run history (up to the 50 most recent). Each row shows the agent, task, status, and delegation context. Use this to watch what your fleet is doing.
+### The five boards
 
-- **New task** — open a modal to send a one-off task to an agent.
-- **Search / filter** — by agent or task text.
-- **Open a run** — click a row to see its detail (transcript, tokens, cost, delegation tree).
-- **Cancel** — stop a running job.
+| Board         | Opens            | Its panel contains                                                                                                          |
+| ------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Work**      | `/`              | **Projects** (your registered projects) and **Channels** (the folders threads arrive in)                                    |
+| **Agents**    | `/agents`        | **Agents** (a foldable list) with Skills, Learned Skills, Memory; then **Connect**: API Connectors, MCP Connectors, Credentials |
+| **Run**       | `/automations`   | **Cron** and **Webhooks**, each with a `+` to create one                                                                    |
+| **Approvals** | `/approvals`     | **Approvals** (what is waiting) and **Recents** (what was recently decided)                                                 |
+| **Settings**  | `/llm-providers` | Access, Safety, Workspace, LLM Providers, Install                                                                           |
 
-## Chat — `/chat`
+Settings sits at the foot of the rail, below the separator, with two cells that
+open no panel:
 
-Direct conversation with your **root agent** (configured in Settings). Messages are grouped into conversations (Today / Yesterday / Earlier) with live polling for job status.
+- **Logs** navigates straight to `/logs`. Its page is a list; there is nothing to
+  unfold in a 300 px column.
+- **Help** opens a small card of three links, all outside the app: the
+  documentation, the Discord server, and the public quality board.
 
-- Send a message, start a new conversation, delete a conversation.
+### Lists read from the database
 
-If no root agent is designated, this page prompts you to set one in Settings.
+Projects, Channels, Agents, Cron, Webhooks, Approvals and Recents are read live.
+Each is bounded: a section shows a handful of rows and a **See all** link to the
+full page. `See all` stays even when the list is short, wherever the full page
+carries more than the list — on a fresh install the Workspaces page was otherwise
+reachable from nowhere.
 
-## Agents — `/agents`
+A project row carries a dot when one of its conversations is unread. A settings
+row lights up only when its own setting is the one open, which is why the
+Settings rows compare the query parameter and not just the path.
 
-Manage the agent fleet. Agents are grouped under their orchestrators.
+### The `…` menu on a row
 
-- **Create / edit / delete** an agent.
-- **Drag-and-drop reorder** within an orchestrator group.
-- Per-agent job counts and live activity status.
+Rows in the sidebar carry a **rename** and a **delete** action, wired to the kind
+of row: a conversation, a project, an agent, a cron schedule, or a webhook.
+Neither ever uses a native browser dialog — renaming opens a small form, deleting
+asks for confirmation in the app.
 
-See [Create an agent](/docs/guides/create-an-agent) for the agent composer.
+A project is **not** deleted: it is a folder on your disk, and Nodal destroys
+nothing it did not create. Its menu offers to **remove it from the list** (the
+same "hide" the project page offers), and the folder stays where it is.
 
-## Skills — `/skills`
+<Callout type="info">
+  There is no RECENT section and no back link anywhere in 0.9.0. Both were removed
+  deliberately: the sidebar already says where you are, and the Channels folders
+  cover what RECENT used to show.
+</Callout>
+
+## Work
+
+### New conversation — `/`
+
+The screen Nodal opens on. A centred, empty thread with the composer in the
+middle: pick the model you want the root agent to answer with, and type.
+
+**No conversation row exists until your first message lands.** Opening this page
+and closing it writes nothing, so an inbox no longer fills with threads that were
+never used. Once the first message goes out, the screen moves to `/chat/<id>`.
+
+`?project=<id>` opens the same screen bound to a project — it is what the **New
+conversation** button on a project's page uses, and the conversation it creates
+is anchored to that project.
+
+### Conversations — `/chat` and `/chat/<id>`
+
+`/chat` is the home of every conversation, channel threads included: one row per
+chat, named after the person or room at the other end.
+
+`?folder=<name>` opens one folder — `telegram`, `discord`, `slack`, `whatsapp`,
+`dashboard`, or `mcp`. The sidebar's Channels section links straight to these.
+The **MCP folder is the exception**: runs started from outside Nodal, through the
+MCP server or the HTTP API, have no conversation, so its rows open the run page
+instead of a thread.
+
+`/chat/<id>` is one thread. It reads as a feed: your message, the agent's turns,
+its tool calls folded into blocks you can open, its delegations with the verdict
+the reviewer recorded, and what it delivered. Opening a block never moves the
+view. A reply is streamed word by word while the turn runs.
+
+Every tool row passes through the redaction gate before it reaches the screen, so
+a key written into a file does not show up in a diff.
+
+### Workspaces — `/spaces`
+
+The only projects page. One list, two kinds of row:
+
+- **Registered** — a project you declared, dated by the day it entered the
+  registry.
+- **Detected** — a folder an agent wrote in that nobody declared. **Register** it
+  or **Hide** it.
+
+**New project** creates one, and offers to run `git init` in the folder. That
+option is off by default and nothing touches a folder without it.
+
+<Callout type="info">
+  `/code` now redirects here. The folder detection it carried became the
+  "Detected" rows; its proof panel became the project's **Files &amp; proof**
+  panel; its session list became the project's activity.
+</Callout>
+
+### A project — `/spaces/<id>`
+
+The project's name, and its **path** underneath — nothing else in the header.
+
+The body is one sorted list of everything that happened in this project:
+conversations and sessions together, newest first. A conversation row opens its
+thread; a session row with no conversation opens the run page.
+
+**Files &amp; proof** is a panel docked to the right edge, **open by default**. It
+pushes the page rather than covering it, so the list on its left stays visible and
+stays clickable. It holds the project's folder, what recent runs wrote (read from
+git when the folder is a repository), and the proof commands that ran.
+
+`/spaces/<id>/files` renders the same page — the panel is open everywhere, so the
+older link still lands where it promised.
+
+## Agents
+
+### Agents — `/agents`
+
+The fleet, grouped under their orchestrators, with per-agent job counts and live
+activity. Drag a row to reorder it within its group.
+
+**Create New Agent** opens a modal that asks **how to start**:
+
+- **Customize a new agent** — an empty form, you pick everything.
+- **Pre-filled agent profiles** — a profile family pre-fills the name, the role,
+  the model and the skills that fit. Recommended connectors are suggested, never
+  imposed, and **nothing is written to the database until you create the agent**.
+
+### One agent — `/agents/<id>/edit`
+
+Eight tabs:
+
+| Tab            | What it holds                                                                                        |
+| -------------- | ---------------------------------------------------------------------------------------------------- |
+| **Overview**   | Name, persona, role, and the **model** — including Claude Code or Codex as the agent's whole runtime  |
+| **Channels**   | Telegram, Discord, Slack and WhatsApp bindings                                                        |
+| **Skills**     | Assign and unassign skills                                                                            |
+| **Tools**      | The built-in tools this agent holds                                                                   |
+| **Connectors** | Connectors and MCP servers, with the per-operation allowlist                                          |
+| **Runs**       | This agent's runs                                                                                     |
+| **Autonomy**   | Per-tool approval — **Autonomous**, **Ask first** or **Block** — plus the Yolo toggles                |
+| **Settings**   | Workspaces, budgets, memory budget, team permissions, delete                                          |
+
+Tabs that mean nothing for an agent running on a coding CLI are disabled with a
+reason rather than hidden.
+
+### Skills — `/skills`
 
 Two tabs:
 
-- **Workspace** — every skill installed on the workspace (assigned or not), grouped by provenance: Community, Custom, Learned, Built-in. Edit any skill here, built-ins included (edits override the catalog default; **Reset to default** restores it). Assign, edit or delete from the row actions.
-- **Community** — the community catalog as category-filtered tiles. **Install a community skill** from GitHub / the catalog, then assign it.
+- **Workspace** — every skill installed here, grouped by provenance: Community,
+  Custom, Learned, Built-in. Built-ins are editable; **Reset to default** undoes
+  the override.
+- **Community** — the community catalog as category-filtered tiles, plus
+  **Install a community skill** from GitHub or a skills.sh path.
 
-## Learned Skills — `/learned-skills`
+### Learned Skills — `/learned-skills`
 
-Skills the agents wrote themselves through the reflection loop. Review, **archive / restore / delete**, or **assign to an agent**. Two workspace-level controls live here:
+Skills the agents wrote themselves through the [learning
+loop](/docs/concepts/learning-loop). Review, archive, restore, delete, or assign
+to an agent. The two workspace-level controls live on this page:
 
-- **Reflection** on/off (per entity).
-- **Assignment mode** — auto-assign learned skills vs. require approval.
+- **Reflection** on or off.
+- **Assignment mode** — auto-assign learned skills, or require approval.
 
-## Connectors — `/connectors`
+### Memory — `/memories`
 
-Third-party integrations. Two tabs:
+Persistent facts, in two tabs (Active / Archived). Create, archive, restore,
+delete; filter by agent, search by fact text, and see each fact's category and
+last-access date.
 
-- **Installed** — active connectors in a table; uninstall here.
-- **Marketplace** — the connector catalog as category-filtered tiles.
+### API Connectors — `/connectors`
 
-Install a connector, then configure its credential (API key or OAuth — the OAuth flow redirects out and back). This page also surfaces OAuth success/error feedback.
+Third-party integrations in two tabs, **Installed** and **Marketplace**. Connect
+one (an OAuth flow or an API key), then enable it on an agent's Connectors tab.
+The OAuth round-trip reports its success or failure on this page.
 
-## MCP — `/mcp`
+### MCP Connectors — `/mcp`
 
-Same two-tab structure as Connectors, for Model Context Protocol servers.
+The same two-tab shape for Model Context Protocol servers, plus a **custom MCP**
+form for your own stdio or HTTP server.
 
-- **Installed** servers in a table.
-- **Marketplace** of catalog MCP servers, plus a **custom MCP** form for adding your own stdio or HTTP server.
+### Credentials — `/credentials`
 
-## Credentials — `/credentials`
+The credential vault: stored API keys and OAuth tokens, reused across connectors.
+Create through a wizard, rename inline, delete, and read the account name and
+token expiry. The wizard also shows the **authorized redirect URI** to paste into
+your OAuth app, with a copy button.
 
-The credential vault — stored API keys and OAuth tokens reused across connectors.
+## Run
 
-- **Create** (wizard modal), **rename** (inline), **delete**, and view account name + token expiry.
+### Automations — `/automations`
 
-## Memory — `/memories`
+Schedules and webhooks on one page. Create, edit, duplicate, pause, run now and
+delete a schedule; create, pause, rotate the secret of, and delete a webhook.
 
-Persistent facts the agents learn and reference. Two tabs (Active / Archived).
+### One automation — `/automations/<id>`
 
-- **Create** a memory, **archive / restore**, **delete**.
-- Filter by agent, search by fact text, see the category (preference / context / outcome / learned_rule) and last-access date.
+One route serves a schedule and a webhook alike:
+
+- a header saying which it is,
+- a settings card of five rows,
+- its **last ten runs** with what they cost over thirty days,
+- and what the routine has **remembered** — the state it keeps for itself.
+
+### A run — `/jobs/<id>`, `/scheduled/<id>`, `/code/<id>`
+
+All three addresses render **the same run page**, whether the run came from a
+schedule, from a project, from the dashboard or from an MCP client.
+
+It opens at the top and never scrolls itself. From top to bottom:
+
+1. **The header card** — the request (its first line as the title, the whole text
+   below), the agent, the origin, the model, the status, and seven figures: cost,
+   duration, input tokens, output tokens, cache reads, files changed, last
+   activity. A figure that is genuinely zero prints `0`; a dash means absent.
+2. **The run's full identifier**, selectable, with a copy button.
+3. **What was delivered** — the run's answer and its delivery summary. The run
+   records how that text was produced, so the page never has to guess whether it
+   is the agent's own words or a compiled relay. When a reviewer recorded a
+   verdict, the review *is* the answer and the reply is not repeated above it.
+4. **The review** — the recorded verdict and the reviewer's full report.
+5. **The proof** — the verification commands that ran, with their output.
+6. **The files** — what the run wrote, read from git when the project folder is a
+   repository, with one diff plate per file.
+7. **The activity** — every turn and every tool call, in order, always open.
+
+See [Proof](/docs/concepts/proof) for what each of the last three blocks is
+actually reading.
+
+### Dashboard — `/dashboard`
+
+The workspace overview: a greeting, headline counts, a weekly activity chart, the
+job-status breakdown, the success rate, token usage and per-agent activity. It is
+no longer the screen Nodal opens on, and no menu entry points at it — it keeps its
+address for the links that already exist.
 
 ## Approvals — `/approvals`
 
-The queue and history of tool calls that require your sign-off. Tabs: pending, approved, rejected, expired, all.
+Everything that needs your sign-off, and everything that got it. Tabs:
+**pending**, **approved**, **rejected**, **expired**, **all**.
 
-- **Approve / reject** a pending tool call (optionally with a note).
-- Each entry shows the tool input, the agent's stated **purpose** and **impact**, and a link to the originating job.
+Each card shows the tool input, the agent's stated **purpose** and **impact**, and
+a link to the run that asked. Approve or reject, optionally with a note.
+
+`?show=<id>` opens one request on its own, whatever its decision — it is what the
+sidebar's **Recents** rows link to. The list narrows to that card and the page
+says so in its subtitle.
 
 See the autonomy model in [Agents](/docs/concepts/agents).
 
-## Automations — `/automations`
-
-Scheduled, recurring agent tasks (cron). Create a schedule that fires an agent on an interval.
-
-- **Create / edit / delete** a schedule, **pause / enable**, **duplicate**, and **Run now**.
-
-Full details in [Automations](/docs/guides/automations).
-
-## LLM Providers — `/llm-providers`
-
-API keys for your LLM providers (Anthropic, OpenAI, OpenRouter, local endpoints, …). A first-class sidebar entry because it's touched often.
-
-- **Add** a provider key, **rename**, **delete**, and see provider type + active status.
-
 ## Logs — `/logs`
 
-The fleet-wide tool-call audit trail. A paginated table (50 per page).
+Two tabs, because the page used to confuse two different things:
 
-- Filter by **agent**, **tool name**, or **job ID**; page through with Previous / Next; expand a row to see the full tool input/output.
+- **Activity** — the list of runs, one folded row per run, unfoldable onto its
+  tool calls. Filter by agent, by tool name or by job id; page through 50 at a
+  time. This is where `/jobs` now lands.
+- **Service logs** — the runner's and the web app's own log output, in the app.
 
-This is the in-app view of agent activity; the CLI `nodal-agents logs` tails the raw service log files instead.
+The CLI's `nodal-agents logs` tails the raw service log files instead; see the
+[CLI reference](/docs/reference/cli).
 
-## Settings — `/settings`
+## Settings
 
-Workspace-level configuration: auth mode (display), security / sign-in method, network access (allowed IPs), timezone, the worker secret, install notes, the app/runner URLs, the **webhook ingress URL**, the shared-workspace path, the workspace list, **root-agent designation**, and LAN command (Yolo) mode.
+Settings is a filterable list. Each entry in the sidebar opens **one page** of
+settings, in place — there is no anchored panel any more, and every setting is
+edited on the page it lives on.
+
+### Access — `/settings?page=access`
+
+*Who can open this dashboard, and from where.*
+
+| Setting            | What it holds                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| **Sign-in**        | No sign-in, email and password, or bearer token; plus Google sign-in when configured |
+| **Network access** | Local only (`127.0.0.1`) or LAN, with the address the dashboard answers on           |
+| **Password**       | Change it. Shown only when sign-in is email and password                             |
+| **Worker secret**  | The shared secret the web app uses to call the runner. Set by the installer          |
+
+### Safety — `/settings?page=safety`
+
+*What your agents may do on their own, and what stops them.*
+
+| Setting                   | What it holds                                                        |
+| ------------------------- | -------------------------------------------------------------------- |
+| **Auto-run brake**        | The workspace-wide emergency brake. Pause every auto-run at once     |
+| **Verification surfaces** | Which ways of working get proven — see [Proof](/docs/concepts/proof) |
+| **ROOT agent**            | Which agent is ROOT, its grants and its autonomy level               |
+| **MCP server**            | Whether external clients may hand work to the root agent             |
+
+### Workspace — `/settings?page=workspace`
+
+*Where your agents work, and the facts of this installation.*
+
+| Setting        | What it holds                                                           |
+| -------------- | ----------------------------------------------------------------------- |
+| **Timezone**   | The zone agents use to tell the time and schedule automations            |
+| **Workspaces** | The workspace list, and which one is active                              |
+| **URLs**       | Where this install answers, and where its shared folder is. Read only    |
+| **Session**    | Your account and workspace identifiers in the local database. Read only  |
+
+### Install — `/settings?page=install`
+
+*Notes every agent reads about this machine.* One free-text field, injected into
+every agent's runtime block.
+
+### LLM Providers — `/llm-providers`
+
+Its own page, because it is touched often: add a provider key, rename it, delete
+it, mark it inactive, and see each provider's type and status. See [Connect a
+model](/docs/guides/connect-a-model).
 
 ### Root context — `/settings/root-context`
 
-A deep view of everything the root agent receives as system context: its personality prompt, the full markdown of every assigned skill, install notes, and persistent memories — all editable in one place. Changes are read live on the next job.
+Everything the root agent receives as system context, in one place: its
+personality prompt, the full Markdown of every assigned skill, the install notes
+and the persistent memories — all editable. Changes are read on the next job.
+
+<Callout type="info">
+  A settings row never invents a value. When a read fails, the row says **Could
+  not be read** rather than showing a plausible default.
+</Callout>

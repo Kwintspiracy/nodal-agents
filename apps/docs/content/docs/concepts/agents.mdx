@@ -31,17 +31,24 @@ A **job** is one unit of work — a chat message, a cron tick, an API call, or a
 
 ### Always-on built-in tools
 
-Every agent gets these 16 tools on every job, regardless of skills (`ALWAYS_ON_TOOLS` in `packages/tools/src/builtin/index.ts`):
+Every agent gets these 19 tools on every job, regardless of skills (`ALWAYS_ON_TOOLS` in `packages/tools/src/builtin/index.ts`):
 
 - `return_result` — set the job's final answer.
+- `ask_user` — stop and ask you a question the agent cannot answer on its own.
 - `skill_view` — read the full content of an assigned skill on demand.
 - `list_models` — list the models available to this agent.
 - `list_schedules` — list the agent's cron automations.
 - `save_memory`, `query_memory`, `mark_memory_helpful`, `mark_memory_outdated` — the [memory](/docs/concepts/memory) tools (write, recall, and rate persistent facts).
 - `search_history` — full-text recall across all of this workspace's past jobs and conversations, including ones run by other agents.
 - `web_search` — search the web, using the agent's configured Tavily/Firecrawl provider if any, otherwise a free best-effort search.
-- `dashboard_publish` — publish the agent's substantive output to the dashboard (it becomes the job's `result`, shown on `/jobs`).
+- `dashboard_publish` — publish the agent's substantive output to the dashboard (it becomes the job's `result`).
 - `file_read`, `file_write`, `file_edit`, `file_list`, `file_search` — read and edit files in the agent's workspaces.
+- `register_project` — declare a folder it worked in as a [project](/docs/concepts/projects).
+- `declare_verification` — declare the commands that prove what it just built, so Nodal runs and records them. Requires approval by default, exactly like `run_command`. See [Proof](/docs/concepts/proof).
+
+The complete registry — always-on, skill-gated, grant-gated and channel tools —
+is generated from the runtime itself on the [built-in tools
+reference](/docs/reference/builtin-tools).
 
 ## Anti-loop guards
 
@@ -68,13 +75,27 @@ Tool calls with real-world side-effects (like `run_command`) can require approva
 
 ### Built-in tools can be restricted too
 
-The sixteen always-on built-ins are listed on the agent's **Autonomy** tab under **Built-in tools**, with the same three settings as every other tool.
+The always-on built-ins are listed on the agent's **Autonomy** tab under **Built-in tools**, with the same three settings as every other tool.
 
 Before this, they were on and unlisted, and the only way to restrain one was the read-only preset — which blocks five write tools at once. There was no way to say "may read files, may not search the web". Now there is.
 
 One tool cannot be blocked: **`return_result`**, which is how a job reports that it finished or got stuck. Blocking it would leave every job of that agent unable to end, with no way to tell you why. The dashboard says so on the row rather than simply refusing.
 
 Blocking a tool leaves it **visible** to the agent and refuses the call, telling the model the restriction is deliberate. That wording is the point: an agent told "this is not available to you" reports the limit back to you, while an agent that simply sees a failure tends to try to work around it.
+
+### An agent does not recompose its own team
+
+A per-agent setting, **`may_change_team`**, decides whether an agent may use the three meta-tools that change who is on its team: `create_agent`, `attach_agent` and `detach_agent`.
+
+It is **off by default**, and the migration turned it off for every agent that already existed. With it off, those three are not in the list the runner computes for the job, so the model never sees them — this is not a refusal at call time.
+
+Two gates, deliberately stacked: a [ROOT grant](/docs/guides/root-agent) says what the _workspace_ allows, and this setting says whether _this agent_ may rearrange its own team. The setting can only take away; it never adds a tool a disabled grant already refused.
+
+### The workspace brake
+
+**Settings → Safety → Auto-run brake** pauses every auto-run at once, in every auth mode.
+
+While it is engaged, any `auto_approve` rule on a code-execution tool is dropped for the job, and an explicit `require_approval` rule is injected so a blanket wildcard cannot sweep the tool back in. Nothing is deleted from the database: releasing the brake re-arms the rules exactly as they were. The brake also outranks the agent's autonomy level, so `fully_autonomous` cannot auto-approve past it.
 
 ## Related
 

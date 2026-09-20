@@ -23,7 +23,7 @@ Nodal-Agents is multi-provider: you add one key per provider, then each agent in
 
 ## Add a provider
 
-1. In the dashboard go to **LLM Providers**.
+1. In the dashboard open **Settings** at the foot of the rail, then **LLM Providers**.
 2. Click **Add provider**.
 3. Select your **Provider** from the dropdown. Already-configured providers are greyed out.
 4. Set the **Base URL**. Cloud providers pre-fill a canonical URL — leave it blank to use the default. Local providers (Ollama, OpenAI-compatible) require a URL.
@@ -53,11 +53,11 @@ Provider keys are shared across the workspace. Each agent picks:
 2. **Model** — fetched live from that provider's endpoint, with a curated list as fallback.
 3. **Fallback chain** (optional) — ordered list of `(provider key, model)` pairs tried in sequence when the primary provider can't serve (retries exhausted, timeout, or quota). When a provider is rate-limited and a fallback exists, the chain hands over after one quick retry instead of waiting out the congestion.
 
-Change these in **Agents → `<agent>` → Settings**.
+Change these on the agent's **Overview** tab, in its Model section. The **Reasoning** control sits there too, when the model declares one.
 
 ## Update or replace a key
 
-Go to **LLM Providers**, find the row, and click **Edit**. The API key is masked after saving — click **Replace** to enter a new one. Saving without touching the key field keeps the existing key unchanged.
+Go to **Settings → LLM Providers**, find the row, and click **Edit**. The API key is masked after saving — click **Replace** to enter a new one. Saving without touching the key field keeps the existing key unchanged.
 
 ## Notes
 

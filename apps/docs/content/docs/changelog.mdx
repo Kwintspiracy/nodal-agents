@@ -7,6 +7,354 @@ Notable releases, newest first. Pre-1.0: minor versions can carry breaking
 changes. Every release is published to npm as `nodal-agents` and tagged on
 GitHub — upgrade in place with `nodal-agents update` (your data is preserved).
 
+## v0.9.0 — Sep 20, 2026
+
+The product changed shape. The sidebar became a rail of five boards, a project
+opens on its conversations with its folder beside it, and what Nodal opens on is
+an empty conversation rather than a dashboard of numbers. Underneath, a run's
+delivered files are read from git instead of from what the agent said it wrote.
+
+**The sidebar, and what it opens**
+
+- **Five boards in a rail: Work, Agents, Run, Approvals, Settings.** Each opens
+  its own 300 px panel; Logs navigates and Help opens the documentation, the
+  Discord and the public quality board. Which board is active is derived from the
+  address alone, so two tabs on the same URL show the same panel and a link you
+  send opens what it promises.
+- **The default screen is a new conversation.** Opening Nodal puts you in front
+  of an empty thread, not a dashboard. No row is written before your first
+  message, so a thread opened and closed without a word no longer sits in your
+  inbox forever. The dashboard of figures still exists, at `/dashboard`.
+- **Settings is one list of four pages** — Access, Safety, Workspace, Install —
+  each opening in place with the setting you picked. LLM Providers keeps its own
+  page. Eleven stacked blocks became rows you can filter by name.
+- **Back links are gone everywhere.** The sidebar already says where you are.
+- **An inspector docked to the right edge**, which pushes the page instead of
+  covering it: the list on its left stays visible and stays clickable, so you
+  walk from one row to the next without closing anything.
+
+**Work is a folder you open**
+
+- **One projects page.** Workspaces lists both the projects you registered and
+  the folders an agent wrote in that nobody declared — register one, or hide it.
+  The old Code screen redirects here.
+- **A project opens on its activity, with its folder beside it.** One sorted list
+  of every conversation and every session, including runs started from the CLI or
+  from an MCP client. "Files & proof" is a panel docked to the right, open by
+  default, not a second screen.
+- **An automation has its own page**: its settings, its last ten runs with what
+  they cost over thirty days, and what the routine has remembered. One page
+  serves a schedule and a webhook alike.
+- **Nodal can run `git init` in a project folder** — an option, off by default,
+  offered when you create a project and in its settings. It exists because the
+  git reading below is the only one that sees what a command wrote without naming
+  it, and someone who starts a project from Telegram has no repository to read.
+
+**What a run really wrote**
+
+- **Writes are read from git.** When the project folder is a repository, the
+  runner reads `git status --porcelain` before and after each command, and the
+  delta is the file list. A `run_command` that writes ten files without naming
+  one used to leave no trace at all. Each file carries git's own word for what
+  happened to it, "deleted" included. A folder that is not a repository falls
+  back to the named-files rule, and the Files block says so rather than
+  pretending.
+- **A run records how its answer was produced**, so the run page and the thread
+  no longer each guess, differently, whether the text is the agent's own words or
+  a compiled relay.
+- **A reviewer's own commands are kept** as proof of the work they reviewed, and
+  the verdict sits next to what was delivered.
+- **A refused command names the real cause.** A checkpoint that cannot finish
+  still refuses the write; what changed is what it tells you — a typed code plus
+  the facts measured right then, the folder's size, its file count and the limit,
+  instead of one sentence for every cause.
+
+**Threads**
+
+- **Unread, per person and per thread.** The dot in front of a thread used to
+  mean only "waiting for you, or running". A read now belongs to whoever read:
+  the thread you just opened is not read by a teammate.
+- **The chat reply appears as it is written**, word by word, instead of arriving
+  whole at the end of the turn.
+
+**Two guards against paying twice**
+
+- **A second review of the same thing is refused, not run** — same reviewer, same
+  target, nothing completed in between. An orchestrator that has a PR reviewed,
+  has the findings fixed and asks again is asking about something that changed,
+  and goes through.
+- **An agent does not recompose its own team.** A per-agent setting,
+  `may_change_team`, off by default and off for every agent that already exists:
+  with it off the three team meta-tools are not in the list the runner computes,
+  so the model never sees them.
+- **Delegating expires the parent's prompt cache, and the run now says what that
+  costs.** A sequential delegation always outlasts a provider's cache, so the
+  parent re-pays its prefix at full rate on every resume — about a fifth of a
+  run's bill. Nothing billed changes; the cost is read from the calls themselves
+  and shown.
+
+**Installing**
+
+- **The install names npm's script gate before it bites.** npm skips the install
+  scripts of `@embedded-postgres/<platform>`, the package carrying the Postgres
+  binaries. The install page, the CLI reference, the self-hosting guide and this
+  documentation now say what the warning means and give the command; `up` says it
+  after the fact.
+
+---
+
+## v0.8.11 — Sep 19, 2026
+
+A release about reading a run without opening a chat.
+
+**A run is a board to follow, not a thread to read**
+
+- **One page for every run**, whether it came from a schedule, from a project or
+  from an MCP client: a header card with the request, the agent, the origin, the
+  model and seven figures (cost, duration, tokens in and out, cache reads, files
+  changed, last activity), then what was delivered, the review, the proof, the
+  files of a code run, and the whole activity.
+- **The run says which run it is** — the full identifier under the header,
+  selectable, with a copy button.
+- **A cost or a duration that is genuinely zero prints `0`.** A dash means
+  absent. The two had been indistinguishable.
+- **Audit rows are masked at the gate**: the card, the raw output and the input
+  of every tool row go through one redaction before any screen sees them.
+
+**The thread reads the verdict the reviewer recorded**
+
+- **A delegation's head says the recorded verdict** — "Approved", or "Changes
+  requested · 2 blockers, 1 minor" — read from the row the review tool wrote
+  rather than from the first line of the child's prose, which could say the
+  opposite.
+
+**Channels, and what a failure asks of you**
+
+- **An MCP folder in Channels.** Runs started from outside Nodal, through the MCP
+  server or the API, get their own folder with multi-select delete that refuses
+  to orphan a live delegation.
+- **A failed run says the gesture it calls for.** When a provider rejects a
+  request for a model, the failure says "Try another model for this agent"
+  instead of leaving you with a provider code.
+- **A restart never leaves a job processing with nobody on it.** Jobs whose
+  runner stopped answering are reclaimed and marked, and a parent is woken only
+  if the child it waited for is the one that died.
+- **A late timeout keeps the turns already done** instead of discarding the job.
+
+---
+
+## v0.8.10 — Sep 16, 2026
+
+A release about trusting what Nodal tells you.
+
+**The launcher stops what is yours, and nothing else**
+
+- **No recorded pid is killed unproven.** Windows recycles process numbers, so a
+  process that took the place of a dead worker could be killed in its stead. A
+  pid is signalled only when a fresh reading of the process table agrees on its
+  name and its creation time. When the table cannot be read, nothing is signalled
+  and the line says so.
+- **`up` refuses to kill a healthy stack it did not start.** A live install on
+  the configured ports used to be treated as leftovers to clean up.
+- **Postgres keeps a log**, in `~/.nodalai/logs/postgres/`, one directory per
+  data directory, rotated daily. A backend crash can now be read instead of
+  guessed at.
+- **`down` never sits silently.** Past its budget it reports what the postmaster
+  is still doing and the exact command to end it, for a pid it confirmed.
+
+**An agent's work is credited when the disk says so**
+
+- **A write is recognised by its content**, not by a size and a timestamp whose
+  resolution depends on the filesystem. A rewrite of the same size in the same
+  second is now seen.
+- **A refused read is not an absent file.** A file the runner cannot open after
+  the tool ran is neither credited nor invented.
+- **A project is a project everywhere.** Six places decided whether a folder was
+  a code project and did not agree. A folder you hid stays hidden in the agent's
+  context too, not just on screen.
+
+**Fixes**
+
+- **`release:check` refuses to run over a live dev stack** instead of building in
+  place and emptying the folder the running dashboard is served from.
+- **A delegated job that produced nothing is a failure**, not a completed job.
+  The parent no longer tells you work is "launched" when the specialist returned
+  no deliverable.
+
+---
+
+## v0.8.9 — Sep 9, 2026
+
+Nodal now proves what it builds. Until this release its verification engine had
+never run once — not in your install, not in any install.
+
+**Your agents prove their own work**
+
+- **Verification had never run. Not once.** The engine existed, the screen
+  existed, and the table that records proof had been empty since day one. The
+  reason was a question nobody wanted to answer: Nodal asked _you_ which commands
+  prove your project. **The agent that built the thing now declares how to check
+  it**, and Nodal runs that check when the work ends. A project turns green or
+  red with the command that decided it, and the output that explains it.
+- **What an agent already ran is what it declares** — the syntax check, the
+  build, the request against a server it started. These are not new powers; they
+  were simply never recorded. Declaring them is subject to the same approval
+  rules as running them.
+- **A deliverable is what was aimed at.** A finished app used to be listed with
+  twenty unverified deliverables, archive folders included, because a shell
+  declares everything it _could_ write.
+
+**Every agent gets a purpose, at creation**
+
+- **Creating an agent starts from what you want it for**, not from an empty form.
+  Profiles pre-fill the model, the tools and the autonomy that fit, and
+  everything stays editable, because nothing exists in the database until you
+  click.
+- **Connectors are recommended, never imposed.**
+
+**The chat thread tells the truth**
+
+- **A chat row opens the thread your next message will land in.** It could open
+  another one: the screen picked the most recently _touched_ thread while the
+  runner picks the most recently _opened_ one.
+- **Channels and dashboard conversations are two lists**, one row per chat, named
+  after the person or room at the other end rather than after the first message
+  ever sent.
+- **Threads scroll like a messenger** — open at the last message, follow new
+  ones, but only if you were already at the bottom.
+
+**Scheduled runs remember what they did**
+
+- **A routine keeps its own state**, read and written without a model. It used to
+  store "what I last announced" as a memory searched back in plain language, and
+  a memory that got cleaned up made it announce a release twice on a public
+  Discord.
+- **Memories stop filling with logbook entries.** More than a third of an agent's
+  memory was routine reports. Memory is what an agent knows about you.
+
+**Faster, cheaper conversations**
+
+- **A chat turn costs about half of what it did.** Every turn silently made a
+  second full-size call to re-ask a question whose answer depended on none of the
+  context it was sending — roughly nine thousand tokens, on every message,
+  including "hello".
+
+**Fixes**
+
+- **Signing in over the local network works again.** The dashboard had answered
+  500 in LAN mode since v0.8.7.
+- **A project can no longer contain another project**, and naming a project's
+  folder is optional — leave it empty and it takes the project's name.
+
+---
+
+## v0.8.8 — Aug 28, 2026
+
+Your bot tokens stop being readable in the database, a Slack bot that loses its
+connection comes back on its own, and a database outage no longer destroys the
+log that would explain it.
+
+**Every credential is now encrypted at rest**
+
+- **Bot tokens leave the clear.** The Discord, Slack, WhatsApp and Telegram
+  credentials — and the secret that authenticates your inbound webhooks — were
+  the last values stored readable in the database. They are now encrypted with
+  the same key as your API keys and OAuth credentials. Existing installs are
+  migrated on the next start, in place, with nothing to do.
+- **Reading the database is no longer enough to use them.** A webhook secret is
+  compared after decryption, so a copy of your database does not let anyone fire
+  your agents.
+- **A credential that cannot be decrypted says so.** Restoring a backup without
+  its key used to look exactly like "no bot configured here".
+
+**A Slack bot that drops comes back**
+
+- **A revoked or rotated token no longer leaves an agent silently offline.** The
+  connection is re-established on its own with the credentials as they stand at
+  that moment, so rotating a token is enough to recover.
+- **Retries slow down instead of hammering.**
+
+**A database outage no longer erases its own explanation**
+
+- **Repeated failures collapse.** With the database unreachable, seventeen places
+  wrote the same line every 30 seconds — one real log had 7 412 such lines out of
+  61 359, and since logs rotate, a long outage pushed out the earlier lines that
+  said _why_ it started. The first failure is logged in full, repeats are
+  counted, and recovery says how many there were.
+- **Failures say what actually went wrong** — connection refused, authentication
+  failed, a missing table — instead of the SQL alone.
+
+**Also**
+
+- **GLM 5.3 Flash** joins the model catalogue: a larger context than GLM 5.3,
+  roughly nineteen times cheaper, and it can read images.
+
+---
+
+## v0.8.7 — Aug 27, 2026
+
+Your agents work in the folder you gave them, you can see what they actually
+built, and a coding CLI can now _be_ an agent — Codex as well as Claude Code.
+
+**An agent writes where you told it to**
+
+- **The folder you attach is the folder it uses.** Four runs in a row had
+  delivered into the shared hand-off area while a real project folder sat
+  attached and unused. The cause was not disobedience: the system prompt
+  announced one workspace while the tools saw two.
+- **The shared workspace is named for what it is** — the hand-off area between
+  agents, not the place your deliverables go.
+
+**Nodal stops guessing which folders are projects**
+
+- **It shows the folders your agents wrote in, and gives you two gestures: rename
+  and hide.** Seven different definitions of "real code" were tried and dropped,
+  each breaking on a real case.
+- **Hiding reaches the agents too.** A hidden project leaves every agent's
+  runtime block, not just the screen. The folder on disk is never touched.
+- **The name you choose travels.** Rename a project and your agents hear it under
+  that name.
+
+**An agent can be a coding CLI — Codex included**
+
+- **Codex is selectable next to Claude Code** on an agent's Overview tab. The
+  whole turn is served by that CLI: Nodal keeps the perimeter — folders, budget,
+  approvals, channels — and relays its answer verbatim.
+- **Write mode works on Windows.** It silently did nothing: the turn completed
+  normally and the model answered "the environment forbids all writing" with no
+  error anywhere.
+- **Codex reports no cost, and the screen says so** instead of offering a dollar
+  cap that cannot bound anything.
+
+**Agents stop reporting work they did not do**
+
+- An orchestrator announced "app delivered and reviewed by Reviewer C (2 passes)"
+  four times in one day. No delegation, no write, no file. It was not lying — it
+  was completing a pattern, because nothing in its history distinguished a real
+  hand-off from an invented one. Delegation now leaves a structural trace on the
+  turn that made it, so a turn **without** delegation carries no line at all.
+
+**Hardening** — twenty-eight review passes, twenty-four findings
+
+The most serious were not in this release's new code. They were asleep in code
+that runs every day:
+
+- **Tool output was written to the audit trail in clear text** — the content of
+  every file a CLI session read, tokens included.
+- **A tool restriction could be lifted by switching harness.** An agent with
+  tools explicitly removed got them back when moved to a provider that cannot
+  enforce that kind of ban. It now refuses the turn and says why.
+- **The single-writer lock could be bypassed by spelling.** `C:/Common` and
+  `c:\common` produced two separate locks.
+- **The anti-loop guard undercounted parallel tool calls** — six simultaneous
+  calls counted as one.
+- **The workspace auto-run gate became one brake, not two locks.** Enabling Yolo
+  per agent was already owner-only on both sides; the workspace switch keeps its
+  real value, the emergency brake, and now applies in every auth mode rather than
+  only on LAN.
+
+---
+
 ## v0.8.6 — Aug 23, 2026
 
 Your terminal can now hand work to your agents, and the dashboard follows you

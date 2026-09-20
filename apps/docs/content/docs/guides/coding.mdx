@@ -25,14 +25,15 @@ claude --version     # Claude Code
 codex --version      # Codex
 ```
 
-If either is missing, install it and sign in first. The **Capabilities** page has
-a **Test** button for each provider that runs a real call and reports exactly
-what failed — a missing binary and an expired login look different there.
+If either is missing, install it and sign in first. Each provider row on the
+agent's edit page carries a **Test** button that runs a real probe and reports
+exactly what failed — a missing binary and an expired login look different there.
+The onboarding flow runs the same probe for both providers.
 
 ## Enable it for an agent
 
-1. Open **Skills** in the dashboard and find **Coding CLI** in the built-in
-   library.
+1. Open **Skills** in the dashboard and find **Coding CLI (Claude Code / Codex)**
+   in the built-in library.
 2. Assign it to the agent.
 3. On the agent's edit page, choose which providers it may use and what each one
    defaults to.
@@ -119,16 +120,29 @@ Two things are worth knowing about that number, because it is easy to misread:
 When the cap is reached, `code_task` refuses to start and says so. It does not
 silently downgrade or wait.
 
-## Watching the work: the Code tab
+## Watching the work
 
-Every run lands in the **Code** tab, which is built around what you actually want
-to check after the fact:
+<Callout type="info">
+  The **Code tab is gone** in 0.9.0. `/code` redirects to **Workspaces**, and what it carried now
+  lives in two places that were already there.
+</Callout>
 
-- **Which files were touched**, with the diff of the one you select.
+**The project's page** (`/spaces/<id>`) lists every session and conversation that
+touched the project, newest first, with its folder and its proof in a panel
+docked to the right.
+
+**The run page** is what a session row opens, and it is the same page for every
+origin. It answers what you actually check after the fact:
+
+- **Which files were touched**, with the diff of the one you select. When the
+  project folder is a git repository, that list is read from `git status` before
+  and after the run, so a command that wrote ten files without naming one is
+  still credited. See [Proof](/docs/concepts/proof).
 - **The activity trail**, turn by turn — what the CLI did, in order.
-- **Token accounting per model**, including cache reads and cache writes. On a
-  Claude run the cache writes are usually the dominant line, which is worth
-  seeing rather than guessing at.
+- **Token accounting**, including cache reads. On a Claude run the cache line is
+  usually dominant, which is worth seeing rather than guessing at.
+- **The proof** — the commands the agent declared to check its own work, with
+  their exit codes and output.
 
 ## Code is not done until it is reviewed
 
@@ -137,13 +151,21 @@ agent never to conclude "done" straight after a successful write.
 
 This is deliberate, and it comes from watching harnesses that let a coder certify
 its own work: the agent that wrote the change is the worst judge of whether the
-change is right. Either the agent requests a review, or you read the diff in the
-Code tab. Both are fine. Skipping both is not.
+change is right. Either the agent requests a review, or you read the diff on the
+run page. Both are fine. Skipping both is not.
+
+When a review does happen, its verdict is a **typed record**, not the reviewer's
+prose: the thread and the run page read that record, so a reviewer whose first
+sentence says one thing and whose verdict says another cannot mislead the screen.
+Asking for the same review twice, with nothing completed in between, is refused
+rather than run.
 
 ## Related
 
 - [Coding CLI skill reference](/docs/reference/system-skills/code-task) — the exact
   guidance injected into the agent's prompt
+- [Proof](/docs/concepts/proof) — what the run wrote, what proved it, and the snapshot taken first
+- [Projects](/docs/concepts/projects) — the folders this work lands in
 - [Shell commands](/docs/guides/shell-commands) — the same approval model, for
   arbitrary commands
 - [Workspaces](/docs/concepts/workspaces) — where an agent's files live

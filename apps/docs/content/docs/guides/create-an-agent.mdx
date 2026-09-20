@@ -16,9 +16,16 @@ An agent is the basic unit of work: a **name**, a **system prompt** that shapes 
 
 <Step>
 
-### Open Agents → New agent
+### Open the Agents board → Create New Agent
 
-Go to `http://localhost:3000`, open **Agents**, and click **New agent**.
+Go to `http://localhost:3000`, open the **Agents** board in the sidebar rail, and click **Create New Agent**.
+
+The modal asks **how to start**:
+
+- **Customize a new agent** — an empty form, you pick everything.
+- **Pre-filled agent profiles** — a profile family (Development and others) pre-fills the name, the role, the model and the skills that fit the job you have in mind, and suggests connectors. Every field stays editable.
+
+**Nothing exists in the database until you create the agent**, so a profile you looked at and abandoned leaves no trace, and a suggested connector is a suggestion — never something attached behind your back.
 
 </Step>
 
@@ -52,17 +59,24 @@ Router and Planner are [orchestrators](/docs/concepts/orchestrators) — pick th
 
 Select a **provider key** and a **model** (the list is pulled from the provider's live endpoint). Optionally set a **fallback chain** — ordered `(provider, model)` pairs the runner tries if the primary fails.
 
+You can also make the agent **be** a coding CLI here: picking Claude Code or Codex as its model hands the whole turn to that CLI, with Nodal keeping the perimeter. See [Coding with an agent](/docs/guides/coding).
+
 </Step>
 
 <Step>
 
 ### Save, then assign tools
 
-On the detail page, use the tabs:
+On the agent's edit page, use the tabs:
 
+- **Overview** — name, persona, role and model, all editable afterwards.
+- **Channels** — Telegram, Discord, Slack, WhatsApp.
 - **Skills** — reusable capabilities that inject guidance and unlock tools ([reference](/docs/reference/skills)).
+- **Tools** — the built-in tools this agent holds.
 - **Connectors** — Gmail, Drive, Notion, Airtable… plus MCP servers ([concepts](/docs/concepts/connectors-and-mcp)).
+- **Runs** — what it has done.
 - **Autonomy** — per-tool approval: **Autonomous**, **Ask first**, or **Block**.
+- **Settings** — workspaces, budgets, team permissions, delete.
 
 </Step>
 
@@ -74,13 +88,15 @@ On the detail page, use the tabs:
 
 <Tab value="Dashboard chat">
 
-Select the agent in the **Chat** sidebar and type a task. It runs immediately; follow progress in **Jobs**.
+The dashboard chat talks to your workspace's [ROOT agent](/docs/guides/root-agent) — the first orchestrator you created — which routes work to the right specialist. Open the **Work** board and type into the empty conversation, or pick an existing thread under **Channels → Nodal chats**.
+
+Follow progress under **Logs → Activity**, and open any run for [its own page](/docs/reference/dashboard#a-run--jobsid-scheduledid-codeid).
 
 </Tab>
 
 <Tab value="Telegram">
 
-Open **Agents → your agent → Telegram** and paste a bot token from [@BotFather](https://t.me/BotFather). DM the bot once, then approve that conversation under **Channels** to become its owner — a bot's username is public, so the first DM only _requests_ ownership. Full walkthrough in the [Telegram guide](/docs/guides/telegram).
+Open **Agents → your agent → Channels** and paste a bot token from [@BotFather](https://t.me/BotFather). DM the bot once, then approve that conversation under **Channels** to become its owner — a bot's username is public, so the first DM only _requests_ ownership. Full walkthrough in the [Telegram guide](/docs/guides/telegram).
 
 </Tab>
 

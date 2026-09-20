@@ -1,0 +1,101 @@
+---
+title: Projects
+description: The folders your agents work in — registered or merely detected — and how Nodal keeps track of what each one contains.
+---
+
+A **project** is a folder on your disk that your agents work in. It is not a
+[workspace](/docs/concepts/workspaces) (the tenant boundary) and not an agent
+workspace (a file root an agent may read and write). It is the thing you point at
+when you say "the client portal".
+
+Everything about projects lives on one page, **Workspaces** (`/spaces`).
+
+## Registered and detected
+
+The projects page shows one list with two kinds of row.
+
+**Registered** — you declared this folder, or an agent did through
+`register_project`. It carries a name you chose, a kind, and the date it entered
+the registry — not the day its row happened to be written.
+
+**Detected** — an agent wrote in this folder and nobody ever declared it. Two
+gestures on the row: **Register** it, or **Hide** it.
+
+Seven different definitions of "real code" were tried before this and each broke
+on a real case: file extensions, the agent's skills, a `package.json` at the
+root, a checkbox on the agent, a checkbox on the folder. Detection is not an
+eighth guess — it is the plain fact that an agent wrote there.
+
+<Callout type="info">
+  A project can no longer contain another project. Creating one on a folder that already holds
+  projects used to produce two entries for the same work, one swallowing the other. Junctions and
+  simultaneous creations are covered too.
+</Callout>
+
+## Creating one
+
+**New project** on the projects page asks for:
+
+| Field              | What it means                                                     |
+| ------------------ | ----------------------------------------------------------------- |
+| **Name**           | What you and your agents call it                                  |
+| **Folder**         | The agent workspace it lands inside                               |
+| **Folder name**    | Optional — leave it empty and the folder takes the project's name |
+| **Produces**       | **Code** or **Documents**                                         |
+| **Initialise git** | Off by default. See below                                         |
+
+### Initialise git
+
+Nodal offers to run `git init` in the folder, and the box is **unchecked by
+default**: `git init` writes into your folder, and Nodal does not put a
+repository in someone's directory because it thinks that is better.
+
+What it buys you, in the product's own words: _"Nodal then lists exactly the
+files each run wrote, even the ones a command wrote without naming them. Nothing
+is committed and nothing is pushed."_
+
+That is the whole reason the option exists. Reading `git status` before and after
+a command is the only way to see what a shell wrote without announcing it — see
+[Proof](/docs/concepts/proof). Someone who starts a project from Telegram has no
+repository to read, so the option is offered in the New project form **and** in
+the project's own settings.
+
+## A project's page
+
+Opening a project lands on its **activity**: one sorted list of everything that
+happened in it, newest first — conversations and sessions together, including
+runs started from the CLI or from an MCP client. Its name is the header, its path
+sits underneath.
+
+**Files &amp; proof** is docked to the right edge, open by default. It shows the
+folder, what recent runs wrote, and the proof commands that ran, so you read the
+work and its evidence side by side instead of on two screens.
+
+## Hiding reaches the agents, not the disk
+
+Hiding a project removes it from the `## Runtime` block of every agent in the
+workspace, not just from your screen. An agent stops being told the folder
+exists.
+
+The folder on disk is never touched, and one click brings it back.
+
+The same goes the other way: **rename a project and your agents hear it under
+that name**. "Modify the client portal" finally designates something.
+
+## What an agent sees
+
+At job time each agent's system prompt carries a `## Runtime` block listing the
+projects of its workspace — the visible ones, under the names you chose. The list
+is read from the database at job start, so a rename or a hide takes effect on the
+next job with no restart.
+
+Six different places used to decide whether a folder was a code project, and they
+did not agree. They share one rule now, and a job is attached to the project the
+agent meant to write in, never to a registered subfolder of it.
+
+## Related
+
+- [Proof](/docs/concepts/proof) — what a run wrote, and what proved it
+- [Workspaces](/docs/concepts/workspaces) — the tenant boundary, and agent file roots
+- [Coding with an agent](/docs/guides/coding) — handing development work to a coding CLI
+- [Dashboard reference](/docs/reference/dashboard#workspaces--spaces) — the pages themselves

@@ -7,18 +7,47 @@ Once agents are running, the dashboard and the CLI give you everything you need 
 
 ## Watching runs
 
-The **Runs** page (`/jobs`) lists the most recent job runs. Open any run to see its detail, including the **delegation tree**: when an orchestrator delegates to sub-agents, the orchestrator run sits above its delegated child runs so you can follow the whole fan-out at a glance.
+**Logs → Activity** (`/logs`) is the list of runs: one folded row per run,
+unfoldable onto its own tool calls, filterable by agent, by tool name or by job
+id, 50 to a page. It is the fleet-wide audit trail and the run list at once —
+three screens used to tell the same story, each in its own way. `/jobs` now lands
+here.
 
-Each run shows:
+Its second tab, **Service logs**, shows the runner's and the web app's own log
+output in the app, without going to a terminal.
 
-- **Tokens used** — per job, cumulative across resumes.
-- **Real provider cost** — the actual dollar cost when the provider reports it (OpenRouter with `usage:{include:true}`). Providers that don't report cost leave this at `$0`.
-- **Trigger** — an icon for how the job started (chat, cron schedule, webhook, API, internal).
-- **Status** — running / completed / failed / cancelled / no_action.
+Opening a row gives you [the run page](/docs/reference/dashboard#a-run--jobsid-scheduledid-codeid),
+which is the same page for every origin — a schedule, a project, the dashboard
+chat, an MCP client. Its header card carries seven figures:
 
-You can **cancel** a running job from the run row or its detail.
+| Figure            | What it counts                                                       |
+| ----------------- | -------------------------------------------------------------------- |
+| **Cost**          | The dollar cost the provider reported, cumulative across resumes      |
+| **Duration**      | Wall-clock, when it was measured                                      |
+| **Input tokens**  | Total input, cache included                                           |
+| **Output tokens** | Total output                                                          |
+| **Cache reads**   | Tokens served from a cached prefix                                    |
+| **Files changed** | What the run wrote, constated — see [Proof](/docs/concepts/proof)     |
+| **Activity**      | How long ago something last happened on this run                      |
 
-The **Logs** page (`/logs`) is the fleet-wide tool-call audit trail — every tool call, filterable by agent, tool name, or job ID.
+A figure that is genuinely zero prints `0`; a dash means the figure is absent.
+The two were indistinguishable before 0.8.11, which made "this run cost nothing"
+and "nobody measured this run" look the same.
+
+Below the card: what was delivered, the review, the proof, the files, and the
+whole activity trail. A running job can be **cancelled** from the header.
+
+### What a delegation costs in lost cache
+
+A sequential delegation always outlasts a provider's prompt cache — five minutes
+for an Anthropic `ephemeral` prefix — so the parent re-pays its whole prefix at
+fresh-input rate on every resume. That is by construction, not a bug, and it is
+roughly a fifth of a long run's bill.
+
+Nothing billed changes, but the run now **shows** it: the figure is read from the
+`llm_calls` rows themselves, on six conditions, and never estimated from a
+percentage. A provider that does not report cache writes triggers nothing at all
+rather than being given a guessed cache lifetime.
 
 ## Cost and budget caps
 
@@ -57,4 +86,27 @@ nodal-agents logs             # print all three (no follow)
 
 A single service follows live (`tail -f` style) until Ctrl+C; with no argument all three are printed once. If Postgres refuses to start, set `NODALAI_PG_LOG=1` before `nodal-agents up` for verbose Postgres startup output.
 
-For the in-app, structured view of agent actions, use the dashboard **Logs** page instead — it's the tool-call audit trail, not the raw service stdout.
+The cluster keeps **its own** log, separate from the three above, in
+`~/.nodalai/logs/postgres/<data-dir>/postgresql-YYYY-MM-DD.log` — one
+subdirectory per data directory, one file per day. That is where a backend crash
+is written, and it is what to read when a stack goes down without an explanation
+on the runner's side.
+
+For the in-app view, use the dashboard's **Logs** page: **Activity** for the runs
+and their tool calls, **Service logs** for the same runner and web output without
+a terminal.
+
+## Undoing a run
+
+Before any tool that can modify a workspace runs, Nodal snapshots that folder
+into a shadow git store. Listing and restoring live in the CLI, on purpose —
+deciding that a run went wrong is a judgement, and an agent able to roll itself
+back could roll back the evidence:
+
+```bash
+nodal-agents checkpoints                    # snapshots for the current directory
+nodal-agents checkpoints restore 4f3a9c21   # put it back (the replaced state is saved first)
+```
+
+Read [Proof](/docs/concepts/proof#checkpoints--the-snapshot-taken-before-a-write)
+for what a checkpoint does **not** cover, and what a refused write tells you.

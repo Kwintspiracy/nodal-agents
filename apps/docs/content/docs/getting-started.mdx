@@ -91,19 +91,61 @@ system skills, and starts the runner (`:3001`) and the dashboard (`:3000`). Open
 Your data lives at `~/.nodalai/` — wipe it any time with `rm -rf ~/.nodalai`. Stop
 the stack with `nodal-agents down`.
 
+## What you land on
+
+The dashboard opens on an **empty conversation**, not on a page of numbers:
+_"Hey, what are we building today?"_ with a composer under it.
+
+Nothing is written until you send your first message, so opening this screen and
+closing it leaves no trace. Once you send, the thread gets its own address and
+appears under **Channels → Nodal chats** in the sidebar.
+
+The sidebar is a **rail of five boards** — Work, Agents, Run, Approvals,
+Settings — each opening its own panel. Everything below is reached from there.
+The full map is the [dashboard reference](/docs/reference/dashboard).
+
 ## Connect a model
 
-Open **LLM Providers** in the dashboard and paste an API key for any provider
-(Anthropic, OpenAI, Google, DeepSeek, MiniMax, OpenRouter…) — or point it at a
-local model (LM Studio / Ollama). Setup is one key per provider; each agent then
-picks its own model on top.
+The empty conversation cannot answer until a provider key exists.
+
+1. Click **Settings** at the foot of the rail, then **LLM Providers**.
+2. Click **Add provider** and pick one — Anthropic, OpenAI, Google, DeepSeek,
+   MiniMax, OpenRouter, or a local endpoint (Ollama, LM Studio, …).
+3. Paste the key. Local providers need a base URL instead.
+4. Click **Test connection**. The dashboard makes a real call to the provider and
+   reports what came back. **Save is blocked until the test passes** — a key that
+   was never verified is worse than no key.
+
+Setup is **one key per provider**. Every agent in the workspace can then use any
+model from it, and each agent picks its own. Full walkthrough:
+[Connect a model](/docs/guides/connect-a-model).
 
 ## Create your first agent
 
-1. Go to **Agents → New agent**.
-2. Give it a name, a personality / system prompt, and pick its model.
-3. Optionally assign it [skills](/docs/reference/skills), connectors, or MCP servers.
-4. Send it a task from the dashboard chat — or wire it to Telegram.
+1. Open the **Agents** board in the rail and click **Create New Agent**.
+2. Choose **how to start**:
+   - **Customize a new agent** — an empty form, you pick everything.
+   - **Pre-filled agent profiles** — a profile pre-fills the name, the role, the
+     model and the skills that fit. Recommended connectors are suggested, never
+     imposed.
+3. Nothing is written to the database until you create the agent, so everything
+   stays editable while you look at it.
+4. After it exists, its tabs carry the rest: **Skills**, **Tools**,
+   **Connectors**, **Autonomy** (per-tool approval), **Channels**.
+
+The **first orchestrator** you create becomes this workspace's
+[ROOT agent](/docs/guides/root-agent) — the one the dashboard chat talks to.
+
+## Send it something
+
+Go back to **Work** in the rail and type into the composer, or open a thread that
+already exists. Follow what happens in **Logs → Activity**, which lists every run
+and unfolds onto its tool calls; open any run to get [its own
+page](/docs/reference/dashboard#a-run--jobsid-scheduledid-codeid), with what it
+cost, what it delivered and which files it wrote.
+
+If the agent asks to run something that needs your sign-off, it shows up on the
+**Approvals** board.
 
 ## Update
 
@@ -123,8 +165,18 @@ nodal-agents logs [web|runner|postgres]
 Tails logs for the given service, or all three if you omit the argument.
 
 ```bash
+nodal-agents checkpoints
+```
+
+Lists the snapshots taken before an agent wrote in the current directory.
+`nodal-agents checkpoints restore <sha>` puts the folder back. See
+[Proof](/docs/concepts/proof#checkpoints--the-snapshot-taken-before-a-write).
+
+```bash
 nodal-agents reset --yes
 ```
 
 Deletes all Nodal-Agents data and config. Omit `--yes` to get a confirmation
 prompt first.
+
+Every command and flag is in the [CLI reference](/docs/reference/cli).

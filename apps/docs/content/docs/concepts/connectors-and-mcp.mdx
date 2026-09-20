@@ -24,30 +24,41 @@ connector is exposed without a working implementation.
 
 ### Available connectors
 
-The current catalog (from `packages/shared/src/connector-catalog.ts`):
+Fifteen connectors ship in the catalog:
 
 | Name             | Auth                            |
 | ---------------- | ------------------------------- |
 | Notion           | API key                         |
 | Notion (OAuth)   | OAuth 2                         |
-| Google Drive     | OAuth 2                         |
-| Gmail            | OAuth 2                         |
-| Google Calendar  | OAuth 2                         |
-| Google Sheets    | OAuth 2                         |
-| Google Docs      | OAuth 2                         |
+| Google Drive     | OAuth 2 (`google-oauth`)        |
+| Gmail            | OAuth 2 (`google-oauth`)        |
+| Google Calendar  | OAuth 2 (`google-oauth`)        |
+| Google Sheets    | OAuth 2 (`google-oauth`)        |
+| Google Docs      | OAuth 2 (`google-oauth`)        |
+| Outlook Mail     | OAuth 2 (`microsoft-oauth`)     |
 | Airtable (OAuth) | OAuth 2                         |
 | Airtable         | API key (Personal Access Token) |
 | Apify            | API key                         |
+| Cloudflare       | API key                         |
 | Firecrawl        | API key                         |
 | Tavily           | API key                         |
 | Poyo             | API key                         |
 
+[The connectors reference](/docs/reference/connectors) is generated from the
+catalog itself, one page per connector, with the full tool inventory grouped by
+risk and the exact OAuth scopes each one requests.
+
 ### Assign a connector to an agent
 
-1. Go to **Connectors** in the dashboard and connect the integration (OAuth flow
+1. Go to **API Connectors** in the dashboard and connect the integration (OAuth flow
    or paste a key).
 2. Open the target agent's edit page and go to the **Connectors** tab.
 3. Enable the integration. Its tools become available on the agent's next job.
+
+The Connectors tab also carries an **enabled-operations allowlist** per
+connector: destructive operations (delete, overwrite) can be switched off for
+one agent while the rest of the connector stays available. Every connector page
+in the reference marks which of its tools are destructive.
 
 Credentials are fetched from the database at execution time — they are never
 baked into a job at enqueue time.
@@ -60,6 +71,10 @@ MCP (Model Context Protocol) servers expose tools that the runner discovers at
 job-start and injects into the agent's whitelist. Tools are namespaced with the
 server's slug to avoid collisions: a server with slug `stripe` exposes tools like
 `stripe__retrieve_balance`.
+
+The catalog carries **24 ready-made servers** plus two "add your own" entries,
+one HTTP and one stdio. Each has [its own generated
+page](/docs/reference/mcp) with transport, auth and setup.
 
 ### Transports
 
@@ -104,7 +119,8 @@ The runner maps MCP tool annotations to its own risk model:
 
 **From the catalog:**
 
-1. Go to **MCP** in the dashboard.
+1. Go to **MCP Connectors** in the dashboard (the Agents board, under
+   **Connect**).
 2. Pick a server from the library (verified or pending badge) and click
    **Connect**.
 3. Fill in the URL (if required), API key, and any env vars shown.
@@ -136,8 +152,8 @@ The direction also works in reverse: Nodal can expose **itself** as an MCP
 server, so an external client — your terminal, a coding agent like Claude Code
 — hands work to your agents instead of the other way around.
 
-Enable the **MCP server** switch in Settings (off by default), then register
-the server in your client, on the machine that hosts Nodal:
+Enable the **MCP server** switch in **Settings → Safety** (off by default), then
+register the server in your client, on the machine that hosts Nodal:
 
 ```bash
 claude mcp add nodal -- nodal-agents mcp serve
@@ -146,8 +162,12 @@ claude mcp add nodal -- nodal-agents mcp serve
 The client gets exactly one tool, `run_task`: it creates a **tracked job** for
 your workspace's root agent (or a chosen agent by slug) and returns the job id
 immediately. The work itself runs asynchronously through the normal loop —
-the agent's own tools, approval rules, budgets, and delegation — and lands on
-the Runs page with channel `mcp` plus the caller's self-chosen label.
+the agent's own tools, approval rules, budgets, and delegation.
+
+Nobody typed these runs, so they have no conversation: they land in their own
+**MCP folder** under Channels, whose rows open [the run
+page](/docs/reference/dashboard#a-run--jobsid-scheduledid-codeid) directly, and
+they appear in **Logs → Activity** like any other run.
 
 What the door never grants, whatever the switch says: the configuration tools.
 An MCP job can ask for work; it cannot create agents, skills, connectors or

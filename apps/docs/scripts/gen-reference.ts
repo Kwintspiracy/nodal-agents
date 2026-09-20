@@ -118,6 +118,50 @@ const escapeAnglesOutsideCode = (md: string): string =>
     .map((seg, i) => (i % 2 === 1 ? seg : seg.replace(/</g, '&lt;')))
     .join('');
 
+/**
+ * La PAGE D'ACCUEIL d'une section générée, et son `meta.json`.
+ *
+ * ⚠️ UN DOSSIER SANS `index` N'EST PAS UNE ROUTE. fumadocs sert les PAGES :
+ * `source.getPage(['reference','connectors'])` rend `undefined` tant qu'aucun
+ * fichier ne porte ce chemin, et `/docs/reference/connectors` répond 404. Or
+ * `reference/index.mdx` pointait vers les cinq dossiers depuis toujours — cinq
+ * liens morts sur un site exporté en statique, invisibles parce qu'aucune porte
+ * ne relisait les liens (audit doc 0.9.0).
+ *
+ * L'index est donc ÉCRIT ICI plutôt qu'à la main : les entrées sont celles que
+ * le générateur vient de produire, donc la liste ne peut pas vieillir. Et
+ * `pages` le nomme en tête, sans quoi la barre latérale ouvrirait le dossier
+ * sur sa première fiche au lieu de sa page.
+ */
+const writeSectionIndex = (
+  dir: string,
+  section: string,
+  title: string,
+  description: string,
+  lede: string,
+  entries: ReadonlyArray<{ slug: string; label: string }>,
+): void => {
+  const list = entries
+    .map((e) => `- [${cell(e.label)}](/docs/reference/${section}/${e.slug})`)
+    .join('\n');
+  writeFileSync(
+    join(dir, 'index.mdx'),
+    `---
+title: ${fm(title)}
+description: ${fm(description)}
+---
+
+${lede}
+
+${list}
+`,
+  );
+  writeFileSync(
+    join(dir, 'meta.json'),
+    JSON.stringify({ title, pages: ['index', ...entries.map((e) => e.slug)] }, null, 2) + '\n',
+  );
+};
+
 // ── System skills: one page per skill ───────────────────────────────────────────
 const renderSkillPage = (skill: SystemSkill): string => {
   const unlocks =
@@ -154,7 +198,18 @@ ${escapeAnglesOutsideCode(skill.content.trim())}
 const writeSkillSection = (dir: string, title: string, list: SystemSkill[]): string[] => {
   const slugs = list.map((s) => s.slug);
   for (const skill of list) writeFileSync(join(dir, `${skill.slug}.md`), renderSkillPage(skill));
-  writeFileSync(join(dir, 'meta.json'), JSON.stringify({ title, pages: slugs }, null, 2) + '\n');
+  writeSectionIndex(
+    dir,
+    'system-skills',
+    title,
+    `The ${list.length} skills seeded into every install from the product catalog.`,
+    `These ship in \`@nodal-agents/catalog\` and are upserted into every install at
+boot. Each page carries what the skill does, which tools it unlocks, and the
+exact guidance it injects into an agent's system prompt. Only **capability**
+skills are yours to assign — baseline, channel and agent-internal skills are
+managed by the runner.`,
+    list.map((s) => ({ slug: s.slug, label: s.name })),
+  );
   return slugs;
 };
 
@@ -192,8 +247,10 @@ const opsTable = (ops: OperationDescriptor[]): string => {
 };
 
 const connectorSlugs: string[] = [];
+const connectorEntries: Array<{ slug: string; label: string }> = [];
 for (const c of CONNECTOR_CATALOG) {
   connectorSlugs.push(c.slug);
+  connectorEntries.push({ slug: c.slug, label: c.label });
   const adapter = ADAPTER_REGISTRY[c.slug];
   const ops = adapter?.operations ?? [];
   const authLine =
@@ -236,9 +293,17 @@ ${inventory}
 `,
   );
 }
-writeFileSync(
-  join(connectorsDir, 'meta.json'),
-  JSON.stringify({ title: 'Connectors', pages: connectorSlugs }, null, 2) + '\n',
+writeSectionIndex(
+  connectorsDir,
+  'connectors',
+  'Connectors',
+  `The ${connectorEntries.length} first-party integrations in the catalog, with their auth and full tool inventory.`,
+  `Each connector ships with its adapter, so nothing here is listed without a
+working implementation. A page gives the connector's auth, the OAuth scopes it
+requests, and every tool its adapter exposes, grouped by risk — **Read**,
+**Write**, **Destructive**. The destructive ones are what the per-agent
+enabled-operations allowlist exists for.`,
+  connectorEntries,
 );
 
 // ── MCP: one page per catalog entry ──────────────────────────────────────────────
@@ -247,6 +312,7 @@ writeFileSync(
 // the transport so each entry gets its own page.
 const usedMcpNames = new Set<string>();
 const mcpPages: string[] = [];
+const mcpEntries: Array<{ slug: string; label: string }> = [];
 for (const m of MCP_CATALOG) {
   let page = m.slug;
   if (usedMcpNames.has(page)) page = `${m.slug}-${m.transport}`;
@@ -256,6 +322,7 @@ for (const m of MCP_CATALOG) {
   mcpPages.push(page);
 
   const status = m.status === 'pending' ? ' (test pending)' : '';
+  mcpEntries.push({ slug: page, label: `${m.label}${status}` });
   const transport = m.transport === 'http' ? 'Streamable HTTP' : 'stdio (local subprocess)';
   const authScheme =
     m.transport === 'stdio'
@@ -300,9 +367,17 @@ ${facts}
 `,
   );
 }
-writeFileSync(
-  join(mcpDir, 'meta.json'),
-  JSON.stringify({ title: 'MCP connectors', pages: mcpPages }, null, 2) + '\n',
+writeSectionIndex(
+  mcpDir,
+  'mcp',
+  'MCP connectors',
+  `The ${mcpEntries.length} Model Context Protocol servers in the catalog, with transport, auth and setup for each.`,
+  `Two transports: **Streamable HTTP** for a hosted server, and **stdio** for a
+local subprocess the runner spawns on first use. Two entries are not servers at
+all but the "add your own" forms, one per transport. A page marked *test
+pending* ships without having been verified against a live server, so its
+connection parameters may need adjusting.`,
+  mcpEntries,
 );
 
 // ── Models + ROOT grants ─────────────────────────────────────────────────────────
@@ -317,6 +392,11 @@ const PROVIDER_LABEL: Record<string, string> = {
   minimax: 'MiniMax',
   mistral: 'Mistral',
   groq: 'Groq',
+  // Moonshot manquait, et la table rendait alors la clé brute : la colonne
+  // Provider affichait « moonshot » en bas de casse, seule de la table
+  // (audit doc 0.9.0). Le repli `?? p` reste — il dit la vérité plutôt que
+  // d'inventer un libellé — mais un fournisseur du catalogue mérite le sien.
+  moonshot: 'Moonshot',
   openrouter: 'OpenRouter',
 };
 const providerLabel = (p: string): string => PROVIDER_LABEL[p] ?? p;
@@ -415,9 +495,18 @@ ${grantRows}
 `,
 );
 
-writeFileSync(
-  join(modelsDir, 'meta.json'),
-  JSON.stringify({ title: 'Models & grants', pages: ['models', 'root-grants'] }, null, 2) + '\n',
+writeSectionIndex(
+  modelsDir,
+  'models',
+  'Models & grants',
+  'The curated model catalog, and every power a ROOT agent can be given.',
+  `Two tables, both read from the product itself: the ${modelCount} models Nodal
+pre-fills with the right capability flags, and the full \`RootGrants\` surface
+with each grant's default.`,
+  [
+    { slug: 'models', label: 'Models' },
+    { slug: 'root-grants', label: 'ROOT grants' },
+  ],
 );
 
 // ── Built-in tools ────────────────────────────────────────────────────────────────
@@ -581,9 +670,16 @@ ${channelTable}
 `,
 );
 
-writeFileSync(
-  join(builtinToolsDir, 'meta.json'),
-  JSON.stringify({ title: 'Built-in tools', pages: ['builtin-tools'] }, null, 2) + '\n',
+writeSectionIndex(
+  builtinToolsDir,
+  'builtin-tools',
+  'Built-in tools',
+  'Every tool the runtime registers, generated from the registry itself.',
+  `${builtinTools.length} tools: ${alwaysOnTools.length} always-on,
+${gatedTools.length} unlocked by a skill, a ROOT grant or a per-agent
+authorization, plus ${channelTools.length} channel tools an agent only gets once
+a channel is connected.`,
+  [{ slug: 'builtin-tools', label: 'Built-in tools' }],
 );
 
 // ── Catalog facts, for the homepage ──────────────────────────────────────────

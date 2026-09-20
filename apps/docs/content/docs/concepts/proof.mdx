@@ -1,0 +1,217 @@
+---
+title: Proof
+description: What a run actually wrote, what proved it worked, and the snapshot taken before it was allowed to write at all.
+---
+
+An agent that says "done, I wrote the file" is making a claim. Nodal keeps four
+separate records so you never have to take that claim on its word:
+
+| Record               | The question it answers                                 |
+| -------------------- | ------------------------------------------------------- |
+| **Constated writes** | Which files this run actually changed                   |
+| **Verification**     | Whether what it built still works, and by which command |
+| **Review**           | What a second agent found when it read the work         |
+| **Checkpoints**      | What the folder looked like _before_ the run touched it |
+
+The first three are on [the run page](/docs/reference/dashboard#a-run--jobsid-scheduledid-codeid)
+and in a project's **Files &amp; proof** panel. Checkpoints are deliberately not:
+they live in the CLI, for the reason given below.
+
+## Constated writes — what the run changed
+
+A run's file list is never the agent's own summary. It is read back from the
+disk, and how it is read depends on the folder.
+
+### When the project is a git repository
+
+The runner reads `git status --porcelain` **before** a shell command or a harness
+run and again **after** it. The delta is the file list. This is the only reading
+that sees what a command wrote without naming it: a `run_command` running
+`npm install`, a generator, a script that writes ten files.
+
+Each file carries git's own word for what happened to it — `added`, `modified`,
+`deleted` or `renamed` — which is a word a tool name could not have produced. A
+deletion, in particular, is invisible to any "files this tool targeted" list.
+
+Four limits, stated because they are real:
+
+- **Ignored paths do not count.** `git status` does not list what `.gitignore`
+  covers, and nothing here passes `--ignored`. A rebuilt `dist/` or a reinstalled
+  `node_modules/` is not a deliverable, so it does not appear.
+- **Two runs in the same repository see each other's files.** `git status` talks
+  about the folder, not about the process. Reading before and after each call
+  narrows the window to the length of one call; it cannot close it.
+- **A line that vanishes from the status is re-read on disk, never deduced.** A
+  `git commit` and a `git checkout -- <file>` both empty a status line, and only
+  the second one wrote a byte. Re-reading the content is what separates them.
+- **A rename is only paired when it was staged.** A shell `mv` shows up as a
+  deletion plus an untracked file, so the constat reports two gestures. `git mv`
+  reports one.
+
+### When it is not a repository
+
+The folder falls back to the **named-files** rule: only files a tool or a harness
+_named_ as its target are re-read on disk and credited. What a shell wrote
+without naming it is not constated, and the Files block **says so** rather than
+showing an empty list as if nothing had happened.
+
+That gap is exactly why Nodal offers to run `git init` when you create a project.
+See [Projects](/docs/concepts/projects).
+
+<Callout type="info">
+  A write is recognised by the **content** of the file, not by its size and timestamp. A rewrite of
+  the same size within the same second is seen, which a timestamp with two-second resolution could
+  not do.
+</Callout>
+
+## Verification — the command that proves it works
+
+Until 0.8.9 this engine had never run, in any install, because it asked the wrong
+person: it asked _you_ which commands prove your project. You have no reason to
+know.
+
+**The agent that built the thing declares how to check it.** When the work ends,
+Nodal runs that declaration and records the result.
+
+### How it works
+
+The agent calls `declare_verification` once, when it is done, with the commands
+it **already ran** to check its own output: a syntax check, a build, a test
+suite, a request against a server it started. Each command must exit `0` when the
+project is healthy and non-zero when it is not — a command that always succeeds
+proves nothing.
+
+Nodal runs them in order, stopping at the first failure, and records each one
+with its exit code and its output. The project turns green or red with the
+command that decided it.
+
+Three guards:
+
+- **Declaring is gated like running.** `declare_verification` requires approval
+  by default, exactly like `run_command`. The proof executes later, outside the
+  approval flow, so letting the declaration through would be a way around the
+  rule you set.
+- **You can only declare for a project this run produced something in**, and only
+  for a project a tool of this run _named_ as its target. An agent cannot declare
+  — and so cannot cause to run — a sequence on somebody else's project.
+- **The project must be registered.** Declaring for an unknown path fails loudly
+  and names what is missing, rather than recording a proof that can never run.
+
+### Verification surfaces
+
+**Settings → Safety → Verification surfaces** decides which ways of working are
+placed under verification. Four surfaces, all on by default:
+
+| Surface                        | Covers                                               |
+| ------------------------------ | ---------------------------------------------------- |
+| **Coding tool**                | `code_task` — a coding CLI called as a tool          |
+| **Claude Code / Codex agents** | Agents that _are_ a coding CLI session               |
+| **File tools**                 | `file_write`, `file_edit`, and the Office file tools |
+| **Commands and scripts**       | `run_command`, `run_skill_script`                    |
+
+A surface you switch off produces no verification intent, and the run **says so**
+("surface outside verification") rather than falling silent.
+
+A proof is judged stale when the project changed between the moment it was
+captured and the moment it is read, so a green verdict never survives a write it
+did not see.
+
+## Review — what a second agent found
+
+An agent that wrote a change is the worst judge of whether the change is right.
+When work is reviewed, the reviewer's verdict is a **typed record**, not prose:
+approved, or changes requested with a count per severity.
+
+- The thread and the run page read that record, never the first line of the
+  reviewer's text, which could say the opposite.
+- The reviewer's own commands are recorded as proof of the work they reviewed.
+  On one run a reviewer ran six real browser scenarios and the proof table held
+  zero rows for the job.
+- The verdict is masked before it reaches a screen, so a reviewer quoting a
+  failing command or a config path does not put a token on screen in clear.
+- **A second review of the same thing is refused, not run** — same reviewer, same
+  target, nothing completed in between. Asking again after the findings were
+  fixed is asking about a target that changed, and goes through.
+
+## Checkpoints — the snapshot taken before a write
+
+A write-mode run that goes wrong has no undo. Your own git history is the only
+recourse, if you happened to have committed, in a folder that happens to be a
+repository. Most agent workspaces are neither.
+
+**Before any tool that can modify a workspace runs, Nodal snapshots that
+workspace.** Every workspace the agent holds, once per turn.
+
+### What it is
+
+A **shadow git store** at `~/.nodalai/checkpoints/`, machine-scoped and
+content-addressed, so a hundred snapshots of a tree cost roughly one copy plus
+the deltas.
+
+It is never your project's own `.git`. Nodal adds no commit to your history,
+never touches your index, never moves your HEAD. The cost is duplicated object
+storage on a folder that is already a repository; the benefit is that a
+checkpoint can never corrupt something you care about.
+
+**It is not a tool.** The model never sees it, cannot call it and cannot skip it.
+Anything the model can decide not to do is not a safety net.
+
+### What it does not cover
+
+<Callout type="warn">
+  Checkpoints cover files tracked by an ordinary `git add`: anything the project's own `.gitignore`
+  excludes (`.env`, local data, caches) is **not** snapshotted and cannot be restored. That is
+  deliberate — copying ignored secrets into a second, unmanaged store would be worse than the gap.
+</Callout>
+
+Eight directories are always skipped, whatever your `.gitignore` says:
+`node_modules`, `.git`, `.next`, `dist`, `build`, `__pycache__`, `.venv`,
+`target`. So are files ending in `.log`.
+
+### Listing and restoring
+
+Restoring is deliberately a **human gesture**. Deciding that a run went wrong is
+a judgement, and an agent able to roll itself back could roll back the evidence
+of what it did. So it lives in the CLI, not in the product:
+
+```bash
+nodal-agents checkpoints                      # the current directory
+nodal-agents checkpoints list /path/to/project
+nodal-agents checkpoints restore 4f3a9c21     # the sha, or its first characters
+```
+
+A restore snapshots the state it is about to replace first, so restoring the
+wrong one is itself undoable.
+
+### When a snapshot cannot be taken
+
+**The write is refused.** That is the whole contract: a net that silently is not
+there is worse than no net, because it is the one you believed you had.
+
+What the refusal tells you is a typed code plus the facts measured at that
+moment — the folder's size, its file count, and the limit — instead of one
+sentence for every cause:
+
+| Code                      | What happened                                       |
+| ------------------------- | --------------------------------------------------- |
+| `snapshot_timeout`        | Snapshotting ran out of time: the folder is too big |
+| `snapshot_failed`         | Anything else while snapshotting                    |
+| `checkpoint_read_timeout` | Reading the store ran out of time                   |
+| `checkpoint_read_failed`  | Anything else while reading the store               |
+| `git_missing`             | The `git` binary is not on the PATH                 |
+
+The measurement behind those facts is itself bounded, and says when it stopped:
+"more than 50,000 files" is not "50,000 files". An honest floor beats an exact
+total nobody waited for.
+
+A workspace Nodal cannot even stat is skipped rather than fatal — a write into it
+would fail on its own — while a snapshot that fails on a _reachable_ workspace
+still refuses, because there it genuinely cannot tell whether that is the one
+about to change.
+
+## Related
+
+- [Projects](/docs/concepts/projects) — the folders this all applies to
+- [Coding with an agent](/docs/guides/coding) — read mode, write mode, approval
+- [Shell commands](/docs/guides/shell-commands) — the approval gate and the safety floor
+- [Dashboard reference](/docs/reference/dashboard) — where each record is shown
