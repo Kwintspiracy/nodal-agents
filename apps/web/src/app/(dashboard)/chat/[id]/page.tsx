@@ -109,6 +109,17 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
           density={density}
         />
       }
+      footer={
+        // P4 — la barre d'état, ancrée tout en bas de l'écran, PLEINE LARGEUR
+        // comme l'en-tête : hors de la colonne du fil (Quentin, 20/09).
+        <StatusBar
+          cost={cost}
+          proofVerdict={lastProof?.verdict ?? null}
+          proofSequences={verification.sequences.length}
+          pendingDeliveries={pendingDeliveries}
+          live={live}
+        />
+      }
     >
       {/* Le message envoyé paraît TOUT DE SUITE dans le fil, avec l'agent qui
           réfléchit, avant que la réponse arrive (Quentin, 18/09). Le porteur
@@ -136,16 +147,6 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
                 This conversation lives in {origin.replace(/^via /, '')}. Reply from there.
               </p>
             )
-          }
-          statusBar={
-            // P4 — la barre d'état, ancrée tout en bas de l'écran.
-            <StatusBar
-              cost={cost}
-              proofVerdict={lastProof?.verdict ?? null}
-              proofSequences={verification.sequences.length}
-              pendingDeliveries={pendingDeliveries}
-              live={live}
-            />
           }
         >
           <LiveRefresh live={live} />

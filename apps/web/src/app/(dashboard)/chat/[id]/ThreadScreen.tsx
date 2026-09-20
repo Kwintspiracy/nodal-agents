@@ -16,7 +16,6 @@ import ThreadScroller, { type ThreadFollow } from './ThreadScroller.tsx';
 export default function ThreadScreen({
   children,
   composer,
-  statusBar,
   follow = 'bottom',
   sidePadding = true,
 }: {
@@ -24,8 +23,6 @@ export default function ThreadScreen({
   children: ReactNode;
   /** La saisie, ou ce qui la remplace (un mot quand on ne peut pas écrire). */
   composer?: ReactNode;
-  /** La barre d'état, tout en bas, pleine largeur. */
-  statusBar?: ReactNode;
   /**
    * Ce que l'écran fait du bas de son contenu (voir `ThreadFollow`). Un fil se
    * lit par sa fin : il s'ouvre en bas et suit ce qui arrive. La page d'un run
@@ -89,7 +86,6 @@ export default function ThreadScreen({
           {composer}
         </div>
       )}
-      {statusBar}
     </>
   );
 }

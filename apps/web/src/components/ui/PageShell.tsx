@@ -31,6 +31,13 @@ type Common = {
    * n'a pas de hauteur à donner à un panneau ancré.
    */
   aside?: ReactNode;
+  /**
+   * Une barre PLEINE LARGEUR tout en bas, hors de la colonne de contenu et
+   * du panneau — l'exact pendant de l'en-tête (Quentin, 20/09 : la barre
+   * d'état d'un fil était DANS le conteneur, elle doit prendre toute la
+   * largeur de la vue). N'a d'effet que sur un écran `fill`.
+   */
+  footer?: ReactNode;
   /** Page body. */
   children: ReactNode;
   /** Drop the max-width body wrapper (full-bleed body — e.g. full-screen chat). */
@@ -93,6 +100,7 @@ export default function PageShell(props: Props) {
     toolbar,
     toolbarBleed = false,
     aside,
+    footer,
     children,
     fluid = false,
     fill = false,
@@ -141,6 +149,9 @@ export default function PageShell(props: Props) {
           </div>
           {aside}
         </div>
+        {/* Le pied : après la rangée, donc d'un bord à l'autre, comme l'en-tête
+            avant elle. */}
+        {footer}
       </div>
     );
   }
