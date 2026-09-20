@@ -15,6 +15,7 @@ export * from './entities/tool-call';
 export * from './entities/approval';
 export * from './entities/memory';
 export * from './entities/webhook-trigger';
+export * from './entities/automation';
 export * from './entities/skill';
 export * from './entities/schedule';
 export * from './entities/llm-key';

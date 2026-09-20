@@ -26,7 +26,7 @@ import type { JobTriggerContext } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
 import { SYSTEM_PROMPT_CACHE_BOUNDARY, wrapUntrusted } from '@nodal-agents/shared';
-import { ALWAYS_ON_TOOL_DOCS } from '@nodal-agents/tools';
+import { ALWAYS_ON_TOOL_DOCS, ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
 import { skillKindOfSlug } from '@nodal-agents/catalog';
 import { buildTeamBlock } from './team-block';
 import { buildBaselineBlock, buildChannelBlock, buildDiscoverabilityBlock } from './agent-baseline';
@@ -58,6 +58,18 @@ export interface JobContext {
    * DO have the full toolset and must not get the chat directive).
    */
   surface?: 'chat' | 'cli-runtime';
+  /**
+   * Les NOMS des outils que ce job a réellement, quand l'appelant les connaît.
+   *
+   * Sert à une chose : décider si une skill de socle qui EXIGE un outil est
+   * injectée (`platform-support` ne dit que « appelle `nodal_docs` »). Omis, le
+   * prompt retombe sur `ALWAYS_ON_TOOLS`, ce qui est exact aujourd'hui puisque
+   * les deux branches de liste blanche d'`executeJob` accordent cette liste
+   * entière. Le champ existe parce que le jour où un outil toujours-actif
+   * cessera de l'être, la promesse faite dans le prompt doit suivre la liste
+   * blanche, pas une constante.
+   */
+  availableToolNames?: readonly string[];
   /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
   telegramChatId?: string;
   /**
@@ -726,9 +738,23 @@ async function buildMessagingChannelsBlock(
    * (revue Codex de la dette de la PR #73, passe 2, constat 1).
    */
   nodalTools = true,
-): Promise<string> {
-  const bindings = (await listChannelBindings(db, agentId)).filter((b) => b.enabled);
-  if (bindings.length === 0) return '';
+): Promise<{ text: string; boundChannels: string[]; configuredChannels: string[] }> {
+  const all = await listChannelBindings(db, agentId);
+  const bindings = all.filter((b) => b.enabled);
+  // Les liaisons servent DEUX blocs : celui-ci, qui décrit les canaux ACTIFS,
+  // et la couche de découverte, qui annonce les autres. Rendues ici pour que la
+  // requête reste unique — une seconde lecture des mêmes lignes aurait pu en
+  // donner une autre réponse, et le prompt aurait proposé de configurer un
+  // canal déjà configuré.
+  //
+  // Les DEUX listes voyagent, parce qu'une liaison DÉSACTIVÉE n'est ni décrite
+  // ici ni disponible : elle existe, jeton compris, et l'agent qui l'ignorerait
+  // enverrait le propriétaire recoller un jeton qu'il a déjà (revue de la
+  // PR #329, constat 1). Elle n'est pas décrite non plus, faute d'écran qui la
+  // produise ou la rallume — voir `DiscoverabilityInput.configuredChannelSlugs`.
+  const boundChannels = bindings.map((b) => b.channel);
+  const configuredChannels = all.map((b) => b.channel);
+  if (bindings.length === 0) return { text: '', boundChannels, configuredChannels };
 
   const lines = await Promise.all(
     bindings.map(async (b) => {
@@ -759,23 +785,29 @@ async function buildMessagingChannelsBlock(
   // La retirer faisait répondre « je ne sais pas » à un agent qui sait (revue
   // Codex de la dette de la PR #73, passe 3, constat 2).
   if (!nodalTools) {
-    return (
-      `${connected}\n\n` +
-      `Sending and exploring happen in a job, not from here — hand it the platform and ` +
-      `the conversation you mean. Only approved conversations can be written to; to get a ` +
-      `new one approved, the owner mentions you there (or messages you from it) and ` +
-      `approves the card that appears.`
-    );
+    return {
+      text:
+        `${connected}\n\n` +
+        `Sending and exploring happen in a job, not from here — hand it the platform and ` +
+        `the conversation you mean. Only approved conversations can be written to; to get a ` +
+        `new one approved, the owner mentions you there (or messages you from it) and ` +
+        `approves the card that appears.`,
+      boundChannels,
+      configuredChannels,
+    };
   }
 
-  return (
-    `${connected}\n\n` +
-    `Use \`list_conversations\` to explore a platform's structure (servers, channels, groups) ` +
-    `and see which conversations are approved. You can only SEND to approved conversations; ` +
-    `to get a new one approved, ask your owner to mention you there (or message you from it) ` +
-    `and approve the resulting card. Send tools accept an optional \`channel\` to target a ` +
-    `platform other than the current conversation's.`
-  );
+  return {
+    text:
+      `${connected}\n\n` +
+      `Use \`list_conversations\` to explore a platform's structure (servers, channels, groups) ` +
+      `and see which conversations are approved. You can only SEND to approved conversations; ` +
+      `to get a new one approved, ask your owner to mention you there (or message you from it) ` +
+      `and approve the resulting card. Send tools accept an optional \`channel\` to target a ` +
+      `platform other than the current conversation's.`,
+    boundChannels,
+    configuredChannels,
+  };
 }
 
 // ─── buildSystemPrompt ────────────────────────────────────────────────────────
@@ -847,7 +879,7 @@ export async function buildSystemPrompt(
     workspaceMcps,
     workspaceRows,
     memoryRows,
-    messagingChannelsBlock,
+    messagingChannels,
   ] = await Promise.all([
     // Build team block (data-driven from DB — empty string for workers)
     // A cli-runtime agent gets the roster as knowledge, never as instructions:
@@ -1121,10 +1153,22 @@ export async function buildSystemPrompt(
   // coding-CLI session none of those exist, so every one of those "MUST"s is an
   // order the agent cannot obey. Omitted there rather than shipped as noise the
   // model has to decide to ignore.
+  // Les outils que cet agent a réellement. `availableToolNames` quand le runner
+  // le passe ; sinon la liste toujours-active, qui est EXACTE pour la seule
+  // question posée ici : sur `job` un agent a tout `ALWAYS_ON_TOOLS` (branche
+  // orchestrateur comme branche worker d'`executeJob`, §6), sur `chat` et
+  // `cli-runtime` il n'en a aucun. Le repli existe parce que le prompt est
+  // assemblé AVANT la liste blanche (`execute.ts`, §5 puis §6) : y brancher la
+  // vraie liste demanderait de réordonner le runner, ce qui n'est pas le sujet
+  // de cette PR. Le champ est là pour le jour où ce sera le cas.
+  const availableTools: readonly string[] =
+    jobContext?.availableToolNames ?? (hasNodalTools ? ALWAYS_ON_TOOLS : []);
+
   const baselineBlock = buildBaselineBlock(agent.model, {
     role: agent.role,
     nodalTools: jobContext?.surface !== 'cli-runtime',
     surface: jobContext?.surface ?? 'job',
+    availableTools,
   });
   const channelBlock = buildChannelBlock({
     channel: jobContext?.origin,
@@ -1136,6 +1180,12 @@ export async function buildSystemPrompt(
     attachedMcpSlugs: mcpRows.map((r) => r.slug),
     workspaceConnectors,
     workspaceMcps,
+    // Les canaux auxquels cet agent est DÉJÀ lié, lus en base — la même source
+    // que le bloc « Messaging channels » qui les décrit plus bas. Le reste de
+    // `CHANNELS` est ce qu'on peut lui donner, et c'est exactement ce que le
+    // prompt ne disait nulle part le 21/09.
+    boundChannelSlugs: messagingChannels.boundChannels,
+    configuredChannelSlugs: messagingChannels.configuredChannels,
     nodalTools: hasNodalTools,
   });
 
@@ -1177,6 +1227,8 @@ export async function buildSystemPrompt(
   // memory ranking, per-job jobContext) and stays fresh. Previously the volatile
   // timestamp sat 3rd, so every job's whole system prompt differed and NOTHING
   // cached across jobs. Providers without caching strip the marker before send.
+  const messagingChannelsBlock = messagingChannels.text;
+
   const stable =
     personality +
     wrap(baselineBlock) +
