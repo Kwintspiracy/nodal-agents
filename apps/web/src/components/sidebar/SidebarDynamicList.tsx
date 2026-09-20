@@ -66,6 +66,7 @@ export default function SidebarDynamicList({
   dot = false,
   active = true,
   menu,
+  isActive,
 }: {
   /** Nomme la section pour les tests et les parcours. */
   testId: string;
@@ -114,6 +115,11 @@ export default function SidebarDynamicList({
    * suite après un geste, sans attendre le tour d'horloge.
    */
   menu?: (row: DynamicRow, relire: () => Promise<void>) => ReactNode;
+  /**
+   * La ligne où l'on EST, quand elle ne se déduit pas du chemin seul — les
+   * lignes de RECENTS ne diffèrent que par un paramètre (`?show=`).
+   */
+  isActive?: (row: DynamicRow) => boolean;
 }) {
   const lire = useCallback(() => read(FOLDER_THREADS_PROBE), [read]);
   const { rows, erreur, relire } = useSidebarRead<DynamicRow>(lire, active);
@@ -154,7 +160,11 @@ export default function SidebarDynamicList({
             href={hrefOf(r)}
             title={r.title ?? r.name}
             depth="thread"
-            active={pathname === hrefOf(r) || pathname.startsWith(`${hrefOf(r)}/`)}
+            active={
+              isActive !== undefined
+                ? isActive(r)
+                : pathname === hrefOf(r) || pathname.startsWith(`${hrefOf(r)}/`)
+            }
             markCurrent
             menu={menu?.(r, relire)}
             testId={`sidebar-row-${testId}`}

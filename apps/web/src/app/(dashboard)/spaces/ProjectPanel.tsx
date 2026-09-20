@@ -8,7 +8,7 @@
 // CÔTE À CÔTE : il pousse la page au lieu de la couvrir, la liste reste
 // visible et cliquable, et on passe d'une ligne à l'autre sans rien fermer.
 // C'est le même motif que la page Settings reçoit (planche P1, issue #231), et
-// c'est le composant partagé `DockedPanel` qui le dessine.
+// depuis le 20/09 la carte FLOTTE au bord droit (planche 498:5776).
 //
 // L'état est PARTAGÉ entre deux endroits de la page : le bouton, qui vit dans
 // la barre d'outils du `PageShell`, et le panneau, qui vit dans le corps. D'où
@@ -23,10 +23,11 @@
 // préférence qui ne fait pas d'aller-retour, et il est payé une fois par
 // ouverture de page.
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { FolderOpen } from '@phosphor-icons/react';
-import DockedPanel from '@/components/ui/DockedPanel';
+import { createContext, useContext, useEffect, useId, useState, type ReactNode } from 'react';
+import { FolderOpen, X } from '@phosphor-icons/react';
+import IconButton from '@/components/ui/IconButton';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import { useLayer } from '@/lib/layers.ts';
 
 /** La clé du choix, une seule pour tous les projets : c'est une habitude de lecture. */
 const STORAGE_KEY = 'nodal.project-panel-open';
@@ -104,7 +105,6 @@ export function ProjectPanelButton() {
       // Pressé = PLEIN, la façon dont le DS dit « actif » ailleurs (la
       // pastille sombre de `PillTabs`). Relâché = neutre, comme ses voisins.
       variant={open ? 'ink' : 'neutral'}
-      size="sm"
       onClick={toggle}
       aria-pressed={open}
       data-testid="project-panel-toggle"
@@ -115,29 +115,74 @@ export function ProjectPanelButton() {
   );
 }
 
+/** La largeur du panneau flottant, et la place qu'il prend au contenu. */
+export const PROJECT_PANEL_W = 400;
+
 /**
- * Le PANNEAU seul, pour la fente `aside` du `PageShell` (#237).
+ * Le PANNEAU, FLOTTANT (planche 498:5776, Quentin 20/09) : une carte posée au
+ * bord droit de l'écran, sous l'en-tête, avec ses coins et son ombre — pas une
+ * colonne ancrée pleine hauteur qui coupait la page en deux. Il se ferme par
+ * sa croix, par Échap (pile des calques), ou par le bouton de la rangée.
  *
- * Il n'y a plus de rangée maison ici : c'est le `PageShell` qui met la colonne
- * de contenu et le panneau côte à côte, sous l'en-tête. Une rangée écrite
- * dans la page vivait FORCÉMENT sous la zone de barre d'outils, donc le
- * panneau commençait plus bas que le filet, et la barre traînait à gauche de
- * ses boutons une bande vide qui n'appartenait à rien (Quentin, 19/09).
+ * Sur un écran étroit il ne flotte pas : il se pose SOUS la liste, en pleine
+ * largeur, parce qu'une carte de 400 px par-dessus une colonne de 400 px
+ * cacherait tout ce qu'elle est censée accompagner.
  */
 export function ProjectFilesPanel({ title, children }: { title: string; children: ReactNode }) {
   const { open, close } = usePanel();
+  const titleId = useId();
+  useLayer(open, close);
+  if (!open) return null;
   return (
-    <DockedPanel open={open} onClose={close} title={title} testId="project-files-panel">
-      {children}
-    </DockedPanel>
+    <aside
+      role="complementary"
+      aria-labelledby={titleId}
+      data-testid="project-files-panel"
+      className="mt-6 flex max-h-[70vh] flex-col overflow-hidden rounded-xl border border-rule bg-paper shadow-[0_12px_32px_rgba(0,0,0,0.28)] lg:fixed lg:top-[96px] lg:right-6 lg:bottom-6 lg:mt-0 lg:max-h-none lg:w-[400px]"
+    >
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-rule-2 py-3 pr-3 pl-5">
+        <h2 id={titleId} className="min-w-0 truncate text-title-16 text-ink">
+          {title}
+        </h2>
+        <IconButton ghost aria-label="Close" onClick={close} className="h-7 w-7">
+          <X size={16} />
+        </IconButton>
+      </div>
+      <div
+        tabIndex={0}
+        className="flex min-h-px flex-1 flex-col gap-3.5 overflow-y-auto p-5 focus-visible:outline-none"
+      >
+        {children}
+      </div>
+    </aside>
   );
 }
 
-/** Le corps qui défile, dans les gouttières de la page. */
-export function ProjectPanelBody({ children }: { children: ReactNode }) {
+/**
+ * Le CORPS de la page : la rangée d'actions, puis le contenu, centrés comme
+ * sur toute autre page — et décalés vers la gauche de la largeur du panneau
+ * quand celui-ci flotte, pour que la colonne reste centrée dans la place qui
+ * lui reste (c'est ce que la planche dessine : la liste au milieu de l'espace
+ * à gauche de la carte).
+ */
+export function ProjectPanelBody({
+  actions,
+  children,
+}: {
+  /** La rangée d'actions de la page, au-dessus du contenu, alignée à droite. */
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  const { open } = usePanel();
   return (
-    <main className="min-w-0 flex-1 overflow-y-auto px-5 pt-5 pb-10 sm:px-8 lg:px-9">
-      {children}
-    </main>
+    <div
+      data-testid="project-body"
+      className={`px-5 pt-6 pb-10 transition-[padding] sm:px-8 lg:px-9 ${open ? 'lg:pr-[440px]' : ''}`}
+    >
+      <div className="mx-auto flex max-w-6xl flex-col gap-4">
+        {actions}
+        {children}
+      </div>
+    </div>
   );
 }

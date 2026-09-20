@@ -60,7 +60,13 @@ const DYNAMIC: Record<PanelDynamic, () => ReactElement> = {
   cron: () => <CronList />,
   webhooks: () => <WebhooksList />,
   approvals: () => <ApprovalsList />,
-  recents: () => <RecentApprovals />,
+  // Sous <Suspense> : la section lit `?show=` pour allumer la ligne dont la
+  // carte est ouverte, et Next veut `useSearchParams` sous une frontière.
+  recents: () => (
+    <Suspense fallback={null}>
+      <RecentApprovals />
+    </Suspense>
+  ),
 };
 
 /**

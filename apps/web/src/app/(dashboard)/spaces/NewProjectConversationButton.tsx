@@ -15,7 +15,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 
 export default function NewProjectConversationButton({ projectId }: { projectId: string }) {
   return (
-    <PrimaryButton variant="neutral" size="sm" href={`/?project=${encodeURIComponent(projectId)}`}>
+    <PrimaryButton variant="neutral" href={`/?project=${encodeURIComponent(projectId)}`}>
       New conversation
     </PrimaryButton>
   );

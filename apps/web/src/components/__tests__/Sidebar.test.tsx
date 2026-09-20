@@ -875,18 +875,17 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     expect(
       rendues[0]?.querySelector('[data-testid="thread-dot"]')?.getAttribute('data-calls'),
     ).toBe('no');
-    // Une ligne rendue NE NAVIGUE PAS et ne s'allume pas (Quentin, 20/09) :
-    // c'est un bouton, qui déplie le RÉSUMÉ de la demande sous elle.
-    expect(rendues[0]?.tagName).toBe('BUTTON');
-    expect(rendues[0]?.getAttribute('aria-expanded')).toBe('false');
-    expect(container.querySelector('[data-testid="recent-summary"]')).toBeNull();
-    await click(rendues[0]!);
-    const resume = container.querySelector('[data-testid="recent-summary"]');
-    expect(resume?.textContent).toContain('Search the web for « nodal »');
-    expect(resume?.textContent).toContain('Researcher · web_search');
-    expect(resume?.textContent).toContain('Approved');
-    await click(rendues[0]!);
-    expect(container.querySelector('[data-testid="recent-summary"]')).toBeNull();
+    // Une ligne rendue ouvre la CARTE de la demande dans la vue principale
+    // (Quentin, 20/09) — pas le fil, pas un résumé dans la barre — et seule
+    // celle dont la carte est ouverte s'allume.
+    expect(rendues[0]?.getAttribute('href')).toBe('/approvals?show=r1');
+    expect(rendues[0]?.className).not.toContain(SIDEBAR_ROW_ACTIVE.split(' ')[0]!);
+
+    await remonter();
+    search = 'show=r1';
+    await renderSidebar();
+    const ouverte = listRows('recents')[0]!;
+    expect(ouverte.closest('[data-sidebar-row]')?.className).toContain(SIDEBAR_ROW_ACTIVE);
   });
 
   it('ne lit PAS les approbations en attente une seconde fois', async () => {

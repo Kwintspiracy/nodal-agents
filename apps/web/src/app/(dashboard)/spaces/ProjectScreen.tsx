@@ -29,7 +29,6 @@ import {
   listCodeProjectPrefsAction,
 } from '@/lib/actions.ts';
 
-import WorkBar from '@/components/ui/WorkBar';
 import ActionRow from '@/components/ui/ActionRow';
 import { projectFactsLine } from './project-header.ts';
 import { activityRows } from './activity-rows.ts';
@@ -86,38 +85,35 @@ export default async function ProjectScreen({
 
   return (
     <ProjectPanelProvider forceOpen={forceFilesOpen}>
-      {/* L'ORDRE, et c'est la règle de #242 : l'en-tête (titre, sous-titre), la
-          WorkBar avec le retour dedans, la rangée des actions SOUS la barre,
-          puis la rangée contenu / panneau. Les actions ne sont ni sur la ligne
-          du retour — un retour entouré de boutons n'est plus un retour — ni
-          dans un bandeau pleine largeur au-dessus du panneau.
-          `fluid` : la page d'un projet remplit le cadre. Sa liste est une
-          boîte de réception, et le panneau lui prend déjà 400 px à droite. */}
+      {/* La planche 498:5776 (Quentin, 20/09) : l'en-tête porte le nom et le
+          CHEMIN du projet ; dessous, la page est une page comme les autres —
+          contenu centré, rangée d'actions alignée à droite au-dessus de la
+          liste, boutons à la taille standard — et le panneau « Files & proof »
+          FLOTTE au bord droit, ouvert par défaut. Plus de WorkBar : le chemin
+          est dans l'en-tête, et rien d'autre n'y était dit.
+          `fluid` : la colonne se centre ELLE-MÊME dans `ProjectPanelBody`,
+          parce qu'elle doit se recentrer dans la place que le panneau laisse. */}
       <PageShell
-        fill
         fluid
-        toolbarBleed
         title={facts.name}
-        subtitle={projectFactsLine(facts)}
-        toolbar={
-          <>
-            <WorkBar context={<span className="text-body-13 text-ink-3">{facts.path}</span>} />
-            <ActionRow className="px-5 pt-4 sm:px-8 lg:px-9">
+        subtitle={
+          <span className="flex flex-col gap-0.5">
+            <span className="font-mono text-mono-11 text-ink-3">{facts.path}</span>
+            <span>{projectFactsLine(facts)}</span>
+          </span>
+        }
+      >
+        <ProjectPanelBody
+          actions={
+            <ActionRow>
               <ProjectToolbar
                 projectId={facts.id}
                 projectPath={facts.path}
                 projectName={facts.name}
               />
             </ActionRow>
-          </>
-        }
-        aside={
-          <ProjectFilesPanel title="Files & proof">
-            <FilesAndProof result={pageResult} prefs={prefsResult} owner={ownerResult} />
-          </ProjectFilesPanel>
-        }
-      >
-        <ProjectPanelBody>
+          }
+        >
           {/* L'OPTION GIT DU PROJET (issue #200), dans la colonne et pas dans
               le panneau : le panneau montre ce que le dossier CONTIENT et ce
               que la preuve en dit, tandis que poser un dépôt est un geste qu'on
@@ -157,6 +153,12 @@ export default async function ProjectScreen({
               <ProjectActivity rows={rows} />
             </>
           )}
+
+          {/* Le panneau vit DANS le corps : fixé au bord droit sur un grand
+              écran, posé sous la liste sur un petit. */}
+          <ProjectFilesPanel title="Files & proof">
+            <FilesAndProof result={pageResult} prefs={prefsResult} owner={ownerResult} />
+          </ProjectFilesPanel>
         </ProjectPanelBody>
       </PageShell>
     </ProjectPanelProvider>

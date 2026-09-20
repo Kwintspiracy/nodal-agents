@@ -23,21 +23,37 @@ const TABS = ['pending', 'approved', 'rejected', 'expired', 'all'] as const;
 type Tab = (typeof TABS)[number];
 
 interface PageProps {
-  searchParams: Promise<{ status?: string }>;
+  /**
+   * `?status=` choisit l'onglet ; `?show=<id>` ouvre UNE demande, quelle que
+   * soit sa décision — c'est ce que la section RECENTS de la barre latérale
+   * ouvre (Quentin, 20/09) : la carte entière, dans la vue principale, avec
+   * ce qui a été décidé.
+   */
+  searchParams: Promise<{ status?: string; show?: string }>;
 }
 
 export default async function ApprovalsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const rawStatus = sp.status;
+  const show = typeof sp.show === 'string' && sp.show !== '' ? sp.show : null;
   const status: Tab =
-    rawStatus === 'approved' ||
-    rawStatus === 'rejected' ||
-    rawStatus === 'expired' ||
-    rawStatus === 'all'
-      ? rawStatus
-      : 'pending';
+    show !== null
+      ? 'all'
+      : rawStatus === 'approved' ||
+          rawStatus === 'rejected' ||
+          rawStatus === 'expired' ||
+          rawStatus === 'all'
+        ? rawStatus
+        : 'pending';
 
-  const result = await listApprovalsAction({ status });
+  const lecture = await listApprovalsAction({ status });
+  // Une demande ouverte depuis la barre : la liste se réduit à elle, et la page
+  // le dit dans son sous-titre plutôt que de la noyer parmi cent autres.
+  const result = !lecture.ok
+    ? lecture
+    : show === null
+      ? lecture
+      : { ok: true as const, data: lecture.data.filter((a) => a.id === show) };
   if (!result.ok) {
     return (
       <PageShell title="Approvals">
@@ -52,10 +68,19 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
     <PageShell
       title="Approvals"
       subtitle={
-        <>
-          {result.data.length} {status === 'all' ? '' : status} approval
-          {result.data.length === 1 ? '' : 's'}
-        </>
+        show !== null ? (
+          <>
+            One request, as it was decided.{' '}
+            <Link href="/approvals" className="text-ink-2 hover:text-ink">
+              Back to the list
+            </Link>
+          </>
+        ) : (
+          <>
+            {result.data.length} {status === 'all' ? '' : status} approval
+            {result.data.length === 1 ? '' : 's'}
+          </>
+        )
       }
       toolbar={
         <div className="flex gap-1.5 text-xs">
@@ -78,9 +103,11 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
       {result.data.length === 0 ? (
         <EmptyState
           title={
-            status === 'pending'
-              ? 'No pending approvals. Tools that require approval show up here.'
-              : `No ${status} approvals.`
+            show !== null
+              ? 'This request was not found. It may have been deleted with its job.'
+              : status === 'pending'
+                ? 'No pending approvals. Tools that require approval show up here.'
+                : `No ${status} approvals.`
           }
         />
       ) : (
