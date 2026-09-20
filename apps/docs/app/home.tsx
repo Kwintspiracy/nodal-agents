@@ -35,6 +35,7 @@ import {
   PILLARS,
   PRACTICES,
   PRINCIPLES,
+  PROOF_RECORDS,
   ROADMAP,
   SECTIONS,
   VERSION,
@@ -283,6 +284,8 @@ export default function Home() {
           <p className="home-intro">
             A platform you install, not a service you sign up for. It brings its own database, its
             own dashboard and its own runner, and it talks to whichever model you already pay for.
+            The dashboard is five boards: your work, your agents, what runs on its own, what waits
+            for your approval, and the settings.
           </p>
           <div className="home-grid-2">
             {PILLARS.map((p) => (
@@ -365,9 +368,11 @@ export default function Home() {
             ))}
           </div>
           <p className="home-figures-note">
-            Counted from the catalogs themselves at build time, not typed by hand. You can also run
-            several instances of one connector side by side, a personal Gmail and a work Gmail on
-            the same install, each with its own credential.
+            Counted from the catalogs themselves at build time, not typed by hand. Of the built-in
+            tools, {CATALOG.alwaysOnTools} are on for every agent and the rest unlock through a
+            skill, a grant or a per-agent authorisation. You can also run several instances of one
+            connector side by side, a personal Gmail and a work Gmail on the same install, each with
+            its own credential.
           </p>
 
           <IconWall
@@ -414,6 +419,23 @@ export default function Home() {
               </article>
             ))}
           </div>
+
+          <p className="home-mono" style={{ marginTop: '48px' }}>
+            When an agent says it is done
+          </p>
+          <dl className="home-defs">
+            {PROOF_RECORDS.map((r) => (
+              <div key={r.term}>
+                <dt>{r.term}</dt>
+                <dd>{r.body}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="home-figures-note">
+            Four records, kept apart on purpose. The first three sit on the run page and in the
+            project panel. The fourth stays in the command line, because deciding that a run went
+            wrong is your call, and an agent able to roll itself back could roll back the evidence.
+          </p>
 
           <figure className="home-diagram">
             <FlowDiagram />
