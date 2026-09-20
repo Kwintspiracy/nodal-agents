@@ -16,12 +16,20 @@
 //      « instantanée ».
 //   5. LES PHRASES disent le plancher quand le comptage s'est arrêté avant la
 //      fin — « At least », jamais la taille nue.
+//   6. LA FRAÎCHEUR EST PAR ESPACE. La photo d'un espace silencieux remonte
+//      même enterrée sous deux cents photos d'un espace bavard : une absence
+//      affirmée à tort est ce que l'invariant #4 refuse.
+//   7. UN FICHIER à la place du dossier partagé se dit ILLISIBLE, et non vide.
 //
 // Mutations vérifiées :
 //   - le `stat` retiré de l'action (mesure directe) → le point 3 rougit (un
 //     dossier absent pèse « 0 B in 0 files ») ;
 //   - `capped` ignoré dans `footprintSizeText` → le point 5 rougit ;
-//   - `ms ?? null` remplacé par `ms ?? 0` → le point 4 rougit.
+//   - `ms ?? null` remplacé par `ms ?? 0` → le point 4 rougit ;
+//   - la lecture par espace remplacée par un balayage borné commun → le point
+//     6 rougit (l'espace silencieux n'a plus de photo) ;
+//   - `unreadable` changé en `absent` sur la branche « pas un dossier » → le
+//     point 7 rougit.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
@@ -29,7 +37,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, entityMembers, jobCheckpoints } from '@nodal-agents/db';
+import { agentJobs, agents, entities, entityMembers, jobCheckpoints } from '@nodal-agents/db';
 import { footprintSizeText, footprintSnapshotText } from '../workspace-footprint.ts';
 import type { WorkspaceFootprint } from '../workspace-footprint-actions.ts';
 
@@ -166,6 +174,29 @@ describe('la taille d’un espace et le coût de son filet @cap:travailler-sur-d
     expect(footprintSnapshotText(vu)).toBe('Last snapshot took 24.1 s');
   });
 
+  it('dit ILLISIBLE quand un FICHIER occupe le chemin du dossier partagé', async () => {
+    // `measureWorkspace` rendrait `{0, 0, false}` : c'est le `stat` préalable
+    // qui fait la différence entre « vide », « absent » et « pas un dossier »
+    // (revue C, passe 1, mutation (b) non couverte).
+    const [e] = await testDb
+      .insert(entities)
+      .values({ userId: seed.userId, name: 'Fichier', slug: `fichier-${Date.now()}` })
+      .returning({ id: entities.id });
+    await testDb
+      .insert(entityMembers)
+      .values({ entityId: e!.id, userId: seed.userId, role: 'owner' });
+    await mkdir(join(racine, e!.id), { recursive: true });
+    await writeFile(join(racine, e!.id, 'shared'), 'je ne suis pas un dossier', 'utf8');
+
+    const { listWorkspaceFootprintsAction } = await actions();
+    const r = await listWorkspaceFootprintsAction();
+    if (!r.ok) throw new Error(r.message);
+    const sien = r.data.find((f) => f.workspaceId === e!.id);
+    expect(sien!.measure, 'un fichier a été mesuré comme un dossier').toBeNull();
+    expect(sien!.unmeasured).toBe('unreadable');
+    expect(footprintSizeText(sien!)).toBe('Size unreadable');
+  });
+
   it('dit « pas chronométrée » pour une photo d’avant la colonne', async () => {
     await testDb.insert(jobCheckpoints).values({
       jobId,
@@ -221,5 +252,85 @@ describe('les phrases d’une empreinte @cap:travailler-sur-des-fichiers/moteur'
       lastSnapshot: { ms: 640, takenAt: new Date('2026-09-20T12:00:00Z'), workspace: 'C:/p' },
     };
     expect(footprintSnapshotText(vu)).toBe('Last snapshot took 640 ms');
+  });
+});
+
+// ─── La fraîcheur, par espace ────────────────────────────────────────────────
+//
+// EN DERNIER, et son commentaire le dit : ce cas sème deux cents photos, qui
+// rendraient faux tout cas postérieur attendant « aucune photo ».
+
+/** Un SECOND espace de la même personne, silencieux, et sa photo à lui. */
+const voisin = { entityId: '', jobId: '', partage: '' };
+
+describe('la fraîcheur par espace @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('rend la photo d’un espace SILENCIEUX, même noyée sous celles d’un actif', async () => {
+    // ⚠️ LE CAS QUI A FAIT RATER LA PREMIÈRE VERSION (revue C, passe 1, C1).
+    // La lecture prenait les deux cents lignes les plus récentes toutes
+    // entités confondues, puis gardait la première de chaque espace : la photo
+    // d'un espace calme, enterrée sous celles d'un espace bavard, disparaissait
+    // et l'écran affirmait « No safety snapshot yet ». Une absence AFFIRMÉE à
+    // tort est ce que l'invariant #4 refuse.
+    const [e] = await testDb
+      .insert(entities)
+      .values({ userId: seed.userId, name: 'Voisin', slug: `voisin-${Date.now()}` })
+      .returning({ id: entities.id });
+    voisin.entityId = e!.id;
+    await testDb
+      .insert(entityMembers)
+      .values({ entityId: voisin.entityId, userId: seed.userId, role: 'owner' });
+    const [a] = await testDb
+      .insert(agents)
+      .values({
+        entityId: voisin.entityId,
+        name: 'Agent',
+        slug: `agent-voisin-${Date.now()}`,
+        personality: '',
+      })
+      .returning({ id: agents.id });
+    const [j] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: voisin.entityId,
+        agentId: a!.id,
+        channel: 'dashboard',
+        task: 'une tâche',
+        status: 'completed',
+      })
+      .returning({ id: agentJobs.id });
+    voisin.jobId = j!.id;
+    voisin.partage = join(racine, voisin.entityId, 'shared');
+
+    // SA photo, ANCIENNE.
+    await testDb.insert(jobCheckpoints).values({
+      jobId: voisin.jobId,
+      turn: 1,
+      workspace: voisin.partage,
+      sha: 'ddddddd',
+      snapshotMs: 1500,
+      takenAt: new Date('2026-01-01T00:00:00Z'),
+    });
+
+    // Et DEUX CENTS photos plus récentes de l'espace bavard, qui enterraient
+    // la sienne.
+    await testDb.insert(jobCheckpoints).values(
+      Array.from({ length: 200 }, (_, i) => ({
+        jobId,
+        turn: 1000 + i,
+        workspace: join(racine, seed.entityId, 'shared'),
+        sha: 'eeeeeee',
+        snapshotMs: 100 + i,
+        takenAt: new Date(Date.UTC(2026, 8, 20, 0, 0, i)),
+      })),
+    );
+
+    const { listWorkspaceFootprintsAction } = await actions();
+    const r = await listWorkspaceFootprintsAction();
+    if (!r.ok) throw new Error(r.message);
+    const sien = r.data.find((f) => f.workspaceId === voisin.entityId);
+    expect(sien, 'l’espace voisin est absent de la lecture').toBeDefined();
+    expect(sien!.lastSnapshot, 'la photo de l’espace silencieux a disparu').not.toBeNull();
+    expect(sien!.lastSnapshot!.ms).toBe(1500);
+    expect(footprintSnapshotText(sien!)).toBe('Last snapshot took 1.5 s');
   });
 });

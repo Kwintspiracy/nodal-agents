@@ -40,15 +40,7 @@
 
 import 'server-only';
 import { stat } from 'node:fs/promises';
-import {
-  agentJobs,
-  desc,
-  entities,
-  entityMembers,
-  eq,
-  inArray,
-  jobCheckpoints,
-} from '@nodal-agents/db';
+import { agentJobs, desc, entities, entityMembers, eq, jobCheckpoints } from '@nodal-agents/db';
 import { formatBytes, measureWorkspace } from '@nodal-agents/checkpoints';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
@@ -79,17 +71,6 @@ async function getSession() {
   const session = await requireAuth(req, provider);
   return applyActiveEntity(session, req);
 }
-
-/**
- * Combien de lignes de photo la lecture balaie pour retrouver la dernière de
- * chaque espace.
- *
- * Deux cents : un tour de runner en écrit une par dossier, et la plus récente
- * d'un espace resté silencieux peut donc être enterrée sous celles d'un espace
- * actif. Une borne est nécessaire — la table grossit à chaque tour — et
- * celle-ci couvre largement le cas où l'on a quelques espaces.
- */
-const SNAPSHOT_SCAN_MAX = 200;
 
 /** Ce qu'un comptage a trouvé. `capped` = les deux chiffres sont des planchers. */
 export type FootprintMeasure = {
@@ -159,38 +140,34 @@ export async function listWorkspaceFootprintsAction(): Promise<ActionResult<Work
       .orderBy(entities.createdAt);
     if (mine.length === 0) return ok([]);
 
-    const ids = mine.map((r) => r.id);
-
-    // LA DERNIÈRE PHOTO DE CHAQUE ESPACE, en UNE lecture pour tous — jamais une
-    // par ligne. Les plus récentes d'abord, et le premier de chaque espace
-    // gagne : c'est un `DISTINCT ON` écrit en TypeScript, parce que la liste
-    // compte au plus quelques espaces et qu'un agrégat en SQL rendrait la même
-    // chose plus difficile à lire.
-    const photos = await db
-      .select({
-        entityId: agentJobs.entityId,
-        ms: jobCheckpoints.snapshotMs,
-        takenAt: jobCheckpoints.takenAt,
-        workspace: jobCheckpoints.workspace,
-      })
-      .from(jobCheckpoints)
-      .innerJoin(agentJobs, eq(agentJobs.id, jobCheckpoints.jobId))
-      .where(inArray(agentJobs.entityId, ids))
-      .orderBy(desc(jobCheckpoints.takenAt))
-      .limit(SNAPSHOT_SCAN_MAX);
-
-    const derniere = new Map<string, LastSnapshot>();
-    for (const p of photos) {
-      if (p.entityId === null || derniere.has(p.entityId)) continue;
-      derniere.set(p.entityId, {
-        ms: p.ms ?? null,
-        takenAt: p.takenAt,
-        workspace: p.workspace,
-      });
-    }
-
     const lignes: WorkspaceFootprint[] = [];
     for (const { id } of mine) {
+      // LA DERNIÈRE PHOTO DE CET ESPACE, demandée POUR LUI.
+      //
+      // ⚠️ UNE SEULE LECTURE BORNÉE POUR TOUS LES ESPACES NE MARCHE PAS, et
+      // c'est un constat de la revue C de cette PR. Prendre les deux cents
+      // lignes les plus récentes toutes entités confondues puis garder la
+      // première de chaque espace enterre la photo d'un espace silencieux sous
+      // celles d'un espace actif : l'écran écrivait alors « No safety snapshot
+      // yet » pour un espace qui en avait une. Une absence AFFIRMÉE à tort est
+      // exactement ce que l'invariant #4 refuse, et cette lecture-ci existe
+      // pour dire des faits.
+      //
+      // Une requête par espace, donc — autant que la boucle en fait déjà pour
+      // mesurer, et une lecture indexée par `job_id` à côté d'un parcours de
+      // disque de trois secondes ne se voit pas.
+      const [photo] = await db
+        .select({
+          ms: jobCheckpoints.snapshotMs,
+          takenAt: jobCheckpoints.takenAt,
+          workspace: jobCheckpoints.workspace,
+        })
+        .from(jobCheckpoints)
+        .innerJoin(agentJobs, eq(agentJobs.id, jobCheckpoints.jobId))
+        .where(eq(agentJobs.entityId, id))
+        .orderBy(desc(jobCheckpoints.takenAt))
+        .limit(1);
+
       const path = sharedWorkspacePath(id);
       let measure: FootprintMeasure | null = null;
       let unmeasured: WorkspaceFootprint['unmeasured'] = null;
@@ -213,7 +190,10 @@ export async function listWorkspaceFootprintsAction(): Promise<ActionResult<Work
         path,
         measure,
         unmeasured,
-        lastSnapshot: derniere.get(id) ?? null,
+        lastSnapshot:
+          photo === undefined
+            ? null
+            : { ms: photo.ms ?? null, takenAt: photo.takenAt, workspace: photo.workspace },
       });
     }
 

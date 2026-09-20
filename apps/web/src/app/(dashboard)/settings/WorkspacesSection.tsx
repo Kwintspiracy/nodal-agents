@@ -68,13 +68,25 @@ export default function WorkspacesSection({ initial, formId }: Props) {
   const [footprintError, setFootprintError] = useState<string | null>(null);
   useEffect(() => {
     let vivant = true;
-    void listWorkspaceFootprintsAction().then((res) => {
-      if (!vivant) return;
-      if (res.ok) setFootprints(res.data);
-      // Un échec se DIT sous la ligne : une taille absente en silence se
-      // lirait comme un dossier vide.
-      else setFootprintError(res.message);
-    });
+    void listWorkspaceFootprintsAction()
+      .then((res) => {
+        if (!vivant) return;
+        if (res.ok) setFootprints(res.data);
+        // Un échec se DIT sous la ligne : une taille absente en silence se
+        // lirait comme un dossier vide.
+        else setFootprintError(res.message);
+      })
+      .catch(() => {
+        // ⚠️ L'ACTION ATTRAPE SES PROPRES ERREURS, PAS CELLES DU TRANSPORT
+        // (revue C de cette PR). Un réseau coupé, un serveur qui ne répond
+        // plus : la promesse est REJETÉE, et sans ce `catch` la ligne restait
+        // sur « Measuring shared folder… » pour toujours, sans jamais rien
+        // dire. Une mesure qui ne revient pas se dit comme une mesure qui
+        // échoue.
+        if (!vivant) return;
+        setFootprintError('Could not reach the server to measure the folders.');
+      });
+
     return () => {
       vivant = false;
     };

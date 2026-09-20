@@ -14,12 +14,16 @@
 //      montre pas un vide qui se lirait « rien » ;
 //   3. un comptage arrêté avant la fin s'affiche « At least », jamais la taille
 //      nue ;
-//   4. une lecture en échec se DIT sous la ligne, elle ne disparaît pas.
+//   4. une lecture en échec se DIT sous la ligne, elle ne disparaît pas ;
+//   5. un TRANSPORT qui casse le dit aussi — l'action n'attrape que ses
+//      propres erreurs, pas une promesse rejetée.
 //
 // Mutations vérifiées :
 //   - l'appel à `listWorkspaceFootprintsAction` retiré de l'effet → les points
 //     1 et 3 rougissent (l'écran reste sur « Measuring… ») ;
-//   - le message d'erreur remplacé par une chaîne vide → le point 4 rougit.
+//   - le message d'erreur remplacé par une chaîne vide → le point 4 rougit ;
+//   - le `.catch` retiré de l'effet → le point 5 rougit (la ligne reste sur
+//     « Measuring… »).
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { createElement } from 'react';
@@ -135,6 +139,20 @@ describe('la taille d’un espace à l’écran @cap:travailler-sur-des-fichiers
     await render();
 
     expect(empreinte(ESPACE.id)).toContain('Measuring shared folder');
+  });
+
+  it('DIT un transport qui casse, au lieu de mesurer pour toujours', async () => {
+    // L'action attrape ses PROPRES erreurs et rend `fail()` ; elle n'attrape
+    // pas celles du transport. Réseau coupé, serveur muet : la promesse est
+    // rejetée, et sans `catch` la ligne restait sur « Measuring… » sans jamais
+    // rien dire (revue C, passe 1, constat C2).
+    vi.mocked(listWorkspaceFootprintsAction).mockRejectedValue(new Error('fetch failed'));
+
+    await render();
+
+    const texte = empreinte(ESPACE.id);
+    expect(texte).toContain('Could not reach the server');
+    expect(texte, 'la ligne mesure encore').not.toContain('Measuring');
   });
 
   it('DIT une lecture en échec, au lieu de laisser la ligne muette', async () => {
