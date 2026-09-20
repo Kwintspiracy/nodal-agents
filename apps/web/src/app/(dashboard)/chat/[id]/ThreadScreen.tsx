@@ -14,6 +14,12 @@ import type { ReactNode } from 'react';
 import ActionRow from '@/components/ui/ActionRow';
 import ThreadScroller, { type ThreadFollow } from './ThreadScroller.tsx';
 
+/**
+ * Les boîtes qu'une rangée d'actions peut prendre, et il n'y en a que deux :
+ * celle du corps d'un run, et celle de la colonne d'un fil.
+ */
+export type ThreadActionsBox = '' | 'mx-auto max-w-6xl' | 'mx-auto max-w-[760px]';
+
 export default function ThreadScreen({
   children,
   composer,
@@ -50,8 +56,12 @@ export default function ThreadScreen({
    * L'appelant la donne parce qu'elle diffère d'un écran à l'autre : le corps
    * d'un run fait 1152 px de boîte, la colonne d'un fil 760. La déduire ici
    * demanderait à cette charpente de connaître ses trois pages.
+   *
+   * ÉNUMÉRÉE, et pas une chaîne libre (Reviewer C, passe 2) : une classe
+   * quelconque passée ici pourrait cacher la rangée ou la déplacer, et le
+   * typage est le seul endroit où ça se refuse sans écrire un garde-fou.
    */
-  actionsBox?: string;
+  actionsBox?: ThreadActionsBox;
   /**
    * Ce que l'écran fait du bas de son contenu (voir `ThreadFollow`). Un fil se
    * lit par sa fin : il s'ouvre en bas et suit ce qui arrive. La page d'un run
@@ -80,7 +90,17 @@ export default function ThreadScreen({
       {actions !== null && (
         // Les gouttières de la page, et la boîte que l'appelant donne : c'est ce
         // qui aligne le bouton sur le bord droit de ce qu'il arrête.
-        <div className={`w-full min-w-0 shrink-0 px-5 pt-4 sm:px-8 lg:px-9 ${actionsBox}`}>
+        //
+        // `mr-[var(--thread-gutter)]` : la MÊME compensation que la saisie
+        // (Reviewer C, passe 2). La colonne du fil vit DANS le défilement, dont
+        // la goutttière de barre est réservée (`scrollbar-gutter: stable`), et
+        // elle est donc centrée dans une largeur amputée de cette barre. Une
+        // rangée posée dehors et centrée sur la fenêtre entière dérivait de
+        // quelques pixels vers la droite dès que le fil débordait — exactement
+        // le décalage que la saisie corrige depuis le 17/09.
+        <div
+          className={`w-full min-w-0 shrink-0 px-5 pt-4 sm:px-8 lg:px-9 ${actionsBox} mr-[var(--thread-gutter,0px)]`}
+        >
           <ActionRow>{actions}</ActionRow>
         </div>
       )}

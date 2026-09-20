@@ -148,6 +148,11 @@ describe('le fil d’une conversation @cap:suivre-execution/ecran', () => {
     // inversion d'identifiant entre deux écrans laissait le bouton en place et
     // n'était vue par aucun test.
     expect(html).toContain('data-job-id="job-du-fil"');
+    // DANS LA COLONNE DU FIL, 760 px : la boîte de `ConversationFeedView`, et
+    // pas celle du corps d'un run (Reviewer C, passe 2).
+    const rangee = html.slice(html.indexOf(RANGEE) - 400, html.indexOf(RANGEE));
+    expect(rangee).toContain('max-w-[760px]');
+    expect(rangee).not.toContain('max-w-6xl');
     // SOUS la barre et AVANT le fil : c'est la place de la rangée d'actions
     // (#242), et la seule où elle reste sous les yeux pendant que ça travaille.
     expect(html.indexOf('data-testid="work-bar"')).toBeLessThan(html.indexOf(RANGEE));
@@ -173,6 +178,11 @@ describe('la page d’une session de code @cap:suivre-execution/ecran', () => {
     expect(html).toContain(STOP);
     expect(html).toContain(RANGEE);
     expect(html).toContain('data-job-id="job-code"');
+    // Une session de code est un RUN : la boîte de son corps, comme la page
+    // d'un run, et pas la colonne d'un fil.
+    const rangee = html.slice(html.indexOf(RANGEE) - 400, html.indexOf(RANGEE));
+    expect(rangee).toContain('max-w-6xl');
+    expect(rangee).not.toContain('max-w-[760px]');
   });
 
   it('ne le dessine PAS pour une session de chat de la CLI', async () => {

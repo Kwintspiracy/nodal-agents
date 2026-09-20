@@ -118,6 +118,36 @@ describe('PageShell — la borne du mode pleine hauteur @cap:suivre-execution/ec
     expect(html).not.toContain(BORNE);
   });
 
+  // ⚠️ L'EXCEPTION, DITE PLUTÔT QUE DÉCOUVERTE (Reviewer C, passe 2 de la PR
+  // #325). Depuis #252 la charpente d'un run porte une rangée d'actions, et
+  // cette rangée prend la BOÎTE DU CORPS pour que le bouton Stop tombe sur le
+  // bord droit de ce qu'il arrête. `max-w-6xl` apparaît donc dans le markup
+  // d'un run vivant — sur la rangée, jamais sur la zone de lecture, qui est ce
+  // que #237 protège. Le cas au-dessus ne rend aucune action et ne l'aurait
+  // jamais vu : celui-ci le fixe.
+  it('un run VIVANT ne borne QUE sa rangée d’actions', () => {
+    const html = renderToStaticMarkup(
+      <RunScreen
+        avatarName="Builder A"
+        avatarUrl={null}
+        title="Un run"
+        subtitle="code"
+        agents={[]}
+        actions={<span data-testid="une-action">Stop</span>}
+      >
+        <p data-testid="corps">le corps du run</p>
+      </RunScreen>,
+    );
+    // La borne existe, UNE fois, et elle est sur la rangée.
+    expect(html.split(BORNE)).toHaveLength(2);
+    expect(html.indexOf(BORNE)).toBeLessThan(html.indexOf('data-testid="action-row"'));
+    // La ZONE QUI DÉFILE, elle, n'en porte aucune : c'est la promesse de #237,
+    // et c'est là qu'on lit.
+    const defilement = html.slice(html.indexOf('overflow-y-auto'));
+    expect(defilement).not.toContain(BORNE);
+    expect(defilement).toContain('le corps du run');
+  });
+
   it('un FIL de chat rend sans la borne', async () => {
     const html = renderToStaticMarkup(
       await ChatThreadPage({ params: Promise.resolve({ id: 'c-1' }) }),

@@ -352,6 +352,12 @@ describe('RunPage — arrêter un run @cap:suivre-execution/ecran', () => {
     expect(html).toContain('>Stop<');
     // Le job de TÊTE de ce run, et pas un autre.
     expect(html).toContain('data-job-id="job-1"');
+    // ET DANS LA BOÎTE DU CORPS (Reviewer C, passe 2). Sans cette assertion,
+    // échanger les deux boîtes entre le run et le fil laissait tout vert et
+    // ramenait les 384 px d'écart que la passe 1 avait fait corriger.
+    const rangee = html.slice(html.indexOf('data-testid="action-row"') - 400);
+    expect(rangee).toContain('max-w-6xl');
+    expect(rangee).not.toContain('max-w-[760px]');
     // DANS la rangée d'actions, jamais dans la barre : c'est la règle de #242,
     // et une action posée sur la ligne de faits du run en faisait un fait.
     expect(html).toContain('data-testid="action-row"');
