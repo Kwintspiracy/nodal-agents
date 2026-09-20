@@ -41,6 +41,10 @@ import {
   HORS_MESURE,
   etatDeMesure,
   repartitionDeLaMesure,
+  runsEnCoursDeDeuxLectures,
+  revuesEnCours,
+  releaseCheckEnCours,
+  cequiTourne,
 } from './lib.mjs';
 import { ciDuDepot, parcoursDuDepot } from './depot.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -586,6 +590,96 @@ function memoire(essais, le, execution) {
   };
 }
 
+// ─── 7 quinquies. Ce qui TOURNE en ce moment (#296) ───────────────────────────
+//
+// Trois lectures, trois sources qui n'ont rien en commun sauf ceci : chacune
+// dit si elle a répondu. Le calcul, lui, est PUR et vit dans `lib.mjs` — c'est
+// là que se prouve qu'une source muette ne devient jamais « rien en cours ».
+
+/**
+ * Les runs GitHub Actions en cours.
+ *
+ * DEUX APPELS, UNE SEULE SOURCE. GitHub ne rend pas les runs qui avancent et
+ * ceux qui attendent un runner dans la même requête ; la bande, elle, n'a qu'une
+ * ligne pour dire si elle a vu GitHub.
+ *
+ * ⚠️ IL SUFFIT QU'UN SEUL DES DEUX SE TAISE POUR QUE LA SOURCE SOIT MUETTE, et
+ * c'est un constat de la revue C de cette PR. `sh` avale toute erreur et rend la
+ * chaîne vide : si le premier appel répond et que le second tombe (jeton
+ * expiré, réseau coupé entre les deux), les runs en file disparaissaient en
+ * silence pendant que la bande affirmait avoir tout lu. Une réponse à moitié
+ * n'est pas une réponse (invariant #4).
+ */
+function runsGitHubEnCours() {
+  const champs = 'databaseId,status,name,displayTitle,headBranch,createdAt,url';
+  const lire = (statut) => {
+    const texte = sh(`gh run list --status ${statut} --limit 20 --json ${champs}`);
+    if (!texte) return null;
+    try {
+      const v = JSON.parse(texte);
+      // Un `gh` qui répond autre chose que du JSON n'a pas répondu non plus :
+      // le rendre « lu, vide » serait la même approximation.
+      return Array.isArray(v) ? v : null;
+    } catch {
+      return null;
+    }
+  };
+  const enCours = lire('in_progress');
+  const enFile = lire('queued');
+  if (enCours === null || enFile === null) {
+    console.warn('[qa] GitHub did not answer on the runs in flight, that source is MISSING.');
+  }
+  // La RÈGLE vit dans `lib.mjs`, où elle se teste : ici il ne reste que les deux
+  // lectures et le message.
+  return runsEnCoursDeDeuxLectures(enCours, enFile);
+}
+
+/**
+ * Les passes de revue que Nodal fait tourner.
+ *
+ * ⚠️ CETTE SOURCE N'EST PAS LUE, ET LA BANDE LE DIT. C'est un choix, et c'est
+ * l'issue #296 elle-même qui l'autorise : « the portal treats it as "unknown,
+ * not reported" rather than guessing ».
+ *
+ * Ce qui l'empêche est mécanique. Ces passes vivent dans `agent_jobs`, et
+ * l'atteindre demande `@nodal-agents/db`, dont le point d'entrée est du
+ * TypeScript source (`main: ./src/index.ts`). Le collecteur du portail est un
+ * script Node NU, lancé par `node collect.mjs` : il ne peut pas importer ce
+ * paquet, et lui adjoindre un runtime TypeScript ferait du portail statique
+ * autre chose que ce qu'il est. L'autre voie — une route de lecture sur le
+ * runner — est un changement du produit, pas de cette page.
+ *
+ * Le mensonge serait de rendre « aucune revue ne tourne ». La bande écrit donc
+ * ce qu'elle ne sait pas, avec sa raison : quelqu'un qui lit cette ligne sait
+ * qu'une revue peut tourner sans y figurer (invariant #4).
+ */
+function revuesDeNodal() {
+  return revuesEnCours(null);
+}
+
+/** Le `release:check` en cours, lu sur le drapeau que le script pose. */
+function releaseCheckDuDepot() {
+  const chemin = join(DATA, 'release-check.running.json');
+  if (!existsSync(chemin)) return releaseCheckEnCours(null);
+  try {
+    return releaseCheckEnCours(JSON.parse(readFileSync(chemin, 'utf8')));
+  } catch {
+    // Le fichier est là et illisible : c'est une source muette, pas une
+    // absence. Les deux ne se disent pas pareil.
+    return releaseCheckEnCours({});
+  }
+}
+
+/** Ce qui tourne, les trois sources réunies. */
+function enVol() {
+  return cequiTourne({
+    ci: runsGitHubEnCours(),
+    revues: revuesDeNodal(),
+    release: releaseCheckDuDepot(),
+    le: new Date().toISOString(),
+  });
+}
+
 // ─── Assemblage ───────────────────────────────────────────────────────────────
 
 /** Le mode `--github-only` : la part lue sur GitHub, reposée sur la mesure. */
@@ -596,6 +690,10 @@ function rafraichirGitHub() {
     prixCi: prixCi(),
     release: release(),
     deploiement: deploiement(),
+    // Ce qui TOURNE (#296). Relu à CHAQUE rendu, comme le déploiement : une
+    // bande qui daterait de la mesure nocturne dirait ce que la machine faisait
+    // à 03:17, ce qui est exactement l'inverse de ce qu'on lui demande.
+    enVol: enVol(),
     le: new Date().toISOString(),
   };
   const snapshot = fusionnerTableauGitHub(lireJson(chemin), frais);
@@ -716,6 +814,8 @@ function main() {
     // Quand le site a été déployé pour la dernière fois, et ce qui est arrivé
     // aux runs depuis (#306).
     deploiement: deploiement(),
+    // Ce qui TOURNE au moment de la collecte (#296).
+    enVol: enVol(),
   };
 
   writeFileSync(join(DATA, 'snapshot.json'), JSON.stringify(snapshot, null, 2));

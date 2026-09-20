@@ -64,6 +64,11 @@ import {
   etatDeMesure,
   repartitionDeLaMesure,
   etatDuDeploiement,
+  runsEnCours,
+  runsEnCoursDeDeuxLectures,
+  revuesEnCours,
+  releaseCheckEnCours,
+  cequiTourne,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -3501,5 +3506,158 @@ describe('etatDuDeploiement — ce que les runs de docs.yml disent du site', () 
       run(2, 'completed', 'success', 'issues', '2026-09-20T11:27:00Z', '2026-09-20T11:29:00Z'),
     ]);
     expect(e.depuis).toEqual({ enCours: 0, annules: 0, echoues: 3 });
+  });
+});
+
+// ─── Ce qui TOURNE en ce moment (#296) ────────────────────────────────────────
+//
+// La bande existe parce que le Kanban, le 20/09/2026, disait vrai et ne servait
+// à rien : toutes les cartes fermées pendant que la session lançait
+// `release:check`, la CI de `main` et trois passes de revue. Rien de tout cela
+// n'est une issue ni une PR.
+//
+// CE QUE CES CAS PROUVENT, et c'est toujours la même chose sous trois formes :
+// une source qui n'a pas répondu ne devient JAMAIS « rien en cours ».
+//
+// Mutations vérifiées :
+//   - `sourceMuette` remplacée par `sourceLue([])` dans `runsEnCours` → le
+//     premier cas rougit (GitHub muet passe pour une machine au repos) ;
+//   - le filtre sur `status` retiré → « un run terminé n'est plus en vol »
+//     rougit ;
+//   - le tri retiré de `cequiTourne` → « les plus anciens d'abord » rougit.
+
+describe('ce qui tourne en ce moment (#296)', () => {
+  const runCi = (id, status, branche, quand) => ({
+    databaseId: id,
+    status,
+    name: 'ci',
+    displayTitle: `CI on #${id}`,
+    headBranch: branche,
+    createdAt: quand,
+    url: `https://example.test/${id}`,
+  });
+
+  it('GitHub muet se DIT muet, il ne se rend pas « rien en cours »', () => {
+    const s = runsEnCours(null);
+    expect(s.etat).toBe('unreachable');
+    expect(s.lignes).toEqual([]);
+    expect(s.raison).toContain('GitHub');
+
+    // Et la différence se voit jusqu'au bout : la bande n'est pas COMPLÈTE.
+    const vue = cequiTourne({
+      ci: s,
+      revues: revuesEnCours([]),
+      release: releaseCheckEnCours(null),
+      le: '2026-09-20T10:00:00Z',
+    });
+    expect(vue.lignes).toEqual([]);
+    expect(vue.complet, 'une source muette a été comptée comme lue').toBe(false);
+    expect(vue.muettes.map((m) => m.source)).toEqual(['ci']);
+  });
+
+  it('GitHub qui répond « rien » est un FAIT, et il se distingue du silence', () => {
+    const s = runsEnCours([]);
+    expect(s.etat).toBe('read');
+    const vue = cequiTourne({
+      ci: s,
+      revues: revuesEnCours([]),
+      release: releaseCheckEnCours(null),
+      le: '2026-09-20T10:00:00Z',
+    });
+    expect(vue.lignes).toEqual([]);
+    expect(vue.complet, 'trois sources lues ne font pas une bande complète').toBe(true);
+    expect(vue.muettes).toEqual([]);
+  });
+
+  it('un run TERMINÉ n’est plus en vol ; une file d’attente dit ce qu’elle attend', () => {
+    const s = runsEnCours([
+      runCi(1, 'completed', 'main', '2026-09-20T09:00:00Z'),
+      runCi(2, 'in_progress', 'feat/x', '2026-09-20T09:10:00Z'),
+      runCi(3, 'queued', 'feat/y', '2026-09-20T09:20:00Z'),
+    ]);
+    expect(s.lignes).toHaveLength(2);
+    expect(s.lignes[0].quoi).toBe('CI on #2');
+    expect(s.lignes[0].ou).toBe('branch feat/x');
+    expect(s.lignes[0].attend, 'un run qui avance attend quelque chose').toBeNull();
+    // L'ADRESSE du run : c'est par elle qu'on va voir ce qui tourne. Sans cette
+    // assertion, la perdre ne rougissait rien (revue C de cette PR).
+    expect(s.lignes[0].url).toBe('https://example.test/2');
+    // Une file d'attente n'est pas un travail qui avance : le dire évite de
+    // croire la machine occupée quand elle patiente.
+    expect(s.lignes[1].attend).toBe('a runner');
+  });
+
+  it('UNE des deux lectures de GitHub qui se tait suffit à taire la source', () => {
+    // ⚠️ LE CAS QUI A FAIT RATER LA PREMIÈRE VERSION (revue C de la PR #326).
+    // GitHub ne rend pas dans la même requête ce qui avance et ce qui attend un
+    // runner. Rendre « lu » dès que l'UNE des deux répond faisait disparaître
+    // les runs en file en silence, pendant que la bande affirmait avoir tout lu.
+    const avance = [runCi(1, 'in_progress', 'main', '2026-09-20T09:00:00Z')];
+
+    expect(runsEnCoursDeDeuxLectures(avance, null).etat, 'la file muette a été ignorée').toBe(
+      'unreachable',
+    );
+    expect(runsEnCoursDeDeuxLectures(null, []).etat).toBe('unreachable');
+    // Un `gh` qui répond autre chose qu'un tableau n'a pas répondu non plus.
+    expect(runsEnCoursDeDeuxLectures(avance, 'pas du json').etat).toBe('unreachable');
+
+    // Les deux ont parlé : la source est lue, et les deux listes se rejoignent.
+    const lu = runsEnCoursDeDeuxLectures(avance, [
+      runCi(2, 'queued', 'feat/z', '2026-09-20T09:05:00Z'),
+    ]);
+    expect(lu.etat).toBe('read');
+    expect(lu.lignes.map((l) => l.quoi)).toEqual(['CI on #1', 'CI on #2']);
+  });
+
+  it('Nodal injoignable se DIT, et une passe de revue nomme sa PR', () => {
+    expect(revuesEnCours(null).etat).toBe('unreachable');
+    expect(revuesEnCours(null).raison).toContain('Nodal');
+
+    const s = revuesEnCours([
+      { pr: 324, agent: 'reviewer-c', depuis: '2026-09-20T09:05:00Z', statut: 'processing' },
+      {
+        pr: 317,
+        agent: 'reviewer-c',
+        depuis: '2026-09-20T09:01:00Z',
+        statut: 'awaiting_approval',
+      },
+    ]);
+    expect(s.lignes.map((l) => l.quoi)).toEqual(['Review pass on #317', 'Review pass on #324']);
+    expect(s.lignes[0].attend).toBe('your approval');
+    expect(s.lignes[0].ou).toBe('Nodal, reviewer-c');
+  });
+
+  it('release:check : pas de fichier = il ne tourne pas ; un fichier illisible se DIT', () => {
+    // Le fichier manquant est une RÉPONSE, pas une source muette : le script
+    // l'efface en finissant.
+    expect(releaseCheckEnCours(null)).toEqual({ etat: 'read', lignes: [] });
+    expect(releaseCheckEnCours({ ou: 'x' }).etat, 'un état sans heure a été accepté').toBe(
+      'unreachable',
+    );
+
+    const s = releaseCheckEnCours({ depuis: '2026-09-20T08:20:00Z', ou: 'wt-proof' });
+    expect(s.lignes).toHaveLength(1);
+    expect(s.lignes[0].quoi).toBe('release:check');
+    expect(s.lignes[0].ou).toBe('this machine, wt-proof');
+  });
+
+  it('les plus ANCIENS d’abord, toutes sources confondues', () => {
+    const vue = cequiTourne({
+      ci: runsEnCours([runCi(9, 'in_progress', 'main', '2026-09-20T09:30:00Z')]),
+      revues: revuesEnCours([
+        { pr: 324, agent: 'reviewer-c', depuis: '2026-09-20T09:10:00Z', statut: 'processing' },
+      ]),
+      release: releaseCheckEnCours({ depuis: '2026-09-20T08:50:00Z', ou: 'main' }),
+      le: '2026-09-20T09:40:00Z',
+    });
+    // Quarante minutes de `release:check` passent devant dix minutes de revue,
+    // qui passent devant la CI partie il y a dix secondes.
+    expect(vue.lignes.map((l) => l.quoi)).toEqual([
+      'release:check',
+      'Review pass on #324',
+      'CI on #9',
+    ]);
+    expect(vue.complet).toBe(true);
+    expect(vue.le).toBe('2026-09-20T09:40:00Z');
   });
 });

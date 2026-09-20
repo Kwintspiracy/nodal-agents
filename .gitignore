@@ -107,3 +107,8 @@ apps/web/tests/e2e/.artifacts/
 # Rapports de test bruts, écrits à côté de coverage/ par la mesure nocturne.
 # Le portail les LIT pour tenir sa mémoire test par test ; il ne les commite pas.
 tests-run.json
+
+# Le drapeau que `release:check` pose pendant qu'il tourne, pour que le portail
+# puisse dire « ça tourne » (#296). Un fichier de travail : il existe le temps
+# d'une commande et s'efface en sortant, il n'a rien à faire dans l'historique.
+apps/qa/data/release-check.running.json

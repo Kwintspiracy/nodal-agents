@@ -985,3 +985,100 @@ describe('le rendu ne plante pas sur une collecte plus vieille que lui', () => {
     expect(html).toContain('Une capacité');
   });
 });
+
+// ─── La bande « Running now » (#296) ──────────────────────────────────────────
+//
+// Le 20/09/2026 au matin, le Kanban disait vrai et ne servait à rien : toutes
+// les cartes fermées pendant que `release:check`, la CI de `main` et trois
+// passes de revue tournaient. Ce qui se prouve ici est que la bande le montre,
+// SUR LA PAGE, et surtout qu'elle ne fait jamais passer un silence pour un
+// repos.
+//
+// Mutations vérifiées :
+//   - `bandeEnVol()` retiré de `vueChantiers` → les quatre cas rougissent ;
+//   - la phrase des sources muettes supprimée → « une source muette se DIT »
+//     rougit ;
+//   - les deux phrases du vide rendues identiques → « rien en cours ne se dit
+//     pas pareil selon qu'on a pu regarder » rougit.
+
+describe('la bande « Running now », sur la page', () => {
+  const enVol = (v) => rendre({ ...INSTANTANE, enVol: v });
+
+  it('montre une ligne par travail, ce qu’il est, où il tourne et depuis quand', () => {
+    const html = enVol({
+      lignes: [
+        {
+          genre: 'release',
+          quoi: 'release:check',
+          ou: 'this machine, wt-proof',
+          depuis: '2026-09-20T08:50:00Z',
+          attend: null,
+          url: null,
+        },
+        {
+          genre: 'ci',
+          quoi: 'CI on #317',
+          ou: 'branch feat/deliverable-to-check',
+          depuis: '2026-09-20T09:30:00Z',
+          attend: 'a runner',
+          url: 'https://example.test/run/1',
+        },
+      ],
+      muettes: [],
+      complet: true,
+      le: '2026-09-20T09:40:00Z',
+    });
+    expect(html).toContain('Running now: 2');
+    // L'HEURE DE LA LECTURE, sur la bande elle-même : sans elle, « running »
+    // est une affirmation sans date (revue C de cette PR).
+    expect(html).toContain('Read at 20 Sept 2026, 09:40Z');
+    expect(html).toContain('release:check');
+    expect(html).toContain('this machine, wt-proof');
+    expect(html).toContain('CI on #317');
+    expect(html).toContain('branch feat/deliverable-to-check');
+    // Ce qu'il attend : une file d'attente n'est pas un travail qui avance.
+    expect(html).toContain('waiting for a runner');
+    // Un run a une adresse : la ligne y mène.
+    expect(html).toContain('https://example.test/run/1');
+  });
+
+  it('« rien en cours » ne se dit pas pareil selon qu’on a pu regarder', () => {
+    const toutLu = enVol({ lignes: [], muettes: [], complet: true, le: '2026-09-20T09:40:00Z' });
+    expect(toutLu).toContain('Nothing running.');
+    expect(toutLu).toContain('Every source answered');
+
+    const partiel = enVol({
+      lignes: [],
+      muettes: [{ source: 'ci', raison: 'GitHub did not answer' }],
+      complet: false,
+      le: '2026-09-20T09:40:00Z',
+    });
+    // Le mot qui change tout : ce n'est pas « rien ne tourne », c'est « rien
+    // dans ce qu'on a pu lire ».
+    expect(partiel).toContain('Nothing running in what could be read');
+    expect(partiel).not.toContain('Every source answered');
+  });
+
+  it('une source muette se DIT, avec sa raison, jamais rendue « idle »', () => {
+    const html = enVol({
+      lignes: [],
+      muettes: [
+        { source: 'revues', raison: 'Nodal was not reachable from here' },
+        { source: 'ci', raison: 'GitHub did not answer' },
+      ],
+      complet: false,
+      le: '2026-09-20T09:40:00Z',
+    });
+    expect(html).toContain('2 sources did not answer');
+    expect(html).toContain('Nodal was not reachable from here');
+    expect(html).toContain('GitHub did not answer');
+    // Et le lecteur est prévenu de ce que ça implique.
+    expect(html).toContain('Something may be running there without showing here');
+  });
+
+  it('un instantané d’AVANT la bande le dit, il ne montre pas un repos', () => {
+    const html = rendre({ ...INSTANTANE, enVol: undefined });
+    expect(html).toContain('Jobs in flight: not collected');
+    expect(html).not.toContain('Nothing running.');
+  });
+});

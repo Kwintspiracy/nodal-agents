@@ -27,12 +27,30 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { configHoteDepuis, portsDeLaStack, verdictStackVivante } from './lib/live-stack.mjs';
 import { sonderUnPort } from './lib/sonde.mjs';
+import { poserLeDrapeau, brancherLeRetrait } from './lib/release-check-flag.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const skipSlow = process.argv.includes('--fast');
 
 let failed = 0;
 const started = Date.now();
+
+// ─── Ce qui dit au portail que cette commande TOURNE (issue #296) ────────────
+//
+// `release:check` dure quarante minutes et ne laisse AUCUNE trace qu'un autre
+// programme puisse lire : ni run GitHub, ni ligne en base. Le 20/09/2026 au
+// matin, c'est elle qui tournait pendant que le portail montrait un Kanban vide
+// et que le propriétaire demandait pourquoi rien n'était actif.
+//
+// Les trois gestes vivent dans `lib/release-check-flag.mjs`, où ils se testent
+// contre un vrai dossier : sans cela, retirer l'appel ci-dessous — c'est-à-dire
+// tout le sujet de l'issue — ne faisait rougir personne (revue C, PR #326).
+//
+// Le retrait est branché sur la fin normale ET sur les signaux : un Ctrl-C au
+// milieu des quarante minutes laissait sinon le portail annoncer un
+// `release:check` qui ne tourne plus.
+poserLeDrapeau(repoRoot);
+brancherLeRetrait(repoRoot);
 
 // ─── 0. Personne ne sert sur les ports de la stack ───────────────────────────
 //
