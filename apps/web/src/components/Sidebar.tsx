@@ -30,6 +30,7 @@ import SidebarPanel from './SidebarPanel';
 import ThemeToggle from './ui/ThemeToggle';
 import NotificationsBell from './NotificationsBell';
 import { useApprovals } from './ApprovalsProvider';
+import { useChatFolders } from './ChatFoldersProvider';
 import { destinationForPath, matchedDestination } from './sidebar-nav.ts';
 import type { WorkspaceRow } from '@/lib/actions';
 
@@ -46,6 +47,11 @@ export default function Sidebar({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const { pending } = useApprovals();
+  // CE QUI TOURNE, lu là où le menu le lit déjà (#300, #303). Aucune requête
+  // de plus : `ChatFoldersProvider` sonde toutes les 15 s pour les dossiers, et
+  // ces deux chiffres viennent de la même lecture. Un second appel donnerait
+  // deux vérités sur le même fait, et elles se contrediraient entre deux tours.
+  const { runsInProgress, workConversationsInProgress } = useChatFolders();
 
   // La destination se DÉDUIT de la route, et de rien d'autre : aucun état,
   // aucune mémoire. Deux onglets ouverts sur la même adresse montrent le même
@@ -132,6 +138,8 @@ export default function Sidebar({
         <SidebarRail
           activeKey={active?.key ?? null}
           approvalsCount={pending.length}
+          runsInProgress={runsInProgress}
+          workConversationsInProgress={workConversationsInProgress}
           logsActive={logsActive}
           userMenu={userMenu}
           initiale={initiale ?? null}

@@ -226,6 +226,18 @@ async function getSession() {
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
+/**
+ * Les `origin` qu'une conversation doit porter pour que la section Work la
+ * LISTE — et donc pour qu'elle puisse allumer quoi que ce soit dans la barre.
+ *
+ * Écrits UNE fois : la requête des canaux, celle des runs par dossier et le
+ * compte de la case Work s'en servent toutes les trois, et trois copies de la
+ * même paire finiraient par diverger. `onboarding` en est absent, et c'est le
+ * sens même de la liste (`conversations_origin_check` en base : `user`,
+ * `onboarding`, `project`).
+ */
+const WORK_CONVERSATION_ORIGINS: readonly string[] = ['user', 'project'];
+
 /** Les jobs de tête chargés d'un fil — au-delà, l'écran n'est plus lisible. */
 const HEAD_JOBS_MAX = 100;
 const MESSAGES_MAX = 500;
@@ -412,7 +424,7 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
       .where(
         and(
           eq(conversations.entityId, session.entityId),
-          inArray(conversations.origin, ['user', 'project']),
+          inArray(conversations.origin, [...WORK_CONVERSATION_ORIGINS]),
         ),
       )
       // `id` DÉPARTAGE à date égale. Sans lui, deux fils du même chat posés à
@@ -749,7 +761,7 @@ export async function listCurrentThreadByChatAction(): Promise<ActionResult<Curr
           isNotNull(conversations.chatId),
           ne(conversations.chatId, ''),
           ne(conversations.channel, 'dashboard'),
-          inArray(conversations.origin, ['user', 'project']),
+          inArray(conversations.origin, [...WORK_CONVERSATION_ORIGINS]),
         ),
       );
 
@@ -818,6 +830,40 @@ export type ChatFoldersSnapshot = {
    * fait exister celui d'un canal.
    */
   externalRuns: number;
+  /**
+   * COMBIEN DE RUNS TOURNENT, tous canaux confondus (#300).
+   *
+   * Ce que `running` ne peut pas dire : il range par dossier de chat, et le
+   * travail d'une automatisation, d'un webhook ou d'un agent qui en appelle un
+   * autre n'en a aucun (`folderOfWork` rend `null`). La case Logs du rail
+   * promet « quelque chose tourne » à l'échelle du produit, et pas « dans un
+   * dossier de chat » : il lui faut ce total-là.
+   *
+   * ⚠️ `externalRuns` NE DIT PAS ÇA et ne pouvait pas servir : il compte les
+   * runs de tête venus de dehors QUEL QUE SOIT leur statut (`runsFromOutside`
+   * ne regarde pas `status`). Il fait exister le dossier MCP ; il ne dit rien
+   * de ce qui avance.
+   *
+   * Le total compte les JOBS vivants, délégations comprises : c'est ce que la
+   * page Logs liste, une ligne par job, et un chiffre qui ne compterait que
+   * les têtes ne correspondrait plus à ce qu'on trouve en cliquant. Tiré de la
+   * MÊME requête que `running`, avant le rangement par dossier : pas une
+   * lecture de plus.
+   */
+  runsInProgress: number;
+  /**
+   * COMBIEN DE CONVERSATIONS DE LA SECTION WORK portent un run en cours (#303).
+   *
+   * Des conversations, et non des runs : la section Work liste les endroits où
+   * l'on parle — les projets et les canaux — et trois runs d'un même fil n'y
+   * allument qu'une ligne.
+   *
+   * Seules comptent celles que la section peut LISTER (`origin` `user` ou
+   * `project`). Une conversation d'onboarding peut tourner sans qu'aucune
+   * ligne de Work puisse la montrer, et un point qui désigne une ligne
+   * introuvable est pire que pas de point.
+   */
+  workConversationsInProgress: number;
 };
 
 /**
@@ -896,7 +942,7 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
             isNotNull(conversations.chatId),
             ne(conversations.chatId, ''),
             ne(conversations.channel, 'dashboard'),
-            inArray(conversations.origin, ['user', 'project']),
+            inArray(conversations.origin, [...WORK_CONVERSATION_ORIGINS]),
           ),
         ),
       // Groupé sur les DEUX canaux — celui du job et celui de sa conversation —
@@ -919,7 +965,7 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
           and(
             eq(conversations.id, agentJobs.conversationId),
             eq(conversations.entityId, session.entityId),
-            inArray(conversations.origin, ['user', 'project']),
+            inArray(conversations.origin, [...WORK_CONVERSATION_ORIGINS]),
           ),
         )
         .where(
@@ -932,9 +978,24 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
       // Les CONVERSATIONS où ça tourne. Une seule lecture, dédupliquée en
       // base : trois jobs d'un même fil n'allument qu'un point, et cinquante
       // lignes à l'écran ne font pas cinquante requêtes.
+      //
+      // L'`origin` voyage AVEC l'identifiant (#303) : la case Work ne doit
+      // compter que les conversations que sa section peut lister. Une
+      // jointure, pas une requête de plus — `origin` ne dépend que de la
+      // conversation, donc le `distinct` rend toujours une ligne par fil.
       db
-        .selectDistinct({ conversationId: agentJobs.conversationId })
+        .selectDistinct({
+          conversationId: agentJobs.conversationId,
+          origin: conversations.origin,
+        })
         .from(agentJobs)
+        .leftJoin(
+          conversations,
+          and(
+            eq(conversations.id, agentJobs.conversationId),
+            eq(conversations.entityId, session.entityId),
+          ),
+        )
         .where(
           and(
             eq(agentJobs.entityId, session.entityId),
@@ -950,6 +1011,11 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
         .from(agentJobs)
         .where(runsFromOutside(session.entityId)),
     ]);
+
+    // Le total AVANT le rangement par dossier : `running` perd en route tout
+    // ce que `folderOfWork` ne sait pas ranger, et c'est justement ce que la
+    // case Logs doit compter (#300).
+    const runsInProgress = runningRows.reduce((total, r) => total + r.n, 0);
 
     const running: Record<string, number> = {};
     for (const r of runningRows) {
@@ -978,6 +1044,14 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
         .map((r) => r.conversationId)
         .filter((id): id is string => id !== null),
       externalRuns: externalRows[0]?.n ?? 0,
+      runsInProgress,
+      // Une conversation que la section Work ne liste pas n'allume pas sa
+      // case. `origin` est `null` quand la jointure n'a rien trouvé — un job
+      // qui désigne une conversation d'une autre entité ou déjà supprimée — et
+      // ce cas-là ne compte pas non plus.
+      workConversationsInProgress: runningConvRows.filter(
+        (r) => r.origin !== null && WORK_CONVERSATION_ORIGINS.includes(r.origin),
+      ).length,
     });
   } catch (err) {
     console.error('[getChatFoldersAction]', err);
