@@ -183,13 +183,6 @@
 .home-hero-band .home-mono {
   color: var(--home-hero-ink-soft);
 }
-/* The accent keeps its dark-theme value on the picture: the light one is
-   tempered for white paper and sinks into the blue. */
-.home-hero-band h1 em {
-  color: #ff6a48;
-}
-.home-hero-band .home-lead,
-.home-hero-band .home-install-note,
 .home-hero-band .home-install .p {
   color: var(--home-hero-ink-soft);
 }
@@ -199,8 +192,7 @@
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
-.home-hero-band .home-install .c,
-.home-hero-band .home-install-note code {
+.home-hero-band .home-install .c {
   color: var(--home-hero-ink);
 }
 .home-hero-band .home-btn-ghost {
@@ -231,17 +223,17 @@
   font-size: clamp(40px, 7vw, 74px);
   margin: 14px 0 0;
 }
-.home-hero h1 em {
-  font-style: normal;
-  color: var(--home-flame);
+.home-tagline {
+  display: block;
+  margin-top: 14px;
+  font-family: var(--font-publicsans), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  font-size: clamp(19px, 1.9vw, 26px);
+  letter-spacing: 0;
+  line-height: 1.3;
+  color: var(--home-hero-ink-soft);
 }
-.home-lead {
-  font-size: clamp(17px, 1.6vw, 20px);
-  color: var(--home-ink-soft);
-  max-width: 46ch;
-  margin: 22px 0 0;
-}
-.home-hero-aside {
+.home-hero-band .home-install {
   margin-top: 32px;
 }
 /* Narrow screens: one column over the whole picture, so the veil covers it
@@ -272,11 +264,6 @@
 }
 .home-install .c {
   color: var(--home-ink);
-}
-.home-install-note {
-  margin: 12px 0 0;
-  font-size: 14px;
-  color: var(--home-ink-soft);
 }
 
 .home-actions {
@@ -875,7 +862,6 @@
 /* ── Narrow ────────────────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {
-  .home-hero,
   .home-screens {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -24,7 +24,6 @@ import {
   INVARIANTS,
   LINK_CHANGELOG,
   LINK_DOCS,
-  LINK_GETTING_STARTED,
   LINK_GITHUB,
   LINK_NPM,
   LINK_QA,
@@ -225,40 +224,22 @@ export default function Home() {
         <div className="home-wrap home-hero">
           {/* One column, set to the right: the dog and the conveyor live in
               the left half of the picture and stay uncovered. */}
+          {/* Three things and nothing else on the picture (Quentin, 20/09):
+              the name, the line, the command. */}
           <div className="home-hero-copy">
-            <p className="home-mono">Self-hosted agent platform · v{VERSION}</p>
             <h1 className="home-display">
-              Your AI agents. Your data. <em>Your machine.</em>
+              Nodal. <span className="home-tagline">Herding agents is what we're built for.</span>
             </h1>
-            <p className="home-lead">
-              Nodal-Agents runs a team of AI agents on your own hardware. Each one has its own
-              model, tools, memory and personality. They research, write files, call your
-              connectors, and hand work to each other until the job is done.
-            </p>
-            <div className="home-actions">
-              <a className="home-btn home-btn-primary" href={LINK_GETTING_STARTED}>
-                Get started
-              </a>
-              <a className="home-btn home-btn-ghost" href={LINK_GITHUB}>
-                View the source
-              </a>
-            </div>
-            <aside className="home-hero-aside">
-              <div className="home-install">
-                <div>
-                  <span className="p">$ </span>
-                  <span className="c">npm install -g nodal-agents</span>
-                </div>
-                <div>
-                  <span className="p">$ </span>
-                  <span className="c">nodal-agents up</span>
-                </div>
+            <div className="home-install">
+              <div>
+                <span className="p">$ </span>
+                <span className="c">npm install -g nodal-agents</span>
               </div>
-              <p className="home-install-note">
-                Node 22 or newer. No config file, no account, nothing to answer in the terminal.
-                Your browser opens on a guided setup. Data lives in <code>~/.nodalai</code>.
-              </p>
-            </aside>
+              <div>
+                <span className="p">$ </span>
+                <span className="c">nodal-agents up</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
