@@ -441,6 +441,36 @@ export type DeliverySummary = {
    * distinctes, prises sur un seul et même fait.
    */
   changesRequested: boolean;
+  /**
+   * LES COMMANDES DE CE TRAVAIL, et ce qu'on a vu de chacune (#282).
+   *
+   * `observed` à faux veut dire : la commande a tourné et aucune écriture n'a
+   * été CONSTATÉE sur son tour (#197). Ce n'est pas « elle n'a rien fait »,
+   * c'est « on ne l'a pas vu » — dans un dépôt, le constat par git l'aurait vu.
+   *
+   * Le fait vient du verdict déjà calculé (`ProducedItem` de genre `command`,
+   * son drapeau `certain`), jamais d'une seconde lecture des lignes d'audit :
+   * deux lectures du même fait auraient divergé au premier correctif.
+   */
+  commands: DeliveryCommand[];
+  /**
+   * CE TRAVAIL A-T-IL PRODUIT QUELQUE CHOSE qu'on ait constaté ? C'est
+   * `verdict.isWork`, transporté tel quel.
+   *
+   * Il décide du MOT de l'en-tête. Depuis #282 l'encart paraît aussi pour un
+   * tour dont la seule commande n'a rien laissé voir ; écrire « Delivered »
+   * au-dessus d'une liste de commandes non constatées dirait exactement le
+   * contraire de ce que le verdict a mesuré (invariant #4).
+   */
+  produced: boolean;
+};
+
+/** Une commande du travail, et ce qu'on a constaté d'elle (#282). */
+export type DeliveryCommand = {
+  /** La commande, telle que la carte d'outil l'a présentée. */
+  label: string;
+  /** Une écriture a-t-elle été constatée sur le tour de cette commande ? */
+  observed: boolean;
 };
 
 export type FeedTotals = {

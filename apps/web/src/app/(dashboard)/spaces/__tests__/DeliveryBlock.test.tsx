@@ -33,6 +33,8 @@ const EMPTY: DeliverySummary = {
   verdict: null,
   review: null,
   changesRequested: false,
+  commands: [],
+  produced: true,
 };
 
 const totals = (costUsd: number | null = null) => ({
@@ -562,7 +564,14 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
     const html = renderToStaticMarkup(
       <DeliveryBlock
         jobId="job-59"
-        summary={{ ...EMPTY, review: 'approve', changesRequested: false, verdict: 'green' }}
+        summary={{
+          ...EMPTY,
+          review: 'approve',
+          changesRequested: false,
+          commands: [],
+          produced: true,
+          verdict: 'green',
+        }}
       />,
     );
     // La même assertion que le cas du dessus : la ligne entière, dans l'ordre.
@@ -593,7 +602,14 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
     const html = renderToStaticMarkup(
       <DeliveryBlock
         jobId="job-59"
-        summary={{ ...EMPTY, review: 'abstained', changesRequested: false, verdict: 'green' }}
+        summary={{
+          ...EMPTY,
+          review: 'abstained',
+          changesRequested: false,
+          commands: [],
+          produced: true,
+          verdict: 'green',
+        }}
       />,
     );
     expect(ligne(html)).toContain('Delivered · abstained');
@@ -617,5 +633,106 @@ describe('deliverySummary — le verdict de la relecture @cap:verifier-un-livrab
     const sansRelecture = summaryOf({ feed: { items: [], totals: totals() } });
     expect(sansRelecture.review).toBeNull();
     expect(sansRelecture.changesRequested).toBe(false);
+  });
+});
+
+// ─── #282 — une commande qu'on n'a pas vue se LIT dans l'encart ──────────────
+//
+// Jusqu'au 21/09 le fil ne disait RIEN d'un tour dont la seule commande n'avait
+// laissé aucune écriture constatée : ni encart (le verdict dit « pas du
+// travail »), ni note (rien d'inclassable). Le verdict avait mesuré une
+// absence, et cette absence ne se lisait nulle part.
+//
+// Décision de Quentin : l'encart, avec la commande marquée. Ce qui suit prouve
+// les deux moitiés — la commande est nommée, et le mot de l'en-tête ne promet
+// pas une livraison qui n'a pas eu lieu.
+
+describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrable/ecran', () => {
+  it('nomme la commande et dit que rien n’a été observé', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{
+          ...EMPTY,
+          produced: false,
+          commands: [{ label: 'ls -la', observed: false }],
+        }}
+        jobId={null}
+      />,
+    );
+    expect(html).toContain('Commands');
+    expect(html).toContain('ls -la');
+    expect(html).toContain('nothing observed');
+    // ET LE MOT N'EST PLUS « DELIVERED ». Rien n'a été constaté : écrire
+    // « Delivered » au-dessus de cette liste dirait le contraire du verdict.
+    expect(html).toContain('>Ran');
+    expect(html).not.toContain('Delivered');
+    // ET LE SIGNE S'ÉTEINT au lieu de virer au rouge : une absence est grise et
+    // se dit, jamais rouge. Sans cette assertion, la couleur du crochet était
+    // la seule mutation du lot qui restait verte (Reviewer C, passe 1).
+    expect(html).toContain('text-ink-4');
+    expect(html).not.toContain('text-ok');
+  });
+
+  it('montre douze commandes au plus, et COMPTE le reste', () => {
+    // `classifyProduction` pousse un item par ligne terminal réussie, sans
+    // plafond : une session de code de cent cinquante appels shell rendait un
+    // encart plus long que le fil qu'il conclut (Reviewer C, passe 1).
+    const quinze = Array.from({ length: 15 }, (_, i) => ({
+      label: `commande-${i}`,
+      observed: i % 2 === 0,
+    }));
+    const html = renderToStaticMarkup(
+      <DeliveryBlock summary={{ ...EMPTY, commands: quinze }} jobId={null} />,
+    );
+    // LES DOUZE PREMIÈRES, DANS L'ORDRE. Sans la borne basse, un découpage
+    // arbitraire gardant douze items dont le onzième serait resté vert
+    // (Reviewer C, passe 2).
+    expect(html).toContain('commande-0');
+    expect(html).toContain('commande-11');
+    expect(html).not.toContain('commande-12');
+    // Les trois qui restent sont COMPTÉES, pas jetées — et la phrase est celle
+    // des COMMANDES, pas celle des fichiers, qui est la même au mot près.
+    expect(html).toContain('data-testid="commands-more"');
+    expect(html).toContain('… and 3 more');
+  });
+
+  it('ne compte rien quand la liste de commandes tient en entier', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{ ...EMPTY, commands: [{ label: 'ls -la', observed: false }] }}
+        jobId={null}
+      />,
+    );
+    // « … and 0 more » demande d'être lu pour apprendre qu'il n'y a rien de
+    // plus. Les fichiers avaient déjà ce garde-fou ; les commandes ne l'avaient
+    // pas (Reviewer C, passe 2).
+    expect(html).not.toContain('commands-more');
+    expect(html).not.toContain('more');
+  });
+
+  it('dit « Delivered » et tait l’aveu quand la commande a été constatée', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{
+          ...EMPTY,
+          produced: true,
+          files: 1,
+          filePaths: ['out/bilan.md'],
+          commands: [{ label: 'pnpm build', observed: true }],
+        }}
+        jobId={null}
+      />,
+    );
+    expect(html).toContain('Delivered');
+    expect(html).toContain('pnpm build');
+    expect(html).not.toContain('nothing observed');
+  });
+
+  it('ne dessine aucune section Commands quand le travail n’en a fait tourner aucune', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock summary={{ ...EMPTY, files: 1, filePaths: ['a.md'] }} jobId={null} />,
+    );
+    expect(html).not.toContain('Commands');
+    expect(html).not.toContain('nothing observed');
   });
 });

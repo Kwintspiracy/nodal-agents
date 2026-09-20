@@ -226,6 +226,19 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
     // côté ; c'est là que « Changes requested » ou « Approved » se lit.
     review,
     changesRequested: reviewBlocksDelivery(review),
+    // LE DÉTAIL D'UN PROCESS DE CODE NE PORTE AUCUNE COMMANDE de ce genre
+    // (#282) : il porte les commandes de PREUVE (`verificationRuns`, déjà
+    // rendues dans `checks`), jamais les appels shell du travail ni le constat
+    // d'écriture de leur tour. Une liste vide, donc — pas une invention.
+    commands: [],
+    // CE QUE LA GARDE DU DESSUS GARANTIT, et rien de plus (Reviewer C, passe 1
+    // de la PR #327) : arrivé ici, le run a écrit des fichiers OU fait tourner
+    // une preuve. Un run de preuve seule, sans un fichier changé, passe donc
+    // avec `produced: true` et garde le mot « Delivered » — c'est ce que cette
+    // page affiche depuis toujours, et #282 ne touche pas à cette question-là.
+    // Le mot ne peut de toute façon pas mentir ici par la porte de #282 : cette
+    // page ne porte aucune commande non constatée à lui opposer.
+    produced: true,
   };
 }
 

@@ -18,6 +18,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agentJobs, conversations, constatedWrites, toolCalls } from '@nodal-agents/db';
+import type { FeedItem } from '../conversation-feed.ts';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -120,12 +121,16 @@ async function semer(opts: { cle: string; command: string; aEcrit: boolean }): P
   }
 }
 
-/** Le fil rendu porte-t-il un encart de production ? */
-async function montreDuTravail(cle: string): Promise<boolean> {
+/** L'encart de production du fil rendu, ou `null` quand il n'y en a aucun. */
+async function encart(cle: string): Promise<Extract<FeedItem, { kind: 'produced' }> | null> {
   const { getConversationThreadAction } = await import('../conversation-actions.ts');
   const r = await getConversationThreadAction(fils[cle] ?? '');
   if (!r.ok) throw new Error(`${r.code} ${r.message}`);
-  return r.data.feed.items.some((i) => i.kind === 'produced');
+  return (
+    r.data.feed.items.find(
+      (i): i is Extract<FeedItem, { kind: 'produced' }> => i.kind === 'produced',
+    ) ?? null
+  );
 }
 
 beforeAll(async () => {
@@ -138,11 +143,29 @@ beforeAll(async () => {
 });
 
 describe('le verdict du fil lit l’écriture constatée @cap:verifier-un-livrable/moteur', () => {
-  it('un tour shell qui n’a rien produit n’est PAS montré comme du travail', async () => {
-    expect(await montreDuTravail('rien-ecrit')).toBe(false);
+  it('un tour shell qui n’a rien laissé voir le DIT, sans se dire du travail', async () => {
+    // ⚠️ CE CAS A CHANGÉ DE RÉPONSE (#282, décision de Quentin du 21/09). Il
+    // affirmait qu'aucun encart ne paraissait : c'était vrai, et c'était le
+    // problème — le fil ne disait alors RIEN de ce tour, ni encart ni note, et
+    // l'absence que le verdict avait mesurée restait dans les journaux.
+    //
+    // L'encart paraît donc maintenant, et c'est lui qui porte la nuance : il
+    // ne se dit PAS une livraison (`produced` à faux) et il nomme la commande
+    // dont rien n'a été constaté.
+    const e = await encart('rien-ecrit');
+    expect(e).not.toBeNull();
+    expect(e!.summary.produced).toBe(false);
+    expect(e!.summary.commands).toEqual([{ label: 'ls -la', observed: false }]);
+    // Et le verdict reste ce qu'il était : ce tour n'est pas du travail.
+    expect(e!.verdict.isWork).toBe(false);
+    expect(e!.verdict.uncertain).toBe(1);
   });
 
   it('une écriture CONSTATÉE sur le même tour en fait un travail', async () => {
-    expect(await montreDuTravail('a-ecrit')).toBe(true);
+    const e = await encart('a-ecrit');
+    expect(e).not.toBeNull();
+    expect(e!.summary.produced).toBe(true);
+    // La même commande, vue cette fois : elle ne porte plus l'aveu.
+    expect(e!.summary.commands).toEqual([{ label: 'pnpm build', observed: true }]);
   });
 });

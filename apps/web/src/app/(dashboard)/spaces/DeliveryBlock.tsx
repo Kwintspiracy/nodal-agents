@@ -37,6 +37,7 @@ import {
   Check,
   CheckCircle,
   PencilSimple,
+  Terminal,
   Warning,
   X,
 } from '@phosphor-icons/react/dist/ssr';
@@ -47,6 +48,18 @@ import { formatCost, formatMs, shortToolName } from './format.ts';
 
 /** Au-delà, la liste de fichiers cesse d'être lisible : on compte le reste. */
 const FILES_SHOWN = 12;
+
+/**
+ * Au-delà, la liste de commandes cesse d'être lisible — même règle que les
+ * fichiers, et pour la même raison (Reviewer C, passe 1 de la PR #327).
+ *
+ * `classifyProduction` pousse un item par ligne `terminal` réussie, sans
+ * plafond : une session de code qui lance cent cinquante appels shell rendait
+ * un encart de cent cinquante lignes, plus long que le fil qu'il conclut. Le
+ * modèle les porte toutes, comme pour les fichiers ; l'écran en montre douze
+ * et COMPTE le reste, il ne le jette pas.
+ */
+const COMMANDS_SHOWN = 12;
 
 /**
  * Le mot que la relecture ajoute à côté de « Delivered » (#59). `null` quand
@@ -120,6 +133,8 @@ export default function DeliveryBlock({
 
   const shownFiles = summary.filePaths.slice(0, FILES_SHOWN);
   const hiddenFiles = summary.filePaths.length - shownFiles.length;
+  const shownCommands = summary.commands.slice(0, COMMANDS_SHOWN);
+  const hiddenCommands = summary.commands.length - shownCommands.length;
   // Le pied ne se dessine que s'il a quelque chose à dire : personne n'a relu
   // ET aucun run à ouvrir, il n'y a pas de pied.
   const showFoot = summary.reviews.length > 0 || jobId !== null;
@@ -139,20 +154,30 @@ export default function DeliveryBlock({
             Une relecture qui demande des corrections fait le même effet sur le
             signe, et sur lui seul : le mot, lui, ne bouge plus (#59, décision
             du 19/09 au soir). */}
+        {/* UNE ABSENCE SE DESSINE EN GRIS, jamais en rouge (#282) : un tour
+            dont la seule commande n'a rien laissé voir n'est pas en panne, il
+            est indéterminé. Le crochet reste, sa couleur s'éteint. */}
         {changesRequested ? (
           <Warning size={16} className="text-warn" aria-hidden />
         ) : (
           <CheckCircle
             size={16}
-            className={verdict === 'red' ? 'text-warn' : 'text-ok'}
+            className={
+              !summary.produced ? 'text-ink-4' : verdict === 'red' ? 'text-warn' : 'text-ok'
+            }
             aria-hidden
           />
         )}
         {/* Le mot du résultat, puis ce que la relecture en dit — deux faits,
             jamais l'un à la place de l'autre. Sans relecture, il n'y a qu'un
             fait et la ligne s'arrête là. */}
+        {/* « DELIVERED » SE MÉRITE (#282). L'encart paraît désormais aussi pour
+            un tour dont la seule commande n'a rien laissé voir ; écrire
+            « Delivered » au-dessus de cette liste dirait le contraire de ce que
+            le verdict a mesuré. Le mot devient alors « Ran » : quelque chose a
+            bien tourné, et c'est tout ce qu'on sait. */}
         <span className="text-title-15 text-ink">
-          Delivered
+          {summary.produced ? 'Delivered' : 'Ran'}
           {reviewLabel !== null && <span className="text-ink-3"> · {reviewLabel}</span>}
         </span>
         {/* La pastille suit le mot, à trente pixels — pas poussée au bord
@@ -195,6 +220,43 @@ export default function DeliveryBlock({
           </ul>
           {hiddenFiles > 0 && (
             <p className="mt-1 text-mono-11 text-ink-4">… and {hiddenFiles} more</p>
+          )}
+        </div>
+      )}
+
+      {/* LES COMMANDES DU TRAVAIL, et ce qu'on a vu de chacune (#282). Une
+          commande dont aucune écriture n'a été constatée sur son tour le DIT,
+          au lieu de disparaître de l'écran : c'est l'absence que le verdict a
+          mesurée, et l'invariant #4 demande qu'elle se dise.
+
+          « nothing observed », et pas « rien fait » : dans un dépôt, le constat
+          par git aurait vu l'écriture. Ce qui manque est le CONSTAT, pas
+          forcément l'effet. */}
+      {summary.commands.length > 0 && (
+        <div className="border-t border-rule-2 px-4 pt-2.5 pb-3">
+          <p className="mb-1 text-mono-11 text-ink-4">Commands</p>
+          <ul className="flex flex-col gap-1">
+            {shownCommands.map((c, i) => (
+              <li
+                key={i}
+                className="flex min-w-0 items-center gap-2"
+                data-testid="delivery-command"
+              >
+                <Terminal size={12} className="shrink-0 text-ink-4" aria-hidden />
+                <span className="min-w-0 truncate text-mono-12 text-ink-2">{c.label}</span>
+                {!c.observed && (
+                  <span className="shrink-0 text-mono-11 text-ink-4">nothing observed</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          {/* La MÊME phrase que sous les fichiers, quelques lignes plus haut :
+              une étiquette la distingue, sinon un test qui la cherche ne dit
+              pas de quelle liste il parle (Reviewer C, passe 2). */}
+          {hiddenCommands > 0 && (
+            <p data-testid="commands-more" className="mt-1 text-mono-11 text-ink-4">
+              … and {hiddenCommands} more
+            </p>
           )}
         </div>
       )}
