@@ -116,6 +116,9 @@ describe('ProjectScreen — l’ordre de la page @cap:travailler-sur-des-fichier
     const panneau = html.slice(iPanneau, html.indexOf('>', iPanneau));
     expect(panneau).toContain('lg:sticky lg:top-6');
     expect(panneau).toContain('lg:w-[400px]');
+    // Sur une fenêtre assez large, la carte se pose sur la marge libre et ne
+    // pousse pas le contenu ; en dessous, elle prend sa place dans la rangée.
+    expect(panneau).toContain('min-[2372px]:-ml-[424px]');
     // Le sous-titre est le CHEMIN seul : pas d'agent, pas de compte.
     expect(html).not.toContain('1 conversation');
     expect(html).not.toContain('2 conversations');

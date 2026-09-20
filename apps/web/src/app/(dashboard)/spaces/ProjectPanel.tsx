@@ -117,7 +117,16 @@ export function ProjectFilesPanel({ title, children }: { title: string; children
       // Une COLONNE à côté du contenu, collante : son haut s'aligne sur la
       // rangée d'actions (même `pt-6` que le corps), jamais sur l'en-tête, et
       // elle suit le défilement. Sur un écran étroit elle passe sous la liste.
-      className="mx-5 mt-6 flex max-h-[70vh] flex-col overflow-hidden rounded-xl border border-rule bg-paper shadow-[0_12px_32px_rgba(0,0,0,0.28)] sm:mx-8 lg:sticky lg:top-6 lg:mx-0 lg:mt-0 lg:max-h-[calc(100vh-48px)] lg:w-[400px] lg:shrink-0 lg:self-start"
+      //
+      // ELLE NE POUSSE LE CONTENU QUE S'IL LE FAUT (Quentin, 20/09). La
+      // colonne de contenu fait au plus 1152 px, centrée dans la zone
+      // principale (la fenêtre moins les 372 px de la barre). Tant que la zone
+      // a de quoi loger la colonne centrée ET la carte à droite — à partir de
+      // 2372 px de fenêtre — la carte se pose PAR-DESSUS la marge libre
+      // (marge négative de sa largeur plus l'écart) et le contenu reste au
+      // milieu de la page. En dessous, elle prend sa place dans la rangée et
+      // le contenu se recentre dans ce qui reste, donc glisse vers la gauche.
+      className="mx-5 mt-6 flex max-h-[70vh] flex-col overflow-hidden rounded-xl border border-rule bg-paper shadow-[0_12px_32px_rgba(0,0,0,0.28)] sm:mx-8 lg:sticky lg:top-6 lg:mx-0 lg:mt-0 lg:max-h-[calc(100vh-48px)] lg:w-[400px] lg:shrink-0 lg:self-start min-[2372px]:-ml-[424px]"
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-rule-2 py-3 pr-3 pl-5">
         <h2 id={titleId} className="min-w-0 truncate text-title-16 text-ink">

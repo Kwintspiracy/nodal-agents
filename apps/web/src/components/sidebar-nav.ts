@@ -298,7 +298,6 @@ export const DESTINATIONS: readonly Destination[] = [
     href: '/llm-providers',
     routes: ['/settings', '/llm-providers'],
     groups: SETTINGS_GROUPS,
-    foot: true,
   },
 ];
 

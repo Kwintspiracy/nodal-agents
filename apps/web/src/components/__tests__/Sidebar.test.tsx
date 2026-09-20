@@ -5,7 +5,7 @@
 // fichier prouve les sept choses que cette refonte pouvait casser sans qu'on
 // le voie :
 //
-//   1. le rail porte CINQ destinations, plus Logs et Help, et Settings en bas ;
+//   1. le rail porte CINQ destinations, plus Logs et Help, et Settings juste sous Approvals ;
 //   2. la destination active se DÉDUIT de la route, et rien d'autre ;
 //   3. chaque panneau porte les sections de SA planche, dans l'ordre ;
 //   4. les listes du panneau se LISENT en base, bornées, et disent leurs trois
@@ -221,7 +221,7 @@ afterEach(async () => {
 // ─── 1. Le rail : cinq destinations, Logs, Help ──────────────────────────────
 
 describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () => {
-  it('rend Work, Agents, Run, Approvals, puis Logs, Settings et Help', async () => {
+  it('rend Work, Agents, Run, Approvals, Settings, puis Logs et Help', async () => {
     await renderSidebar();
     for (const key of ['work', 'agents', 'run', 'approvals', 'logs', 'settings', 'help']) {
       expect(railCell(key), `le rail porte « ${key} »`).not.toBeNull();
@@ -238,14 +238,14 @@ describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () 
     expect(() => navLink('Agent')).toThrow();
   });
 
-  it('range Settings EN BAS, et le dit dans la table', async () => {
-    // Settings est une destination comme les autres — elle ouvre un panneau —
-    // mais la planche la met sous la séparation, avec Logs et Help. Le fait
-    // vit dans `sidebar-nav`, pas dans le rendu du rail.
+  it('range Settings juste SOUS Approvals, dans le groupe du haut', async () => {
+    // Quentin, 20/09 : « mets l'onglet Settings juste sous Approvals ». Plus
+    // aucune destination sous la séparation ; il n'y reste que Logs et Help.
+    // Le fait vit dans `sidebar-nav`, pas dans le rendu du rail.
     //
-    // Mutation vérifiée : `foot: true` retiré de la destination Settings →
-    // ce cas rougit, la case remonte dans le groupe du haut.
-    expect(DESTINATIONS.filter((d) => d.foot === true).map((d) => d.key)).toEqual(['settings']);
+    // Mutation vérifiée : `foot: true` remis sur Settings → ce cas rougit, la
+    // case redescend sous Logs.
+    expect(DESTINATIONS.filter((d) => d.foot === true).map((d) => d.key)).toEqual([]);
 
     await renderSidebar();
     const cases = [...container.querySelectorAll('[data-testid^="rail-"]')].map((el) =>
@@ -256,8 +256,8 @@ describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () 
       'rail-agents',
       'rail-run',
       'rail-approvals',
-      'rail-logs',
       'rail-settings',
+      'rail-logs',
       'rail-help',
     ]);
   });
