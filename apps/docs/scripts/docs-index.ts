@@ -139,56 +139,91 @@ export function splitFrontmatter(source: string): Frontmatter {
 }
 
 /**
- * Markdown/MDX → plain text, one line at a time so headings stay recognisable
- * to the caller (it splits on them afterwards).
+ * Markdown/MDX → plain text. Headings keep their `#` marks: the caller splits
+ * on them afterwards.
  *
- * Removed: import/export statements, JSX tags (the tag itself, never the text
- * between an opening and closing tag), code fences (their MARKERS — the code
- * stays, because a command line is often the answer), list bullets, table
- * pipes, emphasis, link syntax (the label stays, the target goes).
+ * ORDER IS THE WHOLE PROBLEM, and two Reviewer C findings on the first pass of
+ * this file were both about getting it wrong:
+ *
+ *   - Code came LAST, so removing JSX tags first ate the brackets of a
+ *     placeholder written as code. `` `/ask <agent-slug> <text>` `` reached the
+ *     index as `/ask`, and the tool served a command stripped of its arguments
+ *     with every appearance of being complete.
+ *   - Tags were removed LINE BY LINE, so a `<Card>` written across five lines
+ *     never matched and shipped verbatim: attribute names, hrefs and quotes
+ *     presented as prose.
+ *
+ * So code is taken out of the way FIRST, as placeholders, and put back LAST.
+ * Everything in between is free to be aggressive, and a fenced block can no
+ * longer be mistaken for anything: a `## comment` inside one used to open a
+ * section under an anchor that scrolls nowhere.
+ *
+ * Removed: import/export statements, JSX and HTML tags (the tag, never the text
+ * around it), fence markers (the code itself stays, because a command line is
+ * often the answer), list bullets, table pipes, emphasis, link targets.
  */
 export function stripMdx(body: string): string {
-  const lines = body.split('\n');
-  const out: string[] = [];
-  let inFence = false;
+  const code: string[] = [];
+  // U+0001 cannot appear in a docs page and is matched by no rule below, so a
+  // placeholder survives every pass intact.
+  const keep = (text: string): string => `\u0001${String(code.push(text) - 1)}\u0001`;
 
-  for (const raw of lines) {
-    const line = raw;
+  let work = body;
 
-    if (/^\s*```/.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) {
-      out.push(line.trim());
-      continue;
-    }
-    // `import { Callout } from 'fumadocs-ui/components/callout';`
-    if (/^\s*(import|export)\s/.test(line)) continue;
+  // 1. Fenced blocks. Their newlines are folded into spaces on the way in:
+  //    restored at the end they would otherwise reintroduce lines, and one of
+  //    them starting with `##` would open a section that does not exist.
+  work = work.replace(/^[ \t]*```[^\n]*\n([\s\S]*?)^[ \t]*```[ \t]*$/gm, (_all, inner: string) =>
+    keep(
+      inner
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l !== '')
+        .join(' ')
+        // A shell comment opens with `#`. Restored at the start of a line it
+        // would be read as a heading, so the marker goes and the comment stays.
+        .replace(/^#+\s*/, ''),
+    ),
+  );
 
-    let text = line;
-    // JSX/HTML tags: drop the tag, keep whatever sat between them.
-    text = text.replace(/<\/?[A-Za-z][^>]*>/g, ' ');
-    // Links and images: keep the label, drop the target.
-    text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
-    text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
-    // Table rows → cells separated by spaces; separator rows disappear.
+  // 2. Inline code spans, before anything can look inside them.
+  work = work.replace(/`([^`\n]+)`/g, (_all, inner: string) => keep(inner));
+
+  // 3. `import { Callout } from 'fumadocs-ui/components/callout';`
+  work = work
+    .split('\n')
+    .filter((l) => !/^\s*(import|export)\s/.test(l))
+    .join('\n');
+
+  // 4. JSX and HTML tags, across the WHOLE text so a tag written over several
+  //    lines matches. `[^<>]` rather than `[^>]` keeps a malformed tag from
+  //    swallowing the rest of the page.
+  work = work.replace(/<\/?[A-Za-z][^<>]*>/g, ' ');
+
+  // 5. Links and images: the label stays, the target goes.
+  work = work.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
+  work = work.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+
+  // 6. Line-anchored markup: tables, bullets, quotes.
+  const lines: string[] = [];
+  for (const raw of work.split('\n')) {
+    let text = raw;
     if (/^\s*\|/.test(text)) {
       if (/^\s*\|[\s:|-]+\|\s*$/.test(text)) continue;
       text = text.replace(/\|/g, ' ');
     }
-    // List bullets and blockquote markers.
     text = text.replace(/^\s*[-*+]\s+/, '');
     text = text.replace(/^\s*\d+\.\s+/, '');
     text = text.replace(/^\s*>\s?/, '');
-    // Emphasis and inline code markers (the code text itself stays).
-    text = text.replace(/\*\*([^*]+)\*\*/g, '$1');
-    text = text.replace(/`([^`]+)`/g, '$1');
-    // A heading keeps its `#` marks — the splitter below needs them.
-    out.push(text.trimEnd());
+    lines.push(text.trimEnd());
   }
+  work = lines.join('\n');
 
-  return out.join('\n');
+  // 7. Emphasis.
+  work = work.replace(/\*\*([^*]+)\*\*/g, '$1');
+
+  // 8. The code, back where it was.
+  return work.replace(/\u0001(\d+)\u0001/g, (_all, i: string) => code[Number(i)] ?? '');
 }
 
 /**

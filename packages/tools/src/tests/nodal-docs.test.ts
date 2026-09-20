@@ -113,6 +113,76 @@ describe('nodal_docs @cap:consulter-l-aide/moteur', () => {
     expect(hits[0]?.url).toBe('/a#webhook-triggers');
   });
 
+  it('settles a near-tie in favour of the section that answers MORE of the question', () => {
+    // Reviewer C, pass 1, P2-11(a): nothing asserted that the coverage bonus
+    // did anything, so setting its weight to zero passed unnoticed.
+    //
+    // A near-tie is the only place it CAN matter, because every field weight is
+    // larger than it: a section that wins a field outright wins regardless.
+    // So the tie is built on purpose. `/heading` answers half the question in
+    // its heading and nothing else; `/both` answers the whole question in its
+    // prose. Their field scores land within a point of each other, and what
+    // separates them is that one of them addresses what was actually asked.
+    const index = {
+      generator: 'test',
+      sections: [
+        {
+          page: 'heading',
+          pageTitle: 'P',
+          heading: 'Telegram',
+          url: '/heading',
+          text: 'A paragraph about nothing in particular.',
+        },
+        {
+          page: 'both',
+          pageTitle: 'P',
+          heading: 'Elsewhere',
+          url: '/both',
+          text: 'Connect it: telegram, telegram, telegram, telegram, telegram, telegram.',
+        },
+      ],
+    };
+    expect(searchDocs(index, 'connect telegram', 2)[0]?.url).toBe('/both');
+  });
+
+  it('breaks a tie on the URL, never on the order the index was written in', () => {
+    // Reviewer C, pass 1, P2-11(b). Two identical sections under different
+    // URLs: without the tie-break the answer depends on which page the walker
+    // reached first, so adding an unrelated page could silently change what the
+    // agent is told.
+    const section = { pageTitle: 'P', heading: 'Same', text: 'Identical words here.' };
+    const index = {
+      generator: 'test',
+      sections: [
+        { ...section, page: 'z', url: '/z' },
+        { ...section, page: 'a', url: '/a' },
+      ],
+    };
+    expect(searchDocs(index, 'identical words', 2).map((h) => h.url)).toEqual(['/a', '/z']);
+    const reversed = { generator: 'test', sections: [...index.sections].reverse() };
+    expect(searchDocs(reversed, 'identical words', 2).map((h) => h.url)).toEqual(['/a', '/z']);
+  });
+
+  it('matches a plural by prefix, and refuses to prefix-match a short word', () => {
+    // Reviewer C, pass 1, P1-8 asked for a prefix counter-example in the real
+    // vocabulary of these pages. There is none: the only words a query term
+    // prefixes are its own plural ("webhook" into "webhooks", eleven times in
+    // the guides) and `agentId`. What makes that safe is the length floor, and
+    // that is what is pinned here.
+    const index = {
+      generator: 'test',
+      sections: [
+        { page: 'a', pageTitle: 'A', heading: 'Webhooks', url: '/a', text: 'About webhooks.' },
+        { page: 'b', pageTitle: 'B', heading: 'Tokens', url: '/b', text: 'About a token.' },
+      ],
+    };
+    // Long enough: the plural is the same topic.
+    expect(searchDocs(index, 'webhook', 2)[0]?.url).toBe('/a');
+    // Too short to prefix: "tok" must not reach "token", or a three-letter
+    // fragment of a question would match every page that mentions one.
+    expect(searchDocs(index, 'tok', 2)).toEqual([]);
+  });
+
   it('drops the words every question carries, and keeps the ones that matter', () => {
     expect(queryTerms('how do I set up a Telegram bot')).toEqual(['set', 'up', 'telegram', 'bot']);
     // Every word a stopword: no terms, and the caller returns nothing rather

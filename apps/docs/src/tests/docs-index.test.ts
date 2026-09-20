@@ -148,6 +148,116 @@ describe('the documentation index @cap:consulter-l-aide/moteur', () => {
     expect(first).toContain('A deeper heading Folded into its section.');
   });
 
+  it('keeps a code span whole, even when it is shaped like a tag', () => {
+    // Reviewer C, pass 1, C1. `stripMdx` used to remove JSX tags BEFORE
+    // unwrapping code spans, so a placeholder written as code lost its
+    // brackets and the tool served a command without its arguments:
+    // "/ask — routes to a different agent" instead of
+    // "/ask <agent-slug> <text> — routes to ...". The words eaten were the
+    // only part of that line worth reading.
+    const page = [
+      '---',
+      'title: Group commands',
+      '---',
+      '',
+      '- `/ask <agent-slug> <text>` — routes to a different agent',
+      "- `@bot_username <text>` — mention with the bot's username",
+      '- `nodal-agents up --port <n>` starts the stack',
+    ].join('\n');
+
+    const text = sectionsOfPage('sample.mdx', page)[0]?.text ?? '';
+    expect(text).toContain('/ask <agent-slug> <text>');
+    expect(text).toContain('@bot_username <text>');
+    expect(text).toContain('--port <n>');
+  });
+
+  it('removes a JSX tag that spans several lines', () => {
+    // Reviewer C, pass 1, C2. The tag removal ran line by line, so a `<Card>`
+    // written across five lines never matched and was shipped verbatim in the
+    // index: attribute names, hrefs and quotes, as if they were prose.
+    const page = [
+      '---',
+      'title: Agents',
+      'description: What an agent is.',
+      '---',
+      '',
+      '## Related',
+      '',
+      '<Cards>',
+      '  <Card',
+      '    title="Orchestrators"',
+      '    href="/docs/concepts/orchestrators"',
+      '    description="How agents delegate work."',
+      '  />',
+      '</Cards>',
+    ].join('\n');
+
+    const stripped = stripMdx(splitFrontmatter(page).body);
+    expect(stripped).not.toContain('<');
+    expect(stripped).not.toContain('href=');
+    expect(stripped).not.toContain('title=');
+
+    // A card grid is navigation, not an answer: the tag goes and its attributes
+    // with it, exactly as for a single-line tag. That leaves this section with
+    // nothing to say, and an empty section is dropped rather than indexed as a
+    // heading with no text.
+    const sections = sectionsOfPage('sample.mdx', page);
+    expect(sections.map((s) => s.heading)).toEqual(['Agents']);
+    expect(sections[0]?.text).toBe('What an agent is.');
+  });
+
+  it('never lets a fenced line open a section', () => {
+    // A shell comment inside a fence starts with `##`. Read line by line it
+    // became a heading, and everything after it moved into a section that does
+    // not exist on the site, under an anchor that scrolls nowhere.
+    const page = [
+      '---',
+      'title: Commands',
+      '---',
+      '',
+      '## Install',
+      '',
+      '```bash',
+      '## not a heading',
+      'npm i -g nodal-agents',
+      '```',
+      '',
+      'Text after the fence.',
+    ].join('\n');
+
+    // No description and no lead prose, so the page has one section: Install.
+    const sections = sectionsOfPage('sample.mdx', page);
+    expect(sections.map((s) => s.heading)).toEqual(['Install']);
+    const install = sections[0]?.text ?? '';
+    expect(install).toContain('npm i -g nodal-agents');
+    expect(install).toContain('Text after the fence.');
+  });
+
+  it('ships no leftover markup anywhere in the index', () => {
+    // Swept over the whole index rather than one page: both findings above
+    // were "one page nobody looked at".
+    //
+    // What counts as markup, and what does not: an MDX component is
+    // capitalised (`<Card`, `<Cards>`, `<Callout`), and an attribute or a
+    // self-closing slash only ever comes from a tag. A lowercase angle
+    // placeholder (`<agent-slug>`, `<package>`, `<sha>`) is the opposite case
+    // entirely: it is code the reader needs, and eating it is the bug C1 was.
+    const index = buildDocsIndex(contentDir);
+    const offenders = index.sections.filter((s) =>
+      /<[A-Z][A-Za-z]*[\s/>]|href=|className=|\/>/.test(s.text),
+    );
+    expect(
+      offenders.map((s) => `${s.page} :: ${s.heading}`),
+      'these sections still carry markup',
+    ).toEqual([]);
+
+    // The other half of the same sweep: the placeholders DID survive.
+    const groups = index.sections.find(
+      (s) => s.page === 'guides/telegram' && s.heading === 'How incoming messages become jobs',
+    );
+    expect(groups?.text).toContain('/ask <agent-slug> <text>');
+  });
+
   it('builds the anchors the site actually serves', () => {
     // Expected values produced by the library fumadocs-core slugs headings
     // with, run against these exact strings:
