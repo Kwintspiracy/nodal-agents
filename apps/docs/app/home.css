@@ -148,12 +148,80 @@
 
 /* ── Hero ──────────────────────────────────────────────────────────────── */
 
+/* The band is dark in both themes: its ground is the illustration (deep blue),
+   with a flat blue of the same family underneath so the page holds up while
+   the image loads. The `background-image` itself is set inline by `home.tsx`,
+   which owns the base path. Three layers, back to front: a left-to-right veil
+   for the copy, a bottom fade into the page colour, and the picture. */
+.home-hero-band {
+  --home-hero-ink: #ffffff;
+  --home-hero-ink-soft: rgba(255, 255, 255, 0.78);
+  --home-hero-line: rgba(255, 255, 255, 0.28);
+  position: relative;
+  isolation: isolate;
+  background-color: #0a1f5c;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center 40%;
+  color: var(--home-hero-ink);
+}
+.home-hero-band::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(180deg, rgba(4, 12, 40, 0) 88%, var(--home-bg) 100%),
+    linear-gradient(
+      90deg,
+      rgba(4, 12, 40, 0.86) 0%,
+      rgba(4, 12, 40, 0.62) 42%,
+      rgba(4, 12, 40, 0.18) 100%
+    );
+}
+.home-hero-band .home-mono {
+  color: var(--home-hero-ink-soft);
+}
+/* The accent keeps its dark-theme value on the picture: the light one is
+   tempered for white paper and sinks into the blue. */
+.home-hero-band h1 em {
+  color: #ff6a48;
+}
+.home-hero-band .home-lead,
+.home-hero-band .home-install-note,
+.home-hero-band .home-install .p {
+  color: var(--home-hero-ink-soft);
+}
+.home-hero-band .home-install {
+  background: rgba(4, 12, 40, 0.55);
+  border-color: var(--home-hero-line);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.home-hero-band .home-install .c,
+.home-hero-band .home-install-note code {
+  color: var(--home-hero-ink);
+}
+.home-hero-band .home-btn-ghost {
+  border-color: var(--home-hero-line);
+  color: var(--home-hero-ink);
+}
+.home-hero-band .home-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.home-hero-band .home-btn-primary:hover {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #0a1f5c;
+}
+
 .home-hero {
-  padding-block: clamp(56px, 10vw, 112px) clamp(40px, 6vw, 72px);
+  min-height: clamp(520px, 72vh, 760px);
+  padding-block: clamp(56px, 8vw, 96px) clamp(72px, 9vw, 120px);
   display: grid;
   grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
   gap: clamp(28px, 5vw, 64px);
-  align-items: end;
+  align-items: center;
 }
 .home-hero h1 {
   font-size: clamp(40px, 7vw, 74px);

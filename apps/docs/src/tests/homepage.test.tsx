@@ -102,6 +102,13 @@ describe('homepage rendering', () => {
   it('uses no em dash, which the product copy rules forbid', () => {
     expect(markup).not.toContain('—');
   });
+
+  it('opens on a hero band whose background is the illustration shipped with the site', () => {
+    // The band sets the picture inline (the base path is home-content's), and
+    // the file must really be in `public/`: a static export serves nothing else.
+    expect(markup).toContain(`background-image:url(${BASE_PATH}/home/hero.webp)`);
+    expect(existsSync(join(docsRoot, 'public', 'home', 'hero.webp'))).toBe(true);
+  });
 });
 
 describe('the catalog section only shows what the product actually ships', () => {
