@@ -1,24 +1,24 @@
 'use client';
 
-// Sidebar — LA barre latérale : un RAIL et un PANNEAU (#230, 19/09/2026).
+// Sidebar — LA barre latérale : un RAIL et un PANNEAU (#230, refondue en #258).
 //
-// Décision du propriétaire sur les propositions de barre latérale (planche
-// Figma « Sidebar propositions · 4a 3b 3c », GWXBALe90DMFR3XYGccofJ) : la
-// proposition 4a remplace la colonne unique de 300 px livrée en 0.8.11 (#206).
-// Un rail de 72 px porte trois destinations — Talk, Build, Run — et un panneau
-// de 226 px montre celle qui est active.
+// Le propriétaire a redessiné la barre le 19/09/2026 au soir : Figma
+// `WPLtjoJjXJBEqDyCpLy9xc`, nœud `25:1062`, cinq planches côte à côte. Un rail
+// de 72 px porte CINQ destinations — Work, Agents, Run, Approvals, Settings —
+// et un panneau de 300 px montre celle qui est active.
 //
-// Ce fichier ne porte plus que la COQUILLE : le rail est dans `SidebarRail`, le
+// Ce fichier ne porte que la COQUILLE : le rail est dans `SidebarRail`, le
 // panneau dans `SidebarPanel`, et la table des destinations dans `sidebar-nav`.
 // Ce qui reste ici est ce qu'aucun des deux ne peut savoir seul : quelle
 // destination la route allume, et comment les deux colonnes se comportent sur
 // un téléphone.
 //
-// ⚠️ LE CONTENU N'A PAS CHANGÉ. Ce sont les MÊMES entrées qu'en 0.8.11,
-// réparties en trois panneaux — l'issue dit en toutes lettres que rien n'est
-// ajouté ni retiré. Les deux endroits où la répartition a demandé un arbitrage
-// (« Scheduled », les liens externes) sont commentés là où ils vivent :
-// `sidebar-nav.ts` et `SidebarRail.tsx`.
+// ⚠️ APPROVALS ET SETTINGS NE SONT PLUS DES EXCEPTIONS. En #230 c'étaient deux
+// cases qui naviguaient sans ouvrir de panneau, et ce fichier portait donc deux
+// drapeaux à part pour les allumer. Elles sont maintenant des destinations
+// entières : la case allumée et le panneau montré redisent la même chose, et
+// les deux drapeaux ont disparu. Il n'en reste qu'un, pour Logs — la seule case
+// du rail qui navigue sans rien ouvrir.
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
@@ -51,16 +51,15 @@ export default function Sidebar({
   // aucune mémoire. Deux onglets ouverts sur la même adresse montrent le même
   // panneau, et un lien partagé ouvre ce qu'il promet.
   //
-  // La case ALLUMÉE du rail et le PANNEAU montré ne sont pas la même chose :
-  // sur `/settings`, aucune des trois n'est la page courante, et le panneau
-  // montre quand même quelque chose (Run, le repli). Les confondre faisait dire
-  // à la case Run qu'on était sur sa page alors qu'on était dans les réglages.
+  // La case ALLUMÉE du rail et le PANNEAU montré restent deux choses : sur
+  // `/logs`, aucune destination n'est la page courante, et le panneau montre
+  // quand même quelque chose (Work, le repli). Les confondre faisait dire à
+  // une case qu'on était sur sa page alors qu'on était ailleurs.
   const active = matchedDestination(pathname);
   const destination = destinationForPath(pathname);
-  const settingsActive = pathname === '/settings' || pathname.startsWith('/settings/');
-  // Approvals n'est pas une destination : sa case s'allume sur sa page, et le
-  // panneau montre alors le repli, comme sur `/settings`.
-  const approvalsActive = pathname === '/approvals' || pathname.startsWith('/approvals/');
+  // Logs NAVIGUE et n'ouvre aucun panneau : sa case est la seule du rail que la
+  // table des destinations ne peut pas allumer.
+  const logsActive = pathname === '/logs' || pathname.startsWith('/logs/');
 
   // Close mobile menu on route change.
   useEffect(() => {
@@ -116,11 +115,10 @@ export default function Sidebar({
             • Mobile (≤lg): a FULL-SCREEN menu. Le rail garde ses 72 px — c'est
               ce qui permet de changer de destination sans refermer le menu —
               et le panneau prend tout le reste de la largeur, au lieu des
-              226 px du bureau.
+              300 px du bureau.
             • Desktop (lg+): les deux colonnes fixes, toujours visibles, taillées
               dans `--sidebar-w` (app/globals.css) — la MÊME mesure que la zone
-              de contenu garde en gouttière, et qui vaut désormais
-              `--rail-w + --panel-w`.
+              de contenu garde en gouttière, et qui vaut `--rail-w + --panel-w`.
           Un seul arbre pour les deux : le rail, le panneau et le bloc de compte
           ne sont rendus qu'une fois — pas de route en double, pas de
           `data-testid` en double. */}
@@ -133,9 +131,8 @@ export default function Sidebar({
       >
         <SidebarRail
           activeKey={active?.key ?? null}
-          settingsActive={settingsActive}
-          approvalsActive={approvalsActive}
           approvalsCount={pending.length}
+          logsActive={logsActive}
           userMenu={userMenu}
           initiale={initiale ?? null}
         />

@@ -19,18 +19,34 @@ import type { Icon as PhosphorIcon } from '@phosphor-icons/react';
 import AttentionCount from './AttentionCount';
 
 /**
- * La forme d'une case : 56 × 52, coins `xl`. Identique pour toutes les cases à
- * libellé, active ou non.
+ * La forme d'une case : 64 × 52, coins de 4 px. Identique pour toutes les
+ * cases à libellé, active ou non.
+ *
+ * ⚠️ PLEINE LARGEUR depuis la v2 (#258). Elle faisait 56 px dans un rail de
+ * 72, ce qui laissait 8 px de chaque côté ; la planche du 19/09 au soir la
+ * dessine d'un bord à l'autre, moins les 4 px de retrait du rail. Une case
+ * qui ne touche pas les bords se lit comme un bouton posé sur une colonne ;
+ * pleine largeur, elle EST la colonne.
+ *
+ * ⚠️ RAYON 4, et plus `xl`. Le grand rayon venait des lignes du panneau ; la
+ * planche v2 donne aux cases du rail un coin presque droit, et c'est ce qui
+ * les distingue des lignes rondes d'à côté.
  *
  * Exportée parce qu'un test la compare d'une case à l'autre : c'est ce qui fait
  * de « toutes les cases se ressemblent » une chose vérifiable, et pas une
  * intention dans un commentaire.
  */
 export const RAIL_CELL =
-  'flex h-[52px] w-14 shrink-0 flex-col items-center justify-center gap-1 rounded-xl transition-colors';
+  'flex h-[52px] w-16 shrink-0 flex-col items-center justify-center gap-1 rounded-[4px] transition-colors';
 
-/** La case ACTIVE : fond papier cerné, donc « en relief » quel que soit le thème. */
-export const RAIL_CELL_ACTIVE = 'bg-paper border border-rule-2 text-ink';
+/**
+ * La case ACTIVE : fond papier, SANS bordure (#258).
+ *
+ * Elle en portait une en v1 pour tenir dans les deux thèmes. La planche v2 ne
+ * la dessine pas, et le fond suffit maintenant qu'il est pleine largeur : un
+ * trait autour d'une case qui touche les bords redessinerait la colonne.
+ */
+export const RAIL_CELL_ACTIVE = 'bg-paper text-ink';
 
 /** La case au repos, et son survol. */
 export const RAIL_CELL_IDLE = 'text-ink-3 hover:bg-hover hover:text-ink-2';
@@ -43,6 +59,14 @@ export function railCellClass(active = false): string {
 type Props = {
   /** Où mène la case. ABSENT quand elle ouvre une carte au lieu de naviguer. */
   href?: string;
+  /**
+   * La case QUITTE l'application — la documentation, qui est dehors (#258).
+   *
+   * Elle devient alors une ancre en cible neuve plutôt qu'un lien de routeur :
+   * le routeur de Next ne sait pas naviguer hors du site, et une case « Help »
+   * qui remplacerait l'onglet ferait perdre la page sur laquelle on travaille.
+   */
+  external?: boolean;
   /** Ce que la case fait quand elle ne mène nulle part. */
   onClick?: () => void;
   /** L'état que `onClick` bascule — rendu en `aria-expanded`. */
@@ -65,6 +89,7 @@ type Props = {
 
 export default function RailCell({
   href,
+  external = false,
   onClick,
   expanded,
   label,
@@ -107,6 +132,14 @@ export default function RailCell({
       >
         {contenu}
       </button>
+    );
+  }
+
+  if (external) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" {...commun}>
+        {contenu}
+      </a>
     );
   }
 
