@@ -530,6 +530,18 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     expect(allumees()).toEqual(['Install']);
 
     await remonter();
+    // UN RÉGLAGE QUE LE PANNEAU N'ÉCRIT PAS. `open=network` est un réglage
+    // réel de la page, qu'aucune des quatre lignes n'ouvre : la CLÉ est la
+    // bonne, la VALEUR n'est celle d'aucune. Comparer la seule présence de
+    // `open` les allumerait toutes les quatre ici.
+    //
+    // Mutation vérifiée : `courants.get(cle) !== valeur` remplacé par
+    // `!courants.has(cle)` → ce cas rougit, les quatre s'allument.
+    search = 'open=network';
+    await renderSidebar();
+    expect(allumees()).toEqual([]);
+
+    await remonter();
     // `/settings` NU : la route ne dit aucun réglage ouvert, donc aucune ligne
     // ne se prétend courante — ce que la planche dessine. La case du rail,
     // elle, s'allume : c'est là que se lit où l'on est.
