@@ -79,3 +79,41 @@ export function redactAuditRow<T extends AuditRowLike>(row: T): T {
     presented: redactPresented(row.presented),
   };
 }
+
+/**
+ * UN VERDICT DE RELECTURE, masqué avant de voyager (#286).
+ *
+ * Le problème que ça ferme : les deux lecteurs de `review_verdict`
+ * (`lireVerdictsLivres` dans `job-feed.ts`, `readReviewVerdicts` dans
+ * `review-verdicts.ts`) parsaient `tool_calls.tool_output` BRUT et rendaient le
+ * `summary` et le `issue` de chaque constat tels quels — quatre endroits à
+ * l'écran, le fil et la section de relecture d'un run. Or ces textes sont
+ * écrits par l'agent relecteur : un relecteur qui recopie une commande qui
+ * échoue, une ligne de configuration ou une erreur portant un jeton le posait
+ * en clair, pendant que le MÊME jeton, dans le MÊME `tool_output`, était masqué
+ * partout ailleurs (#150, #165, #212). `review-verdicts.ts` masquait d'ailleurs
+ * le `result` du délégué deux lignes plus bas, ce qui rendait l'écart visible.
+ *
+ * Le masquage se fait APRÈS l'analyse, jamais avant : le parseur est celui de
+ * l'outil, il valide la forme sur les octets EXACTEMENT tels qu'ils ont été
+ * écrits. Masquer le JSON d'abord ferait dépendre la lecture d'un texte
+ * réécrit, et un verdict deviendrait illisible — donc absent de l'écran — sans
+ * que rien ne le dise (invariant #4).
+ *
+ * La marche est AVEUGLE (`redactPresented`), et pas une liste de champs : un
+ * champ ajouté demain à `ReviewVerdictRecord` serait sinon un trou silencieux,
+ * exactement ce que la même décision a écarté pour les cartes.
+ *
+ * Pourquoi la conversion de type est SÛRE : la marche rend un objet pour un
+ * objet, un tableau pour un tableau, et ne réécrit que les FEUILLES de type
+ * chaîne — les clés, les nombres et les booléens passent intacts. La forme est
+ * donc conservée par construction. Les deux valeurs de `verdict` ne risquent
+ * rien non plus : le masqueur ne reconnaît que des préfixes de fournisseurs
+ * (`sk-ant-`, `ghp_`, `xoxb-`…), jamais un mot ordinaire.
+ *
+ * La ligne STOCKÉE n'est pas touchée : l'orchestration la relit pour décider si
+ * une relecture interdit d'annoncer livré (SECRET-001).
+ */
+export function redactReviewVerdict<T>(record: T): T {
+  return redactPresented(record) as T;
+}
