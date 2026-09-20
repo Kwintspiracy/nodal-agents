@@ -36,7 +36,7 @@ test.beforeAll(async () => {
 function networkSection(
   page: Parameters<typeof test>[1] extends never ? never : import('@playwright/test').Page,
 ): Locator {
-  return page.getByTestId('settings-panel');
+  return page.getByTestId('setting-section-network');
 }
 
 test.describe('NetworkForm — /settings @cap:se-connecter/ecran', () => {
@@ -70,7 +70,7 @@ test.describe('NetworkForm — /settings @cap:se-connecter/ecran', () => {
     // they are asserted where they now live rather than dropped — the product
     // still has to show both. A direct link opens that panel.
     await page.goto('/settings?open=urls');
-    const urls = page.getByTestId('settings-panel');
+    const urls = page.getByTestId('setting-section-urls');
     await expect(urls.getByRole('heading', { name: 'URLs', level: 2 })).toBeVisible({
       timeout: 10_000,
     });

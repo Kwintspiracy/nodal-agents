@@ -24,7 +24,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 let pathname = '/agents';
-/** Les paramètres de la route — `?open=` des réglages. Sans le « ? ». */
+/** Les paramètres de la route — `?page=` des réglages. Sans le « ? ». */
 let search = '';
 
 vi.mock('next/navigation', () => ({
@@ -508,20 +508,17 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
       'LLM Providers',
       'Install',
     ]);
-    // ⚠️ « INSTALL » N'EST PAS UNE FAMILLE de réglages : les familles sont
-    // access, safety, workspace et advanced, et « Install notes » est une
-    // LIGNE de workspace. Chaque entrée ouvre donc la PREMIÈRE entrée de sa
-    // famille, parce que la page ouvre un RÉGLAGE et pas une famille : on
-    // atterrit dans la bonne famille, et jamais sur une page qui ignorerait
-    // ce qu'on a cliqué.
-    expect(navLink('Access').getAttribute('href')).toBe('/settings?open=sign-in');
-    expect(navLink('Safety').getAttribute('href')).toBe('/settings?open=auto-run-brake');
-    expect(navLink('Workspace').getAttribute('href')).toBe('/settings?open=timezone');
-    expect(navLink('Install').getAttribute('href')).toBe('/settings?open=install-notes');
+    // Depuis le 20/09 chaque entrée est une PAGE de réglages (`?page=`), ses
+    // formulaires en place et sans panneau ; « Install » est la page de la
+    // seule ligne « Install notes », et LLM Providers a la sienne.
+    expect(navLink('Access').getAttribute('href')).toBe('/settings?page=access');
+    expect(navLink('Safety').getAttribute('href')).toBe('/settings?page=safety');
+    expect(navLink('Workspace').getAttribute('href')).toBe('/settings?page=workspace');
+    expect(navLink('Install').getAttribute('href')).toBe('/settings?page=install');
   });
 
   it('n’allume QUE le réglage ouvert, et aucun sur /settings nu', async () => {
-    // Les quatre mènent à `/settings` avec un `?open=` différent. Comparer sur
+    // Les quatre mènent à `/settings` avec un `?page=` différent. Comparer sur
     // le CHEMIN seul les allumait toutes les quatre — quatre lignes qui se
     // disent « la page où vous êtes » (passe 1 de la revue de la PR #279) ;
     // comparer sur la chaîne entière n'en allumait aucune, même la bonne,
@@ -531,7 +528,7 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     // Mutation vérifiée : le `href.split('?')[0]` de la v1 remis dans
     // `isPanelItemActive` → ce cas rougit, les quatre s'allument d'un coup.
     pathname = '/settings';
-    search = 'open=timezone';
+    search = 'page=workspace';
     await renderSidebar();
     const allumees = () => {
       const panneau = container.querySelector('[data-testid="sidebar-panel"]');
@@ -542,19 +539,19 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     expect(allumees()).toEqual(['Workspace']);
 
     await remonter();
-    search = 'open=install-notes';
+    search = 'page=install';
     await renderSidebar();
     expect(allumees()).toEqual(['Install']);
 
     await remonter();
-    // UN RÉGLAGE QUE LE PANNEAU N'ÉCRIT PAS. `open=network` est un réglage
+    // UN RÉGLAGE QUE LE PANNEAU N'ÉCRIT PAS. `page=advanced` est une valeur
     // réel de la page, qu'aucune des quatre lignes n'ouvre : la CLÉ est la
     // bonne, la VALEUR n'est celle d'aucune. Comparer la seule présence de
     // `open` les allumerait toutes les quatre ici.
     //
     // Mutation vérifiée : `courants.get(cle) !== valeur` remplacé par
     // `!courants.has(cle)` → ce cas rougit, les quatre s'allument.
-    search = 'open=network';
+    search = 'page=advanced';
     await renderSidebar();
     expect(allumees()).toEqual([]);
 

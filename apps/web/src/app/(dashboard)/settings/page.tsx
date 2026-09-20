@@ -41,9 +41,8 @@ import VerificationSurfacesSection from './VerificationSurfacesSection.tsx';
 import McpServerSection from './McpServerSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
-import SettingsList from './SettingsList.tsx';
-import SettingsPanel from './SettingsPanel.tsx';
-import { SettingsScreenProvider } from './SettingsScreen.tsx';
+import SettingsSections from './SettingsSections.tsx';
+import { resolveSettingsPage } from './settings-pages.ts';
 import { buildSettingRows, type SettingId } from './settings-rows.ts';
 import { dockedFormId } from '@/lib/docked-form-id.ts';
 import PageShell from '@/components/ui/PageShell';
@@ -71,7 +70,8 @@ const SETTING_IDS: ReadonlySet<string> = new Set<SettingId>([
 ]);
 
 type PageProps = {
-  searchParams: Promise<{ open?: string }>;
+  /** `?page=` choisit la page ; `?open=<réglage>` (liens d'avant le 20/09) y mène aussi. */
+  searchParams: Promise<{ page?: string; open?: string }>;
 };
 
 export default async function SettingsPage({ searchParams }: PageProps) {
@@ -210,27 +210,17 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     ),
   };
 
-  // Une valeur d'URL inconnue n'ouvre rien, et ne casse rien.
-  const wanted = sp.open;
-  const initialOpen =
-    wanted !== undefined && SETTING_IDS.has(wanted) && rows.some((r) => r.id === wanted)
-      ? (wanted as SettingId)
-      : null;
+  // UNE page par entrée du menu (20/09) : ses réglages, dans l'ordre de la
+  // planche, chacun avec son formulaire en place. Une valeur d'URL inconnue
+  // ouvre Access, et ne casse rien.
+  const page = resolveSettingsPage(sp);
+  const ids = new Set<string>(page.ids);
+  const pageRows = rows.filter((r) => SETTING_IDS.has(r.id) && ids.has(r.id));
 
-  // La liste va dans la colonne de contenu, bornée en largeur comme sur toutes
-  // les pages ; le panneau va dans l'`aside`, hors de cette borne, collé au
-  // bord de l'écran. Ce qu'ils partagent passe par le fournisseur (#237).
   return (
-    <SettingsScreenProvider rows={rows} initialOpen={initialOpen}>
-      <PageShell
-        title="Settings"
-        subtitle="One list. Each row shows its current value and opens on the right."
-        fill
-        aside={<SettingsPanel panels={panels} />}
-      >
-        <SettingsList />
-      </PageShell>
-    </SettingsScreenProvider>
+    <PageShell title={page.label} subtitle={page.lede}>
+      <SettingsSections rows={pageRows} panels={panels} />
+    </PageShell>
   );
 }
 

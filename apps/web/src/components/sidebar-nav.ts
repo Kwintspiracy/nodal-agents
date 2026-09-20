@@ -204,20 +204,19 @@ const APPROVALS_GROUPS: readonly PanelGroup[] = [
  * côté. Décision de l'orchestrateur du 19/09 au soir : les quatre lignes de la
  * planche, chacune menant à quelque chose de RÉEL.
  *
- * Chaque ligne ouvre la PREMIÈRE entrée de sa famille (`/settings?open=…`),
- * parce que c'est le seul point d'entrée que la page connaisse : elle ouvre un
- * RÉGLAGE, pas une famille. On atterrit donc dans la bonne famille, sur son
- * premier réglage, et jamais sur une page qui ignorerait ce qu'on a cliqué.
+ * Chaque ligne ouvre SA page de réglages (`/settings?page=…`, 20/09) : les
+ * réglages d'une famille sont EN PLACE dans la page, sans panneau, et une
+ * entrée du menu est une page. LLM Providers a la sienne.
  */
 const SETTINGS_GROUPS: readonly PanelGroup[] = [
   {
     section: 'Settings',
     items: [
-      { href: '/settings?open=sign-in', label: 'Access', icon: Key },
-      { href: '/settings?open=auto-run-brake', label: 'Safety', icon: ShieldCheck },
-      { href: '/settings?open=timezone', label: 'Workspace', icon: Cube },
+      { href: '/settings?page=access', label: 'Access', icon: Key },
+      { href: '/settings?page=safety', label: 'Safety', icon: ShieldCheck },
+      { href: '/settings?page=workspace', label: 'Workspace', icon: Cube },
       { href: '/llm-providers', label: 'LLM Providers', icon: Sparkle },
-      { href: '/settings?open=install-notes', label: 'Install', icon: PlugsConnected },
+      { href: '/settings?page=install', label: 'Install', icon: PlugsConnected },
     ],
   },
 ];
