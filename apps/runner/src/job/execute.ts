@@ -2032,6 +2032,9 @@ async function runJobTracked(
     action: (r.action ?? 'auto_approve') as ApprovalRule['action'],
     agentId: r.agentId,
     entityId: r.entityId,
+    // `condition_json` travels to the gate, or a rule confined to one folder
+    // ("Approve for this project", issue #346) would silently apply everywhere.
+    conditionJson: (r.conditionJson ?? null) as ApprovalRule['conditionJson'],
   }));
 
   // ── 8b. Workspace auto-run BRAKE for code-execution tools ─────────────────────
@@ -3947,7 +3950,13 @@ async function runJobTracked(
         // suivantes sont différées : une seule ligne par tour, comme pour
         // toute approbation.
         if (def.asksUser === true) return true;
-        const rule = matchApprovalRule(approvalRuleList, name, agentRow.id, job.entityId ?? '');
+        const rule = matchApprovalRule(
+          approvalRuleList,
+          name,
+          agentRow.id,
+          job.entityId ?? '',
+          agentWorkspacesList,
+        );
         return (rule?.action ?? def.defaultApproval) === 'require_approval';
       };
       const parallelizable =

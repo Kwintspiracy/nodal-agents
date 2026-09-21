@@ -194,7 +194,11 @@ import {
   parseRootGrants,
   redactSecretsForAudit,
   explainApproval,
+  explainApprovalRules,
+  resolveToolDefaultApproval,
   type ApprovalExplanation,
+  type ExplainedApprovalRule,
+  type ApprovalRuleCondition,
   findModelCatalogEntry,
   LIVE_JOB_STATUSES,
   isShellProgram,
@@ -6006,6 +6010,24 @@ export type ApprovalRow = {
    * button: one decision instead of one per tool.
    */
   mcpRulePattern: string | null;
+  /**
+   * Les regles d'approbation qui ont JOUE pour cet appel, de la plus precise a
+   * la moins precise, la premiere marquee `wins` (#346). La carte les montre,
+   * et permet de les changer sur place : avant, elle promettait « ca tournera
+   * sans demander » pendant qu'une regle plus precise continuait de demander.
+   */
+  ruleChain: ExplainedApprovalRule[];
+  /**
+   * La posture de l'outil quand AUCUNE regle ne le nomme. Seule chose que la
+   * carte affiche quand `ruleChain` est vide, sous le nom « Tool default ».
+   */
+  toolDefault: 'auto_approve' | 'require_approval' | 'block';
+  /**
+   * Les dossiers de l'agent (`agent_workspaces`), pour « Approve for this
+   * project » : aucun dossier, pas de bouton ; un seul, pas de question ;
+   * plusieurs, un choix.
+   */
+  agentWorkspaces: Array<{ label: string; path: string }>;
 };
 
 export async function listApprovalsAction(
@@ -6120,6 +6142,56 @@ export async function listApprovalsAction(
       );
     }
 
+    // Les regles d'approbation de l'entite, UNE fois pour la page : la carte
+    // doit dire quelle regle a decide (#346), et le dire pour chaque demande
+    // sans une requete par ligne.
+    const ruleRows = await db
+      .select({
+        id: approvalRules.id,
+        toolName: approvalRules.toolName,
+        action: approvalRules.action,
+        agentId: approvalRules.agentId,
+        entityId: approvalRules.entityId,
+        conditionJson: approvalRules.conditionJson,
+      })
+      .from(approvalRules)
+      .where(eq(approvalRules.entityId, session.entityId));
+    const chainRules = ruleRows.map((r) => ({
+      id: r.id,
+      toolName: r.toolName,
+      action: (r.action ?? 'auto_approve') as 'auto_approve' | 'require_approval' | 'block',
+      agentId: r.agentId,
+      entityId: r.entityId,
+      conditionJson: (r.conditionJson ?? null) as ApprovalRuleCondition | null,
+    }));
+
+    // Les dossiers de chaque agent concerne, une requete pour toute la page.
+    // Ils decident si « Approve for this project » existe, et sur quel dossier.
+    const agentIdsOnPage = [...new Set(rows.map((r) => r.agentId).filter((id) => id !== null))];
+    const workspaceRows =
+      agentIdsOnPage.length === 0
+        ? []
+        : await db
+            .select({
+              agentId: agentWorkspaces.agentId,
+              label: agentWorkspaces.label,
+              path: agentWorkspaces.path,
+            })
+            .from(agentWorkspaces)
+            .where(
+              and(
+                eq(agentWorkspaces.entityId, session.entityId),
+                inArray(agentWorkspaces.agentId, agentIdsOnPage),
+              ),
+            )
+            .orderBy(agentWorkspaces.position, agentWorkspaces.label);
+    const workspacesByAgent = new Map<string, Array<{ label: string; path: string }>>();
+    for (const w of workspaceRows) {
+      const list = workspacesByAgent.get(w.agentId) ?? [];
+      list.push({ label: w.label, path: w.path });
+      workspacesByAgent.set(w.agentId, list);
+    }
+
     return ok(
       rows.map((r) => {
         // NOUVEAU-1: the stored approval row keeps the REAL toolInput (the
@@ -6158,6 +6230,21 @@ export async function listApprovalsAction(
           // The rule pattern that would cover this whole server — what the
           // "always allow this server" button posts. Null for a built-in.
           mcpRulePattern: ctx?.rulePattern ?? null,
+          // LA MEME fonction que la porte (`matchApprovalRule` en derive) :
+          // ce que la carte montre est ce que le moteur a obei, pas une
+          // seconde lecture de la precedence libre de deriver (#346).
+          ruleChain:
+            r.agentId === null
+              ? []
+              : explainApprovalRules(
+                  chainRules,
+                  r.toolName,
+                  r.agentId,
+                  session.entityId,
+                  workspacesByAgent.get(r.agentId) ?? [],
+                ),
+          toolDefault: resolveToolDefaultApproval(r.toolName),
+          agentWorkspaces: r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
         };
       }) as ApprovalRow[],
     );
@@ -6329,6 +6416,17 @@ const SetApprovalRuleSchema = z.object({
    * a per-agent `require_approval` or `block`.
    */
   scope: z.enum(['agent', 'entity']).default('agent'),
+  /**
+   * « Approve for this project » (#346) : la regle ne vaut que TANT QUE
+   * l'agent travaille dans ce dossier. Le chemin doit etre l'un des
+   * `agent_workspaces` de l'agent, verifie ici et pas seulement a l'ecran.
+   *
+   * Absent = regle sans condition. Et l'upsert REECRIT `condition_json` dans
+   * les deux cas : changer une regle depuis l'ecran d'autonomie ou depuis la
+   * ligne « Change » la rend inconditionnelle, plutot que de lui laisser en
+   * silence une condition que personne ne voit la (invariant #4).
+   */
+  workspacePath: z.string().min(1).max(1000).optional(),
 });
 
 /**
@@ -6393,7 +6491,13 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { agentId, toolName, action, scope } = parsed.data;
+    const { agentId, toolName, action, scope, workspacePath } = parsed.data;
+
+    // Une regle conditionnee ne vaut que pour CET agent : « Everyone dans le
+    // dossier de cet agent-la » ne veut rien dire.
+    if (workspacePath !== undefined && scope !== 'agent') {
+      return fail('validation_failed', 'A folder condition only applies to a per-agent rule');
+    }
 
     // Some always-on tools are not capabilities but machinery — blocking them
     // does not narrow what the agent can do, it breaks how it reports at all.
@@ -6413,6 +6517,21 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
+
+    // Le dossier doit etre l'un des SIENS. Sans ce controle, un appel direct
+    // poserait une condition sur un chemin quelconque, et la regle ne
+    // s'appliquerait jamais - une permission accordee qui ne fait rien.
+    let conditionJson: Record<string, string> = {};
+    if (workspacePath !== undefined) {
+      const owned = await db
+        .select({ path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(and(eq(agentWorkspaces.agentId, agentId), eq(agentWorkspaces.path, workspacePath)));
+      if (owned.length === 0) {
+        return fail('validation_failed', 'That folder is not attached to this agent');
+      }
+      conditionJson = { workspacePath };
+    }
 
     // agent_id IS NULL is the workspace-wide scope (see the schema note on the
     // NULLS NOT DISTINCT unique index — a plain UNIQUE would let duplicates in).
@@ -6445,10 +6564,11 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
           agentId: ruleAgentId,
           toolName,
           action,
+          conditionJson,
         })
         .onConflictDoUpdate({
           target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
-          set: { action, updatedAt: new Date() },
+          set: { action, conditionJson, updatedAt: new Date() },
         });
     }
 

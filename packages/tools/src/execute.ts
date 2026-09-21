@@ -7,8 +7,11 @@ import {
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   surfaceForTool,
+  explainApprovalRules,
+  namespaceOfToolName,
   type ConstatedWrite,
   type MutationTarget,
+  type ChainWorkspace,
 } from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type {
@@ -190,7 +193,13 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   //   - `preflight` receives the full ToolContext and may run async code or
   //     touch the DB. A blocked tool should execute NONE of its own code, and a
   //     doc comment is not a guarantee that some future preflight stays pure.
-  const blockingRule = matchApprovalRule(opts.approvalRules, tool.name, ctx.agentId, ctx.entityId);
+  const blockingRule = matchApprovalRule(
+    opts.approvalRules,
+    tool.name,
+    ctx.agentId,
+    ctx.entityId,
+    ctx.workspaces,
+  );
   if (blockingRule?.action !== 'block' && tool.preflight) {
     // ── 1.5 Preflight — refuse BEFORE anyone is asked to approve ─────────────
     // Ordering is the whole point. Everything below writes an approval request
@@ -222,6 +231,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     tool.name,
     ctx.agentId,
     ctx.entityId,
+    ctx.workspaces,
   );
   // Un wildcard `*` auto_approve ne vaut PAS consentement à exécuter du code
   // (revue sécurité du 25/08). C'est le même trou que la relaxation d'autonomie,
@@ -318,6 +328,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       'run_command',
       ctx.agentId,
       ctx.entityId,
+      ctx.workspaces,
     );
     // Seule une règle qui NOMME `run_command` s'hérite. Un joker retombé ici
     // est exactement celui déjà en place — il n'y a rien à hériter, et son sens
@@ -994,8 +1005,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
  * snake_case — the same invariant lint-skill-content.ts relies on).
  */
 export function namespaceOf(toolName: string): string | null {
-  const i = toolName.indexOf('__');
-  return i > 0 ? toolName.slice(0, i) : null;
+  return namespaceOfToolName(toolName);
 }
 
 /** The rule pattern that covers every tool of one MCP server. */
@@ -1005,11 +1015,29 @@ export function namespaceRulePattern(serverPrefix: string): string {
 
 /**
  * Find the most specific matching approval rule.
- * Specificity: agent-scoped + tool-name > entity-scoped + tool-name > wildcard.
- * Returns undefined if no rule matches (default: execute without approval).
+ *
+ * DERIVED from `explainApprovalRules` (@nodal-agents/shared): the gate obeys the
+ * FIRST rule of the ordered chain, and the approval card shows that same chain.
+ * One truth. Before issue #346 the order was a private `.find()` ladder here and
+ * the card could say nothing about it, so an owner was told "this will now run
+ * without asking" while a more specific rule kept asking.
+ *
+ * Specificity, most precise first: agent + exact tool confined to a folder this
+ * job works in, agent + exact tool, Everyone + exact tool, agent + `<server>__*`,
+ * Everyone + `<server>__*`, agent + `*`, Everyone + `*`.
+ *
+ * `workspaces` is the job's attached folders (`ToolContext.workspaces`). A rule
+ * carrying a `condition_json.workspacePath` applies ONLY when that folder is
+ * among them; otherwise it is skipped and the search continues at the next tier.
+ * Omitting the argument therefore makes every conditioned rule inapplicable,
+ * which is the conservative reading for a caller that does not know where the
+ * job is working.
+ *
+ * Returns undefined if no rule matches (the tool's own `defaultApproval` then
+ * decides).
  *
  * Exported so callers can pre-check whether a tool call WOULD be gated before
- * calling executeTool — e.g. the runner's parallel read pre-pass (execute.ts
+ * calling executeTool - e.g. the runner's parallel read pre-pass (execute.ts
  * in apps/runner) uses this to keep any call that would land on
  * 'require_approval' out of the concurrent batch, so at most one
  * approval_requests row is created per turn (see audit finding RT-3 / #17).
@@ -1019,50 +1047,15 @@ export function matchApprovalRule(
   toolName: string,
   agentId: string,
   entityId: string,
+  workspaces?: readonly ChainWorkspace[],
 ): ExecuteOptions['approvalRules'][number] | undefined {
-  // Priority 1: agent-scoped rule for this exact tool
-  const agentToolRule = rules.find((r) => r.toolName === toolName && r.agentId === agentId);
-  if (agentToolRule) return agentToolRule;
-
-  // Priority 2: entity-scoped rule for this exact tool (no agent filter)
-  const entityToolRule = rules.find(
-    (r) => r.toolName === toolName && r.agentId === null && r.entityId === entityId,
+  const winner = explainApprovalRules(rules, toolName, agentId, entityId, workspaces).find(
+    (r) => r.wins,
   );
-  if (entityToolRule) return entityToolRule;
-
-  // Priority 3 & 4: NAMESPACE rules — `<serverPrefix>__*`, covering every tool
-  // one MCP server exposes.
-  //
-  // Without this, consenting to a server means creating one rule per tool: the
-  // a single server commonly exposes 30 tools, so one "I trust this server"
-  // decision turned into 30 identical rows. The owner has already made that
-  // decision once, when they attached the server — asking them to re-express it
-  // thirty times is how a gate becomes a rubber stamp.
-  //
-  // `__` is the MCP namespace marker (builtin and connector tools are bare
-  // snake_case), so a namespace rule can never accidentally cover a built-in.
-  // Deliberately BELOW exact-tool rules: a per-tool `require_approval` or
-  // `block` still overrides a per-server `auto_approve`.
-  const namespace = namespaceOf(toolName);
-  if (namespace) {
-    const pattern = `${namespace}__*`;
-    const agentNs = rules.find((r) => r.toolName === pattern && r.agentId === agentId);
-    if (agentNs) return agentNs;
-    const entityNs = rules.find(
-      (r) => r.toolName === pattern && r.agentId === null && r.entityId === entityId,
-    );
-    if (entityNs) return entityNs;
-  }
-
-  // Priority 5: agent-scoped wildcard (toolName = '*')
-  const agentWild = rules.find((r) => r.toolName === '*' && r.agentId === agentId);
-  if (agentWild) return agentWild;
-
-  // Priority 6: entity-scoped wildcard
-  const entityWild = rules.find(
-    (r) => r.toolName === '*' && r.agentId === null && r.entityId === entityId,
-  );
-  return entityWild;
+  if (!winner) return undefined;
+  // Back to the ORIGINAL row, BY POSITION: callers read fields the chain does
+  // not carry, and nothing guarantees two rules carry distinct ids.
+  return rules[winner.sourceIndex];
 }
 
 // ─── Audit trail writer ───────────────────────────────────────────────────────

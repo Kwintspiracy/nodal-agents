@@ -34,7 +34,7 @@ import {
   type CodingActivityItem,
 } from '@/lib/actions.ts';
 import { labelDuConstat } from '@/lib/constated-files.ts';
-import ApprovalActions from '@/app/(dashboard)/approvals/ApprovalActions.tsx';
+import ApprovalRequestCard from '@/app/(dashboard)/approvals/ApprovalRequestCard.tsx';
 import VerificationSection from './VerificationSection.tsx';
 import FileChangeBlock from './FileChangeBlock.tsx';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -154,55 +154,7 @@ export default function CodeProcessDetail({
       {/* Les approbations en attente du pipeline : la seule chose qui BLOQUE le
           process, donc au-dessus des sections qui racontent ce qui est fait. */}
       {approvals.map((a) => (
-        <div
-          key={a.id}
-          className="space-y-3 overflow-hidden rounded-xl border border-warn/40 border-l-4 border-l-warn bg-paper p-4"
-          data-testid="approval-card"
-        >
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-medium-14 text-ink">{a.explanation.what}</span>
-            <MonoMicroTag tone="ink">{a.agentName ?? 'agent'}</MonoMicroTag>
-            <span className="text-mono-11 text-ink-4">{a.toolName}</span>
-          </div>
-          <div className="space-y-1.5 rounded-md border border-rule-2 bg-canvas px-3 py-2">
-            <p className="text-body-13 italic text-ink-2">
-              {a.explanation.purpose
-                ? `« ${a.explanation.purpose} »`
-                : "L'agent n'a pas expliqué pourquoi."}
-            </p>
-            <p className="text-body-12 text-warn">
-              {a.explanation.effectLabel}
-              {a.explanation.target && (
-                <span className="text-ink-2"> → {a.explanation.target}</span>
-              )}
-            </p>
-            {a.explanation.args.length > 0 && (
-              <dl className="space-y-0.5 pt-0.5">
-                {a.explanation.args.map((arg) => (
-                  <div key={arg.key} className="flex gap-2 text-mono-12">
-                    <dt className="shrink-0 text-ink-3">{arg.key}</dt>
-                    <dd className="min-w-0 break-all text-ink-2">
-                      {arg.value}
-                      {arg.truncated && (
-                        <span className="text-ink-3">
-                          {' '}
-                          ({arg.fullLength} caractères, 300 affichés)
-                        </span>
-                      )}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-          </div>
-          <ApprovalActions
-            approvalId={a.id}
-            toolName={a.toolName}
-            agentId={a.agentId}
-            mcpRulePattern={a.mcpRulePattern}
-            mcpServerName={a.explanation.provenance.name ?? null}
-          />
-        </div>
+        <ApprovalRequestCard key={a.id} approval={a} />
       ))}
 
       {/* La relecture, avec les VRAIS verdicts — c'est pour eux que la section

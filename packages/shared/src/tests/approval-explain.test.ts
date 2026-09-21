@@ -41,7 +41,7 @@ describe('explainApproval — the two requests the owner could not read', () => 
       },
     });
 
-    expect(x.what).toContain('fetch markdown');
+    expect(x.what).toContain('Fetch markdown');
     expect(x.what).toContain('Fetch');
     // The old wording. It must never come back for a third-party tool.
     expect(x.what.toLowerCase()).not.toContain('irreversible');
@@ -75,7 +75,7 @@ describe('explainApproval — the two requests the owner could not read', () => 
         endpoint: 'https://cogni-web-psi.vercel.app/api/mcp',
       },
     });
-    expect(x.what).toContain('get home');
+    expect(x.what).toContain('Get home');
     expect(x.target).toBe('https://cogni-web-psi.vercel.app/api/mcp');
     expect(x.effect).toBe('external');
     expect(x.args).toEqual([]);
@@ -92,7 +92,7 @@ describe('explainApproval — the two requests the owner could not read', () => 
       mcp: { slug: 'srv', name: 'Srv', endpoint: 'https://srv.test', readOnlyHint: true },
     });
     expect(x.effect).toBe('read');
-    expect(x.effectLabel).toContain('déclarée par le serveur');
+    expect(x.effectLabel).toContain('declared by the server');
   });
 
   it('says so when the MCP server cannot be resolved, instead of inventing a verdict', () => {
@@ -102,7 +102,7 @@ describe('explainApproval — the two requests the owner could not read', () => 
       mcp: null,
     });
     expect(x.effect).toBe('unknown');
-    expect(x.what).toContain('non identifié');
+    expect(x.what).toContain('unidentified MCP server');
     expect(x.impact).toBeNull();
   });
 });
@@ -163,12 +163,12 @@ describe('renderExplanationText — the channel card', () => {
         },
       }),
     );
-    expect(text).toContain('Serveur MCP');
+    expect(text).toContain('MCP server');
     expect(text).toContain('Fetch');
     expect(text).toContain('npx');
     // The third party's text must be labelled as theirs — it is untrusted
     // content reaching a human who is about to authorise something.
-    expect(text).toContain('texte tiers, non vérifié');
+    expect(text).toContain('third-party text, unverified');
     expect(text).toContain('https://example.test/a.md');
   });
 });
@@ -240,7 +240,7 @@ describe('troncature des arguments', () => {
     expect(arg.truncated).toBe(true);
     expect(arg.fullLength).toBe(1234);
     // Le reviewer doit savoir qu'il lit un quart de ce qui va s'exécuter.
-    expect(renderExplanationText(x)).toContain('1234 caractères');
+    expect(renderExplanationText(x)).toContain('1234 characters');
   });
 
   it('ne prétend pas tronquer ce qui tient', () => {
@@ -248,22 +248,22 @@ describe('troncature des arguments', () => {
     const arg = x.args.find((a) => a.key === 'command')!;
     expect(arg.truncated).toBe(false);
     expect(arg.fullLength).toBe(6);
-    expect(renderExplanationText(x)).not.toContain('caractères,');
+    expect(renderExplanationText(x)).not.toContain('characters,');
   });
 });
 
 describe('explainApproval — effet des outils de lecture (constat live 25/08)', () => {
-  it('file_search est annonce « Lecture », jamais « Ecriture »', () => {
+  it('file_search est annonce « Read », jamais « Write »', () => {
     const x = explainApproval({
       toolName: 'file_search',
       toolInput: { pattern: 'calorie', target: 'files' },
       mcp: null,
     });
     expect(x.effect).toBe('read');
-    expect(x.effectLabel).toBe('Lecture');
+    expect(x.effectLabel).toBe('Read');
     const text = renderExplanationText(x);
-    expect(text).toContain('Lecture');
-    expect(text).not.toContain('Écriture');
+    expect(text).toContain('Read');
+    expect(text).not.toContain('Write');
     expect(text).not.toContain('irreversible');
   });
 });
