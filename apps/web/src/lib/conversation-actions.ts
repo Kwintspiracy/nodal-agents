@@ -874,8 +874,11 @@ export type ChatFoldersSnapshot = {
    * de la case Logs (#300) — retiré le 22/09/2026 sur décision du
    * propriétaire. Le recalculer à chaque tour de cadence pour personne serait
    * une lecture, pas une donnée. Ce qui tourne HORS d'une conversation de Work
-   * — une automatisation, un webhook, une délégation — n'est donc compté nulle
-   * part dans cet instantané, et c'est voulu : la page Logs le montre.
+   * — une automatisation, un webhook, une délégation — n'est donc porté par
+   * AUCUN COMPTE CHIFFRÉ de cet instantané, et c'est voulu : la page Logs le
+   * montre. (`runningConversationIds`, lui, nomme bien tous les fils qui
+   * tournent, l'entretien d'accueil compris : c'est une liste d'identifiants,
+   * lue ligne par ligne, pas un total qu'une case afficherait.)
    *
    * Des conversations, et non des runs : la section Work liste les endroits où
    * l'on parle — les projets et les canaux — et trois runs d'un même fil n'y

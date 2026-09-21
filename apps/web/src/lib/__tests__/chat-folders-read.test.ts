@@ -172,9 +172,10 @@ beforeAll(async () => {
       status: 'completed',
       conversationId: filTelegram,
     },
-    // UN RUN QU'AUCUN DOSSIER NE RANGE (#300) : une automatisation tourne, son
-    // canal `cron` ne designe aucun dossier de chat, et `running` l'oublie
-    // donc en route. C'est precisement ce que la case Logs doit montrer.
+    // UN RUN QU'AUCUN DOSSIER NE RANGE : une automatisation tourne, son canal
+    // `cron` ne designe aucun dossier de chat, et `running` l'oublie donc en
+    // route. La case Logs le montrait (#300) ; elle a perdu sa puce le
+    // 22/09/2026, et plus aucun compte chiffre de l'instantane ne le porte.
     {
       entityId: seed.entityId,
       agentId: seed.agentId,
@@ -270,14 +271,16 @@ describe('les dossiers lus en base @cap:reprendre-conversation/moteur', () => {
     expect(parDossier).toBe(3);
   });
 
-  it('ne compte NULLE PART ce qui tourne hors d’une conversation de Work', async () => {
+  it('ne met dans AUCUN COMPTE ce qui tourne hors d’une conversation de Work', async () => {
     // La fixture porte cinq jobs vivants, dont DEUX qu'aucun écran de la barre
     // ne peut montrer : l'automatisation `cron`, qu'aucun dossier ne range, et
     // le run `internal` sur l'entretien d'accueil, qu'aucune ligne de Work ne
     // liste. La case Logs les comptait ; elle n'existe plus pour ça.
     //
     // Ce cas reprend ce que l'ancien cas de la case Logs prouvait, à l'envers :
-    // ces deux-là ne doivent apparaître dans AUCUN champ de l'instantané.
+    // aucun COMPTE CHIFFRÉ de l'instantané ne les porte. `runningConversationIds`,
+    // lui, nomme bien le fil de l'accueil — c'est une liste lue ligne par ligne,
+    // et le cas voisin l'exige (Reviewer C, passe 2).
     const { getChatFoldersAction } = await import('../conversation-actions.ts');
     const result = await getChatFoldersAction();
     if (!result.ok) throw new Error(result.message);
