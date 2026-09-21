@@ -600,7 +600,7 @@ export const CI_JOBS: readonly CiJob[] = [
 /* ── Section 06 ─────────────────────────────────────────────────────────── */
 
 /** Source: apps/cli/package.json (version) and CHANGELOG.md (headline). */
-export const VERSION = '0.9.2';
+export const VERSION = '0.9.1';
 export const VERSION_DATE = 'September 2026';
 
 /** Source: README.md, "On the roadmap". */
