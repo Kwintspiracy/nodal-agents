@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   setAgentConnectorAssignmentAction,
   setAgentMcpServerAssignmentAction,
   setAgentApprovalRuleAction,
+  listAgentApprovalRulesAction,
   type AgentConnectorRow,
   type AgentMcpServerRow,
 } from '@/lib/actions.ts';
@@ -20,6 +21,11 @@ import Modal, { ModalFooter } from '@/components/ui/Modal';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
+import {
+  FOLDER_LIMIT_CONFIRM_LABEL,
+  FOLDER_LIMIT_TITLE,
+  folderLimitWideningMessage,
+} from './folder-limit-copy.ts';
 
 /**
  * ConnectorsTabContent — unified Connectors tab for /agents/[id]/edit.
@@ -77,6 +83,44 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
   const [trustAsk, setTrustAsk] = useState<string | null>(null);
   const [trustAllAgents, setTrustAllAgents] = useState(false);
   const debounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  /**
+   * Les règles de CET agent qui sont confinées à un dossier, par nom d'outil
+   * (issue #401). Le libellé vient du serveur, qui l'a résolu depuis
+   * `agent_workspaces` : cet écran ne recalcule rien, et dit le même dossier
+   * que l'onglet Approvals.
+   *
+   * Sans cette lecture l'onglet écrivait `<prefix>__*` sans savoir ce qu'il
+   * remplaçait : une permission posée comme « seulement dans Dev » devenait
+   * valable partout, sans un mot.
+   */
+  const [folderByTool, setFolderByTool] = useState<Map<string, string>>(() => new Map());
+  useEffect(() => {
+    let live = true;
+    void listAgentApprovalRulesAction(agentId).then((r) => {
+      if (!live || !r.ok) return;
+      const m = new Map<string, string>();
+      for (const rule of r.data) {
+        if (rule.action !== 'auto_approve' || rule.workspaceLabel === null) continue;
+        m.set(rule.toolName, rule.workspaceLabel);
+      }
+      setFolderByTool(m);
+    });
+    return () => {
+      live = false;
+    };
+  }, [agentId]);
+
+  /**
+   * La confiance demandée sur un serveur dont le motif porte déjà une règle de
+   * dossier. Enregistrer retire la condition : on le dit AVANT, avec la phrase
+   * de l'onglet Approvals (#390), puis on l'envoie avec `confirmWidening`.
+   */
+  const [pendingWiden, setPendingWiden] = useState<{
+    serverId: string;
+    scope: 'agent' | 'entity';
+    folder: string;
+  } | null>(null);
 
   // ── persist (debounced) ──────────────────────────────────────────────────
   //
@@ -247,22 +291,55 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
     }
     const scope = trustAllAgents ? ('entity' as const) : ('agent' as const);
     setTrustAllAgents(false);
+
+    // La règle que cet onglet va écrire porte-t-elle DÉJÀ une limite de
+    // dossier ? Alors la confiance la remplacerait par une permission valable
+    // partout : le serveur refuse sans `confirmWidening`, et le refuser sans
+    // rien montrer serait une impasse. On demande, en nommant le dossier.
+    const folder = folderByTool.get(`${slugToPrefix(server.slug)}__*`);
+    if (folder !== undefined) {
+      setPendingWiden({ serverId, scope, folder });
+      return;
+    }
+    writeTrustRule(serverId, scope, false);
+  }
+
+  /**
+   * L'unique écriture de règle de cet onglet : `setAgentApprovalRuleAction`,
+   * celle qui porte le garde de #360. `confirmWidening` n'est vrai que sur le
+   * chemin où le propriétaire a lu ce qu'il perdait et a répondu oui.
+   */
+  function writeTrustRule(serverId: string, scope: 'agent' | 'entity', confirmWidening: boolean) {
+    const server = mcpServers.find((s) => s.mcpServerId === serverId);
+    if (!server) return;
+    const toolName = `${slugToPrefix(server.slug)}__*`;
     void setAgentApprovalRuleAction({
       agentId,
-      toolName: `${slugToPrefix(server.slug)}__*`,
+      toolName,
       action: 'auto_approve',
       scope,
+      ...(confirmWidening ? { confirmWidening: true } : {}),
     }).then((r) => {
       if (!r.ok) {
         // Loud: the server IS attached, so silence here would leave the owner
         // believing its calls run freely when every one of them will prompt.
-        toast.error(`${server.label} attaché, mais la règle de confiance a échoué : ${r.message}`);
+        toast.error(`${server.label} is attached, but the trust rule failed: ${r.message}`);
         return;
+      }
+      // La limite de dossier vient de sauter : la carte en mémoire la porte
+      // encore, et un second passage rouvrirait la boîte pour rien.
+      if (confirmWidening && scope === 'agent') {
+        setFolderByTool((prev) => {
+          if (!prev.has(toolName)) return prev;
+          const m = new Map(prev);
+          m.delete(toolName);
+          return m;
+        });
       }
       toast.success(
         scope === 'entity'
-          ? `${server.label} : ses outils s'exécuteront sans demande pour tous vos agents.`
-          : `${server.label} : ses outils s'exécuteront sans demande pour cet agent.`,
+          ? `${server.label}: its tools will run without asking, for all your agents.`
+          : `${server.label}: its tools will run without asking, for this agent.`,
       );
     });
   }
@@ -439,19 +516,17 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
 
       <ConfirmDialog
         open={trustAsk !== null}
-        title={`Faire confiance à ${mcpServers.find((s) => s.mcpServerId === trustAsk)?.label ?? 'ce serveur'} ?`}
-        message="Ses outils s'exécuteront sans vous demander à chaque appel. Choisissez plutôt de demander à chaque fois pour un serveur que vous voulez surveiller. Révocable à tout moment dans les règles d'approbation."
-        confirmLabel="Faire confiance"
-        cancelLabel="Demander à chaque appel"
+        title={`Trust ${mcpServers.find((s) => s.mcpServerId === trustAsk)?.label ?? 'this server'}?`}
+        message="Its tools will run without asking you on every call. Pick asking every time for a server you want to watch. You can change this in the approval rules at any time."
+        confirmLabel="Trust it"
+        cancelLabel="Ask on every call"
         destructive={false}
         extra={
           <Checkbox
             checked={trustAllAgents}
             onChange={(e) => setTrustAllAgents(e.target.checked)}
             label={
-              <span className="text-body-13 text-ink-2">
-                Pour tous mes agents, pas seulement celui-ci
-              </span>
+              <span className="text-body-13 text-ink-2">For all my agents, not only this one</span>
             }
           />
         }
@@ -460,6 +535,25 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
         // attached, it simply keeps asking. Closing with ESC lands here too,
         // which is the safe side.
         onCancel={() => confirmTrust(false)}
+      />
+
+      {/*
+        La limite de dossier se perd À DÉCOUVERT, ici comme sur l'onglet
+        Approvals (issue #401, phrase de #390). Annuler laisse le serveur
+        attaché avec sa règle de dossier intacte : ses outils continuent de
+        demander hors du dossier, ce qui est ce que le propriétaire avait posé.
+      */}
+      <ConfirmDialog
+        open={pendingWiden !== null}
+        title={FOLDER_LIMIT_TITLE}
+        message={pendingWiden === null ? '' : folderLimitWideningMessage(pendingWiden.folder)}
+        confirmLabel={FOLDER_LIMIT_CONFIRM_LABEL}
+        onConfirm={() => {
+          const pending = pendingWiden;
+          setPendingWiden(null);
+          if (pending) writeTrustRule(pending.serverId, pending.scope, true);
+        }}
+        onCancel={() => setPendingWiden(null)}
       />
     </div>
   );
