@@ -90,6 +90,9 @@ function RowBody({ row }: { row: WorkspaceRow }) {
       {/* min-w-0 : sans lui, un chemin long refuse de se couper et pousse
           l'heure et la pastille hors de la ligne. */}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        {/* Pas d'étiquette « hidden » sur la ligne (#364) : une ligne masquée
+            n'apparaît plus QUE sous « Hidden (N) », et répéter le mot sous le
+            titre qui vient de le dire n'apprend rien. */}
         <span className="flex items-center gap-2">
           {row.kind === 'detected' && (
             <MonoMicroTag tone="ink" className="shrink-0">
@@ -103,11 +106,6 @@ function RowBody({ row }: { row: WorkspaceRow }) {
           {row.produces === 'documents' && (
             <MonoMicroTag tone="ink" className="shrink-0">
               documents
-            </MonoMicroTag>
-          )}
-          {row.hidden && (
-            <MonoMicroTag tone="warn" className="shrink-0">
-              hidden
             </MonoMicroTag>
           )}
         </span>
