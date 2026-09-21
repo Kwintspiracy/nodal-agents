@@ -453,6 +453,18 @@ export type DeliverySummary = {
   /** 'green' toutes vertes, 'red' au moins une qui ne l'est pas, null aucune preuve. */
   verdict: 'green' | 'red' | null;
   /**
+   * Les tours de réparation qu'il a fallu pour en arriver là (#375). `0` — le
+   * cas ordinaire — ne s'écrit pas à l'écran : c'est l'absence d'un fait, pas
+   * un fait.
+   *
+   * `null` quand la surface qui a composé ce récapitulatif N'A PAS LU la
+   * colonne — le détail de la page Code, qui travaille sur des séquences
+   * déjà groupées et n'ouvre pas la ligne d'état du livrable. Écrire `0`
+   * là-bas affirmerait qu'aucune réparation n'a eu lieu, ce que personne n'a
+   * vérifié (invariant #4). L'écran ne dit donc rien, comme pour `0`.
+   */
+  repairs: number | null;
+  /**
    * Le DERNIER verdict de relecture enregistré sous ce travail (#59), tel
    * quel : `'approve'`, `'request_changes'`, ou `null` quand personne n'a relu.
    */

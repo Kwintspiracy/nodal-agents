@@ -62,6 +62,7 @@ import {
   type RunCursor,
 } from './external-runs.ts';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
+import { lastSequencePerDeliverable, readRepairAttempts } from './verification-repairs.ts';
 import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
 // La borne de `collectDescendants`, nommée ici pour que le message d'erreur la
 // dise plutôt que de la recopier en dur.
@@ -1865,13 +1866,33 @@ export async function getConversationThreadAction(
       if (root === undefined || view.verdict === null) continue;
       reviewByRoot.set(root, view.verdict);
     }
-    const proofByRoot = new Map<string, ThreadProofRun[]>();
+    // LES LIGNES ENTIÈRES d'abord, filtrées ensuite (#375) : garder seulement
+    // la dernière séquence de chaque livrable demande de connaître sa séquence
+    // et sa date, que `ThreadProofRun` ne porte pas.
+    const runsByRoot = new Map<string, (typeof verificationRunRows)[number][]>();
     for (const row of verificationRunRows) {
       const root = row.jobId !== null ? rootOf.get(row.jobId) : undefined;
       if (root === undefined) continue;
-      const bucket = proofByRoot.get(root) ?? [];
-      bucket.push({ command: row.command, verdict: row.verdict });
-      proofByRoot.set(root, bucket);
+      const bucket = runsByRoot.get(root) ?? [];
+      bucket.push(row);
+      runsByRoot.set(root, bucket);
+    }
+    const proofByRoot = new Map<string, ThreadProofRun[]>();
+    for (const [root, bucket] of runsByRoot) {
+      proofByRoot.set(
+        root,
+        lastSequencePerDeliverable(bucket).map((r) => ({ command: r.command, verdict: r.verdict })),
+      );
+    }
+
+    // Les tours de réparation, rangés sous la tête comme la preuve : un
+    // délégué rejoué a été rejoué POUR le travail qui l'a mandaté.
+    const repairsByJob = await readRepairAttempts(db, relevantIds);
+    const repairsByRoot = new Map<string, number>();
+    for (const [jobId, n] of repairsByJob) {
+      const root = rootOf.get(jobId);
+      if (root === undefined) continue;
+      repairsByRoot.set(root, Math.max(repairsByRoot.get(root) ?? 0, n));
     }
 
     const jobs: ThreadJob[] = headRows.map((r, i) => ({
@@ -1891,6 +1912,7 @@ export async function getConversationThreadAction(
       }),
       project: r.job.projectId !== null ? (projectById.get(r.job.projectId) ?? null) : null,
       proof: proofByRoot.get(r.job.id) ?? [],
+      repairs: repairsByRoot.get(r.job.id) ?? 0,
       reviewVerdict: reviewByRoot.get(r.job.id) ?? null,
       // Les lignes d'audit de la tête ET de toute sa descendance, déjà
       // rangées sous la tête pour la frontière chat/travail : le récapitulatif

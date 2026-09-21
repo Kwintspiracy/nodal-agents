@@ -101,6 +101,7 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   verdict: chat,
   project: null,
   proof: [],
+  repairs: 0,
   reviewVerdict: null,
   audit: [],
   workspaceRoots: [],
@@ -194,6 +195,8 @@ describe('buildConversationThread — une conversation de canal', () => {
         reviews: [],
         checks: [],
         verdict: null,
+        // #375 — aucun tour de réparation : l'encart n'en dira rien.
+        repairs: 0,
         // #59 — personne n'a relu ce travail : le récapitulatif le dit, et il
         // n'interdit rien.
         review: null,

@@ -210,6 +210,7 @@ import {
   type JobResultKind,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
+import { lastSequencePerDeliverable, readRepairAttempts } from './verification-repairs.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
@@ -2703,6 +2704,7 @@ export async function getSpaceConversationAction(
     // la sortie brute et l'entrée (`redactAuditRow`). Masquer la carte seule
     // laissait un jeton voyager dans `toolOutput` jusqu'au premier écran qui
     // l'afficherait (Reviewer C, passe 2).
+    const readRepairsOfRun = await readRepairAttempts(db, relevantIds);
     const auditRows = classifiableRows.map(redactAuditRow);
     const projectRow = projectRows[0];
     const runJob: ThreadJob = {
@@ -2729,7 +2731,16 @@ export async function getSpaceConversationAction(
             },
       // La preuve de la racine ET de ses délégués : un délégué qui fait tourner
       // les tests les fait tourner POUR ce travail (T24).
-      proof: verificationRunRows.map((r) => ({ command: r.command, verdict: r.verdict })),
+      // LA DERNIÈRE SÉQUENCE DE CHAQUE LIVRABLE (#375) : un run rejoué en porte
+      // deux, et les additionner ferait conclure « Proof failed » sur un run
+      // dont la preuve finit verte.
+      proof: lastSequencePerDeliverable(verificationRunRows).map((r) => ({
+        command: r.command,
+        verdict: r.verdict,
+      })),
+      // Ce que ce verdict a coûté : le plus grand `repair_attempts` du run et
+      // de ses délégués.
+      repairs: Math.max(0, ...readRepairsOfRun.values()),
       // #59 — le dernier verdict de relecture de ce run et de ses délégués,
       // pris sur la MÊME lecture que la section Review (`reviewVerdicts`,
       // ordonnée par `seq`). Le bloc de conclusion le pose à côté de

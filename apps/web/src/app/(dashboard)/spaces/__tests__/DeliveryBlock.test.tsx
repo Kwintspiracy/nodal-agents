@@ -33,6 +33,7 @@ const fichiers = (...paths: string[]) =>
   paths.map((path) => ({ path, addedLines: 0, removedLines: 0 }));
 
 const EMPTY: DeliverySummary = {
+  repairs: 0,
   files: 0,
   fileChanges: [],
   lines: null,
@@ -130,6 +131,7 @@ function summaryOf(over: Partial<ThreadJob> & { feed: ConversationFeed }): Deliv
     verdict: travail,
     project: null,
     proof: [],
+    repairs: 0,
     reviewVerdict: null,
     audit: [],
     workspaceRoots: [],
@@ -1011,6 +1013,47 @@ describe('DeliveryBlock — le verdict de preuve en toutes lettres @cap:verifier
     );
     expect(ligne(html)).toContain('Delivered · Approved · Proof passed');
     expect(html).toMatch(/<span class="text-ok">[^<]*·[^<]*Proof passed<\/span>/);
+  });
+
+  it('une preuve passée APRÈS une réparation le dit à côté du mot', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-375"
+        summary={{ ...livreEtApprouve, verdict: 'green', repairs: 1 }}
+      />,
+    );
+    expect(ligne(html)).toContain('Delivered · Approved · Proof passed after 1 repair');
+  });
+
+  it('une preuve rouge après réparation le dit aussi, et reste en warn', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-375"
+        summary={{ ...livreEtApprouve, verdict: 'red', repairs: 1 }}
+      />,
+    );
+    expect(ligne(html)).toContain('Proof failed after 1 repair');
+    expect(html).toMatch(/<span class="text-warn">[^<]*Proof failed after 1 repair<\/span>/);
+  });
+
+  it('zéro réparation, et une surface qui n’a pas lu la colonne, ne disent RIEN', () => {
+    const zero = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-375"
+        summary={{ ...livreEtApprouve, verdict: 'green', repairs: 0 }}
+      />,
+    );
+    expect(zero).toContain('Proof passed');
+    expect(zero).not.toContain('repair');
+
+    const inconnu = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-375"
+        summary={{ ...livreEtApprouve, verdict: 'green', repairs: null }}
+      />,
+    );
+    expect(inconnu).toContain('Proof passed');
+    expect(inconnu).not.toContain('repair');
   });
 
   it('aucune preuve déclarée, aucun mot', () => {

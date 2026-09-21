@@ -214,6 +214,10 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
   const passed = commands.filter((r) => r.verdict === 'green').length;
   const review = lastReviewVerdict(verdicts);
   return {
+    // Cette surface ne lit pas `repair_attempts` : elle rend les séquences de
+    // preuve telles qu'elles sont, groupées, et n'ouvre pas la ligne d'état du
+    // livrable. Elle ne dit donc rien du nombre de réparations (#375).
+    repairs: null,
     files: changes.length,
     fileChanges: changes.map((c) => ({
       path: c.filePath,

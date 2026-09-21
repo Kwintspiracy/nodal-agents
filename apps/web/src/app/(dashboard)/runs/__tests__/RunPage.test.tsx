@@ -74,6 +74,7 @@ const delivered: FeedItem = {
   verdict: { isWork: true, items: [], uncertain: 0, more: 0, unclassified: 0 },
   project: null,
   summary: {
+    repairs: 0,
     files: 0,
     fileChanges: [],
     lines: null,

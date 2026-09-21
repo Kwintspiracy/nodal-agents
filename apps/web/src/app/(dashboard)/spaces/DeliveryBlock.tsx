@@ -262,10 +262,18 @@ export default function DeliveryBlock({
               mot devient le seul endroit où le sort des preuves se lit. Taire
               le mot dans l'autre cas ferait dépendre la grammaire de la ligne
               d'un fait qui n'a rien à voir avec elle. */}
+          {/* ET IL DIT CE QUE LE VERDICT A COÛTÉ (#375) : depuis qu'une preuve
+              rouge rouvre le run pour un tour de réparation, « Proof passed »
+              tout court cacherait qu'il a fallu s'y reprendre. Rien à zéro
+              réparation — le cas ordinaire — ni quand la surface n'a pas lu la
+              colonne : une absence ne s'écrit pas. */}
           {summary.live === null && verdict !== null && (
             <span className={verdict === 'red' ? 'text-warn' : 'text-ok'}>
               {' '}
               · {verdict === 'red' ? 'Proof failed' : 'Proof passed'}
+              {summary.repairs !== null && summary.repairs > 0
+                ? ` after ${summary.repairs} repair${summary.repairs > 1 ? 's' : ''}`
+                : ''}
             </span>
           )}
         </span>

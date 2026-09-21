@@ -45,6 +45,7 @@ import DeliveryBlock from '../DeliveryBlock.tsx';
 import type { DeliverySummary } from '@/lib/conversation-feed.ts';
 
 const EMPTY: DeliverySummary = {
+  repairs: 0,
   files: 0,
   fileChanges: [],
   lines: null,
