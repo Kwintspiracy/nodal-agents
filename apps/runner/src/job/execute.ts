@@ -6,12 +6,11 @@
 //   8: anti-loop guards (ChainCounters from @nodal-agents/orchestration)
 //   9: tool whitelist explicit per agent (computeToolWhitelist)
 
-import { eq, and, isNull, sql } from '@nodal-agents/db';
+import { eq, and, isNull } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
   agentTasks,
-  approvalRules,
   approvalRequests,
   agentSkillAssignments,
   agentSkills,
@@ -60,6 +59,7 @@ import { resolveAgentLlmClient } from './resolve-llm.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
+import { loadApprovalRules } from './approval-rules.ts';
 import {
   computeToolWhitelist,
   computeToolChoice,
@@ -77,7 +77,6 @@ import {
   matchApprovalRule,
   DELIVERY_TOOL_NAMES as DELIVERY_TOOL_NAME_LIST,
   SHARED_WORKSPACE_LABEL,
-  CODE_EXECUTION_TOOL_NAMES,
   toolsNamedButAbsent,
   exposeStatedPurpose,
 } from '@nodal-agents/tools';
@@ -2009,96 +2008,19 @@ async function runJobTracked(
   }
 
   // ── 8. Load approval rules ────────────────────────────────────────────────────
-  // Deterministic order (audit #2 DB-1): most specific first (agent-scoped
-  // before entity-wide, exact tool before wildcard), then id as a stable
-  // tiebreaker. matchApprovalRule (packages/tools/src/execute.ts) already
-  // picks the single row for the tier it needs via `.find()` — the
-  // UNIQUE(entity_id, agent_id, tool_name) constraint on approval_rules means
-  // at most one row can exist per tier going forward — but an unordered SELECT
-  // would still make `.find()`'s result depend on physical row order for any
-  // pre-existing/seeded state. Sorting removes that dependency outright.
-  const ruleRows = await db
-    .select()
-    .from(approvalRules)
-    .where(eq(approvalRules.entityId, job.entityId ?? ''))
-    .orderBy(
-      sql`${approvalRules.agentId} IS NULL`,
-      sql`${approvalRules.toolName} = '*'`,
-      approvalRules.id,
-    );
+  // Read FRESH here, and again at every turn boundary + after every resolved
+  // approval (issue #370): a rule written while the job waited for an approval
+  // — what "Approve for this project" writes on the card the person is looking
+  // at — must apply to the run it was answered on, not only to the next one.
+  // The `auto_run_paused` brake is applied inside loadApprovalRules, so it is
+  // re-applied by every reload and no reload can release it.
+  let approvalRuleList: ApprovalRule[] = await loadApprovalRules(db, job, agentRow);
 
-  let approvalRuleList: ApprovalRule[] = ruleRows.map((r) => ({
-    id: r.id,
-    toolName: r.toolName,
-    action: (r.action ?? 'auto_approve') as ApprovalRule['action'],
-    agentId: r.agentId,
-    entityId: r.entityId,
-    // `condition_json` travels to the gate, or a rule confined to one folder
-    // ("Approve for this project", issue #346) would silently apply everywhere.
-    conditionJson: (r.conditionJson ?? null) as ApprovalRule['conditionJson'],
-  }));
-
-  // ── 8b. Workspace auto-run BRAKE for code-execution tools ─────────────────────
-  // run_command, run_skill_script and skill_file_write are ALL code-execution
-  // surfaces — a shell command, a bundled skill script, and a skill file whose
-  // content is a script waiting to be run by one of the other two. É-2 (audit
-  // sécu 2026-07-07): create_mcp/attach_mcp with a stdio transport ALSO spawn
-  // an arbitrary local subprocess (npx/uvx <cmd>), and code_task spawns the
-  // owner's coding CLI — same trust class as a shell.
-  //
-  // INVERSION du modèle à deux clés (0082, décision Quentin 24/08). L'ancien
-  // lan_command_yolo était une PRÉ-CONDITION : hors local-trust, aucune règle
-  // auto_approve de ces outils ne s'appliquait tant que l'owner n'avait pas
-  // « débloqué » le workspace. Redondant — poser la règle par agent est DÉJÀ
-  // owner-only des deux côtés (web ET la carte d'approbation) — et pénible :
-  // deux serrures, une seule clé. Sa vraie valeur était le coupe-circuit, qui
-  // devient son SEUL rôle : `entities.auto_run_paused` est un frein
-  // d'urgence, inactif par défaut, TOUS modes d'auth confondus (un bouton
-  // rouge qui ne marche qu'en LAN n'est pas un bouton rouge). Enclenché :
-  //   (a) drop any auto_approve rule for these tools, and
-  //   (b) if no tool-specific rule then remains, inject a require_approval
-  //       rule so a blanket wildcard ('*') auto_approve can't sweep them in.
-  // Nothing is deleted from the DB — releasing the brake re-arms the rules.
-  // Injecting an explicit require_approval rule also matters downstream: the
-  // autonomy relaxation in executeTool is guarded by `!matchedRule`, so once a
-  // tool has a matched rule here, fully_autonomous/destructive_gate can no
-  // longer auto-approve it either — the brake outranks autonomy.
-  {
-    // La liste vient de @nodal-agents/tools — source unique (revue sécurité du
-    // 25/08). Elle était recopiée ici : deux copies identiques, rien qui
-    // verrouille l'égalité. Un outil ajouté à la garde d'autonomie mais oublié
-    // dans cette copie serait resté balayable par une règle wildcard `*`
-    // auto_approve alors même que le frein est enclenché.
-    const CODE_EXECUTION_TOOLS = CODE_EXECUTION_TOOL_NAMES;
-    const [brakeRow] = await db
-      .select({ autoRunPaused: entitiesTable.autoRunPaused })
-      .from(entitiesTable)
-      .where(eq(entitiesTable.id, job.entityId ?? ''))
-      .limit(1);
-    if (brakeRow?.autoRunPaused) {
-      for (const codeTool of CODE_EXECUTION_TOOLS) {
-        approvalRuleList = approvalRuleList.filter(
-          (r) => !(r.toolName === codeTool && r.action === 'auto_approve'),
-        );
-        const hasToolRule = approvalRuleList.some((r) => r.toolName === codeTool);
-        if (!hasToolRule) {
-          approvalRuleList.push({
-            id: `auto-run-pause-${codeTool}`,
-            toolName: codeTool,
-            action: 'require_approval',
-            agentId: agentRow.id,
-            entityId: job.entityId ?? '',
-          });
-        }
-      }
-    }
-  }
-
-  // ── 8c. Fully-autonomous workspace ────────────────────────────────────────────
+  // ── 8b. Fully-autonomous workspace ────────────────────────────────────────────
   // The owner's ROOT autonomy level governs how much hand-holding the workspace
   // wants. `fully_autonomous` = "no approval prompts, period" — so we relax the
   // safe-by-default require_approval posture inside executeTool. It is applied
-  // there AFTER explicit rules + the run_command LAN master-switch (8b) and BEFORE
+  // there AFTER explicit rules + the auto-run brake (job/approval-rules.ts) and BEFORE
   // the catastrophic-command hardline floor, so neither safety boundary is bypassed.
   const [autonomyRow] = await db
     .select({ rootGrants: entitiesTable.rootGrants })
@@ -2115,11 +2037,17 @@ async function runJobTracked(
   //
   // `purpose` est posé ICI, et pas dans chaque outil : la liste est complète
   // (builtins, meta-outils, outils de skill, MCP) et les règles d'approbation
-  // sont FINALES (8a/8b/8c viennent de les ajuster). C'est donc le seul endroit
+  // sont FINALES (8 et 8b viennent de les poser, frein compris). C'est donc le seul endroit
   // où « cet outil, pour cet agent, demande-t-il d'abord ? » se calcule — la
   // réponse décide si le champ est requis ou optionnel dans le schéma que le
   // modèle reçoit. Le gate, lui, refuse une demande sans phrase quoi qu'il
   // arrive (@nodal-agents/tools, purpose.ts).
+  //
+  // Les règles, elles, se relisent à chaque tour (#370) ; le SCHÉMA de l'outil,
+  // lui, reste celui du démarrage. C'est voulu : le changer en cours de job
+  // invaliderait le cache de prompt, et l'écart est sans danger — le champ reste
+  // demandé alors qu'il aurait pu devenir optionnel, et le gate refuse de toute
+  // façon une demande sans phrase.
   const outilsAvecRaison = exposeStatedPurpose(toolDefs as AnyToolDef[], {
     approvalRules: approvalRuleList,
     agentId: agentRow.id,
@@ -2500,6 +2428,14 @@ async function runJobTracked(
         servedProvider,
         totalDurationMs: dureeCumuleeMs(),
       });
+
+      // Issue #370: a decision can WRITE a rule ("Approve for this project" /
+      // "Change" on the approval card). Re-read before the job goes on, so the
+      // rule the person just wrote governs the rest of THIS run. AFTER the
+      // checkpoint on purpose (Reviewer C): should this read throw, the replayed
+      // transcript is already persisted, and the executed_at stamps make the
+      // restart idempotent.
+      approvalRuleList = await loadApprovalRules(db, job, agentRow);
     }
 
     // If there are still PENDING (unresolved) requests, re-suspend and wait.
@@ -2737,7 +2673,7 @@ async function runJobTracked(
   // runnerEnv, so fall back to raw process.env like the other job-level limits
   // above (AUTH_MODE, MAX_TOTAL_TOKENS_PER_JOB, …) — reading the full `env`
   // proxy here would throw in those contexts (see the AUTH_MODE comment,
-  // section 8b). 0 disables the window: suspend immediately (prior behavior).
+  // section 8). 0 disables the window: suspend immediately (prior behavior).
   const approvalGraceMsRaw =
     runnerEnv?.NODALAI_APPROVAL_GRACE_MS ?? Number(process.env['NODALAI_APPROVAL_GRACE_MS']);
   const approvalGraceMs =
@@ -2805,6 +2741,11 @@ async function runJobTracked(
           trace('grace_window_resolved_inline', { count: openRows.length });
           const executed = await executeResolvedApprovals(openRows, messages);
           messages = executed.messages;
+
+          // Issue #370: same re-read as the worker-driven resume above. This is
+          // the path the incident took — the decision landed inside the grace
+          // window, and the rule it wrote was invisible to the rest of the job.
+          approvalRuleList = await loadApprovalRules(db, job, agentRow);
 
           if (executed.catastrophicRefusalMessage !== null) {
             trace('resume_catastrophic_command_failed_job');
@@ -3270,6 +3211,12 @@ async function runJobTracked(
         await failJob(db, jobId as string, 'turn_limit_exceeded', runStats(), messages);
         return { status: 'failed', error: 'turn_limit_exceeded' };
       }
+
+      // Issue #370: fresh rules at every turn boundary. One read of
+      // approval_rules + one of the entity brake, both filtered by entity, per
+      // turn. Without it a rule written mid-run only applied to the next job,
+      // which is exactly when "Approve for this project" is answered.
+      approvalRuleList = await loadApprovalRules(db, job, agentRow);
 
       // a. Validate message structure
       validateMessageStructure(messages);

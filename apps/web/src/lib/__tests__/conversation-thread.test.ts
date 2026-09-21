@@ -219,7 +219,7 @@ describe('buildConversationThread — une conversation de canal', () => {
   /** Un tour dont la SEULE action est une commande dont rien n'a été vu. */
   const commandeNonConstatee: ProductionVerdict = {
     isWork: false,
-    items: [{ kind: 'command', label: 'ls -la', certain: false }],
+    items: [{ kind: 'command', label: 'ls -la', certain: false, purpose: null }],
     uncertain: 1,
     more: 0,
     unclassified: 0,
@@ -235,7 +235,7 @@ describe('buildConversationThread — une conversation de canal', () => {
     expect(produits).toHaveLength(1);
     const e = produits[0] as Extract<FeedItem, { kind: 'produced' }>;
     // La commande est NOMMÉE, et marquée : c'est elle qu'on vient lire.
-    expect(e.summary.commands).toEqual([{ label: 'ls -la', observed: false }]);
+    expect(e.summary.commands).toEqual([{ label: 'ls -la', observed: false, purpose: null }]);
     // Et l'encart ne se dit PAS une livraison : le verdict n'a rien constaté,
     // et le mot de l'en-tête en dépend.
     expect(e.summary.produced).toBe(false);
@@ -247,7 +247,7 @@ describe('buildConversationThread — une conversation de canal', () => {
   it('une commande CONSTATÉE ne porte aucun aveu', () => {
     const constatee: ProductionVerdict = {
       isWork: true,
-      items: [{ kind: 'command', label: 'pnpm build', certain: true }],
+      items: [{ kind: 'command', label: 'pnpm build', certain: true, purpose: null }],
       uncertain: 0,
       more: 0,
       unclassified: 0,
@@ -258,8 +258,31 @@ describe('buildConversationThread — une conversation de canal', () => {
       jobs: [job({ jobId: 'j1', verdict: constatee })],
     });
     const e = items.find((i) => i.kind === 'produced') as Extract<FeedItem, { kind: 'produced' }>;
-    expect(e.summary.commands).toEqual([{ label: 'pnpm build', observed: true }]);
+    expect(e.summary.commands).toEqual([{ label: 'pnpm build', observed: true, purpose: null }]);
     expect(e.summary.produced).toBe(true);
+  });
+
+  // #372 — la phrase de l'agent ne s'arrête pas au verdict : elle descend
+  // jusqu'au récapitulatif, qui est ce que l'écran lit.
+  it('la phrase de l’agent descend du verdict jusqu’au récapitulatif', () => {
+    const avecPhrase: ProductionVerdict = {
+      isWork: true,
+      items: [
+        { kind: 'command', label: 'pnpm build', certain: true, purpose: 'Build before shipping' },
+      ],
+      uncertain: 0,
+      more: 0,
+      unclassified: 0,
+    };
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1', verdict: avecPhrase })],
+    });
+    const e = items.find((i) => i.kind === 'produced') as Extract<FeedItem, { kind: 'produced' }>;
+    expect(e.summary.commands).toEqual([
+      { label: 'pnpm build', observed: true, purpose: 'Build before shipping' },
+    ]);
   });
 
   it('un tour SANS commande et sans production ne rend toujours aucun encart', () => {

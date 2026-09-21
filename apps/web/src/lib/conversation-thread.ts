@@ -520,7 +520,9 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     // écriture n'a été constatée sur le tour de cette commande (#197).
     commands: job.verdict.items
       .filter((i): i is Extract<ProducedItem, { kind: 'command' }> => i.kind === 'command')
-      .map((i) => ({ label: i.label, observed: i.certain })),
+      // La phrase de l'agent voyage avec la commande (#372) : elle est lue
+      // dans l'entrée de l'appel, et l'encart ne la récrit pas.
+      .map((i) => ({ label: i.label, observed: i.certain, purpose: i.purpose })),
     produced: job.verdict.isWork,
     // L'issue d'un travail qui n'est pas allé au bout, lue sur sa ligne : elle
     // prime sur `produced` pour le mot de l'en-tête (Quentin, 22/09).

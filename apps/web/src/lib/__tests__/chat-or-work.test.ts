@@ -279,7 +279,9 @@ describe('classifyProduction — ce qui sort du chat', () => {
   it('une commande dont une écriture a été CONSTATÉE est du travail', () => {
     const v = verdict([commande('pnpm build')], dashboard, aEcrit);
     expect(v.isWork).toBe(true);
-    expect(v.items).toEqual([{ kind: 'command', label: 'pnpm build', certain: true }]);
+    expect(v.items).toEqual([
+      { kind: 'command', label: 'pnpm build', certain: true, purpose: null },
+    ]);
     expect(v.uncertain).toBe(0);
   });
 
@@ -314,7 +316,7 @@ describe('classifyProduction — la commande, tranchée par l’écriture consta
     // constatée sur son tour. Rien ne se dessine comme une production.
     const v = verdict([commande('ls -la')]);
     expect(v.isWork).toBe(false);
-    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false }]);
+    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
     // L'absence est DITE, jamais tue : elle est comptée comme incertaine.
     expect(v.uncertain).toBe(1);
   });
@@ -343,7 +345,7 @@ describe('classifyProduction — la commande, tranchée par l’écriture consta
     // pour du travail une commande lancée au tour suivant.
     const v = verdict([commande('ls -la', { turn: 2 })], dashboard, aEcrit);
     expect(v.isWork).toBe(false);
-    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false }]);
+    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
   });
 
   it('le constat d’un AUTRE job ne crédite pas celui-ci', () => {
@@ -376,7 +378,12 @@ describe('classifyProduction — la commande, tranchée par l’écriture consta
       }),
     ]);
     expect(v.isWork).toBe(true);
-    expect(v.items).toContainEqual({ kind: 'command', label: 'ls -la', certain: false });
+    expect(v.items).toContainEqual({
+      kind: 'command',
+      label: 'ls -la',
+      certain: false,
+      purpose: null,
+    });
     expect(v.uncertain).toBe(1);
   });
 
@@ -568,5 +575,45 @@ describe('classifyProduction — le plafond', () => {
     ]);
     expect(v.isWork).toBe(false);
     expect(v.items).toEqual([]);
+  });
+});
+
+// #372 — POURQUOI LA COMMANDE A TOURNÉ.
+//
+// `run_command` exige un `purpose` dans son entrée, et la ligne d'audit le
+// garde. Aucun écran ne le lisait : l'encart ne montrait que la ligne de
+// commande, et rien ne disait ce qu'elle cherchait à faire (Quentin, 21/09).
+// La phrase vient de l'agent, elle n'est jamais composée ici (invariant #2).
+//
+// Mutation vérifiée : `purpose: commandPurpose(row.toolInput)` remplacé par
+// `purpose: null` dans la branche `terminal` → « la phrase de l'entrée voyage
+// avec la commande » rougit.
+describe('classifyProduction — pourquoi la commande a tourné @cap:verifier-un-livrable/moteur', () => {
+  it('la phrase de l’entrée voyage avec la commande', () => {
+    const v = verdict(
+      [commande('pnpm build', { toolInput: { command: 'pnpm build', purpose: 'Build the app' } })],
+      dashboard,
+      aEcrit,
+    );
+    expect(v.items).toEqual([
+      { kind: 'command', label: 'pnpm build', certain: true, purpose: 'Build the app' },
+    ]);
+  });
+
+  it('une entrée SANS phrase ne rend pas de phrase', () => {
+    // Une ligne écrite avant ce champ, ou un autre outil qui déclare la même
+    // carte : l'écran montrera la commande seule plutôt qu'une phrase inventée.
+    const v = verdict([commande('ls -la', { toolInput: { command: 'ls -la' } })]);
+    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
+  });
+
+  it('une phrase blanche vaut une absence', () => {
+    const v = verdict([commande('ls -la', { toolInput: { command: 'ls -la', purpose: '   ' } })]);
+    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
+  });
+
+  it('une phrase qui n’est pas du texte vaut une absence', () => {
+    const v = verdict([commande('ls -la', { toolInput: { command: 'ls -la', purpose: 42 } })]);
+    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
   });
 });
