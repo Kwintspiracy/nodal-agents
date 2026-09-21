@@ -248,8 +248,10 @@ export default function DeliveryBlock({
             <StatusPill
               variant="idle"
               label={
+                // Sans dénominateur (Reviewer C, #342) : « 1 / 1 » se lirait
+                // comme un état final alors qu'une preuve peut encore courir.
                 summary.tests !== null
-                  ? `${summary.tests.passed} / ${summary.tests.total} checks so far`
+                  ? `${summary.tests.passed} ${summary.tests.passed === 1 ? 'check' : 'checks'} passed so far`
                   : 'No checks yet'
               }
             />

@@ -763,7 +763,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
         status="processing"
       />,
     );
-    expect(html).toContain('1 / 1 checks so far');
+    expect(html).toContain('1 check passed so far');
     expect(html).not.toContain('>Verified');
     const sansPreuve = renderToStaticMarkup(
       <DeliveryBlock summary={{ ...EMPTY, live: 'working' }} jobId="job-9" status="processing" />,
