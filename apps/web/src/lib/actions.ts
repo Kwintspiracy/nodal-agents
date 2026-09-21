@@ -6513,6 +6513,20 @@ const SetApprovalRuleSchema = z.object({
    * silence une condition que personne ne voit la (invariant #4).
    */
   workspacePath: z.string().min(1).max(1000).optional(),
+  /**
+   * « Oui, retire la limite de dossier » (issue #401).
+   *
+   * Sans ce drapeau, `refuseGlobalGrantOverFolderRule` REFUSE de remplacer une
+   * regle confinee a un dossier par une permission valable partout : c'est le
+   * garde de #360, et il reste le defaut pour tout appelant qui ne dit rien.
+   * Avec, l'appelant affirme avoir montre au proprietaire ce qu'il perd, en
+   * nommant le dossier, et avoir recu son accord : l'elargissement n'est plus
+   * silencieux, et le silence est la SEULE chose que le garde protegeait.
+   *
+   * Nomme ainsi, et non `force` : un drapeau qui dit « passe outre » finit pose
+   * partout « pour que ca marche ».
+   */
+  confirmWidening: z.boolean().optional(),
 });
 
 /**
@@ -6629,7 +6643,7 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { agentId, toolName, action, scope, workspacePath } = parsed.data;
+    const { agentId, toolName, action, scope, workspacePath, confirmWidening } = parsed.data;
 
     // Une regle conditionnee ne vaut que pour CET agent : « Everyone dans le
     // dossier de cet agent-la » ne veut rien dire.
@@ -6682,7 +6696,15 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
     // permission globale (revue Reviewer C, passe 2). Le garde pose `FOR UPDATE`
     // sur la ligne ; le commit la libere une fois l'ecriture faite.
     const refus = await db.transaction(async (tx) => {
-      if (action === 'auto_approve' && workspacePath === undefined && scope === 'agent') {
+      // `confirmWidening` ne DESACTIVE pas le garde : il dit que la perte a
+      // ete montree et acceptee (issue #401). Le garde n'a jamais protege
+      // l'elargissement lui-meme, seulement son silence.
+      if (
+        action === 'auto_approve' &&
+        workspacePath === undefined &&
+        scope === 'agent' &&
+        confirmWidening !== true
+      ) {
         const message = await refuseGlobalGrantOverFolderRule(
           tx,
           session.entityId,

@@ -192,6 +192,65 @@ describe('rien n’élargit une règle de dossier en silence @cap:approuver-une-
     expect((await setCodeTaskYoloAction({ agentId: seed.agentId, enabled: true })).ok).toBe(false);
     expect((await rowFor('code_task'))!.conditionJson).toEqual({ workspacePath: FOLDER });
   });
+
+  // Issue #401. L'onglet Connectors écrit une règle sur le MOTIF du serveur
+  // (`<prefix>__*`) au moment où le propriétaire dit « faire confiance ». Ce
+  // motif est une règle comme une autre : s'il porte déjà une limite de
+  // dossier, la confiance la remplacerait par une permission valable partout.
+  it('le motif MCP de l’onglet Connectors est refusé quand il porte une limite de dossier', async () => {
+    const { setAgentApprovalRuleAction } = await import('../actions.ts');
+    expect((await poserRegleDossier('cogni_cortex__*')).ok).toBe(true);
+
+    const r = await setAgentApprovalRuleAction({
+      agentId: seed.agentId,
+      toolName: 'cogni_cortex__*',
+      action: 'auto_approve',
+      scope: 'agent',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain(FOLDER);
+
+    const row = await rowFor('cogni_cortex__*');
+    expect(row!.conditionJson).toEqual({ workspacePath: FOLDER });
+  });
+
+  it('le drapeau explicite, lui, retire la condition et laisse une règle sans dossier', async () => {
+    // `confirmWidening` n'est envoyé que par le chemin qui a MONTRÉ la perte
+    // en nommant le dossier et reçu un oui. Ce que le garde protégeait, c'est
+    // le silence ; ici il n'y en a plus, et la ligne doit donc bouger.
+    const { setAgentApprovalRuleAction } = await import('../actions.ts');
+    expect((await poserRegleDossier('cogni_cortex__confirme')).ok).toBe(true);
+
+    const r = await setAgentApprovalRuleAction({
+      agentId: seed.agentId,
+      toolName: 'cogni_cortex__confirme',
+      action: 'auto_approve',
+      scope: 'agent',
+      confirmWidening: true,
+    });
+    expect(r.ok).toBe(true);
+
+    const row = await rowFor('cogni_cortex__confirme');
+    expect(row!.action).toBe('auto_approve');
+    expect(row!.conditionJson).toEqual({});
+  });
+
+  it('le drapeau à false ne vaut pas accord', async () => {
+    const { setAgentApprovalRuleAction } = await import('../actions.ts');
+    expect((await poserRegleDossier('cogni_cortex__faux')).ok).toBe(true);
+
+    const r = await setAgentApprovalRuleAction({
+      agentId: seed.agentId,
+      toolName: 'cogni_cortex__faux',
+      action: 'auto_approve',
+      scope: 'agent',
+      confirmWidening: false,
+    });
+    expect(r.ok).toBe(false);
+    expect((await rowFor('cogni_cortex__faux'))!.conditionJson).toEqual({
+      workspacePath: FOLDER,
+    });
+  });
 });
 
 describe('la chaîne d’une demande SANS agent @cap:approuver-une-action/moteur', () => {

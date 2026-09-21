@@ -72,6 +72,12 @@ import {
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import FolderPickerModal from './FolderPickerModal.tsx';
+import {
+  FOLDER_LIMIT_CONFIRM_LABEL,
+  FOLDER_LIMIT_TITLE,
+  folderLimitPreamble,
+  folderLimitWideningMessage,
+} from './folder-limit-copy.ts';
 import { SectionCard, SectionHead } from './SectionCard.tsx';
 import AutonomyToolRow from './AutonomyToolRow.tsx';
 import McpServerTools from './McpServerTools.tsx';
@@ -2129,7 +2135,7 @@ export function AutonomyTab({
       */}
       <ConfirmDialog
         open={pendingWiden !== null}
-        title={pendingWiden?.action === null ? 'Delete this rule?' : 'Remove the folder limit?'}
+        title={pendingWiden?.action === null ? 'Delete this rule?' : FOLDER_LIMIT_TITLE}
         message={
           pendingWiden === null
             ? ''
@@ -2138,10 +2144,12 @@ export function AutonomyTab({
                 // « suivra le serveur » serait faux si une règle d'entité sur
                 // le même outil survit et continue de gagner (revue Reviewer
                 // C, passe 4, C2).
-                `This rule applies only in ${pendingWiden.folder} today. Following the server deletes this agent's rule on the tool.`
-              : `This rule applies only in ${pendingWiden.folder} today. Saving from here applies your choice everywhere this agent works.`
+                `${folderLimitPreamble(pendingWiden.folder)} Following the server deletes this agent's rule on the tool.`
+              : folderLimitWideningMessage(pendingWiden.folder)
         }
-        confirmLabel={pendingWiden?.action === null ? 'Delete the rule' : 'Remove the limit'}
+        confirmLabel={
+          pendingWiden?.action === null ? 'Delete the rule' : FOLDER_LIMIT_CONFIRM_LABEL
+        }
         onConfirm={() => {
           const pending = pendingWiden;
           setPendingWiden(null);
