@@ -220,16 +220,16 @@ describe('la carte dit quelle règle a décidé @cap:approuver-une-action/ecran'
     expect(lignes[0]!.textContent).toContain('Ask first');
     expect(lignes[0]!.textContent).toContain('Everyone');
     expect(lignes[0]!.textContent).toContain(TOOL);
-    expect(lignes[0]!.textContent).toContain('wins');
-    expect(lignes[0]!.textContent).not.toContain('overridden');
+    expect(lignes[0]!.textContent).toContain('Wins');
+    expect(lignes[0]!.textContent).not.toContain('Overridden');
 
     // Celle que la personne venait d'écrire, écrasée, et dite comme telle.
     expect(lignes[1]!.textContent).toContain('Autonomous');
     expect(lignes[1]!.textContent).toContain('Reviewer C');
     expect(lignes[1]!.textContent).toContain('mcp_playwright__*');
-    expect(lignes[1]!.textContent).toContain('overridden');
+    expect(lignes[1]!.textContent).toContain('Overridden');
 
-    expect(lignes[2]!.textContent).toContain('overridden');
+    expect(lignes[2]!.textContent).toContain('Overridden');
     expect(rendu().textContent).toContain('Reason this triggered Approval request');
   });
 
@@ -261,7 +261,7 @@ describe('la carte dit quelle règle a décidé @cap:approuver-une-action/ecran'
     expect(lignes[0]!.getAttribute('data-testid')).toBe('approval-rule-tool-default');
     expect(lignes[0]!.textContent).toContain('Tool default');
     expect(lignes[0]!.textContent).toContain('Ask first');
-    expect(lignes[0]!.textContent).toContain('wins');
+    expect(lignes[0]!.textContent).toContain('Wins');
   });
 
   it('Change remplace le bouton par le sélecteur et enregistre au bon scope', async () => {
@@ -434,7 +434,7 @@ describe('ce que la carte écrit, en anglais @cap:approuver-une-action/ecran', (
     await monter(demande());
     const texte = rendu().textContent ?? '';
     expect(texte).toContain('Browser run code unsafe');
-    expect(texte).toContain('requested use of');
+    expect(texte).toContain('needs to execute this tool');
     expect(texte).toContain('Open the report page');
     expect(texte).toContain('External call');
     expect(texte).toContain('third-party tool, MCP server Playwright');
@@ -473,7 +473,7 @@ describe('ce que la carte écrit, en anglais @cap:approuver-une-action/ecran', (
     expect(bouton('Approve once')).toBeDefined();
   });
 
-  it('une demande déjà tranchée, dépliée, garde son corps et perd ses boutons', async () => {
+  it('une demande tranchée, ouverte, garde son corps et perd ses boutons', async () => {
     await monter(
       demande({
         status: 'approved',
@@ -481,7 +481,7 @@ describe('ce que la carte écrit, en anglais @cap:approuver-une-action/ecran', (
         resolvedBy: 'quentin',
       } as Partial<Approval>),
     );
-    // Elle arrive repliée depuis le 21/09 : c'est le caret qui la rouvre.
+    // Elle arrive en Close : le bloc de demande est le seul absent.
     await cliquerLeCaret();
     const texte = rendu().textContent ?? '';
     expect(texte).toContain('Browser run code unsafe');
@@ -492,17 +492,22 @@ describe('ce que la carte écrit, en anglais @cap:approuver-une-action/ecran', (
   });
 });
 
-// ─── Le pli, par état de la demande ───────────────────────────────────────────
+// ─── Open et Close, les deux états du composant ───────────────────────────────
 //
-// Demande de Quentin (21/09) : « quand la carte est présentée pour approval,
-// elle devrait être ouverte (tool input fermé). Lorsque les cartes sont dans les
-// archives, elles doivent être 100 % fermées par défaut. »
+// Composant Figma « Approval Card » (nœud 557:6743) : DEUX variantes, Open et
+// Close, et rien entre les deux. Close est la MÊME carte moins le seul bloc
+// `request` (la ligne d'effet et les arguments). La raison de l'agent,
+// « Tool input », les règles et le pied de boutons restent dans les deux.
 //
-// Les assertions portent sur le DOM rendu : un bloc plié est ABSENT, pas caché
-// par une classe. Une carte d'archive qui garderait ses règles dans le document
-// resterait lue par les lecteurs d'écran, et la page resterait aussi longue.
+// Quentin, 22/09 : « le design de la carte d'approbation n'est toujours pas
+// respecté à la lettre. Il y a pourtant un composant avec deux états, ouvert et
+// fermé, clairement décrits. » Le pli à 100 % de #365/#368 inventait un
+// troisième état : il est retiré.
+//
+// Les assertions portent sur le DOM rendu : un bloc absent est ABSENT, pas
+// masqué par une classe.
 
-describe('le pli de la carte suit l’état de la demande @cap:approuver-une-action/ecran', () => {
+describe('la carte a deux états, Open et Close @cap:approuver-une-action/ecran', () => {
   const TRANCHEE = {
     status: 'approved',
     notes: 'Looked fine',
@@ -510,42 +515,18 @@ describe('le pli de la carte suit l’état de la demande @cap:approuver-une-act
     ruleChain: CHAINE_346,
   } as Partial<Approval>;
 
-  it('en attente : la carte est ouverte, et « Tool input » seul est replié', async () => {
+  it('Open rend le bloc de demande : effet, provenance et arguments', async () => {
     await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
 
-    expect(parTestId('approval-request-body')).not.toBeNull();
-    expect(parTestId('approval-rule-list')).not.toBeNull();
-    expect(bouton('Approve once')).toBeDefined();
-
-    const entree = parTestId('approval-tool-input-toggle');
-    expect(entree).not.toBeNull();
-    expect(entree!.getAttribute('aria-expanded')).toBe('false');
-    // Les arguments bruts ne sont pas dans le document tant qu'on n'ouvre pas.
-    expect(rendu().querySelector('pre')).toBeNull();
+    const corps = parTestId('approval-request-body');
+    expect(corps).not.toBeNull();
+    expect(corps!.textContent).toContain('External call');
+    expect(corps!.textContent).toContain('third-party tool, MCP server Playwright');
+    expect(corps!.textContent).toContain('await page.click("#go")');
+    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('en attente : le caret replie TOUT ce qui est sous la ligne d’agent', async () => {
-    // Il n'y a qu'un pli. Le caret d'une demande en attente range la carte
-    // comme celui d'une archive : bloc de demande, « Tool input », règles et
-    // pied de boutons quittent le DOM, et la carte tient sur deux lignes.
-    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
-    await cliquerLeCaret();
-
-    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('false');
-    expect(parTestId('approval-request-body')).toBeNull();
-    expect(parTestId('approval-rule-list')).toBeNull();
-    expect(parTestId('approval-tool-input-toggle')).toBeNull();
-    expect(rendu().textContent).not.toContain('Reason this triggered Approval request');
-    expect(bouton('Approve once')).toBeUndefined();
-    expect(bouton('Approve for this project')).toBeUndefined();
-    expect(bouton('Reject')).toBeUndefined();
-
-    // L'en-tête et la ligne d'agent restent : la carte se relit et se rouvre.
-    expect(rendu().textContent).toContain('Browser run code unsafe');
-    expect(parTestId('approval-request-toggle')!.textContent).toContain('Reviewer C');
-  });
-
-  it('en attente : un reclic rend la carte entière, boutons compris', async () => {
+  it('Close cache CE BLOC et RIEN d’autre', async () => {
     await monter(
       demande({
         ruleChain: CHAINE_346,
@@ -553,61 +534,92 @@ describe('le pli de la carte suit l’état de la demande @cap:approuver-une-act
       } as Partial<Approval>),
     );
     await cliquerLeCaret();
-    await cliquerLeCaret();
 
-    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('true');
-    expect(parTestId('approval-request-body')).not.toBeNull();
-    expect(parTestId('approval-rule-list')).not.toBeNull();
-    expect(bouton('Approve once')).toBeDefined();
-    expect(bouton('Approve for this project')).toBeDefined();
-    expect(bouton('Reject')).toBeDefined();
-    // Et « Tool input » revient replié, comme à l'arrivée.
-    expect(parTestId('approval-tool-input-toggle')!.getAttribute('aria-expanded')).toBe('false');
-  });
-
-  it('tranchée : il ne reste que l’en-tête et la ligne d’agent', async () => {
-    await monter(demande(TRANCHEE));
-
-    // Ce qui reste : le titre, la pastille de statut, View job, la ligne d'agent.
-    const texte = rendu().textContent ?? '';
-    expect(texte).toContain('Browser run code unsafe');
-    expect(texte).toContain('approved');
-    expect(bouton('View job')).toBeUndefined(); // c'est un lien, pas un bouton
-    expect(rendu().querySelector('a[href="/jobs/j1"]')).not.toBeNull();
-    const ligne = parTestId('approval-request-toggle');
-    expect(ligne).not.toBeNull();
-    expect(ligne!.getAttribute('aria-expanded')).toBe('false');
-    expect(ligne!.textContent).toContain('Reviewer C');
-
-    // Ce qui est plié : tout le reste, absent du DOM.
+    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('false');
     expect(parTestId('approval-request-body')).toBeNull();
-    expect(parTestId('approval-tool-input-toggle')).toBeNull();
-    expect(parTestId('approval-rule-list')).toBeNull();
-    expect(parTestId('approval-decision-note')).toBeNull();
-    expect(texte).not.toContain('Reason this triggered Approval request');
-    expect(texte).not.toContain('Looked fine');
-  });
+    expect(rendu().textContent).not.toContain('External call');
+    expect(rendu().textContent).not.toContain('await page.click');
 
-  it('tranchée : un clic sur la ligne d’agent rend la carte entière', async () => {
-    await monter(demande(TRANCHEE));
-    await cliquerLeCaret();
-
-    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('true');
-    expect(parTestId('approval-request-body')).not.toBeNull();
+    // Tout le reste tient : la raison, « Tool input », les règles, le pied.
+    expect(parTestId('approval-reason')!.textContent).toContain('Open the report page');
     expect(parTestId('approval-tool-input-toggle')).not.toBeNull();
     expect(parTestId('approval-rule-list')).not.toBeNull();
-    expect(parTestId('approval-decision-note')!.textContent).toContain('Looked fine');
-    // Répondre n'a plus de sens : les boutons ne reviennent pas avec le pli.
-    expect(bouton('Approve once')).toBeUndefined();
+    expect(rendu().textContent).toContain('Reason this triggered Approval request');
+    expect(rendu().querySelector('a[href="/jobs/j1"]')!.textContent).toContain('Open Run');
+    expect(bouton('Reject')).toBeDefined();
+    expect(bouton('Approve for this project')).toBeDefined();
+    expect(bouton('Approve once')).toBeDefined();
   });
 
-  it('tranchée : un second clic la replie à nouveau', async () => {
-    await monter(demande(TRANCHEE));
+  it('un reclic sur la ligne d’agent revient à Open', async () => {
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
     await cliquerLeCaret();
     await cliquerLeCaret();
 
+    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('true');
+    expect(parTestId('approval-request-body')).not.toBeNull();
+  });
+
+  it('une demande en attente arrive en Open, une demande tranchée en Close', async () => {
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+    expect(parTestId('approval-request-body')).not.toBeNull();
+
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+
+    await monter(demande(TRANCHEE));
     expect(parTestId('approval-request-body')).toBeNull();
-    expect(parTestId('approval-rule-list')).toBeNull();
+    // Une archive garde ce qui se relit : sa raison, ses règles, sa note.
+    expect(parTestId('approval-reason')!.textContent).toContain('Open the report page');
+    expect(parTestId('approval-rule-list')).not.toBeNull();
+    expect(parTestId('approval-decision-note')!.textContent).toContain('Looked fine');
+    // Et elle n’offre plus de décision, « Open Run » mis à part.
+    expect(bouton('Approve once')).toBeUndefined();
+    expect(bouton('Reject')).toBeUndefined();
+    expect(rendu().querySelector('a[href="/jobs/j1"]')!.textContent).toContain('Open Run');
+  });
+
+  it('« Tool input » a son propre pli, replié par défaut et indépendant', async () => {
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+
+    const entree = parTestId('approval-tool-input-toggle')!;
+    expect(entree.getAttribute('aria-expanded')).toBe('false');
+    expect(rendu().querySelector('pre')).toBeNull();
+
+    await act(async () => {
+      entree.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(rendu().querySelector('pre')!.textContent).toContain('page.click');
+
+    // Passer en Close ne le referme pas : les deux plis sont indépendants.
+    await cliquerLeCaret();
+    expect(parTestId('approval-tool-input-toggle')!.getAttribute('aria-expanded')).toBe('true');
+    expect(rendu().querySelector('pre')).not.toBeNull();
+  });
+
+  it('l’en-tête porte la pastille de statut, et plus « View job »', async () => {
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+    expect(rendu().textContent).toContain('pending');
+    expect(rendu().textContent).not.toContain('View job');
+
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+
+    await monter(demande(TRANCHEE));
+    expect(rendu().textContent).toContain('approved');
+    expect(rendu().textContent).not.toContain('View job');
+  });
+
+  it('le titre des règles est du texte courant, pas du mono', async () => {
+    // Dessin : Body/13 en `ink`. En `text-mono-11 text-ink` le titre passait
+    // pour une étiquette technique au-dessus de sa propre liste.
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+    const titre = [...rendu().querySelectorAll('p')].find(
+      (n) => n.textContent === 'Reason this triggered Approval request',
+    );
+    expect(titre).toBeDefined();
+    expect(titre!.getAttribute('class')).toContain('text-body-13');
+    expect(titre!.getAttribute('class')).not.toContain('mono');
   });
 
   it('`defaultOpen` ouvre une demande tranchée, c’est ce que `?show=` demande', async () => {
@@ -615,56 +627,30 @@ describe('le pli de la carte suit l’état de la demande @cap:approuver-une-act
 
     expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('true');
     expect(parTestId('approval-request-body')).not.toBeNull();
-    expect(parTestId('approval-rule-list')).not.toBeNull();
     expect(parTestId('approval-decision-note')!.textContent).toContain('Looked fine');
   });
 
-  it('répondue sous les yeux, la carte se range sans attendre une navigation', async () => {
+  it('répondue sous les yeux, la carte passe en Close sans attendre une navigation', async () => {
     // L'onglet All garde la MÊME instance de carte quand la page se relit après
-    // une réponse : même `key`, statut nouveau. Sans remise à zéro du pli, la
-    // demande tranchée restait dépliée là où toutes ses voisines sont rangées
-    // (Reviewer C, passe 1).
+    // une réponse : même `key`, statut nouveau.
     await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
     expect(parTestId('approval-request-body')).not.toBeNull();
 
-    await rerendre(
-      demande({
-        status: 'approved',
-        notes: 'Looked fine',
-        resolvedBy: 'quentin',
-        ruleChain: CHAINE_346,
-      } as Partial<Approval>),
-    );
+    await rerendre(demande(TRANCHEE));
 
     expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('false');
     expect(parTestId('approval-request-body')).toBeNull();
-    expect(parTestId('approval-rule-list')).toBeNull();
-    expect(parTestId('approval-decision-note')).toBeNull();
+    expect(parTestId('approval-decision-note')!.textContent).toContain('Looked fine');
   });
 
-  it('tranchée : replier ferme aussi « Tool input », un pli à 100 % en est un', async () => {
-    await monter(demande(TRANCHEE));
-    await cliquerLeCaret();
-
-    const entree = parTestId('approval-tool-input-toggle')!;
-    await act(async () => {
-      entree.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    expect(rendu().querySelector('pre')).not.toBeNull();
-
-    await cliquerLeCaret();
-    await cliquerLeCaret();
-
-    expect(parTestId('approval-tool-input-toggle')!.getAttribute('aria-expanded')).toBe('false');
-    expect(rendu().querySelector('pre')).toBeNull();
-  });
-
-  it('une QUESTION suit la même règle : ouverte en attente, repliée une fois répondue', async () => {
+  it('une QUESTION porte sa question et ses options dans la ligne de raison', async () => {
     const entree = { question: 'Which branch do I target?', options: ['main', 'develop'] };
 
     await monter(demande({ kind: 'question', toolInput: entree } as Partial<Approval>));
-    expect(parTestId('approval-request-body')).not.toBeNull();
-    expect((rendu().textContent ?? '').includes('develop')).toBe(true);
+    expect(parTestId('approval-reason')!.textContent).toContain('develop');
+    // Une question n'a ni effet ni arguments : le bloc de demande n'existe pas.
+    expect(parTestId('approval-request-body')).toBeNull();
+    expect(rendu().textContent).toContain('Which branch do I target?');
 
     if (root) await act(async () => root!.unmount());
     container?.remove();
@@ -677,11 +663,7 @@ describe('le pli de la carte suit l’état de la demande @cap:approuver-une-act
         answer: 'main',
       } as Partial<Approval>),
     );
-    expect(parTestId('approval-request-body')).toBeNull();
-    expect(parTestId('approval-tool-input-toggle')).toBeNull();
-    expect(parTestId('approval-decision-note')).toBeNull();
-    expect((rendu().textContent ?? '').includes('develop')).toBe(false);
-    // Le titre de la carte reste la question : l'en-tête ne se plie jamais.
-    expect(rendu().textContent).toContain('Which branch do I target?');
+    expect(parTestId('approval-decision-note')!.textContent).toContain('Answered: main');
+    expect(rendu().querySelector('a[href="/jobs/j1"]')!.textContent).toContain('Open Run');
   });
 });

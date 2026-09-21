@@ -61,12 +61,18 @@ const STATUS_TO_VARIANT: Record<string, StatusVariant> = {
  * rejects, which is the whole point: they can see what they changed before
  * living with it.
  *
- * LE PLI (Quentin, 21/09). Une demande en attente s'ouvre : elle attend une
- * réponse, donc tout ce qui sert à décider est visible, « Tool input » mis à
- * part. Une demande tranchée est une archive : elle tient sur deux lignes. Le
- * caret de la ligne d'agent range et rend la carte ENTIÈRE dans les deux cas,
- * boutons compris : il n'y a qu'un pli. `defaultOpen` est la seule exception,
- * et elle vient de la page, jamais de l'URL lue ici.
+ * DEUX ÉTATS, ET RIEN D'AUTRE (composant Figma « Approval Card », nœud
+ * 557:6743, variantes Open 557:6742 et Close 557:6741). Open montre tout.
+ * Close est la MÊME carte moins le seul bloc `request` — la ligne d'effet et
+ * les arguments. La raison de l'agent, « Tool input », les règles et le pied de
+ * boutons restent dans les deux : ce sont eux qui font lire et décider.
+ *
+ * Le pli à 100 % de #365/#368 est retiré : il inventait un troisième état que
+ * le dessin ne porte pas, et il rangeait sous le même chevron une archive
+ * entière d'un côté, règles et boutons de l'autre.
+ *
+ * Défauts : en attente → Open (elle appelle une réponse) ; tranchée → Close
+ * (c'est une archive) ; `defaultOpen` → Open, ce que `?show=` demande.
  */
 export default function ApprovalRequestCard({
   approval,
@@ -87,10 +93,8 @@ export default function ApprovalRequestCard({
   const [isPending, startTransition] = useTransition();
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [notes, setNotes] = useState('');
-  // LE PLI SUIT L'ÉTAT DE LA DEMANDE (Quentin, 21/09). Une demande en attente
-  // s'ouvre : elle appelle une réponse, tout ce qui sert à décider est sous les
-  // yeux. Une demande tranchée est une archive : elle se range à une ligne, et
-  // le caret la rouvre entière.
+  // Open ou Close, les deux variantes du dessin. En attente → Open ; tranchée
+  // → Close ; `defaultOpen` force Open.
   const [requestOpen, setRequestOpen] = useState(approval.status === 'pending' || defaultOpen);
   // LE STATUT DÉJÀ VU. La page garde la MÊME carte quand elle se relit après une
   // réponse (même `key`), et l'onglet All la garde en liste : sans cela, une
@@ -109,17 +113,6 @@ export default function ApprovalRequestCard({
   const x = a.explanation;
   const pending = a.status === 'pending';
   const agentName = a.agentName ?? 'no agent';
-  /**
-   * Carte repliée à 100 % : il ne reste que l'en-tête et la ligne d'agent.
-   *
-   * UN SEUL PLI (Quentin, 21/09). Le caret range TOUT ce qui est sous la ligne
-   * d'agent — bloc de demande, « Tool input », règles, note de décision, pied de
-   * boutons — que la demande attende ou non. Deux états de pli selon le statut
-   * donnaient deux cartes différentes sous le même chevron : un clic repliait
-   * une archive entière et, sur la carte d'à côté, laissait règles et boutons
-   * en place.
-   */
-  const folded = !requestOpen;
 
   if (statutVu !== a.status) {
     setStatutVu(a.status);
@@ -128,14 +121,12 @@ export default function ApprovalRequestCard({
   }
 
   /**
-   * Plier ou déplier. Replier range la carte entièrement, « Tool input »
-   * compris : un pli annoncé à 100 % qui garderait un bloc ouvert sous lui le
-   * rouvrirait au clic suivant, sans que rien ne l'ait demandé.
+   * Passer de Open à Close. Le pli de « Tool input » est INDÉPENDANT : il a son
+   * propre caret, il est replié par défaut, et il reste ce qu'il est quand la
+   * carte change d'état.
    */
   function toggleRequest() {
-    const next = !requestOpen;
-    setRequestOpen(next);
-    if (!next) setInputOpen(false);
+    setRequestOpen((v) => !v);
   }
 
   /**
@@ -273,13 +264,11 @@ export default function ApprovalRequestCard({
             {question ? question.question : toolDisplayName(a.toolName)}
           </span>
         </div>
+        {/* Le statut, et lui seul. « View job » est descendu au pied sous le
+            nom « Open Run » : l'en-tête dit ce qu'on regarde, le pied dit ce
+            qu'on peut en faire (dessin, nœud 557:6743). */}
         <div className="flex shrink-0 items-center gap-2">
-          {!pending && (
-            <StatusPill variant={STATUS_TO_VARIANT[a.status] ?? 'idle'} label={a.status} />
-          )}
-          <PrimaryButton variant="neutral" size="md" href={`/jobs/${a.jobId}`}>
-            View job
-          </PrimaryButton>
+          <StatusPill variant={STATUS_TO_VARIANT[a.status] ?? 'idle'} label={a.status} />
         </div>
       </div>
 
@@ -292,79 +281,81 @@ export default function ApprovalRequestCard({
       >
         <AgentAvatar name={agentName} size="sm" shape="square" />
         <span className="shrink-0 text-medium-13 text-ink">{agentName}</span>
-        <span className="truncate text-body-13 text-ink-3">requested use of</span>
+        <span className="truncate text-body-13 text-ink-3">needs to execute this tool</span>
         <span className="ml-auto shrink-0 truncate text-mono-11 text-feed-tool">{a.toolName}</span>
       </DisclosureButton>
 
-      {requestOpen && (
+      {/* LA RAISON, DANS LES DEUX ÉTATS. La voix de l'agent, verbatim
+          (invariant #2), alignée sous le nom de l'agent. Une absence se dit :
+          « il n'a pas dit pourquoi » est une information. Close cache ce que
+          l'outil FERA, jamais ce que l'agent a DIT. */}
+      <div className="bg-paper py-3 pl-[37px] pr-3" data-testid="approval-reason">
+        {question ? (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-body-13 italic text-ink-2">{question.question}</p>
+            {question.context && <p className="text-body-12 text-ink-2">{question.context}</p>}
+            <ul className="flex flex-col gap-0.5">
+              {question.options.map((o) => (
+                <li key={o} className="text-body-12 text-ink-2">
+                  {o}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="text-body-13 italic text-ink-2">
+            {x.purpose ? `“${x.purpose}”` : 'The agent did not say why.'}
+          </p>
+        )}
+      </div>
+
+      {/* LE SEUL BLOC QUE « Close » CACHE : l'effet et les arguments, ce que
+          l'appel va faire au monde. */}
+      {question === null && requestOpen && (
         <div
-          className="flex flex-col gap-4 bg-canvas px-6 py-2.5"
+          className="flex flex-col gap-1.5 bg-canvas py-2.5 pl-[37px] pr-6"
           data-testid="approval-request-body"
         >
-          {question ? (
-            <div className="flex flex-col gap-1.5">
-              <p className="text-body-13 italic text-ink-2">{question.question}</p>
-              {question.context && <p className="text-body-12 text-ink-2">{question.context}</p>}
-              <ul className="flex flex-col gap-0.5">
-                {question.options.map((o) => (
-                  <li key={o} className="text-body-12 text-ink-2">
-                    {o}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <>
-              {/* La voix de l'agent, verbatim (invariant #2). Une absence se
-                  dit : « il n'a pas dit pourquoi » est une information. */}
-              <p className="text-body-13 italic text-ink-2">
-                {x.purpose ? `“${x.purpose}”` : 'The agent did not say why.'}
-              </p>
+          <p className="flex items-start gap-1.5 text-body-12 text-warn">
+            <Warning size={14} className="mt-0.5 shrink-0" aria-hidden />
+            <span>
+              {x.effectLabel}
+              {x.provenance.kind === 'mcp' && (
+                <>
+                  {' · third-party tool, MCP server '}
+                  {x.provenance.name ?? x.provenance.slug}
+                </>
+              )}
+              {x.provenance.kind !== 'mcp' && x.impact && (
+                <span className="text-ink-2">{` · ${x.impact}`}</span>
+              )}
+              {x.target && <span className="text-ink-2">{` · ${x.target}`}</span>}
+            </span>
+          </p>
 
-              <div className="flex flex-col gap-1.5">
-                <p className="flex items-start gap-1.5 text-body-12 text-warn">
-                  <Warning size={14} className="mt-0.5 shrink-0" aria-hidden />
-                  <span>
-                    {x.effectLabel}
-                    {x.provenance.kind === 'mcp' && (
-                      <>
-                        {' · third-party tool, MCP server '}
-                        {x.provenance.name ?? x.provenance.slug}
-                      </>
+          {x.provenance.kind === 'mcp' && x.provenance.supplied && (
+            <p className="text-micro-10 text-ink-3">
+              Description supplied by this server, third-party text, unverified:{' '}
+              <span className="text-ink-2">{x.provenance.supplied}</span>
+            </p>
+          )}
+
+          {x.args.length > 0 && (
+            <dl className="flex flex-col gap-0.5">
+              {x.args.map((arg) => (
+                <div key={arg.key} className="flex gap-2">
+                  <dt className="shrink-0 text-mono-12 text-ink-3">{arg.key}</dt>
+                  <dd className="min-w-0 whitespace-pre-wrap break-all text-mono-12 text-run">
+                    {arg.value}
+                    {arg.truncated && (
+                      <span className="text-ink-3">
+                        {` (${arg.fullLength} characters, 300 shown)`}
+                      </span>
                     )}
-                    {x.provenance.kind !== 'mcp' && x.impact && (
-                      <span className="text-ink-2">{` · ${x.impact}`}</span>
-                    )}
-                    {x.target && <span className="text-ink-2">{` · ${x.target}`}</span>}
-                  </span>
-                </p>
-
-                {x.provenance.kind === 'mcp' && x.provenance.supplied && (
-                  <p className="text-micro-10 text-ink-3">
-                    Description supplied by this server, third-party text, unverified:{' '}
-                    <span className="text-ink-2">{x.provenance.supplied}</span>
-                  </p>
-                )}
-
-                {x.args.length > 0 && (
-                  <dl className="flex flex-col gap-0.5">
-                    {x.args.map((arg) => (
-                      <div key={arg.key} className="flex gap-2">
-                        <dt className="shrink-0 text-mono-12 text-ink-3">{arg.key}</dt>
-                        <dd className="min-w-0 whitespace-pre-wrap break-all text-mono-12 text-run">
-                          {arg.value}
-                          {arg.truncated && (
-                            <span className="text-ink-3">
-                              {` (${arg.fullLength} characters, 300 shown)`}
-                            </span>
-                          )}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                )}
-              </div>
-            </>
+                  </dd>
+                </div>
+              ))}
+            </dl>
           )}
 
           <p className="text-body-12 text-ink-3">
@@ -376,37 +367,36 @@ export default function ApprovalRequestCard({
         </div>
       )}
 
-      {/* Les arguments bruts, replies : ce qui a ete lu plus haut est mis en
-          forme, ceci est la source. */}
-      {!folded && (
-        <div className="border-t border-rule-2">
-          <DisclosureButton
-            open={inputOpen}
-            onClick={() => setInputOpen((v) => !v)}
-            inset="tight"
-            testId="approval-tool-input-toggle"
-          >
-            <span className="text-body-13 text-ink-3">Tool input</span>
-          </DisclosureButton>
-          {inputOpen && (
-            <pre className="whitespace-pre-wrap break-words px-4 pb-4 text-mono-12 text-ink-2">
-              {JSON.stringify(a.toolInput, null, 2)}
-            </pre>
-          )}
-        </div>
-      )}
+      {/* Les arguments bruts, repliés : ce qui a été lu plus haut est mis en
+          forme, ceci est la source. Son pli lui appartient, et il survit au
+          passage Open / Close. */}
+      <div className="border-t border-rule-2">
+        <DisclosureButton
+          open={inputOpen}
+          onClick={() => setInputOpen((v) => !v)}
+          inset="tight"
+          testId="approval-tool-input-toggle"
+        >
+          <span className="text-body-13 text-ink-3">Tool input</span>
+        </DisclosureButton>
+        {inputOpen && (
+          <pre className="whitespace-pre-wrap break-words px-4 pb-4 text-mono-12 text-ink-2">
+            {JSON.stringify(a.toolInput, null, 2)}
+          </pre>
+        )}
+      </div>
 
       {/* POURQUOI cette demande existe. Sans cette section, l'ordre de
           precedence etait invisible, et la carte pouvait promettre le
           contraire de ce que la porte allait faire (#346). */}
-      {question === null && !folded && (
-        <div className="flex flex-col gap-4 border-t border-rule-2 p-4">
-          <p className="text-mono-11 text-ink">Reason this triggered Approval request</p>
+      {question === null && (
+        <div className="flex flex-col gap-2 border-t border-rule-2 px-4 pb-6 pt-4">
+          <p className="text-body-13 text-ink">Reason this triggered Approval request</p>
           <div className="overflow-clip rounded-lg bg-hover" data-testid="approval-rule-list">
             {lines.map((row, i) => (
               <div
                 key={row.key}
-                className={`flex items-center gap-2.5 px-2.5 py-3 ${i > 0 ? 'border-t border-rule' : ''}`}
+                className={`flex items-center gap-2.5 px-2.5 py-3 ${i > 0 ? 'border-t border-rule-2' : ''}`}
                 data-testid={`approval-rule-${row.key}`}
               >
                 <div className={`w-25 shrink-0 ${row.wins ? '' : 'opacity-60'}`}>
@@ -420,10 +410,14 @@ export default function ApprovalRequestCard({
                 >
                   {row.toolName}
                 </span>
+                {/* Le dessin écrit « Overriden » avec un seul r : c'est une
+                    faute d'orthographe, pas un mot du produit. */}
                 {row.wins ? (
-                  <span className="shrink-0 text-micro-10 text-ok">wins</span>
+                  <span className="w-25 shrink-0 text-mono-11 text-ok">Wins</span>
                 ) : (
-                  <span className="shrink-0 text-micro-10 text-ink-4 opacity-60">overridden</span>
+                  <span className="w-25 shrink-0 text-mono-11 text-ink-4 opacity-60">
+                    Overridden
+                  </span>
                 )}
                 {a.agentId !== null &&
                   (editing === row.key ? (
@@ -456,7 +450,7 @@ export default function ApprovalRequestCard({
                     />
                   ) : (
                     <PrimaryButton
-                      variant="ink"
+                      variant="neutral"
                       size="sm"
                       onClick={() => setEditing(row.key)}
                       disabled={isPending}
@@ -471,92 +465,8 @@ export default function ApprovalRequestCard({
         </div>
       )}
 
-      {/* La decision. Aucun bouton n'ecrit de regle, sauf celui qui le dit.
-          Repliee, la carte n'offre rien a cliquer : on la rouvre d'abord. */}
-      {pending && !folded && (
-        <div className="flex flex-col gap-3 border-t border-rule-2 px-4 pb-6 pt-6.5">
-          {question ? (
-            <QuestionActions approvalId={a.id} options={question.options} />
-          ) : (
-            <>
-              {showRejectInput && (
-                <TextArea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Reason for rejecting (optional, passed to the agent)"
-                  rows={2}
-                  maxLength={500}
-                  className="!resize-none !bg-canvas"
-                />
-              )}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <PrimaryButton
-                    variant="danger"
-                    size="md"
-                    onClick={handleReject}
-                    disabled={isPending}
-                  >
-                    {showRejectInput ? 'Confirm rejection' : 'Reject'}
-                  </PrimaryButton>
-                  {showRejectInput && (
-                    <PrimaryButton
-                      variant="neutral"
-                      size="md"
-                      className="!border-0 !bg-transparent !text-ink-3 hover:!text-ink"
-                      onClick={() => {
-                        setShowRejectInput(false);
-                        setNotes('');
-                      }}
-                    >
-                      Cancel
-                    </PrimaryButton>
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {a.agentId !== null && a.agentWorkspaces.length > 1 && (
-                    <Select
-                      value={folder}
-                      onChange={(e) => setFolder(e.target.value)}
-                      aria-label="Folder this approval applies to"
-                      data-testid="approval-folder-select"
-                    >
-                      {a.agentWorkspaces.map((w) => (
-                        <option key={w.path} value={w.path}>
-                          {w.label}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
-                  {a.agentId !== null && a.agentWorkspaces.length > 0 && (
-                    <PrimaryButton
-                      variant="neutral"
-                      size="md"
-                      onClick={handleApproveForProject}
-                      disabled={isPending}
-                      data-testid="approval-approve-project"
-                    >
-                      Approve for this project
-                    </PrimaryButton>
-                  )}
-                  <PrimaryButton
-                    variant="ink"
-                    size="md"
-                    onClick={handleApproveOnce}
-                    disabled={isPending}
-                    data-testid="approval-approve-once"
-                  >
-                    Approve once
-                  </PrimaryButton>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
       {/* Une demande deja tranchee garde ce qui a ete decide, et par qui. */}
-      {!folded && !pending && (a.notes || a.answer) && (
+      {!pending && (a.notes || a.answer) && (
         <p
           className="border-t border-rule-2 px-4 py-3 text-body-12 italic text-ink-3"
           data-testid="approval-decision-note"
@@ -565,6 +475,98 @@ export default function ApprovalRequestCard({
           {a.resolvedBy ? ` (by ${a.resolvedBy})` : ''}
         </p>
       )}
+
+      {/* LE PIED, DANS LES DEUX ETATS. A gauche « Open Run », qui mene au run
+          et reste quoi qu'il arrive : une demande tranchee se relit la. A
+          droite la decision, et elle seule s'en va une fois prise. Aucun bouton
+          n'ecrit de regle, sauf celui qui le dit. */}
+      <div className="flex flex-col gap-3 border-t border-rule-2 px-4 pb-6 pt-6.5">
+        {pending && question === null && showRejectInput && (
+          <TextArea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Reason for rejecting (optional, passed to the agent)"
+            rows={2}
+            maxLength={500}
+            className="!resize-none !bg-canvas"
+          />
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <PrimaryButton variant="neutral" size="md" href={`/jobs/${a.jobId}`}>
+            Open Run
+          </PrimaryButton>
+
+          {pending &&
+            (question ? (
+              <QuestionActions approvalId={a.id} options={question.options} />
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Rejeter est plein, pas contour : c'est la seule action qui
+                    coupe l'agent, et le dessin la peint en `color/skill`. La
+                    variante `danger` du DS est un contour, partagee par les
+                    « Disconnect » de modale ; on surcharge ici plutot que de
+                    repeindre tous les autres. */}
+                <PrimaryButton
+                  variant="danger"
+                  size="md"
+                  className="!border-skill !bg-skill !text-canvas hover:!bg-skill hover:!brightness-95"
+                  onClick={handleReject}
+                  disabled={isPending}
+                >
+                  {showRejectInput ? 'Confirm rejection' : 'Reject'}
+                </PrimaryButton>
+                {showRejectInput && (
+                  <PrimaryButton
+                    variant="neutral"
+                    size="md"
+                    className="!border-0 !bg-transparent !text-ink-3 hover:!text-ink"
+                    onClick={() => {
+                      setShowRejectInput(false);
+                      setNotes('');
+                    }}
+                  >
+                    Cancel
+                  </PrimaryButton>
+                )}
+                {a.agentId !== null && a.agentWorkspaces.length > 1 && (
+                  <Select
+                    value={folder}
+                    onChange={(e) => setFolder(e.target.value)}
+                    aria-label="Folder this approval applies to"
+                    data-testid="approval-folder-select"
+                  >
+                    {a.agentWorkspaces.map((w) => (
+                      <option key={w.path} value={w.path}>
+                        {w.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+                {a.agentId !== null && a.agentWorkspaces.length > 0 && (
+                  <PrimaryButton
+                    variant="neutral"
+                    size="md"
+                    onClick={handleApproveForProject}
+                    disabled={isPending}
+                    data-testid="approval-approve-project"
+                  >
+                    Approve for this project
+                  </PrimaryButton>
+                )}
+                <PrimaryButton
+                  variant="ink"
+                  size="md"
+                  className="!bg-ok !text-paper"
+                  onClick={handleApproveOnce}
+                  disabled={isPending}
+                  data-testid="approval-approve-once"
+                >
+                  Approve once
+                </PrimaryButton>
+              </div>
+            ))}
+        </div>
+      </div>
     </div>
   );
 }
