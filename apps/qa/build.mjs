@@ -1942,21 +1942,34 @@ ${modaleExplications()}
         return;
       }
       enCours = true;
-      Promise.all([lireUne(charge.urls[0]), lireUne(charge.urls[1])]).then(function(r){
-        var raison = (r[0] && r[0].erreur) || (r[1] && r[1].erreur) || null;
-        var etat = ciEnDirect({ enCours: r[0], enFile: r[1], le: le, precedent: precedent, raison: raison });
-        if(etat.etat === 'lue') precedent = { lignes: etat.lignes, le: etat.le };
-        peindre(etat);
-        enCours = false;
-      });
+      // Le garde est rendu DANS TOUS LES CAS : le laisser leve sur une
+      // exception gelerait la colonne jusqu'au rechargement, et une colonne
+      // gelee est exactement ce que #363 corrige (constat C1 de la revue C).
+      var rendreLaMain = function(){ enCours = false; };
+      Promise.all([lireUne(charge.urls[0]), lireUne(charge.urls[1])])
+        .then(function(r){
+          var raison = (r[0] && r[0].erreur) || (r[1] && r[1].erreur) || null;
+          var etat = ciEnDirect({ enCours: r[0], enFile: r[1], le: le, precedent: precedent, raison: raison });
+          if(etat.etat === 'lue') precedent = { lignes: etat.lignes, le: etat.le };
+          peindre(etat);
+        })
+        .then(rendreLaMain, rendreLaMain);
     }
 
+    // LA CADENCE, et le calcul qui la fixe (constat C2 de la revue C). Deux
+    // requetes par lecture, 60 par heure et par adresse IP sans jeton : une
+    // lecture toutes les deux minutes plus celle de l'ouverture fait 31
+    // lectures, donc 62 requetes, dans une fenetre glissante d'une heure. Deux
+    // de trop, et un 403 en fin de premiere heure. A 150 secondes, c'est 25
+    // lectures et 50 requetes : la colonne reste sous le plafond meme avec un
+    // onglet laisse ouvert toute la journee.
+    var CADENCE = 150000;
     lire();
-    setInterval(function(){ if(!document.hidden) lire(); }, 120000);
+    setInterval(function(){ if(!document.hidden) lire(); }, CADENCE);
     // Revenir sur l'onglet relit, mais pas plus souvent que l'intervalle : un
     // va-et-vient entre deux onglets épuiserait le quota en quelques minutes.
     document.addEventListener('visibilitychange', function(){
-      if(!document.hidden && Date.now() - derniereTentative >= 120000) lire();
+      if(!document.hidden && Date.now() - derniereTentative >= CADENCE) lire();
     });
   })();
 

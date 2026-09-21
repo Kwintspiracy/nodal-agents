@@ -77,6 +77,8 @@ import {
   ciEnDirect,
   sansCi,
   compteEnVol,
+  heureUtc,
+  heureLocale,
   htmlCarteEnVol,
   htmlDirectEnVol,
   SCRIPT_EN_VOL,
@@ -4276,6 +4278,19 @@ describe('la colonne Running lit GitHub dans le navigateur (#363)', () => {
     });
     expect(vue.muettes).toEqual([]);
     expect(vue.complet).toBe(true);
+  });
+
+  it('une date absente ne devient pas une heure, dans aucun des deux fuseaux', () => {
+    // La sentinelle d'absence, et c'est la seule assertion d'heure qui ne
+    // dépende pas du fuseau de la machine (constat C4 de la revue C). Sans
+    // elle, `new Date(null)` rendrait « 01 Jan 1970 » et la colonne daterait
+    // une lecture qui n'a pas eu lieu.
+    expect(heureLocale(null)).toBe('·');
+    expect(heureLocale(undefined)).toBe('·');
+    expect(heureUtc(null)).toBe('·');
+    // Et une date réelle porte le `Z` en UTC, jamais dans le fuseau du lecteur.
+    expect(heureUtc('2026-09-21T09:40:00Z')).toBe('21 Sept 2026, 09:40Z');
+    expect(heureLocale('2026-09-21T09:40:00Z')).not.toContain('Z');
   });
 
   it('le script de la page EMBARQUE les fonctions éprouvées ici, pas des copies', () => {

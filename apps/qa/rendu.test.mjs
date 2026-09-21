@@ -1108,10 +1108,23 @@ describe('la colonne « Running » du Kanban', () => {
     ]) {
       expect(html, nom).toContain(nom);
     }
-    // La cadence : deux lectures toutes les deux minutes, jamais en boucle
-    // serree. L'API publique donne 60 requetes par heure et par adresse IP.
-    expect(html).toContain('120000');
+    // LA CADENCE, et le calcul qui la fixe. Deux requetes par lecture, 60 par
+    // heure et par adresse IP sans jeton. A 120 000 ms, l'ouverture plus les
+    // rafraichissements font 31 lectures, donc 62 requetes, dans une fenetre
+    // glissante d'une heure : deux de trop (constat C2 de la revue C). A
+    // 150 000 ms, c'est 25 lectures et 50 requetes.
+    const cadence = Number(html.match(/var CADENCE = (\d+);/)?.[1]);
+    expect(cadence, 'la cadence de lecture est introuvable dans la page').toBeGreaterThan(0);
+    expect(1 + Math.floor(3600000 / cadence), 'plus de 30 lectures par heure').toBeLessThanOrEqual(
+      30,
+    );
     expect(html).toContain('visibilitychange');
+    // L'en-tete que GitHub demande : sans elle, l'API sert une forme ancienne
+    // et rien ne le dirait (constat C3 de la revue C).
+    expect(html).toContain('application/vnd.github+json');
+    // Et la main est rendue quoi qu'il arrive : un garde reste a `true` sur une
+    // exception gelerait la colonne pour toujours (constat C1).
+    expect(html).toContain('.then(rendreLaMain, rendreLaMain)');
   });
 
   it('sans dépôt collecté, la page ne DEVINE aucune adresse', () => {
