@@ -130,7 +130,7 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
 
     const out = await finalizeJobSuccess(
       asDb(),
-      { jobId, resultKind: 'prose', result: 'fait' },
+      { jobId, resultKind: 'prose', repairTurn: 'unsupported', result: 'fait' },
       deps(),
     );
     // Le run FINIT : le fait accompagne la décision terminale, il ne la
@@ -150,7 +150,11 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
     // et `produced` est resté faux. Rien n'a été livré.
     await insertLivrable(jobId, { produced: false });
 
-    await finalizeJobSuccess(asDb(), { jobId, resultKind: 'prose', result: 'rien écrit' }, deps());
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId, resultKind: 'prose', repairTurn: 'unsupported', result: 'rien écrit' },
+      deps(),
+    );
 
     expect(
       await attend(jobId),
@@ -167,7 +171,7 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId, resultKind: 'prose', result: 'un shell a tourné' },
+      { jobId, resultKind: 'prose', repairTurn: 'unsupported', result: 'un shell a tourné' },
       deps(),
     );
 
@@ -179,7 +183,7 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId, resultKind: 'prose', result: 'juste une réponse' },
+      { jobId, resultKind: 'prose', repairTurn: 'unsupported', result: 'juste une réponse' },
       deps(),
     );
 
@@ -193,7 +197,7 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId: delegue, resultKind: 'prose', result: 'rapport écrit' },
+      { jobId: delegue, resultKind: 'prose', repairTurn: 'unsupported', result: 'rapport écrit' },
       deps(),
     );
 
@@ -230,7 +234,7 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
 
     const out = await finalizeJobSuccess(
       asDb(),
-      { jobId: a, resultKind: 'prose', result: 'fait' },
+      { jobId: a, resultKind: 'prose', repairTurn: 'unsupported', result: 'fait' },
       deps(),
     );
 
@@ -260,7 +264,7 @@ describe('un livrable de ce run attend un regard @cap:verifier-un-livrable/moteu
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId: feuille, resultKind: 'prose', result: 'rapport écrit' },
+      { jobId: feuille, resultKind: 'prose', repairTurn: 'unsupported', result: 'rapport écrit' },
       deps(),
     );
 

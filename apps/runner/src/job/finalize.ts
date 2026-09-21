@@ -40,6 +40,24 @@
 // fort (code + données) et le job finit quand même ; le fail-closed n'entre en
 // vigueur qu'en ②, avec la garde.
 //
+// ─── PR② — UN tour de réparation, et un seul (issue #375, décision D2) ──────
+//
+// Ce que ② ajoute à ① : un verdict `red` sur un livrable CONFIGURÉ n'écrit
+// plus le statut terminal du premier coup. La primitive rend `repair_due`,
+// pose `repair_attempts = 1` sur les états rouges, relâche sa réclamation et
+// rend la main SANS écrire de statut : le job reste non terminal, son appelant
+// lui donne un tour de plus avec la sortie rouge comme entrée, et la preuve
+// repasse à la finalisation suivante. Deuxième rouge ⇒ `completed`,
+// `red_streak + 1`, aucune troisième chance (invariant #8).
+//
+// POURQUOI L'APPELANT DÉCLARE (`repairTurn`). Un tour de réparation n'existe
+// que là où il y a une boucle de tours à reprendre — `executeJob`. Le runtime
+// CLI a son propre cycle (PR③ du plan) et le cron du tableau de tâches ne
+// reprend rien : il compile des résultats d'enfants déjà finis. Le champ est
+// REQUIS, comme `resultKind` : chaque porte terminale DIT si elle sait rouvrir
+// son job, plutôt qu'un défaut qui laisserait un jour un job pendu sans statut
+// parce que personne n'a lu ce retour.
+//
 // ─── Aucun type de livrable ici ────────────────────────────────────────────
 //
 // La primitive n'appelle que le registre (`../verification/registry.ts`).
@@ -55,6 +73,8 @@ import { agentJobs, jobDeliverableVerificationState, verificationRuns } from '@n
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { DecisionStatus, JobResultKind } from '@nodal-agents/shared';
 import { getVerifier } from '../verification/registry.ts';
+import { buildRepairBrief } from '../verification/repair-brief.ts';
+import type { RepairBriefCommand } from '../verification/repair-brief.ts';
 import type {
   DeliverableVerifier,
   LoadedConfig,
@@ -84,6 +104,8 @@ export const FINALIZE_JOB_NOT_FOUND = 'FINALIZE_JOB_NOT_FOUND';
 export const FINALIZE_CLAIMED_ELSEWHERE = 'FINALIZE_CLAIMED_ELSEWHERE';
 /** La configuration ou l'epoch du projet ont bougé PENDANT la preuve : ce qui a été prouvé n'est plus l'arbre courant. */
 export const VERIFY_STALE_EPOCH = 'VERIFY_STALE_EPOCH';
+/** Un tour de réparation vient de s'ouvrir sur ce job (PR②, décision D2). */
+export const VERIFY_REPAIR_TURN_OPENED = 'VERIFY_REPAIR_TURN_OPENED';
 /**
  * Au-delà de ce délai, un marqueur `finalizing_at` sans décision terminale est
  * réputé orphelin (le finaliseur qui l'a posé est mort entre ses deux
@@ -116,15 +138,19 @@ export type ObservedOutcome =
   | 'review_pending'
   | 'already_terminal'
   | 'verification_due'
+  | 'repair_due'
   | 'verification_persistence_failed';
 
 /**
- * Ce que la primitive rend EFFECTIVEMENT en PR① : le job finit, ou il était
- * déjà fini. `verification_due` et `verification_persistence_failed` sont
- * observés, journalisés, et rendus comme `completed_unverified` — la phase
- * d'observation interdit de changer l'issue d'un job.
+ * Ce que la primitive rend EFFECTIVEMENT : le job finit, il était déjà fini,
+ * ou — PR②, et seulement si l'appelant sait rouvrir son job — il repart pour
+ * UN tour de réparation, sans statut terminal écrit.
+ *
+ * `verification_due` et `verification_persistence_failed` restent observés,
+ * journalisés, et rendus comme `completed_unverified` : la garde de ① n'est
+ * toujours pas branchée sur eux, seul le rouge réparable change l'issue.
  */
-export type FinalizeKind = 'completed' | 'completed_unverified' | 'already_terminal';
+export type FinalizeKind = 'completed' | 'completed_unverified' | 'already_terminal' | 'repair_due';
 
 /** L'état d'un livrable après la finalisation, tel que la décision l'a laissé. */
 export interface DeliverableDecision {
@@ -139,6 +165,22 @@ export interface DeliverableDecision {
   readonly due: boolean;
 }
 
+/**
+ * Ce qu'un tour de réparation ouvert donne à l'appelant : le texte à poser
+ * comme entrée du tour suivant, et de quoi le journaliser.
+ *
+ * Le BRIEF est composé ici, dans la primitive, et pas chez l'appelant : les
+ * enregistrements de preuve ne vivent que le temps de cette fonction, et deux
+ * appelants qui composeraient chacun leur message diraient deux choses du
+ * même rouge.
+ */
+export interface RepairTurn {
+  /** Le message de plateforme, verbatim, destiné au MODÈLE (jamais à l'écran). */
+  readonly brief: string;
+  /** Les clés canoniques des livrables rouges qui ont ouvert ce tour. */
+  readonly keys: readonly string[];
+}
+
 export interface FinalizeOutcome {
   readonly kind: FinalizeKind;
   /** Le résultat typé COMPLET, calculé même quand il n'est pas opposé. */
@@ -146,6 +188,8 @@ export interface FinalizeOutcome {
   /** Au moins un livrable dû. Journalisé ; sans effet sur `kind` en ①. */
   readonly observedDue: boolean;
   readonly decisions: readonly DeliverableDecision[];
+  /** Présent SI ET SEULEMENT SI `kind === 'repair_due'`. */
+  readonly repair?: RepairTurn;
 }
 
 /** Compteurs de tokens/durée du run — même forme que celle de `completeJob`. */
@@ -222,6 +266,20 @@ export interface FinalizeInput {
    * `completeJob` poseront — reste en place.
    */
   readonly resultKind: JobResultKind;
+  /**
+   * L'appelant SAIT-IL rouvrir ce job pour un tour de plus ? (PR②, D2.)
+   *
+   * `'supported'` — la boucle de tours de `executeJob` : une preuve rouge
+   * jamais réparée rend `repair_due`, le job ne prend PAS de statut terminal,
+   * et l'appelant relance un tour avec `outcome.repair.brief` en entrée.
+   *
+   * `'unsupported'` — les portes qui n'ont pas de tour à reprendre (le runtime
+   * CLI, qui a son propre cycle en PR③ ; le cron du tableau de tâches, qui
+   * compile des enfants déjà finis). Le rouge y reste OBSERVÉ, comme en ① : le
+   * job finit `completed_unverified`. Pas de défaut : une porte terminale qui
+   * oublierait de répondre laisserait un jour un job sans statut.
+   */
+  readonly repairTurn: 'supported' | 'unsupported';
   readonly toolsUsed?: readonly string[];
   /**
    * Le marqueur `finalizing_at` que l'APPELANT a déjà posé (le cron réclame un
@@ -273,6 +331,8 @@ interface DeliverablePlan {
   readonly displayPath: string | null;
   /** La génération sale capturée sous verrou — le garde de la transaction 2. */
   readonly generation: number;
+  /** Réparations déjà ouvertes sur ce livrable. `>= 1` ⇒ plus aucune (D2). */
+  readonly repairAttempts: number;
   readonly verifier: DeliverableVerifier;
   readonly config: LoadedConfig;
 }
@@ -457,6 +517,102 @@ async function poseDeliverableCheck(
   log(DELIVERABLE_CHECK_NO_ROOT, { jobId, cause: 'chaine_sans_tete', maillons: CHAIN_WALK_MAX });
 }
 
+/**
+ * Ouvre UN tour de réparation sur les livrables rouges de ce job, ou rend
+ * `null` si aucun ne peut en avoir un (issue #375, décision D2).
+ *
+ * TOUT SE PASSE DANS LA TRANSACTION TERMINALE, et c'est la seule façon d'être
+ * juste : `repair_attempts` passe de 0 à 1 SOUS LA MÊME garde de génération
+ * que l'écriture d'état, et aucun statut terminal n'est écrit. Un processus
+ * qui meurt AVANT le commit ne laisse donc rien : ni réparation marquée, ni
+ * statut.
+ *
+ * CE QU'IL ADVIENT D'UN RUNNER QUI MEURT APRÈS LE COMMIT, dit exactement
+ * (constat C1 de la revue C, qui a réfuté la version précédente de ce
+ * commentaire) : le job reste `processing`, et il est FAUCHÉ comme n'importe
+ * quel job en cours d'un runner mort — `reclaimJobsOfDeadRunners` l'échoue en
+ * `runner_restarted` à 2,5 min (`cron/reclaim-jobs.ts`), `resetOrphanedJobs`
+ * en `orphan_job_reset` à 5 min. Ni l'un ni l'autre ne rejoue la preuve : le
+ * tour de réparation est perdu avec le run, exactement comme le tour ordinaire
+ * qu'il aurait joué. Aucun job pendu, et jamais deux réparations — c'est la
+ * borne en base qui le garantit, pas la reprise.
+ *
+ * LA BORNE EST EN BASE, pas en mémoire : `repair_attempts = 0` est dans le
+ * `WHERE`. Un runner redémarré entre le tour de réparation et la
+ * re-finalisation relit 1 et n'en ouvre pas un second (« y compris après
+ * reprise du processus », D2).
+ *
+ * UN SEUL TOUR POUR TOUS LES ROUGES. Le brief porte toutes les commandes
+ * rouges du job, pas une par livrable : l'agent a un tour, il doit voir tout
+ * ce qu'il a à corriger. Un livrable déjà réparé (`repair_attempts >= 1`) qui
+ * rougit encore entre dans le brief sans rouvrir quoi que ce soit — c'est un
+ * fait que l'agent doit lire, ce n'est plus une chance de plus.
+ */
+async function ouvrirReparation(
+  tx: AnyDrizzleDb,
+  jobId: string,
+  rouges: readonly { plan: DeliverablePlan; proof: ProofResult }[],
+): Promise<RepairTurn | null> {
+  if (rouges.length === 0) return null;
+
+  const now = new Date();
+  let ouvert = false;
+  for (const rouge of rouges) {
+    if (rouge.plan.repairAttempts !== 0) continue;
+    const marque = await tx
+      .update(jobDeliverableVerificationState)
+      .set({ repairAttempts: 1, updatedAt: now })
+      .where(
+        and(
+          eq(jobDeliverableVerificationState.id, rouge.plan.stateId),
+          eq(jobDeliverableVerificationState.repairAttempts, 0),
+          eq(jobDeliverableVerificationState.dirtyGeneration, rouge.plan.generation),
+        ),
+      )
+      .returning({ id: jobDeliverableVerificationState.id });
+    if (marque.length > 0) ouvert = true;
+  }
+  if (!ouvert) return null;
+
+  const commandes: RepairBriefCommand[] = [];
+  for (const rouge of rouges) {
+    for (const record of rouge.proof.records) {
+      if (record.verdict !== 'red') continue;
+      commandes.push({
+        // L'ADRESSE si on la connaît, l'identité sinon (constat C2) : c'est
+        // ce que l'agent doit rouvrir, pas une clé repliée en casse.
+        deliverable: rouge.plan.displayPath ?? rouge.plan.canonicalKey,
+        record,
+      });
+    }
+  }
+  if (commandes.length === 0) {
+    // Un verdict rouge sans commande rouge : la preuve se contredirait. On
+    // refuse plutôt que d'ouvrir un tour au brief vide (invariant #4).
+    throw new Error(`REPAIR_BRIEF_WITHOUT_RED_COMMAND: ${jobId}`);
+  }
+
+  // La réclamation se RELÂCHE (`completeJob` l'aurait fait ; il n'est pas
+  // appelé ici) : sans ça, la finalisation d'après le tour de réparation lirait
+  // un marqueur frais qui n'est pas le sien et se retirerait pendant dix
+  // minutes. Et le tour compte pour UNE reprise de chaîne, comme une reprise
+  // après délégation — jamais plus : `repair_attempts` garantit qu'il n'y en a
+  // qu'un par job.
+  await tx
+    .update(agentJobs)
+    .set({
+      finalizingAt: null,
+      chainCount: sql`coalesce(${agentJobs.chainCount}, 0) + 1`,
+      updatedAt: now,
+    })
+    .where(eq(agentJobs.id, jobId));
+
+  return {
+    brief: buildRepairBrief(commandes),
+    keys: rouges.map((r) => r.plan.canonicalKey),
+  };
+}
+
 // ─── La primitive ───────────────────────────────────────────────────────────
 
 /**
@@ -543,6 +699,7 @@ export async function finalizeJobSuccess(
         canonicalKey: jobDeliverableVerificationState.canonicalKey,
         dirtyGeneration: jobDeliverableVerificationState.dirtyGeneration,
         displayPathSnapshot: jobDeliverableVerificationState.displayPathSnapshot,
+        repairAttempts: jobDeliverableVerificationState.repairAttempts,
       })
       .from(jobDeliverableVerificationState)
       .where(eq(jobDeliverableVerificationState.jobId, jobId));
@@ -582,6 +739,7 @@ export async function finalizeJobSuccess(
         canonicalKey: state.canonicalKey,
         displayPath: state.displayPathSnapshot,
         generation: state.dirtyGeneration,
+        repairAttempts: state.repairAttempts,
         verifier,
         config,
       });
@@ -636,7 +794,7 @@ export async function finalizeJobSuccess(
 
   // ─── Transaction 2 : décision, statut terminal ────────────────────────────
   const committed = await db.transaction(
-    async (tx): Promise<{ decisions: DeliverableDecision[] } | null> => {
+    async (tx): Promise<{ decisions: DeliverableDecision[]; repair?: RepairTurn } | null> => {
       // La MÊME garde qu'en transaction 1, reprise sous le verrou : c'est elle
       // qui sérialise deux finalisations concurrentes du même job. Celle qui
       // arrive après le commit de l'autre lit un job terminal et n'écrit rien.
@@ -650,6 +808,13 @@ export async function finalizeJobSuccess(
       if (TERMINAL_STATUSES.includes(job.status as (typeof TERMINAL_STATUSES)[number])) return null;
 
       const decisions: DeliverableDecision[] = [];
+      /**
+       * Les livrables dont le verdict est ROUGE et dont l'écriture d'état a
+       * bien atterri — les seuls candidats à un tour de réparation. Un rouge
+       * retombé en `dirty` (génération périmée, panne d'écriture) n'en est pas
+       * un : on ne fait pas réparer ce qu'on n'a pas su prouver.
+       */
+      const rouges: { plan: DeliverablePlan; proof: ProofResult }[] = [];
 
       for (const plan of opened.plans) {
         const proof = proofs.get(plan.stateId) ?? null;
@@ -695,7 +860,11 @@ export async function finalizeJobSuccess(
             .update(jobDeliverableVerificationState)
             .set({
               decisionStatus: status,
-              ...(status === 'green' ? { verifiedGeneration: plan.generation } : {}),
+              // Un vert REMET LE COMPTEUR DE ROUGES À ZÉRO : `red_streak` dit
+              // les rouges consécutifs, pas les rouges de toujours. L'incrément,
+              // lui, n'est PAS écrit ici : il n'a lieu que si le rouge est le
+              // dernier mot (voir plus bas, après la décision de réparation).
+              ...(status === 'green' ? { verifiedGeneration: plan.generation, redStreak: 0 } : {}),
               ...(ready
                 ? { testedEpoch: ready.epoch, commandHashSnapshot: ready.manifestHash }
                 : {}),
@@ -730,12 +899,51 @@ export async function finalizeJobSuccess(
           });
         }
 
+        if (effective === 'red') {
+          const prouve = proofs.get(plan.stateId);
+          // `red` ne sort de `decisionStatusFor` que sur un `proof` non nul :
+          // la garde est là pour le compilateur, pas pour un cas atteignable.
+          if (prouve) rouges.push({ plan, proof: prouve });
+        }
+
         decisions.push({
           deliverableType: plan.deliverableType,
           canonicalKey: plan.canonicalKey,
           decisionStatus: effective,
           ...classify(effective),
         });
+      }
+
+      // ─── PR② : UN tour de réparation, ou le rouge est le dernier mot ──────
+      const repair =
+        input.repairTurn === 'supported' ? await ouvrirReparation(tx, jobId, rouges) : null;
+
+      if (repair) {
+        // RIEN de terminal n'est écrit : pas de `completeJob`, pas de
+        // `poseDeliverableCheck` (le run n'a pas livré, il rejoue), pas de
+        // livraison préparée (livrer une notice sur un job qui continue la
+        // dupliquerait au tour suivant). L'état des livrables, lui, EST commis
+        // — le rouge est un fait, réparé ou non.
+        return { decisions, repair };
+      }
+
+      // Aucune réparation : chaque rouge est définitif pour ce job, et le
+      // compteur de rouges consécutifs l'enregistre. Même garde de génération
+      // que l'écriture d'état plus haut — sur une ligne qui aurait bougé
+      // depuis, on n'incrémente rien.
+      for (const rouge of rouges) {
+        await tx
+          .update(jobDeliverableVerificationState)
+          .set({
+            redStreak: sql`${jobDeliverableVerificationState.redStreak} + 1`,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(jobDeliverableVerificationState.id, rouge.plan.stateId),
+              eq(jobDeliverableVerificationState.dirtyGeneration, rouge.plan.generation),
+            ),
+          );
       }
 
       // L'écriture terminale elle-même : `completeJob` porte déjà la
@@ -778,7 +986,19 @@ export async function finalizeJobSuccess(
 
   if (!committed) return alreadyTerminal;
 
-  const { decisions } = committed;
+  const { decisions, repair } = committed;
+  if (repair) {
+    // Le job N'EST PAS terminal : il repart pour un tour, avec `repair.brief`
+    // en entrée. Journalisé par un CODE et des données, jamais une phrase.
+    log(VERIFY_REPAIR_TURN_OPENED, { jobId, keys: repair.keys });
+    return {
+      kind: 'repair_due',
+      observedOutcome: 'repair_due',
+      observedDue: true,
+      decisions,
+      repair,
+    };
+  }
   const observedDue = decisions.some((d) => d.due);
   if (observedDue) {
     log(VERIFICATION_DUE_OBSERVED, {

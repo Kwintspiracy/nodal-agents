@@ -6,6 +6,9 @@
 //   - awaiting_approval does NOT bump chain_count
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -23,6 +26,7 @@ import {
   codeProjects,
   conversations,
   entities,
+  jobDeliverableVerificationState,
   telegramAllowedChats,
   channelBindings,
   agentSchedules,
@@ -32,7 +36,14 @@ import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DeliveryError } from '@nodal-agents/delivery';
-import { findModelCatalogEntry, projectKey } from '@nodal-agents/shared';
+import {
+  ENV_ALLOWLIST_VERSION,
+  SHELL_POLICY_VERSION,
+  findModelCatalogEntry,
+  hashVerificationManifest,
+  normalizePath,
+  projectKey,
+} from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import {
@@ -6930,5 +6941,240 @@ describe('executeJob — le projet courant de la conversation (P6)', () => {
     expect(sp).toContain('D:/APPS/projet-du-fil');
     expect(sp).toContain('Projet du fil');
     expect(sp).toContain('- Turns before this one: 1');
+  });
+});
+
+// ─── Le tour de réparation, VU DE LA BOUCLE (issue #375) ─────────────────────
+//
+// `repair-turn.test.ts` prouve la primitive ; ce test-ci prouve la BOUCLE : que
+// le tour de plus est réellement joué, et que le modèle reçoit la sortie rouge
+// dans le corps de sa requête. L'assertion porte sur le prompt capturé, pas sur
+// un compteur d'appels.
+
+describe('executeJob — une preuve rouge rejoue UN tour @cap:verifier-un-livrable/moteur', () => {
+  it('le second tour part avec la commande rouge et sa sortie, et coûte UNE reprise', async () => {
+    const dir = normalizePath(await mkdtemp(join(tmpdir(), 'nodal-exec-repair-')));
+    const scriptPath = join(dir, 'proof.js');
+    await writeFile(
+      scriptPath,
+      "process.stderr.write('AssertionError: expected 1 to be 2'); process.exit(4)",
+      'utf8',
+    );
+    const command = `"${process.execPath}" "${scriptPath}"`;
+    const commands = [{ command, timeoutSeconds: 20 }];
+    const cle = projectKey(dir);
+
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: dir,
+      projectKey: cle,
+      verifyCommands: commands,
+      verificationEpoch: 1,
+      verifyApprovedManifestHash: hashVerificationManifest({
+        verifierConfig: commands,
+        invariants: [],
+        canonicalKey: cle,
+        cwd: dir,
+        shellPolicyVersion: SHELL_POLICY_VERSION,
+        envAllowlistVersion: ENV_ALLOWLIST_VERSION,
+      }),
+    });
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'corrige le projet',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('insert job');
+
+    await db.insert(jobDeliverableVerificationState).values({
+      jobId: job.id,
+      deliverableType: 'code_project',
+      canonicalKey: cle,
+      dirtyGeneration: 1,
+      decisionStatus: 'dirty',
+      produced: true,
+      displayPathSnapshot: dir,
+    });
+
+    const prompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          text: 'Livré.',
+          toolCalls: [
+            { toolCallId: 'tc-rep-1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+        {
+          text: 'Corrigé et relivré.',
+          toolCalls: [
+            { toolCallId: 'tc-rep-2', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      prompts,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // DEUX tours : le premier a livré, le second a réparé.
+    expect(prompts).toHaveLength(2);
+    const second = JSON.stringify(prompts[1]);
+    expect(second).toContain('The proof of your delivery failed');
+    expect(second).toContain('Exit code: 4');
+    expect(second).toContain('AssertionError: expected 1 to be 2');
+    // Le premier tour, lui, ne pouvait pas connaître le rouge.
+    expect(JSON.stringify(prompts[0])).not.toContain('The proof of your delivery failed');
+
+    const [ligne] = await db
+      .select({ status: agentJobs.status, chainCount: agentJobs.chainCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(ligne?.status).toBe('completed');
+    // UNE reprise, et une seule : le checkpoint du second tour n'a pas réécrit
+    // la valeur d'avant.
+    expect(ligne?.chainCount).toBe(1);
+
+    const [etat] = await db
+      .select({
+        decisionStatus: jobDeliverableVerificationState.decisionStatus,
+        repairAttempts: jobDeliverableVerificationState.repairAttempts,
+        redStreak: jobDeliverableVerificationState.redStreak,
+      })
+      .from(jobDeliverableVerificationState)
+      .where(eq(jobDeliverableVerificationState.jobId, job.id));
+    expect(etat?.decisionStatus).toBe('red');
+    expect(etat?.repairAttempts).toBe(1);
+    expect(etat?.redStreak).toBe(1);
+  });
+});
+
+// La reprise comptée SUR UN CHEMIN QUI SAUVEGARDE. Le test au-dessus finit le
+// job dans le même appel, donc aucun checkpoint n'écrit `chain_count` : il ne
+// prouve pas que la recopie en mémoire sert à quelque chose. Celui-ci suspend
+// le tour de réparation sur une approbation — `saveCheckpoint` écrit alors
+// `chain_count` DEPUIS LA MÉMOIRE, et c'est là que l'incrément se perdrait.
+describe('executeJob — la reprise de réparation survit au checkpoint @cap:verifier-un-livrable/moteur', () => {
+  let repairDb: TestDb;
+  let repairSeed: Awaited<ReturnType<typeof seedMinimal>>;
+
+  beforeAll(async () => {
+    const result = await spinUpTestDb();
+    repairDb = result.db;
+    repairSeed = await seedMinimal(repairDb);
+    await repairDb.update(agents).set({ role: 'agent' }).where(eq(agents.id, repairSeed.agentId));
+    await repairDb.insert(approvalRules).values({
+      entityId: repairSeed.entityId,
+      agentId: null,
+      toolName: 'save_memory',
+      action: 'require_approval',
+    });
+  });
+
+  it('un tour de réparation suspendu garde son chain_count à 1', async () => {
+    const dir = normalizePath(await mkdtemp(join(tmpdir(), 'nodal-exec-repair2-')));
+    const scriptPath = join(dir, 'proof.js');
+    await writeFile(scriptPath, "process.stderr.write('boum'); process.exit(1)", 'utf8');
+    const commands = [{ command: `"${process.execPath}" "${scriptPath}"`, timeoutSeconds: 20 }];
+    const cle = projectKey(dir);
+
+    await repairDb.insert(codeProjects).values({
+      entityId: repairSeed.entityId,
+      projectPath: dir,
+      projectKey: cle,
+      verifyCommands: commands,
+      verificationEpoch: 1,
+      verifyApprovedManifestHash: hashVerificationManifest({
+        verifierConfig: commands,
+        invariants: [],
+        canonicalKey: cle,
+        cwd: dir,
+        shellPolicyVersion: SHELL_POLICY_VERSION,
+        envAllowlistVersion: ENV_ALLOWLIST_VERSION,
+      }),
+    });
+
+    const [job] = await repairDb
+      .insert(agentJobs)
+      .values({
+        entityId: repairSeed.entityId,
+        agentId: repairSeed.agentId,
+        channel: 'api',
+        task: 'corrige puis demande',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('insert job');
+
+    await repairDb.insert(jobDeliverableVerificationState).values({
+      jobId: job.id,
+      deliverableType: 'code_project',
+      canonicalKey: cle,
+      dirtyGeneration: 1,
+      decisionStatus: 'dirty',
+      produced: true,
+      displayPathSnapshot: dir,
+    });
+
+    const llmClient = makeMockLlmClient([
+      {
+        text: 'Livré.',
+        toolCalls: [
+          { toolCallId: 'tc-rep2-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      {
+        // Le tour de réparation appelle un outil sous approbation : le job se
+        // suspend, et le checkpoint écrit `chain_count`.
+        toolCalls: [
+          {
+            toolCallId: 'tc-rep2-mem',
+            toolName: 'save_memory',
+            args: {
+              fact: 'la preuve rouge portait sur le projet',
+              category: 'context',
+              purpose: 'Garder ce fait pour la suite du travail.',
+            },
+          },
+        ],
+      },
+    ]);
+
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    setActiveLlmClient(llmClient);
+    const result = await executeJob(
+      job.id as JobId,
+      {
+        db: repairDb as RunnerDeps['db'],
+        llmClient,
+        embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+        registry,
+        authProvider: new LocalTrustProvider(),
+        close: async () => {},
+      },
+      testEnv,
+    );
+    expect(result.status).toBe('awaiting_approval');
+
+    const [ligne] = await repairDb
+      .select({ status: agentJobs.status, chainCount: agentJobs.chainCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(ligne?.status).toBe('awaiting_approval');
+    // Le checkpoint a écrit la valeur DE LA MÉMOIRE : sans la recopie, il
+    // écrirait 0 et la reprise de réparation ne coûterait rien.
+    expect(ligne?.chainCount).toBe(1);
   });
 });
