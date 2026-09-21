@@ -441,6 +441,17 @@ describe('ce que la carte écrit, en anglais @cap:approuver-une-action/ecran', (
     expect(texte).toContain('Tool input');
   });
 
+  it('le bouclier d’en-tête porte la couleur d’alerte du dessin', async () => {
+    // Figma « DeliveryBlock » (nœud 521:7812) : l'icône est peinte en
+    // `color/warn`. Rendue en `text-ink-3`, elle se confondait avec le texte
+    // secondaire et la carte ne signalait plus rien.
+    await monter(demande());
+    const bouclier = parTestId('approval-shield');
+    expect(bouclier).not.toBeNull();
+    expect(bouclier!.getAttribute('class')).toContain('text-warn');
+    expect(bouclier!.getAttribute('class')).not.toContain('text-ink-3');
+  });
+
   it('dit en anglais que l’agent n’a pas donné de raison', async () => {
     await monter(
       demande({
@@ -513,16 +524,45 @@ describe('le pli de la carte suit l’état de la demande @cap:approuver-une-act
     expect(rendu().querySelector('pre')).toBeNull();
   });
 
-  it('en attente : le caret ne replie QUE le bloc de demande', async () => {
+  it('en attente : le caret replie TOUT ce qui est sous la ligne d’agent', async () => {
+    // Il n'y a qu'un pli. Le caret d'une demande en attente range la carte
+    // comme celui d'une archive : bloc de demande, « Tool input », règles et
+    // pied de boutons quittent le DOM, et la carte tient sur deux lignes.
     await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
     await cliquerLeCaret();
 
+    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('false');
     expect(parTestId('approval-request-body')).toBeNull();
-    // Ce qui sert encore à répondre reste joignable.
+    expect(parTestId('approval-rule-list')).toBeNull();
+    expect(parTestId('approval-tool-input-toggle')).toBeNull();
+    expect(rendu().textContent).not.toContain('Reason this triggered Approval request');
+    expect(bouton('Approve once')).toBeUndefined();
+    expect(bouton('Approve for this project')).toBeUndefined();
+    expect(bouton('Reject')).toBeUndefined();
+
+    // L'en-tête et la ligne d'agent restent : la carte se relit et se rouvre.
+    expect(rendu().textContent).toContain('Browser run code unsafe');
+    expect(parTestId('approval-request-toggle')!.textContent).toContain('Reviewer C');
+  });
+
+  it('en attente : un reclic rend la carte entière, boutons compris', async () => {
+    await monter(
+      demande({
+        ruleChain: CHAINE_346,
+        agentWorkspaces: [{ label: 'nodal', path: 'D:/APPS/NodalAI' }],
+      } as Partial<Approval>),
+    );
+    await cliquerLeCaret();
+    await cliquerLeCaret();
+
+    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('true');
+    expect(parTestId('approval-request-body')).not.toBeNull();
     expect(parTestId('approval-rule-list')).not.toBeNull();
-    expect(parTestId('approval-tool-input-toggle')).not.toBeNull();
     expect(bouton('Approve once')).toBeDefined();
+    expect(bouton('Approve for this project')).toBeDefined();
     expect(bouton('Reject')).toBeDefined();
+    // Et « Tool input » revient replié, comme à l'arrivée.
+    expect(parTestId('approval-tool-input-toggle')!.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('tranchée : il ne reste que l’en-tête et la ligne d’agent', async () => {
