@@ -38,6 +38,7 @@ import { pruneJobMediaFiles } from './prune-media.ts';
 import { pruneOldJobs } from '@nodal-agents/db';
 import { workspacesRoot } from '../lib/workspaces-root.ts';
 import { env } from '../env.ts';
+import type { RunnerEnv } from '../env.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
@@ -58,6 +59,7 @@ export interface CronTickResult {
   orphanJobsReset: number;
   pendingRecovered: number;
   stalePendingFailed: number;
+  /** Demandes d'approbation échues fermées par le balayage TTL (#349). */
   approvalsExpired: number;
   orphansReset: number;
   tasksUnblocked: number;
@@ -162,6 +164,22 @@ function resolveSkillUpdateCheckEnv(): SkillUpdateCheckTickEnv {
   }
 }
 
+/**
+ * Le `RunnerEnv` pour un `triggerWorker`, quand il est lisible. Le proxy `env`
+ * JETTE si `DATABASE_URL` manque (certains environnements de test ne le posent
+ * jamais) et ce tour doit rester appelable : sans lui, la reprise repose sur la
+ * phase de récupération des jobs `pending` du tour suivant, qui est le repli
+ * documenté (même motif que `reviveJobIfApprovalResolvedDuringSuspend`).
+ */
+function resolveRunnerEnvForTrigger(): RunnerEnv | undefined {
+  try {
+    void env.APP_URL;
+    return env;
+  } catch {
+    return undefined;
+  }
+}
+
 // ─── runCronTick ──────────────────────────────────────────────────────────────
 
 /**
@@ -251,12 +269,13 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     0,
   );
 
-  // Expire approvals whose TTL passed and finalize the jobs waiting on them
-  // (D3) — otherwise an unanswered approval leaves its job in awaiting_approval
-  // forever.
+  // Expire approvals whose TTL passed and resume the jobs waiting on them
+  // (D3, issue #349) — otherwise an unanswered approval leaves its job in
+  // awaiting_approval forever, and the deadline the card displays means
+  // nothing. The resumed job reads an expiry error on its gated tool call.
   const approvalsExpired = await guardPhase(
     'expireStaleApprovals',
-    () => expireStaleApprovals(deps.db),
+    () => expireStaleApprovals(deps.db, resolveRunnerEnvForTrigger()),
     0,
   );
 

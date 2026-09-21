@@ -913,6 +913,18 @@ export async function maybeResumeParent(
   }
 }
 
+// ─── approval TTL ─────────────────────────────────────────────────────────────
+
+/**
+ * Ce que le MODÈLE lit quand sa demande a expiré sans réponse (#349). Ce n'est
+ * pas un texte d'écran : la page a déjà son onglet Expired et la carte tranchée
+ * montre le statut. C'est le résultat d'outil qui remplace le marqueur
+ * `[AWAITING_APPROVAL]`, au même endroit que `[REJECTED]`.
+ */
+export const APPROVAL_EXPIRED_TOOL_RESULT =
+  '[EXPIRED] No answer arrived before this request deadline, so it expired. ' +
+  'Nothing was done. Ask again if it is still needed.';
+
 /**
  * Self-heal a job stranded in `awaiting_approval` despite its gated approval
  * already being resolved — the T-ε race between `suspendForApproval`'s last
@@ -938,7 +950,9 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
     .select({ status: approvalRequests.status })
     .from(approvalRequests)
     .where(and(eq(approvalRequests.jobId, jobId), isNull(approvalRequests.executedAt)));
-  const hasResolved = openRows.some((r) => r.status === 'approved' || r.status === 'rejected');
+  const hasResolved = openRows.some(
+    (r) => r.status === 'approved' || r.status === 'rejected' || r.status === 'expired',
+  );
   if (!hasResolved) return;
 
   const flipped = await db
@@ -2306,6 +2320,16 @@ async function runJobTracked(
           }
         }
         trace('resume_approved_tool_executed', { toolName: req.toolName });
+      } else if (req.status === 'expired') {
+        // Nobody answered before the deadline and the TTL sweep closed the
+        // request (cron/reset-orphans.ts, issue #349). The job resumes the same
+        // way it resumes from a rejection; what differs is what the model is
+        // told, because "declined" and "nobody was there" call for different
+        // next moves. The same sentence serves an approval and a question
+        // (kind = 'question'): in both cases nothing happened and asking again
+        // is allowed.
+        replacementOutput = toResultOutput(APPROVAL_EXPIRED_TOOL_RESULT);
+        trace('resume_expired_tool_marker_replaced', { toolName: req.toolName });
       } else {
         // Rejected: replace marker with a [REJECTED] explanation.
         const reason = req.notes ?? 'no reason provided';
@@ -2386,7 +2410,7 @@ async function runJobTracked(
     // Filter to resolved (approved or rejected) rows; anything still 'pending'
     // means the human hasn't acted yet — we'll handle those at suspend time.
     const resolvedRows = pendingExecRows.filter(
-      (r) => r.status === 'approved' || r.status === 'rejected',
+      (r) => r.status === 'approved' || r.status === 'rejected' || r.status === 'expired',
     );
 
     if (resolvedRows.length > 0) {
