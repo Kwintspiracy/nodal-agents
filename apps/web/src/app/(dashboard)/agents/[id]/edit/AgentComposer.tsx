@@ -668,6 +668,11 @@ export default function AgentComposer({
         {tab === 'autonomy' && !isCliRuntime && (
           <>
             <AutonomyTab
+              // Changer d'agent REMONTE l'onglet (revue Reviewer C, passe 4,
+              // C2) : sans cela, revenir sur un agent déjà visité rouvrait son
+              // état d'alors, « chargé », sur des règles qui ont pu changer
+              // ailleurs entre-temps.
+              key={agent.id}
               agentId={agent.id}
               connectors={connectors}
               mcpServers={mcpServers}
@@ -1839,7 +1844,8 @@ export function AutonomyTab({
     }
 
     markSaving(toolName, true);
-    void setAgentApprovalRuleAction({ agentId, toolName, action }).then((result) => {
+    const promise = setAgentApprovalRuleAction({ agentId, toolName, action });
+    void promise.then((result) => {
       markSaving(toolName, false);
       if (!result.ok) toast.error(result.message);
       // Relecture après un refus, et après tout changement d'une règle de
@@ -1859,6 +1865,14 @@ export function AutonomyTab({
           });
         });
       }
+    });
+    // Un REJET (réseau coupé pendant l'envoi, erreur de sérialisation) saute
+    // tout le `then` : sans cette reprise, l'outil restait dans `savingRef`,
+    // donc sa ligne grisée pour toujours ET protégée de toute relecture
+    // ultérieure, sans un mot (revue Reviewer C, passe 4, C1).
+    promise.catch(() => {
+      markSaving(toolName, false);
+      toast.error('The rule was not saved. Check your connection and try again.');
     });
   }
 
@@ -2112,6 +2126,20 @@ function CommandExecutionSection({
     (r) => r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve',
   );
 
+  /**
+   * Le dossier auquel la règle Yolo est confinée, s'il y en a un (revue
+   * Reviewer C, passe 4, C3).
+   *
+   * « approuvé, mais seulement dans Dev » allume aussi cette bascule. L'éteindre
+   * SUPPRIME la règle : une permission que le propriétaire avait posée dossier
+   * par dossier disparaissait sans un mot, et rien sur cet onglet ne sait la
+   * recréer.
+   */
+  const yoloFolder =
+    rules.find((r) => r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve')
+      ?.workspaceLabel ?? null;
+  const [confirmDropFolder, setConfirmDropFolder] = useState(false);
+
   // 0082 : plus de pré-condition workspace — ce toggle est la SEULE clé
   // (owner-only hors local-trust, confirmation à l'activation). Le frein
   // auto_run_paused ne conditionne pas la création de la règle : il la rend
@@ -2140,8 +2168,11 @@ function CommandExecutionSection({
     if (next) {
       // Enable: show warning confirm first
       setConfirmOpen(true);
+    } else if (yoloFolder !== null) {
+      // Disable: nothing to warn about, EXCEPT when what it deletes is a rule
+      // confined to a folder (issue #361, and Reviewer C pass 4).
+      setConfirmDropFolder(true);
     } else {
-      // Disable: no confirm needed
       void doSet(false);
     }
   }
@@ -2226,6 +2257,24 @@ function CommandExecutionSection({
         }}
         onCancel={() => setConfirmOpen(false)}
       />
+
+      {/*
+        Éteindre la bascule SUPPRIME la règle. Quand cette règle ne valait que
+        dans un dossier, ce que le propriétaire perd n'est pas « le mode Yolo »
+        mais une permission qu'il avait posée dossier par dossier, et que cet
+        onglet ne sait pas recréer (revue Reviewer C, passe 4, C3).
+      */}
+      <ConfirmDialog
+        open={confirmDropFolder}
+        title="Delete the rule for this folder?"
+        message={`Commands run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a command for that folder again from its approval card.`}
+        confirmLabel="Delete the rule"
+        onConfirm={() => {
+          setConfirmDropFolder(false);
+          void doSet(false);
+        }}
+        onCancel={() => setConfirmDropFolder(false)}
+      />
     </SectionCard>
   );
 }
@@ -2273,6 +2322,13 @@ function CodeTaskSection({
   const yoloEnabled = rules.some(
     (r) => r.toolName === CODE_TASK_TOOL && r.action === 'auto_approve',
   );
+  // Même garde que CommandExecutionSection (revue Reviewer C, passe 4, C3) :
+  // éteindre supprime la règle, et quand elle ne valait que dans un dossier,
+  // c'est une permission posée dossier par dossier qui disparaît.
+  const yoloFolder =
+    rules.find((r) => r.toolName === CODE_TASK_TOOL && r.action === 'auto_approve')
+      ?.workspaceLabel ?? null;
+  const [confirmDropFolder, setConfirmDropFolder] = useState(false);
   // 0082 : même contrat que CommandExecutionSection — le toggle est la seule
   // clé (owner-only hors local-trust) ; le frein rend la règle dormante.
   const canToggle = isLocalTrust || isOwner;
@@ -2298,6 +2354,8 @@ function CodeTaskSection({
   function handleToggle(next: boolean) {
     if (next) {
       setConfirmOpen(true);
+    } else if (yoloFolder !== null) {
+      setConfirmDropFolder(true);
     } else {
       void doSet(false);
     }
@@ -2415,6 +2473,18 @@ function CodeTaskSection({
           void doSet(true);
         }}
         onCancel={() => setConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmDropFolder}
+        title="Delete the rule for this folder?"
+        message={`Coding tasks run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a coding task for that folder again from its approval card.`}
+        confirmLabel="Delete the rule"
+        onConfirm={() => {
+          setConfirmDropFolder(false);
+          void doSet(false);
+        }}
+        onCancel={() => setConfirmDropFolder(false)}
       />
 
       <p className="mt-4 text-body-12 text-ink-4">

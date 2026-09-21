@@ -65,7 +65,10 @@ const actions = vi.hoisted(() => {
         { ok: true; data: undefined } | { ok: false; code: string; message: string }
       > => ({ ok: true, data: undefined }),
     ),
-    setRunCommandYoloAction: noop(),
+    setRunCommandYoloAction: vi.fn(async (_raw: { agentId: string; enabled: boolean }) => ({
+      ok: true as const,
+      data: undefined,
+    })),
     setCodeTaskYoloAction: noop(),
     setCliDailyBudgetAction: noop(),
     getCliUsageTodayAction: vi.fn(async () => ({ ok: true as const, data: { usd: 0 } })),
@@ -634,8 +637,76 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
 
     await act(async () => {});
     expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
-    // L'onglet a fini de charger : il montre le nouvel agent, sans règle.
-    expect(container.textContent).toContain('Built-in tools');
+    // Et pas seulement le dossier : l'ACTION de l'agent précédent est partie
+    // aussi. Sans cette ligne, le test passait sur le code d'avant la PR, qui
+    // n'affichait jamais de dossier (revue Reviewer C, passe 4, question 5).
+    expect(control('file_write', 'auto_approve').getAttribute('aria-pressed')).toBe('true');
+    expect(control('file_write', 'block').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('relâche la ligne quand la promesse d’enregistrement rejette', async () => {
+    // Revue Reviewer C, passe 4, C1 : un rejet saute tout le `then`. La ligne
+    // restait grise pour toujours, et protégée de toute relecture, sans un mot.
+    actions.setAgentApprovalRuleAction.mockImplementation(async () => {
+      throw new Error('network down');
+    });
+    await render([], [FOLDER_RULE]);
+
+    await act(async () => {
+      control('file_write', 'block').click();
+    });
+    await act(async () => {
+      [...document.body.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Remove the limit')!
+        .click();
+    });
+    await act(async () => {});
+
+    expect(control('file_write', 'block').disabled).toBe(false);
+  });
+
+  it('prévient avant que la bascule Yolo ne supprime une règle de dossier', async () => {
+    // Revue Reviewer C, passe 4, C3 : « approuvé seulement dans Dev » allume
+    // aussi cette bascule, et l'éteindre SUPPRIME la règle. Une permission
+    // posée dossier par dossier disparaissait sans un mot, et rien sur cet
+    // onglet ne sait la recréer.
+    await render(
+      [],
+      [
+        {
+          id: 'r6',
+          toolName: 'run_command',
+          action: 'auto_approve',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
+      ],
+    );
+    actions.setRunCommandYoloAction.mockClear();
+
+    const yolo = [...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]')].find(
+      (b) => b.getAttribute('aria-checked') === 'true',
+    );
+    expect(yolo).toBeDefined();
+    await act(async () => {
+      yolo!.click();
+    });
+
+    expect(dialogText()).toContain('Delete the rule for this folder?');
+    expect(dialogText()).toContain(
+      'Commands run without asking only in Dev today. Turning this off deletes that rule.',
+    );
+    expect(actions.setRunCommandYoloAction.mock.calls).toEqual([]);
+
+    await act(async () => {
+      [...document.body.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Delete the rule')!
+        .click();
+    });
+    expect(actions.setRunCommandYoloAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      enabled: false,
+    });
   });
 
   it('nomme le dossier dans le nom accessible du curseur', async () => {
