@@ -7,6 +7,7 @@ import type { StatusVariant } from '@/components/ui/StatusPill';
 import PageShell from '@/components/ui/PageShell';
 import EmptyState from '@/components/ui/EmptyState';
 import ApprovalActions from './ApprovalActions.tsx';
+import ApprovalsLive from './ApprovalsLive.tsx';
 import QuestionActions from './QuestionActions.tsx';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 
@@ -104,6 +105,10 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
         )
       }
     >
+      {/* La page suit le provider de la barre : une demande qui arrive pendant
+          qu'on la regarde apparaît, et le rail ne peut plus compter une attente
+          que la page dit absente. */}
+      <ApprovalsLive />
       {result.data.length === 0 ? (
         <EmptyState
           title={
