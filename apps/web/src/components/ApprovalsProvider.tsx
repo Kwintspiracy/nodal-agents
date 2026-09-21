@@ -47,7 +47,18 @@ export function ApprovalsProvider({
   const [pending, setPending] = useState<PendingApproval[]>(initial);
 
   const fetchPending = useCallback(async () => {
-    const result = await listApprovalsAction({ status: 'pending' });
+    // Une lecture qui LÈVE est attrapée ici, et pas plus loin : `refresh` est
+    // attendue par celui qui vient de répondre, et un rejet remonterait dans sa
+    // transition, où personne ne l'attrape — il perdrait son toast de succès
+    // pour une décision pourtant enregistrée. Attrapée, elle garde le dernier
+    // état connu et le DIT dans la console (jamais en silence).
+    let result: Awaited<ReturnType<typeof listApprovalsAction>>;
+    try {
+      result = await listApprovalsAction({ status: 'pending' });
+    } catch (err) {
+      console.error('[ApprovalsProvider] listApprovalsAction threw', err);
+      return;
+    }
     if (!result.ok) return;
     // Map the full ApprovalRow down to the minimal PendingApproval shape.
     setPending(
