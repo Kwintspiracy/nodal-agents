@@ -72,6 +72,16 @@ import {
   cartesEnVol,
   numeroDeTicket,
   mentionDeTicket,
+  urlsDesRunsEnVol,
+  runsDeLApiGitHub,
+  ciEnDirect,
+  sansCi,
+  compteEnVol,
+  heureUtc,
+  heureLocale,
+  htmlCarteEnVol,
+  htmlDirectEnVol,
+  SCRIPT_EN_VOL,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -3994,5 +4004,351 @@ describe('les cartes de la colonne « Running » (#340)', () => {
     );
     expect(v.cartes.map((c) => c.quoi)).toEqual(['Review pass on #326']);
     expect(v.cartes[0].ticketUrl).toBeNull();
+  });
+});
+
+// ─── La colonne « Running » lit GitHub dans le navigateur (#363) ──────────────
+//
+// POURQUOI CES CAS EXISTENT. La colonne montrait les runs en vol AU MOMENT DE
+// LA CONSTRUCTION de la page. Le portail est statique : le 21/09/2026 elle en
+// portait trois longtemps après leur fin, pendant que
+// `gh run list --status in_progress` ne rendait rien. La lecture est passée
+// dans le navigateur, et tout ce qui se décide se décide ici.
+//
+// CE QUE CES CAS PROUVENT : la traduction de la réponse REST, la fusion des
+// deux lectures (celle de `runsEnCoursDeDeuxLectures`, RÉUTILISÉE et non
+// recopiée), l'ordre, le message d'erreur, et la garde de la dernière lecture
+// réussie AVEC SA DATE.
+//
+// Mutations vérifiées :
+//   - dans `ciEnDirect`, la branche `gardee` supprimée (on rend toujours
+//     `muette`) → « une lecture ratée garde la précédente » rougit ;
+//   - dans `htmlDirectEnVol`, la phrase « GitHub did not answer » remplacée par
+//     la phrase du vide → « GitHub muet le DIT » rougit ;
+//   - dans `runsDeLApiGitHub`, le garde-fou `Array.isArray(runs)` retiré → « une
+//     limite d'API n'est pas une liste vide » rougit ;
+//   - dans `sansCi`, le filtre sur `genre` retiré → « un instantané d'avant
+//     #363 ne rejoue pas ses runs périmés » rougit.
+
+describe('la colonne Running lit GitHub dans le navigateur (#363)', () => {
+  /** Un run tel que l'API REST publique le rend — snake_case, pas camel. */
+  const runApi = (id, status, titre, branche, quand) => ({
+    id,
+    status,
+    name: 'CI',
+    display_title: titre,
+    head_branch: branche,
+    created_at: quand,
+    html_url: `https://github.com/x/y/actions/runs/${id}`,
+  });
+
+  const reponse = (runs) => ({ total_count: runs.length, workflow_runs: runs });
+
+  it('les DEUX adresses sortent du dépôt COLLECTÉ, jamais d’un nom écrit en dur', () => {
+    expect(urlsDesRunsEnVol('Kwintspiracy/nodal-agents')).toEqual([
+      'https://api.github.com/repos/Kwintspiracy/nodal-agents/actions/runs?status=in_progress&per_page=20',
+      'https://api.github.com/repos/Kwintspiracy/nodal-agents/actions/runs?status=queued&per_page=20',
+    ]);
+    // Sans dépôt, AUCUNE adresse : la colonne dira qu'elle ne sait pas quoi
+    // lire plutôt que d'aller frapper à une porte inventée.
+    expect(urlsDesRunsEnVol(null)).toEqual([]);
+    expect(urlsDesRunsEnVol('')).toEqual([]);
+    expect(urlsDesRunsEnVol('pas-un-depot')).toEqual([]);
+    // Et rien qui sorte de la forme `proprietaire/nom` ne construit d'URL : une
+    // valeur bricolée se glisserait sinon dans le chemin de la requête.
+    expect(urlsDesRunsEnVol('x/y?evil=1')).toEqual([]);
+  });
+
+  it('une réponse REST se traduit dans la forme que la RÈGLE existante lit', () => {
+    const runs = runsDeLApiGitHub(
+      reponse([runApi(7, 'in_progress', 'Fix the hero (#68)', 'main', '2026-09-21T08:00:00Z')]),
+    );
+    expect(runs).toEqual([
+      {
+        databaseId: 7,
+        status: 'in_progress',
+        name: 'CI',
+        displayTitle: 'Fix the hero (#68)',
+        headBranch: 'main',
+        createdAt: '2026-09-21T08:00:00Z',
+        url: 'https://github.com/x/y/actions/runs/7',
+      },
+    ]);
+  });
+
+  it('une limite d’API n’est PAS une liste vide, et une page HTML non plus', () => {
+    // GitHub rend `{message, documentation_url}` au-delà de 60 lectures par
+    // heure. Le lire comme « aucun run » est exactement le mensonge que
+    // l'invariant #4 interdit.
+    expect(runsDeLApiGitHub({ message: 'API rate limit exceeded' })).toBeNull();
+    expect(runsDeLApiGitHub('<html>proxy</html>')).toBeNull();
+    expect(runsDeLApiGitHub(null)).toBeNull();
+    expect(runsDeLApiGitHub({ workflow_runs: 'nope' })).toBeNull();
+    // Un tableau VIDE, lui, est une réponse.
+    expect(runsDeLApiGitHub(reponse([]))).toEqual([]);
+  });
+
+  it('les deux lectures se fondent, les plus anciennes d’abord', () => {
+    const etat = ciEnDirect({
+      enCours: reponse([
+        runApi(2, 'in_progress', 'CI on the branch', 'feat/b', '2026-09-21T09:10:00Z'),
+      ]),
+      enFile: reponse([runApi(3, 'queued', 'Deploy (#350)', 'main', '2026-09-21T09:02:00Z')]),
+      le: '2026-09-21T09:15:00Z',
+    });
+    expect(etat.etat).toBe('lue');
+    expect(etat.le).toBe('2026-09-21T09:15:00Z');
+    expect(etat.lignes.map((l) => l.quoi)).toEqual(['Deploy (#350)', 'CI on the branch']);
+    // Une file d'attente n'est pas un travail qui avance : la règle de #296 est
+    // RÉUTILISÉE, pas recopiée, et elle continue de le dire.
+    expect(etat.lignes[0].attend).toBe('a runner');
+    expect(etat.lignes[1].attend).toBeNull();
+    // Un run TERMINÉ que l'API glisserait dans la réponse ne passe pas non plus.
+    const avecFini = ciEnDirect({
+      enCours: reponse([
+        runApi(4, 'completed', 'Finished', 'main', '2026-09-21T08:00:00Z'),
+        runApi(5, 'in_progress', 'Alive', 'main', '2026-09-21T09:00:00Z'),
+      ]),
+      enFile: reponse([]),
+      le: '2026-09-21T09:15:00Z',
+    });
+    expect(avecFini.lignes.map((l) => l.quoi)).toEqual(['Alive']);
+  });
+
+  it('UNE des deux lectures qui se tait suffit à taire la source', () => {
+    const etat = ciEnDirect({
+      enCours: reponse([runApi(2, 'in_progress', 'CI', 'main', '2026-09-21T09:10:00Z')]),
+      enFile: { message: 'API rate limit exceeded' },
+      le: '2026-09-21T09:15:00Z',
+      raison: 'HTTP 403 from the GitHub runs API',
+    });
+    expect(etat.etat, 'une réponse à moitié a été prise pour une réponse').toBe('muette');
+    expect(etat.lignes).toEqual([]);
+    expect(etat.raison).toBe('HTTP 403 from the GitHub runs API');
+    expect(etat.tentee).toBe('2026-09-21T09:15:00Z');
+    // Et rien n'est affirmé sur l'heure d'une lecture qui n'a pas eu lieu.
+    expect(etat.le).toBeNull();
+  });
+
+  it('une lecture ratée GARDE la précédente, avec SA date, pas avec l’heure courante', () => {
+    const bonne = ciEnDirect({
+      enCours: reponse([runApi(2, 'in_progress', 'CI on #68', 'main', '2026-09-21T09:00:00Z')]),
+      enFile: reponse([]),
+      le: '2026-09-21T09:05:00Z',
+    });
+    expect(bonne.etat).toBe('lue');
+
+    const ratee = ciEnDirect({
+      enCours: null,
+      enFile: null,
+      le: '2026-09-21T09:20:00Z',
+      precedent: { lignes: bonne.lignes, le: bonne.le },
+      raison: 'the browser could not reach the GitHub runs API',
+    });
+    expect(ratee.etat).toBe('gardee');
+    expect(ratee.lignes.map((l) => l.quoi)).toEqual(['CI on #68']);
+    // ⚠️ LE CŒUR DE #363 : les cartes gardées portent l'heure de LEUR lecture,
+    // pas celle de la tentative ratée. Sans cette distinction, la colonne
+    // redevient ce qu'elle était, un passé présenté comme un présent.
+    expect(ratee.le).toBe('2026-09-21T09:05:00Z');
+    expect(ratee.tentee).toBe('2026-09-21T09:20:00Z');
+
+    // Rien à garder : on ne sait rien, et on ne montre rien.
+    const rien = ciEnDirect({ enCours: null, enFile: null, le: '2026-09-21T09:20:00Z' });
+    expect(rien.etat).toBe('muette');
+    expect(rien.lignes).toEqual([]);
+  });
+
+  it('GitHub muet le DIT sur la colonne, avec l’heure de la tentative', () => {
+    const html = htmlDirectEnVol({
+      etat: 'muette',
+      lignes: [],
+      le: null,
+      raison: 'HTTP 403 from the GitHub runs API',
+      tentee: '2026-09-21T09:20:00Z',
+    });
+    expect(html).toContain('GitHub did not answer');
+    expect(html).toContain('HTTP 403 from the GitHub runs API');
+    expect(html).toContain('Nothing is claimed about what runs on GitHub');
+    // Et surtout PAS la phrase du repos : c'est tout l'objet de l'invariant #4.
+    expect(html).not.toContain('Nothing in flight');
+    expect(html).not.toContain('GitHub answered');
+  });
+
+  it('vide ET lu se dit « nothing in flight as of », avec l’heure', () => {
+    const html = htmlDirectEnVol({
+      etat: 'lue',
+      lignes: [],
+      le: '2026-09-21T09:20:00Z',
+      raison: null,
+      tentee: null,
+    });
+    expect(html).toContain('Nothing in flight as of');
+    expect(html).toContain('GitHub answered');
+    expect(html).not.toContain('GitHub did not answer');
+    // L'heure est celle du LECTEUR, donc sans le `Z` des dates de construction.
+    expect(html).toContain('GitHub runs as of');
+    expect(html).not.toContain('Z,');
+  });
+
+  it('une lecture gardée s’affiche AVEC son aveu et sa date, jamais seule', () => {
+    const html = htmlDirectEnVol(
+      {
+        etat: 'gardee',
+        lignes: [
+          {
+            genre: 'ci',
+            quoi: 'CI on #68',
+            ou: 'branch main',
+            ticket: 68,
+            mention: null,
+            branche: 'main',
+            depuis: '2026-09-21T09:00:00Z',
+            attend: null,
+            url: 'https://github.com/x/y/actions/runs/2',
+          },
+        ],
+        le: '2026-09-21T09:05:00Z',
+        raison: 'the browser could not reach the GitHub runs API',
+        tentee: '2026-09-21T09:20:00Z',
+      },
+      [{ numero: 68, url: 'https://github.com/x/y/issues/68', type: 'issue', etat: 'OPEN' }],
+    );
+    expect(html).toContain('GitHub did not answer');
+    expect(html).toContain('the last read that worked');
+    expect(html).toContain('CI on #68');
+    // La carte mène au TICKET du tableau, par sa vraie adresse : la règle de
+    // #340 vaut aussi pour une carte rendue dans le navigateur.
+    expect(html).toContain('href="https://github.com/x/y/issues/68"');
+    expect(html).toContain('Open the run');
+    // L'aveu vient AVANT les cartes : les lire d'abord ferait croire à un
+    // présent.
+    expect(html.indexOf('GitHub did not answer')).toBeLessThan(html.indexOf('CI on #68'));
+  });
+
+  it('un instantané d’AVANT #363 ne rejoue pas ses runs GitHub périmés', () => {
+    // Les trois cartes du 21/09 venaient de là : un instantané committé porte
+    // des runs finis depuis. Le collecteur ne les écrit plus, mais un vieux
+    // fichier en porte encore.
+    const vieux = {
+      lignes: [
+        { genre: 'ci', quoi: 'CI on main (#360)', ou: 'branch main', depuis: null },
+        { genre: 'release', quoi: 'release:check', ou: 'this machine', depuis: null },
+      ],
+      muettes: [{ source: 'ci', raison: 'GitHub did not answer' }],
+      complet: false,
+      le: '2026-09-21T07:53:00Z',
+    };
+    const propre = sansCi(vieux);
+    expect(propre.lignes.map((l) => l.quoi)).toEqual(['release:check']);
+    expect(propre.muettes).toEqual([]);
+    // Plus aucune source muette parmi celles qui restent : le « + » du compte
+    // n'a plus lieu d'être.
+    expect(propre.complet).toBe(true);
+    // Un instantané ABSENT reste absent : ce n'est pas « rien en cours ».
+    expect(sansCi(undefined)).toBeUndefined();
+    expect(sansCi(null)).toBeNull();
+  });
+
+  it('une source qui reste muette garde le « + » du compte', () => {
+    const propre = sansCi({
+      lignes: [],
+      muettes: [
+        { source: 'ci', raison: 'GitHub did not answer' },
+        { source: 'release', raison: 'the release:check state file could not be read' },
+      ],
+      complet: false,
+      le: null,
+    });
+    expect(propre.muettes.map((m) => m.source)).toEqual(['release']);
+    expect(propre.complet).toBe(false);
+    expect(compteEnVol(0, propre.complet)).toBe('0+');
+    expect(compteEnVol(3, true)).toBe('3');
+  });
+
+  it('une source ABSENTE du relevé ne se compte pas comme injoignable', () => {
+    // Depuis #363 le collecteur ne passe plus `ci` du tout. Un `undefined` pris
+    // pour une source muette aurait collé un « + » définitif au compte et une
+    // phrase « GitHub did not answer » à une construction qui ne lit plus
+    // GitHub.
+    const vue = cequiTourne({
+      revues: revuesEnCours([]),
+      release: releaseCheckEnCours(null),
+      le: '2026-09-21T09:00:00Z',
+    });
+    expect(vue.muettes).toEqual([]);
+    expect(vue.complet).toBe(true);
+  });
+
+  it('une date absente ne devient pas une heure, dans aucun des deux fuseaux', () => {
+    // La sentinelle d'absence, et c'est la seule assertion d'heure qui ne
+    // dépende pas du fuseau de la machine (constat C4 de la revue C). Sans
+    // elle, `new Date(null)` rendrait « 01 Jan 1970 » et la colonne daterait
+    // une lecture qui n'a pas eu lieu.
+    expect(heureLocale(null)).toBe('·');
+    expect(heureLocale(undefined)).toBe('·');
+    expect(heureUtc(null)).toBe('·');
+    // Et une date réelle porte le `Z` en UTC, jamais dans le fuseau du lecteur.
+    expect(heureUtc('2026-09-21T09:40:00Z')).toBe('21 Sept 2026, 09:40Z');
+    expect(heureLocale('2026-09-21T09:40:00Z')).not.toContain('Z');
+  });
+
+  it('le script de la page EMBARQUE les fonctions éprouvées ici, pas des copies', () => {
+    // La page exécute `String(fn)` de ces fonctions-là : une copie recopiée à
+    // la main dériverait au premier changement, et la colonne rendue dans le
+    // navigateur ne serait plus celle que ces cas prouvent.
+    for (const fn of [
+      ciEnDirect,
+      runsDeLApiGitHub,
+      runsEnCoursDeDeuxLectures,
+      runsEnCours,
+      cartesEnVol,
+      htmlCarteEnVol,
+      htmlDirectEnVol,
+      compteEnVol,
+    ]) {
+      expect(SCRIPT_EN_VOL, fn.name).toContain(String(fn));
+    }
+    // Et les constantes que ces fonctions lisent voyagent avec elles : sans
+    // elles, le bloc jette une ReferenceError au premier clic.
+    expect(SCRIPT_EN_VOL).toContain(`var SOURCE_LUE = "read";`);
+    expect(SCRIPT_EN_VOL).toContain('var GENRES_EN_VOL = ');
+    // Une balise fermante de script dans le bloc couperait la page en deux.
+    expect(SCRIPT_EN_VOL).not.toContain('</scr' + 'ipt');
+  });
+
+  it('le bloc embarqué S’EXÉCUTE et rend la même colonne que le module', () => {
+    // La preuve du CÂBLAGE : le texte inscrit dans la page est évalué, puis on
+    // lui demande la même colonne qu'au module. Sans ce cas, une constante
+    // oubliée dans la liste ne rougissait nulle part et la page mourait au
+    // chargement.
+    const etat = {
+      etat: 'lue',
+      lignes: [
+        {
+          genre: 'ci',
+          quoi: 'CI on #68',
+          ou: 'branch main',
+          ticket: 68,
+          mention: null,
+          branche: 'main',
+          depuis: '2026-09-21T09:00:00Z',
+          attend: 'a runner',
+          url: 'https://github.com/x/y/actions/runs/2',
+        },
+      ],
+      le: '2026-09-21T09:05:00Z',
+      raison: null,
+      tentee: null,
+    };
+    const tableau = [
+      { numero: 68, url: 'https://github.com/x/y/issues/68', type: 'issue', etat: 'OPEN' },
+    ];
+    const joue = new Function(
+      'etat',
+      'tableau',
+      `${SCRIPT_EN_VOL}\nreturn htmlDirectEnVol(etat, tableau);`,
+    );
+    expect(joue(etat, tableau)).toBe(htmlDirectEnVol(etat, tableau));
   });
 });
