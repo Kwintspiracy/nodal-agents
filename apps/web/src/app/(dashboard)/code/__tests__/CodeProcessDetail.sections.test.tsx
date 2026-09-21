@@ -25,7 +25,7 @@ const listApprovalsAction = vi.hoisted(() =>
 vi.mock('@/lib/actions.ts', () => ({
   getCodingProcessDetailAction,
   listApprovalsAction,
-  // Importées par ApprovalActions, que ce module charge.
+  // Importées par ApprovalRequestCard, que ce module charge.
   resolveApprovalAction: vi.fn(),
   setAgentApprovalRuleAction: vi.fn(),
 }));

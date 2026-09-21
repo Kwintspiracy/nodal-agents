@@ -6509,12 +6509,14 @@ export async function listInternalToolsAction(): Promise<
  * Rend le message d'erreur, ou null quand l'ecriture peut passer.
  */
 async function refuseGlobalGrantOverFolderRule(
-  db: ReturnType<typeof getDb>,
+  tx: {
+    select: ReturnType<typeof getDb>['select'];
+  },
   entityId: string,
   agentId: string,
   toolName: string,
 ): Promise<string | null> {
-  const [existing] = await db
+  const [existing] = await tx
     .select({ action: approvalRules.action, conditionJson: approvalRules.conditionJson })
     .from(approvalRules)
     .where(
@@ -6523,7 +6525,13 @@ async function refuseGlobalGrantOverFolderRule(
         eq(approvalRules.agentId, agentId),
         eq(approvalRules.toolName, toolName),
       ),
-    );
+    )
+    // VERROU. Lire puis ecrire hors transaction laissait une fenetre : un
+    // second geste concurrent passait le garde et ecrasait la regle de dossier
+    // par une permission globale (revue Reviewer C, passe 2). `FOR UPDATE`
+    // tient la ligne jusqu'au commit de l'appelant, qui ouvre donc TOUJOURS une
+    // transaction autour de ce garde et de son ecriture.
+    .for('update');
   const folder = (existing?.conditionJson as ApprovalRuleCondition | null)?.workspacePath;
   if (!existing || existing.action !== 'auto_approve' || typeof folder !== 'string') return null;
   return (
@@ -6581,36 +6589,48 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
       conditionJson = { workspacePath };
     }
 
-    if (action === 'auto_approve' && workspacePath === undefined && scope === 'agent') {
-      const refus = await refuseGlobalGrantOverFolderRule(db, session.entityId, agentId, toolName);
-      if (refus) return fail('validation_failed', refus);
-    }
-
     // agent_id IS NULL is the workspace-wide scope (see the schema note on the
     // NULLS NOT DISTINCT unique index — a plain UNIQUE would let duplicates in).
     const ruleAgentId = scope === 'entity' ? null : agentId;
     const scopeMatch =
       ruleAgentId === null ? isNull(approvalRules.agentId) : eq(approvalRules.agentId, agentId);
 
-    if (action === null) {
-      // DELETE: revert to the tool's own default.
-      await db
-        .delete(approvalRules)
-        .where(
-          and(
-            eq(approvalRules.entityId, session.entityId),
-            scopeMatch,
-            eq(approvalRules.toolName, toolName),
-          ),
+    // LE GARDE ET SON ECRITURE DANS LA MEME TRANSACTION. Separes, un second
+    // geste concurrent passait le garde et ecrasait la regle de dossier par une
+    // permission globale (revue Reviewer C, passe 2). Le garde pose `FOR UPDATE`
+    // sur la ligne ; le commit la libere une fois l'ecriture faite.
+    const refus = await db.transaction(async (tx) => {
+      if (action === 'auto_approve' && workspacePath === undefined && scope === 'agent') {
+        const message = await refuseGlobalGrantOverFolderRule(
+          tx,
+          session.entityId,
+          agentId,
+          toolName,
         );
-    } else {
+        if (message) return message;
+      }
+
+      if (action === null) {
+        // DELETE: revert to the tool's own default.
+        await tx
+          .delete(approvalRules)
+          .where(
+            and(
+              eq(approvalRules.entityId, session.entityId),
+              scopeMatch,
+              eq(approvalRules.toolName, toolName),
+            ),
+          );
+        return null;
+      }
+
       // UPSERT on the (entity_id, agent_id, tool_name) unique constraint
       // (DB-1, audit #2). The old select-then-branch left a race window where
       // two concurrent calls could both miss the SELECT and insert divergent
       // rows for the same scope — matchApprovalRule's `.find()` would then pick
       // whichever the SELECT happened to return first, a non-deterministic
       // gate. onConflictDoUpdate makes this atomic: one canonical row survives.
-      await db
+      await tx
         .insert(approvalRules)
         .values({
           entityId: session.entityId,
@@ -6623,7 +6643,9 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
           target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
           set: { action, conditionJson, updatedAt: new Date() },
         });
-    }
+      return null;
+    });
+    if (refus) return fail('validation_failed', refus);
 
     revalidatePath(`/agents/${agentId}/edit`);
     revalidatePath('/approvals');
@@ -6697,20 +6719,22 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
     // both pass the delete and then race on the insert, throwing on the
     // constraint instead of leaving one clean row. db.transaction plus
     // onConflictDoUpdate makes the whole toggle atomic and idempotent.
-    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine
-    // deja a un dossier, l'ecraser elargirait la permission en silence
-    // (revue Reviewer C, passe 1) : on refuse, en nommant le dossier.
-    if (enabled) {
-      const refus = await refuseGlobalGrantOverFolderRule(
-        db,
-        session.entityId,
-        agentId,
-        'run_command',
-      );
-      if (refus) return fail('validation_failed', refus);
-    }
+    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine deja a
+    // un dossier, l'ecraser elargirait la permission en silence (revue
+    // Reviewer C, passe 1) : on refuse, en nommant le dossier. Le garde vit
+    // DANS la transaction et verrouille la ligne, sans quoi un geste concurrent
+    // passerait entre la lecture et l'ecriture (passe 2).
+    const refus = await db.transaction(async (tx) => {
+      if (enabled) {
+        const message = await refuseGlobalGrantOverFolderRule(
+          tx,
+          session.entityId,
+          agentId,
+          'run_command',
+        );
+        if (message) return message;
+      }
 
-    await db.transaction(async (tx) => {
       await tx
         .delete(approvalRules)
         .where(
@@ -6735,7 +6759,9 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
             set: { action: 'auto_approve', updatedAt: new Date() },
           });
       }
+      return null;
     });
+    if (refus) return fail('validation_failed', refus);
 
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
@@ -6799,20 +6825,22 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
     // setRunCommandYoloAction) — approval_rules carries a
     // UNIQUE(entity_id, agent_id, tool_name) constraint, so two overlapping
     // calls could otherwise race on the insert.
-    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine
-    // deja a un dossier, l'ecraser elargirait la permission en silence
-    // (revue Reviewer C, passe 1) : on refuse, en nommant le dossier.
-    if (enabled) {
-      const refus = await refuseGlobalGrantOverFolderRule(
-        db,
-        session.entityId,
-        agentId,
-        'code_task',
-      );
-      if (refus) return fail('validation_failed', refus);
-    }
+    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine deja a
+    // un dossier, l'ecraser elargirait la permission en silence (revue
+    // Reviewer C, passe 1) : on refuse, en nommant le dossier. Le garde vit
+    // DANS la transaction et verrouille la ligne, sans quoi un geste concurrent
+    // passerait entre la lecture et l'ecriture (passe 2).
+    const refus = await db.transaction(async (tx) => {
+      if (enabled) {
+        const message = await refuseGlobalGrantOverFolderRule(
+          tx,
+          session.entityId,
+          agentId,
+          'code_task',
+        );
+        if (message) return message;
+      }
 
-    await db.transaction(async (tx) => {
       await tx
         .delete(approvalRules)
         .where(
@@ -6837,7 +6865,9 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
             set: { action: 'auto_approve', updatedAt: new Date() },
           });
       }
+      return null;
     });
+    if (refus) return fail('validation_failed', refus);
 
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);

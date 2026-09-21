@@ -12,7 +12,7 @@
 // compte à côté.
 //
 // ⚠️ QUATRE SURFACES répondent dans le produit, et chacune a son cas ici : la
-// carte de la page Approvals (`ApprovalActions`, avec son échelle entière), la
+// carte de la page Approvals (`ApprovalRequestCard`, la carte entière), la
 // carte de question de cette même page (`QuestionActions`), la carte de question
 // DANS LE FIL (`spaces/QuestionCard`), et le bouton Approve de la CLOCHE
 // (`NotificationsBell`). La troisième manquait au premier jet (Reviewer C,
@@ -335,7 +335,7 @@ afterEach(async () => {
 describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/ecran', () => {
   it('APPROUVER fait disparaître le nombre, sans attendre le tour de cadence', async () => {
     // Mutation vérifiée : `if (result.ok) await refresh();` retiré de
-    // `resolve()` dans `ApprovalActions` → la case reste « Approvals1 ».
+    // `resolve()` dans `ApprovalRequestCard` → la case reste « Approvals1 ».
     await monter(carteApprobation());
     expect(caseApprovals()).toBe('Approvals1');
 
@@ -483,7 +483,7 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     // encore la demande qu'on vient de fermer.
     //
     // Mutation vérifiée : `await refresh()` → `void refresh()` dans
-    // `ApprovalActions.resolve` → ce cas rougit, le bouton est déjà réactivé
+    // `ApprovalRequestCard.resolve` → ce cas rougit, le bouton est déjà réactivé
     // alors que la lecture est encore en vol.
     const relacher = lectureRetenue();
     await monter(carteApprobation());

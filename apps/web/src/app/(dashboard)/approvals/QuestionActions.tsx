@@ -32,7 +32,7 @@ export default function QuestionActions({ approvalId, options }: Props) {
   const [notes, setNotes] = useState('');
   // Une question attendue compte dans la pastille du rail comme une permission
   // attendue : y répondre doit la faire tomber sur le champ, et pas au tour de
-  // cadence suivant. Même geste que dans `ApprovalActions`.
+  // cadence suivant. Même geste que dans `ApprovalRequestCard`.
   const { refresh } = useApprovals();
 
   /** Répondre, puis relire les attentes — la relecture part APRÈS la réponse. */

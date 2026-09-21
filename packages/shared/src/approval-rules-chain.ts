@@ -112,7 +112,8 @@ export function namespaceOfToolName(toolName: string): string | null {
  * backslash would silently stop applying (invariant #4: never fail quietly).
  *
  * A bare drive prefix is kept whole: `C:` and `D:` are different places, and
- * collapsing both to an empty string would have made them equal.
+ * collapsing both to an empty string would have made them equal. The two
+ * leading slashes of a UNC path are kept for the same reason.
  *
  * Written here rather than with `node:path` on purpose: this module is imported
  * by the dashboard, and dragging a Node builtin into that graph is how a client
@@ -124,6 +125,10 @@ export function normaliseWorkspacePath(
 ): string {
   const unified = raw.replace(/\\/g, '/');
   const isAbsolute = unified.startsWith('/');
+  // UNC : `\\serveur\part` n'est PAS `/serveur/part`. Les deux barres de tete
+  // sont conservees, sinon deux dossiers distincts se comparaient egaux
+  // (revue Reviewer C, passe 2).
+  const isUnc = unified.startsWith('//');
   // `C:` et `D:` sont des chemins DIFFERENTS, et la boucle ci-dessous les
   // reduisait tous deux a la chaine vide faute de separateur (revue Reviewer C,
   // passe 1). Le prefixe de lecteur est mis de cote avant le decoupage.
@@ -139,7 +144,8 @@ export function normaliseWorkspacePath(
     }
     out.push(segment);
   }
-  const joined = (drive ? `${drive[1]}/` : isAbsolute ? '/' : '') + out.join('/');
+  const prefix = drive ? `${drive[1]}/` : isUnc ? '//' : isAbsolute ? '/' : '';
+  const joined = prefix + out.join('/');
   return platform === 'win32' ? joined.toLowerCase() : joined;
 }
 

@@ -258,6 +258,15 @@ describe('normaliseWorkspacePath @cap:approuver-une-action/moteur', () => {
     expect(normaliseWorkspacePath('D:\\', 'win32')).toBe('d:/');
   });
 
+  it('keeps a UNC path distinct from a POSIX one', () => {
+    // Les deux rendaient `/serveur/part` (revue Reviewer C, passe 2).
+    expect(normaliseWorkspacePath('\\\\serveur\\part', 'linux')).toBe('//serveur/part');
+    expect(normaliseWorkspacePath('/serveur/part', 'linux')).toBe('/serveur/part');
+    expect(normaliseWorkspacePath('\\\\serveur\\part', 'linux')).not.toBe(
+      normaliseWorkspacePath('/serveur/part', 'linux'),
+    );
+  });
+
   it('workspaceMatches says no when the list is empty', () => {
     expect(workspaceMatches('/a', [], 'linux')).toBe(false);
     expect(workspaceMatches('/a', undefined, 'linux')).toBe(false);
