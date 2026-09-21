@@ -10,6 +10,8 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { exposeStatedPurpose } from '../purpose-exposure';
+import { createToolRegistry } from '../registry';
+import { registerBuiltins } from '../builtin';
 import type { ApprovalRule, ToolDefinition } from '../types';
 
 const AGENT = '11111111-1111-1111-1111-111111111111';
@@ -118,5 +120,46 @@ describe('la liste d’outils d’un job expose `purpose` @cap:approuver-une-act
     expose([source]);
     expect(source.inputSchema).toBe(avant);
     expect(avant.safeParse({ path: '/tmp/a' }).success).toBe(true);
+  });
+});
+
+// ─── Le trou que l'exemption « pas un objet » pourrait ouvrir ────────────────
+//
+// `withStatedPurpose` laisse intact un outil dont l'entrée n'est pas un objet
+// zod : il n'y a rien à étendre. Mais la porte, elle, refuserait quand même un
+// tel outil s'il était gaté — le modèle n'aurait aucun endroit où écrire la
+// phrase, et rappellerait l'outil jusqu'au plafond de tours. Constat C1 de
+// Reviewer C sur la PR #359, laissé non tranché faute d'inventaire. Le voici,
+// et il se re-vérifie tout seul à chaque outil ajouté.
+
+describe('aucun outil livré ne tombe dans ce trou @cap:approuver-une-action/moteur', () => {
+  it('tout outil du registre prend un OBJET en entrée', () => {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const outils = registry.list() as unknown as AnyTool[];
+    expect(outils.length).toBeGreaterThan(20);
+
+    const sansObjet = outils
+      .filter((t) => !(t.inputSchema instanceof z.ZodObject))
+      .map((t) => t.name);
+    expect(sansObjet).toEqual([]);
+  });
+
+  it('et reçoit donc bien le champ, gaté ou non', () => {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const outils = registry.list() as unknown as AnyTool[];
+
+    const muets = expose(outils)
+      .filter((t) => t.asksUser !== true)
+      .filter((t) => {
+        const shape = (t.inputSchema as z.ZodObject<z.ZodRawShape>).shape as Record<
+          string,
+          unknown
+        >;
+        return !Object.prototype.hasOwnProperty.call(shape, 'purpose');
+      })
+      .map((t) => t.name);
+    expect(muets).toEqual([]);
   });
 });
