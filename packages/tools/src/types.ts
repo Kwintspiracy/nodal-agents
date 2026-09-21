@@ -5,6 +5,7 @@ import type { z } from 'zod';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { EmbeddingClient } from '@nodal-agents/llm';
 import type {
+  ApprovalRuleCondition,
   MutationTarget,
   OperationRiskLevel,
   ToolCard,
@@ -584,6 +585,13 @@ export interface ApprovalRule {
   action: 'auto_approve' | 'require_approval' | 'block';
   agentId: string | null;
   entityId: string | null;
+  /**
+   * `approval_rules.condition_json`. Today it carries at most a
+   * `workspacePath`: the rule applies ONLY while the job works in that folder
+   * ("Approve for this project", issue #346). Absent or `{}` = no condition,
+   * which is every historical row.
+   */
+  conditionJson?: ApprovalRuleCondition | null;
 }
 
 // ─── ToolExecutionResult ──────────────────────────────────────────────────────

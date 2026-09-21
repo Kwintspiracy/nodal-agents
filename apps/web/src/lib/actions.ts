@@ -194,7 +194,11 @@ import {
   parseRootGrants,
   redactSecretsForAudit,
   explainApproval,
+  explainApprovalRules,
+  resolveToolDefaultApproval,
   type ApprovalExplanation,
+  type ExplainedApprovalRule,
+  type ApprovalRuleCondition,
   findModelCatalogEntry,
   LIVE_JOB_STATUSES,
   isShellProgram,
@@ -6005,8 +6009,33 @@ export type ApprovalRow = {
    * call comes from. Null for a built-in. Drives the "always allow this server"
    * button: one decision instead of one per tool.
    */
-  mcpRulePattern: string | null;
+  /**
+   * Les regles d'approbation qui ont JOUE pour cet appel, de la plus precise a
+   * la moins precise, la premiere marquee `wins` (#346). La carte les montre,
+   * et permet de les changer sur place : avant, elle promettait « ca tournera
+   * sans demander » pendant qu'une regle plus precise continuait de demander.
+   */
+  ruleChain: ExplainedApprovalRule[];
+  /**
+   * La posture de l'outil quand AUCUNE regle ne le nomme. Seule chose que la
+   * carte affiche quand `ruleChain` est vide, sous le nom « Tool default ».
+   */
+  toolDefault: 'auto_approve' | 'require_approval' | 'block';
+  /**
+   * Les dossiers de l'agent (`agent_workspaces`), pour « Approve for this
+   * project » : aucun dossier, pas de bouton ; un seul, pas de question ;
+   * plusieurs, un choix.
+   */
+  agentWorkspaces: Array<{ label: string; path: string }>;
 };
+
+/**
+ * Un identifiant d'agent qui n'existe pas, pour lire la chaine d'une demande
+ * SANS agent : seuls les tiers Everyone peuvent alors matcher. Un UUID nul
+ * plutot qu'une chaine vide, parce qu'`agent_id` est un uuid et qu'une regle
+ * ne peut pas en porter un tout a zero.
+ */
+const NO_AGENT = '00000000-0000-0000-0000-000000000000';
 
 export async function listApprovalsAction(
   opts: {
@@ -6120,6 +6149,56 @@ export async function listApprovalsAction(
       );
     }
 
+    // Les regles d'approbation de l'entite, UNE fois pour la page : la carte
+    // doit dire quelle regle a decide (#346), et le dire pour chaque demande
+    // sans une requete par ligne.
+    const ruleRows = await db
+      .select({
+        id: approvalRules.id,
+        toolName: approvalRules.toolName,
+        action: approvalRules.action,
+        agentId: approvalRules.agentId,
+        entityId: approvalRules.entityId,
+        conditionJson: approvalRules.conditionJson,
+      })
+      .from(approvalRules)
+      .where(eq(approvalRules.entityId, session.entityId));
+    const chainRules = ruleRows.map((r) => ({
+      id: r.id,
+      toolName: r.toolName,
+      action: (r.action ?? 'auto_approve') as 'auto_approve' | 'require_approval' | 'block',
+      agentId: r.agentId,
+      entityId: r.entityId,
+      conditionJson: (r.conditionJson ?? null) as ApprovalRuleCondition | null,
+    }));
+
+    // Les dossiers de chaque agent concerne, une requete pour toute la page.
+    // Ils decident si « Approve for this project » existe, et sur quel dossier.
+    const agentIdsOnPage = [...new Set(rows.map((r) => r.agentId).filter((id) => id !== null))];
+    const workspaceRows =
+      agentIdsOnPage.length === 0
+        ? []
+        : await db
+            .select({
+              agentId: agentWorkspaces.agentId,
+              label: agentWorkspaces.label,
+              path: agentWorkspaces.path,
+            })
+            .from(agentWorkspaces)
+            .where(
+              and(
+                eq(agentWorkspaces.entityId, session.entityId),
+                inArray(agentWorkspaces.agentId, agentIdsOnPage),
+              ),
+            )
+            .orderBy(agentWorkspaces.position, agentWorkspaces.label);
+    const workspacesByAgent = new Map<string, Array<{ label: string; path: string }>>();
+    for (const w of workspaceRows) {
+      const list = workspacesByAgent.get(w.agentId) ?? [];
+      list.push({ label: w.label, path: w.path });
+      workspacesByAgent.set(w.agentId, list);
+    }
+
     return ok(
       rows.map((r) => {
         // NOUVEAU-1: the stored approval row keeps the REAL toolInput (the
@@ -6147,7 +6226,7 @@ export async function listApprovalsAction(
               ? {
                   slug: ctx.slug,
                   name: ctx.ambiguous
-                    ? `${ctx.name} (attention : plusieurs serveurs partagent ce préfixe)`
+                    ? `${ctx.name} (careful: several servers share this prefix)`
                     : ctx.name,
                   endpoint: ctx.endpoint,
                   ...(ctx.toolDescription ? { toolDescription: ctx.toolDescription } : {}),
@@ -6155,9 +6234,24 @@ export async function listApprovalsAction(
                 }
               : null,
           }),
-          // The rule pattern that would cover this whole server — what the
-          // "always allow this server" button posts. Null for a built-in.
-          mcpRulePattern: ctx?.rulePattern ?? null,
+          // LA MEME fonction que la porte (`matchApprovalRule` en derive) :
+          // ce que la carte montre est ce que le moteur a obei, pas une
+          // seconde lecture de la precedence libre de deriver (#346).
+          // Une demande SANS agent (agent supprime, job systeme) reste
+          // gouvernee par les regles Everyone. Rendre une chaine vide faisait
+          // dire « Tool default » a la carte alors qu'une regle d'entite
+          // decidait - le mensonge meme que #346 ferme (revue Reviewer C,
+          // passe 1). `NO_AGENT` ne peut egaler aucun `agent_id` : seuls les
+          // tiers Everyone peuvent matcher.
+          ruleChain: explainApprovalRules(
+            chainRules,
+            r.toolName,
+            r.agentId ?? NO_AGENT,
+            session.entityId,
+            r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
+          ),
+          toolDefault: resolveToolDefaultApproval(r.toolName),
+          agentWorkspaces: r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
         };
       }) as ApprovalRow[],
     );
@@ -6329,6 +6423,17 @@ const SetApprovalRuleSchema = z.object({
    * a per-agent `require_approval` or `block`.
    */
   scope: z.enum(['agent', 'entity']).default('agent'),
+  /**
+   * « Approve for this project » (#346) : la regle ne vaut que TANT QUE
+   * l'agent travaille dans ce dossier. Le chemin doit etre l'un des
+   * `agent_workspaces` de l'agent, verifie ici et pas seulement a l'ecran.
+   *
+   * Absent = regle sans condition. Et l'upsert REECRIT `condition_json` dans
+   * les deux cas : changer une regle depuis l'ecran d'autonomie ou depuis la
+   * ligne « Change » la rend inconditionnelle, plutot que de lui laisser en
+   * silence une condition que personne ne voit la (invariant #4).
+   */
+  workspacePath: z.string().min(1).max(1000).optional(),
 });
 
 /**
@@ -6386,6 +6491,55 @@ export async function listInternalToolsAction(): Promise<
   }
 }
 
+/**
+ * Refuse une autorisation GLOBALE qui remplacerait, sans le dire, une regle
+ * confinee a un dossier.
+ *
+ * Depuis « Approve for this project » (#346), une regle agent+outil peut
+ * porter `condition_json.workspacePath` : « approuve, mais seulement quand
+ * l'agent travaille la ». Les surfaces qui ecrivent une regle auto_approve
+ * ailleurs (les bascules Yolo, l'ecran d'autonomie) ne connaissent pas cette
+ * condition et l'ecrasaient : une permission posee comme « seulement ici »
+ * devenait valable partout, en silence (revue Reviewer C, passe 1).
+ *
+ * Seul le sens PERMISSIF est refuse. Passer la meme regle a `require_approval`
+ * ou `block`, ou la supprimer, retire la condition mais RESTREINT : rien a
+ * proteger la.
+ *
+ * Rend le message d'erreur, ou null quand l'ecriture peut passer.
+ */
+async function refuseGlobalGrantOverFolderRule(
+  tx: {
+    select: ReturnType<typeof getDb>['select'];
+  },
+  entityId: string,
+  agentId: string,
+  toolName: string,
+): Promise<string | null> {
+  const [existing] = await tx
+    .select({ action: approvalRules.action, conditionJson: approvalRules.conditionJson })
+    .from(approvalRules)
+    .where(
+      and(
+        eq(approvalRules.entityId, entityId),
+        eq(approvalRules.agentId, agentId),
+        eq(approvalRules.toolName, toolName),
+      ),
+    )
+    // VERROU. Lire puis ecrire hors transaction laissait une fenetre : un
+    // second geste concurrent passait le garde et ecrasait la regle de dossier
+    // par une permission globale (revue Reviewer C, passe 2). `FOR UPDATE`
+    // tient la ligne jusqu'au commit de l'appelant, qui ouvre donc TOUJOURS une
+    // transaction autour de ce garde et de son ecriture.
+    .for('update');
+  const folder = (existing?.conditionJson as ApprovalRuleCondition | null)?.workspacePath;
+  if (!existing || existing.action !== 'auto_approve' || typeof folder !== 'string') return null;
+  return (
+    `${toolName} is already approved for this agent only inside ${folder}. ` +
+    'Change that rule on the approval card before allowing it everywhere.'
+  );
+}
+
 export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
@@ -6393,7 +6547,13 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { agentId, toolName, action, scope } = parsed.data;
+    const { agentId, toolName, action, scope, workspacePath } = parsed.data;
+
+    // Une regle conditionnee ne vaut que pour CET agent : « Everyone dans le
+    // dossier de cet agent-la » ne veut rien dire.
+    if (workspacePath !== undefined && scope !== 'agent') {
+      return fail('validation_failed', 'A folder condition only applies to a per-agent rule');
+    }
 
     // Some always-on tools are not capabilities but machinery — blocking them
     // does not narrow what the agent can do, it breaks how it reports at all.
@@ -6414,43 +6574,78 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
+    // Le dossier doit etre l'un des SIENS. Sans ce controle, un appel direct
+    // poserait une condition sur un chemin quelconque, et la regle ne
+    // s'appliquerait jamais - une permission accordee qui ne fait rien.
+    let conditionJson: Record<string, string> = {};
+    if (workspacePath !== undefined) {
+      const owned = await db
+        .select({ path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(and(eq(agentWorkspaces.agentId, agentId), eq(agentWorkspaces.path, workspacePath)));
+      if (owned.length === 0) {
+        return fail('validation_failed', 'That folder is not attached to this agent');
+      }
+      conditionJson = { workspacePath };
+    }
+
     // agent_id IS NULL is the workspace-wide scope (see the schema note on the
     // NULLS NOT DISTINCT unique index — a plain UNIQUE would let duplicates in).
     const ruleAgentId = scope === 'entity' ? null : agentId;
     const scopeMatch =
       ruleAgentId === null ? isNull(approvalRules.agentId) : eq(approvalRules.agentId, agentId);
 
-    if (action === null) {
-      // DELETE: revert to the tool's own default.
-      await db
-        .delete(approvalRules)
-        .where(
-          and(
-            eq(approvalRules.entityId, session.entityId),
-            scopeMatch,
-            eq(approvalRules.toolName, toolName),
-          ),
+    // LE GARDE ET SON ECRITURE DANS LA MEME TRANSACTION. Separes, un second
+    // geste concurrent passait le garde et ecrasait la regle de dossier par une
+    // permission globale (revue Reviewer C, passe 2). Le garde pose `FOR UPDATE`
+    // sur la ligne ; le commit la libere une fois l'ecriture faite.
+    const refus = await db.transaction(async (tx) => {
+      if (action === 'auto_approve' && workspacePath === undefined && scope === 'agent') {
+        const message = await refuseGlobalGrantOverFolderRule(
+          tx,
+          session.entityId,
+          agentId,
+          toolName,
         );
-    } else {
+        if (message) return message;
+      }
+
+      if (action === null) {
+        // DELETE: revert to the tool's own default.
+        await tx
+          .delete(approvalRules)
+          .where(
+            and(
+              eq(approvalRules.entityId, session.entityId),
+              scopeMatch,
+              eq(approvalRules.toolName, toolName),
+            ),
+          );
+        return null;
+      }
+
       // UPSERT on the (entity_id, agent_id, tool_name) unique constraint
       // (DB-1, audit #2). The old select-then-branch left a race window where
       // two concurrent calls could both miss the SELECT and insert divergent
       // rows for the same scope — matchApprovalRule's `.find()` would then pick
       // whichever the SELECT happened to return first, a non-deterministic
       // gate. onConflictDoUpdate makes this atomic: one canonical row survives.
-      await db
+      await tx
         .insert(approvalRules)
         .values({
           entityId: session.entityId,
           agentId: ruleAgentId,
           toolName,
           action,
+          conditionJson,
         })
         .onConflictDoUpdate({
           target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
-          set: { action, updatedAt: new Date() },
+          set: { action, conditionJson, updatedAt: new Date() },
         });
-    }
+      return null;
+    });
+    if (refus) return fail('validation_failed', refus);
 
     revalidatePath(`/agents/${agentId}/edit`);
     revalidatePath('/approvals');
@@ -6524,7 +6719,22 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
     // both pass the delete and then race on the insert, throwing on the
     // constraint instead of leaving one clean row. db.transaction plus
     // onConflictDoUpdate makes the whole toggle atomic and idempotent.
-    await db.transaction(async (tx) => {
+    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine deja a
+    // un dossier, l'ecraser elargirait la permission en silence (revue
+    // Reviewer C, passe 1) : on refuse, en nommant le dossier. Le garde vit
+    // DANS la transaction et verrouille la ligne, sans quoi un geste concurrent
+    // passerait entre la lecture et l'ecriture (passe 2).
+    const refus = await db.transaction(async (tx) => {
+      if (enabled) {
+        const message = await refuseGlobalGrantOverFolderRule(
+          tx,
+          session.entityId,
+          agentId,
+          'run_command',
+        );
+        if (message) return message;
+      }
+
       await tx
         .delete(approvalRules)
         .where(
@@ -6549,7 +6759,9 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
             set: { action: 'auto_approve', updatedAt: new Date() },
           });
       }
+      return null;
     });
+    if (refus) return fail('validation_failed', refus);
 
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
@@ -6613,7 +6825,22 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
     // setRunCommandYoloAction) — approval_rules carries a
     // UNIQUE(entity_id, agent_id, tool_name) constraint, so two overlapping
     // calls could otherwise race on the insert.
-    await db.transaction(async (tx) => {
+    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine deja a
+    // un dossier, l'ecraser elargirait la permission en silence (revue
+    // Reviewer C, passe 1) : on refuse, en nommant le dossier. Le garde vit
+    // DANS la transaction et verrouille la ligne, sans quoi un geste concurrent
+    // passerait entre la lecture et l'ecriture (passe 2).
+    const refus = await db.transaction(async (tx) => {
+      if (enabled) {
+        const message = await refuseGlobalGrantOverFolderRule(
+          tx,
+          session.entityId,
+          agentId,
+          'code_task',
+        );
+        if (message) return message;
+      }
+
       await tx
         .delete(approvalRules)
         .where(
@@ -6638,7 +6865,9 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
             set: { action: 'auto_approve', updatedAt: new Date() },
           });
       }
+      return null;
     });
+    if (refus) return fail('validation_failed', refus);
 
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);

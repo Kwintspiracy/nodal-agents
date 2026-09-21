@@ -12,7 +12,7 @@
 // compte à côté.
 //
 // ⚠️ QUATRE SURFACES répondent dans le produit, et chacune a son cas ici : la
-// carte de la page Approvals (`ApprovalActions`, avec son échelle entière), la
+// carte de la page Approvals (`ApprovalRequestCard`, la carte entière), la
 // carte de question de cette même page (`QuestionActions`), la carte de question
 // DANS LE FIL (`spaces/QuestionCard`), et le bouton Approve de la CLOCHE
 // (`NotificationsBell`). La troisième manquait au premier jet (Reviewer C,
@@ -90,7 +90,7 @@ import {
   listSidebarWebhooksAction,
   listSidebarRecentApprovalsAction,
 } from '@/lib/sidebar-actions.ts';
-import ApprovalActions from '@/app/(dashboard)/approvals/ApprovalActions.tsx';
+import ApprovalRequestCard from '@/app/(dashboard)/approvals/ApprovalRequestCard.tsx';
 import QuestionActions from '@/app/(dashboard)/approvals/QuestionActions.tsx';
 import QuestionCard from '@/app/(dashboard)/spaces/QuestionCard.tsx';
 
@@ -153,17 +153,54 @@ async function monter(surface: ReactElement, attentes: PendingApproval[] = [ATTE
   });
 }
 
-/** La carte de la page Approvals — l'échelle entière. */
-function carteApprobation(agentId: string | null = null): ReactElement {
-  return (
-    <ApprovalActions
-      approvalId={ATTENTE.id}
-      toolName={ATTENTE.toolName}
-      agentId={agentId}
-      mcpRulePattern={null}
-      mcpServerName={null}
-    />
-  );
+/**
+ * La carte de la page Approvals, celle qui répond ET montre les règles (#346).
+ *
+ * `dossiers` décide de la présence de « Approve for this project » : sans
+ * dossier attaché, le bouton n'existe pas, parce qu'il n'y aurait aucun
+ * dossier auquel confiner la règle.
+ */
+function carteApprobation(
+  agentId: string | null = null,
+  dossiers: Array<{ label: string; path: string }> = [],
+): ReactElement {
+  const demande = {
+    id: ATTENTE.id,
+    jobId: ATTENTE.jobId,
+    agentId,
+    agentName: 'Alfred',
+    agentSlug: 'alfred',
+    toolName: ATTENTE.toolName,
+    toolInput: {},
+    kind: 'approval',
+    answer: null,
+    status: 'pending',
+    requestedAt: null,
+    resolvedAt: null,
+    resolvedBy: null,
+    expiresAt: null,
+    notes: null,
+    jobTask: null,
+    jobChannel: 'dashboard',
+    conversationId: null,
+    conversationChannel: 'dashboard',
+    rootChannel: null,
+    rootJobId: null,
+    explanation: {
+      what: 'Send message',
+      effect: 'write',
+      effectLabel: 'Write',
+      target: null,
+      provenance: { kind: 'builtin' },
+      purpose: null,
+      args: [],
+      impact: null,
+    },
+    ruleChain: [],
+    toolDefault: 'require_approval',
+    agentWorkspaces: dossiers,
+  } as unknown as Parameters<typeof ApprovalRequestCard>[0]['approval'];
+  return <ApprovalRequestCard approval={demande} />;
 }
 
 /** La carte de question DU FIL, celle qui vit dans `spaces`. */
@@ -241,17 +278,6 @@ function lectureRetenue(): () => void {
   };
 }
 
-/**
- * Cliquer le bouton de la BOÎTE DE CONFIRMATION, et pas son homonyme de la
- * page : « Always reject » est écrit sur les deux, et le premier trouvé dans le
- * document est celui de la page — le cliquer refermerait la boîte.
- */
-async function confirmer(texte: string): Promise<void> {
-  const boite = document.body.querySelector('[role="dialog"]');
-  if (!boite) throw new Error('aucune boîte de confirmation ouverte');
-  await cliquerDans(boite, texte);
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(listFolderThreadsAction).mockResolvedValue({ ok: true, data: {} });
@@ -309,7 +335,7 @@ afterEach(async () => {
 describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/ecran', () => {
   it('APPROUVER fait disparaître le nombre, sans attendre le tour de cadence', async () => {
     // Mutation vérifiée : `if (result.ok) await refresh();` retiré de
-    // `resolve()` dans `ApprovalActions` → la case reste « Approvals1 ».
+    // `resolve()` dans `ApprovalRequestCard` → la case reste « Approvals1 ».
     await monter(carteApprobation());
     expect(caseApprovals()).toBe('Approvals1');
 
@@ -366,40 +392,23 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     expect(caseApprovals()).toBe('Approvals');
   });
 
-  it('TOUJOURS AUTORISER cet outil la fait tomber, après la règle', async () => {
-    // Le chemin le plus long de l'échelle : une règle écrite, puis la
-    // résolution. La pastille suit la seconde, pas la première.
-    await monter(carteApprobation('ag-1'));
-    await cliquer('Always for this tool');
-    await confirmer('Always allow');
+  it('APPROUVER POUR CE DOSSIER la fait tomber, après la règle conditionnée', async () => {
+    // Le chemin le plus long qui reste (#346) : une règle confinée au dossier,
+    // puis la résolution. La pastille suit la seconde, pas la première.
+    await monter(carteApprobation('ag-1', [{ label: 'nodal', path: 'D:/APPS/NodalAI' }]));
+    await cliquer('Approve for this project');
     expect(vi.mocked(setAgentApprovalRuleAction).mock.calls[0]?.[0]).toEqual({
       agentId: 'ag-1',
       toolName: 'send_message',
       action: 'auto_approve',
       scope: 'agent',
+      workspacePath: 'D:/APPS/NodalAI',
     });
     // LA RÉSOLUTION AUSSI : sans elle, la règle serait écrite et la demande
     // resterait en attente en base, pastille tombée (Reviewer C, passe 2).
     expect(vi.mocked(resolveApprovalAction).mock.calls[0]?.[0]).toEqual({
       approvalRequestId: 'a1',
       decision: 'approve',
-    });
-    expect(caseApprovals()).toBe('Approvals');
-  });
-
-  it('TOUJOURS REJETER la fait tomber, après la règle de blocage', async () => {
-    await monter(carteApprobation('ag-1'));
-    await cliquer('Always reject');
-    await confirmer('Always reject');
-    expect(vi.mocked(setAgentApprovalRuleAction).mock.calls[0]?.[0]).toEqual({
-      agentId: 'ag-1',
-      toolName: 'send_message',
-      action: 'block',
-    });
-    expect(vi.mocked(resolveApprovalAction).mock.calls[0]?.[0]).toEqual({
-      approvalRequestId: 'a1',
-      decision: 'reject',
-      notes: 'Permanently blocked by the owner.',
     });
     expect(caseApprovals()).toBe('Approvals');
   });
@@ -474,7 +483,7 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     // encore la demande qu'on vient de fermer.
     //
     // Mutation vérifiée : `await refresh()` → `void refresh()` dans
-    // `ApprovalActions.resolve` → ce cas rougit, le bouton est déjà réactivé
+    // `ApprovalRequestCard.resolve` → ce cas rougit, le bouton est déjà réactivé
     // alors que la lecture est encore en vol.
     const relacher = lectureRetenue();
     await monter(carteApprobation());

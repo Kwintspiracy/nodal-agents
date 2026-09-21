@@ -102,20 +102,31 @@ export function parseMcpToolName(toolName: string): { prefix: string; tool: stri
 }
 
 const EFFECT_LABEL: Record<ApprovalEffect, string> = {
-  read: 'Lecture',
-  write: 'Écriture',
-  external: 'Appel externe',
-  destructive: 'Destructif',
-  unknown: 'Effet inconnu',
+  read: 'Read',
+  write: 'Write',
+  external: 'External call',
+  destructive: 'Destructive',
+  unknown: 'Unknown effect',
 };
 
 /** Turn a snake_case / camelCase tool name into something readable. */
-function humanise(name: string): string {
+export function humanise(name: string): string {
   return name
     .replace(/[_-]+/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .trim()
     .toLowerCase();
+}
+
+/**
+ * The tool's name as the approval card titles it: readable words, first letter
+ * capitalised, no quotes, no `__` namespace. `mcp_playwright__browser_run_code_unsafe`
+ * reads "Browser run code unsafe"; a product tool reads its own name in words.
+ */
+export function toolDisplayName(toolName: string): string {
+  const mcp = parseMcpToolName(toolName);
+  const words = humanise(mcp ? mcp.tool : toolName);
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /** Fields the approval UI asks the agent to fill, rendered outside the arg list. */
@@ -209,11 +220,9 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
     // crosses the network. `external` is the honest floor whatever the tool does.
     const effect: ApprovalEffect = opts.mcp.readOnlyHint ? 'read' : 'external';
     return {
-      what: `« ${humanise(mcpName.tool)} » via ${opts.mcp.name}`,
+      what: `${toolDisplayName(opts.toolName)} via ${opts.mcp.name}`,
       effect,
-      effectLabel: opts.mcp.readOnlyHint
-        ? 'Lecture (déclarée par le serveur)'
-        : EFFECT_LABEL.external,
+      effectLabel: opts.mcp.readOnlyHint ? 'Read (declared by the server)' : EFFECT_LABEL.external,
       target: url ?? opts.mcp.endpoint,
       provenance: {
         kind: 'mcp',
@@ -235,7 +244,7 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
     // Namespaced tool whose server could not be resolved — say that, do not
     // fall back to a scary generic line.
     return {
-      what: `« ${humanise(mcpName.tool)} » via un serveur MCP non identifié (${mcpName.prefix})`,
+      what: `${toolDisplayName(opts.toolName)} via an unidentified MCP server (${mcpName.prefix})`,
       effect: 'unknown',
       effectLabel: EFFECT_LABEL.unknown,
       target: firstUrl(args),
@@ -287,7 +296,7 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
   }
 
   return {
-    what: humanise(opts.toolName),
+    what: toolDisplayName(opts.toolName),
     effect,
     effectLabel: EFFECT_LABEL[effect],
     target,
@@ -308,19 +317,19 @@ export function renderExplanationText(x: ApprovalExplanation): string {
   lines.push(`⚠️ ${x.effectLabel}${x.target ? ` → ${x.target}` : ''}`);
   if (x.provenance.kind === 'mcp') {
     lines.push(
-      `🔌 Serveur MCP « ${x.provenance.name ?? x.provenance.slug} »` +
+      `🔌 MCP server ${x.provenance.name ?? x.provenance.slug}` +
         (x.provenance.endpoint ? ` (${x.provenance.endpoint})` : ''),
     );
     if (x.provenance.supplied) {
-      lines.push(`   Description fournie par ce serveur (texte tiers, non vérifié) :`);
-      lines.push(`   « ${x.provenance.supplied.slice(0, 200)} »`);
+      lines.push(`   Description supplied by this server (third-party text, unverified):`);
+      lines.push(`   “${x.provenance.supplied.slice(0, 200)}”`);
     }
   }
   if (x.impact) lines.push(`   ${x.impact}`);
   if (x.args.length > 0) {
-    lines.push('', 'Arguments :');
+    lines.push('', 'Arguments:');
     for (const a of x.args) {
-      const cut = a.truncated ? ` (${a.fullLength} caractères, ${ARG_MAX} affichés)` : '';
+      const cut = a.truncated ? ` (${a.fullLength} characters, ${ARG_MAX} shown)` : '';
       lines.push(`  ${a.key} = ${a.value}${cut}`);
     }
   }
