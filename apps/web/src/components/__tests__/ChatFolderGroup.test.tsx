@@ -269,61 +269,67 @@ describe('le groupe de dossiers @cap:reprendre-conversation/ecran', () => {
     expect(container.querySelector('[data-testid="inbox-folder-mcp"]')).toBeNull();
   });
 
-  it('écrit sur la pastille le nombre qui attend dans CE dossier', async () => {
+  it('N’ÉCRIT AUCUN NOMBRE sur un dossier de CANAL', async () => {
+    // Décision du propriétaire, 22/09/2026 : « ne mets pas de puce numérotée
+    // sur les channels ». Chaque canal portait son compte ; il n'en reste
+    // qu'un, sur « Nodal chats ».
+    //
+    // Mutation vérifiée : `waiting={f.waiting}` remis dans `ChatFolderGroup`
+    // → ce cas rougit sur Telegram.
     await renderGroup({
       channels: ['telegram', 'slack'],
       approvals: [...pending('telegram', 3), ...pending('slack', 1)],
     });
-    expect(folderRow('telegram').textContent).toContain('3');
-    expect(folderRow('slack').textContent).toContain('1');
+    expect(folderRow('telegram').textContent).toBe('Telegram');
+    expect(folderRow('slack').textContent).toBe('Slack');
+    // Et pas de pastille non plus : c'est le nombre qu'on retire, pas sa
+    // couleur qu'on cache.
+    expect(folderRow('telegram').querySelector('span[class*="bg-err"]')).toBeNull();
   });
 
-  it('écrit la pastille d’un délégué du tableau des tâches sur le dossier de son fil', async () => {
-    // #148. Le job porte `task-board`, qui n'est le dossier de personne ; sa
-    // conversation porte Telegram. La ligne du fil s'allumait déjà ; c'est la
-    // pastille du dossier qui restait muette au-dessus d'elle.
+  it('n’en écrit pas davantage sur MCP, qui est un endroit d’où arrive du travail', async () => {
     await renderGroup({
       channels: ['telegram'],
-      approvals: pending('task-board', 2, 'telegram'),
+      externalRuns: 2,
+      approvals: pending('mcp', 4),
     });
-    expect(folderRow('telegram').textContent).toContain('2');
-    expect(folderRow('dashboard').textContent).toBe('Nodal chats');
+    expect(folderRow('mcp').textContent).toBe('MCP');
   });
 
-  it('compte un LIVRABLE À VÉRIFIER dans la même pastille qu’une approbation', async () => {
-    // #255 — la quatrième chose qu'énumère la décision 2 de #135, et la
-    // dernière à avoir reçu sa colonne (`agent_jobs.deliverable_check_due_at`,
-    // migration 0118). Elle arrive par une autre lecture que les approbations,
-    // et elle atterrit dans LA MÊME pastille : une personne ne lit pas deux
-    // chiffres côte à côte pour savoir combien de choses l'attendent.
-    await renderGroup({
-      channels: ['telegram'],
-      approvals: pending('telegram', 1),
-      deliverables: [{ jobChannel: 'telegram', conversationChannel: null }],
-    });
-    expect(folderRow('telegram').textContent).toContain('2');
-  });
-
-  it('range un livrable à vérifier par le canal de son FIL, comme une approbation', async () => {
-    // Un run lancé depuis le tableau des tâches porte `task-board`, qui n'est
-    // le dossier de personne ; c'est sa conversation qui dit où il se range.
-    await renderGroup({
-      channels: ['telegram'],
-      deliverables: [{ jobChannel: 'task-board', conversationChannel: 'telegram' }],
-    });
-    expect(folderRow('telegram').textContent).toContain('1');
-    expect(folderRow('dashboard').textContent).toBe('Nodal chats');
-  });
-
-  it('ne rend PAS de pastille à zéro — pas même un « 0 »', async () => {
-    await renderGroup({ channels: ['telegram'], approvals: pending('telegram', 0) });
+  it('écrit le nombre sur « NODAL CHATS », le seul dossier qui le garde', async () => {
+    // C'est le dossier du tableau de bord, celui d'où l'on parle. Le compte y
+    // reste parce qu'on y répond, et parce que la case Approvals du rail dit
+    // déjà le total.
+    //
+    // Mutation vérifiée : `DASHBOARD_FOLDER` remplacé par n'importe quelle
+    // autre clé → ce cas rougit.
+    await renderGroup({ channels: ['telegram'], approvals: pending('dashboard', 3) });
+    expect(folderRow('dashboard').textContent).toContain('3');
     expect(folderRow('telegram').textContent).toBe('Telegram');
   });
 
+  it('compte un LIVRABLE À VÉRIFIER dans la même pastille qu’une approbation', async () => {
+    // #255 — la quatrième chose qu'énumère la décision 2 de #135. Elle arrive
+    // par une autre lecture que les approbations, et elle atterrit dans LA
+    // MÊME pastille : une personne ne lit pas deux chiffres côte à côte pour
+    // savoir combien de choses l'attendent.
+    await renderGroup({
+      channels: ['telegram'],
+      approvals: pending('dashboard', 1),
+      deliverables: [{ jobChannel: 'dashboard', conversationChannel: null }],
+    });
+    expect(folderRow('dashboard').textContent).toContain('2');
+  });
+
+  it('ne rend PAS de pastille à zéro — pas même un « 0 »', async () => {
+    await renderGroup({ channels: ['telegram'], approvals: pending('dashboard', 0) });
+    expect(folderRow('dashboard').textContent).toBe('Nodal chats');
+  });
+
   it('plafonne la pastille à « 9+ » au-delà de neuf', async () => {
-    await renderGroup({ channels: ['telegram'], approvals: pending('telegram', 12) });
-    expect(folderRow('telegram').textContent).toContain('9+');
-    expect(folderRow('telegram').textContent).not.toContain('12');
+    await renderGroup({ channels: ['telegram'], approvals: pending('dashboard', 12) });
+    expect(folderRow('dashboard').textContent).toContain('9+');
+    expect(folderRow('dashboard').textContent).not.toContain('12');
   });
 
   it('allume le point d’un dossier où un run tourne, SANS y écrire de nombre', async () => {
