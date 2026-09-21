@@ -237,7 +237,7 @@ describe.runIf(ACTIF)('capture du markup de la barre latérale', () => {
     ['work-running', '/chat', ['telegram', 'discord', 'whatsapp', 'mcp'], 2, 1],
   ];
 
-  for (const [nom, route, channels, runsInProgress, workConversationsInProgress] of cas) {
+  for (const [nom, route, channels, , workConversationsInProgress] of cas) {
     it(`écrit ${nom}.html`, async () => {
       pathname = route;
       await render(
@@ -255,7 +255,6 @@ describe.runIf(ACTIF)('capture du markup de la barre latérale', () => {
               deliverablesToCheck: [],
               deliverableCheckJobIds: [],
               deliverableCheckConversationIds: [],
-              runsInProgress,
               workConversationsInProgress,
             }}
           >

@@ -893,7 +893,6 @@ export type ChatFoldersSnapshot = {
    * Tiré de la MÊME requête que `running`, avant le rangement par dossier :
    * pas une lecture de plus.
    */
-  runsInProgress: number;
   /**
    * COMBIEN DE CONVERSATIONS DE LA SECTION WORK portent un run en cours (#303).
    *
@@ -1103,11 +1102,6 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
         .limit(DELIVERABLE_CHECK_MAX),
     ]);
 
-    // Le total AVANT le rangement par dossier : `running` perd en route tout
-    // ce que `folderOfWork` ne sait pas ranger, et c'est justement ce que la
-    // case Logs doit compter (#300).
-    const runsInProgress = runningRows.reduce((total, r) => total + r.n, 0);
-
     const running: Record<string, number> = {};
     for (const r of runningRows) {
       // Un run devient un DOSSIER par la même règle que partout ailleurs : le
@@ -1146,7 +1140,6 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
       deliverableCheckConversationIds: dueRows
         .map((r) => r.conversationId)
         .filter((id): id is string => id !== null),
-      runsInProgress,
       // Une conversation que la section Work ne liste pas n'allume pas sa
       // case. `origin` est `null` quand la jointure n'a rien trouvé — un job
       // qui désigne une conversation d'une autre entité ou déjà supprimée — et

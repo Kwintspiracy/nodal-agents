@@ -102,10 +102,16 @@ type Props = {
   testId: string;
 };
 
-/** Ce qui tourne derrière une case : combien, et de quoi il s'agit. */
+/**
+ * Ce qui tourne derrière une case : combien, et de quoi il s'agit.
+ *
+ * `conversation` est le seul mot aujourd'hui : la case Logs a perdu son point
+ * le 22/09/2026, et c'était la seule qui comptait des runs. Le champ reste —
+ * il part dans le nom accessible, et « 2 in progress » ne dirait pas de quoi.
+ */
 export type RailCellRunning = {
   count: number;
-  noun: 'run' | 'conversation';
+  noun: 'conversation';
 };
 
 /**

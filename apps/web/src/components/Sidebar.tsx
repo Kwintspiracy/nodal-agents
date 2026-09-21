@@ -52,7 +52,7 @@ export default function Sidebar({
   // de plus : `ChatFoldersProvider` sonde toutes les 15 s pour les dossiers, et
   // ces deux chiffres viennent de la même lecture. Un second appel donnerait
   // deux vérités sur le même fait, et elles se contrediraient entre deux tours.
-  const { runsInProgress, workConversationsInProgress } = useChatFolders();
+  const { workConversationsInProgress } = useChatFolders();
 
   // La destination se DÉDUIT de la route, et de rien d'autre : aucun état,
   // aucune mémoire. Deux onglets ouverts sur la même adresse montrent le même
@@ -140,7 +140,6 @@ export default function Sidebar({
         <SidebarRail
           activeKey={active?.key ?? null}
           approvalsCount={pending.length}
-          runsInProgress={runsInProgress}
           workConversationsInProgress={workConversationsInProgress}
           logsActive={logsActive}
           userMenu={userMenu}

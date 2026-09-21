@@ -86,7 +86,6 @@ function HelpLink({
 export default function SidebarRail({
   activeKey,
   approvalsCount,
-  runsInProgress,
   workConversationsInProgress,
   logsActive,
   userMenu,
@@ -97,17 +96,12 @@ export default function SidebarRail({
   /** Combien de demandes attendent la personne. 0 = aucune pastille. */
   approvalsCount: number;
   /**
-   * COMBIEN DE RUNS TOURNENT, tous canaux confondus — ce que la case Logs
-   * montre (#300). 0 = aucun point.
+   * COMBIEN DE CONVERSATIONS DE LA SECTION WORK tournent — ce que la case Work
+   * montre (#303). 0 = aucun point.
    *
    * Passé par la barre, qui le lit dans `ChatFoldersProvider`, plutôt que lu
    * ici : le rail reste une vue, et un test le monte avec l'instantané qu'il
    * veut sans câbler un provider.
-   */
-  runsInProgress: number;
-  /**
-   * COMBIEN DE CONVERSATIONS DE LA SECTION WORK tournent — ce que la case Work
-   * montre (#303). 0 = aucun point.
    */
   workConversationsInProgress: number;
   /** La route est-elle sous `/logs` ? Logs navigue, il n'a pas de panneau. */
@@ -190,15 +184,18 @@ export default function SidebarRail({
       <div className="flex-1" />
 
       {/* Logs NAVIGUE — il n'ouvre aucun panneau, et sa case s'allume comme
-          n'importe quelle autre quand on est sur sa page. */}
+          n'importe quelle autre quand on est sur sa page.
+
+          ET ELLE NE PORTE RIEN (décision du propriétaire, 22/09/2026 :
+          « Enlève le pulsing dot sur l'onglet Logs »). #300 y avait posé un
+          point qui comptait tous les runs vivants ; il est retiré, et la case
+          redevient ce qu'elle était. Le point ne bat plus que sur Work, où il
+          compte les conversations de sa section. */}
       <RailCell
         href={RAIL_FOOT.logs.href}
         label={RAIL_FOOT.logs.label}
         icon={ListMagnifyingGlass}
         active={logsActive}
-        // Le point de Logs compte des RUNS, et tous les runs : on y va pour
-        // voir ce que la machine fait, d'où que la demande vienne (#300).
-        running={{ count: runsInProgress, noun: 'run' as const }}
         testId="rail-logs"
       />
 

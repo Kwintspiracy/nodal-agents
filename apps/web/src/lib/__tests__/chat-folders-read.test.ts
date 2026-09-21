@@ -251,16 +251,18 @@ describe('les dossiers lus en base @cap:reprendre-conversation/moteur', () => {
     expect(result.data.runningConversationIds).not.toContain(null);
   });
 
-  it('compte TOUS les runs vivants, y compris ceux qu’aucun dossier ne range', async () => {
+  it('ne compte plus les runs vivants : la case Logs n’a plus de point', async () => {
+    // L'instantané portait `runsInProgress`, le total des runs vivants, et il
+    // n'existait QUE pour le point de la case Logs (#300). Ce point est retiré
+    // le 22/09/2026 sur décision du propriétaire, et le total avec lui : un
+    // champ calculé à chaque tour de cadence pour personne est une lecture de
+    // plus, pas une donnée.
     const { getChatFoldersAction } = await import('../conversation-actions.ts');
     const result = await getChatFoldersAction();
     if (!result.ok) throw new Error(result.message);
-    // Cinq jobs vivants : deux `processing` sur Telegram, le job `api` de la
-    // fixture, l'automatisation `cron` et le run de l'accueil. Les quatre
-    // `awaiting_approval` n'en sont pas : ils attendent la personne.
-    expect(result.data.runsInProgress).toBe(5);
-    // Et c'est bien PLUS que ce que les dossiers savent ranger : `running`
-    // perd le `cron` et l'`internal`, qui ne designent aucun dossier de chat.
+    expect('runsInProgress' in result.data).toBe(false);
+    // Le rangement par dossier, lui, reste : il fait le point vert d'un dossier
+    // du menu, et il ne compte que ce que `folderOfWork` sait ranger.
     const parDossier = Object.values(result.data.running).reduce((t, n) => t + n, 0);
     expect(parDossier).toBe(3);
   });
