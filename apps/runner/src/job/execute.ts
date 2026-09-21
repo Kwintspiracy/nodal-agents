@@ -913,6 +913,18 @@ export async function maybeResumeParent(
   }
 }
 
+// ─── approval TTL ─────────────────────────────────────────────────────────────
+
+/**
+ * Ce que le MODÈLE lit quand sa demande a expiré sans réponse (#349). Ce n'est
+ * pas un texte d'écran : la page a déjà son onglet Expired et la carte tranchée
+ * montre le statut. C'est le résultat d'outil qui remplace le marqueur
+ * `[AWAITING_APPROVAL]`, au même endroit que `[REJECTED]`.
+ */
+export const APPROVAL_EXPIRED_TOOL_RESULT =
+  '[EXPIRED] No answer arrived before this request deadline, so it expired. ' +
+  'Nothing was done. Ask again if it is still needed.';
+
 /**
  * Self-heal a job stranded in `awaiting_approval` despite its gated approval
  * already being resolved — the T-ε race between `suspendForApproval`'s last
@@ -938,7 +950,9 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
     .select({ status: approvalRequests.status })
     .from(approvalRequests)
     .where(and(eq(approvalRequests.jobId, jobId), isNull(approvalRequests.executedAt)));
-  const hasResolved = openRows.some((r) => r.status === 'approved' || r.status === 'rejected');
+  const hasResolved = openRows.some(
+    (r) => r.status === 'approved' || r.status === 'rejected' || r.status === 'expired',
+  );
   if (!hasResolved) return;
 
   const flipped = await db
@@ -2306,6 +2320,16 @@ async function runJobTracked(
           }
         }
         trace('resume_approved_tool_executed', { toolName: req.toolName });
+      } else if (req.status === 'expired') {
+        // Nobody answered before the deadline and the TTL sweep closed the
+        // request (cron/reset-orphans.ts, issue #349). The job resumes the same
+        // way it resumes from a rejection; what differs is what the model is
+        // told, because "declined" and "nobody was there" call for different
+        // next moves. The same sentence serves an approval and a question
+        // (kind = 'question'): in both cases nothing happened and asking again
+        // is allowed.
+        replacementOutput = toResultOutput(APPROVAL_EXPIRED_TOOL_RESULT);
+        trace('resume_expired_tool_marker_replaced', { toolName: req.toolName });
       } else {
         // Rejected: replace marker with a [REJECTED] explanation.
         const reason = req.notes ?? 'no reason provided';
@@ -2386,7 +2410,7 @@ async function runJobTracked(
     // Filter to resolved (approved or rejected) rows; anything still 'pending'
     // means the human hasn't acted yet — we'll handle those at suspend time.
     const resolvedRows = pendingExecRows.filter(
-      (r) => r.status === 'approved' || r.status === 'rejected',
+      (r) => r.status === 'approved' || r.status === 'rejected' || r.status === 'expired',
     );
 
     if (resolvedRows.length > 0) {
@@ -3711,6 +3735,9 @@ async function runJobTracked(
               // Les MOTS DE L'AGENT : c'est son texte final, sur la branche
               // texte (#154, #210).
               resultKind: 'prose',
+              // La boucle de tours SAIT rouvrir ce job : un rouge jamais
+              // réparé rend `repair_due` et rejoue un tour (issue #375).
+              repairTurn: 'supported',
               toolsUsed,
               stats: runStats(),
               messages,
@@ -3730,6 +3757,31 @@ async function runJobTracked(
             // que le chemin return_result rendait déjà already_handled.
             trace('terminal_write_lost_race', { turn, writer: 'finalize_text', jobId });
             return { status: 'already_handled' };
+          }
+          // PREUVE ROUGE, ET JAMAIS RÉPARÉE : le job NE FINIT PAS. Il repart
+          // pour UN tour, avec la sortie rouge verbatim comme entrée (issue
+          // #375, décision D2 du plan « Vérifier & Corriger »). La primitive a
+          // déjà posé `repair_attempts = 1` et compté cette reprise sur
+          // `chain_count` — on recopie le compteur EN MÉMOIRE, sinon le
+          // prochain checkpoint réécrirait la valeur d'avant et la reprise ne
+          // coûterait rien au budget anti-boucle (invariant #8).
+          //
+          // Le texte est du HARNAIS QUI PARLE AU MODÈLE, comme les rappels de
+          // livraison au-dessus : il n'atteint aucun écran, l'invariant #2
+          // n'est pas en jeu.
+          if (finalized.kind === 'repair_due') {
+            if (!finalized.repair) {
+              // La primitive promet `repair` avec ce `kind`. On le dit fort
+              // plutôt que de continuer un tour sans rien à corriger.
+              throw new Error(`REPAIR_TURN_WITHOUT_BRIEF: ${jobId}`);
+            }
+            trace('repair_turn', { turn, keys: finalized.repair.keys });
+            job.chainCount = (job.chainCount ?? 0) + 1;
+            messages = [
+              ...messages,
+              { role: 'user', content: finalized.repair.brief } as ModelMessage,
+            ];
+            continue;
           }
           // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
           // or delay the job response — gates + throttle live inside the hook.
@@ -5108,6 +5160,8 @@ async function runJobTracked(
             // reste en place. Elle est nommée quand même — la primitive exige
             // que chaque porte DISE de quel genre est le texte qu'elle passe.
             resultKind: 'prose',
+            // Même boucle, même reprise possible (issue #375).
+            repairTurn: 'supported',
             toolsUsed,
             stats: runStats(),
             messages,
@@ -5127,6 +5181,31 @@ async function runJobTracked(
           // report that the row was already handled so the caller never overrides it.
           trace('terminal_write_lost_race', { turn, writer: 'finalize', jobId });
           return { status: 'already_handled' };
+        }
+        // PREUVE ROUGE, ET JAMAIS RÉPARÉE : le job NE FINIT PAS. Il repart
+        // pour UN tour, avec la sortie rouge verbatim comme entrée (issue
+        // #375, décision D2 du plan « Vérifier & Corriger »). La primitive a
+        // déjà posé `repair_attempts = 1` et compté cette reprise sur
+        // `chain_count` — on recopie le compteur EN MÉMOIRE, sinon le
+        // prochain checkpoint réécrirait la valeur d'avant et la reprise ne
+        // coûterait rien au budget anti-boucle (invariant #8).
+        //
+        // Le texte est du HARNAIS QUI PARLE AU MODÈLE, comme les rappels de
+        // livraison au-dessus : il n'atteint aucun écran, l'invariant #2
+        // n'est pas en jeu.
+        if (finalized.kind === 'repair_due') {
+          if (!finalized.repair) {
+            // La primitive promet `repair` avec ce `kind`. On le dit fort
+            // plutôt que de continuer un tour sans rien à corriger.
+            throw new Error(`REPAIR_TURN_WITHOUT_BRIEF: ${jobId}`);
+          }
+          trace('repair_turn', { turn, keys: finalized.repair.keys });
+          job.chainCount = (job.chainCount ?? 0) + 1;
+          messages = [
+            ...messages,
+            { role: 'user', content: finalized.repair.brief } as ModelMessage,
+          ];
+          continue;
         }
         // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
         // or delay the job response — gates + throttle live inside the hook.

@@ -319,7 +319,7 @@ describe('l’intention d’un autre job, posée AVANT la preuve (#101) @cap:ver
     const logs: Log = [];
     const aRun = finalizeJobSuccess(
       db as unknown as AnyDrizzleDb,
-      { jobId: jobA, result: 'fini par A', resultKind: 'prose' },
+      { jobId: jobA, result: 'fini par A', resultKind: 'prose', repairTurn: 'unsupported' },
       {
         getVerifier: () =>
           verificateur({
@@ -373,7 +373,7 @@ describe('l’intention d’un autre job, posée AVANT la preuve (#101) @cap:ver
     const logs: Log = [];
     const outcome = await finalizeJobSuccess(
       db as unknown as AnyDrizzleDb,
-      { jobId: jobA, result: 'fini par A', resultKind: 'prose' },
+      { jobId: jobA, result: 'fini par A', resultKind: 'prose', repairTurn: 'unsupported' },
       { getVerifier: () => verificateur({}), log: logger(logs) },
     );
 
@@ -396,7 +396,7 @@ describe('l’intention d’un autre job, posée AVANT la preuve (#101) @cap:ver
     const logs: Log = [];
     const outcome = await finalizeJobSuccess(
       db as unknown as AnyDrizzleDb,
-      { jobId: jobA, result: 'fini par A', resultKind: 'prose' },
+      { jobId: jobA, result: 'fini par A', resultKind: 'prose', repairTurn: 'unsupported' },
       { getVerifier: () => verificateur({}), log: logger(logs) },
     );
 
@@ -414,7 +414,7 @@ describe('l’intention d’un autre job, posée AVANT la preuve (#101) @cap:ver
     const logs: Log = [];
     const outcome = await finalizeJobSuccess(
       db as unknown as AnyDrizzleDb,
-      { jobId: jobB, result: 'fini par B', resultKind: 'prose' },
+      { jobId: jobB, result: 'fini par B', resultKind: 'prose', repairTurn: 'unsupported' },
       { getVerifier: () => verificateur({}), log: logger(logs) },
     );
 

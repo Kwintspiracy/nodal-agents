@@ -73,6 +73,7 @@ import {
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import FolderPickerModal from './FolderPickerModal.tsx';
 import { SectionCard, SectionHead } from './SectionCard.tsx';
+import AutonomyToolRow from './AutonomyToolRow.tsx';
 import CommandAllowlistSection from './CommandAllowlistSection.tsx';
 import TeamChangeSection from './TeamChangeSection.tsx';
 import {
@@ -107,7 +108,6 @@ import TextArea from '@/components/ui/TextArea';
 import Select from '@/components/ui/Select';
 import Checkbox from '@/components/ui/Checkbox';
 import Switch from '@/components/ui/Switch';
-import SegmentedControl from '@/components/ui/SegmentedControl';
 import ModelToolsBadge, { ModelToolsLegend } from '@/components/ui/ModelToolsBadge.tsx';
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
@@ -121,10 +121,16 @@ import type { OperationDescriptor } from '@nodal-agents/shared';
 /**
  * One built-in tool as returned by listInternalToolsAction.
  *
- * `requiresApproval` is omitted on the wire — none of these ships an approval
- * gate of its own — so it is filled in at render rather than sent sixteen times.
+ * `label` and `summary` are the owner's two texts (issue #382); the tool's
+ * `description`, written for the model, is not on the wire at all. Nothing
+ * ships `requiresApproval` either: none of these tools has an approval gate of
+ * its own.
  */
-type InternalToolUiRow = Omit<OperationDescriptor, 'requiresApproval'> & {
+type InternalToolUiRow = {
+  slug: string;
+  label: string;
+  summary: string;
+  risk: OperationDescriptor['risk'];
   unblockableReason?: string;
 };
 import { isToolGroupSkill } from '@/lib/skill-tool-groups.ts';
@@ -970,7 +976,9 @@ function TabsBar({
     { id: 'tools', label: 'Tools', count: counts.tools },
     { id: 'connectors', label: 'Connectors', count: counts.connectors },
     { id: 'runs', label: 'Runs', count: counts.runs },
-    { id: 'autonomy', label: 'Autonomy' },
+    // L'identifiant reste `autonomy` : c'est le `?tab=` des liens déjà partagés.
+    // Seul le mot que lit le propriétaire change (issue #382).
+    { id: 'autonomy', label: 'Approvals' },
     { id: 'settings', label: 'Settings' },
   ];
   const TABS: TabItem<Tab>[] = BASE_TABS.map((t) =>
@@ -1593,26 +1601,41 @@ function SkillDetachIcon() {
   );
 }
 
-// ─── Autonomy tab — per-tool approval gate controls ───────────────────────────
+// ─── Approvals tab: per-tool approval gate controls ──────────────────────────
 //
 // Gateable tools = write/destructive operations from the agent's assigned
 // connectors + telegram_send_message if a Telegram bot is configured.
-// Read-only tools (risk='read') are never gated — they're always autonomous and
+// Read-only tools (risk='read') are never gated: they are always allowed and
 // are not shown to avoid clutter.
 //
 // The three-way control maps directly to approval_rules.action:
-//   Autonomous   → delete the rule (runtime default = auto_approve)
-//   Ask first    → action='require_approval'
-//   Block        → action='block'
+//   Run without asking → delete the rule (runtime default = auto_approve)
+//   Ask for approval   → action='require_approval'
+//   Block              → action='block'
 
 // Static: always-possible outward tool when a bot is configured.
 const TELEGRAM_SEND_OPERATION: OperationDescriptor = {
   slug: 'telegram_send_message',
   name: 'Send Telegram message',
+  label: 'Send a Telegram message',
+  summary:
+    'Send a message through the connected Telegram bot. A sent message cannot be taken back.',
   risk: 'destructive',
   requiresApproval: true,
   description: 'Deliver a message to the user via the configured Telegram bot (irreversible).',
 };
+
+/**
+ * What one connector operation shows the owner.
+ *
+ * A connector that already declares `label`/`summary` (issue #382) speaks for
+ * itself. The others fall back to the `name` and `description` the screen has
+ * always shown: rolling thirteen adapters over in one pull request would mean
+ * writing a hundred and fifty sentences nobody has read.
+ */
+function ownerTextFor(op: OperationDescriptor): { label: string; summary: string } {
+  return { label: op.label ?? op.name, summary: op.summary ?? op.description ?? '' };
+}
 
 type ApprovalAction = 'auto_approve' | 'require_approval' | 'block';
 
@@ -1621,7 +1644,7 @@ function mcpSlugToPrefix(slug: string): string {
   return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
 }
 
-function AutonomyTab({
+export function AutonomyTab({
   agentId,
   connectors,
   mcpServers,
@@ -1734,8 +1757,8 @@ function AutonomyTab({
     <div className="space-y-6">
       <SectionCard>
         <SectionHead
-          label="Autonomy / Approvals"
-          hint="Control whether this agent acts freely, must ask you first, or is blocked — per outward tool. Its built-in tools are listed separately, below."
+          label="Approvals"
+          hint="Choose what this agent can do on its own, what needs your approval, and what it cannot do. Set a rule for each external tool. Built-in tools are listed below."
         />
         {gateableTools.length === 0 ? (
           <p className="text-body-13 text-ink-3">
@@ -1750,7 +1773,9 @@ function AutonomyTab({
             {gateableTools.map((op) => (
               <AutonomyToolRow
                 key={op.slug}
-                op={op}
+                slug={op.slug}
+                {...ownerTextFor(op)}
+                risk={op.risk}
                 value={ruleFor(op.slug)}
                 saving={saving.has(op.slug)}
                 onChange={(action) => handleChange(op.slug, action)}
@@ -1759,9 +1784,8 @@ function AutonomyTab({
           </div>
         )}
         <p className="mt-4 text-body-12 text-ink-4">
-          Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>{' '}
-          for the tools above. Rules take effect at the agent&apos;s next turn, and as soon as a
-          request is answered.
+          Connector tools without a rule run without asking. Third-party tools, commands and the
+          tools that change your workspace ask first. Changes apply at the agent&apos;s next step.
         </p>
       </SectionCard>
 
@@ -1779,7 +1803,7 @@ function AutonomyTab({
       <SectionCard>
         <SectionHead
           label="Built-in tools"
-          hint="Every agent gets these. Restrict any of them for this agent — memory, web search, workspace files."
+          hint="Every agent has these tools. Set which ones this agent may use, including memory, web search, and workspace files."
         />
         <div
           className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
@@ -1788,7 +1812,10 @@ function AutonomyTab({
           {internalTools.map((op) => (
             <AutonomyToolRow
               key={op.slug}
-              op={{ ...op, requiresApproval: false }}
+              slug={op.slug}
+              label={op.label}
+              summary={op.summary}
+              risk={op.risk}
               value={ruleFor(op.slug)}
               saving={saving.has(op.slug)}
               onChange={(action) => handleChange(op.slug, action)}
@@ -1799,8 +1826,8 @@ function AutonomyTab({
           ))}
         </div>
         <p className="mt-4 text-body-12 text-ink-4">
-          Blocking a tool leaves it visible to the agent but refuses the call, telling it the
-          restriction is deliberate — so it reports the limit instead of working around it.
+          Blocked tools stay visible to the agent. If it tries to use one, it is told the tool is
+          blocked.
         </p>
       </SectionCard>
 
@@ -1817,8 +1844,8 @@ function AutonomyTab({
       {attachedMcpServers.length > 0 && (
         <SectionCard>
           <SectionHead
-            label="MCP servers"
-            hint="Tools from a third-party MCP server ask before running by default — the product cannot vouch for code it did not write. Trust a server here to stop being asked."
+            label="Third-party tools"
+            hint="Third-party tools ask for approval by default. Trust a server to let its tools run without asking, including tools added to that server later."
           />
           <div
             className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
@@ -1829,13 +1856,10 @@ function AutonomyTab({
               return (
                 <AutonomyToolRow
                   key={s.mcpServerId}
-                  op={{
-                    slug: pattern,
-                    name: s.label,
-                    risk: 'write',
-                    requiresApproval: true,
-                    description: `All ${s.availableTools.length} tools exposed by this server, including any it adds later.`,
-                  }}
+                  slug={pattern}
+                  label={`${s.label} server`}
+                  summary={`All ${s.availableTools.length} current tools and any added later.`}
+                  risk="write"
                   // Unlike the connector rows above, "no rule" here means ASK:
                   // every MCP tool ships defaultApproval: 'require_approval'.
                   value={rules.find((r) => r.toolName === pattern)?.action ?? 'require_approval'}
@@ -1997,23 +2021,18 @@ function CommandExecutionSection({
 
   return (
     <SectionCard>
-      <SectionHead
-        label="Command execution"
-        hint="Controls whether shell commands (run_command) require human approval before running. By default, every command pauses for your approval."
-      />
+      <SectionHead label="Run commands" hint="Commands ask for your approval by default." />
 
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-medium-14 text-ink">
-              Auto-run commands without approval (Yolo)
-            </span>
+            <span className="text-medium-14 text-ink">Run commands without asking</span>
             <MonoMicroTag tone="err">irreversible</MonoMicroTag>
             {isDormant && <MonoMicroTag tone="warn">paused</MonoMicroTag>}
           </div>
           <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
-            When on, this agent runs any shell command immediately with no approval gate. Commands
-            are still logged. Only enable for agents you fully trust.
+            When on, the agent can run any permitted command immediately. Commands are still logged.
+            Use this only for agents you trust.
           </p>
           {isDormant && (
             <p className="mt-2 text-body-12 text-warn">
@@ -2371,15 +2390,15 @@ function ReadOnlyAgentSection({
     <SectionCard>
       <SectionHead
         label="Read-only agent"
-        hint="Blocks all write tools for this agent. Meant for reviewer agents."
+        hint="Meant for reviewer agents, which read the work and never change it."
       />
 
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
-          <span className="text-medium-14 text-ink">Block write tools</span>
+          <span className="text-medium-14 text-ink">Read-only agent</span>
           <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
-            Blocks file writes, shell commands, and skill scripts for this agent. Reversible any
-            time.
+            Prevent this agent from writing files, editing skill files, running commands, or running
+            skill scripts. You can turn this off at any time.
           </p>
           {partiallyBlocked && (
             <p className="mt-2 text-body-12 text-ink-4">
@@ -2694,93 +2713,6 @@ function FileWriteAuthRow({
         }}
         onCancel={() => setConfirmOpen(false)}
       />
-    </div>
-  );
-}
-
-function AutonomyToolRow({
-  op,
-  value,
-  saving,
-  onChange,
-  lockedReason,
-}: {
-  op: OperationDescriptor;
-  value: ApprovalAction;
-  saving: boolean;
-  onChange: (action: ApprovalAction) => void;
-  /**
-   * Set for a tool that may not be blocked (return_result). The row still
-   * renders — an owner who counts sixteen internal tools in the docs and finds
-   * fifteen here would rightly wonder what is being hidden — but the control is
-   * replaced by the reason. The server refuses the rule too; this is the
-   * affordance, not the guard.
-   */
-  lockedReason?: string;
-}) {
-  const riskLabel: Record<string, string> = { write: 'write', destructive: 'irreversible' };
-
-  return (
-    <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
-      {/* Tool identity */}
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-medium-14 text-ink">{op.name}</span>
-          <span
-            className={[
-              'inline-flex h-[18px] items-center rounded-full px-2 text-mono-11 uppercase tracking-[0.1em]',
-              op.risk === 'destructive'
-                ? 'bg-err/10 text-err'
-                : op.risk === 'write'
-                  ? 'bg-warn/10 text-warn'
-                  : 'bg-hover text-ink-3',
-            ].join(' ')}
-          >
-            {riskLabel[op.risk] ?? op.risk}
-          </span>
-        </div>
-        {op.description && (
-          <p className="mt-0.5 text-body-13 leading-[1.4]! text-ink-3">{op.description}</p>
-        )}
-        <code className="mt-1 block text-mono-11 text-ink-4">{op.slug}</code>
-      </div>
-
-      {lockedReason !== undefined ? (
-        <p
-          className="max-w-xs text-body-12 leading-[1.4]! text-ink-4 sm:text-right"
-          data-testid={`autonomy-locked-${op.slug}`}
-        >
-          Always on. {lockedReason}
-        </p>
-      ) : (
-        /* 3-way control */
-        <SegmentedControl
-          value={value}
-          onChange={onChange}
-          disabled={saving}
-          ariaLabel={`Approval policy for ${op.name}`}
-          options={[
-            {
-              value: 'auto_approve' as const,
-              label: 'Autonomous',
-              activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
-              testId: `autonomy-btn-${op.slug}-auto_approve`,
-            },
-            {
-              value: 'require_approval' as const,
-              label: 'Ask first',
-              activeClassName: 'bg-warn/15 text-warn border-warn/30',
-              testId: `autonomy-btn-${op.slug}-require_approval`,
-            },
-            {
-              value: 'block' as const,
-              label: 'Block',
-              activeClassName: 'bg-err/15 text-err border-err/30',
-              testId: `autonomy-btn-${op.slug}-block`,
-            },
-          ]}
-        />
-      )}
     </div>
   );
 }

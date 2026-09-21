@@ -630,62 +630,111 @@ describe('failStalePendingJobs', () => {
   });
 });
 
-describe('expireStaleApprovals (D3)', () => {
-  it('expires a past-TTL pending approval and fails its awaiting_approval job', async () => {
-    const job = await createJob({ status: 'awaiting_approval' });
-    const past = new Date(Date.now() - 60 * 1000);
-    const [appr] = await db
+describe('expireStaleApprovals (D3, issue #349) @cap:approuver-une-action/moteur', () => {
+  async function insertApproval(jobId: string, over: { expiresAt: Date; status?: string }) {
+    const [row] = await db
       .insert(approvalRequests)
       .values({
         entityId: seed.entityId,
-        jobId: job.id,
+        jobId,
         agentId: seed.agentId,
         toolName: 'run_command',
         toolInput: { command: 'ls' },
-        status: 'pending',
-        expiresAt: past,
+        status: over.status ?? 'pending',
+        resolvedBy: over.status && over.status !== 'pending' ? 'api' : null,
+        expiresAt: over.expiresAt,
       })
       .returning({ id: approvalRequests.id });
+    if (!row) throw new Error('Failed to seed approval request');
+    return row;
+  }
 
-    const failed = await expireStaleApprovals(db);
-    expect(failed).toBeGreaterThanOrEqual(1);
-
-    // Approval marked expired.
-    const [a] = await db
-      .select({ status: approvalRequests.status })
+  async function approvalRow(id: string) {
+    const [row] = await db
+      .select({
+        status: approvalRequests.status,
+        resolvedAt: approvalRequests.resolvedAt,
+        resolvedBy: approvalRequests.resolvedBy,
+      })
       .from(approvalRequests)
-      .where(eq(approvalRequests.id, appr!.id));
-    expect(a?.status).toBe('expired');
+      .where(eq(approvalRequests.id, id));
+    return row;
+  }
 
-    // Job finalized (not stuck awaiting_approval forever) with a user-facing result.
-    const [j] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
+  async function jobStatus(id: string) {
+    const [row] = await db
+      .select({ status: agentJobs.status })
       .from(agentJobs)
-      .where(eq(agentJobs.id, job.id));
-    expect(j?.status).toBe('failed');
-    expect(j?.error).toBe('approval_expired');
-    expect((j?.result ?? '').length).toBeGreaterThan(0);
+      .where(eq(agentJobs.id, id));
+    return row?.status;
+  }
+
+  it('closes a past-deadline pending request and puts its job back to work', async () => {
+    const job = await createJob({ status: 'awaiting_approval' });
+    const appr = await insertApproval(job.id, { expiresAt: new Date(Date.now() - 60 * 1000) });
+
+    const expired = await expireStaleApprovals(db);
+    expect(expired).toBeGreaterThanOrEqual(1);
+
+    const row = await approvalRow(appr.id);
+    expect(row?.status).toBe('expired');
+    expect(row?.resolvedBy).toBe('system:ttl_expired');
+    expect(row?.resolvedAt).toBeInstanceOf(Date);
+
+    // Resumed, not failed: the job goes back to `pending` so the worker replays
+    // it and the model reads the expiry on its gated tool call.
+    expect(await jobStatus(job.id)).toBe('pending');
   });
 
-  it('does NOT touch a pending approval whose TTL is still in the future', async () => {
+  it('a second sweep changes nothing: the row is no longer pending', async () => {
     const job = await createJob({ status: 'awaiting_approval' });
-    const future = new Date(Date.now() + 60 * 60 * 1000);
-    await db.insert(approvalRequests).values({
-      entityId: seed.entityId,
-      jobId: job.id,
-      agentId: seed.agentId,
-      toolName: 'run_command',
-      toolInput: { command: 'ls' },
-      status: 'pending',
-      expiresAt: future,
+    const appr = await insertApproval(job.id, { expiresAt: new Date(Date.now() - 60 * 1000) });
+
+    await expireStaleApprovals(db);
+    const first = await approvalRow(appr.id);
+    await expireStaleApprovals(db);
+    const second = await approvalRow(appr.id);
+
+    expect(second?.status).toBe('expired');
+    expect(second?.resolvedAt?.getTime()).toBe(first?.resolvedAt?.getTime());
+  });
+
+  it('does NOT touch a pending request whose deadline is still in the future', async () => {
+    const job = await createJob({ status: 'awaiting_approval' });
+    const appr = await insertApproval(job.id, {
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     });
 
     await expireStaleApprovals(db);
 
-    const [j] = await db
-      .select({ status: agentJobs.status })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, job.id));
-    expect(j?.status).toBe('awaiting_approval'); // untouched
+    const row = await approvalRow(appr.id);
+    expect(row?.status).toBe('pending');
+    expect(row?.resolvedAt).toBeNull();
+    expect(await jobStatus(job.id)).toBe('awaiting_approval');
+  });
+
+  it('does NOT rewrite a request a human already decided, deadline or not', async () => {
+    const job = await createJob({ status: 'processing' });
+    const appr = await insertApproval(job.id, {
+      expiresAt: new Date(Date.now() - 60 * 1000),
+      status: 'approved',
+    });
+
+    await expireStaleApprovals(db);
+
+    const row = await approvalRow(appr.id);
+    expect(row?.status).toBe('approved');
+    expect(row?.resolvedBy).toBe('api');
+    expect(await jobStatus(job.id)).toBe('processing');
+  });
+
+  it('leaves a cancelled job terminal: an expired request never resurrects it', async () => {
+    const job = await createJob({ status: 'cancelled' });
+    const appr = await insertApproval(job.id, { expiresAt: new Date(Date.now() - 60 * 1000) });
+
+    await expireStaleApprovals(db);
+
+    expect((await approvalRow(appr.id))?.status).toBe('expired');
+    expect(await jobStatus(job.id)).toBe('cancelled');
   });
 });

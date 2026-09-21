@@ -425,7 +425,7 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
       project: null,
       summary: {
         files: 0,
-        filePaths: [],
+        fileChanges: [],
         lines: null,
         tests: null,
         durationMs: 41_000,

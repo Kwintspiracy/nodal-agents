@@ -39,6 +39,8 @@ type CreateSkillOutput = { ok: true; message: string } | { ok: false; error: str
 
 export const createSkillTool: ToolDefinition<typeof CreateSkillInput, CreateSkillOutput> = {
   name: 'create_skill',
+  label: 'Create a skill',
+  summary: 'Add a new skill to this workspace, ready to be given to an agent.',
   description:
     'Create a new skill for this entity. The skill can then be assigned to agents via attach_skill. ' +
     'slug must be lowercase alphanumeric + hyphens. Fails with an error if the slug is already taken.' +

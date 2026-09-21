@@ -48,8 +48,12 @@ import {
   extractFilePath,
   isRefusedToolCall,
   lineCountsOfCall,
-  type CodingChangeView,
 } from './coding-changes.ts';
+import {
+  groupFileChanges,
+  type FileChangeCall,
+  type FileChangeGroup,
+} from './file-change-groups.ts';
 import { faconsDeConstater, rapprocherConstat } from './constated-files.ts';
 import { initGitRepository } from './project-git.ts';
 import {
@@ -185,7 +189,6 @@ import type {
   CredentialType,
   OperationDescriptor,
   ConstatedBy,
-  ConstatedChangeKind,
 } from '@nodal-agents/shared';
 import {
   type RootGrants,
@@ -6467,9 +6470,9 @@ export async function listInternalToolsAction(): Promise<
   ActionResult<
     Array<{
       slug: string;
-      name: string;
+      label: string;
+      summary: string;
       risk: 'read' | 'write' | 'destructive';
-      description?: string;
       unblockableReason?: string;
     }>
   >
@@ -6477,11 +6480,14 @@ export async function listInternalToolsAction(): Promise<
   try {
     await getSession();
     return ok(
+      // `label` and `summary`, never `description`: the text written for the
+      // model stays with the model (issue #382). The descriptor no longer
+      // carries it at all, so this action could not leak it even by mistake.
       INTERNAL_TOOL_DESCRIPTORS.map((d) => ({
         slug: d.slug,
-        name: d.name,
+        label: d.label,
+        summary: d.summary,
         risk: d.risk,
-        ...(d.description === undefined ? {} : { description: d.description }),
         ...(d.unblockableReason === undefined ? {} : { unblockableReason: d.unblockableReason }),
       })),
     );
@@ -13730,22 +13736,17 @@ export type CodingToolCallView = {
   } | null;
 };
 
-/** One file's full edit history in this pipeline — the Changes panel's unit (v4, Quentin 19/08 third pass). */
-export type CodingFileChangeGroup = {
-  filePath: string;
-  /** Summed across every edit to this file — churn, not a single merged diff. */
-  addedLines: number;
-  removedLines: number;
-  /** Chronological, root + direct children merged. Each rendered as its own hunk — an edit acts on the PREVIOUS edit's result, so concatenating them into one blob would misrepresent the sequence. */
-  edits: CodingChangeView[];
-  /**
-   * Ce que le CONSTAT dit de ce fichier (issue #199) : créé, modifié, supprimé,
-   * renommé. Absent sur un run d'avant la migration 0113, dont la liste est
-   * encore celle que les outils ont déclarée — et où personne n'a jamais su
-   * dire qu'un fichier avait été supprimé.
-   */
-  changeKind?: ConstatedChangeKind;
-};
+/**
+ * One file's full edit history in this pipeline — the Changes panel's unit (v4,
+ * Quentin 19/08 third pass).
+ *
+ * LE TYPE ET SON REGROUPEMENT VIVENT DANS `file-change-groups.ts` DEPUIS #369.
+ * Ce fichier est `'use server'` : rien de synchrone ne peut s'y exporter, si
+ * bien que ni l'encart du fil ni un test ne pouvaient atteindre la boucle qui
+ * construisait ces groupes. Elle est sortie ; le nom reste, les importateurs
+ * ne bougent pas.
+ */
+export type CodingFileChangeGroup = FileChangeGroup;
 
 /**
  * Un verdict de relecture. Le type et sa lecture vivent dans
@@ -14117,7 +14118,8 @@ export async function getCodingProcessDetailAction(
         return agentId ? (detailWsByAgent.get(agentId) ?? []) : [];
       };
 
-      const changeGroups = new Map<string, CodingFileChangeGroup>();
+      /** Les écritures RETENUES, prêtes pour le regroupement partagé (#369). */
+      const retenues: FileChangeCall[] = [];
       // Les écritures BRUTES pour la dérivation de projet du header (même règle
       // que la liste — les deux surfaces doivent nommer le même projet).
       const rawChanges: ChangeRef[] = [];
@@ -14153,24 +14155,12 @@ export async function getCodingProcessDetailAction(
         // Non rattachable, hors détail — comme dans la liste.
         if (!isInsideWorkspace(ref, detailWorkspaces)) continue;
         rawChanges.push(ref);
-        // Même canonicalisation que la liste : sur la forme ABSOLUE, sinon le
-        // même fichier apparaît deux fois selon l'outil qui l'a écrit.
-        const canonical = canonicalChangePath(
-          resolveChangePath(ref) ?? change.filePath,
-          workspaceRoots,
-        );
-        const group = changeGroups.get(canonical) ?? {
-          filePath: canonical,
-          addedLines: 0,
-          removedLines: 0,
-          edits: [],
-        };
-        group.addedLines += change.newText ? change.newText.split('\n').length : 0;
-        group.removedLines += change.oldText ? change.oldText.split('\n').length : 0;
-        group.edits.push({ ...change, filePath: canonical });
-        changeGroups.set(canonical, group);
+        retenues.push({ change, resolvedPath: resolveChangePath(ref) });
       }
-      const changesDeclares = Array.from(changeGroups.values());
+      // Même canonicalisation que la liste, et le MÊME regroupement que
+      // l'encart de livraison du fil (#369) : sur la forme ABSOLUE, sinon le
+      // même fichier apparaît deux fois selon l'outil qui l'a écrit.
+      const changesDeclares = groupFileChanges(retenues, workspaceRoots);
 
       // ── LA LISTE VIENT DU CONSTAT (issue #199) ───────────────────────────
       //

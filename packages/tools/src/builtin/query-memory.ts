@@ -45,6 +45,8 @@ export interface MemoryRecord {
 
 export const queryMemoryTool: ToolDefinition<typeof QueryMemoryInputSchema, MemoryRecord[]> = {
   name: 'query_memory',
+  label: 'Recall a fact',
+  summary: 'Search saved memories for relevant preferences, rules, or context.',
   description:
     'Read persistent memories shared across all agents in your entity. Use before starting a ' +
     'task to recall relevant context, user preferences, and learned rules — including memories ' +

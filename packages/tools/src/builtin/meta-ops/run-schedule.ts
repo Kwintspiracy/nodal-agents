@@ -25,6 +25,8 @@ type RunScheduleOutput = { ok: true; message: string } | { ok: false; error: str
 
 export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunScheduleOutput> = {
   name: 'run_schedule',
+  label: 'Run a schedule now',
+  summary: "Run a schedule's task straight away, without waiting for its next time.",
   description:
     "Run a schedule's task NOW, on demand, without waiting for its cron time. " +
     'Use list_schedules to find the name. Fails if no schedule with that name exists or it has no task.',

@@ -84,6 +84,8 @@ function globToRegex(glob: string): RegExp {
 
 export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSearchOutput> = {
   name: 'file_search',
+  label: 'Search workspace files',
+  summary: 'Find matching file names or text inside workspace files.',
   description:
     'Search the agent workspace(s). `target:"files"` matches the regex against file paths. ' +
     '`target:"content"` (default) scans file contents and returns line-level matches. Use ' +

@@ -35,7 +35,7 @@ const TOOL = 'web_search';
 async function openAutonomyTab(page: Page, editUrl: string): Promise<void> {
   await page.goto(editUrl);
   await page.waitForLoadState('networkidle', { timeout: 15_000 });
-  await page.getByRole('tab', { name: /^autonomy$/i }).click();
+  await page.getByRole('tab', { name: /^approvals$/i }).click();
   // The section is rendered after the rules load, not on first paint.
   await expect(page.locator('[data-testid="autonomy-internal-list"]')).toBeVisible({
     timeout: 15_000,

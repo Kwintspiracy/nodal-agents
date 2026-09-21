@@ -120,10 +120,7 @@ export default function CommandAllowlistSection({
 
   return (
     <SectionCard>
-      <SectionHead
-        label="Commands this agent may start"
-        hint="Names the programs run_command may launch. It does not limit what a program does once it has started."
-      />
+      <SectionHead label="Allowed commands" hint="Leave the list empty to allow any command." />
 
       <p className="text-body-13 text-ink" data-testid="command-allowlist-state">
         {allowlistStateLine(saved)}
@@ -140,18 +137,15 @@ export default function CommandAllowlistSection({
           data-testid="command-allowlist-entries"
         />
         <p className="mt-1 text-body-12 text-ink-4">
-          An entry is one or more words, matched against the start of the command. Clear the field
-          and save to remove the list.
-        </p>
-        <p className="mt-1 text-body-12 text-ink-4">
-          With a list, a command is one program and its arguments, double quotes to group; no
-          chaining, no redirection, no shell.
+          Add one command prefix per line, such as node or npx vitest. Each entry allows that
+          program and its arguments. With a list, commands run without a shell: no chaining, no
+          redirection. Clear the list and save to remove the limit.
         </p>
       </div>
 
       <div className="mt-3">
         <Checkbox
-          label="Refuse every command"
+          label="Block all commands"
           checked={refuseEvery}
           disabled={!canEdit}
           onChange={(e) => setRefuseEvery(e.target.checked)}
@@ -184,8 +178,8 @@ export default function CommandAllowlistSection({
       </div>
 
       <p className="mt-4 text-body-12 text-ink-4">
-        This list governs run_command only. Skill scripts, Code tasks and verification commands are
-        not affected.
+        This list applies only to run_command. Skill scripts, Code tasks, and verification commands
+        are unaffected.
       </p>
 
       {!hasCommandSkill && (

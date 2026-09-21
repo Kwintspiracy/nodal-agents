@@ -215,7 +215,7 @@ describe('code-run-view — ce qui a été livré @cap:suivre-execution/ecran', 
     );
     expect(summary).not.toBeNull();
     expect(summary?.files).toBe(2);
-    expect(summary?.filePaths).toEqual(['a.tsx', 'b.ts']);
+    expect(summary?.fileChanges.map((f) => f.path)).toEqual(['a.tsx', 'b.ts']);
     expect(summary?.lines).toEqual({ added: 10, removed: 2 });
     expect(summary?.tests).toEqual({ passed: 1, total: 1 });
     expect(summary?.verdict).toBe('green');

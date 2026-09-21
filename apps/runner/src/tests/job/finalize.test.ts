@@ -14,6 +14,12 @@
 //    de découpage, fermé ici en séquentiel ; l'interleaving réel est T14) ;
 //  - la primitive ne connaît aucun type de livrable : un type sans
 //    vérificateur lève, rien n'est écrit.
+//
+// TOUS les appels de ce fichier passent `repairTurn: 'unsupported'` : ils
+// prouvent la porte telle que les surfaces SANS boucle de tours la voient (le
+// runtime CLI, le cron du tableau de tâches), c'est-à-dire le comportement de
+// PR① mot pour mot. Le tour de réparation de PR② a son propre fichier,
+// `repair-turn.test.ts` — un rouge y rouvre le run au lieu de le finir.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, access } from 'node:fs/promises';
@@ -285,7 +291,13 @@ describe('finalizeJobSuccess — phase d’observation (v5-C)', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'fini', resultKind: 'prose', toolsUsed: ['return_result'] },
+      {
+        jobId: jobId,
+        result: 'fini',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        toolsUsed: ['return_result'],
+      },
       deps(),
     );
 
@@ -324,7 +336,7 @@ describe('finalizeJobSuccess — phase d’observation (v5-C)', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps(),
     );
 
@@ -366,7 +378,7 @@ describe('finalizeJobSuccess — phase d’observation (v5-C)', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps(),
     );
 
@@ -400,7 +412,13 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'classeur écrit', resultKind: 'prose', toolsUsed: ['xlsx_create'] },
+      {
+        jobId: jobId,
+        result: 'classeur écrit',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        toolsUsed: ['xlsx_create'],
+      },
       deps(),
     );
 
@@ -428,7 +446,7 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps(),
     );
 
@@ -472,7 +490,7 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps(),
     );
 
@@ -505,7 +523,7 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps(),
     );
 
@@ -531,7 +549,7 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps(),
     );
 
@@ -546,7 +564,13 @@ describe('finalizeJobSuccess — non configuré et non approuvé', () => {
     const jobId = await insertJob('processing');
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'sans livrable', resultKind: 'prose', toolsUsed: [] },
+      {
+        jobId: jobId,
+        result: 'sans livrable',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        toolsUsed: [],
+      },
       deps(),
     );
     expect(outcome.kind).toBe('completed');
@@ -567,7 +591,13 @@ describe('finalizeJobSuccess — déjà terminal', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'trop tard', resultKind: 'prose', toolsUsed: [] },
+      {
+        jobId: jobId,
+        result: 'trop tard',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        toolsUsed: [],
+      },
       deps(),
     );
 
@@ -589,12 +619,24 @@ describe('finalizeJobSuccess — déjà terminal', () => {
 
     const first = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'premier', resultKind: 'prose', toolsUsed: [] },
+      {
+        jobId: jobId,
+        result: 'premier',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        toolsUsed: [],
+      },
       deps(),
     );
     const second = await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'second', resultKind: 'prose', toolsUsed: [] },
+      {
+        jobId: jobId,
+        result: 'second',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        toolsUsed: [],
+      },
       deps(),
     );
 
@@ -650,7 +692,13 @@ describe('finalizeJobSuccess — déjà terminal', () => {
           bOutcome = (
             await finalizeJobSuccess(
               asDb(),
-              { jobId: jobId, result: 'par B', resultKind: 'prose', toolsUsed: [] },
+              {
+                jobId: jobId,
+                result: 'par B',
+                resultKind: 'prose',
+                repairTurn: 'unsupported',
+                toolsUsed: [],
+              },
               deps(),
             )
           ).kind;
@@ -660,7 +708,7 @@ describe('finalizeJobSuccess — déjà terminal', () => {
 
       const a = await finalizeJobSuccess(
         asDb(),
-        { jobId, result: 'par A', resultKind: 'prose' },
+        { jobId, result: 'par A', resultKind: 'prose', repairTurn: 'unsupported' },
         deps({ getVerifier: () => verifierA }),
       );
 
@@ -718,7 +766,7 @@ describe('finalizeJobSuccess — génération périmée et persistance', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', resultKind: 'prose' },
+      { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported' },
       deps({ getVerifier: () => bumping }),
     );
 
@@ -750,7 +798,13 @@ describe('finalizeJobSuccess — génération périmée et persistance', () => {
     try {
       outcome = await finalizeJobSuccess(
         asDb(),
-        { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+        {
+          jobId: jobId,
+          result: 'ok',
+          resultKind: 'prose',
+          repairTurn: 'unsupported',
+          toolsUsed: [],
+        },
         deps(),
       );
     } finally {
@@ -779,7 +833,7 @@ describe('finalizeJobSuccess — génération périmée et persistance', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId: jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps(),
     );
 
@@ -807,7 +861,13 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: ['file_write'] },
+      {
+        jobId,
+        result: 'ok',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        toolsUsed: ['file_write'],
+      },
       deps(),
     );
     expect(outcome.kind).toBe('completed');
@@ -845,7 +905,7 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps(),
     );
 
@@ -884,7 +944,7 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps({ getVerifier: () => apresLaPreuve }),
     );
 
@@ -920,7 +980,7 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps({ getVerifier: () => aba }),
     );
 
@@ -936,7 +996,7 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+      { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported', toolsUsed: [] },
       deps(),
     );
 
@@ -962,7 +1022,13 @@ describe('finalizeJobSuccess — le registre décide, pas la primitive', () => {
     await expect(
       finalizeJobSuccess(
         asDb(),
-        { jobId: jobId, result: 'ok', resultKind: 'prose', toolsUsed: [] },
+        {
+          jobId: jobId,
+          result: 'ok',
+          resultKind: 'prose',
+          repairTurn: 'unsupported',
+          toolsUsed: [],
+        },
         deps(),
       ),
     ).rejects.toThrow('DELIVERABLE_TYPE_UNSUPPORTED');
@@ -994,7 +1060,13 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
 
     await finalizeJobSuccess(
       asDb(),
-      { jobId: parentId, result: '', resultKind: 'prose', toolsUsed: [] },
+      {
+        jobId: parentId,
+        result: '',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        toolsUsed: [],
+      },
       deps(),
     );
 
@@ -1013,6 +1085,7 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
           jobId,
           result: 'ok',
           resultKind: 'prose',
+          repairTurn: 'unsupported',
           delivery: { channel: 'telegram', chatId: '42', payload: 'ok' },
         },
         deps(),
@@ -1030,6 +1103,7 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
           jobId,
           result: 'ok',
           resultKind: 'prose',
+          repairTurn: 'unsupported',
           delivery: { channel: 'telegram', chatId: '42', payload: 'ok' },
         },
         deps({
@@ -1052,6 +1126,7 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
         jobId,
         result: 'ok',
         resultKind: 'prose',
+        repairTurn: 'unsupported',
         delivery: { channel: 'telegram', chatId: '42', payload: 'à livrer' },
       },
       deps({
@@ -1243,7 +1318,7 @@ describe('la réclamation du marqueur finalizing_at', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'par le second', resultKind: 'prose' },
+      { jobId, result: 'par le second', resultKind: 'prose', repairTurn: 'unsupported' },
       deps({ getVerifier: () => stubVerifier(() => proofs++) }),
     );
 
@@ -1262,7 +1337,13 @@ describe('la réclamation du marqueur finalizing_at', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'par le cron', resultKind: 'prose', claim: { finalizingAt: mine } },
+      {
+        jobId,
+        result: 'par le cron',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        claim: { finalizingAt: mine },
+      },
       deps(),
     );
 
@@ -1284,7 +1365,7 @@ describe('la réclamation du marqueur finalizing_at', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'repris', resultKind: 'prose' },
+      { jobId, result: 'repris', resultKind: 'prose', repairTurn: 'unsupported' },
       deps(),
     );
 
@@ -1314,7 +1395,7 @@ describe('la réclamation du marqueur finalizing_at', () => {
 
     const outcome = await finalizeJobSuccess(
       asDb(),
-      { jobId, result: 'ok', resultKind: 'prose' },
+      { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported' },
       deps({ getVerifier: () => bumping }),
     );
 

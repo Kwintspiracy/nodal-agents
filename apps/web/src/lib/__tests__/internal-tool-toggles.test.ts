@@ -71,13 +71,15 @@ describe('the descriptors the dashboard renders', () => {
   // would drag the Office document libraries into the dashboard for sixteen
   // labels). See internal-tools.test.ts there.
 
-  it('carries a human label and the tool name for every entry', () => {
+  it('carries both owner-facing texts, and the tool name, for every entry', () => {
     for (const d of INTERNAL_TOOL_DESCRIPTORS) {
-      expect(d.name, `${d.slug} has no label`).toBeTruthy();
+      expect(d.label, `${d.slug} has no label`).toBeTruthy();
       // The label must not just be the slug echoed back — that would be a
       // missing entry silently passing as a label.
-      expect(d.name).not.toBe(d.slug);
-      expect(d.description, `${d.slug} has no description`).toBeTruthy();
+      expect(d.label).not.toBe(d.slug);
+      expect(d.summary, `${d.slug} has no summary`).toBeTruthy();
+      // The model's own text never travels to the dashboard (issue #382).
+      expect(Object.keys(d)).not.toContain('description');
     }
   });
 

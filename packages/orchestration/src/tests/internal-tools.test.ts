@@ -21,20 +21,31 @@ describe('INTERNAL_TOOL_DESCRIPTORS', () => {
     expect(INTERNAL_TOOL_DESCRIPTORS.map((d) => d.slug)).toEqual([...ALWAYS_ON_TOOLS]);
   });
 
-  it('takes each description from the tool definition itself, not a copy', () => {
+  it('takes both owner texts from the tool definition itself, not a copy', () => {
     // A copy would drift: the owner would read what the tool used to do while
     // deciding whether to switch off what it does now.
     for (const d of INTERNAL_TOOL_DESCRIPTORS) {
       const doc = ALWAYS_ON_TOOL_DOCS.find((x) => x.name === d.slug);
       expect(doc, `${d.slug} missing from ALWAYS_ON_TOOL_DOCS`).toBeDefined();
-      expect(d.description).toBe(doc!.description);
+      expect(d.label).toBe(doc!.label);
+      expect(d.summary).toBe(doc!.summary);
+    }
+  });
+
+  it('carries no model-facing description at all (issue #382)', () => {
+    // The screen showed this field verbatim: a wall of instructions written
+    // for the model. The descriptor cannot carry it any more, so it cannot
+    // come back by a careless spread on the way to the dashboard.
+    for (const d of INTERNAL_TOOL_DESCRIPTORS) {
+      expect(Object.keys(d), `${d.slug} still ships a description`).not.toContain('description');
     }
   });
 
   it('gives every tool a label that is not just its slug', () => {
     for (const d of INTERNAL_TOOL_DESCRIPTORS) {
-      expect(d.name, `${d.slug} has no label`).toBeTruthy();
-      expect(d.name, `${d.slug} fell back to its slug`).not.toBe(d.slug);
+      expect(d.label, `${d.slug} has no label`).toBeTruthy();
+      expect(d.label, `${d.slug} fell back to its slug`).not.toBe(d.slug);
+      expect(d.summary, `${d.slug} has no summary`).toBeTruthy();
     }
   });
 

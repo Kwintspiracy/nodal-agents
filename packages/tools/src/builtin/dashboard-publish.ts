@@ -25,6 +25,8 @@ export const dashboardPublishTool: ToolDefinition<
   { ok: true }
 > = {
   name: 'dashboard_publish',
+  label: 'Publish the job result',
+  summary: 'Put the full answer on the Jobs dashboard and pass it to any dependent task.',
   description:
     "Set this job's RESULT — the agent's substantive output. It becomes agent_jobs.result, shown on " +
     "/jobs, AND it is the exact text handed to any task that depends on this one and to the run's " +

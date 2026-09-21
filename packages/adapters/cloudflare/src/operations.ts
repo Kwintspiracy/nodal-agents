@@ -12,6 +12,9 @@ export const CLOUDFLARE_OPERATIONS: OperationDescriptor[] = [
   {
     slug: 'cloudflare_deploy',
     name: 'Deploy to Workers',
+    label: 'Publish to Cloudflare Workers',
+    summary:
+      'Publish a built site or app from the workspace. It goes live at a workers.dev address.',
     risk: 'write',
     requiresApproval: true,
     description:
@@ -28,6 +31,8 @@ export const CLOUDFLARE_OPERATIONS: OperationDescriptor[] = [
   {
     slug: 'cloudflare_delete_worker',
     name: 'Delete Worker',
+    label: 'Delete a Cloudflare Worker',
+    summary: 'Permanently delete a Worker. Its workers.dev address stops working immediately.',
     risk: 'destructive',
     requiresApproval: true,
     description: 'Permanently delete a Worker (its workers.dev URL goes offline immediately).',

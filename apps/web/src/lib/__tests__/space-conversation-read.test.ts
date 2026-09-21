@@ -687,7 +687,7 @@ describe('getSpaceConversationAction', () => {
     expect(produced.jobId).toBe(runId);
     // Deux fichiers écrits, celui de la racine et celui du délégué ; le
     // fichier seulement listé n'en est pas un.
-    expect(produced.summary.filePaths).toEqual(['digest.md', 'annexe.md']);
+    expect(produced.summary.fileChanges.map((f) => f.path)).toEqual(['digest.md', 'annexe.md']);
     expect(produced.summary.files).toBe(2);
     // La preuve du délégué remonte : une commande, verte.
     expect(produced.summary.tests).toEqual({ passed: 1, total: 1 });

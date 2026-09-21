@@ -19,6 +19,8 @@ type AssignSkillOutput = { ok: true; message: string } | { ok: false; error: str
 
 export const assignSkillTool: ToolDefinition<typeof AssignSkillInput, AssignSkillOutput> = {
   name: 'attach_skill',
+  label: 'Give a skill to an agent',
+  summary: 'Assign an existing skill to an existing agent.',
   description:
     'Assign an existing skill to an existing agent in this entity. ' +
     'Both skillSlug and agentSlug must already exist. Returns a clear error if either is not found. ' +

@@ -248,6 +248,11 @@ export async function generateAssignTools(
     const tool: ToolDefinition<typeof assignInputSchema, never> = {
       name: toolName,
       description,
+      // Le texte que lit le PROPRIÉTAIRE (issue #382), construit du nom en base
+      // comme la description : un outil de délégation par sous-agent, jamais une
+      // table de libellés écrite à la main (invariant #1).
+      label: `Delegate to ${agentName}`,
+      summary: `Hand a task to ${agentName} and wait for the answer before going on.`,
       inputSchema: assignInputSchema,
       riskLevel: 'write',
       // Un travail confié à un autre agent : la conversation le rend comme un

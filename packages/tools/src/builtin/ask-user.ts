@@ -83,6 +83,8 @@ async function findAnsweredQuestionRow(
 
 export const askUserTool: ToolDefinition<typeof AskUserInputSchema, AskUserOutput> = {
   name: 'ask_user',
+  label: 'Ask you a question',
+  summary: 'Pause the job until you choose from 2 to 6 options.',
   description:
     'Ask the person a question with 2 to 6 answer options, and WAIT for their answer. ' +
     'The job pauses here: it resumes only once they pick an option, and their choice comes ' +

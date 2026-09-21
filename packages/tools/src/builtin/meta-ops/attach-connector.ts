@@ -25,6 +25,8 @@ export const attachConnectorTool: ToolDefinition<
   AttachConnectorOutput
 > = {
   name: 'attach_connector',
+  label: 'Give a connector to an agent',
+  summary: 'Attach an existing connector to an agent so its operations become usable.',
   description:
     'Attach an EXISTING connector to an agent so its operations become usable by that agent. ' +
     'Both connectorSlug and agentSlug must already exist (use create_connector first if needed). ' +

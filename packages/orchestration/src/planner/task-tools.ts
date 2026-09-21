@@ -81,6 +81,9 @@ export function generateTaskTools(
     { taskId: string; title: string; warning?: string }
   > = {
     name: 'create_task',
+    label: 'Create a task',
+    summary:
+      'Put a work task on the board and assign it to an agent. Tasks run after this job, in the order their dependencies allow.',
     description:
       'Create a WORK task in the task board and assign it to an agent. ' +
       'Tasks are executed asynchronously by the cron tick after this job completes. ' +
@@ -186,6 +189,8 @@ export function generateTaskTools(
     }>
   > = {
     name: 'list_tasks',
+    label: 'List tasks',
+    summary: "See the tasks on this job's board, with their status and who they are assigned to.",
     description:
       'List tasks on the task board for this job. ' +
       'Returns task IDs (needed for depends_on), titles, statuses, and assignments.',

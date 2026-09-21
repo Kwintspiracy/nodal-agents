@@ -21,6 +21,8 @@ type DetachSkillOutput = { ok: true; message: string } | { ok: false; error: str
 
 export const detachSkillTool: ToolDefinition<typeof DetachSkillInput, DetachSkillOutput> = {
   name: 'detach_skill',
+  label: 'Take a skill back',
+  summary: 'Remove a skill from an agent. It can be given again at any time.',
   description:
     'Remove a skill from an agent (un-assign it). Reversible with attach_skill. ' +
     'Idempotent: ok even if the skill was not assigned.',

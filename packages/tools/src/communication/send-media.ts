@@ -62,6 +62,8 @@ type MediaOutput = { ok: true; bytes: number; filename: string };
 
 type MediaSpec = {
   name: string;
+  label: string;
+  summary: string;
   mediaKind: OutboundMedia['kind'];
   maxBytes: number;
   errorName: string;
@@ -74,6 +76,8 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
   return {
     name: spec.name,
     description: spec.description,
+    label: spec.label,
+    summary: spec.summary,
     inputSchema: MediaInput,
     riskLevel: 'write',
     // Les trois outils média (vidéo, audio, voix) sortent de cette fabrique :
@@ -158,6 +162,8 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
 export function createSendVideoTool(): ToolDefinition<typeof MediaInput, MediaOutput> {
   return makeSendMediaTool({
     name: 'send_video',
+    label: 'Send a video',
+    summary: 'Send a video that plays in the conversation. A sent video cannot be taken back.',
     mediaKind: 'video',
     maxBytes: 50 * MB,
     errorName: 'video_too_large',
@@ -186,6 +192,9 @@ Size cap: 50 MB → throws \`video_too_large\`. Other failures: \`no_recipient\`
 export function createSendAudioTool(): ToolDefinition<typeof MediaInput, MediaOutput> {
   return makeSendMediaTool({
     name: 'send_audio',
+    label: 'Send an audio track',
+    summary:
+      'Send an audio track that plays in the conversation. A sent track cannot be taken back.',
     mediaKind: 'audio',
     maxBytes: 50 * MB,
     errorName: 'audio_too_large',
@@ -208,6 +217,8 @@ Size cap: 50 MB → throws \`audio_too_large\`. Other failures: \`no_recipient\`
 export function createSendVoiceTool(): ToolDefinition<typeof MediaInput, MediaOutput> {
   return makeSendMediaTool({
     name: 'send_voice',
+    label: 'Send a voice note',
+    summary: 'Send a short spoken message as a voice note. A sent note cannot be taken back.',
     mediaKind: 'voice',
     maxBytes: 50 * MB,
     errorName: 'voice_too_large',

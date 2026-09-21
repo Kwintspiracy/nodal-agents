@@ -61,6 +61,9 @@ export type FileWriteOutput =
 
 export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWriteOutput> = {
   name: 'file_write',
+  label: 'Write a workspace file',
+  summary:
+    'Create or replace a file safely. For a small change to an existing file, use Edit a workspace file. Maximum write size: 1 MiB.',
   description:
     'Write (or overwrite) a file in the agent workspace. Atomic: writes to a tempfile then ' +
     'renames over the target, so partial-write failures never corrupt the original. Use ' +
