@@ -5,8 +5,16 @@
 //
 // Planche du propriétaire du 19/09/2026 au soir : Figma
 // `WPLtjoJjXJBEqDyCpLy9xc`, nœud `25:1062`, cinq cadres côte à côte. Le logo en
-// haut, puis Work / Agents / Run / Approvals / Settings ; en bas, Logs, Help, le
-// compte, et la version du produit.
+// haut, puis Work / Agents / Scheduled / Approvals / Settings ; en bas, Runs,
+// Help, le compte, et la version du produit.
+//
+// ⚠️ LES LIBELLÉS ET LES ICÔNES VIENNENT D'UNE AUTRE PLANCHE (nœud `46:1330`,
+// 21/09/2026) : « Run » y devient « Scheduled » et « Logs » devient « Runs »,
+// et quatre des sept cases prennent une icône que Phosphor n'a pas
+// (`components/icons/rail-icons.tsx`). LES ROUTES, LES CLÉS ET LES
+// IDENTIFIANTS DE TEST NE CHANGENT PAS : `rail-run` mène toujours aux
+// automatisations, `rail-logs` toujours à `/logs`. Renommer les identifiants
+// aurait cassé des parcours sans rien prouver de plus.
 //
 // ⚠️ CE QUI A CHANGÉ DEPUIS #230 :
 //
@@ -37,14 +45,9 @@
 
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import {
-  ArrowSquareOut,
-  ListMagnifyingGlass,
-  Question,
-  User,
-  type Icon as PhosphorIcon,
-} from '@phosphor-icons/react';
+import { ArrowSquareOut, Question, User, type Icon as PhosphorIcon } from '@phosphor-icons/react';
 import RailCell, { RailAvatarButton } from './ui/RailCell';
+import { RailRuns } from './icons/rail-icons.tsx';
 import { ProductLogo, PRODUCT_NAME } from './ui/BrandMark';
 import RailPopover from './ui/RailPopover';
 import VersionBadge from './VersionBadge';
@@ -183,8 +186,9 @@ export default function SidebarRail({
 
       <div className="flex-1" />
 
-      {/* Logs NAVIGUE — il n'ouvre aucun panneau, et sa case s'allume comme
-          n'importe quelle autre quand on est sur sa page.
+      {/* RUNS (« Logs » jusqu'au 21/09/2026) NAVIGUE — il n'ouvre aucun
+          panneau, et sa case s'allume comme n'importe quelle autre quand on est
+          sur sa page.
 
           ET ELLE NE PORTE RIEN (décision du propriétaire, 22/09/2026 :
           « Enlève le pulsing dot sur l'onglet Logs »). #300 y avait posé un
@@ -194,7 +198,7 @@ export default function SidebarRail({
       <RailCell
         href={RAIL_FOOT.logs.href}
         label={RAIL_FOOT.logs.label}
-        icon={ListMagnifyingGlass}
+        icon={RailRuns}
         active={logsActive}
         testId="rail-logs"
       />

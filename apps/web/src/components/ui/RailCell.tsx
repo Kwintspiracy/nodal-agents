@@ -4,8 +4,8 @@
 // (#230, 19/09/2026).
 //
 // Le rail porte des cases de même forme : trois destinations qui naviguent
-// (Work, Agent, Run), Approvals et Settings qui naviguent aussi, Help qui ouvre
-// une carte, et le compte, qui est un rond. Elles se ressemblent toutes parce
+// (Work, Agents, Scheduled), Approvals et Settings qui naviguent aussi, Help
+// qui ouvre une carte, et le compte, qui est un rond. Elles se ressemblent toutes parce
 // qu'elles sont la MÊME case : une forme, un état, et un contenu qui varie.
 //
 // Elle vit dans `components/ui` pour la même raison que `SidebarRow` : c'est
@@ -15,7 +15,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import type { Icon as PhosphorIcon } from '@phosphor-icons/react';
+import type { RailIcon } from '../icons/rail-icons.tsx';
 import AttentionCount from './AttentionCount';
 import LiveDot from './LiveDot';
 
@@ -73,7 +73,15 @@ type Props = {
   /** L'état que `onClick` bascule — rendu en `aria-expanded`. */
   expanded?: boolean;
   label: string;
-  icon: PhosphorIcon;
+  /**
+   * L'ICÔNE de la case. Le type est le plus petit contrat que `RailCell`
+   * exerce — une taille et une classe — parce que les cases portent DEUX
+   * familles depuis le 21/09/2026 : les icônes de la planche du propriétaire
+   * (`components/icons/rail-icons.tsx`) et celles de Phosphor qui restent
+   * (Settings, Help). Les deux le satisfont, et le rendu ci-dessous n'a pas à
+   * savoir laquelle il dessine.
+   */
+  icon: RailIcon;
   /** La case est-elle celle où l'on se trouve, ou celle dont la carte est ouverte ? */
   active?: boolean;
   /**

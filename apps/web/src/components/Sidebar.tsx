@@ -4,8 +4,8 @@
 //
 // Le propriétaire a redessiné la barre le 19/09/2026 au soir : Figma
 // `WPLtjoJjXJBEqDyCpLy9xc`, nœud `25:1062`, cinq planches côte à côte. Un rail
-// de 72 px porte CINQ destinations — Work, Agents, Run, Approvals, Settings —
-// et un panneau de 300 px montre celle qui est active.
+// de 72 px porte CINQ destinations — Work, Agents, Scheduled, Approvals,
+// Settings — et un panneau de 300 px montre celle qui est active.
 //
 // Ce fichier ne porte que la COQUILLE : le rail est dans `SidebarRail`, le
 // panneau dans `SidebarPanel`, et la table des destinations dans `sidebar-nav`.
