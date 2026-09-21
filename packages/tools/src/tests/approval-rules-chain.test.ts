@@ -135,6 +135,49 @@ describe('explainApprovalRules @cap:approuver-une-action/moteur', () => {
   });
 });
 
+describe("le cas de l'issue #357, de bout en bout @cap:regler-autonomie/moteur", () => {
+  // Ce que l'onglet Approvals promet maintenant en une phrase : « A rule on one
+  // tool wins over the server's rule, whoever that rule was set for. » Elle
+  // n'est vraie que si la chaîne le fait, et c'est le cas rapporté le 21/09 :
+  // garder tout Playwright autonome, et bloquer le seul outil qui exécute du
+  // code arbitraire.
+  it('un serveur autonome, un seul de ses outils bloqué : le blocage gagne', () => {
+    const rules: ApprovalRule[] = [
+      rule({ id: 'serveur', toolName: 'mcp_playwright__*', action: 'auto_approve' }),
+      rule({ id: 'outil', toolName: TOOL, action: 'block' }),
+    ];
+
+    expect(matchApprovalRule(rules, TOOL, AGENT, ENTITY)).toMatchObject({
+      id: 'outil',
+      action: 'block',
+    });
+    // Et le reste du serveur passe toujours sans demander.
+    expect(
+      matchApprovalRule(rules, 'mcp_playwright__browser_snapshot', AGENT, ENTITY),
+    ).toMatchObject({ id: 'serveur', action: 'auto_approve' });
+  });
+
+  it("une règle d'outil posée pour TOUT LE MONDE bat aussi le serveur de l'agent", () => {
+    const rules: ApprovalRule[] = [
+      rule({ id: 'serveur', toolName: 'mcp_playwright__*', action: 'auto_approve' }),
+      rule({ id: 'outil-everyone', toolName: TOOL, agentId: null, action: 'block' }),
+    ];
+
+    expect(matchApprovalRule(rules, TOOL, AGENT, ENTITY)).toMatchObject({
+      id: 'outil-everyone',
+      action: 'block',
+    });
+  });
+
+  it("sans règle sur l'outil exact, c'est bien celle du serveur qui décide", () => {
+    const rules: ApprovalRule[] = [
+      rule({ id: 'serveur', toolName: 'mcp_playwright__*', action: 'auto_approve' }),
+    ];
+
+    expect(matchApprovalRule(rules, TOOL, AGENT, ENTITY)).toMatchObject({ id: 'serveur' });
+  });
+});
+
 describe('explainApprovalRules — the folder condition @cap:approuver-une-action/moteur', () => {
   const FOLDER = 'D:/APPS/NodalAI';
   const conditioned = rule({

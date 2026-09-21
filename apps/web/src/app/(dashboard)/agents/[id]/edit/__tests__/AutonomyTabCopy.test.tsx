@@ -144,7 +144,10 @@ const MCP_SERVER = {
   slug: 'cogni-cortex',
   label: 'Cogni Cortex',
   assigned: true,
-  availableTools: ['read', 'write'],
+  availableTools: [
+    { name: 'read_page', description: 'Read one page.' },
+    { name: 'run_code_unsafe', description: 'Run arbitrary code in the browser.' },
+  ],
 };
 
 async function render(
@@ -769,5 +772,127 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
       toolName: 'file_write',
       action: 'block',
     });
+  });
+});
+
+describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", () => {
+  // Issue #357 : la section ne portait qu'une ligne PAR SERVEUR. Garder
+  // `cogni_cortex__*` autonome et bloquer un seul de ses outils ne se disait
+  // nulle part depuis la page de l'agent.
+
+  function fold(): HTMLButtonElement {
+    const el = container.querySelector<HTMLButtonElement>(
+      '[data-testid="autonomy-mcp-fold-cogni_cortex"]',
+    );
+    if (!el) throw new Error('no fold for the server');
+    return el;
+  }
+
+  async function open(): Promise<void> {
+    await act(async () => {
+      fold().click();
+    });
+  }
+
+  function toolControl(name: string, action: string): HTMLButtonElement {
+    const el = container.querySelector<HTMLButtonElement>(
+      `[data-testid="autonomy-btn-cogni_cortex__${name}-${action}"]`,
+    );
+    if (!el) throw new Error(`no control for ${name} ${action}`);
+    return el;
+  }
+
+  it('annonce combien le serveur expose, et ne les montre que sur demande', async () => {
+    await render([], [], [MCP_SERVER]);
+    expect(fold().textContent).toContain('2 tools');
+    expect(fold().getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-testid="autonomy-mcp-tools-cogni_cortex"]')).toBeNull();
+
+    await open();
+    expect(fold().getAttribute('aria-expanded')).toBe('true');
+    const list = container.querySelector('[data-testid="autonomy-mcp-tools-cogni_cortex"]');
+    expect(list).not.toBeNull();
+    expect(list!.textContent).toContain('read_page');
+    expect(list!.textContent).toContain('run_code_unsafe');
+    expect(list!.textContent).toContain('Run arbitrary code in the browser.');
+  });
+
+  it("sans règle sur l'outil exact, la ligne suit le serveur", async () => {
+    await render([], [], [MCP_SERVER]);
+    await open();
+    expect(toolControl('read_page', 'inherit').getAttribute('aria-pressed')).toBe('true');
+    expect(toolControl('read_page', 'block').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it("montre la valeur d'une règle déjà posée sur un outil exact", async () => {
+    await render(
+      [],
+      [
+        {
+          id: 'r7',
+          toolName: 'cogni_cortex__run_code_unsafe',
+          action: 'block',
+          conditionJson: null,
+          workspaceLabel: null,
+        },
+      ],
+      [MCP_SERVER],
+    );
+    await open();
+    expect(toolControl('run_code_unsafe', 'block').getAttribute('aria-pressed')).toBe('true');
+    // Sa voisine, elle, n'a pas de règle : elle suit toujours le serveur.
+    expect(toolControl('read_page', 'inherit').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it("enregistre sur le NOM EXACT de l'outil, pas sur le motif du serveur", async () => {
+    await render([], [], [MCP_SERVER]);
+    await open();
+    actions.setAgentApprovalRuleAction.mockClear();
+
+    await act(async () => {
+      toolControl('run_code_unsafe', 'block').click();
+    });
+
+    expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      toolName: 'cogni_cortex__run_code_unsafe',
+      action: 'block',
+    });
+  });
+
+  it('« Follow the server » supprime la règle de l’outil', async () => {
+    await render(
+      [],
+      [
+        {
+          id: 'r8',
+          toolName: 'cogni_cortex__run_code_unsafe',
+          action: 'block',
+          conditionJson: null,
+          workspaceLabel: null,
+        },
+      ],
+      [MCP_SERVER],
+    );
+    await open();
+    actions.setAgentApprovalRuleAction.mockClear();
+
+    await act(async () => {
+      toolControl('run_code_unsafe', 'inherit').click();
+    });
+
+    // `action: null` = supprimer la ligne, et non poser une quatrième valeur.
+    expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      toolName: 'cogni_cortex__run_code_unsafe',
+      action: null,
+    });
+  });
+
+  it("dit, une fois, qu'une règle d'outil bat celle du serveur", async () => {
+    const text = await render([], [], [MCP_SERVER]);
+    expect(text).toContain(
+      "A rule on one tool wins over the server's rule, whoever that rule was set for.",
+    );
   });
 });
