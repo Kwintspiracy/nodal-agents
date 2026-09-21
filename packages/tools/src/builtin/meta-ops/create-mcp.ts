@@ -60,6 +60,9 @@ type CreateMcpOutput = { ok: true; message: string } | { ok: false; error: strin
 
 export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutput> = {
   name: 'create_mcp',
+  label: 'Add an MCP server',
+  summary:
+    'Register a third-party MCP server after checking that it answers and listing its tools. Nothing is saved when the server cannot be reached.',
   description:
     'Provision a new MCP server in this entity and make its tools available. ' +
     "BEFORE calling this, run skill_view('tool-create-mcp') to load the exact format + a worked " +

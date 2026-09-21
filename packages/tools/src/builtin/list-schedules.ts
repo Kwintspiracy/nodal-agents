@@ -35,6 +35,8 @@ export const listSchedulesTool: ToolDefinition<
   ListSchedulesOutput
 > = {
   name: 'list_schedules',
+  label: 'List schedules',
+  summary: "See this workspace's schedules, including their status and next run.",
   description:
     'List the cron schedules (automations) in this workspace — name, agent, cron, timezone, ' +
     'active/paused, next & last run. Use it to answer "what are my schedules?" or to find a ' +

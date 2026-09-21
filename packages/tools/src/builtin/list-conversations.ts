@@ -75,6 +75,9 @@ export function createListConversationsTool(): ToolDefinition<
 > {
   return {
     name: 'list_conversations',
+    label: 'List conversations',
+    summary:
+      'See the conversations the agent can reach on a connected channel, and which ones you approved.',
     description: `Explore a connected messaging platform's structure (servers, channels, groups, DMs) and see which conversations you're already approved to send to.
 
 - **channel**: which connected platform to explore (telegram, discord, slack, whatsapp).

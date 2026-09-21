@@ -5,7 +5,7 @@
 // field are told apart:
 //
 //   an emptied field            → null  (no list, unrestricted again)
-//   "Refuse every command"      → []    (every command refused)
+//   "Block all commands"        → []    (every command refused)
 //   two lines                   → ['node', 'npx vitest']
 //
 // Rendered in jsdom and TYPED, not only rendered: the assertions are on the
@@ -120,7 +120,7 @@ describe('CommandAllowlistSection — what the owner saves @cap:assigner-outils/
     expect(arg.allowlist).not.toEqual([]);
   });
 
-  it('"Refuse every command" saves an empty list, never null', async () => {
+  it('"Block all commands" saves an empty list, never null', async () => {
     await render(null);
     await check(refuseEveryBox());
     await save();
@@ -162,7 +162,7 @@ describe('CommandAllowlistSection — what the owner saves @cap:assigner-outils/
   it('says how a command must be written once a list exists', async () => {
     await render(null);
     expect(container.textContent).toContain(
-      'With a list, a command is one program and its arguments, double quotes to group; no chaining, no redirection, no shell.',
+      'With a list, commands run without a shell: no chaining, no redirection.',
     );
   });
 
@@ -184,8 +184,8 @@ describe('CommandAllowlistSection — what the owner saves @cap:assigner-outils/
   it('says what the list does not govern', async () => {
     await render(null);
     const text = container.textContent ?? '';
-    expect(text).toContain('This list governs run_command only');
-    expect(text).toContain('Skill scripts, Code tasks and verification commands are not affected');
+    expect(text).toContain('This list applies only to run_command');
+    expect(text).toContain('Skill scripts, Code tasks, and verification commands are unaffected');
   });
 
   it('renders the message of a refused save, next to the field', async () => {

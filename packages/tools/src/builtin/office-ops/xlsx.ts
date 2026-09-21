@@ -433,6 +433,9 @@ type XlsxReadOutput =
 
 export const xlsxReadTool: ToolDefinition<typeof XlsxReadInput, XlsxReadOutput> = {
   name: 'xlsx_read',
+  label: 'Read a spreadsheet',
+  summary:
+    'Read the rows of an Excel workbook in the workspace. A formula comes back as its last computed result.',
   description:
     'Read an Excel (.xlsx) workbook from the agent workspace. Returns rows as arrays of strings. ' +
     'Formula cells return their cached result. Dates are ISO-formatted (YYYY-MM-DD). ' +
@@ -520,6 +523,8 @@ type XlsxSetCellOutput =
 
 export const xlsxSetCellTool: ToolDefinition<typeof XlsxSetCellInput, XlsxSetCellOutput> = {
   name: 'xlsx_set_cell',
+  label: 'Set a cell',
+  summary: 'Write a value into one cell. Every other cell, formula, and style is kept.',
   description:
     'Set a single cell value in an Excel workbook. Other cells, formulae, and styles are ' +
     'preserved (lossless in-place edit via exceljs). The workbook is saved back to the same ' +
@@ -584,6 +589,8 @@ type XlsxSetRangeOutput =
 
 export const xlsxSetRangeTool: ToolDefinition<typeof XlsxSetRangeInput, XlsxSetRangeOutput> = {
   name: 'xlsx_set_range',
+  label: 'Write a block of cells',
+  summary: 'Write a block of values starting at one cell. Cells outside that block are kept.',
   description:
     'Write a 2-D block of values into an Excel workbook starting at start_cell. ' +
     'Other cells outside the range are preserved. Atomic save.',
@@ -653,6 +660,8 @@ type XlsxAppendRowsOutput =
 export const xlsxAppendRowsTool: ToolDefinition<typeof XlsxAppendRowsInput, XlsxAppendRowsOutput> =
   {
     name: 'xlsx_append_rows',
+    label: 'Add rows',
+    summary: 'Add rows under the last row that holds data. Existing rows are kept.',
     description:
       'Append rows at the bottom of a worksheet (after the last row with data). ' +
       'Existing data is preserved.',
@@ -712,6 +721,8 @@ type XlsxAddSheetOutput =
 
 export const xlsxAddSheetTool: ToolDefinition<typeof XlsxAddSheetInput, XlsxAddSheetOutput> = {
   name: 'xlsx_add_sheet',
+  label: 'Add a sheet',
+  summary: 'Add an empty sheet to an existing workbook.',
   description: 'Add a new (empty) worksheet to an existing Excel workbook.',
   inputSchema: XlsxAddSheetInput,
   riskLevel: 'write',
@@ -762,6 +773,9 @@ type XlsxCreateOutput =
 
 export const xlsxCreateTool: ToolDefinition<typeof XlsxCreateInput, XlsxCreateOutput> = {
   name: 'xlsx_create',
+  label: 'Create a spreadsheet',
+  summary:
+    'Create an empty Excel workbook in the workspace. An existing file is only replaced when the agent asks to overwrite it.',
   description:
     'Create a new empty Excel (.xlsx) workbook at the specified workspace path. ' +
     'Fails if the file already exists unless overwrite:true is passed.',
@@ -812,6 +826,9 @@ type XlsxDeleteRowsOutput =
 export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, XlsxDeleteRowsOutput> =
   {
     name: 'xlsx_delete_rows',
+    label: 'Delete rows',
+    summary:
+      'Delete a range of rows and pull the rows below them up. Deleted rows cannot be recovered.',
     description:
       'Delete a range of rows from a worksheet. Rows below the deleted range are shifted up. ' +
       'This is a DESTRUCTIVE operation — rows are permanently removed. Confirm the row range ' +
@@ -937,6 +954,9 @@ export const xlsxFormatRangeTool: ToolDefinition<
   XlsxFormatRangeOutput
 > = {
   name: 'xlsx_format_range',
+  label: 'Format cells',
+  summary:
+    'Change font, colour, borders, alignment, or number format on a range of cells. Values and formulas are kept.',
   description:
     'Apply formatting (font, fill color, borders, alignment, number format) to a cell range in ' +
     'an Excel worksheet. Only the properties you provide are changed — cell values, formulae, ' +
@@ -1067,6 +1087,8 @@ type XlsxInsertRowsOutput =
 export const xlsxInsertRowsTool: ToolDefinition<typeof XlsxInsertRowsInput, XlsxInsertRowsOutput> =
   {
     name: 'xlsx_insert_rows',
+    label: 'Insert rows',
+    summary: 'Insert rows inside a sheet, pushing the rows below them down.',
     description:
       'Insert one or more rows at a position in a worksheet, shifting existing rows (and any ' +
       'formulae that reference them) down. Unlike xlsx_append_rows, which always adds after the ' +
@@ -1132,6 +1154,9 @@ export const xlsxDeleteColumnsTool: ToolDefinition<
   XlsxDeleteColumnsOutput
 > = {
   name: 'xlsx_delete_columns',
+  label: 'Delete columns',
+  summary:
+    'Delete a range of columns and pull the columns on their right over. Deleted columns cannot be recovered.',
   description:
     'Delete a range of columns from a worksheet. Columns to the right are shifted left. This is a ' +
     'DESTRUCTIVE operation — column data is permanently removed. Confirm the column range with ' +
@@ -1202,6 +1227,8 @@ export const xlsxInsertColumnsTool: ToolDefinition<
   XlsxInsertColumnsOutput
 > = {
   name: 'xlsx_insert_columns',
+  label: 'Insert columns',
+  summary: 'Insert columns inside a sheet, pushing the columns on their right further right.',
   description:
     'Insert one or more columns at a position in a worksheet, shifting existing columns (and any ' +
     'formulae that reference them) right.',
@@ -1264,6 +1291,9 @@ type XlsxMergeCellsOutput =
 export const xlsxMergeCellsTool: ToolDefinition<typeof XlsxMergeCellsInput, XlsxMergeCellsOutput> =
   {
     name: 'xlsx_merge_cells',
+    label: 'Merge cells',
+    summary:
+      'Join a rectangle of cells into one, keeping the value and style of its top left cell.',
     description:
       'Merge a rectangular cell range into a single cell (e.g. for a title spanning several ' +
       'columns). The value and style of the top-left cell are kept; the other cells in the range ' +
@@ -1332,6 +1362,8 @@ export const xlsxUnmergeCellsTool: ToolDefinition<
   XlsxUnmergeCellsOutput
 > = {
   name: 'xlsx_unmerge_cells',
+  label: 'Split merged cells',
+  summary: 'Undo a merge and give the range its separate cells back.',
   description: 'Undo a previous cell merge, restoring the range to independent cells.',
   inputSchema: XlsxUnmergeCellsInput,
   riskLevel: 'write',
@@ -1413,6 +1445,8 @@ export const xlsxSetColumnWidthsTool: ToolDefinition<
   XlsxSetColumnWidthsOutput
 > = {
   name: 'xlsx_set_column_widths',
+  label: 'Set column widths',
+  summary: 'Set column widths, or fit them to the longest value they show.',
   description:
     'Set explicit column widths and/or approximate-autofit columns to their content in an Excel ' +
     'worksheet. Autofit measures the longest displayed value in each targeted column and clamps ' +
@@ -1513,6 +1547,8 @@ export const xlsxFreezePanesTool: ToolDefinition<
   XlsxFreezePanesOutput
 > = {
   name: 'xlsx_freeze_panes',
+  label: 'Freeze rows and columns',
+  summary: 'Keep chosen rows and columns in view while the rest of the sheet scrolls.',
   description:
     'Freeze rows and/or columns in a worksheet so they stay visible while scrolling (e.g. ' +
     'freeze the header row and a label column). Pass rows:0 and columns:0 to remove an ' +
@@ -1580,6 +1616,8 @@ type XlsxFindCellsOutput =
 
 export const xlsxFindCellsTool: ToolDefinition<typeof XlsxFindCellsInput, XlsxFindCellsOutput> = {
   name: 'xlsx_find_cells',
+  label: 'Find cells',
+  summary: 'Find the cells whose shown value matches a text or a pattern, and get their addresses.',
   description:
     'Search a workbook for cells whose displayed value matches a string or regular expression. ' +
     'Formula cells are matched against their cached result. Returns cell addresses and values — ' +

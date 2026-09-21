@@ -144,7 +144,7 @@ test.describe.configure({ timeout: 90_000 });
 
 async function openAutonomyTab(page: Page): Promise<void> {
   await page.goto(`/agents/${agentId}/edit?tab=autonomy`);
-  await expect(page.getByText('Commands this agent may start')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText('Allowed commands')).toBeVisible({ timeout: 20_000 });
 }
 
 test('an owner names two commands, reads them back, then removes the list @cap:assigner-outils/ecran', async ({
@@ -198,7 +198,7 @@ test('an owner names two commands, reads them back, then removes the list @cap:a
   await expect(page.getByTestId('command-allowlist-entries')).toHaveValue('');
 });
 
-test('"Refuse every command" saves an empty list, which is not the same as no list', async ({
+test('"Block all commands" saves an empty list, which is not the same as no list', async ({
   page,
 }) => {
   await openAutonomyTab(page);

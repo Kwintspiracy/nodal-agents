@@ -202,6 +202,9 @@ type ScheduleOutput = { ok: true; message: string } | { ok: false; error: string
 
 export const createScheduleTool: ToolDefinition<typeof CreateScheduleInput, ScheduleOutput> = {
   name: 'create_schedule',
+  label: 'Create a schedule',
+  summary:
+    'Set up a recurring task for an agent, at clock times or on an interval, in your own timezone.',
   description:
     'Create a recurring schedule that fires a task for an agent. Give the WHEN as either ' +
     'atTimes (fixed clock times like ["09:00","21:00"]) OR everyMinutes (an interval). You give ' +
@@ -304,6 +307,8 @@ const UpdateScheduleInput = z.object({
 
 export const updateScheduleTool: ToolDefinition<typeof UpdateScheduleInput, ScheduleOutput> = {
   name: 'update_schedule',
+  label: 'Change a schedule',
+  summary: 'Change when an existing schedule runs, or its task, name, days, or notification.',
   description:
     'Edit an existing schedule. Change WHEN with atTimes (["09:00","21:00"]) or everyMinutes — the ' +
     "tool rebuilds it in the user's timezone; you never write cron or convert. Also edits task / " +
@@ -396,6 +401,8 @@ const ToggleScheduleInput = z.object({
 
 export const toggleScheduleTool: ToolDefinition<typeof ToggleScheduleInput, ScheduleOutput> = {
   name: 'toggle_schedule',
+  label: 'Pause or resume a schedule',
+  summary: 'Pause a schedule, or start it again.',
   description:
     'Pause (active=false) or resume (active=true) a schedule. Fails if it does not exist.',
   inputSchema: ToggleScheduleInput,

@@ -1,11 +1,11 @@
 // router/internal-tools.ts — the always-on built-in tools, described for the
 // dashboard's per-tool controls.
 //
-// Why here and not in apps/web: the descriptions are DERIVED from the real tool
-// definitions (`ALWAYS_ON_TOOL_DOCS`, itself built from each tool's own
-// `description` field), so a tool whose wording changes cannot drift from what
-// the owner reads before switching it off. apps/web already depends on this
-// package and not on `@nodal-agents/tools`, which pulls in the Office document
+// Why here and not in apps/web: the owner-facing texts are DERIVED from the
+// real tool definitions (`ALWAYS_ON_TOOL_DOCS`, itself built from each tool's
+// own `label` and `summary` fields), so a tool whose wording changes cannot
+// drift from what the owner reads before switching it off. apps/web already
+// depends on this package and not on `@nodal-agents/tools`, which pulls in the Office document
 // libraries — no reason to drag those into the dashboard for its labels.
 //
 // Why this exists at all: the Autonomy screen only ever listed OUTWARD tools
@@ -15,34 +15,6 @@
 
 import { ALWAYS_ON_TOOLS, ALWAYS_ON_TOOL_DOCS, UNBLOCKABLE_TOOLS } from '@nodal-agents/tools';
 import type { OperationDescriptor } from '@nodal-agents/shared';
-
-/**
- * Human labels. The tool NAME is the identifier the model sees and the owner
- * may recognise from a transcript, so it stays visible in the UI — this is the
- * plain-language half, for someone who has never read a tool list.
- */
-const LABELS: Readonly<Record<string, string>> = {
-  return_result: 'Finish a task',
-  ask_user: 'Ask the user a question',
-  register_project: 'Create a project',
-  declare_verification: 'Declare how to verify what it built',
-  skill_view: 'Read its own skills',
-  list_models: 'List available models',
-  list_schedules: 'List its schedules',
-  save_memory: 'Remember a fact',
-  query_memory: 'Recall a fact',
-  nodal_docs: 'Look up how Nodal-Agents works',
-  search_history: 'Search past conversations',
-  mark_memory_helpful: 'Mark a memory useful',
-  mark_memory_outdated: 'Mark a memory outdated',
-  web_search: 'Search the web',
-  dashboard_publish: 'Publish to the dashboard',
-  file_read: 'Read a workspace file',
-  file_write: 'Write a workspace file',
-  file_edit: 'Edit a workspace file',
-  file_list: 'List workspace files',
-  file_search: 'Search workspace files',
-};
 
 /**
  * Risk, in the same three-level vocabulary the connector operations use, so one
@@ -67,7 +39,22 @@ const RISK: Readonly<Record<string, OperationDescriptor['risk']>> = {
  */
 export { UNBLOCKABLE_TOOLS };
 
-export type InternalToolDescriptor = OperationDescriptor & {
+/**
+ * One built-in tool as the OWNER reads it.
+ *
+ * It carries no `description`, and that absence is the point (issue #382): the
+ * `description` of a ToolDefinition is written for the MODEL, and the screen
+ * used to show it verbatim — a wall of "do NOT" addressed to someone else. The
+ * model text cannot reach the dashboard through this type at all any more.
+ */
+export type InternalToolDescriptor = {
+  /** The tool name, shown as the technical identifier under the summary. */
+  slug: string;
+  /** Short imperative title, declared by the tool itself. */
+  label: string;
+  /** One or two sentences for the owner, declared by the tool itself. */
+  summary: string;
+  risk: OperationDescriptor['risk'];
   /** Set when the tool may not be blocked; the string says why, verbatim to the owner. */
   unblockableReason?: string;
 };
@@ -83,15 +70,21 @@ export type InternalToolDescriptor = OperationDescriptor & {
 export const INTERNAL_TOOL_DESCRIPTORS: readonly InternalToolDescriptor[] = ALWAYS_ON_TOOLS.map(
   (name): InternalToolDescriptor => {
     const doc = ALWAYS_ON_TOOL_DOCS.find((d) => d.name === name);
+    if (!doc) {
+      // Fails loud (invariant #4) rather than showing the owner a row titled
+      // with a tool name: a tool granted to every agent and described nowhere
+      // is a capability nobody was offered a control for.
+      throw new Error(
+        `Always-on tool "${name}" has no entry in ALWAYS_ON_TOOL_DOCS: the Approvals tab ` +
+          'would have no title and no summary for it.',
+      );
+    }
     const reason = UNBLOCKABLE_TOOLS[name];
     return {
       slug: name,
-      name: LABELS[name] ?? name,
+      label: doc.label,
+      summary: doc.summary,
       risk: RISK[name] ?? 'read',
-      // These are internal capabilities, not outward actions: none of them
-      // ships an approval gate of its own. The owner can still add one.
-      requiresApproval: false,
-      ...(doc?.description === undefined ? {} : { description: doc.description }),
       ...(reason === undefined ? {} : { unblockableReason: reason }),
     };
   },

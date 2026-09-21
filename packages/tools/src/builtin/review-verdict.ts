@@ -105,6 +105,9 @@ export interface ReviewVerdictOutput {
 
 export const reviewVerdictTool: ToolDefinition<typeof reviewVerdictSchema, ReviewVerdictOutput> = {
   name: 'review_verdict',
+  label: 'Give a review verdict',
+  summary:
+    'Record the result of a review as approved or changes requested. Requesting changes requires naming the file and the problem.',
   description:
     'Emit your STRUCTURED review verdict — the final act of a review task. Call it exactly once, ' +
     'after you have actually inspected the work (files read, evidence checked). ' +

@@ -39,6 +39,8 @@ export interface HistoryHit {
 
 export const searchHistoryTool: ToolDefinition<typeof SearchHistoryInputSchema, HistoryHit[]> = {
   name: 'search_history',
+  label: 'Search past work',
+  summary: 'Find decisions and details from earlier jobs and conversations in this workspace.',
   description:
     "Search this workspace's PAST jobs and conversations by keyword (full-text). Use it to " +
     'recall what was decided, found, or done before — including by OTHER agents in this ' +

@@ -52,6 +52,9 @@ export const saveRoutineStateTool: ToolDefinition<
   SaveRoutineStateOutput
 > = {
   name: 'save_routine_state',
+  label: 'Remember where a routine stopped',
+  summary:
+    'Store a value for the next run of the same routine, such as the last item handled. It is read back at the start of every run.',
   description:
     "Record this routine's own state for its next run — for example the last version you " +
     'announced, or the id of the last item you processed. The state you save here is shown ' +

@@ -26,6 +26,9 @@ type UpdateSkillOutput = { ok: true; message: string } | { ok: false; error: str
 
 export const updateSkillTool: ToolDefinition<typeof UpdateSkillInput, UpdateSkillOutput> = {
   name: 'update_skill',
+  label: 'Change a skill',
+  summary:
+    "Change an existing skill's content, name, description, or active state. Its slug stays the same.",
   description:
     'Update an existing skill in this entity (content, name, description, or active). ' +
     'Identify the skill by its slug OR name. The slug itself cannot be changed. ' +

@@ -30,6 +30,8 @@ export const markMemoryHelpfulTool: ToolDefinition<
   MarkMemoryHelpfulOutput
 > = {
   name: 'mark_memory_helpful',
+  label: 'Mark a memory useful',
+  summary: 'Give a memory more priority when it materially helped with a job.',
   description:
     'Mark a fact from your Persistent memory block as having been helpful in this job. ' +
     'Bumps its importance (capped at 5★) so the memory stays in your auto-injection ' +

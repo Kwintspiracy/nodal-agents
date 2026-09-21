@@ -1,7 +1,7 @@
 /**
  * An owner settles, tool by tool, what an agent may do alone and what it must ask for first.
  *
- * Playwright e2e — Autonomy / Approvals tab in the agent editor.
+ * Playwright e2e — the Approvals tab in the agent editor.
  *
  * Strategy: navigate to the existing /agents list, find the first existing agent
  * (created by the real user), and verify the Autonomy tab is present and functional.
@@ -35,7 +35,7 @@ test.beforeAll(async () => {
 
 test.describe.configure({ timeout: 60_000 });
 
-test.describe('Autonomy / Approvals tab @cap:regler-autonomie/ecran', () => {
+test.describe('Approvals tab @cap:regler-autonomie/ecran', () => {
   // Populated by the "find first agent" setup test.
   let firstAgentEditUrl: string | null = null;
 
@@ -64,7 +64,7 @@ test.describe('Autonomy / Approvals tab @cap:regler-autonomie/ecran', () => {
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
     // The tab bar should contain an "Autonomy" tab.
-    const autonomyTab = page.getByRole('tab', { name: /^autonomy$/i });
+    const autonomyTab = page.getByRole('tab', { name: /^approvals$/i });
     await expect(autonomyTab).toBeVisible({ timeout: 10_000 });
   });
 
@@ -77,7 +77,7 @@ test.describe('Autonomy / Approvals tab @cap:regler-autonomie/ecran', () => {
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
     // Click the Autonomy tab.
-    await page.getByRole('tab', { name: /^autonomy$/i }).click();
+    await page.getByRole('tab', { name: /^approvals$/i }).click();
 
     // Should show either the empty state OR the tool list — but never an error.
     const hasEmptyState = page
@@ -107,7 +107,7 @@ test.describe('Autonomy / Approvals tab @cap:regler-autonomie/ecran', () => {
     await page.goto(firstAgentEditUrl);
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
-    await page.getByRole('tab', { name: /^autonomy$/i }).click();
+    await page.getByRole('tab', { name: /^approvals$/i }).click();
 
     // Skip if there are no gateable tools (empty state agent).
     const toolList = page.locator('[data-testid="autonomy-tool-list"]');
@@ -117,7 +117,7 @@ test.describe('Autonomy / Approvals tab @cap:regler-autonomie/ecran', () => {
       return;
     }
 
-    // Find the first "Ask first" button in the tool list.
+    // Find the first "Ask for approval" button in the tool list.
     const firstAskFirstBtn = toolList
       .locator('[data-testid^="autonomy-btn-"][data-testid$="-require_approval"]')
       .first();
@@ -128,7 +128,7 @@ test.describe('Autonomy / Approvals tab @cap:regler-autonomie/ecran', () => {
     // testid = "autonomy-btn-<slug>-require_approval"
     const toolSlug = testId?.replace('autonomy-btn-', '').replace('-require_approval', '') ?? '';
 
-    // Click "Ask first".
+    // Click "Ask for approval".
     await firstAskFirstBtn.click();
 
     // Wait for the server action to complete (button stops being disabled).
@@ -137,16 +137,16 @@ test.describe('Autonomy / Approvals tab @cap:regler-autonomie/ecran', () => {
     // Reload to verify persistence.
     await page.reload();
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
-    await page.getByRole('tab', { name: /^autonomy$/i }).click();
+    await page.getByRole('tab', { name: /^approvals$/i }).click();
 
-    // The "Ask first" button should still be the active selection.
+    // The "Ask for approval" button should still be the active selection.
     // We verify by checking that the button has the active styling (bg-warn class).
     const persistedBtn = page.locator(`[data-testid="autonomy-btn-${toolSlug}-require_approval"]`);
     await expect(persistedBtn).toBeVisible({ timeout: 8_000 });
     // The active state uses bg-warn/15 class — verify it's applied.
     await expect(persistedBtn).toHaveClass(/bg-warn/, { timeout: 5_000 });
 
-    // Reset back to Autonomous (cleanup — don't leave a require_approval rule behind).
+    // Reset back to "Run without asking" (cleanup — don't leave a require_approval rule behind).
     const autoBtn = page.locator(`[data-testid="autonomy-btn-${toolSlug}-auto_approve"]`);
     await autoBtn.click();
     // Wait for the server action to finish.

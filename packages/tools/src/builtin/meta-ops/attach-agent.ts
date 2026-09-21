@@ -17,6 +17,8 @@ type AttachAgentOutput = { ok: true; message: string } | { ok: false; error: str
 
 export const attachAgentTool: ToolDefinition<typeof AttachAgentInput, AttachAgentOutput> = {
   name: 'attach_agent',
+  label: 'Add an agent to the team',
+  summary: 'Attach an existing agent as a sub-agent so work can be delegated to it.',
   description:
     'Assign an EXISTING agent as your sub-agent so you can delegate to it. ' +
     'Use this — NOT create_agent — when the agent already exists. ' +

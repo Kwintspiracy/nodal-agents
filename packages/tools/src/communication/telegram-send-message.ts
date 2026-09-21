@@ -65,6 +65,9 @@ export function createTelegramSendMessageTool(): ToolDefinition<
 > {
   return {
     name: 'telegram_send_message',
+    label: 'Send a Telegram message',
+    summary:
+      'Send a message through the connected Telegram bot. A sent message cannot be taken back.',
     description: `Send a Telegram message to a user or chat.
 
 Use this tool to deliver a reply, notification, or result via Telegram.

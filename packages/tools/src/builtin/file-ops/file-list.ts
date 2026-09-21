@@ -75,6 +75,8 @@ function globToRegex(glob: string): RegExp {
 
 export const fileListTool: ToolDefinition<typeof FileListInputSchema, FileListOutput> = {
   name: 'file_list',
+  label: 'List workspace files',
+  summary: 'Show files in a workspace folder, with optional filters. Returns up to 500 entries.',
   description:
     'List entries of a directory in the agent workspace(s). With no `path` argument, returns ' +
     'the list of available workspace labels. With a path, lists that directory. For ' +

@@ -66,6 +66,9 @@ export type FileEditOutput =
 
 export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOutput> = {
   name: 'file_edit',
+  label: 'Edit a workspace file',
+  summary:
+    'Replace an exact part of a file while leaving the rest untouched. The edit fails if the target text is missing or ambiguous.',
   description:
     'Edit an existing file by replacing an exact substring. Quote the chunk to change verbatim ' +
     '(including whitespace). Fails loud when the substring is missing (you misquoted) or ' +

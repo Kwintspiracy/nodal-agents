@@ -61,6 +61,9 @@ function slideNumberOf(node: OfficeContentNode): number {
 
 export const pptxReadTool: ToolDefinition<typeof PptxReadInput, PptxReadOutput> = {
   name: 'pptx_read',
+  label: 'Read a PowerPoint deck',
+  summary:
+    'Read the text of a slide deck in the workspace, slide by slide. Images, animations, and speaker notes may be missing.',
   description:
     'Read the text content of a PowerPoint (.pptx) presentation from the agent workspace. ' +
     'Returns concatenated text from all slides plus a per-slide text array. Slide count is ' +
@@ -384,6 +387,9 @@ type PptxCreateOutput =
 
 export const pptxCreateTool: ToolDefinition<typeof PptxCreateInput, PptxCreateOutput> = {
   name: 'pptx_create',
+  label: 'Create a PowerPoint deck',
+  summary:
+    'Create a slide deck with titles, bullets, notes, tables, and images. An existing file is only replaced when the agent asks to overwrite it.',
   description:
     'Create a new PowerPoint (.pptx) presentation from slide descriptors. Each slide can ' +
     'have a title, bullet points (or body text), speaker notes, a table, and an optional ' +
@@ -432,6 +438,8 @@ export const pptxAppendSlidesTool: ToolDefinition<
   PptxAppendSlidesOutput
 > = {
   name: 'pptx_append_slides',
+  label: 'Add slides to a deck',
+  summary: 'Add new slides at the end of an existing deck. Existing slides are never modified.',
   description:
     'Append new slides to the END of an existing PowerPoint (.pptx) file without touching any ' +
     'existing slide. Each new slide accepts the same fields as pptx_create (title, bullets/body, ' +
@@ -608,6 +616,9 @@ export const pptxReplaceTextTool: ToolDefinition<
   PptxReplaceTextOutput
 > = {
   name: 'pptx_replace_text',
+  label: 'Replace text in a deck',
+  summary:
+    'Replace exact text in a slide deck. Occurrences split across formatting changes are reported, not guessed at.',
   description:
     'Find and replace text inside an existing PowerPoint (.pptx) file, in place. Only ' +
     'occurrences that live entirely inside a single text run are replaced; occurrences split ' +

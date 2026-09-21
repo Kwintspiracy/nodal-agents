@@ -192,6 +192,8 @@ export const skillFileReadTool: ToolDefinition<
   SkillFileReadOutput
 > = {
   name: 'skill_file_read',
+  label: 'Read a skill file',
+  summary: "Read a file bundled with one of the agent's skills, such as a reference or a template.",
   description:
     "Read a bundled file that ships with one of this agent's installed skills " +
     '(reference docs, templates, stylesheets, presets). Use this for on-demand ' +
@@ -310,6 +312,8 @@ export const skillFileListTool: ToolDefinition<
   SkillFileListOutput
 > = {
   name: 'skill_file_list',
+  label: 'List skill files',
+  summary: "See which files ship with one of the agent's skills before reading them.",
   description:
     "List the bundled files that ship with one of this agent's installed skills, " +
     'so you can discover which resources (references, templates, presets) are ' +
@@ -438,6 +442,9 @@ export const skillFileWriteTool: ToolDefinition<
   SkillFileWriteOutput
 > = {
   name: 'skill_file_write',
+  label: 'Write a skill file',
+  summary:
+    "Create or replace a file inside one of the agent's skill folders. Only skills you marked writable can be changed.",
   description:
     "Write or overwrite a bundled file inside one of your installed skills' folders " +
     '(e.g. drop a new workflow into a ComfyUI skill, update a reference doc). Use this to ' +

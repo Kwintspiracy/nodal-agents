@@ -291,7 +291,30 @@ export interface ToolProvisioning {
  */
 export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   name: string;
+  /**
+   * What the MODEL reads. Long, precise, full of « do NOT » — it has to be, the
+   * model decides from it alone. Never shown to a person: the Approvals tab
+   * shows `label` and `summary` instead (issue #382).
+   */
   description: string;
+  /**
+   * What the OWNER reads as the row title: a short imperative name, no final
+   * full stop (« Read a workspace file », « Publish to Cloudflare Workers »).
+   *
+   * Optional in the TYPE for the same reason as `card`: third-party tools (MCP
+   * servers, the connector adapters — 154 definitions) are built elsewhere and
+   * must compile without it. Every tool the PRODUCT ships declares one, and the
+   * registry test (`owner-copy.test.ts`) names any built-in that does not.
+   */
+  label?: string;
+  /**
+   * What the OWNER reads under that title: one or two sentences, second person,
+   * saying what the tool does to their workspace and what it costs them. No em
+   * dash — a person reads this text, a model does not parse it.
+   *
+   * Optional in the TYPE, required for built-ins: same contract as `label`.
+   */
+  summary?: string;
   inputSchema: TInput;
   riskLevel: OperationRiskLevel;
   /**
