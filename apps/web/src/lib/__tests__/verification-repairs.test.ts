@@ -105,6 +105,17 @@ describe('lastSequencePerDeliverable @cap:verifier-un-livrable/moteur', () => {
     expect(gardees.map((r) => r.sequenceId)).toEqual(['du-job', 'du-relecteur']);
   });
 
+  it('à date ÉGALE, la dernière arrivée gagne — le tri reste total', () => {
+    // Sans cette règle, deux rendus du même fil pourraient montrer deux
+    // séquences différentes (Reviewer C, passe 2).
+    const gardees = lastSequencePerDeliverable([
+      ligne('premiere', 'red', '2026-09-21T10:00:00Z'),
+      ligne('seconde', 'green', '2026-09-21T10:00:00Z'),
+    ]);
+
+    expect(gardees.map((r) => r.sequenceId)).toEqual(['seconde']);
+  });
+
   it('aucune ligne : aucune ligne', () => {
     expect(lastSequencePerDeliverable([])).toEqual([]);
   });
@@ -122,6 +133,29 @@ describe('lastSequenceViewPerDeliverable @cap:verifier-un-livrable/moteur', () =
     source: 'job',
     sequenceId,
     startedAt,
+  });
+
+  it('une date ILLISIBLE ne gagne jamais sur une vraie heure', () => {
+    // `startedAt` vaut la chaîne vide quand la vue n'a pas de date, et
+    // `Date.parse('')` est `NaN` : la séquence en place l'emportait, donc la
+    // rouge d'avant la réparation (Reviewer C, passe 2).
+    // L'illisible arrive EN PREMIER : sans la garde, elle reste en place et la
+    // vraie date ne la déloge jamais.
+    const gardees = lastSequenceViewPerDeliverable([
+      sequence('sans-date', ''),
+      sequence('datee', '2026-09-21T10:00:00.000Z'),
+    ]);
+
+    expect(gardees.map((s) => s.sequenceId)).toEqual(['datee']);
+  });
+
+  it('entre deux dates illisibles, l’ordre d’arrivée tranche', () => {
+    const gardees = lastSequenceViewPerDeliverable([
+      sequence('premiere', 'pas une date'),
+      sequence('seconde', ''),
+    ]);
+
+    expect(gardees.map((s) => s.sequenceId)).toEqual(['seconde']);
   });
 
   it('sur des séquences déjà groupées, la même règle s’applique', () => {

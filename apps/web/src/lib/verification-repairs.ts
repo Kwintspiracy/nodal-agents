@@ -47,6 +47,14 @@ const identite = (row: ProofIdentity): string =>
  * identité écrites à la même milliseconde n'existent pas (une preuve dure au
  * moins un spawn), mais le tri doit rester total pour que l'écran ne clignote
  * pas d'un rendu à l'autre.
+ *
+ * UNE DATE ILLISIBLE NE GAGNE JAMAIS SUR L'HEURE (Reviewer C, passe 2). La vue
+ * des séquences rend `startedAt` par `createdAt?.toISOString() ?? ''`
+ * (`verification-runs-view.ts`), et `Date.parse('')` vaut `NaN` : toute
+ * comparaison avec `NaN` étant fausse, la séquence DÉJÀ EN PLACE l'emportait
+ * — donc la rouge d'avant la réparation, en silence. Une date illisible vaut
+ * donc moins l'infini : elle perd contre toute date, et l'ordre d'arrivée
+ * tranche entre deux illisibles.
  */
 function derniereParIdentite<T extends ProofIdentity>(
   rows: readonly T[],
@@ -55,7 +63,8 @@ function derniereParIdentite<T extends ProofIdentity>(
   const gagnante = new Map<string, { sequenceId: string; at: number; rang: number }>();
   rows.forEach((row, rang) => {
     const cle = identite(row);
-    const at = quand(row);
+    const brut = quand(row);
+    const at = Number.isFinite(brut) ? brut : Number.NEGATIVE_INFINITY;
     const tenante = gagnante.get(cle);
     if (tenante === undefined || at > tenante.at || (at === tenante.at && rang > tenante.rang)) {
       gagnante.set(cle, { sequenceId: row.sequenceId, at, rang });
