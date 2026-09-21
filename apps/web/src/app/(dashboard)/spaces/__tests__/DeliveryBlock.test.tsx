@@ -1036,6 +1036,19 @@ describe('DeliveryBlock — le verdict de preuve en toutes lettres @cap:verifier
     expect(html).toMatch(/<span class="text-warn">[^<]*Proof failed after 1 repair<\/span>/);
   });
 
+  // Le pluriel est défensif : la décision D2 borne à UNE réparation, et la
+  // borne est en base. Il est testé quand même — sans ce cas, le retirer
+  // laisserait la suite verte (Reviewer C, PR #389).
+  it('deux réparations s’accordent au pluriel', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-375"
+        summary={{ ...livreEtApprouve, verdict: 'green', repairs: 2 }}
+      />,
+    );
+    expect(ligne(html)).toContain('Proof passed after 2 repairs');
+  });
+
   it('zéro réparation, et une surface qui n’a pas lu la colonne, ne disent RIEN', () => {
     const zero = renderToStaticMarkup(
       <DeliveryBlock

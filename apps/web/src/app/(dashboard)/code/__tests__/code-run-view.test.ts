@@ -224,6 +224,54 @@ describe('code-run-view — ce qui a été livré @cap:suivre-execution/ecran', 
     // Le bloc nomme QUI a relu ; un verdict de code ne porte pas ce nom.
     expect(summary?.reviews).toEqual([]);
   });
+
+  // #375 — un run réparé porte DEUX séquences sur le même livrable. Cet
+  // encart-ci conclut comme les deux autres ; il les additionnait, et disait
+  // « 1 / 2 » et « Proof failed » d'un run que les autres écrans donnaient
+  // vert (Reviewer C, PR #389).
+  it('un run RÉPARÉ ne compte que la dernière preuve, comme les autres écrans', () => {
+    const commande = (sequenceId: string, verdict: string, at: string) => ({
+      jobId: JOB,
+      sequenceId,
+      commandRank: 1,
+      command: 'pnpm test',
+      exitCode: verdict === 'green' ? 0 : 1,
+      outcomeKind: 'exit',
+      durationMs: 100,
+      verdict,
+      testedGeneration: 1,
+      testedEpoch: 0,
+      source: 'job',
+      sourceAgentName: null,
+      createdAt: at,
+    });
+    const sequence = (sequenceId: string, verdict: string, at: string) => ({
+      sequenceId,
+      jobId: JOB,
+      deliverableType: 'code_project',
+      canonicalKey: 'd:/apps/x',
+      verdict,
+      startedAt: at,
+      source: 'job',
+      sourceAgentName: null,
+      runs: [commande(sequenceId, verdict, at)],
+    });
+
+    const summary = codeDelivery(
+      detail({
+        header: header({ costUsd: 1, durationMs: 1000 }),
+        changes: [{ filePath: 'a.tsx', addedLines: 1, removedLines: 0, edits: [] }],
+        verificationRuns: [
+          sequence('avant-reparation', 'red', '2026-09-18T09:58:00.000Z'),
+          sequence('apres-reparation', 'green', '2026-09-18T10:05:00.000Z'),
+        ],
+      }),
+    );
+
+    expect(summary?.verdict).toBe('green');
+    expect(summary?.tests).toEqual({ passed: 1, total: 1 });
+    expect(summary?.checks).toEqual([{ command: 'pnpm test', ok: true }]);
+  });
 });
 
 describe('code-run-view — l’activité @cap:suivre-execution/ecran', () => {

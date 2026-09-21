@@ -210,7 +210,8 @@ import {
   type JobResultKind,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
-import { lastSequencePerDeliverable, readRepairAttempts } from './verification-repairs.ts';
+import { lastSequencePerDeliverable } from './verification-repairs.ts';
+import { readRepairAttempts } from './verification-repairs-read.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';

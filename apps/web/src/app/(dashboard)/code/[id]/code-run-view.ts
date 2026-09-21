@@ -15,6 +15,7 @@ import type { StatusVariant } from '@/components/ui/StatusPill';
 import type { DeliverySummary, Step, TurnUsage } from '@/lib/conversation-feed.ts';
 import { outcomeOfToolOutput } from '@/lib/tool-card-payload.ts';
 import { lastReviewVerdict } from '@/lib/review-state.ts';
+import { lastSequenceViewPerDeliverable } from '@/lib/verification-repairs.ts';
 import { reviewBlocksDelivery } from '@nodal-agents/shared';
 import { liveKind } from '@/lib/job-live.ts';
 import type { ThreadAgent } from '@/app/(dashboard)/spaces/format.ts';
@@ -207,7 +208,14 @@ export function codeActivityLabel(
  */
 export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | null {
   const { header, changes, verificationRuns, verdicts } = detail;
-  const commands = verificationRuns.flatMap((s) => s.runs);
+  // LA DERNIÈRE SÉQUENCE DE CHAQUE PREUVE (#375, Reviewer C de la PR #389) :
+  // cet encart-ci conclut « Proof passed » ou « Proof failed » comme les deux
+  // autres, et il additionnait encore la séquence rouge d'avant la réparation
+  // avec la verte d'après — il disait « 1 / 2 » et « Proof failed » d'un run
+  // que les deux autres écrans donnaient vert. La SECTION de preuve de la
+  // page, elle, garde toutes les séquences : elle les montre, elle n'en
+  // conclut rien.
+  const commands = lastSequenceViewPerDeliverable(verificationRuns).flatMap((s) => s.runs);
   if (changes.length === 0 && commands.length === 0) return null;
   const added = changes.reduce((acc, c) => acc + c.addedLines, 0);
   const removed = changes.reduce((acc, c) => acc + c.removedLines, 0);

@@ -2,110 +2,89 @@
 // (issue #375).
 //
 // Depuis que le runner rouvre un run sur une preuve rouge pour un tour de
-// réparation, un même livrable peut porter DEUX séquences dans
-// `verification_runs` : celle qui a rougi, et celle qui a suivi la correction.
-// Les écrans qui comptent les commandes et concluent « Proof passed » ou
-// « Proof failed » les additionnaient toutes. Le résultat se lisait à l'envers
-// d'un run parfaitement vert : « 1 / 2 » et « Proof failed », alors qu'une
-// seule commande existe et qu'elle passe.
+// réparation, un même job peut prouver DEUX fois le même livrable : la
+// séquence qui a rougi, et celle qui a suivi la correction. Les trois écrans
+// qui comptent les commandes et concluent « Proof passed » ou « Proof failed »
+// les additionnaient. Le résultat se lisait à l'envers d'un run parfaitement
+// vert : « 1 / 2 » et « Proof failed », alors qu'une seule commande existe et
+// qu'elle passe.
 //
-// Deux gestes, et ils vivent ICI parce que deux écrans les font (le fil d'une
-// conversation, la page d'un run) et qu'une seconde copie divergerait au
-// premier correctif :
+// CE QUE CE MODULE RETIRE, ET RIEN D'AUTRE : le doublon qu'une réparation
+// crée. L'identité d'une preuve est donc le QUADRUPLET
+// (job, type de livrable, clé canonique, origine) :
 //
-//   `lastSequencePerDeliverable` — ne garder que la DERNIÈRE séquence de
-//   chaque livrable, celle qui dit où on en est ;
-//   `readRepairAttempts` — combien de tours de réparation chaque job a coûté,
-//   lu sur `job_deliverable_verification_state.repair_attempts`, la colonne
-//   que la finalisation écrit. Jamais déduit du nombre de séquences : une
-//   preuve immédiate de `code_task` en crée une sans qu'aucune réparation
-//   n'ait eu lieu.
+//   le JOB, parce qu'un délégué qui prouve le même projet que sa tête a
+//   prouvé quelque chose de son côté — l'effacer ferait disparaître de
+//   l'encart une preuve que personne n'a rejouée (Reviewer C, PR #389) ;
+//   l'ORIGINE, pour la même raison, entre un relecteur et le travail.
+//
+// Une réparation, elle, rejoue le MÊME job sur le MÊME livrable avec la MÊME
+// origine : c'est exactement, et uniquement, ce que le filtre replie.
+//
+// Ce module est PUR : `CodeProcessDetail` est un composant client, et le
+// détail de la page Code passe par ici. La lecture en base des tours de
+// réparation vit à côté, dans `verification-repairs-read.ts`, sous
+// `server-only`.
 
-import 'server-only';
-import { inArray, jobDeliverableVerificationState } from '@nodal-agents/db';
-import type { getDb } from './server.ts';
-
-type Db = ReturnType<typeof getDb>;
-
-/** Ce qu'une ligne de preuve doit porter pour être triée par séquence. */
-export interface SequencedProofRow {
+/** Ce qu'une preuve doit porter pour qu'on sache DE QUI et DE QUOI elle parle. */
+export interface ProofIdentity {
+  readonly jobId: string | null;
   readonly deliverableType: string;
   readonly canonicalKey: string;
-  readonly sequenceId: string;
-  readonly createdAt: Date | null;
-  /**
-   * QUI a lancé la preuve : `'job'` (le travail lui-même) ou `'reviewer'` (un
-   * relecteur mandaté). Il entre dans l'identité du groupe, et ce n'est pas un
-   * détail : sans lui, la preuve d'un relecteur, plus récente, masquerait celle
-   * du travail sur le même livrable, et l'encart cesserait de montrer un rouge
-   * qu'il montrait avant cette PR. Ce qu'on retire ici est le DOUBLON que la
-   * réparation crée, rien d'autre.
-   */
+  /** `'job'` (le travail lui-même) ou `'reviewer'` (un relecteur mandaté). */
   readonly source: string;
+  readonly sequenceId: string;
 }
 
+const identite = (row: ProofIdentity): string =>
+  JSON.stringify([row.jobId, row.deliverableType, row.canonicalKey, row.source]);
+
 /**
- * Ne garde que la dernière séquence de preuve de CHAQUE livrable, dans l'ordre
- * d'entrée.
+ * Le cœur : par identité de preuve, ne garder que la séquence la plus récente,
+ * dans l'ordre d'entrée.
  *
- * « Dernière » se lit sur `created_at`, et à égalité sur l'ordre d'arrivée des
- * lignes : deux séquences du même livrable écrites dans la même milliseconde
- * n'existent pas en pratique (une preuve dure au moins un spawn), mais le tri
- * doit rester total pour que l'écran ne clignote pas d'un rendu à l'autre.
- *
- * Les livrables sont indépendants : un run qui prouve deux projets garde la
- * dernière séquence de chacun. L'ORIGINE aussi (`source`) : la preuve d'un
- * relecteur et celle du travail sont deux faits, et la plus récente n'efface
- * pas l'autre.
+ * À égalité de date, l'ordre d'arrivée tranche — deux séquences de la même
+ * identité écrites à la même milliseconde n'existent pas (une preuve dure au
+ * moins un spawn), mais le tri doit rester total pour que l'écran ne clignote
+ * pas d'un rendu à l'autre.
  */
-export function lastSequencePerDeliverable<T extends SequencedProofRow>(rows: readonly T[]): T[] {
-  // clé du livrable → la séquence retenue, et la date qui l'a fait gagner.
+function derniereParIdentite<T extends ProofIdentity>(
+  rows: readonly T[],
+  quand: (row: T) => number,
+): T[] {
   const gagnante = new Map<string, { sequenceId: string; at: number; rang: number }>();
   rows.forEach((row, rang) => {
-    const cle = JSON.stringify([row.deliverableType, row.canonicalKey, row.source]);
-    const at = row.createdAt?.getTime() ?? 0;
+    const cle = identite(row);
+    const at = quand(row);
     const tenante = gagnante.get(cle);
     if (tenante === undefined || at > tenante.at || (at === tenante.at && rang > tenante.rang)) {
       gagnante.set(cle, { sequenceId: row.sequenceId, at, rang });
     }
   });
-  return rows.filter(
-    (row) =>
-      gagnante.get(JSON.stringify([row.deliverableType, row.canonicalKey, row.source]))
-        ?.sequenceId === row.sequenceId,
-  );
+  return rows.filter((row) => gagnante.get(identite(row))?.sequenceId === row.sequenceId);
 }
 
 /**
- * Combien de tours de réparation chaque job a coûté, par `job_id`.
+ * Les LIGNES de `verification_runs`, une par commande : ne garder que celles
+ * de la dernière séquence de chaque preuve.
  *
- * LA BORNE D'ENTITÉ EST CELLE DES `jobIds`, et c'est voulu : la table ne porte
- * pas de colonne d'entité, elle appartient à son job. Les deux appelants
- * passent des identifiants déjà bornés à la session (`collectDescendants(db,
- * session.entityId, …)`), exactement comme la lecture voisine des livrables
- * non configurés, qui filtre elle aussi sur le seul `job_id`.
- *
- * Un job absent de la carte n'en a coûté aucun — la colonne vaut zéro par
- * défaut, et on ne rapporte que ce qui est strictement positif. Un job qui
- * porte plusieurs livrables rend le plus grand : le run a été rejoué une fois,
- * que ce soit pour un projet ou pour trois.
+ * `created_at` est `NOT NULL` en base et la lecture le rend tel quel : le type
+ * l'exige ici plutôt que de porter une branche pour un cas que personne ne
+ * peut produire (Reviewer C, PR #389).
  */
-export async function readRepairAttempts(
-  db: Db,
-  jobIds: readonly string[],
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  if (jobIds.length === 0) return out;
-  const rows = await db
-    .select({
-      jobId: jobDeliverableVerificationState.jobId,
-      repairAttempts: jobDeliverableVerificationState.repairAttempts,
-    })
-    .from(jobDeliverableVerificationState)
-    .where(inArray(jobDeliverableVerificationState.jobId, [...jobIds]));
-  for (const row of rows) {
-    if (row.repairAttempts <= 0) continue;
-    out.set(row.jobId, Math.max(out.get(row.jobId) ?? 0, row.repairAttempts));
-  }
-  return out;
+export function lastSequencePerDeliverable<T extends ProofIdentity & { readonly createdAt: Date }>(
+  rows: readonly T[],
+): T[] {
+  return derniereParIdentite(rows, (row) => row.createdAt.getTime());
+}
+
+/**
+ * Les SÉQUENCES déjà groupées — ce que le détail de la page Code manipule.
+ * Même règle, même identité ; seule la date change de nom et de forme
+ * (`startedAt`, une chaîne ISO).
+ */
+export function lastSequenceViewPerDeliverable<
+  T extends ProofIdentity & { readonly startedAt: string },
+>(sequences: readonly T[]): T[] {
+  return derniereParIdentite(sequences, (s) => Date.parse(s.startedAt));
 }

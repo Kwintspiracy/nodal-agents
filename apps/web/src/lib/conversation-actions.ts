@@ -62,7 +62,8 @@ import {
   type RunCursor,
 } from './external-runs.ts';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
-import { lastSequencePerDeliverable, readRepairAttempts } from './verification-repairs.ts';
+import { lastSequencePerDeliverable } from './verification-repairs.ts';
+import { readRepairAttempts } from './verification-repairs-read.ts';
 import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
 // La borne de `collectDescendants`, nommée ici pour que le message d'erreur la
 // dise plutôt que de la recopier en dur.
