@@ -33,6 +33,15 @@ export interface SequencedProofRow {
   readonly canonicalKey: string;
   readonly sequenceId: string;
   readonly createdAt: Date | null;
+  /**
+   * QUI a lancé la preuve : `'job'` (le travail lui-même) ou `'reviewer'` (un
+   * relecteur mandaté). Il entre dans l'identité du groupe, et ce n'est pas un
+   * détail : sans lui, la preuve d'un relecteur, plus récente, masquerait celle
+   * du travail sur le même livrable, et l'encart cesserait de montrer un rouge
+   * qu'il montrait avant cette PR. Ce qu'on retire ici est le DOUBLON que la
+   * réparation crée, rien d'autre.
+   */
+  readonly source: string;
 }
 
 /**
@@ -45,13 +54,15 @@ export interface SequencedProofRow {
  * doit rester total pour que l'écran ne clignote pas d'un rendu à l'autre.
  *
  * Les livrables sont indépendants : un run qui prouve deux projets garde la
- * dernière séquence de chacun.
+ * dernière séquence de chacun. L'ORIGINE aussi (`source`) : la preuve d'un
+ * relecteur et celle du travail sont deux faits, et la plus récente n'efface
+ * pas l'autre.
  */
 export function lastSequencePerDeliverable<T extends SequencedProofRow>(rows: readonly T[]): T[] {
   // clé du livrable → la séquence retenue, et la date qui l'a fait gagner.
   const gagnante = new Map<string, { sequenceId: string; at: number; rang: number }>();
   rows.forEach((row, rang) => {
-    const cle = JSON.stringify([row.deliverableType, row.canonicalKey]);
+    const cle = JSON.stringify([row.deliverableType, row.canonicalKey, row.source]);
     const at = row.createdAt?.getTime() ?? 0;
     const tenante = gagnante.get(cle);
     if (tenante === undefined || at > tenante.at || (at === tenante.at && rang > tenante.rang)) {
@@ -60,13 +71,19 @@ export function lastSequencePerDeliverable<T extends SequencedProofRow>(rows: re
   });
   return rows.filter(
     (row) =>
-      gagnante.get(JSON.stringify([row.deliverableType, row.canonicalKey]))?.sequenceId ===
-      row.sequenceId,
+      gagnante.get(JSON.stringify([row.deliverableType, row.canonicalKey, row.source]))
+        ?.sequenceId === row.sequenceId,
   );
 }
 
 /**
  * Combien de tours de réparation chaque job a coûté, par `job_id`.
+ *
+ * LA BORNE D'ENTITÉ EST CELLE DES `jobIds`, et c'est voulu : la table ne porte
+ * pas de colonne d'entité, elle appartient à son job. Les deux appelants
+ * passent des identifiants déjà bornés à la session (`collectDescendants(db,
+ * session.entityId, …)`), exactement comme la lecture voisine des livrables
+ * non configurés, qui filtre elle aussi sur le seul `job_id`.
  *
  * Un job absent de la carte n'en a coûté aucun — la colonne vaut zéro par
  * défaut, et on ne rapporte que ce qui est strictement positif. Un job qui

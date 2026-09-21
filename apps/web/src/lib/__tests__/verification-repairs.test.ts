@@ -10,24 +10,29 @@ import { lastSequencePerDeliverable } from '../verification-repairs.ts';
 
 const at = (iso: string): Date => new Date(iso);
 
+interface Ligne {
+  deliverableType: string;
+  canonicalKey: string;
+  sequenceId: string;
+  createdAt: Date | null;
+  source: string;
+  command: string;
+  verdict: string;
+}
+
 const ligne = (
   sequenceId: string,
   verdict: string,
   createdAt: string,
   canonicalKey = 'd:/apps/demo',
   deliverableType = 'code_project',
-): {
-  deliverableType: string;
-  canonicalKey: string;
-  sequenceId: string;
-  createdAt: Date | null;
-  command: string;
-  verdict: string;
-} => ({
+  source = 'job',
+): Ligne => ({
   deliverableType,
   canonicalKey,
   sequenceId,
   createdAt: at(createdAt),
+  source,
   command: 'pnpm test',
   verdict,
 });
@@ -80,6 +85,24 @@ describe('lastSequencePerDeliverable @cap:verifier-un-livrable/moteur', () => {
     ]);
 
     expect(gardees.map((r) => r.sequenceId)).toEqual(['recente']);
+  });
+
+  it('la preuve d’un RELECTEUR ne masque pas celle du travail', () => {
+    // Avant cette porte, l'encart montrait les deux. Ce qu'on retire est le
+    // doublon de la réparation, pas la preuve de quelqu'un d'autre.
+    const gardees = lastSequencePerDeliverable([
+      ligne('du-job', 'red', '2026-09-21T10:00:00Z'),
+      ligne(
+        'du-relecteur',
+        'green',
+        '2026-09-21T10:05:00Z',
+        'd:/apps/demo',
+        'code_project',
+        'reviewer',
+      ),
+    ]);
+
+    expect(gardees.map((r) => r.sequenceId)).toEqual(['du-job', 'du-relecteur']);
   });
 
   it('aucune ligne : aucune ligne', () => {
