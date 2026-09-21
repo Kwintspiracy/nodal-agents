@@ -2744,6 +2744,7 @@ export async function getSpaceConversationAction(
       feed,
       createdAt: job.createdAt,
       completedAt: job.completedAt,
+      status: job.status ?? null,
       result: job.result,
       resultKind: job.resultKind ?? null,
       verdict: classifyProduction({

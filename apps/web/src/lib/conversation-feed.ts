@@ -337,6 +337,8 @@ export type FeedItem =
   | {
       kind: 'produced';
       jobId: string;
+      /** Le statut du travail, pour le bouton Stop du récapitulatif. */
+      status: string | null;
       verdict: ProductionVerdict;
       project: { id: string; name: string; path: string } | null;
       /** P2bis — de quoi dessiner le récapitulatif de livraison. */
@@ -463,6 +465,14 @@ export type DeliverySummary = {
    * contraire de ce que le verdict a mesuré (invariant #4).
    */
   produced: boolean;
+  /**
+   * COMMENT LE TRAVAIL S'EST REFERMÉ, quand il ne s'est pas terminé :
+   * `'stopped'` (annulé par la personne) ou `'failed'`. `null` pour un travail
+   * terminé, ou encore en cours. Il décide du mot de l'en-tête AVANT
+   * `produced` : ce qu'un run arrêté a écrit reste nommé dessous, mais
+   * « Delivered » ou « Ran » au-dessus dirait qu'il est allé au bout.
+   */
+  ended: 'stopped' | 'failed' | null;
 };
 
 /** Une commande du travail, et ce qu'on a constaté d'elle (#282). */

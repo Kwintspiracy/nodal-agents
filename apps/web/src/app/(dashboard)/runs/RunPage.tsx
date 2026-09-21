@@ -128,9 +128,14 @@ export function RunBody({ data }: { data: SpaceConversationView }) {
         </div>
       )}
 
-      {/* Ce qui a été LIVRÉ, juste dessous, puis la file d'envoi. */}
+      {/* Ce qui a été LIVRÉ, juste dessous, puis la file d'envoi. Sans le
+          lien « Open run » quand il mènerait à CETTE page (Quentin, 22/09 :
+          « un bouton Open run qui ouvre le run dans lequel je suis déjà »). */}
       {view.delivered !== null && (
-        <DeliveryBlock summary={view.delivered.summary} jobId={view.delivered.jobId} />
+        <DeliveryBlock
+          summary={view.delivered.summary}
+          jobId={view.delivered.jobId === job.id ? null : view.delivered.jobId}
+        />
       )}
       <DeliveriesCard deliveries={data.deliveries} />
 

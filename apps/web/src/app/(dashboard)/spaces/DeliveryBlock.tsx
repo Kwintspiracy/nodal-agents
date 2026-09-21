@@ -43,6 +43,8 @@ import {
 } from '@phosphor-icons/react/dist/ssr';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import StatusPill from '@/components/ui/StatusPill';
+import StopRunButton from '@/components/ui/StopRunButton';
+import { canStopRun } from '@/lib/job-live.ts';
 import type { DeliverySummary } from '@/lib/conversation-feed.ts';
 import { formatCost, formatMs, shortToolName } from './format.ts';
 
@@ -92,6 +94,7 @@ function Stat({ label, value, mono = false }: { label: string; value: string; mo
 export default function DeliveryBlock({
   summary,
   jobId,
+  status = null,
 }: {
   summary: DeliverySummary;
   /**
@@ -100,6 +103,12 @@ export default function DeliveryBlock({
    * de pointer vers une page introuvable.
    */
   jobId: string | null;
+  /**
+   * Le statut de ce travail (`agent_jobs.status`), pour le bouton Stop à côté
+   * d'« Open run » : il ne se dessine que sur un statut vivant, et jamais
+   * sans `jobId`. `null` quand l'appelant ne le connaît pas : pas de bouton.
+   */
+  status?: string | null;
 }) {
   const { verdict, changesRequested } = summary;
   // Le mot de la relecture, ou `null` quand personne n'a relu. Il ne remplace
@@ -163,7 +172,13 @@ export default function DeliveryBlock({
           <CheckCircle
             size={16}
             className={
-              !summary.produced ? 'text-ink-4' : verdict === 'red' ? 'text-warn' : 'text-ok'
+              // Un run arrêté ou tombé n'a pas de crochet vert, quoi qu'il
+              // ait écrit : le signe dit l'issue du travail, pas sa trace.
+              summary.ended !== null || !summary.produced
+                ? 'text-ink-4'
+                : verdict === 'red'
+                  ? 'text-warn'
+                  : 'text-ok'
             }
             aria-hidden
           />
@@ -176,8 +191,17 @@ export default function DeliveryBlock({
             « Delivered » au-dessus de cette liste dirait le contraire de ce que
             le verdict a mesuré. Le mot devient alors « Ran » : quelque chose a
             bien tourné, et c'est tout ce qu'on sait. */}
+        {/* ET IL NE SE DIT PAS D'UN RUN QUI N'EST PAS ALLÉ AU BOUT (Quentin,
+            22/09 : un run annulé « apparaît comme delivered »). Ce qu'il a
+            écrit avant reste listé dessous ; l'en-tête dit l'issue. */}
         <span className="text-title-15 text-ink">
-          {summary.produced ? 'Delivered' : 'Ran'}
+          {summary.ended === 'stopped'
+            ? 'Stopped'
+            : summary.ended === 'failed'
+              ? 'Failed'
+              : summary.produced
+                ? 'Delivered'
+                : 'Ran'}
           {reviewLabel !== null && <span className="text-ink-3"> · {reviewLabel}</span>}
         </span>
         {/* La pastille suit le mot, à trente pixels — pas poussée au bord
@@ -186,7 +210,13 @@ export default function DeliveryBlock({
 
             Quand quelqu'un a relu, elle NOMME qui a tranché ; c'est alors le
             fait le plus frais du bloc. Les commandes de preuve gardent leur
-            sort une ligne plus bas, dans « Proof ». */}
+            sort une ligne plus bas, dans « Proof ».
+
+            ET ELLE NE SUIT PAS LE MOT DE L'EN-TÊTE (Reviewer C, #335) : un run
+            arrêté dont les preuves ont tourné vertes lit « Stopped · Verified ».
+            Deux faits, deux signes : l'issue du travail, et ce que les preuves
+            ont dit. Masquer « Verified » dirait que les preuves n'ont pas eu
+            lieu, ce qui serait faux. */}
         <span className="ml-5">
           {reviewLabel !== null ? (
             <StatusPill variant={changesRequested ? 'warn' : 'done'} label="By the reviewer" />
@@ -300,6 +330,16 @@ export default function DeliveryBlock({
               </span>
             </span>
           ))}
+          {/* ARRÊTER LE RUN D'ICI, tant qu'il court (Quentin, 22/09 : « il y a
+              un bouton Open run, je devrais pouvoir le stopper »). L'encart
+              paraît dès qu'un run en cours a produit quelque chose, et c'est
+              lui qu'on regarde dans le fil ; le bouton se cache tout seul dès
+              que le run n'est plus vivant. */}
+          {jobId !== null && canStopRun(status) && (
+            <span className="ml-5">
+              <StopRunButton jobId={jobId} status={status} />
+            </span>
+          )}
           {jobId !== null && (
             // Après le dernier nom, à trente pixels — pas au bord droit : la
             // planche le pose dans la ligne, comme la pastille du haut.

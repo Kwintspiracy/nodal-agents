@@ -239,6 +239,9 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
     // Le mot ne peut de toute façon pas mentir ici par la porte de #282 : cette
     // page ne porte aucune commande non constatée à lui opposer.
     produced: true,
+    // L'issue du process, lue sur sa ligne (`agent_jobs.status`) : un process
+    // arrêté ou tombé garde ses fichiers listés, mais pas le mot « Delivered ».
+    ended: header.status === 'cancelled' ? 'stopped' : header.status === 'failed' ? 'failed' : null,
   };
 }
 

@@ -95,6 +95,7 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   feed: feedDeJob('fais ceci', 'voilà'),
   createdAt: null,
   completedAt: null,
+  status: null,
   result: null,
   resultKind: null,
   verdict: chat,
@@ -177,6 +178,7 @@ describe('buildConversationThread — une conversation de canal', () => {
     expect(produits[0]).toEqual({
       kind: 'produced',
       jobId: 'j2',
+      status: null,
       verdict: travail,
       project: { id: 'p1', name: 'Bilans', path: '/w/bilans' },
       // P2bis — l'item porte de quoi dessiner le récapitulatif. Ce job n'a
@@ -200,6 +202,7 @@ describe('buildConversationThread — une conversation de canal', () => {
         // quelque chose : la liste est vide et l'encart se dit une livraison.
         commands: [],
         produced: true,
+        ended: null,
       },
     });
   });

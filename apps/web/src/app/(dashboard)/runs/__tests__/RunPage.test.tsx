@@ -70,6 +70,7 @@ const child: FeedItem = {
 const delivered: FeedItem = {
   kind: 'produced',
   jobId: 'job-1',
+  status: null,
   verdict: { isWork: true, items: [], uncertain: 0, more: 0, unclassified: 0 },
   project: null,
   summary: {
@@ -86,6 +87,7 @@ const delivered: FeedItem = {
     changesRequested: false,
     commands: [],
     produced: true,
+    ended: null,
   },
 };
 
@@ -187,6 +189,15 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
     expect(scroller).not.toContain('px-5');
     expect(scroller).not.toContain('lg:px-9');
     expect(scroller).toContain('pt-6');
+  });
+
+  // Quentin, 22/09 : « un cadre delivered avec un bouton Open run qui ouvre le
+  // run dans lequel je suis déjà, c'est étrange ». Le récapitulatif de CE run
+  // ne propose pas de l'ouvrir.
+  it('le récapitulatif de livraison ne propose pas d’ouvrir le run où l’on est déjà', () => {
+    const page = renderToStaticMarkup(<RunBody data={data(false)} />);
+    expect(page).toContain('Delivered');
+    expect(page).not.toContain('Open run');
   });
 
   it('aucun lien vers le run parent ni vers un délégué : ils se lisent dans la chronologie', () => {
