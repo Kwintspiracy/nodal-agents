@@ -119,7 +119,7 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
   name: 'run_command',
   label: 'Run a command',
   summary:
-    'Run a shell command in the agent workspace and read back its output. Every command asks for your approval until you turn that off for this agent.',
+    'Run a shell command in the agent workspace and read back its output. Commands ask for your approval by default.',
   description:
     'Run a shell command in the agent workspace and return its stdout, stderr and exit code. ' +
     'Use it to install dependencies, run scripts, build steps, CLIs, etc. Compound commands ' +

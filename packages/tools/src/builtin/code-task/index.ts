@@ -215,7 +215,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
   name: 'code_task',
   label: 'Run a coding task',
   summary:
-    'Hand one self-contained dev task to the coding CLI installed on your machine, under your own subscription. It reads the agent workspace, and only writes there when you allow write mode.',
+    'Hand one self-contained dev task to the coding CLI installed on your machine, under your own subscription. It works in the agent workspace, reading only unless the task asks for write mode.',
   description:
     "Delegate a complete dev task (analyse code, find bugs, review, or — in write mode — implement changes) to the coding CLI installed on the owner's machine (Claude Code or Codex), running under the OWNER's subscription in the agent workspace. The CLI is a full autonomous coding agent: give it ONE self-contained task and read its final answer. It sees only your task text and the workspace files, never this conversation. Default mode is read-only. Runs take minutes — do NOT call code_task again for the same goal while unsure; one task, one call, then deliver the result.",
   inputSchema: codeTaskSchema,

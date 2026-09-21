@@ -85,7 +85,41 @@ const AGENT_ID = '33333333-3333-4333-8333-333333333333';
 let container: HTMLDivElement;
 let root: Root;
 
-async function render(): Promise<string> {
+/**
+ * Deux operations de connecteur : celle qui declare ses textes (issue #382) et
+ * celle qui n'en declare pas encore. Le repli de la seconde est ce que l'ecran
+ * montre aux douze adaptateurs non encore repris.
+ */
+const CONNECTOR = {
+  connectorId: 'c1',
+  slug: 'cloudflare',
+  label: 'Cloudflare',
+  credentialName: null,
+  assigned: true,
+  enabledOperations: null,
+  availableOperations: [
+    {
+      slug: 'cloudflare_deploy',
+      name: 'Deploy to Workers',
+      label: 'Publish to Cloudflare Workers',
+      summary:
+        'Publish a built site or app from the workspace. It goes live at a workers.dev address.',
+      risk: 'write' as const,
+      requiresApproval: true,
+      description:
+        'Publish a built static site/app directory from the agent workspace to Cloudflare Workers.',
+    },
+    {
+      slug: 'legacy_write',
+      name: 'Legacy operation',
+      risk: 'write' as const,
+      requiresApproval: true,
+      description: 'What this connector has always shown, for an adapter not yet rewritten.',
+    },
+  ],
+};
+
+async function render(connectors: unknown[] = []): Promise<string> {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -93,7 +127,7 @@ async function render(): Promise<string> {
     root.render(
       <AutonomyTab
         agentId={AGENT_ID}
-        connectors={[]}
+        connectors={connectors as never}
         mcpServers={[]}
         hasTelegramBot={false}
         attachedSkills={[
@@ -177,6 +211,31 @@ describe("les textes de l'onglet Approvals @cap:regler-autonomie/ecran", () => {
     // Les anciens mots ont disparu de l'écran, pas seulement été doublés.
     expect(text).not.toContain('Autonomous');
     expect(text).not.toContain('Ask first');
+  });
+
+  it('rend une operation de connecteur par ses textes de proprietaire, jamais par sa description', async () => {
+    // Le chemin `ownerTextFor` : sans ce cas, remplacer le repli par
+    // `op.description ?? op.summary` laisserait les suites vertes et ramenerait
+    // le mur ecrit pour le modele (revue Reviewer C, passe 1, P2-11).
+    const text = await render([CONNECTOR]);
+
+    expect(text).toContain('Publish to Cloudflare Workers');
+    expect(text).toContain(
+      'Publish a built site or app from the workspace. It goes live at a workers.dev address.',
+    );
+    expect(text).not.toContain('Publish a built static site/app directory');
+    expect(text).not.toContain('Deploy to Workers');
+  });
+
+  it("montre encore le nom et la description d'un connecteur pas encore repris", async () => {
+    // Douze adaptateurs n'ont pas encore leurs deux textes. Tant qu'ils ne les
+    // ont pas, leur ligne reste celle d'avant plutot qu'une ligne vide.
+    const text = await render([CONNECTOR]);
+
+    expect(text).toContain('Legacy operation');
+    expect(text).toContain(
+      'What this connector has always shown, for an adapter not yet rewritten.',
+    );
   });
 
   it('dit ce que sont les commandes, et la liste qui les borne', async () => {
