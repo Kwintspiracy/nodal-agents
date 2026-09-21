@@ -118,7 +118,9 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
            français, sans la moindre mention des règles qui décidaient (#346). */
         <div className="space-y-3">
           {result.data.map((a) => (
-            <ApprovalRequestCard key={a.id} approval={a} />
+            /* `?show=` ouvre la carte dépliée même tranchée : on a cliqué pour
+               la lire. La carte ne devine rien de l'URL, la page le lui dit. */
+            <ApprovalRequestCard key={a.id} approval={a} defaultOpen={show !== null} />
           ))}
         </div>
       )}

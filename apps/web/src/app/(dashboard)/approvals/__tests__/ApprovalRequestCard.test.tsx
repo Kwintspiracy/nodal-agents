@@ -134,12 +134,34 @@ if (typeof globalThis.CSS?.supports !== 'function') {
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-async function monter(approval: Approval): Promise<void> {
+async function monter(approval: Approval, defaultOpen = false): Promise<void> {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root!.render(<ApprovalRequestCard approval={approval} />);
+    root!.render(<ApprovalRequestCard approval={approval} defaultOpen={defaultOpen} />);
+  });
+}
+
+/** Re-rendre LA MÊME instance avec une demande modifiée : c'est ce que fait la
+ *  page quand elle se relit après une réponse, la carte gardant sa `key`. */
+async function rerendre(approval: Approval, defaultOpen = false): Promise<void> {
+  await act(async () => {
+    root!.render(<ApprovalRequestCard approval={approval} defaultOpen={defaultOpen} />);
+  });
+}
+
+/** Un élément par son `data-testid`, ou `null` s'il n'est pas dans le DOM. */
+function parTestId(id: string): HTMLElement | null {
+  return rendu().querySelector(`[data-testid="${id}"]`);
+}
+
+/** Le caret de la ligne d'agent, celui qui plie et déplie. */
+async function cliquerLeCaret(): Promise<void> {
+  const el = parTestId('approval-request-toggle');
+  if (!el) throw new Error('ligne d’agent introuvable');
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   });
 }
 
@@ -440,7 +462,7 @@ describe('ce que la carte écrit, en anglais @cap:approuver-une-action/ecran', (
     expect(bouton('Approve once')).toBeDefined();
   });
 
-  it('une demande déjà tranchée garde son corps et perd ses boutons', async () => {
+  it('une demande déjà tranchée, dépliée, garde son corps et perd ses boutons', async () => {
     await monter(
       demande({
         status: 'approved',
@@ -448,11 +470,178 @@ describe('ce que la carte écrit, en anglais @cap:approuver-une-action/ecran', (
         resolvedBy: 'quentin',
       } as Partial<Approval>),
     );
+    // Elle arrive repliée depuis le 21/09 : c'est le caret qui la rouvre.
+    await cliquerLeCaret();
     const texte = rendu().textContent ?? '';
     expect(texte).toContain('Browser run code unsafe');
     expect(texte).toContain('Looked fine');
     expect(texte).toContain('Reason this triggered Approval request');
     expect(bouton('Approve once')).toBeUndefined();
     expect(bouton('Reject')).toBeUndefined();
+  });
+});
+
+// ─── Le pli, par état de la demande ───────────────────────────────────────────
+//
+// Demande de Quentin (21/09) : « quand la carte est présentée pour approval,
+// elle devrait être ouverte (tool input fermé). Lorsque les cartes sont dans les
+// archives, elles doivent être 100 % fermées par défaut. »
+//
+// Les assertions portent sur le DOM rendu : un bloc plié est ABSENT, pas caché
+// par une classe. Une carte d'archive qui garderait ses règles dans le document
+// resterait lue par les lecteurs d'écran, et la page resterait aussi longue.
+
+describe('le pli de la carte suit l’état de la demande @cap:approuver-une-action/ecran', () => {
+  const TRANCHEE = {
+    status: 'approved',
+    notes: 'Looked fine',
+    resolvedBy: 'quentin',
+    ruleChain: CHAINE_346,
+  } as Partial<Approval>;
+
+  it('en attente : la carte est ouverte, et « Tool input » seul est replié', async () => {
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+
+    expect(parTestId('approval-request-body')).not.toBeNull();
+    expect(parTestId('approval-rule-list')).not.toBeNull();
+    expect(bouton('Approve once')).toBeDefined();
+
+    const entree = parTestId('approval-tool-input-toggle');
+    expect(entree).not.toBeNull();
+    expect(entree!.getAttribute('aria-expanded')).toBe('false');
+    // Les arguments bruts ne sont pas dans le document tant qu'on n'ouvre pas.
+    expect(rendu().querySelector('pre')).toBeNull();
+  });
+
+  it('en attente : le caret ne replie QUE le bloc de demande', async () => {
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+    await cliquerLeCaret();
+
+    expect(parTestId('approval-request-body')).toBeNull();
+    // Ce qui sert encore à répondre reste joignable.
+    expect(parTestId('approval-rule-list')).not.toBeNull();
+    expect(parTestId('approval-tool-input-toggle')).not.toBeNull();
+    expect(bouton('Approve once')).toBeDefined();
+    expect(bouton('Reject')).toBeDefined();
+  });
+
+  it('tranchée : il ne reste que l’en-tête et la ligne d’agent', async () => {
+    await monter(demande(TRANCHEE));
+
+    // Ce qui reste : le titre, la pastille de statut, View job, la ligne d'agent.
+    const texte = rendu().textContent ?? '';
+    expect(texte).toContain('Browser run code unsafe');
+    expect(texte).toContain('approved');
+    expect(bouton('View job')).toBeUndefined(); // c'est un lien, pas un bouton
+    expect(rendu().querySelector('a[href="/jobs/j1"]')).not.toBeNull();
+    const ligne = parTestId('approval-request-toggle');
+    expect(ligne).not.toBeNull();
+    expect(ligne!.getAttribute('aria-expanded')).toBe('false');
+    expect(ligne!.textContent).toContain('Reviewer C');
+
+    // Ce qui est plié : tout le reste, absent du DOM.
+    expect(parTestId('approval-request-body')).toBeNull();
+    expect(parTestId('approval-tool-input-toggle')).toBeNull();
+    expect(parTestId('approval-rule-list')).toBeNull();
+    expect(parTestId('approval-decision-note')).toBeNull();
+    expect(texte).not.toContain('Reason this triggered Approval request');
+    expect(texte).not.toContain('Looked fine');
+  });
+
+  it('tranchée : un clic sur la ligne d’agent rend la carte entière', async () => {
+    await monter(demande(TRANCHEE));
+    await cliquerLeCaret();
+
+    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('true');
+    expect(parTestId('approval-request-body')).not.toBeNull();
+    expect(parTestId('approval-tool-input-toggle')).not.toBeNull();
+    expect(parTestId('approval-rule-list')).not.toBeNull();
+    expect(parTestId('approval-decision-note')!.textContent).toContain('Looked fine');
+    // Répondre n'a plus de sens : les boutons ne reviennent pas avec le pli.
+    expect(bouton('Approve once')).toBeUndefined();
+  });
+
+  it('tranchée : un second clic la replie à nouveau', async () => {
+    await monter(demande(TRANCHEE));
+    await cliquerLeCaret();
+    await cliquerLeCaret();
+
+    expect(parTestId('approval-request-body')).toBeNull();
+    expect(parTestId('approval-rule-list')).toBeNull();
+  });
+
+  it('`defaultOpen` ouvre une demande tranchée, c’est ce que `?show=` demande', async () => {
+    await monter(demande(TRANCHEE), true);
+
+    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('true');
+    expect(parTestId('approval-request-body')).not.toBeNull();
+    expect(parTestId('approval-rule-list')).not.toBeNull();
+    expect(parTestId('approval-decision-note')!.textContent).toContain('Looked fine');
+  });
+
+  it('répondue sous les yeux, la carte se range sans attendre une navigation', async () => {
+    // L'onglet All garde la MÊME instance de carte quand la page se relit après
+    // une réponse : même `key`, statut nouveau. Sans remise à zéro du pli, la
+    // demande tranchée restait dépliée là où toutes ses voisines sont rangées
+    // (Reviewer C, passe 1).
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+    expect(parTestId('approval-request-body')).not.toBeNull();
+
+    await rerendre(
+      demande({
+        status: 'approved',
+        notes: 'Looked fine',
+        resolvedBy: 'quentin',
+        ruleChain: CHAINE_346,
+      } as Partial<Approval>),
+    );
+
+    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('false');
+    expect(parTestId('approval-request-body')).toBeNull();
+    expect(parTestId('approval-rule-list')).toBeNull();
+    expect(parTestId('approval-decision-note')).toBeNull();
+  });
+
+  it('tranchée : replier ferme aussi « Tool input », un pli à 100 % en est un', async () => {
+    await monter(demande(TRANCHEE));
+    await cliquerLeCaret();
+
+    const entree = parTestId('approval-tool-input-toggle')!;
+    await act(async () => {
+      entree.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(rendu().querySelector('pre')).not.toBeNull();
+
+    await cliquerLeCaret();
+    await cliquerLeCaret();
+
+    expect(parTestId('approval-tool-input-toggle')!.getAttribute('aria-expanded')).toBe('false');
+    expect(rendu().querySelector('pre')).toBeNull();
+  });
+
+  it('une QUESTION suit la même règle : ouverte en attente, repliée une fois répondue', async () => {
+    const entree = { question: 'Which branch do I target?', options: ['main', 'develop'] };
+
+    await monter(demande({ kind: 'question', toolInput: entree } as Partial<Approval>));
+    expect(parTestId('approval-request-body')).not.toBeNull();
+    expect((rendu().textContent ?? '').includes('develop')).toBe(true);
+
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+
+    await monter(
+      demande({
+        kind: 'question',
+        toolInput: entree,
+        status: 'approved',
+        answer: 'main',
+      } as Partial<Approval>),
+    );
+    expect(parTestId('approval-request-body')).toBeNull();
+    expect(parTestId('approval-tool-input-toggle')).toBeNull();
+    expect(parTestId('approval-decision-note')).toBeNull();
+    expect((rendu().textContent ?? '').includes('develop')).toBe(false);
+    // Le titre de la carte reste la question : l'en-tête ne se plie jamais.
+    expect(rendu().textContent).toContain('Which branch do I target?');
   });
 });

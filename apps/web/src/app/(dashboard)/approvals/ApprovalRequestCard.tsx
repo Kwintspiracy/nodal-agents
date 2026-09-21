@@ -60,19 +60,43 @@ const STATUS_TO_VARIANT: Record<string, StatusVariant> = {
  * Changing a rule does NOT answer the request. The person then approves or
  * rejects, which is the whole point: they can see what they changed before
  * living with it.
+ *
+ * LE PLI (Quentin, 21/09). Une demande en attente s'ouvre : elle attend une
+ * réponse, donc tout ce qui sert à décider est visible, « Tool input » mis à
+ * part. Une demande tranchée est une archive : elle tient sur deux lignes, et
+ * son caret rouvre la carte entière. `defaultOpen` est la seule exception, et
+ * elle vient de la page, jamais de l'URL lue ici.
  */
 export default function ApprovalRequestCard({
   approval,
   onResolved,
+  defaultOpen = false,
 }: {
   approval: ApprovalRow;
   /** Called after a successful answer, so a list can drop the card. */
   onResolved?: () => void;
+  /**
+   * Ouvrir une demande DÉJÀ TRANCHÉE malgré le pli par défaut. C'est ce que
+   * `?show=<id>` demande : la personne a cliqué sur cette demande précise dans
+   * RECENTS, elle veut la lire, pas la déplier. La page le dit explicitement ;
+   * la carte ne lit jamais l'URL elle-même.
+   */
+  defaultOpen?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [notes, setNotes] = useState('');
-  const [requestOpen, setRequestOpen] = useState(true);
+  // LE PLI SUIT L'ÉTAT DE LA DEMANDE (Quentin, 21/09). Une demande en attente
+  // s'ouvre : elle appelle une réponse, tout ce qui sert à décider est sous les
+  // yeux. Une demande tranchée est une archive : elle se range à une ligne, et
+  // le caret la rouvre entière.
+  const [requestOpen, setRequestOpen] = useState(approval.status === 'pending' || defaultOpen);
+  // LE STATUT DÉJÀ VU. La page garde la MÊME carte quand elle se relit après une
+  // réponse (même `key`), et l'onglet All la garde en liste : sans cela, une
+  // demande qui vient d'être tranchée restait dépliée au milieu de voisines
+  // rangées (Reviewer C, passe 1). Ajusté au rendu plutôt que dans un effet,
+  // pour qu'aucune image ne montre l'ancien pli.
+  const [statutVu, setStatutVu] = useState(approval.status);
   const [inputOpen, setInputOpen] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [chain, setChain] = useState<ExplainedApprovalRule[]>(approval.ruleChain);
@@ -84,6 +108,32 @@ export default function ApprovalRequestCard({
   const x = a.explanation;
   const pending = a.status === 'pending';
   const agentName = a.agentName ?? 'no agent';
+  /**
+   * Carte repliée à 100 % : il ne reste que l'en-tête et la ligne d'agent.
+   *
+   * Le caret ne replie QUE le bloc de demande sur une demande en attente — le
+   * pied de boutons et les règles doivent rester joignables tant qu'il y a
+   * quelque chose à répondre. Sur une demande tranchée, il n'y a plus rien à
+   * répondre : le même caret range alors la carte entière.
+   */
+  const folded = !pending && !requestOpen;
+
+  if (statutVu !== a.status) {
+    setStatutVu(a.status);
+    setRequestOpen(pending || defaultOpen);
+    setInputOpen(false);
+  }
+
+  /**
+   * Plier ou déplier. Replier une carte TRANCHÉE la range entièrement, « Tool
+   * input » compris : un pli annoncé à 100 % qui garderait un bloc ouvert sous
+   * lui le rouvrirait au clic suivant, sans que rien ne l'ait demandé.
+   */
+  function toggleRequest() {
+    const next = !requestOpen;
+    setRequestOpen(next);
+    if (!next && !pending) setInputOpen(false);
+  }
 
   /**
    * Repondre, PUIS relire les attentes — la barre compte les lignes de ce
@@ -225,7 +275,7 @@ export default function ApprovalRequestCard({
       {/* Qui demande, et quel outil exactement. */}
       <DisclosureButton
         open={requestOpen}
-        onClick={() => setRequestOpen((v) => !v)}
+        onClick={toggleRequest}
         className="h-11 border-t border-rule-2"
         testId="approval-request-toggle"
       >
@@ -236,7 +286,10 @@ export default function ApprovalRequestCard({
       </DisclosureButton>
 
       {requestOpen && (
-        <div className="flex flex-col gap-4 bg-canvas px-6 py-2.5">
+        <div
+          className="flex flex-col gap-4 bg-canvas px-6 py-2.5"
+          data-testid="approval-request-body"
+        >
           {question ? (
             <div className="flex flex-col gap-1.5">
               <p className="text-body-13 italic text-ink-2">{question.question}</p>
@@ -314,26 +367,28 @@ export default function ApprovalRequestCard({
 
       {/* Les arguments bruts, replies : ce qui a ete lu plus haut est mis en
           forme, ceci est la source. */}
-      <div className="border-t border-rule-2">
-        <DisclosureButton
-          open={inputOpen}
-          onClick={() => setInputOpen((v) => !v)}
-          inset="tight"
-          testId="approval-tool-input-toggle"
-        >
-          <span className="text-body-13 text-ink-3">Tool input</span>
-        </DisclosureButton>
-        {inputOpen && (
-          <pre className="whitespace-pre-wrap break-words px-4 pb-4 text-mono-12 text-ink-2">
-            {JSON.stringify(a.toolInput, null, 2)}
-          </pre>
-        )}
-      </div>
+      {!folded && (
+        <div className="border-t border-rule-2">
+          <DisclosureButton
+            open={inputOpen}
+            onClick={() => setInputOpen((v) => !v)}
+            inset="tight"
+            testId="approval-tool-input-toggle"
+          >
+            <span className="text-body-13 text-ink-3">Tool input</span>
+          </DisclosureButton>
+          {inputOpen && (
+            <pre className="whitespace-pre-wrap break-words px-4 pb-4 text-mono-12 text-ink-2">
+              {JSON.stringify(a.toolInput, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
 
       {/* POURQUOI cette demande existe. Sans cette section, l'ordre de
           precedence etait invisible, et la carte pouvait promettre le
           contraire de ce que la porte allait faire (#346). */}
-      {question === null && (
+      {question === null && !folded && (
         <div className="flex flex-col gap-4 border-t border-rule-2 p-4">
           <p className="text-mono-11 text-ink">Reason this triggered Approval request</p>
           <div className="overflow-clip rounded-lg bg-hover" data-testid="approval-rule-list">
@@ -489,8 +544,11 @@ export default function ApprovalRequestCard({
       )}
 
       {/* Une demande deja tranchee garde ce qui a ete decide, et par qui. */}
-      {!pending && (a.notes || a.answer) && (
-        <p className="border-t border-rule-2 px-4 py-3 text-body-12 italic text-ink-3">
+      {!folded && !pending && (a.notes || a.answer) && (
+        <p
+          className="border-t border-rule-2 px-4 py-3 text-body-12 italic text-ink-3"
+          data-testid="approval-decision-note"
+        >
           {a.answer ? `Answered: ${a.answer}` : `Note: ${a.notes}`}
           {a.resolvedBy ? ` (by ${a.resolvedBy})` : ''}
         </p>
