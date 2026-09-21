@@ -80,6 +80,9 @@ type SendFileOutput = { ok: true; bytes: number; filename: string };
 export function createSendFileTool(): ToolDefinition<typeof SendFileInput, SendFileOutput> {
   return {
     name: 'send_file',
+    label: 'Send a file',
+    summary:
+      'Send a file from the workspace or a URL as a plain download. A sent file cannot be taken back.',
     description: `Deliver ANY file to the user as a document attachment via their channel (Telegram).
 
 Use this for non-image files — PDF, Markdown (.md), .txt, .csv, .json, .zip,

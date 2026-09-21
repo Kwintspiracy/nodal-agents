@@ -60,6 +60,9 @@ export const NODAL_DOCS_MAX_CHARS = 1200;
 
 export const nodalDocsTool: ToolDefinition<typeof NodalDocsInputSchema, NodalDocsSection[]> = {
   name: 'nodal_docs',
+  label: 'Search product help',
+  summary:
+    'Look up how Nodal-Agents works before explaining a feature or saying it is unavailable.',
   description:
     'Search the Nodal-Agents product documentation — the platform you are running inside. ' +
     'Returns the best two or three passages, each with the page it comes from and its URL. ' +

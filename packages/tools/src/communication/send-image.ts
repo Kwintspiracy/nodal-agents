@@ -69,6 +69,9 @@ type SendImageOutput = { ok: true; bytes: number };
 export function createSendImageTool(): ToolDefinition<typeof SendImageInput, SendImageOutput> {
   return {
     name: 'send_image',
+    label: 'Send an image',
+    summary:
+      'Send an image from the workspace or a URL to the conversation. A sent image cannot be taken back.',
     description: `Deliver an image or file to the user via their channel (Telegram).
 
 Pass \`source\` as a **local file path** or a **local/remote URL** (e.g. ComfyUI's

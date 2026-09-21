@@ -36,6 +36,8 @@ export const markMemoryOutdatedTool: ToolDefinition<
   MarkMemoryOutdatedOutput
 > = {
   name: 'mark_memory_outdated',
+  label: 'Mark a memory outdated',
+  summary: 'Archive a memory that newer information has replaced.',
   description:
     'Mark a fact from your Persistent memory block as outdated when newer information ' +
     'in the current job contradicts or supersedes it. The memory is archived (not deleted) ' +

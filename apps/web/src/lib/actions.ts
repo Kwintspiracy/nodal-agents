@@ -6467,9 +6467,9 @@ export async function listInternalToolsAction(): Promise<
   ActionResult<
     Array<{
       slug: string;
-      name: string;
+      label: string;
+      summary: string;
       risk: 'read' | 'write' | 'destructive';
-      description?: string;
       unblockableReason?: string;
     }>
   >
@@ -6477,11 +6477,14 @@ export async function listInternalToolsAction(): Promise<
   try {
     await getSession();
     return ok(
+      // `label` and `summary`, never `description`: the text written for the
+      // model stays with the model (issue #382). The descriptor no longer
+      // carries it at all, so this action could not leak it even by mistake.
       INTERNAL_TOOL_DESCRIPTORS.map((d) => ({
         slug: d.slug,
-        name: d.name,
+        label: d.label,
+        summary: d.summary,
         risk: d.risk,
-        ...(d.description === undefined ? {} : { description: d.description }),
         ...(d.unblockableReason === undefined ? {} : { unblockableReason: d.unblockableReason }),
       })),
     );

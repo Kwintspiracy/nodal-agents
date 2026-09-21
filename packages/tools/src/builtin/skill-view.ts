@@ -71,6 +71,8 @@ async function buildBundleManifest(ctx: ToolContext, slug: string): Promise<stri
 
 export const skillViewTool: ToolDefinition<typeof SkillViewInputSchema, SkillViewOutput> = {
   name: 'skill_view',
+  label: 'Read its skills',
+  summary: 'Load the full instructions for a relevant skill or tool before using it.',
   description:
     "Load a skill's FULL instructions by slug, on demand. Call this the moment a skill listed in " +
     'your Skills index is relevant — BEFORE acting — to get its complete guidance, the exact paths ' +

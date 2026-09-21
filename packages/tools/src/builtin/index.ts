@@ -289,40 +289,125 @@ export type AlwaysOnTool = (typeof ALWAYS_ON_TOOLS)[number];
  * (invariant #4) rather than silently ignoring the rule.
  */
 export const UNBLOCKABLE_TOOLS: Readonly<Record<string, string>> = {
+  // Lu par le PROPRIÉTAIRE, à deux endroits : à la place du curseur sur la
+  // ligne de l'outil, et comme message de refus quand une règle de blocage est
+  // quand même écrite. Une seule phrase pour les deux (issue #382).
   return_result:
-    'return_result is how a job reports that it finished or is stuck. Blocking it would leave ' +
-    'every job of this agent unable to end, with no way to tell you why.',
+    'Always available. The agent needs this tool to finish a job or explain why it is stuck. ' +
+    'It cannot be blocked.',
 };
+
+/**
+ * Les deux lecteurs d'un outil : le modèle lit `description`, le propriétaire
+ * lit `label` et `summary` (issue #382). Aucun des deux ne voit le texte de
+ * l'autre.
+ */
+export type AlwaysOnToolDoc = {
+  name: string;
+  /** Le texte du MODÈLE, injecté dans le prompt système. */
+  description: string;
+  /** Le titre que lit le PROPRIÉTAIRE sur l'onglet Approvals. */
+  label: string;
+  /** Le résumé que lit le PROPRIÉTAIRE sous ce titre. */
+  summary: string;
+};
+
+/**
+ * Le couple (label, summary) d'un outil du produit, ou une erreur nommant
+ * l'outil fautif. Pas de repli sur `name` : un outil livré sans texte pour son
+ * propriétaire est un oubli, pas un cas à rattraper en silence (invariant #4).
+ */
+function ownerCopy(tool: { name: string; label?: string; summary?: string }): {
+  label: string;
+  summary: string;
+} {
+  if (tool.label === undefined || tool.summary === undefined) {
+    throw new Error(
+      `Built-in tool "${tool.name}" ships no label/summary: the Approvals tab would have ` +
+        'nothing to show its owner. Declare both on its ToolDefinition.',
+    );
+  }
+  return { label: tool.label, summary: tool.summary };
+}
 
 /**
  * Documentation for the always-on built-in tools.
  * Source of truth for the "Built-in capabilities" block injected into every
- * agent's system prompt by buildSystemPrompt() in @nodal-agents/orchestration.
+ * agent's system prompt by buildSystemPrompt() in @nodal-agents/orchestration,
+ * and for the rows the owner reads on the Approvals tab.
  *
  * Order matches ALWAYS_ON_TOOLS. Adding a new always-on tool requires updating
- * BOTH this array and ALWAYS_ON_TOOLS — keep them in sync. The `{name, description}`
- * shape is data-driven from the underlying tool definitions, so the prompt block
- * always reflects the canonical tool docs.
+ * BOTH this array and ALWAYS_ON_TOOLS, in sync. Every field is
+ * data-driven from the underlying tool definitions, so neither the prompt block
+ * nor the screen can drift from the canonical tool docs.
  */
-export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<{ name: string; description: string }> = [
-  { name: returnResultTool.name, description: returnResultTool.description },
-  { name: askUserTool.name, description: askUserTool.description },
-  { name: registerProjectTool.name, description: registerProjectTool.description },
-  { name: declareVerificationTool.name, description: declareVerificationTool.description },
-  { name: skillViewTool.name, description: skillViewTool.description },
-  { name: listModelsTool.name, description: listModelsTool.description },
-  { name: listSchedulesTool.name, description: listSchedulesTool.description },
-  { name: saveMemoryTool.name, description: saveMemoryTool.description },
-  { name: queryMemoryTool.name, description: queryMemoryTool.description },
-  { name: nodalDocsTool.name, description: nodalDocsTool.description },
-  { name: searchHistoryTool.name, description: searchHistoryTool.description },
-  { name: markMemoryHelpfulTool.name, description: markMemoryHelpfulTool.description },
-  { name: markMemoryOutdatedTool.name, description: markMemoryOutdatedTool.description },
-  { name: webSearchTool.name, description: webSearchTool.description },
-  { name: dashboardPublishTool.name, description: dashboardPublishTool.description },
-  { name: fileReadTool.name, description: fileReadTool.description },
-  { name: fileWriteTool.name, description: fileWriteTool.description },
-  { name: fileEditTool.name, description: fileEditTool.description },
-  { name: fileListTool.name, description: fileListTool.description },
-  { name: fileSearchTool.name, description: fileSearchTool.description },
+export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<AlwaysOnToolDoc> = [
+  {
+    name: returnResultTool.name,
+    description: returnResultTool.description,
+    ...ownerCopy(returnResultTool),
+  },
+  { name: askUserTool.name, description: askUserTool.description, ...ownerCopy(askUserTool) },
+  {
+    name: registerProjectTool.name,
+    description: registerProjectTool.description,
+    ...ownerCopy(registerProjectTool),
+  },
+  {
+    name: declareVerificationTool.name,
+    description: declareVerificationTool.description,
+    ...ownerCopy(declareVerificationTool),
+  },
+  { name: skillViewTool.name, description: skillViewTool.description, ...ownerCopy(skillViewTool) },
+  {
+    name: listModelsTool.name,
+    description: listModelsTool.description,
+    ...ownerCopy(listModelsTool),
+  },
+  {
+    name: listSchedulesTool.name,
+    description: listSchedulesTool.description,
+    ...ownerCopy(listSchedulesTool),
+  },
+  {
+    name: saveMemoryTool.name,
+    description: saveMemoryTool.description,
+    ...ownerCopy(saveMemoryTool),
+  },
+  {
+    name: queryMemoryTool.name,
+    description: queryMemoryTool.description,
+    ...ownerCopy(queryMemoryTool),
+  },
+  { name: nodalDocsTool.name, description: nodalDocsTool.description, ...ownerCopy(nodalDocsTool) },
+  {
+    name: searchHistoryTool.name,
+    description: searchHistoryTool.description,
+    ...ownerCopy(searchHistoryTool),
+  },
+  {
+    name: markMemoryHelpfulTool.name,
+    description: markMemoryHelpfulTool.description,
+    ...ownerCopy(markMemoryHelpfulTool),
+  },
+  {
+    name: markMemoryOutdatedTool.name,
+    description: markMemoryOutdatedTool.description,
+    ...ownerCopy(markMemoryOutdatedTool),
+  },
+  { name: webSearchTool.name, description: webSearchTool.description, ...ownerCopy(webSearchTool) },
+  {
+    name: dashboardPublishTool.name,
+    description: dashboardPublishTool.description,
+    ...ownerCopy(dashboardPublishTool),
+  },
+  { name: fileReadTool.name, description: fileReadTool.description, ...ownerCopy(fileReadTool) },
+  { name: fileWriteTool.name, description: fileWriteTool.description, ...ownerCopy(fileWriteTool) },
+  { name: fileEditTool.name, description: fileEditTool.description, ...ownerCopy(fileEditTool) },
+  { name: fileListTool.name, description: fileListTool.description, ...ownerCopy(fileListTool) },
+  {
+    name: fileSearchTool.name,
+    description: fileSearchTool.description,
+    ...ownerCopy(fileSearchTool),
+  },
 ];

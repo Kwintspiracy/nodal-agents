@@ -246,6 +246,9 @@ type DocxReadOutput =
 
 export const docxReadTool: ToolDefinition<typeof DocxReadInput, DocxReadOutput> = {
   name: 'docx_read',
+  label: 'Read a Word document',
+  summary:
+    'Read the text of a Word document in the workspace, paragraph by paragraph. Images and headers are not included.',
   description:
     'Read the text content of a Word (.docx) document from the agent workspace. ' +
     'Returns the full plain text and a paragraph-per-line array. Table cell text IS ' +
@@ -371,6 +374,9 @@ type DocxCreateOutput = { ok: true; path: string } | { ok: false; reason: string
 
 export const docxCreateTool: ToolDefinition<typeof DocxCreateInput, DocxCreateOutput> = {
   name: 'docx_create',
+  label: 'Create a Word document',
+  summary:
+    'Create a Word document from headings, paragraphs, lists, tables, and images. An existing file is only replaced when the agent asks to overwrite it.',
   description:
     'Create a new Word (.docx) document from an ordered list of content blocks: paragraphs ' +
     '(with heading level 1-6, bold, italic, and bullet/numbered lists), tables, images (PNG/JPEG), ' +
@@ -543,6 +549,9 @@ const FINAL_SECTPR_RE =
 
 export const docxAppendParagraphsTool: ToolDefinition<typeof DocxAppendInput, DocxAppendOutput> = {
   name: 'docx_append_paragraphs',
+  label: 'Add paragraphs to a Word document',
+  summary:
+    'Add paragraphs at the end of an existing Word document. The rest of the document is left untouched.',
   description:
     'Append paragraphs (with optional heading 1-6, bold, italic) to the END of an existing Word ' +
     '(.docx) document, in place. Fidelity-preserving: the new <w:p> XML is inserted directly into ' +
@@ -726,6 +735,9 @@ export const docxReplaceTextTool: ToolDefinition<
   DocxReplaceTextOutput
 > = {
   name: 'docx_replace_text',
+  label: 'Replace text in a Word document',
+  summary:
+    'Replace exact text in a Word document while keeping its formatting. Occurrences split across formatting changes are reported, not guessed at.',
   description:
     "Find and replace literal text (no regex) inside an existing Word (.docx) document's body " +
     'in place, preserving all formatting. Only text fully contained in a single formatting run is ' +

@@ -22,6 +22,8 @@ export const detachConnectorTool: ToolDefinition<
   DetachConnectorOutput
 > = {
   name: 'detach_connector',
+  label: 'Take a connector back',
+  summary: 'Remove a connector from an agent. Its operations stop being available to that agent.',
   description:
     'Remove a connector from an agent (its operations stop being available to that agent). ' +
     'Reversible with attach_connector. Idempotent.',

@@ -72,6 +72,9 @@ export const declareVerificationTool: ToolDefinition<
   DeclareVerificationOutput
 > = {
   name: 'declare_verification',
+  label: 'Record how a project was checked',
+  summary:
+    "Record checks the agent already ran on a project it created or changed. Each check must fail when the project is unhealthy, and must have run from inside that project's folder.",
   description:
     'Declare how to verify a project you just produced, so the system can run that proof and ' +
     'record it. Call it once, when the work is done, with the commands you ALREADY ran to check ' +

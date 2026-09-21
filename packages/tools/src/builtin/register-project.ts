@@ -81,6 +81,9 @@ export const registerProjectTool: ToolDefinition<
   RegisterProjectOutput
 > = {
   name: 'register_project',
+  label: 'Create a project',
+  summary:
+    'Create a workspace folder and add it to Spaces, when you request a project or choose "new project". Asks for approval unless you set a rule. Existing projects and code folders with a manifest do not need it.',
   description:
     'Create a project: a folder in your workspace, registered so it appears in Spaces with ' +
     'the work and conversations that belong to it. ' +

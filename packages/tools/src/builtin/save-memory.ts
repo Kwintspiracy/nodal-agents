@@ -39,6 +39,9 @@ export type SaveMemoryOutput = { saved: true; id: string } | { saved: false; rea
 
 export const saveMemoryTool: ToolDefinition<typeof SaveMemoryInputSchema, SaveMemoryOutput> = {
   name: 'save_memory',
+  label: 'Remember a fact',
+  summary:
+    'Save a lasting preference or fact that may help with future work. Temporary details are skipped.',
   description:
     'Save a durable fact to long-term memory. Use the `save_memory` tool whenever (a) the user ' +
     'explicitly asks you to remember, save, or store something, OR (b) you learn a ' +

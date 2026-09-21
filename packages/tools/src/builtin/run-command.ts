@@ -117,6 +117,9 @@ function sharedWorkspaceEnv(ctx: {
 
 export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandOutput> = {
   name: 'run_command',
+  label: 'Run a command',
+  summary:
+    'Run a shell command in the agent workspace and read back its output. Every command asks for your approval until you turn that off for this agent.',
   description:
     'Run a shell command in the agent workspace and return its stdout, stderr and exit code. ' +
     'Use it to install dependencies, run scripts, build steps, CLIs, etc. Compound commands ' +

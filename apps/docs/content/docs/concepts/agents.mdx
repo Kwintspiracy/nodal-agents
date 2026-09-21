@@ -70,13 +70,13 @@ Every job is bounded. When a limit is hit the job fails loud with a clear code �
 
 Tool calls with real-world side-effects (like `run_command`) can require approval before they run. You configure rules per-agent or per-tool:
 
-- **Autonomous** — run immediately.
-- **Ask first** — pause the job and wait for your approval in the dashboard.
+- **Run without asking** — run immediately.
+- **Ask for approval** — pause the job and wait for your approval in the dashboard.
 - **Block** — never allow this tool.
 
 ### Built-in tools can be restricted too
 
-The always-on built-ins are listed on the agent's **Autonomy** tab under **Built-in tools**, with the same three settings as every other tool.
+The always-on built-ins are listed on the agent's **Approvals** tab under **Built-in tools**, with the same three settings as every other tool.
 
 Before this, they were on and unlisted, and the only way to restrain one was the read-only preset — which blocks five write tools at once. There was no way to say "may read files, may not search the web". Now there is.
 

@@ -58,6 +58,9 @@ function mapRole(role: 'worker' | 'router' | 'planner'): {
 
 export const createAgentTool: ToolDefinition<typeof CreateAgentInput, CreateAgentOutput> = {
   name: 'create_agent',
+  label: 'Create an agent',
+  summary:
+    'Add a new agent to this workspace and attach it as a sub-agent. Use it only for an agent that does not exist yet.',
   description:
     'Create a NEW agent in this entity (auto-assigned to you). ' +
     "BEFORE calling this, run skill_view('tool-create-agent') for the exact format + the " +

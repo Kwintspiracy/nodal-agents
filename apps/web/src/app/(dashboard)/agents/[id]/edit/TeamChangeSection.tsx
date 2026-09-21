@@ -67,15 +67,15 @@ export default function TeamChangeSection({
   return (
     <SectionCard>
       <SectionHead
-        label="May change its own team"
-        hint="Lets this agent create an agent, attach one to itself or detach one, on its own, mid-run."
+        label="Let this agent change its team"
+        hint="Allow the agent to create, attach, or detach agents during a run. When off, it must work with the team you assigned and tell you if it needs someone else."
         right={
           <div className="mt-0.5">
             <Switch
               checked={enabled}
               onChange={() => void handleToggle()}
               disabled={saving || !canEdit}
-              ariaLabel="May change its own team"
+              ariaLabel="Let this agent change its team"
             />
           </div>
         }

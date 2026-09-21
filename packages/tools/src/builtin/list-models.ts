@@ -27,6 +27,8 @@ type ListModelsOutput =
 
 export const listModelsTool: ToolDefinition<typeof ListModelsInputSchema, ListModelsOutput> = {
   name: 'list_models',
+  label: 'List available models',
+  summary: "Get valid model IDs before assigning or changing an agent's model.",
   description:
     'List the valid model ids for assigning to an agent (curated catalog for the provider). ' +
     'Call this BEFORE create_agent / update_agent and pass the exact modelId it returns — ' +

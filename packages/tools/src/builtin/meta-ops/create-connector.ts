@@ -47,6 +47,9 @@ export const createConnectorTool: ToolDefinition<
   CreateConnectorOutput
 > = {
   name: 'create_connector',
+  label: 'Add a connector',
+  summary:
+    'Register an API key connector from the catalogue, with its key stored encrypted. Services that sign in through OAuth are set up on the Connectors page instead.',
   description:
     'Register an API-key connector in this entity from the known catalog. ' +
     'Provide the catalog slug + a name + the API key (stored encrypted). ONLY api_key ' +

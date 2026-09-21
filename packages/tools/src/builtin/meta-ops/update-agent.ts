@@ -31,6 +31,8 @@ type UpdateAgentOutput = { ok: true; message: string } | { ok: false; error: str
 
 export const updateAgentTool: ToolDefinition<typeof UpdateAgentInput, UpdateAgentOutput> = {
   name: 'update_agent',
+  label: 'Change an agent',
+  summary: "Change an existing agent's model, personality, or display name.",
   description:
     'Edit an EXISTING agent (model, personality, or display name). ' +
     "BEFORE calling this, run skill_view('tool-update-agent') for the exact format. " +

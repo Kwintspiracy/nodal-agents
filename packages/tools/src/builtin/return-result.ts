@@ -21,6 +21,9 @@ export type ReturnResultInput = z.infer<typeof ReturnResultInputSchema>;
 
 export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, ReturnResultInput> = {
   name: 'return_result',
+  label: 'Finish a task',
+  summary:
+    'Report that a task succeeded or is blocked. It sends no answer by itself: the agent delivers its answer in the same step, through the right channel.',
   description:
     'Signal that the task is complete (status="success") or blocked (status="blocked"). ' +
     'For content delivery to the user, use the appropriate delivery tool ' +

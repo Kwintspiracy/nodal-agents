@@ -145,6 +145,9 @@ async function duckDuckGoSearch(query: string): Promise<WebSearchResult> {
 
 export const webSearchTool: ToolDefinition<typeof WebSearchInputSchema, WebSearchResult> = {
   name: 'web_search',
+  label: 'Search the web',
+  summary:
+    'Search online using the configured provider, or a free search option if none is configured.',
   description:
     'Search the web. Uses your configured Tavily/Firecrawl provider if any, otherwise a free ' +
     'best-effort search.',

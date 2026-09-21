@@ -49,6 +49,9 @@ export type FileReadOutput =
 
 export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOutput> = {
   name: 'file_read',
+  label: 'Read a workspace file',
+  summary:
+    'Read file contents, a section at a time for large files. Files over 50 MiB cannot be read with this tool.',
   description:
     'Read the contents of a file in the agent workspace. Returns lines with start_line / ' +
     'end_line markers. Use `offset` and `limit` to paginate large files. Files above ~1 MiB ' +

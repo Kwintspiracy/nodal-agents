@@ -182,6 +182,9 @@ class ScriptsNotAuthorizedError extends Error {
 export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, RunSkillScriptOutput> =
   {
     name: 'run_skill_script',
+    label: 'Run a skill script',
+    summary:
+      "Run a script that ships with one of the agent's skills instead of rewriting what it does. Only skills you authorized can be run this way.",
     description:
       "Execute a script that ships with one of your installed skills (e.g. a ComfyUI skill's " +
       "run_workflow.py). Use this to run the skill's real automation instead of re-implementing " +

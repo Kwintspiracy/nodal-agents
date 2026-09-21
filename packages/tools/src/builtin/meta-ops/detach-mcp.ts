@@ -16,6 +16,8 @@ type DetachMcpOutput = { ok: true; message: string } | { ok: false; error: strin
 
 export const detachMcpTool: ToolDefinition<typeof DetachMcpInput, DetachMcpOutput> = {
   name: 'detach_mcp',
+  label: 'Take an MCP server back',
+  summary: 'Remove an MCP server from an agent. Its tools stop being available to that agent.',
   description:
     'Remove an MCP server from an agent (its tools stop being available to that agent). ' +
     'Reversible with attach_mcp. Idempotent.',

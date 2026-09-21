@@ -18,6 +18,8 @@ type DetachAgentOutput = { ok: true; message: string } | { ok: false; error: str
 
 export const detachAgentTool: ToolDefinition<typeof DetachAgentInput, DetachAgentOutput> = {
   name: 'detach_agent',
+  label: 'Remove an agent from the team',
+  summary: 'Stop delegating to a sub-agent. The agent itself is kept and can be attached again.',
   description:
     'Remove a sub-agent from your team (stop being able to delegate to it). The agent itself is ' +
     'NOT deleted — only the assignment under you. Reversible with attach_agent. Idempotent.',

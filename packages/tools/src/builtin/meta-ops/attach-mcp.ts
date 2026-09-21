@@ -24,6 +24,8 @@ type AttachMcpOutput = { ok: true; message: string } | { ok: false; error: strin
 
 export const attachMcpTool: ToolDefinition<typeof AttachMcpInput, AttachMcpOutput> = {
   name: 'attach_mcp',
+  label: 'Give an MCP server to an agent',
+  summary: 'Attach an existing MCP server to an agent so its tools become usable.',
   description:
     'Attach an EXISTING MCP server to an agent so its tools become usable by that agent. ' +
     'Both mcpSlug and agentSlug must already exist (use create_mcp first if needed). ' +
