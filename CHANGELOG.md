@@ -10,7 +10,24 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
-## v0.9.2 — Sep 21, 2026
+## v0.9.1 — Sep 21, 2026
+
+A release about the product knowing itself. Asked on a fresh install whether
+Telegram could be configured, the agent answered that Telegram was not supported
+and offered to build an MCP server, while Telegram ships with its own tab in that
+agent's settings. The documentation is now a knowledge base every agent can read,
+with the reflex to read it before calling anything impossible, and the prompt
+names the four messaging channels and the two kinds of automation.
+
+The rest is about seeing what is happening and being able to stop it. A Stop
+button sits on the three screens where a person actually watches a run, the rail
+carries a dot while something is live, a delivered file waiting for an eye is
+counted in the attention pill, and a command that left nothing observable is said
+rather than passed over in silence. Settings shows what a workspace weighs and
+how long its last safety snapshot took, before a refusal rather than after, and
+the launcher refuses to serve a database a migration was skipped on and can
+repair it. Twenty-one pull requests, two migrations
+(`0118_agent_jobs_deliverable_check_due` and `0119_job_checkpoints_snapshot_ms`).
 
 A release about approvals, and about what the product says of its own work. On 21
 September an owner answered "Always for this server" and the tool kept asking,
@@ -21,7 +38,7 @@ rule written during a run applies to the run it was answered on. A request nobod
 answers expires, and its job goes back to work. And a red proof reopens the run
 for one repair turn instead of ending on a failure nobody could act on.
 
-Thirty-eight pull requests, two migrations.
+Later the same day, thirty-eight more pull requests and two migrations, in the same release.
 
 **Approvals**
 
@@ -87,27 +104,6 @@ Thirty-eight pull requests, two migrations.
 - Two migrations, `0120_excluded_project_paths` and
   `0121_entities_proof_repair_attempts`. `nodal-agents update` applies them, and
   there is nothing to do by hand.
-
----
-
-## v0.9.1 — Sep 21, 2026
-
-A release about the product knowing itself. Asked on a fresh install whether
-Telegram could be configured, the agent answered that Telegram was not supported
-and offered to build an MCP server, while Telegram ships with its own tab in that
-agent's settings. The documentation is now a knowledge base every agent can read,
-with the reflex to read it before calling anything impossible, and the prompt
-names the four messaging channels and the two kinds of automation.
-
-The rest is about seeing what is happening and being able to stop it. A Stop
-button sits on the three screens where a person actually watches a run, the rail
-carries a dot while something is live, a delivered file waiting for an eye is
-counted in the attention pill, and a command that left nothing observable is said
-rather than passed over in silence. Settings shows what a workspace weighs and
-how long its last safety snapshot took, before a refusal rather than after, and
-the launcher refuses to serve a database a migration was skipped on and can
-repair it. Twenty-one pull requests, two migrations
-(`0118_agent_jobs_deliverable_check_due` and `0119_job_checkpoints_snapshot_ms`).
 
 **The agent knows the platform it runs in**
 
