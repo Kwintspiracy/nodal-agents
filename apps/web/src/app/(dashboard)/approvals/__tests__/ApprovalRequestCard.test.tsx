@@ -667,3 +667,62 @@ describe('la carte a deux états, Open et Close @cap:approuver-une-action/ecran'
     expect(rendu().querySelector('a[href="/jobs/j1"]')!.textContent).toContain('Open Run');
   });
 });
+
+// ─── Ce que la revue a trouvé ─────────────────────────────────────────────────
+
+describe('la carte ne perd ni son échéance ni sa garde @cap:approuver-une-action/ecran', () => {
+  it('une QUESTION en attente montre encore quand elle expire', async () => {
+    // Reviewer C, C1 : la ligne d'horodatage vivait dans le bloc `request`, que
+    // Close cache et qu'une question n'a jamais. Une question ouverte perdait
+    // alors sa date d'expiration DANS LES DEUX ÉTATS, et rien ne le disait.
+    await monter(
+      demande({
+        kind: 'question',
+        toolInput: { question: 'Which branch do I target?', options: ['main'] },
+        requestedAt: new Date('2026-09-21T08:00:00.000Z'),
+        expiresAt: new Date('2026-09-21T09:00:00.000Z'),
+      } as Partial<Approval>),
+    );
+    expect(parTestId('approval-timing')!.textContent).toContain('requested');
+    expect(parTestId('approval-timing')!.textContent).toContain('expires');
+  });
+
+  it('un outil garde son échéance en Close, là où le bloc de demande s’en va', async () => {
+    await monter(
+      demande({
+        ruleChain: CHAINE_346,
+        requestedAt: new Date('2026-09-21T08:00:00.000Z'),
+        expiresAt: new Date('2026-09-21T09:00:00.000Z'),
+      } as Partial<Approval>),
+    );
+    await cliquerLeCaret();
+    expect(parTestId('approval-request-body')).toBeNull();
+    expect(parTestId('approval-timing')!.textContent).toContain('expires');
+  });
+
+  it('une demande EXPIRÉE n’offre aucun bouton de décision', async () => {
+    // Reviewer C, Q10 : aucun test ne montait de carte `expired`, donc un garde
+    // qui aurait laissé passer ce statut serait resté vert.
+    await monter(
+      demande({
+        status: 'expired',
+        ruleChain: CHAINE_346,
+        agentWorkspaces: [{ label: 'nodal', path: 'D:/APPS/NodalAI' }],
+      } as Partial<Approval>),
+    );
+    expect(bouton('Approve once')).toBeUndefined();
+    expect(bouton('Approve for this project')).toBeUndefined();
+    expect(bouton('Reject')).toBeUndefined();
+    expect(rendu().querySelector('textarea')).toBeNull();
+    // Le pied reste, avec le seul lien qui vaille encore.
+    expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
+    expect(rendu().textContent).toContain('expired');
+  });
+
+  it('« Open Run » n’est rendu qu’une fois, en Open comme en Close', async () => {
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+    expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
+    await cliquerLeCaret();
+    expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
+  });
+});

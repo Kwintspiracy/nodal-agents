@@ -288,8 +288,11 @@ export default function ApprovalRequestCard({
       {/* LA RAISON, DANS LES DEUX ÉTATS. La voix de l'agent, verbatim
           (invariant #2), alignée sous le nom de l'agent. Une absence se dit :
           « il n'a pas dit pourquoi » est une information. Close cache ce que
-          l'outil FERA, jamais ce que l'agent a DIT. */}
-      <div className="bg-paper py-3 pl-[37px] pr-3" data-testid="approval-reason">
+          l'outil FERA, jamais ce que l'agent a DIT.
+          38 px : l'inset de `DisclosureButton` (px-4) plus son caret (w-3.5)
+          plus son gap-2, c'est-à-dire la colonne où commence le nom de
+          l'agent. */}
+      <div className="bg-paper py-3 pl-[38px] pr-3" data-testid="approval-reason">
         {question ? (
           <div className="flex flex-col gap-1.5">
             <p className="text-body-13 italic text-ink-2">{question.question}</p>
@@ -307,13 +310,26 @@ export default function ApprovalRequestCard({
             {x.purpose ? `“${x.purpose}”` : 'The agent did not say why.'}
           </p>
         )}
+
+        {/* QUAND, dans les deux états et pour les deux genres. Cette ligne
+            vivait dans le bloc `request` : une QUESTION, qui n'a pas ce bloc,
+            perdait alors sa date d'expiration partout (Reviewer C, C1). Une
+            échéance que rien n'affiche est une échéance qui surprend. */}
+        {(a.requestedAt || (pending && a.expiresAt)) && (
+          <p className="pt-1.5 text-body-12 text-ink-3" data-testid="approval-timing">
+            {a.requestedAt && <>requested {new Date(a.requestedAt).toLocaleString()}</>}
+            {pending && a.expiresAt && (
+              <> {`· expires ${new Date(a.expiresAt).toLocaleString()}`}</>
+            )}
+          </p>
+        )}
       </div>
 
       {/* LE SEUL BLOC QUE « Close » CACHE : l'effet et les arguments, ce que
           l'appel va faire au monde. */}
       {question === null && requestOpen && (
         <div
-          className="flex flex-col gap-1.5 bg-canvas py-2.5 pl-[37px] pr-6"
+          className="flex flex-col gap-1.5 bg-canvas py-2.5 pl-[38px] pr-6"
           data-testid="approval-request-body"
         >
           <p className="flex items-start gap-1.5 text-body-12 text-warn">
@@ -357,13 +373,6 @@ export default function ApprovalRequestCard({
               ))}
             </dl>
           )}
-
-          <p className="text-body-12 text-ink-3">
-            {a.requestedAt && <>requested {new Date(a.requestedAt).toLocaleString()}</>}
-            {pending && a.expiresAt && (
-              <> {`· expires ${new Date(a.expiresAt).toLocaleString()}`}</>
-            )}
-          </p>
         </div>
       )}
 
