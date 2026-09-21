@@ -213,14 +213,19 @@ describe('DeliveryBlock — le diff de chaque fichier @cap:travailler-sur-des-fi
     // la bordure de l'encart et les plaques.
     expect(liste?.parentElement?.className).toContain('rounded-xl');
     expect(liste?.className ?? '').not.toContain('px-');
+    // Ni écart entre les plaques : elles se touchent, filet contre filet
+    // (Reviewer C, passe 1 : sans ça, remettre un `gap-1.5` laissait le cas
+    // vert alors que les plaques flottaient de nouveau).
+    expect(liste?.className ?? '').not.toContain('gap-');
 
     // ET AUCUN TITRE « Files » au-dessus : ce qui précède immédiatement les
     // plaques est la rangée de cellules (Files / Lines / …), pas un libellé.
     const precedent = liste?.previousElementSibling;
-    expect(precedent?.textContent).toContain('Files');
+    // La rangée de cellules, reconnaissable au libellé COLLÉ à sa valeur, et
+    // non un titre seul (Reviewer C, passe 1 : un `2` tout court se serait
+    // aussi lu dans « 12 / 12 » ou dans un coût).
+    expect(precedent?.textContent).toContain('Files2');
     expect(precedent?.querySelectorAll('[data-testid="file-change-kind"]')).toHaveLength(0);
-    // La rangée de cellules, reconnaissable à ses valeurs, et non un titre seul.
-    expect(precedent?.textContent).toContain('2');
 
     // Le dessin : la première plaque porte le filet haut, chacune le filet bas.
     const plaques = [...(liste?.children ?? [])];
@@ -231,6 +236,16 @@ describe('DeliveryBlock — le diff de chaque fichier @cap:travailler-sur-des-fi
       expect(p.className).toContain('first:border-t');
       // Plus de carte à soi : ni coin arrondi, ni cadre sur les quatre côtés.
       expect(p.className).not.toContain('rounded-xl');
+      // Et aucune marge latérale sur la plaque elle-même : « bord à bord »
+      // tombe aussi si le rembourrage passe de la section à la plaque
+      // (Reviewer C, passe 1).
+      expect(p.className).not.toContain('px-');
+    }
+    // Le mot du geste est GRAS (mesuré : `font-bold` l'emporte bien sur le
+    // poids 400 que `text-mono-12` embarque — la feuille compilée pose
+    // `.font-bold` APRÈS `.text-mono-12`).
+    for (const mot of container.querySelectorAll('[data-testid="file-change-kind"]')) {
+      expect(mot.className).toContain('font-bold');
     }
   });
 
