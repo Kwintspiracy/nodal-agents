@@ -314,16 +314,36 @@ export default function DeliveryBlock({
           <p className="mb-1 text-mono-11 text-ink-4">Commands</p>
           <ul className="flex flex-col gap-1">
             {shownCommands.map((c, i) => (
-              <li
-                key={i}
-                className="flex min-w-0 items-center gap-2"
-                data-testid="delivery-command"
-              >
-                <Terminal size={12} className="shrink-0 text-ink-4" aria-hidden />
-                <span className="min-w-0 truncate text-mono-12 text-ink-2">{c.label}</span>
-                {!c.observed && (
-                  <span className="shrink-0 text-mono-11 text-ink-4">no file change seen</span>
-                )}
+              <li key={i} className="flex min-w-0 items-start gap-2" data-testid="delivery-command">
+                <Terminal size={12} className="mt-1 shrink-0 text-ink-4" aria-hidden />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  {/* POURQUOI, PUIS QUOI (#372). La liste ne disait que la
+                      ligne de commande ; « ça serait bien d'avoir une
+                      information qui dit pourquoi la commande est exécutée »
+                      (Quentin, 21/09). L'agent l'a déjà écrite dans l'entrée
+                      de l'appel : elle est posée telle quelle, dans sa voix.
+                      Sans elle, la commande reste seule — le produit n'en
+                      compose aucune (invariant #2). */}
+                  {/* DEUX LIGNES AU PLUS (Reviewer C, #372). Le schéma de
+                      `run_command` accepte quatre cents caractères : une
+                      phrase de cette taille pousserait à elle seule l'encart
+                      plus bas que le travail qu'il conclut. Elle n'est pas
+                      jetée pour autant, elle est repliée. */}
+                  {c.purpose !== null && (
+                    <span
+                      data-testid="delivery-command-purpose"
+                      className="line-clamp-2 text-body-12 text-ink-2"
+                    >
+                      {c.purpose}
+                    </span>
+                  )}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 truncate text-mono-12 text-ink-2">{c.label}</span>
+                    {!c.observed && (
+                      <span className="shrink-0 text-mono-11 text-ink-4">no file change seen</span>
+                    )}
+                  </div>
+                </div>
               </li>
             ))}
           </ul>

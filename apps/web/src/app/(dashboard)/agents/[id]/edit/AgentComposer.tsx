@@ -1760,8 +1760,8 @@ function AutonomyTab({
         )}
         <p className="mt-4 text-body-12 text-ink-4">
           Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>{' '}
-          for the tools above. Rules take effect on the next job — already-running jobs are not
-          affected.
+          for the tools above. Rules take effect at the agent&apos;s next turn, and as soon as a
+          request is answered.
         </p>
       </SectionCard>
 

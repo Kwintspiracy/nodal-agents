@@ -492,6 +492,13 @@ export type DeliveryCommand = {
   label: string;
   /** Une écriture a-t-elle été constatée sur le tour de cette commande ? */
   observed: boolean;
+  /**
+   * Pourquoi l'agent l'a lancée, dans SA phrase (#372) : l'entrée de
+   * `run_command` porte ce champ, et l'encart le transporte sans le récrire.
+   * `null` quand l'appel n'en portait pas ; l'écran montre alors la commande
+   * seule (invariant #2).
+   */
+  purpose: string | null;
 };
 
 export type FeedTotals = {
