@@ -1,7 +1,8 @@
 // DeliveryFiles.test.tsx — L'ENCART DE LIVRAISON MONTRE CE QUI A CHANGÉ (#369).
 //
-// Ce que ce fichier prouve, dans le DOM rendu : sous « Files », chaque fichier
-// porte sa plaque, REPLIÉE, avec le chemin et « +N −M » ; le clic la déplie et
+// Ce que ce fichier prouve, dans le DOM rendu : sous les cellules, chaque
+// fichier porte sa plaque, BORD À BORD et repliée, avec le chemin et
+// « +N −M » ; le clic la déplie et
 // fait paraître les lignes du diff ; rien n'est demandé avant ce clic, et un
 // second fichier ne redemande rien ; un travail sans fichier ne dessine aucune
 // plaque du tout.
@@ -197,6 +198,40 @@ describe('DeliveryBlock — le diff de chaque fichier @cap:travailler-sur-des-fi
     const peintes = lignes();
     expect(peintes).toContainEqual(['+', expect.stringContaining('PREMIER')]);
     expect(peintes).toContainEqual(['+', expect.stringContaining('SECOND')]);
+  });
+
+  it('les plaques vont de BORD À BORD, directement sous les cellules', async () => {
+    // Quentin, 22/09 : « the diff/file block shall be edge to edge » (planche
+    // « DeliveryBlock », 560:7076). La liste vivait dans une section rembourrée
+    // de 16 px, et chaque plaque était une carte arrondie flottant dedans.
+    await render(<DeliveryBlock summary={DEUX} jobId="job-7" filesJobId="job-7" />);
+    const liste = container.querySelector('[data-testid="delivery-files"]');
+    expect(liste).not.toBeNull();
+
+    // AUCUN CONTENEUR INTERMÉDIAIRE : la liste est fille de l'encart lui-même,
+    // celui qui porte le cadre arrondi. Donc aucun rembourrage latéral entre
+    // la bordure de l'encart et les plaques.
+    expect(liste?.parentElement?.className).toContain('rounded-xl');
+    expect(liste?.className ?? '').not.toContain('px-');
+
+    // ET AUCUN TITRE « Files » au-dessus : ce qui précède immédiatement les
+    // plaques est la rangée de cellules (Files / Lines / …), pas un libellé.
+    const precedent = liste?.previousElementSibling;
+    expect(precedent?.textContent).toContain('Files');
+    expect(precedent?.querySelectorAll('[data-testid="file-change-kind"]')).toHaveLength(0);
+    // La rangée de cellules, reconnaissable à ses valeurs, et non un titre seul.
+    expect(precedent?.textContent).toContain('2');
+
+    // Le dessin : la première plaque porte le filet haut, chacune le filet bas.
+    const plaques = [...(liste?.children ?? [])];
+    expect(plaques).toHaveLength(2);
+    for (const p of plaques) {
+      expect(p.className).toContain('w-full');
+      expect(p.className).toContain('border-b');
+      expect(p.className).toContain('first:border-t');
+      // Plus de carte à soi : ni coin arrondi, ni cadre sur les quatre côtés.
+      expect(p.className).not.toContain('rounded-xl');
+    }
   });
 
   it('un travail sans changement de fichier ne dessine aucune plaque', async () => {
