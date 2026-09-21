@@ -5,7 +5,7 @@
 // fichier prouve les sept choses que cette refonte pouvait casser sans qu'on
 // le voie :
 //
-//   1. le rail porte CINQ destinations, plus Logs et Help, et Settings juste sous Approvals ;
+//   1. le rail porte CINQ destinations, plus Runs et Help, et Settings juste sous Approvals ;
 //   2. la destination active se DÉDUIT de la route, et rien d'autre ;
 //   3. chaque panneau porte les sections de SA planche, dans l'ordre ;
 //   4. les listes du panneau se LISENT en base, bornées, et disent leurs trois
@@ -243,10 +243,10 @@ afterEach(async () => {
   });
 });
 
-// ─── 1. Le rail : cinq destinations, Logs, Help ──────────────────────────────
+// ─── 1. Le rail : cinq destinations, Runs, Help ──────────────────────────────
 
 describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () => {
-  it('rend Work, Agents, Run, Approvals, Settings, puis Logs et Help', async () => {
+  it('rend Work, Agents, Scheduled, Approvals, Settings, puis Runs et Help', async () => {
     await renderSidebar();
     for (const key of ['work', 'agents', 'run', 'approvals', 'logs', 'settings', 'help']) {
       expect(railCell(key), `le rail porte « ${key} »`).not.toBeNull();
@@ -255,17 +255,60 @@ describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () 
     // règle plus un à la fois.
     expect(railCell('agents').textContent?.trim()).toBe('Agents');
     expect(railCell('work').textContent?.trim()).toBe('Work');
-    expect(railCell('run').textContent?.trim()).toBe('Run');
-    expect(railCell('logs').textContent?.trim()).toBe('Logs');
+    // « SCHEDULED » et « RUNS » depuis la planche `46:1330` (21/09/2026) : le
+    // panneau de `rail-run` montre ce qu'on PROGRAMME, et la page de
+    // `rail-logs` liste les EXÉCUTIONS. Les identifiants et les routes n'ont
+    // pas bougé, et c'est exactement ce que ce cas garde sous les yeux.
+    //
+    // Mutation vérifiée : `label: 'Logs'` remis dans `RAIL_FOOT` de
+    // `sidebar-nav` → ce cas rougit sur la dernière ligne.
+    expect(railCell('run').textContent?.trim()).toBe('Scheduled');
+    expect(railCell('logs').textContent?.trim()).toBe('Runs');
     // Les noms de la v1 ont disparu, et ils ne se cachent nulle part.
     expect(() => navLink('Talk')).toThrow();
     expect(() => navLink('Build')).toThrow();
     expect(() => navLink('Agent')).toThrow();
   });
 
+  it('porte SUR CHAQUE CASE l’icône de la planche', async () => {
+    // Planche `46:1330` (21/09/2026) : quatre cases prennent une icône lucide
+    // que Phosphor n'a pas, et la case du bas prend le vecteur du dessin. Les
+    // chemins sont copiés dans `components/icons/rail-icons.tsx`, et chaque
+    // composant se nomme lui-même — c'est ce nom que ce cas lit, plutôt que de
+    // comparer un `d` de 2 000 caractères.
+    //
+    // Mutation vérifiée : `RailAlarmClockCheck` remplacé par `RailRuns` sur la
+    // destination `run` de `sidebar-nav` → ce cas rougit.
+    await renderSidebar();
+    const attendues: ReadonlyArray<readonly [string, string]> = [
+      ['work', 'briefcase'],
+      ['agents', 'user-lock'],
+      ['run', 'alarm-clock-check'],
+      ['approvals', 'shield-check'],
+      ['logs', 'runs'],
+    ];
+    for (const [key, icone] of attendues) {
+      // UNE icône, et CELLE-LÀ. Le compte est asserté en plus de la présence
+      // (Reviewer C, passe 1) : sans lui, une case qui rendrait la sienne ET
+      // une autre passerait, et le rail porterait deux dessins dans 64 px.
+      const icones = [...railCell(key).querySelectorAll('[data-testid^="icon-"]')].map((el) =>
+        el.getAttribute('data-testid'),
+      );
+      expect(icones, `la case « ${key} » porte la seule icône « ${icone} »`).toEqual([
+        `icon-${icone}`,
+      ]);
+    }
+    // Settings et Help gardent leurs icônes Phosphor : la planche ne les change
+    // pas, et elles n'ont donc aucun `rail-icon-*`. Elles dessinent quand même.
+    for (const key of ['settings', 'help']) {
+      expect(railCell(key).querySelector('svg'), `« ${key} » dessine une icône`).not.toBeNull();
+      expect(railCell(key).querySelector('[data-testid^="icon-"]')).toBeNull();
+    }
+  });
+
   it('range Settings juste SOUS Approvals, dans le groupe du haut', async () => {
     // Quentin, 20/09 : « mets l'onglet Settings juste sous Approvals ». Plus
-    // aucune destination sous la séparation ; il n'y reste que Logs et Help.
+    // aucune destination sous la séparation ; il n'y reste que Runs et Help.
     // Le fait vit dans `sidebar-nav`, pas dans le rendu du rail.
     //
     // Mutation vérifiée : `foot: true` remis sur Settings → ce cas rougit, la
@@ -287,9 +330,9 @@ describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () 
     ]);
   });
 
-  it('fait NAVIGUER Logs, et fait OUVRIR une carte à Help', async () => {
+  it('fait NAVIGUER Runs, et fait OUVRIR une carte à Help', async () => {
     await renderSidebar();
-    // Logs mène à sa page et n'ouvre aucun panneau : c'est la seule case du
+    // Runs mène à sa page et n'ouvre aucun panneau : c'est la seule case du
     // rail que la table des destinations ne connaît pas.
     expect(railCell('logs').getAttribute('href')).toBe('/logs');
     expect(railCell('logs').getAttribute('target')).toBeNull();
@@ -418,11 +461,11 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
     ['/spaces', 'work', 'Work'],
     // La racine rend un fil vide depuis l'issue #248 : c'est Work, pas Run.
     ['/', 'work', 'Work'],
-    ['/dashboard', 'run', 'Run'],
-    ['/automations', 'run', 'Run'],
+    ['/dashboard', 'run', 'Scheduled'],
+    ['/automations', 'run', 'Scheduled'],
     // Une page de run n'a pas d'entrée dans le panneau, mais elle allume bien
     // une destination : un rail sans case active se lirait comme cassé.
-    ['/jobs/j1', 'run', 'Run'],
+    ['/jobs/j1', 'run', 'Scheduled'],
     // Les deux qui ont GAGNÉ un panneau en v2.
     ['/approvals', 'approvals', 'Approvals'],
     ['/settings', 'settings', 'Settings'],
@@ -440,11 +483,11 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
     });
   }
 
-  it('allume Logs sur /logs, et montre alors le panneau de REPLI', async () => {
+  it('allume Runs sur /logs, et montre alors le panneau de REPLI', async () => {
     pathname = '/logs';
     await renderSidebar();
     expect(destinationActive()).toBe('logs');
-    // Logs n'ouvre AUCUN panneau : le repli est Work, la racine du produit, et
+    // Runs n'ouvre AUCUN panneau : le repli est Work, la racine du produit, et
     // il est le même pour tout le monde — ce qu'une « dernière destination
     // visitée » n'aurait pas été.
     expect(
@@ -1390,7 +1433,7 @@ describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
 
 // ─── Ce qui TOURNE, dit par le rail (#300, #303) ──────────────────────────────
 //
-// Deux cases du rail portent un point qui bat quand quelque chose avance : Logs
+// Deux cases du rail portent un point qui bat quand quelque chose avance : Runs
 // pour les runs, Work pour les conversations de sa section. Le fait vient de
 // l'INSTANTANE du provider que la barre sonde deja (`ChatFoldersProvider`), et
 // d'aucune seconde lecture : ces cas montent la barre avec l'instantane voulu et
@@ -1445,19 +1488,20 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
     expect(railCell('work').getAttribute('aria-label')).toBeNull();
   });
 
-  it('NE POSE RIEN sur Logs, quoi qu’il tourne', async () => {
+  it('NE POSE RIEN sur Runs, quoi qu’il tourne', async () => {
     // Decision du proprietaire, 22/09/2026 : « Enleve le pulsing dot sur
-    // l'onglet Logs ». #300 y avait pose un point qui comptait tous les runs
-    // vivants ; la case redevient ce qu'elle etait avant.
+    // l'onglet Logs » (la case s'appelle « Runs » depuis le 21/09/2026). #300 y
+    // avait pose un point qui comptait tous les runs vivants ; la case redevient
+    // ce qu'elle etait avant.
     //
-    // Mutation verifiee : le `running` remis sur la case Logs de `SidebarRail`
+    // Mutation verifiee : le `running` remis sur la case Runs de `SidebarRail`
     // -> ce cas rougit.
     pathname = '/agents';
     await renderSidebar([], [], { workConversationsInProgress: 4 });
     expect(pointQuiTourne('logs')).toBeNull();
     // Ni point, ni nom qui parlerait de runs : la case ne porte que son libelle.
     expect(railCell('logs').getAttribute('aria-label')).toBeNull();
-    expect(railCell('logs').textContent?.trim()).toBe('Logs');
+    expect(railCell('logs').textContent?.trim()).toBe('Runs');
     // Et Work, elle, est bien allumee : c'est la seule qui compte desormais.
     expect(pointQuiTourne('work')).not.toBeNull();
   });

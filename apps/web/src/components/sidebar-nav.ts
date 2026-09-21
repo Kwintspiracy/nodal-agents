@@ -39,21 +39,25 @@ import {
   BookOpen,
   Brain,
   BookOpenText,
-  ChatCircleText,
   Cube,
-  CheckCircle,
   DiscordLogo,
   GearSix,
   Key,
   Lightbulb,
   Plug,
   PlugsConnected,
-  Pulse,
   SealCheck,
   ShieldCheck,
   Sparkle,
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
+import {
+  RailAlarmClockCheck,
+  RailBriefcase,
+  RailShieldCheck,
+  RailUserLock,
+  type RailIcon,
+} from './icons/rail-icons.tsx';
 
 /** Une entrée du panneau : une destination interne du tableau de bord. */
 export type PanelItem = {
@@ -110,7 +114,12 @@ export type Destination = {
   key: DestinationKey;
   /** Le libellé du rail ET le titre du panneau : un seul mot, le même. */
   label: string;
-  icon: PhosphorIcon;
+  /**
+   * L'icône de la case, telle que la planche `46:1330` la dessine : quatre des
+   * cinq viennent de `components/icons/rail-icons.tsx`, Settings garde son
+   * `GearSix` Phosphor. Le type couvre les deux familles.
+   */
+  icon: RailIcon;
   /** Où mène le clic sur la destination. */
   href: string;
   /**
@@ -246,7 +255,10 @@ export const DESTINATIONS: readonly Destination[] = [
   {
     key: 'work',
     label: 'Work',
-    icon: ChatCircleText,
+    // La MALLETTE de la planche `46:1330` (lucide `briefcase-business`), et
+    // plus la bulle de conversation : cette destination porte le TRAVAIL, pas
+    // seulement ce qu'on s'y dit.
+    icon: RailBriefcase,
     href: '/',
     // `/` allume Work (#248) : la racine est un fil vide, donc l'endroit où
     // l'on travaille. `/spaces` aussi, puisque les espaces sont dans ce
@@ -258,7 +270,7 @@ export const DESTINATIONS: readonly Destination[] = [
   {
     key: 'agents',
     label: 'Agents',
-    icon: Cube,
+    icon: RailUserLock,
     href: '/agents',
     routes: [
       '/agents',
@@ -273,8 +285,12 @@ export const DESTINATIONS: readonly Destination[] = [
   },
   {
     key: 'run',
-    label: 'Run',
-    icon: Pulse,
+    // « SCHEDULED », et plus « Run » (planche `46:1330`, 21/09/2026). Le libellé
+    // dit enfin ce que le panneau montre — des automatisations et des webhooks,
+    // c'est-à-dire ce qu'on PROGRAMME. La clé, la route et l'identifiant de test
+    // ne bougent pas : c'est le mot qui change, pas la destination.
+    label: 'Scheduled',
+    icon: RailAlarmClockCheck,
     // `/dashboard`, et non `/` (issue #248) ni `/automations`. La case du rail
     // est un LIEN, et elle mène là où mène la PREMIÈRE LIGNE de son panneau —
     // « Dashboard », que le propriétaire a fait revenir en tête de Run le
@@ -298,9 +314,11 @@ export const DESTINATIONS: readonly Destination[] = [
   {
     key: 'approvals',
     label: 'Approvals',
-    // Un rond COCHÉ, et plus un bouclier (planche v2) : le bouclier disait
-    // « on te protège », alors que ce panneau montre ce que l'on VALIDE.
-    icon: CheckCircle,
+    // LE BOUCLIER COCHÉ REVIENT (planche `46:1330`, 21/09/2026) : c'est celui
+    // de la carte d'approbation, et le rail dit désormais la même chose qu'elle.
+    // Le dessin est celui de lucide, pas le `ShieldCheck` de Phosphor que la
+    // carte utilise — la planche pose bien le premier sur le rail.
+    icon: RailShieldCheck,
     href: '/approvals',
     routes: ['/approvals'],
     groups: APPROVALS_GROUPS,
@@ -319,7 +337,7 @@ export const DESTINATIONS: readonly Destination[] = [
  * Ce que le rail porte EN BAS, sous la séparation : ce qui n'ouvre pas de
  * panneau.
  *
- * Logs NAVIGUE — sa page est une liste, elle n'a rien à déplier dans une
+ * Runs NAVIGUE — sa page est une liste, elle n'a rien à déplier dans une
  * colonne de 300 px. Help ouvre une CARTE de trois liens, tous dehors.
  *
  * ⚠️ POURQUOI UNE CARTE, ET PAS UN LIEN. La planche ne dessine que la CASE,
@@ -330,7 +348,10 @@ export const DESTINATIONS: readonly Destination[] = [
  * propriétaire, 20/09/2026 : les trois restent, dans la carte.
  */
 export const RAIL_FOOT = {
-  logs: { href: '/logs', label: 'Logs' },
+  // « RUNS », et plus « Logs » (planche `46:1330`, 21/09/2026). La page liste
+  // les exécutions ; « Logs » nommait le fichier, « Runs » nomme la chose. La
+  // clé `logs`, la route `/logs` et l'identifiant `rail-logs` ne bougent pas.
+  logs: { href: '/logs', label: 'Runs' },
   /**
    * Les trois endroits qui parlent DU PRODUIT, et qui sont tous hors de
    * l'application. Les adresses sont celles que la 0.8.11 utilisait déjà ;

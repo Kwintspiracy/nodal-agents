@@ -155,16 +155,20 @@ test('a run is one row, unfolded into its calls @cap:suivre-execution/ecran', as
   );
 });
 
-test('Runs has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran', async ({
+test('the old Runs page has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran', async ({
   page,
 }) => {
   await page.goto('/logs');
+  // WHAT LEFT THE MENU IS THE PAGE, NOT THE WORD. This used to look for a menu
+  // link named "Runs", which worked only as long as nothing else carried that
+  // word: the rail cell that opens this very list is named "Runs" since the
+  // owner's board of 21/09/2026, and the name check then failed on the right
+  // answer. The address is what the test means, so the address is what it now
+  // reads: no menu entry points at the retired `/runs` page, whatever it is
+  // called.
   await expect(
-    page
-      .getByRole('navigation')
-      .first()
-      .getByRole('link', { name: /^runs$/i }),
-    'the Runs entry is still in the menu',
+    page.locator('nav a[href^="/runs"]'),
+    'a menu entry still points at the retired /runs page',
   ).toHaveCount(0);
 
   await page.goto('/jobs');
