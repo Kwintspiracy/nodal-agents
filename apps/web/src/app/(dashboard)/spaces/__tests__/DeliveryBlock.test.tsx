@@ -603,13 +603,13 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
     expect(entete).toMatch(/<svg[^>]*class="[^"]*text-ok/);
   });
 
-  it('sans relecture, la ligne n’a qu’un fait et garde « Verified »', () => {
+  it('sans relecture, la ligne ne porte aucun mot de relecture et garde « Verified »', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock jobId="job-59" summary={{ ...EMPTY, verdict: 'green' }} />,
     );
-    expect(ligne(html)).toContain('Delivered');
-    // Rien n'est accroché derrière : pas de point médian après le mot.
-    expect(ligne(html)).not.toContain('Delivered ·');
+    // Depuis #373 le verdict de preuve est un mot lui aussi : la ligne porte
+    // donc deux faits ici, le résultat et la preuve, et aucun de relecture.
+    expect(ligne(html)).toContain('Delivered · Proof passed');
     expect(html).toContain('Verified');
     expect(html).not.toContain('By the reviewer');
     expect(html).not.toContain('Approved');
@@ -955,5 +955,100 @@ describe('DeliveryBlock — pourquoi la commande a tourné @cap:verifier-un-livr
     // et l'aveu de la commande non constatée reste dit.
     expect(html).not.toContain('delivery-command-purpose');
     expect(html).toContain('no file change seen');
+  });
+});
+
+// ─── #373 — le verdict de preuve est un MOT, pas la couleur du crochet ──────
+//
+// Quentin, 21/09, devant un run livré et approuvé dont le crochet était rouge :
+// « ça veut dire quoi car à côté ça dit Approved, donc ça a été livré ou pas ?
+// et pourquoi c'est rouge ? ». Trois faits, deux dits en toutes lettres et le
+// troisième caché dans une couleur. Le troisième se dit maintenant lui aussi.
+//
+// Mutation vérifiée : la condition `verdict !== null` du troisième mot
+// remplacée par `false` dans `DeliveryBlock.tsx` → « un verdict rouge se DIT,
+// et le crochet reste vert » rougit. Et le crochet rendu à nouveau
+// `verdict === 'red' ? 'text-warn' : 'text-ok'` → la même le rougit aussi.
+describe('DeliveryBlock — le verdict de preuve en toutes lettres @cap:verifier-un-livrable/ecran', () => {
+  /** Un run livré, relu et approuvé : le cas exact de l'issue. */
+  const livreEtApprouve = {
+    ...EMPTY,
+    produced: true,
+    review: 'approve',
+    changesRequested: false,
+    checks: [{ command: 'pnpm test', ok: false }],
+  };
+
+  it('un verdict rouge se DIT, et le crochet reste vert', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-373" summary={{ ...livreEtApprouve, verdict: 'red' }} />,
+    );
+    // Les trois faits, dans l'ordre, sur la même ligne.
+    expect(ligne(html)).toContain('Delivered · Approved · Proof failed');
+    // Le crochet dit LE RUN A LIVRÉ, et plus rien d'autre : il ne se peint plus
+    // en warn à côté du mot « Approved », ce qui se lisait comme une
+    // contradiction.
+    const entete = html.slice(0, html.indexOf('Delivered'));
+    expect(entete).toMatch(/<svg[^>]*class="[^"]*text-ok/);
+    expect(entete).not.toMatch(/<svg[^>]*class="[^"]*text-warn/);
+    // Et c'est le MOT qui porte la couleur de l'alerte.
+    expect(html).toMatch(/<span class="text-warn">[^<]*·[^<]*Proof failed<\/span>/);
+  });
+
+  it('un verdict vert se dit aussi, en vert', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-373" summary={{ ...livreEtApprouve, verdict: 'green' }} />,
+    );
+    expect(ligne(html)).toContain('Delivered · Approved · Proof passed');
+    expect(html).toMatch(/<span class="text-ok">[^<]*·[^<]*Proof passed<\/span>/);
+  });
+
+  it('aucune preuve déclarée, aucun mot', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-373" summary={{ ...livreEtApprouve, verdict: null, checks: [] }} />,
+    );
+    // Il n'y a pas de troisième fait : un mot gris en inventerait un.
+    expect(ligne(html)).toContain('Delivered · Approved');
+    expect(html).not.toContain('Proof passed');
+    expect(html).not.toContain('Proof failed');
+  });
+
+  // Reviewer C, #373 : aucun test ne fixait ce que dit la ligne d'un run
+  // ARRÊTÉ dont les preuves ont tourné. La règle est celle de #335 — l'issue du
+  // travail et le sort des preuves sont deux faits, et le second ne se tait pas
+  // parce que le premier est mauvais.
+  it('un run arrêté dit son issue ET le sort de ses preuves', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-373"
+        summary={{ ...EMPTY, produced: true, ended: 'stopped', verdict: 'green' }}
+      />,
+    );
+    expect(ligne(html)).toContain('Stopped · Proof passed');
+    // Et le crochet reste gris : le run n'est pas alle au bout.
+    const entete = html.slice(0, html.indexOf('Stopped'));
+    expect(entete).not.toMatch(/<svg[^>]*class="[^"]*text-ok/);
+  });
+
+  // La ligne de mots est bornee : trois mots, une pastille et un bouton Stop
+  // dans une boite de 48 px de haut, ca coupe plutot que ca deborde.
+  it('la ligne de mots ne pousse pas la boite', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-373" summary={{ ...livreEtApprouve, verdict: 'red' }} />,
+    );
+    expect(html).toMatch(/class="min-w-0 truncate text-title-15 text-ink"/);
+  });
+
+  it('tant que le run court, la preuve se compte et ne conclut pas', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-373"
+        summary={{ ...EMPTY, produced: true, live: 'working', verdict: 'green' }}
+      />,
+    );
+    expect(ligne(html)).toContain('Working');
+    // Même règle que « Verified » : la conclusion attend la fin du run.
+    expect(html).not.toContain('Proof passed');
+    expect(html).not.toContain('Proof failed');
   });
 });
