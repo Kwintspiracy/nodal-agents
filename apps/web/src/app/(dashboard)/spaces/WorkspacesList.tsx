@@ -38,6 +38,13 @@
 // gestes, et un dossier détecté masqué n'a qu'une ligne de masquage, qu'on ne
 // supprime pas sans le ramener dans la liste.
 //
+// Oublier ÉCARTE aussi le dossier (#385), et c'est la section « Excluded
+// folders (N) », tout en bas : la détection — qui ne lit pas le registre mais
+// les écritures passées des agents — ramenait sinon le projet oublié dans la
+// liste marqué « Detected ». La section a son propre pli, à côté de « Hidden »
+// et non dedans : oublier le DERNIER projet masqué vide « Hidden » et remplit
+// « Excluded », et une section rangée dans l'autre serait alors introuvable.
+//
 // RENOMMER reste sur un projet OUVERT : c'est un geste qu'on pose en regardant
 // le projet, pas en balayant une liste de cinquante.
 //
@@ -64,7 +71,12 @@ import { conversationTimeLabel } from '@/app/(dashboard)/chat/conversation-rows.
 // troisième : un fichier 'use server' qui en réexporte un autre casse le
 // repérage des actions de Next.
 import { setCodeProjectHiddenAction } from '@/lib/actions.ts';
-import { forgetCodeProjectAction, registerDetectedProjectAction } from '@/lib/project-actions.ts';
+import {
+  detectProjectPathAgainAction,
+  forgetCodeProjectAction,
+  registerDetectedProjectAction,
+} from '@/lib/project-actions.ts';
+import type { ExcludedFolderRow } from '@/lib/project-actions.ts';
 // La confirmation du produit, jamais `window.confirm` (invariant #10).
 import ConfirmDialog from '@/components/ConfirmDialog';
 import type { WorkspaceProof, WorkspaceRow, WorkspacesView } from '@/lib/workspaces.ts';
@@ -329,10 +341,73 @@ function Row({ row, onDone }: { row: WorkspaceRow; onDone: () => void }) {
   );
 }
 
-export default function WorkspacesList({ view }: { view: WorkspacesView }) {
+/**
+ * LE GESTE QUI DÉFAIT L'EXCLUSION (#385) : le dossier redevient détectable.
+ *
+ * Il ne réenregistre rien. La ligne d'exclusion part, et la détection reprend
+ * son cours : si un agent a écrit là, le dossier reparaît marqué « Detected »,
+ * avec Register et Hide ; sinon il ne reparaît pas, et c'est exact.
+ */
+function DetectAgainButton({ path, onDone }: { path: string; onDone: () => void }) {
+  const [pending, start] = useTransition();
+  const router = useRouter();
+
+  return (
+    <RowActionButton
+      disabled={pending}
+      onClick={() =>
+        start(async () => {
+          const result = await detectProjectPathAgainAction({ projectPath: path });
+          if (!result.ok) {
+            toast.error(result.message ?? 'The action failed');
+            return;
+          }
+          onDone();
+          router.refresh();
+        })
+      }
+      title="Let detection propose this folder again if an agent writes in it."
+    >
+      Detect again
+    </RowActionButton>
+  );
+}
+
+/** Une ligne de dossier écarté : son chemin, et le geste qui le défait. */
+function ExcludedRow({ folder, onDone }: { folder: ExcludedFolderRow; onDone: () => void }) {
+  return (
+    <div className="flex items-center" data-testid={`excluded-folder-${folder.key}`}>
+      <div className={`${ROW} min-w-0 flex-1`}>
+        <Disc variant="neutral" size="sm" shape="square">
+          <Folder weight="fill" aria-hidden />
+        </Disc>
+        {/* LE CHEMIN, et rien d'autre : un dossier écarté n'a ni nom choisi ni
+            preuve — il n'a plus de ligne au registre, c'est tout le sujet. */}
+        <span className="min-w-0 flex-1 truncate text-mono-12 text-ink-3" title={folder.path}>
+          {folder.path}
+        </span>
+      </div>
+      <span className="flex shrink-0 items-center gap-2 pr-4">
+        <DetectAgainButton path={folder.path} onDone={onDone} />
+      </span>
+    </div>
+  );
+}
+
+export default function WorkspacesList({
+  view,
+  excluded = [],
+}: {
+  view: WorkspacesView;
+  /** Les dossiers ÉCARTÉS de l'espace (#385). Vide = la section n'existe pas. */
+  excluded?: readonly ExcludedFolderRow[];
+}) {
   const [showHidden, setShowHidden] = useState(false);
+  const [showExcluded, setShowExcluded] = useState(false);
   const hiddenCount = view.hiddenRows.length;
+  const excludedCount = excluded.length;
   const hiddenListId = useId();
+  const excludedListId = useId();
 
   return (
     <div>
@@ -380,6 +455,45 @@ export default function WorkspacesList({ view }: { view: WorkspacesView }) {
               <div className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2 bg-paper">
                 {view.hiddenRows.map((row) => (
                   <Row key={row.key} row={row} onDone={() => setShowHidden(true)} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* LES DOSSIERS ÉCARTÉS (#385), sous les projets masqués et dans leur
+          propre pli. ABSENT à zéro, comme « Hidden » : une section vide pose
+          une question à laquelle la page a déjà répondu. Replié, aucune ligne
+          n'est dans le DOM. */}
+      {excludedCount > 0 && (
+        <div className="mt-6">
+          <TextButton
+            className="text-medium-14 text-ink-2 underline underline-offset-2 hover:text-ink"
+            aria-expanded={showExcluded}
+            aria-controls={excludedListId}
+            onClick={() => setShowExcluded((v) => !v)}
+            data-testid="excluded-folders-toggle"
+          >
+            {`Excluded folders (${excludedCount})`}
+          </TextButton>
+          {showExcluded && (
+            <div id={excludedListId}>
+              {/* La phrase dit le FAIT qui ne se devine pas : ces dossiers ne
+                  reviennent pas dans la liste, même si un agent y travaille
+                  encore. C'est ce que « Forget » vient d'obtenir. */}
+              <p className="mb-2 mt-2 text-body-12 text-ink-4">
+                Forgetting a project excludes its folder. It stays out of the list even if an agent
+                still writes in it. Detect again puts it back in detection. The folders stay where
+                they are on disk.
+              </p>
+              <div className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2 bg-paper">
+                {excluded.map((folder) => (
+                  <ExcludedRow
+                    key={folder.key}
+                    folder={folder}
+                    onDone={() => setShowExcluded(true)}
+                  />
                 ))}
               </div>
             </div>

@@ -17,7 +17,7 @@
 // « Hidden »). Les deux lisent les mêmes colonnes, ici, côte à côte : c'est ce
 // qui les empêche de diverger.
 
-import { and, eq, isNotNull, codeProjects } from '@nodal-agents/db';
+import { and, eq, isNotNull, codeProjects, excludedProjectPaths } from '@nodal-agents/db';
 
 /** La valeur de `hidden` d'un projet qui se liste. */
 const HIDDEN_LISTED = false;
@@ -38,4 +38,36 @@ export function listedProjectsWhere(entityId: string) {
 /** La MÊME règle, sur une ligne déjà lue — la part que la page applique. */
 export function isListedProject(row: { hidden: boolean }): boolean {
   return row.hidden === HIDDEN_LISTED;
+}
+
+// ─── Les dossiers ÉCARTÉS (#385) ─────────────────────────────────────────────
+//
+// La liste ne vient pas que du registre : un dossier où un agent a écrit y
+// paraît aussi, marqué « Detected », sans avoir de ligne à lui. Oublier un
+// projet (#371) supprimait sa ligne de registre, et la détection le ramenait
+// aussitôt — le geste ne tenait pas.
+//
+// L'exclusion est donc la TROISIÈME part de la même règle, et elle est écrite
+// ici, à côté des deux autres, pour la même raison : deux endroits qui
+// décideraient chacun de leur côté finiraient par dire deux choses.
+//
+// Elle ne porte QUE sur la détection. Un dossier écarté qu'on ré-enregistre
+// devient un projet du registre, et un projet du registre se liste — sinon
+// l'exclusion masquerait en silence un projet que quelqu'un vient de déclarer
+// (invariant #4). C'est aussi pourquoi `register_project` retire la ligne.
+
+/** Les dossiers ÉCARTÉS de cet espace. Une seule lecture, jamais une par ligne. */
+export function excludedPathsWhere(entityId: string) {
+  return eq(excludedProjectPaths.entityId, entityId);
+}
+
+/**
+ * ÉCARTÉ : ce que la détection ne propose plus.
+ *
+ * Par CLÉ d'identité (`projectKey`), jamais par égalité de texte sur le chemin
+ * — sous Windows le même dossier remonte avec des casses différentes selon la
+ * session, et une comparaison de texte laisserait passer la moitié des cas.
+ */
+export function isExcludedPath(key: string, excludedKeys: ReadonlySet<string>): boolean {
+  return excludedKeys.has(key);
 }

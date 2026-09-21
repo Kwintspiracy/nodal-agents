@@ -16,10 +16,16 @@
 // La DÉTECTION SURVIT, et c'est l'essentiel : un dossier où un agent a écrit
 // sans être déclaré reste une ligne, marquée « Detected », avec les deux gestes
 // de l'onglet Code (Register, Hide). Rien n'est perdu en la retirant du menu.
+//
+// SAUF ce qu'on a ÉCARTÉ (#385). Oublier un projet écrit son dossier dans les
+// dossiers écartés de l'espace, et la détection les saute : sans cela, un
+// projet oublié dont le dossier porte encore des écritures d'agents revenait
+// dans la liste marqué « Detected », et « Forget » ne tenait pas. La règle est
+// celle de `project-listing.ts`, la même pour tout ce qui liste.
 
 import { projectKey } from '@nodal-agents/shared';
 // La règle du projet LISTÉ, la MÊME que celle de la requête de la barre.
-import { isListedProject } from './project-listing.ts';
+import { isExcludedPath, isListedProject } from './project-listing.ts';
 import type { VerifyStatus } from './verification-display.ts';
 import type { ProjectListRow } from './project-actions.ts';
 
@@ -190,6 +196,11 @@ export function mergeWorkspaces(input: {
   prefs: readonly WorkspacePrefs[];
   /** Le dernier verdict par clé, pour les dossiers détectés comme pour le registre. */
   proofRuns?: ReadonlyMap<string, WorkspaceProofRun>;
+  /**
+   * Les clés des dossiers ÉCARTÉS de l'espace (#385) — ce que la DÉTECTION
+   * saute. Absent = personne n'a rien écarté, et la détection est entière.
+   */
+  excludedKeys?: ReadonlySet<string>;
 }): WorkspacesView {
   const grouped = groupSessionsByProject(input.sessions);
   const prefsByKey = new Map(input.prefs.map((p) => [projectKey(p.projectPath), p]));
@@ -220,9 +231,16 @@ export function mergeWorkspaces(input: {
 
   const registeredKeys = new Set(registered.map((r) => r.key));
 
+  const excludedKeys = input.excludedKeys ?? new Set<string>();
+
   const detected: WorkspaceRow[] = [];
   for (const [key, g] of grouped) {
     if (registeredKeys.has(key)) continue;
+    // ÉCARTÉ : quelqu'un a retiré ce dossier de l'espace, et la détection ne le
+    // propose plus — même si un agent continue d'y écrire (#385). Le test passe
+    // APRÈS celui du registre : un dossier écarté puis ré-enregistré est un
+    // projet du registre, et il se liste comme tel.
+    if (isExcludedPath(key, excludedKeys)) continue;
     const prefs = prefsByKey.get(key);
     detected.push({
       kind: 'detected',

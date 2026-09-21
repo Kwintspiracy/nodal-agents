@@ -568,6 +568,23 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     CREATE INDEX IF NOT EXISTS idx_code_projects_registered
       ON code_projects(entity_id) WHERE registered_at IS NOT NULL;
 
+    -- excluded_project_paths (migration 0120, issue #385) — les dossiers qu une
+    -- personne a ecartes de l espace. La detection (les dossiers deduits des
+    -- ecritures passees des agents) les saute, et « Detect again » supprime la
+    -- ligne. L unicite porte sur project_key, la cle d identite, pour la meme
+    -- raison que celle de code_projects depuis 0088.
+    CREATE TABLE IF NOT EXISTS excluded_project_paths (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      project_path text NOT NULL,
+      project_key text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT excluded_project_paths_entity_key_unique UNIQUE (entity_id, project_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_excluded_project_paths_entity
+      ON excluded_project_paths(entity_id);
+
     -- FK agent_jobs.project_id → code_projects.id (posée une fois la table
     -- créée : agent_jobs est déclarée bien plus haut dans ce fichier).
     DO $$

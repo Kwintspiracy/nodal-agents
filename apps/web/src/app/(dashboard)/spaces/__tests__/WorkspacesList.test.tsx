@@ -28,10 +28,19 @@ vi.mock('@/lib/actions.ts', () => ({ setCodeProjectHiddenAction: vi.fn() }));
 vi.mock('@/lib/project-actions.ts', () => ({
   registerDetectedProjectAction: async () => ({ ok: true, data: { id: 'x', path: 'x' } }),
   forgetCodeProjectAction: vi.fn(),
+  detectProjectPathAgainAction: vi.fn(),
 }));
 
 import { setCodeProjectHiddenAction } from '@/lib/actions.ts';
-import { forgetCodeProjectAction } from '@/lib/project-actions.ts';
+import { detectProjectPathAgainAction, forgetCodeProjectAction } from '@/lib/project-actions.ts';
+import type { ExcludedFolderRow } from '@/lib/project-actions.ts';
+
+/** Un dossier ÉCARTÉ de l'espace (#385) : un chemin, une date, pas de ligne. */
+const ecarte = (path: string, key: string): ExcludedFolderRow => ({
+  key,
+  path,
+  excludedAt: new Date('2026-09-21T08:00:00Z'),
+});
 
 const ligne = (over: Partial<WorkspaceRow> & { key: string; name: string }): WorkspaceRow => ({
   kind: 'registered',
@@ -44,7 +53,7 @@ const ligne = (over: Partial<WorkspaceRow> & { key: string; name: string }): Wor
   ...over,
 });
 
-function render(view: Partial<WorkspacesView>): string {
+function render(view: Partial<WorkspacesView>, excluded: ExcludedFolderRow[] = []): string {
   return renderToStaticMarkup(
     <WorkspacesList
       view={{
@@ -53,6 +62,7 @@ function render(view: Partial<WorkspacesView>): string {
         counts: { total: 0, registered: 0, detected: 0, waiting: 0 },
         ...view,
       }}
+      excluded={excluded}
     />,
   );
 }
@@ -261,7 +271,10 @@ describe('WorkspacesList @cap:travailler-sur-des-fichiers/ecran', () => {
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-async function monter(view: Partial<WorkspacesView>): Promise<void> {
+async function monter(
+  view: Partial<WorkspacesView>,
+  excluded: ExcludedFolderRow[] = [],
+): Promise<void> {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -274,6 +287,7 @@ async function monter(view: Partial<WorkspacesView>): Promise<void> {
           counts: { total: 0, registered: 0, detected: 0, waiting: 0 },
           ...view,
         }}
+        excluded={excluded}
       />,
     );
   });
@@ -311,6 +325,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(setCodeProjectHiddenAction).mockResolvedValue({ ok: true, data: undefined });
   vi.mocked(forgetCodeProjectAction).mockResolvedValue({ ok: true, data: undefined });
+  vi.mocked(detectProjectPathAgainAction).mockResolvedValue({ ok: true, data: undefined });
 });
 
 afterEach(async () => {
@@ -481,5 +496,92 @@ describe('« Forget » sur un projet masqué @cap:travailler-sur-des-fichiers/ec
 
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(vi.mocked(forgetCodeProjectAction)).not.toHaveBeenCalled();
+  });
+});
+
+// ─── #385 : la section « Excluded folders » ──────────────────────────────────
+//
+// Elle existe parce qu'oublier un projet écarte son dossier, et qu'un réglage
+// qu'on ne voit pas ne se défait pas. Trois choses s'y prouvent : qu'elle est
+// ABSENTE quand rien n'est écarté, qu'elle COMPTE et montre les chemins une
+// fois dépliée, et que « Detect again » envoie le bon chemin à l'action.
+//
+// Elle a son propre pli, à côté de « Hidden » et non dedans : oublier le
+// DERNIER projet masqué vide « Hidden » et remplit « Excluded », et une
+// section rangée dans l'autre serait alors introuvable. Le premier cas ci-
+// dessous est exactement celui-là.
+describe('les dossiers écartés de la page Projects @cap:travailler-sur-des-fichiers/ecran', () => {
+  it('sans rien d’écarté, AUCUNE section ne paraît', () => {
+    const html = render({
+      rows: [ligne({ key: 'd:/dev/garde', id: 'p-9', name: 'Gardé', path: 'D:/Dev/garde' })],
+      counts: { total: 1, registered: 1, detected: 0, waiting: 0 },
+    });
+    expect(html).not.toContain('Excluded folders (');
+    expect(html).not.toContain('data-testid="excluded-folders-toggle"');
+  });
+
+  it('elle paraît MÊME SANS projet masqué : c’est le cas qui suit un oubli', () => {
+    const html = render({ rows: [], hiddenRows: [] }, [ecarte('D:/Dev/oublie', 'd:/dev/oublie')]);
+    expect(html).not.toContain('Hidden (');
+    expect(html).toContain('Excluded folders (1)');
+  });
+
+  it('repliée, elle COMPTE sans mettre un seul chemin dans le DOM', () => {
+    const html = render({ rows: [] }, [
+      ecarte('D:/Dev/oublie', 'd:/dev/oublie'),
+      ecarte('D:/APPS/parti', 'd:/apps/parti'),
+    ]);
+    expect(html).toContain('Excluded folders (2)');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('D:/Dev/oublie');
+    expect(html).not.toContain('Detect again');
+  });
+
+  it('dépliée, elle montre chaque chemin, son geste, et DIT ce qu’être écarté veut dire', async () => {
+    await monter({ rows: [] }, [
+      ecarte('D:/Dev/oublie', 'd:/dev/oublie'),
+      ecarte('D:/APPS/parti', 'd:/apps/parti'),
+    ]);
+    expect(rendu().querySelector('[data-testid="excluded-folder-d:/dev/oublie"]')).toBeNull();
+
+    await cliquer('Excluded folders (2)');
+
+    expect(rendu().querySelector('[data-testid="excluded-folder-d:/dev/oublie"]')).not.toBeNull();
+    expect(rendu().querySelector('[data-testid="excluded-folder-d:/apps/parti"]')).not.toBeNull();
+    expect(rendu().textContent).toContain('D:/Dev/oublie');
+    expect(rendu().textContent).toContain('D:/APPS/parti');
+    // LE FAIT qui ne se devine pas : le dossier reste hors de la liste même si
+    // un agent y travaille encore.
+    expect(rendu().textContent).toContain('even if an agent still writes in it');
+    const gestes = [...rendu().querySelectorAll('[data-testid^="excluded-folder-"] button')].map(
+      (b) => b.textContent?.trim(),
+    );
+    expect(gestes).toEqual(['Detect again', 'Detect again']);
+  });
+
+  it('« Detect again » envoie SON chemin à l’action, pas celui de la ligne d’à côté', async () => {
+    await monter({ rows: [] }, [
+      ecarte('D:/Dev/oublie', 'd:/dev/oublie'),
+      ecarte('D:/APPS/parti', 'd:/apps/parti'),
+    ]);
+    await cliquer('Excluded folders (2)');
+
+    const secondeLigne = rendu().querySelector('[data-testid="excluded-folder-d:/apps/parti"]');
+    const bouton = secondeLigne?.querySelector('button');
+    if (!bouton) throw new Error('bouton introuvable');
+    await act(async () => {
+      bouton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    // L'ARGUMENT de l'action, pas le nombre d'appels.
+    expect(vi.mocked(detectProjectPathAgainAction).mock.calls.at(0)?.[0]).toEqual({
+      projectPath: 'D:/APPS/parti',
+    });
+  });
+
+  it('le contrôle est un dépliant annoncé, pas un lien', () => {
+    const html = render({ rows: [] }, [ecarte('D:/Dev/oublie', 'd:/dev/oublie')]);
+    expect(html).toContain('data-testid="excluded-folders-toggle"');
+    expect(html).toContain('aria-controls=');
   });
 });

@@ -20,6 +20,7 @@ import {
   codeProjects,
   conversations,
   entities,
+  excludedProjectPaths,
   users,
   verificationRuns,
 } from '@nodal-agents/db';
@@ -1703,5 +1704,165 @@ describe('forgetCodeProjectAction @cap:travailler-sur-des-fichiers/moteur', () =
 
     // 4. LE DOSSIER EST TOUJOURS LÀ : oublier ne touche pas au disque.
     expect(existsSync(projet.path)).toBe(true);
+  });
+});
+
+// ─── #385 : un projet oublié ne revient pas en « Detected » ──────────────────
+//
+// Oublier supprime la ligne du registre. La DÉTECTION, elle, ne lit pas le
+// registre : elle déduit des dossiers des écritures passées des agents. Un
+// projet oublié dont le dossier porte encore de telles écritures revenait donc
+// dans la liste marqué « Detected », avec Register et Hide offerts de nouveau.
+//
+// Ce qui se prouve ici est la LIGNE d'exclusion : écrite par l'oubli, lue par
+// la liste, retirée par « Detect again ». Le saut lui-même est prouvé sans
+// base dans `workspaces-merge.test.ts`, sur la règle partagée.
+describe('les dossiers écartés @cap:travailler-sur-des-fichiers/moteur', () => {
+  /** Les exclusions de l'espace de la session, par clé. */
+  async function exclusions(): Promise<Array<{ key: string; path: string }>> {
+    return testDb
+      .select({
+        key: excludedProjectPaths.projectKey,
+        path: excludedProjectPaths.projectPath,
+      })
+      .from(excludedProjectPaths)
+      .where(eq(excludedProjectPaths.entityId, seed.entityId));
+  }
+
+  /** Un projet enregistré et masqué, sur un vrai dossier. */
+  async function projetMasque(nomDossier: string): Promise<{ id: string; path: string }> {
+    const path = `${terrain.path}/${nomDossier}`;
+    await mkdir(path, { recursive: true });
+    const [row] = await testDb
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: path,
+        projectKey: projectKey(path),
+        hidden: true,
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    return { id: row!.id, path };
+  }
+
+  it('OUBLIER écrit le dossier dans les écartés, avec son chemin tel qu’il est stocké', async () => {
+    const { forgetCodeProjectAction } = await import('../project-actions.ts');
+    const projet = await projetMasque('ecarte-par-oubli');
+
+    const result = await forgetCodeProjectAction({ projectPath: projet.path });
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+
+    const lignes = await exclusions();
+    const ecarte = lignes.find((l) => l.key === projectKey(projet.path));
+    expect(ecarte).toBeDefined();
+    // Le chemin AFFICHABLE, pas la clé : c'est lui que la section montre.
+    expect(ecarte?.path).toBe(projet.path);
+  });
+
+  it('un oubli REFUSÉ n’écarte rien : la transaction porte les deux ou aucune', async () => {
+    const { forgetCodeProjectAction } = await import('../project-actions.ts');
+    const path = `${terrain.path}/pas-masque-donc-pas-ecarte`;
+    await mkdir(path, { recursive: true });
+    await testDb.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: path,
+      projectKey: projectKey(path),
+      hidden: false,
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+
+    const result = await forgetCodeProjectAction({ projectPath: path });
+    expect(result.ok).toBe(false);
+    expect((await exclusions()).some((l) => l.key === projectKey(path))).toBe(false);
+  });
+
+  it('la liste rend ce qui a été écarté, et rien de l’espace d’à côté', async () => {
+    const { listExcludedProjectPathsAction, forgetCodeProjectAction } =
+      await import('../project-actions.ts');
+    const projet = await projetMasque('ecarte-et-liste');
+    await forgetCodeProjectAction({ projectPath: projet.path });
+
+    const chezLeVoisin = `${voisin.path}/leur-dossier-ecarte`;
+    await testDb.insert(excludedProjectPaths).values({
+      entityId: voisin.entityId,
+      projectPath: chezLeVoisin,
+      projectKey: projectKey(chezLeVoisin),
+    });
+
+    const result = await listExcludedProjectPathsAction();
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+    if (!result.ok) return;
+    const chemins = result.data.map((r) => r.path);
+    expect(chemins).toContain(projet.path);
+    expect(chemins).not.toContain(chezLeVoisin);
+    expect(result.data.every((r) => r.excludedAt instanceof Date)).toBe(true);
+  });
+
+  it('« Detect again » retire la ligne, et un second clic le DIT au lieu de réussir en silence', async () => {
+    const { forgetCodeProjectAction, detectProjectPathAgainAction } =
+      await import('../project-actions.ts');
+    const projet = await projetMasque('ecarte-puis-redetecte');
+    await forgetCodeProjectAction({ projectPath: projet.path });
+    expect((await exclusions()).some((l) => l.key === projectKey(projet.path))).toBe(true);
+
+    const result = await detectProjectPathAgainAction({ projectPath: projet.path });
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+    expect((await exclusions()).some((l) => l.key === projectKey(projet.path))).toBe(false);
+
+    // Deux onglets ouverts sur la même page : le second clic ne doit pas
+    // annoncer un geste qu'il n'a pas posé (invariant #4).
+    const encore = await detectProjectPathAgainAction({ projectPath: projet.path });
+    expect(encore.ok).toBe(false);
+    if (encore.ok) return;
+    expect(encore.code).toBe('not_excluded');
+  });
+
+  it('un dossier écarté de l’espace d’à côté n’est pas réactivable d’ici', async () => {
+    const { detectProjectPathAgainAction } = await import('../project-actions.ts');
+    const chezLeVoisin = `${voisin.path}/leur-dossier-intouchable`;
+    await testDb.insert(excludedProjectPaths).values({
+      entityId: voisin.entityId,
+      projectPath: chezLeVoisin,
+      projectKey: projectKey(chezLeVoisin),
+    });
+
+    const result = await detectProjectPathAgainAction({ projectPath: chezLeVoisin });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_excluded');
+
+    const [toujoursLa] = await testDb
+      .select({ id: excludedProjectPaths.id })
+      .from(excludedProjectPaths)
+      .where(eq(excludedProjectPaths.projectKey, projectKey(chezLeVoisin)));
+    expect(toujoursLa).toBeDefined();
+  });
+
+  it('oublier DEUX FOIS le même dossier n’échoue pas : une seule ligne d’exclusion', async () => {
+    const { forgetCodeProjectAction } = await import('../project-actions.ts');
+    const projet = await projetMasque('oublie-deux-fois');
+    const premier = await forgetCodeProjectAction({ projectPath: projet.path });
+    expect(premier.ok, premier.ok ? '' : premier.message).toBe(true);
+
+    // Le dossier est ré-enregistré puis masqué de nouveau, comme après un
+    // « Detect again » suivi d'un « Register ».
+    await testDb.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: projet.path,
+      projectKey: projectKey(projet.path),
+      hidden: true,
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+
+    const second = await forgetCodeProjectAction({ projectPath: projet.path });
+    expect(second.ok, second.ok ? '' : second.message).toBe(true);
+    expect(await ligneDuProjet(projet.path)).toBeNull();
+
+    const toutes = (await exclusions()).filter((l) => l.key === projectKey(projet.path));
+    expect(toutes).toHaveLength(1);
   });
 });

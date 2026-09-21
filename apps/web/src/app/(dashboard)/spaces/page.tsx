@@ -12,7 +12,11 @@
 // ou, pour un run d'automatisation, sur /scheduled/<id>.
 
 import { listCodingProcessesAction, listCodeProjectPrefsAction } from '@/lib/actions.ts';
-import { listProjectsAction, listProofsForPathsAction } from '@/lib/project-actions.ts';
+import {
+  listExcludedProjectPathsAction,
+  listProjectsAction,
+  listProofsForPathsAction,
+} from '@/lib/project-actions.ts';
 import { mergeWorkspaces, workspacesSubtitle } from '@/lib/workspaces.ts';
 import type { WorkspaceProofRun } from '@/lib/workspaces.ts';
 import PageShell from '@/components/ui/PageShell';
@@ -24,13 +28,15 @@ import NewProjectButton from './NewProjectButton.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function SpacesPage() {
-  // Trois lectures BORNÉES, une par liste, jamais une par ligne : le registre,
-  // les sessions de code (la détection, plafonnée comme dans l'onglet Code), et
-  // les deux gestes du propriétaire avec l'état de configuration des preuves.
-  const [projectsResult, sessionsResult, prefsResult] = await Promise.all([
+  // Quatre lectures BORNÉES, une par liste, jamais une par ligne : le registre,
+  // les sessions de code (la détection, plafonnée comme dans l'onglet Code),
+  // les deux gestes du propriétaire avec l'état de configuration des preuves,
+  // et les dossiers qu'il a ÉCARTÉS (#385).
+  const [projectsResult, sessionsResult, prefsResult, excludedResult] = await Promise.all([
     listProjectsAction(),
     listCodingProcessesAction(),
     listCodeProjectPrefsAction(),
+    listExcludedProjectPathsAction(),
   ]);
 
   // Une lecture en ÉCHEC ne se traduit pas par « rien à montrer » : elle se
@@ -39,18 +45,27 @@ export default async function SpacesPage() {
   // page : il retire les lignes détectées, et la page le dit en une phrase
   // plutôt que de laisser croire qu'aucun agent n'a jamais écrit nulle part.
   const projects = projectsResult.ok ? projectsResult.data : [];
-  const sessions = sessionsResult.ok ? sessionsResult.data : [];
   const prefs = prefsResult.ok ? prefsResult.data : [];
+  const excluded = excludedResult.ok ? excludedResult.data : [];
+  const excludedKeys = new Set(excluded.map((e) => e.key));
+  // SANS la liste des dossiers écartés, la détection ne se rend PAS (#385).
+  // Elle ne peut pas être filtrée, et la rendre entière ramènerait dans la
+  // liste des dossiers que quelqu'un a retirés — un « smart fallback » qui
+  // défait le geste au moment précis où il compte (invariant #4). La page le
+  // dit, comme elle le dit déjà d'une détection en panne.
+  const sessions = sessionsResult.ok && excludedResult.ok ? sessionsResult.data : [];
   const detectionError = !sessionsResult.ok
     ? sessionsResult.message
     : !prefsResult.ok
       ? prefsResult.message
-      : null;
+      : !excludedResult.ok
+        ? excludedResult.message
+        : null;
 
   // Les dossiers DÉTECTÉS peuvent porter une preuve eux aussi : une séquence se
   // configure par clé de dossier, pas par appartenance au registre. Une
   // quatrième lecture bornée, et seulement s'il y a des dossiers détectés.
-  const firstPass = mergeWorkspaces({ projects, sessions, prefs });
+  const firstPass = mergeWorkspaces({ projects, sessions, prefs, excludedKeys });
   const detectedPaths = [...firstPass.rows, ...firstPass.hiddenRows]
     .filter((r) => r.kind === 'detected')
     .map((r) => r.path);
@@ -62,9 +77,11 @@ export default async function SpacesPage() {
     }
   }
   const view =
-    proofRuns.size > 0 ? mergeWorkspaces({ projects, sessions, prefs, proofRuns }) : firstPass;
+    proofRuns.size > 0
+      ? mergeWorkspaces({ projects, sessions, prefs, proofRuns, excludedKeys })
+      : firstPass;
 
-  const vide = view.rows.length === 0 && view.hiddenRows.length === 0;
+  const vide = view.rows.length === 0 && view.hiddenRows.length === 0 && excluded.length === 0;
 
   return (
     <PageShell
@@ -95,7 +112,7 @@ export default async function SpacesPage() {
               description="Create one, or let an agent write in one of its folders: it shows up here."
             />
           ) : (
-            <WorkspacesList view={view} />
+            <WorkspacesList view={view} excluded={excluded} />
           )}
         </>
       )}
