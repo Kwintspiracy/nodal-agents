@@ -1061,6 +1061,13 @@ export async function forgetCodeProjectAction(raw: unknown): Promise<ActionResul
     // renommer (`assertProjectOwner`, actions.ts) : oublier emporte un réglage
     // que TOUT l'espace voit, agents compris. Comparaison directe avec
     // `entities.user_id`, sans exemption local-trust.
+    //
+    // Le prédicat est REDIT ici plutôt qu'importé, et c'est voulu (revue
+    // Reviewer C du 21/09, mineur) : `actions.ts` porte `'use server'`, donc
+    // chacun de ses exports devient un point d'entrée appelable depuis le
+    // navigateur. Exporter la garde en ferait une porte publique. La sortir
+    // dans un module tiers est le geste propre, et il appartient à la PR qui
+    // déplacera les gestes du projet, pas à celle-ci.
     const [ownerRow] = await db
       .select({ userId: entities.userId })
       .from(entities)
