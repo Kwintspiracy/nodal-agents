@@ -26,7 +26,7 @@
 // en amont.
 
 import { SENT_TEXT_KINDS } from '@nodal-agents/shared';
-import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
+import type { ConstatedChangeKind, ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 // UNIQUEMENT le type, et c'est load-bearing : ce module est lu par des
 // composants `'use client'`, et une importation de VALEUR depuis
 // `@nodal-agents/orchestration` embarquerait `@nodal-agents/db` et drizzle dans
@@ -404,6 +404,13 @@ export type DeliveryFileChange = {
   path: string;
   addedLines: number;
   removedLines: number;
+  /**
+   * Le mot du geste — créé, modifié, supprimé, renommé — porté par l'en-tête
+   * et non déduit des fragments : la plaque est repliée d'abord, ses fragments
+   * n'arrivent qu'au clic, et un mot déduit d'eux dirait « modified » sur un
+   * fichier créé jusqu'à ce que quelqu'un l'ouvre.
+   */
+  changeKind?: ConstatedChangeKind;
 };
 
 /**

@@ -106,6 +106,20 @@ describe('regroupement par fichier @cap:travailler-sur-des-fichiers/moteur', () 
     expect(a?.edits).toHaveLength(2);
   });
 
+  it('le GESTE vient de la carte, pas des fragments — il tient plaque repliée', () => {
+    // Le mot se lit avant le premier clic, et l'encart n'a alors AUCUN
+    // fragment : déduit d'eux, « created » se serait lu « modified » jusqu'au
+    // dépli, puis aurait changé sous les yeux du lecteur.
+    const groupes = fileChangesOfAuditRows(rows, []);
+    expect(groupes.map((g) => [g.filePath, g.changeKind])).toEqual([
+      ['src/a.ts', 'added'],
+      ['src/b.ts', 'added'],
+    ]);
+    expect(fileChangesOfAuditRows([edition('src/c.ts', 'un', 'deux')], [])[0]?.changeKind).toBe(
+      'modified',
+    );
+  });
+
   it('un fichier seulement LU n’est pas un fichier livré', () => {
     expect(fileChangesOfAuditRows([lecture('src/lu.ts')], [])).toEqual([]);
   });

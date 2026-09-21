@@ -69,6 +69,10 @@ export default function DeliveryFiles({
             filePath: f.path,
             addedLines: f.addedLines,
             removedLines: f.removedLines,
+            // Le mot du geste voyage avec l'en-tête : sans lui, la plaque le
+            // déduirait de fragments qui ne sont pas encore là, et un fichier
+            // créé se lirait « modified » jusqu'au dépli.
+            changeKind: f.changeKind,
             edits: edits?.get(f.path) ?? AUCUN,
           }}
         />

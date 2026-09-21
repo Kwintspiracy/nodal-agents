@@ -446,6 +446,7 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     path: g.filePath,
     addedLines: g.addedLines,
     removedLines: g.removedLines,
+    changeKind: g.changeKind,
   }));
   const counted = job.audit
     .filter((row) => callHappened(outcomeOfToolOutput(row.toolOutput)))

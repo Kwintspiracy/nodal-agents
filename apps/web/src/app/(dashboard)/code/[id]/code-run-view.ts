@@ -219,6 +219,7 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
       path: c.filePath,
       addedLines: c.addedLines,
       removedLines: c.removedLines,
+      changeKind: c.changeKind,
     })),
     lines: added === 0 && removed === 0 ? null : { added, removed },
     tests: commands.length > 0 ? { passed, total: commands.length } : null,

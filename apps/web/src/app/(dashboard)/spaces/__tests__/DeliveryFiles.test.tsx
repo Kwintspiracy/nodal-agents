@@ -66,8 +66,8 @@ const DEUX: DeliverySummary = {
   ...EMPTY,
   files: 2,
   fileChanges: [
-    { path: 'src/a.ts', addedLines: 3, removedLines: 1 },
-    { path: 'src/b.ts', addedLines: 1, removedLines: 0 },
+    { path: 'src/a.ts', addedLines: 3, removedLines: 1, changeKind: 'modified' as const },
+    { path: 'src/b.ts', addedLines: 1, removedLines: 0, changeKind: 'added' as const },
   ],
 };
 
@@ -107,8 +107,11 @@ describe('DeliveryBlock — le diff de chaque fichier @cap:travailler-sur-des-fi
 
     const plaques = container.querySelectorAll('[data-testid="file-change-kind"]');
     expect(plaques).toHaveLength(2);
-    // Le geste, le chemin, et ce que le fichier a pris de lignes.
+    // Le geste, le chemin, et ce que le fichier a pris de lignes. Le mot est
+    // JUSTE avant le premier clic : il vient de l'en-tête, pas des fragments
+    // qui ne sont pas encore chargés.
     expect(plaques[0]?.textContent).toBe('modified');
+    expect(plaques[1]?.textContent).toBe('added');
     const entete = plaques[0]?.closest('button')?.textContent ?? '';
     expect(entete).toContain('src/a.ts');
     expect(entete).toContain('+3');

@@ -140,8 +140,8 @@ export function fileChangesOfAuditRows(
   rows: readonly AuditRowForChanges[],
   workspaceRoots: readonly string[],
 ): FileChangeGroup[] {
-  /** Clé canonique brute → chemin masqué canonique, dans l'ordre d'écriture. */
-  const display = new Map<string, string>();
+  /** Clé canonique brute → ce que la carte a dit, dans l'ordre d'écriture. */
+  const display = new Map<string, { path: string; changeKind: ConstatedChangeKind }>();
   const calls: FileChangeCall[] = [];
   for (const row of rows) {
     if (!callHappened(outcomeOfToolOutput(row.toolOutput))) continue;
@@ -150,7 +150,17 @@ export function fileChangesOfAuditRows(
       p.files.forEach((f, i) => {
         if (f.action === 'listed') return;
         const key = canonicalChangePath(row.rawFilePaths?.[i] ?? f.path, workspaceRoots);
-        if (!display.has(key)) display.set(key, canonicalChangePath(f.path, workspaceRoots));
+        // Le geste vient de la CARTE, pas des fragments (#369) : la plaque est
+        // repliée d'abord, ses fragments n'arrivent qu'au clic, et un mot déduit
+        // d'eux aurait dit « modified » sur un fichier créé jusqu'au dépli.
+        // C'est le PREMIER appel qui nomme le fichier qui décide — un fichier
+        // écrit puis retouché a bien été créé.
+        if (!display.has(key)) {
+          display.set(key, {
+            path: canonicalChangePath(f.path, workspaceRoots),
+            changeKind: f.action === 'modified' ? 'modified' : 'added',
+          });
+        }
       });
     }
     if (isRefusedToolCall(row.toolOutput)) continue;
@@ -158,15 +168,16 @@ export function fileChangesOfAuditRows(
     if (change !== null) calls.push({ change });
   }
   const byPath = new Map(groupFileChanges(calls, workspaceRoots).map((g) => [g.filePath, g]));
-  return [...display.entries()].map(([key, masked]) => {
+  return [...display.entries()].map(([key, dit]) => {
     const group = byPath.get(key);
     return {
-      filePath: masked,
+      filePath: dit.path,
+      changeKind: dit.changeKind,
       addedLines: group?.addedLines ?? 0,
       removedLines: group?.removedLines ?? 0,
       // Les fragments portent le chemin MASQUÉ eux aussi : ils voyagent jusqu'à
       // l'écran, et l'identité brute ne sort jamais de cette fonction.
-      edits: (group?.edits ?? []).map((e) => ({ ...e, filePath: masked })),
+      edits: (group?.edits ?? []).map((e) => ({ ...e, filePath: dit.path })),
     };
   });
 }
