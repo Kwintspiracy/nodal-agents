@@ -678,7 +678,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           produced: false,
           ended: null,
           live: null,
-          commands: [{ label: 'ls -la', observed: false }],
+          commands: [{ label: 'ls -la', observed: false, purpose: null }],
         }}
         jobId={null}
       />,
@@ -848,6 +848,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     const quinze = Array.from({ length: 15 }, (_, i) => ({
       label: `commande-${i}`,
       observed: i % 2 === 0,
+      purpose: null,
     }));
     const html = renderToStaticMarkup(
       <DeliveryBlock summary={{ ...EMPTY, commands: quinze }} jobId={null} />,
@@ -867,7 +868,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
   it('ne compte rien quand la liste de commandes tient en entier', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock
-        summary={{ ...EMPTY, commands: [{ label: 'ls -la', observed: false }] }}
+        summary={{ ...EMPTY, commands: [{ label: 'ls -la', observed: false, purpose: null }] }}
         jobId={null}
       />,
     );
@@ -888,7 +889,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           live: null,
           files: 1,
           filePaths: ['out/bilan.md'],
-          commands: [{ label: 'pnpm build', observed: true }],
+          commands: [{ label: 'pnpm build', observed: true, purpose: null }],
         }}
         jobId={null}
       />,
@@ -904,5 +905,51 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     );
     expect(html).not.toContain('Commands');
     expect(html).not.toContain('no file change seen');
+  });
+});
+
+// #372 — CHAQUE COMMANDE DIT POURQUOI ELLE A TOURNÉ.
+//
+// La liste ne portait que la ligne de commande, tronquée : rien ne disait ce
+// qu'elle cherchait à faire. L'agent l'a déjà écrit dans l'entrée de l'appel ;
+// l'écran le pose au-dessus, verbatim, et la commande passe dessous.
+//
+// Mutation vérifiée : la condition `c.purpose !== null` remplacée par `false`
+// dans `DeliveryBlock.tsx` → « la phrase de l'agent se lit au-dessus de la
+// commande » rougit.
+describe('DeliveryBlock — pourquoi la commande a tourné @cap:verifier-un-livrable/ecran', () => {
+  it('la phrase de l’agent se lit au-dessus de la commande', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{
+          ...EMPTY,
+          commands: [
+            { label: 'pnpm build', observed: true, purpose: 'Build the app before shipping it' },
+          ],
+        }}
+        jobId={null}
+      />,
+    );
+    expect(html).toContain('Build the app before shipping it');
+    expect(html).toContain('pnpm build');
+    // AU-DESSUS, pas à côté : c'est le titre de la ligne, la commande est sa
+    // preuve. L'ordre dans le HTML est celui qu'on lit à l'écran.
+    expect(html.indexOf('Build the app before shipping it')).toBeLessThan(
+      html.indexOf('pnpm build'),
+    );
+  });
+
+  it('sans phrase, la commande reste seule', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{ ...EMPTY, commands: [{ label: 'ls -la', observed: false, purpose: null }] }}
+        jobId={null}
+      />,
+    );
+    expect(html).toContain('ls -la');
+    // Aucune phrase composée par l'écran à la place de l'agent (invariant #2),
+    // et l'aveu de la commande non constatée reste dit.
+    expect(html).not.toContain('delivery-command-purpose');
+    expect(html).toContain('no file change seen');
   });
 });

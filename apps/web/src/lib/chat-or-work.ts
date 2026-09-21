@@ -89,8 +89,13 @@ export type ProducedItem =
   /**
    * Une commande. `certain` dit si une écriture a été CONSTATÉE sur son tour
    * (#197) : à faux, elle ne décide pas à elle seule qu'il y a eu travail.
+   *
+   * `purpose` est la phrase que l'agent a écrite dans l'entrée de l'appel pour
+   * dire POURQUOI il lançait cette commande (#372). `null` quand l'entrée n'en
+   * porte pas : l'écran montre alors la commande seule, il n'en invente aucune
+   * (invariant #2).
    */
-  | { kind: 'command'; label: string; certain: boolean }
+  | { kind: 'command'; label: string; certain: boolean; purpose: string | null }
   | { kind: 'harness'; label: string }
   | { kind: 'external'; label: string; certain: boolean };
 
@@ -152,6 +157,23 @@ const HARNESS_FALLBACK = 'Code harness';
 function harnessLabel(toolName: string): string {
   const suffix = toolName.slice(4).toLowerCase();
   return HARNESS_LABELS[suffix] ?? HARNESS_FALLBACK;
+}
+
+/**
+ * LA PHRASE DE L'AGENT, telle qu'il l'a écrite (#372). `run_command` exige un
+ * `purpose` dans son entrée : il dit pourquoi la commande a tourné, et c'est
+ * la seule phrase que l'écran a le droit de poser au-dessus d'elle. Le produit
+ * n'en compose aucune à la place de l'agent (invariant #2).
+ *
+ * `null` dès que l'entrée n'en porte pas : une ligne écrite avant ce champ, un
+ * autre outil qui déclare la même carte, une chaîne vide ou blanche.
+ */
+function commandPurpose(toolInput: unknown): string | null {
+  if (typeof toolInput !== 'object' || toolInput === null) return null;
+  const raw = (toolInput as { purpose?: unknown }).purpose;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed === '' ? null : trimmed;
 }
 
 function truncate(text: string, max: number): string {
@@ -317,7 +339,7 @@ export function classifyProduction(input: {
         row.turn !== null &&
         input.constatedTurns.has(constatedTurnKey(row.jobId, row.turn));
       if (!certain) uncertain += 1;
-      items.push({ kind: 'command', label, certain });
+      items.push({ kind: 'command', label, certain, purpose: commandPurpose(row.toolInput) });
       continue;
     }
 
