@@ -3,16 +3,20 @@
 // FileChangeBlock — un fichier changé de /code/[id], dessiné comme le bloc
 // « fichier » du fil (planche #135).
 //
-// DEUX DESSINS, UN SEUL MOTEUR — ILS RESTENT ALIGNÉS (Reviewer C, #164).
-// `spaces/FileDiff.tsx` dessine le même objet dans le fil, autrement : il
-// DEMANDE son diff au runner (un diff git pris dans un instantané, chargé au
-// premier clic), et le rend sans gouttière. Ici les fragments sont déjà en
-// mémoire — la page les tient de son action — et la planche #135 demande la
-// plaque numérotée. Fusionner les deux rendus maintenant changerait le fil,
-// que cette PR ne doit pas toucher ; le bloc du fil se posera sur cette
-// plaque-ci dans la PR #135 qui lui revient, et c'est CE fichier qui fait foi
-// pour le dessin. En attendant, une seule chose doit rester vraie des deux
-// côtés : les lignes sortent de `fragmentDiff`, jamais d'un second moteur.
+// ET L'ENCART DE LIVRAISON DU FIL SE POSE DESSUS (#369). Il listait des
+// chemins ; il montre désormais CETTE plaque, une par fichier, repliée. Les
+// groupes viennent du même module qu'ici (`lib/file-change-groups.ts`) et les
+// lignes du même `fragmentDiff` : pour un même run, les deux écrans peignent
+// les mêmes rangées. Deux différences, et elles sont dans les props : le fil
+// replie (`defaultOpen={false}`) et va chercher ses fragments au premier clic
+// (`onOpen`, `pending`), parce qu'un fil ne peut pas embarquer le texte de
+// cent écritures dans chaque rendu.
+//
+// `spaces/FileDiff.tsx` dessine encore un TROISIÈME objet, et c'est une autre
+// question : le diff git d'un fichier pris dans un instantané, demandé au
+// runner depuis la carte « N fichiers » d'un appel d'outil. Une seule chose
+// doit rester vraie des trois côtés : les lignes sortent de `fragmentDiff`,
+// jamais d'un second moteur.
 //
 // CE QUI DISPARAÎT AVEC LUI. La page rendait un diff SPLIT maison
 // (`buildSplitRows`, `SplitDiffCell`, `FileSplitDiff`) : deux demi-colonnes où
@@ -36,8 +40,7 @@ import { useMemo, useState } from 'react';
 import { fragmentDiff } from '@nodal-agents/shared';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import type { CodingChangeView } from '@/lib/coding-changes.ts';
-import type { CodingFileChangeGroup } from '@/lib/actions.ts';
-import type { ConstatedChangeKind } from '@nodal-agents/shared';
+import type { FileChangeGesture, FileChangeGroup } from '@/lib/file-change-groups.ts';
 
 /**
  * LE MOT DU GESTE, celui que git emploie.
@@ -48,11 +51,15 @@ import type { ConstatedChangeKind } from '@nodal-agents/shared';
  * qu'aucun outil l'ait nommé — deux gestes que le vocabulaire d'avant ne
  * savait pas dire.
  */
-const GESTE_LIBELLE: Record<ConstatedChangeKind, string> = {
+const GESTE_LIBELLE: Record<FileChangeGesture, string> = {
   added: 'added',
   modified: 'modified',
   deleted: 'deleted',
   renamed: 'renamed',
+  // `file_write` ECRIT OU ÉCRASE, et sa carte ne distingue pas les deux
+  // (Reviewer C, PR #380). Le mot reste celui de la carte plutôt que d'affirmer
+  // une création sur chaque écrasement.
+  written: 'written',
 };
 
 /**
@@ -198,10 +205,43 @@ function PlateLine({ row }: { row: Extract<PlateRow, { kind: 'line' }> }) {
   );
 }
 
-export default function FileChangeBlock({ group }: { group: CodingFileChangeGroup }) {
-  // Ouvert d'entrée : la planche montre les fichiers dépliés, et la borne de
-  // 80 lignes rend la page finie même sur un pipeline bavard.
-  const [open, setOpen] = useState(true);
+export default function FileChangeBlock({
+  group,
+  defaultOpen = true,
+  onOpen,
+  pending = false,
+  emptyNote,
+}: {
+  group: FileChangeGroup;
+  /**
+   * La page d'un run ouvre ses plaques d'entrée : la planche montre les
+   * fichiers dépliés, et la borne de 80 lignes rend la page finie même sur un
+   * pipeline bavard. L'encart de livraison du fil, lui, les REPLIE (#369) : il
+   * conclut un travail au milieu d'une conversation, et douze diffs dépliés
+   * enterreraient la suite du fil.
+   */
+  defaultOpen?: boolean;
+  /**
+   * Appelé quand la plaque S'OUVRE, jamais quand elle se ferme. C'est le signal
+   * du chargement paresseux : l'encart du fil n'a que les en-têtes, et va
+   * chercher les fragments au premier dépli.
+   */
+  onOpen?: () => void;
+  /**
+   * Les fragments sont EN ROUTE. Sans lui, une plaque encore vide dirait « no
+   * text recorded » — une absence affirmée alors que la réponse n'est pas
+   * arrivée (invariant #4).
+   */
+  pending?: boolean;
+  /**
+   * Ce que dit la plaque quand elle n'a AUCUNE ligne à peindre, si la raison
+   * n'est pas celle du cas courant (« aucun texte enregistré »). L'encart du
+   * fil s'en sert pour dire qu'un chargement a échoué, plutôt que d'affirmer
+   * une absence qu'il n'a pas constatée (invariant #4).
+   */
+  emptyNote?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const { rows, hiddenOld, hiddenNew } = useMemo(
     () => buildPlateRows(group.edits, PLATE_LINE_LIMIT),
     [group.edits],
@@ -215,14 +255,21 @@ export default function FileChangeBlock({ group }: { group: CodingFileChangeGrou
   // ce que git a vu autour du run ; les appels d'outils, eux, ne disent que ce
   // qu'ils ont TENTÉ, et ils ne savent pas dire « supprimé ». Un fichier que
   // git a vu et qu'aucun outil n'a nommé n'a que ce mot-là.
-  const geste: ConstatedChangeKind =
+  const geste: FileChangeGesture =
     group.changeKind ?? (group.edits[0]?.kind === 'write' ? 'added' : 'modified');
 
   return (
     <div className="overflow-hidden rounded-xl border border-rule-2">
       <DisclosureButton
         open={open}
-        onClick={() => setOpen((v) => !v)}
+        // Le signal se donne HORS de la mise à jour d'état : React rejoue les
+        // fonctions de mise à jour en mode strict, et un effet posé dedans
+        // partirait deux fois.
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          if (next) onOpen?.();
+        }}
         inset="tight"
         className="h-[42px] py-0"
       >
@@ -249,8 +296,12 @@ export default function FileChangeBlock({ group }: { group: CodingFileChangeGrou
           {/* Un appel d'écriture sans texte (un classeur, une ligne d'audit
               ancienne) n'a rien à peindre : ça se dit, plutôt que de laisser
               une plaque vide passer pour « aucun changement ». */}
-          {rows.length === 0 ? (
-            <p className="px-4 py-2 text-mono-11 text-ink-4">No text recorded for this change.</p>
+          {pending && rows.length === 0 ? (
+            <p className="px-4 py-2 text-mono-11 text-ink-4">Loading the diff…</p>
+          ) : rows.length === 0 ? (
+            <p className="px-4 py-2 text-mono-11 text-ink-4">
+              {emptyNote ?? 'No text recorded for this change.'}
+            </p>
           ) : (
             <div className="max-h-[480px] overflow-auto">
               <div className="min-w-max py-2">

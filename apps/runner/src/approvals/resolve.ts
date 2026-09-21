@@ -11,7 +11,7 @@ import { approvalRequests, agentJobs } from '@nodal-agents/db';
 import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { triggerWorker } from '../routes/agent.ts';
+import { resumeJobAfterApprovalResolution } from './resume.ts';
 
 export type ApprovalDecision = 'approve' | 'reject';
 
@@ -192,44 +192,27 @@ export async function resolveApprovalDecision(
   // that's harmless — the decision was genuinely made, the job just isn't there
   // to run it.) Approval does NOT bump chain_count — the human acted on an
   // already-proposed action, not a new LLM chain call.
-  const resumed = await deps.db
-    .update(agentJobs)
-    .set({ status: 'pending', updatedAt: new Date() })
-    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'awaiting_approval')))
-    .returning({ id: agentJobs.id });
+  const outcome = await resumeJobAfterApprovalResolution(deps.db, jobId, runnerEnv);
 
-  if (resumed.length === 0) {
-    // The job wasn't `awaiting_approval` at the UPDATE above — re-read to find
-    // out why. Two very different cases share this zero-rows outcome:
-    //   - the job is `processing` (or already back to `pending`): its OWN
-    //     executeJob got here FIRST — either it's mid grace-window poll (Lot
-    //     A1, NODALAI_APPROVAL_GRACE_MS) and will pick up this decision on its
-    //     next poll, or a prior decision already flipped it back to pending.
-    //     Either way the decision IS recorded (the approval_requests UPDATE
-    //     above succeeded) and will be honored — no separate trigger needed,
-    //     and triggering one now would race the in-process runner.
-    //   - the job is in a TERMINAL status (cancelled/completed/failed): the
-    //     decision has nowhere to land — fail loud (job_not_resumable), same
-    //     as before (B1: cancel wins, a stale tap must not resurrect it).
-    const [current] = await deps.db
-      .select({ status: agentJobs.status })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, jobId))
-      .limit(1);
-    if (current?.status === 'processing' || current?.status === 'pending') {
-      return {
-        ok: true,
-        jobId,
-        decision: input.decision,
-        answer: answerToStore,
-        chatId: (job as { chatId?: string | null }).chatId ?? null,
-        resumed: 'in_process',
-      };
-    }
-    return { ok: false, code: 'job_not_resumable', status: current?.status ?? null };
+  if (outcome.resumed === 'in_process') {
+    // The job's own executeJob got here first (grace-window poll, or a prior
+    // decision already flipped it back). The decision IS recorded and will be
+    // honored on its next poll; triggering a worker now would race it.
+    return {
+      ok: true,
+      jobId,
+      decision: input.decision,
+      answer: answerToStore,
+      chatId: (job as { chatId?: string | null }).chatId ?? null,
+      resumed: 'in_process',
+    };
   }
-
-  void triggerWorker(jobId, runnerEnv);
+  if (outcome.resumed === null) {
+    // Terminal job (cancelled / completed / failed): the decision has nowhere
+    // to land. Fail loud, same as before (B1: cancel wins, a stale tap must
+    // not resurrect a cancelled job and run its gated tool).
+    return { ok: false, code: 'job_not_resumable', status: outcome.status };
+  }
 
   return {
     ok: true,

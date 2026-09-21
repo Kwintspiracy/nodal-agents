@@ -75,7 +75,7 @@ const delivered: FeedItem = {
   project: null,
   summary: {
     files: 0,
-    filePaths: [],
+    fileChanges: [],
     lines: null,
     tests: null,
     durationMs: 41_000,

@@ -26,7 +26,11 @@ import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import { normalize as posixNormalize } from 'node:path/posix';
 import { initGitRepository } from './project-git.ts';
 // La règle du projet LISTÉ, partagée par la barre latérale et par la page.
-import { listedProjectsWhere, registeredProjectsWhere } from './project-listing.ts';
+import {
+  isListedProject,
+  listedProjectsWhere,
+  registeredProjectsWhere,
+} from './project-listing.ts';
 import type { Dirent } from 'node:fs';
 import {
   eq,
@@ -47,6 +51,9 @@ import {
   conversations,
   entities,
   verificationRuns,
+  // UNE transaction pour oublier un projet : les liens coupés et la ligne
+  // supprimée arrivent ensemble, ou rien n'arrive.
+  withTransaction,
 } from '@nodal-agents/db';
 import {
   normalizePath,
@@ -988,6 +995,131 @@ export async function registerDetectedProjectAction(
   } catch (err) {
     console.error('[projects] PROJECT_REGISTER_DETECTED_FAILED', err);
     return fail('register_failed', 'Could not register this folder');
+  }
+}
+
+// ─── forgetCodeProjectAction ─────────────────────────────────────────────────
+
+const forgetProjectSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+});
+
+/**
+ * OUBLIER un projet (#371) : sa ligne de registre quitte la base, son dossier
+ * reste EXACTEMENT où il est.
+ *
+ * Le produit savait cacher (`code_projects.hidden`) et remettre dans la liste
+ * (#367), jamais supprimer : aucune action n'effaçait une ligne
+ * `code_projects`, sauf le retour arrière interne de l'outil
+ * `register_project`. « Hidden ou pas, comment je supprime réellement un
+ * projet ? » (Quentin, 21/09) n'avait donc pas de réponse.
+ *
+ * ═══ DEUX GESTES, JAMAIS UN ═══
+ *
+ * L'action REFUSE un projet qui n'est pas masqué. Oublier est irréversible —
+ * le nom choisi, la séquence de preuve et son approbation partent avec la
+ * ligne — et un geste irréversible ne doit pas être à un clic d'une liste
+ * qu'on balaie. Cacher d'abord, oublier ensuite : le refus est ce qui tient
+ * cette règle côté moteur, pas seulement à l'écran.
+ *
+ * Elle refuse aussi une ligne de simple COMPTABILITÉ (`registered_at IS
+ * NULL`) : un dossier détecté puis caché n'a d'autre existence en base que ce
+ * masquage, et supprimer sa ligne le RAMÈNERAIT dans la liste. Le même mot
+ * pour deux effets opposés n'est pas un mot.
+ *
+ * ═══ CE QUI PART, CE QUI RESTE ═══
+ *
+ * Part : la ligne `code_projects`, qui porte à elle seule toutes les
+ * préférences du projet (nom d'affichage, masquage, commandes de preuve et
+ * leur approbation, option git) — c'est la même ligne, pas une table à côté.
+ *
+ * Reste : les runs et les conversations, avec leur historique entier. Seul le
+ * LIEN vers le projet est coupé — `conversations.current_project_id` et
+ * `agent_jobs.project_id` repassent à NULL. Les deux portent bien une FK
+ * `ON DELETE SET NULL`, et l'UPDATE explicite est quand même écrit : il dit
+ * dans le code ce que la suppression fait aux lignes voisines, et il ne
+ * dépend pas d'une contrainte qu'une migration future pourrait redéfinir.
+ * `job_checkpoints` n'est pas touchée : elle est indexée par job, jamais par
+ * projet.
+ *
+ * Rien n'est touché sur le DISQUE. Supprimer le dossier est un geste que la
+ * personne pose elle-même dans son explorateur, et l'écran le dit.
+ *
+ * UNE transaction : les deux liens coupés et la ligne supprimée arrivent
+ * ensemble, ou rien n'arrive.
+ */
+export async function forgetCodeProjectAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const parsed = forgetProjectSchema.safeParse(raw);
+    if (!parsed.success) return fail('validation_failed', 'Invalid project input');
+
+    const db = getDb();
+
+    // LE PROPRIÉTAIRE, et lui seul — la même garde EXACTE que masquer et
+    // renommer (`assertProjectOwner`, actions.ts) : oublier emporte un réglage
+    // que TOUT l'espace voit, agents compris. Comparaison directe avec
+    // `entities.user_id`, sans exemption local-trust.
+    //
+    // Le prédicat est REDIT ici plutôt qu'importé, et c'est voulu (revue
+    // Reviewer C du 21/09, mineur) : `actions.ts` porte `'use server'`, donc
+    // chacun de ses exports devient un point d'entrée appelable depuis le
+    // navigateur. Exporter la garde en ferait une porte publique. La sortir
+    // dans un module tiers est le geste propre, et il appartient à la PR qui
+    // déplacera les gestes du projet, pas à celle-ci.
+    const [ownerRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!ownerRow) return fail('not_found', 'Workspace not found');
+    if (ownerRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can forget a project.');
+    }
+
+    // Par IDENTITÉ, jamais par égalité de texte : sous Windows le même dossier
+    // remonte avec des casses différentes selon la session.
+    const key = projectKey(flattenPath(parsed.data.projectPath));
+    const [row] = await db
+      .select({
+        id: codeProjects.id,
+        hidden: codeProjects.hidden,
+        registeredAt: codeProjects.registeredAt,
+      })
+      .from(codeProjects)
+      .where(and(eq(codeProjects.entityId, session.entityId), eq(codeProjects.projectKey, key)))
+      .limit(1);
+    if (!row) return fail('not_found', 'This project is not in the registry.');
+    if (row.registeredAt === null) {
+      return fail('not_registered', 'Only a registered project can be forgotten.');
+    }
+    // Un projet ENCORE LISTÉ ne s'oublie pas. La question posée est celle de
+    // la liste, et elle se lit là où la règle est écrite (`project-listing.ts`)
+    // — jamais par une seconde comparaison de `hidden` qui divergerait le jour
+    // où la règle change.
+    if (isListedProject(row)) {
+      return fail('not_hidden', 'Remove it from the list first, then forget it.');
+    }
+
+    const projectId = row.id;
+    await withTransaction(db, async (tx) => {
+      await tx
+        .update(conversations)
+        .set({ currentProjectId: null })
+        .where(eq(conversations.currentProjectId, projectId));
+      await tx.update(agentJobs).set({ projectId: null }).where(eq(agentJobs.projectId, projectId));
+      await tx
+        .delete(codeProjects)
+        .where(and(eq(codeProjects.id, projectId), eq(codeProjects.entityId, session.entityId)));
+    });
+
+    console.warn(`[projects] PROJECT_FORGOTTEN id=${projectId} key=${key}`);
+    revalidatePath('/spaces');
+    revalidatePath('/code');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[projects] PROJECT_FORGET_FAILED', err);
+    return fail('forget_failed', 'Could not forget this project');
   }
 }
 

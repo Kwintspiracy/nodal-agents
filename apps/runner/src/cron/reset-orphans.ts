@@ -11,8 +11,10 @@ import { agentJobs, agentTasks, approvalRequests } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { failJob } from '../job/state.ts';
+import { resumeJobAfterApprovalResolution } from '../approvals/resume.ts';
 import { resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
 import type { RunnerDeps } from '../deps.ts';
+import type { RunnerEnv } from '../env.ts';
 
 // User-facing failure notices for the cron reapers. These are the deliberate,
 // minimal exceptions to invariant #2 that invariant #4 (no silent failures)
@@ -21,8 +23,6 @@ const ORPHAN_RESET_NOTICE =
   "⚠️ Cette tâche a été interrompue (le service a redémarré ou s'est arrêté en cours d'exécution) et n'a pas pu être terminée. Relancez-la si besoin.";
 const STALE_PENDING_NOTICE =
   "⚠️ Cette tâche n'a jamais été prise en charge par un worker (démarrage manqué) et a été abandonnée. Relancez-la si besoin.";
-const APPROVAL_EXPIRED_NOTICE =
-  '⚠️ Cette action attendait votre approbation mais le délai a expiré sans réponse. La tâche a été arrêtée ; relancez-la si vous souhaitez la reprendre.';
 
 /**
  * Best-effort: deliver a finalized job's failure notice to its Telegram chat so
@@ -370,15 +370,30 @@ export async function failStalePendingJobs(
 // ─── approval TTL ───────────────────────────────────────────────────────────────
 
 /**
- * Expire pending approvals whose TTL (`expires_at`, default now + 1h) has passed
- * and finalize the jobs waiting on them (D3, audit followup). The column was set
- * at creation but NOTHING ever acted on it, so an approval no one answered left
- * its job stuck in `awaiting_approval` forever. Marks the approval `expired`,
- * fails the still-waiting job with a user-facing notice, and delivers it.
+ * Expire pending approvals whose TTL (`expires_at`, default now + 1h) has
+ * passed, then put the job that waited on them back to work (issue #349).
  *
- * @returns count of jobs failed for an expired approval
+ * The deadline used to be written at creation and never applied, so an
+ * unanswered request stayed `pending` forever: the card kept saying "expires
+ * <a past date>", the rail kept counting it, the Approvals page kept listing
+ * it under Pending. One UPDATE ... RETURNING marks the whole batch, which is
+ * what makes the sweep idempotent — a second tick, or a second runner, finds
+ * nothing left `pending` past its deadline.
+ *
+ * What the job does next is a RESUME, not a failure. It comes back exactly the
+ * way it comes back from a rejection (`approvals/resume.ts`, shared with the
+ * human path), and the model reads an error on its gated tool call saying the
+ * request expired unanswered. The agent then adapts: it asks again, takes
+ * another route, or reports that it could not proceed. Failing the job here
+ * instead would end the run on a timer, with a canned notice, for a request
+ * the person may simply not have seen yet.
+ *
+ * @returns count of approval requests expired by this sweep
  */
-export async function expireStaleApprovals(db: AnyDrizzleDb): Promise<number> {
+export async function expireStaleApprovals(
+  db: AnyDrizzleDb,
+  runnerEnv?: RunnerEnv,
+): Promise<number> {
   const now = new Date();
   const expired = await db
     .update(approvalRequests)
@@ -386,31 +401,15 @@ export async function expireStaleApprovals(db: AnyDrizzleDb): Promise<number> {
     .where(and(eq(approvalRequests.status, 'pending'), lt(approvalRequests.expiresAt, now)))
     .returning({ jobId: approvalRequests.jobId });
 
-  let failed = 0;
-  for (const { jobId } of expired) {
-    // Only finalize a job that is STILL awaiting this approval — never touch one
-    // that already moved on (approved elsewhere, cancelled, completed). failJob's
-    // own non-terminal guard is the backstop; this keeps us from failing a live
-    // `pending`/`processing` job that merely had a stale approval row.
-    const [job] = await db
-      .select({ status: agentJobs.status })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, jobId))
-      .limit(1);
-    if (job?.status !== 'awaiting_approval') continue;
-
-    const landed = await failJob(
-      db,
-      jobId,
-      'approval_expired',
-      undefined,
-      undefined,
-      APPROVAL_EXPIRED_NOTICE,
-    );
-    if (landed) {
-      failed += 1;
-      await notifyJobFailure(db, jobId, APPROVAL_EXPIRED_NOTICE);
-    }
+  // Une demande par job suffit à le réveiller : le job relit TOUTES ses lignes
+  // ouvertes à la reprise (execute.ts, 11.7). Deux demandes échues sur le même
+  // job ne le reprennent donc qu'une fois.
+  for (const jobId of new Set(expired.map((r) => r.jobId))) {
+    // A job that already moved on (approved elsewhere, cancelled, completed)
+    // is left alone: the conditional flip inside the shared resume is what
+    // decides, and it reports rather than forcing.
+    await resumeJobAfterApprovalResolution(db, jobId, runnerEnv);
   }
-  return failed;
+
+  return expired.length;
 }

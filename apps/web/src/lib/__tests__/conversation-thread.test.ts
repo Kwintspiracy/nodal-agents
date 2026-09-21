@@ -186,7 +186,7 @@ describe('buildConversationThread — une conversation de canal', () => {
       // rendent pas un « 0 / 0 » ou un « $0.00 » qui n'existent pas.
       summary: {
         files: 0,
-        filePaths: [],
+        fileChanges: [],
         lines: null,
         tests: null,
         durationMs: null,
@@ -219,7 +219,7 @@ describe('buildConversationThread — une conversation de canal', () => {
   /** Un tour dont la SEULE action est une commande dont rien n'a été vu. */
   const commandeNonConstatee: ProductionVerdict = {
     isWork: false,
-    items: [{ kind: 'command', label: 'ls -la', certain: false }],
+    items: [{ kind: 'command', label: 'ls -la', certain: false, purpose: null }],
     uncertain: 1,
     more: 0,
     unclassified: 0,
@@ -235,7 +235,7 @@ describe('buildConversationThread — une conversation de canal', () => {
     expect(produits).toHaveLength(1);
     const e = produits[0] as Extract<FeedItem, { kind: 'produced' }>;
     // La commande est NOMMÉE, et marquée : c'est elle qu'on vient lire.
-    expect(e.summary.commands).toEqual([{ label: 'ls -la', observed: false }]);
+    expect(e.summary.commands).toEqual([{ label: 'ls -la', observed: false, purpose: null }]);
     // Et l'encart ne se dit PAS une livraison : le verdict n'a rien constaté,
     // et le mot de l'en-tête en dépend.
     expect(e.summary.produced).toBe(false);
@@ -247,7 +247,7 @@ describe('buildConversationThread — une conversation de canal', () => {
   it('une commande CONSTATÉE ne porte aucun aveu', () => {
     const constatee: ProductionVerdict = {
       isWork: true,
-      items: [{ kind: 'command', label: 'pnpm build', certain: true }],
+      items: [{ kind: 'command', label: 'pnpm build', certain: true, purpose: null }],
       uncertain: 0,
       more: 0,
       unclassified: 0,
@@ -258,8 +258,31 @@ describe('buildConversationThread — une conversation de canal', () => {
       jobs: [job({ jobId: 'j1', verdict: constatee })],
     });
     const e = items.find((i) => i.kind === 'produced') as Extract<FeedItem, { kind: 'produced' }>;
-    expect(e.summary.commands).toEqual([{ label: 'pnpm build', observed: true }]);
+    expect(e.summary.commands).toEqual([{ label: 'pnpm build', observed: true, purpose: null }]);
     expect(e.summary.produced).toBe(true);
+  });
+
+  // #372 — la phrase de l'agent ne s'arrête pas au verdict : elle descend
+  // jusqu'au récapitulatif, qui est ce que l'écran lit.
+  it('la phrase de l’agent descend du verdict jusqu’au récapitulatif', () => {
+    const avecPhrase: ProductionVerdict = {
+      isWork: true,
+      items: [
+        { kind: 'command', label: 'pnpm build', certain: true, purpose: 'Build before shipping' },
+      ],
+      uncertain: 0,
+      more: 0,
+      unclassified: 0,
+    };
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1', verdict: avecPhrase })],
+    });
+    const e = items.find((i) => i.kind === 'produced') as Extract<FeedItem, { kind: 'produced' }>;
+    expect(e.summary.commands).toEqual([
+      { label: 'pnpm build', observed: true, purpose: 'Build before shipping' },
+    ]);
   });
 
   it('un tour SANS commande et sans production ne rend toujours aucun encart', () => {
@@ -310,7 +333,7 @@ describe('buildConversationThread — une conversation de canal', () => {
     expect(produit?.kind === 'produced' && produit.summary.files).toBe(1);
     // #135 — la LISTE suit la même règle que le compte : le chemin canonique,
     // une seule fois, jamais la forme absolue à côté de la relative.
-    expect(produit?.kind === 'produced' && produit.summary.filePaths).toEqual([
+    expect(produit?.kind === 'produced' && produit.summary.fileChanges.map((f) => f.path)).toEqual([
       'notes/bonjour.html',
     ]);
     expect(produit?.kind === 'produced' && produit.summary.lines).toEqual({
@@ -1151,7 +1174,7 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
       ecritureMasquee(`cles/${CLE_B}.txt`),
     ]);
     expect(recap.files).toBe(2);
-    expect(recap.filePaths).toEqual([
+    expect(recap.fileChanges.map((f) => f.path)).toEqual([
       `cles/${REDACTED_TEXT} (sk-).txt`,
       `cles/${REDACTED_TEXT} (sk-).txt`,
     ]);
@@ -1162,7 +1185,7 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
       ecritureMasquee(`cles/${CLE_A}.txt`),
       ecritureMasquee(`cles/${CLE_B}.txt`),
     ]);
-    const affiche = recap.filePaths.join('\n');
+    const affiche = recap.fileChanges.map((f) => f.path).join('\n');
     expect(affiche).not.toContain(CLE_A);
     expect(affiche).not.toContain(CLE_B);
     expect(affiche).toContain(REDACTED_TEXT);
@@ -1174,7 +1197,7 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
       ecritureMasquee(`cles/${CLE_A}.txt`),
     ]);
     expect(recap.files).toBe(1);
-    expect(recap.filePaths).toEqual([`cles/${REDACTED_TEXT} (sk-).txt`]);
+    expect(recap.fileChanges.map((f) => f.path)).toEqual([`cles/${REDACTED_TEXT} (sk-).txt`]);
   });
 
   it('une ligne SANS chemins bruts garde l’ancienne identité : le chemin présenté', () => {
@@ -1193,6 +1216,6 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
     });
     const recap = recapDe([sansBruts('src/a.ts'), sansBruts('src/b.ts')]);
     expect(recap.files).toBe(2);
-    expect(recap.filePaths).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(recap.fileChanges.map((f) => f.path)).toEqual(['src/a.ts', 'src/b.ts']);
   });
 });
