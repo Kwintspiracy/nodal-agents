@@ -203,12 +203,20 @@ function commandPurpose(toolInput: unknown): string | null {
  * et sans ce recours la ligne porterait le nom de l'outil (« run_command ») au
  * lieu de la commande refusée. L'entrée arrive déjà masquée (`redactAuditRow`).
  *
- * `null` quand l'entrée ne porte pas de commande textuelle : l'appelant dit
- * alors le nom de l'outil, il n'invente rien.
+ * DEUX OUTILS DÉCLARENT LA CARTE `terminal` (Reviewer C, passe 1) :
+ * `run_command`, dont l'entrée porte `command`, et `run_skill_script`, dont
+ * l'entrée porte `script`. Ne lire que `command` faisait dire
+ * « run_skill_script » à la ligne d'un script refusé, alors que son nom était
+ * là. Le champ est lu, jamais composé : rien n'est reconstruit à partir de
+ * l'interpréteur, que seul le succès connaît.
+ *
+ * `null` quand l'entrée ne porte ni l'un ni l'autre : l'appelant dit alors le
+ * nom de l'outil, il n'invente rien.
  */
 function commandFromInput(toolInput: unknown): string | null {
   if (typeof toolInput !== 'object' || toolInput === null) return null;
-  const raw = (toolInput as { command?: unknown }).command;
+  const record = toolInput as { command?: unknown; script?: unknown };
+  const raw = typeof record.command === 'string' ? record.command : record.script;
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   return trimmed === '' ? null : truncate(trimmed, COMMAND_MAX);

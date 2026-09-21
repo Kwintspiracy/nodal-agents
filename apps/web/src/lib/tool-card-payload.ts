@@ -75,9 +75,12 @@ export function outcomeOfToolOutput(toolOutput: string | null | undefined): Step
  *
  * Une règle `block` rend `{ outcome: 'error', error: 'blocked: an approval
  * rule forbids …' }` (`packages/tools/src/execute.ts`) : l'issue est une
- * erreur, et le mot qui la distingue d'une panne est en tête du message. Un
- * `outcome: 'blocked'` en toutes lettres compte aussi — les deux formes
- * existent dans les lignes d'audit.
+ * erreur, et le mot qui la distingue d'une panne est en tête du message.
+ *
+ * Un `outcome: 'blocked'` en toutes lettres compte aussi, bien qu'aucun outil
+ * du dépôt n'en écrive aujourd'hui (Reviewer C, passe 1) : `StepOutcome` porte
+ * cette valeur, `outcomeOfToolOutput` la rend, et une ligne qui la porterait
+ * doit être lue comme un refus plutôt que passer pour une commande ordinaire.
  *
  * La lecture vit ICI, avec les deux autres lectures de `tool_calls` : une
  * seconde façon de reconnaître un refus divergerait au premier changement du

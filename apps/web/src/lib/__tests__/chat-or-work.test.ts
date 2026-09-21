@@ -809,6 +809,34 @@ describe('classifyProduction — l’issue de la commande @cap:verifier-un-livra
     expect(v.uncertain).toBe(0);
   });
 
+  it('un script de skill refusé est nommé par son script, pas par l’outil', () => {
+    // `run_skill_script` déclare la même carte `terminal` et porte `script`
+    // dans son entrée, là où `run_command` porte `command` (Reviewer C).
+    const v = verdict([
+      ligne({
+        toolName: 'run_skill_script',
+        card: 'terminal',
+        presented: null,
+        toolInput: { skill: 'reporting', script: 'scripts/build_deck.py' },
+        toolOutput: JSON.stringify({
+          outcome: 'error',
+          error: 'blocked: an approval rule forbids "run_skill_script" for this agent.',
+        }),
+      }),
+    ]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'scripts/build_deck.py',
+        certain: false,
+        purpose: null,
+        exitCode: null,
+        timedOut: false,
+        blocked: true,
+      },
+    ]);
+  });
+
   it('une erreur qui n’est pas un refus de règle reste muette', () => {
     const v = verdict([
       commande('pnpm build', {
