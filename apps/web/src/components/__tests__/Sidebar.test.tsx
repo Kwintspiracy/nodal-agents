@@ -113,10 +113,10 @@ async function renderSidebar(
   channels: string[] = [],
   attentes: PendingApproval[] = [],
   /**
-   * CE QUI TOURNE, tel que le provider le porte (#300, #303). Ce que le test
-   * ne dit pas vaut zero : une barre ou rien ne tourne est l'etat courant.
+   * CE QUI TOURNE, tel que le provider le porte (#303). Ce que le test ne dit
+   * pas vaut zero : une barre ou rien ne tourne est l'etat courant.
    */
-  tourne: { runsInProgress?: number; workConversationsInProgress?: number } = {},
+  tourne: { workConversationsInProgress?: number } = {},
 ): Promise<void> {
   await render(
     <ApprovalsProvider initial={attentes}>

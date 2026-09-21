@@ -257,6 +257,9 @@ describe('les dossiers lus en base @cap:reprendre-conversation/moteur', () => {
     // le 22/09/2026 sur décision du propriétaire, et le total avec lui : un
     // champ calculé à chaque tour de cadence pour personne est une lecture de
     // plus, pas une donnée.
+    //
+    // Mutation vérifiée : `runsInProgress` réinséré dans le littéral rendu par
+    // `getChatFoldersAction` → ce cas rougit.
     const { getChatFoldersAction } = await import('../conversation-actions.ts');
     const result = await getChatFoldersAction();
     if (!result.ok) throw new Error(result.message);
@@ -265,6 +268,29 @@ describe('les dossiers lus en base @cap:reprendre-conversation/moteur', () => {
     // du menu, et il ne compte que ce que `folderOfWork` sait ranger.
     const parDossier = Object.values(result.data.running).reduce((t, n) => t + n, 0);
     expect(parDossier).toBe(3);
+  });
+
+  it('ne compte NULLE PART ce qui tourne hors d’une conversation de Work', async () => {
+    // La fixture porte cinq jobs vivants, dont DEUX qu'aucun écran de la barre
+    // ne peut montrer : l'automatisation `cron`, qu'aucun dossier ne range, et
+    // le run `internal` sur l'entretien d'accueil, qu'aucune ligne de Work ne
+    // liste. La case Logs les comptait ; elle n'existe plus pour ça.
+    //
+    // Ce cas reprend ce que l'ancien cas de la case Logs prouvait, à l'envers :
+    // ces deux-là ne doivent apparaître dans AUCUN champ de l'instantané.
+    const { getChatFoldersAction } = await import('../conversation-actions.ts');
+    const result = await getChatFoldersAction();
+    if (!result.ok) throw new Error(result.message);
+    // Le rangement par dossier oublie le `cron` et l'`internal`.
+    expect(Object.values(result.data.running).reduce((t, n) => t + n, 0)).toBe(3);
+    // Work ne compte que le fil Telegram : pas l'accueil, pas l'automatisation.
+    expect(result.data.workConversationsInProgress).toBe(1);
+    // Et aucun champ chiffré de l'instantané ne porte un total plus grand que
+    // ceux-là : un cinquième compte réapparaîtrait ici, quel que soit son nom.
+    const chiffres = Object.entries(result.data).filter(
+      (paire): paire is [string, number] => typeof paire[1] === 'number',
+    );
+    expect(chiffres.filter(([, n]) => n > 3)).toEqual([]);
   });
 
   it('ne compte pour Work que les conversations que la section peut lister', async () => {
