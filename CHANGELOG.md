@@ -10,6 +10,86 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.2 — Sep 21, 2026
+
+A release about approvals, and about what the product says of its own work. On 21
+September an owner answered "Always for this server" and the tool kept asking,
+because a narrower rule was deciding without any screen saying so. The approval
+card now shows the rules that decided, in the order the gate reads them, and they
+are changed right there. A request with no stated reason is not posed at all. A
+rule written during a run applies to the run it was answered on. A request nobody
+answers expires, and its job goes back to work. And a red proof reopens the run
+for one repair turn instead of ending on a failure nobody could act on.
+
+Thirty-eight pull requests, two migrations.
+
+**Approvals**
+
+- An approval request with no stated reason is not posed at all. (#359)
+- The approval card shows the rules that decided, and lets you change them there. (#360)
+- An approval card opens when it waits, and folds away once decided. (#365)
+- The approval shield is warn coloured, and one caret folds the whole card. (#368)
+- An approval rule written mid-run applies to the run it was answered on. (#374)
+- The approval card has two states, Open and Close, and nothing between. (#381)
+- An unanswered approval request expires, and its job goes back to work. (#384)
+- The Approvals tab speaks to the owner, not to the model. (#387)
+- A rule confined to a folder says which folder, and says what saving costs. (#390)
+- A rule can be set on one tool of an MCP server, not only on the whole server. (#393)
+- Trusting an MCP server says what it costs a folder-confined rule. (#403)
+- Answering an approval clears the rail's count at once. (#339)
+- The Approvals page follows the bar instead of going stale. (#348)
+
+**Delivery inset**
+
+- Stop where the person looks, a delivery inset that says Stopped, and no Open run to the page you are on. (#335)
+- Working in the running colour while the job runs, and Stop at the top right of the box. (#337)
+- Checks are counted while the run works, "no file change seen", and Open run is a button on the right. (#342)
+- Each command in the delivery inset says why it ran. (#376)
+- The delivery inset shows the diff of each created or modified file. (#380)
+- The proof verdict is a word, not the colour of the check mark. (#383)
+- The delivery inset says the proof passed after a repair, and counts the last try only. (#389)
+- The file diff plates in the delivery inset run edge to edge. (#396)
+- The "+N -M" of a file counts the diff the plaque draws, from one engine. (#397)
+- Every command in the delivery inset says how it ended. (#398)
+
+**Runs and proof**
+
+- A red proof reopens the run for one repair turn before it completes. (#379)
+- The repair turns after a failed proof are a workspace setting, next to what else bounds a run. (#392)
+
+**Projects**
+
+- The Projects page is called Projects, and a removed project is not on it. (#367)
+- A hidden project can be forgotten, and its folder stays where it is. (#378)
+- A forgotten project stays forgotten: its folder is excluded from detection. (#388)
+
+**Sidebar and rail**
+
+- The reading density toggle is gone: a thread opens folded, a run page opens unfolded. (#341)
+- The rail's live dot moves to the right edge, beside the count. (#345)
+- The Logs cell carries no live dot, and the count behind it goes too. (#351)
+- No numbered badge on a channel folder. (#353)
+- The unread dot takes the colour of activity, and red keeps what must be answered. (#355)
+- The rail says Scheduled and Runs, with the icons the owner drew. (#400)
+
+**Quality portal**
+
+- The jobs in flight are cards in a Running column, not a strip. (#343)
+- The Running column reads GitHub in the browser, not at build time. (#366)
+
+**Site**
+
+- Homepage: the hero's nav and column sit in the page container, only the picture bleeds. (#334)
+- Homepage: the hero on the design's width with three pillars, a titled screens band, and one claim style on every section. (#336)
+
+**Upgrade**
+
+- Two migrations, `0120_excluded_project_paths` and
+  `0121_entities_proof_repair_attempts`. `nodal-agents update` applies them, and
+  there is nothing to do by hand.
+
+---
+
 ## v0.9.1 — Sep 21, 2026
 
 A release about the product knowing itself. Asked on a fresh install whether
