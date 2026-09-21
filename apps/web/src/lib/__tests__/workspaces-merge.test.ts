@@ -159,6 +159,20 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(view.counts).toMatchObject({ total: 1, registered: 1, detected: 0 });
   });
 
+  it('le SOUS-TITRE ne compte pas un dossier détecté que la page ne montre pas', () => {
+    // Revue Reviewer C, passe 1 (mineur) : le filtre pouvait s'appliquer aux
+    // lignes sans s'appliquer au compte, et « 0 projects · 0 registered, 1
+    // detected » annoncerait une ligne introuvable à l'œil.
+    const view = mergeWorkspaces({
+      projects: [],
+      sessions: [session({ projectPath: 'D:/APPS/scratch', projectName: 'scratch' })],
+      prefs: [prefs({ projectPath: 'D:/APPS/scratch', hidden: true })],
+    });
+    expect(view.rows).toHaveLength(0);
+    expect(view.counts).toMatchObject({ total: 0, registered: 0, detected: 0 });
+    expect(workspacesSubtitle(view.counts)).toBe('0 projects · 0 registered, 0 detected');
+  });
+
   it('les DEUX sortes de masqués sont dans la MÊME section, registre et détection', () => {
     const view = mergeWorkspaces({
       projects: [projet({ id: 'p-1', name: 'Rangé', path: 'D:/Dev/range', hidden: true })],
