@@ -98,10 +98,11 @@
 /* ── Hero ──────────────────────────────────────────────────────────────── */
 
 /* The whole first screen is the illustration: the nav rides on it, and the
-   copy column sits on its left edge. Sizes, spacing and colours come from the
-   redesign (`design/inbound/hero-redesign/Hero Redesigns.dc.html`), a 1440 by
-   810 frame; everything stated in pixels there is written here in `clamp()` so
-   the band holds from 360 up, and lands on the design value at 1440.
+   copy column sits on the left of the page container. Sizes, spacing and
+   colours come from the redesign (`design/inbound/hero-redesign/Hero
+   Redesigns.dc.html`), a 1440 by 810 frame; everything stated in pixels there
+   is written here in `clamp()` so the band holds from 360 up, and lands on the
+   design value at 1440.
 
    The band is dark in both themes: its ground is the illustration, with a flat
    blue of the same family underneath so the page holds up while the image
@@ -116,7 +117,6 @@
   --hero-green: #5ee6a8;
   --hero-paper: #e8eefb;
   --hero-deep: #0a1a33;
-  --hero-gutter: clamp(20px, 5vw, 56px);
   position: relative;
   isolation: isolate;
   background-color: var(--hero-deep);
@@ -155,13 +155,18 @@
   right: 0;
   z-index: 2;
 }
+/* The nav and the column below sit in the page's own container (`home-wrap`,
+   1180px, centred): only the picture bleeds to the edges. The design frame is
+   1440 wide with a 56px gutter, which is what the container gives at 1440;
+   wider than that, the content stays with the rest of the page instead of
+   drifting to the viewport edge (owner's request, 2026-09-22). */
 .home-bar-inner {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 26px var(--hero-gutter);
+  padding-block: 26px;
 }
 .home-mark {
   display: flex;
@@ -203,7 +208,7 @@
   min-height: 100svh;
   display: flex;
   align-items: center;
-  padding: 118px var(--hero-gutter) clamp(56px, 8vw, 96px);
+  padding-block: 118px clamp(56px, 8vw, 96px);
 }
 .home-hero-copy {
   width: 100%;

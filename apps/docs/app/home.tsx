@@ -215,7 +215,7 @@ export default function Home() {
         style={{ backgroundImage: `url(${BASE_PATH}/home/hero.webp)` }}
       >
         <header className="home-bar">
-          <div className="home-bar-inner">
+          <div className="home-wrap home-bar-inner">
             <a className="home-mark" href={`${BASE_PATH}/`}>
               <img
                 src={`${BASE_PATH}/home/logo-128.png`}
@@ -235,10 +235,11 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="home-hero">
-          {/* One column, held to the left edge of the band exactly as the
-              design does, so the racks and the conveyor on the right half of
-              the picture stay uncovered. */}
+        <div className="home-wrap home-hero">
+          {/* One column on the left of the page's container, the same one the
+              sections below use, so the racks and the conveyor on the right
+              half of the picture stay uncovered and the text lines up with the
+              rest of the page. Only the picture bleeds to the edges. */}
           <div className="home-hero-copy">
             <p className="home-hero-pill">
               <span className="dot" aria-hidden="true" />v{VERSION} · {HERO.pillSuffix}
