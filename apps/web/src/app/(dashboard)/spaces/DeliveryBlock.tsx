@@ -345,11 +345,28 @@ export default function DeliveryBlock({
           page d'un run de code, qui dessine ces mêmes plaques dans son panneau
           Changes quelques pixels plus bas : les tracer deux fois sur un écran
           n'apprendrait rien à personne. */}
-      {shownFiles.length > 0 && (
-        <div className="border-t border-rule-2 px-4 py-2.5">
-          {filesJobId !== null ? (
+      {/* ET LES PLAQUES VONT DE BORD À BORD (Quentin, 22/09 : « the diff/file
+          block shall be edge to edge »). La liste était posée dans une section
+          rembourrée de 16 px : chaque plaque flottait dans la boîte, plus
+          étroite que les cellules au-dessus et que la section Proof en
+          dessous. Elle n'a plus ni marge latérale ni conteneur intermédiaire ;
+          le filet de chaque plaque tient la place de celui de la section.
+
+          La liste de chemins nus, elle, garde son rembourrage : ce sont des
+          lignes de texte, pas des plaques, et collées au bord elles seraient
+          les seules de l'encart à toucher la bordure. */}
+      {shownFiles.length > 0 &&
+        (filesJobId !== null ? (
+          <>
             <DeliveryFiles files={shownFiles} jobId={filesJobId} />
-          ) : (
+            {hiddenFiles > 0 && (
+              <p className="border-t border-rule-2 px-4 py-1.5 text-mono-11 text-ink-4">
+                … and {hiddenFiles} more
+              </p>
+            )}
+          </>
+        ) : (
+          <div className="border-t border-rule-2 px-4 py-2.5">
             <ul className="flex flex-col gap-1">
               {shownFiles.map((f) => (
                 <li key={f.path} className="flex min-w-0 items-center gap-2">
@@ -358,12 +375,11 @@ export default function DeliveryBlock({
                 </li>
               ))}
             </ul>
-          )}
-          {hiddenFiles > 0 && (
-            <p className="mt-1 text-mono-11 text-ink-4">… and {hiddenFiles} more</p>
-          )}
-        </div>
-      )}
+            {hiddenFiles > 0 && (
+              <p className="mt-1 text-mono-11 text-ink-4">… and {hiddenFiles} more</p>
+            )}
+          </div>
+        ))}
 
       {/* LES COMMANDES DU TRAVAIL, et ce qu'on a vu de chacune (#282). Une
           commande dont aucune écriture n'a été constatée sur son tour le DIT,

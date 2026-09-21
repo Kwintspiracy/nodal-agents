@@ -1,7 +1,8 @@
 // DeliveryFiles.test.tsx — L'ENCART DE LIVRAISON MONTRE CE QUI A CHANGÉ (#369).
 //
-// Ce que ce fichier prouve, dans le DOM rendu : sous « Files », chaque fichier
-// porte sa plaque, REPLIÉE, avec le chemin et « +N −M » ; le clic la déplie et
+// Ce que ce fichier prouve, dans le DOM rendu : sous les cellules, chaque
+// fichier porte sa plaque, BORD À BORD et repliée, avec le chemin et
+// « +N −M » ; le clic la déplie et
 // fait paraître les lignes du diff ; rien n'est demandé avant ce clic, et un
 // second fichier ne redemande rien ; un travail sans fichier ne dessine aucune
 // plaque du tout.
@@ -197,6 +198,55 @@ describe('DeliveryBlock — le diff de chaque fichier @cap:travailler-sur-des-fi
     const peintes = lignes();
     expect(peintes).toContainEqual(['+', expect.stringContaining('PREMIER')]);
     expect(peintes).toContainEqual(['+', expect.stringContaining('SECOND')]);
+  });
+
+  it('les plaques vont de BORD À BORD, directement sous les cellules', async () => {
+    // Quentin, 22/09 : « the diff/file block shall be edge to edge » (planche
+    // « DeliveryBlock », 560:7076). La liste vivait dans une section rembourrée
+    // de 16 px, et chaque plaque était une carte arrondie flottant dedans.
+    await render(<DeliveryBlock summary={DEUX} jobId="job-7" filesJobId="job-7" />);
+    const liste = container.querySelector('[data-testid="delivery-files"]');
+    expect(liste).not.toBeNull();
+
+    // AUCUN CONTENEUR INTERMÉDIAIRE : la liste est fille de l'encart lui-même,
+    // celui qui porte le cadre arrondi. Donc aucun rembourrage latéral entre
+    // la bordure de l'encart et les plaques.
+    expect(liste?.parentElement?.className).toContain('rounded-xl');
+    expect(liste?.className ?? '').not.toContain('px-');
+    // Ni écart entre les plaques : elles se touchent, filet contre filet
+    // (Reviewer C, passe 1 : sans ça, remettre un `gap-1.5` laissait le cas
+    // vert alors que les plaques flottaient de nouveau).
+    expect(liste?.className ?? '').not.toContain('gap-');
+
+    // ET AUCUN TITRE « Files » au-dessus : ce qui précède immédiatement les
+    // plaques est la rangée de cellules (Files / Lines / …), pas un libellé.
+    const precedent = liste?.previousElementSibling;
+    // La rangée de cellules, reconnaissable au libellé COLLÉ à sa valeur, et
+    // non un titre seul (Reviewer C, passe 1 : un `2` tout court se serait
+    // aussi lu dans « 12 / 12 » ou dans un coût).
+    expect(precedent?.textContent).toContain('Files2');
+    expect(precedent?.querySelectorAll('[data-testid="file-change-kind"]')).toHaveLength(0);
+
+    // Le dessin : la première plaque porte le filet haut, chacune le filet bas.
+    const plaques = [...(liste?.children ?? [])];
+    expect(plaques).toHaveLength(2);
+    for (const p of plaques) {
+      expect(p.className).toContain('w-full');
+      expect(p.className).toContain('border-b');
+      expect(p.className).toContain('first:border-t');
+      // Plus de carte à soi : ni coin arrondi, ni cadre sur les quatre côtés.
+      expect(p.className).not.toContain('rounded-xl');
+      // Et aucune marge latérale sur la plaque elle-même : « bord à bord »
+      // tombe aussi si le rembourrage passe de la section à la plaque
+      // (Reviewer C, passe 1).
+      expect(p.className).not.toContain('px-');
+    }
+    // Le mot du geste est GRAS (mesuré : `font-bold` l'emporte bien sur le
+    // poids 400 que `text-mono-12` embarque — la feuille compilée pose
+    // `.font-bold` APRÈS `.text-mono-12`).
+    for (const mot of container.querySelectorAll('[data-testid="file-change-kind"]')) {
+      expect(mot.className).toContain('font-bold');
+    }
   });
 
   it('un travail sans changement de fichier ne dessine aucune plaque', async () => {

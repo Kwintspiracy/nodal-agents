@@ -190,17 +190,32 @@ export function hiddenNote(hiddenOld: number, hiddenNew: number): string | null 
   return only > 0 ? `… and ${only} more lines` : null;
 }
 
+/**
+ * Une rangée de la plaque, telle que la planche la dessine (nœud
+ * « DeliveryBlock », 560:7076).
+ *
+ * LE SIGNE VOYAGE AVEC LE TEXTE, ET LA RANGÉE PORTE SA COULEUR. Le signe
+ * vivait dans une colonne à part, grise, et tout texte se peignait en
+ * `text-code-text` : une ligne retirée se lisait de la même encre qu'une ligne
+ * de contexte, et seul son fond la distinguait. La planche colore le texte —
+ * `text-err` sur `bg-warn-bg`, `text-ok` sur `bg-ok-bg`. Le signe fait un
+ * caractère de large sur TOUTES les rangées, contexte compris (une espace),
+ * donc le code reste aligné d'une rangée à l'autre.
+ */
 function PlateLine({ row }: { row: Extract<PlateRow, { kind: 'line' }> }) {
-  const bg = row.sign === '+' ? 'bg-ok-bg' : row.sign === '-' ? 'bg-warn-bg' : '';
+  const tone =
+    row.sign === '+'
+      ? 'bg-ok-bg text-ok'
+      : row.sign === '-'
+        ? 'bg-warn-bg text-err'
+        : 'text-code-text';
   return (
-    <div className={`flex w-full ${bg}`} data-diff={row.sign}>
-      <span className="w-12 shrink-0 pr-3 text-right text-mono-11 text-ink-4 select-none">
-        {row.num}
+    <div className={`flex w-full gap-3 px-3.5 py-px ${tone}`} data-diff={row.sign}>
+      <span className="w-7 shrink-0 text-right text-mono-12 text-ink-4 select-none">{row.num}</span>
+      <span className="text-mono-12 whitespace-pre">
+        {row.sign === ' ' ? ' ' : row.sign}
+        {row.text || ' '}
       </span>
-      <span className="w-3 shrink-0 text-mono-12 text-ink-4 select-none">
-        {row.sign === ' ' ? '' : row.sign}
-      </span>
-      <span className="pr-4 text-mono-12 whitespace-pre text-code-text">{row.text || ' '}</span>
     </div>
   );
 }
@@ -211,6 +226,7 @@ export default function FileChangeBlock({
   onOpen,
   pending = false,
   emptyNote,
+  flush = false,
 }: {
   group: FileChangeGroup;
   /**
@@ -240,6 +256,17 @@ export default function FileChangeBlock({
    * une absence qu'il n'a pas constatée (invariant #4).
    */
   emptyNote?: string;
+  /**
+   * BORD À BORD, sans cadre à soi (Quentin, 22/09, devant l'encart de
+   * livraison : « the diff/file block shall be edge to edge »). La page d'un
+   * run pose ses plaques dans une colonne, chacune une carte arrondie ; dans
+   * l'encart du fil elles occupent TOUTE la largeur de la boîte, séparées par
+   * un simple filet, comme les cellules et la section Proof qui les encadrent.
+   *
+   * La dernière ne porte pas son filet bas : la section suivante dessine déjà
+   * le sien, et deux filets collés font une ligne deux fois trop épaisse.
+   */
+  flush?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const { rows, hiddenOld, hiddenNew } = useMemo(
@@ -259,7 +286,13 @@ export default function FileChangeBlock({
     group.changeKind ?? (group.edits[0]?.kind === 'write' ? 'added' : 'modified');
 
   return (
-    <div className="overflow-hidden rounded-xl border border-rule-2">
+    <div
+      className={
+        flush
+          ? 'w-full bg-paper border-b border-rule-2 first:border-t last:border-b-0'
+          : 'overflow-hidden rounded-xl border border-rule-2'
+      }
+    >
       <DisclosureButton
         open={open}
         // Le signal se donne HORS de la mise à jour d'état : React rejoue les
@@ -271,9 +304,18 @@ export default function FileChangeBlock({
           if (next) onOpen?.();
         }}
         inset="tight"
+        // La hauteur reste écrite EN TOUTES LETTRES, la même des deux côtés :
+        // `__tests__/DisclosureButton.test.tsx` refuse un `className` en
+        // expression sur cette balise, et il a raison — un retrait caché dans
+        // un ternaire est exactement le trou que sa garde ferme (#151).
         className="h-[42px] py-0"
       >
-        <span className="shrink-0 text-mono-12 text-feed-tool" data-testid="file-change-kind">
+        {/* GRAS, comme la planche : le mot du geste est ce que le regard
+            accroche en premier sur la rangée, avant le chemin. */}
+        <span
+          className="shrink-0 text-mono-12 font-bold text-feed-tool"
+          data-testid="file-change-kind"
+        >
           {GESTE_LIBELLE[geste]}
         </span>
         {/* Le chemin se tronque par la GAUCHE : c'est sa fin qui porte le nom

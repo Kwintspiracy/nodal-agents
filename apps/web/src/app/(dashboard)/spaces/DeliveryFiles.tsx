@@ -71,13 +71,17 @@ export default function DeliveryFiles({
   const rang = new Map<string, number>();
 
   return (
-    <div className="flex flex-col gap-1.5" data-testid="delivery-files">
+    // BORD À BORD, COLLÉES (Quentin, 22/09). Aucun écart entre les plaques et
+    // aucune marge autour : elles s'empilent sous les cellules comme les
+    // sections de l'encart, séparées par le filet que chacune porte.
+    <div className="flex flex-col" data-testid="delivery-files">
       {files.map((f) => {
         const n = rang.get(f.path) ?? 0;
         rang.set(f.path, n + 1);
         return (
           <FileChangeBlock
             key={`${f.path}#${n}`}
+            flush
             defaultOpen={false}
             onOpen={load}
             pending={loading}
