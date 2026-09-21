@@ -1376,6 +1376,13 @@ describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
 // Le point est `aria-hidden` : ce qu'il montre, le nom de la case le DIT, et
 // c'est ce nom que ces cas verifient a cote du point.
 
+/** La rangee des marques qui porte cette marque — c'est elle qui est placee. */
+function rangee(marque: Element): HTMLElement {
+  const parent = marque.parentElement;
+  if (!parent) throw new Error('marque sans rangee');
+  return parent;
+}
+
 /** Le point « ca tourne » d'une case du rail, ou `null` s'il n'y en a pas. */
 function pointQuiTourne(key: string): HTMLElement | null {
   return container.querySelector<HTMLElement>(`[data-testid="rail-${key}-running"]`);
@@ -1435,7 +1442,7 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
     expect(pointQuiTourne('logs')).not.toBeNull();
   });
 
-  it('laisse a Approvals son coin : la ou il y a une pastille, rien ne tourne', async () => {
+  it('pose la puce A DROITE, du meme bord que la pastille', async () => {
     pathname = '/agents';
     const uneAttente: PendingApproval[] = [
       {
@@ -1449,21 +1456,31 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
         conversationChannel: 'dashboard',
       },
     ];
-    await renderSidebar([], uneAttente, { runsInProgress: 4 });
-    // La pastille tient le coin DROIT, et le point de Logs le coin GAUCHE :
-    // deux coins, donc aucun recouvrement possible, quelle que soit la case.
+    await renderSidebar([], uneAttente, { runsInProgress: 4, workConversationsInProgress: 1 });
+    // LE MEME BORD pour les deux marques (decision du proprietaire, 22/09/2026).
+    // La puce etait au coin GAUCHE, seule de ce cote dans une colonne dont tout
+    // le reste est centre.
+    //
+    // Mutation verifiee : `right-1` remis a `left-1` sur la rangee de
+    // `RailCell` -> ces trois cas rougissent.
     const pastille = railCell('approvals').querySelector('span[class*="bg-err"]');
     expect(pastille).not.toBeNull();
-    expect(pastille!.className).toContain('right-1');
-    expect(pointQuiTourne('logs')!.className).toContain('left-1');
+    expect(rangee(pastille!).className).toContain('right-1');
+    for (const key of ['logs', 'work']) {
+      const rang = rangee(pointQuiTourne(key)!);
+      expect(rang.className, key).toContain('right-1');
+      expect(rang.className, key).not.toContain('left-1');
+    }
     expect(pointQuiTourne('approvals')).toBeNull();
     expect(railCell('approvals').getAttribute('aria-label')).toBe('Approvals, 1 pending');
   });
 
-  it('pose le point et la pastille dans DEUX coins, meme sur une seule case', async () => {
+  it('pose le point et la pastille COTE A COTE, meme sur une seule case', async () => {
     // La regle se lit sur le composant, pas sur le cablage du jour (Reviewer C,
     // passe 1) : aucune case ne porte les deux aujourd'hui, et celle qui le
-    // ferait demain ne doit pas poser le point SUR le chiffre.
+    // ferait demain ne doit pas poser le point SUR le chiffre. Ce n'est plus
+    // deux coins qui l'empechent mais une RANGEE : le flux les met cote a cote,
+    // et deux elements d'une meme rangee ne peuvent pas se recouvrir.
     await render(
       <RailCell
         href="/logs"
@@ -1475,10 +1492,18 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
       />,
     );
     const cellule = container.querySelector('[data-testid="rail-deux"]')!;
-    expect(cellule.querySelector('span[class*="bg-err"]')!.className).toContain('right-1');
+    const pastille = cellule.querySelector('span[class*="bg-err"]')!;
     const point = container.querySelector('[data-testid="rail-deux-running"]')!;
-    expect(point.className).toContain('left-1');
-    expect(point.className).not.toContain('right-1');
+    // UNE SEULE rangee, sur le bord droit, qui porte les deux.
+    const rang = rangee(point);
+    expect(rangee(pastille)).toBe(rang);
+    expect(rang.className).toContain('right-1');
+    expect(rang.className).not.toContain('left-1');
+    // Et dans cet ordre : ce qui avance d'abord, ce qui attend au bord.
+    expect([...rang.children].indexOf(point)).toBeLessThan([...rang.children].indexOf(pastille));
+    // Aucune marque n'est posee toute seule : c'est la rangee qui est placee.
+    expect(point.className).not.toContain('absolute');
+    expect(pastille.className).not.toContain('absolute');
     // Et le nom dit les DEUX, dans cet ordre : ce qui attend, puis ce qui
     // avance.
     expect(cellule.getAttribute('aria-label')).toBe('Logs, 3 pending, 2 runs in progress');
