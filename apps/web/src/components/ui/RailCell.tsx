@@ -159,9 +159,9 @@ export default function RailCell({
       {/* 10 px demi-gras — le pas `micro-10` du DS, celui de la planche. */}
       <span className="text-micro-10 leading-none">{label}</span>
       {(nombre !== null || point) && (
-        // LES DEUX MARQUES PARTAGENT LE BORD DROIT, dans une rangée (décision
-        // du propriétaire, 22/09/2026 : « sur l'onglet Work, la puce d'activité
-        // doit être à droite »).
+        // LES DEUX MARQUES PARTAGENT LE BORD DROIT (décision du propriétaire,
+        // 22/09/2026 : « sur l'onglet Work, la puce d'activité doit être à
+        // droite »).
         //
         // Elles n'étaient pas au même endroit : la pastille au coin droit, le
         // point au coin gauche, chacun le sien pour qu'ils ne se croisent
@@ -169,14 +169,24 @@ export default function RailCell({
         // à gauche d'une colonne dont tout le reste est centré, et c'est ce qui
         // se voyait.
         //
-        // Une RANGÉE tient la même promesse sans deux coins : posés côte à côte
-        // par le flux, ils ne peuvent pas se recouvrir, quelle que soit la case
-        // et même si l'une portait un jour les deux. L'ordre est celui du nom de
-        // la case — ce qui avance, puis ce qui attend.
+        // UNE COLONNE tient la même promesse sans deux coins : empilées par le
+        // flux, les marques ne peuvent pas se recouvrir, quelle que soit la
+        // case et même si l'une portait un jour les deux.
+        //
+        // ⚠️ EMPILÉES, et non côte à côte (Reviewer C). Une rangée s'élargit
+        // vers la gauche depuis le bord droit : la pastille fait 18 px à un
+        // chiffre et jusqu'à 42 px à « 99+ », si bien que la seconde marque
+        // arrivait sur le coin de l'icône, qui tient le milieu de la case. En
+        // colonne, la largeur reste celle de la marque la plus large, et
+        // l'icône garde son axe.
+        //
+        // L'ordre est celui du nom de la case (`railCellName`) : ce qui attend,
+        // puis ce qui avance.
         //
         // Sur le COIN, et non à côté du libellé : une case du rail fait 64 px,
         // et une marque posée dans la colonne pousserait l'icône hors de son axe.
-        <span className="absolute top-1 right-1 flex items-center gap-1">
+        <span className="absolute top-1 right-1 flex flex-col items-end gap-1">
+          {nombre !== null && <AttentionCount count={nombre} variant="solid" />}
           {point && (
             // `aria-hidden` : ce que le point dit, le nom de la case le dit
             // déjà en toutes lettres. Annoncé deux fois, il deviendrait un
@@ -189,7 +199,6 @@ export default function RailCell({
               <LiveDot variant="lime" size="sm" />
             </span>
           )}
-          {nombre !== null && <AttentionCount count={nombre} variant="solid" />}
         </span>
       )}
     </>
