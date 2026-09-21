@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Brain } from '@phosphor-icons/react';
@@ -668,6 +668,11 @@ export default function AgentComposer({
         {tab === 'autonomy' && !isCliRuntime && (
           <>
             <AutonomyTab
+              // Changer d'agent REMONTE l'onglet (revue Reviewer C, passe 4,
+              // C2) : sans cela, revenir sur un agent déjà visité rouvrait son
+              // état d'alors, « chargé », sur des règles qui ont pu changer
+              // ailleurs entre-temps.
+              key={agent.id}
               agentId={agent.id}
               connectors={connectors}
               mcpServers={mcpServers}
@@ -1669,8 +1674,69 @@ export function AutonomyTab({
   /** agents.may_change_team — false = the three team tools are not in the list. */
   mayChangeTeam: boolean;
 }) {
-  const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  /**
+   * Les règles ET l'agent auxquelles elles appartiennent (revue Reviewer C,
+   * passe 3, C1).
+   *
+   * Portées ensemble, et non vidées dans un effet : passer d'un agent à
+   * l'autre change ce que l'écran LIT, tout de suite, même si la lecture
+   * suivante échoue. Vider dans l'effet marcherait aussi, au prix d'un
+   * `setState` synchrone dans un effet, donc d'un rendu en cascade.
+   */
+  const [rulesState, setRulesState] = useState<{
+    agentId: string;
+    rows: ApprovalRuleUiRow[];
+  }>({ agentId: '', rows: [] });
+  const rules = rulesState.agentId === agentId ? rulesState.rows : [];
+
+  const setRules = useCallback(
+    (next: ApprovalRuleUiRow[] | ((prev: ApprovalRuleUiRow[]) => ApprovalRuleUiRow[])) => {
+      setRulesState((prev) => {
+        const base = prev.agentId === agentId ? prev.rows : [];
+        return { agentId, rows: typeof next === 'function' ? next(base) : next };
+      });
+    },
+    [agentId],
+  );
+  /**
+   * Numéro de la relecture la plus récente (revue Reviewer C, passe 2, F1).
+   *
+   * `setRules` remplace le TABLEAU ENTIER. Deux changements rapprochés sur deux
+   * outils lancent deux relectures ; si la plus ancienne revient la dernière,
+   * elle repose l'état d'avant la seconde écriture, et une ligne retombe à
+   * l'écran sur une action que la base ne porte plus. Seule la dernière
+   * demandée a le droit d'écrire.
+   */
+  const lastReload = useRef(0);
+  /**
+   * Les outils dont l'écriture est encore en vol (revue Reviewer C, passe 3,
+   * C2).
+   *
+   * Une relecture déclenchée par l'outil A peut interroger la base AVANT que
+   * l'écriture de l'outil B, partie entre-temps, y soit visible : elle
+   * ramènerait alors l'ancienne valeur de B et écraserait sa ligne, et comme
+   * la réponse de B ne relit rien, l'écran resterait faux. Le garde de
+   * séquence n'y peut rien : ce n'est pas une réponse périmée, c'est une
+   * lecture prise trop tôt. Une relecture laisse donc en place les lignes dont
+   * personne n'a encore le résultat.
+   */
+  const savingRef = useRef<ReadonlySet<string>>(new Set());
+
+  // Le ref est la source, l'état n'en est que le reflet pour le rendu : mis à
+  // jour dans l'updater de `setSaving`, il n'aurait pas encore la bonne valeur
+  // quand la relecture, déclenchée dans la même continuation de promesse, le
+  // consulte.
+  function markSaving(toolName: string, on: boolean) {
+    const next = new Set(savingRef.current);
+    if (on) next.add(toolName);
+    else next.delete(toolName);
+    savingRef.current = next;
+    setSaving(next);
+  }
+  // Chargé POUR CET AGENT : sans l'identifiant, l'onglet du suivant s'ouvrait
+  // déjà « chargé », sur les règles du précédent.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loaded = loadedFor === agentId;
   const [saving, setSaving] = useState<Set<string>>(new Set());
   // Fetched, not imported: the descriptors live in @nodal-agents/orchestration,
   // and importing that from this 'use client' component pulls drizzle into the
@@ -1680,11 +1746,13 @@ export function AutonomyTab({
 
   // Load current rules on mount
   useEffect(() => {
+    const seq = ++lastReload.current;
     listAgentApprovalRulesAction(agentId).then((result) => {
+      if (seq !== lastReload.current) return;
       if (result.ok) setRules(result.data);
-      setLoaded(true);
+      setLoadedFor(agentId);
     });
-  }, [agentId]);
+  }, [agentId, setRules]);
 
   useEffect(() => {
     listInternalToolsAction().then((result) => {
@@ -1717,32 +1785,97 @@ export function AutonomyTab({
     return rules.find((r) => r.toolName === toolName)?.action ?? 'auto_approve';
   }
 
+  /**
+   * Le dossier auquel la règle de cet outil est confinée, ou `undefined`
+   * (issue #361). Le libellé vient du serveur, qui l'a résolu depuis
+   * `agent_workspaces` ; l'écran ne recalcule rien.
+   */
+  function folderFor(toolName: string): string | undefined {
+    return rules.find((r) => r.toolName === toolName)?.workspaceLabel ?? undefined;
+  }
+
+  /**
+   * Un changement RESTRICTIF demandé sur une règle de dossier, en attente de
+   * la confirmation. Enregistrer depuis cet onglet retire la condition : le
+   * serveur réécrit `condition_json` à vide. Le dire avant, plutôt que de
+   * laisser le propriétaire découvrir après coup que « seulement dans Dev »
+   * est devenu « partout ».
+   *
+   * La version PERMISSIVE n'est pas ici, et ce n'est pas un oubli (revue
+   * Reviewer C, passe 1, C1) : `refuseGlobalGrantOverFolderRule` la REFUSE.
+   * Annoncer un élargissement qui n'aura pas lieu, puis le faire confirmer,
+   * serait un mensonge. Elle part au serveur, qui répond avec sa propre phrase
+   * et nomme le dossier.
+   */
+  const [pendingWiden, setPendingWiden] = useState<{
+    toolName: string;
+    action: ApprovalAction;
+    folder: string;
+  } | null>(null);
+
+  function requestChange(toolName: string, action: ApprovalAction) {
+    const folder = folderFor(toolName);
+    if (folder !== undefined && action !== 'auto_approve') {
+      setPendingWiden({ toolName, action, folder });
+      return;
+    }
+    handleChange(toolName, action);
+  }
+
   function handleChange(toolName: string, action: ApprovalAction) {
     // Optimistic update. The row is KEPT for auto_approve — it used to be
     // dropped, mirroring the server action's old "no rule needed, the default
     // is already auto_approve" branch. That stopped being true for MCP tools,
     // which default to require_approval, so dropping it made the UI show "ask"
     // on the next load for a server the owner had just trusted.
-    setRules((prev) => [
-      ...prev.filter((r) => r.toolName !== toolName),
-      { id: '', toolName, action },
-    ]);
+    //
+    // SAUF sur une règle de dossier (revue Reviewer C, passe 1, C2) : le
+    // serveur peut refuser l'écriture, et poser tout de suite une ligne sans
+    // condition ferait lire « partout » pendant l'aller-retour, sur une règle
+    // que la base garde confinée. Là, on attend sa réponse et on relit.
+    const conditioned = folderFor(toolName) !== undefined;
+    if (!conditioned) {
+      setRules((prev) => [
+        ...prev.filter((r) => r.toolName !== toolName),
+        // Sans condition, et c'est ce que le serveur écrit : changer une règle
+        // depuis cet onglet réécrit `condition_json` à vide (issue #361).
+        { id: '', toolName, action, conditionJson: null, workspaceLabel: null },
+      ]);
+    }
 
-    setSaving((prev) => new Set([...prev, toolName]));
-    void setAgentApprovalRuleAction({ agentId, toolName, action }).then((result) => {
-      setSaving((prev) => {
-        const next = new Set(prev);
-        next.delete(toolName);
-        return next;
+    markSaving(toolName, true);
+    void setAgentApprovalRuleAction({ agentId, toolName, action })
+      .then((result) => {
+        markSaving(toolName, false);
+        if (!result.ok) toast.error(result.message);
+        // Relecture après un refus, et après tout changement d'une règle de
+        // dossier : dans les deux cas, ce que la base porte maintenant ne se
+        // devine pas depuis l'écran.
+        if (!result.ok || conditioned) {
+          const seq = ++lastReload.current;
+          listAgentApprovalRulesAction(agentId).then((r) => {
+            if (!r.ok || seq !== lastReload.current) return;
+            setRules((prev) => {
+              const inFlight = savingRef.current;
+              if (inFlight.size === 0) return r.data;
+              return [
+                ...r.data.filter((d) => !inFlight.has(d.toolName)),
+                ...prev.filter((p) => inFlight.has(p.toolName)),
+              ];
+            });
+          });
+        }
+      })
+      // Un REJET (réseau coupé pendant l'envoi, erreur de sérialisation) saute
+      // tout le `then` : sans cette reprise, l'outil restait dans `savingRef`,
+      // donc sa ligne grisée pour toujours ET protégée de toute relecture
+      // ultérieure, sans un mot (revue Reviewer C, passe 4, C1). Enchaîné et
+      // non posé à côté : une branche `.catch` parallèle laisse le rejet du
+      // `.then` sans preneur, ce que la CI compte comme une erreur.
+      .catch(() => {
+        markSaving(toolName, false);
+        toast.error('The rule was not saved. Check your connection and try again.');
       });
-      if (!result.ok) {
-        toast.error(result.message);
-        // Reload from server on error
-        listAgentApprovalRulesAction(agentId).then((r) => {
-          if (r.ok) setRules(r.data);
-        });
-      }
-    });
   }
 
   if (!loaded) {
@@ -1778,7 +1911,8 @@ export function AutonomyTab({
                 risk={op.risk}
                 value={ruleFor(op.slug)}
                 saving={saving.has(op.slug)}
-                onChange={(action) => handleChange(op.slug, action)}
+                onChange={(action) => requestChange(op.slug, action)}
+                {...(folderFor(op.slug) === undefined ? {} : { folder: folderFor(op.slug) })}
               />
             ))}
           </div>
@@ -1818,7 +1952,8 @@ export function AutonomyTab({
               risk={op.risk}
               value={ruleFor(op.slug)}
               saving={saving.has(op.slug)}
-              onChange={(action) => handleChange(op.slug, action)}
+              onChange={(action) => requestChange(op.slug, action)}
+              {...(folderFor(op.slug) === undefined ? {} : { folder: folderFor(op.slug) })}
               {...(op.unblockableReason === undefined
                 ? {}
                 : { lockedReason: op.unblockableReason })}
@@ -1864,7 +1999,8 @@ export function AutonomyTab({
                   // every MCP tool ships defaultApproval: 'require_approval'.
                   value={rules.find((r) => r.toolName === pattern)?.action ?? 'require_approval'}
                   saving={saving.has(pattern)}
-                  onChange={(action) => handleChange(pattern, action)}
+                  onChange={(action) => requestChange(pattern, action)}
+                  {...(folderFor(pattern) === undefined ? {} : { folder: folderFor(pattern) })}
                 />
               );
             })}
@@ -1921,6 +2057,29 @@ export function AutonomyTab({
 
       <ScriptAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
       <FileWriteAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
+
+      {/*
+        La règle de dossier se perd À DÉCOUVERT (issue #361). Le serveur
+        réécrit `condition_json` à vide quel que soit le sens du changement, et
+        refuse carrément la version permissive : ce que cette boîte annonce est
+        ce qui va arriver, pas une précaution de forme.
+      */}
+      <ConfirmDialog
+        open={pendingWiden !== null}
+        title="Remove the folder limit?"
+        message={
+          pendingWiden === null
+            ? ''
+            : `This rule applies only in ${pendingWiden.folder} today. Saving from here applies your choice everywhere this agent works.`
+        }
+        confirmLabel="Remove the limit"
+        onConfirm={() => {
+          const pending = pendingWiden;
+          setPendingWiden(null);
+          if (pending) handleChange(pending.toolName, pending.action);
+        }}
+        onCancel={() => setPendingWiden(null)}
+      />
     </div>
   );
 }
@@ -1969,6 +2128,20 @@ function CommandExecutionSection({
     (r) => r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve',
   );
 
+  /**
+   * Le dossier auquel la règle Yolo est confinée, s'il y en a un (revue
+   * Reviewer C, passe 4, C3).
+   *
+   * « approuvé, mais seulement dans Dev » allume aussi cette bascule. L'éteindre
+   * SUPPRIME la règle : une permission que le propriétaire avait posée dossier
+   * par dossier disparaissait sans un mot, et rien sur cet onglet ne sait la
+   * recréer.
+   */
+  const yoloFolder =
+    rules.find((r) => r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve')
+      ?.workspaceLabel ?? null;
+  const [confirmDropFolder, setConfirmDropFolder] = useState(false);
+
   // 0082 : plus de pré-condition workspace — ce toggle est la SEULE clé
   // (owner-only hors local-trust, confirmation à l'activation). Le frein
   // auto_run_paused ne conditionne pas la création de la règle : il la rend
@@ -1981,7 +2154,13 @@ function CommandExecutionSection({
       enabled
         ? [
             ...rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
-            { id: '', toolName: RUN_COMMAND_TOOL, action: 'auto_approve' as const },
+            {
+              id: '',
+              toolName: RUN_COMMAND_TOOL,
+              action: 'auto_approve' as const,
+              conditionJson: null,
+              workspaceLabel: null,
+            },
           ]
         : rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
     );
@@ -1991,8 +2170,11 @@ function CommandExecutionSection({
     if (next) {
       // Enable: show warning confirm first
       setConfirmOpen(true);
+    } else if (yoloFolder !== null) {
+      // Disable: nothing to warn about, EXCEPT when what it deletes is a rule
+      // confined to a folder (issue #361, and Reviewer C pass 4).
+      setConfirmDropFolder(true);
     } else {
-      // Disable: no confirm needed
       void doSet(false);
     }
   }
@@ -2077,6 +2259,24 @@ function CommandExecutionSection({
         }}
         onCancel={() => setConfirmOpen(false)}
       />
+
+      {/*
+        Éteindre la bascule SUPPRIME la règle. Quand cette règle ne valait que
+        dans un dossier, ce que le propriétaire perd n'est pas « le mode Yolo »
+        mais une permission qu'il avait posée dossier par dossier, et que cet
+        onglet ne sait pas recréer (revue Reviewer C, passe 4, C3).
+      */}
+      <ConfirmDialog
+        open={confirmDropFolder}
+        title="Delete the rule for this folder?"
+        message={`Commands run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a command for that folder again from its approval card.`}
+        confirmLabel="Delete the rule"
+        onConfirm={() => {
+          setConfirmDropFolder(false);
+          void doSet(false);
+        }}
+        onCancel={() => setConfirmDropFolder(false)}
+      />
     </SectionCard>
   );
 }
@@ -2124,6 +2324,13 @@ function CodeTaskSection({
   const yoloEnabled = rules.some(
     (r) => r.toolName === CODE_TASK_TOOL && r.action === 'auto_approve',
   );
+  // Même garde que CommandExecutionSection (revue Reviewer C, passe 4, C3) :
+  // éteindre supprime la règle, et quand elle ne valait que dans un dossier,
+  // c'est une permission posée dossier par dossier qui disparaît.
+  const yoloFolder =
+    rules.find((r) => r.toolName === CODE_TASK_TOOL && r.action === 'auto_approve')
+      ?.workspaceLabel ?? null;
+  const [confirmDropFolder, setConfirmDropFolder] = useState(false);
   // 0082 : même contrat que CommandExecutionSection — le toggle est la seule
   // clé (owner-only hors local-trust) ; le frein rend la règle dormante.
   const canToggle = isLocalTrust || isOwner;
@@ -2134,7 +2341,13 @@ function CodeTaskSection({
       enabled
         ? [
             ...rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
-            { id: '', toolName: CODE_TASK_TOOL, action: 'auto_approve' as const },
+            {
+              id: '',
+              toolName: CODE_TASK_TOOL,
+              action: 'auto_approve' as const,
+              conditionJson: null,
+              workspaceLabel: null,
+            },
           ]
         : rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
     );
@@ -2143,6 +2356,8 @@ function CodeTaskSection({
   function handleToggle(next: boolean) {
     if (next) {
       setConfirmOpen(true);
+    } else if (yoloFolder !== null) {
+      setConfirmDropFolder(true);
     } else {
       void doSet(false);
     }
@@ -2262,6 +2477,18 @@ function CodeTaskSection({
         onCancel={() => setConfirmOpen(false)}
       />
 
+      <ConfirmDialog
+        open={confirmDropFolder}
+        title="Delete the rule for this folder?"
+        message={`Coding tasks run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a coding task for that folder again from its approval card.`}
+        confirmLabel="Delete the rule"
+        onConfirm={() => {
+          setConfirmDropFolder(false);
+          void doSet(false);
+        }}
+        onCancel={() => setConfirmDropFolder(false)}
+      />
+
       <p className="mt-4 text-body-12 text-ink-4">
         Model, effort and diagnostics live in the Tools tab.
       </p>
@@ -2355,6 +2582,8 @@ function ReadOnlyAgentSection({
               id: '',
               toolName,
               action: 'block' as const,
+              conditionJson: null,
+              workspaceLabel: null,
             })),
           ]
         : rules.filter((r) => !(presetTools.includes(r.toolName) && r.action === 'block')),

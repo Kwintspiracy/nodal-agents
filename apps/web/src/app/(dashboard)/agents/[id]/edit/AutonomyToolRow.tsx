@@ -33,6 +33,7 @@ export default function AutonomyToolRow({
   saving,
   onChange,
   lockedReason,
+  folder,
 }: {
   /** The tool name. Stays visible: it is what the owner sees in a transcript. */
   slug: string;
@@ -50,6 +51,15 @@ export default function AutonomyToolRow({
    * affordance, not the guard.
    */
   lockedReason?: string;
+  /**
+   * The folder this rule is confined to, when it carries one (issue #361).
+   *
+   * Since « Approve for this project » (#360) a rule can read « approved, but
+   * only while the agent works there ». Without this the row said « Run
+   * without asking » where the truth was « Run without asking in Dev », and
+   * the owner had no way to see the difference.
+   */
+  folder?: string;
 }) {
   return (
     <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
@@ -75,40 +85,67 @@ export default function AutonomyToolRow({
       </div>
 
       {lockedReason !== undefined ? (
-        <p
-          className="max-w-xs text-body-12 leading-[1.4]! text-ink-4 sm:text-right"
-          data-testid={`autonomy-locked-${slug}`}
-        >
-          {lockedReason}
-        </p>
+        <div className="flex max-w-xs flex-col items-start gap-1 sm:items-end">
+          {/*
+            Le dossier s'affiche AUSSI sur une ligne verrouillée (revue Reviewer
+            C, passe 3, C4) : le verrou n'interdit que le blocage, une règle de
+            dossier existe ici comme ailleurs, et la taire ferait lire
+            « partout ».
+          */}
+          {folder !== undefined && (
+            <span className="text-body-12 text-ink-4" data-testid={`autonomy-folder-${slug}`}>
+              in {folder}
+            </span>
+          )}
+          <p
+            className="text-body-12 leading-[1.4]! text-ink-4 sm:text-right"
+            data-testid={`autonomy-locked-${slug}`}
+          >
+            {lockedReason}
+          </p>
+        </div>
       ) : (
-        /* 3-way control */
-        <SegmentedControl
-          value={value}
-          onChange={onChange}
-          disabled={saving}
-          ariaLabel={`Approval rule for ${label}`}
-          options={[
-            {
-              value: 'auto_approve' as const,
-              label: 'Run without asking',
-              activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
-              testId: `autonomy-btn-${slug}-auto_approve`,
-            },
-            {
-              value: 'require_approval' as const,
-              label: 'Ask for approval',
-              activeClassName: 'bg-warn/15 text-warn border-warn/30',
-              testId: `autonomy-btn-${slug}-require_approval`,
-            },
-            {
-              value: 'block' as const,
-              label: 'Block',
-              activeClassName: 'bg-err/15 text-err border-err/30',
-              testId: `autonomy-btn-${slug}-block`,
-            },
-          ]}
-        />
+        /* 3-way control, with the folder the rule is confined to beside it */
+        <div className="flex flex-col items-start gap-1 sm:items-end">
+          {folder !== undefined && (
+            <span className="text-body-12 text-ink-4" data-testid={`autonomy-folder-${slug}`}>
+              in {folder}
+            </span>
+          )}
+          <SegmentedControl
+            value={value}
+            onChange={onChange}
+            disabled={saving}
+            // Le dossier fait partie du NOM de ce réglage : sans lui, un lecteur
+            // d'écran annonce « Run without asking » sans la moitié qui compte
+            // (revue Reviewer C, passe 1, C4).
+            ariaLabel={
+              folder === undefined
+                ? `Approval rule for ${label}`
+                : `Approval rule for ${label}, limited to ${folder}`
+            }
+            options={[
+              {
+                value: 'auto_approve' as const,
+                label: 'Run without asking',
+                activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
+                testId: `autonomy-btn-${slug}-auto_approve`,
+              },
+              {
+                value: 'require_approval' as const,
+                label: 'Ask for approval',
+                activeClassName: 'bg-warn/15 text-warn border-warn/30',
+                testId: `autonomy-btn-${slug}-require_approval`,
+              },
+              {
+                value: 'block' as const,
+                label: 'Block',
+                activeClassName: 'bg-err/15 text-err border-err/30',
+                testId: `autonomy-btn-${slug}-block`,
+              },
+            ]}
+          />
+        </div>
       )}
     </div>
   );
