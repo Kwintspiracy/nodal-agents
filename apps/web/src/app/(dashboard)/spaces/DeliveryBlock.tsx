@@ -210,7 +210,13 @@ export default function DeliveryBlock({
 
             Quand quelqu'un a relu, elle NOMME qui a tranché ; c'est alors le
             fait le plus frais du bloc. Les commandes de preuve gardent leur
-            sort une ligne plus bas, dans « Proof ». */}
+            sort une ligne plus bas, dans « Proof ».
+
+            ET ELLE NE SUIT PAS LE MOT DE L'EN-TÊTE (Reviewer C, #335) : un run
+            arrêté dont les preuves ont tourné vertes lit « Stopped · Verified ».
+            Deux faits, deux signes : l'issue du travail, et ce que les preuves
+            ont dit. Masquer « Verified » dirait que les preuves n'ont pas eu
+            lieu, ce qui serait faux. */}
         <span className="ml-5">
           {reviewLabel !== null ? (
             <StatusPill variant={changesRequested ? 'warn' : 'done'} label="By the reviewer" />
