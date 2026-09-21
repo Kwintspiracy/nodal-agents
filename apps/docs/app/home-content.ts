@@ -98,7 +98,7 @@ export const HERO: HeroCopy = {
   pillars: [
     {
       label: 'You stay in control',
-      body: 'Approve, pause or undo any step. Nothing runs past you unless you let it.',
+      body: 'Risky steps ask you first, and any step can be undone. You decide how far that goes.',
     },
     {
       label: 'Autonomy you dial',
