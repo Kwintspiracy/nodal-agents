@@ -11,7 +11,7 @@
 //
 // Le seam constate maintenant, et range son constat (`constated_writes`). Ce
 // module fait la jonction : la LISTE vient des lignes du constat, le CONTENU
-// (les fragments avant/après, les compteurs de churn) vient des appels d'outils
+// (les fragments avant/après, et les lignes que leur diff signe) vient des appels d'outils
 // qui ont nommé le même fichier. Un fichier que git a vu et qu'aucun outil n'a
 // nommé paraît donc, sans diff — c'est justement le fichier qu'on ne voyait
 // pas.
