@@ -1507,6 +1507,10 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
     expect(rang.className).not.toContain('bottom-1');
     // EMPILEE : une rangee aurait pousse la seconde marque sur l'icone.
     expect(rang.className).toContain('flex-col');
+    // ALIGNEE A DROITE : sans cela, la marque la plus etroite - la puce - se
+    // rangerait sur le bord GAUCHE d'une colonne large comme la pastille, donc
+    // loin du bord que le proprietaire a demande (Reviewer C, passe 2).
+    expect(rang.className).toContain('items-end');
     // Et la colonne est posee DANS la case, pas ailleurs.
     expect(rang.parentElement).toBe(cellule);
     // Dans l'ordre du nom de la case : ce qui attend, puis ce qui avance.

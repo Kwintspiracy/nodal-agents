@@ -174,11 +174,15 @@ export default function RailCell({
         // case et même si l'une portait un jour les deux.
         //
         // ⚠️ EMPILÉES, et non côte à côte (Reviewer C). Une rangée s'élargit
-        // vers la gauche depuis le bord droit : la pastille fait 18 px à un
-        // chiffre et jusqu'à 42 px à « 99+ », si bien que la seconde marque
-        // arrivait sur le coin de l'icône, qui tient le milieu de la case. En
-        // colonne, la largeur reste celle de la marque la plus large, et
-        // l'icône garde son axe.
+        // vers la gauche depuis le bord droit : la pastille `solid` fait 18 px
+        // à un chiffre et environ 30 px à « 99+ » (`px-1.5` + `text-micro-10`),
+        // si bien que la seconde marque arrivait sur le coin de l'icône, qui
+        // tient le milieu de la case. En colonne, la largeur reste celle de la
+        // marque la plus large, et l'icône garde son axe.
+        //
+        // `items-end` n'est donc pas décoratif : c'est lui qui tient la marque
+        // la plus étroite — la puce — sur le bord droit quand la colonne est
+        // large comme la pastille.
         //
         // L'ordre est celui du nom de la case (`railCellName`) : ce qui attend,
         // puis ce qui avance.
