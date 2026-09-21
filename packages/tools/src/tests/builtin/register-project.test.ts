@@ -712,6 +712,53 @@ describe('register_project — le dossier écarté @cap:travailler-sur-des-fichi
     expect(await ecartes(projectKey(abs))).toHaveLength(0);
   });
 
+  it('une panne sur la désexclusion ne fait PAS échouer un projet déjà déclaré', async () => {
+    // Revue Reviewer C du 21/09, mineur C1. À ce stade la ligne est commise et
+    // la conversation porte le projet : rendre `ok: false` ferait croire à
+    // l'agent qu'il n'a rien créé, et il recommencerait.
+    const abs = `${terrain}/panne-desexclusion`;
+    await ecarter(abs, seed.entityId);
+
+    // Le SEUL `delete` que cet appel fait sur cette table, cassé.
+    const dbCasse = new Proxy(db as object, {
+      get(cible, prop, recepteur) {
+        if (prop === 'delete') {
+          return (table: unknown) => {
+            if (table === excludedProjectPaths) {
+              return {
+                where: () => ({
+                  returning: async () => {
+                    throw new Error('PANNE_PASSAGERE_EXCLUSIONS');
+                  },
+                }),
+              };
+            }
+            return (Reflect.get(cible, prop, recepteur) as (t: unknown) => unknown)(table);
+          };
+        }
+        return Reflect.get(cible, prop, recepteur);
+      },
+    }) as typeof db;
+
+    const jobId = await jobNeuf();
+    const conversationId = await conversationNeuve('chat-panne-exclusion');
+    const res = await executeTool(
+      outil(),
+      { path: 'panne-desexclusion' },
+      { ...ctx(jobId, conversationId), db: dbCasse } as unknown as ToolContext,
+      options(),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    expect((res.output as { ok: boolean }).ok).toBe(true);
+
+    // Le projet EST déclaré, et l'exclusion orpheline reste — sans effet
+    // visible : elle ne filtre que la détection, et un projet du registre se
+    // liste quoi qu'il arrive.
+    expect((await ligne(abs))?.registeredAt).not.toBeNull();
+    expect(await ecartes(projectKey(abs))).toHaveLength(1);
+  });
+
   it('ne touche QUE le dossier déclaré : les autres exclusions restent', async () => {
     const declare = `${terrain}/declare`;
     const autre = `${terrain}/toujours-ecarte`;
