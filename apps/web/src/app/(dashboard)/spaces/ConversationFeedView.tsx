@@ -7,6 +7,8 @@ import Link from 'next/link';
 import { ArrowSquareOut, PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import StatusPill from '@/components/ui/StatusPill';
+import StopRunButton from '@/components/ui/StopRunButton';
+import { canStopRun } from '@/lib/job-live.ts';
 import ClampedText from './ClampedText.tsx';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -231,7 +233,7 @@ function FeedItemView({
       // et à la preuve, qui vivaient trois écrans plus bas.
       // #135 — le pied du récapitulatif ouvre le run qui l'a produit :
       // l'identifiant est DÉJÀ sur l'item, il n'avait jamais servi à l'écran.
-      return <DeliveryBlock summary={item.summary} jobId={item.jobId} />;
+      return <DeliveryBlock summary={item.summary} jobId={item.jobId} status={item.status} />;
     case 'handoff':
       // P7 — la consigne passée au travail. Repliée dans le style des notes :
       // la demande de l'utilisateur est juste au-dessus, écrite de sa main.
@@ -1124,10 +1126,15 @@ function DelegationGroup({
             )}
             {/* P8 : le fil d'un JOB vit sur /scheduled/[id] — /spaces/<id> est
                 devenu la page d'un PROJET. */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-end gap-3">
+              {/* ARRÊTER CE RUN D'ICI (Quentin, 22/09 : « il y a un bouton
+                  Open run, je devrais pouvoir le stopper »). Le bouton vit à
+                  côté du lien qu'on regarde, pour le job de CE bloc ; il se
+                  cache tout seul dès que le job n'est plus vivant. */}
+              {canStopRun(job.status) && <StopRunButton jobId={job.id} status={job.status} />}
               <Link
                 href={`/scheduled/${job.id}`}
-                className="ml-auto flex shrink-0 items-center gap-1.5 text-medium-13 text-ink-2 hover:text-ink"
+                className="flex shrink-0 items-center gap-1.5 text-medium-13 text-ink-2 hover:text-ink"
               >
                 Open run
                 <ArrowSquareOut size={14} aria-hidden />

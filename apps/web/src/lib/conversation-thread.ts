@@ -83,6 +83,14 @@ export type ThreadJob = {
   /** Quand le travail s'est refermé. null : il court encore. */
   completedAt: Date | null;
   /**
+   * COMMENT il s'est refermé (`agent_jobs.status`), tel quel. Un run arrêté
+   * par la personne ou tombé en échec a pu écrire des fichiers avant : le
+   * récapitulatif les nomme, mais son en-tête ne dit pas « Delivered » d'un
+   * travail qui n'est pas allé au bout (Quentin, 22/09 : « j'ai cancel un
+   * run mais il apparaît comme delivered »).
+   */
+  status: string | null;
+  /**
    * Ce que le travail a RENDU (`agent_jobs.result`) : la chose livrée à la
    * personne, par le canal ou le dashboard. C'est elle que le fil montre hors
    * du groupe quand la dernière prose de l'agent n'est pas sa réponse.
@@ -513,6 +521,9 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
       .filter((i): i is Extract<ProducedItem, { kind: 'command' }> => i.kind === 'command')
       .map((i) => ({ label: i.label, observed: i.certain })),
     produced: job.verdict.isWork,
+    // L'issue d'un travail qui n'est pas allé au bout, lue sur sa ligne : elle
+    // prime sur `produced` pour le mot de l'en-tête (Quentin, 22/09).
+    ended: job.status === 'cancelled' ? 'stopped' : job.status === 'failed' ? 'failed' : null,
   };
 }
 
@@ -555,6 +566,9 @@ export function afterJobItems(job: ThreadJob): FeedItem[] {
       {
         kind: 'produced',
         jobId: job.jobId,
+        // Pour le bouton Stop de l'encart : l'encart paraît aussi sur un run
+        // qui court encore, dès qu'il a produit quelque chose.
+        status: job.status,
         verdict: job.verdict,
         project: job.project,
         summary: deliverySummary(job),

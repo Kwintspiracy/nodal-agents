@@ -10,8 +10,15 @@
 // fichiers ÉCRITS, ramasse les délégués en relectures, et ne rend un verdict
 // que si une preuve a tourné.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+
+// Le bouton Stop de l'encart lit le routeur de Next ; hors de l'app, il n'y a
+// pas de routeur monté (« invariant expected app router to be mounted »).
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: () => {}, refresh: () => {} }),
+}));
+
 import DeliveryBlock from '../DeliveryBlock.tsx';
 import {
   buildConversationThread,
@@ -35,6 +42,7 @@ const EMPTY: DeliverySummary = {
   changesRequested: false,
   commands: [],
   produced: true,
+  ended: null,
 };
 
 const totals = (costUsd: number | null = null) => ({
@@ -111,6 +119,7 @@ function summaryOf(over: Partial<ThreadJob> & { feed: ConversationFeed }): Deliv
     jobId: 'j1',
     createdAt: null,
     completedAt: null,
+    status: null,
     result: null,
     resultKind: null,
     verdict: travail,
@@ -267,6 +276,14 @@ describe('deliverySummary — ce que le modèle compte', () => {
     });
     expect(rouge.verdict).toBe('red');
     expect(rouge.tests).toEqual({ passed: 1, total: 2 });
+  });
+
+  it('l’issue d’un travail arrêté ou tombé voyage jusqu’à l’encart ; un travail fini n’en a pas', () => {
+    const vide = { items: [], totals: totals() };
+    expect(summaryOf({ feed: vide, status: 'cancelled' }).ended).toBe('stopped');
+    expect(summaryOf({ feed: vide, status: 'failed' }).ended).toBe('failed');
+    expect(summaryOf({ feed: vide, status: 'completed' }).ended).toBeNull();
+    expect(summaryOf({ feed: vide, status: 'processing' }).ended).toBeNull();
   });
 
   it('la durée court de l’ouverture du travail à sa fin ; inconnue tant qu’il court', () => {
@@ -570,6 +587,7 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
           changesRequested: false,
           commands: [],
           produced: true,
+          ended: null,
           verdict: 'green',
         }}
       />,
@@ -608,6 +626,7 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
           changesRequested: false,
           commands: [],
           produced: true,
+          ended: null,
           verdict: 'green',
         }}
       />,
@@ -654,6 +673,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
         summary={{
           ...EMPTY,
           produced: false,
+          ended: null,
           commands: [{ label: 'ls -la', observed: false }],
         }}
         jobId={null}
@@ -671,6 +691,61 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     // la seule mutation du lot qui restait verte (Reviewer C, passe 1).
     expect(html).toContain('text-ink-4');
     expect(html).not.toContain('text-ok');
+  });
+
+  // Quentin, 22/09 : « j'ai cancel un run mais il apparaît comme delivered et
+  // verified, c'est possible ça ? ». Ce que le run a écrit avant l'arrêt reste
+  // listé ; le mot de l'en-tête, lui, dit l'issue.
+  it('un run arrêté dit « Stopped », un run tombé « Failed », quoi qu’ils aient écrit', () => {
+    const arrete = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{
+          ...EMPTY,
+          produced: true,
+          files: 2,
+          filePaths: ['a.ts', 'b.ts'],
+          ended: 'stopped',
+        }}
+        jobId={null}
+      />,
+    );
+    expect(arrete).toContain('>Stopped');
+    expect(arrete).not.toContain('Delivered');
+    // Les fichiers restent nommés : l'arrêt n'efface pas ce qui a été écrit.
+    expect(arrete).toContain('a.ts');
+    // Et le crochet ne se peint pas en vert pour un travail qui n'est pas allé au bout.
+    expect(arrete).toContain('text-ink-4');
+    expect(arrete).not.toContain('text-ok');
+
+    const tombe = renderToStaticMarkup(
+      <DeliveryBlock summary={{ ...EMPTY, produced: true, ended: 'failed' }} jobId={null} />,
+    );
+    expect(tombe).toContain('>Failed');
+    expect(tombe).not.toContain('Delivered');
+  });
+
+  // Quentin, 22/09 : « pourquoi je ne peux pas stopper le run depuis le chat,
+  // il y a un bouton Open run ». L'encart paraît sur un run qui court dès
+  // qu'il a produit ; le bouton Stop vit à côté du lien, pour CE job.
+  it('porte le bouton Stop à côté d’« Open run » tant que le run court, et plus après', () => {
+    const enCours = renderToStaticMarkup(
+      <DeliveryBlock summary={{ ...EMPTY, produced: true }} jobId="job-9" status="processing" />,
+    );
+    expect(enCours).toContain('data-testid="stop-run"');
+    expect(enCours).toContain('data-job-id="job-9"');
+    expect(enCours).toContain('Open run');
+
+    const fini = renderToStaticMarkup(
+      <DeliveryBlock summary={{ ...EMPTY, produced: true }} jobId="job-9" status="completed" />,
+    );
+    expect(fini).not.toContain('data-testid="stop-run"');
+    expect(fini).toContain('Open run');
+
+    // Sans job à ouvrir, rien à arrêter non plus : le statut seul ne suffit pas.
+    const sansJob = renderToStaticMarkup(
+      <DeliveryBlock summary={{ ...EMPTY, produced: true }} jobId={null} status="processing" />,
+    );
+    expect(sansJob).not.toContain('data-testid="stop-run"');
   });
 
   it('montre douze commandes au plus, et COMPTE le reste', () => {
@@ -716,6 +791,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
         summary={{
           ...EMPTY,
           produced: true,
+          ended: null,
           files: 1,
           filePaths: ['out/bilan.md'],
           commands: [{ label: 'pnpm build', observed: true }],

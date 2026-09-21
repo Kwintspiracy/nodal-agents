@@ -91,17 +91,25 @@ export default function ThreadScreen({
         // Les gouttières de la page, et la boîte que l'appelant donne : c'est ce
         // qui aligne le bouton sur le bord droit de ce qu'il arrête.
         //
-        // `mr-[var(--thread-gutter)]` : la MÊME compensation que la saisie
+        // `pr-[var(--thread-gutter)]` : la MÊME compensation que la saisie
         // (Reviewer C, passe 2). La colonne du fil vit DANS le défilement, dont
-        // la goutttière de barre est réservée (`scrollbar-gutter: stable`), et
+        // la gouttière de barre est réservée (`scrollbar-gutter: stable`), et
         // elle est donc centrée dans une largeur amputée de cette barre. Une
         // rangée posée dehors et centrée sur la fenêtre entière dérivait de
         // quelques pixels vers la droite dès que le fil débordait — exactement
         // le décalage que la saisie corrige depuis le 17/09.
-        <div
-          className={`w-full min-w-0 shrink-0 px-5 pt-4 sm:px-8 lg:px-9 ${actionsBox} mr-[var(--thread-gutter,0px)]`}
-        >
-          <ActionRow>{actions}</ActionRow>
+        //
+        // EN PADDING SUR UNE ENVELOPPE PLEINE LARGEUR, pas en marge sur la
+        // boîte : `mr-[…]` posé sur une boîte `mx-auto` remplaçait sa marge
+        // droite automatique, et dès que l'écran dépassait la largeur de la
+        // boîte, `margin-left: auto` la poussait CONTRE LE BORD DROIT. Sur un
+        // grand écran, le bouton Stop d'un run était à 400 px de la carte qu'il
+        // arrête (Quentin, 22/09 : « excentré »). L'enveloppe réserve la
+        // gouttière, la boîte se centre dans ce qui reste, comme la carte.
+        <div className="w-full min-w-0 shrink-0 pt-4 pr-[var(--thread-gutter,0px)]">
+          <div className={`min-w-0 px-5 sm:px-8 lg:px-9 ${actionsBox}`}>
+            <ActionRow>{actions}</ActionRow>
+          </div>
         </div>
       )}
       {/* `scrollbar-gutter: stable` : la gouttière de la barre est réservée

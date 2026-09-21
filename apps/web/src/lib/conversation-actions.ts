@@ -1902,6 +1902,7 @@ export async function getConversationThreadAction(
       feed: assembled[i]!.feed,
       createdAt: r.job.createdAt,
       completedAt: r.job.completedAt,
+      status: r.job.status ?? null,
       result: r.job.result,
       // La provenance du résultat, lue sur la ligne plutôt que devinée à son
       // premier caractère (#154).

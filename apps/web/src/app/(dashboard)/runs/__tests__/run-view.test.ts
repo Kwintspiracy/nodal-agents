@@ -420,6 +420,7 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
     const produced: FeedItem = {
       kind: 'produced',
       jobId: 'job-1',
+      status: null,
       verdict: { isWork: true, items: [], uncertain: 0, more: 0, unclassified: 0 },
       project: null,
       summary: {
@@ -436,6 +437,7 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
         changesRequested: false,
         commands: [],
         produced: true,
+        ended: null,
       },
     };
     const lifted = liftDelivered([turn(), produced]);
