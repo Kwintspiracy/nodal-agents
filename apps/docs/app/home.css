@@ -78,6 +78,12 @@
   margin-inline: auto;
   padding-inline: clamp(20px, 5vw, 56px);
 }
+/* The hero alone runs on the design's own width (a 1440 frame): at 1440 the
+   gutter is the design's 56px, wider the column stays 56px from the edge of
+   a centred 1440 box (owner, 2026-09-22). The sections keep 1180. */
+.home-wrap-wide {
+  max-width: 1440px;
+}
 
 .home-display {
   font-family: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
@@ -117,6 +123,8 @@
   --hero-green: #5ee6a8;
   --hero-paper: #e8eefb;
   --hero-deep: #0a1a33;
+  /* The page's accent on a dark ground: the dark-theme flame. */
+  --hero-flame: #ff6a48;
   position: relative;
   isolation: isolate;
   background-color: var(--hero-deep);
@@ -212,7 +220,9 @@
 }
 .home-hero-copy {
   width: 100%;
-  max-width: 620px;
+  /* Wide enough for the title on one line at 90px and the lede on two
+     (owner, 2026-09-22); the picture's right half stays clear at 1440. */
+  max-width: 800px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -247,49 +257,53 @@
   font-weight: 700;
   color: var(--hero-ink);
   letter-spacing: -0.033em;
+  /* One line (owner, 2026-09-22). The size follows the viewport, so the
+     line holds down to 900px; below that it may wrap (see the media query). */
+  white-space: nowrap;
 }
 .home-hero-lede {
   margin: 0;
   font-size: clamp(17px, 1.53vw, 22px);
   line-height: 1.5;
   color: var(--hero-ink-soft);
-  max-width: 480px;
+  /* Two lines at the design size (owner, 2026-09-22). */
+  max-width: 660px;
 }
 
-.home-hero-actions {
+/* ── The three pillars ─────────────────────────────────────────────────── */
+
+/* In place of the design's two buttons (owner, 2026-09-22): what the product
+   stands on, in the accent colour, small. Three columns on a wide screen, a
+   stack on a narrow one. The install command below stays the call to action. */
+.home-hero-pillars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  align-items: center;
+  gap: 10px 28px;
 }
-.home-hero-btn {
-  display: inline-flex;
-  align-items: center;
-  font-size: 17px;
-  text-decoration: none;
-  border-radius: 10px;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
+.home-hero-pillars li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 12px;
+  border-left: 2px solid var(--hero-flame);
+  flex: 1 1 200px;
+  max-width: 240px;
 }
-.home-hero-btn-primary {
-  background: var(--hero-paper);
-  color: var(--hero-deep);
-  font-weight: 600;
-  padding: 15px 30px;
-}
-.home-hero-btn-primary:hover {
-  background: #ffffff;
-}
-.home-hero-btn-ghost {
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  color: var(--hero-ink);
+.home-hero-pillars strong {
+  font-family: var(--font-plexmono), ui-monospace, monospace;
+  font-size: 12px;
   font-weight: 500;
-  padding: 14px 28px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hero-flame);
 }
-.home-hero-btn-ghost:hover {
-  border-color: #ffffff;
+.home-hero-pillars span {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--hero-ink-soft);
 }
 
 /* ── The terminal ──────────────────────────────────────────────────────── */
@@ -368,6 +382,10 @@
   .home-hero-copy {
     max-width: none;
   }
+  /* The one-line title may wrap here: at 6.25vw it no longer fits the width. */
+  .home-hero-title {
+    white-space: normal;
+  }
   .home-term {
     width: 100%;
   }
@@ -429,13 +447,22 @@
 
 /* ── Screens band ──────────────────────────────────────────────────────── */
 
+/* Room above the captures and a title over them (owner, 2026-09-22: they sat
+   against the hero). */
+.home-screens-band {
+  padding-top: clamp(48px, 7vw, 88px);
+  padding-bottom: clamp(56px, 8vw, 96px);
+}
+.home-screens-title {
+  font-size: clamp(24px, 3vw, 34px);
+  margin: 0 0 clamp(18px, 2.2vw, 28px);
+}
 .home-screens {
   display: grid;
   /* The two captures are the same size (1393 by 1040), so two equal columns
      and the same rendered box for each (Quentin, 20/09). */
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: clamp(16px, 2.5vw, 28px);
-  padding-bottom: clamp(56px, 8vw, 96px);
   align-items: start;
 }
 .home-shot {
@@ -483,12 +510,9 @@
   font-size: clamp(28px, 4vw, 46px);
   margin: 0 0 10px;
 }
-.home-section > div > p:first-of-type,
-.home-intro {
-  color: var(--home-ink-soft);
-  max-width: 62ch;
-  margin-top: 0;
-}
+/* Every section opens the same way: the title, then one claim in the display
+   face with the accent bar (`home-claim`, below). Section 02 had it alone;
+   the owner asked for the same on all six (2026-09-22). */
 
 /* ── Generic blocks ────────────────────────────────────────────────────── */
 
@@ -752,14 +776,17 @@
 
 /* ── A claim that carries a section ────────────────────────────────────── */
 
+/* Shared by the six sections since 2026-09-22. The width and size were set for
+   one sentence; the other sections open on two or three, so both are relaxed
+   a little, and the accent bar is what carries the look. */
 .home-claim {
   font-family: var(--font-archivo), sans-serif;
-  font-size: clamp(19px, 2.1vw, 25px);
+  font-size: clamp(18px, 1.8vw, 22px);
   font-weight: 600;
   letter-spacing: -0.015em;
-  line-height: 1.35;
-  max-width: 34ch;
-  margin: 0 0 20px;
+  line-height: 1.4;
+  max-width: 52ch;
+  margin: 0 0 24px;
   border-left: 3px solid var(--home-flame);
   padding-left: 18px;
 }
