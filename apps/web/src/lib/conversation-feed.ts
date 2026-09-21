@@ -478,8 +478,12 @@ export type DeliverySummary = {
    * cours a produit quelque chose ; « Delivered » et le crochet vert y
    * disaient un travail fini à côté d'une pastille « Running » (Quentin,
    * 22/09). Vivant, l'en-tête dit « Working », dans la couleur de « Running ».
+   *
+   * `'waiting'` quand le run est vivant mais ARRÊTÉ SUR LA PERSONNE (une
+   * approbation) : il ne travaille pas, il attend (Reviewer C, #337). `null`
+   * quand le travail est terminé.
    */
-  live: boolean;
+  live: 'working' | 'waiting' | null;
 };
 
 /** Une commande du travail, et ce qu'on a constaté d'elle (#282). */

@@ -37,6 +37,7 @@ import {
   Check,
   CheckCircle,
   CircleNotch,
+  HourglassSimple,
   PencilSimple,
   Terminal,
   Warning,
@@ -159,8 +160,13 @@ export default function DeliveryBlock({
             Delivered avec un crochet vert, un bouton Stop et Running en haut »).
             L'icône et le mot prennent la couleur de « Running », et le crochet
             attend la fin. */}
-        {summary.live ? (
+        {summary.live === 'working' ? (
           <CircleNotch size={16} className="animate-spin text-run" aria-hidden />
+        ) : summary.live === 'waiting' ? (
+          // Bloqué sur la personne (une approbation) : il n'y a rien qui tourne,
+          // donc pas de spinner ; la couleur est celle du « needs approval » de
+          // la page Code (Reviewer C, #337).
+          <HourglassSimple size={16} className="text-warn" aria-hidden />
         ) : changesRequested ? (
           <Warning size={16} className="text-warn" aria-hidden />
         ) : null}
@@ -176,7 +182,7 @@ export default function DeliveryBlock({
         {/* UNE ABSENCE SE DESSINE EN GRIS, jamais en rouge (#282) : un tour
             dont la seule commande n'a rien laissé voir n'est pas en panne, il
             est indéterminé. Le crochet reste, sa couleur s'éteint. */}
-        {summary.live || changesRequested ? null : (
+        {summary.live !== null || changesRequested ? null : (
           <CheckCircle
             size={16}
             className={
@@ -202,16 +208,20 @@ export default function DeliveryBlock({
         {/* ET IL NE SE DIT PAS D'UN RUN QUI N'EST PAS ALLÉ AU BOUT (Quentin,
             22/09 : un run annulé « apparaît comme delivered »). Ce qu'il a
             écrit avant reste listé dessous ; l'en-tête dit l'issue. */}
-        <span className={`text-title-15 ${summary.live ? 'text-run' : 'text-ink'}`}>
-          {summary.live
+        <span
+          className={`text-title-15 ${summary.live === 'working' ? 'text-run' : summary.live === 'waiting' ? 'text-warn' : 'text-ink'}`}
+        >
+          {summary.live === 'working'
             ? 'Working'
-            : summary.ended === 'stopped'
-              ? 'Stopped'
-              : summary.ended === 'failed'
-                ? 'Failed'
-                : summary.produced
-                  ? 'Delivered'
-                  : 'Ran'}
+            : summary.live === 'waiting'
+              ? 'Waiting for you'
+              : summary.ended === 'stopped'
+                ? 'Stopped'
+                : summary.ended === 'failed'
+                  ? 'Failed'
+                  : summary.produced
+                    ? 'Delivered'
+                    : 'Ran'}
           {reviewLabel !== null && <span className="text-ink-3"> · {reviewLabel}</span>}
         </span>
         {/* La pastille suit le mot, à trente pixels — pas poussée au bord

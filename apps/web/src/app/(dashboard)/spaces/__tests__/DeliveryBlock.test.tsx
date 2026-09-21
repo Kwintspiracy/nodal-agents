@@ -43,7 +43,7 @@ const EMPTY: DeliverySummary = {
   commands: [],
   produced: true,
   ended: null,
-  live: false,
+  live: null,
 };
 
 const totals = (costUsd: number | null = null) => ({
@@ -589,7 +589,7 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
           commands: [],
           produced: true,
           ended: null,
-          live: false,
+          live: null,
           verdict: 'green',
         }}
       />,
@@ -629,7 +629,7 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
           commands: [],
           produced: true,
           ended: null,
-          live: false,
+          live: null,
           verdict: 'green',
         }}
       />,
@@ -677,7 +677,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           ...EMPTY,
           produced: false,
           ended: null,
-          live: false,
+          live: null,
           commands: [{ label: 'ls -la', observed: false }],
         }}
         jobId={null}
@@ -758,23 +758,53 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
   it('tant que le run court, l’en-tête dit « Working » dans la couleur de Running, sans crochet', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock
-        summary={{ ...EMPTY, produced: true, live: true }}
+        summary={{ ...EMPTY, produced: true, live: 'working' }}
         jobId="job-9"
         status="processing"
       />,
     );
     expect(html).toContain('>Working');
     expect(html).not.toContain('Delivered');
-    expect(html).toContain('text-run');
-    // Le crochet vert attend la fin ; l'icône est celle du travail en cours.
-    expect(html).not.toContain('text-ok');
-    // Et le bouton Stop est DANS L'EN-TÊTE, à droite, pas dans le pied.
+    // Le crochet vert attend la fin ; l'icône est celle du travail en cours,
+    // et elle est VERROUILLÉE (Reviewer C, #337) : le mot seul ne suffit pas.
     const head = html.slice(html.indexOf('data-testid="delivery-head"'));
     const headOnly = head.slice(0, head.indexOf('</div>'));
+    expect(headOnly).toContain('animate-spin');
+    expect(headOnly).toContain('text-run');
+    expect(html).not.toContain('text-ok');
+    // Et le bouton Stop est DANS L'EN-TÊTE, à droite, pas dans le pied.
     expect(headOnly).toContain('data-testid="stop-run"');
     expect(headOnly).toContain('ml-auto');
     // Un seul bouton sur tout l'encart : celui de l'en-tête, plus celui du pied.
     expect(html.split('data-testid="stop-run"').length - 1).toBe(1);
+  });
+
+  // Un run bloqué sur une approbation est vivant mais ne travaille pas : pas de
+  // spinner, le mot dit qu'il attend la personne (Reviewer C, #337).
+  it('un run qui attend une approbation dit « Waiting for you », sans spinner', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{ ...EMPTY, produced: true, live: 'waiting' }}
+        jobId="job-9"
+        status="awaiting_approval"
+      />,
+    );
+    expect(html).toContain('>Waiting for you');
+    expect(html).not.toContain('animate-spin');
+    expect(html).not.toContain('Working');
+    expect(html).not.toContain('Delivered');
+    // Toujours arrêtable d'ici.
+    expect(html).toContain('data-testid="stop-run"');
+  });
+
+  it('liveKind : working, waiting, ou rien', async () => {
+    const { liveKind } = await import('@/lib/job-live.ts');
+    expect(liveKind('processing')).toBe('working');
+    expect(liveKind('pending')).toBe('working');
+    expect(liveKind('awaiting_approval')).toBe('waiting');
+    expect(liveKind('completed')).toBeNull();
+    expect(liveKind('cancelled')).toBeNull();
+    expect(liveKind(null)).toBeNull();
   });
 
   it('montre douze commandes au plus, et COMPTE le reste', () => {
@@ -821,7 +851,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           ...EMPTY,
           produced: true,
           ended: null,
-          live: false,
+          live: null,
           files: 1,
           filePaths: ['out/bilan.md'],
           commands: [{ label: 'pnpm build', observed: true }],

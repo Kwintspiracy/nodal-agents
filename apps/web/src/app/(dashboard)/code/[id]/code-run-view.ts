@@ -16,7 +16,7 @@ import type { DeliverySummary, Step, TurnUsage } from '@/lib/conversation-feed.t
 import { outcomeOfToolOutput } from '@/lib/tool-card-payload.ts';
 import { lastReviewVerdict } from '@/lib/review-state.ts';
 import { reviewBlocksDelivery } from '@nodal-agents/shared';
-import { canStopRun } from '@/lib/job-live.ts';
+import { liveKind } from '@/lib/job-live.ts';
 import type { ThreadAgent } from '@/app/(dashboard)/spaces/format.ts';
 import { formatMs, formatTokens } from '@/app/(dashboard)/spaces/format.ts';
 import { relativeTime } from '@/lib/format-time';
@@ -243,7 +243,7 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
     // L'issue du process, lue sur sa ligne (`agent_jobs.status`) : un process
     // arrêté ou tombé garde ses fichiers listés, mais pas le mot « Delivered ».
     ended: header.status === 'cancelled' ? 'stopped' : header.status === 'failed' ? 'failed' : null,
-    live: canStopRun(header.status),
+    live: liveKind(header.status),
   };
 }
 

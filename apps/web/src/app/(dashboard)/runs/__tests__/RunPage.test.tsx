@@ -88,7 +88,7 @@ const delivered: FeedItem = {
     commands: [],
     produced: true,
     ended: null,
-    live: false,
+    live: null,
   },
 };
 

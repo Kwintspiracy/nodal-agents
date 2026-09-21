@@ -438,7 +438,7 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
         commands: [],
         produced: true,
         ended: null,
-        live: false,
+        live: null,
       },
     };
     const lifted = liftDelivered([turn(), produced]);
