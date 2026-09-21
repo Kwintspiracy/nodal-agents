@@ -31,6 +31,13 @@
 // dans la liste avec une étiquette, ce qui défaisait le geste de la barre
 // latérale ; il est maintenant là, avec « Show in list ».
 //
+// Et depuis #371, c'est aussi le SEUL endroit d'où un projet peut QUITTER
+// Nodal : « Forget » supprime sa ligne de registre et ses préférences, garde
+// l'historique des runs et des conversations, et ne touche pas au dossier. Il
+// n'apparaît que sur un projet du REGISTRE déjà masqué — oublier reste à deux
+// gestes, et un dossier détecté masqué n'a qu'une ligne de masquage, qu'on ne
+// supprime pas sans le ramener dans la liste.
+//
 // RENOMMER reste sur un projet OUVERT : c'est un geste qu'on pose en regardant
 // le projet, pas en balayant une liste de cinquante.
 //
@@ -57,7 +64,9 @@ import { conversationTimeLabel } from '@/app/(dashboard)/chat/conversation-rows.
 // troisième : un fichier 'use server' qui en réexporte un autre casse le
 // repérage des actions de Next.
 import { setCodeProjectHiddenAction } from '@/lib/actions.ts';
-import { registerDetectedProjectAction } from '@/lib/project-actions.ts';
+import { forgetCodeProjectAction, registerDetectedProjectAction } from '@/lib/project-actions.ts';
+// La confirmation du produit, jamais `window.confirm` (invariant #10).
+import ConfirmDialog from '@/components/ConfirmDialog';
 import type { WorkspaceProof, WorkspaceRow, WorkspacesView } from '@/lib/workspaces.ts';
 
 /** La pastille de preuve : quatre états, quatre mots. */
@@ -192,7 +201,7 @@ function ShowInListButton({ row, onDone }: { row: WorkspaceRow; onDone: () => vo
   const router = useRouter();
 
   return (
-    <span className="flex shrink-0 items-center pr-4">
+    <>
       <RowActionButton
         disabled={pending}
         onClick={() =>
@@ -213,17 +222,76 @@ function ShowInListButton({ row, onDone }: { row: WorkspaceRow; onDone: () => vo
       >
         Show in list
       </RowActionButton>
-    </span>
+    </>
+  );
+}
+
+/**
+ * LE GESTE QUI EFFACE (#371) : le projet quitte Nodal, son dossier reste.
+ *
+ * Il n'est offert QUE sous « Hidden (N) », et QUE sur un projet du registre.
+ * Deux raisons, et ce sont les deux moitiés de la même :
+ *
+ *   — cacher d'abord, oublier ensuite. Le geste est irréversible (le nom
+ *     choisi, la séquence de preuve et son approbation partent avec la ligne),
+ *     donc il n'est jamais à un clic d'une liste qu'on balaie. L'action serveur
+ *     tient la même règle : elle refuse un projet qui n'est pas masqué.
+ *   — un dossier DÉTECTÉ caché n'a d'autre existence en base que ce masquage :
+ *     supprimer sa ligne le ramènerait dans la liste. Il garde donc son seul
+ *     geste, « Show in list ».
+ *
+ * La confirmation DIT les trois faits, parce qu'aucun d'eux ne se devine :
+ * ce qui part, ce qui reste, et ce que Nodal ne touche pas.
+ */
+function ForgetButton({ row, onDone }: { row: WorkspaceRow; onDone: () => void }) {
+  const [pending, start] = useTransition();
+  const [asking, setAsking] = useState(false);
+  const router = useRouter();
+
+  return (
+    <>
+      <RowActionButton
+        tone="danger"
+        disabled={pending}
+        onClick={() => setAsking(true)}
+        title="Delete this project from Nodal. The folder stays on disk."
+      >
+        Forget
+      </RowActionButton>
+      <ConfirmDialog
+        open={asking}
+        title={`Forget ${truncate(row.name, 40)}?`}
+        message="The project leaves Nodal: its registration and its settings are deleted. Runs and conversations keep their history, with the link to the project cleared. Its folder on disk is not touched, deleting it is yours to do in your file explorer."
+        confirmLabel="Forget"
+        onCancel={() => setAsking(false)}
+        onConfirm={() => {
+          setAsking(false);
+          start(async () => {
+            const result = await forgetCodeProjectAction({ projectPath: row.path });
+            if (!result.ok) {
+              toast.error(result.message ?? 'The action failed');
+              return;
+            }
+            onDone();
+            router.refresh();
+          });
+        }}
+      />
+    </>
   );
 }
 
 function Row({ row, onDone }: { row: WorkspaceRow; onDone: () => void }) {
-  // Les gestes de la ligne, et il y en a au plus une sorte : une ligne masquée
-  // ne propose QUE de revenir dans la liste ; un dossier détecté visible
-  // propose de s'inscrire ou de partir ; un projet du registre visible n'en
-  // propose aucun ici, ses gestes sont sur sa page et dans la barre latérale.
+  // Les gestes de la ligne : une ligne masquée propose de revenir dans la
+  // liste, et — si elle est au REGISTRE — de quitter Nodal pour de bon ; un
+  // dossier détecté visible propose de s'inscrire ou de partir ; un projet du
+  // registre visible n'en propose aucun ici, ses gestes sont sur sa page et
+  // dans la barre latérale.
   const gestes = row.hidden ? (
-    <ShowInListButton row={row} onDone={onDone} />
+    <span className="flex shrink-0 items-center gap-2 pr-4">
+      <ShowInListButton row={row} onDone={onDone} />
+      {row.kind === 'registered' && <ForgetButton row={row} onDone={onDone} />}
+    </span>
   ) : row.kind === 'detected' ? (
     <DetectedActions row={row} onDone={onDone} />
   ) : null;
@@ -300,9 +368,14 @@ export default function WorkspacesList({ view }: { view: WorkspacesView }) {
           </TextButton>
           {showHidden && (
             <div id={hiddenListId}>
+              {/* La phrase DIT ce que la section fait, et elle a changé avec
+                  elle (#371) : « Nothing is deleted » était vrai tant que le
+                  seul geste remettait dans la liste. Maintenant qu'on peut
+                  oublier, ce qui reste vrai des DEUX gestes est que le dossier
+                  n'est jamais touché. */}
               <p className="mb-2 mt-2 text-body-12 text-ink-4">
-                Removed from the list and from the sidebar. Nothing is deleted: the folders stay
-                where they are, and Show in list puts a project back.
+                Removed from the list and from the sidebar. Show in list puts a project back, Forget
+                deletes it from Nodal. Either way the folders stay where they are on disk.
               </p>
               <div className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2 bg-paper">
                 {view.hiddenRows.map((row) => (
