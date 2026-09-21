@@ -7,6 +7,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import Checkbox from '@/components/ui/Checkbox';
+import { useApprovals } from '@/components/ApprovalsProvider';
 
 interface Props {
   approvalId: string;
@@ -54,12 +55,30 @@ export default function ApprovalActions({
   // Reset on every open: a grant widened once must not silently pre-widen the next.
   const [allAgents, setAllAgents] = useState(false);
 
-  function resolve(decision: 'approve' | 'reject', reason?: string) {
-    return resolveApprovalAction({
+  // LA MÊME VÉRITÉ QUE LE RAIL. La pastille de la case « Approvals » compte les
+  // lignes de ce provider, et rien d'autre : répondre ici doit le faire relire,
+  // sinon le nombre reste affiché jusqu'au prochain sondage (15 s) et la barre
+  // réclame une réponse déjà donnée. Un compteur local tenu à côté aurait
+  // divergé du provider dès la première demande arrivée d'un autre canal.
+  const { refresh } = useApprovals();
+
+  /**
+   * Répondre, PUIS relire les attentes.
+   *
+   * L'ordre compte : la relecture part une fois que l'action serveur a répondu,
+   * jamais avant, sinon elle compterait la demande qu'on vient de fermer. Et
+   * elle est attendue DANS la transition, ce qui garde les boutons désactivés
+   * le temps que la barre se mette à jour au lieu de les rouvrir sur un nombre
+   * périmé.
+   */
+  async function resolve(decision: 'approve' | 'reject', reason?: string) {
+    const result = await resolveApprovalAction({
       approvalRequestId: approvalId,
       decision,
       ...(reason ? { notes: reason } : {}),
     });
+    if (result.ok) await refresh();
+    return result;
   }
 
   function handleApproveOnce() {

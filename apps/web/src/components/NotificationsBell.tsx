@@ -34,7 +34,13 @@ function inputSnippet(toolInput: Record<string, unknown> | null | undefined): st
 
 // ─── Approve button inside the dropdown ───────────────────────────────────────
 
-function ApproveButton({ item, onApproved }: { item: PendingApproval; onApproved: () => void }) {
+function ApproveButton({
+  item,
+  onApproved,
+}: {
+  item: PendingApproval;
+  onApproved: () => Promise<void>;
+}) {
   const [isPending, startTransition] = useTransition();
 
   function handleApprove() {
@@ -47,7 +53,9 @@ function ApproveButton({ item, onApproved }: { item: PendingApproval; onApproved
         toast.error(r.message);
       } else {
         toast.success('Approved');
-        onApproved();
+        // ATTENDUE, comme sur la page Approvals : le bouton se réactive sur le
+        // nouveau nombre, jamais sur l'ancien.
+        await onApproved();
       }
     });
   }
@@ -78,7 +86,7 @@ function ApprovalsDropdown({
   items: PendingApproval[];
   updates: SkillUpdateNotice[];
   onClose: () => void;
-  onApproved: () => void;
+  onApproved: () => Promise<void>;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -197,8 +205,8 @@ export default function NotificationsBell() {
   const close = useCallback(() => setOpen(false), []);
   const toggle = useCallback(() => setOpen((v) => !v), []);
 
-  const handleApproved = useCallback(() => {
-    refresh();
+  const handleApproved = useCallback(async () => {
+    await refresh();
     // Panel stays open so the user can approve more items; it will auto-update.
   }, [refresh]);
 

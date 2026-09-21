@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { resolveApprovalAction } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import { useApprovals } from '@/components/ApprovalsProvider';
 
 export interface QuestionCardProps {
   /**
@@ -47,6 +48,12 @@ export interface QuestionCardProps {
 export default function QuestionCard({ prompt, options, question }: QuestionCardProps) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  // Une question du fil compte dans la pastille du rail comme celle de la page
+  // Approvals : y répondre ICI doit la faire tomber ICI. `router.refresh()` ne
+  // suffit pas — il refait le rendu serveur du fil, et `ApprovalsProvider` est
+  // un état client que seule sa relecture met à jour (sinon : 15 s de barre qui
+  // réclame une réponse déjà donnée).
+  const { refresh } = useApprovals();
   const status = question?.status ?? null;
   const answer = question?.answer ?? null;
   const waiting = status === 'pending' && question !== null;
@@ -67,6 +74,8 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
       // Le fil est rendu côté serveur : sans ce rafraîchissement, la carte
       // resterait en attente jusqu'au prochain passage de LiveRefresh.
       router.refresh();
+      // Et la barre, qui compte les attentes côté client.
+      await refresh();
     });
   }
 
