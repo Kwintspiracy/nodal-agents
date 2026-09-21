@@ -29,6 +29,16 @@ import { callHappened, outcomeOfToolOutput, parsePresented } from './tool-card-p
 import type { ConstatedChangeKind } from '@nodal-agents/shared';
 
 /**
+ * LE MOT DU GESTE porte sur un fichier, tel que la plaque le dit.
+ *
+ * Aux quatre mots du constat (`ConstatedChangeKind`) s'ajoute `written`, et il
+ * manquait (Reviewer C, PR #380). `file_write` écrit OU écrase, et sa carte dit
+ * `written` dans les deux cas : le ranger d'office dans `added` affirmait une
+ * création sur chaque écrasement. Le mot de la carte est le seul vrai.
+ */
+export type FileChangeGesture = ConstatedChangeKind | 'written';
+
+/**
  * L'HISTOIRE COMPLÈTE D'UN FICHIER dans un pipeline — l'unité du panneau
  * Changes de la page Code, et celle de l'encart de livraison depuis #369.
  */
@@ -46,9 +56,10 @@ export type FileChangeGroup = {
   /**
    * Ce que le CONSTAT dit de ce fichier (issue #199) : créé, modifié, supprimé,
    * renommé. Absent d'un run d'avant la migration 0113, dont la liste est
-   * encore celle que les outils ont déclarée.
+   * encore celle que les outils ont déclarée — et `written` quand c'est la
+   * carte de l'outil qui le dit, elle qui ne distingue pas les deux.
    */
-  changeKind?: ConstatedChangeKind;
+  changeKind?: FileChangeGesture;
 };
 
 /**
@@ -141,7 +152,7 @@ export function fileChangesOfAuditRows(
   workspaceRoots: readonly string[],
 ): FileChangeGroup[] {
   /** Clé canonique brute → ce que la carte a dit, dans l'ordre d'écriture. */
-  const display = new Map<string, { path: string; changeKind: ConstatedChangeKind }>();
+  const display = new Map<string, { path: string; changeKind: FileChangeGesture }>();
   const calls: FileChangeCall[] = [];
   for (const row of rows) {
     if (!callHappened(outcomeOfToolOutput(row.toolOutput))) continue;
@@ -158,7 +169,7 @@ export function fileChangesOfAuditRows(
         if (!display.has(key)) {
           display.set(key, {
             path: canonicalChangePath(f.path, workspaceRoots),
-            changeKind: f.action === 'modified' ? 'modified' : 'added',
+            changeKind: f.action === 'created' ? 'added' : f.action,
           });
         }
       });

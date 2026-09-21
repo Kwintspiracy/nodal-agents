@@ -25,6 +25,7 @@ import FileChangeBlock from '@/app/(dashboard)/code/[id]/FileChangeBlock.tsx';
 import { getRunFileChangesAction } from '@/lib/run-file-changes-actions.ts';
 import type { CodingChangeView } from '@/lib/coding-changes.ts';
 import type { DeliveryFileChange } from '@/lib/conversation-feed.ts';
+import type { FileChangeGroup } from '@/lib/file-change-groups.ts';
 
 /** Une plaque sans fragment garde la MÊME liste vide d'un rendu à l'autre. */
 const AUCUN: CodingChangeView[] = [];
@@ -36,47 +37,67 @@ export default function DeliveryFiles({
   files: DeliveryFileChange[];
   jobId: string;
 }) {
-  const [edits, setEdits] = useState<Map<string, CodingChangeView[]> | null>(null);
+  const [groupes, setGroupes] = useState<FileChangeGroup[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = (): void => {
-    if (edits !== null || loading) return;
+    if (groupes !== null || loading) return;
     setLoading(true);
     setError(null);
     void getRunFileChangesAction({ jobId })
       .then((res) => {
-        if (res.ok) setEdits(new Map(res.data.map((g) => [g.filePath, g.edits])));
+        if (res.ok) setGroupes(res.data);
         else setError(res.code);
       })
       .catch(() => setError('unreachable'))
       .finally(() => setLoading(false));
   };
 
+  // DEUX FICHIERS PEUVENT PORTER LE MÊME CHEMIN AFFICHÉ (Reviewer C, #380).
+  // Leur identité est le chemin BRUT, qui ne sort jamais du serveur (#161) :
+  // `cles/sk-A.txt` et `cles/sk-B.txt` sont deux fichiers et masquent vers le
+  // même texte. Une `Map` par chemin en perdait un — le second écrasait le
+  // premier, et les deux plaques montraient le même diff. Les fragments se
+  // rejoignent donc par le RANG : le n-ième fichier d'un chemin prend le
+  // n-ième groupe de ce chemin, et les deux listes sortent du même moteur,
+  // dans le même ordre.
+  const parChemin = new Map<string, CodingChangeView[][]>();
+  for (const g of groupes ?? []) {
+    const deja = parChemin.get(g.filePath) ?? [];
+    deja.push(g.edits);
+    parChemin.set(g.filePath, deja);
+  }
+  const rang = new Map<string, number>();
+
   return (
     <div className="flex flex-col gap-1.5" data-testid="delivery-files">
-      {files.map((f) => (
-        <FileChangeBlock
-          key={f.path}
-          defaultOpen={false}
-          onOpen={load}
-          pending={loading}
-          // UNE ABSENCE NE S'AFFIRME PAS QUAND ELLE N'A PAS ÉTÉ CONSTATÉE
-          // (invariant #4) : un chargement qui échoue le dit, il ne laisse pas
-          // la plaque annoncer « aucun texte enregistré ».
-          emptyNote={error !== null ? `No diff: ${error}` : undefined}
-          group={{
-            filePath: f.path,
-            addedLines: f.addedLines,
-            removedLines: f.removedLines,
-            // Le mot du geste voyage avec l'en-tête : sans lui, la plaque le
-            // déduirait de fragments qui ne sont pas encore là, et un fichier
-            // créé se lirait « modified » jusqu'au dépli.
-            changeKind: f.changeKind,
-            edits: edits?.get(f.path) ?? AUCUN,
-          }}
-        />
-      ))}
+      {files.map((f) => {
+        const n = rang.get(f.path) ?? 0;
+        rang.set(f.path, n + 1);
+        return (
+          <FileChangeBlock
+            key={`${f.path}#${n}`}
+            defaultOpen={false}
+            onOpen={load}
+            pending={loading}
+            // UNE ABSENCE NE S'AFFIRME PAS QUAND ELLE N'A PAS ÉTÉ CONSTATÉE
+            // (invariant #4) : un chargement qui échoue le dit, il ne laisse pas
+            // la plaque annoncer « aucun texte enregistré ».
+            emptyNote={error !== null ? `No diff: ${error}` : undefined}
+            group={{
+              filePath: f.path,
+              addedLines: f.addedLines,
+              removedLines: f.removedLines,
+              // Le mot du geste voyage avec l'en-tête : sans lui, la plaque le
+              // déduirait de fragments qui ne sont pas encore là, et un fichier
+              // créé se lirait « modified » jusqu'au dépli.
+              changeKind: f.changeKind,
+              edits: parChemin.get(f.path)?.[n] ?? AUCUN,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

@@ -46,6 +46,16 @@ const lecture = (path: string): AuditRowForChanges => ({
  * Ce que fait la page d'un run avec les mêmes lignes : elle lit l'entrée de
  * chaque appel, écarte les refus, et passe le reste au regroupement partagé.
  * C'est la boucle de `getCodingProcessDetailAction`, sans ses requêtes.
+ *
+ * CE QUE CE TEST NE SURVEILLE PAS, ET QUI LE SURVEILLE (Reviewer C, #380). Il
+ * prouve que le fil et cette boucle-ci rendent les mêmes rangées ; il ne peut
+ * pas prouver que la VRAIE boucle appelle bien le moteur partagé —
+ * `getCodingProcessDetailAction` vit dans un fichier `'use server'` et demande
+ * une base. C'est `apps/web/tests/code-processes-actions.test.ts` qui la tient,
+ * sur un vrai Postgres : débrancher `resolvedPath` du `retenues.push` de
+ * `actions.ts` fait rougir « la forme à LABEL et la forme absolue du même
+ * fichier ne comptent qu'UNE fois » (vérifié par mutation le 21/09). Les deux
+ * tests ensemble ferment la question ; aucun des deux seul ne la ferme.
  */
 function commePageCode(
   rows: readonly AuditRowForChanges[],
@@ -118,6 +128,22 @@ describe('regroupement par fichier @cap:travailler-sur-des-fichiers/moteur', () 
     expect(fileChangesOfAuditRows([edition('src/c.ts', 'un', 'deux')], [])[0]?.changeKind).toBe(
       'modified',
     );
+  });
+
+  it('« written » reste « written » : la carte de file_write ne dit pas si c’est une création', () => {
+    // Reviewer C, #380. `file_write` écrit OU écrase, et présente `written`
+    // dans les deux cas : le ranger dans « added » affirmait une création sur
+    // chaque écrasement.
+    const ecrase: AuditRowForChanges = {
+      ...ecriture('src/a.ts', 'neuf'),
+      presented: {
+        card: 'files',
+        total: 1,
+        truncated: false,
+        files: [{ path: 'src/a.ts', action: 'written' }],
+      },
+    };
+    expect(fileChangesOfAuditRows([ecrase], [])[0]?.changeKind).toBe('written');
   });
 
   it('un fichier seulement LU n’est pas un fichier livré', () => {

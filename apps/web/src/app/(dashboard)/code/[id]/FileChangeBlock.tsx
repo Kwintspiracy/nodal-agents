@@ -40,8 +40,7 @@ import { useMemo, useState } from 'react';
 import { fragmentDiff } from '@nodal-agents/shared';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import type { CodingChangeView } from '@/lib/coding-changes.ts';
-import type { FileChangeGroup } from '@/lib/file-change-groups.ts';
-import type { ConstatedChangeKind } from '@nodal-agents/shared';
+import type { FileChangeGesture, FileChangeGroup } from '@/lib/file-change-groups.ts';
 
 /**
  * LE MOT DU GESTE, celui que git emploie.
@@ -52,11 +51,15 @@ import type { ConstatedChangeKind } from '@nodal-agents/shared';
  * qu'aucun outil l'ait nommé — deux gestes que le vocabulaire d'avant ne
  * savait pas dire.
  */
-const GESTE_LIBELLE: Record<ConstatedChangeKind, string> = {
+const GESTE_LIBELLE: Record<FileChangeGesture, string> = {
   added: 'added',
   modified: 'modified',
   deleted: 'deleted',
   renamed: 'renamed',
+  // `file_write` ECRIT OU ÉCRASE, et sa carte ne distingue pas les deux
+  // (Reviewer C, PR #380). Le mot reste celui de la carte plutôt que d'affirmer
+  // une création sur chaque écrasement.
+  written: 'written',
 };
 
 /**
@@ -252,7 +255,7 @@ export default function FileChangeBlock({
   // ce que git a vu autour du run ; les appels d'outils, eux, ne disent que ce
   // qu'ils ont TENTÉ, et ils ne savent pas dire « supprimé ». Un fichier que
   // git a vu et qu'aucun outil n'a nommé n'a que ce mot-là.
-  const geste: ConstatedChangeKind =
+  const geste: FileChangeGesture =
     group.changeKind ?? (group.edits[0]?.kind === 'write' ? 'added' : 'modified');
 
   return (

@@ -150,6 +150,54 @@ describe('DeliveryBlock — le diff de chaque fichier @cap:travailler-sur-des-fi
     expect(lignes()).toContainEqual(['+', expect.stringContaining('seul')]);
   });
 
+  it('deux fichiers au MÊME chemin affiché gardent chacun SON diff', async () => {
+    // Reviewer C, #380. Leur identité est le chemin brut, qui ne sort jamais du
+    // serveur (#161) : deux fichiers qui ne diffèrent que par un jeton masquent
+    // vers le même texte. Une correspondance par chemin en perdait un, et les
+    // deux plaques montraient le même diff.
+    const masque = 'cles/[secret] (sk-).txt';
+    getRunFileChangesAction.mockResolvedValueOnce({
+      ok: true,
+      data: [
+        {
+          filePath: masque,
+          addedLines: 1,
+          removedLines: 0,
+          edits: [{ filePath: masque, kind: 'write', oldText: null, newText: 'PREMIER' }],
+        },
+        {
+          filePath: masque,
+          addedLines: 1,
+          removedLines: 0,
+          edits: [{ filePath: masque, kind: 'write', oldText: null, newText: 'SECOND' }],
+        },
+      ],
+    } as never);
+    await render(
+      <DeliveryBlock
+        summary={{
+          ...EMPTY,
+          files: 2,
+          fileChanges: [
+            { path: masque, addedLines: 1, removedLines: 0, changeKind: 'added' as const },
+            { path: masque, addedLines: 1, removedLines: 0, changeKind: 'added' as const },
+          ],
+        }}
+        jobId="job-7"
+        filesJobId="job-7"
+      />,
+    );
+    const boutons = [...container.querySelectorAll('[data-testid="file-change-kind"]')].map((el) =>
+      el.closest('button'),
+    );
+    await click(boutons[0]!);
+    await click(boutons[1]!);
+
+    const peintes = lignes();
+    expect(peintes).toContainEqual(['+', expect.stringContaining('PREMIER')]);
+    expect(peintes).toContainEqual(['+', expect.stringContaining('SECOND')]);
+  });
+
   it('un travail sans changement de fichier ne dessine aucune plaque', async () => {
     await render(<DeliveryBlock summary={EMPTY} jobId="job-7" filesJobId="job-7" />);
     expect(container.querySelectorAll('[data-testid="file-change-kind"]')).toHaveLength(0);

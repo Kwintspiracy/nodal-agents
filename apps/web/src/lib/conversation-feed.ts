@@ -26,7 +26,7 @@
 // en amont.
 
 import { SENT_TEXT_KINDS } from '@nodal-agents/shared';
-import type { ConstatedChangeKind, ToolCard, ToolCardPayload } from '@nodal-agents/shared';
+import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 // UNIQUEMENT le type, et c'est load-bearing : ce module est lu par des
 // composants `'use client'`, et une importation de VALEUR depuis
 // `@nodal-agents/orchestration` embarquerait `@nodal-agents/db` et drizzle dans
@@ -41,6 +41,7 @@ import {
   isToolCard,
 } from './tool-card-payload.ts';
 import { lineCountsOfCall, type LineCounts } from './coding-changes.ts';
+import type { FileChangeGesture } from './file-change-groups.ts';
 import { knownHint, type FailureHint } from './failure-hint.ts';
 import type { ProductionVerdict } from './chat-or-work.ts';
 
@@ -410,7 +411,7 @@ export type DeliveryFileChange = {
    * n'arrivent qu'au clic, et un mot déduit d'eux dirait « modified » sur un
    * fichier créé jusqu'à ce que quelqu'un l'ouvre.
    */
-  changeKind?: ConstatedChangeKind;
+  changeKind?: FileChangeGesture;
 };
 
 /**
