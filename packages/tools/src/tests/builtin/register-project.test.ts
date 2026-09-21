@@ -27,6 +27,7 @@ import { normalizePath, projectKey } from '@nodal-agents/shared';
 import { createToolRegistry } from '../../registry';
 import { registerBuiltins } from '../../builtin';
 import { executeTool } from '../../execute';
+import { withStatedPurpose } from '../../purpose';
 import type { ExecuteOptions, ToolContext } from '../../types';
 
 /**
@@ -82,8 +83,17 @@ afterEach(async () => {
 function outil() {
   const tool = registry.get('register_project');
   if (!tool) throw new Error('register_project absent du registre');
-  return tool;
+  // L'outil TEL QUE LE JOB LE POSE : la liste d'outils lui ajoute `purpose`
+  // (`exposeStatedPurpose`, appelé par le runner). Sans ce passage, zod
+  // retirerait la phrase de l'entrée et la porte refuserait un appel que le
+  // modèle a pourtant rempli correctement. Optionnel ici : ces contrats
+  // couvrent aussi les régimes qui relâchent la garde (Yolo, fully_autonomous),
+  // où l'outil ne demande plus rien à personne.
+  return withStatedPurpose(tool, { required: false });
 }
+
+/** La phrase que l'agent écrit pour la personne qui approuve. */
+const RAISON = 'Ranger les notes de veille dans leur propre projet.';
 
 async function jobNeuf(): Promise<string> {
   const [job] = await db
@@ -547,7 +557,7 @@ describe('register_project — la porte : le propriétaire confirme (revue Codex
 
     const res = await executeTool(
       outil(),
-      { path: 'veille-ia', name: 'Veille IA' },
+      { path: 'veille-ia', name: 'Veille IA', purpose: RAISON },
       { ...ctx(jobId, null), toolCallId: 'call-reg-porte' } as ToolContext,
       optionsSansRegle(),
     );
@@ -623,7 +633,7 @@ describe('register_project — la porte : le propriétaire confirme (revue Codex
 
     const suspendu = await executeTool(
       outil(),
-      { path: 'reprise', name: 'Reprise' },
+      { path: 'reprise', name: 'Reprise', purpose: RAISON },
       { ...ctx(jobId, conversationId), toolCallId: 'call-reg-reprise' } as ToolContext,
       optionsSansRegle(),
     );
@@ -632,7 +642,7 @@ describe('register_project — la porte : le propriétaire confirme (revue Codex
 
     const rejoue = await executeTool(
       outil(),
-      { path: 'reprise', name: 'Reprise' },
+      { path: 'reprise', name: 'Reprise', purpose: RAISON },
       { ...ctx(jobId, conversationId), toolCallId: 'call-reg-reprise' } as ToolContext,
       {
         approvalRules: [

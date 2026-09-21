@@ -93,6 +93,22 @@ A fact you save via \`save_memory\` must describe something VERIFIED — an exac
 
 Memory is what you KNOW, never a log of what you DID. Do not save "I created file X", "I posted the announcement", "run completed" — the file, the message and the run are their own record, and an account of one job is worthless to the next. If you are a scheduled routine and you need to recognise this run against the last one, that is \`save_routine_state\`, not memory.`;
 
+/**
+ * La règle de `purpose`, dite UNE fois, pour tout le monde.
+ *
+ * Générique par construction : aucun nom d'agent, aucun nom d'outil. QUELS
+ * outils demandent d'abord se lit dans les schémas que le modèle reçoit
+ * (`exposeStatedPurpose`, @nodal-agents/tools) — en poser la liste ici serait
+ * de la métadonnée codée en dur (invariant #1), et elle serait fausse dès
+ * qu'une règle d'approbation change.
+ *
+ * Pas sur `chat` : cette surface n'a que `run_task`, que rien ne gate, et une
+ * consigne inapplicable y coûte des jetons à chaque tour.
+ */
+const APPROVAL_PURPOSE_BLOCK = `## When a call has to be approved
+
+Some of your tools stop and wait for a person before they run. Their input schema carries a \`purpose\` field. Fill it with one sentence written for whoever reads the approval card: what you need this call for, and why. Without it nothing is submitted to anyone and the call comes straight back to you, unrun.`;
+
 /** Worker-only — capitalize durable discoveries before finishing (not the orchestrator's job: it delegates the work, it doesn't do it). */
 const WORKER_DISCOVERY_BLOCK = `## Capitalize what you learn
 
@@ -228,7 +244,9 @@ export function buildBaselineBlock(
 
   // Le chat n'a pas `save_memory` : la discipline qui l'ordonne n'y va pas.
   const memoryBlock = surface === 'chat' ? '' : MEMORY_DISCIPLINE_BLOCK;
-  return [catalogBlock, memoryBlock, roleBlock].filter(Boolean).join('\n\n');
+  // Voir APPROVAL_PURPOSE_BLOCK : le chat n'a aucun outil que la porte suspend.
+  const approvalBlock = surface === 'chat' ? '' : APPROVAL_PURPOSE_BLOCK;
+  return [catalogBlock, memoryBlock, approvalBlock, roleBlock].filter(Boolean).join('\n\n');
 }
 
 /** Layer 2 — per-channel etiquette, only when the agent is bound to a channel. */

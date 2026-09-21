@@ -132,8 +132,15 @@ export function toolDisplayName(toolName: string): string {
 /** Fields the approval UI asks the agent to fill, rendered outside the arg list. */
 const UI_META_KEYS = new Set(['purpose']);
 
-/** The agent's stated reason, trimmed, or null when absent or blank. */
-function readPurpose(input: unknown): string | null {
+/**
+ * The agent's stated reason, trimmed, or null when absent or blank.
+ *
+ * Exported because the approval GATE (@nodal-agents/tools, purpose.ts) refuses a
+ * call that reaches it without one: "absent or blank" has to mean the same thing
+ * where it is refused and where it is rendered, or a call could be let through
+ * here and still print the fallback line there.
+ */
+export function readStatedPurpose(input: unknown): string | null {
   if (!input || typeof input !== 'object') return null;
   const raw = (input as Record<string, unknown>)['purpose'];
   if (typeof raw !== 'string') return null;
@@ -204,7 +211,7 @@ export interface ExplainOptions {
  */
 export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
   const args = flattenArgs(opts.toolInput);
-  const purpose = readPurpose(opts.toolInput);
+  const purpose = readStatedPurpose(opts.toolInput);
   const mcpName = parseMcpToolName(opts.toolName);
 
   if (mcpName && opts.mcp) {
