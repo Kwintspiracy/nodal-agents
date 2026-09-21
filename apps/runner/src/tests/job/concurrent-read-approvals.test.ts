@@ -288,14 +288,28 @@ describe('concurrent gated reads — approval re-pairing (audit RT-3 / #17)', ()
         // deferred WITHOUT ever calling executeTool (no orphan row created).
         {
           toolCalls: [
-            { toolCallId: 'tc-read-A', toolName: 'file_read', args: { path: 'a.txt' } },
-            { toolCallId: 'tc-read-B', toolName: 'file_read', args: { path: 'b.txt' } },
+            {
+              toolCallId: 'tc-read-A',
+              toolName: 'file_read',
+              args: { path: 'a.txt', purpose: 'Lire le premier fichier avant de décider.' },
+            },
+            {
+              toolCallId: 'tc-read-B',
+              toolName: 'file_read',
+              args: { path: 'b.txt', purpose: 'Lire le second fichier avant de décider.' },
+            },
           ],
         },
         // Turn 2 (after A's approval resolves): the LLM re-issues the deferred
         // read for b.txt under a NEW toolCallId, per the [DEFERRED] instruction.
         {
-          toolCalls: [{ toolCallId: 'tc-read-B2', toolName: 'file_read', args: { path: 'b.txt' } }],
+          toolCalls: [
+            {
+              toolCallId: 'tc-read-B2',
+              toolName: 'file_read',
+              args: { path: 'b.txt', purpose: 'Lire le second fichier avant de décider.' },
+            },
+          ],
         },
         // Turn 3 (after B's approval resolves): agent finishes.
         {

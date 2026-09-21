@@ -105,6 +105,18 @@ export {
   isCodeExecutionTool,
   CODE_EXECUTION_TOOL_NAMES,
 } from './execute';
+// La raison que l'agent doit donner quand un appel va suspendre le job devant
+// une personne. `exposeStatedPurpose` pose le champ sur la liste d'outils du
+// job (appelé par le runner) ; le REFUS, lui, est câblé dans `executeTool` et
+// ne s'exporte pas — rien hors du gate n'a à le prononcer.
+export {
+  PURPOSE_KEY,
+  PURPOSE_DESCRIPTION,
+  missingPurposeInstruction,
+  withStatedPurpose,
+} from './purpose';
+export { exposeStatedPurpose, asksForApprovalFirst } from './purpose-exposure';
+export type { PurposeExposureContext } from './purpose-exposure';
 // Command classifiers moved to @nodal-agents/shared (2026-07-08) so the
 // approval-impact line (shared, rendered by runner AND web) can reuse the
 // SAME verdicts as the gate — re-exported here so existing consumers

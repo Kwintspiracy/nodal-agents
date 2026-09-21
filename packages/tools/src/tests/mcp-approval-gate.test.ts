@@ -15,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import {
+  TEST_PURPOSE,
   createGateHarness,
   anMcpTool,
   aBuiltinTool,
@@ -109,7 +110,7 @@ describe('Règles par SERVEUR — un consentement, pas trente', () => {
   it('ne peut jamais relâcher un outil du produit — les builtins n’ont pas de namespace', async () => {
     await expectGate(aGatedBuiltinTool())
       .withRules([aServerRule('run')])
-      .withInput({ command: 'echo hi' })
+      .withInput({ command: 'echo hi', purpose: TEST_PURPOSE })
       .underAutonomy(undefined)
       .toRequireApproval();
   });
@@ -128,7 +129,9 @@ describe('create_mcp stdio — plancher dur dans tous les modes', () => {
       name: 'create_mcp',
       description: 'Register an MCP server.',
       riskLevel: 'write',
-      inputSchema: z.object({ transport: z.string().optional() }),
+      // `purpose` est posé sur tout outil qui demande d'abord (exposeStatedPurpose)
+      // et le gate refuse l'appel qui ne le porte pas : le fixture le déclare.
+      inputSchema: z.object({ transport: z.string().optional(), purpose: z.string().optional() }),
     });
 
   it('exige un humain dans les quatre modes', async () => {
@@ -136,7 +139,7 @@ describe('create_mcp stdio — plancher dur dans tous les modes', () => {
     // qui auto-approuve AVANT d'atteindre cette branche.
     await expectGate(createMcp())
       .withRules([])
-      .withInput({ transport: 'stdio' })
+      .withInput({ transport: 'stdio', purpose: TEST_PURPOSE })
       .underEveryAutonomy()
       .toRequireApproval();
   });
@@ -144,7 +147,7 @@ describe('create_mcp stdio — plancher dur dans tous les modes', () => {
   it('résiste même à une règle auto_approve explicite', async () => {
     await expectGate(createMcp())
       .withRules([aToolRule('create_mcp')])
-      .withInput({ transport: 'stdio' })
+      .withInput({ transport: 'stdio', purpose: TEST_PURPOSE })
       .underAutonomy('fully_autonomous')
       .toRequireApproval();
   });
@@ -154,7 +157,7 @@ describe('create_mcp stdio — plancher dur dans tous les modes', () => {
     // outil du serveur attaché porte désormais son propre gate (MCP-001).
     const results = await expectGate(createMcp())
       .withRules([])
-      .withInput({ transport: 'http' })
+      .withInput({ transport: 'http', purpose: TEST_PURPOSE })
       .underAutonomy('destructive_gate')
       .run();
     expect(results[0]?.outcome).toBe('success');

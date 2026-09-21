@@ -7,7 +7,7 @@ import { eq } from '@nodal-agents/db';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { approvalRequests, toolCalls } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
-import { executeTool } from '../execute';
+import { executeTool as gateReel } from '../execute';
 import type {
   ToolDefinition,
   ToolContext,
@@ -27,7 +27,7 @@ function makeSimpleTool(
   return {
     name: 'simple_tool',
     description: 'Simple tool for testing',
-    inputSchema: z.object({ value: z.string() }),
+    inputSchema: z.object({ value: z.string(), purpose: z.string().optional() }),
     riskLevel: 'read',
     execute: async (input: SimpleInput, _ctx: ToolContext) => `result:${input.value}`,
     ...override,
@@ -63,6 +63,23 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
     ...overrides,
   };
 }
+
+// Depuis le 21/09/2026, une demande d'approbation sans la phrase de l'agent
+// n'est pas posée du tout (`purpose.ts`). Les contrats de CE fichier portent sur
+// la POSTURE d'approbation — quelle règle gagne, quel mode relâche quoi — et pas
+// sur la phrase, qui a ses propres tests (`approval-purpose.test.ts`). Le
+// harnais la fournit donc, exactement comme un appel réel la fournit, plutôt que
+// de la répéter dans soixante-quinze appels.
+const RAISON = 'Test: why this call is being made.';
+const executeTool: typeof gateReel = ((tool, input, ctx, opts) =>
+  gateReel(
+    tool,
+    input !== null && typeof input === 'object' && !Array.isArray(input)
+      ? { purpose: RAISON, ...(input as Record<string, unknown>) }
+      : input,
+    ctx,
+    opts,
+  )) as typeof gateReel;
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -644,7 +661,7 @@ function makeRunCommandTool(): ToolDefinition<z.ZodObject<{ command: z.ZodString
   return {
     name: 'run_command',
     description: 'run a shell command',
-    inputSchema: z.object({ command: z.string() }),
+    inputSchema: z.object({ command: z.string(), purpose: z.string().optional() }),
     riskLevel: 'write',
     defaultApproval: 'require_approval',
     execute: async (input: { command: string }) => `ran:${input.command}`,
@@ -922,7 +939,11 @@ describe('executeTool — meta-tool safe-by-default posture (M-6)', () => {
 // ─── Audit sécu 2026-07-07 — NOUVEAU-1 (secret redaction) & É-2 (mcp gating) ────
 
 describe('executeTool — secret redaction (NOUVEAU-1)', () => {
-  const connSchema = z.object({ name: z.string(), apiKey: z.string() });
+  const connSchema = z.object({
+    name: z.string(),
+    apiKey: z.string(),
+    purpose: z.string().optional(),
+  });
   const secretTool: ToolDefinition<typeof connSchema, string> = {
     name: 'create_connector',
     description: 'test connector with a secret arg',
@@ -976,6 +997,7 @@ describe('executeTool — create_mcp stdio treated as code-execution (É-2)', ()
   const mcpSchema = z.object({
     transport: z.enum(['http', 'stdio']),
     command: z.string().optional(),
+    purpose: z.string().optional(),
   });
   const mcpTool: ToolDefinition<typeof mcpSchema, string> = {
     name: 'create_mcp',
@@ -1014,6 +1036,7 @@ describe('executeTool — declare_verification judged by its COMMANDS (revue pas
   const declareSchema = z.object({
     project_path: z.string(),
     commands: z.array(z.object({ command: z.string() })),
+    purpose: z.string().optional(),
   });
   const declareTool: ToolDefinition<typeof declareSchema, string> = {
     name: 'declare_verification',
@@ -1114,6 +1137,7 @@ describe('executeTool — une preuve déclarée est jugée sous la règle de run
   const declareSchema = z.object({
     project_path: z.string(),
     commands: z.array(z.object({ command: z.string() })),
+    purpose: z.string().optional(),
   });
   const declareTool: ToolDefinition<typeof declareSchema, string> = {
     name: 'declare_verification',
