@@ -40,8 +40,9 @@ import {
   type RunSummary,
 } from './conversation-feed.ts';
 import type { JobResultKind } from '@nodal-agents/shared';
-import { canonicalChangePath, lineCountsOfCall, sumLineCounts } from './coding-changes.ts';
-import { callHappened, outcomeOfToolOutput, parsePresented } from './tool-card-payload.ts';
+import { lineCountsOfCall, sumLineCounts } from './coding-changes.ts';
+import { fileChangesOfAuditRows } from './file-change-groups.ts';
+import { callHappened, outcomeOfToolOutput } from './tool-card-payload.ts';
 import type { ProducedItem, ProductionVerdict } from './chat-or-work.ts';
 // La règle « une relecture interdit-elle d'annoncer livré ? » vit dans
 // `@nodal-agents/shared` (#59) : l'orchestration la lit pour poser son champ
@@ -432,24 +433,23 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
   //
   // L'identité est le chemin BRUT, l'affichage le chemin masqué (#161) : la
   // carte entre ici déjà masquée (#150), et deux fichiers dont les chemins ne
-  // diffèrent que par un jeton n'en faisaient plus qu'un. La clé de la `Map`
-  // ne sort jamais d'ici ; sa valeur, seule, est montrée.
-  const files = new Map<string, string>();
-  const addFile = (masked: string, raw: string): void => {
-    const key = canonicalChangePath(raw, job.workspaceRoots);
-    if (!files.has(key)) files.set(key, canonicalChangePath(masked, job.workspaceRoots));
-  };
+  // diffèrent que par un jeton n'en faisaient plus qu'un. Rien de brut ne sort
+  // de `fileChangesOfAuditRows` ; seuls les chemins masqués en reviennent.
+  //
+  // LE MÊME MOTEUR QUE LA PAGE CODE (#369). Cette lecture vivait ici, à côté de
+  // la boucle jumelle enfouie dans `getCodingProcessDetailAction` ; les deux
+  // sont maintenant le même module (`file-change-groups.ts`), si bien que la
+  // plaque de diff d'un fichier est LA MÊME des deux côtés pour un même run.
+  // Les fragments sont jetés ici : l'encart n'embarque que les en-têtes, le
+  // dépli les redemande.
+  const fileChanges = fileChangesOfAuditRows(job.audit, job.workspaceRoots).map((g) => ({
+    path: g.filePath,
+    addedLines: g.addedLines,
+    removedLines: g.removedLines,
+  }));
   const counted = job.audit
     .filter((row) => callHappened(outcomeOfToolOutput(row.toolOutput)))
-    .map((row) => {
-      const p = parsePresented(row.presented);
-      if (p !== null && p.card === 'files') {
-        p.files.forEach((f, i) => {
-          if (f.action !== 'listed') addFile(f.path, row.rawFilePaths?.[i] ?? f.path);
-        });
-      }
-      return lineCountsOfCall(row.toolName, row.toolInput, row.toolOutput);
-    });
+    .map((row) => lineCountsOfCall(row.toolName, row.toolInput, row.toolOutput));
   const reviews: DeliveryReview[] = [];
 
   const walk = (items: readonly FeedItem[], depth: number): void => {
@@ -491,13 +491,12 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
 
   const passed = job.proof.filter((r) => r.verdict === 'green').length;
   const lines = sumLineCounts(counted);
-  // Les chemins, dans l'ORDRE OÙ ILS ONT ÉTÉ ÉCRITS : un `Set` garde l'ordre
-  // d'insertion, et les lignes d'audit arrivent déjà triées par date. Le compte
-  // en est dérivé — il ne peut plus diverger de la liste (#135).
-  const filePaths = [...files.values()];
+  // Les fichiers arrivent dans l'ORDRE OÙ ILS ONT ÉTÉ ÉCRITS : une `Map` garde
+  // l'ordre d'insertion, et les lignes d'audit sont déjà triées par date. Le
+  // compte en est dérivé — il ne peut plus diverger de la liste (#135).
   return {
-    files: filePaths.length,
-    filePaths,
+    files: fileChanges.length,
+    fileChanges,
     lines: lines.added === 0 && lines.removed === 0 ? null : lines,
     tests: job.proof.length > 0 ? { passed, total: job.proof.length } : null,
     durationMs:

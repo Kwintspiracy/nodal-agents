@@ -1448,7 +1448,9 @@ describe('getConversationThreadAction — les secrets d’une carte (#150)', () 
     ]);
     // Le récapitulatif nomme le même chemin masqué, et n'en compte qu'un.
     expect(encart.summary.files).toBe(1);
-    expect(encart.summary.filePaths).toEqual(['cles/[secret masqué] (sk-).txt']);
+    expect(encart.summary.fileChanges.map((f) => f.path)).toEqual([
+      'cles/[secret masqué] (sk-).txt',
+    ]);
     expect(JSON.stringify(r.data.feed)).not.toContain(secret);
   });
 

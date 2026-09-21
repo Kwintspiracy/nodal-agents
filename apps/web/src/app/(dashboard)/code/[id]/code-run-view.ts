@@ -199,7 +199,8 @@ export function codeActivityLabel(
  *   - `reviews` — le bloc y nomme QUI a relu ; un verdict de code ne porte que
  *     l'identifiant du job qui l'a rendu, pas le nom de son agent. La section
  *     Review, juste dessous, montre les verdicts en entier.
- *   - `filePaths` porte les chemins tels que le pipeline les a écrits.
+ *   - `fileChanges` porte les chemins tels que le pipeline les a écrits, et ce
+ *     qu'ils ont pris de lignes.
  *
  * `null` quand le run n'a RIEN à montrer — ni fichier, ni preuve : un cadre
  * « Delivered » vide affirmerait une livraison qui n'a pas eu lieu.
@@ -214,7 +215,11 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
   const review = lastReviewVerdict(verdicts);
   return {
     files: changes.length,
-    filePaths: changes.map((c) => c.filePath),
+    fileChanges: changes.map((c) => ({
+      path: c.filePath,
+      addedLines: c.addedLines,
+      removedLines: c.removedLines,
+    })),
     lines: added === 0 && removed === 0 ? null : { added, removed },
     tests: commands.length > 0 ? { passed, total: commands.length } : null,
     durationMs: header.durationMs,

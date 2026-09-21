@@ -395,6 +395,18 @@ export type DeliveryReview = {
 export type DeliveryCheck = { command: string; ok: boolean };
 
 /**
+ * UN FICHIER CRÉÉ OU MODIFIÉ, tel que l'encart le montre REPLIÉ (#369) : son
+ * chemin, et ce qu'il a pris de lignes. Du churn, la même lecture que la page
+ * Code — « +27 −2 » veut dire vingt-sept lignes écrites et deux remplacées, pas
+ * le résultat d'une comparaison.
+ */
+export type DeliveryFileChange = {
+  path: string;
+  addedLines: number;
+  removedLines: number;
+};
+
+/**
  * Ce que le récapitulatif de livraison a le droit de dire d'un travail
  * (P2bis). CHAQUE champ peut manquer, et un champ absent ne se dessine pas :
  * la maquette montre « Lignes +27 −2 » et « Couverture 92 % », que rien en
@@ -406,10 +418,17 @@ export type DeliverySummary = {
   /**
    * CES fichiers, dans l'ordre où ils ont été écrits (#135) — le récapitulatif
    * ne dit plus « 3 files » sans dire lesquels. Chemins canoniques, dédoublonnés
-   * comme le compte : `filePaths.length === files`, toujours. L'écran en montre
-   * douze au plus et compte le reste ; le modèle les porte tous.
+   * comme le compte : `fileChanges.length === files`, toujours. L'écran en
+   * montre douze au plus et compte le reste ; le modèle les porte tous.
+   *
+   * L'EN-TÊTE SEUL, JAMAIS LES FRAGMENTS (#369). Chaque ligne porte de quoi
+   * dessiner la plaque REPLIÉE — le chemin, « +N −M » — et rien de plus : les
+   * avant/après des écritures pèsent le poids de ce qui a été écrit, et les
+   * faire voyager dans chaque rendu du fil coûterait ce poids pour des plaques
+   * que personne n'ouvre. Le dépli va les chercher, un appel par travail
+   * (`getRunFileChangesAction`), comme `FileDiff` le fait depuis P11.
    */
-  filePaths: string[];
+  fileChanges: DeliveryFileChange[];
   /**
    * Les lignes écrites et remplacées, sommées sur le job et ses délégués — le
    * même churn que la page Code. null quand AUCUN appel n'a écrit de texte

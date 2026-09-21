@@ -47,6 +47,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import StatusPill from '@/components/ui/StatusPill';
 import StopRunButton from '@/components/ui/StopRunButton';
 import { canStopRun } from '@/lib/job-live.ts';
+import DeliveryFiles from './DeliveryFiles.tsx';
 import type { DeliverySummary } from '@/lib/conversation-feed.ts';
 import { formatCost, formatMs, shortToolName } from './format.ts';
 
@@ -97,6 +98,7 @@ export default function DeliveryBlock({
   summary,
   jobId,
   status = null,
+  filesJobId = null,
 }: {
   summary: DeliverySummary;
   /**
@@ -111,6 +113,16 @@ export default function DeliveryBlock({
    * sans `jobId`. `null` quand l'appelant ne le connaît pas : pas de bouton.
    */
   status?: string | null;
+  /**
+   * Le travail dont les DIFFS se chargent au dépli (#369). Distinct de `jobId`,
+   * qui n'est que la cible du lien « Open run » : la page d'un run se passe du
+   * lien vers elle-même, et ses fichiers doivent pourtant s'ouvrir.
+   *
+   * `null` : les fichiers restent une liste de chemins. C'est le choix de la
+   * page d'un run de code, où les mêmes plaques se dessinent déjà dans le
+   * panneau Changes juste dessous.
+   */
+  filesJobId?: string | null;
 }) {
   const { verdict, changesRequested } = summary;
   // Le mot de la relecture, ou `null` quand personne n'a relu. Il ne remplace
@@ -142,8 +154,8 @@ export default function DeliveryBlock({
     stats.push({ label: 'Cost', value: formatCost(summary.costUsd) });
   }
 
-  const shownFiles = summary.filePaths.slice(0, FILES_SHOWN);
-  const hiddenFiles = summary.filePaths.length - shownFiles.length;
+  const shownFiles = summary.fileChanges.slice(0, FILES_SHOWN);
+  const hiddenFiles = summary.fileChanges.length - shownFiles.length;
   const shownCommands = summary.commands.slice(0, COMMANDS_SHOWN);
   const hiddenCommands = summary.commands.length - shownCommands.length;
   // Le pied ne se dessine que s'il a quelque chose à dire : personne n'a relu
@@ -283,16 +295,28 @@ export default function DeliveryBlock({
         </div>
       )}
 
+      {/* CE QUI A CHANGÉ DANS CHAQUE FICHIER (#369). Une plaque par fichier,
+          REPLIÉE : la ligne porte le chemin et « +N −M », le clic montre le
+          diff unifié — la même plaque que la page d'un run, au même moteur.
+
+          Sans `filesJobId`, la liste reste des chemins nus. C'est le cas de la
+          page d'un run de code, qui dessine ces mêmes plaques dans son panneau
+          Changes quelques pixels plus bas : les tracer deux fois sur un écran
+          n'apprendrait rien à personne. */}
       {shownFiles.length > 0 && (
         <div className="border-t border-rule-2 px-4 py-2.5">
-          <ul className="flex flex-col gap-1">
-            {shownFiles.map((path) => (
-              <li key={path} className="flex min-w-0 items-center gap-2">
-                <PencilSimple size={12} className="shrink-0 text-ink-4" aria-hidden />
-                <span className="min-w-0 truncate text-mono-12 text-feed-path">{path}</span>
-              </li>
-            ))}
-          </ul>
+          {filesJobId !== null ? (
+            <DeliveryFiles files={shownFiles} jobId={filesJobId} />
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {shownFiles.map((f) => (
+                <li key={f.path} className="flex min-w-0 items-center gap-2">
+                  <PencilSimple size={12} className="shrink-0 text-ink-4" aria-hidden />
+                  <span className="min-w-0 truncate text-mono-12 text-feed-path">{f.path}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           {hiddenFiles > 0 && (
             <p className="mt-1 text-mono-11 text-ink-4">… and {hiddenFiles} more</p>
           )}
