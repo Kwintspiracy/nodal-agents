@@ -539,7 +539,16 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
       .filter((i): i is Extract<ProducedItem, { kind: 'command' }> => i.kind === 'command')
       // La phrase de l'agent voyage avec la commande (#372) : elle est lue
       // dans l'entrée de l'appel, et l'encart ne la récrit pas.
-      .map((i) => ({ label: i.label, observed: i.certain, purpose: i.purpose })),
+      // L'issue voyage avec elle (#395) : « exit 1 » et « blocked » se lisent
+      // sur la ligne, et une commande qui a rendu 0 ne dit rien.
+      .map((i) => ({
+        label: i.label,
+        observed: i.certain,
+        purpose: i.purpose,
+        exitCode: i.exitCode,
+        timedOut: i.timedOut,
+        blocked: i.blocked,
+      })),
     produced: job.verdict.isWork,
     // L'issue d'un travail qui n'est pas allé au bout, lue sur sa ligne : elle
     // prime sur `produced` pour le mot de l'en-tête (Quentin, 22/09).

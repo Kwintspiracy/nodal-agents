@@ -538,6 +538,17 @@ export type DeliveryCommand = {
    * seule (invariant #2).
    */
   purpose: string | null;
+  /**
+   * L'ISSUE DE LA COMMANDE (#395), telle que sa carte l'a portée. `null` quand
+   * la ligne n'en porte aucune : une commande tuée par le délai, une carte
+   * illisible. Jamais un zéro de repli — un succès qu'on n'a pas constaté ne
+   * s'affirme pas (invariant #4).
+   */
+  exitCode: number | null;
+  /** La commande a été TUÉE par le délai : elle n'a pas de code de sortie. */
+  timedOut: boolean;
+  /** Une règle du propriétaire l'a refusée : elle n'a rien exécuté. */
+  blocked: boolean;
 };
 
 export type FeedTotals = {

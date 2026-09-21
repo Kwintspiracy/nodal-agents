@@ -57,7 +57,7 @@
 // réel ; la garder en « travail » est précisément le faux vert que #196 vient
 // de retirer de l'autre côté.
 
-import { parsePresented, outcomeOfToolOutput } from './tool-card-payload.ts';
+import { parsePresented, outcomeOfToolOutput, isBlockedByRule } from './tool-card-payload.ts';
 
 /** Une ligne `tool_calls`, réduite à ce que le classement lit. */
 export type ClassifiableRow = {
@@ -94,8 +94,24 @@ export type ProducedItem =
    * dire POURQUOI il lançait cette commande (#372). `null` quand l'entrée n'en
    * porte pas : l'écran montre alors la commande seule, il n'en invente aucune
    * (invariant #2).
+   *
+   * L'ISSUE DE LA COMMANDE (#395). `exitCode` est celui de la carte `terminal`,
+   * `null` quand la ligne n'en porte aucun — une commande tuée par le délai,
+   * une ligne sans carte lisible. `timedOut` distingue les deux, sans quoi une
+   * commande tuée se lirait comme une commande muette. `blocked` dit qu'une
+   * règle du propriétaire l'a refusée : elle n'a rien exécuté, et elle est
+   * listée quand même, parce qu'une commande absente de la liste se lit comme
+   * une commande que personne n'a tentée.
    */
-  | { kind: 'command'; label: string; certain: boolean; purpose: string | null }
+  | {
+      kind: 'command';
+      label: string;
+      certain: boolean;
+      purpose: string | null;
+      exitCode: number | null;
+      timedOut: boolean;
+      blocked: boolean;
+    }
   | { kind: 'harness'; label: string }
   | { kind: 'external'; label: string; certain: boolean };
 
@@ -179,6 +195,23 @@ function commandPurpose(toolInput: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * LA COMMANDE LUE DANS L'ENTRÉE DE L'APPEL (#395), quand la carte n'a pas de
+ * charge utile : un refus n'exécute rien, donc `present()` n'a jamais tourné,
+ * et sans ce recours la ligne porterait le nom de l'outil (« run_command ») au
+ * lieu de la commande refusée. L'entrée arrive déjà masquée (`redactAuditRow`).
+ *
+ * `null` quand l'entrée ne porte pas de commande textuelle : l'appelant dit
+ * alors le nom de l'outil, il n'invente rien.
+ */
+function commandFromInput(toolInput: unknown): string | null {
+  if (typeof toolInput !== 'object' || toolInput === null) return null;
+  const raw = (toolInput as { command?: unknown }).command;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed === '' ? null : truncate(trimmed, COMMAND_MAX);
 }
 
 function truncate(text: string, max: number): string {
@@ -284,6 +317,28 @@ export function classifyProduction(input: {
     // écriture que le propriétaire vient justement de refuser.
     const outcome = outcomeOfToolOutput(row.toolOutput);
     if (outcome !== 'success') {
+      // UNE COMMANDE REFUSÉE PAR UNE RÈGLE EST LISTÉE QUAND MÊME (#395). Elle
+      // n'a rien exécuté, donc elle ne produit rien et ne décide rien
+      // (`certain: false`, et elle n'entre pas dans `uncertain` : on sait
+      // exactement ce qui s'est passé). Mais la taire laissait la liste des
+      // commandes se lire comme la liste de ce que l'agent avait TENTÉ, alors
+      // qu'une ligne manquait — et le refus d'un propriétaire est précisément
+      // ce qu'il veut voir.
+      //
+      // Sa carte n'a pas de charge utile : `present()` ne tourne que sur une
+      // exécution réussie, donc la commande se lit dans l'ENTRÉE de l'appel.
+      if (row.card === 'terminal' && isBlockedByRule(row.toolOutput)) {
+        items.push({
+          kind: 'command',
+          label: commandFromInput(row.toolInput) ?? row.toolName,
+          certain: false,
+          purpose: commandPurpose(row.toolInput),
+          exitCode: null,
+          timedOut: false,
+          blocked: true,
+        });
+        continue;
+      }
       // Une issue INCONNUE (aucune sortie enregistrée) ne prouve pas l'échec
       // non plus : elle est comptée comme non classable, jamais comme
       // production — même règle que les lignes sans carte.
@@ -329,10 +384,11 @@ export function classifyProduction(input: {
     }
 
     if (row.card === 'terminal') {
+      const carte = payload !== null && payload.card === 'terminal' ? payload : null;
       const label =
-        payload !== null && payload.card === 'terminal'
-          ? truncate(payload.command, COMMAND_MAX)
-          : row.toolName;
+        carte !== null
+          ? truncate(carte.command, COMMAND_MAX)
+          : (commandFromInput(row.toolInput) ?? row.toolName);
       // #197 — la carte prouve qu'une commande a tourné, jamais qu'elle a
       // écrit. Une écriture constatée sur SON tour la tranche ; sans elle, la
       // commande est dite incertaine et ne décide rien à elle seule.
@@ -344,7 +400,20 @@ export function classifyProduction(input: {
         row.turn !== null &&
         input.constatedTurns.has(constatedTurnKey(row.jobId, row.turn));
       if (!certain) uncertain += 1;
-      items.push({ kind: 'command', label, certain, purpose: commandPurpose(row.toolInput) });
+      items.push({
+        kind: 'command',
+        label,
+        certain,
+        purpose: commandPurpose(row.toolInput),
+        // L'ISSUE VIENT DE LA CARTE, pas d'une seconde lecture de la sortie
+        // brute (#395) : `terminalCard` la pose au moment où la commande rend
+        // la main. Sans carte lisible, l'issue est INCONNUE et se dit `null` —
+        // jamais un zéro, qui affirmerait un succès que rien n'a constaté
+        // (invariant #4).
+        exitCode: carte?.exitCode ?? null,
+        timedOut: carte?.timedOut ?? false,
+        blocked: false,
+      });
       continue;
     }
 

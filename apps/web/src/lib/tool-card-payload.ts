@@ -69,3 +69,31 @@ export function outcomeOfToolOutput(toolOutput: string | null | undefined): Step
   }
   return 'success';
 }
+
+/**
+ * L'appel a-t-il été REFUSÉ PAR UNE RÈGLE du propriétaire ? (#395)
+ *
+ * Une règle `block` rend `{ outcome: 'error', error: 'blocked: an approval
+ * rule forbids …' }` (`packages/tools/src/execute.ts`) : l'issue est une
+ * erreur, et le mot qui la distingue d'une panne est en tête du message. Un
+ * `outcome: 'blocked'` en toutes lettres compte aussi — les deux formes
+ * existent dans les lignes d'audit.
+ *
+ * La lecture vit ICI, avec les deux autres lectures de `tool_calls` : une
+ * seconde façon de reconnaître un refus divergerait au premier changement du
+ * message, et une commande refusée repasserait pour une commande qui a tourné.
+ */
+export function isBlockedByRule(toolOutput: string | null | undefined): boolean {
+  if (toolOutput === null || toolOutput === undefined) return false;
+  try {
+    const parsed = JSON.parse(toolOutput) as unknown;
+    if (!parsed || typeof parsed !== 'object') return false;
+    const record = parsed as { outcome?: unknown; error?: unknown };
+    if (record.outcome === 'blocked') return true;
+    return record.outcome === 'error' && typeof record.error === 'string'
+      ? record.error.startsWith('blocked:')
+      : false;
+  } catch {
+    return false;
+  }
+}

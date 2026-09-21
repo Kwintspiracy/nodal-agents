@@ -687,7 +687,16 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           produced: false,
           ended: null,
           live: null,
-          commands: [{ label: 'ls -la', observed: false, purpose: null }],
+          commands: [
+            {
+              label: 'ls -la',
+              observed: false,
+              purpose: null,
+              exitCode: 0,
+              timedOut: false,
+              blocked: false,
+            },
+          ],
         }}
         jobId={null}
       />,
@@ -857,6 +866,9 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     const quinze = Array.from({ length: 15 }, (_, i) => ({
       label: `commande-${i}`,
       observed: i % 2 === 0,
+      exitCode: 0,
+      timedOut: false,
+      blocked: false,
       purpose: null,
     }));
     const html = renderToStaticMarkup(
@@ -877,7 +889,19 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
   it('ne compte rien quand la liste de commandes tient en entier', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock
-        summary={{ ...EMPTY, commands: [{ label: 'ls -la', observed: false, purpose: null }] }}
+        summary={{
+          ...EMPTY,
+          commands: [
+            {
+              label: 'ls -la',
+              observed: false,
+              purpose: null,
+              exitCode: 0,
+              timedOut: false,
+              blocked: false,
+            },
+          ],
+        }}
         jobId={null}
       />,
     );
@@ -898,7 +922,16 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           live: null,
           files: 1,
           fileChanges: fichiers('out/bilan.md'),
-          commands: [{ label: 'pnpm build', observed: true, purpose: null }],
+          commands: [
+            {
+              label: 'pnpm build',
+              observed: true,
+              purpose: null,
+              exitCode: 0,
+              timedOut: false,
+              blocked: false,
+            },
+          ],
         }}
         jobId={null}
       />,
@@ -936,7 +969,14 @@ describe('DeliveryBlock — pourquoi la commande a tourné @cap:verifier-un-livr
         summary={{
           ...EMPTY,
           commands: [
-            { label: 'pnpm build', observed: true, purpose: 'Build the app before shipping it' },
+            {
+              label: 'pnpm build',
+              observed: true,
+              purpose: 'Build the app before shipping it',
+              exitCode: 0,
+              timedOut: false,
+              blocked: false,
+            },
           ],
         }}
         jobId={null}
@@ -958,7 +998,19 @@ describe('DeliveryBlock — pourquoi la commande a tourné @cap:verifier-un-livr
   it('sans phrase, la commande reste seule', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock
-        summary={{ ...EMPTY, commands: [{ label: 'ls -la', observed: false, purpose: null }] }}
+        summary={{
+          ...EMPTY,
+          commands: [
+            {
+              label: 'ls -la',
+              observed: false,
+              purpose: null,
+              exitCode: 0,
+              timedOut: false,
+              blocked: false,
+            },
+          ],
+        }}
         jobId={null}
       />,
     );

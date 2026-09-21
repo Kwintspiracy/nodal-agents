@@ -49,7 +49,7 @@ import StatusPill from '@/components/ui/StatusPill';
 import StopRunButton from '@/components/ui/StopRunButton';
 import { canStopRun } from '@/lib/job-live.ts';
 import DeliveryFiles from './DeliveryFiles.tsx';
-import type { DeliverySummary } from '@/lib/conversation-feed.ts';
+import type { DeliveryCommand, DeliverySummary } from '@/lib/conversation-feed.ts';
 import { formatCost, formatMs, shortToolName } from './format.ts';
 
 /** Au-delà, la liste de fichiers cesse d'être lisible : on compte le reste. */
@@ -84,6 +84,26 @@ const REVIEW_WORDS: Record<string, string> = {
 function reviewWord(review: string | null): string | null {
   if (review === null || review === '') return null;
   return REVIEW_WORDS[review] ?? review;
+}
+
+/**
+ * CE QUE LA LIGNE D'UNE COMMANDE DIT DE SON ISSUE (#395), ou `null` quand elle
+ * n'a rien à dire.
+ *
+ * Une sortie à zéro ne se dit pas : c'est le cas courant, et le répéter sur
+ * chaque ligne noierait celle qui a lâché. Un code inconnu (`exitCode: null`
+ * sans délai dépassé) ne se dit pas non plus — inventer « exit 0 » là serait
+ * un succès affirmé sans constat (invariant #4), et le dire « unknown » sur
+ * toutes les lignes d'avant la carte `terminal` ferait du bruit pour rien.
+ *
+ * Exportée pour le test : la règle compte plus que le pixel, et elle se
+ * vérifie cas par cas sans rendre l'encart entier.
+ */
+export function commandOutcome(command: DeliveryCommand): string | null {
+  if (command.blocked) return 'blocked';
+  if (command.timedOut) return 'timed out';
+  if (command.exitCode === null || command.exitCode === 0) return null;
+  return `exit ${String(command.exitCode)}`;
 }
 
 function Stat({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
@@ -377,7 +397,16 @@ export default function DeliveryBlock({
           n'a pas été vu.) */}
       {summary.commands.length > 0 && (
         <div className="border-t border-rule-2 px-4 pt-2.5 pb-3">
-          <p className="mb-1 text-mono-11 text-ink-4">Commands</p>
+          <p className="text-mono-11 text-ink-4">Commands</p>
+          {/* CE QUE CETTE LISTE EST, ET CE QU'ELLE N'EST PAS (#395). Quentin,
+              21/09 : « est-ce que ce sont seulement les commandes de test, dont
+              le résultat est dans Proof ? ». Non — c'est tout ce que le run a
+              lancé, et « Proof » juste dessous est une autre chose. La phrase
+              le dit une fois, sous le titre, plutôt que de laisser deux listes
+              voisines se confondre. */}
+          <p className="mb-1.5 text-body-12 text-ink-4">
+            Every command the run executed. Proof below lists the checks the agent declared.
+          </p>
           <ul className="flex flex-col gap-1">
             {shownCommands.map((c, i) => (
               <li key={i} className="flex min-w-0 items-start gap-2" data-testid="delivery-command">
@@ -405,6 +434,18 @@ export default function DeliveryBlock({
                   )}
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="min-w-0 truncate text-mono-12 text-ink-2">{c.label}</span>
+                    {/* L'ISSUE DE LA COMMANDE (#395). Une sortie à zéro ne dit
+                        rien : c'est le cas courant, et l'écrire sur chaque
+                        ligne noierait celle qui a lâché. Tout le reste se dit
+                        en un mot, dans la couleur de l'attention. */}
+                    {commandOutcome(c) !== null && (
+                      <span
+                        data-testid="delivery-command-outcome"
+                        className="shrink-0 text-mono-11 text-warn"
+                      >
+                        {commandOutcome(c)}
+                      </span>
+                    )}
                     {!c.observed && (
                       <span className="shrink-0 text-mono-11 text-ink-4">no file change seen</span>
                     )}
