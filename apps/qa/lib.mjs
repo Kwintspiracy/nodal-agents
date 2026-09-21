@@ -85,6 +85,15 @@ export function colonneDeCarte(carte) {
   return 'In progress';
 }
 
+/**
+ * Les colonnes DÉDUITES de GitHub, et elles seules.
+ *
+ * « Running » n'en fait pas partie, et c'est voulu (#340) : ses cartes ne sont
+ * ni des issues ni des PR, `colonneDeCarte` ne peut pas les produire, et
+ * `pileDuneColonne` n'aurait rien à y ranger. Cette colonne vit dans
+ * `cartesEnVol`, avec ses propres sources et sa propre façon de dire qu'une
+ * d'elles n'a pas répondu.
+ */
 export const COLONNES = ['To do', 'In progress', 'In review', 'To test', 'Done'];
 
 // ─── Le résultat d'un parcours ────────────────────────────────────────────────
@@ -613,6 +622,10 @@ export function cartesDuTableau({ issues, pr } = {}) {
       titre: p.title,
       etat: p.mergedAt ? 'MERGED' : p.state,
       url: p.url,
+      // La branche de la PR, et elle sert à UNE chose : rattacher un run de CI
+      // à son ticket (#340). Le titre d'un run de `pull_request` est le titre de
+      // la PR, qui ne nomme aucun numéro ; sa branche, elle, le désigne.
+      branche: p.headRefName ?? null,
       brouillon: p.isDraft ?? false,
       etiquettes: [],
       majLe: p.updatedAt ?? null,
@@ -2646,6 +2659,38 @@ function sourceMuette(raison) {
   return { etat: SOURCE_MUETTE, raison, lignes: [] };
 }
 
+/** Un numéro lu dans un titre, ou `null` — jamais un zéro, jamais une devinette. */
+function numeroLu(trouve) {
+  const n = Number(trouve?.[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Le ticket qu'un titre de run DÉSIGNE, sans ambiguïté, ou `null`.
+ *
+ * GitHub ne donne pas le ticket d'un run : il donne un titre. Sur ce dépôt, un
+ * run de `push` sur `main` porte le titre du squash, qui finit par `(#336)` :
+ * cette forme-là ne peut désigner qu'une chose, et c'est la seule que cette
+ * fonction accepte. Un run de PR porte le titre de la PR, qui ne nomme rien en
+ * fin, et rend donc `null` — sa branche le retrouvera.
+ */
+export function numeroDeTicket(titre) {
+  return numeroLu(String(titre ?? '').match(/\(#(\d+)\)\s*$/));
+}
+
+/**
+ * Le ticket qu'un titre MENTIONNE, en passant, ou `null`.
+ *
+ * ⚠️ SIGNAL FAIBLE, et il est tenu séparé pour cette raison (revue C de cette
+ * PR, constat P0.4). « Fix #68 crash » sur la branche d'une PR ouverte parle du
+ * travail #68, mais le run, lui, appartient à cette PR. Confondre les deux
+ * rattachait le run à l'issue et non à la PR qui le fait tourner. La mention ne
+ * sert donc qu'en DERNIER, quand ni la forme de fin ni la branche n'ont parlé.
+ */
+export function mentionDeTicket(titre) {
+  return numeroLu(String(titre ?? '').match(/#(\d+)/));
+}
+
 /**
  * Les runs GitHub Actions EN COURS, réduits à une ligne chacun.
  *
@@ -2667,6 +2712,16 @@ export function runsEnCours(runs) {
         // qui permet de reconnaître « la CI de ma PR » d'un coup d'œil.
         quoi: r.displayTitle || r.name || 'GitHub Actions run',
         ou: r.headBranch ? `branch ${r.headBranch}` : 'GitHub Actions',
+        // Le ticket auquel ce run appartient, quand son titre le nomme. Une
+        // carte « Running » doit mener au travail, pas seulement au run (#340).
+        ticket: numeroDeTicket(r.displayTitle),
+        // Et, à part, ce que le titre mentionne seulement : un signal faible,
+        // qui ne sert qu'à défaut de mieux.
+        mention: mentionDeTicket(r.displayTitle),
+        // La branche telle quelle, en plus de sa forme lisible : c'est par elle
+        // qu'un run de `pull_request` retrouve sa PR, dont le titre ne nomme
+        // aucun numéro.
+        branche: r.headBranch ?? null,
         depuis: r.createdAt ?? null,
         // Ce qu'il attend : une file d'attente n'est pas un travail qui avance,
         // et les confondre ferait croire la machine occupée quand elle patiente.
@@ -2715,6 +2770,8 @@ export function revuesEnCours(jobs) {
         genre: 'review',
         quoi: j.pr ? `Review pass on #${j.pr}` : 'Review pass',
         ou: j.agent ? `Nodal, ${j.agent}` : 'Nodal',
+        ticket: Number.isFinite(Number(j.pr)) ? Number(j.pr) : null,
+        mention: null,
         depuis: j.depuis ?? null,
         attend: j.statut === 'awaiting_approval' ? 'your approval' : null,
         url: null,
@@ -2743,6 +2800,10 @@ export function releaseCheckEnCours(etat) {
       genre: 'release',
       quoi: 'release:check',
       ou: etat.ou ? `this machine, ${etat.ou}` : 'this machine',
+      // Une commande locale n'appartient à aucun ticket, et lui en inventer un
+      // serait pire que de n'en montrer aucun.
+      ticket: null,
+      mention: null,
       depuis: etat.depuis,
       attend: null,
       url: null,
@@ -2775,5 +2836,117 @@ export function cequiTourne({ ci, revues, release, le }) {
     // veut rien dire, et la page doit écrire autre chose.
     complet: muettes.length === 0,
     le: le ?? null,
+  };
+}
+
+// ─── La colonne « Running » du Kanban (issue #340) ────────────────────────────
+//
+// Décision du propriétaire, 22/09/2026, sur la bande de la PR #326 : « je
+// préfère les cartes de tickets plutôt que les lignes Running now ». Une bande
+// au-dessus du tableau était un second endroit où regarder ; une colonne est le
+// premier endroit où l'œil va déjà.
+//
+// CE QUI NE CHANGE PAS, et c'est l'essentiel : une source qui n'a pas répondu se
+// DIT injoignable, sur la colonne elle-même, et ne devient jamais « nothing
+// running » (invariant #4). Une colonne vide ne veut dire « la machine dort »
+// que lorsque toutes les sources ont parlé.
+
+/** Le nom de la colonne, en un seul endroit : la page et ses tests le lisent. */
+export const COLONNE_EN_VOL = 'Running';
+
+/** Ce qu'une carte annonce d'abord, par genre de travail. */
+const GENRES_EN_VOL = { ci: 'CI', review: 'Review', release: 'Release' };
+
+/**
+ * LES CARTES DE LA COLONNE « Running », à partir de ce que les sources ont vu.
+ *
+ * Fonction PURE, et c'est la raison d'être de sa signature : elle ne parle ni à
+ * GitHub ni à Nodal, elle transforme le relevé que `cequiTourne` a produit. Un
+ * test la joue sur un objet écrit à la main, sans réseau.
+ *
+ * `cartesDuTableau` est le Kanban lui-même, et il sert à UNE chose : retrouver
+ * le ticket d'un travail en vol pour y mener. L'adresse vient de la carte
+ * RÉELLE, jamais d'une URL fabriquée à partir d'un numéro — un lien construit à
+ * la main mène à une page d'erreur dès que le dépôt change de nom. Ticket
+ * introuvable sur le tableau : la carte n'en montre aucun, et garde son lien
+ * vers le run quand il en a un.
+ *
+ * TROIS CHEMINS POUR LE TROUVER, du plus sûr au moins sûr, et l'ordre compte.
+ * Le numéro que le titre DÉSIGNE d'abord : sur ce dépôt un run de `push` porte
+ * le titre du squash, qui finit par `(#336)`. La branche ensuite, et elle seule
+ * couvre le cas le plus fréquent — un run de `pull_request` porte le titre de la
+ * PR, qui ne nomme aucun numéro, pendant que sa branche la désigne. Ce que le
+ * titre MENTIONNE en passant vient en dernier : « Fix #68 crash » parle du
+ * travail #68, mais le run appartient à la PR qui le fait tourner.
+ *
+ * Seules les PR OUVERTES sont indexées par branche, et une branche que DEUX PR
+ * ouvertes se partagent est retirée de l'index : un lien juste une fois sur deux
+ * est un lien faux, pas un lien approximatif.
+ *
+ * `enVol` absent (`undefined` ou `null`) = l'instantané est plus vieux que cette
+ * lecture. C'est `absente`, pas « rien en cours ».
+ */
+export function cartesEnVol(enVol, cartesDuTableau = null) {
+  if (enVol === undefined || enVol === null) {
+    return { etat: 'absente', cartes: [], muettes: [], complet: false, le: null };
+  }
+  const duTableau = cartesDuTableau ?? [];
+  const parNumero = new Map(
+    duTableau.map((c) => [Number(c.numero), c]).filter(([n]) => Number.isFinite(n)),
+  );
+  // Les PR OUVERTES par branche. Le titre d'un run de `pull_request` est celui
+  // de la PR et ne nomme aucun numéro ; sa branche le fait. Seules les ouvertes
+  // entrent : une branche est réutilisée, et rattacher un run à une PR mergée
+  // il y a trois semaines serait un lien faux, pas un lien approximatif.
+  //
+  // ⚠️ UNE BRANCHE PARTAGÉE PAR DEUX PR OUVERTES NE DÉSIGNE PLUS RIEN, et elle
+  // est retirée de l'index (revue C de cette PR, constat P0.3). Le cas arrive :
+  // une PR vers `main` et une PR empilée vers une autre base, ou deux forks aux
+  // branches homonymes — `headRefName` ne dit pas le fork. Prendre la première
+  // rencontrée donnerait un lien juste une fois sur deux, sans le dire ; la
+  // carte préfère n'en montrer aucun (invariant #4).
+  const parBranche = new Map();
+  const ambigues = new Set();
+  for (const c of duTableau) {
+    if (c.type !== 'pr' || c.etat !== 'OPEN' || !c.branche) continue;
+    if (parBranche.has(c.branche)) ambigues.add(c.branche);
+    else parBranche.set(c.branche, c);
+  }
+  for (const b of ambigues) parBranche.delete(b);
+  const cartes = (enVol.lignes ?? []).map((l) => {
+    const numero = Number.isFinite(Number(l.ticket)) ? Number(l.ticket) : null;
+    const mention = Number.isFinite(Number(l.mention)) ? Number(l.mention) : null;
+    // TROIS CHEMINS, du plus sûr au moins sûr. Le numéro qu'un titre DÉSIGNE
+    // (`(#336)` en fin de titre), la branche de la PR qui fait tourner le run,
+    // et seulement à défaut ce que le titre mentionne au passage.
+    const trouvee =
+      (numero === null ? undefined : parNumero.get(numero)) ??
+      (l.branche ? parBranche.get(l.branche) : undefined) ??
+      (mention === null ? undefined : parNumero.get(mention));
+    const ticket = trouvee ? Number(trouvee.numero) : null;
+    return {
+      genre: l.genre ?? 'other',
+      // Le libellé du genre est calculé ICI, pas dans le gabarit : c'est le seul
+      // moyen qu'un test puisse le prouver sans rendre la page entière.
+      genreDit: GENRES_EN_VOL[l.genre] ?? 'Job',
+      quoi: l.quoi ?? 'Job in flight',
+      ou: l.ou ?? '',
+      depuis: l.depuis ?? null,
+      attend: l.attend ?? null,
+      url: l.url ?? null,
+      ticket,
+      ticketUrl: trouvee?.url ?? null,
+      ticketType: trouvee?.type ?? null,
+    };
+  });
+  return {
+    etat: 'lue',
+    cartes,
+    muettes: (enVol.muettes ?? []).map((m) => ({
+      source: m.source ?? 'unknown',
+      raison: m.raison ?? 'unreachable',
+    })),
+    complet: enVol.complet === true,
+    le: enVol.le ?? null,
   };
 }

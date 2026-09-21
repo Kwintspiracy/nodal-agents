@@ -986,99 +986,180 @@ describe('le rendu ne plante pas sur une collecte plus vieille que lui', () => {
   });
 });
 
-// ─── La bande « Running now » (#296) ──────────────────────────────────────────
+// ─── La colonne « Running » du Kanban (#340, après la bande de #296) ──────────
 //
 // Le 20/09/2026 au matin, le Kanban disait vrai et ne servait à rien : toutes
 // les cartes fermées pendant que `release:check`, la CI de `main` et trois
-// passes de revue tournaient. Ce qui se prouve ici est que la bande le montre,
-// SUR LA PAGE, et surtout qu'elle ne fait jamais passer un silence pour un
-// repos.
+// passes de revue tournaient. La bande de #296 a répondu à ça ; le propriétaire
+// a demandé le 22/09 des CARTES plutôt que des lignes.
+//
+// Ce qui se prouve ici est que la colonne est SUR LA PAGE, en tête du tableau,
+// qu'une carte mène au ticket du tableau et au run, et surtout qu'un silence ne
+// passe jamais pour un repos.
 //
 // Mutations vérifiées :
-//   - `bandeEnVol()` retiré de `vueChantiers` → les quatre cas rougissent ;
+//   - `colonneEnVol()` retiré de `vueChantiers` → les sept cas rougissent ;
+//   - la colonne placée APRÈS les colonnes déduites → « première colonne »
+//     rougit ;
 //   - la phrase des sources muettes supprimée → « une source muette se DIT »
 //     rougit ;
 //   - les deux phrases du vide rendues identiques → « rien en cours ne se dit
-//     pas pareil selon qu'on a pu regarder » rougit.
+//     pas pareil selon qu'on a pu regarder » rougit ;
+//   - la classe `carte-en-vol` remplacée par `ticket` → « le filtre par release
+//     ne vide pas la colonne » rougit.
 
-describe('la bande « Running now », sur la page', () => {
+describe('la colonne « Running » du Kanban', () => {
   const enVol = (v) => rendre({ ...INSTANTANE, enVol: v });
 
-  it('montre une ligne par travail, ce qu’il est, où il tourne et depuis quand', () => {
+  /** Le HTML de la colonne « Running », de son en-tête à la fin de sa pile. */
+  const colonne = (html) => {
+    const debut = html.indexOf('colonne--en-vol');
+    expect(debut, 'la colonne Running est absente de la page').toBeGreaterThan(-1);
+    return html.slice(debut, html.indexOf('</section>', debut));
+  };
+
+  const CI_SUR_68 = {
+    genre: 'ci',
+    quoi: 'Homepage: the hero on the design width (#68)',
+    ou: 'branch main',
+    ticket: 68,
+    depuis: '2026-09-20T09:30:00Z',
+    attend: 'a runner',
+    url: 'https://example.test/run/1',
+  };
+
+  it('montre une carte par travail : ce qu’il est, où il tourne, depuis quand', () => {
     const html = enVol({
       lignes: [
         {
           genre: 'release',
           quoi: 'release:check',
           ou: 'this machine, wt-proof',
+          ticket: null,
           depuis: '2026-09-20T08:50:00Z',
           attend: null,
           url: null,
         },
-        {
-          genre: 'ci',
-          quoi: 'CI on #317',
-          ou: 'branch feat/deliverable-to-check',
-          depuis: '2026-09-20T09:30:00Z',
-          attend: 'a runner',
-          url: 'https://example.test/run/1',
-        },
+        CI_SUR_68,
       ],
       muettes: [],
       complet: true,
       le: '2026-09-20T09:40:00Z',
     });
-    expect(html).toContain('Running now: 2');
-    // L'HEURE DE LA LECTURE, sur la bande elle-même : sans elle, « running »
-    // est une affirmation sans date (revue C de cette PR).
-    expect(html).toContain('Read at 20 Sept 2026, 09:40Z');
-    expect(html).toContain('release:check');
-    expect(html).toContain('this machine, wt-proof');
-    expect(html).toContain('CI on #317');
-    expect(html).toContain('branch feat/deliverable-to-check');
+    const col = colonne(html);
+    expect(col).toContain('Running');
+    // Le compte de la colonne, comme toute colonne du tableau.
+    expect(col).toContain('<span class="compte">2</span>');
+    // L'HEURE DE LA LECTURE, sur la colonne elle-même : sans elle, « running »
+    // est une affirmation sans date.
+    expect(col).toContain('read at 20 Sept 2026, 09:40Z');
+    expect(col).toContain('release:check');
+    expect(col).toContain('this machine, wt-proof');
+    expect(col).toContain('since 20 Sept 2026, 08:50Z');
+    expect(col).toContain('Homepage: the hero on the design width (#68)');
+    expect(col).toContain('branch main');
+    // Le genre du travail, dit sur la carte.
+    expect(col).toContain('>CI<');
+    expect(col).toContain('>Release<');
     // Ce qu'il attend : une file d'attente n'est pas un travail qui avance.
-    expect(html).toContain('waiting for a runner');
-    // Un run a une adresse : la ligne y mène.
-    expect(html).toContain('https://example.test/run/1');
+    expect(col).toContain('waiting for a runner');
+    // Et le run a son adresse.
+    expect(col).toContain('https://example.test/run/1');
+  });
+
+  it('est la PREMIÈRE colonne du tableau, avant « To do »', () => {
+    const html = enVol({ lignes: [CI_SUR_68], muettes: [], complet: true, le: null });
+    const kanban = html.indexOf('<div class="kanban">');
+    expect(kanban).toBeGreaterThan(-1);
+    const running = html.indexOf('colonne--en-vol', kanban);
+    const aFaire = html.indexOf('<h3>To do</h3>', kanban);
+    expect(running).toBeGreaterThan(-1);
+    expect(aFaire).toBeGreaterThan(-1);
+    expect(running, 'la colonne Running n’est pas la première du Kanban').toBeLessThan(aFaire);
+  });
+
+  it('la carte mène au TICKET du tableau, par sa vraie adresse', () => {
+    // #68 est sur le tableau de ce rendu : la carte prend SON adresse, jamais
+    // une URL fabriquée à partir du numéro.
+    const col = colonne(
+      enVol({ lignes: [CI_SUR_68], muettes: [], complet: true, le: '2026-09-20T09:40:00Z' }),
+    );
+    expect(col).toContain('href="https://github.com/x/y/issues/1"');
+    expect(col).toContain('>#68<');
+
+    // Un ticket que le tableau ne connaît pas ne se devine pas : la carte le
+    // dit, et garde son lien vers le run.
+    const inconnu = colonne(
+      enVol({
+        lignes: [{ ...CI_SUR_68, ticket: 9999 }],
+        muettes: [],
+        complet: true,
+        le: null,
+      }),
+    );
+    expect(inconnu).toContain('no ticket on the board');
+    expect(inconnu).not.toContain('>#9999<');
+    expect(inconnu).toContain('https://example.test/run/1');
   });
 
   it('« rien en cours » ne se dit pas pareil selon qu’on a pu regarder', () => {
-    const toutLu = enVol({ lignes: [], muettes: [], complet: true, le: '2026-09-20T09:40:00Z' });
+    const toutLu = colonne(
+      enVol({ lignes: [], muettes: [], complet: true, le: '2026-09-20T09:40:00Z' }),
+    );
     expect(toutLu).toContain('Nothing running.');
     expect(toutLu).toContain('Every source answered');
+    expect(toutLu).toContain('<span class="compte">0</span>');
 
-    const partiel = enVol({
-      lignes: [],
-      muettes: [{ source: 'ci', raison: 'GitHub did not answer' }],
-      complet: false,
-      le: '2026-09-20T09:40:00Z',
-    });
+    const partiel = colonne(
+      enVol({
+        lignes: [],
+        muettes: [{ source: 'ci', raison: 'GitHub did not answer' }],
+        complet: false,
+        le: '2026-09-20T09:40:00Z',
+      }),
+    );
     // Le mot qui change tout : ce n'est pas « rien ne tourne », c'est « rien
-    // dans ce qu'on a pu lire ».
+    // dans ce qu'on a pu lire ». Et le compte porte un « + », parce que « 0 »
+    // se lirait comme un total.
     expect(partiel).toContain('Nothing running in what could be read');
     expect(partiel).not.toContain('Every source answered');
+    expect(partiel).toContain('<span class="compte">0+</span>');
   });
 
-  it('une source muette se DIT, avec sa raison, jamais rendue « idle »', () => {
-    const html = enVol({
-      lignes: [],
-      muettes: [
-        { source: 'revues', raison: 'Nodal was not reachable from here' },
-        { source: 'ci', raison: 'GitHub did not answer' },
-      ],
-      complet: false,
-      le: '2026-09-20T09:40:00Z',
-    });
-    expect(html).toContain('2 sources did not answer');
-    expect(html).toContain('Nodal was not reachable from here');
-    expect(html).toContain('GitHub did not answer');
+  it('une source muette se DIT sur la colonne, avec sa raison, jamais « idle »', () => {
+    const col = colonne(
+      enVol({
+        lignes: [],
+        muettes: [
+          { source: 'revues', raison: 'Nodal was not reachable from here' },
+          { source: 'ci', raison: 'GitHub did not answer' },
+        ],
+        complet: false,
+        le: '2026-09-20T09:40:00Z',
+      }),
+    );
+    expect(col).toContain('2 sources did not answer');
+    expect(col).toContain('Nodal was not reachable from here');
+    expect(col).toContain('GitHub did not answer');
     // Et le lecteur est prévenu de ce que ça implique.
-    expect(html).toContain('Something may be running there without showing here');
+    expect(col).toContain('Something may be running there without showing here');
   });
 
-  it('un instantané d’AVANT la bande le dit, il ne montre pas un repos', () => {
-    const html = rendre({ ...INSTANTANE, enVol: undefined });
-    expect(html).toContain('Jobs in flight: not collected');
-    expect(html).not.toContain('Nothing running.');
+  it('le filtre par release NE VIDE PAS la colonne : un travail en vol n’a pas de release', () => {
+    // Le filtre masque `.kanban .ticket` dont le `data-release` ne correspond
+    // pas. Une carte en vol n'appartient à aucune release : sous la classe
+    // `ticket`, chaque filtre l'aurait fait disparaître.
+    const col = colonne(enVol({ lignes: [CI_SUR_68], muettes: [], complet: true, le: null }));
+    expect(col).toContain('class="carte-en-vol');
+    expect(col).not.toContain('class="ticket');
+    expect(col).not.toContain('data-release');
+  });
+
+  it('un instantané d’AVANT cette lecture le dit, il ne montre pas un repos', () => {
+    const col = colonne(rendre({ ...INSTANTANE, enVol: undefined }));
+    expect(col).toContain('Jobs in flight: not collected');
+    expect(col).not.toContain('Nothing running.');
+    // Le compte non plus ne vaut pas zéro : on ne sait pas.
+    expect(col).toContain('<span class="compte">?</span>');
   });
 });

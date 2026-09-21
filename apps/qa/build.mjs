@@ -29,6 +29,8 @@ import {
   etatDeMesure,
   repartitionDeLaMesure,
   MOT_MESURE,
+  cartesEnVol,
+  COLONNE_EN_VOL,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
@@ -942,6 +944,11 @@ function vueEcarts() {
 
 // « Abandonné » est une colonne à part entière : sans elle, une PR fermée
 // sans merge n'apparaîtrait NULLE PART — disparue du tableau sans trace.
+//
+// « Running » (#340) n'est PAS dans cette liste : ces six colonnes sont déduites
+// des issues et des PR, et une carte y entre par `colonneDeCarte`. Un travail en
+// vol n'est ni l'un ni l'autre. Sa colonne est posée à part, en tête du tableau,
+// par `colonneEnVol()`.
 const COLONNES = ['To do', 'In progress', 'In review', 'To test', 'Done', 'Abandoned'];
 
 const TONS_ETIQUETTE = {
@@ -1012,61 +1019,84 @@ function cadreDeploiement() {
 }
 
 /**
- * CE QUI TOURNE EN CE MOMENT, au-dessus du Kanban (issue #296).
+ * LA COLONNE « Running » DU KANBAN (issue #340, après la bande de #296).
  *
- * POURQUOI CETTE BANDE. Le 20/09/2026 au matin, le propriétaire a regardé ce
+ * POURQUOI ELLE EXISTE. Le 20/09/2026 au matin, le propriétaire a regardé ce
  * tableau et dit : « je ne vois plus rien d'actif sur le Kanban, et pourtant tu
  * as des processus qui tournent ». Le Kanban avait raison — toutes les cartes
  * fermées — et ne servait à rien : `release:check`, la CI de `main` et trois
  * passes de revue tournaient au même instant. Rien de tout cela n'est une issue
  * ni une PR, donc rien n'en avait de carte.
  *
- * LA RÈGLE ENTIÈRE DE CETTE BANDE tient en une phrase : une source qui n'a pas
- * répondu se DIT injoignable, jamais « rien en cours » (invariant #4). Une
- * bande vide ne veut dire « la machine dort » que lorsque les trois sources ont
- * parlé, et la page l'écrit noir sur blanc dans les deux cas.
+ * POURQUOI UNE COLONNE ET PLUS UNE BANDE. Décision du propriétaire, 22/09/2026 :
+ * « je préfère les cartes de tickets plutôt que les lignes Running now ». Une
+ * bande au-dessus du tableau était un second endroit où regarder ; la première
+ * colonne est là où l'œil va déjà, et un travail en vol se lit alors dans la
+ * même forme que le reste du tableau.
+ *
+ * LA RÈGLE N'A PAS CHANGÉ D'UN MOT : une source qui n'a pas répondu se DIT
+ * injoignable, ICI, sur la colonne elle-même, jamais « nothing running »
+ * (invariant #4). Une colonne vide ne veut dire « la machine dort » que lorsque
+ * toutes les sources ont parlé, et la page écrit les deux cas différemment.
  *
  * Elle ne propose AUCUN geste : arrêter un run est une affaire du produit
  * (#252), pas d'une page publiée en lecture seule.
+ *
+ * ⚠️ Ses cartes ne portent PAS la classe `ticket`, et ce n'est pas un oubli : le
+ * filtre par release masque `.kanban .ticket` dont le `data-release` ne
+ * correspond pas, et un travail en vol n'appartient à aucune release. Sous la
+ * classe `ticket`, chaque filtre aurait vidé cette colonne.
  */
-function bandeEnVol() {
-  const v = s.enVol;
-  if (v === undefined || v === null) {
-    return `<p class="en-vol en-vol--absent"><b>Jobs in flight: not collected.</b> This measurement predates the check.</p>`;
+function colonneEnVol() {
+  const v = cartesEnVol(s.enVol, s.chantiers?.cartes ?? null);
+  const entete = (compte, note) =>
+    `<header><h3>${COLONNE_EN_VOL}</h3><span class="compte">${compte}</span></header>${note}`;
+  if (v.etat === 'absente') {
+    return `<section class="colonne colonne--en-vol">
+      ${entete('?', '')}
+      <div class="pile"><p class="vide en-vol__silence"><b>Jobs in flight: not collected.</b> This measurement predates the check, so nothing is claimed about what runs.</p></div>
+    </section>`;
   }
-  const lu = v.le ? ` Read at ${esc(dateFr(v.le))}.` : '';
-  const muettes = (v.muettes ?? []).map((m) => esc(String(m.raison ?? 'unreachable')));
-  const silence = muettes.length
-    ? `<p class="en-vol__silence"><b>${muettes.length} source${muettes.length > 1 ? 's' : ''} did not answer</b>: ${muettes.join('; ')}. Something may be running there without showing here.</p>`
+  const lu = v.le ? `<p class="fenetre">read at ${esc(dateFr(v.le))}</p>` : '';
+  const silence = v.muettes.length
+    ? `<p class="vide en-vol__silence"><b>${v.muettes.length} source${v.muettes.length > 1 ? 's' : ''} did not answer</b>: ${v.muettes.map((m) => esc(m.raison)).join('; ')}. Something may be running there without showing here.</p>`
     : '';
-  const lignes = v.lignes ?? [];
-  if (lignes.length === 0) {
-    // Les deux phrases du vide, et elles ne disent pas la même chose : l'une
-    // est un constat, l'autre un aveu.
-    const phrase = v.complet
-      ? '<b>Nothing running.</b> Every source answered.'
-      : '<b>Nothing running in what could be read.</b>';
-    return `<div class="en-vol en-vol--vide"><p>${phrase}${lu}</p>${silence}</div>`;
-  }
-  const rang = (l) => {
-    const quoi = l.url ? `<a href="${esc(l.url)}">${esc(l.quoi)}</a>` : `<b>${esc(l.quoi)}</b>`;
-    const depuis = l.depuis
-      ? `<span class="en-vol__depuis">since ${esc(dateFr(l.depuis))}</span>`
+  // Le compte porte un « + » quand une source s'est tue : un chiffre nu se lit
+  // comme un total, et « 0 » se lirait comme « rien ne tourne ».
+  const compte = v.complet ? String(v.cartes.length) : `${v.cartes.length}+`;
+  const carte = (c) => {
+    // Le ticket vient du TABLEAU, avec sa vraie adresse. Sans ticket connu, la
+    // carte le dit et mène au run : un lien fabriqué à partir d'un numéro serait
+    // faux le jour où le dépôt change de nom.
+    const ticket = c.ticketUrl
+      ? `<a class="num-ticket" href="${esc(c.ticketUrl)}" target="_blank" rel="noopener">${c.ticketType === 'pr' ? 'PR ' : ''}#${Number(c.ticket)}</a>`
+      : `<span class="num-ticket">no ticket on the board</span>`;
+    const attend = c.attend
+      ? `<span class="pastille pastille--inconnu">waiting for ${esc(c.attend)}</span>`
       : '';
-    const attend = l.attend
-      ? `<span class="en-vol__attend">waiting for ${esc(l.attend)}</span>`
+    const depuis = c.depuis ? ` · since ${esc(dateFr(c.depuis))}` : '';
+    const run = c.url
+      ? `<a class="carte-en-vol__lien" href="${esc(c.url)}" target="_blank" rel="noopener">Open the run</a>`
       : '';
-    return `<li class="en-vol__rang en-vol__rang--${esc(l.genre ?? 'other')}">
-      <span class="en-vol__quoi">${quoi}</span>
-      <span class="en-vol__ou">${esc(l.ou ?? '')}</span>
-      ${depuis}${attend}
-    </li>`;
+    return `<article class="carte-en-vol carte-en-vol--${esc(c.genre)}">
+      <span class="carte-en-vol__tete">${ticket}<span class="etiq etiq--gris">${esc(c.genreDit)}</span>${attend}</span>
+      <span class="carte-en-vol__titre">${esc(c.quoi)}</span>
+      <span class="carte-en-vol__ou">${esc(c.ou)}${depuis}</span>
+      ${run}
+    </article>`;
   };
-  return `<div class="en-vol">
-    <p class="en-vol__titre"><b>Running now: ${lignes.length}</b>${lu}</p>
-    <ul class="en-vol__liste">${lignes.map(rang).join('')}</ul>
-    ${silence}
-  </div>`;
+  // Les deux phrases du vide, et elles ne disent pas la même chose : l'une est
+  // un constat, l'autre un aveu.
+  const vide = v.complet
+    ? '<p class="vide"><b>Nothing running.</b> Every source answered.</p>'
+    : '<p class="vide"><b>Nothing running in what could be read.</b></p>';
+  return `<section class="colonne colonne--en-vol">
+    ${entete(compte, lu)}
+    <div class="pile">
+      ${v.cartes.length ? v.cartes.map(carte).join('') : vide}
+      ${silence}
+    </div>
+  </section>`;
 }
 
 /**
@@ -1119,8 +1149,9 @@ function vueChantiers() {
   const cartes = s.chantiers?.cartes ?? null;
   if (!cartes) {
     return `<section id="chantiers" class="vue actif">${entete('chantiers', 'Work in flight')}
-      ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}${bandeEnVol()}
-      <div class="alerte">GitHub did not answer, the portal shows nothing rather than a stale list.</div></section>`;
+      ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}
+      <div class="alerte">GitHub did not answer, the portal shows nothing rather than a stale list.</div>
+      <div class="kanban kanban--en-vol-seul">${colonneEnVol()}</div></section>`;
   }
 
   const carte = (c) => {
@@ -1230,10 +1261,10 @@ function vueChantiers() {
   return `
 <section id="chantiers" class="vue actif">
   ${entete('chantiers', 'Work in flight')}
-  ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}${bandeEnVol()}
+  ${repere('chantiers', 'release')}${cadreRelease()}${cadreDeploiement()}
   ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} decision${aFaire > 1 ? 's' : ''} waiting on you</b>: they block the rest until they are settled.${enReview > 0 ? ` And ${enReview} pull request${enReview > 1 ? 's are' : ' is'} waiting for your merge.` : ''}</div>` : ''}
   ${filtre}
-  <div class="kanban">${colonnes}</div>
+  <div class="kanban">${colonneEnVol()}${colonnes}</div>
 </section>`;
 }
 
@@ -1547,40 +1578,41 @@ tr:last-child td{border-bottom:0}
 .ligne-deploiement b{font-family:Archivo,sans-serif}
 .ligne-deploiement--absent{padding:10px 12px;border:1px solid var(--regle);border-radius:6px}
 
-/* ── Running now (#296) ── */
-.en-vol{margin:12px 0 0;padding:12px 14px;border:1px solid var(--regle);border-radius:8px;
-  font-size:13px;line-height:1.5}
-.en-vol--absent{color:var(--encre-3)}
-.en-vol__titre{margin:0}
-.en-vol__titre b,.en-vol b{font-family:Archivo,sans-serif}
-.en-vol__liste{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
-.en-vol__rang{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;
-  padding:6px 0 0;border-top:1px solid var(--regle)}
-.en-vol__ou,.en-vol__depuis,.en-vol__attend{color:var(--encre-3);font-size:12px}
-.en-vol__attend{font-family:Archivo,sans-serif}
-.en-vol__silence{margin:8px 0 0;font-size:12px;color:var(--encre-3)}
+/* ── La colonne « Running » (#340, apres la bande de #296) ── */
+/* La colonne est la PREMIERE du tableau : son liseré la distingue des colonnes
+   deduites de GitHub, parce qu'elle ne l'est pas. */
+.colonne--en-vol header{border-bottom-color:var(--accent)}
+.carte-en-vol{display:flex;flex-direction:column;gap:8px;background:var(--panneau);
+  border:1px solid var(--regle);border-radius:5px;padding:15px 16px 14px;
+  color:var(--encre2);box-shadow:inset 3px 0 0 var(--accent)}
+.carte-en-vol__tete{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.carte-en-vol__titre{font-size:15px;line-height:1.4;color:var(--encre)}
+.carte-en-vol__ou{font-size:12px;color:var(--encre3);line-height:1.5}
+.carte-en-vol__lien{font-size:12px;color:var(--encre2)}
+.en-vol__silence{line-height:1.5}
+.en-vol__silence b{font-family:Archivo,sans-serif;color:var(--encre2)}
 
 /* ── Kanban ── */
 .rappel{border-left:3px solid var(--accent);padding:2px 0 2px 18px;margin:0 0 30px;
   font-size:17px;color:var(--encre2);max-width:80ch}
 .rappel b{color:var(--encre);font-weight:700;font-family:Archivo,sans-serif}
 /* Le tableau prend TOUTE la largeur de la fenetre, pas celle de la colonne de
-   texte : six colonnes de cartes ne se lisent pas dans 1220 px. Il sort donc de
-   la gouttiere et se reprend sa propre marge, et sous 1180 px il defile
-   horizontalement plutot que d'ecraser ses colonnes. */
-.kanban{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:18px;
+   texte : SEPT colonnes de cartes ne se lisent pas dans 1220 px. Il sort donc de
+   la gouttiere et se reprend sa propre marge, et quand elles ne tiennent plus il
+   defile horizontalement plutot que d'ecraser ses colonnes. */
+.kanban{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:18px;
   align-items:start;padding-bottom:12px}
-/* Sous 1180 px, six colonnes lisibles ne tiennent plus : le tableau defile
-   plutot que d'ecraser ses cartes en bandes de texte. Lui seul defile, pas la
-   page. */
-/* Sous 1400 px, six colonnes lisibles ne tiennent plus a cote de la barre : le
-   tableau defile, et lui seul. Il reprend la gouttiere du contenu pour que la
-   premiere et la derniere carte soient a la meme distance du bord que le reste
-   de la page. */
-@media(max-width:1400px){
-  .kanban{grid-template-columns:repeat(6,minmax(236px,1fr));overflow-x:auto;
+/* Sous 1600 px, SEPT colonnes lisibles ne tiennent plus a cote de la barre : le
+   tableau defile, et lui seul, pas la page. Il reprend la gouttiere du contenu
+   pour que la premiere et la derniere carte soient a la meme distance du bord
+   que le reste de la page. Le seuil etait a 1400 px pour six colonnes ; la
+   colonne « Running » (#340) en ajoute une septieme, et 236 px par colonne reste
+   la largeur en dessous de laquelle une carte devient une bande de texte. */
+@media(max-width:1600px){
+  .kanban{grid-template-columns:repeat(7,minmax(236px,1fr));overflow-x:auto;
     margin-inline:calc(clamp(20px,3.2vw,48px) * -1);padding-inline:clamp(20px,3.2vw,48px)}
 }
+.kanban--en-vol-seul{grid-template-columns:minmax(0,300px)}
 .colonne{min-width:0}
 .colonne header{display:flex;justify-content:space-between;align-items:baseline;
   gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--encre)}

@@ -69,6 +69,9 @@ import {
   revuesEnCours,
   releaseCheckEnCours,
   cequiTourne,
+  cartesEnVol,
+  numeroDeTicket,
+  mentionDeTicket,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -3659,5 +3662,337 @@ describe('ce qui tourne en ce moment (#296)', () => {
     ]);
     expect(vue.complet).toBe(true);
     expect(vue.le).toBe('2026-09-20T09:40:00Z');
+  });
+});
+
+// ─── Les CARTES de la colonne « Running » (#340) ───────────────────────────────
+//
+// Décision du propriétaire, 22/09/2026 : « je préfère les cartes de tickets
+// plutôt que les lignes Running now ». La transformation vit ici, PURE : elle ne
+// parle ni à GitHub ni à Nodal, et ces cas la jouent sur des objets écrits à la
+// main.
+//
+// Mutations vérifiées :
+//   - `ticket` pris du relevé et non de la carte trouvée → « un ticket absent
+//     du tableau ne se devine pas » rougit ;
+//   - le repli par branche retiré → « un run de PR retrouve son ticket par sa
+//     BRANCHE » rougit ;
+//   - la branche ambiguë gardée dans l'index → « une branche que DEUX PR
+//     ouvertes se partagent ne désigne plus rien » rougit ;
+//   - la mention remise devant la branche → « une MENTION dans un titre ne bat
+//     pas la branche du run » rougit ;
+//   - la forme parenthésée retirée de `numeroDeTicket` → « le ticket de fin de
+//     titre gagne » rougit ;
+//   - `etat: 'absente'` remplacé par un relevé vide → « un instantané d'avant
+//     n'est pas un repos » rougit.
+
+describe('les cartes de la colonne « Running » (#340)', () => {
+  const TABLEAU = [
+    { numero: 68, type: 'issue', titre: 'A card', url: 'https://github.test/x/y/issues/68' },
+    { numero: 326, type: 'pr', titre: 'A pull request', url: 'https://github.test/x/y/pull/326' },
+  ];
+
+  it('un titre DÉSIGNE un ticket, ou il en MENTIONNE un : ce n’est pas pareil', () => {
+    // Le squash de ce dépôt finit par `(#N)` : cette forme-là ne peut désigner
+    // qu'une chose, et c'est la seule que `numeroDeTicket` accepte.
+    expect(numeroDeTicket('Homepage: the hero on the design width (#336)')).toBe(336);
+    expect(numeroDeTicket('Fix #12 crash seen in review (#340)')).toBe(340);
+    // Un `#12` cité en passant ne DÉSIGNE rien : il se lit à part, en signal
+    // faible (constat P0.4 de la revue C).
+    expect(
+      numeroDeTicket('Fix #12 crash'),
+      'une mention a été prise pour une désignation',
+    ).toBeNull();
+    expect(mentionDeTicket('Fix #12 crash')).toBe(12);
+    expect(mentionDeTicket('(#340) opening title')).toBe(340);
+    // Et un titre qui ne nomme rien ne rend RIEN : pas de zéro, pas de devinette.
+    expect(numeroDeTicket('CI')).toBeNull();
+    expect(mentionDeTicket('CI')).toBeNull();
+    expect(mentionDeTicket(null)).toBeNull();
+    expect(mentionDeTicket('release #0')).toBeNull();
+  });
+
+  it('une carte par travail, et son ticket porte l’adresse du TABLEAU', () => {
+    const v = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([
+          {
+            status: 'in_progress',
+            displayTitle: 'A card (#68)',
+            headBranch: 'main',
+            createdAt: '2026-09-20T09:30:00Z',
+            url: 'https://github.test/run/1',
+          },
+        ]),
+        revues: revuesEnCours([
+          { pr: 326, agent: 'reviewer-c', depuis: '2026-09-20T09:10:00Z', statut: 'processing' },
+        ]),
+        release: releaseCheckEnCours({ depuis: '2026-09-20T08:50:00Z', ou: 'wt-proof' }),
+        le: '2026-09-20T09:40:00Z',
+      }),
+      TABLEAU,
+    );
+    expect(v.etat).toBe('lue');
+    expect(v.complet).toBe(true);
+    expect(v.le).toBe('2026-09-20T09:40:00Z');
+    // Les plus anciens d'abord, tri hérité de `cequiTourne`.
+    expect(v.cartes.map((c) => c.quoi)).toEqual([
+      'release:check',
+      'Review pass on #326',
+      'A card (#68)',
+    ]);
+    // Le libellé du genre est calculé ici, pas dans le gabarit.
+    expect(v.cartes.map((c) => c.genreDit)).toEqual(['Release', 'Review', 'CI']);
+
+    const revue = v.cartes[1];
+    // L'adresse vient de la carte RÉELLE du tableau : une URL fabriquée à partir
+    // du numéro serait fausse le jour où le dépôt change de nom.
+    expect(revue.ticket).toBe(326);
+    expect(revue.ticketUrl).toBe('https://github.test/x/y/pull/326');
+    expect(revue.ticketType).toBe('pr');
+    expect(revue.ou).toBe('Nodal, reviewer-c');
+
+    const ci = v.cartes[2];
+    expect(ci.ticket).toBe(68);
+    expect(ci.ticketUrl).toBe('https://github.test/x/y/issues/68');
+    expect(ci.url, 'le run a perdu son adresse').toBe('https://github.test/run/1');
+
+    // `release:check` n'appartient à aucun ticket, et on ne lui en invente pas.
+    expect(v.cartes[0].ticket).toBeNull();
+    expect(v.cartes[0].ticketUrl).toBeNull();
+  });
+
+  it('un run de PR retrouve son ticket par sa BRANCHE, pas par son titre', () => {
+    // LE CAS LE PLUS FRÉQUENT, et celui qui a fait ajouter ce chemin : le titre
+    // d'un run de `pull_request` est le titre de la PR, qui ne nomme aucun
+    // numéro. Sans la branche, chaque CI d'agent s'affichait « no ticket ».
+    const tableau = [
+      ...TABLEAU,
+      {
+        numero: 341,
+        type: 'pr',
+        etat: 'OPEN',
+        branche: 'feat/portal-running-cards',
+        url: 'https://github.test/x/y/pull/341',
+      },
+      // Une PR MERGÉE sur la même branche ne doit pas la capter : une branche se
+      // réutilise, et ce lien-là serait faux.
+      {
+        numero: 12,
+        type: 'pr',
+        etat: 'MERGED',
+        branche: 'feat/portal-running-cards',
+        url: 'https://github.test/x/y/pull/12',
+      },
+    ];
+    const v = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([
+          {
+            status: 'in_progress',
+            displayTitle: 'Portal: the jobs in flight are cards',
+            headBranch: 'feat/portal-running-cards',
+            createdAt: '2026-09-21T02:21:39Z',
+            url: 'https://github.test/run/7',
+          },
+        ]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: '2026-09-21T02:24:00Z',
+      }),
+      tableau,
+    );
+    expect(v.cartes).toHaveLength(1);
+    expect(v.cartes[0].ticket, 'la branche n’a pas retrouvé sa PR').toBe(341);
+    expect(v.cartes[0].ticketUrl).toBe('https://github.test/x/y/pull/341');
+    expect(v.cartes[0].ticketType).toBe('pr');
+
+    // Sans PR ouverte sur cette branche, la carte n'invente rien.
+    const orpheline = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([
+          {
+            status: 'in_progress',
+            displayTitle: 'Nightly',
+            headBranch: 'feat/nobody',
+            createdAt: '2026-09-21T02:21:39Z',
+            url: 'https://github.test/run/8',
+          },
+        ]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: null,
+      }),
+      tableau,
+    );
+    expect(orpheline.cartes[0].ticket).toBeNull();
+    expect(orpheline.cartes[0].ticketUrl).toBeNull();
+  });
+
+  it('un ticket ABSENT du tableau ne se devine pas', () => {
+    const v = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([]),
+        revues: revuesEnCours([
+          { pr: 9999, agent: 'reviewer-c', depuis: '2026-09-20T09:10:00Z', statut: 'processing' },
+        ]),
+        release: releaseCheckEnCours(null),
+        le: '2026-09-20T09:40:00Z',
+      }),
+      TABLEAU,
+    );
+    expect(v.cartes).toHaveLength(1);
+    // Le numéro est connu, la carte NON : montrer un lien vers une page qui
+    // n'existe pas sur ce tableau serait une affirmation de plus.
+    expect(v.cartes[0].ticket).toBeNull();
+    expect(v.cartes[0].ticketUrl).toBeNull();
+  });
+
+  it('une source muette traverse jusqu’aux cartes, avec sa raison', () => {
+    const v = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours(null),
+        revues: revuesEnCours(null),
+        release: releaseCheckEnCours(null),
+        le: '2026-09-20T09:40:00Z',
+      }),
+      TABLEAU,
+    );
+    expect(v.cartes).toEqual([]);
+    // ZÉRO CARTE ET DEUX SOURCES MUETTES : c'est exactement le cas que la page
+    // ne doit jamais rendre « nothing running » (invariant #4).
+    expect(v.complet).toBe(false);
+    expect(v.muettes.map((m) => m.source)).toEqual(['ci', 'revues']);
+    expect(v.muettes[1].raison).toContain('Nodal');
+  });
+
+  it('un instantané d’AVANT cette lecture n’est pas un repos', () => {
+    for (const rien of [undefined, null]) {
+      const v = cartesEnVol(rien, TABLEAU);
+      expect(v.etat, 'une absence de relevé a été rendue comme un relevé').toBe('absente');
+      expect(v.cartes).toEqual([]);
+      // Et surtout PAS `complet` : « rien en cours » n'est pas prouvé.
+      expect(v.complet).toBe(false);
+    }
+  });
+
+  it('une branche que DEUX PR ouvertes se partagent ne désigne plus rien', () => {
+    // Constat P0.3 de la revue C : une PR vers `main` et une PR empilée vers une
+    // autre base vivent sur la même branche, et `headRefName` ne dit pas le
+    // fork. Prendre la première rencontrée donnait un lien juste une fois sur
+    // deux, sans le dire.
+    const partagee = [
+      { numero: 341, type: 'pr', etat: 'OPEN', branche: 'feat/x', url: 'https://t/pull/341' },
+      { numero: 342, type: 'pr', etat: 'OPEN', branche: 'feat/x', url: 'https://t/pull/342' },
+    ];
+    const run = {
+      status: 'in_progress',
+      displayTitle: 'Some title',
+      headBranch: 'feat/x',
+      createdAt: '2026-09-21T02:21:39Z',
+      url: 'https://t/run/1',
+    };
+    const releve = () =>
+      cequiTourne({
+        ci: runsEnCours([run]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: null,
+      });
+    const ambigu = cartesEnVol(releve(), partagee);
+    expect(ambigu.cartes[0].ticket, 'une branche ambiguë a quand même désigné une PR').toBeNull();
+    expect(ambigu.cartes[0].ticketUrl).toBeNull();
+    // Et la carte garde son lien vers le run : elle ne perd rien d'autre.
+    expect(ambigu.cartes[0].url).toBe('https://t/run/1');
+
+    // Une seule PR ouverte sur cette branche, et le lien revient.
+    const seule = cartesEnVol(releve(), [partagee[0]]);
+    expect(seule.cartes[0].ticket).toBe(341);
+  });
+
+  it('une MENTION dans un titre ne bat pas la branche du run', () => {
+    // Constat P0.4 de la revue C : « Fix #68 crash » parle du travail #68, mais
+    // le run appartient à la PR qui le fait tourner. La mention ne sert qu'en
+    // dernier recours.
+    const tableau = [
+      ...TABLEAU,
+      { numero: 341, type: 'pr', etat: 'OPEN', branche: 'feat/x', url: 'https://t/pull/341' },
+    ];
+    const surUnePr = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([
+          {
+            status: 'in_progress',
+            displayTitle: 'Fix #68 crash',
+            headBranch: 'feat/x',
+            createdAt: '2026-09-21T02:21:39Z',
+            url: 'https://t/run/1',
+          },
+        ]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: null,
+      }),
+      tableau,
+    );
+    expect(surUnePr.cartes[0].ticket, 'la mention a battu la branche').toBe(341);
+
+    // Sans branche connue, la mention est tout ce qu'on a, et elle sert.
+    const sansBranche = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([
+          {
+            status: 'in_progress',
+            displayTitle: 'Fix #68 crash',
+            headBranch: 'feat/inconnue',
+            createdAt: '2026-09-21T02:21:39Z',
+            url: 'https://t/run/1',
+          },
+        ]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: null,
+      }),
+      tableau,
+    );
+    expect(sansBranche.cartes[0].ticket).toBe(68);
+
+    // Et la forme de FIN bat tout : c'est la seule qui désigne sans ambiguïté.
+    const squash = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([
+          {
+            status: 'in_progress',
+            displayTitle: 'Fix #341 crash (#68)',
+            headBranch: 'feat/x',
+            createdAt: '2026-09-21T02:21:39Z',
+            url: 'https://t/run/1',
+          },
+        ]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: null,
+      }),
+      tableau,
+    );
+    expect(squash.cartes[0].ticket).toBe(68);
+  });
+
+  it('sans tableau, les cartes existent quand même, sans lien de ticket', () => {
+    // Le cas réel : GitHub n'a pas répondu sur les cartes, et la colonne doit
+    // quand même dire ce qui tourne.
+    const v = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([]),
+        revues: revuesEnCours([
+          { pr: 326, agent: 'reviewer-c', depuis: '2026-09-20T09:10:00Z', statut: 'processing' },
+        ]),
+        release: releaseCheckEnCours(null),
+        le: '2026-09-20T09:40:00Z',
+      }),
+      null,
+    );
+    expect(v.cartes.map((c) => c.quoi)).toEqual(['Review pass on #326']);
+    expect(v.cartes[0].ticketUrl).toBeNull();
   });
 });
