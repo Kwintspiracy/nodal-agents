@@ -33,7 +33,7 @@ import {
   FORMULA,
   HERO,
   LINK_GITHUB,
-  LINK_START,
+  SCREENS_TITLE,
   MCP_ICONS,
   INVARIANTS,
   PILLARS,
@@ -129,8 +129,14 @@ describe('homepage rendering', () => {
       ['CI jobs', CI_JOBS.flatMap((j) => [j.name, j.body])],
       [
         'hero',
-        [...HERO.titleLines, HERO.lede, HERO.primaryCta, HERO.secondaryCta, ...HERO.commands],
+        [
+          HERO.title,
+          HERO.lede,
+          ...HERO.pillars.flatMap((p) => [p.label, p.body]),
+          ...HERO.commands,
+        ],
       ],
+      ['screens title', [SCREENS_TITLE]],
       ['roadmap', ROADMAP],
     ];
     for (const [name, texts] of blocks) {
@@ -173,13 +179,34 @@ describe('homepage rendering', () => {
 
   // Every word of the hero comes from `HERO`, so the page and the handoff
   // cannot drift apart without this going red.
-  it('renders the hero copy it declares, both title lines included', () => {
-    for (const line of HERO.titleLines) expect(markup).toContain(line);
+  it('renders the hero copy it declares: a one-line title, the lede, three pillars, the commands', () => {
+    // One line, no break inside the heading (owner, 2026-09-22).
+    expect(markup).toContain(`<h1 class="home-hero-title">${HERO.title}</h1>`);
     expect(markup).toContain(HERO.lede);
-    expect(markup).toContain(HERO.primaryCta);
-    expect(markup).toContain(HERO.secondaryCta);
+    expect(HERO.pillars).toHaveLength(3);
+    for (const p of HERO.pillars) {
+      expect(markup).toContain(p.label);
+      expect(markup).toContain(p.body);
+    }
+    // The two buttons of the design are gone: the install command is the call
+    // to action, and the nav carries GitHub.
+    expect(markup).not.toContain('home-hero-btn');
     expect(markup).toContain(HERO.terminalTitle);
     for (const command of HERO.commands) expect(markup).toContain(command);
+  });
+
+  // Every section opens the same way since 2026-09-22: the title, then one
+  // claim in the display face with the accent bar. Six sections, six claims,
+  // and no section left on the old plain intro.
+  it('opens every section on a claim with the accent bar, the same style six times', () => {
+    expect(markup.split('class="home-claim"').length - 1).toBe(SECTIONS.length);
+    expect(markup).not.toContain('home-intro');
+  });
+
+  it('gives the two captures a title and room under the hero', () => {
+    const band = markup.slice(markup.indexOf('home-screens-band'));
+    expect(band.indexOf(SCREENS_TITLE)).toBeGreaterThan(0);
+    expect(band.indexOf(SCREENS_TITLE)).toBeLessThan(band.indexOf('home-shot'));
   });
 
   // The pill is the one place on the page where a version could be typed by
@@ -187,12 +214,6 @@ describe('homepage rendering', () => {
   // case below checks against `apps/cli/package.json`.
   it('prints the published version on the hero pill, never a typed one', () => {
     expect(markup).toContain(`v${VERSION} · ${HERO.pillSuffix}`);
-  });
-
-  it('sends "Get started" to the install page, and the second button to GitHub', () => {
-    expect(markup).toContain(`href="${LINK_START}">${HERO.primaryCta}</a>`);
-    expect(existsSync(join(docsRoot, 'content', 'docs', 'getting-started.mdx'))).toBe(true);
-    expect(markup).toContain(`href="${LINK_GITHUB}">${HERO.secondaryCta}</a>`);
   });
 
   // The redesign names Instrument Sans and IBM Plex Mono outright. They are
