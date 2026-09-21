@@ -834,6 +834,13 @@
       "when": 1786001220000,
       "tag": "0119_job_checkpoints_snapshot_ms",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1786001280000,
+      "tag": "0120_excluded_project_paths",
+      "breakpoints": true
     }
   ]
 }

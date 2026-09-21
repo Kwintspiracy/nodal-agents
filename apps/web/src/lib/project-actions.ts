@@ -27,6 +27,7 @@ import { normalize as posixNormalize } from 'node:path/posix';
 import { initGitRepository } from './project-git.ts';
 // La règle du projet LISTÉ, partagée par la barre latérale et par la page.
 import {
+  excludedPathsWhere,
   isListedProject,
   listedProjectsWhere,
   registeredProjectsWhere,
@@ -50,6 +51,7 @@ import {
   conversationReads,
   conversations,
   entities,
+  excludedProjectPaths,
   verificationRuns,
   // UNE transaction pour oublier un projet : les liens coupés et la ligne
   // supprimée arrivent ensemble, ou rien n'arrive.
@@ -220,6 +222,36 @@ async function getSession() {
   }
   const session = await requireAuth(req, provider);
   return applyActiveEntity(session, req);
+}
+
+/**
+ * LE PROPRIÉTAIRE, et lui seul — la même garde EXACTE que masquer et renommer
+ * (`assertProjectOwner`, actions.ts). Rend le refus, ou `null` quand la
+ * personne est bien la propriétaire de l'espace.
+ *
+ * Le prédicat est REDIT ici plutôt qu'importé d'`actions.ts`, et c'est voulu
+ * (revue Reviewer C du 21/09, mineur) : ce module-là porte `'use server'`, donc
+ * chacun de ses exports devient un point d'entrée appelable depuis le
+ * navigateur, et exporter la garde en ferait une porte publique. Cette
+ * fonction-ci n'est PAS exportée : les gestes de ce module la partagent sans
+ * que personne d'autre puisse l'appeler.
+ *
+ * Comparaison directe avec `entities.user_id`, sans exemption local-trust.
+ */
+async function ownerRefusal(
+  db: ReturnType<typeof getDb>,
+  session: { userId: string; entityId: string },
+  geste: string,
+): Promise<ActionResult<never> | null> {
+  const [ownerRow] = await db
+    .select({ userId: entities.userId })
+    .from(entities)
+    .where(eq(entities.id, session.entityId));
+  if (!ownerRow) return fail('not_found', 'Workspace not found');
+  if (ownerRow.userId !== session.userId) {
+    return fail('forbidden', `Only the workspace owner can ${geste}.`);
+  }
+  return null;
 }
 
 /** Le nom du dossier, quand le propriétaire n'en a pas choisi un autre. */
@@ -1057,25 +1089,14 @@ export async function forgetCodeProjectAction(raw: unknown): Promise<ActionResul
 
     const db = getDb();
 
-    // LE PROPRIÉTAIRE, et lui seul — la même garde EXACTE que masquer et
-    // renommer (`assertProjectOwner`, actions.ts) : oublier emporte un réglage
-    // que TOUT l'espace voit, agents compris. Comparaison directe avec
-    // `entities.user_id`, sans exemption local-trust.
-    //
-    // Le prédicat est REDIT ici plutôt qu'importé, et c'est voulu (revue
-    // Reviewer C du 21/09, mineur) : `actions.ts` porte `'use server'`, donc
-    // chacun de ses exports devient un point d'entrée appelable depuis le
-    // navigateur. Exporter la garde en ferait une porte publique. La sortir
-    // dans un module tiers est le geste propre, et il appartient à la PR qui
-    // déplacera les gestes du projet, pas à celle-ci.
-    const [ownerRow] = await db
-      .select({ userId: entities.userId })
-      .from(entities)
-      .where(eq(entities.id, session.entityId));
-    if (!ownerRow) return fail('not_found', 'Workspace not found');
-    if (ownerRow.userId !== session.userId) {
-      return fail('forbidden', 'Only the workspace owner can forget a project.');
-    }
+    // LE PROPRIÉTAIRE, et lui seul : oublier emporte un réglage que TOUT
+    // l'espace voit, agents compris.
+    const refus = await ownerRefusal(
+      db,
+      { userId: session.userId, entityId: session.entityId },
+      'forget a project',
+    );
+    if (refus) return refus;
 
     // Par IDENTITÉ, jamais par égalité de texte : sous Windows le même dossier
     // remonte avec des casses différentes selon la session.
@@ -1085,6 +1106,10 @@ export async function forgetCodeProjectAction(raw: unknown): Promise<ActionResul
         id: codeProjects.id,
         hidden: codeProjects.hidden,
         registeredAt: codeProjects.registeredAt,
+        // Le chemin TEL QU'IL EST STOCKÉ, pas celui de l'appel : c'est lui que
+        // la section « Excluded folders » affichera, et il a été écrit une
+        // fois pour toutes à l'enregistrement.
+        projectPath: codeProjects.projectPath,
       })
       .from(codeProjects)
       .where(and(eq(codeProjects.entityId, session.entityId), eq(codeProjects.projectKey, key)))
@@ -1102,6 +1127,7 @@ export async function forgetCodeProjectAction(raw: unknown): Promise<ActionResul
     }
 
     const projectId = row.id;
+    const projectPath = row.projectPath;
     await withTransaction(db, async (tx) => {
       await tx
         .update(conversations)
@@ -1111,6 +1137,20 @@ export async function forgetCodeProjectAction(raw: unknown): Promise<ActionResul
       await tx
         .delete(codeProjects)
         .where(and(eq(codeProjects.id, projectId), eq(codeProjects.entityId, session.entityId)));
+      // LE DOSSIER EST ÉCARTÉ, dans la MÊME transaction (#385). Sans cela la
+      // détection — qui ne lit pas le registre mais les écritures passées des
+      // agents — ramenait le projet dans la liste marqué « Detected », avec
+      // Register et Hide offerts de nouveau, et « Forget » ne tenait pas.
+      //
+      // `DO NOTHING` sur le conflit : le dossier peut déjà être écarté (un
+      // projet ré-enregistré là puis oublié une seconde fois), et une seconde
+      // exclusion du même dossier n'est pas un échec de l'oubli.
+      await tx
+        .insert(excludedProjectPaths)
+        .values({ entityId: session.entityId, projectPath, projectKey: key })
+        .onConflictDoNothing({
+          target: [excludedProjectPaths.entityId, excludedProjectPaths.projectKey],
+        });
     });
 
     console.warn(`[projects] PROJECT_FORGOTTEN id=${projectId} key=${key}`);
@@ -1120,6 +1160,106 @@ export async function forgetCodeProjectAction(raw: unknown): Promise<ActionResul
   } catch (err) {
     console.error('[projects] PROJECT_FORGET_FAILED', err);
     return fail('forget_failed', 'Could not forget this project');
+  }
+}
+
+// ─── Les dossiers ÉCARTÉS (#385) ─────────────────────────────────────────────
+
+/** Un dossier écarté, tel que la section « Excluded folders » le montre. */
+export type ExcludedFolderRow = {
+  /** `projectKey(path)` — l'identité, et la clé de rendu de la ligne. */
+  key: string;
+  /** Le chemin tel qu'il a été écrit, celui que l'écran affiche. */
+  path: string;
+  /** Le jour où il a été écarté. */
+  excludedAt: Date;
+};
+
+/**
+ * LES DOSSIERS ÉCARTÉS de l'espace, le plus récemment écarté d'abord.
+ *
+ * UNE lecture bornée à l'entité, comme les trois autres que la page fait. Elle
+ * sert à DEUX choses, et c'est pour cela qu'elle rend les chemins et pas
+ * seulement les clés : filtrer la détection (par clé) et dessiner la section
+ * qui les montre (par chemin). Une personne qui ne verrait pas ce qu'elle a
+ * écarté ne pourrait pas le défaire.
+ */
+export async function listExcludedProjectPathsAction(): Promise<ActionResult<ExcludedFolderRow[]>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const rows = await getDb()
+      .select({
+        key: excludedProjectPaths.projectKey,
+        path: excludedProjectPaths.projectPath,
+        excludedAt: excludedProjectPaths.createdAt,
+      })
+      .from(excludedProjectPaths)
+      .where(excludedPathsWhere(session.entityId))
+      .orderBy(desc(excludedProjectPaths.createdAt), desc(excludedProjectPaths.projectKey));
+    return ok(rows);
+  } catch (err) {
+    console.error('[projects] EXCLUDED_PATHS_LIST_FAILED', err);
+    return fail('excluded_list_failed', 'Could not read the excluded folders');
+  }
+}
+
+const detectAgainSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+});
+
+/**
+ * « DETECT AGAIN » : le dossier redevient détectable (#385).
+ *
+ * Le geste qui DÉFAIT l'exclusion, et il ne fait que cela — il ne réenregistre
+ * rien. La ligne d'exclusion part, et la détection reprend son cours : si un
+ * agent a écrit là, le dossier reparaît marqué « Detected », avec Register et
+ * Hide. Si plus rien n'y a été écrit, il ne reparaît pas, et c'est exact.
+ *
+ * LE PROPRIÉTAIRE, et lui seul, comme pour l'exclusion elle-même : les deux
+ * moitiés d'un même réglage ne se gardent pas différemment.
+ *
+ * Un chemin qui n'est pas écarté rend un refus plutôt qu'un succès silencieux
+ * (invariant #4) : deux onglets ouverts sur la même page, et le second clic
+ * doit dire que la ligne n'est plus là.
+ */
+export async function detectProjectPathAgainAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const parsed = detectAgainSchema.safeParse(raw);
+    if (!parsed.success) return fail('validation_failed', 'Invalid folder input');
+
+    const db = getDb();
+    const refus = await ownerRefusal(
+      db,
+      { userId: session.userId, entityId: session.entityId },
+      'change the excluded folders',
+    );
+    if (refus) return refus;
+
+    // Par IDENTITÉ, comme l'exclusion a été écrite.
+    const key = projectKey(flattenPath(parsed.data.projectPath));
+    const deleted = await db
+      .delete(excludedProjectPaths)
+      .where(
+        and(
+          eq(excludedProjectPaths.entityId, session.entityId),
+          eq(excludedProjectPaths.projectKey, key),
+        ),
+      )
+      .returning({ id: excludedProjectPaths.id });
+    if (deleted.length === 0) {
+      return fail('not_excluded', 'This folder is not in the excluded list.');
+    }
+
+    console.warn(`[projects] PROJECT_PATH_DETECTABLE_AGAIN key=${key}`);
+    revalidatePath('/spaces');
+    revalidatePath('/code');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[projects] PROJECT_PATH_DETECT_AGAIN_FAILED', err);
+    return fail('detect_again_failed', 'Could not put this folder back in detection');
   }
 }
 

@@ -20,6 +20,7 @@ import {
   approvalRequests,
   codeProjects,
   conversations,
+  excludedProjectPaths,
   and,
   eq,
 } from '@nodal-agents/db';
@@ -664,5 +665,112 @@ describe('register_project — la porte : le propriétaire confirme (revue Codex
     expect((await stat(`${terrain}/reprise`)).isDirectory()).toBe(true);
     expect(await projetDuJob(jobId)).toBe(out.project_id);
     expect(await projetDeLaConversation(conversationId)).toBe(out.project_id);
+  });
+});
+
+// ─── #385 : enregistrer là où l'on avait ÉCARTÉ ──────────────────────────────
+//
+// Oublier un projet écrit son dossier dans les dossiers écartés de l'espace,
+// pour que la détection cesse de le proposer. Enregistrer un projet LÀ est la
+// décision inverse, et elle est prise en connaissance de cause : cet outil
+// demande toujours une approbation, et la carte montre le dossier.
+//
+// Laisser la ligne d'exclusion en place ferait cohabiter « ce dossier est
+// écarté » et « ce dossier est un projet », deux phrases qui ne peuvent pas
+// être vraies ensemble.
+describe('register_project — le dossier écarté @cap:travailler-sur-des-fichiers/moteur', () => {
+  async function ecarter(abs: string, entityId: string): Promise<void> {
+    await db.insert(excludedProjectPaths).values({
+      entityId,
+      projectPath: abs,
+      projectKey: projectKey(abs),
+    });
+  }
+
+  async function ecartes(key: string) {
+    return db
+      .select({ id: excludedProjectPaths.id, entityId: excludedProjectPaths.entityId })
+      .from(excludedProjectPaths)
+      .where(eq(excludedProjectPaths.projectKey, key));
+  }
+
+  it('retire l’exclusion du dossier qu’il vient de déclarer', async () => {
+    const abs = `${terrain}/reprise`;
+    await ecarter(abs, seed.entityId);
+    expect(await ecartes(projectKey(abs))).toHaveLength(1);
+
+    const jobId = await jobNeuf();
+    const conversationId = await conversationNeuve('chat-ecarte');
+    const res = await appel({ path: 'reprise', name: 'Reprise' }, jobId, conversationId);
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+
+    // 1. Le projet est DÉCLARÉ.
+    const row = await ligne(abs);
+    expect(row?.registeredAt).not.toBeNull();
+    // 2. Le dossier n'est PLUS écarté : la détection et le registre disent la
+    //    même chose de lui.
+    expect(await ecartes(projectKey(abs))).toHaveLength(0);
+  });
+
+  it('une panne sur la désexclusion ne fait PAS échouer un projet déjà déclaré', async () => {
+    // Revue Reviewer C du 21/09, mineur C1. À ce stade la ligne est commise et
+    // la conversation porte le projet : rendre `ok: false` ferait croire à
+    // l'agent qu'il n'a rien créé, et il recommencerait.
+    const abs = `${terrain}/panne-desexclusion`;
+    await ecarter(abs, seed.entityId);
+
+    // Le SEUL `delete` que cet appel fait sur cette table, cassé.
+    const dbCasse = new Proxy(db as object, {
+      get(cible, prop, recepteur) {
+        if (prop === 'delete') {
+          return (table: unknown) => {
+            if (table === excludedProjectPaths) {
+              return {
+                where: () => ({
+                  returning: async () => {
+                    throw new Error('PANNE_PASSAGERE_EXCLUSIONS');
+                  },
+                }),
+              };
+            }
+            return (Reflect.get(cible, prop, recepteur) as (t: unknown) => unknown)(table);
+          };
+        }
+        return Reflect.get(cible, prop, recepteur);
+      },
+    }) as typeof db;
+
+    const jobId = await jobNeuf();
+    const conversationId = await conversationNeuve('chat-panne-exclusion');
+    const res = await executeTool(
+      outil(),
+      { path: 'panne-desexclusion' },
+      { ...ctx(jobId, conversationId), db: dbCasse } as unknown as ToolContext,
+      options(),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    expect((res.output as { ok: boolean }).ok).toBe(true);
+
+    // Le projet EST déclaré, et l'exclusion orpheline reste — sans effet
+    // visible : elle ne filtre que la détection, et un projet du registre se
+    // liste quoi qu'il arrive.
+    expect((await ligne(abs))?.registeredAt).not.toBeNull();
+    expect(await ecartes(projectKey(abs))).toHaveLength(1);
+  });
+
+  it('ne touche QUE le dossier déclaré : les autres exclusions restent', async () => {
+    const declare = `${terrain}/declare`;
+    const autre = `${terrain}/toujours-ecarte`;
+    await ecarter(declare, seed.entityId);
+    await ecarter(autre, seed.entityId);
+
+    const jobId = await jobNeuf();
+    const conversationId = await conversationNeuve('chat-ecarte-2');
+    const res = await appel({ path: 'declare' }, jobId, conversationId);
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+
+    expect(await ecartes(projectKey(declare))).toHaveLength(0);
+    expect(await ecartes(projectKey(autre))).toHaveLength(1);
   });
 });

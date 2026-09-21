@@ -216,6 +216,68 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
   });
 });
 
+// ─── #385 : ce que la détection ne propose plus ──────────────────────────────
+//
+// Oublier un projet (#371) supprime sa ligne de registre, et la détection — qui
+// lit les écritures passées des agents, jamais le registre — le ramenait
+// aussitôt marqué « Detected ». Le saut se prouve ICI, sur la règle partagée et
+// sans base : c'est elle que la barre et la page appliquent toutes les deux.
+//
+// Vérifié par MUTATION : en retirant le `continue` sur `isExcludedPath` dans
+// `mergeWorkspaces`, le premier cas passe de 0 à 1 ligne détectée et rougit.
+describe('mergeWorkspaces, les dossiers écartés @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('un dossier ÉCARTÉ ne paraît pas, même si un agent y écrit encore', () => {
+    const view = mergeWorkspaces({
+      projects: [],
+      sessions: [
+        session({ projectPath: 'D:/Dev/oublie', projectName: 'oublie' }),
+        session({ projectPath: 'D:/Dev/garde', projectName: 'garde' }),
+      ],
+      prefs: [],
+      excludedKeys: new Set(['d:/dev/oublie']),
+    });
+
+    expect(view.rows.map((r) => r.path)).toEqual(['D:/Dev/garde']);
+    // Ni dans la liste, ni derrière « Hidden » : écarter n'est pas masquer.
+    expect(view.hiddenRows).toHaveLength(0);
+    expect(view.counts).toMatchObject({ total: 1, detected: 1, registered: 0 });
+  });
+
+  it('l’exclusion se lit par IDENTITÉ : deux casses du même dossier, un seul écart', () => {
+    const view = mergeWorkspaces({
+      projects: [],
+      sessions: [session({ projectPath: 'C:/Dev/App', projectName: 'app' })],
+      prefs: [],
+      excludedKeys: new Set(['c:/dev/app']),
+    });
+
+    expect(view.rows).toHaveLength(0);
+  });
+
+  it('un dossier écarté puis RÉ-ENREGISTRÉ se liste : l’exclusion ne masque pas le registre', () => {
+    const view = mergeWorkspaces({
+      projects: [projet({ id: 'p-9', name: 'Repris', path: 'D:/Dev/repris' })],
+      sessions: [session({ projectPath: 'D:/Dev/repris', projectName: 'repris' })],
+      prefs: [],
+      excludedKeys: new Set(['d:/dev/repris']),
+    });
+
+    expect(view.rows).toHaveLength(1);
+    expect(view.rows[0]!.kind).toBe('registered');
+    expect(view.rows[0]!.id).toBe('p-9');
+  });
+
+  it('sans exclusion, la détection est ENTIÈRE — le défaut ne cache rien', () => {
+    const view = mergeWorkspaces({
+      projects: [],
+      sessions: [session({ projectPath: 'D:/Dev/oublie', projectName: 'oublie' })],
+      prefs: [],
+    });
+
+    expect(view.rows.map((r) => r.path)).toEqual(['D:/Dev/oublie']);
+  });
+});
+
 describe('workspaceProof @cap:verifier-un-livrable/moteur', () => {
   it('une approbation en attente passe AVANT le dernier verdict', () => {
     const vert = { verdict: 'pass' as const, at: new Date('2026-09-10T00:00:00Z') };

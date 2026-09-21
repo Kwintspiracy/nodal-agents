@@ -18,6 +18,7 @@ export * from './schedule-state.ts';
 export * from './llm_keys.ts';
 export * from './mcp.ts';
 export * from './code-projects.ts';
+export * from './excluded-project-paths.ts';
 export * from './auth.ts';
 export * from './agent-connector-assignments.ts';
 export * from './agent-workspaces.ts';

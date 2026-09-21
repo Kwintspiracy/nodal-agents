@@ -25,7 +25,7 @@
 import { mkdir, rmdir, stat } from 'node:fs/promises';
 import { basename } from 'node:path/posix';
 import { z } from 'zod';
-import { and, eq, codeProjects } from '@nodal-agents/db';
+import { and, eq, codeProjects, excludedProjectPaths } from '@nodal-agents/db';
 import { isSafeSubfolder, projectKey } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../types';
 import { textCard, failureText } from '../presenters';
@@ -303,6 +303,42 @@ export const registerProjectTool: ToolDefinition<
           ? `attach_failed:${outcome.code};rollback_failed`
           : `attach_failed:${outcome.code}`,
       };
+    }
+
+    // LE DOSSIER N'EST PLUS ÉCARTÉ (#385). Oublier un projet écrit son chemin
+    // dans les dossiers écartés de l'espace, pour que la détection cesse de le
+    // proposer. Enregistrer un projet LÀ est la décision inverse, et elle est
+    // prise en connaissance de cause : cet outil demande TOUJOURS une
+    // approbation du propriétaire, et la carte montre le dossier. Laisser la
+    // ligne d'exclusion en place ferait cohabiter « ce dossier est écarté » et
+    // « ce dossier est un projet », deux phrases qui ne peuvent pas être vraies
+    // ensemble.
+    //
+    // APRÈS le rattachement, pas avant : un appel qui échoue et se défait ne
+    // doit rien laisser derrière lui.
+    // ET IL NE FAIT PAS ÉCHOUER L'APPEL (revue Reviewer C du 21/09, mineur).
+    // Le projet est DÉCLARÉ et RATTACHÉ à ce stade : la ligne est commise, le
+    // dossier est là, la conversation le porte. Laisser une panne de base sur
+    // cette dernière écriture rendre `ok: false` ferait croire à l'agent qu'il
+    // n'a rien créé, et il recommencerait. Ce qui reste alors est une ligne
+    // d'exclusion orpheline, sans effet visible — elle ne filtre QUE la
+    // détection, et un projet du registre se liste quoi qu'il arrive. La panne
+    // est donc JOURNALISÉE sous son propre code, jamais tue (invariant #4).
+    try {
+      const desexclues = await ctx.db
+        .delete(excludedProjectPaths)
+        .where(
+          and(
+            eq(excludedProjectPaths.entityId, ctx.entityId),
+            eq(excludedProjectPaths.projectKey, key),
+          ),
+        )
+        .returning({ id: excludedProjectPaths.id });
+      if (desexclues.length > 0) {
+        console.warn(`[projects] PROJECT_PATH_UNEXCLUDED key=${key} id=${row.id}`);
+      }
+    } catch (err) {
+      console.error(`[projects] PROJECT_PATH_UNEXCLUDE_FAILED key=${key} id=${row.id}`, err);
     }
 
     return {
