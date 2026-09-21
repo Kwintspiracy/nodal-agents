@@ -37,13 +37,24 @@ export function signatureDesAttentes(ids: readonly string[]): string {
   return [...ids].sort().join(',');
 }
 
-export default function ApprovalsLive() {
+export default function ApprovalsLive({ servi }: { servi?: readonly string[] }) {
   const { pending } = useApprovals();
   const router = useRouter();
   const signature = signatureDesAttentes(pending.map((a) => a.id));
-  // Le premier rendu ne rafraîchit rien : le serveur vient de rendre la page à
-  // partir des mêmes lignes.
-  const derniere = useRef(signature);
+  // CE QUE LE SERVEUR A RENDU, quand la page peut le dire — c'est-à-dire sur la
+  // liste des attentes, la seule vue dont les lignes SONT l'ensemble des
+  // attentes.
+  //
+  // Sans cela, la référence partait de la signature courante, et une demande
+  // arrivée ENTRE le rendu serveur et le montage n'apparaissait jamais : les
+  // deux côtés étaient déjà d'accord sur un ensemble que la page, elle, n'avait
+  // pas dessiné (Reviewer C). Avec, le premier effet voit la différence et
+  // demande le rendu tout de suite.
+  //
+  // Sur les autres vues — un onglet de demandes résolues, une demande ouverte
+  // seule — la page ne rend PAS l'ensemble des attentes, et le prétendre
+  // rafraîchirait à chaque montage.
+  const derniere = useRef(servi === undefined ? signature : signatureDesAttentes(servi));
 
   useEffect(() => {
     if (derniere.current === signature) return;

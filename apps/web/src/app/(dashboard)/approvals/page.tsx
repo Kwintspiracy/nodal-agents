@@ -107,8 +107,14 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
     >
       {/* La page suit le provider de la barre : une demande qui arrive pendant
           qu'on la regarde apparaît, et le rail ne peut plus compter une attente
-          que la page dit absente. */}
-      <ApprovalsLive />
+          que la page dit absente.
+
+          `servi` n'est donné que sur la LISTE DES ATTENTES, parce qu'elle seule
+          rend exactement l'ensemble que le provider compte. Il ferme la fenêtre
+          entre le rendu serveur et le montage. */}
+      <ApprovalsLive
+        {...(status === 'pending' && show === null ? { servi: result.data.map((a) => a.id) } : {})}
+      />
       {result.data.length === 0 ? (
         <EmptyState
           title={

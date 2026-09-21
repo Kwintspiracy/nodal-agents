@@ -11,6 +11,8 @@
 // sort côté DOM, la page étant rendue ailleurs.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -26,6 +28,16 @@ import ApprovalsLive, { signatureDesAttentes } from '../ApprovalsLive.tsx';
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
+
+/** La SOURCE de la page, depuis la racine du paquet ou celle du dépôt. */
+function lirePage(): string {
+  const relatif = join('src', 'app', '(dashboard)', 'approvals', 'page.tsx');
+  for (const racine of [process.cwd(), join(process.cwd(), 'apps', 'web')]) {
+    const chemin = join(racine, relatif);
+    if (existsSync(chemin)) return readFileSync(chemin, 'utf8');
+  }
+  throw new Error('page.tsx introuvable depuis ' + process.cwd());
+}
 
 /** Une attente, réduite à ce que le provider en garde. */
 function attente(id: string): PendingApproval {
@@ -51,7 +63,7 @@ function laLectureRend(ids: string[]): void {
   } as unknown as Awaited<ReturnType<typeof listApprovalsAction>>);
 }
 
-async function monter(initial: PendingApproval[]): Promise<void> {
+async function monter(initial: PendingApproval[], servi?: string[]): Promise<void> {
   const cible = document.createElement('div');
   document.body.appendChild(cible);
   container = cible;
@@ -60,7 +72,7 @@ async function monter(initial: PendingApproval[]): Promise<void> {
   await act(async () => {
     racine.render(
       <ApprovalsProvider initial={initial}>
-        <ApprovalsLive />
+        <ApprovalsLive {...(servi === undefined ? {} : { servi })} />
       </ApprovalsProvider>,
     );
   });
@@ -142,6 +154,41 @@ describe('la page des approbations suit la barre @cap:approuver-une-action/ecran
     laLectureRend(['a2']);
     await unTourDeCadence();
     expect(routerRefresh).toHaveBeenCalled();
+  });
+
+  it('RELIT TOUT DE SUITE si le serveur a rendu un AUTRE ensemble', async () => {
+    // La fenêtre entre le rendu serveur et le montage (Reviewer C) : la demande
+    // est arrivée pendant ce trajet, le provider la connaît déjà, et la page
+    // dessinée ne la porte pas. Sans `servi`, les deux côtés se seraient
+    // accordés sur un ensemble que la page n'a jamais montré.
+    //
+    // Mutation vérifiée : `servi` ignoré dans `ApprovalsLive` (la référence
+    // repart de la signature courante) → ce cas rougit.
+    await monter([attente('deja-la'), attente('arrivee-entre-temps')], ['deja-la']);
+    expect(routerRefresh).toHaveBeenCalled();
+  });
+
+  it('ne relit PAS quand le serveur a rendu le MÊME ensemble', async () => {
+    await monter([attente('a1')], ['a1']);
+    expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it('la PAGE le monte vraiment, et lui donne ce qu’elle a rendu', async () => {
+    // Le trou de harnais que Reviewer C a nommé : les cas ci-dessus montent le
+    // composant eux-mêmes, si bien qu'un `ApprovalsLive` parfait mais jamais
+    // branché les laissait tous verts — c'est-à-dire le défaut de départ.
+    //
+    // La page est un composant SERVEUR asynchrone qui lit la base : la monter
+    // ici ne prouverait rien de plus que ce que ses doublures rendraient. Ce
+    // qui se vérifie, et qui suffit, c'est qu'elle le rende.
+    // Le chemin part du dossier de travail, pas d'`import.meta.url` : sous
+    // vitest, ce dernier n'est pas une URL de fichier, et sous Windows son
+    // `pathname` rend « /D:/… », que `readFileSync` n'ouvre pas. Les deux
+    // racines possibles sont celle du paquet et celle du dépôt.
+    const source = lirePage();
+    expect(source).toContain('<ApprovalsLive');
+    // Et qu'elle lui passe ce qu'elle a dessiné, sur la liste des attentes.
+    expect(source).toContain('servi: result.data.map((a) => a.id)');
   });
 
   it('la signature ne dépend pas de l’ORDRE des lignes', async () => {
