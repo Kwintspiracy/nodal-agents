@@ -40,6 +40,7 @@ vi.mock('next/link', () => ({
 }));
 vi.mock('@/lib/actions', () => ({
   listApprovalsAction: vi.fn(),
+  listSkillUpdatesAction: vi.fn(),
   resolveApprovalAction: vi.fn(),
   setAgentApprovalRuleAction: vi.fn(),
   deleteAgentAction: vi.fn(),
@@ -73,6 +74,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import Sidebar from '../Sidebar.tsx';
 import { ApprovalsProvider, type PendingApproval } from '../ApprovalsProvider';
+import { SkillUpdatesProvider } from '../SkillUpdatesProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
 import {
   listApprovalsAction,
@@ -92,8 +94,8 @@ import ApprovalActions from '@/app/(dashboard)/approvals/ApprovalActions.tsx';
 import QuestionActions from '@/app/(dashboard)/approvals/QuestionActions.tsx';
 import QuestionCard from '@/app/(dashboard)/spaces/QuestionCard.tsx';
 
-let container: HTMLDivElement;
-let root: Root;
+let container: HTMLDivElement | null = null;
+let root: Root | null = null;
 /**
  * L'espion de `console.error`, posé par les cas qui en ont besoin et restauré
  * par l'`afterEach` — quoi qu'il arrive. Restauré à la dernière ligne du cas,
@@ -119,11 +121,13 @@ const ATTENTE: PendingApproval = {
 
 /** La barre ET la surface de décision qu'on veut éprouver, dans UN provider. */
 async function monter(surface: ReactElement, attentes: PendingApproval[] = [ATTENTE]) {
-  container = document.createElement('div');
-  document.body.appendChild(container);
-  root = createRoot(container);
+  const cible = document.createElement('div');
+  document.body.appendChild(cible);
+  container = cible;
+  const racine = createRoot(cible);
+  root = racine;
   await act(async () => {
-    root.render(
+    racine.render(
       <ApprovalsProvider initial={attentes}>
         <ChatFoldersProvider
           initial={{
@@ -138,8 +142,12 @@ async function monter(surface: ReactElement, attentes: PendingApproval[] = [ATTE
             workConversationsInProgress: 0,
           }}
         >
-          <Sidebar workspaces={ESPACES} />
-          {surface}
+          {/* La cloche lit DEUX sources. Sans celle-ci, son fail-soft partirait
+              en avertissement de console à chaque montage. */}
+          <SkillUpdatesProvider initial={[]}>
+            <Sidebar workspaces={ESPACES} />
+            {surface}
+          </SkillUpdatesProvider>
         </ChatFoldersProvider>
       </ApprovalsProvider>,
     );
@@ -170,9 +178,15 @@ function carteDuFil(): ReactElement {
   );
 }
 
+/** Le conteneur du rendu courant, ou un échec net si rien n'a été monté. */
+function rendu(): HTMLDivElement {
+  if (!container) throw new Error('rien n’a été monté dans ce cas');
+  return container;
+}
+
 /** Ce que la case Approvals du rail AFFICHE — libellé, et chiffre s'il y en a. */
 function caseApprovals(): string {
-  const el = container.querySelector('[data-testid="rail-approvals"]');
+  const el = rendu().querySelector('[data-testid="rail-approvals"]');
   if (!el) throw new Error('rail-approvals absente');
   return el.textContent?.trim() ?? '';
 }
@@ -194,7 +208,14 @@ async function cliquerDans(
 
 /** Cliquer un bouton de la page, par son texte ou par son nom accessible. */
 async function cliquer(texte: string, par: 'texte' | 'aria-label' = 'texte'): Promise<void> {
-  await cliquerDans(container, texte, par);
+  await cliquerDans(rendu(), texte, par);
+}
+
+/** Le bouton « Approve once » du rendu courant, pour lire son état. */
+function boutonApprouver(): HTMLButtonElement | undefined {
+  return [...rendu().querySelectorAll('button')].find(
+    (b) => b.textContent?.trim() === 'Approve once',
+  ) as HTMLButtonElement | undefined;
 }
 
 /**
@@ -241,10 +262,19 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(async () => {
-    root.unmount();
-  });
-  container.remove();
+  // GARDÉ : un cas qui échoue avant `monter()` laisserait `root` à null, ou
+  // pointant sur la racine déjà démontée du cas précédent. Un `unmount()` qui
+  // lève ici masquerait l'échec d'origine (Reviewer C, passe 3).
+  const racine = root;
+  const cible = container;
+  root = null;
+  container = null;
+  if (racine) {
+    await act(async () => {
+      racine.unmount();
+    });
+  }
+  cible?.remove();
   journal?.mockRestore();
   journal = null;
 });
@@ -265,7 +295,7 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     });
     expect(caseApprovals()).toBe('Approvals');
     expect(
-      container.querySelector('[data-testid="rail-approvals"]')?.getAttribute('aria-label'),
+      rendu().querySelector('[data-testid="rail-approvals"]')?.getAttribute('aria-label'),
     ).toBeNull();
   });
 
@@ -402,9 +432,7 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     } as unknown as Awaited<ReturnType<typeof listApprovalsAction>>);
     await monter(carteApprobation());
     await cliquer('Approve once');
-    const approuver = [...container.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === 'Approve once',
-    );
+    const approuver = boutonApprouver();
     expect(approuver?.hasAttribute('disabled')).toBe(false);
     expect(caseApprovals()).toBe('Approvals1');
     expect(journal.mock.calls.map((c) => c[0])).toContain(
@@ -412,12 +440,45 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     );
   });
 
+  it('ATTEND la relecture : le bouton ne revient pas sur l’ancien nombre', async () => {
+    // LA PROPRIÉTÉ CENTRALE, et la seule que l'ordre d'appel ne prouve pas
+    // (Reviewer C, passe 3) : `refresh` est ATTENDUE dans la transition. Sans
+    // l'`await`, le bouton se réactiverait aussitôt, sur une barre qui compte
+    // encore la demande qu'on vient de fermer.
+    //
+    // Mutation vérifiée : `await refresh()` → `void refresh()` dans
+    // `ApprovalActions.resolve` → ce cas rougit, le bouton est déjà réactivé
+    // alors que la lecture est encore en vol.
+    let relacher: (() => void) | null = null;
+    vi.mocked(listApprovalsAction).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          relacher = () => resolve({ ok: true, data: [] });
+        }),
+    );
+    await monter(carteApprobation());
+    await cliquer('Approve once');
+
+    // La lecture est EN VOL : le bouton attend, et la barre porte encore le
+    // vieux nombre — ce qui est juste, la relecture n'a pas répondu.
+    expect(boutonApprouver()?.hasAttribute('disabled')).toBe(true);
+    expect(caseApprovals()).toBe('Approvals1');
+
+    if (!relacher) throw new Error('la lecture n’a jamais été appelée');
+    await act(async () => {
+      (relacher as () => void)();
+    });
+
+    // Elle a répondu : le bouton revient, et il revient sur le NOUVEAU nombre.
+    expect(boutonApprouver()?.hasAttribute('disabled')).toBe(false);
+    expect(caseApprovals()).toBe('Approvals');
+  });
+
   it('APPROUVER DEPUIS LA CLOCHE la fait tomber — la quatrième surface', async () => {
     // Mutation vérifiée : `await onApproved()` retiré de `NotificationsBell`
-    // → ce cas rougit sur « Approvals1 ». Retirer seulement l'`await` ne le
-    // fait PAS rougir, et c'est honnête : `act()` vide la file des microtâches
-    // de toute façon. Ce que ce cas prouve, c'est que la cloche relit ; que sa
-    // relecture soit ATTENDUE ne se voit qu'à l'écran, sur un vrai aller-retour.
+    // → ce cas rougit sur « Approvals1 ». Ce cas prouve que la cloche RELIT ;
+    // que la relecture soit attendue est prouvé à part, sur la carte de la page,
+    // par le cas qui retient la lecture en vol.
     await monter(<div />);
     await cliquer('Notifications (1 pending)', 'aria-label');
     await cliquer('Approve');
