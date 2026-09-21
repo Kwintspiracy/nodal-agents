@@ -5,6 +5,10 @@ import {
   DEFAULT_VERIFICATION_SURFACES,
   VERIFICATION_SURFACE_KEYS,
   VERIFICATION_SURFACE_TOOLS,
+  PROOF_REPAIR_ATTEMPTS_CHOICES,
+  PROOF_REPAIR_ATTEMPTS_DEFAULT,
+  PROOF_REPAIR_ATTEMPTS_MAX,
+  readProofRepairAttempts,
 } from '../verification-surfaces';
 
 const ALL_TRUE = { codeTask: true, cliRuntime: true, fileOps: true, shell: true };
@@ -84,5 +88,35 @@ describe('VERIFICATION_SURFACE_TOOLS', () => {
     expect(surfaceForTool('run_skill_script')).toBe('shell');
     expect(surfaceForTool('code_task')).toBe('codeTask');
     expect(surfaceForTool('file_read')).toBeNull();
+  });
+});
+
+// ─── Les tours de réparation (#377) ─────────────────────────────────────────
+//
+// La borne vit en base, gardée par un CHECK. Cette fonction est la CEINTURE :
+// elle ramène dans les bornes ce qu'une ligne pourrait porter si la contrainte
+// tombait (restauration d'une sauvegarde plus ancienne). Elle ne décide de
+// rien toute seule — `finalize` journalise un code quand elle a dû rabattre
+// (Reviewer C, PR #392), plutôt que de tourner en silence sur un nombre que
+// personne n'a choisi.
+
+describe('readProofRepairAttempts @cap:verifier-un-livrable/moteur', () => {
+  it('laisse passer les quatre valeurs offertes, telles quelles', () => {
+    for (const n of PROOF_REPAIR_ATTEMPTS_CHOICES) {
+      expect(readProofRepairAttempts(n)).toBe(n);
+    }
+  });
+
+  it('rabat sur la borne la PLUS PROCHE, jamais sur le défaut', () => {
+    // Un espace qui avait demandé beaucoup en obtient le maximum, pas un.
+    expect(readProofRepairAttempts(9)).toBe(PROOF_REPAIR_ATTEMPTS_MAX);
+    expect(readProofRepairAttempts(-4)).toBe(0);
+  });
+
+  it('ce qui n’est pas un entier vaut le défaut — une ligne d’avant la colonne', () => {
+    expect(readProofRepairAttempts(null)).toBe(PROOF_REPAIR_ATTEMPTS_DEFAULT);
+    expect(readProofRepairAttempts(undefined)).toBe(PROOF_REPAIR_ATTEMPTS_DEFAULT);
+    expect(readProofRepairAttempts('2')).toBe(PROOF_REPAIR_ATTEMPTS_DEFAULT);
+    expect(readProofRepairAttempts(1.5)).toBe(PROOF_REPAIR_ATTEMPTS_DEFAULT);
   });
 });

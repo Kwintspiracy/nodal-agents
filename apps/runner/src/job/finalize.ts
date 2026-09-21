@@ -120,6 +120,13 @@ export const VERIFY_STALE_EPOCH = 'VERIFY_STALE_EPOCH';
 /** Un tour de réparation vient de s'ouvrir sur ce job (PR②, décision D2). */
 export const VERIFY_REPAIR_TURN_OPENED = 'VERIFY_REPAIR_TURN_OPENED';
 /**
+ * Le réglage de réparation de l'espace n'est pas lisible tel quel : ligne
+ * absente, ou valeur hors des bornes que le CHECK de la colonne tient (#377).
+ * Rabattu, et DIT — un repli muet sur une donnée abîme ferait tourner le
+ * runner sur un nombre que personne n'a choisi (invariant #4).
+ */
+export const VERIFY_REPAIR_SETTING_UNREADABLE = 'VERIFY_REPAIR_SETTING_UNREADABLE';
+/**
  * Au-delà de ce délai, un marqueur `finalizing_at` sans décision terminale est
  * réputé orphelin (le finaliseur qui l'a posé est mort entre ses deux
  * transactions) et se reprend. Seuil JS — décision de découpage n°12.
@@ -782,9 +789,33 @@ export async function finalizeJobSuccess(
         .select({ proofRepairAttempts: entities.proofRepairAttempts })
         .from(entities)
         .where(eq(entities.id, job.entityId));
-      // Un espace introuvable — impossible tant que la clé étrangère tient —
-      // ne répare rien plutôt que de réparer selon un défaut inventé.
-      maxReparations = espace ? readProofRepairAttempts(espace.proofRepairAttempts) : 0;
+      if (!espace) {
+        // ⚠️ AUCUN TEST NE COUVRE CETTE BRANCHE, et c'est assumé : il faudrait
+        // que la ligne `entities` disparaisse alors qu'un job la référence, ce
+        // que la clé étrangère interdit. Elle reste parce que réparer selon un
+        // défaut inventé serait pire que ne pas réparer, et parce qu'un repli
+        // muet est exactement ce que l'invariant #4 refuse (Reviewer C, #392).
+        maxReparations = 0;
+        log(VERIFY_REPAIR_SETTING_UNREADABLE, {
+          jobId,
+          entityId: job.entityId,
+          cause: 'no_entity',
+        });
+      } else {
+        maxReparations = readProofRepairAttempts(espace.proofRepairAttempts);
+        if (maxReparations !== espace.proofRepairAttempts) {
+          // Le CHECK de la colonne interdit d'ÉCRIRE une valeur hors bornes :
+          // en LIRE une veut dire qu'elle est entrée autrement — restauration
+          // d'une sauvegarde antérieure à la contrainte, contrainte tombée.
+          // Rabattue sur la borne la plus proche, et dite.
+          log(VERIFY_REPAIR_SETTING_UNREADABLE, {
+            jobId,
+            entityId: job.entityId,
+            stored: espace.proofRepairAttempts,
+            used: maxReparations,
+          });
+        }
+      }
     }
 
     return { entityId: job.entityId, plans, maxReparations };
