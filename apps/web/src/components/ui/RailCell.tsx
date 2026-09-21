@@ -149,31 +149,60 @@ export default function RailCell({
   testId,
 }: Props) {
   const nom = railCellName(label, pill, running);
+  // RIEN À ZÉRO, pour l'une comme pour l'autre : une pastille « 0 » ou un point
+  // éteint demandent d'être lus pour apprendre qu'il n'y a rien à faire.
+  const nombre = pill !== undefined && pill > 0 ? pill : null;
+  const point = running !== undefined && running.count > 0;
   const contenu = (
     <>
       <Icon size={18} className="h-[18px] w-[18px]" />
       {/* 10 px demi-gras — le pas `micro-10` du DS, celui de la planche. */}
       <span className="text-micro-10 leading-none">{label}</span>
-      {pill !== undefined && pill > 0 && (
-        // Sur le COIN, et non à côté du libellé : une case du rail fait 56 px,
-        // et un nombre posé dans la colonne pousserait l'icône hors de son axe.
-        <AttentionCount count={pill} variant="solid" className="absolute top-1 right-1" />
-      )}
-      {running !== undefined && running.count > 0 && (
-        // LE COIN GAUCHE, et la pastille garde le droit (Reviewer C, passe 1).
-        // Les deux tenaient le même coin, et rien ne les en empêchait : aucune
-        // case n'en porte deux aujourd'hui, mais celle qui le ferait demain
-        // aurait posé le point SUR le chiffre, sans qu'un test le voie. Une
-        // règle sans condition — chacun son coin — ne peut pas se croiser.
+      {(nombre !== null || point) && (
+        // LES DEUX MARQUES PARTAGENT LE BORD DROIT (décision du propriétaire,
+        // 22/09/2026 : « sur l'onglet Work, la puce d'activité doit être à
+        // droite »).
         //
-        // `aria-hidden` : ce que le point dit, le nom de la case le dit déjà
-        // en toutes lettres. Annoncé deux fois, il deviendrait un bruit.
-        <span
-          aria-hidden="true"
-          data-testid={`${testId}-running`}
-          className="absolute top-1 left-1 flex h-2 w-2 items-center justify-center"
-        >
-          <LiveDot variant="lime" size="sm" />
+        // Elles n'étaient pas au même endroit : la pastille au coin droit, le
+        // point au coin gauche, chacun le sien pour qu'ils ne se croisent
+        // jamais. Le point s'est retrouvé du côté où rien d'autre ne vit, seul
+        // à gauche d'une colonne dont tout le reste est centré, et c'est ce qui
+        // se voyait.
+        //
+        // UNE COLONNE tient la même promesse sans deux coins : empilées par le
+        // flux, les marques ne peuvent pas se recouvrir, quelle que soit la
+        // case et même si l'une portait un jour les deux.
+        //
+        // ⚠️ EMPILÉES, et non côte à côte (Reviewer C). Une rangée s'élargit
+        // vers la gauche depuis le bord droit : la pastille `solid` fait 18 px
+        // à un chiffre et environ 30 px à « 99+ » (`px-1.5` + `text-micro-10`),
+        // si bien que la seconde marque arrivait sur le coin de l'icône, qui
+        // tient le milieu de la case. En colonne, la largeur reste celle de la
+        // marque la plus large, et l'icône garde son axe.
+        //
+        // `items-end` n'est donc pas décoratif : c'est lui qui tient la marque
+        // la plus étroite — la puce — sur le bord droit quand la colonne est
+        // large comme la pastille.
+        //
+        // L'ordre est celui du nom de la case (`railCellName`) : ce qui attend,
+        // puis ce qui avance.
+        //
+        // Sur le COIN, et non à côté du libellé : une case du rail fait 64 px,
+        // et une marque posée dans la colonne pousserait l'icône hors de son axe.
+        <span className="absolute top-1 right-1 flex flex-col items-end gap-1">
+          {nombre !== null && <AttentionCount count={nombre} variant="solid" />}
+          {point && (
+            // `aria-hidden` : ce que le point dit, le nom de la case le dit
+            // déjà en toutes lettres. Annoncé deux fois, il deviendrait un
+            // bruit.
+            <span
+              aria-hidden="true"
+              data-testid={`${testId}-running`}
+              className="flex h-2 w-2 items-center justify-center"
+            >
+              <LiveDot variant="lime" size="sm" />
+            </span>
+          )}
         </span>
       )}
     </>
