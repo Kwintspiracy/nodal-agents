@@ -250,9 +250,40 @@ describe('normaliseWorkspacePath @cap:approuver-une-action/moteur', () => {
     expect(normaliseWorkspacePath('D:/Apps', 'linux')).toBe('D:/Apps');
   });
 
+  it('keeps a bare drive prefix, so C: and D: stay different places', () => {
+    // Les deux tombaient sur la chaine vide, donc etaient egaux (revue
+    // Reviewer C, passe 1).
+    expect(normaliseWorkspacePath('C:', 'win32')).not.toBe(normaliseWorkspacePath('D:', 'win32'));
+    expect(normaliseWorkspacePath('C:', 'win32')).toBe('c:/');
+    expect(normaliseWorkspacePath('D:\\', 'win32')).toBe('d:/');
+  });
+
   it('workspaceMatches says no when the list is empty', () => {
     expect(workspaceMatches('/a', [], 'linux')).toBe(false);
     expect(workspaceMatches('/a', undefined, 'linux')).toBe(false);
+  });
+});
+
+describe('une condition ne change pas de tier @cap:approuver-une-action/moteur', () => {
+  it('un joker conditionne ne bat PAS un block pose sur l agent et l outil exact', () => {
+    // Hisser toute regle conditionnee en tete de chaine etait une elevation de
+    // privilege : `setAgentApprovalRuleAction` accepte un `toolName` libre, donc
+    // un joker conditionne est ecrivable, et il annulait un `block` explicite
+    // (revue Reviewer C, passe 1).
+    const rules: ApprovalRule[] = [
+      rule({
+        id: 'joker-conditionne',
+        toolName: '*',
+        action: 'auto_approve',
+        conditionJson: { workspacePath: '/w' },
+      }),
+      rule({ id: 'block-exact', action: 'block' }),
+    ];
+    const chain = explainApprovalRules(rules, TOOL, AGENT, ENTITY, [{ label: 'w', path: '/w' }]);
+    expect(chain.map((r) => r.id)).toEqual(['block-exact', 'joker-conditionne']);
+    expect(
+      matchApprovalRule(rules, TOOL, AGENT, ENTITY, [{ label: 'w', path: '/w' }])?.action,
+    ).toBe('block');
   });
 });
 

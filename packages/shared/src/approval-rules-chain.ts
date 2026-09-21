@@ -111,6 +111,9 @@ export function namespaceOfToolName(toolName: string): string | null {
  * `d:/apps/nodal/` are the same folder, and a condition that failed on a
  * backslash would silently stop applying (invariant #4: never fail quietly).
  *
+ * A bare drive prefix is kept whole: `C:` and `D:` are different places, and
+ * collapsing both to an empty string would have made them equal.
+ *
  * Written here rather than with `node:path` on purpose: this module is imported
  * by the dashboard, and dragging a Node builtin into that graph is how a client
  * bundle breaks.
@@ -121,8 +124,13 @@ export function normaliseWorkspacePath(
 ): string {
   const unified = raw.replace(/\\/g, '/');
   const isAbsolute = unified.startsWith('/');
+  // `C:` et `D:` sont des chemins DIFFERENTS, et la boucle ci-dessous les
+  // reduisait tous deux a la chaine vide faute de separateur (revue Reviewer C,
+  // passe 1). Le prefixe de lecteur est mis de cote avant le decoupage.
+  const drive = /^([A-Za-z]:)(\/|$)/.exec(unified);
+  const body = drive ? unified.slice(2) : unified;
   const out: string[] = [];
-  for (const segment of unified.split('/')) {
+  for (const segment of body.split('/')) {
     if (segment === '' || segment === '.') continue;
     if (segment === '..') {
       if (out.length > 0 && out[out.length - 1] !== '..') out.pop();
@@ -131,7 +139,7 @@ export function normaliseWorkspacePath(
     }
     out.push(segment);
   }
-  const joined = (isAbsolute ? '/' : '') + out.join('/');
+  const joined = (drive ? `${drive[1]}/` : isAbsolute ? '/' : '') + out.join('/');
   return platform === 'win32' ? joined.toLowerCase() : joined;
 }
 
@@ -210,10 +218,11 @@ export function explainApprovalRules(
     { tier: 'entity-all', pick: (r) => r.toolName === '*' && forEveryone(r) },
   ];
 
-  const conditioned: ExplainedApprovalRule[] = [];
-  const plain: ExplainedApprovalRule[] = [];
+  const ordered: ExplainedApprovalRule[] = [];
 
   for (const { tier, pick } of tiers) {
+    const conditioned: ExplainedApprovalRule[] = [];
+    const plain: ExplainedApprovalRule[] = [];
     for (const [index, rule] of rules.entries()) {
       if (!pick(rule)) continue;
       const condition = readCondition(rule);
@@ -240,9 +249,16 @@ export function explainApprovalRules(
       };
       (condition !== null ? conditioned : plain).push(explained);
     }
+    // Conditionnee d'abord, A L'INTERIEUR de son tier, jamais au-dessus des
+    // autres. Hisser toute regle conditionnee en tete de chaine ouvrait une
+    // elevation de privilege : un joker conditionne battait alors un `block`
+    // pose sur l'agent et l'outil exact (revue Reviewer C, passe 1). Sur le
+    // tier qui compte - agent + outil exact, deja le plus haut - l'effet voulu
+    // est le meme, et la contrainte d'unicite fait de toute facon que les deux
+    // formes ne coexistent pas.
+    ordered.push(...conditioned, ...plain);
   }
 
-  const ordered = [...conditioned, ...plain];
   if (ordered[0]) ordered[0].wins = true;
   return ordered;
 }

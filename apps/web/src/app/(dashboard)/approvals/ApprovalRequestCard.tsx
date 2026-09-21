@@ -104,11 +104,18 @@ export default function ApprovalRequestCard({
   }
 
   /** Relire la chaine apres avoir change une regle : la carte doit se croire. */
-  async function reloadChain() {
+  async function reloadChain(): Promise<boolean> {
     const fresh = await listApprovalsAction({ status: 'all', jobIds: [a.jobId] });
-    if (!fresh.ok) return;
-    const row = fresh.data.find((r) => r.id === a.id);
-    if (row) setChain(row.ruleChain);
+    const row = fresh.ok ? fresh.data.find((r) => r.id === a.id) : undefined;
+    if (!row) {
+      // Fail loud (invariant #4). La lecture est plafonnee a 100 lignes par
+      // job : au-dela, la demande regardee sort de la fenetre et la carte
+      // garderait une chaine perimee en se taisant.
+      toast.error('Rule saved, but the card could not re-read the rules. Reload the page.');
+      return false;
+    }
+    setChain(row.ruleChain);
+    return true;
   }
 
   function handleApproveOnce() {
@@ -175,14 +182,18 @@ export default function ApprovalRequestCard({
         toolName: row.toolName,
         action: next,
         scope: row.scope,
+        // LA CONDITION DE DOSSIER SURVIT AU CHANGEMENT. Sans ce renvoi, passer
+        // une regle « approuve dans ce dossier » a Autonomous la rendait
+        // GLOBALE pour l'agent, en silence : une permission posee comme
+        // « seulement ici » s'appliquait partout (revue Reviewer C, passe 1).
+        ...(row.workspacePath === null ? {} : { workspacePath: row.workspacePath }),
       });
       if (!result.ok) {
         toast.error(`Rule not saved: ${result.message}`);
         return;
       }
       setEditing(null);
-      await reloadChain();
-      toast.success(`Rule saved. Now answer this request.`);
+      if (await reloadChain()) toast.success('Rule saved. Now answer this request.');
     });
   }
 
@@ -496,6 +507,8 @@ interface RuleLine {
   action: RuleAction;
   scope: 'agent' | 'entity';
   scopeLabel: string;
+  /** Le dossier auquel la regle est confinee, renvoye tel quel a l'ecriture. */
+  workspacePath: string | null;
   wins: boolean;
 }
 
@@ -521,6 +534,7 @@ export function buildRuleLines(
         action: toolDefault,
         scope: 'agent',
         scopeLabel: 'Tool default',
+        workspacePath: null,
         wins: true,
       },
     ];
@@ -530,6 +544,7 @@ export function buildRuleLines(
     toolName: r.toolName,
     action: r.action,
     scope: r.scope,
+    workspacePath: r.workspacePath,
     scopeLabel:
       r.scope === 'entity'
         ? 'Everyone'

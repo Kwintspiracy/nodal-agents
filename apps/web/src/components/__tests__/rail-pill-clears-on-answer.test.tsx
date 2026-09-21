@@ -196,7 +196,6 @@ function carteApprobation(
       args: [],
       impact: null,
     },
-    mcpRulePattern: null,
     ruleChain: [],
     toolDefault: 'require_approval',
     agentWorkspaces: dossiers,

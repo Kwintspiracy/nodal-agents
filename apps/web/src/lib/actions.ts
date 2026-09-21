@@ -6009,7 +6009,6 @@ export type ApprovalRow = {
    * call comes from. Null for a built-in. Drives the "always allow this server"
    * button: one decision instead of one per tool.
    */
-  mcpRulePattern: string | null;
   /**
    * Les regles d'approbation qui ont JOUE pour cet appel, de la plus precise a
    * la moins precise, la premiere marquee `wins` (#346). La carte les montre,
@@ -6029,6 +6028,14 @@ export type ApprovalRow = {
    */
   agentWorkspaces: Array<{ label: string; path: string }>;
 };
+
+/**
+ * Un identifiant d'agent qui n'existe pas, pour lire la chaine d'une demande
+ * SANS agent : seuls les tiers Everyone peuvent alors matcher. Un UUID nul
+ * plutot qu'une chaine vide, parce qu'`agent_id` est un uuid et qu'une regle
+ * ne peut pas en porter un tout a zero.
+ */
+const NO_AGENT = '00000000-0000-0000-0000-000000000000';
 
 export async function listApprovalsAction(
   opts: {
@@ -6219,7 +6226,7 @@ export async function listApprovalsAction(
               ? {
                   slug: ctx.slug,
                   name: ctx.ambiguous
-                    ? `${ctx.name} (attention : plusieurs serveurs partagent ce préfixe)`
+                    ? `${ctx.name} (careful: several servers share this prefix)`
                     : ctx.name,
                   endpoint: ctx.endpoint,
                   ...(ctx.toolDescription ? { toolDescription: ctx.toolDescription } : {}),
@@ -6227,22 +6234,22 @@ export async function listApprovalsAction(
                 }
               : null,
           }),
-          // The rule pattern that would cover this whole server — what the
-          // "always allow this server" button posts. Null for a built-in.
-          mcpRulePattern: ctx?.rulePattern ?? null,
           // LA MEME fonction que la porte (`matchApprovalRule` en derive) :
           // ce que la carte montre est ce que le moteur a obei, pas une
           // seconde lecture de la precedence libre de deriver (#346).
-          ruleChain:
-            r.agentId === null
-              ? []
-              : explainApprovalRules(
-                  chainRules,
-                  r.toolName,
-                  r.agentId,
-                  session.entityId,
-                  workspacesByAgent.get(r.agentId) ?? [],
-                ),
+          // Une demande SANS agent (agent supprime, job systeme) reste
+          // gouvernee par les regles Everyone. Rendre une chaine vide faisait
+          // dire « Tool default » a la carte alors qu'une regle d'entite
+          // decidait - le mensonge meme que #346 ferme (revue Reviewer C,
+          // passe 1). `NO_AGENT` ne peut egaler aucun `agent_id` : seuls les
+          // tiers Everyone peuvent matcher.
+          ruleChain: explainApprovalRules(
+            chainRules,
+            r.toolName,
+            r.agentId ?? NO_AGENT,
+            session.entityId,
+            r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
+          ),
           toolDefault: resolveToolDefaultApproval(r.toolName),
           agentWorkspaces: r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
         };
@@ -6484,6 +6491,47 @@ export async function listInternalToolsAction(): Promise<
   }
 }
 
+/**
+ * Refuse une autorisation GLOBALE qui remplacerait, sans le dire, une regle
+ * confinee a un dossier.
+ *
+ * Depuis « Approve for this project » (#346), une regle agent+outil peut
+ * porter `condition_json.workspacePath` : « approuve, mais seulement quand
+ * l'agent travaille la ». Les surfaces qui ecrivent une regle auto_approve
+ * ailleurs (les bascules Yolo, l'ecran d'autonomie) ne connaissent pas cette
+ * condition et l'ecrasaient : une permission posee comme « seulement ici »
+ * devenait valable partout, en silence (revue Reviewer C, passe 1).
+ *
+ * Seul le sens PERMISSIF est refuse. Passer la meme regle a `require_approval`
+ * ou `block`, ou la supprimer, retire la condition mais RESTREINT : rien a
+ * proteger la.
+ *
+ * Rend le message d'erreur, ou null quand l'ecriture peut passer.
+ */
+async function refuseGlobalGrantOverFolderRule(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  agentId: string,
+  toolName: string,
+): Promise<string | null> {
+  const [existing] = await db
+    .select({ action: approvalRules.action, conditionJson: approvalRules.conditionJson })
+    .from(approvalRules)
+    .where(
+      and(
+        eq(approvalRules.entityId, entityId),
+        eq(approvalRules.agentId, agentId),
+        eq(approvalRules.toolName, toolName),
+      ),
+    );
+  const folder = (existing?.conditionJson as ApprovalRuleCondition | null)?.workspacePath;
+  if (!existing || existing.action !== 'auto_approve' || typeof folder !== 'string') return null;
+  return (
+    `${toolName} is already approved for this agent only inside ${folder}. ` +
+    'Change that rule on the approval card before allowing it everywhere.'
+  );
+}
+
 export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
@@ -6531,6 +6579,11 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
         return fail('validation_failed', 'That folder is not attached to this agent');
       }
       conditionJson = { workspacePath };
+    }
+
+    if (action === 'auto_approve' && workspacePath === undefined && scope === 'agent') {
+      const refus = await refuseGlobalGrantOverFolderRule(db, session.entityId, agentId, toolName);
+      if (refus) return fail('validation_failed', refus);
     }
 
     // agent_id IS NULL is the workspace-wide scope (see the schema note on the
@@ -6644,6 +6697,19 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
     // both pass the delete and then race on the insert, throwing on the
     // constraint instead of leaving one clean row. db.transaction plus
     // onConflictDoUpdate makes the whole toggle atomic and idempotent.
+    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine
+    // deja a un dossier, l'ecraser elargirait la permission en silence
+    // (revue Reviewer C, passe 1) : on refuse, en nommant le dossier.
+    if (enabled) {
+      const refus = await refuseGlobalGrantOverFolderRule(
+        db,
+        session.entityId,
+        agentId,
+        'run_command',
+      );
+      if (refus) return fail('validation_failed', refus);
+    }
+
     await db.transaction(async (tx) => {
       await tx
         .delete(approvalRules)
@@ -6733,6 +6799,19 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
     // setRunCommandYoloAction) — approval_rules carries a
     // UNIQUE(entity_id, agent_id, tool_name) constraint, so two overlapping
     // calls could otherwise race on the insert.
+    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine
+    // deja a un dossier, l'ecraser elargirait la permission en silence
+    // (revue Reviewer C, passe 1) : on refuse, en nommant le dossier.
+    if (enabled) {
+      const refus = await refuseGlobalGrantOverFolderRule(
+        db,
+        session.entityId,
+        agentId,
+        'code_task',
+      );
+      if (refus) return fail('validation_failed', refus);
+    }
+
     await db.transaction(async (tx) => {
       await tx
         .delete(approvalRules)

@@ -34,6 +34,7 @@ vi.mock('@/components/ApprovalsProvider', () => ({
   useApprovals: () => ({ refresh: async () => {} }),
 }));
 
+import { toast } from 'sonner';
 import ApprovalRequestCard from '../ApprovalRequestCard.tsx';
 import {
   resolveApprovalAction,
@@ -79,7 +80,6 @@ function demande(over: Partial<Approval> = {}): Approval {
       args: [{ key: 'code', value: 'await page.click("#go")', truncated: false, fullLength: 23 }],
       impact: null,
     },
-    mcpRulePattern: 'mcp_playwright__*',
     ruleChain: [],
     toolDefault: 'require_approval',
     agentWorkspaces: [],
@@ -273,6 +273,57 @@ describe('la carte dit quelle règle a décidé @cap:approuver-une-action/ecran'
     // Et changer une règle NE RÉPOND PAS : la demande attend toujours.
     expect(vi.mocked(resolveApprovalAction)).not.toHaveBeenCalled();
     expect(bouton('Approve once')).toBeDefined();
+  });
+
+  it('Change sur une règle de dossier GARDE le dossier', async () => {
+    // Sans ce renvoi, passer une règle « approuvé dans ce dossier » à
+    // Autonomous la rendait GLOBALE pour l'agent, en silence (Reviewer C,
+    // passe 1).
+    await monter(
+      demande({
+        ruleChain: [
+          {
+            id: 'r-folder',
+            toolName: TOOL,
+            action: 'auto_approve',
+            agentId: AGENT,
+            scope: 'agent',
+            tier: 'agent-tool-in-folder',
+            workspacePath: 'D:/APPS/NodalAI',
+            workspaceLabel: 'nodal',
+            wins: true,
+          },
+        ],
+      } as Partial<Approval>),
+    );
+    await cliquer('Change');
+    await act(async () => {
+      rendu()
+        .querySelector<HTMLButtonElement>('[data-testid="approval-rule-r-folder-block"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(vi.mocked(setAgentApprovalRuleAction).mock.calls[0]?.[0]).toEqual({
+      agentId: AGENT,
+      toolName: TOOL,
+      action: 'block',
+      scope: 'agent',
+      workspacePath: 'D:/APPS/NodalAI',
+    });
+  });
+
+  it('une relecture qui ne retrouve pas la demande le DIT', async () => {
+    // Fail loud : la lecture est plafonnée à 100 lignes par job. Au-delà, la
+    // carte gardait une chaîne périmée en se taisant (Reviewer C, passe 1).
+    vi.mocked(listApprovalsAction).mockResolvedValue({ ok: true, data: [] });
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+    await cliquer('Change');
+    await act(async () => {
+      rendu()
+        .querySelector<HTMLButtonElement>('[data-testid="approval-rule-r-everyone-block"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toContain('could not re-read the rules');
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
   });
 
   it('une ligne d’agent écrit une règle d’agent', async () => {
