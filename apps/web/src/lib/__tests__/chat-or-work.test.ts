@@ -280,7 +280,15 @@ describe('classifyProduction — ce qui sort du chat', () => {
     const v = verdict([commande('pnpm build')], dashboard, aEcrit);
     expect(v.isWork).toBe(true);
     expect(v.items).toEqual([
-      { kind: 'command', label: 'pnpm build', certain: true, purpose: null },
+      {
+        kind: 'command',
+        label: 'pnpm build',
+        certain: true,
+        purpose: null,
+        exitCode: 0,
+        timedOut: false,
+        blocked: false,
+      },
     ]);
     expect(v.uncertain).toBe(0);
   });
@@ -316,7 +324,17 @@ describe('classifyProduction — la commande, tranchée par l’écriture consta
     // constatée sur son tour. Rien ne se dessine comme une production.
     const v = verdict([commande('ls -la')]);
     expect(v.isWork).toBe(false);
-    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'ls -la',
+        certain: false,
+        purpose: null,
+        exitCode: 0,
+        timedOut: false,
+        blocked: false,
+      },
+    ]);
     // L'absence est DITE, jamais tue : elle est comptée comme incertaine.
     expect(v.uncertain).toBe(1);
   });
@@ -345,7 +363,17 @@ describe('classifyProduction — la commande, tranchée par l’écriture consta
     // pour du travail une commande lancée au tour suivant.
     const v = verdict([commande('ls -la', { turn: 2 })], dashboard, aEcrit);
     expect(v.isWork).toBe(false);
-    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'ls -la',
+        certain: false,
+        purpose: null,
+        exitCode: 0,
+        timedOut: false,
+        blocked: false,
+      },
+    ]);
   });
 
   it('le constat d’un AUTRE job ne crédite pas celui-ci', () => {
@@ -383,6 +411,9 @@ describe('classifyProduction — la commande, tranchée par l’écriture consta
       label: 'ls -la',
       certain: false,
       purpose: null,
+      exitCode: 0,
+      timedOut: false,
+      blocked: false,
     });
     expect(v.uncertain).toBe(1);
   });
@@ -475,7 +506,24 @@ describe("classifyProduction — l'issue de l'appel", () => {
       it(`une carte ${nom} en ${issue} ne produit RIEN`, () => {
         const v = verdict([ligne({ ...base, toolOutput: echec(issue) })]);
         expect(v.isWork).toBe(false);
-        expect(v.items).toEqual([]);
+        // UNE COMMANDE REFUSÉE PAR UNE RÈGLE PARAÎT, sans rien produire
+        // (#395) : c'est la seule ligne en échec que l'encart liste, et elle
+        // le dit (`blocked`). Tout le reste reste muet, comme avant.
+        if (nom === 'terminal' && issue === 'blocked') {
+          expect(v.items).toEqual([
+            {
+              kind: 'command',
+              label: 'run_command',
+              certain: false,
+              purpose: null,
+              exitCode: null,
+              timedOut: false,
+              blocked: true,
+            },
+          ]);
+        } else {
+          expect(v.items).toEqual([]);
+        }
         expect(v.more).toBe(0);
       });
     }
@@ -596,7 +644,15 @@ describe('classifyProduction — pourquoi la commande a tourné @cap:verifier-un
       aEcrit,
     );
     expect(v.items).toEqual([
-      { kind: 'command', label: 'pnpm build', certain: true, purpose: 'Build the app' },
+      {
+        kind: 'command',
+        label: 'pnpm build',
+        certain: true,
+        purpose: 'Build the app',
+        exitCode: 0,
+        timedOut: false,
+        blocked: false,
+      },
     ]);
   });
 
@@ -604,16 +660,190 @@ describe('classifyProduction — pourquoi la commande a tourné @cap:verifier-un
     // Une ligne écrite avant ce champ, ou un autre outil qui déclare la même
     // carte : l'écran montrera la commande seule plutôt qu'une phrase inventée.
     const v = verdict([commande('ls -la', { toolInput: { command: 'ls -la' } })]);
-    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'ls -la',
+        certain: false,
+        purpose: null,
+        exitCode: 0,
+        timedOut: false,
+        blocked: false,
+      },
+    ]);
   });
 
   it('une phrase blanche vaut une absence', () => {
     const v = verdict([commande('ls -la', { toolInput: { command: 'ls -la', purpose: '   ' } })]);
-    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'ls -la',
+        certain: false,
+        purpose: null,
+        exitCode: 0,
+        timedOut: false,
+        blocked: false,
+      },
+    ]);
   });
 
   it('une phrase qui n’est pas du texte vaut une absence', () => {
     const v = verdict([commande('ls -la', { toolInput: { command: 'ls -la', purpose: 42 } })]);
-    expect(v.items).toEqual([{ kind: 'command', label: 'ls -la', certain: false, purpose: null }]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'ls -la',
+        certain: false,
+        purpose: null,
+        exitCode: 0,
+        timedOut: false,
+        blocked: false,
+      },
+    ]);
+  });
+});
+
+// #395 — L'ISSUE DE CHAQUE COMMANDE.
+//
+// La liste des commandes montrait une ligne qui a rendu 1 exactement comme une
+// ligne qui a rendu 0, et taisait celles qu'une règle du propriétaire avait
+// refusées. Quentin, 21/09 : « est-ce que ce sont seulement les commandes de
+// test, dont le résultat est dans Proof ? ». L'issue vient de la carte
+// `terminal`, que `run_command` remplit quand la commande rend la main.
+//
+// Mutation vérifiée : `exitCode: carte?.exitCode ?? null` remplacé par
+// `exitCode: null` → « une commande qui a lâché porte son code » rougit ; le
+// retrait de la branche `blocked` → « une commande refusée par une règle est
+// listée » rougit.
+describe('classifyProduction — l’issue de la commande @cap:verifier-un-livrable/moteur', () => {
+  const carte = (command: string, over: Record<string, unknown>) => ({
+    card: 'terminal',
+    command,
+    exitCode: 0,
+    timedOut: false,
+    stdoutTail: '',
+    stdoutTruncated: false,
+    stderrTail: '',
+    stderrTruncated: false,
+    ...over,
+  });
+
+  it('une commande qui a lâché porte son code', () => {
+    const v = verdict([
+      commande('pnpm test', { presented: carte('pnpm test', { exitCode: 1, stderrTail: 'boom' }) }),
+    ]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'pnpm test',
+        certain: false,
+        purpose: null,
+        exitCode: 1,
+        timedOut: false,
+        blocked: false,
+      },
+    ]);
+  });
+
+  it('une commande qui a rendu 0 porte 0 — l’écran décide de se taire, pas le modèle', () => {
+    const v = verdict([commande('ls -la')]);
+    expect(v.items[0]).toMatchObject({ exitCode: 0, timedOut: false, blocked: false });
+  });
+
+  it('une commande TUÉE par le délai n’a pas de code, et le dit', () => {
+    const v = verdict([
+      commande('sleep 600', {
+        presented: carte('sleep 600', { exitCode: null, timedOut: true }),
+      }),
+    ]);
+    expect(v.items[0]).toMatchObject({ exitCode: null, timedOut: true, blocked: false });
+  });
+
+  it('une carte illisible laisse l’issue INCONNUE, jamais un zéro de repli', () => {
+    // Un présentateur en panne (`presented` NULL, `presentation_error` posé) :
+    // la ligne existe, la commande se lit dans son entrée, l'issue non.
+    const v = verdict([
+      commande('pnpm build', { presented: null, toolInput: { command: 'pnpm build' } }),
+    ]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'pnpm build',
+        certain: false,
+        purpose: null,
+        exitCode: null,
+        timedOut: false,
+        blocked: false,
+      },
+    ]);
+  });
+
+  it('une commande refusée par une règle est listée, dite « blocked », et ne produit rien', () => {
+    // La forme réelle d'`executeTool` : l'issue est une erreur, et le mot qui
+    // la distingue d'une panne est en tête du message.
+    const v = verdict([
+      commande('rm -rf /', {
+        presented: null,
+        toolInput: { command: 'rm -rf /', purpose: 'Clean up' },
+        toolOutput: JSON.stringify({
+          outcome: 'error',
+          error: 'blocked: an approval rule forbids "run_command" for this agent.',
+        }),
+      }),
+    ]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'rm -rf /',
+        certain: false,
+        purpose: 'Clean up',
+        exitCode: null,
+        timedOut: false,
+        blocked: true,
+      },
+    ]);
+    // Elle n'a rien exécuté : elle ne fait pas un travail à elle seule, et
+    // elle n'est pas un classement INCERTAIN — on sait ce qui s'est passé.
+    expect(v.isWork).toBe(false);
+    expect(v.uncertain).toBe(0);
+  });
+
+  it('un script de skill refusé est nommé par son script, pas par l’outil', () => {
+    // `run_skill_script` déclare la même carte `terminal` et porte `script`
+    // dans son entrée, là où `run_command` porte `command` (Reviewer C).
+    const v = verdict([
+      ligne({
+        toolName: 'run_skill_script',
+        card: 'terminal',
+        presented: null,
+        toolInput: { skill: 'reporting', script: 'scripts/build_deck.py' },
+        toolOutput: JSON.stringify({
+          outcome: 'error',
+          error: 'blocked: an approval rule forbids "run_skill_script" for this agent.',
+        }),
+      }),
+    ]);
+    expect(v.items).toEqual([
+      {
+        kind: 'command',
+        label: 'scripts/build_deck.py',
+        certain: false,
+        purpose: null,
+        exitCode: null,
+        timedOut: false,
+        blocked: true,
+      },
+    ]);
+  });
+
+  it('une erreur qui n’est pas un refus de règle reste muette', () => {
+    const v = verdict([
+      commande('pnpm build', {
+        presented: null,
+        toolOutput: JSON.stringify({ outcome: 'error', error: 'spawn ENOENT' }),
+      }),
+    ]);
+    expect(v.items).toEqual([]);
   });
 });
