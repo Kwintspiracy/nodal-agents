@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Brain } from '@phosphor-icons/react';
@@ -1670,6 +1670,16 @@ export function AutonomyTab({
   mayChangeTeam: boolean;
 }) {
   const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
+  /**
+   * Numéro de la relecture la plus récente (revue Reviewer C, passe 2, F1).
+   *
+   * `setRules` remplace le TABLEAU ENTIER. Deux changements rapprochés sur deux
+   * outils lancent deux relectures ; si la plus ancienne revient la dernière,
+   * elle repose l'état d'avant la seconde écriture, et une ligne retombe à
+   * l'écran sur une action que la base ne porte plus. Seule la dernière
+   * demandée a le droit d'écrire.
+   */
+  const lastReload = useRef(0);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState<Set<string>>(new Set());
   // Fetched, not imported: the descriptors live in @nodal-agents/orchestration,
@@ -1680,8 +1690,9 @@ export function AutonomyTab({
 
   // Load current rules on mount
   useEffect(() => {
+    const seq = ++lastReload.current;
     listAgentApprovalRulesAction(agentId).then((result) => {
-      if (result.ok) setRules(result.data);
+      if (result.ok && seq === lastReload.current) setRules(result.data);
       setLoaded(true);
     });
   }, [agentId]);
@@ -1787,8 +1798,9 @@ export function AutonomyTab({
       // dossier : dans les deux cas, ce que la base porte maintenant ne se
       // devine pas depuis l'écran.
       if (!result.ok || conditioned) {
+        const seq = ++lastReload.current;
         listAgentApprovalRulesAction(agentId).then((r) => {
-          if (r.ok) setRules(r.data);
+          if (r.ok && seq === lastReload.current) setRules(r.data);
         });
       }
     });

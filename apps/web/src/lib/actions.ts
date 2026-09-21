@@ -6429,13 +6429,21 @@ export async function listAgentApprovalRulesAction(
       const folders = await db
         .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
         .from(agentWorkspaces)
-        .where(eq(agentWorkspaces.agentId, agentId));
+        .where(eq(agentWorkspaces.agentId, agentId))
+        // `agent_workspaces` n'est unique que sur (agent_id, LABEL) : deux
+        // libellés peuvent viser le même dossier. Sans ordre, le gagnant de la
+        // table ci-dessous changeait d'une lecture à l'autre (revue Reviewer C,
+        // passe 2, F2). C'est le premier dans l'ordre du propriétaire.
+        .orderBy(agentWorkspaces.position);
       // MÊME comparaison que la chaîne d'approbation (`explainApprovalRules`,
       // @nodal-agents/shared) : séparateurs, barre finale, lettre de lecteur.
       // Comparer les chemins bruts ici ferait afficher un chemin sur cet écran
       // là où la carte d'approbation affiche un libellé (revue Reviewer C,
       // passe 1, question 3).
-      for (const f of folders) labelByPath.set(normaliseWorkspacePath(f.path), f.label);
+      for (const f of folders) {
+        const key = normaliseWorkspacePath(f.path);
+        if (!labelByPath.has(key)) labelByPath.set(key, f.label);
+      }
     }
 
     return ok(

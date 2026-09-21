@@ -340,9 +340,13 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
     );
   });
 
-  it('ne dit rien pour une règle sans condition', async () => {
+  it('ne dit rien pour une règle sans condition, et le dit pour sa voisine', async () => {
+    // Revue Reviewer C, passe 2, question 8 : sur la seule ABSENCE, ce test
+    // passait aussi sur le code d'avant, qui n'affichait jamais rien. Les deux
+    // lignes sont rendues ensemble, dans le même DOM : l'une porte un dossier,
+    // l'autre non.
     await render(
-      [],
+      [CONNECTOR],
       [
         {
           id: 'r2',
@@ -351,9 +355,19 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
           conditionJson: null,
           workspaceLabel: null,
         },
+        {
+          id: 'r3',
+          toolName: 'legacy_write',
+          action: 'auto_approve',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
       ],
     );
     expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="autonomy-folder-legacy_write"]')?.textContent,
+    ).toBe('in Dev');
   });
 
   it("avertit AVANT d'enregistrer, et n'écrit rien tant que personne n'a répondu", async () => {
@@ -413,6 +427,21 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
     );
   });
 
+  it('avertit AUSSI pour « Ask for approval », pas seulement pour « Block »', async () => {
+    // Revue Reviewer C, passe 2, question 9 : la suite ne couvrait que `block`,
+    // donc restreindre la boîte à ce seul cas serait passé inaperçu, et un
+    // passage en « Ask for approval » aurait perdu le dossier sans un mot.
+    await render([], [FOLDER_RULE]);
+    actions.setAgentApprovalRuleAction.mockClear();
+
+    await act(async () => {
+      control('file_write', 'require_approval').click();
+    });
+
+    expect(dialogText()).toContain('Remove the folder limit?');
+    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
+  });
+
   it("n'annonce aucun élargissement pour « Run without asking », que le serveur refuse", async () => {
     // Revue Reviewer C, passe 1, C1 : `refuseGlobalGrantOverFolderRule` refuse
     // cette écriture. Faire confirmer « la limite va sauter » serait annoncer
@@ -464,9 +493,27 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
     expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
       'in Dev',
     );
+
+    // Le serveur répond, et la relecture ramène ce qu'il a VRAIMENT écrit :
+    // une règle sans condition. Le dossier quitte la ligne à ce moment-là, et
+    // pas avant.
+    actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
+      ok: true as const,
+      data: [
+        {
+          id: 'r1',
+          toolName: 'file_write',
+          action: 'block',
+          conditionJson: {},
+          workspaceLabel: null,
+        },
+      ],
+    }));
     await act(async () => {
       resolveSave?.({ ok: true, data: undefined });
     });
+    await act(async () => {});
+    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
   });
 
   it('nomme le dossier dans le nom accessible du curseur', async () => {
