@@ -26,16 +26,6 @@
  * Aucun modèle n'est appelé ici. Les lignes sont semées directement en base,
  * comme le font les autres parcours pilotés par la base (`delegation-outcome`),
  * et tout ce qui est créé est supprimé en `afterAll`.
- *
- * ⚠️ CE FICHIER CHANGE UN RÉGLAGE DE LA PERSONNE, et il faut le savoir : il
- * pose `users.feed_density = 'folded'` pour la durée du fichier et le rend en
- * `afterAll`, dans un `finally` pour qu'un échec du ménage ne l'emporte pas.
- * Reste un cas qu'aucun `finally` ne couvre : un run TUÉ entre les deux (Ctrl+C,
- * un budget dépassé, la machine qui s'éteint) laisse la préférence sur
- * « folded ». Rien ne casse — c'est le défaut du produit — mais quelqu'un qui
- * lisait en « unfolded » lira replié. Pour la retrouver : relancer ce fichier
- * jusqu'au bout, ou remettre la densité depuis l'écran des préférences (la
- * bascule « Folded / Unfolded » de la barre d'un fil).
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
@@ -56,19 +46,10 @@ import { makeDbClient, requireLiveStack, resolveActingUser, testSlugSuffix } fro
  */
 const AT_BOTTOM_SLACK_PX = 64;
 
-/**
- * La densité sous laquelle ces cas ont un sens (#132, #153).
- *
- * Le groupe d'un run s'ouvre replié ou déplié selon la PRÉFÉRENCE de la
- * personne (`users.feed_density`, lue par `getFeedDensityAction`, passée à
- * `RunSummaryRow defaultOpen`). Le cas C a besoin d'une ligne REPLIÉE à
- * déplier : sur une base où le propriétaire lit en « unfolded », il rougissait
- * à sa première assertion et le scénario ne pouvait même pas se jouer
- * (Reviewer C, passe 1 de la PR #169). La préférence est donc posée pour la
- * durée du fichier, puis RENDUE telle qu'elle était — un parcours ne laisse pas
- * derrière lui un réglage qu'il a changé.
- */
-const DENSITY_FOR_THESE_CASES = 'folded';
+// Le cas C a besoin d'une ligne REPLIÉE à déplier. Jusqu'au 22/09/2026 c'était
+// une préférence de la personne (`users.feed_density`), que ce fichier posait
+// puis rendait ; le réglage a été retiré du produit et un fil s'ouvre toujours
+// replié (`DEFAULT_FEED_DENSITY`). Il n'y a plus rien à poser ni à rendre.
 
 /**
  * Attente, en millisecondes, plus longue que la fenêtre pendant laquelle une
@@ -95,73 +76,36 @@ const created: { jobIds: string[]; conversationIds: string[]; agentIds: string[]
   agentIds: [],
 };
 
-/** La densité que la personne lisait avant ce fichier, pour la lui rendre. */
-let densityBefore: string | null = null;
-
 test.beforeAll(async () => {
   await requireLiveStack();
   acting = await resolveActingUser();
-  densityBefore = await setFeedDensity(DENSITY_FOR_THESE_CASES);
   conversationId = await seedThread();
 });
 
 test.afterAll(async () => {
-  // La densité est rendue dans un `finally` qui enveloppe TOUT le ménage : un
-  // `delete` qui lève, ou un `close()` qui refuse, laissait sinon la personne
-  // avec une préférence qu'elle n'a pas choisie (Reviewer C, passe 2 de la
-  // PR #169). Le réglage de quelqu'un ne doit pas dépendre de la réussite d'une
-  // suppression de lignes de test.
-  try {
-    const { agentJobs, chatMessages, conversations, agents, inArray } =
-      await import('@nodal-agents/db');
-    const { db, close } = makeDbClient();
-    try {
-      if (created.conversationIds.length > 0) {
-        await db
-          .delete(chatMessages)
-          .where(inArray(chatMessages.conversationId, created.conversationIds));
-      }
-      // Les lignes `tool_calls` partent avec leur job (ON DELETE CASCADE).
-      if (created.jobIds.length > 0) {
-        await db.delete(agentJobs).where(inArray(agentJobs.id, created.jobIds));
-      }
-      if (created.conversationIds.length > 0) {
-        await db.delete(conversations).where(inArray(conversations.id, created.conversationIds));
-      }
-      if (created.agentIds.length > 0) {
-        await db.delete(agents).where(inArray(agents.id, created.agentIds));
-      }
-    } finally {
-      await close();
-    }
-  } finally {
-    if (densityBefore !== null) await setFeedDensity(densityBefore);
-  }
-});
-
-/**
- * Pose la densité de lecture de la personne au nom de qui le dashboard agit, et
- * rend celle qu'elle avait. `null` si la ligne n'existe pas — il n'y a alors
- * rien à rendre.
- */
-async function setFeedDensity(density: string): Promise<string | null> {
-  const { users, eq } = await import('@nodal-agents/db');
+  const { agentJobs, chatMessages, conversations, agents, inArray } =
+    await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
-    const [row] = await db
-      .select({ density: users.feedDensity })
-      .from(users)
-      .where(eq(users.id, acting.userId))
-      .limit(1);
-    if (row === undefined) return null;
-    if (row.density !== density) {
-      await db.update(users).set({ feedDensity: density }).where(eq(users.id, acting.userId));
+    if (created.conversationIds.length > 0) {
+      await db
+        .delete(chatMessages)
+        .where(inArray(chatMessages.conversationId, created.conversationIds));
     }
-    return row.density;
+    // Les lignes `tool_calls` partent avec leur job (ON DELETE CASCADE).
+    if (created.jobIds.length > 0) {
+      await db.delete(agentJobs).where(inArray(agentJobs.id, created.jobIds));
+    }
+    if (created.conversationIds.length > 0) {
+      await db.delete(conversations).where(inArray(conversations.id, created.conversationIds));
+    }
+    if (created.agentIds.length > 0) {
+      await db.delete(agents).where(inArray(agents.id, created.agentIds));
+    }
   } finally {
     await close();
   }
-}
+});
 
 /** Une ligne de `chat_messages` telle que ce parcours l'écrit. */
 type SeededMessage = {
