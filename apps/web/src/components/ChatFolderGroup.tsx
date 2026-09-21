@@ -249,7 +249,28 @@ export default function ChatFolderGroup() {
               folderKey={f.key}
               label={f.label}
               icon={<Icon size={14} className="h-3.5 w-3.5" />}
-              waiting={f.waiting}
+              // PAS DE NOMBRE SUR UN CANAL (décision du propriétaire,
+              // 22/09/2026 : « ne mets pas de puce numérotée sur les
+              // channels »). Telegram, Discord, WhatsApp, MCP et tout canal
+              // inconnu portaient chacun leur compte ; il n'en reste qu'un, sur
+              // « Nodal chats ».
+              //
+              // Le MODÈLE, lui, continue de compter par dossier : c'est la même
+              // règle qui range une attente sous le canal de sa conversation
+              // (#135, #148), et c'est elle que prouve `chat-folders.test.ts`.
+              // C'est aussi elle qui fait EXISTER le dossier d'un canal où
+              // quelque chose attend sans conversation lue. Ce qui change est
+              // ce que le menu DESSINE.
+              //
+              // ⚠️ CE QUI RESTE, exactement (Reviewer C) : le point rouge du
+              // FIL concerné, qui dit qu'il attend sans dire combien ; la case
+              // Approvals du rail, qui compte les APPROBATIONS, toutes origines
+              // confondues ; et la phrase sous le titre du dossier sur la page
+              // Chat, qui redit le nombre en toutes lettres. Un LIVRABLE à
+              // vérifier (#255), lui, n'est compté nulle part en chiffres hors
+              // de « Nodal chats » : la case Approvals ne le compte pas. Il se
+              // voit sur le point de son fil et dans la phrase de la page.
+              waiting={f.key === DASHBOARD_FOLDER ? f.waiting : 0}
               running={f.running}
               active={f.active}
               expanded={ouvert}
