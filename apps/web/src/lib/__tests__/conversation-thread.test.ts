@@ -203,6 +203,7 @@ describe('buildConversationThread — une conversation de canal', () => {
         commands: [],
         produced: true,
         ended: null,
+        live: null,
       },
     });
   });

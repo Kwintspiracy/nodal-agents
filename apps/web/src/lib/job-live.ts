@@ -32,3 +32,15 @@ export function canStopRun(status: string | null | undefined): boolean {
   // d'une colonne `text`. La comparaison se fait donc en chaînes.
   return (LIVE_JOB_STATUSES as readonly string[]).includes(status);
 }
+
+/**
+ * Ce qu'un travail vivant FAIT, pour le mot de l'encart de livraison (#337) :
+ * `'working'` quand il tourne, `'waiting'` quand il est arrêté sur la personne
+ * (une approbation), `null` quand il n'est plus vivant. Un run bloqué sur une
+ * approbation ne travaille pas ; lui dessiner un spinner ferait lire un
+ * travail actif là où rien ne bouge (Reviewer C, #337).
+ */
+export function liveKind(status: string | null | undefined): 'working' | 'waiting' | null {
+  if (!canStopRun(status)) return null;
+  return status === 'awaiting_approval' ? 'waiting' : 'working';
+}
