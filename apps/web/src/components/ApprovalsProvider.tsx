@@ -21,7 +21,16 @@ export type PendingApproval = Pick<
 
 type ApprovalsContextValue = {
   pending: PendingApproval[];
-  refresh: () => void;
+  /**
+   * RELIRE LES ATTENTES TOUT DE SUITE, sans attendre le tour de cadence.
+   *
+   * Elle rend une promesse, et ce n'est pas un détail : celui qui vient de
+   * répondre à une demande l'attend avant de rendre la main, si bien que la
+   * pastille du rail est déjà tombée quand le bouton se réactive. Sans elle,
+   * la barre garderait le vieux nombre pendant quinze secondes, et la personne
+   * lirait « 1 pending » après avoir répondu à la dernière demande.
+   */
+  refresh: () => Promise<void>;
 };
 
 const ApprovalsContext = createContext<ApprovalsContextValue | null>(null);
@@ -62,8 +71,8 @@ export function ApprovalsProvider({
 
   usePolling(fetchPending, POLL_INTERVAL_MS);
 
-  const refresh = useCallback(() => {
-    void fetchPending();
+  const refresh = useCallback(async () => {
+    await fetchPending();
   }, [fetchPending]);
 
   return (
@@ -71,7 +80,7 @@ export function ApprovalsProvider({
   );
 }
 
-const FALLBACK: ApprovalsContextValue = { pending: [], refresh: () => {} };
+const FALLBACK: ApprovalsContextValue = { pending: [], refresh: async () => {} };
 
 export function useApprovals(): ApprovalsContextValue {
   const ctx = useContext(ApprovalsContext);

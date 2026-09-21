@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { resolveApprovalAction } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
+import { useApprovals } from '@/components/ApprovalsProvider';
 
 interface Props {
   approvalId: string;
@@ -29,14 +30,25 @@ export default function QuestionActions({ approvalId, options }: Props) {
   const [isPending, startTransition] = useTransition();
   const [showDeclineInput, setShowDeclineInput] = useState(false);
   const [notes, setNotes] = useState('');
+  // Une question attendue compte dans la pastille du rail comme une permission
+  // attendue : y répondre doit la faire tomber sur le champ, et pas au tour de
+  // cadence suivant. Même geste que dans `ApprovalActions`.
+  const { refresh } = useApprovals();
+
+  /** Répondre, puis relire les attentes — la relecture part APRÈS la réponse. */
+  async function resolve(input: {
+    decision: 'approve' | 'reject';
+    answer?: string;
+    notes?: string;
+  }) {
+    const result = await resolveApprovalAction({ approvalRequestId: approvalId, ...input });
+    if (result.ok) await refresh();
+    return result;
+  }
 
   function handleAnswer(option: string) {
     startTransition(async () => {
-      const r = await resolveApprovalAction({
-        approvalRequestId: approvalId,
-        decision: 'approve',
-        answer: option,
-      });
+      const r = await resolve({ decision: 'approve', answer: option });
       if (!r.ok) toast.error(r.message);
       else toast.success(`Answered: ${option}`);
     });
@@ -48,8 +60,7 @@ export default function QuestionActions({ approvalId, options }: Props) {
       return;
     }
     startTransition(async () => {
-      const r = await resolveApprovalAction({
-        approvalRequestId: approvalId,
+      const r = await resolve({
         decision: 'reject',
         ...(notes.trim() ? { notes: notes.trim() } : {}),
       });
