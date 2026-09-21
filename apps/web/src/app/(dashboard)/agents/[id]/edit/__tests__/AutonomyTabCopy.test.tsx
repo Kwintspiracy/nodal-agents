@@ -144,6 +144,7 @@ const MCP_SERVER = {
   slug: 'cogni-cortex',
   label: 'Cogni Cortex',
   assigned: true,
+  enabledTools: null,
   availableTools: [
     { name: 'read_page', description: 'Read one page.' },
     { name: 'run_code_unsafe', description: 'Run arbitrary code in the browser.' },
@@ -887,6 +888,19 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
       toolName: 'cogni_cortex__run_code_unsafe',
       action: null,
     });
+  });
+
+  it("ne liste que les outils que l'agent a vraiment", async () => {
+    // Revue Reviewer C, C3 : une règle posée sur un outil retiré de la liste
+    // blanche du serveur ne protège rien, et la ligne promettrait un contrôle
+    // sans effet.
+    await render([], [], [{ ...MCP_SERVER, enabledTools: ['read_page'] }]);
+    expect(fold().textContent).toContain('1 tool');
+
+    await open();
+    const list = container.querySelector('[data-testid="autonomy-mcp-tools-cogni_cortex"]');
+    expect(list!.textContent).toContain('read_page');
+    expect(list!.textContent).not.toContain('run_code_unsafe');
   });
 
   it("dit, une fois, qu'une règle d'outil bat celle du serveur", async () => {

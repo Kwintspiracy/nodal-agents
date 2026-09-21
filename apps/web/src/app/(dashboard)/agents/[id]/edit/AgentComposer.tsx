@@ -2015,7 +2015,15 @@ export function AutonomyTab({
                   <McpServerTools
                     prefix={prefix}
                     serverLabel={s.label}
-                    tools={s.availableTools}
+                    // Les outils que CET agent a, pas ceux que le serveur
+                    // expose (revue Reviewer C, C3) : une règle posée sur un
+                    // outil retiré de la liste blanche ne protège rien, et la
+                    // ligne promettrait un contrôle sans effet.
+                    tools={
+                      Array.isArray(s.enabledTools)
+                        ? s.availableTools.filter((t) => s.enabledTools?.includes(t.name))
+                        : s.availableTools
+                    }
                     ruleFor={(toolName) =>
                       rules.find((r) => r.toolName === toolName)?.action ?? null
                     }
@@ -2095,7 +2103,7 @@ export function AutonomyTab({
           pendingWiden === null
             ? ''
             : pendingWiden.action === null
-              ? `This rule applies only in ${pendingWiden.folder} today. Following the server deletes it.`
+              ? `This rule applies only in ${pendingWiden.folder} today. Following the server deletes it, and the tool then follows the server's rule everywhere this agent works.`
               : `This rule applies only in ${pendingWiden.folder} today. Saving from here applies your choice everywhere this agent works.`
         }
         confirmLabel={pendingWiden?.action === null ? 'Delete the rule' : 'Remove the limit'}
