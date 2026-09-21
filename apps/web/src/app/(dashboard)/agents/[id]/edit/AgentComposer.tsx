@@ -1844,36 +1844,38 @@ export function AutonomyTab({
     }
 
     markSaving(toolName, true);
-    const promise = setAgentApprovalRuleAction({ agentId, toolName, action });
-    void promise.then((result) => {
-      markSaving(toolName, false);
-      if (!result.ok) toast.error(result.message);
-      // Relecture après un refus, et après tout changement d'une règle de
-      // dossier : dans les deux cas, ce que la base porte maintenant ne se
-      // devine pas depuis l'écran.
-      if (!result.ok || conditioned) {
-        const seq = ++lastReload.current;
-        listAgentApprovalRulesAction(agentId).then((r) => {
-          if (!r.ok || seq !== lastReload.current) return;
-          setRules((prev) => {
-            const inFlight = savingRef.current;
-            if (inFlight.size === 0) return r.data;
-            return [
-              ...r.data.filter((d) => !inFlight.has(d.toolName)),
-              ...prev.filter((p) => inFlight.has(p.toolName)),
-            ];
+    void setAgentApprovalRuleAction({ agentId, toolName, action })
+      .then((result) => {
+        markSaving(toolName, false);
+        if (!result.ok) toast.error(result.message);
+        // Relecture après un refus, et après tout changement d'une règle de
+        // dossier : dans les deux cas, ce que la base porte maintenant ne se
+        // devine pas depuis l'écran.
+        if (!result.ok || conditioned) {
+          const seq = ++lastReload.current;
+          listAgentApprovalRulesAction(agentId).then((r) => {
+            if (!r.ok || seq !== lastReload.current) return;
+            setRules((prev) => {
+              const inFlight = savingRef.current;
+              if (inFlight.size === 0) return r.data;
+              return [
+                ...r.data.filter((d) => !inFlight.has(d.toolName)),
+                ...prev.filter((p) => inFlight.has(p.toolName)),
+              ];
+            });
           });
-        });
-      }
-    });
-    // Un REJET (réseau coupé pendant l'envoi, erreur de sérialisation) saute
-    // tout le `then` : sans cette reprise, l'outil restait dans `savingRef`,
-    // donc sa ligne grisée pour toujours ET protégée de toute relecture
-    // ultérieure, sans un mot (revue Reviewer C, passe 4, C1).
-    promise.catch(() => {
-      markSaving(toolName, false);
-      toast.error('The rule was not saved. Check your connection and try again.');
-    });
+        }
+      })
+      // Un REJET (réseau coupé pendant l'envoi, erreur de sérialisation) saute
+      // tout le `then` : sans cette reprise, l'outil restait dans `savingRef`,
+      // donc sa ligne grisée pour toujours ET protégée de toute relecture
+      // ultérieure, sans un mot (revue Reviewer C, passe 4, C1). Enchaîné et
+      // non posé à côté : une branche `.catch` parallèle laisse le rejet du
+      // `.then` sans preneur, ce que la CI compte comme une erreur.
+      .catch(() => {
+        markSaving(toolName, false);
+        toast.error('The rule was not saved. Check your connection and try again.');
+      });
   }
 
   if (!loaded) {
