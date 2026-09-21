@@ -903,6 +903,91 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
     expect(list!.textContent).not.toContain('run_code_unsafe');
   });
 
+  it("la ligne du serveur compte ce que l'agent tient, pas ce que le serveur expose", async () => {
+    // Revue Reviewer C, passe 2, Q2 : « All 5 current tools and any added
+    // later » au-dessus de « 2 tools » faisait lire deux nombres contraires,
+    // et le runner ne donne jamais à l'agent que sa liste blanche.
+    const text = await render([], [], [{ ...MCP_SERVER, enabledTools: ['read_page'] }]);
+    expect(text).toContain('The 1 tools this agent holds from this server.');
+    expect(text).not.toContain('any added later');
+  });
+
+  it('sans liste blanche, la ligne du serveur parle bien de tout le serveur', async () => {
+    const text = await render([], [], [MCP_SERVER]);
+    expect(text).toContain('All 2 current tools and any added later.');
+  });
+
+  it("nomme les règles restées sur des outils que l'agent ne tient plus", async () => {
+    // Revue Reviewer C, passe 2, Q4 : une règle survit au décochage de son
+    // outil et reprend effet à son retour. Invisible, elle réapparaîtrait
+    // « déjà posée » sans que rien ne l'ait dit.
+    await render(
+      [],
+      [
+        {
+          id: 'r9',
+          toolName: 'cogni_cortex__run_code_unsafe',
+          action: 'block',
+          conditionJson: null,
+          workspaceLabel: null,
+        },
+      ],
+      [{ ...MCP_SERVER, enabledTools: ['read_page'] }],
+    );
+    await open();
+    expect(
+      container.querySelector('[data-testid="autonomy-mcp-hidden-cogni_cortex"]')?.textContent,
+    ).toContain('A rule still applies to run_code_unsafe, which this agent no longer holds.');
+  });
+
+  it('ne dit rien de tel quand aucune règle ne traîne', async () => {
+    await render([], [], [{ ...MCP_SERVER, enabledTools: ['read_page'] }]);
+    await open();
+    expect(container.querySelector('[data-testid="autonomy-mcp-hidden-cogni_cortex"]')).toBeNull();
+  });
+
+  it('sur une règle de dossier, « Follow the server » dit ce qui sera supprimé', async () => {
+    // Revue Reviewer C, passe 2, Q6 : les trois textes de ce dialogue n'étaient
+    // assertés nulle part, donc les remettre à ceux de #361 passait inaperçu.
+    await render(
+      [],
+      [
+        {
+          id: 'r10',
+          toolName: 'cogni_cortex__run_code_unsafe',
+          action: 'auto_approve',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
+      ],
+      [MCP_SERVER],
+    );
+    await open();
+    actions.setAgentApprovalRuleAction.mockClear();
+
+    await act(async () => {
+      toolControl('run_code_unsafe', 'inherit').click();
+    });
+
+    const dialog = document.body.textContent ?? '';
+    expect(dialog).toContain('Delete this rule?');
+    expect(dialog).toContain(
+      "This rule applies only in Dev today. Following the server deletes it, and the tool then follows the server's rule everywhere this agent works.",
+    );
+    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
+
+    await act(async () => {
+      [...document.body.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Delete the rule')!
+        .click();
+    });
+    expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      toolName: 'cogni_cortex__run_code_unsafe',
+      action: null,
+    });
+  });
+
   it("dit, une fois, qu'une règle d'outil bat celle du serveur", async () => {
     const text = await render([], [], [MCP_SERVER]);
     expect(text).toContain(

@@ -28,6 +28,7 @@ export default function McpServerTools({
   ruleFor,
   isSaving,
   onChange,
+  hiddenWithRules,
 }: {
   /** Le préfixe du serveur, `cogni_cortex` pour `cogni_cortex__*`. */
   prefix: string;
@@ -36,6 +37,15 @@ export default function McpServerTools({
   ruleFor: (toolName: string) => McpToolRule;
   isSaving: (toolName: string) => boolean;
   onChange: (toolName: string, action: McpToolRule) => void;
+  /**
+   * Les outils que l'agent ne détient PLUS mais sur lesquels une règle traîne
+   * (revue Reviewer C, passe 2, Q4).
+   *
+   * Une règle posée ici survit au décochage de son outil dans l'onglet
+   * Connectors, et reprend effet le jour où il revient. Sans cette ligne, elle
+   * réapparaîtrait « déjà posée » sans que rien ne l'ait jamais dit.
+   */
+  hiddenWithRules: readonly string[];
 }) {
   const [open, setOpen] = useState(false);
   const count = tools.length;
@@ -52,6 +62,16 @@ export default function McpServerTools({
           {count} {count === 1 ? 'tool' : 'tools'}
         </span>
       </DisclosureButton>
+
+      {open && hiddenWithRules.length > 0 && (
+        <p
+          className="border-t border-rule-2 px-4 py-2.5 pl-10 text-body-12 text-ink-4"
+          data-testid={`autonomy-mcp-hidden-${prefix}`}
+        >
+          A rule still applies to {hiddenWithRules.join(', ')}, which this agent no longer holds. It
+          takes effect again if you give the tool back on the Connectors tab.
+        </p>
+      )}
 
       {open && (
         <div

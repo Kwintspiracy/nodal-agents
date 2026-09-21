@@ -1998,12 +1998,27 @@ export function AutonomyTab({
             {attachedMcpServers.map((s) => {
               const prefix = mcpSlugToPrefix(s.slug);
               const pattern = `${prefix}__*`;
+              // Ce que l'AGENT détient, pas ce que le serveur expose (revue
+              // Reviewer C, passe 2, Q2) : le runner ne lui donnera jamais que
+              // sa liste blanche, et un outil ajouté au serveur plus tard en
+              // est filtré lui aussi.
+              const held = Array.isArray(s.enabledTools)
+                ? s.availableTools.filter((t) => s.enabledTools?.includes(t.name))
+                : s.availableTools;
+              const hiddenWithRules = s.availableTools
+                .filter((t) => !held.includes(t))
+                .map((t) => t.name)
+                .filter((name) => rules.some((r) => r.toolName === `${prefix}__${name}`));
               return (
                 <div key={s.mcpServerId}>
                   <AutonomyToolRow
                     slug={pattern}
                     label={`${s.label} server`}
-                    summary={`All ${s.availableTools.length} current tools and any added later.`}
+                    summary={
+                      Array.isArray(s.enabledTools)
+                        ? `The ${held.length} tools this agent holds from this server.`
+                        : `All ${s.availableTools.length} current tools and any added later.`
+                    }
                     risk="write"
                     // Unlike the connector rows above, "no rule" here means ASK:
                     // every MCP tool ships defaultApproval: 'require_approval'.
@@ -2016,14 +2031,11 @@ export function AutonomyTab({
                     prefix={prefix}
                     serverLabel={s.label}
                     // Les outils que CET agent a, pas ceux que le serveur
-                    // expose (revue Reviewer C, C3) : une règle posée sur un
-                    // outil retiré de la liste blanche ne protège rien, et la
-                    // ligne promettrait un contrôle sans effet.
-                    tools={
-                      Array.isArray(s.enabledTools)
-                        ? s.availableTools.filter((t) => s.enabledTools?.includes(t.name))
-                        : s.availableTools
-                    }
+                    // expose (revue Reviewer C, passe 1, C3) : une règle posée
+                    // sur un outil retiré de la liste blanche ne protège rien,
+                    // et la ligne promettrait un contrôle sans effet.
+                    tools={held}
+                    hiddenWithRules={hiddenWithRules}
                     ruleFor={(toolName) =>
                       rules.find((r) => r.toolName === toolName)?.action ?? null
                     }
