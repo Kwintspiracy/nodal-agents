@@ -155,7 +155,7 @@ describe('le verdict du fil lit l’écriture constatée @cap:verifier-un-livrab
     const e = await encart('rien-ecrit');
     expect(e).not.toBeNull();
     expect(e!.summary.produced).toBe(false);
-    expect(e!.summary.commands).toEqual([{ label: 'ls -la', observed: false }]);
+    expect(e!.summary.commands).toEqual([{ label: 'ls -la', observed: false, purpose: null }]);
     // Et le verdict reste ce qu'il était : ce tour n'est pas du travail.
     expect(e!.verdict.isWork).toBe(false);
     expect(e!.verdict.uncertain).toBe(1);
@@ -166,6 +166,6 @@ describe('le verdict du fil lit l’écriture constatée @cap:verifier-un-livrab
     expect(e).not.toBeNull();
     expect(e!.summary.produced).toBe(true);
     // La même commande, vue cette fois : elle ne porte plus l'aveu.
-    expect(e!.summary.commands).toEqual([{ label: 'pnpm build', observed: true }]);
+    expect(e!.summary.commands).toEqual([{ label: 'pnpm build', observed: true, purpose: null }]);
   });
 });
