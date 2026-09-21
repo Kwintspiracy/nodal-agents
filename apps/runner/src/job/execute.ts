@@ -3711,6 +3711,9 @@ async function runJobTracked(
               // Les MOTS DE L'AGENT : c'est son texte final, sur la branche
               // texte (#154, #210).
               resultKind: 'prose',
+              // La boucle de tours SAIT rouvrir ce job : un rouge jamais
+              // réparé rend `repair_due` et rejoue un tour (issue #375).
+              repairTurn: 'supported',
               toolsUsed,
               stats: runStats(),
               messages,
@@ -3730,6 +3733,31 @@ async function runJobTracked(
             // que le chemin return_result rendait déjà already_handled.
             trace('terminal_write_lost_race', { turn, writer: 'finalize_text', jobId });
             return { status: 'already_handled' };
+          }
+          // PREUVE ROUGE, ET JAMAIS RÉPARÉE : le job NE FINIT PAS. Il repart
+          // pour UN tour, avec la sortie rouge verbatim comme entrée (issue
+          // #375, décision D2 du plan « Vérifier & Corriger »). La primitive a
+          // déjà posé `repair_attempts = 1` et compté cette reprise sur
+          // `chain_count` — on recopie le compteur EN MÉMOIRE, sinon le
+          // prochain checkpoint réécrirait la valeur d'avant et la reprise ne
+          // coûterait rien au budget anti-boucle (invariant #8).
+          //
+          // Le texte est du HARNAIS QUI PARLE AU MODÈLE, comme les rappels de
+          // livraison au-dessus : il n'atteint aucun écran, l'invariant #2
+          // n'est pas en jeu.
+          if (finalized.kind === 'repair_due') {
+            if (!finalized.repair) {
+              // La primitive promet `repair` avec ce `kind`. On le dit fort
+              // plutôt que de continuer un tour sans rien à corriger.
+              throw new Error(`REPAIR_TURN_WITHOUT_BRIEF: ${jobId}`);
+            }
+            trace('repair_turn', { turn, keys: finalized.repair.keys });
+            job.chainCount = (job.chainCount ?? 0) + 1;
+            messages = [
+              ...messages,
+              { role: 'user', content: finalized.repair.brief } as ModelMessage,
+            ];
+            continue;
           }
           // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
           // or delay the job response — gates + throttle live inside the hook.
@@ -5108,6 +5136,8 @@ async function runJobTracked(
             // reste en place. Elle est nommée quand même — la primitive exige
             // que chaque porte DISE de quel genre est le texte qu'elle passe.
             resultKind: 'prose',
+            // Même boucle, même reprise possible (issue #375).
+            repairTurn: 'supported',
             toolsUsed,
             stats: runStats(),
             messages,
@@ -5127,6 +5157,31 @@ async function runJobTracked(
           // report that the row was already handled so the caller never overrides it.
           trace('terminal_write_lost_race', { turn, writer: 'finalize', jobId });
           return { status: 'already_handled' };
+        }
+        // PREUVE ROUGE, ET JAMAIS RÉPARÉE : le job NE FINIT PAS. Il repart
+        // pour UN tour, avec la sortie rouge verbatim comme entrée (issue
+        // #375, décision D2 du plan « Vérifier & Corriger »). La primitive a
+        // déjà posé `repair_attempts = 1` et compté cette reprise sur
+        // `chain_count` — on recopie le compteur EN MÉMOIRE, sinon le
+        // prochain checkpoint réécrirait la valeur d'avant et la reprise ne
+        // coûterait rien au budget anti-boucle (invariant #8).
+        //
+        // Le texte est du HARNAIS QUI PARLE AU MODÈLE, comme les rappels de
+        // livraison au-dessus : il n'atteint aucun écran, l'invariant #2
+        // n'est pas en jeu.
+        if (finalized.kind === 'repair_due') {
+          if (!finalized.repair) {
+            // La primitive promet `repair` avec ce `kind`. On le dit fort
+            // plutôt que de continuer un tour sans rien à corriger.
+            throw new Error(`REPAIR_TURN_WITHOUT_BRIEF: ${jobId}`);
+          }
+          trace('repair_turn', { turn, keys: finalized.repair.keys });
+          job.chainCount = (job.chainCount ?? 0) + 1;
+          messages = [
+            ...messages,
+            { role: 'user', content: finalized.repair.brief } as ModelMessage,
+          ];
+          continue;
         }
         // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
         // or delay the job response — gates + throttle live inside the hook.

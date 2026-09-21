@@ -275,6 +275,10 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
           // `relay` : ce root n'a pas écrit ce texte, il compile les résultats
           // de ses tâches — chacune un job à part (#154, #210).
           resultKind: 'relay',
+          // Ce cron ne reprend aucun tour : il COMPILE les résultats de tâches
+          // déjà terminées, sur un root qui n'a plus de boucle à reprendre.
+          // Rouvrir ce job-là n'aurait personne pour jouer le tour.
+          repairTurn: 'unsupported',
           toolsUsed: [],
           delivery,
           // Le marqueur posé à l'étape 1 est le NÔTRE : la primitive l'accepte.

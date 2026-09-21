@@ -806,6 +806,11 @@ export async function runCliRuntimeJob(args: {
       jobId,
       result: turn.finalText,
       resultKind: 'prose',
+      // Le runtime CLI ne reprend PAS un tour depuis ici : son cycle de
+      // réparation lui est propre (heartbeat et verrous tenus pendant la
+      // preuve, respawn, re-preuve — PR③ du plan « Vérifier & Corriger »).
+      // Une preuve rouge y reste donc OBSERVÉE, comme en PR①.
+      repairTurn: 'unsupported',
       toolsUsed: [binding.toolLabel],
       delivery,
     },
