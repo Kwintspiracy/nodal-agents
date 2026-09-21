@@ -11,21 +11,27 @@
 // les deux qui manquait. Une seule vérité : le provider. Personne ne tient de
 // compte à côté.
 //
-// ⚠️ TROIS SURFACES répondent dans le produit, et chacune a son cas ici : la
+// ⚠️ QUATRE SURFACES répondent dans le produit, et chacune a son cas ici : la
 // carte de la page Approvals (`ApprovalActions`, avec son échelle entière), la
-// carte de question de cette même page (`QuestionActions`), et la carte de
-// question DANS LE FIL (`spaces/QuestionCard`). La troisième manquait au
-// premier jet (Reviewer C, passe 1) : elle faisait `router.refresh()`, ce qui
-// refait le rendu serveur du fil mais ne touche pas un état client.
+// carte de question de cette même page (`QuestionActions`), la carte de question
+// DANS LE FIL (`spaces/QuestionCard`), et le bouton Approve de la CLOCHE
+// (`NotificationsBell`). La troisième manquait au premier jet (Reviewer C,
+// passe 1) : elle faisait `router.refresh()`, ce qui refait le rendu serveur du
+// fil mais ne touche pas un état client. La quatrième était remplacée par du
+// vide ici (passe 2), ce qui laissait passer un `onApproved()` non attendu.
 
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi, type MockInstance } from 'vitest';
 import { createElement, type ReactNode, type ReactElement } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
+// Le rafraîchissement du ROUTEUR est espionné : la carte du fil est rendue par
+// le serveur, et sans lui elle resterait « Waiting » jusqu'au prochain passage
+// de LiveRefresh. C'est le seul moyen de l'observer, rien n'en sort côté DOM.
+const routerRefresh = vi.hoisted(() => vi.fn());
 vi.mock('next/navigation', () => ({
   usePathname: () => '/approvals',
-  useRouter: () => ({ refresh: () => {}, push: () => {} }),
+  useRouter: () => ({ refresh: routerRefresh, push: () => {} }),
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('next/link', () => ({
@@ -58,10 +64,10 @@ vi.mock('@/lib/sidebar-actions.ts', () => ({
   listSidebarWebhooksAction: vi.fn(),
   listSidebarRecentApprovalsAction: vi.fn(),
 }));
-// Les blocs qui ne sont pas le sujet appellent chacun leur action serveur.
+// Les blocs qui ne sont pas le sujet appellent chacun leur action serveur. La
+// cloche, elle, RESTE : c'est une des quatre surfaces qui répondent.
 vi.mock('../VersionBadge', () => ({ default: () => null }));
 vi.mock('../WorkspaceSwitcher', () => ({ default: () => null }));
-vi.mock('../NotificationsBell', () => ({ default: () => null }));
 vi.mock('../ui/ThemeToggle', () => ({ default: () => null }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -88,6 +94,13 @@ import QuestionCard from '@/app/(dashboard)/spaces/QuestionCard.tsx';
 
 let container: HTMLDivElement;
 let root: Root;
+/**
+ * L'espion de `console.error`, posé par les cas qui en ont besoin et restauré
+ * par l'`afterEach` — quoi qu'il arrive. Restauré à la dernière ligne du cas,
+ * une assertion en échec avant elle aurait rendu la console muette pour tous les
+ * cas suivants du fichier (Reviewer C, passe 2).
+ */
+let journal: MockInstance<typeof console.error> | null = null;
 
 const ESPACES = [
   { id: 'w1', name: 'Local', slug: 'local', icon: null, active: true },
@@ -165,17 +178,23 @@ function caseApprovals(): string {
 }
 
 /** Cliquer un bouton par son libellé, sous la racine donnée. */
-async function cliquerDans(racine: ParentNode, texte: string): Promise<void> {
-  const el = [...racine.querySelectorAll('button')].find((b) => b.textContent?.trim() === texte);
+async function cliquerDans(
+  racine: ParentNode,
+  texte: string,
+  par: 'texte' | 'aria-label' = 'texte',
+): Promise<void> {
+  const el = [...racine.querySelectorAll('button')].find((b) =>
+    par === 'texte' ? b.textContent?.trim() === texte : b.getAttribute('aria-label') === texte,
+  );
   if (!el) throw new Error(`bouton « ${texte} » absent`);
   await act(async () => {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   });
 }
 
-/** Cliquer un bouton de la page. */
-async function cliquer(texte: string): Promise<void> {
-  await cliquerDans(container, texte);
+/** Cliquer un bouton de la page, par son texte ou par son nom accessible. */
+async function cliquer(texte: string, par: 'texte' | 'aria-label' = 'texte'): Promise<void> {
+  await cliquerDans(container, texte, par);
 }
 
 /**
@@ -226,6 +245,8 @@ afterEach(async () => {
     root.unmount();
   });
   container.remove();
+  journal?.mockRestore();
+  journal = null;
 });
 
 describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/ecran', () => {
@@ -300,6 +321,12 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
       action: 'auto_approve',
       scope: 'agent',
     });
+    // LA RÉSOLUTION AUSSI : sans elle, la règle serait écrite et la demande
+    // resterait en attente en base, pastille tombée (Reviewer C, passe 2).
+    expect(vi.mocked(resolveApprovalAction).mock.calls[0]?.[0]).toEqual({
+      approvalRequestId: 'a1',
+      decision: 'approve',
+    });
     expect(caseApprovals()).toBe('Approvals');
   });
 
@@ -311,6 +338,11 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
       agentId: 'ag-1',
       toolName: 'send_message',
       action: 'block',
+    });
+    expect(vi.mocked(resolveApprovalAction).mock.calls[0]?.[0]).toEqual({
+      approvalRequestId: 'a1',
+      decision: 'reject',
+      notes: 'Permanently blocked by the owner.',
     });
     expect(caseApprovals()).toBe('Approvals');
   });
@@ -339,6 +371,9 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
       decision: 'approve',
       answer: 'The repo README',
     });
+    // Les DEUX gestes : le rendu serveur du fil, qui sort la carte de
+    // « Waiting », et la relecture du provider, qui fait tomber la pastille.
+    expect(routerRefresh).toHaveBeenCalled();
     expect(caseApprovals()).toBe('Approvals');
   });
 
@@ -346,14 +381,50 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     // `refresh` est attendue dans la transition de celui qui répond : un rejet
     // qui remonterait lui ferait perdre son toast de succès pour une décision
     // pourtant enregistrée.
-    const journal = vi.spyOn(console, 'error').mockImplementation(() => {});
+    journal = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.mocked(listApprovalsAction).mockRejectedValue(new Error('socket closed'));
     await monter(carteApprobation());
     await cliquer('Approve once');
     expect(caseApprovals()).toBe('Approvals1');
     expect(journal.mock.calls.map((c) => c[0])).toContain(
-      '[ApprovalsProvider] listApprovalsAction threw',
+      '[ApprovalsProvider] reading the pending approvals failed',
     );
-    journal.mockRestore();
+  });
+
+  it('une RÉPONSE MAL FORMÉE ne coince pas le bouton de celui qui a répondu', async () => {
+    // Le garde couvre le traitement autant que l'appel : une `data` qui n'est
+    // pas un tableau fait lever le `.map`, et un rejet remonté dans la
+    // transition laisserait le bouton désactivé pour toujours.
+    journal = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(listApprovalsAction).mockResolvedValue({
+      ok: true,
+      data: 'pas un tableau',
+    } as unknown as Awaited<ReturnType<typeof listApprovalsAction>>);
+    await monter(carteApprobation());
+    await cliquer('Approve once');
+    const approuver = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Approve once',
+    );
+    expect(approuver?.hasAttribute('disabled')).toBe(false);
+    expect(caseApprovals()).toBe('Approvals1');
+    expect(journal.mock.calls.map((c) => c[0])).toContain(
+      '[ApprovalsProvider] reading the pending approvals failed',
+    );
+  });
+
+  it('APPROUVER DEPUIS LA CLOCHE la fait tomber — la quatrième surface', async () => {
+    // Mutation vérifiée : `await onApproved()` retiré de `NotificationsBell`
+    // → ce cas rougit sur « Approvals1 ». Retirer seulement l'`await` ne le
+    // fait PAS rougir, et c'est honnête : `act()` vide la file des microtâches
+    // de toute façon. Ce que ce cas prouve, c'est que la cloche relit ; que sa
+    // relecture soit ATTENDUE ne se voit qu'à l'écran, sur un vrai aller-retour.
+    await monter(<div />);
+    await cliquer('Notifications (1 pending)', 'aria-label');
+    await cliquer('Approve');
+    expect(vi.mocked(resolveApprovalAction).mock.calls[0]?.[0]).toEqual({
+      approvalRequestId: 'a1',
+      decision: 'approve',
+    });
+    expect(caseApprovals()).toBe('Approvals');
   });
 });

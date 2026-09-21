@@ -47,37 +47,40 @@ export function ApprovalsProvider({
   const [pending, setPending] = useState<PendingApproval[]>(initial);
 
   const fetchPending = useCallback(async () => {
-    // Une lecture qui LÈVE est attrapée ici, et pas plus loin : `refresh` est
-    // attendue par celui qui vient de répondre, et un rejet remonterait dans sa
-    // transition, où personne ne l'attrape — il perdrait son toast de succès
-    // pour une décision pourtant enregistrée. Attrapée, elle garde le dernier
-    // état connu et le DIT dans la console (jamais en silence).
-    let result: Awaited<ReturnType<typeof listApprovalsAction>>;
+    // TOUTE LA LECTURE est sous le garde — l'appel ET le traitement de sa
+    // réponse (Reviewer C, passe 2 : n'envelopper que l'appel ne couvrait que
+    // la moitié du chemin, et une `data` qui n'est pas un tableau faisait lever
+    // le `.map`).
+    //
+    // La raison du garde : `refresh` est attendue par celui qui vient de
+    // répondre, et un rejet remonterait dans sa transition, où personne ne
+    // l'attrape — son bouton resterait désactivé et il perdrait le toast de
+    // succès d'une décision pourtant enregistrée. Attrapée, la lecture garde le
+    // dernier état connu et le DIT dans la console (jamais en silence).
     try {
-      result = await listApprovalsAction({ status: 'pending' });
+      const result = await listApprovalsAction({ status: 'pending' });
+      if (!result.ok) return;
+      // Map the full ApprovalRow down to the minimal PendingApproval shape.
+      setPending(
+        result.data.map((r) => ({
+          id: r.id,
+          jobId: r.jobId,
+          toolName: r.toolName,
+          agentName: r.agentName,
+          toolInput: r.toolInput,
+          requestedAt: r.requestedAt,
+          // D'OÙ vient la demande. Le menu Chat range chaque attente dans son
+          // dossier avec ces deux champs (#135, #148) — le canal de sa
+          // conversation d'abord, celui de son job quand elle n'en a pas. La
+          // pastille d'un dossier est exactement le nombre de lignes qui le
+          // désignent.
+          jobChannel: r.jobChannel,
+          conversationChannel: r.conversationChannel,
+        })),
+      );
     } catch (err) {
-      console.error('[ApprovalsProvider] listApprovalsAction threw', err);
-      return;
+      console.error('[ApprovalsProvider] reading the pending approvals failed', err);
     }
-    if (!result.ok) return;
-    // Map the full ApprovalRow down to the minimal PendingApproval shape.
-    setPending(
-      result.data.map((r) => ({
-        id: r.id,
-        jobId: r.jobId,
-        toolName: r.toolName,
-        agentName: r.agentName,
-        toolInput: r.toolInput,
-        requestedAt: r.requestedAt,
-        // D'OÙ vient la demande. Le menu Chat range chaque attente dans son
-        // dossier avec ces deux champs (#135, #148) — le canal de sa
-        // conversation d'abord, celui de son job quand elle n'en a pas. La
-        // pastille d'un dossier est exactement le nombre de lignes qui le
-        // désignent.
-        jobChannel: r.jobChannel,
-        conversationChannel: r.conversationChannel,
-      })),
-    );
   }, []);
 
   usePolling(fetchPending, POLL_INTERVAL_MS);
