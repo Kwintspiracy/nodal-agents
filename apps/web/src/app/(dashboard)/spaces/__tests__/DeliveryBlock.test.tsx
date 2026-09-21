@@ -28,9 +28,13 @@ import {
 import type { ConversationFeed, DeliverySummary, FeedItem, Step } from '@/lib/conversation-feed.ts';
 import type { ProductionVerdict } from '@/lib/chat-or-work.ts';
 
+/** Des fichiers livrés, sans compteur : ce que la plupart des cas d'écran demandent. */
+const fichiers = (...paths: string[]) =>
+  paths.map((path) => ({ path, addedLines: 0, removedLines: 0 }));
+
 const EMPTY: DeliverySummary = {
   files: 0,
-  filePaths: [],
+  fileChanges: [],
   lines: null,
   tests: null,
   durationMs: null,
@@ -190,8 +194,8 @@ describe('deliverySummary — ce que le modèle compte', () => {
     expect(summary.files).toBe(2);
     // #135 — les chemins EUX-MÊMES, dans l'ordre d'écriture, dédoublonnés
     // comme le compte : la liste et le nombre ne peuvent plus diverger.
-    expect(summary.filePaths).toEqual(['src/a.ts', 'src/c.ts']);
-    expect(summary.files).toBe(summary.filePaths.length);
+    expect(summary.fileChanges.map((f) => f.path)).toEqual(['src/a.ts', 'src/c.ts']);
+    expect(summary.files).toBe(summary.fileChanges.length);
     expect(summary.reviews).toEqual([
       {
         name: 'Le Codeur',
@@ -370,7 +374,7 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
         summary={{
           ...EMPTY,
           files: 3,
-          filePaths: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+          fileChanges: fichiers('src/a.ts', 'src/b.ts', 'src/c.ts'),
           lines: { added: 27, removed: 2 },
           tests: { passed: 6, total: 6 },
           durationMs: 252_000,
@@ -416,7 +420,7 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock
         jobId="job-7"
-        summary={{ ...EMPTY, files: 2, filePaths: ['src/a.ts', 'apps/web/src/b.tsx'] }}
+        summary={{ ...EMPTY, files: 2, fileChanges: fichiers('src/a.ts', 'apps/web/src/b.tsx') }}
       />,
     );
     expect(html).toMatch(/class="[^"]*text-mono-12 text-feed-path[^"]*"[^>]*>src\/a\.ts</);
@@ -427,7 +431,10 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
   it('au-delà de douze fichiers, la liste s’arrête et COMPTE le reste', () => {
     const paths = Array.from({ length: 15 }, (_, i) => `src/f${i}.ts`);
     const html = renderToStaticMarkup(
-      <DeliveryBlock jobId="job-7" summary={{ ...EMPTY, files: 15, filePaths: paths }} />,
+      <DeliveryBlock
+        jobId="job-7"
+        summary={{ ...EMPTY, files: 15, fileChanges: fichiers(...paths) }}
+      />,
     );
     expect(html).toContain('src/f11.ts');
     expect(html).not.toContain('src/f12.ts');
@@ -551,7 +558,7 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
           review: 'request_changes',
           changesRequested: true,
           files: 2,
-          filePaths: ['src/a.ts', 'src/b.ts'],
+          fileChanges: fichiers('src/a.ts', 'src/b.ts'),
           tests: { passed: 2, total: 2 },
           verdict: 'green',
           checks: [{ command: 'pnpm test', ok: true }],
@@ -707,7 +714,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           ...EMPTY,
           produced: true,
           files: 2,
-          filePaths: ['a.ts', 'b.ts'],
+          fileChanges: fichiers('a.ts', 'b.ts'),
           ended: 'stopped',
         }}
         jobId={null}
@@ -888,7 +895,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           ended: null,
           live: null,
           files: 1,
-          filePaths: ['out/bilan.md'],
+          fileChanges: fichiers('out/bilan.md'),
           commands: [{ label: 'pnpm build', observed: true, purpose: null }],
         }}
         jobId={null}
@@ -901,7 +908,10 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
 
   it('ne dessine aucune section Commands quand le travail n’en a fait tourner aucune', () => {
     const html = renderToStaticMarkup(
-      <DeliveryBlock summary={{ ...EMPTY, files: 1, filePaths: ['a.md'] }} jobId={null} />,
+      <DeliveryBlock
+        summary={{ ...EMPTY, files: 1, fileChanges: fichiers('a.md') }}
+        jobId={null}
+      />,
     );
     expect(html).not.toContain('Commands');
     expect(html).not.toContain('no file change seen');

@@ -233,7 +233,15 @@ function FeedItemView({
       // et à la preuve, qui vivaient trois écrans plus bas.
       // #135 — le pied du récapitulatif ouvre le run qui l'a produit :
       // l'identifiant est DÉJÀ sur l'item, il n'avait jamais servi à l'écran.
-      return <DeliveryBlock summary={item.summary} jobId={item.jobId} status={item.status} />;
+      // #369 — le MÊME identifiant sert à charger les diffs au premier dépli.
+      return (
+        <DeliveryBlock
+          summary={item.summary}
+          jobId={item.jobId}
+          filesJobId={item.jobId}
+          status={item.status}
+        />
+      );
     case 'handoff':
       // P7 — la consigne passée au travail. Repliée dans le style des notes :
       // la demande de l'utilisateur est juste au-dessus, écrite de sa main.

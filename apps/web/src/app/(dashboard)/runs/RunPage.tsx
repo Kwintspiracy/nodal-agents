@@ -135,6 +135,10 @@ export function RunBody({ data }: { data: SpaceConversationView }) {
         <DeliveryBlock
           summary={view.delivered.summary}
           jobId={view.delivered.jobId === job.id ? null : view.delivered.jobId}
+          // #369 — les diffs se chargent depuis le travail lui-même, que le
+          // lien « Open run » soit dessiné ou non : les deux questions sont
+          // distinctes, et un run ouvert sur sa propre page doit s'ouvrir.
+          filesJobId={view.delivered.jobId}
         />
       )}
       <DeliveriesCard deliveries={data.deliveries} />
