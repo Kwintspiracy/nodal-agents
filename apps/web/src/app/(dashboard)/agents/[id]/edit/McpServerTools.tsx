@@ -42,8 +42,12 @@ export default function McpServerTools({
    * (revue Reviewer C, passe 2, Q4).
    *
    * Une règle posée ici survit au décochage de son outil dans l'onglet
-   * Connectors, et reprend effet le jour où il revient. Sans cette ligne, elle
-   * réapparaîtrait « déjà posée » sans que rien ne l'ait jamais dit.
+   * Connectors. Sans cette ligne, elle réapparaîtrait « déjà posée » le jour
+   * où l'outil revient, sans que rien ne l'ait jamais dit.
+   *
+   * La phrase dit qu'elle EXISTE, et rien de plus : promettre qu'elle
+   * « reprendra effet » serait faux d'une règle confinée à un dossier, qui ne
+   * vaut que là (revue Reviewer C, passe 3, P0-1).
    */
   hiddenWithRules: readonly string[];
 }) {
@@ -68,8 +72,8 @@ export default function McpServerTools({
           className="border-t border-rule-2 px-4 py-2.5 pl-10 text-body-12 text-ink-4"
           data-testid={`autonomy-mcp-hidden-${prefix}`}
         >
-          A rule still applies to {hiddenWithRules.join(', ')}, which this agent no longer holds. It
-          takes effect again if you give the tool back on the Connectors tab.
+          {hiddenWithRules.length === 1 ? 'A rule is' : 'Rules are'} still stored for{' '}
+          {hiddenWithRules.join(', ')}, which this agent no longer holds.
         </p>
       )}
 

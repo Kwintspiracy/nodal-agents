@@ -903,13 +903,17 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
     expect(list!.textContent).not.toContain('run_code_unsafe');
   });
 
-  it("la ligne du serveur compte ce que l'agent tient, pas ce que le serveur expose", async () => {
-    // Revue Reviewer C, passe 2, Q2 : « All 5 current tools and any added
-    // later » au-dessus de « 2 tools » faisait lire deux nombres contraires,
-    // et le runner ne donne jamais à l'agent que sa liste blanche.
+  it('la ligne du serveur dit sa portée, pas un instantané', async () => {
+    // Revue Reviewer C, passes 2 et 3 : « All 5 current tools and any added
+    // later » au-dessus de « 2 tools » faisait lire deux nombres contraires ;
+    // et compter ce que l'agent tient aujourd'hui décrirait mal une règle qui
+    // gouverne par nom, donc aussi un outil re-donné demain.
     const text = await render([], [], [{ ...MCP_SERVER, enabledTools: ['read_page'] }]);
-    expect(text).toContain('The 1 tools this agent holds from this server.');
-    expect(text).not.toContain('any added later');
+    expect(text).toContain('Every tool from this server, including any you give this agent later.');
+    // Pas de compte sur cette ligne : le motif `<prefix>__*` gouverne par nom,
+    // donc aussi un outil re-donné demain. Le compte est dans le dépli.
+    expect(text).not.toContain('current tools and any added later');
+    expect(fold().textContent).toContain('1 tool');
   });
 
   it('sans liste blanche, la ligne du serveur parle bien de tout le serveur', async () => {
@@ -937,13 +941,60 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
     await open();
     expect(
       container.querySelector('[data-testid="autonomy-mcp-hidden-cogni_cortex"]')?.textContent,
-    ).toContain('A rule still applies to run_code_unsafe, which this agent no longer holds.');
+    ).toContain('A rule is still stored for run_code_unsafe, which this agent no longer holds.');
   });
 
-  it('ne dit rien de tel quand aucune règle ne traîne', async () => {
-    await render([], [], [{ ...MCP_SERVER, enabledTools: ['read_page'] }]);
+  it('accorde la phrase quand DEUX règles traînent', async () => {
+    await render(
+      [],
+      [
+        {
+          id: 'r11',
+          toolName: 'cogni_cortex__run_code_unsafe',
+          action: 'block',
+          conditionJson: null,
+          workspaceLabel: null,
+        },
+        {
+          id: 'r12',
+          toolName: 'cogni_cortex__read_page',
+          action: 'block',
+          conditionJson: null,
+          workspaceLabel: null,
+        },
+      ],
+      // Aucun des deux outils n'est tenu par l'agent.
+      [{ ...MCP_SERVER, enabledTools: [] }],
+    );
+    await open();
+    expect(
+      container.querySelector('[data-testid="autonomy-mcp-hidden-cogni_cortex"]')?.textContent,
+    ).toContain(
+      'Rules are still stored for read_page, run_code_unsafe, which this agent no longer holds.',
+    );
+  });
+
+  it("ne dit rien de tel pour une règle posée sur un outil que l'agent tient", async () => {
+    // Revue Reviewer C, passe 3, P1-4 : l'absence seule était satisfaite par
+    // un calcul qui ne verrait plus rien. Ici une règle EXISTE, sur un outil
+    // que l'agent tient : la ligne ne doit pas se déclencher pour autant.
+    await render(
+      [],
+      [
+        {
+          id: 'r13',
+          toolName: 'cogni_cortex__read_page',
+          action: 'block',
+          conditionJson: null,
+          workspaceLabel: null,
+        },
+      ],
+      [{ ...MCP_SERVER, enabledTools: ['read_page'] }],
+    );
     await open();
     expect(container.querySelector('[data-testid="autonomy-mcp-hidden-cogni_cortex"]')).toBeNull();
+    // Et la règle est bien là, sur sa propre ligne.
+    expect(toolControl('read_page', 'block').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('sur une règle de dossier, « Follow the server » dit ce qui sera supprimé', async () => {

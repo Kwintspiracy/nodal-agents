@@ -2005,18 +2005,30 @@ export function AutonomyTab({
               const held = Array.isArray(s.enabledTools)
                 ? s.availableTools.filter((t) => s.enabledTools?.includes(t.name))
                 : s.availableTools;
+              // Par NOM et non par identité d'objet : `held` vient d'un
+              // `filter` du même tableau aujourd'hui, mais une comparaison qui
+              // dépend de cela casse en silence le jour où la liste est
+              // recopiée quelque part.
+              const heldNames = new Set(held.map((t) => t.name));
               const hiddenWithRules = s.availableTools
-                .filter((t) => !held.includes(t))
                 .map((t) => t.name)
-                .filter((name) => rules.some((r) => r.toolName === `${prefix}__${name}`));
+                .filter(
+                  (name) =>
+                    !heldNames.has(name) && rules.some((r) => r.toolName === `${prefix}__${name}`),
+                );
               return (
                 <div key={s.mcpServerId}>
                   <AutonomyToolRow
                     slug={pattern}
                     label={`${s.label} server`}
+                    // Avec une liste blanche, cette ligne ne peut pas compter :
+                    // le motif `<prefix>__*` gouverne par NOM, donc aussi un
+                    // outil re-donné demain (revue Reviewer C, passe 3, P0-3).
+                    // Elle dit la PORTÉE ; le dépli, lui, dit ce que l'agent
+                    // tient aujourd'hui.
                     summary={
                       Array.isArray(s.enabledTools)
-                        ? `The ${held.length} tools this agent holds from this server.`
+                        ? 'Every tool from this server, including any you give this agent later.'
                         : `All ${s.availableTools.length} current tools and any added later.`
                     }
                     risk="write"
