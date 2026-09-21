@@ -85,6 +85,15 @@ export function colonneDeCarte(carte) {
   return 'In progress';
 }
 
+/**
+ * Les colonnes DÉDUITES de GitHub, et elles seules.
+ *
+ * « Running » n'en fait pas partie, et c'est voulu (#340) : ses cartes ne sont
+ * ni des issues ni des PR, `colonneDeCarte` ne peut pas les produire, et
+ * `pileDuneColonne` n'aurait rien à y ranger. Cette colonne vit dans
+ * `cartesEnVol`, avec ses propres sources et sa propre façon de dire qu'une
+ * d'elles n'a pas répondu.
+ */
 export const COLONNES = ['To do', 'In progress', 'In review', 'To test', 'Done'];
 
 // ─── Le résultat d'un parcours ────────────────────────────────────────────────
@@ -613,6 +622,10 @@ export function cartesDuTableau({ issues, pr } = {}) {
       titre: p.title,
       etat: p.mergedAt ? 'MERGED' : p.state,
       url: p.url,
+      // La branche de la PR, et elle sert à UNE chose : rattacher un run de CI
+      // à son ticket (#340). Le titre d'un run de `pull_request` est le titre de
+      // la PR, qui ne nomme aucun numéro ; sa branche, elle, le désigne.
+      branche: p.headRefName ?? null,
       brouillon: p.isDraft ?? false,
       etiquettes: [],
       majLe: p.updatedAt ?? null,
@@ -2647,6 +2660,25 @@ function sourceMuette(raison) {
 }
 
 /**
+ * Le numéro de ticket qu'un titre NOMME, ou `null`.
+ *
+ * GitHub ne donne pas le ticket d'un run : il donne un titre. Sur ce dépôt, un
+ * run de `push` sur `main` porte le titre du squash, qui finit par `(#336)` ; un
+ * run de PR porte le titre de la PR, qui ne nomme souvent rien. Les deux cas
+ * sont lus, et le second rend `null` — la carte dira alors qu'elle ne connaît
+ * pas son ticket, plutôt que d'en désigner un au hasard.
+ *
+ * La forme parenthésée en fin de titre gagne : un titre comme « Fix #12 crash
+ * seen in (#340) » appartient à la PR #340, et le `#12` n'est qu'une mention.
+ */
+export function numeroDeTicket(titre) {
+  const texte = String(titre ?? '');
+  const fin = texte.match(/\(#(\d+)\)\s*$/);
+  const n = Number((fin ?? texte.match(/#(\d+)/))?.[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
  * Les runs GitHub Actions EN COURS, réduits à une ligne chacun.
  *
  * `null` en entrée = `gh` n'a pas répondu. Un tableau vide = il a répondu, et
@@ -2667,6 +2699,13 @@ export function runsEnCours(runs) {
         // qui permet de reconnaître « la CI de ma PR » d'un coup d'œil.
         quoi: r.displayTitle || r.name || 'GitHub Actions run',
         ou: r.headBranch ? `branch ${r.headBranch}` : 'GitHub Actions',
+        // Le ticket auquel ce run appartient, quand son titre le nomme. Une
+        // carte « Running » doit mener au travail, pas seulement au run (#340).
+        ticket: numeroDeTicket(r.displayTitle),
+        // La branche telle quelle, en plus de sa forme lisible : c'est par elle
+        // qu'un run de `pull_request` retrouve sa PR, dont le titre ne nomme
+        // aucun numéro.
+        branche: r.headBranch ?? null,
         depuis: r.createdAt ?? null,
         // Ce qu'il attend : une file d'attente n'est pas un travail qui avance,
         // et les confondre ferait croire la machine occupée quand elle patiente.
@@ -2715,6 +2754,7 @@ export function revuesEnCours(jobs) {
         genre: 'review',
         quoi: j.pr ? `Review pass on #${j.pr}` : 'Review pass',
         ou: j.agent ? `Nodal, ${j.agent}` : 'Nodal',
+        ticket: Number.isFinite(Number(j.pr)) ? Number(j.pr) : null,
         depuis: j.depuis ?? null,
         attend: j.statut === 'awaiting_approval' ? 'your approval' : null,
         url: null,
@@ -2743,6 +2783,9 @@ export function releaseCheckEnCours(etat) {
       genre: 'release',
       quoi: 'release:check',
       ou: etat.ou ? `this machine, ${etat.ou}` : 'this machine',
+      // Une commande locale n'appartient à aucun ticket, et lui en inventer un
+      // serait pire que de n'en montrer aucun.
+      ticket: null,
       depuis: etat.depuis,
       attend: null,
       url: null,
@@ -2775,5 +2818,101 @@ export function cequiTourne({ ci, revues, release, le }) {
     // veut rien dire, et la page doit écrire autre chose.
     complet: muettes.length === 0,
     le: le ?? null,
+  };
+}
+
+// ─── La colonne « Running » du Kanban (issue #340) ────────────────────────────
+//
+// Décision du propriétaire, 22/09/2026, sur la bande de la PR #326 : « je
+// préfère les cartes de tickets plutôt que les lignes Running now ». Une bande
+// au-dessus du tableau était un second endroit où regarder ; une colonne est le
+// premier endroit où l'œil va déjà.
+//
+// CE QUI NE CHANGE PAS, et c'est l'essentiel : une source qui n'a pas répondu se
+// DIT injoignable, sur la colonne elle-même, et ne devient jamais « nothing
+// running » (invariant #4). Une colonne vide ne veut dire « la machine dort »
+// que lorsque toutes les sources ont parlé.
+
+/** Le nom de la colonne, en un seul endroit : la page et ses tests le lisent. */
+export const COLONNE_EN_VOL = 'Running';
+
+/** Ce qu'une carte annonce d'abord, par genre de travail. */
+const GENRES_EN_VOL = { ci: 'CI', review: 'Review', release: 'Release' };
+
+/**
+ * LES CARTES DE LA COLONNE « Running », à partir de ce que les sources ont vu.
+ *
+ * Fonction PURE, et c'est la raison d'être de sa signature : elle ne parle ni à
+ * GitHub ni à Nodal, elle transforme le relevé que `cequiTourne` a produit. Un
+ * test la joue sur un objet écrit à la main, sans réseau.
+ *
+ * `cartesDuTableau` est le Kanban lui-même, et il sert à UNE chose : retrouver
+ * le ticket d'un travail en vol pour y mener. L'adresse vient de la carte
+ * RÉELLE, jamais d'une URL fabriquée à partir d'un numéro — un lien construit à
+ * la main mène à une page d'erreur dès que le dépôt change de nom. Ticket
+ * introuvable sur le tableau : la carte n'en montre aucun, et garde son lien
+ * vers le run quand il en a un.
+ *
+ * DEUX CHEMINS POUR LE TROUVER, et l'ordre compte. Le numéro que le titre nomme
+ * d'abord : sur ce dépôt un run de `push` porte le titre du squash, qui finit par
+ * `(#336)`. La branche ensuite, et elle seule couvre le cas le plus fréquent —
+ * un run de `pull_request` porte le titre de la PR, qui ne nomme aucun numéro,
+ * pendant que sa branche la désigne. Seules les PR OUVERTES sont indexées par
+ * branche : une branche se réutilise, et pointer une PR mergée il y a trois
+ * semaines serait un lien faux, pas un lien approximatif.
+ *
+ * `enVol` absent (`undefined` ou `null`) = l'instantané est plus vieux que cette
+ * lecture. C'est `absente`, pas « rien en cours ».
+ */
+export function cartesEnVol(enVol, cartesDuTableau = null) {
+  if (enVol === undefined || enVol === null) {
+    return { etat: 'absente', cartes: [], muettes: [], complet: false, le: null };
+  }
+  const duTableau = cartesDuTableau ?? [];
+  const parNumero = new Map(
+    duTableau.map((c) => [Number(c.numero), c]).filter(([n]) => Number.isFinite(n)),
+  );
+  // Les PR OUVERTES par branche. Le titre d'un run de `pull_request` est celui
+  // de la PR et ne nomme aucun numéro ; sa branche le fait. Seules les ouvertes
+  // entrent : une branche est réutilisée, et rattacher un run à une PR mergée
+  // il y a trois semaines serait un lien faux, pas un lien approximatif.
+  const parBranche = new Map();
+  for (const c of duTableau) {
+    if (c.type !== 'pr' || c.etat !== 'OPEN' || !c.branche) continue;
+    if (!parBranche.has(c.branche)) parBranche.set(c.branche, c);
+  }
+  const cartes = (enVol.lignes ?? []).map((l) => {
+    const numero = Number.isFinite(Number(l.ticket)) ? Number(l.ticket) : null;
+    // Le numéro que le titre nomme d'abord, la branche ensuite : un titre qui
+    // finit par `(#336)` désigne son ticket sans ambiguïté, une branche seulement
+    // la PR qui vit dessus.
+    const trouvee =
+      (numero === null ? undefined : parNumero.get(numero)) ??
+      (l.branche ? parBranche.get(l.branche) : undefined);
+    const ticket = trouvee ? Number(trouvee.numero) : null;
+    return {
+      genre: l.genre ?? 'other',
+      // Le libellé du genre est calculé ICI, pas dans le gabarit : c'est le seul
+      // moyen qu'un test puisse le prouver sans rendre la page entière.
+      genreDit: GENRES_EN_VOL[l.genre] ?? 'Job',
+      quoi: l.quoi ?? 'Job in flight',
+      ou: l.ou ?? '',
+      depuis: l.depuis ?? null,
+      attend: l.attend ?? null,
+      url: l.url ?? null,
+      ticket,
+      ticketUrl: trouvee?.url ?? null,
+      ticketType: trouvee?.type ?? null,
+    };
+  });
+  return {
+    etat: 'lue',
+    cartes,
+    muettes: (enVol.muettes ?? []).map((m) => ({
+      source: m.source ?? 'unknown',
+      raison: m.raison ?? 'unreachable',
+    })),
+    complet: enVol.complet === true,
+    le: enVol.le ?? null,
   };
 }

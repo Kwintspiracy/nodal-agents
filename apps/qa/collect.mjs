@@ -288,7 +288,7 @@ function chantiers() {
   // avec le reste. Comme le corps, ils ne vont pas dans le snapshot — seul
   // l'état qu'on en tire voyage.
   const CHAMPS_PR =
-    'number,title,state,isDraft,createdAt,updatedAt,mergedAt,closedAt,milestone,url,body,comments,statusCheckRollup';
+    'number,title,state,isDraft,createdAt,updatedAt,mergedAt,closedAt,milestone,url,body,comments,statusCheckRollup,headRefName';
   const deuxEtats = (famille, champs, limiteFermes) =>
     fusionnerEtats(
       j(`gh ${famille} list --state open --limit 1000 --json ${champs}`),
