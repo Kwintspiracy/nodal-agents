@@ -379,18 +379,21 @@ export type FolderThreadSource = FolderThread & { folder: string };
  * OUVERT sur le tableau de bord. La règle de la comparaison vit en un seul
  * endroit, `lib/unread.ts` ; ici, on ne fait que l'ajouter aux deux autres.
  *
- * Les trois disent la même chose à l'œil — « il y a de quoi revenir » — et
- * c'est pour cela qu'elles partagent UN point plutôt que trois signes : un
- * menu qui distinguerait « non lu » de « en attente » demanderait de lire une
- * légende avant de lire la barre latérale.
+ * Les trois partagent UN point plutôt que trois signes : un menu qui les
+ * dessinerait chacun à sa façon demanderait de lire une légende avant de lire
+ * la barre latérale.
  *
- * La COULEUR, elle, les sépare en deux depuis le 22/09/2026 : voir
- * `threadDotTone`.
+ * ⚠️ ELLES NE DISENT PLUS LA MÊME CHOSE À L'ŒIL depuis le 22/09/2026 : le
+ * point garde une seule forme mais prend DEUX couleurs, l'une pour ce qui
+ * attend une réponse et l'autre pour ce qui se passe. La règle de la couleur
+ * est `threadDotTone`, juste en dessous, et celle-ci en DÉCOULE : deux
+ * fonctions qui reliraient les mêmes trois champs chacune de leur côté
+ * finiraient par se contredire au premier champ ajouté.
  */
 export function threadCallsFor(
   thread: Pick<FolderThread, 'waiting' | 'running' | 'unread'>,
 ): boolean {
-  return thread.waiting || thread.running || thread.unread;
+  return threadDotTone(thread) !== 'repos';
 }
 
 /** Ce que le point d'un fil DIT, et donc de quelle couleur il est. */

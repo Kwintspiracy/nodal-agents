@@ -529,7 +529,8 @@ describe('threadDotTone @cap:reprendre-conversation/moteur', () => {
   });
 
   it('ne dit jamais autre chose que ce que `threadCallsFor` annonce', () => {
-    // Les deux règles lisent les mêmes trois champs : un point qui appelle a
+    // `threadCallsFor` DÉCOULE de cette règle (Reviewer C) : ce cas garde le
+    // lien vrai si quelqu'un les redétachait un jour. Un point qui appelle a
     // forcément une couleur qui se voit, et un point au repos n'en a aucune.
     for (const waiting of [false, true]) {
       for (const running of [false, true]) {
