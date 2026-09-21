@@ -49,7 +49,18 @@ function borner(texte: string): string {
   return `[truncated: kept the last ${REPAIR_BRIEF_TAIL_CHARS} characters of ${texte.length}]\n${garde}`;
 }
 
-/** Ce que le moteur shell a répondu, sans jamais confondre ses trois issues. */
+/**
+ * Ce que le moteur shell a répondu, sans jamais confondre ses trois issues.
+ *
+ * ⚠️ LES DEUX PREMIÈRES BRANCHES SONT INATTEIGNABLES AUJOURD'HUI, et c'est
+ * assumé : un `timeout` ou un `spawn_error` rendent le verdict `infra_error`
+ * (`verdictOf`, code-project.ts), jamais `red`, et seul un enregistrement
+ * ROUGE entre dans un brief. C'est ce que le plan demande — « `timeout` /
+ * `spawn_error` ⇒ `infra_error` immédiat, pas de réparation » : on ne fait pas
+ * corriger du code à cause d'une machine qui n'a pas répondu. Elles restent
+ * parce qu'écrire « Exit code: null » sur un timeout serait faux, et qu'un
+ * vérificateur à venir peut très bien rendre un rouge sur un timeout.
+ */
 function issue(record: ProofCommandRecord): string {
   if (record.outcomeKind === 'timeout') return 'Outcome: timed out (no exit code)';
   if (record.outcomeKind === 'spawn_error') return 'Outcome: could not be started (no exit code)';
