@@ -2449,6 +2449,10 @@ export function fusionnerTableauGitHub(mesure, frais) {
     // c'est l'inverse de ce qu'on lui demande. `undefined` — un vieux snapshot
     // d'avant la bande — garde ce qu'il portait, c'est-à-dire rien.
     enVol: frais?.enVol === undefined ? (mesure.enVol ?? null) : frais.enVol,
+    // Le dépôt que la page fera lire au navigateur (#363). Relu à chaque rendu,
+    // gardé quand la lecture échoue : c'est une identité, pas un état, et elle
+    // ne change qu'au renommage du dépôt.
+    depotNom: frais?.depotNom ?? mesure.depotNom ?? null,
   };
   if (!frais?.chantiers) return socle;
   return {
@@ -2820,7 +2824,13 @@ export function releaseCheckEnCours(etat) {
  * comme « la machine dort ».
  */
 export function cequiTourne({ ci, revues, release, le }) {
-  const sources = { ci, revues, release };
+  // Une source ABSENTE (`undefined`) n'est pas une source muette : elle n'est
+  // pas de ce relevé. Depuis #363, `ci` n'en est plus — les runs GitHub sont
+  // lus dans le navigateur, et une source que personne ne collecte ne doit ni
+  // peser sur `complet` ni s'afficher comme injoignable.
+  const sources = Object.fromEntries(
+    Object.entries({ ci, revues, release }).filter(([, s]) => s !== undefined),
+  );
   const lignes = [];
   for (const s of Object.values(sources)) {
     if (s?.etat === SOURCE_LUE) lignes.push(...(s.lignes ?? []));
@@ -2950,3 +2960,319 @@ export function cartesEnVol(enVol, cartesDuTableau = null) {
     le: enVol.le ?? null,
   };
 }
+
+// ─── La colonne « Running » lue DANS LE NAVIGATEUR (issue #363) ───────────────
+//
+// POURQUOI. La colonne montrait les runs GitHub en vol AU MOMENT DE LA
+// CONSTRUCTION de la page. Le portail est statique et reconstruit sur événement :
+// la colonne était donc périmée par construction. Le 21/09/2026 elle portait
+// trois runs — la CI d'un merge et le déploiement qui construisait la page —
+// longtemps après leur fin, pendant que `gh run list --status in_progress` ne
+// rendait rien.
+//
+// CE QUI CHANGE. Les runs GitHub sont lus DANS LE NAVIGATEUR, à l'ouverture de
+// la page, sur l'API publique du dépôt, sans jeton. Les deux autres sources de
+// la colonne — le drapeau `release:check` et la ligne des revues de Nodal —
+// gardent leur lecture à la construction, et la page les étiquette comme telles.
+//
+// CE QUI NE CHANGE PAS. Une lecture qui échoue se DIT, avec l'heure de la
+// tentative, et ne devient jamais une colonne vide présentée comme « rien ne
+// tourne » (invariant #4). Une colonne vide ET lue dit « nothing in flight as
+// of <heure> », ce qui n'est pas la même phrase.
+
+/**
+ * Les DEUX adresses que le navigateur lit, ou `[]` si le dépôt est inconnu.
+ *
+ * Deux appels, parce que GitHub ne rend pas dans la même requête ce qui avance
+ * et ce qui attend un runner — c'est déjà ce que faisait le collecteur, et
+ * c'est la raison d'être de `runsEnCoursDeDeuxLectures`.
+ *
+ * Le nom du dépôt n'est PAS écrit ici : il est lu à la collecte
+ * (`gh repo view --json nameWithOwner`, ou `GITHUB_REPOSITORY`) et voyage dans
+ * l'instantané. Un dépôt codé en dur serait une valeur par utilisateur
+ * (invariant #6), et une page renommée mènerait à une erreur sans le dire.
+ */
+export function urlsDesRunsEnVol(depot) {
+  const nom = typeof depot === 'string' ? depot.trim() : '';
+  if (!/^[\w.-]+\/[\w.-]+$/.test(nom)) return [];
+  const base = 'https://api.github.com/repos/' + nom + '/actions/runs';
+  return [base + '?status=in_progress&per_page=20', base + '?status=queued&per_page=20'];
+}
+
+/**
+ * Une réponse de l'API REST des runs, ramenée à la forme que `runsEnCours` lit.
+ *
+ * L'API REST et `gh run list --json` ne nomment pas les mêmes champs : l'une
+ * rend `display_title`, `head_branch`, `created_at`, `html_url`, l'autre leurs
+ * formes camel. La RÈGLE de ce qui est en vol ne doit exister qu'une fois, donc
+ * c'est la réponse qu'on traduit, pas la règle qu'on duplique.
+ *
+ * `null` dès que la réponse n'est pas un objet portant un TABLEAU
+ * `workflow_runs` : une limite d'API rend un objet `{message, documentation_url}`
+ * et un proxy rend de l'HTML. Les deux sont des silences, pas des listes vides.
+ */
+export function runsDeLApiGitHub(reponse) {
+  if (!reponse || typeof reponse !== 'object') return null;
+  const runs = reponse.workflow_runs;
+  if (!Array.isArray(runs)) return null;
+  return runs.map(function (r) {
+    return {
+      databaseId: r?.id ?? null,
+      status: r?.status ?? null,
+      name: r?.name ?? null,
+      displayTitle: r?.display_title ?? r?.name ?? null,
+      headBranch: r?.head_branch ?? null,
+      createdAt: r?.run_started_at ?? r?.created_at ?? null,
+      url: r?.html_url ?? null,
+    };
+  });
+}
+
+/**
+ * CE QUE LA COLONNE SAIT DES RUNS GITHUB après une lecture du navigateur.
+ *
+ * Trois états, et ils ne se disent pas pareil :
+ *   - `lue` : les deux appels ont rendu du JSON. `lignes` est ce qui tourne,
+ *     `le` l'heure de CETTE lecture. Une liste vide veut alors dire « rien ne
+ *     tourne », et c'est un fait.
+ *   - `gardee` : cette lecture a échoué, mais une précédente avait réussi. On
+ *     montre CELLE-LÀ, avec SA date (`le`), et on dit l'heure de la tentative
+ *     ratée (`tentee`) et sa raison. Montrer d'anciennes cartes sans leur date
+ *     serait exactement le défaut de #363.
+ *   - `muette` : cette lecture a échoué et il n'y a rien à garder. Aucune
+ *     affirmation sur ce qui tourne, et la raison est dite.
+ *
+ * `raison` passée par l'appelant l'emporte : le navigateur connaît le code HTTP
+ * (403 = la limite de 60 lectures par heure), la règle non.
+ */
+export function ciEnDirect({ enCours, enFile, le = null, precedent = null, raison = null }) {
+  const source = runsEnCoursDeDeuxLectures(runsDeLApiGitHub(enCours), runsDeLApiGitHub(enFile));
+  if (source.etat === SOURCE_LUE) {
+    return { etat: 'lue', lignes: source.lignes, le: le, raison: null, tentee: null };
+  }
+  const garde = precedent && Array.isArray(precedent.lignes) ? precedent : null;
+  return {
+    etat: garde ? 'gardee' : 'muette',
+    lignes: garde ? garde.lignes : [],
+    le: garde ? (garde.le ?? null) : null,
+    raison: raison ?? source.raison ?? 'unreachable',
+    tentee: le,
+  };
+}
+
+/**
+ * L'instantané de la construction, SANS sa part GitHub.
+ *
+ * Le collecteur ne lit plus les runs (#363), mais un instantané committé plus
+ * ancien en porte, et ce sont précisément les cartes périmées que l'issue
+ * dénonce. Les laisser passer rendrait le correctif invisible le jour où il
+ * compte le plus. La source `ci` muette part aussi : le navigateur dit
+ * lui-même ce qu'il a pu lire, et le redire à la construction ferait deux
+ * verdicts pour une seule source.
+ */
+export function sansCi(enVol) {
+  if (enVol === undefined || enVol === null) return enVol;
+  const muettes = (enVol.muettes ?? []).filter(function (m) {
+    return m?.source !== 'ci';
+  });
+  return {
+    ...enVol,
+    lignes: (enVol.lignes ?? []).filter(function (l) {
+      return l?.genre !== 'ci';
+    }),
+    muettes: muettes,
+    // Les sources qui RESTENT ont-elles toutes parlé ? Retirer `ci` de la liste
+    // sans recalculer ça aurait gardé un « + » que plus rien ne justifie.
+    complet: muettes.length === 0,
+  };
+}
+
+/** Le compte d'une colonne : un « + » dès qu'une source s'est tue. */
+export function compteEnVol(total, complet) {
+  return complet === true ? String(total) : total + '+';
+}
+
+/** L'échappement HTML du portail. Il vit ici parce que la PAGE s'en sert aussi. */
+export function echapperHtml(v) {
+  return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+/**
+ * Une date en UTC, suffixée d'un `Z`.
+ *
+ * TOUT ce que la construction date est écrit ainsi : une collecte de 23 h 30
+ * UTC s'affichait le LENDEMAIN pour qui ouvre la page depuis l'Asie.
+ */
+export function heureUtc(iso) {
+  if (!iso) return '·';
+  return (
+    new Date(iso).toLocaleString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'UTC',
+    }) + 'Z'
+  );
+}
+
+/**
+ * Une date dans le fuseau DU LECTEUR, sans `Z`.
+ *
+ * Réservée à la lecture en direct : « as of 14:02 » ne veut rien dire si
+ * l'heure n'est pas celle de la pendule qu'on a sous les yeux. L'absence de
+ * `Z` est ce qui distingue les deux à l'œil sur la page.
+ */
+export function heureLocale(iso) {
+  if (!iso) return '·';
+  return new Date(iso).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * UNE carte de la colonne « Running ».
+ *
+ * Le gabarit vit ici et NON dans `build.mjs` parce que la page le rejoue dans
+ * le navigateur à chaque lecture : deux copies du même gabarit dériveraient à
+ * la première retouche, et la colonne montrerait deux formes de carte selon la
+ * source. Fonction pure, prouvée sur un objet écrit à la main.
+ */
+export function htmlCarteEnVol(c) {
+  const ticket = c.ticketUrl
+    ? '<a class="num-ticket" href="' +
+      echapperHtml(c.ticketUrl) +
+      '" target="_blank" rel="noopener">' +
+      (c.ticketType === 'pr' ? 'PR ' : '') +
+      '#' +
+      Number(c.ticket) +
+      '</a>'
+    : '<span class="num-ticket">no ticket on the board</span>';
+  const attend = c.attend
+    ? '<span class="pastille pastille--inconnu">waiting for ' + echapperHtml(c.attend) + '</span>'
+    : '';
+  const depuis = c.depuis ? ' · since ' + echapperHtml(heureUtc(c.depuis)) : '';
+  const run = c.url
+    ? '<a class="carte-en-vol__lien" href="' +
+      echapperHtml(c.url) +
+      '" target="_blank" rel="noopener">Open the run</a>'
+    : '';
+  return (
+    '<article class="carte-en-vol carte-en-vol--' +
+    echapperHtml(c.genre) +
+    '"><span class="carte-en-vol__tete">' +
+    ticket +
+    '<span class="etiq etiq--gris">' +
+    echapperHtml(c.genreDit) +
+    '</span>' +
+    attend +
+    '</span><span class="carte-en-vol__titre">' +
+    echapperHtml(c.quoi) +
+    '</span><span class="carte-en-vol__ou">' +
+    echapperHtml(c.ou) +
+    depuis +
+    '</span>' +
+    run +
+    '</article>'
+  );
+}
+
+/**
+ * LA PART DIRECTE de la colonne, rendue à partir d'une lecture du navigateur.
+ *
+ * C'est la fonction que la page exécute à chaque rafraîchissement, et c'est la
+ * même que les tests éprouvent : elle est INSCRITE dans le bloc de script, pas
+ * recopiée.
+ *
+ * Les trois phrases du vide disent trois choses différentes, et c'est tout
+ * l'objet de #363 : « rien ne tourne, GitHub a répondu à telle heure »,
+ * « GitHub n'a pas répondu, voici la dernière lecture qui a marché et sa
+ * date », « GitHub n'a pas répondu et je ne sais rien ».
+ */
+export function htmlDirectEnVol(etat, cartesDuTableau = null) {
+  const v = cartesEnVol(
+    {
+      lignes: etat.lignes ?? [],
+      muettes: [],
+      complet: etat.etat === 'lue',
+      le: etat.le ?? null,
+    },
+    cartesDuTableau,
+  );
+  const cartes = v.cartes.map(htmlCarteEnVol).join('');
+  if (etat.etat === 'lue') {
+    const asof =
+      '<p class="fenetre en-vol__asof">GitHub runs as of ' +
+      echapperHtml(heureLocale(etat.le)) +
+      ', your time.</p>';
+    if (v.cartes.length) return asof + cartes;
+    return (
+      asof +
+      '<p class="vide"><b>Nothing in flight as of ' +
+      echapperHtml(heureLocale(etat.le)) +
+      '.</b> GitHub answered.</p>'
+    );
+  }
+  const suite =
+    etat.etat === 'gardee'
+      ? ' Below is the last read that worked, from ' +
+        echapperHtml(heureLocale(etat.le)) +
+        ', and it may be out of date.'
+      : ' Nothing is claimed about what runs on GitHub.';
+  const dit =
+    '<p class="vide en-vol__silence"><b>GitHub did not answer</b> at ' +
+    echapperHtml(heureLocale(etat.tentee)) +
+    ', your time: ' +
+    echapperHtml(etat.raison) +
+    '.' +
+    suite +
+    '</p>';
+  return etat.etat === 'gardee' ? dit + cartes : dit;
+}
+
+/**
+ * LE SCRIPT DE LA COLONNE, inscrit tel quel dans la page.
+ *
+ * Les fonctions voyagent par `String(fn)` : la page exécute EXACTEMENT ce que
+ * les tests éprouvent, et non une copie qui dériverait au premier changement.
+ * C'est déjà la façon dont `releaseDuHash` et `hashDeLaRelease` voyagent.
+ *
+ * Les constantes qu'elles lisent sont réinscrites en littéral : une fonction
+ * détachée de son module ne voit plus les `const` du module.
+ *
+ * Aucune dépendance, aucun bundler, aucun jeton : le portail reste une page
+ * statique qu'on ouvre depuis un fichier.
+ */
+export const SCRIPT_EN_VOL = [
+  'var SOURCE_LUE = ' + JSON.stringify(SOURCE_LUE) + ';',
+  'var SOURCE_MUETTE = ' + JSON.stringify(SOURCE_MUETTE) + ';',
+  'var GENRES_EN_VOL = ' + JSON.stringify(GENRES_EN_VOL) + ';',
+  String(echapperHtml),
+  String(heureUtc),
+  String(heureLocale),
+  String(numeroLu),
+  String(numeroDeTicket),
+  String(mentionDeTicket),
+  String(sourceLue),
+  String(sourceMuette),
+  String(runsEnCours),
+  String(runsEnCoursDeDeuxLectures),
+  String(runsDeLApiGitHub),
+  String(ciEnDirect),
+  String(cartesEnVol),
+  String(compteEnVol),
+  String(htmlCarteEnVol),
+  String(htmlDirectEnVol),
+]
+  .join('\n')
+  // Une balise fermante de script dans un littéral couperait le bloc au milieu
+  // du code. Il n'y en a aucune aujourd'hui, et cette garde fait qu'il n'y en
+  // aura jamais par accident (le portail a déjà perdu une page ainsi, PR #78).
+  .replace(/<\/script/gi, '<\\/script');

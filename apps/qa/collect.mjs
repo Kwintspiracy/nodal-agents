@@ -41,7 +41,6 @@ import {
   HORS_MESURE,
   etatDeMesure,
   repartitionDeLaMesure,
-  runsEnCoursDeDeuxLectures,
   revuesEnCours,
   releaseCheckEnCours,
   cequiTourne,
@@ -452,16 +451,30 @@ function deploiement() {
 function execution() {
   const id = process.env['GITHUB_RUN_ID'] ?? null;
   if (!id) return null;
+  const depot = nomDuDepot();
+  return { id, url: depot ? `https://github.com/${depot}/actions/runs/${id}` : null };
+}
+
+/**
+ * Le dépôt, sous la forme `proprietaire/nom`, ou `null`.
+ *
+ * Lu, jamais écrit en dur : c'est une valeur par utilisateur (invariant #6), et
+ * un dépôt renommé ferait mentir toutes les adresses construites avec. Deux
+ * chemins, parce que `gh` peut échouer là où `GITHUB_REPOSITORY` répond
+ * toujours sous Actions.
+ *
+ * Depuis #363 il ne sert plus seulement aux liens des runs : c'est lui que la
+ * page donne au navigateur pour qu'il lise l'API publique des runs. Sans lui,
+ * la colonne dit qu'elle ne sait pas quel dépôt lire, et ne devine pas.
+ */
+function nomDuDepot() {
   let depot = null;
   try {
     depot = JSON.parse(sh('gh repo view --json nameWithOwner') || 'null')?.nameWithOwner ?? null;
   } catch {
     depot = null;
   }
-  // Le dépôt vient aussi de l'environnement d'Actions : `gh` peut échouer, pas
-  // `GITHUB_REPOSITORY`.
-  depot = depot ?? process.env['GITHUB_REPOSITORY'] ?? null;
-  return { id, url: depot ? `https://github.com/${depot}/actions/runs/${id}` : null };
+  return depot ?? process.env['GITHUB_REPOSITORY'] ?? null;
 }
 
 // ─── 8. Les capacités du produit, et ce qui les prouve ────────────────────────
@@ -597,42 +610,18 @@ function memoire(essais, le, execution) {
 // là que se prouve qu'une source muette ne devient jamais « rien en cours ».
 
 /**
- * Les runs GitHub Actions en cours.
+ * LES RUNS GITHUB NE SONT PLUS LUS ICI (#363), et c'est le cœur du correctif.
  *
- * DEUX APPELS, UNE SEULE SOURCE. GitHub ne rend pas les runs qui avancent et
- * ceux qui attendent un runner dans la même requête ; la bande, elle, n'a qu'une
- * ligne pour dire si elle a vu GitHub.
+ * Le portail est une page statique reconstruite sur événement : un run lu à la
+ * construction est déjà fini quand quelqu'un ouvre la page. Le 21/09/2026 la
+ * colonne en portait trois, longtemps après leur fin, pendant que
+ * `gh run list --status in_progress` ne rendait rien.
  *
- * ⚠️ IL SUFFIT QU'UN SEUL DES DEUX SE TAISE POUR QUE LA SOURCE SOIT MUETTE, et
- * c'est un constat de la revue C de cette PR. `sh` avale toute erreur et rend la
- * chaîne vide : si le premier appel répond et que le second tombe (jeton
- * expiré, réseau coupé entre les deux), les runs en file disparaissaient en
- * silence pendant que la bande affirmait avoir tout lu. Une réponse à moitié
- * n'est pas une réponse (invariant #4).
+ * La lecture vit désormais dans le NAVIGATEUR, sur l'API publique du dépôt
+ * (`lib.mjs`, `ciEnDirect` et `SCRIPT_EN_VOL`). Le collecteur ne garde que les
+ * deux sources qui n'ont pas d'autre horloge que la sienne : le drapeau
+ * `release:check`, posé sur cette machine, et la ligne des revues de Nodal.
  */
-function runsGitHubEnCours() {
-  const champs = 'databaseId,status,name,displayTitle,headBranch,createdAt,url';
-  const lire = (statut) => {
-    const texte = sh(`gh run list --status ${statut} --limit 20 --json ${champs}`);
-    if (!texte) return null;
-    try {
-      const v = JSON.parse(texte);
-      // Un `gh` qui répond autre chose que du JSON n'a pas répondu non plus :
-      // le rendre « lu, vide » serait la même approximation.
-      return Array.isArray(v) ? v : null;
-    } catch {
-      return null;
-    }
-  };
-  const enCours = lire('in_progress');
-  const enFile = lire('queued');
-  if (enCours === null || enFile === null) {
-    console.warn('[qa] GitHub did not answer on the runs in flight, that source is MISSING.');
-  }
-  // La RÈGLE vit dans `lib.mjs`, où elle se teste : ici il ne reste que les deux
-  // lectures et le message.
-  return runsEnCoursDeDeuxLectures(enCours, enFile);
-}
 
 /**
  * Les passes de revue que Nodal fait tourner.
@@ -670,10 +659,15 @@ function releaseCheckDuDepot() {
   }
 }
 
-/** Ce qui tourne, les trois sources réunies. */
+/**
+ * Ce qui tourne, pour les sources QUE CETTE MACHINE EST SEULE À CONNAÎTRE.
+ *
+ * `ci` n'est plus passée du tout (#363) : elle est lue dans le navigateur. Un
+ * `ci: null` aurait été pire que son absence — le relevé aurait annoncé une
+ * source injoignable pendant que la page, elle, la lisait très bien.
+ */
 function enVol() {
   return cequiTourne({
-    ci: runsGitHubEnCours(),
     revues: revuesDeNodal(),
     release: releaseCheckDuDepot(),
     le: new Date().toISOString(),
@@ -687,6 +681,10 @@ function rafraichirGitHub() {
   const chemin = join(DATA, 'snapshot.json');
   const frais = {
     chantiers: chantiers(),
+    // Le dépôt, relu ici aussi : c'est lui que la page donne au navigateur pour
+    // lire l'API publique des runs (#363), et il doit survivre à un instantané
+    // committé avant ce correctif.
+    depotNom: nomDuDepot(),
     prixCi: prixCi(),
     release: release(),
     deploiement: deploiement(),
@@ -814,8 +812,11 @@ function main() {
     // Quand le site a été déployé pour la dernière fois, et ce qui est arrivé
     // aux runs depuis (#306).
     deploiement: deploiement(),
-    // Ce qui TOURNE au moment de la collecte (#296).
+    // Ce qui TOURNE au moment de la collecte (#296), sans les runs GitHub :
+    // ceux-là sont lus dans le navigateur (#363).
     enVol: enVol(),
+    // Le dépôt que la page fera lire au navigateur (#363).
+    depotNom: nomDuDepot(),
   };
 
   writeFileSync(join(DATA, 'snapshot.json'), JSON.stringify(snapshot, null, 2));

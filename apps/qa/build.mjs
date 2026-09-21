@@ -31,6 +31,12 @@ import {
   MOT_MESURE,
   cartesEnVol,
   COLONNE_EN_VOL,
+  sansCi,
+  echapperHtml,
+  heureUtc,
+  htmlCarteEnVol,
+  urlsDesRunsEnVol,
+  SCRIPT_EN_VOL,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
@@ -120,11 +126,10 @@ const modaleExplications = () => `<dialog id="explication" class="modale">
   ).replace(/</g, '\\u003c')};
 </script>`;
 
-const esc = (v) =>
-  String(v ?? '').replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
-  );
+// L'échappement et la date UTC vivent dans `lib.mjs` depuis #363 : la page les
+// rejoue dans le navigateur, et deux copies auraient divergé au premier
+// changement. Les noms courts restent, ils sont partout dans ce fichier.
+const esc = echapperHtml;
 const n = (v) => (typeof v === 'number' ? v.toLocaleString('en-GB') : '·');
 
 /**
@@ -167,17 +172,7 @@ const jourFr = (iso) =>
   iso
     ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', ...EN_UTC })
     : '·';
-const dateFr = (iso) =>
-  iso
-    ? `${new Date(iso).toLocaleString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        ...EN_UTC,
-      })}Z`
-    : '·';
+const dateFr = heureUtc;
 
 // ─── Écarts : la liste qui dit quoi faire, classée par ce que ça coûte ────────
 
@@ -1019,7 +1014,7 @@ function cadreDeploiement() {
 }
 
 /**
- * LA COLONNE « Running » DU KANBAN (issue #340, après la bande de #296).
+ * LA COLONNE « Running » DU KANBAN (issue #340, puis #363).
  *
  * POURQUOI ELLE EXISTE. Le 20/09/2026 au matin, le propriétaire a regardé ce
  * tableau et dit : « je ne vois plus rien d'actif sur le Kanban, et pourtant tu
@@ -1028,11 +1023,14 @@ function cadreDeploiement() {
  * passes de revue tournaient au même instant. Rien de tout cela n'est une issue
  * ni une PR, donc rien n'en avait de carte.
  *
- * POURQUOI UNE COLONNE ET PLUS UNE BANDE. Décision du propriétaire, 22/09/2026 :
- * « je préfère les cartes de tickets plutôt que les lignes Running now ». Une
- * bande au-dessus du tableau était un second endroit où regarder ; la première
- * colonne est là où l'œil va déjà, et un travail en vol se lit alors dans la
- * même forme que le reste du tableau.
+ * POURQUOI ELLE EST COUPÉE EN DEUX (#363). Le portail est statique et
+ * reconstruit sur événement : un run GitHub lu à la construction est déjà fini
+ * quand quelqu'un ouvre la page. Le 21/09/2026 la colonne en portait trois,
+ * longtemps après leur fin. Les runs sont donc lus DANS LE NAVIGATEUR, à
+ * l'ouverture puis toutes les deux minutes ; le reste — le drapeau
+ * `release:check`, la ligne des revues de Nodal — garde sa lecture à la
+ * construction, ET LA PAGE LE DIT (« at build time … »). Deux moitiés, deux
+ * heures, jamais une seule date pour les deux.
  *
  * LA RÈGLE N'A PAS CHANGÉ D'UN MOT : une source qui n'a pas répondu se DIT
  * injoignable, ICI, sur la colonne elle-même, jamais « nothing running »
@@ -1048,55 +1046,80 @@ function cadreDeploiement() {
  * classe `ticket`, chaque filtre aurait vidé cette colonne.
  */
 function colonneEnVol() {
-  const v = cartesEnVol(s.enVol, s.chantiers?.cartes ?? null);
-  const entete = (compte, note) =>
-    `<header><h3>${COLONNE_EN_VOL}</h3><span class="compte">${compte}</span></header>${note}`;
+  // Les runs GitHub d'un instantané ANTÉRIEUR à #363 sont retirés : ce sont
+  // exactement les cartes périmées que l'issue dénonce, et les laisser passer
+  // rendrait le correctif invisible le jour où il compte.
+  const v = cartesEnVol(sansCi(s.enVol), s.chantiers?.cartes ?? null);
+  // La part directe est vide au rendu : personne n'a encore lu GitHub. Elle ne
+  // dit donc RIEN de ce qui tourne, elle dit qu'elle va regarder.
+  const direct = `<div id="en-vol-direct" class="en-vol__direct">
+      <p class="vide en-vol__silence"><b>GitHub runs: not read yet.</b> This column reads the GitHub runs API from your browser when the page opens, then every two minutes.</p>
+    </div>`;
+  // Le compte part à « ? » : le total dépend d'une lecture qui n'a pas encore
+  // eu lieu, et un chiffre nu se lirait comme un total. Le script l'écrit.
+  const entete = `<header><h3>${COLONNE_EN_VOL}</h3><span class="compte" id="en-vol-compte">?</span></header>`;
   if (v.etat === 'absente') {
     return `<section class="colonne colonne--en-vol">
-      ${entete('?', '')}
-      <div class="pile"><p class="vide en-vol__silence"><b>Jobs in flight: not collected.</b> This measurement predates the check, so nothing is claimed about what runs.</p></div>
+      ${entete}
+      <div class="pile">
+        ${direct}
+        <div class="en-vol__construit">
+          <p class="vide en-vol__silence"><b>The local jobs: not collected.</b> This measurement predates the check, so nothing is claimed about the release check or the Nodal reviews.</p>
+        </div>
+      </div>
     </section>`;
   }
-  const lu = v.le ? `<p class="fenetre">read at ${esc(dateFr(v.le))}</p>` : '';
+  const lu = `<p class="fenetre">the release check and the Nodal reviews, at build time ${esc(dateFr(v.le ?? s.tableauLe ?? s.genereLe))}</p>`;
   const silence = v.muettes.length
-    ? `<p class="vide en-vol__silence"><b>${v.muettes.length} source${v.muettes.length > 1 ? 's' : ''} did not answer</b>: ${v.muettes.map((m) => esc(m.raison)).join('; ')}. Something may be running there without showing here.</p>`
+    ? `<p class="vide en-vol__silence"><b>${v.muettes.length} source${v.muettes.length > 1 ? 's' : ''} did not answer</b> at build time: ${v.muettes.map((m) => esc(m.raison)).join('; ')}. Something may be running there without showing here.</p>`
     : '';
-  // Le compte porte un « + » quand une source s'est tue : un chiffre nu se lit
-  // comme un total, et « 0 » se lirait comme « rien ne tourne ».
-  const compte = v.complet ? String(v.cartes.length) : `${v.cartes.length}+`;
-  const carte = (c) => {
-    // Le ticket vient du TABLEAU, avec sa vraie adresse. Sans ticket connu, la
-    // carte le dit et mène au run : un lien fabriqué à partir d'un numéro serait
-    // faux le jour où le dépôt change de nom.
-    const ticket = c.ticketUrl
-      ? `<a class="num-ticket" href="${esc(c.ticketUrl)}" target="_blank" rel="noopener">${c.ticketType === 'pr' ? 'PR ' : ''}#${Number(c.ticket)}</a>`
-      : `<span class="num-ticket">no ticket on the board</span>`;
-    const attend = c.attend
-      ? `<span class="pastille pastille--inconnu">waiting for ${esc(c.attend)}</span>`
-      : '';
-    const depuis = c.depuis ? ` · since ${esc(dateFr(c.depuis))}` : '';
-    const run = c.url
-      ? `<a class="carte-en-vol__lien" href="${esc(c.url)}" target="_blank" rel="noopener">Open the run</a>`
-      : '';
-    return `<article class="carte-en-vol carte-en-vol--${esc(c.genre)}">
-      <span class="carte-en-vol__tete">${ticket}<span class="etiq etiq--gris">${esc(c.genreDit)}</span>${attend}</span>
-      <span class="carte-en-vol__titre">${esc(c.quoi)}</span>
-      <span class="carte-en-vol__ou">${esc(c.ou)}${depuis}</span>
-      ${run}
-    </article>`;
-  };
   // Les deux phrases du vide, et elles ne disent pas la même chose : l'une est
   // un constat, l'autre un aveu.
   const vide = v.complet
-    ? '<p class="vide"><b>Nothing running.</b> Every source answered.</p>'
-    : '<p class="vide"><b>Nothing running in what could be read.</b></p>';
+    ? '<p class="vide"><b>No local job at build time.</b> Every source answered.</p>'
+    : '<p class="vide"><b>No local job in what could be read at build time.</b></p>';
   return `<section class="colonne colonne--en-vol">
-    ${entete(compte, lu)}
+    ${entete}
     <div class="pile">
-      ${v.cartes.length ? v.cartes.map(carte).join('') : vide}
-      ${silence}
+      ${direct}
+      <div class="en-vol__construit">
+        ${lu}
+        ${v.cartes.length ? v.cartes.map(htmlCarteEnVol).join('') : vide}
+        ${silence}
+      </div>
     </div>
   </section>`;
+}
+
+/**
+ * CE QUE LA PAGE DONNE AU NAVIGATEUR pour lire GitHub elle-même (#363).
+ *
+ * Trois choses, et rien de plus : les deux adresses à lire, le tableau réduit
+ * aux champs dont une carte a besoin pour mener à son ticket, et ce que la part
+ * construite a déjà compté. Le corps des issues et des PR ne passe pas ici —
+ * la page est publiée, et le snapshot ne porte déjà que les cartes.
+ *
+ * Le dépôt VIENT DE LA COLLECTE. Absent, les adresses sont vides et la colonne
+ * dit qu'elle ne sait pas quel dépôt lire : elle ne devine pas (invariant #4),
+ * et aucun nom de dépôt n'est écrit en dur (invariant #6).
+ */
+function chargeEnVol() {
+  const v = cartesEnVol(sansCi(s.enVol), null);
+  const tableau = (s.chantiers?.cartes ?? []).map((c) => ({
+    numero: c.numero,
+    url: c.url,
+    type: c.type,
+    etat: c.etat,
+    branche: c.branche ?? null,
+  }));
+  const charge = {
+    urls: urlsDesRunsEnVol(s.depotNom ?? null),
+    tableau,
+    construit: { cartes: v.etat === 'lue' ? v.cartes.length : 0, complet: v.complet === true },
+  };
+  // Même garde que les explications : une charge qui cite une balise fermante
+  // de script couperait le bloc en deux et tuerait la page (PR #78).
+  return JSON.stringify(charge).replace(/</g, '\\u003c');
 }
 
 /**
@@ -1591,6 +1614,13 @@ tr:last-child td{border-bottom:0}
 .carte-en-vol__lien{font-size:12px;color:var(--encre2)}
 .en-vol__silence{line-height:1.5}
 .en-vol__silence b{font-family:Archivo,sans-serif;color:var(--encre2)}
+/* Les DEUX moities de la colonne (#363) : ce que le navigateur vient de lire
+   sur GitHub, et ce qui a ete lu a la construction. Elles portent chacune leur
+   heure, et le filet les separe pour qu'aucune des deux ne se lise sous la date
+   de l'autre. */
+.en-vol__direct,.en-vol__construit{display:flex;flex-direction:column;gap:10px}
+.en-vol__construit{padding-top:12px;border-top:1px dashed var(--regle)}
+.en-vol__asof{color:var(--accent)}
 
 /* ── Kanban ── */
 .rappel{border-left:3px solid var(--accent);padding:2px 0 2px 18px;margin:0 0 30px;
@@ -1790,6 +1820,9 @@ td.dette{color:var(--ko);font-weight:600}
 </div>
 ${modaleExplications()}
 <script>
+  window.__EN_VOL = ${chargeEnVol()};
+</script>
+<script>
 (function(){
   var vues = document.querySelectorAll('.vue');
   var liens = document.querySelectorAll('#nav a');
@@ -1857,6 +1890,76 @@ ${modaleExplications()}
     modale.showModal();
     corps.scrollTop = 0;
   }
+
+  // ─── La colonne « Running » lit GitHub, ICI, maintenant (#363) ──────────────
+  //
+  // Les fonctions ci-dessous sont INSCRITES depuis lib.mjs : la page exécute
+  // exactement celles que les tests éprouvent. Deux appels par lecture, une
+  // lecture toutes les deux minutes tant que l'onglet est visible, jamais en
+  // boucle serrée : l'API publique de GitHub donne 60 requêtes par heure et par
+  // adresse IP, sans jeton.
+  ${SCRIPT_EN_VOL}
+
+  (function(){
+    var zone = document.getElementById('en-vol-direct');
+    var compte = document.getElementById('en-vol-compte');
+    if(!zone) return;
+    var charge = window.__EN_VOL || { urls: [], tableau: [], construit: { cartes: 0, complet: false } };
+    var construit = charge.construit || { cartes: 0, complet: false };
+    // La dernière lecture qui a RÉUSSI, avec sa date. C'est elle qu'on garde
+    // quand GitHub se tait, et elle ne s'affiche jamais sans son heure.
+    var precedent = null;
+    var enCours = false;
+    var derniereTentative = 0;
+
+    function peindre(etat){
+      zone.innerHTML = htmlDirectEnVol(etat, charge.tableau);
+      if(!compte) return;
+      var total = construit.cartes + (etat.lignes ? etat.lignes.length : 0);
+      compte.textContent = compteEnVol(total, construit.complet && etat.etat === 'lue');
+    }
+
+    // Une réponse, ou la RAISON de son absence. Le code HTTP est dit tel quel :
+    // 403 sur cette API, c'est la limite horaire, et le lecteur a le droit de
+    // le savoir plutôt que de lire « network error ».
+    function lireUne(url){
+      return fetch(url, { headers: { Accept: 'application/vnd.github+json' } })
+        .then(function(r){
+          if(!r.ok) return { erreur: 'HTTP ' + r.status + ' from the GitHub runs API' + (r.status === 403 || r.status === 429 ? ' (the 60 reads per hour limit, most likely)' : '') };
+          return r.json().catch(function(){ return { erreur: 'the GitHub runs API did not answer with JSON' }; });
+        })
+        .catch(function(e){ return { erreur: 'the browser could not reach the GitHub runs API (' + ((e && e.message) || 'network') + ')' }; });
+    }
+
+    function lire(){
+      if(enCours) return;
+      var le = new Date().toISOString();
+      derniereTentative = Date.now();
+      if(!charge.urls || charge.urls.length !== 2){
+        // Le dépôt n'a pas été collecté : on ne le devine pas, et on ne laisse
+        // pas croire que rien ne tourne.
+        peindre(ciEnDirect({ enCours: null, enFile: null, le: le, precedent: precedent, raison: 'the portal does not know which repository to read' }));
+        return;
+      }
+      enCours = true;
+      Promise.all([lireUne(charge.urls[0]), lireUne(charge.urls[1])]).then(function(r){
+        var raison = (r[0] && r[0].erreur) || (r[1] && r[1].erreur) || null;
+        var etat = ciEnDirect({ enCours: r[0], enFile: r[1], le: le, precedent: precedent, raison: raison });
+        if(etat.etat === 'lue') precedent = { lignes: etat.lignes, le: etat.le };
+        peindre(etat);
+        enCours = false;
+      });
+    }
+
+    lire();
+    setInterval(function(){ if(!document.hidden) lire(); }, 120000);
+    // Revenir sur l'onglet relit, mais pas plus souvent que l'intervalle : un
+    // va-et-vient entre deux onglets épuiserait le quota en quelques minutes.
+    document.addEventListener('visibilitychange', function(){
+      if(!document.hidden && Date.now() - derniereTentative >= 120000) lire();
+    });
+  })();
+
   document.querySelectorAll('[data-explique]').forEach(function(b){
     b.addEventListener('click', function(){ ouvrir(b.getAttribute('data-explique')); });
   });
