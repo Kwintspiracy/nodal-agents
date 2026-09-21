@@ -63,9 +63,10 @@ const STATUS_TO_VARIANT: Record<string, StatusVariant> = {
  *
  * LE PLI (Quentin, 21/09). Une demande en attente s'ouvre : elle attend une
  * réponse, donc tout ce qui sert à décider est visible, « Tool input » mis à
- * part. Une demande tranchée est une archive : elle tient sur deux lignes, et
- * son caret rouvre la carte entière. `defaultOpen` est la seule exception, et
- * elle vient de la page, jamais de l'URL lue ici.
+ * part. Une demande tranchée est une archive : elle tient sur deux lignes. Le
+ * caret de la ligne d'agent range et rend la carte ENTIÈRE dans les deux cas,
+ * boutons compris : il n'y a qu'un pli. `defaultOpen` est la seule exception,
+ * et elle vient de la page, jamais de l'URL lue ici.
  */
 export default function ApprovalRequestCard({
   approval,
@@ -111,12 +112,14 @@ export default function ApprovalRequestCard({
   /**
    * Carte repliée à 100 % : il ne reste que l'en-tête et la ligne d'agent.
    *
-   * Le caret ne replie QUE le bloc de demande sur une demande en attente — le
-   * pied de boutons et les règles doivent rester joignables tant qu'il y a
-   * quelque chose à répondre. Sur une demande tranchée, il n'y a plus rien à
-   * répondre : le même caret range alors la carte entière.
+   * UN SEUL PLI (Quentin, 21/09). Le caret range TOUT ce qui est sous la ligne
+   * d'agent — bloc de demande, « Tool input », règles, note de décision, pied de
+   * boutons — que la demande attende ou non. Deux états de pli selon le statut
+   * donnaient deux cartes différentes sous le même chevron : un clic repliait
+   * une archive entière et, sur la carte d'à côté, laissait règles et boutons
+   * en place.
    */
-  const folded = !pending && !requestOpen;
+  const folded = !requestOpen;
 
   if (statutVu !== a.status) {
     setStatutVu(a.status);
@@ -125,14 +128,14 @@ export default function ApprovalRequestCard({
   }
 
   /**
-   * Plier ou déplier. Replier une carte TRANCHÉE la range entièrement, « Tool
-   * input » compris : un pli annoncé à 100 % qui garderait un bloc ouvert sous
-   * lui le rouvrirait au clic suivant, sans que rien ne l'ait demandé.
+   * Plier ou déplier. Replier range la carte entièrement, « Tool input »
+   * compris : un pli annoncé à 100 % qui garderait un bloc ouvert sous lui le
+   * rouvrirait au clic suivant, sans que rien ne l'ait demandé.
    */
   function toggleRequest() {
     const next = !requestOpen;
     setRequestOpen(next);
-    if (!next && !pending) setInputOpen(false);
+    if (!next) setInputOpen(false);
   }
 
   /**
@@ -257,7 +260,15 @@ export default function ApprovalRequestCard({
       {/* Ce qui est demande, et ou aller le voir tourner. */}
       <div className="flex items-center justify-between gap-3 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
-          <ShieldCheck size={16} className="shrink-0 text-ink-3" aria-hidden />
+          {/* Le bouclier porte la couleur d'alerte du dessin (DS, token
+              `color/warn`) : c'est l'objet qui signale une demande, pas une
+              icône décorative. */}
+          <ShieldCheck
+            size={16}
+            className="shrink-0 text-warn"
+            aria-hidden
+            data-testid="approval-shield"
+          />
           <span className="truncate text-medium-14 text-ink">
             {question ? question.question : toolDisplayName(a.toolName)}
           </span>
@@ -460,8 +471,9 @@ export default function ApprovalRequestCard({
         </div>
       )}
 
-      {/* La decision. Aucun bouton n'ecrit de regle, sauf celui qui le dit. */}
-      {pending && (
+      {/* La decision. Aucun bouton n'ecrit de regle, sauf celui qui le dit.
+          Repliee, la carte n'offre rien a cliquer : on la rouvre d'abord. */}
+      {pending && !folded && (
         <div className="flex flex-col gap-3 border-t border-rule-2 px-4 pb-6 pt-6.5">
           {question ? (
             <QuestionActions approvalId={a.id} options={question.options} />
