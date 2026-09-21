@@ -233,3 +233,114 @@ describe('la chaîne d’une demande SANS agent @cap:approuver-une-action/moteur
     ).toEqual([{ tool: 'mcp_orphan__read', scope: 'entity', wins: true }]);
   });
 });
+
+describe("l'onglet Approvals reçoit la condition, pas seulement l'action @cap:regler-autonomie/moteur", () => {
+  // Issue #361 : `listAgentApprovalRulesAction` ne renvoyait que
+  // (id, toolName, action). Une règle « approuvée seulement dans Dev »
+  // arrivait donc à l'écran indiscernable d'une permission globale.
+
+  async function lireRegle(toolName: string) {
+    const { listAgentApprovalRulesAction } = await import('../actions.ts');
+    const r = await listAgentApprovalRulesAction(seed.agentId);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error(r.message);
+    return r.data.find((x) => x.toolName === toolName);
+  }
+
+  it('rend la condition et le LIBELLÉ du dossier, pas son chemin', async () => {
+    expect((await poserRegleDossier('mcp_x__lu')).ok).toBe(true);
+    const regle = await lireRegle('mcp_x__lu');
+    expect(regle).toBeDefined();
+    expect(regle!.conditionJson).toEqual({ workspacePath: FOLDER });
+    // « nodal » est le label du dossier dans agent_workspaces, pose au beforeAll.
+    expect(regle!.workspaceLabel).toBe('nodal');
+  });
+
+  it("rend null sur une règle sans condition, et rien d'autre ne change", async () => {
+    const { setAgentApprovalRuleAction } = await import('../actions.ts');
+    expect(
+      (
+        await setAgentApprovalRuleAction({
+          agentId: seed.agentId,
+          toolName: 'mcp_x__sans_condition',
+          action: 'block',
+          scope: 'agent',
+        })
+      ).ok,
+    ).toBe(true);
+
+    const regle = await lireRegle('mcp_x__sans_condition');
+    expect(regle!.action).toBe('block');
+    expect(regle!.conditionJson).toEqual({});
+    expect(regle!.workspaceLabel).toBeNull();
+  });
+
+  it('tranche entre deux libellés visant le MÊME dossier, toujours de la même façon', async () => {
+    // `agent_workspaces` n'est unique que sur (agent_id, label) : deux
+    // libellés peuvent viser un seul chemin. Sans ordre total, le libellé
+    // affiché changeait d'une lecture à l'autre (revue Reviewer C, passes 2
+    // et 3). C'est le premier dans l'ordre du propriétaire, puis le libellé.
+    const { setAgentApprovalRuleAction } = await import('../actions.ts');
+    const PARTAGE = 'D:\APPS\Partage';
+    await testDb.insert(agentWorkspaces).values([
+      {
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+        label: 'second',
+        path: PARTAGE,
+        position: 7,
+      },
+      {
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+        label: 'premier',
+        path: PARTAGE,
+        position: 2,
+      },
+    ]);
+    expect(
+      (
+        await setAgentApprovalRuleAction({
+          agentId: seed.agentId,
+          toolName: 'mcp_x__partage',
+          action: 'auto_approve',
+          scope: 'agent',
+          workspacePath: PARTAGE,
+        })
+      ).ok,
+    ).toBe(true);
+
+    const regle = await lireRegle('mcp_x__partage');
+    expect(regle!.workspaceLabel).toBe('premier');
+  });
+
+  it('nomme le CHEMIN quand le dossier a été détaché de l’agent', async () => {
+    // Une règle qui survit au détachement de son dossier ne vaut plus nulle
+    // part. Se taire la ferait lire « partout » : le pire des deux sens.
+    const { setAgentApprovalRuleAction } = await import('../actions.ts');
+    const AUTRE = 'D:\APPS\Detache';
+    await testDb.insert(agentWorkspaces).values({
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+      label: 'detache',
+      path: AUTRE,
+      position: 1,
+    });
+    expect(
+      (
+        await setAgentApprovalRuleAction({
+          agentId: seed.agentId,
+          toolName: 'mcp_x__orphelin',
+          action: 'auto_approve',
+          scope: 'agent',
+          workspacePath: AUTRE,
+        })
+      ).ok,
+    ).toBe(true);
+    await testDb.delete(agentWorkspaces).where(eq(agentWorkspaces.path, AUTRE));
+
+    const regle = await lireRegle('mcp_x__orphelin');
+    expect(regle!.conditionJson).toEqual({ workspacePath: AUTRE });
+    expect(regle!.workspaceLabel).toBe(AUTRE);
+  });
+});
