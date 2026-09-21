@@ -81,7 +81,12 @@ describe('les compteurs d’un fichier livré @cap:verifier-un-livrable/moteur',
   });
 });
 
-describe('la ligne et sa plaque disent le même nombre @cap:verifier-un-livrable/ecran', () => {
+// LA BORNE EST DANS L'ÉNONCÉ (Reviewer C, passe 1). La plaque coupe à
+// `PLATE_LINE_LIMIT` rangées et compare des DÉBUTS de texte : au-delà, elle
+// dessine moins de rangées qu'il n'y a de lignes, et le dit elle-même (« …
+// N lines not shown »). La parité rangée à rangée ne vaut donc que sous cette
+// borne, et chaque cas ci-dessous s'y tient.
+describe('la ligne et sa plaque, sous la borne de la plaque @cap:verifier-un-livrable/ecran', () => {
   it('autant de rangées vertes que de « + », autant de rouges que de « − »', () => {
     // Vingt lignes dont trois changent : la plaque montre TOUT (sa borne est de
     // 80 rangées), donc ce qu'elle colorie et ce que la ligne annonce se
@@ -95,9 +100,10 @@ describe('la ligne et sa plaque disent le même nombre @cap:verifier-un-livrable
 
     expect(added).toBe(g.addedLines);
     expect(removed).toBe(g.removedLines);
-    // Et le libellé de la ligne porte ces nombres-là, pas d'autres.
-    expect(html).toContain(`+${g.addedLines}`);
-    expect(html).toContain(`−${g.removedLines}`);
+    // Et le libellé de la ligne porte ces nombres-là, entiers : une
+    // sous-chaîne retrouverait « +3 » dans « +30 ».
+    expect(html).toMatch(new RegExp(`>\\+${g.addedLines}<`));
+    expect(html).toMatch(new RegExp(`>−${g.removedLines}<`));
     expect({ added, removed }).toEqual({ added: 3, removed: 2 });
   });
 
@@ -123,6 +129,6 @@ describe('la ligne et sa plaque disent le même nombre @cap:verifier-un-livrable
     expect(added).toBe(12);
     expect(added).toBe(g.addedLines);
     expect(removed).toBe(0);
-    expect(html).toContain('+12');
+    expect(html).toMatch(/>\+12</);
   });
 });

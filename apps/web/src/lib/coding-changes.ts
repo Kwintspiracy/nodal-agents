@@ -40,7 +40,7 @@ export type CodingChangeView = {
   newText: string | null;
 };
 
-/** Les lignes écrites et remplacées par une écriture. */
+/** Les lignes qu'une écriture ajoute et retire, telles que son diff les signe. */
 export type LineCounts = { added: number; removed: number };
 
 /** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */

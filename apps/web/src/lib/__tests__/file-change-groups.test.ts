@@ -109,9 +109,10 @@ describe('regroupement par fichier @cap:travailler-sur-des-fichiers/moteur', () 
     expect(signees).toContainEqual(['+', 'alpha']);
   });
 
-  it('les compteurs sont le churn des deux écritures du fichier', () => {
+  it('les compteurs somment le diff des deux écritures du fichier', () => {
     const [a] = fileChangesOfAuditRows(rows, []);
-    // Trois lignes écrites, puis une ligne écrite en remplacement d'une ligne.
+    // Trois lignes ajoutées par l'écriture, puis une ligne remplacée par une
+    // autre : le diff de la seconde édition signe un « + » et un « − » (#394).
     expect(a).toMatchObject({ filePath: 'src/a.ts', addedLines: 4, removedLines: 1 });
     expect(a?.edits).toHaveLength(2);
   });
