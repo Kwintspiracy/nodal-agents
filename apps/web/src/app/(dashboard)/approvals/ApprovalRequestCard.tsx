@@ -91,6 +91,12 @@ export default function ApprovalRequestCard({
   // yeux. Une demande tranchée est une archive : elle se range à une ligne, et
   // le caret la rouvre entière.
   const [requestOpen, setRequestOpen] = useState(approval.status === 'pending' || defaultOpen);
+  // LE STATUT DÉJÀ VU. La page garde la MÊME carte quand elle se relit après une
+  // réponse (même `key`), et l'onglet All la garde en liste : sans cela, une
+  // demande qui vient d'être tranchée restait dépliée au milieu de voisines
+  // rangées (Reviewer C, passe 1). Ajusté au rendu plutôt que dans un effet,
+  // pour qu'aucune image ne montre l'ancien pli.
+  const [statutVu, setStatutVu] = useState(approval.status);
   const [inputOpen, setInputOpen] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [chain, setChain] = useState<ExplainedApprovalRule[]>(approval.ruleChain);
@@ -111,6 +117,23 @@ export default function ApprovalRequestCard({
    * répondre : le même caret range alors la carte entière.
    */
   const folded = !pending && !requestOpen;
+
+  if (statutVu !== a.status) {
+    setStatutVu(a.status);
+    setRequestOpen(pending || defaultOpen);
+    setInputOpen(false);
+  }
+
+  /**
+   * Plier ou déplier. Replier une carte TRANCHÉE la range entièrement, « Tool
+   * input » compris : un pli annoncé à 100 % qui garderait un bloc ouvert sous
+   * lui le rouvrirait au clic suivant, sans que rien ne l'ait demandé.
+   */
+  function toggleRequest() {
+    const next = !requestOpen;
+    setRequestOpen(next);
+    if (!next && !pending) setInputOpen(false);
+  }
 
   /**
    * Repondre, PUIS relire les attentes — la barre compte les lignes de ce
@@ -252,7 +275,7 @@ export default function ApprovalRequestCard({
       {/* Qui demande, et quel outil exactement. */}
       <DisclosureButton
         open={requestOpen}
-        onClick={() => setRequestOpen((v) => !v)}
+        onClick={toggleRequest}
         className="h-11 border-t border-rule-2"
         testId="approval-request-toggle"
       >

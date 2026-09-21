@@ -143,6 +143,14 @@ async function monter(approval: Approval, defaultOpen = false): Promise<void> {
   });
 }
 
+/** Re-rendre LA MÊME instance avec une demande modifiée : c'est ce que fait la
+ *  page quand elle se relit après une réponse, la carte gardant sa `key`. */
+async function rerendre(approval: Approval, defaultOpen = false): Promise<void> {
+  await act(async () => {
+    root!.render(<ApprovalRequestCard approval={approval} defaultOpen={defaultOpen} />);
+  });
+}
+
 /** Un élément par son `data-testid`, ou `null` s'il n'est pas dans le DOM. */
 function parTestId(id: string): HTMLElement | null {
   return rendu().querySelector(`[data-testid="${id}"]`);
@@ -569,6 +577,46 @@ describe('le pli de la carte suit l’état de la demande @cap:approuver-une-act
     expect(parTestId('approval-request-body')).not.toBeNull();
     expect(parTestId('approval-rule-list')).not.toBeNull();
     expect(parTestId('approval-decision-note')!.textContent).toContain('Looked fine');
+  });
+
+  it('répondue sous les yeux, la carte se range sans attendre une navigation', async () => {
+    // L'onglet All garde la MÊME instance de carte quand la page se relit après
+    // une réponse : même `key`, statut nouveau. Sans remise à zéro du pli, la
+    // demande tranchée restait dépliée là où toutes ses voisines sont rangées
+    // (Reviewer C, passe 1).
+    await monter(demande({ ruleChain: CHAINE_346 } as Partial<Approval>));
+    expect(parTestId('approval-request-body')).not.toBeNull();
+
+    await rerendre(
+      demande({
+        status: 'approved',
+        notes: 'Looked fine',
+        resolvedBy: 'quentin',
+        ruleChain: CHAINE_346,
+      } as Partial<Approval>),
+    );
+
+    expect(parTestId('approval-request-toggle')!.getAttribute('aria-expanded')).toBe('false');
+    expect(parTestId('approval-request-body')).toBeNull();
+    expect(parTestId('approval-rule-list')).toBeNull();
+    expect(parTestId('approval-decision-note')).toBeNull();
+  });
+
+  it('tranchée : replier ferme aussi « Tool input », un pli à 100 % en est un', async () => {
+    await monter(demande(TRANCHEE));
+    await cliquerLeCaret();
+
+    const entree = parTestId('approval-tool-input-toggle')!;
+    await act(async () => {
+      entree.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(rendu().querySelector('pre')).not.toBeNull();
+
+    await cliquerLeCaret();
+    await cliquerLeCaret();
+
+    expect(parTestId('approval-tool-input-toggle')!.getAttribute('aria-expanded')).toBe('false');
+    expect(rendu().querySelector('pre')).toBeNull();
   });
 
   it('une QUESTION suit la même règle : ouverte en attente, repliée une fois répondue', async () => {
