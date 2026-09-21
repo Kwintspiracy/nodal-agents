@@ -104,6 +104,21 @@ describe("une ligne d'outil parle au propriétaire @cap:regler-autonomie/ecran",
     expect(onChange.mock.calls.at(-1)?.[0]).toBe('block');
   });
 
+  it('nomme le dossier auquel la règle est confinée, à côté du curseur', async () => {
+    // Issue #361 : sans cette ligne, « Run without asking » se lisait comme
+    // « partout » alors que la règle ne vaut que dans un dossier.
+    await render({ folder: 'Dev' });
+    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
+      'in Dev',
+    );
+  });
+
+  it("ne dit aucun dossier quand la règle n'en porte pas", async () => {
+    await render();
+    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
+    expect(container.textContent).not.toContain('in Dev');
+  });
+
   it("remplace le curseur par la raison quand l'outil ne peut pas être bloqué", async () => {
     await render({
       slug: 'return_result',

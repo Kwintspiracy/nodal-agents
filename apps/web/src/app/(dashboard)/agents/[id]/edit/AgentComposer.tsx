@@ -1717,6 +1717,38 @@ export function AutonomyTab({
     return rules.find((r) => r.toolName === toolName)?.action ?? 'auto_approve';
   }
 
+  /**
+   * Le dossier auquel la règle de cet outil est confinée, ou `undefined`
+   * (issue #361). Le libellé vient du serveur, qui l'a résolu depuis
+   * `agent_workspaces` ; l'écran ne recalcule rien.
+   */
+  function folderFor(toolName: string): string | undefined {
+    return rules.find((r) => r.toolName === toolName)?.workspaceLabel ?? undefined;
+  }
+
+  /**
+   * Un changement demandé sur une règle de dossier, en attente de la
+   * confirmation. Enregistrer depuis cet onglet RETIRE la condition : le
+   * serveur réécrit `condition_json` à vide, et refuse même la version
+   * permissive (`refuseGlobalGrantOverFolderRule`). Le dire avant, plutôt que
+   * de laisser le propriétaire découvrir après coup que « seulement dans Dev »
+   * est devenu « partout ».
+   */
+  const [pendingWiden, setPendingWiden] = useState<{
+    toolName: string;
+    action: ApprovalAction;
+    folder: string;
+  } | null>(null);
+
+  function requestChange(toolName: string, action: ApprovalAction) {
+    const folder = folderFor(toolName);
+    if (folder !== undefined) {
+      setPendingWiden({ toolName, action, folder });
+      return;
+    }
+    handleChange(toolName, action);
+  }
+
   function handleChange(toolName: string, action: ApprovalAction) {
     // Optimistic update. The row is KEPT for auto_approve — it used to be
     // dropped, mirroring the server action's old "no rule needed, the default
@@ -1725,7 +1757,9 @@ export function AutonomyTab({
     // on the next load for a server the owner had just trusted.
     setRules((prev) => [
       ...prev.filter((r) => r.toolName !== toolName),
-      { id: '', toolName, action },
+      // Sans condition, et c'est ce que le serveur écrit : changer une règle
+      // depuis cet onglet réécrit `condition_json` à vide (issue #361).
+      { id: '', toolName, action, conditionJson: null, workspaceLabel: null },
     ]);
 
     setSaving((prev) => new Set([...prev, toolName]));
@@ -1778,7 +1812,8 @@ export function AutonomyTab({
                 risk={op.risk}
                 value={ruleFor(op.slug)}
                 saving={saving.has(op.slug)}
-                onChange={(action) => handleChange(op.slug, action)}
+                onChange={(action) => requestChange(op.slug, action)}
+                {...(folderFor(op.slug) === undefined ? {} : { folder: folderFor(op.slug) })}
               />
             ))}
           </div>
@@ -1818,7 +1853,8 @@ export function AutonomyTab({
               risk={op.risk}
               value={ruleFor(op.slug)}
               saving={saving.has(op.slug)}
-              onChange={(action) => handleChange(op.slug, action)}
+              onChange={(action) => requestChange(op.slug, action)}
+              {...(folderFor(op.slug) === undefined ? {} : { folder: folderFor(op.slug) })}
               {...(op.unblockableReason === undefined
                 ? {}
                 : { lockedReason: op.unblockableReason })}
@@ -1864,7 +1900,8 @@ export function AutonomyTab({
                   // every MCP tool ships defaultApproval: 'require_approval'.
                   value={rules.find((r) => r.toolName === pattern)?.action ?? 'require_approval'}
                   saving={saving.has(pattern)}
-                  onChange={(action) => handleChange(pattern, action)}
+                  onChange={(action) => requestChange(pattern, action)}
+                  {...(folderFor(pattern) === undefined ? {} : { folder: folderFor(pattern) })}
                 />
               );
             })}
@@ -1921,6 +1958,29 @@ export function AutonomyTab({
 
       <ScriptAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
       <FileWriteAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
+
+      {/*
+        La règle de dossier se perd À DÉCOUVERT (issue #361). Le serveur
+        réécrit `condition_json` à vide quel que soit le sens du changement, et
+        refuse carrément la version permissive : ce que cette boîte annonce est
+        ce qui va arriver, pas une précaution de forme.
+      */}
+      <ConfirmDialog
+        open={pendingWiden !== null}
+        title="Remove the folder limit?"
+        message={
+          pendingWiden === null
+            ? ''
+            : `This rule applies only in ${pendingWiden.folder} today. Saving from here applies your choice everywhere this agent works. To keep the limit, change the rule on the approval card instead.`
+        }
+        confirmLabel="Remove the limit"
+        onConfirm={() => {
+          const pending = pendingWiden;
+          setPendingWiden(null);
+          if (pending) handleChange(pending.toolName, pending.action);
+        }}
+        onCancel={() => setPendingWiden(null)}
+      />
     </div>
   );
 }
@@ -1981,7 +2041,13 @@ function CommandExecutionSection({
       enabled
         ? [
             ...rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
-            { id: '', toolName: RUN_COMMAND_TOOL, action: 'auto_approve' as const },
+            {
+              id: '',
+              toolName: RUN_COMMAND_TOOL,
+              action: 'auto_approve' as const,
+              conditionJson: null,
+              workspaceLabel: null,
+            },
           ]
         : rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
     );
@@ -2134,7 +2200,13 @@ function CodeTaskSection({
       enabled
         ? [
             ...rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
-            { id: '', toolName: CODE_TASK_TOOL, action: 'auto_approve' as const },
+            {
+              id: '',
+              toolName: CODE_TASK_TOOL,
+              action: 'auto_approve' as const,
+              conditionJson: null,
+              workspaceLabel: null,
+            },
           ]
         : rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
     );
@@ -2355,6 +2427,8 @@ function ReadOnlyAgentSection({
               id: '',
               toolName,
               action: 'block' as const,
+              conditionJson: null,
+              workspaceLabel: null,
             })),
           ]
         : rules.filter((r) => !(presetTools.includes(r.toolName) && r.action === 'block')),

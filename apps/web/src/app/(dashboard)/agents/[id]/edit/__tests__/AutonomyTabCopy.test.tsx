@@ -1,4 +1,5 @@
-// AutonomyTabCopy.test.tsx : les textes de l'onglet Approvals (issue #382).
+// AutonomyTabCopy.test.tsx : les textes de l'onglet Approvals (issue #382), et
+// ce qu'une règle confinée à un dossier y montre (issue #361).
 //
 // Ce que ça prouve, sur le DOM rendu : chaque phrase de la table « Screen copy »
 // de l'issue est bien À L'ÉCRAN, et l'onglet montre `label`/`summary` des outils
@@ -9,11 +10,17 @@
 // est répartie entre elles : une assertion par section prouverait chaque bout
 // sans prouver que le propriétaire les lit ensemble.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-type Rule = { id: string; toolName: string; action: string };
+type Rule = {
+  id: string;
+  toolName: string;
+  action: string;
+  conditionJson: { workspacePath?: string } | null;
+  workspaceLabel: string | null;
+};
 type InternalTool = {
   slug: string;
   label: string;
@@ -47,7 +54,14 @@ const actions = vi.hoisted(() => {
   return {
     listAgentApprovalRulesAction: vi.fn(async () => ({ ok: true as const, data: [] as Rule[] })),
     listInternalToolsAction: vi.fn(async () => ({ ok: true as const, data: [] as InternalTool[] })),
-    setAgentApprovalRuleAction: noop(),
+    // Typée avec son argument : les assertions portent sur CE QUI EST ENVOYÉ
+    // au serveur, pas sur un compteur d'appels (invariant #5).
+    setAgentApprovalRuleAction: vi.fn(
+      async (_raw: { agentId: string; toolName: string; action: string }) => ({
+        ok: true as const,
+        data: undefined,
+      }),
+    ),
     setRunCommandYoloAction: noop(),
     setCodeTaskYoloAction: noop(),
     setCliDailyBudgetAction: noop(),
@@ -119,7 +133,11 @@ const CONNECTOR = {
   ],
 };
 
-async function render(connectors: unknown[] = []): Promise<string> {
+async function render(connectors: unknown[] = [], rules: Rule[] = []): Promise<string> {
+  actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
+    ok: true as const,
+    data: rules,
+  }));
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -151,6 +169,16 @@ async function render(connectors: unknown[] = []): Promise<string> {
   await act(async () => {});
   return container.textContent ?? '';
 }
+
+// Le corps du document est PARTAGÉ : la boîte de confirmation sort par un
+// portail, et un rendu laissé en place ferait lire à l'assertion suivante un
+// dialogue ouvert par le test d'avant.
+afterEach(() => {
+  act(() => {
+    root.unmount();
+  });
+  document.body.innerHTML = '';
+});
 
 beforeEach(() => {
   actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
@@ -266,5 +294,123 @@ describe("les textes de l'onglet Approvals @cap:regler-autonomie/ecran", () => {
     expect(text).toContain(
       'Prevent this agent from writing files, editing skill files, running commands, or running skill scripts. You can turn this off at any time.',
     );
+  });
+});
+
+describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () => {
+  const FOLDER_RULE: Rule = {
+    id: 'r1',
+    toolName: 'file_write',
+    action: 'auto_approve',
+    conditionJson: { workspacePath: 'D:\APPS\Dev' },
+    workspaceLabel: 'Dev',
+  };
+
+  function control(slug: string, action: string): HTMLButtonElement {
+    const el = container.querySelector<HTMLButtonElement>(
+      `[data-testid="autonomy-btn-${slug}-${action}"]`,
+    );
+    if (!el) throw new Error(`no control for ${slug} ${action}`);
+    return el;
+  }
+
+  function dialogText(): string {
+    return document.body.textContent ?? '';
+  }
+
+  it('nomme le dossier sur la ligne, au lieu de laisser lire « partout »', async () => {
+    await render([], [FOLDER_RULE]);
+    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
+      'in Dev',
+    );
+  });
+
+  it('ne dit rien pour une règle sans condition', async () => {
+    await render(
+      [],
+      [
+        {
+          id: 'r2',
+          toolName: 'file_write',
+          action: 'block',
+          conditionJson: null,
+          workspaceLabel: null,
+        },
+      ],
+    );
+    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
+  });
+
+  it("avertit AVANT d'enregistrer, et n'écrit rien tant que personne n'a répondu", async () => {
+    await render([], [FOLDER_RULE]);
+    actions.setAgentApprovalRuleAction.mockClear();
+
+    await act(async () => {
+      control('file_write', 'block').click();
+    });
+
+    expect(dialogText()).toContain('Remove the folder limit?');
+    expect(dialogText()).toContain(
+      'This rule applies only in Dev today. Saving from here applies your choice everywhere this agent works.',
+    );
+    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
+  });
+
+  it('enregistre le choix une fois la perte acceptée', async () => {
+    await render([], [FOLDER_RULE]);
+    actions.setAgentApprovalRuleAction.mockClear();
+
+    await act(async () => {
+      control('file_write', 'block').click();
+    });
+    const confirm = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Remove the limit',
+    );
+    expect(confirm).toBeDefined();
+    await act(async () => {
+      confirm!.click();
+    });
+
+    expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      toolName: 'file_write',
+      action: 'block',
+    });
+  });
+
+  it('garde la règle telle quelle quand on renonce', async () => {
+    await render([], [FOLDER_RULE]);
+    actions.setAgentApprovalRuleAction.mockClear();
+
+    await act(async () => {
+      control('file_write', 'block').click();
+    });
+    const cancel = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Cancel',
+    );
+    await act(async () => {
+      cancel!.click();
+    });
+
+    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
+    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
+      'in Dev',
+    );
+  });
+
+  it("enregistre sans rien demander quand la règle n'a pas de dossier", async () => {
+    await render([]);
+    actions.setAgentApprovalRuleAction.mockClear();
+
+    await act(async () => {
+      control('file_write', 'block').click();
+    });
+
+    expect(dialogText()).not.toContain('Remove the folder limit?');
+    expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      toolName: 'file_write',
+      action: 'block',
+    });
   });
 });

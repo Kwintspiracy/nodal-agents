@@ -33,6 +33,7 @@ export default function AutonomyToolRow({
   saving,
   onChange,
   lockedReason,
+  folder,
 }: {
   /** The tool name. Stays visible: it is what the owner sees in a transcript. */
   slug: string;
@@ -50,6 +51,15 @@ export default function AutonomyToolRow({
    * affordance, not the guard.
    */
   lockedReason?: string;
+  /**
+   * The folder this rule is confined to, when it carries one (issue #361).
+   *
+   * Since « Approve for this project » (#360) a rule can read « approved, but
+   * only while the agent works there ». Without this the row said « Run
+   * without asking » where the truth was « Run without asking in Dev », and
+   * the owner had no way to see the difference.
+   */
+  folder?: string;
 }) {
   return (
     <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
@@ -82,33 +92,40 @@ export default function AutonomyToolRow({
           {lockedReason}
         </p>
       ) : (
-        /* 3-way control */
-        <SegmentedControl
-          value={value}
-          onChange={onChange}
-          disabled={saving}
-          ariaLabel={`Approval rule for ${label}`}
-          options={[
-            {
-              value: 'auto_approve' as const,
-              label: 'Run without asking',
-              activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
-              testId: `autonomy-btn-${slug}-auto_approve`,
-            },
-            {
-              value: 'require_approval' as const,
-              label: 'Ask for approval',
-              activeClassName: 'bg-warn/15 text-warn border-warn/30',
-              testId: `autonomy-btn-${slug}-require_approval`,
-            },
-            {
-              value: 'block' as const,
-              label: 'Block',
-              activeClassName: 'bg-err/15 text-err border-err/30',
-              testId: `autonomy-btn-${slug}-block`,
-            },
-          ]}
-        />
+        /* 3-way control, with the folder the rule is confined to beside it */
+        <div className="flex flex-col items-start gap-1 sm:items-end">
+          {folder !== undefined && (
+            <span className="text-body-12 text-ink-4" data-testid={`autonomy-folder-${slug}`}>
+              in {folder}
+            </span>
+          )}
+          <SegmentedControl
+            value={value}
+            onChange={onChange}
+            disabled={saving}
+            ariaLabel={`Approval rule for ${label}`}
+            options={[
+              {
+                value: 'auto_approve' as const,
+                label: 'Run without asking',
+                activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
+                testId: `autonomy-btn-${slug}-auto_approve`,
+              },
+              {
+                value: 'require_approval' as const,
+                label: 'Ask for approval',
+                activeClassName: 'bg-warn/15 text-warn border-warn/30',
+                testId: `autonomy-btn-${slug}-require_approval`,
+              },
+              {
+                value: 'block' as const,
+                label: 'Block',
+                activeClassName: 'bg-err/15 text-err border-err/30',
+                testId: `autonomy-btn-${slug}-block`,
+              },
+            ]}
+          />
+        </div>
       )}
     </div>
   );

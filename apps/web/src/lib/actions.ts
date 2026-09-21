@@ -6367,6 +6367,23 @@ export type ApprovalRuleUiRow = {
   id: string;
   toolName: string;
   action: 'auto_approve' | 'require_approval' | 'block';
+  /**
+   * La condition de la règle, telle qu'elle est en base (issue #361).
+   *
+   * Depuis « Approve for this project » (#360), une règle agent+outil peut
+   * porter `{ workspacePath }` : « approuvé, mais seulement quand l'agent
+   * travaille là ». L'onglet Approvals ne la recevait pas et rendait une telle
+   * règle comme une règle ordinaire : le propriétaire lisait « Run without
+   * asking » là où la vérité était « Run without asking dans Dev ».
+   */
+  conditionJson: ApprovalRuleCondition | null;
+  /**
+   * Le libellé de ce dossier dans `agent_workspaces`, résolu ici plutôt qu'à
+   * l'écran. `null` quand la règle n'a pas de condition ; le CHEMIN lui-même
+   * quand le dossier n'est plus attaché à l'agent, parce qu'une règle qui
+   * nomme un dossier disparu doit se dire, pas se taire.
+   */
+  workspaceLabel: string | null;
 };
 
 /**
@@ -6395,16 +6412,40 @@ export async function listAgentApprovalRulesAction(
         id: approvalRules.id,
         toolName: approvalRules.toolName,
         action: approvalRules.action,
+        conditionJson: approvalRules.conditionJson,
       })
       .from(approvalRules)
       .where(and(eq(approvalRules.entityId, session.entityId), eq(approvalRules.agentId, agentId)));
 
+    // Les dossiers de CET agent, pour nommer une condition par son libellé
+    // plutôt que par son chemin absolu (issue #361). Une seule requête, et
+    // seulement quand au moins une règle porte une condition.
+    const conditioned = rows.some(
+      (r) => typeof (r.conditionJson as ApprovalRuleCondition | null)?.workspacePath === 'string',
+    );
+    const labelByPath = new Map<string, string>();
+    if (conditioned) {
+      const folders = await db
+        .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(eq(agentWorkspaces.agentId, agentId));
+      for (const f of folders) labelByPath.set(f.path, f.label);
+    }
+
     return ok(
-      rows.map((r) => ({
-        id: r.id,
-        toolName: r.toolName,
-        action: (r.action ?? 'auto_approve') as ApprovalRuleUiRow['action'],
-      })),
+      rows.map((r) => {
+        const condition = (r.conditionJson ?? null) as ApprovalRuleCondition | null;
+        const path = condition?.workspacePath;
+        return {
+          id: r.id,
+          toolName: r.toolName,
+          action: (r.action ?? 'auto_approve') as ApprovalRuleUiRow['action'],
+          conditionJson: condition,
+          // Le chemin quand le dossier n'est plus attaché : la règle nomme
+          // encore quelque chose, et le taire laisserait lire « partout ».
+          workspaceLabel: typeof path === 'string' ? (labelByPath.get(path) ?? path) : null,
+        };
+      }),
     );
   } catch (err) {
     console.error('[listAgentApprovalRulesAction]', err);
