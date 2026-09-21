@@ -29,7 +29,14 @@ interface PageProps {
 }
 
 /** Les deux onglets de la page : l'activité (les runs) et les logs de SERVICE
- *  (runner/web) — deux choses que la page confondait par son nom. */
+ *  (runner/web) — deux choses que la page confondait par son nom.
+ *
+ *  ⚠️ CHAQUE ONGLET PORTE SON PROPRE TITRE depuis le 21/09/2026. La case du
+ *  rail qui mène ici s'appelle « Runs » (planche `46:1330`) ; un titre « Logs »
+ *  au-dessus faisait promettre au menu autre chose que ce que la page montrait.
+ *  L'onglet Activity s'appelle donc « Runs », comme la case, et l'onglet des
+ *  logs de service garde son nom à lui — c'est celui que son onglet écrit
+ *  déjà, et l'appeler « Runs » aurait recréé la confusion à l'envers. */
 function ViewTabs({ active }: { active: 'activity' | 'service' }) {
   const base = 'rounded-full border px-3.5 py-1.5 text-medium-13 transition-colors';
   return (
@@ -66,7 +73,7 @@ export default async function LogsPage({ searchParams }: PageProps) {
     const logsResult = await listServiceLogsAction();
     return (
       <PageShell
-        title="Logs"
+        title="Service logs"
         subtitle="Runner and web process logs — errors, traces, and rotation archives."
         toolbar={<ViewTabs active="service" />}
       >
@@ -100,7 +107,7 @@ export default async function LogsPage({ searchParams }: PageProps) {
 
   if (!result.ok) {
     return (
-      <PageShell title="Logs">
+      <PageShell title="Runs">
         <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
           {result.message}
         </div>
@@ -115,7 +122,7 @@ export default async function LogsPage({ searchParams }: PageProps) {
 
   return (
     <PageShell
-      title="Logs"
+      title="Runs"
       subtitle="Recent runs across the fleet. Open a row to see its calls."
       toolbar={
         <div className="flex flex-wrap items-center gap-3">

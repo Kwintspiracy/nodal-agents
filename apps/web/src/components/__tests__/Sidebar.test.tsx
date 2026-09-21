@@ -288,10 +288,15 @@ describe('le rail porte cinq destinations @cap:installer-et-demarrer/ecran', () 
       ['logs', 'runs'],
     ];
     for (const [key, icone] of attendues) {
-      expect(
-        railCell(key).querySelector(`[data-testid="icon-${icone}"]`),
-        `la case « ${key} » porte l'icône « ${icone} »`,
-      ).not.toBeNull();
+      // UNE icône, et CELLE-LÀ. Le compte est asserté en plus de la présence
+      // (Reviewer C, passe 1) : sans lui, une case qui rendrait la sienne ET
+      // une autre passerait, et le rail porterait deux dessins dans 64 px.
+      const icones = [...railCell(key).querySelectorAll('[data-testid^="icon-"]')].map((el) =>
+        el.getAttribute('data-testid'),
+      );
+      expect(icones, `la case « ${key} » porte la seule icône « ${icone} »`).toEqual([
+        `icon-${icone}`,
+      ]);
     }
     // Settings et Help gardent leurs icônes Phosphor : la planche ne les change
     // pas, et elles n'ont donc aucun `rail-icon-*`. Elles dessinent quand même.

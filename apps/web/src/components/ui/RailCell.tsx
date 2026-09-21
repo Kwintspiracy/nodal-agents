@@ -105,7 +105,8 @@ type Props = {
    * a rien. `noun` est ce que le compte compte, et il part dans le nom
    * accessible : « 2 in progress » ne dirait pas de quoi il s'agit. La case
    * Work compte des conversations, et c'est la seule case qui en porte un
-   * depuis que Logs a perdu le sien (22/09/2026).
+   * depuis que la case du bas a perdu le sien (22/09/2026 ; elle s'appelait
+   * alors « Logs », et « Runs » depuis le 21/09/2026).
    */
   running?: RailCellRunning;
   testId: string;
@@ -114,9 +115,10 @@ type Props = {
 /**
  * Ce qui tourne derrière une case : combien, et de quoi il s'agit.
  *
- * `conversation` est le seul mot aujourd'hui : la case Logs a perdu son point
- * le 22/09/2026, et c'était la seule qui comptait des runs. Le champ reste —
- * il part dans le nom accessible, et « 2 in progress » ne dirait pas de quoi.
+ * `conversation` est le seul mot aujourd'hui : la case du bas — « Logs »
+ * alors, « Runs » depuis le 21/09/2026 — a perdu son point le 22/09/2026, et
+ * c'était la seule qui comptait des runs. Le champ reste : il part dans le nom
+ * accessible, et « 2 in progress » ne dirait pas de quoi.
  */
 export type RailCellRunning = {
   count: number;

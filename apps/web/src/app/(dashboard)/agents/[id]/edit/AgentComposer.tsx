@@ -4099,7 +4099,7 @@ function ClaudeCodeRuntimeCard({
           // respecter le budget, serait un mensonge d'écran.
           <p className="mt-1 text-body-13 leading-[1.5]! text-ink-3">
             {label} reports no cost, so a dollar cap cannot bound it. What bounds a turn here is the
-            per-turn time limit and the tool-call cap. Runs still show up in Logs.
+            per-turn time limit and the tool-call cap. Runs still show up in the Runs list.
           </p>
         )}
       </div>

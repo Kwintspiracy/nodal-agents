@@ -337,7 +337,7 @@ export const DESTINATIONS: readonly Destination[] = [
  * Ce que le rail porte EN BAS, sous la séparation : ce qui n'ouvre pas de
  * panneau.
  *
- * Logs NAVIGUE — sa page est une liste, elle n'a rien à déplier dans une
+ * Runs NAVIGUE — sa page est une liste, elle n'a rien à déplier dans une
  * colonne de 300 px. Help ouvre une CARTE de trois liens, tous dehors.
  *
  * ⚠️ POURQUOI UNE CARTE, ET PAS UN LIEN. La planche ne dessine que la CASE,
