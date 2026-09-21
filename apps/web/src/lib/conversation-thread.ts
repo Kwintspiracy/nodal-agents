@@ -111,8 +111,22 @@ export type ThreadJob = {
    * Les commandes de preuve de CE travail et de ses délégués, dans l'ordre.
    * `[]` quand aucune preuve n'a tourné — et le récapitulatif de livraison
    * n'affiche alors ni « Tests » ni « Checks », plutôt que « 0 / 0 ».
+   *
+   * LA DERNIÈRE SÉQUENCE PAR LIVRABLE, jamais toutes (#375). Depuis qu'une
+   * preuve rouge rouvre le run pour un tour de réparation, un livrable peut
+   * porter DEUX séquences : celle qui a rougi, et celle qui a suivi la
+   * correction. Les additionner ferait dire « Proof failed » à un run dont la
+   * preuve finit verte, et « 1 / 2 » là où une seule commande existe. Le tri
+   * se fait côté lecture (`conversation-actions.ts`), où les lignes portent
+   * encore leur `sequence_id`.
    */
   proof: readonly ThreadProofRun[];
+  /**
+   * Combien de tours de réparation ce travail a coûté (#375) — le plus grand
+   * `repair_attempts` de ses livrables. `0` dans le cas ordinaire, `1` au plus
+   * aujourd'hui (décision D2 : une réparation automatique au maximum).
+   */
+  repairs: number;
   /**
    * Le DERNIER verdict de relecture enregistré sous ce travail (#59) — le sien
    * ou celui d'un délégué relecteur, lu par `seq`, l'ordre d'écriture.
@@ -510,6 +524,9 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     // Un `infra_error` n'est pas un succès : tout ce qui n'est pas vert fait
     // « Checks failed ». La section « Checks » montre laquelle a lâché.
     verdict: job.proof.length === 0 ? null : passed === job.proof.length ? 'green' : 'red',
+    // Ce que ce verdict a coûté (#375). Transporté, jamais recalculé : la
+    // borne vit en base, sur la ligne d'état du livrable.
+    repairs: job.repairs,
     // #59 — ce que la relecture a dit, tel quel. Le bloc dit toujours
     // « Delivered » et pose ce verdict À CÔTÉ. Le récapitulatif ne TRADUIT rien
     // ici, il transporte.

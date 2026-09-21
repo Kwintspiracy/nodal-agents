@@ -101,6 +101,7 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   verdict: chat,
   project: null,
   proof: [],
+  repairs: 0,
   reviewVerdict: null,
   audit: [],
   workspaceRoots: [],
@@ -194,6 +195,8 @@ describe('buildConversationThread — une conversation de canal', () => {
         reviews: [],
         checks: [],
         verdict: null,
+        // #375 — aucun tour de réparation : l'encart n'en dira rien.
+        repairs: 0,
         // #59 — personne n'a relu ce travail : le récapitulatif le dit, et il
         // n'interdit rien.
         review: null,
@@ -206,6 +209,20 @@ describe('buildConversationThread — une conversation de canal', () => {
         live: null,
       },
     });
+  });
+
+  // #375 — le nombre de tours de réparation VOYAGE jusqu'à l'encart. Sans ce
+  // cas, remplacer le transport par une constante laisserait la suite verte
+  // (Reviewer C, PR #389).
+  it('le nombre de réparations du travail arrive dans le récapitulatif', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j3', verdict: travail, repairs: 1 })],
+    });
+    const produits = items.filter((i) => i.kind === 'produced');
+    expect(produits).toHaveLength(1);
+    expect(produits[0]?.kind === 'produced' ? produits[0].summary.repairs : null).toBe(1);
   });
 
   // ─── #282 ── une commande qu'on n'a pas vue se DIT ───────────────────
