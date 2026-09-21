@@ -167,6 +167,11 @@ function harnessLabel(toolName: string): string {
  *
  * `null` dès que l'entrée n'en porte pas : une ligne écrite avant ce champ, un
  * autre outil qui déclare la même carte, une chaîne vide ou blanche.
+ *
+ * Le « verbatim » vaut donc à l'espace de bord près (Reviewer C, #372) : les
+ * blancs de tête et de queue sont retirés, et rien d'autre. Sans ce geste, une
+ * phrase faite d'espaces passerait pour une phrase et poserait une ligne vide
+ * au-dessus de la commande.
  */
 function commandPurpose(toolInput: unknown): string | null {
   if (typeof toolInput !== 'object' || toolInput === null) return null;

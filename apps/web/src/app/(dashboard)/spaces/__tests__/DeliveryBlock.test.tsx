@@ -937,6 +937,10 @@ describe('DeliveryBlock — pourquoi la commande a tourné @cap:verifier-un-livr
     expect(html.indexOf('Build the app before shipping it')).toBeLessThan(
       html.indexOf('pnpm build'),
     );
+    // LES CLASSES, ÉPINGLÉES (Reviewer C) : la phrase est du texte de corps,
+    // pas une note grise, et elle tient en deux lignes au plus — le schéma de
+    // `run_command` accepte quatre cents caractères.
+    expect(html).toContain('class="line-clamp-2 text-body-12 text-ink-2"');
   });
 
   it('sans phrase, la commande reste seule', () => {

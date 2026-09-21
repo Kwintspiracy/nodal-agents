@@ -324,10 +324,15 @@ export default function DeliveryBlock({
                       de l'appel : elle est posée telle quelle, dans sa voix.
                       Sans elle, la commande reste seule — le produit n'en
                       compose aucune (invariant #2). */}
+                  {/* DEUX LIGNES AU PLUS (Reviewer C, #372). Le schéma de
+                      `run_command` accepte quatre cents caractères : une
+                      phrase de cette taille pousserait à elle seule l'encart
+                      plus bas que le travail qu'il conclut. Elle n'est pas
+                      jetée pour autant, elle est repliée. */}
                   {c.purpose !== null && (
                     <span
                       data-testid="delivery-command-purpose"
-                      className="text-body-12 text-ink-2"
+                      className="line-clamp-2 text-body-12 text-ink-2"
                     >
                       {c.purpose}
                     </span>
