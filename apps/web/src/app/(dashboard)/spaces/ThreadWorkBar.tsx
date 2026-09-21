@@ -19,8 +19,6 @@ import WorkBar from '@/components/ui/WorkBar';
 import AvatarStack from '@/components/ui/AvatarStack';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import StatusPill from '@/components/ui/StatusPill';
-import DensityToggle from './DensityToggle.tsx';
-import type { FeedDensity } from '@/lib/feed-density.ts';
 import type { ThreadAgent } from './format.ts';
 
 /**
@@ -36,7 +34,6 @@ export default function ThreadWorkBar({
   status = null,
   proofVerdict = null,
   filesHref = null,
-  density = null,
 }: {
   agents: readonly ThreadAgent[];
   /** L'état du travail (Idle, Running…). */
@@ -48,20 +45,17 @@ export default function ThreadWorkBar({
    * null : pas de projet, pas de bouton.
    */
   filesHref?: string | null;
-  /**
-   * #132 — la densité de lecture de la personne, quand l'écran la laisse
-   * choisir. `null` : pas de contrôle. La page d'un run ne le montre pas —
-   * elle est la vue DÉPLIÉE par définition, et un contrôle qui ne changerait
-   * rien là où on est venu voir le travail serait un bouton menteur.
-   */
-  density?: FeedDensity | null;
 }) {
   const preuveDite = proofVerdict === 'green' || proofVerdict === 'red';
   // Depuis que le retour est parti, une barre peut n'avoir RIEN à dire : un fil
-  // sans agent connu, sans état, sans preuve, sans dossier et sans réglage.
-  // Elle ne se dessine alors pas du tout, plutôt qu'en bandeau vide (#242).
+  // sans agent connu, sans état, sans preuve et sans dossier. Elle ne se
+  // dessine alors pas du tout, plutôt qu'en bandeau vide (#242).
+  //
+  // Le réglage de densité « Show the work · Folded / Unfolded » (#132) a vécu
+  // ici jusqu'au 22/09 : Quentin l'a retiré partout. Un fil s'ouvre replié, et
+  // chaque tour se déplie à la main ; la page d'un run reste la vue dépliée.
   const aQuelqueChoseADire =
-    agents.length > 0 || status !== null || preuveDite || filesHref !== null || density !== null;
+    agents.length > 0 || status !== null || preuveDite || filesHref !== null;
   if (!aQuelqueChoseADire) return null;
 
   return (
@@ -93,9 +87,6 @@ export default function ThreadWorkBar({
           {proofVerdict === 'green' && <StatusPill variant="done" label="Verified" />}
           {proofVerdict === 'red' && <StatusPill variant="warn" label="Checks failed" />}
           {status}
-          {/* #132 — tout au bout : le réglage porte sur la LECTURE du fil, pas
-              sur le travail. */}
-          {density !== null && <DensityToggle density={density} />}
         </>
       }
     />

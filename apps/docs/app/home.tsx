@@ -28,7 +28,6 @@ import {
   LINK_GITHUB,
   LINK_NPM,
   LINK_QA,
-  LINK_START,
   CAPABILITIES,
   CAPABILITIES_VERIFIED,
   MEASURED_COMMIT,
@@ -39,6 +38,7 @@ import {
   PRINCIPLES,
   PROOF_RECORDS,
   ROADMAP,
+  SCREENS_TITLE,
   SECTIONS,
   VERSION,
   VERSION_DATE,
@@ -215,7 +215,7 @@ export default function Home() {
         style={{ backgroundImage: `url(${BASE_PATH}/home/hero.webp)` }}
       >
         <header className="home-bar">
-          <div className="home-wrap home-bar-inner">
+          <div className="home-wrap home-wrap-wide home-bar-inner">
             <a className="home-mark" href={`${BASE_PATH}/`}>
               <img
                 src={`${BASE_PATH}/home/logo-128.png`}
@@ -235,29 +235,29 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="home-wrap home-hero">
-          {/* One column on the left of the page's container, the same one the
-              sections below use, so the racks and the conveyor on the right
-              half of the picture stay uncovered and the text lines up with the
-              rest of the page. Only the picture bleeds to the edges. */}
+        <div className="home-wrap home-wrap-wide home-hero">
+          {/* One column on the left of a 1440px container, the design's own
+              width (owner, 2026-09-22): wider than the sections below, so the
+              hero keeps the design's composition while the picture bleeds to
+              the edges. The racks and the conveyor on the right half of the
+              picture stay uncovered. */}
           <div className="home-hero-copy">
             <p className="home-hero-pill">
               <span className="dot" aria-hidden="true" />v{VERSION} · {HERO.pillSuffix}
             </p>
-            <h1 className="home-hero-title">
-              {HERO.titleLines[0]}
-              <br />
-              {HERO.titleLines[1]}
-            </h1>
+            <h1 className="home-hero-title">{HERO.title}</h1>
             <p className="home-hero-lede">{HERO.lede}</p>
-            <div className="home-hero-actions">
-              <a className="home-hero-btn home-hero-btn-primary" href={LINK_START}>
-                {HERO.primaryCta}
-              </a>
-              <a className="home-hero-btn home-hero-btn-ghost" href={LINK_GITHUB}>
-                {HERO.secondaryCta}
-              </a>
-            </div>
+            {/* The three pillars stand where the design had two buttons: what
+                the product stands on, said once, in the accent colour. The
+                install command below is the call to action. */}
+            <ul className="home-hero-pillars">
+              {HERO.pillars.map((p) => (
+                <li key={p.label}>
+                  <strong>{p.label}</strong>
+                  <span>{p.body}</span>
+                </li>
+              ))}
+            </ul>
             <div className="home-term">
               <div className="home-term-bar">
                 <span className="d r" aria-hidden="true" />
@@ -277,29 +277,34 @@ export default function Home() {
         </div>
       </section>
 
-      <div className="home-wrap home-screens">
-        <figure className="home-shot">
-          <img
-            src={`${BASE_PATH}/home/dashboard-light.webp`}
-            width={1393}
-            height={1040}
-            alt="The Nodal-Agents dashboard in the light theme, showing agent, skill and connector counts, job totals, weekly activity and a per-agent token table."
-            loading="lazy"
-            decoding="async"
-          />
-          <figcaption>The dashboard, light theme.</figcaption>
-        </figure>
-        <figure className="home-shot">
-          <img
-            src={`${BASE_PATH}/home/agent-dark.webp`}
-            width={1393}
-            height={1040}
-            alt="An agent detail page in the dark theme, showing its model, role, skill and connector counts, success rate, a chart of its runs over seven days, and its attached skills."
-            loading="lazy"
-            decoding="async"
-          />
-          <figcaption>One agent, dark theme.</figcaption>
-        </figure>
+      {/* Room above the two captures, and a title over them (owner, 2026-09-22:
+          they sat against the hero). */}
+      <div className="home-wrap home-screens-band">
+        <h2 className="home-display home-screens-title">{SCREENS_TITLE}</h2>
+        <div className="home-screens">
+          <figure className="home-shot">
+            <img
+              src={`${BASE_PATH}/home/dashboard-light.webp`}
+              width={1393}
+              height={1040}
+              alt="The Nodal-Agents dashboard in the light theme, showing agent, skill and connector counts, job totals, weekly activity and a per-agent token table."
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption>The dashboard, light theme.</figcaption>
+          </figure>
+          <figure className="home-shot">
+            <img
+              src={`${BASE_PATH}/home/agent-dark.webp`}
+              width={1393}
+              height={1040}
+              alt="An agent detail page in the dark theme, showing its model, role, skill and connector counts, success rate, a chart of its runs over seven days, and its attached skills."
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption>One agent, dark theme.</figcaption>
+          </figure>
+        </div>
       </div>
 
       {/* ── 01 What it is ────────────────────────────────────────────── */}
@@ -307,7 +312,7 @@ export default function Home() {
         <Rail index={s1.index} label={s1.label} />
         <div>
           <h2 className="home-display">{s1.title}</h2>
-          <p className="home-intro">
+          <p className="home-claim">
             A platform you install, not a service you sign up for. It brings its own database, its
             own dashboard and its own runner, and it talks to whichever model you already pay for.
             The dashboard is five boards: your work, your agents, what runs on its own, what waits
@@ -372,7 +377,7 @@ export default function Home() {
         <Rail index={s3.index} label={s3.label} />
         <div>
           <h2 className="home-display">{s3.title}</h2>
-          <p className="home-intro">
+          <p className="home-claim">
             Three words the product keeps apart, because they are three different decisions you make
             about one agent.
           </p>
@@ -432,7 +437,7 @@ export default function Home() {
         <Rail index={s4.index} label={s4.label} />
         <div>
           <h2 className="home-display">{s4.title}</h2>
-          <p className="home-intro">
+          <p className="home-claim">
             The hard part of an agent platform is not calling a model. It is what happens when a run
             loops, lies, or stops without saying so. These are the decisions that shape the product.
           </p>
@@ -496,7 +501,7 @@ export default function Home() {
         <Rail index={s5.index} label={s5.label} />
         <div>
           <h2 className="home-display">{s5.title}</h2>
-          <p className="home-intro">
+          <p className="home-claim">
             A TypeScript monorepo in strict mode, shipped in small pull requests, each one gated by
             the same checks. The numbers below are measured, not estimated.
           </p>
@@ -564,7 +569,7 @@ export default function Home() {
         <Rail index={s6.index} label={s6.label} />
         <div>
           <h2 className="home-display">{s6.title}</h2>
-          <p className="home-intro">
+          <p className="home-claim">
             Used daily by its maintainer and stable enough for personal production. Still pre-1.0,
             so a minor version can carry a breaking change. Upgrading in place keeps your data.
           </p>

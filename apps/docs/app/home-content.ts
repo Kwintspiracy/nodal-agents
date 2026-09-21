@@ -68,12 +68,23 @@ export const SECTIONS: readonly Section[] = [
  * rendered markup. The version printed on the pill is never typed: it is
  * `VERSION`, which is itself checked against `apps/cli/package.json`.
  */
+export interface HeroPillar {
+  readonly label: string;
+  readonly body: string;
+}
+
 export interface HeroCopy {
-  /** Two lines on purpose: the design breaks the title after the first word. */
-  readonly titleLines: readonly [string, string];
+  /** One line (owner, 2026-09-22): the design broke it after the first word. */
+  readonly title: string;
+  /** Two lines at the design width; the column is sized for that. */
   readonly lede: string;
-  readonly primaryCta: string;
-  readonly secondaryCta: string;
+  /**
+   * The three things the product stands on, in place of the two buttons the
+   * design carried (owner, 2026-09-22). Each is a claim the product keeps:
+   * approvals and undo, the per-agent autonomy setting, the proof read back
+   * from disk. Short on purpose: they sit in the hero, not in a section.
+   */
+  readonly pillars: readonly HeroPillar[];
   /** What follows the version on the pill, after a middle dot. */
   readonly pillSuffix: string;
   /** The shell name the design prints on the right of the terminal chrome. */
@@ -82,14 +93,29 @@ export interface HeroCopy {
 }
 
 export const HERO: HeroCopy = {
-  titleLines: ['Herd your', 'agents.'],
+  title: 'Herd your agents.',
   lede: 'Nodal orchestrates, monitors and keeps your autonomous agents in line, from the first command to production.',
-  primaryCta: 'Get started',
-  secondaryCta: 'GitHub →',
+  pillars: [
+    {
+      label: 'You stay in control',
+      body: 'Risky steps ask you first, and any file change can be undone. You decide how far that goes.',
+    },
+    {
+      label: 'Autonomy you dial',
+      body: 'Per agent, from ask-before-anything to hands-off, and every setting in between.',
+    },
+    {
+      label: 'Work that proves itself',
+      body: 'What an agent delivers is read back from disk and checked, never taken on its word.',
+    },
+  ],
   pillSuffix: 'open source',
   terminalTitle: 'zsh',
   commands: ['npm install -g nodal-agents', 'nodal-agents up'],
 };
+
+/** The title over the two product captures under the hero (owner, 2026-09-22). */
+export const SCREENS_TITLE = 'What it looks like';
 
 /* ── Section 01 ─────────────────────────────────────────────────────────── */
 
