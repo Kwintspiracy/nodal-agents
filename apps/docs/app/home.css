@@ -394,13 +394,6 @@
   .home-hero {
     padding-top: 132px;
   }
-  .home-hero-actions {
-    width: 100%;
-  }
-  .home-hero-btn {
-    flex: 1 1 auto;
-    justify-content: center;
-  }
   .home-term-body {
     font-size: 13px;
   }
