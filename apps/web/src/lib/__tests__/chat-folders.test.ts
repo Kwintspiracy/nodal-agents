@@ -17,6 +17,7 @@ import {
   chatWaitingTotal,
   folderThreads,
   threadCallsFor,
+  threadDotTone,
   FOLDER_THREADS_MAX,
   FOLDER_THREADS_PROBE,
   unfoldedRows,
@@ -502,5 +503,42 @@ describe('threadCallsFor @cap:reprendre-conversation/ecran', () => {
 
   it('se tait quand il n’y a ni demande, ni run, ni non-lu', () => {
     expect(threadCallsFor({ waiting: false, running: false, unread: false })).toBe(false);
+  });
+});
+
+describe('threadDotTone @cap:reprendre-conversation/moteur', () => {
+  it('garde le ROUGE pour ce qui attend une réponse, et pour cela seul', () => {
+    // Décision du propriétaire, 22/09/2026. Le rouge réclame un geste ; un fil
+    // non lu n'en réclame aucun, il y a seulement quelque chose à voir.
+    //
+    // Mutation vérifiée : `if (thread.waiting)` retiré → le premier cas rougit.
+    expect(threadDotTone({ waiting: true, running: false, unread: false })).toBe('attention');
+    expect(threadDotTone({ waiting: false, running: true, unread: false })).toBe('activite');
+    expect(threadDotTone({ waiting: false, running: false, unread: true })).toBe('activite');
+  });
+
+  it('fait parler L’ATTENTE la première quand les deux sont vrais', () => {
+    // Un fil à la fois en attente et non lu appelle d'abord pour ce qu'il
+    // attend : c'est le seul des deux qui demande un geste.
+    expect(threadDotTone({ waiting: true, running: true, unread: true })).toBe('attention');
+    expect(threadDotTone({ waiting: true, running: false, unread: true })).toBe('attention');
+  });
+
+  it('se tait quand rien ne se passe', () => {
+    expect(threadDotTone({ waiting: false, running: false, unread: false })).toBe('repos');
+  });
+
+  it('ne dit jamais autre chose que ce que `threadCallsFor` annonce', () => {
+    // `threadCallsFor` DÉCOULE de cette règle (Reviewer C) : ce cas garde le
+    // lien vrai si quelqu'un les redétachait un jour. Un point qui appelle a
+    // forcément une couleur qui se voit, et un point au repos n'en a aucune.
+    for (const waiting of [false, true]) {
+      for (const running of [false, true]) {
+        for (const unread of [false, true]) {
+          const fil = { waiting, running, unread };
+          expect(threadDotTone(fil) === 'repos').toBe(!threadCallsFor(fil));
+        }
+      }
+    }
   });
 });

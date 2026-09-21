@@ -379,15 +379,56 @@ export type FolderThreadSource = FolderThread & { folder: string };
  * OUVERT sur le tableau de bord. La règle de la comparaison vit en un seul
  * endroit, `lib/unread.ts` ; ici, on ne fait que l'ajouter aux deux autres.
  *
- * Les trois disent la même chose à l'œil — « il y a de quoi revenir » — et
- * c'est pour cela qu'elles partagent UN point plutôt que trois signes : un
- * menu qui distinguerait « non lu » de « en attente » demanderait de lire une
- * légende avant de lire la barre latérale.
+ * Les trois partagent UN point plutôt que trois signes : un menu qui les
+ * dessinerait chacun à sa façon demanderait de lire une légende avant de lire
+ * la barre latérale.
+ *
+ * ⚠️ ELLES NE DISENT PLUS LA MÊME CHOSE À L'ŒIL depuis le 22/09/2026 : le
+ * point garde une seule forme mais prend DEUX couleurs, l'une pour ce qui
+ * attend une réponse et l'autre pour ce qui se passe. La règle de la couleur
+ * est `threadDotTone`, juste en dessous, et celle-ci en DÉCOULE : deux
+ * fonctions qui reliraient les mêmes trois champs chacune de leur côté
+ * finiraient par se contredire au premier champ ajouté.
  */
 export function threadCallsFor(
   thread: Pick<FolderThread, 'waiting' | 'running' | 'unread'>,
 ): boolean {
-  return thread.waiting || thread.running || thread.unread;
+  return threadDotTone(thread) !== 'repos';
+}
+
+/** Ce que le point d'un fil DIT, et donc de quelle couleur il est. */
+export type ThreadDotTone = 'attention' | 'activite' | 'repos';
+
+/**
+ * De quelle couleur le point d'un fil appelle-t-il ?
+ *
+ * Décision du propriétaire, 22/09/2026 : « le dot rouge dans la sidebar, qui
+ * indique quelque chose de non lu, doit être de la même couleur que le pulsing
+ * dot d'activité ». Un fil simplement NON LU était peint du même rouge qu'un
+ * fil qui attend une réponse ; le rouge réclamait un geste là où il n'y avait
+ * rien à faire qu'aller lire.
+ *
+ * Deux sens, donc deux couleurs, et l'ordre compte :
+ *
+ *   - `attention` — QUELQUE CHOSE ATTEND UNE RÉPONSE. C'est le seul cas où la
+ *     personne doit agir, et le seul qui garde le rouge. Il l'emporte : un fil
+ *     à la fois en attente et non lu appelle d'abord pour ce qu'il attend.
+ *   - `activite` — il s'y passe ou il s'y est passé quelque chose : un run
+ *     tourne, ou il y a du non-lu. Lime, la couleur que tout le produit donne
+ *     à « ça avance » (`LiveDot`), SANS le halo qui bat : seul ce qui tourne en
+ *     ce moment bat, et un fil non lu ne bouge pas.
+ *   - `repos` — rien à dire.
+ *
+ * Le rouge reste donc ce qu'il a toujours été ailleurs dans la barre : ce qui
+ * réclame la personne. Il n'est retiré de nulle part où il dit une erreur — la
+ * pastille d'un dossier et celle du rail sont un autre jeton (`bg-err`).
+ */
+export function threadDotTone(
+  thread: Pick<FolderThread, 'waiting' | 'running' | 'unread'>,
+): ThreadDotTone {
+  if (thread.waiting) return 'attention';
+  if (thread.running || thread.unread) return 'activite';
+  return 'repos';
 }
 
 /**

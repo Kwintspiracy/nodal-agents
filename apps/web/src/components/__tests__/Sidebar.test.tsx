@@ -947,6 +947,34 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
     expect(ouverte.closest('[data-sidebar-row]')?.className).toContain(SIDEBAR_ROW_ACTIVE);
   });
 
+  it('garde le point ROUGE sur une demande en attente', async () => {
+    // La section APPROVALS liste ce qui attend une reponse : son point reste
+    // rouge quand le non-lu et le travail en cours passent au lime (22/09).
+    //
+    // Mutation verifiee : `waiting: true` remplace par `unread: true` dans
+    // `sidebar/ApprovalsList` -> ce cas rougit (Reviewer C).
+    pathname = '/approvals';
+    const uneAttente: PendingApproval[] = [
+      {
+        id: 'a0',
+        jobId: 'j0',
+        toolName: 'send_message',
+        agentName: 'Alfred',
+        toolInput: {},
+        requestedAt: null,
+        jobChannel: 'dashboard',
+        conversationChannel: 'dashboard',
+      },
+    ];
+    await renderSidebar([], uneAttente);
+    const ligne = container.querySelector('[data-testid="sidebar-row-approvals"]');
+    expect(ligne).not.toBeNull();
+    const point = ligne!.querySelector('[data-testid="thread-dot"]');
+    expect(point?.getAttribute('data-tone')).toBe('attention');
+    expect(point?.className).toContain('bg-attention');
+    expect(point?.className).not.toContain('bg-agent-vivid');
+  });
+
   it('ne lit PAS les approbations en attente une seconde fois', async () => {
     // `ApprovalsProvider` tient déjà le compte pour la pastille du rail et la
     // cloche. Une seconde lecture des mêmes lignes ferait dire deux nombres
