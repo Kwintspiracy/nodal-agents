@@ -24,6 +24,7 @@ import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/conne
 import {
   FOLDER_LIMIT_CONFIRM_LABEL,
   FOLDER_LIMIT_TITLE,
+  folderLimitEntityWideningMessage,
   folderLimitWideningMessage,
 } from './folder-limit-copy.ts';
 
@@ -546,7 +547,13 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
       <ConfirmDialog
         open={pendingWiden !== null}
         title={FOLDER_LIMIT_TITLE}
-        message={pendingWiden === null ? '' : folderLimitWideningMessage(pendingWiden.folder)}
+        message={
+          pendingWiden === null
+            ? ''
+            : pendingWiden.scope === 'entity'
+              ? folderLimitEntityWideningMessage(pendingWiden.folder)
+              : folderLimitWideningMessage(pendingWiden.folder)
+        }
         confirmLabel={FOLDER_LIMIT_CONFIRM_LABEL}
         onConfirm={() => {
           const pending = pendingWiden;

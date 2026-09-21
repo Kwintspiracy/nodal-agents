@@ -21,5 +21,16 @@ export function folderLimitWideningMessage(folder: string): string {
   return `${folderLimitPreamble(folder)} Saving from here applies your choice everywhere this agent works.`;
 }
 
+/**
+ * La même perte, quand la permission est posée « pour tous mes agents »
+ * (revue Reviewer C, C1). La règle de dossier de CET agent ne disparaît pas :
+ * elle est déclassée hors de son dossier, où la règle d'entité gagne. Dire
+ * « everywhere this agent works » serait vrai et sous-décrirait le geste, qui
+ * vaut aussi pour les autres agents.
+ */
+export function folderLimitEntityWideningMessage(folder: string): string {
+  return `${folderLimitPreamble(folder)} A rule for all your agents lets these tools run everywhere, outside that folder too.`;
+}
+
 /** Le bouton qui confirme la perte de la limite. */
 export const FOLDER_LIMIT_CONFIRM_LABEL = 'Remove the limit';

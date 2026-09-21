@@ -12,10 +12,19 @@
 // seconde couche d'actions qui la contournerait — rougit ici.
 //
 // Ce qu'elle ne voit pas, et il vaut mieux l'écrire que promettre une barrière
-// étanche : elle lit du texte, pas un arbre syntaxique. Un appel assemblé à
-// l'exécution lui échappe, et le garde d'élargissement lui-même est prouvé
-// ailleurs, sur de vraies lignes en base
-// (`src/lib/__tests__/approval-rule-folder-condition.test.ts`).
+// étanche :
+//
+//   - elle lit du texte, pas un arbre syntaxique : un appel assemblé à
+//     l'exécution, ou un import aliasé (`import { approvalRules as ar }`),
+//     lui échappe ;
+//   - elle dit UNE PORTE, pas UN GARDE (revue Reviewer C, C3). Plusieurs
+//     actions de `lib/actions.ts` écrivent la table, et toutes ne passent pas
+//     par `refuseGlobalGrantOverFolderRule` : les bascules Yolo portent le
+//     garde elles-mêmes, le préréglage lecture seule et la recette n'écrivent
+//     que des `block`, qui RESTREIGNENT. Un composant qui appellerait l'une
+//     d'elles passe donc ici, et c'est la revue qui le voit ;
+//   - le garde d'élargissement lui-même est prouvé ailleurs, sur de vraies
+//     lignes en base (`src/lib/__tests__/approval-rule-folder-condition.test.ts`).
 
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
