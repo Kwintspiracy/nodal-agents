@@ -304,13 +304,14 @@ export default function FileChangeBlock({
           if (next) onOpen?.();
         }}
         inset="tight"
-        // 12 px de côté (l'inset « tight »), 8 px de haut et de bas : la rangée
-        // de la planche. Sur la page d'un run, la plaque garde sa hauteur fixe
-        // de 42 px, qui aligne les cartes de la colonne entre elles.
-        className={flush ? 'py-2' : 'h-[42px] py-0'}
+        // La hauteur reste écrite EN TOUTES LETTRES, la même des deux côtés :
+        // `__tests__/DisclosureButton.test.tsx` refuse un `className` en
+        // expression sur cette balise, et il a raison — un retrait caché dans
+        // un ternaire est exactement le trou que sa garde ferme (#151).
+        className="h-[42px] py-0"
       >
-        {/* GRAS, comme la planche : le mot du geste est ce que l'œil accroche
-            en premier sur la rangée, avant le chemin. */}
+        {/* GRAS, comme la planche : le mot du geste est ce que le regard
+            accroche en premier sur la rangée, avant le chemin. */}
         <span
           className="shrink-0 text-mono-12 font-bold text-feed-tool"
           data-testid="file-change-kind"
