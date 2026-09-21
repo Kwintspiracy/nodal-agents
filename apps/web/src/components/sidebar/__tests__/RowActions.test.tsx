@@ -189,4 +189,27 @@ describe('les trois points d’une ligne @cap:creer-agent/ecran', () => {
     });
     expect(deleteAgentAction).not.toHaveBeenCalled();
   });
+
+  it('la confirmation DIT où le projet part, ce qui reste, et par où il revient', async () => {
+    // #364 : « leaves the list » ne disait ni quelle liste, ni que le geste se
+    // défait. Le texte lu à l'écran est ce qui est vérifié.
+    await render(
+      createElement(RowActions, {
+        kind: 'project',
+        id: 'p1',
+        name: 'Recipes',
+        href: '/spaces/p1',
+        path: 'D:/work/recipes',
+        onDone: vi.fn(),
+      }),
+    );
+    await click(container.querySelector('[data-testid="row-menu-project"]'));
+    await click(bouton('Remove from list'));
+    const texte = document.body.textContent ?? '';
+    expect(texte).toContain('"Recipes" leaves the sidebar and the Projects page.');
+    expect(texte).toContain('Its folder stays on disk.');
+    expect(texte).toContain('You can show it again from the Projects page.');
+    // Pas de tiret cadratin dans un texte d'écran.
+    expect(texte).not.toContain('—');
+  });
 });

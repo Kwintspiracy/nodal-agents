@@ -188,7 +188,10 @@ export default function RowActions({
         title={`${recette.retirer} ${recette.chose}?`}
         message={
           kind === 'project'
-            ? `"${name}" leaves the list. Nothing is deleted on disk; the folder stays where it is.`
+            ? // CE QUE LE GESTE FAIT, en toutes lettres (#364) : où le projet
+              // part, ce qui reste, et par où il revient. « Leaves the list »
+              // ne disait ni quelle liste, ni que le geste se défait.
+              `"${name}" leaves the sidebar and the Projects page. Its folder stays on disk. You can show it again from the Projects page.`
             : `"${name}" is deleted. This cannot be undone.`
         }
         confirmLabel={recette.retirer}

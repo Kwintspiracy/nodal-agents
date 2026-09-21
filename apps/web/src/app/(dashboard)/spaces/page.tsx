@@ -51,7 +51,7 @@ export default async function SpacesPage() {
   // configure par clé de dossier, pas par appartenance au registre. Une
   // quatrième lecture bornée, et seulement s'il y a des dossiers détectés.
   const firstPass = mergeWorkspaces({ projects, sessions, prefs });
-  const detectedPaths = [...firstPass.rows, ...firstPass.hiddenDetected]
+  const detectedPaths = [...firstPass.rows, ...firstPass.hiddenRows]
     .filter((r) => r.kind === 'detected')
     .map((r) => r.path);
   const proofRuns = new Map<string, WorkspaceProofRun>();
@@ -64,13 +64,15 @@ export default async function SpacesPage() {
   const view =
     proofRuns.size > 0 ? mergeWorkspaces({ projects, sessions, prefs, proofRuns }) : firstPass;
 
-  const vide = view.rows.length === 0 && view.hiddenDetected.length === 0;
+  const vide = view.rows.length === 0 && view.hiddenRows.length === 0;
 
   return (
     <PageShell
-      // « Workspaces » depuis le 18/09/2026, comme la barre latérale. La ROUTE
-      // reste `/spaces` : un libellé n'a pas besoin de casser une URL.
-      title="Workspaces"
+      // « Projects » (#364) : c'est le « See all » de la section PROJECTS de la
+      // barre, et un « workspace » est autre chose — le dossier de travail d'un
+      // agent. La ROUTE reste `/spaces` : un libellé n'a pas besoin de casser
+      // une URL.
+      title="Projects"
       {...(projectsResult.ok ? { subtitle: workspacesSubtitle(view.counts) } : {})}
       toolbar={
         <div className="flex items-center justify-end">

@@ -18,6 +18,8 @@
 // de l'onglet Code (Register, Hide). Rien n'est perdu en la retirant du menu.
 
 import { projectKey } from '@nodal-agents/shared';
+// La règle du projet LISTÉ, la MÊME que celle de la requête de la barre.
+import { isListedProject } from './project-listing.ts';
 import type { VerifyStatus } from './verification-display.ts';
 import type { ProjectListRow } from './project-actions.ts';
 
@@ -67,8 +69,11 @@ export type WorkspaceRow = {
 export type WorkspacesView = {
   /** Ce qui s'affiche, de la dernière activité à la plus ancienne. */
   rows: WorkspaceRow[];
-  /** Les dossiers détectés que le propriétaire a masqués — derrière « Show ». */
-  hiddenDetected: WorkspaceRow[];
+  /**
+   * Ce que le propriétaire a RETIRÉ de la liste, registre et détection
+   * confondus — derrière « Hidden (N) », et rien de perdu (#364).
+   */
+  hiddenRows: WorkspaceRow[];
   counts: {
     total: number;
     registered: number;
@@ -172,10 +177,12 @@ export function groupSessionsByProject(
  * date d'entrée au registre. Sans cette règle, tout projet déclaré
  * apparaîtrait deux fois dès qu'un agent y écrit, ce qui est le cas normal.
  *
- * Les MASQUÉS : un dossier détecté masqué sort de la liste et se compte à part
- * (« N hidden folder · Show »). Un projet du REGISTRE masqué reste listé avec
- * son étiquette — c'est le comportement de `/spaces` depuis P8, et l'écran du
- * registre est justement celui où l'on doit retrouver ce qu'on a rangé.
+ * Les MASQUÉS sortent de la liste, REGISTRE COMPRIS (#364). Un projet du
+ * registre masqué y restait, avec son étiquette ; c'était le comportement de
+ * `/spaces` depuis P8, et il défaisait le geste de la barre latérale : « Remove
+ * from list » retirait le projet du menu, renvoyait sur cette page, et la page
+ * le montrait toujours. Rien n'est perdu pour autant : les masqués sont rendus
+ * à part, derrière « Hidden (N) », avec le geste qui les remet dans la liste.
  */
 export function mergeWorkspaces(input: {
   projects: readonly ProjectListRow[];
@@ -241,15 +248,18 @@ export function mergeWorkspaces(input: {
     return a.name.localeCompare(b.name);
   };
 
-  const visible = [...registered, ...detected.filter((d) => !d.hidden)].sort(byActivity);
-  const hiddenDetected = detected.filter((d) => d.hidden).sort(byActivity);
+  const toutes = [...registered, ...detected];
+  const visible = toutes.filter((r) => isListedProject(r)).sort(byActivity);
+  const hiddenRows = toutes.filter((r) => !isListedProject(r)).sort(byActivity);
 
   return {
     rows: visible,
-    hiddenDetected,
+    hiddenRows,
     counts: {
       total: visible.length,
-      registered: registered.length,
+      // Ce que la liste MONTRE, pas ce que la base porte : un sous-titre qui
+      // compterait les masqués annoncerait des lignes introuvables à l'œil.
+      registered: visible.filter((r) => r.kind === 'registered').length,
       detected: visible.filter((r) => r.kind === 'detected').length,
       waiting: visible.filter((r) => r.proof === 'approval_pending').length,
     },
