@@ -212,8 +212,12 @@ export default function DeliveryBlock({
         {/* ET IL NE SE DIT PAS D'UN RUN QUI N'EST PAS ALLÉ AU BOUT (Quentin,
             22/09 : un run annulé « apparaît comme delivered »). Ce qu'il a
             écrit avant reste listé dessous ; l'en-tête dit l'issue. */}
+        {/* TROIS MOTS TIENNENT SUR LA LIGNE, OU ELLE COUPE (Reviewer C, #373) :
+            l'en-tête a une hauteur fixe de 48 px, et rien n'y bornait la suite
+            de mots. Avec un troisième, une largeur étroite la faisait pousser
+            la pastille et le bouton Stop hors de la boîte. */}
         <span
-          className={`text-title-15 ${summary.live === 'working' ? 'text-run' : summary.live === 'waiting' ? 'text-warn' : 'text-ink'}`}
+          className={`min-w-0 truncate text-title-15 ${summary.live === 'working' ? 'text-run' : summary.live === 'waiting' ? 'text-warn' : 'text-ink'}`}
         >
           {summary.live === 'working'
             ? 'Working'
@@ -237,7 +241,15 @@ export default function DeliveryBlock({
 
               Et rien tant que le run court : les preuves qui ont déjà tourné
               se comptent dans la pastille, elles ne concluent pas (même règle
-              que « Verified », Quentin le 22/09). */}
+              que « Verified », Quentin le 22/09).
+
+              IL REDIT LA PASTILLE QUAND PERSONNE N'A RELU, et c'est assumé
+              (Reviewer C, #373) : la pastille dit alors « Verified » ou
+              « Checks failed », le mot dit la même chose. Dès qu'une relecture
+              existe — le cas de l'issue — la pastille nomme le relecteur et le
+              mot devient le seul endroit où le sort des preuves se lit. Taire
+              le mot dans l'autre cas ferait dépendre la grammaire de la ligne
+              d'un fait qui n'a rien à voir avec elle. */}
           {summary.live === null && verdict !== null && (
             <span className={verdict === 'red' ? 'text-warn' : 'text-ok'}>
               {' '}

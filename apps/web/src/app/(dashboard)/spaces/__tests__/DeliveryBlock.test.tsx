@@ -1013,6 +1013,32 @@ describe('DeliveryBlock — le verdict de preuve en toutes lettres @cap:verifier
     expect(html).not.toContain('Proof failed');
   });
 
+  // Reviewer C, #373 : aucun test ne fixait ce que dit la ligne d'un run
+  // ARRÊTÉ dont les preuves ont tourné. La règle est celle de #335 — l'issue du
+  // travail et le sort des preuves sont deux faits, et le second ne se tait pas
+  // parce que le premier est mauvais.
+  it('un run arrêté dit son issue ET le sort de ses preuves', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-373"
+        summary={{ ...EMPTY, produced: true, ended: 'stopped', verdict: 'green' }}
+      />,
+    );
+    expect(ligne(html)).toContain('Stopped · Proof passed');
+    // Et le crochet reste gris : le run n'est pas alle au bout.
+    const entete = html.slice(0, html.indexOf('Stopped'));
+    expect(entete).not.toMatch(/<svg[^>]*class="[^"]*text-ok/);
+  });
+
+  // La ligne de mots est bornee : trois mots, une pastille et un bouton Stop
+  // dans une boite de 48 px de haut, ca coupe plutot que ca deborde.
+  it('la ligne de mots ne pousse pas la boite', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-373" summary={{ ...livreEtApprouve, verdict: 'red' }} />,
+    );
+    expect(html).toMatch(/class="min-w-0 truncate text-title-15 text-ink"/);
+  });
+
   it('tant que le run court, la preuve se compte et ne conclut pas', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock
