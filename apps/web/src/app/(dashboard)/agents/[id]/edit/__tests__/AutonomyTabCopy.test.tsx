@@ -382,6 +382,10 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
     expect(dialogText()).toContain(
       'This rule applies only in Dev today. Saving from here applies your choice everywhere this agent works.',
     );
+    // Revue Reviewer C, passe 3, C5 : la carte d'approbation n'existe que
+    // quand une demande existe. Y envoyer le propriétaire, c'est peut-être
+    // l'envoyer devant un écran vide.
+    expect(dialogText()).not.toContain('approval card');
     expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
   });
 
@@ -514,6 +518,124 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
     });
     await act(async () => {});
     expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
+  });
+
+  it('nomme le dossier même sur une ligne qui ne peut pas être bloquée', async () => {
+    // Revue Reviewer C, passe 3, C4 : le verrou n'interdit que le blocage, une
+    // règle de dossier existe ici comme ailleurs.
+    await render(
+      [],
+      [
+        {
+          id: 'r5',
+          toolName: 'return_result',
+          action: 'auto_approve',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
+      ],
+    );
+    expect(
+      container.querySelector('[data-testid="autonomy-folder-return_result"]')?.textContent,
+    ).toBe('in Dev');
+    // La raison du verrou reste, elle : les deux se lisent ensemble.
+    expect(container.querySelector('[data-testid="autonomy-locked-return_result"]')).not.toBeNull();
+  });
+
+  it("une relecture n'écrase pas une écriture encore en vol", async () => {
+    // Revue Reviewer C, passe 3, C2. La relecture déclenchée par la règle de
+    // dossier peut lire la base AVANT que l'écriture partie entre-temps sur un
+    // autre outil y soit visible. Elle ramène alors l'ancienne valeur, et
+    // comme la seconde réponse ne relit rien, l'écran resterait faux.
+    let resolveFolderSave: ((r: { ok: true; data: undefined }) => void) | undefined;
+    let resolveOtherSave: ((r: { ok: true; data: undefined }) => void) | undefined;
+    actions.setAgentApprovalRuleAction.mockImplementation(
+      (raw) =>
+        new Promise<{ ok: true; data: undefined }>((r) => {
+          if (raw.toolName === 'file_write') resolveFolderSave = r;
+          else resolveOtherSave = r;
+        }),
+    );
+    await render([CONNECTOR], [FOLDER_RULE]);
+
+    // 1. La règle de dossier : confirmée, l'écriture part.
+    await act(async () => {
+      control('file_write', 'block').click();
+    });
+    await act(async () => {
+      [...document.body.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Remove the limit')!
+        .click();
+    });
+
+    // 2. Un autre outil, dont l'écriture est encore en vol.
+    await act(async () => {
+      control('legacy_write', 'block').click();
+    });
+
+    // 3. La première réponse arrive et déclenche une relecture qui n'a pas
+    //    encore vu la seconde écriture.
+    actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
+      ok: true as const,
+      data: [
+        {
+          id: 'r1',
+          toolName: 'file_write',
+          action: 'block',
+          conditionJson: {},
+          workspaceLabel: null,
+        },
+      ],
+    }));
+    await act(async () => {
+      resolveFolderSave?.({ ok: true, data: undefined });
+    });
+    await act(async () => {});
+
+    // La ligne dont personne n'a le résultat garde ce que le propriétaire a
+    // choisi, au lieu de retomber sur l'état d'avant.
+    expect(control('legacy_write', 'block').getAttribute('aria-pressed')).toBe('true');
+    await act(async () => {
+      resolveOtherSave?.({ ok: true, data: undefined });
+    });
+  });
+
+  it("n'affiche pas les règles de l'agent précédent quand on change d'agent", async () => {
+    // Revue Reviewer C, passe 3, C1 : les règles étaient gardées telles quelles
+    // tant que la lecture du nouvel agent n'avait pas abouti, dossiers compris.
+    await render([], [FOLDER_RULE]);
+    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
+      'in Dev',
+    );
+
+    // Le second agent, dont la lecture ÉCHOUE : c'est le cas qui compte. Une
+    // lecture qui réussit remplace les règles de toute façon ; une lecture qui
+    // échoue laissait celles d'avant à l'écran, sous le nom du nouvel agent.
+    actions.listAgentApprovalRulesAction.mockImplementation(
+      async () =>
+        ({ ok: false, code: 'db_error', message: 'Failed to load approval rules' }) as never,
+    );
+    await act(async () => {
+      root.render(
+        <AutonomyTab
+          agentId="44444444-4444-4444-8444-444444444444"
+          connectors={[]}
+          mcpServers={[]}
+          hasTelegramBot={false}
+          attachedSkills={[]}
+          autoRunPaused={false}
+          isOwner
+          cliDailyBudgetUsd={0}
+          commandAllowlist={null}
+          mayChangeTeam={false}
+        />,
+      );
+    });
+
+    await act(async () => {});
+    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
+    // L'onglet a fini de charger : il montre le nouvel agent, sans règle.
+    expect(container.textContent).toContain('Built-in tools');
   });
 
   it('nomme le dossier dans le nom accessible du curseur', async () => {

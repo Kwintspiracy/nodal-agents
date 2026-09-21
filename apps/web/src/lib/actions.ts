@@ -6434,7 +6434,10 @@ export async function listAgentApprovalRulesAction(
         // libellés peuvent viser le même dossier. Sans ordre, le gagnant de la
         // table ci-dessous changeait d'une lecture à l'autre (revue Reviewer C,
         // passe 2, F2). C'est le premier dans l'ordre du propriétaire.
-        .orderBy(agentWorkspaces.position);
+        // `position` n'est pas unique non plus : le libellé tranche l'égalité,
+        // sinon deux dossiers de même rang rendaient l'ordre indéterminé
+        // (revue Reviewer C, passe 3, C3).
+        .orderBy(agentWorkspaces.position, agentWorkspaces.label);
       // MÊME comparaison que la chaîne d'approbation (`explainApprovalRules`,
       // @nodal-agents/shared) : séparateurs, barre finale, lettre de lecteur.
       // Comparer les chemins bruts ici ferait afficher un chemin sur cet écran

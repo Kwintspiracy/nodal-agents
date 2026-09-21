@@ -275,6 +275,45 @@ describe("l'onglet Approvals reçoit la condition, pas seulement l'action @cap:r
     expect(regle!.workspaceLabel).toBeNull();
   });
 
+  it('tranche entre deux libellés visant le MÊME dossier, toujours de la même façon', async () => {
+    // `agent_workspaces` n'est unique que sur (agent_id, label) : deux
+    // libellés peuvent viser un seul chemin. Sans ordre total, le libellé
+    // affiché changeait d'une lecture à l'autre (revue Reviewer C, passes 2
+    // et 3). C'est le premier dans l'ordre du propriétaire, puis le libellé.
+    const { setAgentApprovalRuleAction } = await import('../actions.ts');
+    const PARTAGE = 'D:\APPS\Partage';
+    await testDb.insert(agentWorkspaces).values([
+      {
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+        label: 'second',
+        path: PARTAGE,
+        position: 7,
+      },
+      {
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+        label: 'premier',
+        path: PARTAGE,
+        position: 2,
+      },
+    ]);
+    expect(
+      (
+        await setAgentApprovalRuleAction({
+          agentId: seed.agentId,
+          toolName: 'mcp_x__partage',
+          action: 'auto_approve',
+          scope: 'agent',
+          workspacePath: PARTAGE,
+        })
+      ).ok,
+    ).toBe(true);
+
+    const regle = await lireRegle('mcp_x__partage');
+    expect(regle!.workspaceLabel).toBe('premier');
+  });
+
   it('nomme le CHEMIN quand le dossier a été détaché de l’agent', async () => {
     // Une règle qui survit au détachement de son dossier ne vaut plus nulle
     // part. Se taire la ferait lire « partout » : le pire des deux sens.

@@ -85,12 +85,25 @@ export default function AutonomyToolRow({
       </div>
 
       {lockedReason !== undefined ? (
-        <p
-          className="max-w-xs text-body-12 leading-[1.4]! text-ink-4 sm:text-right"
-          data-testid={`autonomy-locked-${slug}`}
-        >
-          {lockedReason}
-        </p>
+        <div className="flex max-w-xs flex-col items-start gap-1 sm:items-end">
+          {/*
+            Le dossier s'affiche AUSSI sur une ligne verrouillée (revue Reviewer
+            C, passe 3, C4) : le verrou n'interdit que le blocage, une règle de
+            dossier existe ici comme ailleurs, et la taire ferait lire
+            « partout ».
+          */}
+          {folder !== undefined && (
+            <span className="text-body-12 text-ink-4" data-testid={`autonomy-folder-${slug}`}>
+              in {folder}
+            </span>
+          )}
+          <p
+            className="text-body-12 leading-[1.4]! text-ink-4 sm:text-right"
+            data-testid={`autonomy-locked-${slug}`}
+          >
+            {lockedReason}
+          </p>
+        </div>
       ) : (
         /* 3-way control, with the folder the rule is confined to beside it */
         <div className="flex flex-col items-start gap-1 sm:items-end">

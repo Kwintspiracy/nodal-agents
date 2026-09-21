@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Brain } from '@phosphor-icons/react';
@@ -1669,7 +1669,30 @@ export function AutonomyTab({
   /** agents.may_change_team — false = the three team tools are not in the list. */
   mayChangeTeam: boolean;
 }) {
-  const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
+  /**
+   * Les règles ET l'agent auxquelles elles appartiennent (revue Reviewer C,
+   * passe 3, C1).
+   *
+   * Portées ensemble, et non vidées dans un effet : passer d'un agent à
+   * l'autre change ce que l'écran LIT, tout de suite, même si la lecture
+   * suivante échoue. Vider dans l'effet marcherait aussi, au prix d'un
+   * `setState` synchrone dans un effet, donc d'un rendu en cascade.
+   */
+  const [rulesState, setRulesState] = useState<{
+    agentId: string;
+    rows: ApprovalRuleUiRow[];
+  }>({ agentId: '', rows: [] });
+  const rules = rulesState.agentId === agentId ? rulesState.rows : [];
+
+  const setRules = useCallback(
+    (next: ApprovalRuleUiRow[] | ((prev: ApprovalRuleUiRow[]) => ApprovalRuleUiRow[])) => {
+      setRulesState((prev) => {
+        const base = prev.agentId === agentId ? prev.rows : [];
+        return { agentId, rows: typeof next === 'function' ? next(base) : next };
+      });
+    },
+    [agentId],
+  );
   /**
    * Numéro de la relecture la plus récente (revue Reviewer C, passe 2, F1).
    *
@@ -1680,7 +1703,35 @@ export function AutonomyTab({
    * demandée a le droit d'écrire.
    */
   const lastReload = useRef(0);
-  const [loaded, setLoaded] = useState(false);
+  /**
+   * Les outils dont l'écriture est encore en vol (revue Reviewer C, passe 3,
+   * C2).
+   *
+   * Une relecture déclenchée par l'outil A peut interroger la base AVANT que
+   * l'écriture de l'outil B, partie entre-temps, y soit visible : elle
+   * ramènerait alors l'ancienne valeur de B et écraserait sa ligne, et comme
+   * la réponse de B ne relit rien, l'écran resterait faux. Le garde de
+   * séquence n'y peut rien : ce n'est pas une réponse périmée, c'est une
+   * lecture prise trop tôt. Une relecture laisse donc en place les lignes dont
+   * personne n'a encore le résultat.
+   */
+  const savingRef = useRef<ReadonlySet<string>>(new Set());
+
+  // Le ref est la source, l'état n'en est que le reflet pour le rendu : mis à
+  // jour dans l'updater de `setSaving`, il n'aurait pas encore la bonne valeur
+  // quand la relecture, déclenchée dans la même continuation de promesse, le
+  // consulte.
+  function markSaving(toolName: string, on: boolean) {
+    const next = new Set(savingRef.current);
+    if (on) next.add(toolName);
+    else next.delete(toolName);
+    savingRef.current = next;
+    setSaving(next);
+  }
+  // Chargé POUR CET AGENT : sans l'identifiant, l'onglet du suivant s'ouvrait
+  // déjà « chargé », sur les règles du précédent.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loaded = loadedFor === agentId;
   const [saving, setSaving] = useState<Set<string>>(new Set());
   // Fetched, not imported: the descriptors live in @nodal-agents/orchestration,
   // and importing that from this 'use client' component pulls drizzle into the
@@ -1692,10 +1743,11 @@ export function AutonomyTab({
   useEffect(() => {
     const seq = ++lastReload.current;
     listAgentApprovalRulesAction(agentId).then((result) => {
-      if (result.ok && seq === lastReload.current) setRules(result.data);
-      setLoaded(true);
+      if (seq !== lastReload.current) return;
+      if (result.ok) setRules(result.data);
+      setLoadedFor(agentId);
     });
-  }, [agentId]);
+  }, [agentId, setRules]);
 
   useEffect(() => {
     listInternalToolsAction().then((result) => {
@@ -1786,13 +1838,9 @@ export function AutonomyTab({
       ]);
     }
 
-    setSaving((prev) => new Set([...prev, toolName]));
+    markSaving(toolName, true);
     void setAgentApprovalRuleAction({ agentId, toolName, action }).then((result) => {
-      setSaving((prev) => {
-        const next = new Set(prev);
-        next.delete(toolName);
-        return next;
-      });
+      markSaving(toolName, false);
       if (!result.ok) toast.error(result.message);
       // Relecture après un refus, et après tout changement d'une règle de
       // dossier : dans les deux cas, ce que la base porte maintenant ne se
@@ -1800,7 +1848,15 @@ export function AutonomyTab({
       if (!result.ok || conditioned) {
         const seq = ++lastReload.current;
         listAgentApprovalRulesAction(agentId).then((r) => {
-          if (r.ok && seq === lastReload.current) setRules(r.data);
+          if (!r.ok || seq !== lastReload.current) return;
+          setRules((prev) => {
+            const inFlight = savingRef.current;
+            if (inFlight.size === 0) return r.data;
+            return [
+              ...r.data.filter((d) => !inFlight.has(d.toolName)),
+              ...prev.filter((p) => inFlight.has(p.toolName)),
+            ];
+          });
         });
       }
     });
@@ -1998,7 +2054,7 @@ export function AutonomyTab({
         message={
           pendingWiden === null
             ? ''
-            : `This rule applies only in ${pendingWiden.folder} today. Saving from here applies your choice everywhere this agent works. To keep the limit, change the rule on the approval card instead.`
+            : `This rule applies only in ${pendingWiden.folder} today. Saving from here applies your choice everywhere this agent works.`
         }
         confirmLabel="Remove the limit"
         onConfirm={() => {
