@@ -50,6 +50,13 @@
 // repasse à la finalisation suivante. Deuxième rouge ⇒ `completed`,
 // `red_streak + 1`, aucune troisième chance (invariant #8).
 //
+// COMBIEN DE TOURS ? C'EST UN RÉGLAGE DE L'ESPACE (issue #377). La borne
+// n'est plus écrite ici : `entities.proof_repair_attempts` la porte, lue en
+// transaction 1 sous le même verrou que le reste. `0` rend le comportement
+// d'avant #375 — le run finit rouge tout de suite —, `1` est le défaut et la
+// décision D2, `3` le plafond que le CHECK de la colonne tient. Une ligne
+// lue avant la migration vaut le défaut (`readProofRepairAttempts`).
+//
 // POURQUOI L'APPELANT DÉCLARE (`repairTurn`). Un tour de réparation n'existe
 // que là où il y a une boucle de tours à reprendre — `executeJob`. Le runtime
 // CLI a son propre cycle (PR③ du plan) et le cron du tableau de tâches ne
@@ -69,9 +76,15 @@
 
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, lt, or, sql } from '@nodal-agents/db';
-import { agentJobs, jobDeliverableVerificationState, verificationRuns } from '@nodal-agents/db';
+import {
+  agentJobs,
+  entities,
+  jobDeliverableVerificationState,
+  verificationRuns,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { DecisionStatus, JobResultKind } from '@nodal-agents/shared';
+import { readProofRepairAttempts } from '@nodal-agents/shared';
 import { getVerifier } from '../verification/registry.ts';
 import { buildRepairBrief } from '../verification/repair-brief.ts';
 import type { RepairBriefCommand } from '../verification/repair-brief.ts';
@@ -106,6 +119,13 @@ export const FINALIZE_CLAIMED_ELSEWHERE = 'FINALIZE_CLAIMED_ELSEWHERE';
 export const VERIFY_STALE_EPOCH = 'VERIFY_STALE_EPOCH';
 /** Un tour de réparation vient de s'ouvrir sur ce job (PR②, décision D2). */
 export const VERIFY_REPAIR_TURN_OPENED = 'VERIFY_REPAIR_TURN_OPENED';
+/**
+ * Le réglage de réparation de l'espace n'est pas lisible tel quel : ligne
+ * absente, ou valeur hors des bornes que le CHECK de la colonne tient (#377).
+ * Rabattu, et DIT — un repli muet sur une donnée abîme ferait tourner le
+ * runner sur un nombre que personne n'a choisi (invariant #4).
+ */
+export const VERIFY_REPAIR_SETTING_UNREADABLE = 'VERIFY_REPAIR_SETTING_UNREADABLE';
 /**
  * Au-delà de ce délai, un marqueur `finalizing_at` sans décision terminale est
  * réputé orphelin (le finaliseur qui l'a posé est mort entre ses deux
@@ -341,6 +361,12 @@ interface OpenedJob {
   /** Nullable comme la colonne : un job sans espace n'a simplement aucun livrable. */
   readonly entityId: string | null;
   readonly plans: readonly DeliverablePlan[];
+  /**
+   * Le réglage de l'espace (#377), lu en transaction 1. Un job sans espace
+   * n'a aucun livrable, donc aucune réparation possible : la valeur vaut zéro
+   * plutôt que le défaut, et personne ne s'en sert.
+   */
+  readonly maxReparations: number;
 }
 
 function defaultLog(code: string, data: Record<string, unknown>): void {
@@ -537,35 +563,44 @@ async function poseDeliverableCheck(
  * qu'il aurait joué. Aucun job pendu, et jamais deux réparations — c'est la
  * borne en base qui le garantit, pas la reprise.
  *
- * LA BORNE EST EN BASE, pas en mémoire : `repair_attempts = 0` est dans le
- * `WHERE`. Un runner redémarré entre le tour de réparation et la
- * re-finalisation relit 1 et n'en ouvre pas un second (« y compris après
- * reprise du processus », D2).
+ * LA BORNE EST EN BASE, pas en mémoire : le compte déjà consommé est dans le
+ * `WHERE`, comparé à `max` (le réglage de l'espace, #377). Un runner
+ * redémarré entre le tour de réparation et la re-finalisation relit le
+ * compteur et s'arrête au même endroit (« y compris après reprise du
+ * processus », D2).
+ *
+ * `max = 0` ne fait rien du tout : c'est le comportement d'avant #375, le run
+ * finit avec son verdict rouge. La garde est ÉCRITE, pas déduite du `WHERE` :
+ * sans elle, un `repair_attempts` à 0 satisferait `< 0` — faux — mais la
+ * boucle tournerait quand même sur chaque rouge pour rien.
  *
  * UN SEUL TOUR POUR TOUS LES ROUGES. Le brief porte toutes les commandes
  * rouges du job, pas une par livrable : l'agent a un tour, il doit voir tout
- * ce qu'il a à corriger. Un livrable déjà réparé (`repair_attempts >= 1`) qui
- * rougit encore entre dans le brief sans rouvrir quoi que ce soit — c'est un
- * fait que l'agent doit lire, ce n'est plus une chance de plus.
+ * ce qu'il a à corriger. Un livrable qui a épuisé sa réserve et rougit encore
+ * entre dans le brief sans rouvrir quoi que ce soit — c'est un fait que
+ * l'agent doit lire, ce n'est plus une chance de plus.
  */
 async function ouvrirReparation(
   tx: AnyDrizzleDb,
   jobId: string,
   rouges: readonly { plan: DeliverablePlan; proof: ProofResult }[],
+  max: number,
 ): Promise<RepairTurn | null> {
-  if (rouges.length === 0) return null;
+  if (rouges.length === 0 || max <= 0) return null;
 
   const now = new Date();
   let ouvert = false;
   for (const rouge of rouges) {
-    if (rouge.plan.repairAttempts !== 0) continue;
+    if (rouge.plan.repairAttempts >= max) continue;
     const marque = await tx
       .update(jobDeliverableVerificationState)
-      .set({ repairAttempts: 1, updatedAt: now })
+      .set({ repairAttempts: rouge.plan.repairAttempts + 1, updatedAt: now })
       .where(
         and(
           eq(jobDeliverableVerificationState.id, rouge.plan.stateId),
-          eq(jobDeliverableVerificationState.repairAttempts, 0),
+          // Le compte QU'ON A LU : deux finalisations concurrentes ne peuvent
+          // pas incrémenter deux fois depuis le même point de départ.
+          eq(jobDeliverableVerificationState.repairAttempts, rouge.plan.repairAttempts),
           eq(jobDeliverableVerificationState.dirtyGeneration, rouge.plan.generation),
         ),
       )
@@ -744,7 +779,46 @@ export async function finalizeJobSuccess(
         config,
       });
     }
-    return { entityId: job.entityId, plans };
+    // LE RÉGLAGE DE L'ESPACE (#377), lu dans la même transaction que le reste
+    // et pas plus tard : ce qui décide de rouvrir le run doit être lu avant la
+    // preuve, comme la configuration de chaque livrable. Un job sans espace
+    // n'a aucun livrable — la lecture n'a pas lieu, et la borne vaut zéro.
+    let maxReparations = 0;
+    if (job.entityId !== null && plans.length > 0) {
+      const [espace] = await tx
+        .select({ proofRepairAttempts: entities.proofRepairAttempts })
+        .from(entities)
+        .where(eq(entities.id, job.entityId));
+      if (!espace) {
+        // ⚠️ AUCUN TEST NE COUVRE CETTE BRANCHE, et c'est assumé : il faudrait
+        // que la ligne `entities` disparaisse alors qu'un job la référence, ce
+        // que la clé étrangère interdit. Elle reste parce que réparer selon un
+        // défaut inventé serait pire que ne pas réparer, et parce qu'un repli
+        // muet est exactement ce que l'invariant #4 refuse (Reviewer C, #392).
+        maxReparations = 0;
+        log(VERIFY_REPAIR_SETTING_UNREADABLE, {
+          jobId,
+          entityId: job.entityId,
+          cause: 'no_entity',
+        });
+      } else {
+        maxReparations = readProofRepairAttempts(espace.proofRepairAttempts);
+        if (maxReparations !== espace.proofRepairAttempts) {
+          // Le CHECK de la colonne interdit d'ÉCRIRE une valeur hors bornes :
+          // en LIRE une veut dire qu'elle est entrée autrement — restauration
+          // d'une sauvegarde antérieure à la contrainte, contrainte tombée.
+          // Rabattue sur la borne la plus proche, et dite.
+          log(VERIFY_REPAIR_SETTING_UNREADABLE, {
+            jobId,
+            entityId: job.entityId,
+            stored: espace.proofRepairAttempts,
+            used: maxReparations,
+          });
+        }
+      }
+    }
+
+    return { entityId: job.entityId, plans, maxReparations };
   });
 
   if (!opened) return alreadyTerminal;
@@ -916,7 +990,9 @@ export async function finalizeJobSuccess(
 
       // ─── PR② : UN tour de réparation, ou le rouge est le dernier mot ──────
       const repair =
-        input.repairTurn === 'supported' ? await ouvrirReparation(tx, jobId, rouges) : null;
+        input.repairTurn === 'supported'
+          ? await ouvrirReparation(tx, jobId, rouges, opened.maxReparations)
+          : null;
 
       if (repair) {
         // RIEN de terminal n'est écrit : pas de `completeJob`, pas de

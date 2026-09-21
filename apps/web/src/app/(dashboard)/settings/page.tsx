@@ -20,6 +20,7 @@ import {
   listAgentsAction,
   getAutoRunPauseAction,
   getVerificationSurfacesAction,
+  getProofRepairAction,
   getMcpServerSwitchAction,
   getInstallNotesAction,
   getWorkspaceTimezoneAction,
@@ -33,6 +34,7 @@ import WorkspacesSection from './WorkspacesSection.tsx';
 import RootAgentSection from './RootAgentSection.tsx';
 import AutoRunPauseSection from './AutoRunPauseSection.tsx';
 import VerificationSurfacesSection from './VerificationSurfacesSection.tsx';
+import ProofRepairSection from './ProofRepairSection.tsx';
 import McpServerSection from './McpServerSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
@@ -79,6 +81,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     agentsResult,
     autoRunPauseResult,
     verificationSurfacesResult,
+    proofRepairResult,
     mcpSwitchResult,
     installNotesResult,
     tzResult,
@@ -91,6 +94,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     listAgentsAction(),
     getAutoRunPauseAction(),
     getVerificationSurfacesAction(),
+    getProofRepairAction(),
     getMcpServerSwitchAction(),
     getInstallNotesAction(),
     getWorkspaceTimezoneAction(),
@@ -117,6 +121,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     network: networkResult.ok ? networkResult.data : null,
     autoRunPause: autoRunPauseResult.ok ? autoRunPauseResult.data : null,
     verification: verificationSurfacesResult.ok ? verificationSurfacesResult.data : null,
+    proofRepair: proofRepairResult.ok ? proofRepairResult.data : null,
     mcpServer: mcpSwitchResult.ok ? mcpSwitchResult.data : null,
     timezone: tzResult.ok ? tzResult.data : null,
     installNotes: installNotesResult.ok ? installNotesResult.data : null,
@@ -138,6 +143,9 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     ) : null,
     verification: verificationSurfacesResult.ok ? (
       <VerificationSurfacesSection initial={verificationSurfacesResult.data} />
+    ) : null,
+    'repair-turns': proofRepairResult.ok ? (
+      <ProofRepairSection initial={proofRepairResult.data} />
     ) : null,
     'root-agent': (
       <RootAgentSection

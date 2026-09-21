@@ -73,7 +73,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       auto_run_paused boolean NOT NULL DEFAULT false,
       mcp_server_enabled boolean NOT NULL DEFAULT false,
       -- mirrors migration 0091
-      verification_surfaces jsonb NOT NULL DEFAULT '{}'
+      verification_surfaces jsonb NOT NULL DEFAULT '{}',
+      -- mirrors migration 0121
+      proof_repair_attempts integer NOT NULL DEFAULT 1
+        CONSTRAINT entities_proof_repair_attempts_check
+        CHECK (proof_repair_attempts >= 0 AND proof_repair_attempts <= 3)
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (

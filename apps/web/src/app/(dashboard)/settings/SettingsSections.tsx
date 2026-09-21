@@ -18,6 +18,7 @@
 
 import type { ReactNode } from 'react';
 import {
+  ArrowsClockwise,
   Browser,
   Checks,
   Clock,
@@ -43,6 +44,7 @@ const ICONS: Record<SettingId, Icon> = {
   'worker-secret': ShieldCheck,
   'auto-run-brake': Pause,
   verification: Checks,
+  'repair-turns': ArrowsClockwise,
   'root-agent': UsersThree,
   'mcp-server': PlugsConnected,
   timezone: Clock,

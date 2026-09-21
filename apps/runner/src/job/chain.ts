@@ -1,9 +1,20 @@
 // job/chain.ts — chain-count budget guard (max chained worker resumes per job)
 
+import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
+
 // ─── MAX_CHAINS ───────────────────────────────────────────────────────────────
 
-/** Matches DEFAULT_LIMITS.maxChains from @nodal-agents/orchestration */
-export const MAX_CHAINS = 15;
+/**
+ * LA MÊME valeur que `DEFAULT_LIMITS.maxChains`, parce que c'est ELLE, et non
+ * une copie qui lui ressemble.
+ *
+ * Elle était recopiée ici, sous un commentaire qui PROMETTAIT qu'elle
+ * correspondait. Depuis #377, l'écran des réglages affiche
+ * `DEFAULT_LIMITS.maxChains` comme « reprises par run » : une divergence
+ * ferait mentir l'écran sur la garde que le runner oppose réellement, et
+ * personne ne le verrait (Reviewer C, PR #392).
+ */
+export const MAX_CHAINS = DEFAULT_LIMITS.maxChains;
 
 // ─── ChainLimitError ──────────────────────────────────────────────────────────
 
