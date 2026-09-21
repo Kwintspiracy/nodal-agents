@@ -61,7 +61,6 @@ vi.mock('@/lib/actions.ts', () => ({
   getAgentModelChoicesAction: vi.fn(async () =>
     ok({ llmKeyId: null, model: '', reasoningEffort: null, llmKeys: [], requireTools: false }),
   ),
-  getFeedDensityAction: vi.fn(async () => ok('folded')),
   setAgentModelAndEffortAction: vi.fn(),
   listKeyModelsAction: vi.fn(async () => ok([])),
   // Le Dashboard

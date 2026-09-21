@@ -87,7 +87,6 @@ vi.mock('@/lib/conversation-actions.ts', () => ({
 }));
 
 vi.mock('@/lib/actions.ts', () => ({
-  getFeedDensityAction: async () => ({ ok: true, data: 'folded' }),
   getAgentModelChoicesAction: async () => ({ ok: false, code: 'x', message: 'x' }),
 }));
 

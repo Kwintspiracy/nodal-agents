@@ -49,12 +49,11 @@ const AFTER_THE_GESTURE_MS = 1_900;
 
 const TOOL_NAME = 'e2e_small_block';
 
-/** La densité sous laquelle ces cas ont un sens — voir le fichier voisin. */
-const DENSITY_FOR_THESE_CASES = 'folded';
+// Un fil s'ouvre toujours replié depuis le 22/09/2026 (le réglage de densité
+// par personne a été retiré) : rien à poser ni à rendre ici.
 
 let acting: { userId: string; entityId: string };
 let seeded: { conversationId: string; agentId: string };
-let densityBefore: string | null = null;
 const created: { jobIds: string[]; conversationIds: string[]; agentIds: string[] } = {
   jobIds: [],
   conversationIds: [],
@@ -64,7 +63,6 @@ const created: { jobIds: string[]; conversationIds: string[]; agentIds: string[]
 test.beforeAll(async () => {
   await requireLiveStack();
   acting = await resolveActingUser();
-  densityBefore = await setFeedDensity(DENSITY_FOR_THESE_CASES);
   seeded = await seedLiveThreadWithASmallBlock();
 });
 
@@ -90,28 +88,7 @@ test.afterAll(async () => {
   } finally {
     await close();
   }
-  if (densityBefore !== null) await setFeedDensity(densityBefore);
 });
-
-/** Pose la densité de lecture de la personne, et rend celle qu'elle avait. */
-async function setFeedDensity(density: string): Promise<string | null> {
-  const { users, eq } = await import('@nodal-agents/db');
-  const { db, close } = makeDbClient();
-  try {
-    const [row] = await db
-      .select({ density: users.feedDensity })
-      .from(users)
-      .where(eq(users.id, acting.userId))
-      .limit(1);
-    if (row === undefined) return null;
-    if (row.density !== density) {
-      await db.update(users).set({ feedDensity: density }).where(eq(users.id, acting.userId));
-    }
-    return row.density;
-  } finally {
-    await close();
-  }
-}
 
 /**
  * Un fil dont le travail COURT — c'est ce qui allume `LiveRefresh` — et dont
