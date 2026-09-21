@@ -78,7 +78,12 @@ describe('D1 overwrite gate — file_write @cap:travailler-sur-des-fichiers/mote
     await writeFile(join(SHARED_ROOT, 'template.json'), 'old', 'utf8');
     const result = await executeTool(
       fileWriteTool,
-      { path: `${SHARED_WORKSPACE_LABEL}/template.json`, content: 'new' },
+      {
+        path: `${SHARED_WORKSPACE_LABEL}/template.json`,
+        content: 'new',
+        // La phrase que la carte affichera : sans elle, la demande n'est pas posée.
+        purpose: 'Mettre le gabarit à jour.',
+      },
       ctx(),
       opts(undefined),
     );
@@ -94,7 +99,12 @@ describe('D1 overwrite gate — file_write @cap:travailler-sur-des-fichiers/mote
     await writeFile(join(SHARED_ROOT, 'template.json'), 'old', 'utf8');
     const result = await executeTool(
       fileWriteTool,
-      { path: `${SHARED_WORKSPACE_LABEL}/template.json`, content: 'new' },
+      {
+        path: `${SHARED_WORKSPACE_LABEL}/template.json`,
+        content: 'new',
+        // La phrase que la carte affichera : sans elle, la demande n'est pas posée.
+        purpose: 'Mettre le gabarit à jour.',
+      },
       ctx(),
       opts('destructive_gate'),
     );
@@ -137,7 +147,12 @@ describe('D1 overwrite gate — file_write @cap:travailler-sur-des-fichiers/mote
     await writeFile(join(SHARED_ROOT, 'template.json'), 'old', 'utf8');
     const result = await executeTool(
       fileWriteTool,
-      { path: `${SHARED_WORKSPACE_LABEL}/template.json`, content: 'new' },
+      {
+        path: `${SHARED_WORKSPACE_LABEL}/template.json`,
+        content: 'new',
+        // La phrase que la carte affichera : sans elle, la demande n'est pas posée.
+        purpose: 'Mettre le gabarit à jour.',
+      },
       ctx(),
       opts('fully_autonomous'),
     );
@@ -178,7 +193,12 @@ describe('D1 overwrite gate — file_edit', () => {
     await writeFile(join(SHARED_ROOT, 'doc.md'), 'hello world', 'utf8');
     const result = await executeTool(
       fileEditTool,
-      { path: `${SHARED_WORKSPACE_LABEL}/doc.md`, old_string: 'hello', new_string: 'bye' },
+      {
+        path: `${SHARED_WORKSPACE_LABEL}/doc.md`,
+        old_string: 'hello',
+        new_string: 'bye',
+        purpose: 'Corriger la salutation du document.',
+      },
       ctx(),
       opts(undefined),
     );

@@ -39,6 +39,9 @@ export const ALL_AUTONOMIES: readonly Autonomy[] = [
   'fully_autonomous',
 ] as const;
 
+/** La phrase que tout appel gaté du harnais porte par défaut. */
+export const TEST_PURPOSE = 'Test harness: why this call is being made.';
+
 export function autonomyLabel(a: Autonomy): string {
   return a ?? 'undefined (défaut livré)';
 }
@@ -60,7 +63,12 @@ class GateExpectation {
   #built: BuiltTool;
   #rules: ApprovalRule[] = [];
   #autonomies: Autonomy[] = [undefined];
-  #input: unknown = {};
+  // Toute demande d'approbation porte la raison de l'agent, sinon le gate la
+  // refuse avant de la poser (@nodal-agents/tools, purpose.ts). Le défaut du
+  // harnais est donc un appel RÉALISTE : ces contrats-ci portent sur la posture
+  // d'approbation, pas sur la phrase, et un défaut vide les ferait tous échouer
+  // pour une raison qui n'est pas la leur. Le refus lui-même a ses tests à lui.
+  #input: unknown = { purpose: TEST_PURPOSE };
   #ctx: ToolContext;
 
   constructor(executeTool: ExecuteToolFn, built: BuiltTool) {

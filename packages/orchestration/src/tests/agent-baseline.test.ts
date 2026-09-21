@@ -91,6 +91,36 @@ describe('Layer 1 — baseline discipline', () => {
     // the reinforcement is ADDITIVE — the baseline is still there
     expect(weak).toContain('## How you work');
   });
+
+  // ── La règle de `purpose`, dite une fois ────────────────────────────────────
+  //
+  // Le gate refuse une demande d'approbation sans phrase, et les schémas
+  // portent le champ. Reste à ce que le modèle sache à quoi il sert AVANT de
+  // buter dessus : c'est cette phrase, et elle n'existait nulle part.
+
+  it('dit la règle de `purpose` une fois, sans nommer aucun outil @cap:approuver-une-action/moteur', () => {
+    const block = buildBaselineBlock('anthropic/claude-sonnet-4.6');
+
+    expect(block).toContain('## When a call has to be approved');
+    expect(block).toContain('`purpose`');
+    expect(block).toContain('one sentence');
+    // Ce qui arrive sans elle, dit au modèle : rien n'est soumis, l'appel revient.
+    expect(block).toContain('comes straight back to you');
+    // Générique : QUELS outils demandent d'abord vit dans les schémas, pas ici
+    // (invariant #1). Une seule occurrence, aussi : le bloc n'est pas répété.
+    expect(block).not.toContain('run_command');
+    expect(block.match(/## When a call has to be approved/g)).toHaveLength(1);
+  });
+
+  it('ne la dit pas sur `chat`, qui n’a aucun outil que la porte suspend', () => {
+    const chat = buildBaselineBlock('anthropic/claude-sonnet-4.6', { surface: 'chat' });
+    expect(chat).not.toContain('## When a call has to be approved');
+  });
+
+  it('ne la dit pas dans une session CLI, qui n’a aucun outil Nodal', () => {
+    const cli = buildBaselineBlock('anthropic/claude-sonnet-4.6', { nodalTools: false });
+    expect(cli).toBe('');
+  });
 });
 
 describe('Memory discipline (C1/C2 — every agent)', () => {

@@ -79,6 +79,7 @@ import {
   SHARED_WORKSPACE_LABEL,
   CODE_EXECUTION_TOOL_NAMES,
   toolsNamedButAbsent,
+  exposeStatedPurpose,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -2108,7 +2109,20 @@ async function runJobTracked(
   const hasAdapterTools = !isOrchestrator && toolDefs.length > ALWAYS_ON_TOOLS.length;
 
   // ── 10. Build tool map ────────────────────────────────────────────────────────
-  const toolMap = new Map<string, AnyToolDef>(toolDefs.map((t) => [t.name, t]));
+  //
+  // `purpose` est posé ICI, et pas dans chaque outil : la liste est complète
+  // (builtins, meta-outils, outils de skill, MCP) et les règles d'approbation
+  // sont FINALES (8a/8b/8c viennent de les ajuster). C'est donc le seul endroit
+  // où « cet outil, pour cet agent, demande-t-il d'abord ? » se calcule — la
+  // réponse décide si le champ est requis ou optionnel dans le schéma que le
+  // modèle reçoit. Le gate, lui, refuse une demande sans phrase quoi qu'il
+  // arrive (@nodal-agents/tools, purpose.ts).
+  const outilsAvecRaison = exposeStatedPurpose(toolDefs as AnyToolDef[], {
+    approvalRules: approvalRuleList,
+    agentId: agentRow.id,
+    entityId: job.entityId ?? '',
+  }) as AnyToolDef[];
+  const toolMap = new Map<string, AnyToolDef>(outilsAvecRaison.map((t) => [t.name, t]));
 
   // Skill-authoring grounding (Phase 2): when this agent can create/update skills
   // (it's the ROOT with the grant — the meta-tool is in its map), append the

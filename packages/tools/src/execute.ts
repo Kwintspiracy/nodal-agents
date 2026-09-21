@@ -19,6 +19,7 @@ import type {
   ApprovalGateRequest,
 } from './types';
 import { InvalidInputError } from './errors';
+import { refuseWithoutStatedPurpose } from './purpose';
 import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
 import {
@@ -549,6 +550,25 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   }
 
   if (effectiveAction === 'require_approval') {
+    // ── 2.5 Une demande sans raison n'est pas posée ──────────────────────────
+    // Tout ce qui suit fabrique une carte qu'une personne devra lire. Sans la
+    // phrase de l'agent, cette carte ne peut que dire qu'il n'a rien dit — et
+    // c'était la règle, pas l'exception (constat Quentin, 21/09/2026). Le refus
+    // est prononcé ICI, avant l'insertion, pour qu'aucune ligne muette
+    // n'existe : voir `purpose.ts` pour la règle et ce qu'elle épargne.
+    const sansRaison = refuseWithoutStatedPurpose(auditTool, validatedInput);
+    if (sansRaison) {
+      const result: ToolExecutionResult = { outcome: 'error', error: sansRaison };
+      await _writeToolCall(
+        ctx,
+        auditTool,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
+
     // Insert approval_requests row
     const [row] = await ctx.db
       .insert(approvalRequests)

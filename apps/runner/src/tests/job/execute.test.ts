@@ -4130,7 +4130,11 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
           {
             toolCallId: 'tc-duree-suspension',
             toolName: 'save_memory',
-            args: { fact: 'un fait à faire approuver', category: 'context' },
+            args: {
+              fact: 'un fait à faire approuver',
+              category: 'context',
+              purpose: 'Garder ce fait pour la suite du travail.',
+            },
           },
         ],
       },
@@ -4172,12 +4176,20 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
           {
             toolCallId: 'tc-gated-a',
             toolName: 'save_memory',
-            args: { fact: 'gated fact A', category: 'context' },
+            args: {
+              fact: 'gated fact A',
+              category: 'context',
+              purpose: 'Garder ce fait pour la suite du travail.',
+            },
           },
           {
             toolCallId: 'tc-sibling-a',
             toolName: 'save_memory',
-            args: { fact: 'sibling fact A', category: 'context' },
+            args: {
+              fact: 'sibling fact A',
+              category: 'context',
+              purpose: 'Garder ce fait pour la suite du travail.',
+            },
           },
         ],
       },
@@ -4297,7 +4309,11 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
           {
             toolCallId: 'tc-gated-tg',
             toolName: 'save_memory',
-            args: { fact: 'truc important', category: 'context' },
+            args: {
+              fact: 'truc important',
+              category: 'context',
+              purpose: 'Garder ce fait pour la suite du travail.',
+            },
           },
         ],
       },
@@ -4376,7 +4392,11 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
           {
             toolCallId: 'tc-gated-b',
             toolName: 'save_memory',
-            args: { fact: GATED_FACT, category: 'context' },
+            args: {
+              fact: GATED_FACT,
+              category: 'context',
+              purpose: 'Garder ce fait pour la suite du travail.',
+            },
           },
         ],
       },
@@ -4478,7 +4498,11 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
           {
             toolCallId: 'tc-gated-c',
             toolName: 'save_memory',
-            args: { fact: REJECTED_FACT, category: 'context' },
+            args: {
+              fact: REJECTED_FACT,
+              category: 'context',
+              purpose: 'Garder ce fait pour la suite du travail.',
+            },
           },
         ],
       },
@@ -4593,7 +4617,11 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
           {
             toolCallId: 'tc-cost-a',
             toolName: 'save_memory',
-            args: { fact: 'costed gated fact', category: 'context' },
+            args: {
+              fact: 'costed gated fact',
+              category: 'context',
+              purpose: 'Garder ce fait pour la suite du travail.',
+            },
           },
         ],
       },

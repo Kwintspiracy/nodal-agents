@@ -46,11 +46,13 @@ function makeCtx(): ToolContext {
 function makeGatedTool(opts: {
   refuseInPreflight?: boolean;
   refuseInExecute?: boolean;
-}): ToolDefinition<z.ZodObject<{ value: z.ZodString }>, string> {
+}): ToolDefinition<z.ZodTypeAny, string> {
   return {
     name: 'gated_tool',
     description: 'Safe-by-default tool used to pin refusal ordering',
-    inputSchema: z.object({ value: z.string() }),
+    // `purpose` : ce que `exposeStatedPurpose` pose sur tout outil qui demande
+    // d'abord, et sans quoi le gate refuse l'appel avant de poser la demande.
+    inputSchema: z.object({ value: z.string(), purpose: z.string().optional() }),
     riskLevel: 'destructive',
     defaultApproval: 'require_approval',
     ...(opts.refuseInPreflight
@@ -141,12 +143,17 @@ describe('preflight runs before the approval gate', () => {
     // reach the approval gate exactly as before. A guard that swallows the gate
     // would be a regression dressed as a security fix.
     const asked: ApprovalGateRequest[] = [];
-    const result = await executeTool(makeGatedTool({}), { value: 'x' }, makeCtx(), {
-      approvalRules: [],
-      onApprovalRequired: async (req) => {
-        asked.push(req);
+    const result = await executeTool(
+      makeGatedTool({}),
+      { value: 'x', purpose: 'Vérifier que la porte fonctionne encore.' },
+      makeCtx(),
+      {
+        approvalRules: [],
+        onApprovalRequired: async (req) => {
+          asked.push(req);
+        },
       },
-    });
+    );
 
     expect(result.outcome).toBe('awaiting_approval');
     expect(asked, 'the approval request disappeared').toHaveLength(1);
