@@ -36,6 +36,7 @@ import {
   ArrowSquareOut,
   Check,
   CheckCircle,
+  CircleNotch,
   PencilSimple,
   Terminal,
   Warning,
@@ -153,7 +154,16 @@ export default function DeliveryBlock({
   // qu'il conclut.
   return (
     <div className="mt-4 overflow-hidden rounded-xl border border-rule-2 bg-paper">
-      <div className="flex h-[48px] items-center gap-2.5 px-4">
+      <div className="flex h-[48px] items-center gap-2.5 px-4" data-testid="delivery-head">
+        {/* TANT QUE ÇA TRAVAILLE, RIEN N'EST LIVRÉ (Quentin, 22/09 : « un panneau
+            Delivered avec un crochet vert, un bouton Stop et Running en haut »).
+            L'icône et le mot prennent la couleur de « Running », et le crochet
+            attend la fin. */}
+        {summary.live ? (
+          <CircleNotch size={16} className="animate-spin text-run" aria-hidden />
+        ) : changesRequested ? (
+          <Warning size={16} className="text-warn" aria-hidden />
+        ) : null}
         {/* L'icône dit LIVRÉ, la pastille dit vérifié ou non — deux faits, deux
             signes (Quentin, 18/09). Elle est donc verte dès que ce bloc
             paraît : un run livré sans preuve n'est pas un demi-run, et un
@@ -166,9 +176,7 @@ export default function DeliveryBlock({
         {/* UNE ABSENCE SE DESSINE EN GRIS, jamais en rouge (#282) : un tour
             dont la seule commande n'a rien laissé voir n'est pas en panne, il
             est indéterminé. Le crochet reste, sa couleur s'éteint. */}
-        {changesRequested ? (
-          <Warning size={16} className="text-warn" aria-hidden />
-        ) : (
+        {summary.live || changesRequested ? null : (
           <CheckCircle
             size={16}
             className={
@@ -194,14 +202,16 @@ export default function DeliveryBlock({
         {/* ET IL NE SE DIT PAS D'UN RUN QUI N'EST PAS ALLÉ AU BOUT (Quentin,
             22/09 : un run annulé « apparaît comme delivered »). Ce qu'il a
             écrit avant reste listé dessous ; l'en-tête dit l'issue. */}
-        <span className="text-title-15 text-ink">
-          {summary.ended === 'stopped'
-            ? 'Stopped'
-            : summary.ended === 'failed'
-              ? 'Failed'
-              : summary.produced
-                ? 'Delivered'
-                : 'Ran'}
+        <span className={`text-title-15 ${summary.live ? 'text-run' : 'text-ink'}`}>
+          {summary.live
+            ? 'Working'
+            : summary.ended === 'stopped'
+              ? 'Stopped'
+              : summary.ended === 'failed'
+                ? 'Failed'
+                : summary.produced
+                  ? 'Delivered'
+                  : 'Ran'}
           {reviewLabel !== null && <span className="text-ink-3"> · {reviewLabel}</span>}
         </span>
         {/* La pastille suit le mot, à trente pixels — pas poussée au bord
@@ -228,6 +238,16 @@ export default function DeliveryBlock({
             <StatusPill variant="idle" label="Not verified" />
           )}
         </span>
+        {/* ARRÊTER LE RUN D'ICI, tant qu'il court (Quentin, 22/09). EN HAUT de
+            la boîte et à droite, seul sur son bord : mêlé au pied, entre les
+            relecteurs et « Open run », il se perdait dans le contenu. Il se
+            cache tout seul dès que le run n'est plus vivant, et jamais sans
+            `jobId`. */}
+        {jobId !== null && canStopRun(status) && (
+          <span className="ml-auto">
+            <StopRunButton jobId={jobId} status={status} />
+          </span>
+        )}
       </div>
 
       {stats.length > 0 && (
@@ -330,16 +350,6 @@ export default function DeliveryBlock({
               </span>
             </span>
           ))}
-          {/* ARRÊTER LE RUN D'ICI, tant qu'il court (Quentin, 22/09 : « il y a
-              un bouton Open run, je devrais pouvoir le stopper »). L'encart
-              paraît dès qu'un run en cours a produit quelque chose, et c'est
-              lui qu'on regarde dans le fil ; le bouton se cache tout seul dès
-              que le run n'est plus vivant. */}
-          {jobId !== null && canStopRun(status) && (
-            <span className="ml-5">
-              <StopRunButton jobId={jobId} status={status} />
-            </span>
-          )}
           {jobId !== null && (
             // Après le dernier nom, à trente pixels — pas au bord droit : la
             // planche le pose dans la ligne, comme la pastille du haut.

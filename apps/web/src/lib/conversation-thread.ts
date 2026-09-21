@@ -47,6 +47,7 @@ import type { ProducedItem, ProductionVerdict } from './chat-or-work.ts';
 // `@nodal-agents/shared` (#59) : l'orchestration la lit pour poser son champ
 // typé, l'écran pour choisir son mot. Une seule écriture, deux lecteurs.
 import { reviewBlocksDelivery } from '@nodal-agents/shared';
+import { canStopRun } from './job-live.ts';
 
 export type ThreadProject = { id: string; name: string; path: string };
 
@@ -524,6 +525,7 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     // L'issue d'un travail qui n'est pas allé au bout, lue sur sa ligne : elle
     // prime sur `produced` pour le mot de l'en-tête (Quentin, 22/09).
     ended: job.status === 'cancelled' ? 'stopped' : job.status === 'failed' ? 'failed' : null,
+    live: canStopRun(job.status),
   };
 }
 

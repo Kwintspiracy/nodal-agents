@@ -43,6 +43,7 @@ const EMPTY: DeliverySummary = {
   commands: [],
   produced: true,
   ended: null,
+  live: false,
 };
 
 const totals = (costUsd: number | null = null) => ({
@@ -588,6 +589,7 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
           commands: [],
           produced: true,
           ended: null,
+          live: false,
           verdict: 'green',
         }}
       />,
@@ -627,6 +629,7 @@ describe('DeliveryBlock — le verdict à côté @cap:verifier-un-livrable/ecran
           commands: [],
           produced: true,
           ended: null,
+          live: false,
           verdict: 'green',
         }}
       />,
@@ -674,6 +677,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           ...EMPTY,
           produced: false,
           ended: null,
+          live: false,
           commands: [{ label: 'ls -la', observed: false }],
         }}
         jobId={null}
@@ -748,6 +752,31 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     expect(sansJob).not.toContain('data-testid="stop-run"');
   });
 
+  // Quentin, 22/09 : « j'ai à la fois un panneau Delivered avec un crochet
+  // vert, un bouton Stop et un tab Running en haut ». Tant que ça travaille,
+  // rien n'est livré : le mot et le signe prennent la couleur de « Running ».
+  it('tant que le run court, l’en-tête dit « Working » dans la couleur de Running, sans crochet', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{ ...EMPTY, produced: true, live: true }}
+        jobId="job-9"
+        status="processing"
+      />,
+    );
+    expect(html).toContain('>Working');
+    expect(html).not.toContain('Delivered');
+    expect(html).toContain('text-run');
+    // Le crochet vert attend la fin ; l'icône est celle du travail en cours.
+    expect(html).not.toContain('text-ok');
+    // Et le bouton Stop est DANS L'EN-TÊTE, à droite, pas dans le pied.
+    const head = html.slice(html.indexOf('data-testid="delivery-head"'));
+    const headOnly = head.slice(0, head.indexOf('</div>'));
+    expect(headOnly).toContain('data-testid="stop-run"');
+    expect(headOnly).toContain('ml-auto');
+    // Un seul bouton sur tout l'encart : celui de l'en-tête, plus celui du pied.
+    expect(html.split('data-testid="stop-run"').length - 1).toBe(1);
+  });
+
   it('montre douze commandes au plus, et COMPTE le reste', () => {
     // `classifyProduction` pousse un item par ligne terminal réussie, sans
     // plafond : une session de code de cent cinquante appels shell rendait un
@@ -792,6 +821,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
           ...EMPTY,
           produced: true,
           ended: null,
+          live: false,
           files: 1,
           filePaths: ['out/bilan.md'],
           commands: [{ label: 'pnpm build', observed: true }],

@@ -473,6 +473,13 @@ export type DeliverySummary = {
    * « Delivered » ou « Ran » au-dessus dirait qu'il est allé au bout.
    */
   ended: 'stopped' | 'failed' | null;
+  /**
+   * LE TRAVAIL COURT ENCORE (statut vivant). L'encart paraît dès qu'un run en
+   * cours a produit quelque chose ; « Delivered » et le crochet vert y
+   * disaient un travail fini à côté d'une pastille « Running » (Quentin,
+   * 22/09). Vivant, l'en-tête dit « Working », dans la couleur de « Running ».
+   */
+  live: boolean;
 };
 
 /** Une commande du travail, et ce qu'on a constaté d'elle (#282). */
