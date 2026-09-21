@@ -888,6 +888,11 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
       toolName: 'cogni_cortex__run_code_unsafe',
       action: null,
     });
+    // Et la LIGNE a disparu de l'écran, sans attendre un rechargement : sans
+    // cela, le curseur resterait sur « Block » alors que la règle est partie
+    // (revue Reviewer C, passe 4, P1-6).
+    expect(toolControl('run_code_unsafe', 'inherit').getAttribute('aria-pressed')).toBe('true');
+    expect(toolControl('run_code_unsafe', 'block').getAttribute('aria-pressed')).toBe('false');
   });
 
   it("ne liste que les outils que l'agent a vraiment", async () => {
@@ -1023,7 +1028,7 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
     const dialog = document.body.textContent ?? '';
     expect(dialog).toContain('Delete this rule?');
     expect(dialog).toContain(
-      "This rule applies only in Dev today. Following the server deletes it, and the tool then follows the server's rule everywhere this agent works.",
+      "This rule applies only in Dev today. Following the server deletes this agent's rule on the tool.",
     );
     expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
 
@@ -1042,7 +1047,7 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
   it("dit, une fois, qu'une règle d'outil bat celle du serveur", async () => {
     const text = await render([], [], [MCP_SERVER]);
     expect(text).toContain(
-      "A rule on one tool wins over the server's rule, whoever that rule was set for.",
+      "A rule on one tool wins over the server's rule. These rows show the rules set for this agent.",
     );
   });
 });

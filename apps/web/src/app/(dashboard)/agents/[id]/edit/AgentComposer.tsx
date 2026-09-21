@@ -2058,8 +2058,15 @@ export function AutonomyTab({
               );
             })}
           </div>
+          {/*
+            « whoever that rule was set for » disait vrai du MOTEUR et faux de
+            CET ÉCRAN (revue Reviewer C, passe 4, C1) : `rules` ne porte que les
+            règles de cet agent, une règle d'entité sur le même outil ne s'y
+            voit pas. La phrase dit donc ce que ces lignes montrent.
+          */}
           <p className="mt-4 text-body-12 text-ink-4">
-            A rule on one tool wins over the server&apos;s rule, whoever that rule was set for.
+            A rule on one tool wins over the server&apos;s rule. These rows show the rules set for
+            this agent.
           </p>
         </SectionCard>
       )}
@@ -2127,7 +2134,11 @@ export function AutonomyTab({
           pendingWiden === null
             ? ''
             : pendingWiden.action === null
-              ? `This rule applies only in ${pendingWiden.folder} today. Following the server deletes it, and the tool then follows the server's rule everywhere this agent works.`
+              ? // Ce qui arrive, et rien de plus : promettre que l'outil
+                // « suivra le serveur » serait faux si une règle d'entité sur
+                // le même outil survit et continue de gagner (revue Reviewer
+                // C, passe 4, C2).
+                `This rule applies only in ${pendingWiden.folder} today. Following the server deletes this agent's rule on the tool.`
               : `This rule applies only in ${pendingWiden.folder} today. Saving from here applies your choice everywhere this agent works.`
         }
         confirmLabel={pendingWiden?.action === null ? 'Delete the rule' : 'Remove the limit'}
