@@ -12,24 +12,24 @@
     "maxFailures": 0,
     "metadata": {
       "ci": {
-        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
-        "commitHash": "74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
-        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35499935339"
+        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/1af7d7caf51e5ca7274643a292cc7de1d6ed3754",
+        "commitHash": "1af7d7caf51e5ca7274643a292cc7de1d6ed3754",
+        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35580462507"
       },
       "gitCommit": {
-        "shortHash": "74fc97ed",
-        "hash": "74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
-        "subject": "Merge pull request #281 from Kwintspiracy/release/0.9.0",
-        "body": "Merge pull request #281 from Kwintspiracy/release/0.9.0\n\nRelease 0.9.0",
+        "shortHash": "1af7d7ca",
+        "hash": "1af7d7caf51e5ca7274643a292cc7de1d6ed3754",
+        "subject": "The approval card shows the rules that decided, and lets you change them there (#360)",
+        "body": "The approval card shows the rules that decided, and lets you change them there (#360)\n\n* The approval card shows the rules that decided, and lets you change them there\n\nOn 2026-09-21 an owner answered \"Always for this server\"; the rule was written,\nan Everyone rule naming the exact tool kept asking, and the card said nothing.\nThe precedence was right. It was simply invisible.\n\nThe order is now a value, not a `.find()` ladder: `explainApprovalRules` returns\nevery rule matching one call, most specific first, the winner marked, and\n`matchApprovalRule` derives its answer from that list. One truth.\n\nThe card shows that list, and a rule changes only through its own line. No\n\"Always\" button writes a rule as a side effect of answering any more. The one\ngrant left on the card is narrower than any of them: \"Approve for this project\"\nauto-approves this tool for this agent WHILE IT WORKS IN THIS FOLDER, via\n`approval_rules.condition_json` (no migration, the column was already there).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* Review pass 1: nothing widens a folder-scoped rule in silence\n\nSeven findings from Reviewer C, three of them important.\n\nA rule confined to a folder could be turned into a global grant without a word:\nthe card's \"Change\" line dropped the condition, and both Yolo toggles overwrote\nit. \"Change\" now carries the folder through, and any GLOBAL auto_approve over a\nfolder-scoped rule is refused by name. Only the permissive direction is refused;\nrestricting still clears the condition, which takes a permission away.\n\nA request with no agent showed \"Tool default\" as the winner while an Everyone\nrule was in fact deciding: the exact lie #346 closes. It now reads the Everyone\ntiers through a sentinel id no rule can carry.\n\nA conditioned rule no longer jumps ahead of every tier. It sorts first inside\nits own tier, which is the same thing where it matters (agent + exact tool is\nalready the top tier) and closes a privilege escalation: a conditioned wildcard\nbeat an explicit `block`.\n\nAlso: a re-read that cannot find its request says so instead of keeping a stale\nchain; `C:` and `D:` stop normalising to the same empty string; the dead\n`mcpRulePattern` field is gone; the MCP ambiguity warning is in English.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* Review pass 2 minors: the guard holds its row, and a UNC path stays its own place\n\nReviewer C approved the pass, with two minor findings.\n\nThe folder-rule guard read the row and wrote outside any shared transaction, so\ntwo concurrent gestures could both pass it and the second would overwrite the\nfolder rule with a global grant. The guard now runs inside the caller's\ntransaction and takes the row `FOR UPDATE`, in all three writers.\n\n`normaliseWorkspacePath` collapsed a UNC path onto a POSIX one: `\\server\\share`\nand `/server/share` are not the same place, and the two leading slashes are now\nkept.\n\nAlso renames the component in comments that still pointed at the deleted\n`ApprovalActions`.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
         "author": {
           "name": "Quentin Beau de Loménie",
           "email": "quentinbeau@gmail.com",
-          "time": 1789876509000
+          "time": 1789977105000
         },
         "committer": {
           "name": "GitHub",
           "email": "noreply@github.com",
-          "time": 1789876509000
+          "time": 1789977105000
         },
         "branch": "main"
       },
@@ -43,24 +43,24 @@
         "retries": 2,
         "metadata": {
           "ci": {
-            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
-            "commitHash": "74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
-            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35499935339"
+            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/1af7d7caf51e5ca7274643a292cc7de1d6ed3754",
+            "commitHash": "1af7d7caf51e5ca7274643a292cc7de1d6ed3754",
+            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35580462507"
           },
           "gitCommit": {
-            "shortHash": "74fc97ed",
-            "hash": "74fc97edcb2b7b2f963f8ade205cd961f5b3bce9",
-            "subject": "Merge pull request #281 from Kwintspiracy/release/0.9.0",
-            "body": "Merge pull request #281 from Kwintspiracy/release/0.9.0\n\nRelease 0.9.0",
+            "shortHash": "1af7d7ca",
+            "hash": "1af7d7caf51e5ca7274643a292cc7de1d6ed3754",
+            "subject": "The approval card shows the rules that decided, and lets you change them there (#360)",
+            "body": "The approval card shows the rules that decided, and lets you change them there (#360)\n\n* The approval card shows the rules that decided, and lets you change them there\n\nOn 2026-09-21 an owner answered \"Always for this server\"; the rule was written,\nan Everyone rule naming the exact tool kept asking, and the card said nothing.\nThe precedence was right. It was simply invisible.\n\nThe order is now a value, not a `.find()` ladder: `explainApprovalRules` returns\nevery rule matching one call, most specific first, the winner marked, and\n`matchApprovalRule` derives its answer from that list. One truth.\n\nThe card shows that list, and a rule changes only through its own line. No\n\"Always\" button writes a rule as a side effect of answering any more. The one\ngrant left on the card is narrower than any of them: \"Approve for this project\"\nauto-approves this tool for this agent WHILE IT WORKS IN THIS FOLDER, via\n`approval_rules.condition_json` (no migration, the column was already there).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* Review pass 1: nothing widens a folder-scoped rule in silence\n\nSeven findings from Reviewer C, three of them important.\n\nA rule confined to a folder could be turned into a global grant without a word:\nthe card's \"Change\" line dropped the condition, and both Yolo toggles overwrote\nit. \"Change\" now carries the folder through, and any GLOBAL auto_approve over a\nfolder-scoped rule is refused by name. Only the permissive direction is refused;\nrestricting still clears the condition, which takes a permission away.\n\nA request with no agent showed \"Tool default\" as the winner while an Everyone\nrule was in fact deciding: the exact lie #346 closes. It now reads the Everyone\ntiers through a sentinel id no rule can carry.\n\nA conditioned rule no longer jumps ahead of every tier. It sorts first inside\nits own tier, which is the same thing where it matters (agent + exact tool is\nalready the top tier) and closes a privilege escalation: a conditioned wildcard\nbeat an explicit `block`.\n\nAlso: a re-read that cannot find its request says so instead of keeping a stale\nchain; `C:` and `D:` stop normalising to the same empty string; the dead\n`mcpRulePattern` field is gone; the MCP ambiguity warning is in English.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* Review pass 2 minors: the guard holds its row, and a UNC path stays its own place\n\nReviewer C approved the pass, with two minor findings.\n\nThe folder-rule guard read the row and wrote outside any shared transaction, so\ntwo concurrent gestures could both pass it and the second would overwrite the\nfolder rule with a global grant. The guard now runs inside the caller's\ntransaction and takes the row `FOR UPDATE`, in all three writers.\n\n`normaliseWorkspacePath` collapsed a UNC path onto a POSIX one: `\\server\\share`\nand `/server/share` are not the same place, and the two leading slashes are now\nkept.\n\nAlso renames the component in comments that still pointed at the deleted\n`ApprovalActions`.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
             "author": {
               "name": "Quentin Beau de Loménie",
               "email": "quentinbeau@gmail.com",
-              "time": 1789876509000
+              "time": 1789977105000
             },
             "committer": {
               "name": "GitHub",
               "email": "noreply@github.com",
-              "time": 1789876509000
+              "time": 1789977105000
             },
             "branch": "main"
           },
@@ -119,12 +119,12 @@
                   "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 2872,
+                  "duration": 4328,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:52:00.443Z",
+                  "startTime": "2026-09-21T09:16:38.337Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -155,12 +155,12 @@
                   "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 7013,
+                  "duration": 9457,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:52:03.569Z",
+                  "startTime": "2026-09-21T09:16:43.303Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -206,12 +206,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2454,
+                      "duration": 2478,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:10.673Z",
+                      "startTime": "2026-09-21T09:16:52.897Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -242,12 +242,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1135,
+                      "duration": 1377,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:13.341Z",
+                      "startTime": "2026-09-21T09:16:55.420Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -295,12 +295,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8385,
+                      "duration": 12651,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:14.494Z",
+                      "startTime": "2026-09-21T09:16:56.825Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -331,12 +331,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2424,
+                      "duration": 3040,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:23.171Z",
+                      "startTime": "2026-09-21T09:17:09.697Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -367,12 +367,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2145,
+                      "duration": 2605,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:25.609Z",
+                      "startTime": "2026-09-21T09:17:12.760Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -403,12 +403,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3398,
+                      "duration": 3888,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:27.763Z",
+                      "startTime": "2026-09-21T09:17:15.380Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -466,12 +466,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 901,
+                      "duration": 1048,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:31.203Z",
+                      "startTime": "2026-09-21T09:17:19.325Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -527,12 +527,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 7767,
+                      "duration": 11464,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:32.127Z",
+                      "startTime": "2026-09-21T09:17:20.401Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -578,12 +578,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3659,
+                      "duration": 4529,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:40.121Z",
+                      "startTime": "2026-09-21T09:17:32.286Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -629,12 +629,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2776,
+                      "duration": 3262,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:43.827Z",
+                      "startTime": "2026-09-21T09:17:36.867Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -671,12 +671,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3594,
+                      "duration": 4282,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:46.631Z",
+                      "startTime": "2026-09-21T09:17:40.161Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -713,12 +713,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4192,
+                      "duration": 5007,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:50.232Z",
+                      "startTime": "2026-09-21T09:17:44.453Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -766,12 +766,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1205,
+                      "duration": 1464,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:54.438Z",
+                      "startTime": "2026-09-21T09:17:49.482Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -802,12 +802,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1675,
+                      "duration": 2096,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:55.669Z",
+                      "startTime": "2026-09-21T09:17:50.982Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -838,12 +838,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1823,
+                      "duration": 2198,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:57.352Z",
+                      "startTime": "2026-09-21T09:17:53.089Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -884,12 +884,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 1817,
+                      "duration": 2192,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:52:59.191Z",
+                      "startTime": "2026-09-21T09:17:55.295Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -945,12 +945,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2161,
+                      "duration": 2683,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:01.028Z",
+                      "startTime": "2026-09-21T09:17:57.518Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -989,12 +989,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2108,
+                      "duration": 2974,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:03.217Z",
+                      "startTime": "2026-09-21T09:18:00.235Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1041,12 +1041,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 226,
+                      "duration": 302,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:05.333Z",
+                      "startTime": "2026-09-21T09:18:03.223Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -1093,12 +1093,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 14547,
+                      "duration": 12347,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:05.568Z",
+                      "startTime": "2026-09-21T09:18:03.541Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1135,12 +1135,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1855,
+                      "duration": 3204,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:20.126Z",
+                      "startTime": "2026-09-21T09:18:15.902Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1188,10 +1188,10 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 6769,
+                      "duration": 7404,
                       "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/5c4f2ce0-e42a-4f37-9167-059c176d3bd2$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/5c4f2ce0-e42a-4f37-9167-059c176d3bd2$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19",
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/2777095f-87b3-4efe-98b6-33ec9f196721$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/2777095f-87b3-4efe-98b6-33ec9f196721$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19",
                         "location": {
                           "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
                           "column": 22,
@@ -1206,13 +1206,13 @@
                             "column": 22,
                             "line": 242
                           },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/5c4f2ce0-e42a-4f37-9167-059c176d3bd2$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n\n  240 |     .first()\n  241 |     .click();\n> 242 |   await expect(page).toHaveURL(new RegExp(`/spaces/${projectId}$`));\n      |                      ^\n  243 |   await expect(page.getByTestId('project-files-panel')).toBeVisible();\n  244 |   const panel = page.getByTestId('project-verification');\n  245 |   await expect(panel).toBeVisible();\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19"
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/2777095f-87b3-4efe-98b6-33ec9f196721$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n\n  240 |     .first()\n  241 |     .click();\n> 242 |   await expect(page).toHaveURL(new RegExp(`/spaces/${projectId}$`));\n      |                      ^\n  243 |   await expect(page.getByTestId('project-files-panel')).toBeVisible();\n  244 |   const panel = page.getByTestId('project-verification');\n  245 |   await expect(panel).toBeVisible();\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19"
                         }
                       ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:22.001Z",
+                      "startTime": "2026-09-21T09:18:19.135Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1241,12 +1241,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4216,
+                      "duration": 4830,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-20T08:53:31.403Z",
+                      "startTime": "2026-09-21T09:18:28.950Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1283,12 +1283,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3481,
+                      "duration": 3635,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:37.555Z",
+                      "startTime": "2026-09-21T09:18:34.349Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1319,12 +1319,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1897,
+                      "duration": 2202,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:41.047Z",
+                      "startTime": "2026-09-21T09:18:37.999Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1365,12 +1365,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 1068,
+                      "duration": 1859,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:42.953Z",
+                      "startTime": "2026-09-21T09:18:40.219Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -1411,12 +1411,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2406,
+                      "duration": 2629,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:44.030Z",
+                      "startTime": "2026-09-21T09:18:42.093Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1447,10 +1447,10 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 2043,
+                      "duration": 2253,
                       "error": {
-                        "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
-                        "stack": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
+                        "message": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
+                        "stack": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
                         "location": {
                           "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
                           "column": 52,
@@ -1465,13 +1465,13 @@
                             "column": 52,
                             "line": 428
                           },
-                          "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n\n  426 |       return trop;\n  427 |     });\n> 428 |     expect(debordements, debordements.join(' | ')).toEqual([]);\n      |                                                    ^\n  429 |\n  430 |     // Et le panneau ne pousse pas la page hors de l'écran.\n  431 |     const pageDeborde = await page.evaluate(\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52"
+                          "message": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n\n  426 |       return trop;\n  427 |     });\n> 428 |     expect(debordements, debordements.join(' | ')).toEqual([]);\n      |                                                    ^\n  429 |\n  430 |     // Et le panneau ne pousse pas la page hors de l'écran.\n  431 |     const pageDeborde = await page.evaluate(\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52"
                         }
                       ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:46.446Z",
+                      "startTime": "2026-09-21T09:18:44.738Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1500,10 +1500,10 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 2439,
+                      "duration": 3387,
                       "error": {
-                        "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
-                        "stack": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
+                        "message": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
+                        "stack": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
                         "location": {
                           "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
                           "column": 52,
@@ -1518,13 +1518,13 @@
                             "column": 52,
                             "line": 428
                           },
-                          "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n\n  426 |       return trop;\n  427 |     });\n> 428 |     expect(debordements, debordements.join(' | ')).toEqual([]);\n      |                                                    ^\n  429 |\n  430 |     // Et le panneau ne pousse pas la page hors de l'écran.\n  431 |     const pageDeborde = await page.evaluate(\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52"
+                          "message": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n\n  426 |       return trop;\n  427 |     });\n> 428 |     expect(debordements, debordements.join(' | ')).toEqual([]);\n      |                                                    ^\n  429 |\n  430 |     // Et le panneau ne pousse pas la page hors de l'écran.\n  431 |     const pageDeborde = await page.evaluate(\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52"
                         }
                       ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-20T08:53:49.834Z",
+                      "startTime": "2026-09-21T09:18:48.602Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1558,10 +1558,10 @@
                       "workerIndex": 3,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 2051,
+                      "duration": 2538,
                       "error": {
-                        "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
-                        "stack": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
+                        "message": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
+                        "stack": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
                         "location": {
                           "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
                           "column": 52,
@@ -1576,13 +1576,13 @@
                             "column": 52,
                             "line": 428
                           },
-                          "message": "Error: div 451>399 | input 561>297\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>399\",\u001b[39m\n\u001b[31m+   \"input 561>297\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n\n  426 |       return trop;\n  427 |     });\n> 428 |     expect(debordements, debordements.join(' | ')).toEqual([]);\n      |                                                    ^\n  429 |\n  430 |     // Et le panneau ne pousse pas la page hors de l'écran.\n  431 |     const pageDeborde = await page.evaluate(\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52"
+                          "message": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n\n  426 |       return trop;\n  427 |     });\n> 428 |     expect(debordements, debordements.join(' | ')).toEqual([]);\n      |                                                    ^\n  429 |\n  430 |     // Et le panneau ne pousse pas la page hors de l'écran.\n  431 |     const pageDeborde = await page.evaluate(\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52"
                         }
                       ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-20T08:53:53.913Z",
+                      "startTime": "2026-09-21T09:18:54.138Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1618,7 +1618,7 @@
             },
             {
               "title": "F — /code mène à Workspaces : la liste a disparu, le panneau est sur le projet",
-              "ok": true,
+              "ok": false,
               "tags": [
                 "cap:verifier-un-livrable/ecran"
               ],
@@ -1633,18 +1633,169 @@
                     {
                       "workerIndex": 4,
                       "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 10463,
-                      "errors": [],
+                      "status": "failed",
+                      "duration": 11471,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('project-files-panel')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('project-files-panel')\u001b[22m\n\u001b[2m    14 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('project-files-panel')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('project-files-panel')\u001b[22m\n\u001b[2m    14 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:457:59",
+                        "location": {
+                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                          "column": 59,
+                          "line": 457
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 455 |\u001b[39m     \u001b[90m// Le choix TIENT d'une visite à l'autre.\u001b[39m\n \u001b[90m 456 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mreload()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 457 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByTestId(\u001b[32m'project-files-panel'\u001b[39m))\u001b[33m.\u001b[39mtoHaveCount(\u001b[35m0\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                                           \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 458 |\u001b[39m     \u001b[90m// Mais `/spaces/<id>/files` veut dire « montre-moi le dossier », et il le\u001b[39m\n \u001b[90m 459 |\u001b[39m     \u001b[90m// montre quand même.\u001b[39m\n \u001b[90m 460 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`/spaces/${projectId}/files`\u001b[39m)\u001b[33m;\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                            "column": 59,
+                            "line": 457
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('project-files-panel')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('project-files-panel')\u001b[22m\n\u001b[2m    14 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n\n\n  455 |     // Le choix TIENT d'une visite à l'autre.\n  456 |     await page.reload();\n> 457 |     await expect(page.getByTestId('project-files-panel')).toHaveCount(0);\n      |                                                           ^\n  458 |     // Mais `/spaces/<id>/files` veut dire « montre-moi le dossier », et il le\n  459 |     // montre quand même.\n  460 |     await page.goto(`/spaces/${projectId}/files`);\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:457:59"
+                        }
+                      ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:53:57.475Z",
+                      "startTime": "2026-09-21T09:18:58.611Z",
                       "annotations": [],
-                      "attachments": []
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium/error-context.md"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                        "column": 59,
+                        "line": 457
+                      }
+                    },
+                    {
+                      "workerIndex": 5,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 10123,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('project-files-panel')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('project-files-panel')\u001b[22m\n\u001b[2m    14 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('project-files-panel')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('project-files-panel')\u001b[22m\n\u001b[2m    14 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:457:59",
+                        "location": {
+                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                          "column": 59,
+                          "line": 457
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 455 |\u001b[39m     \u001b[90m// Le choix TIENT d'une visite à l'autre.\u001b[39m\n \u001b[90m 456 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mreload()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 457 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByTestId(\u001b[32m'project-files-panel'\u001b[39m))\u001b[33m.\u001b[39mtoHaveCount(\u001b[35m0\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                                           \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 458 |\u001b[39m     \u001b[90m// Mais `/spaces/<id>/files` veut dire « montre-moi le dossier », et il le\u001b[39m\n \u001b[90m 459 |\u001b[39m     \u001b[90m// montre quand même.\u001b[39m\n \u001b[90m 460 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`/spaces/${projectId}/files`\u001b[39m)\u001b[33m;\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                            "column": 59,
+                            "line": 457
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('project-files-panel')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('project-files-panel')\u001b[22m\n\u001b[2m    14 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n\n\n  455 |     // Le choix TIENT d'une visite à l'autre.\n  456 |     await page.reload();\n> 457 |     await expect(page.getByTestId('project-files-panel')).toHaveCount(0);\n      |                                                           ^\n  458 |     // Mais `/spaces/<id>/files` veut dire « montre-moi le dossier », et il le\n  459 |     // montre quand même.\n  460 |     await page.goto(`/spaces/${projectId}/files`);\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:457:59"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 1,
+                      "startTime": "2026-09-21T09:19:11.938Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium-retry1/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium-retry1/error-context.md"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium-retry1/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium-retry1/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                        "column": 59,
+                        "line": 457
+                      }
+                    },
+                    {
+                      "workerIndex": 6,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 7135,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('project-files-panel')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('project-files-panel')\u001b[22m\n\u001b[2m    13 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('project-files-panel')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('project-files-panel')\u001b[22m\n\u001b[2m    13 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:457:59",
+                        "location": {
+                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                          "column": 59,
+                          "line": 457
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 455 |\u001b[39m     \u001b[90m// Le choix TIENT d'une visite à l'autre.\u001b[39m\n \u001b[90m 456 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mreload()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 457 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByTestId(\u001b[32m'project-files-panel'\u001b[39m))\u001b[33m.\u001b[39mtoHaveCount(\u001b[35m0\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                                           \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 458 |\u001b[39m     \u001b[90m// Mais `/spaces/<id>/files` veut dire « montre-moi le dossier », et il le\u001b[39m\n \u001b[90m 459 |\u001b[39m     \u001b[90m// montre quand même.\u001b[39m\n \u001b[90m 460 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m`/spaces/${projectId}/files`\u001b[39m)\u001b[33m;\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                            "column": 59,
+                            "line": 457
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveCount\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('project-files-panel')\nExpected: \u001b[32m0\u001b[39m\nReceived: \u001b[31m1\u001b[39m\nTimeout:  5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveCount\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('project-files-panel')\u001b[22m\n\u001b[2m    13 × locator resolved to 1 element\u001b[22m\n\u001b[2m       - unexpected value \"1\"\u001b[22m\n\n\n  455 |     // Le choix TIENT d'une visite à l'autre.\n  456 |     await page.reload();\n> 457 |     await expect(page.getByTestId('project-files-panel')).toHaveCount(0);\n      |                                                           ^\n  458 |     // Mais `/spaces/<id>/files` veut dire « montre-moi le dossier », et il le\n  459 |     // montre quand même.\n  460 |     await page.goto(`/spaces/${projectId}/files`);\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:457:59"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 2,
+                      "startTime": "2026-09-21T09:19:24.075Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium-retry2/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium-retry2/error-context.md"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/code-verification-Proof-co-75493-e-panneau-est-sur-le-projet-chromium-retry2/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
+                        "column": 59,
+                        "line": 457
+                      }
                     }
                   ],
-                  "status": "expected"
+                  "status": "unexpected"
                 }
               ],
               "id": "fa1e367866636d827f1b-819ee4eb0f0c8c92cfe9",
@@ -1677,15 +1828,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 7575,
+                  "duration": 7731,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:54:08.883Z",
+                  "startTime": "2026-09-21T09:19:32.857Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -1711,15 +1862,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3987,
+                  "duration": 4516,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:54:16.519Z",
+                  "startTime": "2026-09-21T09:19:40.789Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -1745,15 +1896,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 1430,
+                  "duration": 1959,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:54:20.532Z",
+                  "startTime": "2026-09-21T09:19:45.321Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -1794,15 +1945,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8736,
+                      "duration": 9999,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:21.999Z",
+                      "startTime": "2026-09-21T09:19:47.326Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1847,10 +1998,10 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1307,
+                      "duration": 1554,
                       "errors": [],
                       "stdout": [
                         {
@@ -1859,7 +2010,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:30.793Z",
+                      "startTime": "2026-09-21T09:19:57.378Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1887,10 +2038,10 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2772,
+                      "duration": 3214,
                       "errors": [],
                       "stdout": [
                         {
@@ -1902,7 +2053,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:32.135Z",
+                      "startTime": "2026-09-21T09:19:58.973Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1930,10 +2081,10 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1311,
+                      "duration": 1553,
                       "errors": [],
                       "stdout": [
                         {
@@ -1942,7 +2093,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:34.915Z",
+                      "startTime": "2026-09-21T09:20:02.197Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1970,15 +2121,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1323,
+                      "duration": 1552,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:36.234Z",
+                      "startTime": "2026-09-21T09:20:03.760Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2021,15 +2172,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8031,
+                      "duration": 9552,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:37.582Z",
+                      "startTime": "2026-09-21T09:20:05.336Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2074,15 +2225,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 6224,
+                      "duration": 8417,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:45.797Z",
+                      "startTime": "2026-09-21T09:20:15.129Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2110,15 +2261,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1618,
+                      "duration": 1737,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:52.097Z",
+                      "startTime": "2026-09-21T09:20:23.622Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2129,6 +2280,125 @@
               "id": "685673995e320d7b3899-e4eee0b7eae53c148174",
               "file": "delegation-outcome.spec.ts",
               "line": 277,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "edrow-narrow.spec.ts",
+      "file": "edrow-narrow.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "EdRow dans une grille étroite",
+          "file": "edrow-narrow.spec.ts",
+          "line": 188,
+          "column": 6,
+          "specs": [
+            {
+              "title": "dans une carte de 294 px, la méta est SOUS le nom",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 7,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1131,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-21T09:20:26.046Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "13ca616b913637481b3a-e34f2304e3bb80c7482a",
+              "file": "edrow-narrow.spec.ts",
+              "line": 192,
+              "column": 3
+            },
+            {
+              "title": "dans 400 px, rien ne se recouvre",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 7,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 157,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-21T09:20:27.195Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "13ca616b913637481b3a-ffafbe03bf11f25ee880",
+              "file": "edrow-narrow.spec.ts",
+              "line": 208,
+              "column": 3
+            },
+            {
+              "title": "large, tout reste sur UNE ligne",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 7,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 202,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-21T09:20:27.380Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "13ca616b913637481b3a-8edc1634fbeab47c4bed",
+              "file": "edrow-narrow.spec.ts",
+              "line": 232,
               "column": 3
             }
           ]
@@ -2163,15 +2433,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1913,
+                      "duration": 2160,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:53.781Z",
+                      "startTime": "2026-09-21T09:20:27.625Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2207,15 +2477,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1531,
+                      "duration": 1793,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:55.864Z",
+                      "startTime": "2026-09-21T09:20:30.013Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2258,15 +2528,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2970,
+                      "duration": 3485,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:54:57.412Z",
+                      "startTime": "2026-09-21T09:20:31.826Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2292,15 +2562,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3080,
+                      "duration": 3651,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:00.415Z",
+                      "startTime": "2026-09-21T09:20:35.354Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2326,15 +2596,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4829,
+                      "duration": 5708,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:03.509Z",
+                      "startTime": "2026-09-21T09:20:39.017Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2360,15 +2630,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5294,
+                      "duration": 5633,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:08.354Z",
+                      "startTime": "2026-09-21T09:20:44.735Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2413,15 +2683,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2627,
+                      "duration": 3290,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:13.669Z",
+                      "startTime": "2026-09-21T09:20:50.394Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2449,15 +2719,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 819,
+                      "duration": 1004,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:16.451Z",
+                      "startTime": "2026-09-21T09:20:53.833Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2485,15 +2755,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 467,
+                      "duration": 569,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:17.289Z",
+                      "startTime": "2026-09-21T09:20:54.848Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2521,15 +2791,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1157,
+                      "duration": 1130,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:17.765Z",
+                      "startTime": "2026-09-21T09:20:55.427Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2572,15 +2842,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2592,
+                      "duration": 3212,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:18.941Z",
+                      "startTime": "2026-09-21T09:20:56.577Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2606,15 +2876,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1142,
+                      "duration": 1362,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:21.691Z",
+                      "startTime": "2026-09-21T09:20:59.968Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2659,15 +2929,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3944,
+                      "duration": 4358,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:22.873Z",
+                      "startTime": "2026-09-21T09:21:01.375Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2695,15 +2965,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1364,
+                      "duration": 1456,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:26.975Z",
+                      "startTime": "2026-09-21T09:21:05.941Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2756,15 +3026,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 2720,
+                      "duration": 3004,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:28.524Z",
+                      "startTime": "2026-09-21T09:21:07.630Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -2808,15 +3078,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5339,
+                      "duration": 5804,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:31.279Z",
+                      "startTime": "2026-09-21T09:21:10.678Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2850,15 +3120,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1710,
+                      "duration": 1955,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:36.625Z",
+                      "startTime": "2026-09-21T09:21:16.492Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2892,15 +3162,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2143,
+                      "duration": 2444,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:38.342Z",
+                      "startTime": "2026-09-21T09:21:18.455Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2943,15 +3213,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4975,
+                      "duration": 5391,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:40.500Z",
+                      "startTime": "2026-09-21T09:21:20.917Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2996,15 +3266,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3947,
+                      "duration": 4612,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:45.519Z",
+                      "startTime": "2026-09-21T09:21:26.353Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3049,15 +3319,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3887,
+                      "duration": 5020,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:49.820Z",
+                      "startTime": "2026-09-21T09:21:31.438Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3102,15 +3372,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1539,
+                      "duration": 1768,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:53.953Z",
+                      "startTime": "2026-09-21T09:21:36.781Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3138,15 +3408,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3991,
+                      "duration": 4548,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:55.524Z",
+                      "startTime": "2026-09-21T09:21:38.584Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3191,15 +3461,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2272,
+                      "duration": 2809,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:55:59.530Z",
+                      "startTime": "2026-09-21T09:21:43.159Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3227,15 +3497,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 669,
+                      "duration": 826,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:01.830Z",
+                      "startTime": "2026-09-21T09:21:46.001Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3263,15 +3533,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1127,
+                      "duration": 1459,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:02.506Z",
+                      "startTime": "2026-09-21T09:21:46.836Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3299,15 +3569,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1880,
+                      "duration": 2704,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:03.641Z",
+                      "startTime": "2026-09-21T09:21:48.305Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3350,15 +3620,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 583,
+                      "duration": 732,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:05.537Z",
+                      "startTime": "2026-09-21T09:21:51.026Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3384,15 +3654,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 703,
+                      "duration": 914,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:06.156Z",
+                      "startTime": "2026-09-21T09:21:51.800Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3418,15 +3688,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 861,
+                      "duration": 1252,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:06.865Z",
+                      "startTime": "2026-09-21T09:21:52.727Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3471,15 +3741,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 551,
+                      "duration": 697,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:07.744Z",
+                      "startTime": "2026-09-21T09:21:54.004Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3507,15 +3777,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2111,
+                      "duration": 2748,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:08.328Z",
+                      "startTime": "2026-09-21T09:21:54.741Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3543,15 +3813,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 611,
+                      "duration": 763,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:10.447Z",
+                      "startTime": "2026-09-21T09:21:57.498Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3579,15 +3849,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5372,
+                      "duration": 6267,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:11.064Z",
+                      "startTime": "2026-09-21T09:21:58.271Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3615,15 +3885,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 565,
+                      "duration": 676,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:16.446Z",
+                      "startTime": "2026-09-21T09:22:04.550Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3633,7 +3903,7 @@
               ],
               "id": "4219922fea2e2bd3c691-a496648011127c20046a",
               "file": "smoke.spec.ts",
-              "line": 179,
+              "line": 170,
               "column": 3
             }
           ]
@@ -3641,7 +3911,7 @@
         {
           "title": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran",
           "file": "smoke.spec.ts",
-          "line": 193,
+          "line": 184,
           "column": 6,
           "specs": [
             {
@@ -3660,15 +3930,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2770,
+                      "duration": 3415,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:17.019Z",
+                      "startTime": "2026-09-21T09:22:05.237Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3678,7 +3948,7 @@
               ],
               "id": "4219922fea2e2bd3c691-5575c1a2c2ef7d0fe69e",
               "file": "smoke.spec.ts",
-              "line": 194,
+              "line": 185,
               "column": 3
             }
           ]
@@ -3686,7 +3956,7 @@
         {
           "title": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran",
           "file": "smoke.spec.ts",
-          "line": 290,
+          "line": 281,
           "column": 6,
           "specs": [
             {
@@ -3704,15 +3974,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 7418,
+                      "duration": 9499,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:19.798Z",
+                      "startTime": "2026-09-21T09:22:08.667Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3722,7 +3992,7 @@
               ],
               "id": "4219922fea2e2bd3c691-562095c7be08cb71b6d6",
               "file": "smoke.spec.ts",
-              "line": 291,
+              "line": 282,
               "column": 3
             },
             {
@@ -3740,15 +4010,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2548,
+                      "duration": 3650,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:56:27.227Z",
+                      "startTime": "2026-09-21T09:22:18.183Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3758,7 +4028,7 @@
               ],
               "id": "4219922fea2e2bd3c691-ef090b343b2518f2bf4f",
               "file": "smoke.spec.ts",
-              "line": 325,
+              "line": 316,
               "column": 3
             }
           ]
@@ -3786,15 +4056,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 7978,
+                  "duration": 14123,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:56:29.805Z",
+                  "startTime": "2026-09-21T09:22:21.908Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3820,15 +4090,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 18482,
+                  "duration": 4642,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:56:37.883Z",
+                  "startTime": "2026-09-21T09:22:36.257Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3854,15 +4124,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3883,
+                  "duration": 4188,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:56:56.383Z",
+                  "startTime": "2026-09-21T09:22:40.914Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3908,15 +4178,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 750,
+                  "duration": 818,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:57:00.328Z",
+                  "startTime": "2026-09-21T09:22:45.170Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -3962,15 +4232,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 629,
+                  "duration": 818,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:57:01.261Z",
+                  "startTime": "2026-09-21T09:22:46.043Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -4016,15 +4286,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 584,
+                  "duration": 680,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:57:01.899Z",
+                  "startTime": "2026-09-21T09:22:46.874Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -4072,15 +4342,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 540,
+                  "duration": 634,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:57:02.491Z",
+                  "startTime": "2026-09-21T09:22:47.563Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -4115,7 +4385,7 @@
         {
           "title": "déplier un bloc du fil @cap:parler-a-un-agent/ecran",
           "file": "thread-unfold-keeps-scroll.spec.ts",
-          "line": 454,
+          "line": 398,
           "column": 6,
           "specs": [
             {
@@ -4133,15 +4403,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2130,
+                      "duration": 2348,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:57:03.052Z",
+                      "startTime": "2026-09-21T09:22:48.218Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4151,7 +4421,7 @@
               ],
               "id": "1e511fcf741ecc03de59-bd5a6fd6f970d0e44def",
               "file": "thread-unfold-keeps-scroll.spec.ts",
-              "line": 455,
+              "line": 399,
               "column": 3
             },
             {
@@ -4169,15 +4439,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1492,
+                      "duration": 1819,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:57:05.514Z",
+                      "startTime": "2026-09-21T09:22:50.812Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4187,7 +4457,7 @@
               ],
               "id": "1e511fcf741ecc03de59-a0e89e1bc5b69667ea39",
               "file": "thread-unfold-keeps-scroll.spec.ts",
-              "line": 497,
+              "line": 441,
               "column": 3
             },
             {
@@ -4205,15 +4475,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3100,
+                      "duration": 3282,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:57:07.020Z",
+                      "startTime": "2026-09-21T09:22:52.645Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4223,7 +4493,7 @@
               ],
               "id": "1e511fcf741ecc03de59-11ae426e0c24ce929994",
               "file": "thread-unfold-keeps-scroll.spec.ts",
-              "line": 541,
+              "line": 485,
               "column": 3
             }
           ]
@@ -4240,7 +4510,7 @@
         {
           "title": "déplier une PETITE boîte @cap:parler-a-un-agent/ecran",
           "file": "thread-unfold-small-block.spec.ts",
-          "line": 349,
+          "line": 326,
           "column": 6,
           "specs": [
             {
@@ -4258,15 +4528,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5501,
+                      "duration": 5794,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:57:10.213Z",
+                      "startTime": "2026-09-21T09:22:55.995Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4276,7 +4546,7 @@
               ],
               "id": "07eaf4a4c56f7c038e34-7e2881ce6b7e04f62c86",
               "file": "thread-unfold-small-block.spec.ts",
-              "line": 350,
+              "line": 327,
               "column": 3
             },
             {
@@ -4294,15 +4564,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5566,
+                      "duration": 5429,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:57:15.908Z",
+                      "startTime": "2026-09-21T09:23:02.024Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4312,7 +4582,7 @@
               ],
               "id": "07eaf4a4c56f7c038e34-7b95247fa3885cf55e2e",
               "file": "thread-unfold-small-block.spec.ts",
-              "line": 396,
+              "line": 373,
               "column": 3
             }
           ]
@@ -4340,15 +4610,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4307,
+                  "duration": 4023,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:57:21.562Z",
+                  "startTime": "2026-09-21T09:23:07.559Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4374,15 +4644,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3147,
+                  "duration": 4324,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:57:25.916Z",
+                  "startTime": "2026-09-21T09:23:11.625Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4408,15 +4678,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3469,
+                  "duration": 3837,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:57:29.073Z",
+                  "startTime": "2026-09-21T09:23:15.960Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4442,15 +4712,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3117,
+                  "duration": 3583,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:57:32.552Z",
+                  "startTime": "2026-09-21T09:23:19.805Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4476,15 +4746,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 4,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4460,
+                  "duration": 5452,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-20T08:57:35.678Z",
+                  "startTime": "2026-09-21T09:23:23.398Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4537,15 +4807,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 9040,
+                      "duration": 4855,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:57:40.155Z",
+                      "startTime": "2026-09-21T09:23:28.873Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -4600,15 +4870,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 4,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5816,
+                      "duration": 4773,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-20T08:57:49.242Z",
+                      "startTime": "2026-09-21T09:23:33.787Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4628,11 +4898,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-09-20T08:51:50.453Z",
-    "duration": 364746.097,
-    "expected": 86,
+    "startTime": "2026-09-21T09:16:25.775Z",
+    "duration": 432889.805,
+    "expected": 88,
     "skipped": 10,
-    "unexpected": 1,
+    "unexpected": 2,
     "flaky": 1
   }
 }
