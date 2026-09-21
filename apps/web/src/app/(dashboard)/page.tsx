@@ -20,11 +20,10 @@
 import PageShell from '@/components/ui/PageShell';
 import NewConversationScreen from './chat/NewConversationScreen.tsx';
 import { getNewConversationAction } from '@/lib/conversation-actions.ts';
-import { getAgentModelChoicesAction, getFeedDensityAction } from '@/lib/actions.ts';
-import { DEFAULT_FEED_DENSITY } from '@/lib/feed-density.ts';
+import { getAgentModelChoicesAction } from '@/lib/actions.ts';
 
-// Force dynamic — le ROOT, le nom du compte et la densité sont relus à chaque
-// visite, comme les trois écrans de fil.
+// Force dynamic — le ROOT et le nom du compte sont relus à chaque visite,
+// comme les trois écrans de fil.
 export const dynamic = 'force-dynamic';
 
 export default async function NewConversationPage({
@@ -52,16 +51,11 @@ export default async function NewConversationPage({
   // recevra la conversation. Pas de ROOT : rien à régler, et pas de saisie.
   const choices = root !== null ? await getAgentModelChoicesAction(root.id) : null;
   const modelChoices = choices?.ok ? choices.data : null;
-  // #132 — une densité illisible ne fait pas rougir l'écran : le défaut dessiné.
-  const densityResult = await getFeedDensityAction();
-  const density = densityResult.ok ? densityResult.data : DEFAULT_FEED_DENSITY;
-
   return (
     <NewConversationScreen
       accountName={accountName}
       root={root}
       project={project}
-      density={density}
       llmKeyId={modelChoices?.llmKeyId ?? null}
       model={modelChoices?.model ?? null}
       reasoningEffort={modelChoices?.reasoningEffort ?? null}

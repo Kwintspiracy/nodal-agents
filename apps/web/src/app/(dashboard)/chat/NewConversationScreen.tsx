@@ -27,7 +27,6 @@ import ThreadWorkBar from '@/app/(dashboard)/spaces/ThreadWorkBar.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
 import { originLabel, threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { EMPTY_SPACE_COST } from '@/lib/space-cost.ts';
-import { DEFAULT_FEED_DENSITY, type FeedDensity } from '@/lib/feed-density.ts';
 import NewConversationBody from './NewConversationBody.tsx';
 import NewConversationComposer from './NewConversationComposer.tsx';
 import { PendingTurnProvider } from './PendingTurn.tsx';
@@ -59,7 +58,6 @@ export default function NewConversationScreen({
   accountName,
   root,
   project = null,
-  density = DEFAULT_FEED_DENSITY,
   llmKeyId = null,
   model = null,
   reasoningEffort = null,
@@ -72,8 +70,6 @@ export default function NewConversationScreen({
   root: { id: string; name: string; avatarUrl: string | null } | null;
   /** Le projet porté par l'écran, quand on vient du dossier d'un projet. */
   project?: { id: string; name: string } | null;
-  /** #132 — la densité de lecture de la personne, portée par la barre. */
-  density?: FeedDensity;
   /** #138 — les trois listes « provider / modèle / effort » du ROOT. */
   llmKeyId?: string | null;
   model?: string | null;
@@ -117,7 +113,6 @@ export default function NewConversationScreen({
           status={<StatusPill variant="idle" />}
           proofVerdict={null}
           filesHref={project !== null ? `/spaces/${project.id}/files` : null}
-          density={density}
         />
       }
     >

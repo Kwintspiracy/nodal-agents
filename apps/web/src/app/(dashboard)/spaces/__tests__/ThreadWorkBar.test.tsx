@@ -4,20 +4,10 @@
 // Rendu statique côté serveur (renderToStaticMarkup), comme les autres tests
 // d'écran de ce dossier : pas de navigateur, on lit le HTML.
 
-import { describe, it, expect, vi } from 'vitest';
-import { act } from 'react';
-import { createRoot } from 'react-dom/client';
+import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ThreadWorkBar from '../ThreadWorkBar.tsx';
 
-// #132 — la barre porte désormais le réglage de densité, qui appelle une action
-// serveur. `actions.ts` est `server-only` : le mock est ce qui rend la barre
-// rendable ici, et c'est aussi la SONDE qui prouve ce que le clic envoie.
-const setFeedDensityAction = vi.hoisted(() =>
-  vi.fn(async (d: unknown) => ({ ok: true as const, data: d })),
-);
-vi.mock('@/lib/actions.ts', () => ({ setFeedDensityAction }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 import { threadAgents } from '../format.ts';
 import type { FeedItem } from '@/lib/conversation-feed.ts';
 
@@ -211,48 +201,5 @@ describe('ThreadWorkBar — la barre SOUS l’en-tête de page', () => {
     const html = renderToStaticMarkup(<ThreadWorkBar agents={[]} proofVerdict="infra_error" />);
     expect(html).not.toContain('Verified');
     expect(html).not.toContain('Checks failed');
-  });
-});
-
-// ─── Le réglage de densité (#135, #132) ──────────────────────────────────────
-//
-// L'assertion porte sur l'ARGUMENT reçu par l'action, jamais sur un compte
-// d'appels (invariant #5) : ce qui compte n'est pas qu'un bouton ait été
-// cliqué, c'est que la densité choisie parte bien vers la base.
-
-describe('ThreadWorkBar — la densité de lecture @cap:suivre-execution/ecran', () => {
-  it('montre les deux segments, et celui de la personne est le retenu', () => {
-    const html = renderToStaticMarkup(<ThreadWorkBar agents={[]} density="unfolded" />);
-    expect(html).toContain('Show the work');
-    expect(html).toContain('Folded');
-    expect(html).toContain('Unfolded');
-    // `aria-pressed` dit lequel est retenu — pas une classe de fond.
-    const unfolded = /data-testid="density-unfolded"[^>]*/.exec(html)?.[0] ?? '';
-    const folded = /data-testid="density-folded"[^>]*/.exec(html)?.[0] ?? '';
-    expect(html).toContain('aria-pressed="true"');
-    expect(`${unfolded}${folded}`).not.toBe('');
-  });
-
-  it('sans densité, la barre ne montre AUCUN réglage — la page d’un run n’en a pas', () => {
-    const html = renderToStaticMarkup(<ThreadWorkBar agents={[]} />);
-    expect(html).not.toContain('Show the work');
-    expect(html).not.toContain('density-folded');
-  });
-
-  it('cliquer « Unfolded » envoie « unfolded » à l’action', async () => {
-    setFeedDensityAction.mockClear();
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    await act(async () => {
-      root.render(<ThreadWorkBar agents={[]} density="folded" />);
-    });
-    const segment = container.querySelector<HTMLButtonElement>('[data-testid="density-unfolded"]');
-    if (!segment) throw new Error('la barre n’a pas dessiné le segment « Unfolded »');
-    await act(async () => {
-      segment.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    expect(setFeedDensityAction.mock.calls.map((c) => c[0])).toEqual(['unfolded']);
-    expect(segment.getAttribute('aria-pressed')).toBe('true');
   });
 });
