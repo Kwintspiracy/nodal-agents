@@ -383,11 +383,49 @@ export type FolderThreadSource = FolderThread & { folder: string };
  * c'est pour cela qu'elles partagent UN point plutôt que trois signes : un
  * menu qui distinguerait « non lu » de « en attente » demanderait de lire une
  * légende avant de lire la barre latérale.
+ *
+ * La COULEUR, elle, les sépare en deux depuis le 22/09/2026 : voir
+ * `threadDotTone`.
  */
 export function threadCallsFor(
   thread: Pick<FolderThread, 'waiting' | 'running' | 'unread'>,
 ): boolean {
   return thread.waiting || thread.running || thread.unread;
+}
+
+/** Ce que le point d'un fil DIT, et donc de quelle couleur il est. */
+export type ThreadDotTone = 'attention' | 'activite' | 'repos';
+
+/**
+ * De quelle couleur le point d'un fil appelle-t-il ?
+ *
+ * Décision du propriétaire, 22/09/2026 : « le dot rouge dans la sidebar, qui
+ * indique quelque chose de non lu, doit être de la même couleur que le pulsing
+ * dot d'activité ». Un fil simplement NON LU était peint du même rouge qu'un
+ * fil qui attend une réponse ; le rouge réclamait un geste là où il n'y avait
+ * rien à faire qu'aller lire.
+ *
+ * Deux sens, donc deux couleurs, et l'ordre compte :
+ *
+ *   - `attention` — QUELQUE CHOSE ATTEND UNE RÉPONSE. C'est le seul cas où la
+ *     personne doit agir, et le seul qui garde le rouge. Il l'emporte : un fil
+ *     à la fois en attente et non lu appelle d'abord pour ce qu'il attend.
+ *   - `activite` — il s'y passe ou il s'y est passé quelque chose : un run
+ *     tourne, ou il y a du non-lu. Lime, la couleur que tout le produit donne
+ *     à « ça avance » (`LiveDot`), SANS le halo qui bat : seul ce qui tourne en
+ *     ce moment bat, et un fil non lu ne bouge pas.
+ *   - `repos` — rien à dire.
+ *
+ * Le rouge reste donc ce qu'il a toujours été ailleurs dans la barre : ce qui
+ * réclame la personne. Il n'est retiré de nulle part où il dit une erreur — la
+ * pastille d'un dossier et celle du rail sont un autre jeton (`bg-err`).
+ */
+export function threadDotTone(
+  thread: Pick<FolderThread, 'waiting' | 'running' | 'unread'>,
+): ThreadDotTone {
+  if (thread.waiting) return 'attention';
+  if (thread.running || thread.unread) return 'activite';
+  return 'repos';
 }
 
 /**

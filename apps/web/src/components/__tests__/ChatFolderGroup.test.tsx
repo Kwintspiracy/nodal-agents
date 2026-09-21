@@ -619,7 +619,13 @@ function threadDots(folder: string): HTMLElement[] {
 }
 
 describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
-  it('est ROUGE quand une demande attend, ou qu’un run tourne ; gris sinon', async () => {
+  it('est ROUGE quand une demande ATTEND, et rien d’autre n’est rouge', async () => {
+    // Decision du proprietaire, 22/09/2026 : le rouge ne reste que la ou
+    // quelqu'un doit repondre. Un run qui tourne et un fil non lu prennent la
+    // couleur de l'activite.
+    //
+    // Mutation verifiee : `threadDotTone` qui rend `attention` des que le fil
+    // appelle → les deux cas de couleur rougissent.
     seedThreads({
       telegram: [
         fil('t1', 'Waiting on you', { waiting: true }),
@@ -633,20 +639,34 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
 
     const dots = threadDots('telegram');
     expect(dots.map((d) => d.getAttribute('data-calls'))).toEqual(['yes', 'yes', 'yes', 'no']);
+    // Ce que chaque point DIT, avant sa couleur.
+    expect(dots.map((d) => d.getAttribute('data-tone'))).toEqual([
+      'attention',
+      'activite',
+      'attention',
+      'repos',
+    ]);
     // La couleur vient du JETON, jamais d'une valeur écrite dans le composant.
     expect(dots[0]?.className).toContain('bg-attention');
-    expect(dots[1]?.className).toContain('bg-attention');
+    // Un run qui tourne est de l'activite : le MEME lime que `LiveDot`.
+    expect(dots[1]?.className).toContain('bg-agent-vivid');
+    expect(dots[1]?.className).not.toContain('bg-attention');
+    // En attente ET en cours : c'est la reponse attendue qui parle la premiere.
     expect(dots[2]?.className).toContain('bg-attention');
     expect(dots[3]?.className).toContain('bg-rule-2');
     expect(dots[3]?.className).not.toContain('bg-attention');
-    // Aucun `#D8153F` en dur dans le rendu : le jeton est la seule source.
+    // Aucun `#D8153F` ni `#D4FF2E` en dur dans le rendu : les jetons sont la
+    // seule source.
     expect(container.innerHTML.toLowerCase()).not.toContain('d8153f');
+    expect(container.innerHTML.toLowerCase()).not.toContain('d4ff2e');
   });
 
-  it('est ROUGE sur un fil NON LU, même sans demande ni run (#209)', async () => {
+  it('prend la couleur de l’ACTIVITÉ sur un fil NON LU, et ne BAT pas', async () => {
     // Le troisième sens du point, ajouté le 19/09/2026 : avant la table
     // `conversation_reads`, un fil au repos était forcément gris parce que
-    // rien ne savait s'il avait été lu.
+    // rien ne savait s'il avait été lu. Il était rouge ; il est lime depuis le
+    // 22/09/2026 — un fil non lu n'attend rien de personne, il y a seulement
+    // quelque chose à voir.
     //
     // Mutation vérifiée : `unread` retiré de `threadCallsFor` → ce test rougit.
     seedThreads({
@@ -660,7 +680,12 @@ describe('le point d’un fil @cap:reprendre-conversation/ecran', () => {
 
     const dots = threadDots('telegram');
     expect(dots.map((d) => d.getAttribute('data-calls'))).toEqual(['yes', 'no']);
-    expect(dots[0]?.className).toContain('bg-attention');
+    expect(dots[0]?.getAttribute('data-tone')).toBe('activite');
+    expect(dots[0]?.className).toContain('bg-agent-vivid');
+    expect(dots[0]?.className).not.toContain('bg-attention');
+    // SANS le halo : seul ce qui tourne en ce moment bat, et un non-lu ne
+    // bouge pas.
+    expect(dots[0]?.className).not.toContain('animate-');
     expect(dots[1]?.className).toContain('bg-rule-2');
   });
 
