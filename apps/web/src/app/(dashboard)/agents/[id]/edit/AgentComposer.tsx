@@ -74,6 +74,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import FolderPickerModal from './FolderPickerModal.tsx';
 import { SectionCard, SectionHead } from './SectionCard.tsx';
 import AutonomyToolRow from './AutonomyToolRow.tsx';
+import McpServerTools from './McpServerTools.tsx';
 import CommandAllowlistSection from './CommandAllowlistSection.tsx';
 import TeamChangeSection from './TeamChangeSection.tsx';
 import {
@@ -1809,11 +1810,11 @@ export function AutonomyTab({
    */
   const [pendingWiden, setPendingWiden] = useState<{
     toolName: string;
-    action: ApprovalAction;
+    action: ApprovalAction | null;
     folder: string;
   } | null>(null);
 
-  function requestChange(toolName: string, action: ApprovalAction) {
+  function requestChange(toolName: string, action: ApprovalAction | null) {
     const folder = folderFor(toolName);
     if (folder !== undefined && action !== 'auto_approve') {
       setPendingWiden({ toolName, action, folder });
@@ -1822,7 +1823,7 @@ export function AutonomyTab({
     handleChange(toolName, action);
   }
 
-  function handleChange(toolName: string, action: ApprovalAction) {
+  function handleChange(toolName: string, action: ApprovalAction | null) {
     // Optimistic update. The row is KEPT for auto_approve — it used to be
     // dropped, mirroring the server action's old "no rule needed, the default
     // is already auto_approve" branch. That stopped being true for MCP tools,
@@ -1835,12 +1836,18 @@ export function AutonomyTab({
     // que la base garde confinée. Là, on attend sa réponse et on relit.
     const conditioned = folderFor(toolName) !== undefined;
     if (!conditioned) {
-      setRules((prev) => [
-        ...prev.filter((r) => r.toolName !== toolName),
+      setRules((prev) => {
+        const without = prev.filter((r) => r.toolName !== toolName);
+        // `null` SUPPRIME la règle (issue #357, « Follow the server ») : la
+        // ligne disparaît, elle ne prend pas une valeur.
+        if (action === null) return without;
         // Sans condition, et c'est ce que le serveur écrit : changer une règle
         // depuis cet onglet réécrit `condition_json` à vide (issue #361).
-        { id: '', toolName, action, conditionJson: null, workspaceLabel: null },
-      ]);
+        return [
+          ...without,
+          { id: '', toolName, action, conditionJson: null, workspaceLabel: null },
+        ];
+      });
     }
 
     markSaving(toolName, true);
@@ -1973,8 +1980,10 @@ export function AutonomyTab({
         order to stop being interrupted. Reported live: repeated prompts just to
         read a CHANGELOG.
 
-        One row per SERVER, not per tool: a server commonly exposes thirty, and
-        the decision the owner actually makes is about the server.
+        One row per SERVER, and the tools it exposes UNDER it, folded (issue
+        #357): a server commonly exposes thirty and the ordinary decision is
+        about the server, but until this fold there was nowhere on the agent's
+        page to say "this server yes, that one tool no".
       */}
       {attachedMcpServers.length > 0 && (
         <SectionCard>
@@ -1987,24 +1996,78 @@ export function AutonomyTab({
             data-testid="autonomy-mcp-list"
           >
             {attachedMcpServers.map((s) => {
-              const pattern = `${mcpSlugToPrefix(s.slug)}__*`;
+              const prefix = mcpSlugToPrefix(s.slug);
+              const pattern = `${prefix}__*`;
+              // Ce que l'AGENT détient, pas ce que le serveur expose (revue
+              // Reviewer C, passe 2, Q2) : le runner ne lui donnera jamais que
+              // sa liste blanche, et un outil ajouté au serveur plus tard en
+              // est filtré lui aussi.
+              const held = Array.isArray(s.enabledTools)
+                ? s.availableTools.filter((t) => s.enabledTools?.includes(t.name))
+                : s.availableTools;
+              // Par NOM et non par identité d'objet : `held` vient d'un
+              // `filter` du même tableau aujourd'hui, mais une comparaison qui
+              // dépend de cela casse en silence le jour où la liste est
+              // recopiée quelque part.
+              const heldNames = new Set(held.map((t) => t.name));
+              const hiddenWithRules = s.availableTools
+                .map((t) => t.name)
+                .filter(
+                  (name) =>
+                    !heldNames.has(name) && rules.some((r) => r.toolName === `${prefix}__${name}`),
+                );
               return (
-                <AutonomyToolRow
-                  key={s.mcpServerId}
-                  slug={pattern}
-                  label={`${s.label} server`}
-                  summary={`All ${s.availableTools.length} current tools and any added later.`}
-                  risk="write"
-                  // Unlike the connector rows above, "no rule" here means ASK:
-                  // every MCP tool ships defaultApproval: 'require_approval'.
-                  value={rules.find((r) => r.toolName === pattern)?.action ?? 'require_approval'}
-                  saving={saving.has(pattern)}
-                  onChange={(action) => requestChange(pattern, action)}
-                  {...(folderFor(pattern) === undefined ? {} : { folder: folderFor(pattern) })}
-                />
+                <div key={s.mcpServerId}>
+                  <AutonomyToolRow
+                    slug={pattern}
+                    label={`${s.label} server`}
+                    // Avec une liste blanche, cette ligne ne peut pas compter :
+                    // le motif `<prefix>__*` gouverne par NOM, donc aussi un
+                    // outil re-donné demain (revue Reviewer C, passe 3, P0-3).
+                    // Elle dit la PORTÉE ; le dépli, lui, dit ce que l'agent
+                    // tient aujourd'hui.
+                    summary={
+                      Array.isArray(s.enabledTools)
+                        ? 'Every tool from this server, including any you give this agent later.'
+                        : `All ${s.availableTools.length} current tools and any added later.`
+                    }
+                    risk="write"
+                    // Unlike the connector rows above, "no rule" here means ASK:
+                    // every MCP tool ships defaultApproval: 'require_approval'.
+                    value={rules.find((r) => r.toolName === pattern)?.action ?? 'require_approval'}
+                    saving={saving.has(pattern)}
+                    onChange={(action) => requestChange(pattern, action)}
+                    {...(folderFor(pattern) === undefined ? {} : { folder: folderFor(pattern) })}
+                  />
+                  <McpServerTools
+                    prefix={prefix}
+                    serverLabel={s.label}
+                    // Les outils que CET agent a, pas ceux que le serveur
+                    // expose (revue Reviewer C, passe 1, C3) : une règle posée
+                    // sur un outil retiré de la liste blanche ne protège rien,
+                    // et la ligne promettrait un contrôle sans effet.
+                    tools={held}
+                    hiddenWithRules={hiddenWithRules}
+                    ruleFor={(toolName) =>
+                      rules.find((r) => r.toolName === toolName)?.action ?? null
+                    }
+                    isSaving={(toolName) => saving.has(toolName)}
+                    onChange={(toolName, action) => requestChange(toolName, action)}
+                  />
+                </div>
               );
             })}
           </div>
+          {/*
+            « whoever that rule was set for » disait vrai du MOTEUR et faux de
+            CET ÉCRAN (revue Reviewer C, passe 4, C1) : `rules` ne porte que les
+            règles de cet agent, une règle d'entité sur le même outil ne s'y
+            voit pas. La phrase dit donc ce que ces lignes montrent.
+          */}
+          <p className="mt-4 text-body-12 text-ink-4">
+            A rule on one tool wins over the server&apos;s rule. These rows show the rules set for
+            this agent.
+          </p>
         </SectionCard>
       )}
 
@@ -2066,13 +2129,19 @@ export function AutonomyTab({
       */}
       <ConfirmDialog
         open={pendingWiden !== null}
-        title="Remove the folder limit?"
+        title={pendingWiden?.action === null ? 'Delete this rule?' : 'Remove the folder limit?'}
         message={
           pendingWiden === null
             ? ''
-            : `This rule applies only in ${pendingWiden.folder} today. Saving from here applies your choice everywhere this agent works.`
+            : pendingWiden.action === null
+              ? // Ce qui arrive, et rien de plus : promettre que l'outil
+                // « suivra le serveur » serait faux si une règle d'entité sur
+                // le même outil survit et continue de gagner (revue Reviewer
+                // C, passe 4, C2).
+                `This rule applies only in ${pendingWiden.folder} today. Following the server deletes this agent's rule on the tool.`
+              : `This rule applies only in ${pendingWiden.folder} today. Saving from here applies your choice everywhere this agent works.`
         }
-        confirmLabel="Remove the limit"
+        confirmLabel={pendingWiden?.action === null ? 'Delete the rule' : 'Remove the limit'}
         onConfirm={() => {
           const pending = pendingWiden;
           setPendingWiden(null);
