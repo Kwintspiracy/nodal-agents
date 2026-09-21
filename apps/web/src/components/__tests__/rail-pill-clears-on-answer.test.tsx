@@ -211,11 +211,35 @@ async function cliquer(texte: string, par: 'texte' | 'aria-label' = 'texte'): Pr
   await cliquerDans(rendu(), texte, par);
 }
 
-/** Le bouton « Approve once » du rendu courant, pour lire son état. */
+/** Un bouton du rendu courant, par son texte — pour lire son état. */
+function bouton(texte: string): HTMLButtonElement | undefined {
+  return [...rendu().querySelectorAll('button')].find((b) => b.textContent?.trim() === texte) as
+    | HTMLButtonElement
+    | undefined;
+}
+
+/** Le bouton « Approve once » du rendu courant. */
 function boutonApprouver(): HTMLButtonElement | undefined {
-  return [...rendu().querySelectorAll('button')].find(
-    (b) => b.textContent?.trim() === 'Approve once',
-  ) as HTMLButtonElement | undefined;
+  return bouton('Approve once');
+}
+
+/**
+ * RETENIR LA LECTURE EN VOL : `listApprovalsAction` ne répond que lorsque le
+ * test le décide. C'est ce qui rend l'attente observable — sans cela, tout est
+ * déjà résolu quand `act()` rend la main.
+ */
+function lectureRetenue(): () => void {
+  let relacher: (() => void) | null = null;
+  vi.mocked(listApprovalsAction).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        relacher = () => resolve({ ok: true, data: [] });
+      }),
+  );
+  return () => {
+    if (!relacher) throw new Error('la lecture n’a jamais été appelée');
+    (relacher as () => void)();
+  };
 }
 
 /**
@@ -261,10 +285,8 @@ beforeEach(() => {
   vi.mocked(setAgentApprovalRuleAction).mockResolvedValue({ ok: true, data: undefined });
 });
 
-afterEach(async () => {
-  // GARDÉ : un cas qui échoue avant `monter()` laisserait `root` à null, ou
-  // pointant sur la racine déjà démontée du cas précédent. Un `unmount()` qui
-  // lève ici masquerait l'échec d'origine (Reviewer C, passe 3).
+/** Défaire le rendu courant — pour en refaire un dans le MÊME cas. */
+async function demonter(): Promise<void> {
   const racine = root;
   const cible = container;
   root = null;
@@ -275,6 +297,13 @@ afterEach(async () => {
     });
   }
   cible?.remove();
+}
+
+afterEach(async () => {
+  // GARDÉ : un cas qui échoue avant `monter()` laisserait `root` à null, ou
+  // pointant sur la racine déjà démontée du cas précédent. Un `unmount()` qui
+  // lève ici masquerait l'échec d'origine (Reviewer C, passe 3).
+  await demonter();
   journal?.mockRestore();
   journal = null;
 });
@@ -449,13 +478,7 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     // Mutation vérifiée : `await refresh()` → `void refresh()` dans
     // `ApprovalActions.resolve` → ce cas rougit, le bouton est déjà réactivé
     // alors que la lecture est encore en vol.
-    let relacher: (() => void) | null = null;
-    vi.mocked(listApprovalsAction).mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          relacher = () => resolve({ ok: true, data: [] });
-        }),
-    );
+    const relacher = lectureRetenue();
     await monter(carteApprobation());
     await cliquer('Approve once');
 
@@ -464,13 +487,37 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     expect(boutonApprouver()?.hasAttribute('disabled')).toBe(true);
     expect(caseApprovals()).toBe('Approvals1');
 
-    if (!relacher) throw new Error('la lecture n’a jamais été appelée');
     await act(async () => {
-      (relacher as () => void)();
+      relacher();
     });
 
     // Elle a répondu : le bouton revient, et il revient sur le NOUVEAU nombre.
     expect(boutonApprouver()?.hasAttribute('disabled')).toBe(false);
+    expect(caseApprovals()).toBe('Approvals');
+  });
+
+  it('RETIENT AUSSI les autres boutons de décision le temps de la lecture', async () => {
+    // Pas seulement « Approve once » : rejeter et répondre à une question
+    // passent par la même transition, et un bouton qui reviendrait avant la fin
+    // se laisserait cliquer deux fois (Reviewer C, passe 4).
+    const relacher = lectureRetenue();
+    await monter(carteApprobation());
+    await cliquer('Reject');
+    await cliquer('Confirm rejection');
+    expect(bouton('Confirm rejection')?.hasAttribute('disabled')).toBe(true);
+    await act(async () => {
+      relacher();
+    });
+    expect(caseApprovals()).toBe('Approvals');
+
+    await demonter();
+    const relacher2 = lectureRetenue();
+    await monter(carteDuFil());
+    await cliquer('The repo README');
+    expect(bouton('The repo README')?.hasAttribute('disabled')).toBe(true);
+    await act(async () => {
+      relacher2();
+    });
     expect(caseApprovals()).toBe('Approvals');
   });
 

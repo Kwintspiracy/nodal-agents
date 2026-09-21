@@ -10,7 +10,13 @@
 // serveur, un contexte, un rendu.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { cloneElement, createElement, type ReactElement, type ReactNode } from 'react';
+import {
+  cloneElement,
+  createElement,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -81,8 +87,23 @@ async function naviguer(vers: string): Promise<void> {
   await act(async () => {
     // CLONÉ, et pas le même objet : React court-circuite le rendu d'un élément
     // référentiellement identique, et la barre resterait sur l'ancien chemin.
-    root.render(cloneElement(dernierArbre!));
+    //
+    // ⚠️ EN PROFONDEUR. Ne cloner que la racine ne suffit pas : ses enfants
+    // restent les mêmes objets, et React s'arrête au premier fournisseur dont
+    // la valeur de contexte n'a pas changé — le menu ne verrait jamais le
+    // nouveau chemin. Cela passait tant qu'`ApprovalsProvider` refaisait sa
+    // valeur à chaque rendu ; ce test tenait donc sur un détail de ce voisin.
+    root.render(clonerEnProfondeur(dernierArbre!));
   });
+}
+
+/** Cloner un élément ET la chaîne de ses enfants, pour forcer un vrai rendu. */
+function clonerEnProfondeur(el: ReactElement): ReactElement {
+  const enfants = (el.props as { children?: ReactNode }).children;
+  if (isValidElement(enfants)) {
+    return cloneElement(el, undefined, clonerEnProfondeur(enfants));
+  }
+  return cloneElement(el);
 }
 
 /**

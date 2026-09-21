@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { ApprovalRow } from '@/lib/actions';
 import { listApprovalsAction } from '@/lib/actions';
 import { usePolling } from '@/lib/use-polling';
@@ -89,9 +89,12 @@ export function ApprovalsProvider({
     await fetchPending();
   }, [fetchPending]);
 
-  return (
-    <ApprovalsContext.Provider value={{ pending, refresh }}>{children}</ApprovalsContext.Provider>
-  );
+  // Un objet neuf à chaque rendu ferait re-rendre TOUS les consommateurs — la
+  // barre, la cloche, la surface de décision — à chaque rendu du parent, alors
+  // que rien n'a changé pour eux (Reviewer C, passe 4).
+  const valeur = useMemo(() => ({ pending, refresh }), [pending, refresh]);
+
+  return <ApprovalsContext.Provider value={valeur}>{children}</ApprovalsContext.Provider>;
 }
 
 const FALLBACK: ApprovalsContextValue = { pending: [], refresh: async () => {} };
