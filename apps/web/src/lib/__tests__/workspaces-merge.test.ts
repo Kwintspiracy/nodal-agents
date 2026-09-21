@@ -106,7 +106,7 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(view.counts).toMatchObject({ total: 1, registered: 0, detected: 1 });
   });
 
-  it('MASQUER retire un dossier détecté de la liste ; il reste retrouvable derrière « Show »', () => {
+  it('MASQUER retire un dossier détecté de la liste ; il reste retrouvable derrière « Hidden »', () => {
     const entree = {
       projects: [],
       sessions: [session({ projectPath: 'D:/APPS/scratch', projectName: 'scratch' })],
@@ -114,15 +114,15 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
 
     const visible = mergeWorkspaces({ ...entree, prefs: [] });
     expect(visible.rows.map((r) => r.name)).toEqual(['scratch']);
-    expect(visible.hiddenDetected).toHaveLength(0);
+    expect(visible.hiddenRows).toHaveLength(0);
 
     const masque = mergeWorkspaces({
       ...entree,
       prefs: [prefs({ projectPath: 'D:/APPS/scratch', hidden: true })],
     });
     expect(masque.rows).toHaveLength(0);
-    expect(masque.hiddenDetected.map((r) => r.name)).toEqual(['scratch']);
-    expect(masque.hiddenDetected[0]!.hidden).toBe(true);
+    expect(masque.hiddenRows.map((r) => r.name)).toEqual(['scratch']);
+    expect(masque.hiddenRows[0]!.hidden).toBe(true);
     expect(masque.counts.total).toBe(0);
   });
 
@@ -140,14 +140,34 @@ describe('mergeWorkspaces @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(view.rows.find((r) => r.id === 'p-2')!.proof).toBe('unverified');
   });
 
-  it('un projet du REGISTRE masqué reste listé, avec son drapeau', () => {
+  it('un projet du REGISTRE masqué SORT de la liste, et se retrouve derrière « Hidden »', () => {
+    // #364. Il y restait avec une étiquette, ce qui défaisait le geste de la
+    // barre latérale : « Remove from list » retirait le projet du menu, puis
+    // renvoyait sur cette page, qui le montrait toujours.
     const view = mergeWorkspaces({
-      projects: [projet({ id: 'p-1', name: 'Rangé', path: 'D:/Dev/range', hidden: true })],
+      projects: [
+        projet({ id: 'p-1', name: 'Rangé', path: 'D:/Dev/range', hidden: true }),
+        projet({ id: 'p-2', name: 'Gardé', path: 'D:/Dev/garde' }),
+      ],
       sessions: [],
       prefs: [],
     });
-    expect(view.rows).toHaveLength(1);
-    expect(view.rows[0]!.hidden).toBe(true);
+    expect(view.rows.map((r) => r.name)).toEqual(['Gardé']);
+    expect(view.hiddenRows.map((r) => r.name)).toEqual(['Rangé']);
+    expect(view.hiddenRows[0]!.hidden).toBe(true);
+    // Le sous-titre compte ce que la liste MONTRE, jamais ce que la base porte.
+    expect(view.counts).toMatchObject({ total: 1, registered: 1, detected: 0 });
+  });
+
+  it('les DEUX sortes de masqués sont dans la MÊME section, registre et détection', () => {
+    const view = mergeWorkspaces({
+      projects: [projet({ id: 'p-1', name: 'Rangé', path: 'D:/Dev/range', hidden: true })],
+      sessions: [session({ projectPath: 'D:/APPS/scratch', projectName: 'scratch' })],
+      prefs: [prefs({ projectPath: 'D:/APPS/scratch', hidden: true })],
+    });
+    expect(view.rows).toHaveLength(0);
+    expect(view.hiddenRows.map((r) => r.kind).sort()).toEqual(['detected', 'registered']);
+    expect(view.counts.total).toBe(0);
   });
 
   it('le nom choisi par le propriétaire l’emporte sur celui du dossier, même détecté', () => {

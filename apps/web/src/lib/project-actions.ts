@@ -25,6 +25,8 @@ import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 // L'aplatissement LEXICAL d'un chemin (`.` et `..`), par la plateforme.
 import { normalize as posixNormalize } from 'node:path/posix';
 import { initGitRepository } from './project-git.ts';
+// La règle du projet LISTÉ, partagée par la barre latérale et par la page.
+import { listedProjectsWhere, registeredProjectsWhere } from './project-listing.ts';
 import type { Dirent } from 'node:fs';
 import {
   eq,
@@ -227,9 +229,11 @@ function basenameOf(path: string): string {
  *
  * Les lignes de comptabilité sont exclues par `registered_at IS NOT NULL` : ce
  * sont des dossiers qu'un agent a touchés, pas des projets qu'on a déclarés.
- * Les MASQUÉS restent dans la liste, avec leur drapeau — masquer est un choix
- * d'affichage que l'écran applique, pas une désinscription que la requête
- * devrait deviner.
+ * Les MASQUÉS sont lus ICI AUSSI, avec leur drapeau : la page en fait sa
+ * section « Hidden », d'où on les remet dans la liste. Elle est la seule
+ * lecture à les rendre, et la règle du projet LISTÉ s'applique ensuite, à la
+ * fusion (`isListedProject`) — la MÊME que celle de la barre latérale
+ * (`listedProjectsWhere`), toutes deux dans `project-listing.ts`.
  */
 export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[]>> {
   try {
@@ -255,7 +259,7 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         registeredAt: codeProjects.registeredAt,
       })
       .from(codeProjects)
-      .where(and(eq(codeProjects.entityId, session.entityId), isNotNull(codeProjects.registeredAt)))
+      .where(registeredProjectsWhere(session.entityId))
       // Le plus récemment ajouté d'abord — la date que la ligne affiche, donc
       // un ordre que l'œil peut vérifier.
       .orderBy(desc(codeProjects.registeredAt));
@@ -1056,15 +1060,9 @@ export async function listSidebarProjectsAction(
         path: codeProjects.projectPath,
       })
       .from(codeProjects)
-      .where(
-        and(
-          eq(codeProjects.entityId, session.entityId),
-          // Un dossier qu'un agent a touché sans qu'on l'ait déclaré n'est pas
-          // un projet : la même règle que la page.
-          isNotNull(codeProjects.registeredAt),
-          eq(codeProjects.hidden, false),
-        ),
-      )
+      // LA MÊME RÈGLE QUE LA PAGE, écrite une seule fois (#364) : déclaré au
+      // registre, et pas retiré de la liste.
+      .where(listedProjectsWhere(session.entityId))
       .orderBy(desc(codeProjects.registeredAt), desc(codeProjects.id))
       .limit(parsed.data);
 
@@ -1107,7 +1105,7 @@ export async function listSidebarProjectsAction(
     );
   } catch (err) {
     console.error('[projects] SIDEBAR_PROJECTS_FAILED', err);
-    return fail('list_failed', 'Could not list the workspaces');
+    return fail('list_failed', 'Could not list projects');
   }
 }
 

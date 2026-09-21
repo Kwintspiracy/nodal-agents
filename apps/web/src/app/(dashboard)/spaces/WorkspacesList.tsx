@@ -24,7 +24,12 @@
 //   REGISTER — les inscrit au registre, avec l'agent qui a écrit comme
 //              responsable. Ils deviennent des projets ordinaires.
 //   HIDE     — les retire de la liste. Le dossier n'est JAMAIS touché, et le
-//              geste se défait depuis « N hidden folder · Show ».
+//              geste se défait depuis « Hidden (N) », en bas de page.
+//
+// « HIDDEN (N) », justement, est le SEUL endroit où l'on retrouve ce qu'on a
+// retiré — détecté ou déclaré (#364). Un projet du registre masqué restait
+// dans la liste avec une étiquette, ce qui défaisait le geste de la barre
+// latérale ; il est maintenant là, avec « Show in list ».
 //
 // RENOMMER reste sur un projet OUVERT : c'est un geste qu'on pose en regardant
 // le projet, pas en balayant une liste de cinquante.
@@ -54,10 +59,6 @@ import { conversationTimeLabel } from '@/app/(dashboard)/chat/conversation-rows.
 import { setCodeProjectHiddenAction } from '@/lib/actions.ts';
 import { registerDetectedProjectAction } from '@/lib/project-actions.ts';
 import type { WorkspaceProof, WorkspaceRow, WorkspacesView } from '@/lib/workspaces.ts';
-
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
 /** La pastille de preuve : quatre états, quatre mots. */
 const PROOF: Record<WorkspaceProof, { variant: 'done' | 'warn' | 'idle'; label: string }> = {
@@ -159,70 +160,112 @@ function DetectedActions({ row, onDone }: { row: WorkspaceRow; onDone: () => voi
 
   return (
     <span className="flex shrink-0 items-center gap-2 pr-4">
-      {row.hidden ? (
-        <RowActionButton
-          disabled={pending}
-          onClick={() =>
-            run(() => setCodeProjectHiddenAction({ projectPath: row.path, hidden: false }))
-          }
-          title="Show it again"
-        >
-          Show
-        </RowActionButton>
-      ) : (
-        <>
-          <RowActionButton
-            disabled={pending}
-            onClick={() =>
-              run(() => registerDetectedProjectAction({ projectPath: row.path, agentId: null }))
+      <RowActionButton
+        disabled={pending}
+        onClick={() =>
+          run(() => registerDetectedProjectAction({ projectPath: row.path, agentId: null }))
+        }
+        title="Keep this folder as a project, with the agent that wrote in it."
+      >
+        Register
+      </RowActionButton>
+      <RowActionButton
+        disabled={pending}
+        onClick={() =>
+          run(() => setCodeProjectHiddenAction({ projectPath: row.path, hidden: true }))
+        }
+        title="Hides it here and for your agents. The folder is untouched."
+      >
+        Hide
+      </RowActionButton>
+    </span>
+  );
+}
+
+/**
+ * LE GESTE QUI DÉFAIT (#364) : une ligne masquée revient dans la liste.
+ *
+ * Le MÊME bouton pour un projet du registre et pour un dossier détecté, parce
+ * que c'est le même geste et la même colonne en base (`code_projects.hidden`) :
+ * deux libellés pour un seul geste feraient croire à deux effets.
+ */
+function ShowInListButton({ row, onDone }: { row: WorkspaceRow; onDone: () => void }) {
+  const [pending, start] = useTransition();
+  const router = useRouter();
+
+  return (
+    <span className="flex shrink-0 items-center pr-4">
+      <RowActionButton
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            const result = await setCodeProjectHiddenAction({
+              projectPath: row.path,
+              hidden: false,
+            });
+            if (!result.ok) {
+              toast.error(result.message ?? 'The action failed');
+              return;
             }
-            title="Keep this folder as a project, with the agent that wrote in it."
-          >
-            Register
-          </RowActionButton>
-          <RowActionButton
-            disabled={pending}
-            onClick={() =>
-              run(() => setCodeProjectHiddenAction({ projectPath: row.path, hidden: true }))
-            }
-            title="Hides it here and for your agents. The folder is untouched."
-          >
-            Hide
-          </RowActionButton>
-        </>
-      )}
+            onDone();
+            router.refresh();
+          })
+        }
+        title="Put it back in the list and in the sidebar."
+      >
+        Show in list
+      </RowActionButton>
     </span>
   );
 }
 
 function Row({ row, onDone }: { row: WorkspaceRow; onDone: () => void }) {
+  // Les gestes de la ligne, et il y en a au plus une sorte : une ligne masquée
+  // ne propose QUE de revenir dans la liste ; un dossier détecté visible
+  // propose de s'inscrire ou de partir ; un projet du registre visible n'en
+  // propose aucun ici, ses gestes sont sur sa page et dans la barre latérale.
+  const gestes = row.hidden ? (
+    <ShowInListButton row={row} onDone={onDone} />
+  ) : row.kind === 'detected' ? (
+    <DetectedActions row={row} onDone={onDone} />
+  ) : null;
+
   // Un dossier détecté n'a PAS de page : il n'est pas au registre, donc il n'a
   // pas d'id. La ligne reste entière et ne feint pas un lien (invariant #4) ;
   // « Register » est justement le geste qui lui en donne un.
-  if (row.kind === 'detected') {
-    return (
-      <div className="flex items-center" data-testid={`workspace-row-${row.key}`}>
-        <div className={`${ROW} min-w-0 flex-1`}>
-          <RowBody row={row} />
-        </div>
-        <DetectedActions row={row} onDone={onDone} />
+  const corps =
+    row.kind === 'detected' ? (
+      <div className={`${ROW} min-w-0 flex-1`}>
+        <RowBody row={row} />
       </div>
+    ) : (
+      <Link href={`/spaces/${row.id}`} className={`${ROW} min-w-0 flex-1 hover:bg-hover`}>
+        <RowBody row={row} />
+      </Link>
+    );
+
+  if (gestes === null) {
+    return (
+      <Link
+        href={`/spaces/${row.id}`}
+        className={`${ROW} hover:bg-hover`}
+        data-testid={`workspace-row-${row.key}`}
+      >
+        <RowBody row={row} />
+      </Link>
     );
   }
   return (
-    <Link
-      href={`/spaces/${row.id}`}
-      className={`${ROW} hover:bg-hover`}
-      data-testid={`workspace-row-${row.key}`}
-    >
-      <RowBody row={row} />
-    </Link>
+    <div className="flex items-center" data-testid={`workspace-row-${row.key}`}>
+      {corps}
+      {gestes}
+    </div>
   );
 }
 
 export default function WorkspacesList({ view }: { view: WorkspacesView }) {
   const [showHidden, setShowHidden] = useState(false);
-  const hiddenCount = view.hiddenDetected.length;
+  const hiddenCount = view.hiddenRows.length;
   const hiddenListId = useId();
 
   return (
@@ -234,36 +277,44 @@ export default function WorkspacesList({ view }: { view: WorkspacesView }) {
         {view.rows.map((row) => (
           <Row key={row.key} row={row} onDone={() => setShowHidden(false)} />
         ))}
-        {showHidden && (
-          <div id={hiddenListId} className="divide-y divide-rule-2">
-            {view.hiddenDetected.map((row) => (
-              <Row key={row.key} row={row} onDone={() => setShowHidden(true)} />
-            ))}
-          </div>
-        )}
       </div>
 
       <p className="mt-3 text-body-12 text-ink-4">
         A row: the project, its folder, when it appeared, and its proof. Detected folders are
-        projects Nodal found by itself; Register keeps them, Hide removes them from the list
-        {hiddenCount > 0 ? (
-          <>
-            {' ('}
-            {plural(hiddenCount, 'hidden folder', 'hidden folders')}
-            {' · '}
-            <TextButton
-              className="underline underline-offset-2 hover:text-ink-2"
-              aria-expanded={showHidden}
-              aria-controls={hiddenListId}
-              onClick={() => setShowHidden((v) => !v)}
-            >
-              {showHidden ? 'Hide again' : 'Show'}
-            </TextButton>
-            {')'}
-          </>
-        ) : null}
-        .
+        projects Nodal found by itself; Register keeps them, Hide removes them from the list.
       </p>
+
+      {/* UN SEUL contrôle pour ce qu'on a retiré, en bas de page, et ABSENT
+          quand il n'y a rien à retrouver (#364) : « Hidden (0) » poserait une
+          question à laquelle la page a déjà répondu. Replié, aucune ligne
+          masquée n'est dans le DOM — un corps caché en CSS resterait
+          cherchable. */}
+      {hiddenCount > 0 && (
+        <div className="mt-6">
+          <TextButton
+            className="text-medium-14 text-ink-2 underline underline-offset-2 hover:text-ink"
+            aria-expanded={showHidden}
+            aria-controls={hiddenListId}
+            onClick={() => setShowHidden((v) => !v)}
+            data-testid="hidden-projects-toggle"
+          >
+            {`Hidden (${hiddenCount})`}
+          </TextButton>
+          {showHidden && (
+            <div id={hiddenListId}>
+              <p className="mb-2 mt-2 text-body-12 text-ink-4">
+                Removed from the list and from the sidebar. Nothing is deleted: the folders stay
+                where they are, and Show in list puts a project back.
+              </p>
+              <div className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2 bg-paper">
+                {view.hiddenRows.map((row) => (
+                  <Row key={row.key} row={row} onDone={() => setShowHidden(true)} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

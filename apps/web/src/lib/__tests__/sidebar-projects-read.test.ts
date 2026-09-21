@@ -259,3 +259,40 @@ describe('la lecture du dossier Workspaces @cap:travailler-sur-des-fichiers/mote
     expect(noms).toHaveLength(12);
   });
 });
+
+// ─── La MÊME règle des deux côtés (#364) ─────────────────────────────────────
+//
+// La barre et la page décidaient chacune de leur côté ce qu'est un projet
+// listé : la requête de la barre écartait les masqués, celle de la page les
+// rendait tous, et la page les dessinait. « Remove from list » retirait donc
+// le projet du menu, puis renvoyait sur une page qui le montrait toujours.
+//
+// Ce que ce cas tient : la page LIT le masqué (elle en fait sa section
+// « Hidden »), mais la fusion l'écarte de la liste, par le MÊME prédicat que
+// la requête de la barre (`isListedProject` / `listedProjectsWhere`).
+//
+// Mutation vérifiée : `eq(codeProjects.hidden, HIDDEN_LISTED)` retiré de
+// `listedProjectsWhere` → « la barre » rougit ; `isListedProject` rendu
+// toujours vrai → « la page » rougit.
+describe('la barre et la page lisent la même règle @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('la barre n’a pas le masqué ; la page le lit, et le range hors de la liste', async () => {
+    const { listSidebarProjectsAction, listProjectsAction } = await import('../project-actions.ts');
+    const { mergeWorkspaces } = await import('../workspaces.ts');
+
+    const barre = await listSidebarProjectsAction(50);
+    if (!barre.ok) throw new Error(barre.message);
+    expect(barre.data.map((p) => p.name)).not.toContain('Hidden project');
+
+    const page = await listProjectsAction();
+    if (!page.ok) throw new Error(page.message);
+    const masque = page.data.find((p) => p.name === 'Hidden project');
+    // La page le LIT — sans quoi sa section « Hidden » n'aurait rien à rendre.
+    expect(masque?.hidden).toBe(true);
+
+    const view = mergeWorkspaces({ projects: page.data, sessions: [], prefs: [] });
+    expect(view.rows.map((r) => r.name)).not.toContain('Hidden project');
+    expect(view.hiddenRows.map((r) => r.name)).toEqual(['Hidden project']);
+    // Et les deux listes s'accordent sur ce qui RESTE.
+    expect(view.rows.map((r) => r.name).sort()).toEqual(barre.data.map((p) => p.name).sort());
+  });
+});
