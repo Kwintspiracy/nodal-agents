@@ -27,6 +27,7 @@ import type {
   McpServerSwitchView,
   NetworkView,
   SecurityView,
+  ProofRepairView,
   VerificationSurfacesView,
   WorkspaceRow,
 } from '@/lib/actions.ts';
@@ -42,6 +43,7 @@ export type SettingId =
   | 'worker-secret'
   | 'auto-run-brake'
   | 'verification'
+  | 'repair-turns'
   | 'root-agent'
   | 'mcp-server'
   | 'timezone'
@@ -73,6 +75,7 @@ export type SettingsSource = {
   network: NetworkView | null;
   autoRunPause: AutoRunPauseView | null;
   verification: VerificationSurfacesView | null;
+  proofRepair: ProofRepairView | null;
   mcpServer: McpServerSwitchView | null;
   timezone: { timezone: string; isExplicit: boolean } | null;
   installNotes: string | null;
@@ -223,6 +226,25 @@ export function buildSettingRows(src: SettingsSource): SettingRow[] {
               label: `${on} OF ${total}`,
             };
           })(),
+  });
+
+  rows.push({
+    id: 'repair-turns',
+    group: 'safety',
+    name: 'Repair turns',
+    lede: 'How many times a run gets to fix itself when its proof fails, and what else bounds a run.',
+    value:
+      src.proofRepair === null
+        ? UNREAD
+        : src.proofRepair.repairAttempts === 0
+          ? 'None, a failed proof ends the run'
+          : src.proofRepair.repairAttempts === 1
+            ? 'One repair turn'
+            : `Up to ${src.proofRepair.repairAttempts} repair turns`,
+    tag:
+      src.proofRepair === null
+        ? { variant: 'warn', label: 'UNREAD' }
+        : { variant: 'ok', label: `${src.proofRepair.repairAttempts} MAX` },
   });
 
   rows.push({

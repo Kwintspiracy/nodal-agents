@@ -116,3 +116,40 @@ export function parseVerificationSurfaces(raw: unknown): VerificationSurfaces {
     shell: pick('shell'),
   };
 }
+
+// ─── Les tours de réparation après une preuve rouge (issue #377) ─────────────
+//
+// La borne que #375 écrivait en dur dans le runner est devenue un réglage de
+// l'espace (`entities.proof_repair_attempts`). Ses bornes vivent ICI parce que
+// TROIS endroits doivent s'accorder sur elles, et qu'un désaccord se paierait
+// en erreur de base plutôt qu'en message lisible : le CHECK de la colonne, le
+// formulaire des réglages, et la lecture du runner.
+
+/** Ce que fait un espace qui n'a jamais touché au réglage : un tour, la décision D2. */
+export const PROOF_REPAIR_ATTEMPTS_DEFAULT = 1;
+
+/**
+ * Le plafond. Au-delà, ce n'est plus une réparation, c'est un agent qui
+ * devine : chaque tour repaie un appel de modèle et une preuve entière, sur un
+ * diagnostic que les deux précédents n'ont pas su lire.
+ */
+export const PROOF_REPAIR_ATTEMPTS_MAX = 3;
+
+/** Les choix offerts, dans l'ordre : 0 (aucune réparation), 1, 2, 3. */
+export const PROOF_REPAIR_ATTEMPTS_CHOICES: readonly number[] = Object.freeze([0, 1, 2, 3]);
+
+/**
+ * La valeur lue sur une ligne, ramenée dans ses bornes.
+ *
+ * Elle NE DEVINE PAS un défaut sur une valeur hors bornes : le CHECK de la
+ * colonne interdit déjà d'en écrire une, et un repli silencieux ferait tourner
+ * le runner sur un nombre que personne n'a choisi (invariant #4). Une valeur
+ * impossible est donc RABATTUE sur la borne la plus proche, et une valeur
+ * absente — une ligne lue avant la migration — vaut le défaut.
+ */
+export function readProofRepairAttempts(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isInteger(raw)) return PROOF_REPAIR_ATTEMPTS_DEFAULT;
+  if (raw < 0) return 0;
+  if (raw > PROOF_REPAIR_ATTEMPTS_MAX) return PROOF_REPAIR_ATTEMPTS_MAX;
+  return raw;
+}

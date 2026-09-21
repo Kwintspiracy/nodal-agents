@@ -33,7 +33,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     key: 'safety',
     label: 'Safety',
     lede: 'What your agents may do on their own, and what stops them.',
-    ids: ['auto-run-brake', 'verification', 'root-agent', 'mcp-server'],
+    ids: ['auto-run-brake', 'verification', 'repair-turns', 'root-agent', 'mcp-server'],
   },
   {
     key: 'workspace',

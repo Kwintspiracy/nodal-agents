@@ -1,4 +1,4 @@
-// settings-rows.test.ts — les treize lignes de /settings et leur VALEUR
+// settings-rows.test.ts — les quatorze lignes de /settings et leur VALEUR
 // COURANTE (S3, #231).
 //
 // Ce qui se prouve ici : une ligne affiche ce qui est VRAIMENT en base. Les
@@ -94,20 +94,31 @@ async function rowsFromDb(overrides: Partial<Parameters<Rows['buildSettingRows']
   const a = await actions();
   const { buildSettingRows } = await rowsModule();
 
-  const [autoRunPause, verification, mcpServer, timezone, installNotes, workspaces, agents, root] =
-    await Promise.all([
-      a.getAutoRunPauseAction(),
-      a.getVerificationSurfacesAction(),
-      a.getMcpServerSwitchAction(),
-      a.getWorkspaceTimezoneAction(),
-      a.getInstallNotesAction(),
-      a.listWorkspacesAction(),
-      a.listAgentsAction(),
-      a.getRootConfigAction(),
-    ]);
+  const [
+    autoRunPause,
+    verification,
+    proofRepair,
+    mcpServer,
+    timezone,
+    installNotes,
+    workspaces,
+    agents,
+    root,
+  ] = await Promise.all([
+    a.getAutoRunPauseAction(),
+    a.getVerificationSurfacesAction(),
+    a.getProofRepairAction(),
+    a.getMcpServerSwitchAction(),
+    a.getWorkspaceTimezoneAction(),
+    a.getInstallNotesAction(),
+    a.listWorkspacesAction(),
+    a.listAgentsAction(),
+    a.getRootConfigAction(),
+  ]);
 
   expect(autoRunPause.ok, 'getAutoRunPauseAction').toBe(true);
   expect(verification.ok, 'getVerificationSurfacesAction').toBe(true);
+  expect(proofRepair.ok, 'getProofRepairAction').toBe(true);
   expect(mcpServer.ok, 'getMcpServerSwitchAction').toBe(true);
   expect(timezone.ok, 'getWorkspaceTimezoneAction').toBe(true);
   expect(installNotes.ok, 'getInstallNotesAction').toBe(true);
@@ -119,6 +130,7 @@ async function rowsFromDb(overrides: Partial<Parameters<Rows['buildSettingRows']
     ...OFF_DB,
     autoRunPause: autoRunPause.ok ? autoRunPause.data : null,
     verification: verification.ok ? verification.data : null,
+    proofRepair: proofRepair.ok ? proofRepair.data : null,
     mcpServer: mcpServer.ok ? mcpServer.data : null,
     timezone: timezone.ok ? timezone.data : null,
     installNotes: installNotes.ok ? installNotes.data : null,
@@ -225,6 +237,53 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     });
   });
 
+  it('Repair turns dit la borne ÉCRITE, y compris zéro', async () => {
+    const a = await actions();
+
+    // Le défaut de la colonne, sans rien écrire : la borne de #375.
+    let rows = await rowsFromDb();
+    expect(value(rows, 'repair-turns')).toBe('One repair turn');
+    expect(rows.find((r) => r.id === 'repair-turns')!.tag).toEqual({
+      variant: 'ok',
+      label: '1 MAX',
+    });
+
+    // Zéro : le comportement d'avant #375, et la ligne le DIT en toutes
+    // lettres plutôt que d'afficher un « 0 » que personne n'interprète.
+    expect((await a.setProofRepairAction({ repairAttempts: 0 })).ok).toBe(true);
+    rows = await rowsFromDb();
+    expect(value(rows, 'repair-turns')).toBe('None, a failed proof ends the run');
+    expect(rows.find((r) => r.id === 'repair-turns')!.tag!.label).toBe('0 MAX');
+
+    expect((await a.setProofRepairAction({ repairAttempts: 3 })).ok).toBe(true);
+    rows = await rowsFromDb();
+    expect(value(rows, 'repair-turns')).toBe('Up to 3 repair turns');
+
+    // Au-delà du plafond, l'action REFUSE — la base ne voit jamais la valeur.
+    const refus = await a.setProofRepairAction({ repairAttempts: 4 });
+    expect(refus.ok).toBe(false);
+    rows = await rowsFromDb();
+    expect(value(rows, 'repair-turns')).toBe('Up to 3 repair turns');
+
+    // Remis au défaut pour les cas suivants.
+    expect((await a.setProofRepairAction({ repairAttempts: 1 })).ok).toBe(true);
+  });
+
+  it('les budgets anti-boucle viennent du code qui les applique, jamais recopiés', async () => {
+    const a = await actions();
+    const { DEFAULT_LIMITS } = await import('@nodal-agents/orchestration');
+    const vue = await a.getProofRepairAction();
+    expect(vue.ok).toBe(true);
+    if (!vue.ok) return;
+    // Les MÊMES nombres que le runner oppose à un job : une recopie dans
+    // l'écran finirait par dire le contraire de la machine.
+    expect(vue.data.budgets).toEqual({
+      resumesPerRun: DEFAULT_LIMITS.maxChains,
+      toolCallsPerTurn: DEFAULT_LIMITS.maxToolCallsPerTurn,
+      delegationDepth: DEFAULT_LIMITS.maxDelegationDepth,
+    });
+  });
+
   it('Workspaces nomme l’espace actif lu en base', async () => {
     const a = await actions();
     const list = await a.listWorkspacesAction();
@@ -242,7 +301,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     }
   });
 
-  it('les treize lignes existent, groupées dans l’ordre Access, Safety, Workspace, Advanced', async () => {
+  it('les quatorze lignes existent, groupées dans l’ordre Access, Safety, Workspace, Advanced', async () => {
     const rows = await rowsFromDb({ authMode: 'local-auth' });
 
     expect(rows.map((r) => r.id)).toEqual([
@@ -252,6 +311,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'worker-secret',
       'auto-run-brake',
       'verification',
+      'repair-turns',
       'root-agent',
       'mcp-server',
       'timezone',
@@ -269,6 +329,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'safety',
       'safety',
       'safety',
+      'safety',
       'workspace',
       'workspace',
       'workspace',
@@ -281,7 +342,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     for (const mode of ['local-trust', 'bearer-token'] as const) {
       const rows = await rowsFromDb({ authMode: mode });
       expect(rows.map((r) => r.id)).not.toContain('password');
-      expect(rows).toHaveLength(12);
+      expect(rows).toHaveLength(13);
     }
   });
 });
@@ -294,6 +355,7 @@ describe('buildSettingRows — la config et l’environnement @cap:installer-et-
     network: null,
     autoRunPause: null,
     verification: null,
+    proofRepair: null,
     mcpServer: null,
     timezone: null,
     installNotes: null,
@@ -422,6 +484,7 @@ describe('filterSettingRows @cap:installer-et-demarrer/moteur', () => {
       network: null,
       autoRunPause: null,
       verification: null,
+      proofRepair: null,
       mcpServer: null,
       timezone: null,
       installNotes: null,

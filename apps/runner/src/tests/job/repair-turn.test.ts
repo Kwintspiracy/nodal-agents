@@ -24,6 +24,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   eq,
   agentJobs,
+  entities,
   codeProjects,
   jobDeliverableVerificationState,
   verificationRuns,
@@ -78,8 +79,18 @@ afterAll(async () => {
   }
 });
 
+/**
+ * Le réglage de l'espace (#377) : combien de tours de réparation au plus.
+ * Chaque test qui en dépend le pose lui-même — jamais un état hérité du test
+ * précédent.
+ */
+async function setMaxReparations(n: number): Promise<void> {
+  await db.update(entities).set({ proofRepairAttempts: n }).where(eq(entities.id, seed.entityId));
+}
+
 beforeEach(async () => {
   logs = [];
+  await setMaxReparations(1);
   await db.delete(verificationRuns);
   await db.delete(jobDeliverableVerificationState);
   await db.delete(codeProjects);
@@ -346,6 +357,84 @@ describe('une preuve rouge rouvre le run pour UN tour @cap:verifier-un-livrable/
     const state = await stateRow(stateId);
     expect(state.repairAttempts).toBe(0);
     expect(state.redStreak).toBe(1);
+  });
+});
+
+describe('la borne de réparation est un réglage de l’espace @cap:verifier-un-livrable/moteur', () => {
+  it('à zéro, aucune réparation : le run finit rouge tout de suite, comme avant #375', async () => {
+    await setMaxReparations(0);
+    const red = await script('zero.js', "process.stderr.write('boum'); process.exit(1)");
+    await setProject([{ command: red, timeoutSeconds: 20 }]);
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId);
+
+    const outcome = await finalize(jobId);
+
+    expect(outcome.kind).toBe('completed_unverified');
+    expect(outcome.repair).toBeUndefined();
+
+    const job = await jobRow(jobId);
+    expect(job.status).toBe('completed');
+    // Aucune reprise consommée : le run n'a pas rejoué de tour.
+    expect(job.chainCount).toBe(0);
+
+    const state = await stateRow(stateId);
+    expect(state.decisionStatus).toBe('red');
+    expect(state.repairAttempts).toBe(0);
+    // Le rouge est le dernier mot dès le premier coup.
+    expect(state.redStreak).toBe(1);
+  });
+
+  it('à deux, le run reçoit DEUX tours, puis le rouge est le dernier mot', async () => {
+    await setMaxReparations(2);
+    const red = await script('deux.js', "process.stderr.write('toujours rouge'); process.exit(1)");
+    await setProject([{ command: red, timeoutSeconds: 20 }]);
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId);
+
+    const premier = await finalize(jobId);
+    expect(premier.kind).toBe('repair_due');
+    expect((await stateRow(stateId)).repairAttempts).toBe(1);
+
+    const second = await finalize(jobId);
+    expect(second.kind).toBe('repair_due');
+    expect((await stateRow(stateId)).repairAttempts).toBe(2);
+    // Toujours pas de rouge définitif : il reste un tour à jouer.
+    expect((await stateRow(stateId)).redStreak).toBe(0);
+    expect((await jobRow(jobId)).status).toBe('processing');
+
+    const troisieme = await finalize(jobId);
+    expect(troisieme.kind).toBe('completed_unverified');
+    expect(troisieme.repair).toBeUndefined();
+
+    const job = await jobRow(jobId);
+    expect(job.status).toBe('completed');
+    // DEUX reprises, une par tour de réparation, et pas une de plus.
+    expect(job.chainCount).toBe(2);
+
+    const state = await stateRow(stateId);
+    expect(state.repairAttempts).toBe(2);
+    expect(state.redStreak).toBe(1);
+  });
+
+  it('à trois, un vert au deuxième tour arrête la boucle : on ne consomme pas la réserve', async () => {
+    await setMaxReparations(3);
+    const cmd = await script('trois.js', "process.stderr.write('boum'); process.exit(1)");
+    await setProject([{ command: cmd, timeoutSeconds: 20 }]);
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId);
+
+    expect((await finalize(jobId)).kind).toBe('repair_due');
+    await rewrite('trois.js', 'process.exit(0)');
+    const apres = await finalize(jobId);
+
+    expect(apres.kind).toBe('completed');
+    expect(apres.decisions[0]?.decisionStatus).toBe('green');
+
+    const state = await stateRow(stateId);
+    expect(state.repairAttempts).toBe(1);
+    expect(state.redStreak).toBe(0);
+    expect((await jobRow(jobId)).chainCount).toBe(1);
   });
 });
 

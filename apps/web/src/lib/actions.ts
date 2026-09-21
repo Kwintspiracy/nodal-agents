@@ -68,6 +68,8 @@ import {
   VerifyCommandsSchema,
   VerificationSurfacesSchema,
   parseVerificationSurfaces,
+  PROOF_REPAIR_ATTEMPTS_MAX,
+  readProofRepairAttempts,
   type DiscoveredCommand,
   type ProjectManifests,
   type VerifyCommand,
@@ -178,6 +180,7 @@ import {
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import {
   buildSystemPrompt,
+  DEFAULT_LIMITS,
   UNBLOCKABLE_TOOLS,
   INTERNAL_TOOL_DESCRIPTORS,
 } from '@nodal-agents/orchestration';
@@ -8001,6 +8004,105 @@ export async function setAutoRunPauseAction(raw: unknown): Promise<ActionResult<
   } catch (err) {
     console.error('[setAutoRunPauseAction]', err);
     return fail('db_error', 'Failed to save the auto-run pause setting');
+  }
+}
+
+// ─── Les tours de réparation, et les budgets d'un run (issue #377) ─────────
+//
+// Un réglage écrivable — combien de fois un run rejoue après une preuve rouge
+// — et trois faits en lecture seule : les budgets anti-boucle (invariant #8).
+//
+// LES BUDGETS SONT LUS DANS LE CODE QUI LES APPLIQUE, jamais recopiés : ils
+// viennent de `DEFAULT_LIMITS` (`@nodal-agents/orchestration`), la même
+// constante que le runner oppose à un job. Une valeur recopiée dans l'écran
+// dirait un jour le contraire de ce que la machine fait, et personne ne le
+// verrait.
+//
+// ET ILS PASSENT PAR L'ACTION, pas par un import du composant : la section est
+// `'use client'`, et importer `@nodal-agents/orchestration` côté client traîne
+// `@nodal-agents/db` et drizzle dans le bundle du navigateur — la page ne
+// compile alors plus du tout, sans erreur de type ni test rouge pour le dire
+// (le piège du 20/08, déjà noté plus haut pour `listInternalToolsAction`).
+
+export type RunBudgetsView = {
+  /** `chain_count` : reprises d'un run (délégation reprise, tour de réparation). */
+  resumesPerRun: number;
+  /** Appels d'outils dans un seul tour. */
+  toolCallsPerTurn: number;
+  /** Profondeur de délégation : un agent qui en mandate un qui en mandate un. */
+  delegationDepth: number;
+};
+
+export type ProofRepairView = {
+  /** 0 à 3. Le défaut de la colonne est 1, la borne de #375. */
+  repairAttempts: number;
+  isOwner: boolean;
+  budgets: RunBudgetsView;
+};
+
+const RUN_BUDGETS: RunBudgetsView = {
+  resumesPerRun: DEFAULT_LIMITS.maxChains,
+  toolCallsPerTurn: DEFAULT_LIMITS.maxToolCallsPerTurn,
+  delegationDepth: DEFAULT_LIMITS.maxDelegationDepth,
+};
+
+export async function getProofRepairAction(): Promise<ActionResult<ProofRepairView>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId, proofRepairAttempts: entities.proofRepairAttempts })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    return ok({
+      repairAttempts: readProofRepairAttempts(entityRow.proofRepairAttempts),
+      isOwner: entityRow.userId === session.userId,
+      budgets: RUN_BUDGETS,
+    });
+  } catch (err) {
+    console.error('[getProofRepairAction]', err);
+    return fail('db_error', 'Failed to load the repair setting');
+  }
+}
+
+const SetProofRepairSchema = z.object({
+  // Les MÊMES bornes que le CHECK de la colonne, lues dans `@nodal-agents/shared`
+  // : un formulaire qui accepterait 4 se ferait refuser par la base avec un
+  // message que personne ne comprend.
+  repairAttempts: z.number().int().min(0).max(PROOF_REPAIR_ATTEMPTS_MAX),
+});
+
+export async function setProofRepairAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetProofRepairSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+
+    const db = getDb();
+    // Même garde owner que le frein d'urgence : `entities.userId`, jamais
+    // `entityMembers.role`, qui vaut 'owner' pour tout invité.
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can change this setting.');
+    }
+
+    await db
+      .update(entities)
+      .set({ proofRepairAttempts: parsed.data.repairAttempts })
+      .where(eq(entities.id, session.entityId));
+
+    revalidatePath('/settings');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setProofRepairAction]', err);
+    return fail('db_error', 'Failed to save the repair setting');
   }
 }
 

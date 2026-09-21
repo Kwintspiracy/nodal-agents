@@ -6,6 +6,7 @@ import {
   uuid,
   jsonb,
   boolean,
+  integer,
   timestamp,
   uniqueIndex,
   index,
@@ -95,8 +96,26 @@ export const entities = pgTable(
     verificationSurfaces: jsonb('verification_surfaces')
       .notNull()
       .default(sql`'{}'::jsonb`),
+    /**
+     * Combien de tours de réparation un run reçoit au plus après une preuve
+     * rouge (issue #377, migration 0121). La borne de #375 était écrite en
+     * dur dans `finalize.ts` ; elle se règle désormais par espace.
+     *
+     * `0` — le run finit avec le verdict rouge immédiatement, comme avant
+     * #375. `1` (défaut) — un tour, la décision D2 du plan. Jusqu'à `3`.
+     *
+     * LE CHECK EST EN BASE, pas seulement dans le formulaire : cette colonne
+     * borne une boucle du runner (invariant #8), et une valeur de 9 999 écrite
+     * par un script ferait tourner un agent toute la nuit sur une preuve qui
+     * ne passera jamais.
+     */
+    proofRepairAttempts: integer('proof_repair_attempts').notNull().default(1),
   },
   (table) => [
+    check(
+      'entities_proof_repair_attempts_check',
+      sql`${table.proofRepairAttempts} >= 0 AND ${table.proofRepairAttempts} <= 3`,
+    ),
     uniqueIndex('entities_mcp_token_idx').on(table.mcpToken),
     index('idx_entities_user_id').on(table.userId),
     index('idx_entities_root_agent_id').on(table.rootAgentId),
