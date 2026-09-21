@@ -84,7 +84,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
     deliverablesToCheck: [],
     deliverableCheckJobIds: [],
     deliverableCheckConversationIds: [],
-    runsInProgress: 0,
     workConversationsInProgress: 0,
   };
   const foldersResult = await getChatFoldersAction();

@@ -95,17 +95,24 @@ type Props = {
    * `count` à zéro ne dessine RIEN, comme la pastille : un point éteint se
    * lirait comme un point, et il faudrait s'approcher pour apprendre qu'il n'y
    * a rien. `noun` est ce que le compte compte, et il part dans le nom
-   * accessible : la case Logs compte des runs, la case Work des conversations,
-   * et les deux ne veulent pas dire la même chose.
+   * accessible : « 2 in progress » ne dirait pas de quoi il s'agit. La case
+   * Work compte des conversations, et c'est la seule case qui en porte un
+   * depuis que Logs a perdu le sien (22/09/2026).
    */
   running?: RailCellRunning;
   testId: string;
 };
 
-/** Ce qui tourne derrière une case : combien, et de quoi il s'agit. */
+/**
+ * Ce qui tourne derrière une case : combien, et de quoi il s'agit.
+ *
+ * `conversation` est le seul mot aujourd'hui : la case Logs a perdu son point
+ * le 22/09/2026, et c'était la seule qui comptait des runs. Le champ reste —
+ * il part dans le nom accessible, et « 2 in progress » ne dirait pas de quoi.
+ */
 export type RailCellRunning = {
   count: number;
-  noun: 'run' | 'conversation';
+  noun: 'conversation';
 };
 
 /**

@@ -148,7 +148,6 @@ async function renderGroup(opts: {
       deliverablesToCheck: opts.deliverables ?? [],
       deliverableCheckJobIds: [],
       deliverableCheckConversationIds: [],
-      runsInProgress: 0,
       workConversationsInProgress: 0,
     },
   });
@@ -165,7 +164,6 @@ async function renderGroup(opts: {
           deliverablesToCheck: opts.deliverables ?? [],
           deliverableCheckJobIds: [],
           deliverableCheckConversationIds: [],
-          runsInProgress: 0,
           workConversationsInProgress: 0,
         }}
       >
@@ -221,7 +219,6 @@ beforeEach(() => {
       deliverablesToCheck: [],
       deliverableCheckJobIds: [],
       deliverableCheckConversationIds: [],
-      runsInProgress: 0,
       workConversationsInProgress: 0,
     },
   });

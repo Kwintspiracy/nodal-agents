@@ -867,35 +867,18 @@ export type ChatFoldersSnapshot = {
    */
   deliverableCheckConversationIds: string[];
   /**
-   * COMBIEN DE RUNS TOURNENT, tous canaux confondus (#300).
-   *
-   * Ce que `running` ne peut pas dire : il range par dossier de chat, et le
-   * travail d'une automatisation, d'un webhook ou d'un agent qui en appelle un
-   * autre n'en a aucun (`folderOfWork` rend `null`). La case Logs du rail
-   * promet « quelque chose tourne » à l'échelle du produit, et pas « dans un
-   * dossier de chat » : il lui faut ce total-là.
-   *
-   * ⚠️ `externalRuns` NE DIT PAS ÇA et ne pouvait pas servir : il compte les
-   * runs de tête venus de dehors QUEL QUE SOIT leur statut (`runsFromOutside`
-   * ne regarde pas `status`). Il fait exister le dossier MCP ; il ne dit rien
-   * de ce qui avance.
-   *
-   * Le total compte les JOBS, délégations comprises : la page Logs rend une
-   * ligne par job (`listActivityRunsAction`), et un chiffre qui ne compterait
-   * que les têtes ne correspondrait plus à ce qu'on trouve en cliquant.
-   *
-   * ⚠️ CE QUI AVANCE, et non « tout ce que Logs affiche » (Reviewer C, passe 1
-   * de la PR #314). `RUNNING_JOB_STATUSES` retire `awaiting_approval` des
-   * statuts vivants ; la page, elle, liste aussi ces lignes-là. Un job arrêté
-   * sur une approbation n'avance pas, il attend la personne, et c'est la
-   * pastille d'Approvals qui le dit — le point le compterait une seconde fois.
-   *
-   * Tiré de la MÊME requête que `running`, avant le rangement par dossier :
-   * pas une lecture de plus.
-   */
-  runsInProgress: number;
-  /**
    * COMBIEN DE CONVERSATIONS DE LA SECTION WORK portent un run en cours (#303).
+   *
+   * ⚠️ IL N'Y A PLUS DE TOTAL DES RUNS ICI. L'instantané en portait un,
+   * `runsInProgress`, tous canaux confondus, et il n'existait que pour le point
+   * de la case Logs (#300) — retiré le 22/09/2026 sur décision du
+   * propriétaire. Le recalculer à chaque tour de cadence pour personne serait
+   * une lecture, pas une donnée. Ce qui tourne HORS d'une conversation de Work
+   * — une automatisation, un webhook, une délégation — n'est donc porté par
+   * AUCUN COMPTE CHIFFRÉ de cet instantané, et c'est voulu : la page Logs le
+   * montre. (`runningConversationIds`, lui, nomme bien tous les fils qui
+   * tournent, l'entretien d'accueil compris : c'est une liste d'identifiants,
+   * lue ligne par ligne, pas un total qu'une case afficherait.)
    *
    * Des conversations, et non des runs : la section Work liste les endroits où
    * l'on parle — les projets et les canaux — et trois runs d'un même fil n'y
@@ -1103,11 +1086,6 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
         .limit(DELIVERABLE_CHECK_MAX),
     ]);
 
-    // Le total AVANT le rangement par dossier : `running` perd en route tout
-    // ce que `folderOfWork` ne sait pas ranger, et c'est justement ce que la
-    // case Logs doit compter (#300).
-    const runsInProgress = runningRows.reduce((total, r) => total + r.n, 0);
-
     const running: Record<string, number> = {};
     for (const r of runningRows) {
       // Un run devient un DOSSIER par la même règle que partout ailleurs : le
@@ -1146,7 +1124,6 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
       deliverableCheckConversationIds: dueRows
         .map((r) => r.conversationId)
         .filter((id): id is string => id !== null),
-      runsInProgress,
       // Une conversation que la section Work ne liste pas n'allume pas sa
       // case. `origin` est `null` quand la jointure n'a rien trouvé — un job
       // qui désigne une conversation d'une autre entité ou déjà supprimée — et

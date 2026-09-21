@@ -172,9 +172,10 @@ beforeAll(async () => {
       status: 'completed',
       conversationId: filTelegram,
     },
-    // UN RUN QU'AUCUN DOSSIER NE RANGE (#300) : une automatisation tourne, son
-    // canal `cron` ne designe aucun dossier de chat, et `running` l'oublie
-    // donc en route. C'est precisement ce que la case Logs doit montrer.
+    // UN RUN QU'AUCUN DOSSIER NE RANGE : une automatisation tourne, son canal
+    // `cron` ne designe aucun dossier de chat, et `running` l'oublie donc en
+    // route. La case Logs le montrait (#300) ; elle a perdu sa puce le
+    // 22/09/2026, et plus aucun compte chiffre de l'instantane ne le porte.
     {
       entityId: seed.entityId,
       agentId: seed.agentId,
@@ -251,18 +252,48 @@ describe('les dossiers lus en base @cap:reprendre-conversation/moteur', () => {
     expect(result.data.runningConversationIds).not.toContain(null);
   });
 
-  it('compte TOUS les runs vivants, y compris ceux qu’aucun dossier ne range', async () => {
+  it('ne compte plus les runs vivants : la case Logs n’a plus de point', async () => {
+    // L'instantané portait `runsInProgress`, le total des runs vivants, et il
+    // n'existait QUE pour le point de la case Logs (#300). Ce point est retiré
+    // le 22/09/2026 sur décision du propriétaire, et le total avec lui : un
+    // champ calculé à chaque tour de cadence pour personne est une lecture de
+    // plus, pas une donnée.
+    //
+    // Mutation vérifiée : `runsInProgress` réinséré dans le littéral rendu par
+    // `getChatFoldersAction` → ce cas rougit.
     const { getChatFoldersAction } = await import('../conversation-actions.ts');
     const result = await getChatFoldersAction();
     if (!result.ok) throw new Error(result.message);
-    // Cinq jobs vivants : deux `processing` sur Telegram, le job `api` de la
-    // fixture, l'automatisation `cron` et le run de l'accueil. Les quatre
-    // `awaiting_approval` n'en sont pas : ils attendent la personne.
-    expect(result.data.runsInProgress).toBe(5);
-    // Et c'est bien PLUS que ce que les dossiers savent ranger : `running`
-    // perd le `cron` et l'`internal`, qui ne designent aucun dossier de chat.
+    expect('runsInProgress' in result.data).toBe(false);
+    // Le rangement par dossier, lui, reste : il fait le point vert d'un dossier
+    // du menu, et il ne compte que ce que `folderOfWork` sait ranger.
     const parDossier = Object.values(result.data.running).reduce((t, n) => t + n, 0);
     expect(parDossier).toBe(3);
+  });
+
+  it('ne met dans AUCUN COMPTE ce qui tourne hors d’une conversation de Work', async () => {
+    // La fixture porte cinq jobs vivants, dont DEUX qu'aucun écran de la barre
+    // ne peut montrer : l'automatisation `cron`, qu'aucun dossier ne range, et
+    // le run `internal` sur l'entretien d'accueil, qu'aucune ligne de Work ne
+    // liste. La case Logs les comptait ; elle n'existe plus pour ça.
+    //
+    // Ce cas reprend ce que l'ancien cas de la case Logs prouvait, à l'envers :
+    // aucun COMPTE CHIFFRÉ de l'instantané ne les porte. `runningConversationIds`,
+    // lui, nomme bien le fil de l'accueil — c'est une liste lue ligne par ligne,
+    // et le cas voisin l'exige (Reviewer C, passe 2).
+    const { getChatFoldersAction } = await import('../conversation-actions.ts');
+    const result = await getChatFoldersAction();
+    if (!result.ok) throw new Error(result.message);
+    // Le rangement par dossier oublie le `cron` et l'`internal`.
+    expect(Object.values(result.data.running).reduce((t, n) => t + n, 0)).toBe(3);
+    // Work ne compte que le fil Telegram : pas l'accueil, pas l'automatisation.
+    expect(result.data.workConversationsInProgress).toBe(1);
+    // Et aucun champ chiffré de l'instantané ne porte un total plus grand que
+    // ceux-là : un cinquième compte réapparaîtrait ici, quel que soit son nom.
+    const chiffres = Object.entries(result.data).filter(
+      (paire): paire is [string, number] => typeof paire[1] === 'number',
+    );
+    expect(chiffres.filter(([, n]) => n > 3)).toEqual([]);
   });
 
   it('ne compte pour Work que les conversations que la section peut lister', async () => {

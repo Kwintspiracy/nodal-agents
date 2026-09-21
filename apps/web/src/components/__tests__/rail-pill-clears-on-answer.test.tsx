@@ -138,7 +138,6 @@ async function monter(surface: ReactElement, attentes: PendingApproval[] = [ATTE
             deliverablesToCheck: [],
             deliverableCheckJobIds: [],
             deliverableCheckConversationIds: [],
-            runsInProgress: 0,
             workConversationsInProgress: 0,
           }}
         >
@@ -271,7 +270,6 @@ beforeEach(() => {
       deliverablesToCheck: [],
       deliverableCheckJobIds: [],
       deliverableCheckConversationIds: [],
-      runsInProgress: 0,
       workConversationsInProgress: 0,
     },
   });

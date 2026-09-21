@@ -113,10 +113,10 @@ async function renderSidebar(
   channels: string[] = [],
   attentes: PendingApproval[] = [],
   /**
-   * CE QUI TOURNE, tel que le provider le porte (#300, #303). Ce que le test
-   * ne dit pas vaut zero : une barre ou rien ne tourne est l'etat courant.
+   * CE QUI TOURNE, tel que le provider le porte (#303). Ce que le test ne dit
+   * pas vaut zero : une barre ou rien ne tourne est l'etat courant.
    */
-  tourne: { runsInProgress?: number; workConversationsInProgress?: number } = {},
+  tourne: { workConversationsInProgress?: number } = {},
 ): Promise<void> {
   await render(
     <ApprovalsProvider initial={attentes}>
@@ -129,7 +129,6 @@ async function renderSidebar(
           deliverablesToCheck: [],
           deliverableCheckJobIds: [],
           deliverableCheckConversationIds: [],
-          runsInProgress: tourne.runsInProgress ?? 0,
           workConversationsInProgress: tourne.workConversationsInProgress ?? 0,
         }}
       >
@@ -233,7 +232,6 @@ beforeEach(() => {
       deliverablesToCheck: [],
       deliverableCheckJobIds: [],
       deliverableCheckConversationIds: [],
-      runsInProgress: 0,
       workConversationsInProgress: 0,
     },
   });
@@ -810,7 +808,6 @@ describe('les listes du panneau se lisent en base @cap:installer-et-demarrer/ecr
               deliverablesToCheck: [],
               deliverableCheckJobIds: [],
               deliverableCheckConversationIds: [],
-              runsInProgress: 0,
               workConversationsInProgress: 0,
             }}
           >
@@ -1218,7 +1215,6 @@ describe('la carte « Help » du rail @cap:consulter-l-aide/ecran', () => {
             deliverablesToCheck: [],
             deliverableCheckJobIds: [],
             deliverableCheckConversationIds: [],
-            runsInProgress: 0,
             workConversationsInProgress: 0,
           }}
         >
@@ -1271,7 +1267,6 @@ describe('le compte au bas du rail @cap:se-connecter/ecran', () => {
             deliverablesToCheck: [],
             deliverableCheckJobIds: [],
             deliverableCheckConversationIds: [],
-            runsInProgress: 0,
             workConversationsInProgress: 0,
           }}
         >
@@ -1394,10 +1389,10 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
     document.body.innerHTML = '';
   });
 
-  it('allume la case Logs quand un run tourne, et le NOMBRE se dit', async () => {
+  it('allume la case Work quand UNE conversation de sa section tourne', async () => {
     pathname = '/agents';
-    await renderSidebar([], [], { runsInProgress: 2 });
-    const point = pointQuiTourne('logs');
+    await renderSidebar([], [], { workConversationsInProgress: 1 });
+    const point = pointQuiTourne('work');
     expect(point).not.toBeNull();
     // Le MEME point que partout ailleurs dans le produit : lime, avec son halo
     // qui bat. Un point vert immobile dirait « fini », pas « en cours ».
@@ -1409,37 +1404,34 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
     expect(rond?.className).toContain('h-[7px]');
     // Le point ne s'annonce pas deux fois : la case le dit en toutes lettres.
     expect(point!.getAttribute('aria-hidden')).toBe('true');
-    expect(railCell('logs').getAttribute('aria-label')).toBe('Logs, 2 runs in progress');
-  });
-
-  it('n’allume rien sur Logs quand aucun run ne tourne', async () => {
-    pathname = '/agents';
-    await renderSidebar([], [], { runsInProgress: 0 });
-    expect(pointQuiTourne('logs')).toBeNull();
-    // Et la case ne se renomme pas pour dire qu'il ne se passe rien : son
-    // libelle suffit.
-    expect(railCell('logs').getAttribute('aria-label')).toBeNull();
-  });
-
-  it('allume la case Work quand UNE conversation de sa section tourne', async () => {
-    pathname = '/agents';
-    await renderSidebar([], [], { workConversationsInProgress: 1 });
-    expect(pointQuiTourne('work')).not.toBeNull();
     // Au SINGULIER : une conversation, pas « 1 conversations ».
     expect(railCell('work').getAttribute('aria-label')).toBe('Work, 1 conversation in progress');
-    // Et Logs reste eteint : les deux cases comptent deux choses differentes,
-    // et rien ne les fait s'allumer ensemble.
-    expect(pointQuiTourne('logs')).toBeNull();
   });
 
   it('n’allume rien sur Work quand aucune conversation ne tourne', async () => {
     pathname = '/agents';
-    await renderSidebar([], [], { workConversationsInProgress: 0, runsInProgress: 3 });
+    await renderSidebar([], [], { workConversationsInProgress: 0 });
     expect(pointQuiTourne('work')).toBeNull();
+    // Et la case ne se renomme pas pour dire qu'il ne se passe rien : son
+    // libelle suffit.
     expect(railCell('work').getAttribute('aria-label')).toBeNull();
-    // Un run tourne pourtant : il n'est simplement dans aucune conversation de
-    // Work - une automatisation, un webhook. Logs le montre, Work non.
-    expect(pointQuiTourne('logs')).not.toBeNull();
+  });
+
+  it('NE POSE RIEN sur Logs, quoi qu’il tourne', async () => {
+    // Decision du proprietaire, 22/09/2026 : « Enleve le pulsing dot sur
+    // l'onglet Logs ». #300 y avait pose un point qui comptait tous les runs
+    // vivants ; la case redevient ce qu'elle etait avant.
+    //
+    // Mutation verifiee : le `running` remis sur la case Logs de `SidebarRail`
+    // -> ce cas rougit.
+    pathname = '/agents';
+    await renderSidebar([], [], { workConversationsInProgress: 4 });
+    expect(pointQuiTourne('logs')).toBeNull();
+    // Ni point, ni nom qui parlerait de runs : la case ne porte que son libelle.
+    expect(railCell('logs').getAttribute('aria-label')).toBeNull();
+    expect(railCell('logs').textContent?.trim()).toBe('Logs');
+    // Et Work, elle, est bien allumee : c'est la seule qui compte desormais.
+    expect(pointQuiTourne('work')).not.toBeNull();
   });
 
   it('pose la puce A DROITE, du meme bord que la pastille', async () => {
@@ -1456,21 +1448,19 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
         conversationChannel: 'dashboard',
       },
     ];
-    await renderSidebar([], uneAttente, { runsInProgress: 4, workConversationsInProgress: 1 });
+    await renderSidebar([], uneAttente, { workConversationsInProgress: 1 });
     // LE MEME BORD pour les deux marques (decision du proprietaire, 22/09/2026).
     // La puce etait au coin GAUCHE, seule de ce cote dans une colonne dont tout
     // le reste est centre.
     //
-    // Mutation verifiee : `right-1` remis a `left-1` sur la rangee de
-    // `RailCell` -> ces trois cas rougissent.
+    // Mutation verifiee : `right-1` remis a `left-1` sur la colonne de
+    // `RailCell` -> ces deux cas rougissent.
     const pastille = railCell('approvals').querySelector('span[class*="bg-err"]');
     expect(pastille).not.toBeNull();
     expect(rangee(pastille!).className).toContain('right-1');
-    for (const key of ['logs', 'work']) {
-      const rang = rangee(pointQuiTourne(key)!);
-      expect(rang.className, key).toContain('right-1');
-      expect(rang.className, key).not.toContain('left-1');
-    }
+    const rang = rangee(pointQuiTourne('work')!);
+    expect(rang.className).toContain('right-1');
+    expect(rang.className).not.toContain('left-1');
     expect(pointQuiTourne('approvals')).toBeNull();
     expect(railCell('approvals').getAttribute('aria-label')).toBe('Approvals, 1 pending');
   });
@@ -1487,11 +1477,11 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
     // le milieu de la case (Reviewer C).
     await render(
       <RailCell
-        href="/logs"
-        label="Logs"
+        href="/work"
+        label="Work"
         icon={ListMagnifyingGlass}
         pill={3}
-        running={{ count: 2, noun: 'run' }}
+        running={{ count: 2, noun: 'conversation' }}
         testId="rail-deux"
       />,
     );
@@ -1520,7 +1510,7 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
     expect(pastille.className).not.toContain('absolute');
     // Et le nom dit les DEUX, dans cet ordre : ce qui attend, puis ce qui
     // avance.
-    expect(cellule.getAttribute('aria-label')).toBe('Logs, 3 pending, 2 runs in progress');
+    expect(cellule.getAttribute('aria-label')).toBe('Work, 3 pending, 2 conversations in progress');
   });
 });
 
