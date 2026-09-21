@@ -397,9 +397,9 @@ export type DeliveryCheck = { command: string; ok: boolean };
 
 /**
  * UN FICHIER CRÉÉ OU MODIFIÉ, tel que l'encart le montre REPLIÉ (#369) : son
- * chemin, et ce qu'il a pris de lignes. Du churn, la même lecture que la page
- * Code — « +27 −2 » veut dire vingt-sept lignes écrites et deux remplacées, pas
- * le résultat d'une comparaison.
+ * chemin, et ce qu'il a pris de lignes. Les lignes sont celles que le DIFF
+ * signe, la même lecture que la page Code (#394) : « +27 −2 » veut dire que la
+ * plaque, dépliée, colorie vingt-sept rangées en vert et deux en rouge.
  */
 export type DeliveryFileChange = {
   path: string;
@@ -438,8 +438,8 @@ export type DeliverySummary = {
    */
   fileChanges: DeliveryFileChange[];
   /**
-   * Les lignes écrites et remplacées, sommées sur le job et ses délégués — le
-   * même churn que la page Code. null quand AUCUN appel n'a écrit de texte
+   * Les lignes ajoutées et retirées, sommées sur le job et ses délégués — le
+   * même diff que la page Code (#394). null quand AUCUN appel n'a écrit de texte
    * (un travail qui n'a produit qu'un classeur n'a pas de lignes).
    */
   lines: LineCounts | null;

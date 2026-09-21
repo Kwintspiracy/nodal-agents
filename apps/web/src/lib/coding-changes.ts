@@ -13,13 +13,17 @@
 // est PUR (aucune requête, aucun texte d'interface), donc testable seul — ce
 // que la version enfouie dans `actions.ts` ne pouvait pas être.
 //
-// LE COMPTE EST DU CHURN, PAS UN DIFF. « +17 −2 » veut dire « dix-sept lignes
-// écrites, deux lignes remplacées », pas le résultat d'une comparaison ligne à
-// ligne : au moment où l'appel est enregistré, personne n'a comparé quoi que
-// ce soit. C'est ce que la page Code affiche depuis toujours, et le fil dit la
-// même chose avec les mêmes nombres.
+// LE COMPTE EST CELUI DU DIFF, LE MÊME QUE LA PLAQUE (issue #394). Il a dit le
+// CHURN jusqu'au 21/09/2026 — « dix-sept lignes écrites, deux remplacées »,
+// sans rien comparer — pendant que la plaque dépliée dessinait un `fragmentDiff`
+// des deux mêmes fragments. Une édition qui remplaçait 59 lignes par 261 dont
+// 250 identiques annonçait donc « +261 −59 » au-dessus d'une dizaine de rangées
+// coloriées : deux règles pour un seul libellé, et un lecteur qui ne retrouvait
+// ni l'un ni l'autre à l'écran. Un seul moteur depuis — `fragmentDiffCounts`
+// (`@nodal-agents/shared`) rend exactement ce que `fragmentDiff` colorie — si
+// bien que la ligne et sa plaque s'accordent par construction.
 
-import { isWindowsPath, normalizePath } from '@nodal-agents/shared';
+import { fragmentDiffCounts, isWindowsPath, normalizePath } from '@nodal-agents/shared';
 
 /**
  * Une écriture lue dans UN appel d'outil, pour le panneau Changes du détail
@@ -36,7 +40,7 @@ export type CodingChangeView = {
   newText: string | null;
 };
 
-/** Les lignes écrites et remplacées par une écriture. */
+/** Les lignes qu'une écriture ajoute et retire, telles que son diff les signe. */
 export type LineCounts = { added: number; removed: number };
 
 /** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
@@ -138,12 +142,16 @@ export function extractChange(toolName: string, rawInput: unknown): CodingChange
   return null;
 }
 
-/** Le churn d'une écriture : lignes du nouveau texte, lignes de l'ancien. */
+/**
+ * Ce qu'une écriture ajoute et retire, tel que la plaque le dessinera.
+ *
+ * Les lignes sont celles que `fragmentDiff` SIGNE entre l'avant et l'après du
+ * fragment, pas le nombre de lignes de chaque version (#394). Une écriture sans
+ * texte précédent (`file_write`, une création) n'a rien à comparer : tout son
+ * contenu est ajouté, ce que le diff rend déjà en comparant à un texte vide.
+ */
 export function changeLineCounts(change: CodingChangeView): LineCounts {
-  return {
-    added: change.newText ? change.newText.split('\n').length : 0,
-    removed: change.oldText ? change.oldText.split('\n').length : 0,
-  };
+  return fragmentDiffCounts(change.oldText ?? '', change.newText ?? '');
 }
 
 /**

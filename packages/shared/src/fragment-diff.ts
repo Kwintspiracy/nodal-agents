@@ -94,3 +94,63 @@ export function fragmentDiff(
 
   return { lines, truncated: false };
 }
+
+/**
+ * Combien de lignes ce diff AJOUTE et RETIRE — le même verdict que
+ * `fragmentDiff`, sans construire son script.
+ *
+ * POURQUOI ELLE EXISTE (issue #394). Les compteurs « +N −M » d'un fichier
+ * comptaient le CHURN : les lignes du nouveau texte contre celles de l'ancien.
+ * Une édition qui remplaçait un fragment de 59 lignes par 261 dont 250
+ * identiques annonçait « +261 −59 » au-dessus d'une plaque qui coloriait onze
+ * rangées. Deux règles pour un seul libellé : le nombre et le dessin ne
+ * pouvaient pas s'accorder. Ils sortent maintenant du même moteur.
+ *
+ * ÉGALITÉ GARANTIE avec `fragmentDiff` : même borne, appliquée aux mêmes
+ * longueurs, puis le même LCS. Les lignes communes en tête et en queue sont
+ * retirées avant le calcul — un préfixe commun appartient toujours à une plus
+ * longue sous-suite commune, donc `added` et `removed` ne bougent pas — et ce
+ * seul raccourci fait tomber le cas de l'issue de 26 ms pour cent éditions à
+ * une fraction de milliseconde. Seule la LONGUEUR du LCS est calculée, sur
+ * deux lignes de tableau au lieu de la matrice entière.
+ */
+export function fragmentDiffCounts(
+  oldText: string,
+  newText: string,
+): { added: number; removed: number } {
+  const a = oldText === '' ? [] : oldText.split('\n');
+  const b = newText === '' ? [] : newText.split('\n');
+
+  // La borne de `fragmentDiff` se lit sur les longueurs ENTIÈRES, avant tout
+  // raccourci : au-delà, elle rend un remplacement en bloc, et ces compteurs
+  // doivent dire ce qu'elle dessine.
+  if (a.length > FRAGMENT_DIFF_MAX_LINES || b.length > FRAGMENT_DIFF_MAX_LINES) {
+    return { added: b.length, removed: a.length };
+  }
+
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  const m = endA - start;
+  const n = endB - start;
+  if (m === 0 || n === 0) return { added: n, removed: m };
+
+  let prev = new Array<number>(n + 1).fill(0);
+  let cur = new Array<number>(n + 1).fill(0);
+  for (let i = m - 1; i >= 0; i--) {
+    cur[n] = 0;
+    for (let j = n - 1; j >= 0; j--) {
+      cur[j] = a[start + i] === b[start + j] ? prev[j + 1]! + 1 : Math.max(prev[j]!, cur[j + 1]!);
+    }
+    const swap = prev;
+    prev = cur;
+    cur = swap;
+  }
+  const lcs = prev[0]!;
+  return { added: n - lcs, removed: m - lcs };
+}

@@ -15,8 +15,8 @@
 // CE MODULE NE COMPARE RIEN. Les lignes d'un diff sortent de `fragmentDiff`
 // (`@nodal-agents/shared`), appelé par la plaque au moment de peindre. Ici on
 // ne fait que RASSEMBLER : quel fichier, quelles éditions, combien de lignes
-// écrites et remplacées. Les compteurs sont du churn, la même lecture que la
-// page Code (voir l'en-tête de `coding-changes.ts`).
+// ajoutées et retirées. Les compteurs sortent du MÊME diff que la plaque
+// (`changeLineCounts`, issue #394), la même lecture que la page Code.
 
 import {
   canonicalChangePath,
@@ -44,7 +44,11 @@ export type FileChangeGesture = ConstatedChangeKind | 'written';
  */
 export type FileChangeGroup = {
   filePath: string;
-  /** Sommés sur chaque édition de ce fichier — du churn, pas un diff fusionné. */
+  /**
+   * Le diff de chaque édition de ce fichier, sommé — pas un diff fusionné des
+   * deux versions extrêmes : chaque édition agit sur le résultat de la
+   * précédente, et c'est aussi ce que la plaque dessine, édition par édition.
+   */
   addedLines: number;
   removedLines: number;
   /**

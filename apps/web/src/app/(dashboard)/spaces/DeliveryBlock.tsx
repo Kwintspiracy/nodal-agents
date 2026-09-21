@@ -13,9 +13,10 @@
 // CE QUI N'EST PAS LÀ, ET POURQUOI. La maquette de Quentin montre six
 // cellules : Fichiers, Lignes, Tests, Couverture, Durée, Coût. Cinq ont une
 // source — « Lignes » se lit dans l'ENTRÉE des appels d'écriture, la même
-// lecture que la page Code (`coding-changes.ts`), et c'est du churn : « +27
-// −2 » veut dire vingt-sept lignes écrites et deux remplacées, pas le résultat
-// d'une comparaison. « Couverture » demanderait un rapport de couverture que
+// lecture que la page Code (`coding-changes.ts`), et c'est le DIFF de chaque
+// écriture (#394) : « +27 −2 » veut dire que les plaques, dépliées, colorient
+// vingt-sept rangées en vert et deux en rouge. « Couverture » demanderait un
+// rapport de couverture que
 // rien n'écrit : la cellule n'existe pas, pas de tiret, pas de zéro, pas de
 // « n/a » (invariant #4). De même, une section vide ne se dessine pas.
 //
