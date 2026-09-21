@@ -311,7 +311,10 @@ describe('une preuve rouge rouvre le run pour UN tour @cap:verifier-un-livrable/
     // Le plan est explicite : « `timeout` / `spawn_error` ⇒ `infra_error`
     // immédiat, pas de réparation ». On ne fait pas corriger du code à cause
     // d'une machine qui n'a pas répondu.
-    const lent = await script('lent.js', 'setTimeout(() => {}, 30_000)');
+    // Cinq secondes, pas trente : le tueur de timeout coupe à une seconde, et
+    // si jamais il ratait son coup le test ne tiendrait pas la machine une
+    // demi-minute (constat mineur C-1, passe 2 de la revue C).
+    const lent = await script('lent.js', 'setTimeout(() => {}, 5_000)');
     await setProject([{ command: lent, timeoutSeconds: 1 }]);
     const jobId = await insertJob('processing');
     const stateId = await insertState(jobId);
