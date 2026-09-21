@@ -27,9 +27,11 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => {} }) }))
 vi.mock('@/lib/actions.ts', () => ({ setCodeProjectHiddenAction: vi.fn() }));
 vi.mock('@/lib/project-actions.ts', () => ({
   registerDetectedProjectAction: async () => ({ ok: true, data: { id: 'x', path: 'x' } }),
+  forgetCodeProjectAction: vi.fn(),
 }));
 
 import { setCodeProjectHiddenAction } from '@/lib/actions.ts';
+import { forgetCodeProjectAction } from '@/lib/project-actions.ts';
 
 const ligne = (over: Partial<WorkspaceRow> & { key: string; name: string }): WorkspaceRow => ({
   kind: 'registered',
@@ -290,9 +292,25 @@ async function cliquer(texte: string): Promise<void> {
   });
 }
 
+/**
+ * Le MÊME clic, mais DANS la confirmation : elle est rendue par un portail
+ * vers `<body>`, donc hors du conteneur monté. Le bouton de la ligne et celui
+ * du dialogue portent le même mot, d'où la recherche scopée au dialogue.
+ */
+async function cliquerDansLaConfirmation(texte: string): Promise<void> {
+  const dialogue = document.body.querySelector('[role="dialog"]');
+  if (!dialogue) throw new Error('aucune confirmation ouverte');
+  const el = [...dialogue.querySelectorAll('button')].find((b) => b.textContent?.trim() === texte);
+  if (!el) throw new Error(`bouton introuvable : ${texte}`);
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(setCodeProjectHiddenAction).mockResolvedValue({ ok: true, data: undefined });
+  vi.mocked(forgetCodeProjectAction).mockResolvedValue({ ok: true, data: undefined });
 });
 
 afterEach(async () => {
@@ -303,7 +321,7 @@ afterEach(async () => {
 });
 
 describe('la section Hidden de la page Projects @cap:travailler-sur-des-fichiers/ecran', () => {
-  it('« Hidden (2) » déplie les deux projets retirés, et dit que rien n’est effacé', async () => {
+  it('« Hidden (2) » déplie les deux projets retirés, et dit ce que ses gestes font', async () => {
     await monter({
       rows: [ligne({ key: 'd:/dev/garde', id: 'p-9', name: 'Gardé', path: 'D:/Dev/garde' })],
       hiddenRows: [masque, masqueDetecte],
@@ -319,7 +337,9 @@ describe('la section Hidden de la page Projects @cap:travailler-sur-des-fichiers
     expect(rendu().querySelector('[data-testid="workspace-row-d:/apps/range"]')).not.toBeNull();
     // La ligne qui reste, elle, n'a pas bougé de la liste principale.
     expect(rendu().querySelector('[data-testid="workspace-row-d:/dev/garde"]')).not.toBeNull();
-    expect(rendu().textContent).toContain('Nothing is deleted');
+    // La phrase de la section dit les DEUX gestes, et ce qu'ils ont en commun :
+    // le dossier reste sur le disque (#371).
+    expect(rendu().textContent).toContain('the folders stay where they are on disk');
     expect(
       rendu()
         .querySelector('[data-testid="hidden-projects-toggle"]')
@@ -356,5 +376,110 @@ describe('la section Hidden de la page Projects @cap:travailler-sur-des-fichiers
       projectPath: 'D:/APPS/range',
       hidden: false,
     });
+  });
+});
+
+// ─── #371 : « Forget », le geste qui fait quitter Nodal à un projet ──────────
+//
+// Trois choses se prouvent ici, et une seule serait trompeuse : QUI porte le
+// bouton (un projet du registre, masqué, et lui seul), CE QUE la confirmation
+// dit (les trois faits, parce qu'aucun ne se devine), et CE QUE confirmer
+// envoie à l'action (son argument, jamais un compteur d'appels).
+describe('« Forget » sur un projet masqué @cap:travailler-sur-des-fichiers/ecran', () => {
+  it('n’est PAS sur un projet visible : la liste principale n’offre rien de tel', async () => {
+    await monter({
+      rows: [ligne({ key: 'd:/dev/garde', id: 'p-9', name: 'Gardé', path: 'D:/Dev/garde' })],
+      hiddenRows: [masque],
+      counts: { total: 1, registered: 1, detected: 0, waiting: 0 },
+    });
+    expect(document.body.textContent).not.toContain('Forget');
+  });
+
+  it('apparaît sous « Hidden », à côté de « Show in list », sur le projet du REGISTRE', async () => {
+    await monter({
+      rows: [],
+      hiddenRows: [masque],
+      counts: { total: 0, registered: 0, detected: 0, waiting: 0 },
+    });
+    await cliquer('Hidden (1)');
+
+    const boutons = [
+      ...rendu().querySelectorAll('[data-testid="workspace-row-d:/dev/range"] button'),
+    ]
+      .map((b) => b.textContent?.trim())
+      .filter((t) => t !== undefined);
+    expect(boutons).toEqual(['Show in list', 'Forget']);
+  });
+
+  it('n’est PAS offert sur un dossier DÉTECTÉ masqué : sa ligne n’est qu’un masquage', async () => {
+    await monter({
+      rows: [],
+      hiddenRows: [masqueDetecte],
+      counts: { total: 0, registered: 0, detected: 0, waiting: 0 },
+    });
+    await cliquer('Hidden (1)');
+
+    const boutons = [
+      ...rendu().querySelectorAll('[data-testid="workspace-row-d:/apps/range"] button'),
+    ]
+      .map((b) => b.textContent?.trim())
+      .filter((t) => t !== undefined);
+    expect(boutons).toEqual(['Show in list']);
+  });
+
+  it('demande confirmation, et la confirmation porte les TROIS faits', async () => {
+    await monter({
+      rows: [],
+      hiddenRows: [masque],
+      counts: { total: 0, registered: 0, detected: 0, waiting: 0 },
+    });
+    await cliquer('Hidden (1)');
+    await cliquer('Forget');
+
+    // Le dialogue du design system, jamais un dialogue natif (invariant #10).
+    const dialogue = document.body.querySelector('[role="dialog"]');
+    expect(dialogue).not.toBeNull();
+    const texte = dialogue?.textContent ?? '';
+    expect(texte).toContain('Forget Rangé?');
+    // 1. le projet quitte Nodal, avec ses préférences.
+    expect(texte).toContain('The project leaves Nodal');
+    expect(texte).toContain('its registration and its settings are deleted');
+    // 2. l'historique reste, seul le lien est coupé.
+    expect(texte).toContain('Runs and conversations keep their history');
+    // 3. le dossier n'est pas touché, et le supprimer est un geste à soi.
+    expect(texte).toContain('Its folder on disk is not touched');
+    expect(texte).toContain('your file explorer');
+
+    // RIEN n'est parti tant que personne n'a confirmé.
+    expect(vi.mocked(forgetCodeProjectAction)).not.toHaveBeenCalled();
+  });
+
+  it('confirmer appelle l’action sur LE chemin de ce projet', async () => {
+    await monter({
+      rows: [],
+      hiddenRows: [masque, masqueDetecte],
+      counts: { total: 0, registered: 0, detected: 0, waiting: 0 },
+    });
+    await cliquer('Hidden (2)');
+    await cliquer('Forget');
+    await cliquerDansLaConfirmation('Forget');
+
+    expect(vi.mocked(forgetCodeProjectAction).mock.calls.at(0)?.[0]).toEqual({
+      projectPath: 'D:/Dev/range',
+    });
+  });
+
+  it('annuler ne ferme pas seulement la question : rien n’est envoyé', async () => {
+    await monter({
+      rows: [],
+      hiddenRows: [masque],
+      counts: { total: 0, registered: 0, detected: 0, waiting: 0 },
+    });
+    await cliquer('Hidden (1)');
+    await cliquer('Forget');
+    await cliquerDansLaConfirmation('Cancel');
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(vi.mocked(forgetCodeProjectAction)).not.toHaveBeenCalled();
   });
 });

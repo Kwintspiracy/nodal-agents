@@ -1542,3 +1542,166 @@ describe('createProjectAction — l’option git @cap:travailler-sur-des-fichier
     expect(ligne?.gitInitializedAt).toBeInstanceOf(Date);
   });
 });
+
+// ─── #371 : OUBLIER un projet masqué ─────────────────────────────────────────
+//
+// Le premier geste du produit qui SUPPRIME une ligne `code_projects`. Ce qui
+// se prouve ici est donc ce qui part ET ce qui reste : la ligne s'en va, le
+// run et la conversation restent avec leur historique et leur lien à NULL, et
+// le dossier est toujours sur le disque.
+//
+// Le refus passe avant le chemin heureux : « oublier » n'est offert que sur un
+// projet DÉJÀ masqué, et c'est le moteur qui tient cette règle, pas l'écran.
+describe('forgetCodeProjectAction @cap:travailler-sur-des-fichiers/moteur', () => {
+  /** Un projet enregistré, sur un vrai dossier, masqué ou non. */
+  async function projetPose(
+    nomDossier: string,
+    options: { hidden: boolean; registered?: boolean },
+  ): Promise<{ id: string; path: string }> {
+    const path = `${terrain.path}/${nomDossier}`;
+    await mkdir(path, { recursive: true });
+    const [row] = await testDb
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: path,
+        projectKey: projectKey(path),
+        displayName: 'Nom choisi',
+        hidden: options.hidden,
+        registeredAt: options.registered === false ? null : new Date(),
+        registeredFrom: options.registered === false ? null : 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    return { id: row!.id, path };
+  }
+
+  it('REFUSE un projet qui n’est pas masqué : la ligne est toujours là', async () => {
+    const { forgetCodeProjectAction } = await import('../project-actions.ts');
+    const projet = await projetPose('a-oublier-visible', { hidden: false });
+
+    const result = await forgetCodeProjectAction({ projectPath: projet.path });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_hidden');
+    // La LIGNE relue, jamais le code de retour seul.
+    const ligne = await ligneDuProjet(projet.path);
+    expect(ligne).not.toBeNull();
+    expect(ligne!.displayName).toBe('Nom choisi');
+  });
+
+  it('REFUSE une ligne de comptabilité masquée : l’oublier la ramènerait dans la liste', async () => {
+    const { forgetCodeProjectAction } = await import('../project-actions.ts');
+    const detecte = await projetPose('detecte-masque', { hidden: true, registered: false });
+
+    const result = await forgetCodeProjectAction({ projectPath: detecte.path });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_registered');
+    expect(await ligneDuProjet(detecte.path)).not.toBeNull();
+  });
+
+  it('un projet d’un AUTRE espace n’existe pas pour cette session', async () => {
+    const { forgetCodeProjectAction } = await import('../project-actions.ts');
+    const chezLeVoisin = `${voisin.path}/leur-projet-masque`;
+    const [ligneVoisin] = await testDb
+      .insert(codeProjects)
+      .values({
+        entityId: voisin.entityId,
+        projectPath: chezLeVoisin,
+        projectKey: projectKey(chezLeVoisin),
+        hidden: true,
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+
+    const result = await forgetCodeProjectAction({ projectPath: chezLeVoisin });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_found');
+
+    const [toujoursLa] = await testDb
+      .select({ id: codeProjects.id })
+      .from(codeProjects)
+      .where(eq(codeProjects.id, ligneVoisin!.id));
+    expect(toujoursLa).toBeDefined();
+  });
+
+  it('masqué : la ligne part, le run et la conversation restent avec leur lien à NULL, le dossier est intact', async () => {
+    const { forgetCodeProjectAction } = await import('../project-actions.ts');
+    const projet = await projetPose('a-oublier-masque', { hidden: true });
+
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        title: 'Ce qu’on s’est dit',
+        currentProjectId: projet.id,
+      })
+      .returning({ id: conversations.id });
+    const [job] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        task: 'ce qui a été fait',
+        status: 'completed',
+        projectId: projet.id,
+        conversationId: conv!.id,
+      })
+      .returning({ id: agentJobs.id });
+
+    // Une conversation d'un AUTRE projet, pour que l'UPDATE prouve qu'il vise
+    // CE projet et pas toute la table.
+    const voisine = await projetPose('projet-voisin-garde', { hidden: true });
+    const [convVoisine] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        title: 'Un autre sujet',
+        currentProjectId: voisine.id,
+      })
+      .returning({ id: conversations.id });
+
+    const result = await forgetCodeProjectAction({ projectPath: projet.path });
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+
+    // 1. La ligne du registre est PARTIE, avec les préférences qu'elle portait.
+    expect(await ligneDuProjet(projet.path)).toBeNull();
+
+    // 2. L'historique RESTE, et son lien au projet est coupé.
+    const [conversationRelue] = await testDb
+      .select({
+        id: conversations.id,
+        title: conversations.title,
+        projet: conversations.currentProjectId,
+      })
+      .from(conversations)
+      .where(eq(conversations.id, conv!.id));
+    expect(conversationRelue?.title).toBe('Ce qu’on s’est dit');
+    expect(conversationRelue?.projet).toBeNull();
+
+    const [jobRelu] = await testDb
+      .select({ id: agentJobs.id, task: agentJobs.task, projet: agentJobs.projectId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(jobRelu?.task).toBe('ce qui a été fait');
+    expect(jobRelu?.projet).toBeNull();
+
+    // 3. Le projet d'à côté n'a rien senti passer.
+    const [voisineRelue] = await testDb
+      .select({ projet: conversations.currentProjectId })
+      .from(conversations)
+      .where(eq(conversations.id, convVoisine!.id));
+    expect(voisineRelue?.projet).toBe(voisine.id);
+    expect(await ligneDuProjet(voisine.path)).not.toBeNull();
+
+    // 4. LE DOSSIER EST TOUJOURS LÀ : oublier ne touche pas au disque.
+    expect(existsSync(projet.path)).toBe(true);
+  });
+});

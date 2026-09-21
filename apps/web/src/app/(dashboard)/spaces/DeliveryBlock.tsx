@@ -173,8 +173,7 @@ export default function DeliveryBlock({
         {/* L'icône dit LIVRÉ, la pastille dit vérifié ou non — deux faits, deux
             signes (Quentin, 18/09). Elle est donc verte dès que ce bloc
             paraît : un run livré sans preuve n'est pas un demi-run, et un
-            crochet gris le faisait passer pour éteint. Seul un verdict ROUGE
-            la fait virer : là, quelque chose ne va pas.
+            crochet gris le faisait passer pour éteint.
 
             Une relecture qui demande des corrections fait le même effet sur le
             signe, et sur lui seul : le mot, lui, ne bouge plus (#59, décision
@@ -182,17 +181,22 @@ export default function DeliveryBlock({
         {/* UNE ABSENCE SE DESSINE EN GRIS, jamais en rouge (#282) : un tour
             dont la seule commande n'a rien laissé voir n'est pas en panne, il
             est indéterminé. Le crochet reste, sa couleur s'éteint. */}
+        {/* ET LE CROCHET NE PORTE PLUS LE VERDICT DE PREUVE (#373, Quentin le
+            21/09 devant un run relu : « ça veut dire quoi car à côté ça dit
+            Approved, donc ça a été livré ou pas ? et pourquoi c'est rouge ? »).
+            Il virait au warn dès qu'une commande de preuve avait lâché, à
+            côté du mot « Approved » : trois faits, deux dits en toutes lettres
+            et le troisième caché dans la couleur d'un signe, ce qui se lisait
+            comme une contradiction. Le verdict de preuve est devenu un MOT,
+            une ligne plus loin. Le crochet ne dit plus qu'une chose : le run a
+            livré, ou il n'est pas allé au bout. */}
         {summary.live !== null || changesRequested ? null : (
           <CheckCircle
             size={16}
             className={
               // Un run arrêté ou tombé n'a pas de crochet vert, quoi qu'il
               // ait écrit : le signe dit l'issue du travail, pas sa trace.
-              summary.ended !== null || !summary.produced
-                ? 'text-ink-4'
-                : verdict === 'red'
-                  ? 'text-warn'
-                  : 'text-ok'
+              summary.ended !== null || !summary.produced ? 'text-ink-4' : 'text-ok'
             }
             aria-hidden
           />
@@ -208,8 +212,12 @@ export default function DeliveryBlock({
         {/* ET IL NE SE DIT PAS D'UN RUN QUI N'EST PAS ALLÉ AU BOUT (Quentin,
             22/09 : un run annulé « apparaît comme delivered »). Ce qu'il a
             écrit avant reste listé dessous ; l'en-tête dit l'issue. */}
+        {/* TROIS MOTS TIENNENT SUR LA LIGNE, OU ELLE COUPE (Reviewer C, #373) :
+            l'en-tête a une hauteur fixe de 48 px, et rien n'y bornait la suite
+            de mots. Avec un troisième, une largeur étroite la faisait pousser
+            la pastille et le bouton Stop hors de la boîte. */}
         <span
-          className={`text-title-15 ${summary.live === 'working' ? 'text-run' : summary.live === 'waiting' ? 'text-warn' : 'text-ink'}`}
+          className={`min-w-0 truncate text-title-15 ${summary.live === 'working' ? 'text-run' : summary.live === 'waiting' ? 'text-warn' : 'text-ink'}`}
         >
           {summary.live === 'working'
             ? 'Working'
@@ -223,6 +231,31 @@ export default function DeliveryBlock({
                     ? 'Delivered'
                     : 'Ran'}
           {reviewLabel !== null && <span className="text-ink-3"> · {reviewLabel}</span>}
+          {/* LE TROISIÈME FAIT, DIT (#373) : ce que les commandes de preuve ont
+              répondu. Il suit la même grammaire que les deux autres — un mot,
+              sur la même ligne, séparé d'un point médian — et porte sa couleur
+              plutôt que de la prêter au crochet.
+
+              Rien quand aucune preuve n'a été déclarée : il n'y a alors pas de
+              troisième fait, et un mot gris en inventerait un.
+
+              Et rien tant que le run court : les preuves qui ont déjà tourné
+              se comptent dans la pastille, elles ne concluent pas (même règle
+              que « Verified », Quentin le 22/09).
+
+              IL REDIT LA PASTILLE QUAND PERSONNE N'A RELU, et c'est assumé
+              (Reviewer C, #373) : la pastille dit alors « Verified » ou
+              « Checks failed », le mot dit la même chose. Dès qu'une relecture
+              existe — le cas de l'issue — la pastille nomme le relecteur et le
+              mot devient le seul endroit où le sort des preuves se lit. Taire
+              le mot dans l'autre cas ferait dépendre la grammaire de la ligne
+              d'un fait qui n'a rien à voir avec elle. */}
+          {summary.live === null && verdict !== null && (
+            <span className={verdict === 'red' ? 'text-warn' : 'text-ok'}>
+              {' '}
+              · {verdict === 'red' ? 'Proof failed' : 'Proof passed'}
+            </span>
+          )}
         </span>
         {/* La pastille suit le mot, à trente pixels — pas poussée au bord
             droit : c'est ainsi que la planche la dessine (Quentin, 17/09,
