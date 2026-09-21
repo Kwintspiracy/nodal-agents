@@ -31,7 +31,6 @@
 // à dire que le travail n'avait pas eu lieu. Le bloc dit donc toujours ce qui
 // s'est passé, et ce que la relecture en pense est un SECOND fait, posé à côté.
 
-import Link from 'next/link';
 import {
   ArrowSquareOut,
   Check,
@@ -44,6 +43,7 @@ import {
   X,
 } from '@phosphor-icons/react/dist/ssr';
 import AgentAvatar from '@/components/ui/AgentAvatar';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 import StatusPill from '@/components/ui/StatusPill';
 import StopRunButton from '@/components/ui/StopRunButton';
 import { canStopRun } from '@/lib/job-live.ts';
@@ -237,9 +237,24 @@ export default function DeliveryBlock({
             Deux faits, deux signes : l'issue du travail, et ce que les preuves
             ont dit. Masquer « Verified » dirait que les preuves n'ont pas eu
             lieu, ce qui serait faux. */}
+        {/* TANT QUE ÇA COURT, RIEN N'EST « VERIFIED » (Quentin, 22/09 : « comment
+            le contenu qui est en Working peut être verified ? »). Les preuves
+            qui ont déjà tourné se COMPTENT, elles ne concluent pas : la
+            conclusion attend la fin du run. */}
         <span className="ml-5">
           {reviewLabel !== null ? (
             <StatusPill variant={changesRequested ? 'warn' : 'done'} label="By the reviewer" />
+          ) : summary.live !== null ? (
+            <StatusPill
+              variant="idle"
+              label={
+                // Sans dénominateur (Reviewer C, #342) : « 1 / 1 » se lirait
+                // comme un état final alors qu'une preuve peut encore courir.
+                summary.tests !== null
+                  ? `${summary.tests.passed} ${summary.tests.passed === 1 ? 'check' : 'checks'} passed so far`
+                  : 'No checks yet'
+              }
+            />
           ) : verdict === 'green' ? (
             <StatusPill variant="done" label="Verified" />
           ) : verdict === 'red' ? (
@@ -289,9 +304,11 @@ export default function DeliveryBlock({
           au lieu de disparaître de l'écran : c'est l'absence que le verdict a
           mesurée, et l'invariant #4 demande qu'elle se dise.
 
-          « nothing observed », et pas « rien fait » : dans un dépôt, le constat
-          par git aurait vu l'écriture. Ce qui manque est le CONSTAT, pas
-          forcément l'effet. */}
+          « no file change seen », et pas « rien fait » : dans un dépôt, le
+          constat par git aurait vu l'écriture. Ce qui manque est le CONSTAT,
+          pas forcément l'effet. (« nothing observed » jusqu'au 22/09 : Quentin
+          ne savait pas ce que ça voulait dire ; le mot dit maintenant CE qui
+          n'a pas été vu.) */}
       {summary.commands.length > 0 && (
         <div className="border-t border-rule-2 px-4 pt-2.5 pb-3">
           <p className="mb-1 text-mono-11 text-ink-4">Commands</p>
@@ -305,7 +322,7 @@ export default function DeliveryBlock({
                 <Terminal size={12} className="shrink-0 text-ink-4" aria-hidden />
                 <span className="min-w-0 truncate text-mono-12 text-ink-2">{c.label}</span>
                 {!c.observed && (
-                  <span className="shrink-0 text-mono-11 text-ink-4">nothing observed</span>
+                  <span className="shrink-0 text-mono-11 text-ink-4">no file change seen</span>
                 )}
               </li>
             ))}
@@ -361,15 +378,16 @@ export default function DeliveryBlock({
             </span>
           ))}
           {jobId !== null && (
-            // Après le dernier nom, à trente pixels — pas au bord droit : la
-            // planche le pose dans la ligne, comme la pastille du haut.
-            <Link
-              href={`/scheduled/${jobId}`}
-              className="ml-5 flex shrink-0 items-center gap-1.5 text-medium-13 text-ink-2 transition-colors hover:text-ink"
-            >
-              Open run
-              <ArrowSquareOut size={12} className="text-ink-3" aria-hidden />
-            </Link>
+            // UN VRAI BOUTON, AU BORD DROIT (Quentin, 22/09) : il était un lien
+            // posé après le dernier relecteur, à trente pixels, et se lisait
+            // comme un nom de plus. Le même bouton neutre que « Files » dans la
+            // barre, seul sur son bord, l'icône dit qu'il ouvre une page.
+            <span className="ml-auto">
+              <PrimaryButton variant="neutral" size="sm" href={`/scheduled/${jobId}`}>
+                Open run
+                <ArrowSquareOut size={12} aria-hidden />
+              </PrimaryButton>
+            </span>
           )}
         </div>
       )}

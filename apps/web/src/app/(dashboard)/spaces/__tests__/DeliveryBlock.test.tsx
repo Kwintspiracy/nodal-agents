@@ -685,7 +685,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     );
     expect(html).toContain('Commands');
     expect(html).toContain('ls -la');
-    expect(html).toContain('nothing observed');
+    expect(html).toContain('no file change seen');
     // ET LE MOT N'EST PLUS « DELIVERED ». Rien n'a été constaté : écrire
     // « Delivered » au-dessus de cette liste dirait le contraire du verdict.
     expect(html).toContain('>Ran');
@@ -750,6 +750,40 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
       <DeliveryBlock summary={{ ...EMPTY, produced: true }} jobId={null} status="processing" />,
     );
     expect(sansJob).not.toContain('data-testid="stop-run"');
+  });
+
+  // Quentin, 22/09 : « comment le contenu qui est en Working peut être
+  // verified ? Non fini mais verified ? ». Tant que ça court, les preuves déjà
+  // passées se comptent ; « Verified » attend la fin.
+  it('tant que le run court, les preuves se comptent et rien n’est « Verified »', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        summary={{ ...EMPTY, live: 'working', tests: { passed: 1, total: 1 }, verdict: 'green' }}
+        jobId="job-9"
+        status="processing"
+      />,
+    );
+    expect(html).toContain('1 check passed so far');
+    expect(html).not.toContain('>Verified');
+    const sansPreuve = renderToStaticMarkup(
+      <DeliveryBlock summary={{ ...EMPTY, live: 'working' }} jobId="job-9" status="processing" />,
+    );
+    expect(sansPreuve).toContain('No checks yet');
+    expect(sansPreuve).not.toContain('Not verified');
+  });
+
+  // Quentin, 22/09 : « dans le footer du cadre, aligne Open run à droite et
+  // fais-en un vrai bouton ».
+  it('« Open run » est un bouton, seul au bord droit du pied', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock summary={{ ...EMPTY }} jobId="job-7" status="completed" />,
+    );
+    const at = html.indexOf('Open run');
+    const before = html.slice(Math.max(0, at - 400), at);
+    expect(before).toContain('ml-auto');
+    expect(before).toContain('href="/scheduled/job-7"');
+    // Le bouton neutre du design system, pas un lien en texte.
+    expect(before).toMatch(/<a[^>]*class="[^"]*inline-flex/);
   });
 
   // Quentin, 22/09 : « j'ai à la fois un panneau Delivered avec un crochet
@@ -861,7 +895,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     );
     expect(html).toContain('Delivered');
     expect(html).toContain('pnpm build');
-    expect(html).not.toContain('nothing observed');
+    expect(html).not.toContain('no file change seen');
   });
 
   it('ne dessine aucune section Commands quand le travail n’en a fait tourner aucune', () => {
@@ -869,6 +903,6 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
       <DeliveryBlock summary={{ ...EMPTY, files: 1, filePaths: ['a.md'] }} jobId={null} />,
     );
     expect(html).not.toContain('Commands');
-    expect(html).not.toContain('nothing observed');
+    expect(html).not.toContain('no file change seen');
   });
 });
