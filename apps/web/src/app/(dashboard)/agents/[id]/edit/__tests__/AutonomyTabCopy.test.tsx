@@ -57,10 +57,13 @@ const actions = vi.hoisted(() => {
     // Typée avec son argument : les assertions portent sur CE QUI EST ENVOYÉ
     // au serveur, pas sur un compteur d'appels (invariant #5).
     setAgentApprovalRuleAction: vi.fn(
-      async (_raw: { agentId: string; toolName: string; action: string }) => ({
-        ok: true as const,
-        data: undefined,
-      }),
+      async (_raw: {
+        agentId: string;
+        toolName: string;
+        action: string;
+      }): Promise<
+        { ok: true; data: undefined } | { ok: false; code: string; message: string }
+      > => ({ ok: true, data: undefined }),
     ),
     setRunCommandYoloAction: noop(),
     setCodeTaskYoloAction: noop(),
@@ -133,7 +136,19 @@ const CONNECTOR = {
   ],
 };
 
-async function render(connectors: unknown[] = [], rules: Rule[] = []): Promise<string> {
+const MCP_SERVER = {
+  mcpServerId: 'm1',
+  slug: 'cogni-cortex',
+  label: 'Cogni Cortex',
+  assigned: true,
+  availableTools: ['read', 'write'],
+};
+
+async function render(
+  connectors: unknown[] = [],
+  rules: Rule[] = [],
+  mcpServers: unknown[] = [],
+): Promise<string> {
   actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
     ok: true as const,
     data: rules,
@@ -146,7 +161,7 @@ async function render(connectors: unknown[] = [], rules: Rule[] = []): Promise<s
       <AutonomyTab
         agentId={AGENT_ID}
         connectors={connectors as never}
-        mcpServers={[]}
+        mcpServers={mcpServers as never}
         hasTelegramBot={false}
         attachedSkills={[
           {
@@ -396,6 +411,108 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
     expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
       'in Dev',
     );
+  });
+
+  it("n'annonce aucun élargissement pour « Run without asking », que le serveur refuse", async () => {
+    // Revue Reviewer C, passe 1, C1 : `refuseGlobalGrantOverFolderRule` refuse
+    // cette écriture. Faire confirmer « la limite va sauter » serait annoncer
+    // ce qui n'arrivera pas. L'appel part, et c'est le serveur qui parle.
+    actions.setAgentApprovalRuleAction.mockImplementation(async () => ({
+      ok: false as const,
+      code: 'validation_failed',
+      message: 'file_write is already approved for this agent only inside D:\APPS\Dev.',
+    }));
+    await render([], [{ ...FOLDER_RULE, action: 'require_approval' }]);
+    actions.setAgentApprovalRuleAction.mockClear();
+
+    await act(async () => {
+      control('file_write', 'auto_approve').click();
+    });
+
+    expect(dialogText()).not.toContain('Remove the folder limit?');
+    expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      toolName: 'file_write',
+      action: 'auto_approve',
+    });
+  });
+
+  it('ne retire pas le dossier de la ligne avant la réponse du serveur', async () => {
+    // C2 : poser tout de suite une ligne sans condition ferait lire
+    // « partout » sur une règle que la base garde confinée.
+    let resolveSave: ((r: { ok: true; data: undefined }) => void) | undefined;
+    actions.setAgentApprovalRuleAction.mockImplementation(
+      () =>
+        new Promise<{ ok: true; data: undefined }>((r) => {
+          resolveSave = r;
+        }),
+    );
+    await render([], [FOLDER_RULE]);
+
+    await act(async () => {
+      control('file_write', 'block').click();
+    });
+    const confirm = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Remove the limit',
+    );
+    await act(async () => {
+      confirm!.click();
+    });
+
+    // L'écriture est partie, la réponse n'est pas revenue : la ligne dit encore
+    // ce que la base porte.
+    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
+      'in Dev',
+    );
+    await act(async () => {
+      resolveSave?.({ ok: true, data: undefined });
+    });
+  });
+
+  it('nomme le dossier dans le nom accessible du curseur', async () => {
+    await render([], [FOLDER_RULE]);
+    const group = container.querySelector('[aria-label*="limited to Dev"]');
+    expect(group?.getAttribute('aria-label')).toBe(
+      'Approval rule for Write a workspace file, limited to Dev',
+    );
+  });
+
+  it('nomme le dossier sur une ligne de CONNECTEUR, pas seulement sur un outil natif', async () => {
+    const text = await render(
+      [CONNECTOR],
+      [
+        {
+          id: 'r3',
+          toolName: 'cloudflare_deploy',
+          action: 'auto_approve',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
+      ],
+    );
+    expect(text).toContain('Publish to Cloudflare Workers');
+    expect(
+      container.querySelector('[data-testid="autonomy-folder-cloudflare_deploy"]')?.textContent,
+    ).toBe('in Dev');
+  });
+
+  it('nomme le dossier sur une ligne de SERVEUR MCP', async () => {
+    await render(
+      [],
+      [
+        {
+          id: 'r4',
+          toolName: 'cogni_cortex__*',
+          action: 'auto_approve',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
+      ],
+      [MCP_SERVER],
+    );
+    expect(
+      container.querySelector('[data-testid="autonomy-folder-cogni_cortex__*"]')?.textContent,
+    ).toBe('in Dev');
   });
 
   it("enregistre sans rien demander quand la règle n'a pas de dossier", async () => {

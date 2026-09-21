@@ -103,7 +103,14 @@ export default function AutonomyToolRow({
             value={value}
             onChange={onChange}
             disabled={saving}
-            ariaLabel={`Approval rule for ${label}`}
+            // Le dossier fait partie du NOM de ce réglage : sans lui, un lecteur
+            // d'écran annonce « Run without asking » sans la moitié qui compte
+            // (revue Reviewer C, passe 1, C4).
+            ariaLabel={
+              folder === undefined
+                ? `Approval rule for ${label}`
+                : `Approval rule for ${label}, limited to ${folder}`
+            }
             options={[
               {
                 value: 'auto_approve' as const,

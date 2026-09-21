@@ -1727,12 +1727,17 @@ export function AutonomyTab({
   }
 
   /**
-   * Un changement demandé sur une règle de dossier, en attente de la
-   * confirmation. Enregistrer depuis cet onglet RETIRE la condition : le
-   * serveur réécrit `condition_json` à vide, et refuse même la version
-   * permissive (`refuseGlobalGrantOverFolderRule`). Le dire avant, plutôt que
-   * de laisser le propriétaire découvrir après coup que « seulement dans Dev »
+   * Un changement RESTRICTIF demandé sur une règle de dossier, en attente de
+   * la confirmation. Enregistrer depuis cet onglet retire la condition : le
+   * serveur réécrit `condition_json` à vide. Le dire avant, plutôt que de
+   * laisser le propriétaire découvrir après coup que « seulement dans Dev »
    * est devenu « partout ».
+   *
+   * La version PERMISSIVE n'est pas ici, et ce n'est pas un oubli (revue
+   * Reviewer C, passe 1, C1) : `refuseGlobalGrantOverFolderRule` la REFUSE.
+   * Annoncer un élargissement qui n'aura pas lieu, puis le faire confirmer,
+   * serait un mensonge. Elle part au serveur, qui répond avec sa propre phrase
+   * et nomme le dossier.
    */
   const [pendingWiden, setPendingWiden] = useState<{
     toolName: string;
@@ -1742,7 +1747,7 @@ export function AutonomyTab({
 
   function requestChange(toolName: string, action: ApprovalAction) {
     const folder = folderFor(toolName);
-    if (folder !== undefined) {
+    if (folder !== undefined && action !== 'auto_approve') {
       setPendingWiden({ toolName, action, folder });
       return;
     }
@@ -1755,12 +1760,20 @@ export function AutonomyTab({
     // is already auto_approve" branch. That stopped being true for MCP tools,
     // which default to require_approval, so dropping it made the UI show "ask"
     // on the next load for a server the owner had just trusted.
-    setRules((prev) => [
-      ...prev.filter((r) => r.toolName !== toolName),
-      // Sans condition, et c'est ce que le serveur écrit : changer une règle
-      // depuis cet onglet réécrit `condition_json` à vide (issue #361).
-      { id: '', toolName, action, conditionJson: null, workspaceLabel: null },
-    ]);
+    //
+    // SAUF sur une règle de dossier (revue Reviewer C, passe 1, C2) : le
+    // serveur peut refuser l'écriture, et poser tout de suite une ligne sans
+    // condition ferait lire « partout » pendant l'aller-retour, sur une règle
+    // que la base garde confinée. Là, on attend sa réponse et on relit.
+    const conditioned = folderFor(toolName) !== undefined;
+    if (!conditioned) {
+      setRules((prev) => [
+        ...prev.filter((r) => r.toolName !== toolName),
+        // Sans condition, et c'est ce que le serveur écrit : changer une règle
+        // depuis cet onglet réécrit `condition_json` à vide (issue #361).
+        { id: '', toolName, action, conditionJson: null, workspaceLabel: null },
+      ]);
+    }
 
     setSaving((prev) => new Set([...prev, toolName]));
     void setAgentApprovalRuleAction({ agentId, toolName, action }).then((result) => {
@@ -1769,9 +1782,11 @@ export function AutonomyTab({
         next.delete(toolName);
         return next;
       });
-      if (!result.ok) {
-        toast.error(result.message);
-        // Reload from server on error
+      if (!result.ok) toast.error(result.message);
+      // Relecture après un refus, et après tout changement d'une règle de
+      // dossier : dans les deux cas, ce que la base porte maintenant ne se
+      // devine pas depuis l'écran.
+      if (!result.ok || conditioned) {
         listAgentApprovalRulesAction(agentId).then((r) => {
           if (r.ok) setRules(r.data);
         });

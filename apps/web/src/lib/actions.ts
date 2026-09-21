@@ -202,6 +202,7 @@ import {
   type ApprovalExplanation,
   type ExplainedApprovalRule,
   type ApprovalRuleCondition,
+  normaliseWorkspacePath,
   findModelCatalogEntry,
   LIVE_JOB_STATUSES,
   isShellProgram,
@@ -6429,7 +6430,12 @@ export async function listAgentApprovalRulesAction(
         .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
         .from(agentWorkspaces)
         .where(eq(agentWorkspaces.agentId, agentId));
-      for (const f of folders) labelByPath.set(f.path, f.label);
+      // MÊME comparaison que la chaîne d'approbation (`explainApprovalRules`,
+      // @nodal-agents/shared) : séparateurs, barre finale, lettre de lecteur.
+      // Comparer les chemins bruts ici ferait afficher un chemin sur cet écran
+      // là où la carte d'approbation affiche un libellé (revue Reviewer C,
+      // passe 1, question 3).
+      for (const f of folders) labelByPath.set(normaliseWorkspacePath(f.path), f.label);
     }
 
     return ok(
@@ -6443,7 +6449,10 @@ export async function listAgentApprovalRulesAction(
           conditionJson: condition,
           // Le chemin quand le dossier n'est plus attaché : la règle nomme
           // encore quelque chose, et le taire laisserait lire « partout ».
-          workspaceLabel: typeof path === 'string' ? (labelByPath.get(path) ?? path) : null,
+          workspaceLabel:
+            typeof path === 'string'
+              ? (labelByPath.get(normaliseWorkspacePath(path)) ?? path)
+              : null,
         };
       }),
     );
