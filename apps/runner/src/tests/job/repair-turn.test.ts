@@ -307,6 +307,27 @@ describe('une preuve rouge rouvre le run pour UN tour @cap:verifier-un-livrable/
     expect(job.chainCount).toBe(0);
   });
 
+  it('une preuve qui EXPIRE n’ouvre aucune réparation : c’est une panne, pas du code à corriger', async () => {
+    // Le plan est explicite : « `timeout` / `spawn_error` ⇒ `infra_error`
+    // immédiat, pas de réparation ». On ne fait pas corriger du code à cause
+    // d'une machine qui n'a pas répondu.
+    const lent = await script('lent.js', 'setTimeout(() => {}, 30_000)');
+    await setProject([{ command: lent, timeoutSeconds: 1 }]);
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId);
+
+    const outcome = await finalize(jobId);
+
+    expect(outcome.kind).toBe('completed_unverified');
+    expect(outcome.repair).toBeUndefined();
+    expect(outcome.decisions[0]?.decisionStatus).toBe('infra_error');
+
+    const state = await stateRow(stateId);
+    expect(state.repairAttempts).toBe(0);
+    expect(state.redStreak).toBe(0);
+    expect((await jobRow(jobId)).status).toBe('completed');
+  });
+
   it('une porte qui ne sait pas rouvrir son job garde le comportement de PR①', async () => {
     const red = await script('red4.js', "process.stderr.write('boum'); process.exit(1)");
     await setProject([{ command: red, timeoutSeconds: 20 }]);

@@ -523,10 +523,19 @@ async function poseDeliverableCheck(
  *
  * TOUT SE PASSE DANS LA TRANSACTION TERMINALE, et c'est la seule façon d'être
  * juste : `repair_attempts` passe de 0 à 1 SOUS LA MÊME garde de génération
- * que l'écriture d'état, et le statut terminal n'est pas écrit dans la même
- * transaction. Un processus qui meurt ici laisse donc un job sans réparation
- * marquée ET sans statut : il sera repris et refera la preuve, jamais un job
- * réparé deux fois.
+ * que l'écriture d'état, et aucun statut terminal n'est écrit. Un processus
+ * qui meurt AVANT le commit ne laisse donc rien : ni réparation marquée, ni
+ * statut.
+ *
+ * CE QU'IL ADVIENT D'UN RUNNER QUI MEURT APRÈS LE COMMIT, dit exactement
+ * (constat C1 de la revue C, qui a réfuté la version précédente de ce
+ * commentaire) : le job reste `processing`, et il est FAUCHÉ comme n'importe
+ * quel job en cours d'un runner mort — `reclaimJobsOfDeadRunners` l'échoue en
+ * `runner_restarted` à 2,5 min (`cron/reclaim-jobs.ts`), `resetOrphanedJobs`
+ * en `orphan_job_reset` à 5 min. Ni l'un ni l'autre ne rejoue la preuve : le
+ * tour de réparation est perdu avec le run, exactement comme le tour ordinaire
+ * qu'il aurait joué. Aucun job pendu, et jamais deux réparations — c'est la
+ * borne en base qui le garantit, pas la reprise.
  *
  * LA BORNE EST EN BASE, pas en mémoire : `repair_attempts = 0` est dans le
  * `WHERE`. Un runner redémarré entre le tour de réparation et la
