@@ -258,8 +258,18 @@ export default function ChatFolderGroup() {
               // Le MODÈLE, lui, continue de compter par dossier : c'est la même
               // règle qui range une attente sous le canal de sa conversation
               // (#135, #148), et c'est elle que prouve `chat-folders.test.ts`.
-              // Ce qui change est ce que le menu DESSINE. La case Approvals du
-              // rail garde le total, et c'est là qu'on lit combien.
+              // C'est aussi elle qui fait EXISTER le dossier d'un canal où
+              // quelque chose attend sans conversation lue. Ce qui change est
+              // ce que le menu DESSINE.
+              //
+              // ⚠️ CE QUI RESTE, exactement (Reviewer C) : le point rouge du
+              // FIL concerné, qui dit qu'il attend sans dire combien ; la case
+              // Approvals du rail, qui compte les APPROBATIONS, toutes origines
+              // confondues ; et la phrase sous le titre du dossier sur la page
+              // Chat, qui redit le nombre en toutes lettres. Un LIVRABLE à
+              // vérifier (#255), lui, n'est compté nulle part en chiffres hors
+              // de « Nodal chats » : la case Approvals ne le compte pas. Il se
+              // voit sur le point de son fil et dans la phrase de la page.
               waiting={f.key === DASHBOARD_FOLDER ? f.waiting : 0}
               running={f.running}
               active={f.active}

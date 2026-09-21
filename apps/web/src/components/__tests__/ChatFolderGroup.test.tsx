@@ -287,6 +287,14 @@ describe('le groupe de dossiers @cap:reprendre-conversation/ecran', () => {
     expect(folderRow('telegram').querySelector('span[class*="bg-err"]')).toBeNull();
   });
 
+  it('n’écrit rien non plus quand il en attend BEAUCOUP dans un canal', async () => {
+    // Le cas précédent monte trois attentes ; celui-ci en monte douze, au-delà
+    // du plafond « 9+ ». Sans lui, une règle qui ne cacherait le nombre que
+    // sous un certain seuil resterait verte (Reviewer C).
+    await renderGroup({ channels: ['telegram'], approvals: pending('telegram', 12) });
+    expect(folderRow('telegram').textContent).toBe('Telegram');
+  });
+
   it('n’en écrit pas davantage sur MCP, qui est un endroit d’où arrive du travail', async () => {
     await renderGroup({
       channels: ['telegram'],
