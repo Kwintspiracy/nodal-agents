@@ -2659,23 +2659,36 @@ function sourceMuette(raison) {
   return { etat: SOURCE_MUETTE, raison, lignes: [] };
 }
 
+/** Un numéro lu dans un titre, ou `null` — jamais un zéro, jamais une devinette. */
+function numeroLu(trouve) {
+  const n = Number(trouve?.[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 /**
- * Le numéro de ticket qu'un titre NOMME, ou `null`.
+ * Le ticket qu'un titre de run DÉSIGNE, sans ambiguïté, ou `null`.
  *
  * GitHub ne donne pas le ticket d'un run : il donne un titre. Sur ce dépôt, un
- * run de `push` sur `main` porte le titre du squash, qui finit par `(#336)` ; un
- * run de PR porte le titre de la PR, qui ne nomme souvent rien. Les deux cas
- * sont lus, et le second rend `null` — la carte dira alors qu'elle ne connaît
- * pas son ticket, plutôt que d'en désigner un au hasard.
- *
- * La forme parenthésée en fin de titre gagne : un titre comme « Fix #12 crash
- * seen in (#340) » appartient à la PR #340, et le `#12` n'est qu'une mention.
+ * run de `push` sur `main` porte le titre du squash, qui finit par `(#336)` :
+ * cette forme-là ne peut désigner qu'une chose, et c'est la seule que cette
+ * fonction accepte. Un run de PR porte le titre de la PR, qui ne nomme rien en
+ * fin, et rend donc `null` — sa branche le retrouvera.
  */
 export function numeroDeTicket(titre) {
-  const texte = String(titre ?? '');
-  const fin = texte.match(/\(#(\d+)\)\s*$/);
-  const n = Number((fin ?? texte.match(/#(\d+)/))?.[1]);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  return numeroLu(String(titre ?? '').match(/\(#(\d+)\)\s*$/));
+}
+
+/**
+ * Le ticket qu'un titre MENTIONNE, en passant, ou `null`.
+ *
+ * ⚠️ SIGNAL FAIBLE, et il est tenu séparé pour cette raison (revue C de cette
+ * PR, constat P0.4). « Fix #68 crash » sur la branche d'une PR ouverte parle du
+ * travail #68, mais le run, lui, appartient à cette PR. Confondre les deux
+ * rattachait le run à l'issue et non à la PR qui le fait tourner. La mention ne
+ * sert donc qu'en DERNIER, quand ni la forme de fin ni la branche n'ont parlé.
+ */
+export function mentionDeTicket(titre) {
+  return numeroLu(String(titre ?? '').match(/#(\d+)/));
 }
 
 /**
@@ -2702,6 +2715,9 @@ export function runsEnCours(runs) {
         // Le ticket auquel ce run appartient, quand son titre le nomme. Une
         // carte « Running » doit mener au travail, pas seulement au run (#340).
         ticket: numeroDeTicket(r.displayTitle),
+        // Et, à part, ce que le titre mentionne seulement : un signal faible,
+        // qui ne sert qu'à défaut de mieux.
+        mention: mentionDeTicket(r.displayTitle),
         // La branche telle quelle, en plus de sa forme lisible : c'est par elle
         // qu'un run de `pull_request` retrouve sa PR, dont le titre ne nomme
         // aucun numéro.
@@ -2755,6 +2771,7 @@ export function revuesEnCours(jobs) {
         quoi: j.pr ? `Review pass on #${j.pr}` : 'Review pass',
         ou: j.agent ? `Nodal, ${j.agent}` : 'Nodal',
         ticket: Number.isFinite(Number(j.pr)) ? Number(j.pr) : null,
+        mention: null,
         depuis: j.depuis ?? null,
         attend: j.statut === 'awaiting_approval' ? 'your approval' : null,
         url: null,
@@ -2786,6 +2803,7 @@ export function releaseCheckEnCours(etat) {
       // Une commande locale n'appartient à aucun ticket, et lui en inventer un
       // serait pire que de n'en montrer aucun.
       ticket: null,
+      mention: null,
       depuis: etat.depuis,
       attend: null,
       url: null,
@@ -2853,13 +2871,17 @@ const GENRES_EN_VOL = { ci: 'CI', review: 'Review', release: 'Release' };
  * introuvable sur le tableau : la carte n'en montre aucun, et garde son lien
  * vers le run quand il en a un.
  *
- * DEUX CHEMINS POUR LE TROUVER, et l'ordre compte. Le numéro que le titre nomme
- * d'abord : sur ce dépôt un run de `push` porte le titre du squash, qui finit par
- * `(#336)`. La branche ensuite, et elle seule couvre le cas le plus fréquent —
- * un run de `pull_request` porte le titre de la PR, qui ne nomme aucun numéro,
- * pendant que sa branche la désigne. Seules les PR OUVERTES sont indexées par
- * branche : une branche se réutilise, et pointer une PR mergée il y a trois
- * semaines serait un lien faux, pas un lien approximatif.
+ * TROIS CHEMINS POUR LE TROUVER, du plus sûr au moins sûr, et l'ordre compte.
+ * Le numéro que le titre DÉSIGNE d'abord : sur ce dépôt un run de `push` porte
+ * le titre du squash, qui finit par `(#336)`. La branche ensuite, et elle seule
+ * couvre le cas le plus fréquent — un run de `pull_request` porte le titre de la
+ * PR, qui ne nomme aucun numéro, pendant que sa branche la désigne. Ce que le
+ * titre MENTIONNE en passant vient en dernier : « Fix #68 crash » parle du
+ * travail #68, mais le run appartient à la PR qui le fait tourner.
+ *
+ * Seules les PR OUVERTES sont indexées par branche, et une branche que DEUX PR
+ * ouvertes se partagent est retirée de l'index : un lien juste une fois sur deux
+ * est un lien faux, pas un lien approximatif.
  *
  * `enVol` absent (`undefined` ou `null`) = l'instantané est plus vieux que cette
  * lecture. C'est `absente`, pas « rien en cours ».
@@ -2876,19 +2898,31 @@ export function cartesEnVol(enVol, cartesDuTableau = null) {
   // de la PR et ne nomme aucun numéro ; sa branche le fait. Seules les ouvertes
   // entrent : une branche est réutilisée, et rattacher un run à une PR mergée
   // il y a trois semaines serait un lien faux, pas un lien approximatif.
+  //
+  // ⚠️ UNE BRANCHE PARTAGÉE PAR DEUX PR OUVERTES NE DÉSIGNE PLUS RIEN, et elle
+  // est retirée de l'index (revue C de cette PR, constat P0.3). Le cas arrive :
+  // une PR vers `main` et une PR empilée vers une autre base, ou deux forks aux
+  // branches homonymes — `headRefName` ne dit pas le fork. Prendre la première
+  // rencontrée donnerait un lien juste une fois sur deux, sans le dire ; la
+  // carte préfère n'en montrer aucun (invariant #4).
   const parBranche = new Map();
+  const ambigues = new Set();
   for (const c of duTableau) {
     if (c.type !== 'pr' || c.etat !== 'OPEN' || !c.branche) continue;
-    if (!parBranche.has(c.branche)) parBranche.set(c.branche, c);
+    if (parBranche.has(c.branche)) ambigues.add(c.branche);
+    else parBranche.set(c.branche, c);
   }
+  for (const b of ambigues) parBranche.delete(b);
   const cartes = (enVol.lignes ?? []).map((l) => {
     const numero = Number.isFinite(Number(l.ticket)) ? Number(l.ticket) : null;
-    // Le numéro que le titre nomme d'abord, la branche ensuite : un titre qui
-    // finit par `(#336)` désigne son ticket sans ambiguïté, une branche seulement
-    // la PR qui vit dessus.
+    const mention = Number.isFinite(Number(l.mention)) ? Number(l.mention) : null;
+    // TROIS CHEMINS, du plus sûr au moins sûr. Le numéro qu'un titre DÉSIGNE
+    // (`(#336)` en fin de titre), la branche de la PR qui fait tourner le run,
+    // et seulement à défaut ce que le titre mentionne au passage.
     const trouvee =
       (numero === null ? undefined : parNumero.get(numero)) ??
-      (l.branche ? parBranche.get(l.branche) : undefined);
+      (l.branche ? parBranche.get(l.branche) : undefined) ??
+      (mention === null ? undefined : parNumero.get(mention));
     const ticket = trouvee ? Number(trouvee.numero) : null;
     return {
       genre: l.genre ?? 'other',

@@ -71,6 +71,7 @@ import {
   cequiTourne,
   cartesEnVol,
   numeroDeTicket,
+  mentionDeTicket,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -3676,6 +3677,10 @@ describe('ce qui tourne en ce moment (#296)', () => {
 //     du tableau ne se devine pas » rougit ;
 //   - le repli par branche retiré → « un run de PR retrouve son ticket par sa
 //     BRANCHE » rougit ;
+//   - la branche ambiguë gardée dans l'index → « une branche que DEUX PR
+//     ouvertes se partagent ne désigne plus rien » rougit ;
+//   - la mention remise devant la branche → « une MENTION dans un titre ne bat
+//     pas la branche du run » rougit ;
 //   - la forme parenthésée retirée de `numeroDeTicket` → « le ticket de fin de
 //     titre gagne » rougit ;
 //   - `etat: 'absente'` remplacé par un relevé vide → « un instantané d'avant
@@ -3687,17 +3692,24 @@ describe('les cartes de la colonne « Running » (#340)', () => {
     { numero: 326, type: 'pr', titre: 'A pull request', url: 'https://github.test/x/y/pull/326' },
   ];
 
-  it('le titre d’un run donne son ticket, et la forme de FIN gagne', () => {
-    // Le squash de ce dépôt finit par `(#N)` : c'est le ticket du run.
+  it('un titre DÉSIGNE un ticket, ou il en MENTIONNE un : ce n’est pas pareil', () => {
+    // Le squash de ce dépôt finit par `(#N)` : cette forme-là ne peut désigner
+    // qu'une chose, et c'est la seule que `numeroDeTicket` accepte.
     expect(numeroDeTicket('Homepage: the hero on the design width (#336)')).toBe(336);
-    // Un `#12` cité en passant n'est pas le ticket quand la fin en nomme un.
     expect(numeroDeTicket('Fix #12 crash seen in review (#340)')).toBe(340);
-    // Sans forme de fin, la première mention est tout ce qu'on a.
-    expect(numeroDeTicket('Fix #12 crash')).toBe(12);
+    // Un `#12` cité en passant ne DÉSIGNE rien : il se lit à part, en signal
+    // faible (constat P0.4 de la revue C).
+    expect(
+      numeroDeTicket('Fix #12 crash'),
+      'une mention a été prise pour une désignation',
+    ).toBeNull();
+    expect(mentionDeTicket('Fix #12 crash')).toBe(12);
+    expect(mentionDeTicket('(#340) opening title')).toBe(340);
     // Et un titre qui ne nomme rien ne rend RIEN : pas de zéro, pas de devinette.
     expect(numeroDeTicket('CI')).toBeNull();
-    expect(numeroDeTicket(null)).toBeNull();
-    expect(numeroDeTicket('release #0')).toBeNull();
+    expect(mentionDeTicket('CI')).toBeNull();
+    expect(mentionDeTicket(null)).toBeNull();
+    expect(mentionDeTicket('release #0')).toBeNull();
   });
 
   it('une carte par travail, et son ticket porte l’adresse du TABLEAU', () => {
@@ -3862,6 +3874,108 @@ describe('les cartes de la colonne « Running » (#340)', () => {
       // Et surtout PAS `complet` : « rien en cours » n'est pas prouvé.
       expect(v.complet).toBe(false);
     }
+  });
+
+  it('une branche que DEUX PR ouvertes se partagent ne désigne plus rien', () => {
+    // Constat P0.3 de la revue C : une PR vers `main` et une PR empilée vers une
+    // autre base vivent sur la même branche, et `headRefName` ne dit pas le
+    // fork. Prendre la première rencontrée donnait un lien juste une fois sur
+    // deux, sans le dire.
+    const partagee = [
+      { numero: 341, type: 'pr', etat: 'OPEN', branche: 'feat/x', url: 'https://t/pull/341' },
+      { numero: 342, type: 'pr', etat: 'OPEN', branche: 'feat/x', url: 'https://t/pull/342' },
+    ];
+    const run = {
+      status: 'in_progress',
+      displayTitle: 'Some title',
+      headBranch: 'feat/x',
+      createdAt: '2026-09-21T02:21:39Z',
+      url: 'https://t/run/1',
+    };
+    const releve = () =>
+      cequiTourne({
+        ci: runsEnCours([run]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: null,
+      });
+    const ambigu = cartesEnVol(releve(), partagee);
+    expect(ambigu.cartes[0].ticket, 'une branche ambiguë a quand même désigné une PR').toBeNull();
+    expect(ambigu.cartes[0].ticketUrl).toBeNull();
+    // Et la carte garde son lien vers le run : elle ne perd rien d'autre.
+    expect(ambigu.cartes[0].url).toBe('https://t/run/1');
+
+    // Une seule PR ouverte sur cette branche, et le lien revient.
+    const seule = cartesEnVol(releve(), [partagee[0]]);
+    expect(seule.cartes[0].ticket).toBe(341);
+  });
+
+  it('une MENTION dans un titre ne bat pas la branche du run', () => {
+    // Constat P0.4 de la revue C : « Fix #68 crash » parle du travail #68, mais
+    // le run appartient à la PR qui le fait tourner. La mention ne sert qu'en
+    // dernier recours.
+    const tableau = [
+      ...TABLEAU,
+      { numero: 341, type: 'pr', etat: 'OPEN', branche: 'feat/x', url: 'https://t/pull/341' },
+    ];
+    const surUnePr = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([
+          {
+            status: 'in_progress',
+            displayTitle: 'Fix #68 crash',
+            headBranch: 'feat/x',
+            createdAt: '2026-09-21T02:21:39Z',
+            url: 'https://t/run/1',
+          },
+        ]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: null,
+      }),
+      tableau,
+    );
+    expect(surUnePr.cartes[0].ticket, 'la mention a battu la branche').toBe(341);
+
+    // Sans branche connue, la mention est tout ce qu'on a, et elle sert.
+    const sansBranche = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([
+          {
+            status: 'in_progress',
+            displayTitle: 'Fix #68 crash',
+            headBranch: 'feat/inconnue',
+            createdAt: '2026-09-21T02:21:39Z',
+            url: 'https://t/run/1',
+          },
+        ]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: null,
+      }),
+      tableau,
+    );
+    expect(sansBranche.cartes[0].ticket).toBe(68);
+
+    // Et la forme de FIN bat tout : c'est la seule qui désigne sans ambiguïté.
+    const squash = cartesEnVol(
+      cequiTourne({
+        ci: runsEnCours([
+          {
+            status: 'in_progress',
+            displayTitle: 'Fix #341 crash (#68)',
+            headBranch: 'feat/x',
+            createdAt: '2026-09-21T02:21:39Z',
+            url: 'https://t/run/1',
+          },
+        ]),
+        revues: revuesEnCours([]),
+        release: releaseCheckEnCours(null),
+        le: null,
+      }),
+      tableau,
+    );
+    expect(squash.cartes[0].ticket).toBe(68);
   });
 
   it('sans tableau, les cartes existent quand même, sans lien de ticket', () => {
