@@ -2016,11 +2016,11 @@ async function runJobTracked(
   // re-applied by every reload and no reload can release it.
   let approvalRuleList: ApprovalRule[] = await loadApprovalRules(db, job, agentRow);
 
-  // ── 8c. Fully-autonomous workspace ────────────────────────────────────────────
+  // ── 8b. Fully-autonomous workspace ────────────────────────────────────────────
   // The owner's ROOT autonomy level governs how much hand-holding the workspace
   // wants. `fully_autonomous` = "no approval prompts, period" — so we relax the
   // safe-by-default require_approval posture inside executeTool. It is applied
-  // there AFTER explicit rules + the run_command LAN master-switch (8b) and BEFORE
+  // there AFTER explicit rules + the auto-run brake (job/approval-rules.ts) and BEFORE
   // the catastrophic-command hardline floor, so neither safety boundary is bypassed.
   const [autonomyRow] = await db
     .select({ rootGrants: entitiesTable.rootGrants })
@@ -2037,7 +2037,7 @@ async function runJobTracked(
   //
   // `purpose` est posé ICI, et pas dans chaque outil : la liste est complète
   // (builtins, meta-outils, outils de skill, MCP) et les règles d'approbation
-  // sont FINALES (8a/8b/8c viennent de les ajuster). C'est donc le seul endroit
+  // sont FINALES (8 et 8b viennent de les poser, frein compris). C'est donc le seul endroit
   // où « cet outil, pour cet agent, demande-t-il d'abord ? » se calcule — la
   // réponse décide si le champ est requis ou optionnel dans le schéma que le
   // modèle reçoit. Le gate, lui, refuse une demande sans phrase quoi qu'il
@@ -2393,11 +2393,6 @@ async function runJobTracked(
       const executed = await executeResolvedApprovals(resolvedRows, messages);
       messages = executed.messages;
 
-      // Issue #370: a decision can WRITE a rule ("Approve for this project" /
-      // "Change" on the approval card). Re-read before the job goes on, so the
-      // rule the person just wrote governs the rest of THIS run.
-      approvalRuleList = await loadApprovalRules(db, job, agentRow);
-
       // Fix #29: a catastrophic run_command was approved but the hardline floor
       // refuses it regardless — fail the job loud NOW, with the clear message,
       // instead of feeding the opaque marker into the LLM loop as if this were
@@ -2433,6 +2428,14 @@ async function runJobTracked(
         servedProvider,
         totalDurationMs: dureeCumuleeMs(),
       });
+
+      // Issue #370: a decision can WRITE a rule ("Approve for this project" /
+      // "Change" on the approval card). Re-read before the job goes on, so the
+      // rule the person just wrote governs the rest of THIS run. AFTER the
+      // checkpoint on purpose (Reviewer C): should this read throw, the replayed
+      // transcript is already persisted, and the executed_at stamps make the
+      // restart idempotent.
+      approvalRuleList = await loadApprovalRules(db, job, agentRow);
     }
 
     // If there are still PENDING (unresolved) requests, re-suspend and wait.
@@ -2670,7 +2673,7 @@ async function runJobTracked(
   // runnerEnv, so fall back to raw process.env like the other job-level limits
   // above (AUTH_MODE, MAX_TOTAL_TOKENS_PER_JOB, …) — reading the full `env`
   // proxy here would throw in those contexts (see the AUTH_MODE comment,
-  // section 8b). 0 disables the window: suspend immediately (prior behavior).
+  // section 8). 0 disables the window: suspend immediately (prior behavior).
   const approvalGraceMsRaw =
     runnerEnv?.NODALAI_APPROVAL_GRACE_MS ?? Number(process.env['NODALAI_APPROVAL_GRACE_MS']);
   const approvalGraceMs =
