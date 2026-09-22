@@ -31,7 +31,10 @@ export default function Handoff({ text }: { text: string }) {
         open={open}
         onClick={() => setOpen((o) => !o)}
         inset="none"
-        insetY="none"
+        // Le `py-0` que cette ligne passait par className n'a JAMAIS été rendu
+        // (le `py-3` de base gagnait, #399) : la rangée a été validée à 12 px.
+        // Elle les garde ; le retrait est dit ici, pas glissé dans une classe.
+        insetY="default"
         className="h-auto"
       >
         <span className="shrink-0 text-mono-11 text-ink-4">Handed to the work</span>

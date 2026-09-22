@@ -132,17 +132,19 @@ export function classNamesSurLaBalise(source: string): string[] {
         if (c === quote) quote = null;
         continue;
       }
-      // Un commentaire dans une accolade (`{/* … */}`, ou `// …` en fin de
-      // ligne d'une expression) n'est pas du code : une apostrophe qu'il porte
-      // (« l'appelant ») n'ouvre pas de chaîne. Sans ceci, un commentaire à
-      // nombre impair d'apostrophes faisait lire la garde au-delà de la balise
-      // (#399).
-      if (depth > 0 && c === '/' && source[j + 1] === '*') {
+      // Un commentaire n'est pas du code : une apostrophe qu'il porte
+      // (« l'appelant ») n'ouvre pas de chaîne. Il vit dans une accolade
+      // (`{/* … */}`, `// …` en fin de ligne d'une expression) ou NU entre
+      // deux attributs, ce que TSX accepte (FileChangeBlock en a un, avec
+      // « d'état »). Sans ceci, un commentaire à nombre impair d'apostrophes
+      // faisait lire la garde au-delà de la balise (#399). Une chaîne passe
+      // avant : un `//` dans une URL entre guillemets n'est pas un commentaire.
+      if (c === '/' && source[j + 1] === '*') {
         const fin = source.indexOf('*/', j + 2);
         j = fin === -1 ? source.length : fin + 1;
         continue;
       }
-      if (depth > 0 && c === '/' && source[j + 1] === '/') {
+      if (c === '/' && source[j + 1] === '/') {
         const fin = source.indexOf('\n', j);
         j = fin === -1 ? source.length : fin;
         continue;
@@ -162,6 +164,11 @@ export function classNamesSurLaBalise(source: string): string[] {
     i = source.indexOf(NOM_BALISE, j);
   }
   return trouves;
+}
+
+/** Ce que la garde refuse dans un className : un retrait, horizontal ou vertical. */
+export function retraitInterdit(valeur: string): boolean {
+  return /(^|\s)p[xy]-[\w.[\]/-]+/.test(valeur);
 }
 
 function fichiersTsx(dir: string, out: string[] = []): string[] {
@@ -184,7 +191,7 @@ describe('DisclosureButton — la garde du retrait', () => {
           fautes.push(
             `${relative(SRC_DIR, fichier)} → className=${valeur} (une expression : la garde ne peut pas y lire le retrait ; écris la classe en toutes lettres)`,
           );
-        } else if (/(^|\s)p[xy]-[\w.[\]/-]+/.test(valeur)) {
+        } else if (retraitInterdit(valeur)) {
           fautes.push(`${relative(SRC_DIR, fichier)} → className="${valeur}"`);
         }
       }
@@ -214,6 +221,21 @@ describe('DisclosureButton — la garde du retrait', () => {
         <span className="px-4">Détails</span>
       </DisclosureButton>`;
     expect(classNamesSurLaBalise(commente)).toEqual(['h-8']);
+    // Un commentaire NU entre deux attributs, avec une apostrophe : la forme
+    // exacte de FileChangeBlock.tsx.
+    const nu = `${NOM_BALISE}
+        open={o}
+        // Le signal se donne HORS de la mise à jour d'état : React rejoue
+        onClick={() => setO((v) => !v)}
+        inset="tight"
+        className="h-8"
+      >
+        <span className="px-4">Détails</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(nu)).toEqual(['h-8']);
+    // Un `//` dans une chaîne n'est pas un commentaire.
+    const url = `${NOM_BALISE} open={o} onClick={() => go('https://x.y/z')} className="h-8">`;
+    expect(classNamesSurLaBalise(url)).toEqual(['h-8']);
     const ligne = `${NOM_BALISE} open={o} onClick={() => {
           // l'appelant referme
           setO(false);
@@ -221,6 +243,15 @@ describe('DisclosureButton — la garde du retrait', () => {
         <span className="px-4">Détails</span>
       </DisclosureButton>`;
     expect(classNamesSurLaBalise(ligne)).toEqual(['h-8']);
+
+    // Le prédicat de la garde lui-même : un py-* est une faute au même titre
+    // qu'un px-* — sans quoi remettre la garde à l'horizontal seul passerait,
+    // tous les appelants ayant migré.
+    expect(retraitInterdit('h-8 py-2')).toBe(true);
+    expect(retraitInterdit('py-0')).toBe(true);
+    expect(retraitInterdit('h-8 px-3')).toBe(true);
+    expect(retraitInterdit('h-8 gap-2 text-ink-4')).toBe(false);
+    expect(retraitInterdit('supply-2')).toBe(false);
 
     // Une expression n'est pas lisible : elle ressort telle quelle, accolade
     // comprise, pour que la garde la refuse — un gabarit qui glisserait un
