@@ -46,6 +46,19 @@ describe('le premier manifeste d’un dépôt neuf est du code @cap:verifier-un-
     expect(neuf(`${ROOT}/mon-app/my-package.json`)).toBe('document');
   });
 
+  it('un manifeste plus profond que la racine résolue suit la racine (#435)', () => {
+    // `notes/site/index.html` : ni `notes` ni l'espace ne portent de marqueur.
+    // `resolveProjectRoots` résout la racine à `notes` — règle du sous-dossier
+    // de premier niveau — et c'est elle qui décide en aval : l'intention
+    // assigne la vérification à `notes`, et l'enregistrement la refuse faute
+    // de marqueur. Classer `code_project` ici ferait perdre au fichier sa clé
+    // de livrable document. Le manifeste ne compte que s'il EST à la racine.
+    expect(neuf(`${ROOT}/notes/site/index.html`)).toBe('document');
+    // Aux deux endroits où le manifeste EST la racine résolue, il compte.
+    expect(neuf(`${ROOT}/mon-app/package.json`)).toBe('code_project');
+    expect(neuf(`${ROOT}/package.json`)).toBe('code_project');
+  });
+
   it('la seconde écriture donne la même réponse que la première : le manifeste est sur le disque', () => {
     const avecManifeste = classifyWrittenFile({
       absPath: `${ROOT}/mon-app/src/index.ts`,
