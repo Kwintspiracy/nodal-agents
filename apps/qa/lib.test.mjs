@@ -3269,18 +3269,29 @@ describe('le repli compte à part ce qu’on ne sait pas dater (revue C de #188)
 // qu'il garde a été cassée, et il a rougi.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// La liste réelle est VIDE depuis le 22/09 (`docs` se mesure, voir lib.mjs) :
+// la mécanique s'éprouve donc sur une liste de fixture, passée en second
+// argument, et non sur un paquet du dépôt qu'il faudrait exclure pour de faux.
+const EXCLUS = Object.freeze({
+  '@nodal-agents/fictif': 'a fixture package, left out to exercise the mechanism',
+});
+
 describe('etatDeMesure — une exclusion assumée n’est pas un trou de mesure (#58)', () => {
-  const docs = { nom: '@nodal-agents/docs', couverture: null };
+  const fictif = { nom: '@nodal-agents/fictif', couverture: null };
   const trou = { nom: '@nodal-agents/inconnu', couverture: null };
 
   it('un paquet volontairement hors mesure porte son état ET sa raison', () => {
-    expect(etatDeMesure(docs)).toEqual({
+    expect(etatDeMesure(fictif, EXCLUS)).toEqual({
       etat: 'exclue',
-      raison: HORS_MESURE['@nodal-agents/docs'],
+      raison: EXCLUS['@nodal-agents/fictif'],
     });
     // Pas une phrase vide : c'est la raison qui fait la différence entre
     // « on a choisi » et « on ne sait pas ».
-    expect(etatDeMesure(docs).raison.length).toBeGreaterThan(20);
+    expect(etatDeMesure(fictif, EXCLUS).raison.length).toBeGreaterThan(20);
+  });
+
+  it('sans liste passée, c’est la liste réelle qui parle', () => {
+    expect(etatDeMesure(fictif)).toEqual({ etat: 'absente', raison: null });
   });
 
   it('un paquet sans couverture et hors de la liste reste un trou, sans raison inventée', () => {
@@ -3303,34 +3314,34 @@ describe('etatDeMesure — une exclusion assumée n’est pas un trou de mesure 
   it('un paquet MESURÉ reste mesuré, même s’il figurait dans la liste', () => {
     // Un fait mesuré l'emporte sur une intention. Effacer un chiffre au nom
     // d'une liste, ce serait l'inverse de ce portail.
-    const mesure = { nom: '@nodal-agents/docs', couverture: { lignes: 42 } };
-    expect(etatDeMesure(mesure)).toEqual({ etat: 'mesuree', raison: null });
+    const mesure = { nom: '@nodal-agents/fictif', couverture: { lignes: 42 } };
+    expect(etatDeMesure(mesure, EXCLUS)).toEqual({ etat: 'mesuree', raison: null });
   });
 });
 
 describe('repartitionDeLaMesure — les trous sont COMPTÉS à part, et NOMMÉS (#58)', () => {
   const paquets = [
     { nom: '@nodal-agents/db', couverture: { lignes: 63.2 } },
-    { nom: '@nodal-agents/docs', couverture: null },
+    { nom: '@nodal-agents/fictif', couverture: null },
     { nom: '@nodal-agents/auth', couverture: null, mesureEchouee: { code: 1 } },
     { nom: '@nodal-agents/orphelin', couverture: null },
   ];
 
   it('un paquet exclu volontairement ne compte pas dans les jamais mesurés', () => {
-    const r = repartitionDeLaMesure(paquets);
-    expect(r.exclues.map((p) => p.nom)).toEqual(['@nodal-agents/docs']);
-    // LE point de l'issue : `docs` n'est NI dans les absents, NI dans les échecs.
+    const r = repartitionDeLaMesure(paquets, EXCLUS);
+    expect(r.exclues.map((p) => p.nom)).toEqual(['@nodal-agents/fictif']);
+    // LE point de l'issue : l'exclu n'est NI dans les absents, NI dans les échecs.
     expect(r.absentes.map((p) => p.nom)).toEqual(['@nodal-agents/orphelin']);
     expect(r.echouees.map((p) => p.nom)).toEqual(['@nodal-agents/auth']);
     expect(r.mesurees.map((p) => p.nom)).toEqual(['@nodal-agents/db']);
   });
 
   it('chaque bac nomme ses paquets — un compteur seul n’a jamais fait aller voir', () => {
-    const r = repartitionDeLaMesure(paquets);
+    const r = repartitionDeLaMesure(paquets, EXCLUS);
     for (const bac of ['mesurees', 'exclues', 'echouees', 'absentes']) {
       for (const p of r[bac]) expect(typeof p.nom).toBe('string');
     }
-    expect(r.exclues[0].raison).toBe(HORS_MESURE['@nodal-agents/docs']);
+    expect(r.exclues[0].raison).toBe(EXCLUS['@nodal-agents/fictif']);
   });
 
   it('une liste vide rend quatre bacs vides, jamais `undefined`', () => {
@@ -3349,6 +3360,19 @@ describe('la liste des exclusions vit à UN seul endroit (#58)', () => {
     // « exclu ». Ce test interdit ce raccourci : c'est le paquet qui porte
     // l'authentification, le moins souhaitable des paquets non mesurés.
     expect(Object.keys(HORS_MESURE)).not.toContain('@nodal-agents/auth');
+  });
+
+  it('le site de documentation n’y est plus : il a des tests, et sa couverture se mesure', () => {
+    // Il y figurait avec « no application code to instrument » — faux : ses
+    // générateurs et son `lib/` portent 64 cas, et `vitest --coverage` y écrit
+    // un `coverage-summary.json`. Le portail le comptait « jamais mesuré » sur
+    // la page des écarts et « left out on purpose » sur la carte : deux
+    // phrases sur un même fait.
+    expect(Object.keys(HORS_MESURE)).not.toContain('@nodal-agents/docs');
+    const tests = readdirSync(join(RACINE, 'apps', 'docs', 'src', 'tests')).filter((f) =>
+      /\.test\.tsx?$/.test(f),
+    );
+    expect(tests.length).toBeGreaterThan(0);
   });
 
   it('`collect.mjs --hors-mesure` rend EXACTEMENT la liste de `lib.mjs`', () => {
