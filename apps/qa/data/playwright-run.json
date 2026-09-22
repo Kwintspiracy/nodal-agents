@@ -12,24 +12,24 @@
     "maxFailures": 0,
     "metadata": {
       "ci": {
-        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/53653e5ab476559527f35d3cd192f8ce8324a62e",
-        "commitHash": "53653e5ab476559527f35d3cd192f8ce8324a62e",
-        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35705305635"
+        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/13a9e1189dcc86677267388f314a3be0dcb75145",
+        "commitHash": "13a9e1189dcc86677267388f314a3be0dcb75145",
+        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35719856969"
       },
       "gitCommit": {
-        "shortHash": "53653e5a",
-        "hash": "53653e5ab476559527f35d3cd192f8ce8324a62e",
-        "subject": "The release is 0.9.1, one section for the whole day (#406)",
-        "body": "The release is 0.9.1, one section for the whole day (#406)\n\nThe 0.9.1 release PR (#333) was merged this morning but never published:\nnpm still serves 0.9.0. The thirty-eight pull requests merged since then\nbelong to the same release, not to a 0.9.2. The version goes back to\n0.9.1 in the CLI package and the docs home, and the CHANGELOG has one\nv0.9.1 section carrying both waves.\n\n\nClaude-Session: https://claude.ai/code/session_01CsPyJRmhPug1NLNhsqPY5W\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+        "shortHash": "13a9e118",
+        "hash": "13a9e1189dcc86677267388f314a3be0dcb75145",
+        "subject": "The docs site is measured: it has 64 tests and coverage runs there (#408)",
+        "body": "The docs site is measured: it has 64 tests and coverage runs there (#408)\n\nThe portal's Gaps page said \"1 package carries tests whose coverage has\nnever been measured: @nodal-agents/docs\", while its coverage card said\n\"1 left out on purpose (@nodal-agents/docs)\". Two sentences about one\nfact, and the exclusion's reason was false: \"there is no application\ncode to instrument\". apps/docs has five test files (64 cases) over its\ngenerators and lib/, and `vitest run --coverage` writes a\ncoverage-summary.json there with nothing to install.\n\nHORS_MESURE is now empty. The mechanism stays (etatDeMesure,\nrepartitionDeLaMesure, `collect.mjs --hors-mesure`, the nightly loop),\nand its tests exercise it on a fixture list passed as a second argument\ninstead of on a real package excluded for the sake of the test. A new\ntest pins the fact: docs is not in the list and has tests. Mutation\nchecked: putting docs back in HORS_MESURE makes it fail.\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
         "author": {
           "name": "Quentin Beau de Loménie",
           "email": "quentinbeau@gmail.com",
-          "time": 1790001995000
+          "time": 1790075344000
         },
         "committer": {
           "name": "GitHub",
           "email": "noreply@github.com",
-          "time": 1790001995000
+          "time": 1790075344000
         },
         "branch": "main"
       },
@@ -43,24 +43,24 @@
         "retries": 2,
         "metadata": {
           "ci": {
-            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/53653e5ab476559527f35d3cd192f8ce8324a62e",
-            "commitHash": "53653e5ab476559527f35d3cd192f8ce8324a62e",
-            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35705305635"
+            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/13a9e1189dcc86677267388f314a3be0dcb75145",
+            "commitHash": "13a9e1189dcc86677267388f314a3be0dcb75145",
+            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35719856969"
           },
           "gitCommit": {
-            "shortHash": "53653e5a",
-            "hash": "53653e5ab476559527f35d3cd192f8ce8324a62e",
-            "subject": "The release is 0.9.1, one section for the whole day (#406)",
-            "body": "The release is 0.9.1, one section for the whole day (#406)\n\nThe 0.9.1 release PR (#333) was merged this morning but never published:\nnpm still serves 0.9.0. The thirty-eight pull requests merged since then\nbelong to the same release, not to a 0.9.2. The version goes back to\n0.9.1 in the CLI package and the docs home, and the CHANGELOG has one\nv0.9.1 section carrying both waves.\n\n\nClaude-Session: https://claude.ai/code/session_01CsPyJRmhPug1NLNhsqPY5W\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+            "shortHash": "13a9e118",
+            "hash": "13a9e1189dcc86677267388f314a3be0dcb75145",
+            "subject": "The docs site is measured: it has 64 tests and coverage runs there (#408)",
+            "body": "The docs site is measured: it has 64 tests and coverage runs there (#408)\n\nThe portal's Gaps page said \"1 package carries tests whose coverage has\nnever been measured: @nodal-agents/docs\", while its coverage card said\n\"1 left out on purpose (@nodal-agents/docs)\". Two sentences about one\nfact, and the exclusion's reason was false: \"there is no application\ncode to instrument\". apps/docs has five test files (64 cases) over its\ngenerators and lib/, and `vitest run --coverage` writes a\ncoverage-summary.json there with nothing to install.\n\nHORS_MESURE is now empty. The mechanism stays (etatDeMesure,\nrepartitionDeLaMesure, `collect.mjs --hors-mesure`, the nightly loop),\nand its tests exercise it on a fixture list passed as a second argument\ninstead of on a real package excluded for the sake of the test. A new\ntest pins the fact: docs is not in the list and has tests. Mutation\nchecked: putting docs back in HORS_MESURE makes it fail.\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
             "author": {
               "name": "Quentin Beau de Loménie",
               "email": "quentinbeau@gmail.com",
-              "time": 1790001995000
+              "time": 1790075344000
             },
             "committer": {
               "name": "GitHub",
               "email": "noreply@github.com",
-              "time": 1790001995000
+              "time": 1790075344000
             },
             "branch": "main"
           },
@@ -119,12 +119,12 @@
                   "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4128,
+                  "duration": 4266,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T08:54:15.942Z",
+                  "startTime": "2026-09-22T11:30:05.008Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -155,12 +155,12 @@
                   "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 9494,
+                  "duration": 9403,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T08:54:20.641Z",
+                  "startTime": "2026-09-22T11:30:10.340Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -206,12 +206,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2096,
+                      "duration": 2418,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:54:30.449Z",
+                      "startTime": "2026-09-22T11:30:19.873Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -242,12 +242,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1384,
+                      "duration": 1696,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:54:32.643Z",
+                      "startTime": "2026-09-22T11:30:22.364Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -295,12 +295,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 12194,
+                      "duration": 10890,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:54:34.056Z",
+                      "startTime": "2026-09-22T11:30:24.085Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -331,12 +331,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2812,
+                      "duration": 3039,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:54:46.476Z",
+                      "startTime": "2026-09-22T11:30:35.138Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -367,12 +367,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2550,
+                      "duration": 2660,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:54:49.304Z",
+                      "startTime": "2026-09-22T11:30:38.192Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -403,12 +403,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3982,
+                      "duration": 4195,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:54:51.868Z",
+                      "startTime": "2026-09-22T11:30:40.865Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -466,12 +466,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 1018,
+                      "duration": 992,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:54:55.910Z",
+                      "startTime": "2026-09-22T11:30:45.124Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -527,12 +527,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 10374,
+                      "duration": 9219,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:54:56.953Z",
+                      "startTime": "2026-09-22T11:30:46.142Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -578,12 +578,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4517,
+                      "duration": 4245,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:07.598Z",
+                      "startTime": "2026-09-22T11:30:55.678Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -629,12 +629,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3493,
+                      "duration": 3305,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:12.170Z",
+                      "startTime": "2026-09-22T11:30:59.976Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -671,12 +671,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4286,
+                      "duration": 4142,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:15.702Z",
+                      "startTime": "2026-09-22T11:31:03.313Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -713,12 +713,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4739,
+                      "duration": 4685,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:20.000Z",
+                      "startTime": "2026-09-22T11:31:07.466Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -766,12 +766,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1455,
+                      "duration": 1430,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:24.757Z",
+                      "startTime": "2026-09-22T11:31:12.172Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -802,12 +802,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2174,
+                      "duration": 2038,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:26.251Z",
+                      "startTime": "2026-09-22T11:31:13.632Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -843,7 +843,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:28.438Z",
+                      "startTime": "2026-09-22T11:31:15.681Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -884,12 +884,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 2218,
+                      "duration": 2015,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:30.766Z",
+                      "startTime": "2026-09-22T11:31:18.006Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -945,12 +945,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2603,
+                      "duration": 2941,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:33.030Z",
+                      "startTime": "2026-09-22T11:31:20.047Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -989,12 +989,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3074,
+                      "duration": 2402,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:35.679Z",
+                      "startTime": "2026-09-22T11:31:23.023Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1041,12 +1041,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 299,
+                      "duration": 256,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:38.767Z",
+                      "startTime": "2026-09-22T11:31:25.435Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -1093,12 +1093,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 15246,
+                      "duration": 17891,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:39.079Z",
+                      "startTime": "2026-09-22T11:31:25.705Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1135,12 +1135,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3265,
+                      "duration": 2616,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:54.340Z",
+                      "startTime": "2026-09-22T11:31:43.608Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1188,10 +1188,10 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 7328,
+                      "duration": 8127,
                       "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/80370f31-dcbf-41db-8319-4be8daef7eab$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/80370f31-dcbf-41db-8319-4be8daef7eab$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19",
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/0b4c4267-22a7-41dc-8da4-ff93cc37c4d3$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/0b4c4267-22a7-41dc-8da4-ff93cc37c4d3$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19",
                         "location": {
                           "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts",
                           "column": 22,
@@ -1206,13 +1206,13 @@
                             "column": 22,
                             "line": 242
                           },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/80370f31-dcbf-41db-8319-4be8daef7eab$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n\n  240 |     .first()\n  241 |     .click();\n> 242 |   await expect(page).toHaveURL(new RegExp(`/spaces/${projectId}$`));\n      |                      ^\n  243 |   await expect(page.getByTestId('project-files-panel')).toBeVisible();\n  244 |   const panel = page.getByTestId('project-verification');\n  245 |   await expect(panel).toBeVisible();\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19"
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nExpected pattern: \u001b[32m/\\/spaces\\/0b4c4267-22a7-41dc-8da4-ff93cc37c4d3$/\u001b[39m\nReceived string:  \u001b[31m\"http://localhost:3000/spaces\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveURL\" with timeout 5000ms\u001b[22m\n\u001b[2m    14 × unexpected value \"http://localhost:3000/spaces\"\u001b[22m\n\n\n  240 |     .first()\n  241 |     .click();\n> 242 |   await expect(page).toHaveURL(new RegExp(`/spaces/${projectId}$`));\n      |                      ^\n  243 |   await expect(page.getByTestId('project-files-panel')).toBeVisible();\n  244 |   const panel = page.getByTestId('project-verification');\n  245 |   await expect(panel).toBeVisible();\n    at openProjectPanel (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:242:22)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:258:19"
                         }
                       ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:55:57.635Z",
+                      "startTime": "2026-09-22T11:31:46.254Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1241,12 +1241,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4657,
+                      "duration": 5988,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-22T08:56:07.471Z",
+                      "startTime": "2026-09-22T11:31:56.652Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1283,12 +1283,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3345,
+                      "duration": 3412,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:56:13.305Z",
+                      "startTime": "2026-09-22T11:32:04.613Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1319,12 +1319,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2192,
+                      "duration": 2561,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:56:16.669Z",
+                      "startTime": "2026-09-22T11:32:08.037Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1365,12 +1365,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 1808,
+                      "duration": 1612,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:56:18.878Z",
+                      "startTime": "2026-09-22T11:32:10.619Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -1411,12 +1411,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2616,
+                      "duration": 3124,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:56:20.701Z",
+                      "startTime": "2026-09-22T11:32:12.243Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1447,7 +1447,7 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 2339,
+                      "duration": 2197,
                       "error": {
                         "message": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
                         "stack": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
@@ -1471,7 +1471,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:56:23.333Z",
+                      "startTime": "2026-09-22T11:32:15.384Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1500,7 +1500,7 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 3364,
+                      "duration": 3089,
                       "error": {
                         "message": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
                         "stack": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
@@ -1524,7 +1524,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-22T08:56:27.308Z",
+                      "startTime": "2026-09-22T11:32:19.089Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1558,7 +1558,7 @@
                       "workerIndex": 3,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 2538,
+                      "duration": 2424,
                       "error": {
                         "message": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m",
                         "stack": "Error: div 451>398 | input 561>296\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 1\u001b[39m\n\u001b[31m+ Received  + 4\u001b[39m\n\n\u001b[32m- Array []\u001b[39m\n\u001b[31m+ Array [\u001b[39m\n\u001b[31m+   \"div 451>398\",\u001b[39m\n\u001b[31m+   \"input 561>296\",\u001b[39m\n\u001b[31m+ ]\u001b[39m\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:428:52",
@@ -1582,7 +1582,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-22T08:56:32.707Z",
+                      "startTime": "2026-09-22T11:32:24.105Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1634,7 +1634,7 @@
                       "workerIndex": 4,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 8637,
+                      "duration": 9540,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('heading', { name: 'Workspaces' })\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading', { name: 'Workspaces' })\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('heading', { name: 'Workspaces' })\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading', { name: 'Workspaces' })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:447:69",
@@ -1658,7 +1658,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:56:37.140Z",
+                      "startTime": "2026-09-22T11:32:28.284Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1687,7 +1687,7 @@
                       "workerIndex": 5,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 6772,
+                      "duration": 7228,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('heading', { name: 'Workspaces' })\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading', { name: 'Workspaces' })\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('heading', { name: 'Workspaces' })\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading', { name: 'Workspaces' })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:447:69",
@@ -1711,7 +1711,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-22T08:56:48.165Z",
+                      "startTime": "2026-09-22T11:32:39.587Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1745,7 +1745,7 @@
                       "workerIndex": 6,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 5845,
+                      "duration": 5811,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('heading', { name: 'Workspaces' })\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading', { name: 'Workspaces' })\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('heading', { name: 'Workspaces' })\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading', { name: 'Workspaces' })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/code-verification.spec.ts:447:69",
@@ -1769,7 +1769,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-22T08:56:57.467Z",
+                      "startTime": "2026-09-22T11:32:49.388Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1831,12 +1831,12 @@
                   "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 9039,
+                  "duration": 7077,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T08:57:05.005Z",
+                  "startTime": "2026-09-22T11:32:56.701Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -1865,12 +1865,12 @@
                   "workerIndex": 7,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 5375,
+                  "duration": 5298,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T08:57:14.233Z",
+                  "startTime": "2026-09-22T11:33:03.964Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -1904,7 +1904,7 @@
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T08:57:19.627Z",
+                  "startTime": "2026-09-22T11:33:09.273Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -1948,12 +1948,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 10056,
+                      "duration": 10250,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:57:21.567Z",
+                      "startTime": "2026-09-22T11:33:11.197Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2001,7 +2001,7 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1550,
+                      "duration": 1602,
                       "errors": [],
                       "stdout": [
                         {
@@ -2010,7 +2010,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:57:31.696Z",
+                      "startTime": "2026-09-22T11:33:21.517Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2041,7 +2041,7 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3128,
+                      "duration": 3112,
                       "errors": [],
                       "stdout": [
                         {
@@ -2053,7 +2053,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:57:33.291Z",
+                      "startTime": "2026-09-22T11:33:23.156Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2084,7 +2084,7 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1548,
+                      "duration": 1566,
                       "errors": [],
                       "stdout": [
                         {
@@ -2093,7 +2093,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:57:36.430Z",
+                      "startTime": "2026-09-22T11:33:26.279Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2124,12 +2124,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1604,
+                      "duration": 1542,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:57:37.991Z",
+                      "startTime": "2026-09-22T11:33:27.854Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2175,12 +2175,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 9266,
+                      "duration": 9568,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:57:39.621Z",
+                      "startTime": "2026-09-22T11:33:29.419Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2228,12 +2228,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8328,
+                      "duration": 7552,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:57:49.113Z",
+                      "startTime": "2026-09-22T11:33:39.230Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2264,12 +2264,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1844,
+                      "duration": 2023,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:57:57.531Z",
+                      "startTime": "2026-09-22T11:33:46.864Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2315,12 +2315,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1403,
+                      "duration": 1529,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:57:59.924Z",
+                      "startTime": "2026-09-22T11:33:48.988Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2349,12 +2349,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 221,
+                      "duration": 158,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:01.348Z",
+                      "startTime": "2026-09-22T11:33:50.533Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2383,12 +2383,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 225,
+                      "duration": 166,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:01.598Z",
+                      "startTime": "2026-09-22T11:33:50.704Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2436,12 +2436,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1958,
+                      "duration": 1979,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:01.882Z",
+                      "startTime": "2026-09-22T11:33:50.908Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2480,12 +2480,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1778,
+                      "duration": 1763,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:04.080Z",
+                      "startTime": "2026-09-22T11:33:53.044Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2531,12 +2531,12 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3569,
+                      "duration": 3460,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:05.878Z",
+                      "startTime": "2026-09-22T11:33:54.827Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2551,7 +2551,7 @@
             },
             {
               "title": "return_result is shown but locked, with the reason",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
@@ -2564,154 +2564,18 @@
                     {
                       "workerIndex": 7,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 8639,
-                      "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"autonomy-locked-return_result\"]')\nExpected pattern: \u001b[32m/always on/i\u001b[39m\nReceived string:  \u001b[31m\"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"autonomy-locked-return_result\"]')\u001b[22m\n\u001b[2m    14 × locator resolved to <p data-testid=\"autonomy-locked-return_result\" class=\"text-body-12 leading-[1.4]! text-ink-4 sm:text-right\">Always available. The agent needs this tool to fi…</p>\u001b[22m\n\u001b[2m       - unexpected value \"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[22m\n",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"autonomy-locked-return_result\"]')\nExpected pattern: \u001b[32m/always on/i\u001b[39m\nReceived string:  \u001b[31m\"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"autonomy-locked-return_result\"]')\u001b[22m\n\u001b[2m    14 × locator resolved to <p data-testid=\"autonomy-locked-return_result\" class=\"text-body-12 leading-[1.4]! text-ink-4 sm:text-right\">Always available. The agent needs this tool to fi…</p>\u001b[22m\n\u001b[2m       - unexpected value \"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts:88:26",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts",
-                          "column": 26,
-                          "line": 88
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 86 |\u001b[39m     \u001b[36mconst\u001b[39m locked \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m'[data-testid=\"autonomy-locked-return_result\"]'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 87 |\u001b[39m     \u001b[36mawait\u001b[39m expect(locked)\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 88 |\u001b[39m     \u001b[36mawait\u001b[39m expect(locked)\u001b[33m.\u001b[39mtoContainText(\u001b[35m/always on/i\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                          \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 89 |\u001b[39m\n \u001b[90m 90 |\u001b[39m     \u001b[90m// And genuinely uncontrollable: no Block button exists for it.\u001b[39m\n \u001b[90m 91 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mlocator(\u001b[32m'[data-testid=\"autonomy-btn-return_result-block\"]'\u001b[39m))\u001b[33m.\u001b[39mtoHaveCount(\u001b[35m0\u001b[39m)\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts",
-                            "column": 26,
-                            "line": 88
-                          },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"autonomy-locked-return_result\"]')\nExpected pattern: \u001b[32m/always on/i\u001b[39m\nReceived string:  \u001b[31m\"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"autonomy-locked-return_result\"]')\u001b[22m\n\u001b[2m    14 × locator resolved to <p data-testid=\"autonomy-locked-return_result\" class=\"text-body-12 leading-[1.4]! text-ink-4 sm:text-right\">Always available. The agent needs this tool to fi…</p>\u001b[22m\n\u001b[2m       - unexpected value \"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[22m\n\n\n  86 |     const locked = page.locator('[data-testid=\"autonomy-locked-return_result\"]');\n  87 |     await expect(locked).toBeVisible();\n> 88 |     await expect(locked).toContainText(/always on/i);\n     |                          ^\n  89 |\n  90 |     // And genuinely uncontrollable: no Block button exists for it.\n  91 |     await expect(page.locator('[data-testid=\"autonomy-btn-return_result-block\"]')).toHaveCount(0);\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts:88:26"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 3609,
+                      "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:09.483Z",
+                      "startTime": "2026-09-22T11:33:58.319Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/internal-tool-toggles-Buil-02a78--but-locked-with-the-reason-chromium/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/internal-tool-toggles-Buil-02a78--but-locked-with-the-reason-chromium/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts",
-                        "column": 26,
-                        "line": 88
-                      }
-                    },
-                    {
-                      "workerIndex": 8,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 9934,
-                      "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"autonomy-locked-return_result\"]')\nExpected pattern: \u001b[32m/always on/i\u001b[39m\nReceived string:  \u001b[31m\"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"autonomy-locked-return_result\"]')\u001b[22m\n\u001b[2m    14 × locator resolved to <p data-testid=\"autonomy-locked-return_result\" class=\"text-body-12 leading-[1.4]! text-ink-4 sm:text-right\">Always available. The agent needs this tool to fi…</p>\u001b[22m\n\u001b[2m       - unexpected value \"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[22m\n",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"autonomy-locked-return_result\"]')\nExpected pattern: \u001b[32m/always on/i\u001b[39m\nReceived string:  \u001b[31m\"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"autonomy-locked-return_result\"]')\u001b[22m\n\u001b[2m    14 × locator resolved to <p data-testid=\"autonomy-locked-return_result\" class=\"text-body-12 leading-[1.4]! text-ink-4 sm:text-right\">Always available. The agent needs this tool to fi…</p>\u001b[22m\n\u001b[2m       - unexpected value \"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts:88:26",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts",
-                          "column": 26,
-                          "line": 88
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 86 |\u001b[39m     \u001b[36mconst\u001b[39m locked \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m'[data-testid=\"autonomy-locked-return_result\"]'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 87 |\u001b[39m     \u001b[36mawait\u001b[39m expect(locked)\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 88 |\u001b[39m     \u001b[36mawait\u001b[39m expect(locked)\u001b[33m.\u001b[39mtoContainText(\u001b[35m/always on/i\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                          \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 89 |\u001b[39m\n \u001b[90m 90 |\u001b[39m     \u001b[90m// And genuinely uncontrollable: no Block button exists for it.\u001b[39m\n \u001b[90m 91 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mlocator(\u001b[32m'[data-testid=\"autonomy-btn-return_result-block\"]'\u001b[39m))\u001b[33m.\u001b[39mtoHaveCount(\u001b[35m0\u001b[39m)\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts",
-                            "column": 26,
-                            "line": 88
-                          },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"autonomy-locked-return_result\"]')\nExpected pattern: \u001b[32m/always on/i\u001b[39m\nReceived string:  \u001b[31m\"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"autonomy-locked-return_result\"]')\u001b[22m\n\u001b[2m    14 × locator resolved to <p data-testid=\"autonomy-locked-return_result\" class=\"text-body-12 leading-[1.4]! text-ink-4 sm:text-right\">Always available. The agent needs this tool to fi…</p>\u001b[22m\n\u001b[2m       - unexpected value \"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[22m\n\n\n  86 |     const locked = page.locator('[data-testid=\"autonomy-locked-return_result\"]');\n  87 |     await expect(locked).toBeVisible();\n> 88 |     await expect(locked).toContainText(/always on/i);\n     |                          ^\n  89 |\n  90 |     // And genuinely uncontrollable: no Block button exists for it.\n  91 |     await expect(page.locator('[data-testid=\"autonomy-btn-return_result-block\"]')).toHaveCount(0);\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts:88:26"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 1,
-                      "startTime": "2026-09-22T08:58:19.520Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/internal-tool-toggles-Buil-02a78--but-locked-with-the-reason-chromium-retry1/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/internal-tool-toggles-Buil-02a78--but-locked-with-the-reason-chromium-retry1/error-context.md"
-                        },
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/internal-tool-toggles-Buil-02a78--but-locked-with-the-reason-chromium-retry1/trace.zip"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts",
-                        "column": 26,
-                        "line": 88
-                      }
-                    },
-                    {
-                      "workerIndex": 9,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 8608,
-                      "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"autonomy-locked-return_result\"]')\nExpected pattern: \u001b[32m/always on/i\u001b[39m\nReceived string:  \u001b[31m\"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"autonomy-locked-return_result\"]')\u001b[22m\n\u001b[2m    14 × locator resolved to <p data-testid=\"autonomy-locked-return_result\" class=\"text-body-12 leading-[1.4]! text-ink-4 sm:text-right\">Always available. The agent needs this tool to fi…</p>\u001b[22m\n\u001b[2m       - unexpected value \"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[22m\n",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"autonomy-locked-return_result\"]')\nExpected pattern: \u001b[32m/always on/i\u001b[39m\nReceived string:  \u001b[31m\"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"autonomy-locked-return_result\"]')\u001b[22m\n\u001b[2m    14 × locator resolved to <p data-testid=\"autonomy-locked-return_result\" class=\"text-body-12 leading-[1.4]! text-ink-4 sm:text-right\">Always available. The agent needs this tool to fi…</p>\u001b[22m\n\u001b[2m       - unexpected value \"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts:88:26",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts",
-                          "column": 26,
-                          "line": 88
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 86 |\u001b[39m     \u001b[36mconst\u001b[39m locked \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m'[data-testid=\"autonomy-locked-return_result\"]'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 87 |\u001b[39m     \u001b[36mawait\u001b[39m expect(locked)\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 88 |\u001b[39m     \u001b[36mawait\u001b[39m expect(locked)\u001b[33m.\u001b[39mtoContainText(\u001b[35m/always on/i\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                          \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 89 |\u001b[39m\n \u001b[90m 90 |\u001b[39m     \u001b[90m// And genuinely uncontrollable: no Block button exists for it.\u001b[39m\n \u001b[90m 91 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mlocator(\u001b[32m'[data-testid=\"autonomy-btn-return_result-block\"]'\u001b[39m))\u001b[33m.\u001b[39mtoHaveCount(\u001b[35m0\u001b[39m)\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts",
-                            "column": 26,
-                            "line": 88
-                          },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"autonomy-locked-return_result\"]')\nExpected pattern: \u001b[32m/always on/i\u001b[39m\nReceived string:  \u001b[31m\"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[39m\nTimeout: 5000ms\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"autonomy-locked-return_result\"]')\u001b[22m\n\u001b[2m    14 × locator resolved to <p data-testid=\"autonomy-locked-return_result\" class=\"text-body-12 leading-[1.4]! text-ink-4 sm:text-right\">Always available. The agent needs this tool to fi…</p>\u001b[22m\n\u001b[2m       - unexpected value \"Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.\"\u001b[22m\n\n\n  86 |     const locked = page.locator('[data-testid=\"autonomy-locked-return_result\"]');\n  87 |     await expect(locked).toBeVisible();\n> 88 |     await expect(locked).toContainText(/always on/i);\n     |                          ^\n  89 |\n  90 |     // And genuinely uncontrollable: no Block button exists for it.\n  91 |     await expect(page.locator('[data-testid=\"autonomy-btn-return_result-block\"]')).toHaveCount(0);\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts:88:26"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 2,
-                      "startTime": "2026-09-22T08:58:31.242Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/internal-tool-toggles-Buil-02a78--but-locked-with-the-reason-chromium-retry2/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/internal-tool-toggles-Buil-02a78--but-locked-with-the-reason-chromium-retry2/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/internal-tool-toggles.spec.ts",
-                        "column": 26,
-                        "line": 88
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "9fb6d35a1ede1596b96d-b9b2b626cce13d35983e",
@@ -2732,15 +2596,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5517,
+                      "duration": 5965,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:41.388Z",
+                      "startTime": "2026-09-22T11:34:01.938Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2750,7 +2614,7 @@
               ],
               "id": "9fb6d35a1ede1596b96d-1ac539154fdaadc9b301",
               "file": "internal-tool-toggles.spec.ts",
-              "line": 94,
+              "line": 96,
               "column": 3
             },
             {
@@ -2766,15 +2630,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5725,
+                      "duration": 5390,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:47.071Z",
+                      "startTime": "2026-09-22T11:34:07.920Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2784,7 +2648,7 @@
               ],
               "id": "9fb6d35a1ede1596b96d-2ab553b2b80c9873a2ec",
               "file": "internal-tool-toggles.spec.ts",
-              "line": 116,
+              "line": 118,
               "column": 3
             }
           ]
@@ -2819,15 +2683,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3581,
+                      "duration": 3671,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:52.830Z",
+                      "startTime": "2026-09-22T11:34:13.336Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2855,15 +2719,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1031,
+                      "duration": 1003,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:56.603Z",
+                      "startTime": "2026-09-22T11:34:17.155Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2891,15 +2755,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 908,
+                      "duration": 558,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:57.649Z",
+                      "startTime": "2026-09-22T11:34:18.175Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2927,15 +2791,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1800,
+                      "duration": 1135,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:58:58.576Z",
+                      "startTime": "2026-09-22T11:34:18.743Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2978,15 +2842,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3219,
+                      "duration": 3323,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:00.401Z",
+                      "startTime": "2026-09-22T11:34:19.905Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3012,15 +2876,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1373,
+                      "duration": 1326,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:03.840Z",
+                      "startTime": "2026-09-22T11:34:23.388Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3065,15 +2929,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4370,
+                      "duration": 4372,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:05.262Z",
+                      "startTime": "2026-09-22T11:34:24.758Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3101,15 +2965,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1612,
+                      "duration": 1473,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:09.841Z",
+                      "startTime": "2026-09-22T11:34:29.308Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3162,15 +3026,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 3390,
+                      "duration": 3282,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:11.674Z",
+                      "startTime": "2026-09-22T11:34:30.964Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -3214,15 +3078,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4999,
+                      "duration": 5038,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:15.114Z",
+                      "startTime": "2026-09-22T11:34:34.294Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3256,15 +3120,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1890,
+                      "duration": 1877,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:20.125Z",
+                      "startTime": "2026-09-22T11:34:39.340Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3298,15 +3162,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2279,
+                      "duration": 2257,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:22.023Z",
+                      "startTime": "2026-09-22T11:34:41.225Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3349,15 +3213,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5612,
+                      "duration": 5304,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:24.321Z",
+                      "startTime": "2026-09-22T11:34:43.500Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3402,15 +3266,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4584,
+                      "duration": 4481,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:29.988Z",
+                      "startTime": "2026-09-22T11:34:48.849Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3455,15 +3319,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4545,
+                      "duration": 4409,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:35.048Z",
+                      "startTime": "2026-09-22T11:34:53.672Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3508,15 +3372,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1865,
+                      "duration": 1814,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:39.902Z",
+                      "startTime": "2026-09-22T11:34:58.343Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3544,15 +3408,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4909,
+                      "duration": 4477,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:41.820Z",
+                      "startTime": "2026-09-22T11:35:00.204Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3597,15 +3461,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2780,
+                      "duration": 3315,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:46.749Z",
+                      "startTime": "2026-09-22T11:35:04.709Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3633,15 +3497,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 842,
+                      "duration": 795,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:49.568Z",
+                      "startTime": "2026-09-22T11:35:08.054Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3669,15 +3533,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1457,
+                      "duration": 1346,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:50.421Z",
+                      "startTime": "2026-09-22T11:35:08.861Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3705,15 +3569,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2408,
+                      "duration": 2222,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:51.894Z",
+                      "startTime": "2026-09-22T11:35:10.217Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3756,15 +3620,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 742,
+                      "duration": 727,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:54.322Z",
+                      "startTime": "2026-09-22T11:35:12.458Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3790,15 +3654,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 957,
+                      "duration": 1217,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:55.108Z",
+                      "startTime": "2026-09-22T11:35:13.225Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3824,15 +3688,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1218,
+                      "duration": 1279,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:56.076Z",
+                      "startTime": "2026-09-22T11:35:14.457Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3877,15 +3741,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 707,
+                      "duration": 686,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:57.322Z",
+                      "startTime": "2026-09-22T11:35:15.761Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3913,15 +3777,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2668,
+                      "duration": 2913,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T08:59:58.720Z",
+                      "startTime": "2026-09-22T11:35:16.489Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3949,15 +3813,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 808,
+                      "duration": 730,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:01.399Z",
+                      "startTime": "2026-09-22T11:35:19.411Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3985,15 +3849,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 6294,
+                      "duration": 7001,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:02.226Z",
+                      "startTime": "2026-09-22T11:35:20.152Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4021,15 +3885,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 728,
+                      "duration": 693,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:08.532Z",
+                      "startTime": "2026-09-22T11:35:27.164Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4066,15 +3930,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3536,
+                      "duration": 2819,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:09.271Z",
+                      "startTime": "2026-09-22T11:35:27.864Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4110,15 +3974,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 9682,
+                      "duration": 9711,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:12.817Z",
+                      "startTime": "2026-09-22T11:35:30.693Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4146,15 +4010,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3223,
+                      "duration": 2909,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:22.509Z",
+                      "startTime": "2026-09-22T11:35:40.418Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4192,20 +4056,66 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 7,
                   "parallelIndex": 0,
-                  "status": "passed",
-                  "duration": 10871,
-                  "errors": [],
+                  "status": "timedOut",
+                  "duration": 40030,
+                  "error": {
+                    "message": "\u001b[31mTest timeout of 30000ms exceeded.\u001b[39m",
+                    "stack": "\u001b[31mTest timeout of 30000ms exceeded.\u001b[39m"
+                  },
+                  "errors": [
+                    {
+                      "message": "\u001b[31mTest timeout of 30000ms exceeded.\u001b[39m"
+                    },
+                    {
+                      "location": {
+                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/telegram-allowlist.spec.ts",
+                        "column": 14,
+                        "line": 156
+                      },
+                      "message": "TimeoutError: page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:3000/agents/929d3db6-b07d-40c2-a292-af8352506825/telegram\", waiting until \"load\"\u001b[22m\n\n\n  154 |   page,\n  155 | }) => {\n> 156 |   await page.goto(`/agents/${agentId}/telegram`);\n      |              ^\n  157 |\n  158 |   const section = page.locator('div', { hasText: 'Authorized chats' }).first();\n  159 |   await expect(page.getByText('Authorized chats')).toBeVisible();\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/telegram-allowlist.spec.ts:156:14"
+                    }
+                  ],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:00:25.763Z",
+                  "startTime": "2026-09-22T11:35:43.362Z",
                   "annotations": [],
-                  "attachments": []
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/telegram-allowlist-A-—-all-806da-ler-par-canal-externe-ecran-chromium/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/telegram-allowlist-A-—-all-806da-ler-par-canal-externe-ecran-chromium/error-context.md"
+                    }
+                  ]
+                },
+                {
+                  "workerIndex": 8,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3546,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 1,
+                  "startTime": "2026-09-22T11:36:25.163Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/telegram-allowlist-A-—-all-806da-ler-par-canal-externe-ecran-chromium-retry1/trace.zip"
+                    }
+                  ]
                 }
               ],
-              "status": "expected"
+              "status": "flaky"
             }
           ],
           "id": "1bc293ed4b1358eba0da-547ee6ac9b23cd0b2cc3",
@@ -4226,15 +4136,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 5856,
+                  "duration": 3686,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:00:36.767Z",
+                  "startTime": "2026-09-22T11:36:31.470Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4260,15 +4170,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 5349,
+                  "duration": 3887,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:00:42.654Z",
+                  "startTime": "2026-09-22T11:36:35.179Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4314,15 +4224,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 1337,
+                  "duration": 1223,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:00:48.088Z",
+                  "startTime": "2026-09-22T11:36:39.146Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -4368,15 +4278,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 944,
+                  "duration": 667,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:00:49.541Z",
+                  "startTime": "2026-09-22T11:36:40.455Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -4422,15 +4332,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 685,
+                  "duration": 636,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:00:50.506Z",
+                  "startTime": "2026-09-22T11:36:41.138Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -4478,15 +4388,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 721,
+                  "duration": 986,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:00:51.200Z",
+                  "startTime": "2026-09-22T11:36:41.787Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -4539,15 +4449,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 8,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2372,
+                      "duration": 2453,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:51.945Z",
+                      "startTime": "2026-09-22T11:36:42.800Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4575,15 +4485,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 8,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1819,
+                      "duration": 1716,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:54.549Z",
+                      "startTime": "2026-09-22T11:36:45.494Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4611,15 +4521,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 8,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3323,
+                      "duration": 3166,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:56.380Z",
+                      "startTime": "2026-09-22T11:36:47.219Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4664,15 +4574,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 8,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 6229,
+                      "duration": 5923,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:00:59.776Z",
+                      "startTime": "2026-09-22T11:36:50.456Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4700,15 +4610,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 8,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5756,
+                      "duration": 5338,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:01:06.217Z",
+                      "startTime": "2026-09-22T11:36:56.615Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4746,15 +4656,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4614,
+                  "duration": 4630,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:01:12.061Z",
+                  "startTime": "2026-09-22T11:37:02.041Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4780,15 +4690,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3759,
+                  "duration": 3648,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:01:16.712Z",
+                  "startTime": "2026-09-22T11:37:06.713Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4814,15 +4724,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3763,
+                  "duration": 3734,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:01:20.481Z",
+                  "startTime": "2026-09-22T11:37:10.376Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4848,15 +4758,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3476,
+                  "duration": 3430,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:01:24.255Z",
+                  "startTime": "2026-09-22T11:37:14.122Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4882,15 +4792,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 10,
+                  "workerIndex": 8,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 5819,
+                  "duration": 5404,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-22T09:01:27.743Z",
+                  "startTime": "2026-09-22T11:37:17.561Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -4943,15 +4853,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 8,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 7506,
+                      "duration": 8281,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:01:33.593Z",
+                      "startTime": "2026-09-22T11:37:22.995Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -5006,15 +4916,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 10,
+                      "workerIndex": 8,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5340,
+                      "duration": 4846,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-22T09:01:41.172Z",
+                      "startTime": "2026-09-22T11:37:31.326Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5034,11 +4944,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-09-22T08:54:02.546Z",
-    "duration": 464079.693,
+    "startTime": "2026-09-22T11:29:49.272Z",
+    "duration": 467143.256,
     "expected": 87,
     "skipped": 10,
-    "unexpected": 3,
-    "flaky": 1
+    "unexpected": 2,
+    "flaky": 2
   }
 }
