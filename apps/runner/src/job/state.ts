@@ -220,11 +220,65 @@ async function fillResultFromChildrenIfEmpty(db: AnyDrizzleDb, jobId: string): P
     .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
 }
 
+/** The text of a message, whatever its shape: a string, or the joined text parts. */
+function messageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const p of content) {
+    const part = p as { type?: unknown; text?: unknown } | null;
+    if (part && part.type === 'text' && typeof part.text === 'string') parts.push(part.text);
+  }
+  return parts.join('');
+}
+
+/**
+ * La tranche de la transcription qui appartient à CE tour : du message
+ * utilisateur qui porte la tâche du job jusqu'à la fin.
+ *
+ * Une transcription commence par l'historique rejoué du fil (thread-history.ts) :
+ * pour chaque tour passé, un message utilisateur, puis un message assistant
+ * SYNTHÉTIQUE qui porte la réponse d'alors et, en parts de texte, ses lignes de
+ * grand livre (`[Delegated to X (…) — actions: …]`). Ce sont des textes
+ * assistant, et rien ne les distingue d'un texte écrit par l'agent à ce tour.
+ *
+ * Issue #419 : un tour Telegram qui a répondu par `telegram_send_message` puis
+ * `return_result {status}` n'écrit aucun texte ; le « dernier texte assistant »
+ * balayé sur TOUTE la transcription était alors la dernière ligne de grand
+ * livre rejouée — la délégation du 15/09 devenait le résultat de chaque tour
+ * suivant, et l'historique du tour d'après la rejouait comme si l'agent
+ * l'avait envoyée sur Telegram.
+ *
+ * La frontière est la DERNIÈRE occurrence du message utilisateur égal à la
+ * tâche : l'historique la précède toujours, les relances système (`[système]`,
+ * les rappels de livrable) la suivent. Quand la tâche n'apparaît nulle part
+ * (une transcription qui n'a pas la forme d'un job), la tranche est la
+ * transcription entière : c'est l'ancien comportement, et il n'est pas caché —
+ * un job dont on ne retrouve pas la tâche est un cas que ce fichier ne sait
+ * pas mieux lire.
+ */
+export function findTaskBoundary(messages: readonly unknown[], task: string): number {
+  if (task.trim() === '') return -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { role?: unknown; content?: unknown } | null;
+    if (m && m.role === 'user' && messageText(m.content) === task) return i;
+  }
+  return -1;
+}
+
+export function currentTurnMessages<T>(messages: readonly T[], task: string): readonly T[] {
+  const i = findTaskBoundary(messages, task);
+  return i === -1 ? messages : messages.slice(i);
+}
+
 /**
  * Extract the agent's last substantive assistant text from a transcript.
  * Used as the final fallback to capture a leaf agent's answer when it produced
  * a written reply but never called a delivery tool (dashboard_publish / a send
  * tool) that would have populated `result`. Returns '' if there is no usable text.
+ *
+ * Reads the CURRENT turn only (`currentTurnMessages`, #419): a text part that
+ * the replayed history carries is not something this agent wrote.
  */
 function lastAssistantText(messages: unknown): string {
   if (!Array.isArray(messages)) return '';
@@ -263,12 +317,21 @@ async function fillResultFromFinalTextIfEmpty(
   messages: unknown,
 ): Promise<void> {
   const [row] = await db
-    .select({ result: agentJobs.result })
+    .select({ result: agentJobs.result, task: agentJobs.task })
     .from(agentJobs)
     .where(eq(agentJobs.id, jobId))
     .limit(1);
   if ((row?.result ?? '').trim().length > 0) return;
-  const text = lastAssistantText(messages);
+  if (Array.isArray(messages) && findTaskBoundary(messages, row?.task ?? '') === -1) {
+    // Dit, pas caché (revue Codex de #427) : sans frontière, le repli relit
+    // toute la transcription, historique rejoué compris.
+    console.warn(
+      `[job ${jobId}] task not found in the transcript — the result fallback reads the whole transcript, replayed history included`,
+    );
+  }
+  const text = lastAssistantText(
+    Array.isArray(messages) ? currentTurnMessages(messages, row?.task ?? '') : messages,
+  );
   if (!text) return;
   await db
     .update(agentJobs)
