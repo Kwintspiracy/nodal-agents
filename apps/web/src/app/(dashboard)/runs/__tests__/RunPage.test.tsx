@@ -115,6 +115,7 @@ function data(live: boolean): SpaceConversationView {
       scheduleName: 'every Monday 09:00',
       scheduleId: 'schedule-1',
       resultKind: null,
+      result: null,
     },
     feed: { items: [turn(1, STEP), turn(2, REPLY), delivered], totals },
     verdicts: [],
@@ -386,5 +387,44 @@ describe('RunPage — arrêter un run @cap:suivre-execution/ecran', () => {
     expect(html).not.toContain('data-testid="stop-run"');
     // Et aucune rangée vide à la place.
     expect(html).not.toContain('data-testid="action-row"');
+  });
+});
+
+// ─── #288 : la réponse sous l'en-tête est CE QUI A ÉTÉ LIVRÉ ─────────────────
+//
+// Un run Telegram qui publie sa réponse par une carte d'envoi puis rend son
+// résultat finit par une prose qui n'est qu'une annonce (« je poste le
+// digest »). Le fil montre depuis #153 la chose livrée, pas l'annonce ; la
+// page du run montrait l'annonce, parce que sa vue ne transportait pas
+// `agent_jobs.result` et que `liftReply` retombait sur la dernière prose.
+// Ce test rougit sans le transport : la page lisait STEP-like annonce là où
+// elle doit lire REPLY.
+describe('RunPage — la réponse est le résultat livré, pas l’annonce (#288) @cap:suivre-execution/ecran', () => {
+  const ANNONCE = 'Je poste le digest sur Telegram maintenant.';
+  const LIVRE = 'Digest de la semaine : quatorze issues ouvertes, trois fermées.';
+
+  const vue = (result: string | null): SpaceConversationView => {
+    const d = data(false);
+    return {
+      ...d,
+      job: { ...d.job, result, resultKind: 'prose' },
+      feed: { items: [turn(1, STEP), turn(2, ANNONCE)], totals },
+    };
+  };
+
+  it('avec un résultat qui se lit comme une réponse, c’est lui qui se lit sous l’en-tête', () => {
+    const html = renderToStaticMarkup(<RunBody data={vue(LIVRE)} />);
+    const reply = /<div data-testid="run-reply">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? '';
+    expect(reply, 'la zone de réponse est rendue').not.toBe('');
+    expect(reply).toContain('quatorze issues');
+    expect(reply).not.toContain(ANNONCE);
+    // L'annonce reste DANS son tour, dans la chronologie : rien n'est perdu.
+    expect(html).toContain(ANNONCE);
+  });
+
+  it('sans résultat, la dernière prose sort, comme avant', () => {
+    const html = renderToStaticMarkup(<RunBody data={vue(null)} />);
+    const reply = /<div data-testid="run-reply">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? '';
+    expect(reply).toContain(ANNONCE);
   });
 });

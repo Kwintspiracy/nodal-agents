@@ -299,7 +299,10 @@ export function dropTaskRequest(items: readonly FeedItem[], task: string): FeedI
  */
 export function liftReply(
   items: readonly FeedItem[],
-  job: Pick<RunJob, 'completedAt'> & { result?: string | null },
+  // `result` est REQUIS (#288) : optionnel, la page compilait sans jamais le
+  // passer, et la branche qui sort le résultat livré n'a pas tourné depuis
+  // #165. Le type oblige désormais la vue à le transporter.
+  job: Pick<RunJob, 'completedAt' | 'result'>,
   /**
    * Le run porte-t-il au moins UN verdict de relecture enregistré — le sien ou
    * celui d'un délégué ? Lu SEULEMENT quand la marque manque (voir ci-dessus).
