@@ -31,7 +31,8 @@ export default function ThinkingBlock({ steps }: { steps: string[] }) {
         onClick={() => setOpen((v) => !v)}
         chevron="end"
         inset="tight"
-        className="h-[36px] gap-2.5 py-0"
+        insetY="none"
+        className="h-[36px] gap-2.5"
       >
         <Sparkle size={14} className="shrink-0 text-ink-4" aria-hidden />
         <span className="shrink-0 text-body-13 text-feed-reasoning">Reasoning</span>

@@ -149,7 +149,7 @@ export default function ProjectShelf({
                 <DisclosureButton
                   open={expanded}
                   onClick={() => setExpanded(!expanded)}
-                  className="py-2"
+                  insetY="tight"
                 >
                   <span className="text-body-12 text-ink-3">
                     {expanded

@@ -66,13 +66,45 @@ describe('DisclosureButton — le retrait horizontal @cap:suivre-execution/ecran
 
   it("le className de l'appelant est toujours rendu — il sert encore à tout le reste", () => {
     const html = renderToStaticMarkup(
-      <DisclosureButton open={false} onClick={() => {}} inset="tight" className="h-8 py-0">
+      <DisclosureButton open={false} onClick={() => {}} inset="tight" className="h-8">
         Détails
       </DisclosureButton>,
     );
     const classes = classesDuBouton(html);
     expect(classes).toContain('h-8');
     expect(classes).toContain('px-3');
+  });
+
+  // #399 — le retrait vertical, même raison : `py-3` écrasait un `py-2` ou un
+  // `py-0` passé par className (mesuré dans #396 : 12 px rendus pour 8 demandés).
+  it('insetY="none" rend py-0 et jamais py-3 ; sans prop, py-3', () => {
+    const sans = classesDuBouton(
+      renderToStaticMarkup(
+        <DisclosureButton open={false} onClick={() => {}}>
+          Détails
+        </DisclosureButton>,
+      ),
+    );
+    expect(sans).toContain('py-3');
+    expect(sans).not.toContain('py-0');
+    const none = classesDuBouton(
+      renderToStaticMarkup(
+        <DisclosureButton open={false} onClick={() => {}} insetY="none">
+          Détails
+        </DisclosureButton>,
+      ),
+    );
+    expect(none).toContain('py-0');
+    expect(none).not.toContain('py-3');
+    const tight = classesDuBouton(
+      renderToStaticMarkup(
+        <DisclosureButton open={false} onClick={() => {}} insetY="tight">
+          Détails
+        </DisclosureButton>,
+      ),
+    );
+    expect(tight).toContain('py-2');
+    expect(tight).not.toContain('py-3');
   });
 });
 
@@ -98,6 +130,21 @@ export function classNamesSurLaBalise(source: string): string[] {
       const c = source[j]!;
       if (quote) {
         if (c === quote) quote = null;
+        continue;
+      }
+      // Un commentaire dans une accolade (`{/* … */}`, ou `// …` en fin de
+      // ligne d'une expression) n'est pas du code : une apostrophe qu'il porte
+      // (« l'appelant ») n'ouvre pas de chaîne. Sans ceci, un commentaire à
+      // nombre impair d'apostrophes faisait lire la garde au-delà de la balise
+      // (#399).
+      if (depth > 0 && c === '/' && source[j + 1] === '*') {
+        const fin = source.indexOf('*/', j + 2);
+        j = fin === -1 ? source.length : fin + 1;
+        continue;
+      }
+      if (depth > 0 && c === '/' && source[j + 1] === '/') {
+        const fin = source.indexOf('\n', j);
+        j = fin === -1 ? source.length : fin;
         continue;
       }
       if (c === '"' || c === "'" || c === '`') quote = c;
@@ -127,7 +174,7 @@ function fichiersTsx(dir: string, out: string[] = []): string[] {
 }
 
 describe('DisclosureButton — la garde du retrait', () => {
-  it('aucune source ne passe un px-* par className : le retrait est une prop, pas une classe', () => {
+  it('aucune source ne passe un px-* ni un py-* par className : le retrait est une prop, pas une classe', () => {
     const fautes: string[] = [];
     for (const fichier of fichiersTsx(SRC_DIR)) {
       const source = readFileSync(fichier, 'utf8');
@@ -137,14 +184,14 @@ describe('DisclosureButton — la garde du retrait', () => {
           fautes.push(
             `${relative(SRC_DIR, fichier)} → className=${valeur} (une expression : la garde ne peut pas y lire le retrait ; écris la classe en toutes lettres)`,
           );
-        } else if (/(^|\s)px-[\w.[\]/-]+/.test(valeur)) {
+        } else if (/(^|\s)p[xy]-[\w.[\]/-]+/.test(valeur)) {
           fautes.push(`${relative(SRC_DIR, fichier)} → className="${valeur}"`);
         }
       }
     }
     expect(
       fautes,
-      `Le retrait horizontal se règle avec inset="default|tight|none". Un px-* dans className ne gagne jamais sur celui du composant (#151) :\n${fautes.join('\n')}`,
+      `Le retrait se règle avec inset="default|tight|none" et insetY="default|none". Un px-* ou un py-* dans className ne gagne jamais sur celui du composant (#151, #399) :\n${fautes.join('\n')}`,
     ).toEqual([]);
   });
 
@@ -154,8 +201,26 @@ describe('DisclosureButton — la garde du retrait', () => {
       </DisclosureButton>`;
     expect(classNamesSurLaBalise(faute)).toEqual(['h-8 px-3']);
 
-    const propre = `${NOM_BALISE} open={o} onClick={() => setO((v) => !v)} inset="tight" className="h-8 py-0">`;
-    expect(classNamesSurLaBalise(propre)).toEqual(['h-8 py-0']);
+    const propre = `${NOM_BALISE} open={o} onClick={() => setO((v) => !v)} inset="tight" insetY="none" className="h-8">`;
+    expect(classNamesSurLaBalise(propre)).toEqual(['h-8']);
+
+    // #399 — un commentaire dans la balise avec UNE apostrophe : la lecture
+    // s'arrête au `>` de la balise, et ne file pas jusqu'au prochain `'`.
+    const commente = `${NOM_BALISE}
+        open={o}
+        {/* le retrait de l'appelant est une prop */}
+        onClick={() => setO((v) => !v)}
+        className="h-8">
+        <span className="px-4">Détails</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(commente)).toEqual(['h-8']);
+    const ligne = `${NOM_BALISE} open={o} onClick={() => {
+          // l'appelant referme
+          setO(false);
+        }} className="h-8">
+        <span className="px-4">Détails</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(ligne)).toEqual(['h-8']);
 
     // Une expression n'est pas lisible : elle ressort telle quelle, accolade
     // comprise, pour que la garde la refuse — un gabarit qui glisserait un

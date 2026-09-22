@@ -30,6 +30,14 @@ type Props = {
    * defect, and `__tests__/DisclosureButton.test.tsx` refuses it.
    */
   inset?: 'default' | 'tight' | 'none';
+  /**
+   * Vertical inset of the row, for the same reason (#399): the base `py-3`
+   * overruled a `py-2` or `py-0` passed through `className` — measured in
+   * #396, 12px rendered for 8 asked. `default` is 12px, `tight` 8px, `none` 0
+   * for a row whose height is set by its caller. A `py-*` in `className` is
+   * refused by the same guard as `px-*`.
+   */
+  insetY?: 'default' | 'tight' | 'none';
   className?: string;
   /** Passed through as `data-testid` — tests and e2e journeys target the row
    *  that unfolds, which is otherwise indistinguishable from any other row. */
@@ -46,6 +54,8 @@ type Props = {
  */
 /** 16px / 12px / 0 — written out so Tailwind sees each class literally. */
 const INSET = { default: 'px-4', tight: 'px-3', none: 'px-0' } as const;
+/** 12px / 8px / 0, same reason (#399). */
+const INSET_Y = { default: 'py-3', tight: 'py-2', none: 'py-0' } as const;
 
 export default function DisclosureButton({
   open,
@@ -53,6 +63,7 @@ export default function DisclosureButton({
   children,
   chevron = 'start',
   inset = 'default',
+  insetY = 'default',
   className = '',
   testId,
 }: Props) {
@@ -67,7 +78,7 @@ export default function DisclosureButton({
       onClick={onClick}
       aria-expanded={open}
       data-testid={testId}
-      className={`flex w-full items-center gap-2 ${INSET[inset]} py-3 text-left hover:bg-hover ${className}`}
+      className={`flex w-full items-center gap-2 ${INSET[inset]} ${INSET_Y[insetY]} text-left hover:bg-hover ${className}`}
     >
       {chevron === 'start' && caret}
       {children}

@@ -31,7 +31,8 @@ export default function Handoff({ text }: { text: string }) {
         open={open}
         onClick={() => setOpen((o) => !o)}
         inset="none"
-        className="h-auto py-0"
+        insetY="none"
+        className="h-auto"
       >
         <span className="shrink-0 text-mono-11 text-ink-4">Handed to the work</span>
         {!open && (
