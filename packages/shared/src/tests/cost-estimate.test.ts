@@ -106,8 +106,9 @@ describe('catalogue — les prix de cache', () => {
 
   it('les modèles SANS prix de cache sont nommés — la liste ne peut que rétrécir', () => {
     // Facturés plein sur leurs jetons de cache (surestimation). Natifs dont le
-    // vendeur n'est pas passé par OpenRouter, variantes -fast sans fiche, et les
-    // deux non tarifés de pricing-coverage.
+    // vendeur n'est pas passé par OpenRouter, et les deux non tarifés de
+    // pricing-coverage. (Les variantes -fast d'Anthropic y figuraient : retirées
+    // du catalogue le 22/09, #416 — OpenRouter ne les sert pas.)
     const missing = all
       .filter((m) => m.p && m.p.cacheReadPerMillionUsd === undefined)
       .map((m) => m.key)
@@ -117,9 +118,6 @@ describe('catalogue — les prix de cache', () => {
         'deepseek/deepseek-chat',
         'deepseek/deepseek-reasoner',
         'minimax/MiniMax-M2',
-        'openrouter/anthropic/claude-opus-5-fast',
-        'openrouter/anthropic/claude-opus-4.7-fast',
-        'openrouter/anthropic/claude-opus-4.8-fast',
         'openrouter/qwen/qwen3.8-max',
       ].sort(),
     );

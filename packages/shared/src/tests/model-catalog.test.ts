@@ -302,6 +302,36 @@ describe('GLM 5.3 Flash', () => {
   });
 });
 
+describe('dead OpenRouter ids are not offered (#416)', () => {
+  // Read on 2026-09-22: /api/v1/models lists no anthropic/*-fast id, and
+  // /api/v1/models/<id>/endpoints answers with an EMPTY endpoints array for all
+  // three. An agent set to one of them got a 404 at call time. models.dev still
+  // knows the names through other providers (vercel, venice), which is why
+  // scripts/refresh-model-vision.mjs saw two of them as "resolved": that
+  // script resolves an id across sources, not against the provider the entry
+  // is catalogued under.
+  it('no anthropic/*-fast id remains under the openrouter provider, nor in VISION_MODEL_IDS', () => {
+    const ids = (MODEL_CATALOG['openrouter'] ?? []).map((e) => e.modelId);
+    expect(ids.filter((id) => /^anthropic\/.*-fast$/.test(id))).toEqual([]);
+    for (const id of [
+      'anthropic/claude-opus-4.7-fast',
+      'anthropic/claude-opus-4.8-fast',
+      'anthropic/claude-opus-5-fast',
+    ]) {
+      expect(findModelCatalogEntry('openrouter', id), id).toBeUndefined();
+      expect(modelCanSeeImages(id), id).toBe(false);
+    }
+    // The non-fast siblings stay: they are served (endpoints present).
+    for (const id of [
+      'anthropic/claude-opus-4.7',
+      'anthropic/claude-opus-4.8',
+      'anthropic/claude-opus-5',
+    ]) {
+      expect(findModelCatalogEntry('openrouter', id), id).toBeDefined();
+    }
+  });
+});
+
 describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
   // Every value below was read off OpenRouter's /api/v1/models (and
   // /models/<id>/endpoints for supported_parameters) on 2026-09-22. Asserted
