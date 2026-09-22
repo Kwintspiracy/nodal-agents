@@ -66,13 +66,45 @@ describe('DisclosureButton — le retrait horizontal @cap:suivre-execution/ecran
 
   it("le className de l'appelant est toujours rendu — il sert encore à tout le reste", () => {
     const html = renderToStaticMarkup(
-      <DisclosureButton open={false} onClick={() => {}} inset="tight" className="h-8 py-0">
+      <DisclosureButton open={false} onClick={() => {}} inset="tight" className="h-8">
         Détails
       </DisclosureButton>,
     );
     const classes = classesDuBouton(html);
     expect(classes).toContain('h-8');
     expect(classes).toContain('px-3');
+  });
+
+  // #399 — le retrait vertical, même raison : `py-3` écrasait un `py-2` ou un
+  // `py-0` passé par className (mesuré dans #396 : 12 px rendus pour 8 demandés).
+  it('insetY="none" rend py-0 et jamais py-3 ; sans prop, py-3', () => {
+    const sans = classesDuBouton(
+      renderToStaticMarkup(
+        <DisclosureButton open={false} onClick={() => {}}>
+          Détails
+        </DisclosureButton>,
+      ),
+    );
+    expect(sans).toContain('py-3');
+    expect(sans).not.toContain('py-0');
+    const none = classesDuBouton(
+      renderToStaticMarkup(
+        <DisclosureButton open={false} onClick={() => {}} insetY="none">
+          Détails
+        </DisclosureButton>,
+      ),
+    );
+    expect(none).toContain('py-0');
+    expect(none).not.toContain('py-3');
+    const tight = classesDuBouton(
+      renderToStaticMarkup(
+        <DisclosureButton open={false} onClick={() => {}} insetY="tight">
+          Détails
+        </DisclosureButton>,
+      ),
+    );
+    expect(tight).toContain('py-2');
+    expect(tight).not.toContain('py-3');
   });
 });
 
@@ -100,6 +132,49 @@ export function classNamesSurLaBalise(source: string): string[] {
         if (c === quote) quote = null;
         continue;
       }
+      // Un commentaire n'est pas du code : une apostrophe qu'il porte
+      // (« l'appelant ») n'ouvre pas de chaîne. Il vit dans une accolade
+      // (`{/* … */}`, `// …` en fin de ligne d'une expression) ou NU entre
+      // deux attributs, ce que TSX accepte (FileChangeBlock en a un, avec
+      // « d'état »). Sans ceci, un commentaire à nombre impair d'apostrophes
+      // faisait lire la garde au-delà de la balise (#399). Une chaîne passe
+      // avant : un `//` dans une URL entre guillemets n'est pas un commentaire.
+      // Une expression régulière (`/[/*]/.test(v)`) commence aussi par `/` : là
+      // où une division est impossible — après `( , = : [ ! & | ? { } ; < >` ou
+      // une flèche — un `/` qui n'ouvre pas de commentaire ouvre un littéral,
+      // qu'on saute jusqu'à son `/` fermant (échappements compris). Sans ceci
+      // le `/*` d'une classe de caractères était pris pour un commentaire et la
+      // garde lisait au-delà de la balise (revue Codex, #433).
+      if (c === '/' && source[j + 1] !== '/' && source[j + 1] !== '*') {
+        let k = j - 1;
+        while (k >= 0 && /\s/.test(source[k]!)) k -= 1;
+        if (k < 0 || /[(,=:[!&|?{};<>]/.test(source[k]!)) {
+          // Dans une classe de caractères (`[/}]`), un `/` ne ferme pas le
+          // littéral, et une accolade n'y compte pas (revue Codex, passe 3).
+          let m = j + 1;
+          let classe = false;
+          for (; m < source.length; m += 1) {
+            const d = source[m];
+            if (d === '\\') m += 1;
+            else if (classe) {
+              if (d === ']') classe = false;
+            } else if (d === '[') classe = true;
+            else if (d === '/' || d === '\n') break;
+          }
+          j = m;
+          continue;
+        }
+      }
+      if (c === '/' && source[j + 1] === '*') {
+        const fin = source.indexOf('*/', j + 2);
+        j = fin === -1 ? source.length : fin + 1;
+        continue;
+      }
+      if (c === '/' && source[j + 1] === '/') {
+        const fin = source.indexOf('\n', j);
+        j = fin === -1 ? source.length : fin;
+        continue;
+      }
       if (c === '"' || c === "'" || c === '`') quote = c;
       else if (c === '{') depth += 1;
       else if (c === '}') depth -= 1;
@@ -117,6 +192,11 @@ export function classNamesSurLaBalise(source: string): string[] {
   return trouves;
 }
 
+/** Ce que la garde refuse dans un className : un retrait, horizontal ou vertical. */
+export function retraitInterdit(valeur: string): boolean {
+  return /(^|\s)p[xy]-[\w.[\]/-]+/.test(valeur);
+}
+
 function fichiersTsx(dir: string, out: string[] = []): string[] {
   for (const entree of readdirSync(dir)) {
     const complet = join(dir, entree);
@@ -127,7 +207,7 @@ function fichiersTsx(dir: string, out: string[] = []): string[] {
 }
 
 describe('DisclosureButton — la garde du retrait', () => {
-  it('aucune source ne passe un px-* par className : le retrait est une prop, pas une classe', () => {
+  it('aucune source ne passe un px-* ni un py-* par className : le retrait est une prop, pas une classe', () => {
     const fautes: string[] = [];
     for (const fichier of fichiersTsx(SRC_DIR)) {
       const source = readFileSync(fichier, 'utf8');
@@ -137,15 +217,40 @@ describe('DisclosureButton — la garde du retrait', () => {
           fautes.push(
             `${relative(SRC_DIR, fichier)} → className=${valeur} (une expression : la garde ne peut pas y lire le retrait ; écris la classe en toutes lettres)`,
           );
-        } else if (/(^|\s)px-[\w.[\]/-]+/.test(valeur)) {
+        } else if (retraitInterdit(valeur)) {
           fautes.push(`${relative(SRC_DIR, fichier)} → className="${valeur}"`);
         }
       }
     }
     expect(
       fautes,
-      `Le retrait horizontal se règle avec inset="default|tight|none". Un px-* dans className ne gagne jamais sur celui du composant (#151) :\n${fautes.join('\n')}`,
+      `Le retrait se règle avec inset="default|tight|none" et insetY="default|none". Un px-* ou un py-* dans className ne gagne jamais sur celui du composant (#151, #399) :\n${fautes.join('\n')}`,
     ).toEqual([]);
+  });
+
+  it('seules deux rangées demandent un retrait vertical réduit, et aucune un retrait nul (#399)', () => {
+    // Les rangées à hauteur fixe et Handoff passaient un `py-0` qui n'a jamais
+    // été rendu ; elles ont été validées à 12 px et le gardent (aucune ne pose
+    // `insetY`). HistoryGroup et ProjectShelf demandaient 8 px et les ont.
+    // Ce test fige ce périmètre : un `insetY="none"` qui apparaîtrait est un
+    // changement d'écran à montrer, pas un détail.
+    const tight: string[] = [];
+    const none: string[] = [];
+    for (const fichier of fichiersTsx(SRC_DIR)) {
+      const source = readFileSync(fichier, 'utf8');
+      if (!source.includes(NOM_BALISE)) continue;
+      const rel = relative(SRC_DIR, fichier).replace(/\\/g, '/');
+      // Les tests (ce fichier compris) rendent la prop pour l'éprouver : ils
+      // ne sont pas des écrans.
+      if (rel.includes('__tests__')) continue;
+      if (/insetY="tight"/.test(source)) tight.push(rel);
+      if (/insetY="none"/.test(source)) none.push(rel);
+    }
+    expect(tight.sort()).toEqual([
+      'app/(dashboard)/spaces/HistoryGroup.tsx',
+      'app/(dashboard)/spaces/ProjectShelf.tsx',
+    ]);
+    expect(none).toEqual([]);
   });
 
   it('CONTRE-ÉPREUVE : la lecture de la balise voit un px-* et ignore ce qui suit', () => {
@@ -154,8 +259,60 @@ describe('DisclosureButton — la garde du retrait', () => {
       </DisclosureButton>`;
     expect(classNamesSurLaBalise(faute)).toEqual(['h-8 px-3']);
 
-    const propre = `${NOM_BALISE} open={o} onClick={() => setO((v) => !v)} inset="tight" className="h-8 py-0">`;
-    expect(classNamesSurLaBalise(propre)).toEqual(['h-8 py-0']);
+    const propre = `${NOM_BALISE} open={o} onClick={() => setO((v) => !v)} inset="tight" insetY="none" className="h-8">`;
+    expect(classNamesSurLaBalise(propre)).toEqual(['h-8']);
+
+    // #399 — un commentaire dans la balise avec UNE apostrophe : la lecture
+    // s'arrête au `>` de la balise, et ne file pas jusqu'au prochain `'`.
+    const commente = `${NOM_BALISE}
+        open={o}
+        {/* le retrait de l'appelant est une prop */}
+        onClick={() => setO((v) => !v)}
+        className="h-8">
+        <span className="px-4">Détails</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(commente)).toEqual(['h-8']);
+    // Un commentaire NU entre deux attributs, avec une apostrophe : la forme
+    // exacte de FileChangeBlock.tsx.
+    const nu = `${NOM_BALISE}
+        open={o}
+        // Le signal se donne HORS de la mise à jour d'état : React rejoue
+        onClick={() => setO((v) => !v)}
+        inset="tight"
+        className="h-8"
+      >
+        <span className="px-4">Détails</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(nu)).toEqual(['h-8']);
+    // Une expression régulière qui contient `/*` n'est pas un commentaire.
+    const regex = `${NOM_BALISE} open={false} onClick={() => /[/*]/.test(value)} className="h-8">
+        <span className="px-4">Child</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(regex)).toEqual(['h-8']);
+    // Une classe de caractères qui contient `/` et `}` (revue Codex, passe 3).
+    const classe = `${NOM_BALISE} open={false} onClick={() => /[/}]/.test(value)} className="h-8">
+        <span className="px-4">Child</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(classe)).toEqual(['h-8']);
+    // Un `//` dans une chaîne n'est pas un commentaire.
+    const url = `${NOM_BALISE} open={o} onClick={() => go('https://x.y/z')} className="h-8">`;
+    expect(classNamesSurLaBalise(url)).toEqual(['h-8']);
+    const ligne = `${NOM_BALISE} open={o} onClick={() => {
+          // l'appelant referme
+          setO(false);
+        }} className="h-8">
+        <span className="px-4">Détails</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(ligne)).toEqual(['h-8']);
+
+    // Le prédicat de la garde lui-même : un py-* est une faute au même titre
+    // qu'un px-* — sans quoi remettre la garde à l'horizontal seul passerait,
+    // tous les appelants ayant migré.
+    expect(retraitInterdit('h-8 py-2')).toBe(true);
+    expect(retraitInterdit('py-0')).toBe(true);
+    expect(retraitInterdit('h-8 px-3')).toBe(true);
+    expect(retraitInterdit('h-8 gap-2 text-ink-4')).toBe(false);
+    expect(retraitInterdit('supply-2')).toBe(false);
 
     // Une expression n'est pas lisible : elle ressort telle quelle, accolade
     // comprise, pour que la garde la refuse — un gabarit qui glisserait un

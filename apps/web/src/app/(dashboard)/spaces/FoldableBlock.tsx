@@ -40,7 +40,7 @@ export default function FoldableBlock({
           onClick={() => setOpen((v) => !v)}
           chevron="end"
           inset="tight"
-          className="h-[33px] gap-2 py-0"
+          className="h-[33px] gap-2"
         >
           {head}
         </DisclosureButton>

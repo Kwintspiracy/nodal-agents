@@ -308,7 +308,7 @@ export default function FileChangeBlock({
         // `__tests__/DisclosureButton.test.tsx` refuse un `className` en
         // expression sur cette balise, et il a raison — un retrait caché dans
         // un ternaire est exactement le trou que sa garde ferme (#151).
-        className="h-[42px] py-0"
+        className="h-[42px]"
       >
         {/* GRAS, comme la planche : le mot du geste est ce que le regard
             accroche en premier sur la rangée, avant le chemin. */}

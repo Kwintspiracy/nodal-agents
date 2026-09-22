@@ -27,7 +27,7 @@ export default function DelegationBlock({ head, body }: { head: ReactNode; body:
         open={open}
         onClick={() => setOpen((v) => !v)}
         inset="tight"
-        className="h-[46px] gap-2.5 py-0"
+        className="h-[46px] gap-2.5"
       >
         {head}
       </DisclosureButton>
