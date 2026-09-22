@@ -239,13 +239,7 @@ export default function FileDiff({
 
   return (
     <li className="border-t border-rule-2 first:border-t-0">
-      <DisclosureButton
-        open={open}
-        onClick={toggle}
-        inset="tight"
-        insetY="none"
-        className="h-[42px]"
-      >
+      <DisclosureButton open={open} onClick={toggle} inset="tight" className="h-[42px]">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${FILE_DOT[action] ?? 'bg-ink-4'}`} />
         <FileName path={path} />
         <LineDelta counts={lineCounts} />

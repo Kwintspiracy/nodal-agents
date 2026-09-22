@@ -139,6 +139,25 @@ export function classNamesSurLaBalise(source: string): string[] {
       // « d'état »). Sans ceci, un commentaire à nombre impair d'apostrophes
       // faisait lire la garde au-delà de la balise (#399). Une chaîne passe
       // avant : un `//` dans une URL entre guillemets n'est pas un commentaire.
+      // Une expression régulière (`/[/*]/.test(v)`) commence aussi par `/` : là
+      // où une division est impossible — après `( , = : [ ! & | ? { } ; < >` ou
+      // une flèche — un `/` qui n'ouvre pas de commentaire ouvre un littéral,
+      // qu'on saute jusqu'à son `/` fermant (échappements compris). Sans ceci
+      // le `/*` d'une classe de caractères était pris pour un commentaire et la
+      // garde lisait au-delà de la balise (revue Codex, #433).
+      if (c === '/' && source[j + 1] !== '/' && source[j + 1] !== '*') {
+        let k = j - 1;
+        while (k >= 0 && /\s/.test(source[k]!)) k -= 1;
+        if (k < 0 || /[(,=:[!&|?{};<>]/.test(source[k]!)) {
+          let m = j + 1;
+          for (; m < source.length; m += 1) {
+            if (source[m] === '\\') m += 1;
+            else if (source[m] === '/' || source[m] === '\n') break;
+          }
+          j = m;
+          continue;
+        }
+      }
       if (c === '/' && source[j + 1] === '*') {
         const fin = source.indexOf('*/', j + 2);
         j = fin === -1 ? source.length : fin + 1;
@@ -202,6 +221,31 @@ describe('DisclosureButton — la garde du retrait', () => {
     ).toEqual([]);
   });
 
+  it('seules deux rangées demandent un retrait vertical réduit, et aucune un retrait nul (#399)', () => {
+    // Les rangées à hauteur fixe et Handoff passaient un `py-0` qui n'a jamais
+    // été rendu ; elles ont été validées à 12 px et le gardent (aucune ne pose
+    // `insetY`). HistoryGroup et ProjectShelf demandaient 8 px et les ont.
+    // Ce test fige ce périmètre : un `insetY="none"` qui apparaîtrait est un
+    // changement d'écran à montrer, pas un détail.
+    const tight: string[] = [];
+    const none: string[] = [];
+    for (const fichier of fichiersTsx(SRC_DIR)) {
+      const source = readFileSync(fichier, 'utf8');
+      if (!source.includes(NOM_BALISE)) continue;
+      const rel = relative(SRC_DIR, fichier).replace(/\\/g, '/');
+      // Les tests (ce fichier compris) rendent la prop pour l'éprouver : ils
+      // ne sont pas des écrans.
+      if (rel.includes('__tests__')) continue;
+      if (/insetY="tight"/.test(source)) tight.push(rel);
+      if (/insetY="none"/.test(source)) none.push(rel);
+    }
+    expect(tight.sort()).toEqual([
+      'app/(dashboard)/spaces/HistoryGroup.tsx',
+      'app/(dashboard)/spaces/ProjectShelf.tsx',
+    ]);
+    expect(none).toEqual([]);
+  });
+
   it('CONTRE-ÉPREUVE : la lecture de la balise voit un px-* et ignore ce qui suit', () => {
     const faute = `${NOM_BALISE} open={o} onClick={() => setO((v) => !v)} className="h-8 px-3">
         <span className="px-4">Détails</span>
@@ -233,6 +277,11 @@ describe('DisclosureButton — la garde du retrait', () => {
         <span className="px-4">Détails</span>
       </DisclosureButton>`;
     expect(classNamesSurLaBalise(nu)).toEqual(['h-8']);
+    // Une expression régulière qui contient `/*` n'est pas un commentaire.
+    const regex = `${NOM_BALISE} open={false} onClick={() => /[/*]/.test(value)} className="h-8">
+        <span className="px-4">Child</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(regex)).toEqual(['h-8']);
     // Un `//` dans une chaîne n'est pas un commentaire.
     const url = `${NOM_BALISE} open={o} onClick={() => go('https://x.y/z')} className="h-8">`;
     expect(classNamesSurLaBalise(url)).toEqual(['h-8']);

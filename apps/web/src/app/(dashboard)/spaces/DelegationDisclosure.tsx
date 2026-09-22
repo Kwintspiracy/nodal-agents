@@ -52,7 +52,6 @@ export default function DelegationDisclosure({
           open={open}
           onClick={() => setOpen((v) => !v)}
           inset="tight"
-          insetY="none"
           className="h-[40px]"
         >
           {avatar}

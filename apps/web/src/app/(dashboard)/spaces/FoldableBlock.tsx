@@ -40,7 +40,6 @@ export default function FoldableBlock({
           onClick={() => setOpen((v) => !v)}
           chevron="end"
           inset="tight"
-          insetY="none"
           className="h-[33px] gap-2"
         >
           {head}
