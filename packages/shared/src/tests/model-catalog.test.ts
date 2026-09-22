@@ -301,3 +301,149 @@ describe('GLM 5.3 Flash', () => {
     expect(modelCanSeeImages('z-ai/glm-5.3')).toBe(false);
   });
 });
+
+describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
+  // Every value below was read off OpenRouter's /api/v1/models (and
+  // /models/<id>/endpoints for supported_parameters) on 2026-09-22. Asserted
+  // rather than eyeballed, for the same two reasons as GLM 5.3 Flash above:
+  // a wrong window mis-sizes compaction, a wrong price mis-reports every job.
+  const entry = (id: string) => findModelCatalogEntry('openrouter', id);
+
+  it('the thirteen ids are catalogued under the openrouter provider', () => {
+    for (const id of [
+      'xiaomi/mimo-v2.6-flash',
+      'xiaomi/mimo-v2.6-pro',
+      'xiaomi/mimo-v2.6-pro-ultraspeed',
+      'z-ai/glm-5.3-flashx',
+      'x-ai/grok-4.6',
+      'x-ai/grok-4.7',
+      'deepseek/deepseek-v4-pro-0813',
+      'deepseek/deepseek-v4.1-flash',
+      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-sol',
+      'openai/gpt-5.6-sol-pro',
+      'openai/gpt-6-astra',
+      'openai/gpt-6-astra-pro',
+    ]) {
+      expect(entry(id), id).toBeDefined();
+      expect(entry(id)?.capabilities.tools, id).toBe(true);
+    }
+  });
+
+  it('Xiaomi MiMo V2.6: 1.05M window, upstream pricing, effort control WITHOUT the always-on flag', () => {
+    expect(modelContextWindow('openrouter', 'xiaomi/mimo-v2.6-pro')).toBe(1_048_576);
+    expect(entry('xiaomi/mimo-v2.6-flash')?.pricing).toEqual({
+      inputPerMillionUsd: 0.14,
+      outputPerMillionUsd: 0.28,
+      cacheReadPerMillionUsd: 0.0028,
+    });
+    expect(entry('xiaomi/mimo-v2.6-pro')?.pricing).toEqual({
+      inputPerMillionUsd: 0.435,
+      outputPerMillionUsd: 0.87,
+      cacheReadPerMillionUsd: 0.0036,
+    });
+    // UltraSpeed is the same checkpoint at 10x the price — the one figure a
+    // copy-paste of Pro would get wrong.
+    expect(entry('xiaomi/mimo-v2.6-pro-ultraspeed')?.pricing?.inputPerMillionUsd).toBe(4.35);
+    expect(entry('xiaomi/mimo-v2.6-pro-ultraspeed')?.pricing?.outputPerMillionUsd).toBe(8.7);
+    for (const id of ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro']) {
+      // No reasoning_effort in supported_parameters upstream: thinking is
+      // engaged only on an explicit agent setting (the Qwen posture).
+      expect(entry(id)?.capabilities.reasoning, id).toBeUndefined();
+      expect(entry(id)?.capabilities.reasoningControl?.levels, id).toEqual([
+        'low',
+        'medium',
+        'high',
+        'max',
+      ]);
+      expect(entry(id)?.capabilities.forcedToolChoice, id).toBe(false);
+      expect(modelCanSeeImages(id), id).toBe(true);
+    }
+  });
+
+  it('GLM 5.3 FlashX keeps the Flash posture with its own price and window', () => {
+    const x = entry('z-ai/glm-5.3-flashx');
+    expect(x?.pricing).toEqual({
+      inputPerMillionUsd: 0.37,
+      outputPerMillionUsd: 1.25,
+      cacheReadPerMillionUsd: 0.075,
+    });
+    // 1.05M — NOT Flash's 1.31M: the copy-paste failure mode, guarded.
+    expect(modelContextWindow('openrouter', 'z-ai/glm-5.3-flashx')).toBe(1_048_576);
+    expect(x?.capabilities.reasoning).toBe(true);
+    expect(x?.capabilities.reasoningControl?.mandatory).toBeUndefined();
+    expect(x?.capabilities.forcedToolChoice).toBe(false);
+    expect(modelCanSeeImages('z-ai/glm-5.3-flashx')).toBe(true);
+  });
+
+  it('Grok 4.6 and 4.7 keep the 4.5 reasoning contract, 4.7 is 20% cheaper', () => {
+    for (const id of ['x-ai/grok-4.6', 'x-ai/grok-4.7']) {
+      expect(modelContextWindow('openrouter', id), id).toBe(500_000);
+      expect(entry(id)?.capabilities.reasoning, id).toBe(true);
+      expect(entry(id)?.capabilities.reasoningControl, id).toEqual({
+        kind: 'effort',
+        levels: ['low', 'medium', 'high'],
+        mandatory: true,
+      });
+      expect(modelCanSeeImages(id), id).toBe(true);
+    }
+    expect(entry('x-ai/grok-4.6')?.pricing).toEqual({
+      inputPerMillionUsd: 2,
+      outputPerMillionUsd: 6,
+      cacheReadPerMillionUsd: 0.5,
+    });
+    expect(entry('x-ai/grok-4.7')?.pricing).toEqual({
+      inputPerMillionUsd: 1.6,
+      outputPerMillionUsd: 4.8,
+      cacheReadPerMillionUsd: 0.4,
+    });
+  });
+
+  it('DeepSeek V4 Pro 0813 and V4.1 Flash: providerOrder, pricing, and only V4.1 Flash sees images', () => {
+    for (const id of ['deepseek/deepseek-v4-pro-0813', 'deepseek/deepseek-v4.1-flash']) {
+      expect(entry(id)?.providerOrder, id).toEqual(['deepseek']);
+      expect(entry(id)?.capabilities.reasoning, id).toBe(true);
+      expect(modelContextWindow('openrouter', id), id).toBe(1_048_576);
+    }
+    expect(entry('deepseek/deepseek-v4-pro-0813')?.pricing).toEqual({
+      inputPerMillionUsd: 0.66,
+      outputPerMillionUsd: 1.98,
+      cacheReadPerMillionUsd: 0.022,
+    });
+    expect(entry('deepseek/deepseek-v4.1-flash')?.pricing).toEqual({
+      inputPerMillionUsd: 0.15,
+      outputPerMillionUsd: 0.6,
+      cacheReadPerMillionUsd: 0.003,
+    });
+    expect(modelCanSeeImages('deepseek/deepseek-v4.1-flash')).toBe(true);
+    expect(modelCanSeeImages('deepseek/deepseek-v4-pro-0813')).toBe(false);
+    expect(modelCanSeeImages('deepseek/deepseek-v4-flash-0731')).toBe(false);
+  });
+
+  it('GPT-5.6 Sol/Terra and GPT-6 Astra: 1.05M window, upstream pricing, vision', () => {
+    const prix = {
+      'openai/gpt-5.6-terra': [2, 12, 0.2, 2.5],
+      'openai/gpt-5.6-sol': [2, 10, 0.2, 2.5],
+      'openai/gpt-5.6-sol-pro': [2, 10, 0.2, 2.5],
+      'openai/gpt-6-astra': [10, 50, 1, 12.5],
+      'openai/gpt-6-astra-pro': [10, 50, 1, 12.5],
+    } as const;
+    for (const [id, [i, o, cr, cw]] of Object.entries(prix)) {
+      expect(entry(id)?.pricing, id).toEqual({
+        inputPerMillionUsd: i,
+        outputPerMillionUsd: o,
+        cacheReadPerMillionUsd: cr,
+        cacheWritePerMillionUsd: cw,
+      });
+      expect(modelContextWindow('openrouter', id), id).toBe(1_050_000);
+      expect(entry(id)?.capabilities.forcedToolChoice, id).toBe(true);
+      expect(entry(id)?.capabilities.reasoningControl?.levels, id).toEqual([
+        'low',
+        'medium',
+        'high',
+        'max',
+      ]);
+      expect(modelCanSeeImages(id), id).toBe(true);
+    }
+  });
+});

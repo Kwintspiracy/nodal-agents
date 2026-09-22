@@ -709,6 +709,93 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         cacheWritePerMillionUsd: 2.5,
       },
     },
+    // The rest of the 5.6 series and GPT-6 Astra, read off OpenRouter's
+    // /api/v1/models on 2026-09-22: same posture as Luna/Terra Pro above
+    // (tools + tool_choice + reasoning_effort in supported_parameters, 1.05M
+    // context, image+file input → VISION_MODEL_IDS). Upstream copy: Sol is
+    // the 5.6 flagship, Terra the balanced tier between Sol and Luna, Astra
+    // "OpenAI's flagship model for demanding end-to-end work". The Pro
+    // variants are priced identically to their base model upstream.
+    {
+      modelId: 'openai/gpt-5.6-terra',
+      label: 'GPT-5.6 Terra',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 12,
+        cacheReadPerMillionUsd: 0.2,
+        cacheWritePerMillionUsd: 2.5,
+      },
+    },
+    {
+      modelId: 'openai/gpt-5.6-sol',
+      label: 'GPT-5.6 Sol',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 10,
+        cacheReadPerMillionUsd: 0.2,
+        cacheWritePerMillionUsd: 2.5,
+      },
+    },
+    {
+      modelId: 'openai/gpt-5.6-sol-pro',
+      label: 'GPT-5.6 Sol Pro',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 10,
+        cacheReadPerMillionUsd: 0.2,
+        cacheWritePerMillionUsd: 2.5,
+      },
+    },
+    {
+      modelId: 'openai/gpt-6-astra',
+      label: 'GPT-6 Astra',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: {
+        inputPerMillionUsd: 10,
+        outputPerMillionUsd: 50,
+        cacheReadPerMillionUsd: 1,
+        cacheWritePerMillionUsd: 12.5,
+      },
+    },
+    {
+      modelId: 'openai/gpt-6-astra-pro',
+      label: 'GPT-6 Astra Pro',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: {
+        inputPerMillionUsd: 10,
+        outputPerMillionUsd: 50,
+        cacheReadPerMillionUsd: 1,
+        cacheWritePerMillionUsd: 12.5,
+      },
+    },
     // Anthropic — reasoningControl WITHOUT the `reasoning` flag, on purpose:
     // the flag would flip openrouter.ts's always-on default injection; here
     // thinking is engaged only when the agent explicitly sets an effort.
@@ -871,6 +958,48 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         inputPerMillionUsd: 0.778824,
         outputPerMillionUsd: 1.55765,
         cacheReadPerMillionUsd: 0.064902,
+      },
+    },
+    {
+      // "The GA release of DeepSeek V4 Pro" (upstream copy) — the dated
+      // successor of the undated alias above. Same posture; pricing, context
+      // and supported_parameters (tools, tool_choice, reasoning,
+      // reasoning_effort) read off /api/v1/models on 2026-09-22.
+      modelId: 'deepseek/deepseek-v4-pro-0813',
+      label: 'DeepSeek V4 Pro (0813)',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      providerOrder: ['deepseek'],
+      pricing: {
+        inputPerMillionUsd: 0.66,
+        outputPerMillionUsd: 1.98,
+        cacheReadPerMillionUsd: 0.022,
+      },
+    },
+    {
+      // The newest Flash (2026-09-10), first on DeepSeek's Causal
+      // Encoder-Decoder architecture. One difference from every V4 Flash
+      // above: it takes IMAGE input (input_modalities: text, image), so it is
+      // in VISION_MODEL_IDS. Same reasoning caveat as its siblings.
+      modelId: 'deepseek/deepseek-v4.1-flash',
+      label: 'DeepSeek V4.1 Flash',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      providerOrder: ['deepseek'],
+      pricing: {
+        inputPerMillionUsd: 0.15,
+        outputPerMillionUsd: 0.6,
+        cacheReadPerMillionUsd: 0.003,
       },
     },
     // Google — all three are thinking models on OpenRouter (supported_parameters
@@ -1124,6 +1253,89 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         cacheReadPerMillionUsd: 0.015,
       },
     },
+    {
+      // "The high-speed variant of GLM-5.3-Flash ... up to 200 tokens/s"
+      // (upstream copy, 2026-09-18). Same model family, same posture as
+      // Flash: multimodal (text, image, video → VISION_MODEL_IDS), reasoning
+      // supported and not mandatory, forcedToolChoice:false. It differs on
+      // price (~5x Flash) and context (1.05M, not 1.31M) — both read off
+      // /api/v1/models on 2026-09-22.
+      modelId: 'z-ai/glm-5.3-flashx',
+      label: 'GLM 5.3 FlashX',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+        },
+      },
+      contextWindow: 1_048_576,
+      pricing: {
+        inputPerMillionUsd: 0.37,
+        outputPerMillionUsd: 1.25,
+        cacheReadPerMillionUsd: 0.075,
+      },
+    },
+    // Xiaomi MiMo-V2.6 — the three 2.6 models OpenRouter serves (2026-09-21),
+    // all read off /api/v1/models and /models/<id>/endpoints on 2026-09-22:
+    // 1.05M context, 131K max output, input_modalities text+image+video+audio
+    // (→ VISION_MODEL_IDS), supported_parameters tools, tool_choice,
+    // reasoning, include_reasoning — and NO reasoning_effort. So, like the
+    // Qwen entries below: reasoningControl WITHOUT the always-on `reasoning`
+    // flag (Auto keeps the provider's default), OpenRouter's unified
+    // `reasoning.effort` drives the intensity when an agent sets one.
+    // forcedToolChoice:false — `tool_choice` is accepted, nothing upstream
+    // says 'required' is honoured, and the runtime floor relaxes it anyway.
+    // Upstream copy: Flash = 309B MoE / 15B active; Pro = the >1T flagship;
+    // Pro-UltraSpeed = the same Pro checkpoint "roughly 10x" faster, 10x the
+    // price.
+    {
+      modelId: 'xiaomi/mimo-v2.6-flash',
+      label: 'MiMo V2.6 Flash',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      pricing: {
+        inputPerMillionUsd: 0.14,
+        outputPerMillionUsd: 0.28,
+        cacheReadPerMillionUsd: 0.0028,
+      },
+    },
+    {
+      modelId: 'xiaomi/mimo-v2.6-pro',
+      label: 'MiMo V2.6 Pro',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      pricing: {
+        inputPerMillionUsd: 0.435,
+        outputPerMillionUsd: 0.87,
+        cacheReadPerMillionUsd: 0.0036,
+      },
+    },
+    {
+      modelId: 'xiaomi/mimo-v2.6-pro-ultraspeed',
+      label: 'MiMo V2.6 Pro UltraSpeed',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      pricing: {
+        inputPerMillionUsd: 4.35,
+        outputPerMillionUsd: 8.7,
+        cacheReadPerMillionUsd: 0.036,
+      },
+    },
     // Moonshot (Kimi)
     {
       modelId: 'moonshotai/kimi-k2.6',
@@ -1200,6 +1412,54 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         inputPerMillionUsd: 2,
         outputPerMillionUsd: 6,
         cacheReadPerMillionUsd: 0.3,
+      },
+    },
+    // Grok 4.6 (2026-08-12) and 4.7 (2026-09-21, "succeeding Grok 4.6" per
+    // upstream copy): same 500K context, same text+image+file input
+    // (→ VISION_MODEL_IDS), same supported_parameters as 4.5 (tools,
+    // tool_choice, reasoning, reasoning_effort), read off /api/v1/models and
+    // /models/<id>/endpoints on 2026-09-22. The reasoning control keeps the
+    // 4.5 posture (low/medium/high, mandatory) — nothing upstream says 4.6 or
+    // 4.7 accept 'none' or an xhigh level, and guessing a level the model
+    // rejects is a failed call. Pricing: 4.6 = 4.5; 4.7 is 20% cheaper.
+    {
+      modelId: 'x-ai/grok-4.6',
+      label: 'Grok 4.6',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high'],
+          mandatory: true,
+        },
+      },
+      contextWindow: 500_000,
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 6,
+        cacheReadPerMillionUsd: 0.5,
+      },
+    },
+    {
+      modelId: 'x-ai/grok-4.7',
+      label: 'Grok 4.7',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high'],
+          mandatory: true,
+        },
+      },
+      contextWindow: 500_000,
+      pricing: {
+        inputPerMillionUsd: 1.6,
+        outputPerMillionUsd: 4.8,
+        cacheReadPerMillionUsd: 0.4,
       },
     },
     // Qwen — both verified via OpenRouter /api/v1/models (2026-07-20): 1M
@@ -1345,14 +1605,35 @@ export const VISION_MODEL_IDS = new Set<string>([
   'openai/gpt-5.6-luna',
   'openai/gpt-5.6-luna-pro',
   'openai/gpt-5.6-terra-pro',
+  // The rest of the 5.6 series and GPT-6 Astra: input_modalities
+  // ["file","image","text"] on /api/v1/models, 2026-09-22.
+  'openai/gpt-5.6-terra',
+  'openai/gpt-5.6-sol',
+  'openai/gpt-5.6-sol-pro',
+  'openai/gpt-6-astra',
+  'openai/gpt-6-astra-pro',
+  // deepseek/deepseek-v4.1-flash reports ["text","image"] (2026-09-22) — the
+  // first V4 Flash that does; v4-flash, v4-flash-0731 and both V4 Pro are
+  // text-only per the same source and deliberately NOT in this set.
+  'deepseek/deepseek-v4.1-flash',
   'qwen/qwen3.8-max',
   // Verified via OpenRouter /api/v1/models input_modalities on 2026-08-28:
   // z-ai/glm-5.3-flash reports ["text","image","video"]. The full z-ai/glm-5.3
   // reports ["text"] only and is deliberately NOT in this set.
   'z-ai/glm-5.3-flash',
+  // z-ai/glm-5.3-flashx reports the same ["text","image","video"] (2026-09-22).
+  'z-ai/glm-5.3-flashx',
+  // Xiaomi MiMo-V2.6: all three report ["text","image","video","audio"]
+  // (2026-09-22).
+  'xiaomi/mimo-v2.6-flash',
+  'xiaomi/mimo-v2.6-pro',
+  'xiaomi/mimo-v2.6-pro-ultraspeed',
   // Verified via OpenRouter /api/v1/models input_modalities (2026-07-20).
   // qwen/qwen3.7-max is deliberately absent — text-only per the same source.
   'x-ai/grok-4.5',
+  // 4.6 and 4.7 report the same ["text","image","file"] (2026-09-22).
+  'x-ai/grok-4.6',
+  'x-ai/grok-4.7',
   'qwen/qwen3.7-plus',
   // Native-provider forms
   'claude-fable-5',
