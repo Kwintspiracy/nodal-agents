@@ -16,8 +16,8 @@
  *   E — un échec serveur ne ment pas : approbation d'un manifeste modifié
  *       derrière le dos de la page ⇒ toast d'erreur et la pilule ne bouge pas ;
  *   F — `/code` mène à Workspaces ; le panneau « Files & proof » d'un projet
- *       se ferme, le choix tient au rechargement, et `/spaces/<id>/files` le
- *       rouvre quand même (#143) ;
+ *       se ferme, se rouvre au rechargement (#297), et `/spaces/<id>/files` le
+ *       montre aussi (#143) ;
  *   G — RIEN ne déborde du panneau, chemin long et commande longue comprises.
  *       Il demande une vraie mise en page, donc un vrai navigateur.
  *
