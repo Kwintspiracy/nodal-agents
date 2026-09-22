@@ -779,6 +779,17 @@ Deux majeurs fermés. La clé ${secret} traînait dans un log.`;
     expect(r.data.verdicts[0]?.report).toContain('[secret masqué]');
   });
 
+  it('#288 : la vue transporte le résultat livré, tel que la ligne le porte', async () => {
+    // La page du run lit agent_jobs.result sous l'en-tête quand la dernière
+    // prose n'est qu'une annonce ; sans ce champ dans la vue, sa branche ne
+    // tournait jamais. Lu sur la ligne semée en tête de fichier.
+    const { getSpaceConversationAction } = await actions();
+    const r = await getSpaceConversationAction(jobId);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.job.result).toBe('Tu aimes les tableaux.');
+  });
+
   it('un travail SANS relecture n’en invente pas', async () => {
     const { getSpaceConversationAction } = await actions();
     const sans = await getSpaceConversationAction(jobId);
