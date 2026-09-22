@@ -134,7 +134,15 @@ import type {
 } from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
-import { failJob, cancelJob, setJobStatus, saveCheckpoint, touchJob, claimJob } from './state.ts';
+import {
+  failJob,
+  cancelJob,
+  setJobStatus,
+  saveCheckpoint,
+  touchJob,
+  claimJob,
+  currentTurnMessages,
+} from './state.ts';
 // LA porte terminale de succès (plan « Vérifier & Corriger », T09/T10) : les
 // deux chemins de succès de cette boucle passent par elle, jamais par
 // completeJob directement — c'est elle qui calcule et journalise la décision
@@ -3122,8 +3130,17 @@ async function runJobTracked(
   // text BEFORE suspending into a delegation, and comes back in a fresh
   // executeJob run whose final turn is `return_result` alone. Counting only
   // this run's text would fail that job over a deliverable it already wrote.
+  //
+  // From the CURRENT turn only (#419): the replayed thread history that
+  // precedes the task carries the older turns' ledger lines as assistant text
+  // parts, and counting one of them as "text seen" let a turn that delivered
+  // nothing pass the guard below — the same line then landed in
+  // `agent_jobs.result` through `fillResultFromFinalTextIfEmpty`.
   let lastAssistantTextSeen = '';
-  for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+  for (const m of currentTurnMessages(messages, job.task) as Array<{
+    role?: unknown;
+    content?: unknown;
+  }>) {
     if (!m || m.role !== 'assistant') continue;
     const c = m.content;
     if (typeof c === 'string') {
