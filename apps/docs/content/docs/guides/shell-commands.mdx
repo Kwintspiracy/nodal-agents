@@ -30,11 +30,15 @@ different approach.
 
 Where you approve a command: the [Approvals page](/docs/reference/dashboard) of
 the dashboard, which lists every command waiting for you. By default, nothing an
-agent proposes runs until you approve that call. Two things let commands through
-without that question: a **Run without asking** rule on `run_command` for that
-agent, optionally confined to one of its folders — the card's **Approve for this
-project** writes exactly that rule — and Yolo mode, which drops the gate for
-every command that agent runs.
+agent proposes runs until you approve that call. Three things let commands
+through without that question: a **Run without asking** rule on `run_command`
+for that agent, optionally confined to one of its folders — the card's
+**Approve for this project** writes exactly that rule; the workspace's
+[autonomy level](/docs/guides/root-agent) set to **Autonomous, gate
+destructive**, under which an ordinary command runs unasked while a destructive
+or heavy one (deleting files, installing a package, killing a process, a disk
+operation) stays gated; and Yolo mode, which drops the gate for every command
+that agent runs.
 
 On a Telegram-bound agent, the agent gets a bounded number of turns to tell you
 via chat that it is waiting — so you are not left wondering why it went quiet.
