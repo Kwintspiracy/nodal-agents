@@ -330,8 +330,14 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
     }
   });
 
-  it('Xiaomi MiMo V2.6: 1.05M window, upstream pricing, effort control WITHOUT the always-on flag', () => {
-    expect(modelContextWindow('openrouter', 'xiaomi/mimo-v2.6-pro')).toBe(1_048_576);
+  it('Xiaomi MiMo V2.6: 1.05M window, upstream pricing, on/off thinking, forced tool_choice', () => {
+    for (const id of [
+      'xiaomi/mimo-v2.6-flash',
+      'xiaomi/mimo-v2.6-pro',
+      'xiaomi/mimo-v2.6-pro-ultraspeed',
+    ]) {
+      expect(modelContextWindow('openrouter', id), id).toBe(1_048_576);
+    }
     expect(entry('xiaomi/mimo-v2.6-flash')?.pricing).toEqual({
       inputPerMillionUsd: 0.14,
       outputPerMillionUsd: 0.28,
@@ -344,24 +350,27 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
     });
     // UltraSpeed is the same checkpoint at 10x the price — the one figure a
     // copy-paste of Pro would get wrong.
-    expect(entry('xiaomi/mimo-v2.6-pro-ultraspeed')?.pricing?.inputPerMillionUsd).toBe(4.35);
-    expect(entry('xiaomi/mimo-v2.6-pro-ultraspeed')?.pricing?.outputPerMillionUsd).toBe(8.7);
-    for (const id of ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro']) {
-      // No reasoning_effort in supported_parameters upstream: thinking is
-      // engaged only on an explicit agent setting (the Qwen posture).
+    expect(entry('xiaomi/mimo-v2.6-pro-ultraspeed')?.pricing).toEqual({
+      inputPerMillionUsd: 4.35,
+      outputPerMillionUsd: 8.7,
+      cacheReadPerMillionUsd: 0.036,
+    });
+    for (const id of [
+      'xiaomi/mimo-v2.6-flash',
+      'xiaomi/mimo-v2.6-pro',
+      'xiaomi/mimo-v2.6-pro-ultraspeed',
+    ]) {
+      // Upstream's `reasoning` object is {mandatory:false} and nothing else:
+      // no effort scale exists, thinking is on or off. No always-on flag.
       expect(entry(id)?.capabilities.reasoning, id).toBeUndefined();
-      expect(entry(id)?.capabilities.reasoningControl?.levels, id).toEqual([
-        'low',
-        'medium',
-        'high',
-        'max',
-      ]);
-      expect(entry(id)?.capabilities.forcedToolChoice, id).toBe(false);
+      expect(entry(id)?.capabilities.reasoningControl, id).toEqual({ kind: 'onoff' });
+      // supports_tool_choice.required:true on every MiMo endpoint.
+      expect(entry(id)?.capabilities.forcedToolChoice, id).toBe(true);
       expect(modelCanSeeImages(id), id).toBe(true);
     }
   });
 
-  it('GLM 5.3 FlashX keeps the Flash posture with its own price and window', () => {
+  it('GLM 5.3 FlashX: the full 5.3 reasoning contract, its own price and window', () => {
     const x = entry('z-ai/glm-5.3-flashx');
     expect(x?.pricing).toEqual({
       inputPerMillionUsd: 0.37,
@@ -371,20 +380,32 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
     // 1.05M — NOT Flash's 1.31M: the copy-paste failure mode, guarded.
     expect(modelContextWindow('openrouter', 'z-ai/glm-5.3-flashx')).toBe(1_048_576);
     expect(x?.capabilities.reasoning).toBe(true);
-    expect(x?.capabilities.reasoningControl?.mandatory).toBeUndefined();
+    // Upstream `reasoning`: mandatory:true, supported_efforts max/high/low.
+    expect(x?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['low', 'high', 'max'],
+      mandatory: true,
+    });
     expect(x?.capabilities.forcedToolChoice).toBe(false);
     expect(modelCanSeeImages('z-ai/glm-5.3-flashx')).toBe(true);
   });
 
-  it('Grok 4.6 and 4.7 keep the 4.5 reasoning contract, 4.7 is 20% cheaper', () => {
+  it('Grok 4.6 and 4.7: mandatory reasoning WITH max (xhigh upstream), 4.7 is 20% cheaper', () => {
     for (const id of ['x-ai/grok-4.6', 'x-ai/grok-4.7']) {
       expect(modelContextWindow('openrouter', id), id).toBe(500_000);
       expect(entry(id)?.capabilities.reasoning, id).toBe(true);
+      // Upstream `reasoning`: mandatory:true, supported_efforts
+      // xhigh/high/medium/low — one level more than 4.5, which stops at high.
       expect(entry(id)?.capabilities.reasoningControl, id).toEqual({
         kind: 'effort',
-        levels: ['low', 'medium', 'high'],
+        levels: ['low', 'medium', 'high', 'max'],
         mandatory: true,
       });
+      expect(entry('x-ai/grok-4.5')?.capabilities.reasoningControl?.levels).toEqual([
+        'low',
+        'medium',
+        'high',
+      ]);
       expect(modelCanSeeImages(id), id).toBe(true);
     }
     expect(entry('x-ai/grok-4.6')?.pricing).toEqual({
@@ -399,12 +420,19 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
     });
   });
 
-  it('DeepSeek V4 Pro 0813 and V4.1 Flash: providerOrder, pricing, and only V4.1 Flash sees images', () => {
+  it('DeepSeek V4 Pro 0813 and V4.1 Flash: providerOrder, pricing, three levels, and only V4.1 Flash sees images', () => {
     for (const id of ['deepseek/deepseek-v4-pro-0813', 'deepseek/deepseek-v4.1-flash']) {
       expect(entry(id)?.providerOrder, id).toEqual(['deepseek']);
       expect(entry(id)?.capabilities.reasoning, id).toBe(true);
       expect(modelContextWindow('openrouter', id), id).toBe(1_048_576);
+      // Upstream `reasoning`: supported_efforts max/high/low, no medium.
+      expect(entry(id)?.capabilities.reasoningControl?.levels, id).toEqual(['low', 'high', 'max']);
+      expect(entry(id)?.capabilities.reasoningControl?.mandatory, id).toBeUndefined();
     }
+    // supports_tool_choice.required is true on DeepSeek's V4 Pro endpoint and
+    // false on every V4.1 Flash endpoint.
+    expect(entry('deepseek/deepseek-v4-pro-0813')?.capabilities.forcedToolChoice).toBe(true);
+    expect(entry('deepseek/deepseek-v4.1-flash')?.capabilities.forcedToolChoice).toBe(false);
     expect(entry('deepseek/deepseek-v4-pro-0813')?.pricing).toEqual({
       inputPerMillionUsd: 0.66,
       outputPerMillionUsd: 1.98,
@@ -443,6 +471,11 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
         'high',
         'max',
       ]);
+      // Upstream `reasoning`: Astra and Astra Pro are mandatory:true (no
+      // 'none' in supported_efforts); the 5.6 models list 'none', so Off stays.
+      expect(entry(id)?.capabilities.reasoningControl?.mandatory, id).toBe(
+        id.startsWith('openai/gpt-6-astra') ? true : undefined,
+      );
       expect(modelCanSeeImages(id), id).toBe(true);
     }
   });

@@ -710,12 +710,18 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       },
     },
     // The rest of the 5.6 series and GPT-6 Astra, read off OpenRouter's
-    // /api/v1/models on 2026-09-22: same posture as Luna/Terra Pro above
-    // (tools + tool_choice + reasoning_effort in supported_parameters, 1.05M
-    // context, image+file input → VISION_MODEL_IDS). Upstream copy: Sol is
-    // the 5.6 flagship, Terra the balanced tier between Sol and Luna, Astra
-    // "OpenAI's flagship model for demanding end-to-end work". The Pro
-    // variants are priced identically to their base model upstream.
+    // /api/v1/models on 2026-09-22 — including its `reasoning` object
+    // ({mandatory, default_enabled, supported_efforts}), which is what the
+    // control below follows. Sol, Sol Pro and Terra: mandatory:false,
+    // supported_efforts max/xhigh/high/medium/low/none → the Luna posture
+    // (four levels, Off offered). Astra and Astra Pro: mandatory:true, no
+    // 'none' → the same four levels with Off hidden. Prices are the
+    // STANDARD OpenAI service tier, the one the list endpoint reports; the
+    // endpoints list also carries a flex tier at half and a priority tier at
+    // double, and an override above 272K prompt tokens — the flat catalogue
+    // price is the standard tier, as for Luna and Terra Pro above. Upstream
+    // copy: Sol is the 5.6 flagship, Terra the balanced tier between Sol and
+    // Luna, Astra "OpenAI's flagship model for demanding end-to-end work".
     {
       modelId: 'openai/gpt-5.6-terra',
       label: 'GPT-5.6 Terra',
@@ -770,7 +776,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       capabilities: {
         tools: true,
         forcedToolChoice: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
       },
       contextWindow: 1_050_000,
       pricing: {
@@ -786,7 +796,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       capabilities: {
         tools: true,
         forcedToolChoice: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
       },
       contextWindow: 1_050_000,
       pricing: {
@@ -962,16 +976,18 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     },
     {
       // "The GA release of DeepSeek V4 Pro" (upstream copy) — the dated
-      // successor of the undated alias above. Same posture; pricing, context
-      // and supported_parameters (tools, tool_choice, reasoning,
-      // reasoning_effort) read off /api/v1/models on 2026-09-22.
+      // successor of the undated alias above. Pricing (DeepSeek's own
+      // endpoint), context and supported_parameters read off /api/v1/models
+      // on 2026-09-22. The levels follow the list endpoint's `reasoning`
+      // object: supported_efforts max/high/low, mandatory:false — so no
+      // 'medium', unlike the older entries above that predate that field.
       modelId: 'deepseek/deepseek-v4-pro-0813',
       label: 'DeepSeek V4 Pro (0813)',
       capabilities: {
         tools: true,
         forcedToolChoice: true,
         reasoning: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+        reasoningControl: { kind: 'effort', levels: ['low', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
@@ -985,14 +1001,17 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // The newest Flash (2026-09-10), first on DeepSeek's Causal
       // Encoder-Decoder architecture. One difference from every V4 Flash
       // above: it takes IMAGE input (input_modalities: text, image), so it is
-      // in VISION_MODEL_IDS. Same reasoning caveat as its siblings.
+      // in VISION_MODEL_IDS. Same reasoning caveat as its siblings; levels
+      // from the list endpoint's `reasoning` object (max/high/low,
+      // mandatory:false, default_enabled:true). forcedToolChoice:false —
+      // every endpoint reports supports_tool_choice.required:false.
       modelId: 'deepseek/deepseek-v4.1-flash',
       label: 'DeepSeek V4.1 Flash',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
+        forcedToolChoice: false,
         reasoning: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+        reasoningControl: { kind: 'effort', levels: ['low', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
@@ -1255,11 +1274,14 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     },
     {
       // "The high-speed variant of GLM-5.3-Flash ... up to 200 tokens/s"
-      // (upstream copy, 2026-09-18). Same model family, same posture as
-      // Flash: multimodal (text, image, video → VISION_MODEL_IDS), reasoning
-      // supported and not mandatory, forcedToolChoice:false. It differs on
-      // price (~5x Flash) and context (1.05M, not 1.31M) — both read off
-      // /api/v1/models on 2026-09-22.
+      // (upstream copy, 2026-09-18). Same model family as Flash: multimodal
+      // (text, image, video → VISION_MODEL_IDS), forcedToolChoice:false
+      // (supports_tool_choice.required:false on its endpoint). The control
+      // follows the list endpoint's `reasoning` object, read 2026-09-22:
+      // mandatory:true, supported_efforts max/high/low, default max — the
+      // full 5.3's posture, and the same object upstream now reports for
+      // Flash too (the Flash entry above predates that field). It differs
+      // from Flash on price (~5x) and context (1.05M, not 1.31M).
       modelId: 'z-ai/glm-5.3-flashx',
       label: 'GLM 5.3 FlashX',
       capabilities: {
@@ -1268,7 +1290,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
-          levels: ['low', 'medium', 'high', 'max'],
+          levels: ['low', 'high', 'max'],
+          mandatory: true,
         },
       },
       contextWindow: 1_048_576,
@@ -1282,12 +1305,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     // all read off /api/v1/models and /models/<id>/endpoints on 2026-09-22:
     // 1.05M context, 131K max output, input_modalities text+image+video+audio
     // (→ VISION_MODEL_IDS), supported_parameters tools, tool_choice,
-    // reasoning, include_reasoning — and NO reasoning_effort. So, like the
-    // Qwen entries below: reasoningControl WITHOUT the always-on `reasoning`
-    // flag (Auto keeps the provider's default), OpenRouter's unified
-    // `reasoning.effort` drives the intensity when an agent sets one.
-    // forcedToolChoice:false — `tool_choice` is accepted, nothing upstream
-    // says 'required' is honoured, and the runtime floor relaxes it anyway.
+    // reasoning, include_reasoning — and NO reasoning_effort. The list
+    // endpoint's `reasoning` object says only {mandatory:false}: no
+    // supported_efforts, so thinking can be switched on or off and nothing
+    // else — kind 'onoff', not a made-up scale. No always-on `reasoning`
+    // flag: Auto keeps the provider's default. forcedToolChoice:true —
+    // every endpoint reports supports_tool_choice.required:true.
     // Upstream copy: Flash = 309B MoE / 15B active; Pro = the >1T flagship;
     // Pro-UltraSpeed = the same Pro checkpoint "roughly 10x" faster, 10x the
     // price.
@@ -1296,8 +1319,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'MiMo V2.6 Flash',
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'onoff' },
       },
       contextWindow: 1_048_576,
       pricing: {
@@ -1311,8 +1334,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'MiMo V2.6 Pro',
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'onoff' },
       },
       contextWindow: 1_048_576,
       pricing: {
@@ -1326,8 +1349,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'MiMo V2.6 Pro UltraSpeed',
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'onoff' },
       },
       contextWindow: 1_048_576,
       pricing: {
@@ -1418,10 +1441,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     // upstream copy): same 500K context, same text+image+file input
     // (→ VISION_MODEL_IDS), same supported_parameters as 4.5 (tools,
     // tool_choice, reasoning, reasoning_effort), read off /api/v1/models and
-    // /models/<id>/endpoints on 2026-09-22. The reasoning control keeps the
-    // 4.5 posture (low/medium/high, mandatory) — nothing upstream says 4.6 or
-    // 4.7 accept 'none' or an xhigh level, and guessing a level the model
-    // rejects is a failed call. Pricing: 4.6 = 4.5; 4.7 is 20% cheaper.
+    // /models/<id>/endpoints on 2026-09-22. The control follows the list
+    // endpoint's `reasoning` object: mandatory:true (no Off), and — unlike
+    // 4.5, whose object stops at high — supported_efforts xhigh/high/medium/
+    // low, so 'max' (→ xhigh) is offered. Pricing: 4.6 = 4.5; 4.7 is 20%
+    // cheaper. Both double above 200K prompt tokens (an override the flat
+    // price does not carry, same as 4.5).
     {
       modelId: 'x-ai/grok-4.6',
       label: 'Grok 4.6',
@@ -1431,7 +1456,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
-          levels: ['low', 'medium', 'high'],
+          levels: ['low', 'medium', 'high', 'max'],
           mandatory: true,
         },
       },
@@ -1451,7 +1476,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
-          levels: ['low', 'medium', 'high'],
+          levels: ['low', 'medium', 'high', 'max'],
           mandatory: true,
         },
       },
