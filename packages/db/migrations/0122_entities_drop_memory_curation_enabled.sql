@@ -1,0 +1,17 @@
+-- LA COLONNE QUE PERSONNE NE POUVAIT ATTEINDRE (issue #411).
+--
+-- `memory_curation_enabled` est née avec la 0.7.0 (migration 0052) pour
+-- découpler la curation de la mémoire de `reflection_enabled`, qui gardait la
+-- boucle d'apprentissage des skills éteinte. Le runner la lisait à chaque
+-- passage ; aucun écran ne l'a jamais montrée ni changée. Un réglage qu'on ne
+-- peut poser qu'en SQL n'est pas un réglage, c'est une colonne.
+--
+-- Décision de Quentin, 22/09 : la supprimer. Ce qui reste dit « ne touche pas
+-- à ça » est le geste que le produit propose déjà : l'épingle sur le fait
+-- (`agent_memory.importance_locked`), que le curateur respecte, et le
+-- coupe-circuit global `MEMORY_CURATION_ENABLED=false` côté runner.
+--
+-- Cette migration ne touche PAS `agent_memory` : aucun fait, aucune
+-- importance, aucune archive ne bouge. Seule la ligne de l'espace perd un
+-- booléen que rien ne lisait hors du cron.
+ALTER TABLE "entities" DROP COLUMN IF EXISTS "memory_curation_enabled";

@@ -55,10 +55,10 @@ export const entities = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
     lastCuratorRunAt: timestamp('last_curator_run_at', { withTimezone: true }),
     reflectionEnabled: boolean('reflection_enabled').notNull().default(false),
-    // Decoupled from reflection_enabled (which gates the skill-learning loop,
-    // opt-in). Gates the memory curator (Phase 2 LLM pass) — ON by default so
-    // memory curation runs even for entities that never opted into reflection.
-    memoryCurationEnabled: boolean('memory_curation_enabled').notNull().default(true),
+    // `memory_curation_enabled` lived here from 0.7.0 to migration 0122 (#411):
+    // a per-workspace gate on the memory curator that no screen ever exposed.
+    // Memory curation is now gated by the runner's MEMORY_CURATION_ENABLED
+    // kill-switch only; "do not touch this fact" is the pin on the fact.
     // Controls whether agent-authored skills are auto-assigned to the authoring
     // agent ('auto') or queued for the entity owner to approve ('approval').
     skillAssignmentMode: text('skill_assignment_mode')
