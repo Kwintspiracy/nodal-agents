@@ -321,6 +321,7 @@ describe('Claude Fable 5.1 on OpenRouter (2026-09-22)', () => {
   });
 
   it('follows the upstream reasoning object: mandatory, four levels, no always-on flag', () => {
+    expect(fable?.capabilities.tools).toBe(true);
     expect(fable?.capabilities.reasoning).toBeUndefined();
     expect(fable?.capabilities.reasoningControl).toEqual({
       kind: 'effort',
