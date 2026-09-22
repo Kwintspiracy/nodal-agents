@@ -26,12 +26,12 @@ search scores on. Fourteen pull requests, one migration
 
 **Models**
 
-- **Fourteen models join the OpenRouter catalogue.** Xiaomi MiMo V2.6 in its
-  three sizes, GLM 5.3 FlashX, Grok 4.6 and 4.7, DeepSeek V4 Pro and V4.1 Flash,
-  GPT-5.6 Sol, Sol Pro and Terra, GPT-6 Astra and Astra Pro, and Claude Fable
-  5.1. Every window, price, modality and capability is read off OpenRouter's own
-  API rather than typed, and each entry says in a comment which call answered it.
-  (#413, #430)
+- **Fourteen models join the OpenRouter catalogue.** Xiaomi MiMo V2.6 Flash, Pro
+  and Pro UltraSpeed, GLM 5.3 FlashX, Grok 4.6 and 4.7, DeepSeek V4 Pro and
+  V4.1 Flash, GPT-5.6 Sol, Sol Pro and Terra, GPT-6 Astra and Astra Pro, and
+  Claude Fable 5.1. Every window, price, modality and capability is read off
+  OpenRouter's own API rather than typed, and each entry says in a comment which
+  call answered it. (#413, #430)
 - **Three Anthropic identifiers OpenRouter does not serve leave the catalogue.**
   `claude-opus-4.7-fast`, `4.8-fast` and `5-fast` were offered in the picker and
   returned a 404 to any agent set to one: OpenRouter lists none of them and
