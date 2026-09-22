@@ -22,14 +22,44 @@
 // manifeste. Ne regarder que la déclaration aurait typé `document` le premier
 // `package.json` d'un dépôt neuf — et plus rien ne l'aurait jamais déclaré.
 //
+// Et pourquoi le fichier ÉCRIT compte lui aussi (#263) : la question est posée
+// AVANT l'écriture, et un dossier neuf n'a pas encore son manifeste sur le
+// disque. Le premier `package.json` d'un dépôt était donc typé `document`, et
+// seule la seconde écriture faisait du dossier un projet — l'inverse de ce que
+// ce paragraphe promettait. Le fichier écrit est-il lui-même un manifeste
+// (`PROJECT_MARKERS`, la même liste que `hasMarker`) ? Alors il fait de son
+// dossier un projet de code dès cette écriture, sans lire le disque.
+//
+// MAIS SEULEMENT À LA RACINE RÉSOLUE (revue Codex, passe 1 sur #435). La
+// racine d'un fichier n'est pas son dossier : `resolveProjectRoots` la met au
+// SOUS-DOSSIER DE PREMIER NIVEAU du dossier attaché. Pour
+// `espace/notes/site/index.html`, la racine est `espace/notes`, qui ne porte
+// aucun marqueur — l'intention y assigne la vérification, l'enregistrement la
+// refuse, et le fichier perd sa clé de livrable document. La règle du fichier
+// écrit ne vaut donc que quand son dossier EST la racine résolue : le premier
+// `package.json` à la racine de l'espace ou d'un sous-dossier de premier
+// niveau. Plus profond, c'est la racine qui décide, comme avant.
+//
+// Conséquence assumée : `index.html` est dans `PROJECT_MARKERS`, donc un
+// `index.html` écrit seul dans un dossier de notes de PREMIER NIVEAU est
+// classé code dès la première écriture. Ce n'est pas nouveau — la liste est la
+// même que celle de `hasMarker`, et la seconde écriture le faisait déjà ;
+// c'est la même réponse, un tour plus tôt.
+//
 // Pourquoi un projet déclaré de DOCUMENTS ne compte pas : ses fichiers sont
 // des documents, précisément. `kind` existe pour que l'écran le dise ; ici il
-// sert à ne pas transformer un dossier de notes en dépôt à tester.
+// sert à ne pas classer code un dossier de notes qu'aucun manifeste ne marque.
 
 import { and, eq, isNotNull } from '@nodal-agents/db';
 import { codeProjects } from '@nodal-agents/db';
 import type { DeliverableType } from '@nodal-agents/shared';
-import { isWithinRoot, normalizePath, resolveProjectRoots } from '@nodal-agents/shared';
+import {
+  PROJECT_MARKERS,
+  isWithinRoot,
+  normalizePath,
+  projectKey,
+  resolveProjectRoots,
+} from '@nodal-agents/shared';
 import { hasMarker, rebaseOntoLexicalRoots } from '../projects/markers';
 import type { ToolContext } from '../types';
 
@@ -48,6 +78,7 @@ export interface ClassifyWrittenFileInput {
 export function classifyWrittenFile(input: ClassifyWrittenFileInput): WrittenFileType {
   const path = normalizePath(input.absPath);
   const dir = path.replace(/\/[^/]*$/, '');
+  const name = path.slice(dir.length + 1);
 
   for (const declared of input.declaredCodeProjectPaths) {
     const root = normalizePath(declared);
@@ -59,7 +90,14 @@ export function classifyWrittenFile(input: ClassifyWrittenFileInput): WrittenFil
     workspaceRoots: input.workspaceRoots,
     hasMarker: input.hasMarker,
   });
-  if (project !== undefined && input.hasMarker(project.path)) return 'code_project';
+  if (project !== undefined) {
+    if (input.hasMarker(project.path)) return 'code_project';
+    // Le manifeste lui-même (#263), et seulement s'il est À la racine résolue
+    // (#435) : plus profond, c'est la racine qui décide. `.git` est un
+    // dossier, jamais un fichier que l'on écrit, il n'entre pas ici.
+    const aLaRacine = project.key === projectKey(dir);
+    if (aLaRacine && name !== '.git' && PROJECT_MARKERS.includes(name)) return 'code_project';
+  }
 
   return 'document';
 }
