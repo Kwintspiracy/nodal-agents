@@ -452,11 +452,14 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     await page.getByTestId('project-panel-toggle').click();
     await expect(page.getByTestId('project-files-panel')).toHaveCount(0);
     await expect(page.getByTestId('project-verification')).toHaveCount(0);
-    // Le choix TIENT d'une visite à l'autre.
+    // Le choix ne tient PAS d'une visite à l'autre (Quentin, 20/09, #297) :
+    // mémorisé dans le navigateur, il se rejouait après le montage et le
+    // panneau rendu ouvert par le serveur se refermait sous les yeux. Rouvrir
+    // la page rouvre donc le panneau — c'est voulu, et c'est vérifié.
     await page.reload();
-    await expect(page.getByTestId('project-files-panel')).toHaveCount(0);
-    // Mais `/spaces/<id>/files` veut dire « montre-moi le dossier », et il le
-    // montre quand même.
+    await expect(page.getByTestId('project-files-panel')).toBeVisible();
+    // Et `/spaces/<id>/files` veut dire « montre-moi le dossier », et il le
+    // montre.
     await page.goto(`/spaces/${projectId}/files`);
     await expect(page.getByTestId('project-files-panel')).toBeVisible();
   });

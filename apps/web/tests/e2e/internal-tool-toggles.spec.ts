@@ -85,7 +85,9 @@ test.describe('Built-in tools — per-tool controls', () => {
     // Present — hiding it would leave an owner wondering what is not being said.
     const locked = page.locator('[data-testid="autonomy-locked-return_result"]');
     await expect(locked).toBeVisible();
-    await expect(locked).toContainText(/always on/i);
+    // The wording is the owner's since #387: "Always available", and the reason.
+    await expect(locked).toContainText(/always available/i);
+    await expect(locked).toContainText(/cannot be blocked/i);
 
     // And genuinely uncontrollable: no Block button exists for it.
     await expect(page.locator('[data-testid="autonomy-btn-return_result-block"]')).toHaveCount(0);
