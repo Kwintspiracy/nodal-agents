@@ -22,6 +22,14 @@
 // manifeste. Ne regarder que la déclaration aurait typé `document` le premier
 // `package.json` d'un dépôt neuf — et plus rien ne l'aurait jamais déclaré.
 //
+// Et pourquoi le fichier ÉCRIT compte lui aussi (#263) : la question est posée
+// AVANT l'écriture, et un dossier neuf n'a pas encore son manifeste sur le
+// disque. Le premier `package.json` d'un dépôt était donc typé `document`, et
+// seule la seconde écriture faisait du dossier un projet — l'inverse de ce que
+// ce paragraphe promettait. Le fichier écrit est-il lui-même un manifeste
+// (`PROJECT_MARKERS`, la même liste que `hasMarker`) ? Alors son dossier est
+// un projet de code dès cette écriture, sans lire le disque.
+//
 // Pourquoi un projet déclaré de DOCUMENTS ne compte pas : ses fichiers sont
 // des documents, précisément. `kind` existe pour que l'écran le dise ; ici il
 // sert à ne pas transformer un dossier de notes en dépôt à tester.
@@ -29,7 +37,12 @@
 import { and, eq, isNotNull } from '@nodal-agents/db';
 import { codeProjects } from '@nodal-agents/db';
 import type { DeliverableType } from '@nodal-agents/shared';
-import { isWithinRoot, normalizePath, resolveProjectRoots } from '@nodal-agents/shared';
+import {
+  PROJECT_MARKERS,
+  isWithinRoot,
+  normalizePath,
+  resolveProjectRoots,
+} from '@nodal-agents/shared';
 import { hasMarker, rebaseOntoLexicalRoots } from '../projects/markers';
 import type { ToolContext } from '../types';
 
@@ -48,6 +61,11 @@ export interface ClassifyWrittenFileInput {
 export function classifyWrittenFile(input: ClassifyWrittenFileInput): WrittenFileType {
   const path = normalizePath(input.absPath);
   const dir = path.replace(/\/[^/]*$/, '');
+  const name = path.slice(dir.length + 1);
+
+  // Le manifeste lui-même (#263) : `.git` est un dossier, jamais un fichier
+  // que l'on écrit, il n'entre pas ici.
+  if (name !== '.git' && PROJECT_MARKERS.includes(name)) return 'code_project';
 
   for (const declared of input.declaredCodeProjectPaths) {
     const root = normalizePath(declared);
