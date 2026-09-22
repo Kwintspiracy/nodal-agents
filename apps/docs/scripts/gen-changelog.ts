@@ -23,45 +23,13 @@
  * what this script wrote without touching the checked-in tree.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { renderChangelogPage } from './changelog-page';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..');
 const outRoot = process.env.NODAL_DOCS_GEN_OUT ?? join(here, '..');
-
-/** Escape `<` outside code spans / fences so `<time>` renders as text. */
-const escapeAnglesOutsideCode = (md: string): string =>
-  md
-    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
-    .map((seg, i) => (i % 2 === 1 ? seg : seg.replace(/</g, '&lt;')))
-    .join('');
-
-/**
- * The releases section of the root changelog: from its first `## v` heading to
- * the end. Fails loud when the root has no such heading — a page generated
- * from nothing would be a changelog that says nothing (invariant #4).
- */
-export function releasesOf(rootChangelog: string): string {
-  const at = rootChangelog.search(/^## v/m);
-  if (at === -1) throw new Error('gen-changelog: CHANGELOG.md has no "## v…" release heading');
-  return rootChangelog.slice(at).trim();
-}
-
-export function renderChangelogPage(rootChangelog: string): string {
-  return `---
-title: Changelog
-description: Notable releases of Nodal-Agents, newest first.
----
-
-Notable releases, newest first — this page is the repository's \`CHANGELOG.md\`,
-generated at build time. Pre-1.0: minor versions can carry breaking changes.
-Every release is published to npm as \`nodal-agents\` and tagged on GitHub —
-upgrade in place with \`nodal-agents update\` (your data is preserved).
-
-${escapeAnglesOutsideCode(releasesOf(rootChangelog))}
-`;
-}
 
 const root = readFileSync(join(repoRoot, 'CHANGELOG.md'), 'utf8');
 const docsDir = join(outRoot, 'content', 'docs');
