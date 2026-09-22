@@ -118,7 +118,7 @@
       "pageTitle": "Memory",
       "heading": "Memory",
       "url": "/nodal-agents/docs/concepts/memory",
-      "text": "How agents store, recall, and automatically use persistent facts across jobs. Agents accumulate facts in a persistent agent_memory table. These facts survive across sessions, restarts, and model swaps — whenever a job runs, relevant memories are already waiting in the system prompt before the first LLM call."
+      "text": "How an agent remembers something for later, and how the fact comes back next time it works. Agents accumulate facts in a persistent agent_memory table. These facts survive across sessions, restarts, and model swaps — whenever a job runs, relevant memories are already waiting in the system prompt before the first LLM call. When you tell an agent to remember this, to keep something for later, or to do it this way next time, a memory is what you are asking for: the fact is written once, and read back on its own every time it is needed."
     },
     {
       "page": "concepts/memory",
@@ -130,8 +130,8 @@
     {
       "page": "concepts/memory",
       "pageTitle": "Memory",
-      "heading": "Auto-injection into every job",
-      "url": "/nodal-agents/docs/concepts/memory#auto-injection-into-every-job",
+      "heading": "Auto-injection into every job — the fact is there next time",
+      "url": "/nodal-agents/docs/concepts/memory#auto-injection-into-every-job--the-fact-is-there-next-time",
       "text": "Before a job starts, the runner selects memories from the entity-wide pool and injects them as a frozen block inside the agent's system prompt. No tool call is needed — the agent already has context. Selection works in two stages: Candidate fetch — up to 200 non-archived, non-expired memories for the entity (MAX_CANDIDATES in packages/memory/src/inject.ts). The ordering depends on the current job: Task-relevant ranking. When the job's task is tokenizable, candidates are ordered by ts_rank against the task text (full-text relevance), with importance and recency only as a tie-break. A fact relevant to this task can surface even if it sits outside the importance/recency top tier. Fallback ranking. When the task has no usable tokens, candidates are ordered by importance DESC, then last_accessed_at DESC. Budget pack — a greedy selector fits as many as possible under a character budget derived from agents.memoryTokenBudget. In the relevance path, the FTS order is authoritative and is not re-sorted by importance. A single oversized fact is skipped rather than truncated. Memory is entity-scoped, not agent-scoped — every agent in the same entity sees the same pool. This matches the query_memory tool's behaviour: knowledge follows the user across agents, not the individual agent."
     },
     {
@@ -151,9 +151,9 @@
     {
       "page": "concepts/memory",
       "pageTitle": "Memory",
-      "heading": "Writing memories",
-      "url": "/nodal-agents/docs/concepts/memory#writing-memories",
-      "text": "Agents write memories with save_memory. Duplicate detection runs on a normalized hash of the fact text — an identical (non-archived) fact already in the store is rejected before it reaches the DB, so the pool stays clean. Content is sanitized before storage to guard against injection payloads being embedded into the entity-wide pool."
+      "heading": "Writing memories — remember this, for later",
+      "url": "/nodal-agents/docs/concepts/memory#writing-memories--remember-this-for-later",
+      "text": "Agents write memories with save_memory — the tool behind \"remember that I prefer short answers\" and \"keep that for later\". Duplicate detection runs on a normalized hash of the fact text — an identical (non-archived) fact already in the store is rejected before it reaches the DB, so the pool stays clean. Content is sanitized before storage to guard against injection payloads being embedded into the entity-wide pool."
     },
     {
       "page": "concepts/memory",
@@ -914,9 +914,9 @@
     {
       "page": "guides/shell-commands",
       "pageTitle": "Shell commands",
-      "heading": "How approval works",
-      "url": "/nodal-agents/docs/guides/shell-commands#how-approval-works",
-      "text": "When the agent calls run_command, the runner creates an approval request and suspends the job. You see the exact command in the dashboard and approve or reject it. If you approve, the runner executes the command and the job resumes with the output. If you reject, the agent receives an error and can try a different approach. On a Telegram-bound agent, the agent gets a bounded number of turns to tell you via chat that it is waiting — so you are not left wondering why it went quiet."
+      "heading": "How approval works — you approve a command before it runs",
+      "url": "/nodal-agents/docs/guides/shell-commands#how-approval-works--you-approve-a-command-before-it-runs",
+      "text": "When the agent calls run_command, the runner creates an approval request and suspends the job. You see the exact command in the dashboard and approve or reject it. If you approve, the runner executes the command and the job resumes with the output. If you reject, the agent receives an error and can try a different approach. Where you approve a command: the Approvals page of the dashboard, which lists every command waiting for you. By default, nothing an agent proposes runs until you approve that call. Three things let commands through without that question: a Run without asking rule on run_command for that agent, optionally confined to one of its folders — the card's Approve for this project writes exactly that rule; the workspace's autonomy level set to Autonomous, gate destructive, under which an ordinary command runs unasked while a destructive or heavy one (deleting files, installing a package, killing a process, a disk operation) stays gated; and Yolo mode, which drops the gate for every command that agent runs. On a Telegram-bound agent, the agent gets a bounded number of turns to tell you via chat that it is waiting — so you are not left wondering why it went quiet."
     },
     {
       "page": "guides/shell-commands",
@@ -1264,9 +1264,9 @@
     {
       "page": "reference/dashboard",
       "pageTitle": "Dashboard reference",
-      "heading": "Approvals — /approvals",
-      "url": "/nodal-agents/docs/reference/dashboard#approvals--approvals",
-      "text": "Everything that needs your sign-off, and everything that got it. Tabs: pending, approved, rejected, expired, all. Each card shows the tool input, the agent's stated purpose and impact, and a link to the run that asked. Approve or reject, optionally with a note. ?show=<id> opens one request on its own, whatever its decision — it is what the sidebar's Recents rows link to. The list narrows to that card and the page says so in its subtitle. See the autonomy model in Agents."
+      "heading": "Approvals — approve or refuse a command, /approvals",
+      "url": "/nodal-agents/docs/reference/dashboard#approvals--approve-or-refuse-a-command-approvals",
+      "text": "Everything that needs your sign-off, and everything that got it. Tabs: pending, approved, rejected, expired, all. This is where you approve a command — or any other tool call an agent asked to make — and where you refuse one. Each card shows the tool input, the agent's stated purpose and impact, and a link to the run that asked. Approve or reject, optionally with a note. An approval covers that one call. To stop confirming every time, you allow the tool rather than the command: on the agent's Approvals tab, set run_command to Run without asking, for that agent, and — if you name one — only inside one of its folders. The card's Approve for this project writes that same rule for the folder the run is in. A rule never reads what the command says, so it cannot allow one command line and keep asking about another. Yolo, on the same tab, goes further: it drops the gate for every command that agent runs. A third way does not come from that tab at all: with the workspace's autonomy level set to Autonomous, gate destructive and no rule on the tool, an ordinary command runs unasked, while a destructive or heavy one (deleting files, installing a package, killing a process, a disk operation) stays gated. See Shell commands. ?show=<id> opens one request on its own, whatever its decision — it is what the sidebar's Recents rows link to. The list narrows to that card and the page says so in its subtitle. See the autonomy model in Agents."
     },
     {
       "page": "reference/dashboard",

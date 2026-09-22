@@ -240,6 +240,48 @@ describe('nodal_docs @cap:consulter-l-aide/moteur', () => {
   });
 });
 
+describe('the words a person actually types @cap:consulter-l-aide/moteur', () => {
+  // Issue #332, remainder of #316. `nodal_docs` scores on the words of the
+  // pages, so a page only answers a question asked in its own vocabulary:
+  // "remember something for later" reached a getting-started section about
+  // sending something, and "how do I approve a command" reached the section
+  // listing the commands that can NEVER be approved. The fix is in the
+  // documentation, the single source — a synonym table in the tool would be
+  // exactly the hand-written list #316 removed.
+  //
+  // FIVE of the six cases below fail on the documentation as it stood before
+  // this change; "remember this" already reached the memory page and is pinned
+  // here so the word cannot be dropped from it. (Verified by running this file
+  // against main's docs-index.json: 5 failed, 1 passed.)
+  //
+  // Each case pins the page reached FIRST for a phrase a person types, so the
+  // vocabulary cannot be edited back out of the pages without a red test.
+  //
+  // "approve a command" lands on the shell-commands guide and not on the
+  // dashboard's Approvals screen, and that is the ranking working, not a miss:
+  // on that page the word "commands" is in the title, in the path AND in the
+  // heading, which no section of `reference/dashboard` can match. The guide
+  // section is the one titled after the question and it links to the screen.
+  const cases: [question: string, firstUrl: RegExp][] = [
+    ['remember something for later', /^\/nodal-agents\/docs\/concepts\/memory(#|$)/],
+    ['remember this', /^\/nodal-agents\/docs\/concepts\/memory(#|$)/],
+    ['for later', /^\/nodal-agents\/docs\/concepts\/memory(#|$)/],
+    ['next time', /^\/nodal-agents\/docs\/concepts\/memory(#|$)/],
+    [
+      'how do I approve a command',
+      /^\/nodal-agents\/docs\/guides\/shell-commands#how-approval-works/,
+    ],
+    ['allow this command', /^\/nodal-agents\/docs\/reference\/dashboard#approvals/],
+  ];
+
+  for (const [question, firstUrl] of cases) {
+    it(`answers "${question}" with the page that has the answer`, async () => {
+      const hits = await ask(question);
+      expect(hits[0]?.url).toMatch(firstUrl);
+    });
+  }
+});
+
 describe('nodal_docs on an agent whitelist @cap:assigner-outils/moteur', () => {
   it('is refused to an agent whose list does not carry it', () => {
     const registry = createToolRegistry();
