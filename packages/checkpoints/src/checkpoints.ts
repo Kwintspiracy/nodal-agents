@@ -36,6 +36,8 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
+
 import {
   CheckpointError,
   checkpointFailureCode,
@@ -100,8 +102,48 @@ function isTimeoutError(err: unknown): boolean {
   return e.killed === true || e.code === 'ETIMEDOUT';
 }
 
-/** `git` introuvable : l'`ENOENT` vient du spawn, pas d'un fichier du dossier. */
+/**
+ * Il n'y a pas de git sur le PATH, dit AVANT d'avoir lancé quoi que ce soit.
+ *
+ * Une erreur à part, et non un `ENOENT` de spawn maquillé : c'est la résolution
+ * qui a répondu « aucun », et confondre les deux ferait croire à un lecteur du
+ * code qu'un processus a été lancé.
+ */
+class GitBinaryMissingError extends Error {
+  constructor() {
+    super(
+      'git is not on PATH: no checkpoint can be taken or read. ' +
+        'Install git, or make it reachable from the process PATH.',
+    );
+    this.name = 'GitBinaryMissingError';
+  }
+}
+
+/**
+ * QUEL git est lancé — le chemin ABSOLU du git du système, jamais le nom nu
+ * (issue #251).
+ *
+ * Toutes les commandes d'ici tournent avec `GIT_WORK_TREE` sur le workspace du
+ * propriétaire, c'est-à-dire sur un dossier où l'agent écrit : c'est la même
+ * famille de risque que le constat d'écritures (#227) et que `apps/web` (#244),
+ * donc la même résolution, celle de `@nodal-agents/shared/git-binary`.
+ *
+ * Pas de git ⇒ ON LÈVE, fort et clair. Aucun repli sur le nom nu, et surtout
+ * aucun instantané « réussi » sans filet derrière (invariant #4).
+ */
+async function gitBinary(): Promise<string> {
+  const binaire = await resolveGitBinary();
+  if (binaire === null) throw new GitBinaryMissingError();
+  return binaire;
+}
+
+/**
+ * `git` introuvable — soit la résolution l'a dit avant de lancer, soit un
+ * `ENOENT` est venu du spawn lui-même (un binaire effacé entre la résolution et
+ * l'appel). Les deux se rendent au propriétaire sous le même code.
+ */
 function isGitMissingError(err: unknown): boolean {
+  if (err instanceof GitBinaryMissingError) return true;
   if (typeof err !== 'object' || err === null) return false;
   const e = err as { code?: unknown; syscall?: unknown };
   return e.code === 'ENOENT' && typeof e.syscall === 'string' && e.syscall.startsWith('spawn');
@@ -303,7 +345,7 @@ async function git(
   /** La borne de CET appel. Seul l'instantané la surcharge — voir storeTimeoutMs. */
   timeoutMs: number = storeTimeoutMs(),
 ): Promise<string> {
-  const { stdout } = await run('git', args, {
+  const { stdout } = await run(await gitBinary(), args, {
     timeout: timeoutMs,
     windowsHide: true,
     env: gitEnv(store, workspace, indexFile),
@@ -323,7 +365,7 @@ async function gitRaw(
   args: string[],
   indexFile?: string,
 ): Promise<string> {
-  const { stdout } = await run('git', args, {
+  const { stdout } = await run(await gitBinary(), args, {
     timeout: storeTimeoutMs(),
     windowsHide: true,
     maxBuffer: 8 * 1024 * 1024,
@@ -361,15 +403,18 @@ function cutAtUtf8Boundary(buf: Buffer, max: number): Buffer {
  * encore ouvert par git ne se supprime pas (`EBUSY`) — chaque index orphelin
  * aurait pesé le poids d'un index complet.
  */
-function gitRawCapped(
+async function gitRawCapped(
   store: string,
   workspace: string,
   args: string[],
   maxBytes: number,
   indexFile?: string,
 ): Promise<{ text: string; truncated: boolean }> {
+  // Résolu AVANT d'ouvrir la promesse : `spawn` ne sait pas attendre, et un
+  // `git` nu laisserait le système chercher le programme (#251).
+  const binaire = await gitBinary();
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
+    const child = spawn(binaire, args, {
       windowsHide: true,
       env: gitEnv(store, workspace, indexFile),
     });
@@ -430,7 +475,7 @@ export async function ensureStore(store: string): Promise<void> {
     // LA CONSTANTE, pas la borne surchargeable : créer un dépôt nu vide ne
     // dépend d'aucun arbre, donc rien ne justifie qu'une borne serrée posée
     // pour un gros dossier empêche le magasin d'exister (#262, passe 2).
-    await run('git', ['init', '--bare', '--quiet', gitDir], {
+    await run(await gitBinary(), ['init', '--bare', '--quiet', gitDir], {
       timeout: GIT_TIMEOUT_MS,
       windowsHide: true,
     });

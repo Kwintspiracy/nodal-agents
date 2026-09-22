@@ -788,6 +788,10 @@ importers:
         version: link:../test-kit
 
   packages/checkpoints:
+    dependencies:
+      '@nodal-agents/shared':
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@nodal-agents/test-kit':
         specifier: workspace:*

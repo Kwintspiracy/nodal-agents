@@ -13,6 +13,9 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@nodal-agents/shared": "workspace:*"
+  },
   "devDependencies": {
     "@nodal-agents/test-kit": "workspace:*"
   }
