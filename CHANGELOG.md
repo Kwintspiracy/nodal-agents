@@ -18,8 +18,9 @@ delegation line replayed from a turn of a week earlier: the page repeated the
 last thing said in the transcript instead of the answer that was delivered. Both
 halves of that are fixed, in the runner and on the page. The model catalogue
 catches up with what OpenRouter actually serves, fourteen models in and three
-dead identifiers out, so an agent set to one of them stops meeting a 404. And
-the documentation now says the words a person types, which is what the in-product
+dead identifiers out of the picker; an agent already set to one of those three
+keeps getting a 404 until its owner picks a model that is served. And the
+documentation now says the words a person types, which is what the in-product
 search scores on. Fourteen pull requests, one migration
 (`0122_entities_drop_memory_curation_enabled`).
 
@@ -34,8 +35,9 @@ search scores on. Fourteen pull requests, one migration
 - **Three Anthropic identifiers OpenRouter does not serve leave the catalogue.**
   `claude-opus-4.7-fast`, `4.8-fast` and `5-fast` were offered in the picker and
   returned a 404 to any agent set to one: OpenRouter lists none of them and
-  serves no endpoint for them. Their non-fast siblings stay, and a test pins both
-  facts. (#429)
+  serves no endpoint for them. The three choices are gone from the picker; an
+  agent already set to one still gets a 404 until its owner chooses a model that
+  is served. Their non-fast siblings stay, and a test pins both facts. (#429)
 
 **Runs and pages**
 
@@ -43,7 +45,7 @@ search scores on. Fourteen pull requests, one migration
   messaging tool and acknowledges with a status writes no text of its own, and
   the reader that fills an empty result took the last assistant text in the
   transcript, which starts with the replayed thread history. Since 15 September
-  every Telegram turn of that shape inherited an old delegation ledger line as
+  a Telegram turn of that shape could inherit an older delegation ledger line as
   its result. Both readers now work on the slice of the transcript that belongs
   to the current turn. (#427)
 - **The run page reads the delivered result, not the last announcement.** The
@@ -54,10 +56,9 @@ search scores on. Fourteen pull requests, one migration
 - **The Memory page says what its agent chips do: Written by.** The row filters
   by the agent that wrote the fact, and read as an assignment. The default chip
   says Anyone. (#428)
-- **Two rows are as tall as their code always asked.** `DisclosureButton` took a
-  vertical inset as a prop instead of a class the base padding silently overruled,
-  so the history group header and the project shelf row render at 8px as written,
-  not 12. The guard refuses the class that used to be passed. (#433)
+- **History group headers and project shelf rows use the tighter spacing they
+  were designed with.** 8px of vertical padding instead of 12; the base padding
+  used to override what each row asked for. (#433)
 
 **Files and projects**
 
