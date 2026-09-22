@@ -26,6 +26,28 @@
 // quand tout va bien, et l'affirme : si l'ordre interne change, le cas rougit
 // au lieu d'armer silencieusement le mauvais rang. Puis il rejoue la même
 // opération avec « aucun git » À PARTIR DE CE RANG-LÀ, et exige le refus.
+//
+// ## Résoudre n'est pas lancer (revue Codex passe 2 sur #436)
+//
+// Les quatre cas ci-dessus prouvent que chaque site DEMANDE le chemin et
+// décline quand il n'y en a pas. Ils ne prouvent PAS que le chemin rendu est
+// celui qui part au lancement : garder `await gitBinary()` et passer `'git'` à
+// `spawn` — ou à `run` — les laissait TOUS LES QUATRE VERTS. La résolution
+// forcée à `null` lève avant le lancement, et quand elle ne lève pas, le git du
+// système répond la même chose que son propre chemin absolu.
+//
+// D'où l'espion sur `node:child_process` : il note le PREMIER argument de
+// chaque `spawn` et de chaque `execFile`, et chaque cas affirme que ce fichier
+// est EXACTEMENT le chemin que le résolveur a rendu. C'est une assertion sur
+// une valeur, pas sur un compteur : un nom nu n'est pas un chemin absolu, donc
+// il ne peut pas passer.
+//
+// L'espion passe au VRAI `spawn` et au VRAI `execFile` — les cas continuent de
+// lancer git pour de bon et d'épingler son résultat. Le détour par
+// `promisify.custom` est obligatoire : `checkpoints.ts` fait
+// `promisify(execFile)` puis déstructure `{ stdout }`, ce que seul le symbole
+// personnalisé du vrai `execFile` rend ; un simple enrobage rendrait `stdout`
+// tout court et `{ stdout }` serait `undefined`.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile, copyFile, stat, mkdir } from 'node:fs/promises';
@@ -56,7 +78,38 @@ vi.mock('@nodal-agents/shared/git-binary', async (importOriginal) => {
   };
 });
 
-import { _resetGitBinaryCache } from '@nodal-agents/shared/git-binary';
+/**
+ * Ce que les lancements ont reçu comme EXÉCUTABLE, dans l'ordre — la seule
+ * chose que l'espion retient.
+ */
+const lances = vi.hoisted(() => ({ spawn: [] as string[], execFile: [] as string[] }));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const vrai = await importOriginal<typeof import('node:child_process')>();
+  const { promisify } = await import('node:util');
+  const execFileEnPromesse = promisify(vrai.execFile);
+
+  type Variadique = (...args: never[]) => unknown;
+  const espionExecFile = ((...args: never[]): unknown => {
+    lances.execFile.push(String(args[0]));
+    return (vrai.execFile as unknown as Variadique)(...args);
+  }) as unknown as typeof vrai.execFile;
+  Object.defineProperty(espionExecFile, promisify.custom, {
+    value: (...args: never[]): unknown => {
+      lances.execFile.push(String(args[0]));
+      return (execFileEnPromesse as unknown as Variadique)(...args);
+    },
+  });
+
+  const espionSpawn = ((...args: never[]): unknown => {
+    lances.spawn.push(String(args[0]));
+    return (vrai.spawn as unknown as Variadique)(...args);
+  }) as unknown as typeof vrai.spawn;
+
+  return { ...vrai, execFile: espionExecFile, spawn: espionSpawn };
+});
+
+import { _resetGitBinaryCache, resolveGitBinary } from '@nodal-agents/shared/git-binary';
 import { snapshot, restoreCheckpoint, listCheckpoints, diffFile, ensureStore } from './checkpoints';
 import { isCheckpointError } from './failure';
 
@@ -71,12 +124,16 @@ beforeEach(async () => {
   await mkdir(ws, { recursive: true });
   resolution.compte = 0;
   resolution.echecAPartirDe = undefined;
+  lances.spawn = [];
+  lances.execFile = [];
   _resetGitBinaryCache();
 });
 
 afterEach(async () => {
   resolution.echecAPartirDe = undefined;
   resolution.compte = 0;
+  lances.spawn = [];
+  lances.execFile = [];
   _resetGitBinaryCache();
   await rm(root, { recursive: true, force: true });
 });
@@ -104,6 +161,40 @@ async function refusAuRang(rang: number, operation: () => Promise<unknown>): Pro
     return err;
   } finally {
     resolution.echecAPartirDe = undefined;
+  }
+}
+
+/**
+ * Le chemin que le résolveur rend ici, et l'exigence qu'il soit bien un chemin
+ * de fichier : c'est ce qui donne du mordant à l'assertion d'après, puisqu'un
+ * nom nu ne peut pas lui être égal.
+ */
+async function cheminResolu(): Promise<string> {
+  const chemin = await resolveGitBinary();
+  expect(chemin, 'aucun git sur le PATH : ces cas ont besoin du vrai git').not.toBeNull();
+  expect(chemin).toMatch(/[\\/]/);
+  resolution.compte = 0;
+  return chemin as string;
+}
+
+/** Rejoue l'opération en notant l'exécutable de chaque lancement. */
+async function executablesDe(
+  operation: () => Promise<unknown>,
+): Promise<{ spawn: string[]; execFile: string[] }> {
+  lances.spawn = [];
+  lances.execFile = [];
+  await operation();
+  return { spawn: [...lances.spawn], execFile: [...lances.execFile] };
+}
+
+/**
+ * Chaque lancement observé est parti par LE CHEMIN RÉSOLU, et il y en a eu au
+ * moins un. Un `'git'` nu échoue sur la valeur, pas sur un compteur.
+ */
+function exigerLancesParLeChemin(fichiers: string[], chemin: string, quoi: string): void {
+  expect(fichiers.length, `aucun lancement ${quoi} observé`).toBeGreaterThan(0);
+  for (const fichier of fichiers) {
+    expect(fichier, `${quoi} lancé par « ${fichier} » et non par le chemin résolu`).toBe(chemin);
   }
 }
 
@@ -171,6 +262,10 @@ describe('le git du magasin de checkpoints @cap:verifier-un-livrable/moteur', ()
     // pas `ensureStore` (cette lecture ne l'appelle pas) ni un diff.
     expect(await lancementsDe(lire)).toBe(1);
 
+    // Et ce lancement-là part par LE CHEMIN RÉSOLU, pas par un nom nu.
+    const chemin = await cheminResolu();
+    exigerLancesParLeChemin((await executablesDe(lire)).execFile, chemin, 'git()');
+
     exigerGitMissing(await refusAuRang(1, lire));
   });
 
@@ -183,6 +278,13 @@ describe('le git du magasin de checkpoints @cap:verifier-un-livrable/moteur', ()
     expect((await diffFile(store, ws, avant, apres, 'image.bin')).kind).toBe('binary');
     // Deux `ls-tree` par `git()`, puis le `--numstat` par `gitRaw()` : rang 3.
     expect(await lancementsDe(lire)).toBe(3);
+
+    // Les trois lancements — les deux `ls-tree` et le `--numstat` — partent par
+    // le chemin résolu.
+    const chemin = await cheminResolu();
+    const { execFile } = await executablesDe(lire);
+    expect(execFile).toHaveLength(3);
+    exigerLancesParLeChemin(execFile, chemin, 'gitRaw()');
 
     exigerGitMissing(await refusAuRang(3, lire));
   });
@@ -201,11 +303,28 @@ describe('le git du magasin de checkpoints @cap:verifier-un-livrable/moteur', ()
     // Deux `ls-tree`, le `--numstat`, puis le diff en flux : rang 4.
     expect(await lancementsDe(lire)).toBe(4);
 
+    // Le 4e lancement est un `spawn`, et c'est le chemin résolu qui part —
+    // garder `await gitBinary()` puis lancer `'git'` laissait tout le reste de
+    // ce cas vert (revue Codex passe 2).
+    const chemin = await cheminResolu();
+    const { spawn, execFile } = await executablesDe(lire);
+    expect(spawn).toHaveLength(1);
+    exigerLancesParLeChemin(spawn, chemin, 'gitRawCapped()');
+    exigerLancesParLeChemin(execFile, chemin, 'les lectures qui le précèdent');
+
     exigerGitMissing(await refusAuRang(4, lire));
   });
 
   it('ensureStore() : le dépôt nu n’est PAS créé quand la résolution dit « aucun git »', async () => {
     const magasinNeuf = join(root, 'magasin-neuf');
+
+    // D'abord la création qui RÉUSSIT : l'`init --bare` part par le chemin
+    // résolu, et le dépôt nu est bien là.
+    const chemin = await cheminResolu();
+    const { execFile } = await executablesDe(() => ensureStore(join(root, 'magasin-temoin')));
+    expect(execFile).toHaveLength(1);
+    exigerLancesParLeChemin(execFile, chemin, "l'`init --bare`");
+    expect(existsSync(join(root, 'magasin-temoin', 'store', 'HEAD'))).toBe(true);
 
     const err = await refusAuRang(1, () => ensureStore(magasinNeuf));
 
