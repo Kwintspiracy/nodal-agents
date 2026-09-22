@@ -646,6 +646,34 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         cacheWritePerMillionUsd: 12.5,
       },
     },
+    {
+      // The newest of the family (2026-09-01), read off /api/v1/models on
+      // 2026-09-22: same window, prices and modalities as Fable 5 except the
+      // cache READ price, four times lower (0.25 vs 1). Its `reasoning` object
+      // says mandatory:true with efforts max/xhigh/high/medium/low, so Off is
+      // hidden here — the Fable 5 entry above predates that object and still
+      // offers it (#417). No always-on `reasoning` flag, as for every Claude
+      // route in this file: the flag would flip openrouter.ts's default
+      // injection, and a mandatory model thinks anyway.
+      modelId: 'anthropic/claude-fable-5.1',
+      label: 'Claude Fable 5.1',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
+      },
+      contextWindow: 1_000_000,
+      pricing: {
+        inputPerMillionUsd: 10,
+        outputPerMillionUsd: 50,
+        cacheReadPerMillionUsd: 0.25,
+        cacheWritePerMillionUsd: 12.5,
+      },
+    },
     // ─── OpenAI ───────────────────────────────────────────────────────────────
     // OpenAI was absent from the OpenRouter list entirely — not a curation
     // choice, a gap: the native `openai` provider carried gpt-5 while anyone
@@ -1583,6 +1611,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
 export const VISION_MODEL_IDS = new Set<string>([
   // OpenRouter (verified via /api/v1/models)
   'anthropic/claude-fable-5',
+  // input_modalities ["text","image","file"] on /api/v1/models, 2026-09-22.
+  'anthropic/claude-fable-5.1',
   'anthropic/claude-haiku-4.5',
   'anthropic/claude-opus-4.7',
   'anthropic/claude-opus-4.8',
