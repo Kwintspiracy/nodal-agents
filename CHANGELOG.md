@@ -10,6 +10,94 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.2 — Sep 23, 2026
+
+A release about saying the right thing. A run whose agent answered through
+Telegram and acknowledged with a status showed, under its own header, a
+delegation line replayed from a turn of a week earlier: the page repeated the
+last thing said in the transcript instead of the answer that was delivered. Both
+halves of that are fixed, in the runner and on the page. The model catalogue
+catches up with what OpenRouter actually serves, fourteen models in and three
+dead identifiers out, so an agent set to one of them stops meeting a 404. And
+the documentation now says the words a person types, which is what the in-product
+search scores on. Fourteen pull requests, one migration
+(`0122_entities_drop_memory_curation_enabled`).
+
+**Models**
+
+- **Fourteen models join the OpenRouter catalogue.** Xiaomi MiMo V2.6 in its
+  three sizes, GLM 5.3 FlashX, Grok 4.6 and 4.7, DeepSeek V4 Pro and V4.1 Flash,
+  GPT-5.6 Sol, Sol Pro and Terra, GPT-6 Astra and Astra Pro, and Claude Fable
+  5.1. Every window, price, modality and capability is read off OpenRouter's own
+  API rather than typed, and each entry says in a comment which call answered it.
+  (#413, #430)
+- **Three Anthropic identifiers OpenRouter does not serve leave the catalogue.**
+  `claude-opus-4.7-fast`, `4.8-fast` and `5-fast` were offered in the picker and
+  returned a 404 to any agent set to one: OpenRouter lists none of them and
+  serves no endpoint for them. Their non-fast siblings stay, and a test pins both
+  facts. (#429)
+
+**Runs and pages**
+
+- **A run's result comes from its own turn.** A turn that answers through a
+  messaging tool and acknowledges with a status writes no text of its own, and
+  the reader that fills an empty result took the last assistant text in the
+  transcript, which starts with the replayed thread history. Since 15 September
+  every Telegram turn of that shape inherited an old delegation ledger line as
+  its result. Both readers now work on the slice of the transcript that belongs
+  to the current turn. (#427)
+- **The run page reads the delivered result, not the last announcement.** The
+  page was never given the result to read, so it fell back to the last prose of
+  the run. On a run that published its answer and then said "I'm posting it now",
+  the reply is what reads under the header and the announcement stays in the
+  activity. (#431)
+- **The Memory page says what its agent chips do: Written by.** The row filters
+  by the agent that wrote the fact, and read as an assignment. The default chip
+  says Anyone. (#428)
+- **Two rows are as tall as their code always asked.** `DisclosureButton` took a
+  vertical inset as a prop instead of a class the base padding silently overruled,
+  so the history group header and the project shelf row render at 8px as written,
+  not 12. The guard refuses the class that used to be passed. (#433)
+
+**Files and projects**
+
+- **The first manifest of a new repository makes it a code project.** Writing a
+  `package.json` into an empty folder left it classified as a plain folder until
+  something else was written, because only the folder's existing contents were
+  read. The file being written is now read too. (#435)
+- **The workspace probe and the checkpoints resolve git before spawning it.** Two
+  callers still launched `git` by its bare name over a folder agents write in.
+  Both resolve the binary the way the rest of the product already does. With no
+  git on the machine, the probe declines and renders nothing, and the snapshot
+  store fails loud with the message the owner already saw. (#436)
+
+**Documentation and site**
+
+- **The documentation says the words a person types.** The in-product `nodal_docs`
+  tool scores on the vocabulary of the pages themselves, so "remember something
+  for later" and "how do I approve a command" reached the wrong page or none. The
+  memory concept page, the shell-commands guide and the dashboard reference now
+  carry those phrasings in their own headings and leads, rather than a synonym
+  list hidden in the tool. (#437)
+- **The changelog page of the site is this file.** It was a hand-kept copy that
+  stopped at 0.9.0 while the repository carried 0.9.1, because a release had to
+  write the same entries twice. The page is now generated from `CHANGELOG.md`
+  before every docs build, like the reference pages. (#432)
+
+**Upgrade**
+
+- One migration, `0122_entities_drop_memory_curation_enabled`. The memory curator
+  loses a per-workspace switch no screen ever exposed; the global kill-switch and
+  the per-fact pin remain the two ways to hold it back. `nodal-agents update`
+  applies it, and there is nothing to do by hand. (#418)
+
+**Under the hood**
+
+- Two end-to-end assertions catch up with decisions already shipped, and the
+  documentation site is measured like every other package. (#407, #408)
+
+---
+
 ## v0.9.1 — Sep 21, 2026
 
 A release about the product knowing itself. Asked on a fresh install whether
