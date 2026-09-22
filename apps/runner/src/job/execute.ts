@@ -142,6 +142,7 @@ import {
   touchJob,
   claimJob,
   currentTurnMessages,
+  findTaskBoundary,
 } from './state.ts';
 // LA porte terminale de succès (plan « Vérifier & Corriger », T09/T10) : les
 // deux chemins de succès de cette boucle passent par elle, jamais par
@@ -3137,6 +3138,10 @@ async function runJobTracked(
   // nothing pass the guard below — the same line then landed in
   // `agent_jobs.result` through `fillResultFromFinalTextIfEmpty`.
   let lastAssistantTextSeen = '';
+  if (findTaskBoundary(messages, job.task) === -1) {
+    // Dit, pas caché : sans frontière, le garde-fou relit tout, historique compris.
+    trace('current_turn_boundary_missing', { messages: messages.length });
+  }
   for (const m of currentTurnMessages(messages, job.task) as Array<{
     role?: unknown;
     content?: unknown;

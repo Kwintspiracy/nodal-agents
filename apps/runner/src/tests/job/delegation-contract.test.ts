@@ -1384,3 +1384,78 @@ describe('le verdict de revue voyage jusqu’au parent @cap:organiser-equipe/mot
     expect(part.output.value).toContain('review_verdict_malformed');
   });
 });
+
+// ─── #419, côté exécution : l'historique rejoué ne satisfait pas la garde ────
+//
+// Le garde-fou « livrable vide » de execute.ts se sème sur la transcription. Une
+// transcription commence par l'historique rejoué, qui porte les lignes de grand
+// livre des tours passés en texte assistant ; compter l'une d'elles comme « du
+// texte vu » laissait passer un tour qui n'avait rien livré, et cette ligne
+// devenait ensuite le résultat. Ce test tient la garde sur le TOUR COURANT :
+// un enfant dont la transcription persistée contient un bloc rejoué à ligne de
+// grand livre, puis sa tâche, et qui ne fait que signaler `return_result`, est
+// relancé une fois puis échoue en `empty_deliverable` — jamais « terminé » avec
+// la ligne d'un autre tour pour résultat.
+describe('la garde « livrable vide » lit le tour courant, pas l’historique rejoué (#419) @cap:parler-a-un-agent/moteur', () => {
+  it('un enfant qui ne signale que return_result derrière un bloc rejoué échoue, sans hériter de la ligne rejouée', async () => {
+    const parentId = await insertJob({
+      channel: 'telegram',
+      status: 'awaiting_delegation',
+      pendingDelegation: { toolUseId: 'assign-419', toolName: 'assign_researcher' },
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-419',
+              toolName: 'assign_researcher',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+      ],
+    });
+    const TASK = 'recherche';
+    const LEDGER =
+      '[Delegated to Researcher (completed) — actions: skill_view, tavily_search, return_result]';
+    const childId = await insertJob({
+      channel: 'internal',
+      parentJobId: parentId,
+      task: TASK,
+      // La transcription telle que thread-history.ts la préfixe, puis la tâche :
+      // plus d'un message, donc executeJob la reprend telle quelle.
+      messages: [
+        { role: 'user', content: 'Tour passé' },
+        { role: 'assistant', content: `Réponse d’avant.\n\n${LEDGER}` },
+        { role: 'user', content: TASK },
+      ],
+    });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          reasoning: 'nothing to add',
+          toolCalls: [
+            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+        {
+          reasoning: 'still nothing',
+          toolCalls: [
+            { toolCallId: 'rr-2', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(childId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    const row = await jobRow(childId);
+    expect(row.error).toBe('empty_deliverable');
+    expect(row.result ?? '').not.toContain('Delegated to');
+    // La relance a bien eu lieu : la garde a vu un tour vide, pas la ligne rejouée.
+    expect(transcriptText(row.messages)).toContain('ta réponse écrite EST le livrable');
+  });
+});

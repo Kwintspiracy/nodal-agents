@@ -257,13 +257,18 @@ function messageText(content: unknown): string {
  * un job dont on ne retrouve pas la tâche est un cas que ce fichier ne sait
  * pas mieux lire.
  */
-export function currentTurnMessages<T>(messages: readonly T[], task: string): readonly T[] {
-  if (task.trim() === '') return messages;
+export function findTaskBoundary(messages: readonly unknown[], task: string): number {
+  if (task.trim() === '') return -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i] as { role?: unknown; content?: unknown } | null;
-    if (m && m.role === 'user' && messageText(m.content) === task) return messages.slice(i);
+    if (m && m.role === 'user' && messageText(m.content) === task) return i;
   }
-  return messages;
+  return -1;
+}
+
+export function currentTurnMessages<T>(messages: readonly T[], task: string): readonly T[] {
+  const i = findTaskBoundary(messages, task);
+  return i === -1 ? messages : messages.slice(i);
 }
 
 /**
@@ -317,6 +322,13 @@ async function fillResultFromFinalTextIfEmpty(
     .where(eq(agentJobs.id, jobId))
     .limit(1);
   if ((row?.result ?? '').trim().length > 0) return;
+  if (Array.isArray(messages) && findTaskBoundary(messages, row?.task ?? '') === -1) {
+    // Dit, pas caché (revue Codex de #427) : sans frontière, le repli relit
+    // toute la transcription, historique rejoué compris.
+    console.warn(
+      `[job ${jobId}] task not found in the transcript — the result fallback reads the whole transcript, replayed history included`,
+    );
+  }
   const text = lastAssistantText(
     Array.isArray(messages) ? currentTurnMessages(messages, row?.task ?? '') : messages,
   );
