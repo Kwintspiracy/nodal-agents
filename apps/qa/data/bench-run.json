@@ -1,7 +1,7 @@
 {
   "run": {
-    "startedAt": "2026-09-21T09:15:33.518Z",
-    "gitSha": "1af7d7ca",
+    "startedAt": "2026-09-22T08:53:08.383Z",
+    "gitSha": "53653e5a",
     "sections": [
       {
         "sectionId": "architecture",
@@ -78,7 +78,7 @@
             "detail": []
           }
         ],
-        "durationMs": 983
+        "durationMs": 1049
       },
       {
         "sectionId": "gate",
@@ -179,7 +179,7 @@
             "direction": "lower-is-better"
           }
         ],
-        "durationMs": 1
+        "durationMs": 0
       },
       {
         "sectionId": "catalog",
