@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { renderChangelogPage } from '../../scripts/gen-changelog';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..', '..');
@@ -45,6 +46,42 @@ describe('the docs changelog page is the root CHANGELOG.md, generated', () => {
     expect(headings(page)).toEqual(fromRoot);
     // The newest release is the root's newest, never one behind (the #405 symptom).
     expect(headings(page)[0]).toBe(fromRoot[0]);
+  });
+
+  it('carries the newest release IN FULL, not just its heading', () => {
+    // Le corps de la release la plus récente, du titre au titre suivant, tel
+    // que le root le porte : une page qui aurait les titres sans les notes
+    // passerait le test des titres.
+    const [first, second] = headings(root);
+    const body = root.slice(root.indexOf(first!), root.indexOf(second!)).trim();
+    expect(body.length).toBeGreaterThan(200);
+    expect(page).toContain(body.replace(/</g, '&lt;'));
+  });
+
+  it('escapes < outside code and keeps it inside a code span or a fence (unit)', () => {
+    const tick = '`';
+    const fixture = [
+      '# X',
+      '',
+      'intro',
+      '',
+      '---',
+      '',
+      '## v9.9 — Jan 1, 2099',
+      '',
+      `says <time> in prose, ${tick}<b>${tick} in a span`,
+      '',
+      tick.repeat(3),
+      '<pre>',
+      tick.repeat(3),
+      '',
+    ].join('\n');
+    const out = renderChangelogPage(fixture);
+    expect(out).toContain('says &lt;time> in prose');
+    expect(out).toContain(`${tick}<b>${tick} in a span`);
+    expect(out).toContain('\n<pre>\n');
+    expect(out).not.toContain('# X');
+    expect(out).not.toContain('intro');
   });
 
   it('starts with the page frontmatter, not the root title', () => {

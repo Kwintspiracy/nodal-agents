@@ -22,6 +22,9 @@ on:
     branches: [main]
     paths:
       - 'apps/docs/**'
+      # La page changelog du site EST ce fichier, généré au build (#405) : une
+      # release qui ne touche que lui doit republier le site.
+      - 'CHANGELOG.md'
       # Le portail est rendu ici : son code ET ses données republient.
       - 'apps/qa/**'
   # La mesure nocturne committe `apps/qa/data` avec `GITHUB_TOKEN` et
