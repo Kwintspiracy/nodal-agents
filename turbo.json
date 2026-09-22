@@ -1,6 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["apps/qa/data/snapshot.json"],
+  "globalDependencies": ["apps/qa/data/snapshot.json", "CHANGELOG.md"],
   "concurrency": "3",
   "tasks": {
     "build": {
