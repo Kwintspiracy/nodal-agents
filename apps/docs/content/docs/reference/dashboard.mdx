@@ -271,7 +271,12 @@ only inside one of its folders. The card's **Approve for this project** writes
 that same rule for the folder the run is in. A rule never reads what the command
 says, so it cannot allow one command line and keep asking about another. **Yolo**,
 on the same tab, goes further: it drops the gate for every command that agent
-runs. See [Shell commands](/docs/guides/shell-commands).
+runs. A third way does not come from that tab at all: with the workspace's
+[autonomy level](/docs/guides/root-agent) set to **Autonomous, gate
+destructive** and no rule on the tool, an ordinary command runs unasked, while a
+destructive or heavy one (deleting files, installing a package, killing a
+process, a disk operation) stays gated. See
+[Shell commands](/docs/guides/shell-commands).
 
 `?show=<id>` opens one request on its own, whatever its decision — it is what the
 sidebar's **Recents** rows link to. The list narrows to that card and the page
