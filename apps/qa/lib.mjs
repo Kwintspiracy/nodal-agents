@@ -2498,11 +2498,18 @@ export function fusionnerTableauGitHub(mesure, frais) {
  * La raison ne porte NI deux-points NI tiret : elle est recomposée dans une
  * phrase (« left out on purpose: <raison> »), et une ponctuation de plus la
  * rendrait illisible.
+ *
+ * VIDE depuis le 22/09. `@nodal-agents/docs` y figurait avec pour raison
+ * « there is no application code to instrument » : c'était faux. Le site a
+ * cinq fichiers de tests (64 cas) sur ses générateurs (`scripts/gen-reference.ts`,
+ * `gen-docs-index.ts`) et son `lib/`, et `vitest run --coverage` y écrit un
+ * `coverage-summary.json` sans rien à installer. Le portail comptait ce paquet
+ * « jamais mesuré » sur la page des écarts tout en le disant « left out on
+ * purpose » sur la carte de couverture : deux phrases sur le même fait. La
+ * liste reste, avec sa mécanique et ses tests, pour le jour où un paquet aura
+ * une vraie raison de ne pas être mesuré.
  */
-export const HORS_MESURE = Object.freeze({
-  '@nodal-agents/docs':
-    'a documentation site, its pages are content and there is no application code to instrument',
-});
+export const HORS_MESURE = Object.freeze({});
 
 /** Les mots anglais de chaque état, pour que le portail et la console disent la même chose. */
 export const MOT_MESURE = Object.freeze({
@@ -2527,9 +2534,9 @@ export const MOT_MESURE = Object.freeze({
  * s'il figure dans `HORS_MESURE`, parce que le chiffre existe et qu'effacer un
  * fait mesuré au nom d'une liste serait exactement l'inverse de ce portail.
  */
-export function etatDeMesure(paquet) {
+export function etatDeMesure(paquet, horsMesure = HORS_MESURE) {
   if (paquet?.couverture) return { etat: 'mesuree', raison: null };
-  const raison = HORS_MESURE[paquet?.nom] ?? null;
+  const raison = horsMesure[paquet?.nom] ?? null;
   if (raison) return { etat: 'exclue', raison };
   const echec = paquet?.mesureEchouee;
   if (echec) {
@@ -2551,11 +2558,11 @@ export function etatDeMesure(paquet) {
  * c'est précisément ce qui a laissé `auth` hors mesure pendant que la carte
  * affichait un nombre rassurant.
  */
-export function repartitionDeLaMesure(paquets = []) {
+export function repartitionDeLaMesure(paquets = [], horsMesure = HORS_MESURE) {
   const bacs = { mesuree: 'mesurees', exclue: 'exclues', echouee: 'echouees', absente: 'absentes' };
   const out = { mesurees: [], exclues: [], echouees: [], absentes: [] };
   for (const p of paquets) {
-    const e = etatDeMesure(p);
+    const e = etatDeMesure(p, horsMesure);
     out[bacs[e.etat]].push({ nom: p?.nom ?? null, raison: e.raison });
   }
   return out;
