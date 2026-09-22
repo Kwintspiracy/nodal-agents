@@ -366,7 +366,11 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
     return list;
   }, [initialItems, tab, agentFilter, q, searchResults, searchedQuery]);
 
-  // Agents that actually have memories in the current dataset
+  // Agents that actually WROTE memories in the current dataset. This row is a
+  // filter by AUTHOR (the agent that called `save_memory`), and it must read
+  // as one (#420): memory is workspace-wide, every agent reads the same pool,
+  // and a row of agent names above a list of facts read as an assignment —
+  // the owner concluded facts could be given to an agent. They cannot.
   const agentChipItems = useMemo<ChipItem<string>[]>(() => {
     const counts = new Map<string, number>();
     for (const m of initialItems) {
@@ -377,7 +381,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
     const items: ChipItem<string>[] = [
       {
         value: 'all',
-        label: 'All agents',
+        label: 'Anyone',
         count: `· ${totalCount}`,
       },
     ];
@@ -439,13 +443,12 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
         />
       </div>
 
-      {/* Agent filter chip row ───────────────────────────────────────────── */}
-      <ChipRow
-        items={agentChipItems}
-        value={agentFilter}
-        onChange={setAgentFilter}
-        className="mt-3"
-      />
+      {/* Author filter chip row (#420): "Written by", because that is what it
+          filters — never who a fact belongs to. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">Written by</span>
+        <ChipRow items={agentChipItems} value={agentFilter} onChange={setAgentFilter} />
+      </div>
 
       {/* Light loading affordance for the debounced FTS search roundtrip */}
       {isSearching && <div className="mt-2 text-legacy-11 text-ink-4">Searching…</div>}
