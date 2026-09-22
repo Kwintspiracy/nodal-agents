@@ -302,6 +302,37 @@ describe('GLM 5.3 Flash', () => {
   });
 });
 
+describe('Claude Fable 5.1 on OpenRouter (2026-09-22)', () => {
+  // Read off /api/v1/models on 2026-09-22, asserted for the same reasons as
+  // the entries below: a wrong window mis-sizes compaction, a wrong price
+  // mis-reports every job. The cache-read price is the one figure a copy of
+  // Fable 5 would get wrong (1 there, 0.25 here).
+  const fable = findModelCatalogEntry('openrouter', 'anthropic/claude-fable-5.1');
+
+  it('is catalogued with the upstream window and prices', () => {
+    expect(fable?.label).toBe('Claude Fable 5.1');
+    expect(modelContextWindow('openrouter', 'anthropic/claude-fable-5.1')).toBe(1_000_000);
+    expect(fable?.pricing).toEqual({
+      inputPerMillionUsd: 10,
+      outputPerMillionUsd: 50,
+      cacheReadPerMillionUsd: 0.25,
+      cacheWritePerMillionUsd: 12.5,
+    });
+  });
+
+  it('follows the upstream reasoning object: mandatory, four levels, no always-on flag', () => {
+    expect(fable?.capabilities.tools).toBe(true);
+    expect(fable?.capabilities.reasoning).toBeUndefined();
+    expect(fable?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['low', 'medium', 'high', 'max'],
+      mandatory: true,
+    });
+    expect(fable?.capabilities.forcedToolChoice).toBe(true);
+    expect(modelCanSeeImages('anthropic/claude-fable-5.1')).toBe(true);
+  });
+});
+
 describe('dead OpenRouter ids are not offered (#416)', () => {
   // Read on 2026-09-22: /api/v1/models lists no anthropic/*-fast id, and
   // /api/v1/models/<id>/endpoints answers with an EMPTY endpoints array for all
