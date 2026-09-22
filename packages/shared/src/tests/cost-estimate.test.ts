@@ -106,8 +106,9 @@ describe('catalogue — les prix de cache', () => {
 
   it('les modèles SANS prix de cache sont nommés — la liste ne peut que rétrécir', () => {
     // Facturés plein sur leurs jetons de cache (surestimation). Natifs dont le
-    // vendeur n'est pas passé par OpenRouter, variantes -fast sans fiche, et les
-    // deux non tarifés de pricing-coverage.
+    // vendeur n'est pas passé par OpenRouter, et les deux non tarifés de
+    // pricing-coverage. (Les variantes -fast d'Anthropic y figuraient : retirées
+    // du catalogue le 22/09, #416 — OpenRouter ne les sert pas.)
     const missing = all
       .filter((m) => m.p && m.p.cacheReadPerMillionUsd === undefined)
       .map((m) => m.key)
