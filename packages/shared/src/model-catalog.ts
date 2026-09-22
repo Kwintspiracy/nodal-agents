@@ -1004,7 +1004,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // in VISION_MODEL_IDS. Same reasoning caveat as its siblings; levels
       // from the list endpoint's `reasoning` object (max/high/low,
       // mandatory:false, default_enabled:true). forcedToolChoice:false —
-      // every endpoint reports supports_tool_choice.required:false.
+      // DeepSeek's own endpoint (the one providerOrder prefers) reports
+      // supports_tool_choice.required:false; some fallbacks (DeepInfra,
+      // Wafer) report true, and the runtime floor relaxes it anyway.
+      // 'max' → OpenRouter 'xhigh' and Auto → 'medium' are not in this
+      // model's supported_efforts; OpenRouter documents that it "will map
+      // your requested effort to the nearest supported level".
       modelId: 'deepseek/deepseek-v4.1-flash',
       label: 'DeepSeek V4.1 Flash',
       capabilities: {

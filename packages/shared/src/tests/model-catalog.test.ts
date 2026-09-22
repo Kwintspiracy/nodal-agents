@@ -430,7 +430,7 @@ describe('OpenRouter catch-up of 2026-09-22 (thirteen models)', () => {
       expect(entry(id)?.capabilities.reasoningControl?.mandatory, id).toBeUndefined();
     }
     // supports_tool_choice.required is true on DeepSeek's V4 Pro endpoint and
-    // false on every V4.1 Flash endpoint.
+    // false on DeepSeek's V4.1 Flash endpoint (the one providerOrder prefers).
     expect(entry('deepseek/deepseek-v4-pro-0813')?.capabilities.forcedToolChoice).toBe(true);
     expect(entry('deepseek/deepseek-v4.1-flash')?.capabilities.forcedToolChoice).toBe(false);
     expect(entry('deepseek/deepseek-v4-pro-0813')?.pricing).toEqual({
