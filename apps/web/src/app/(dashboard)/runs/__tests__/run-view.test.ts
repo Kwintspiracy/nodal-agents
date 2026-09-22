@@ -85,6 +85,7 @@ function view(over: {
       scheduleName: 'every Monday 09:00',
       scheduleId: 'schedule-1',
       resultKind: null,
+      result: null,
       ...over.job,
     },
     feed: { items: over.items ?? [turn()], totals },
@@ -262,7 +263,7 @@ describe('run-view — la demande retirée de la chronologie @cap:suivre-executi
 });
 
 describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', () => {
-  const done = { completedAt: new Date('2026-09-18T09:00:41Z') };
+  const done = { completedAt: new Date('2026-09-18T09:00:41Z'), result: null };
   /** Le rapport d'un relecteur, tel que le bloc Review le porte déjà. */
   const RAPPORT = '# Rapport\n\nDeux majeurs fermés, un mineur reste.';
 
@@ -352,7 +353,7 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
   });
 
   it('rien ne sort tant que le run court : sa dernière phrase est une étape', () => {
-    expect(liftReply([turn()], { completedAt: null }).reply).toBeNull();
+    expect(liftReply([turn()], { completedAt: null, result: null }).reply).toBeNull();
   });
 
   // #210 — ce que la marque change pour un run relu. La règle de 0.8.11 était

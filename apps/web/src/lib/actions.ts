@@ -2417,6 +2417,16 @@ export type SpaceConversationView = {
      * avant la colonne, et la page retombe alors sur la règle de 0.8.11.
      */
     resultKind: JobResultKind | null;
+    /**
+     * CE QUI A ÉTÉ LIVRÉ (`agent_jobs.result`, #288). La page le lit sous
+     * l'en-tête quand la dernière prose de l'agent n'est qu'une annonce — la
+     * règle que le fil applique depuis #153, et que `liftReply` portait sans
+     * jamais recevoir le texte : cette vue ne le transportait pas, le repli
+     * sur la dernière prose gagnait à chaque fois. Même lecture que
+     * `ThreadJob.result` (le fil), sans rédaction : c'est la réponse de
+     * l'agent au propriétaire, pas une sortie d'outil.
+     */
+    result: string | null;
   };
   feed: ConversationFeed;
   /** P3 — ce que la preuve a fait pour ce travail et ses délégués (même lecture que le détail Code). */
@@ -2784,6 +2794,7 @@ export async function getSpaceConversationAction(
           triggerContext: job.triggerContext as JobTriggerContext | null,
         }),
         resultKind: job.resultKind ?? null,
+        result: job.result ?? null,
       },
       feed: feedWithDelivery,
       verdicts: reviewVerdicts.views,
