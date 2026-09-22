@@ -25,6 +25,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
+
 const run = promisify(execFile);
 
 /** A probe that hangs must not hold a job's start. */
@@ -52,8 +54,26 @@ export interface WorkspaceGitState {
 }
 
 async function git(cwd: string, args: string[]): Promise<string | null> {
+  // QUEL git est lancé — le chemin ABSOLU du git du système, jamais le nom nu
+  // (issue #251). `cwd` est le workspace : un dossier où l'agent écrit, donc un
+  // dossier où un `git.exe` peut être déposé. Passer le nom nu laisserait le
+  // système chercher le programme, et sur un runtime dont la recherche regarde
+  // encore le répertoire courant, cette sonde décrirait un dépôt inventé à
+  // l'agent, dans le bloc même qu'il croit avant d'écrire.
+  const binaire = await resolveGitBinary();
+  // Pas de git sur le PATH : c'est une des trois façons de n'avoir « aucune
+  // réponse utilisable », au même titre que « pas un dépôt » et que la borne de
+  // temps ci-dessous. Le contrat du module est inchangé — null, l'appelant ne
+  // rend rien, aucun job n'échoue pour ça. Ce qui est EXCLU, c'est de retomber
+  // sur le nom nu : ce serait exactement le repli silencieux (invariant #4) que
+  // la résolution existe pour fermer.
+  if (binaire === null) return null;
   try {
-    const { stdout } = await run('git', args, { cwd, timeout: GIT_TIMEOUT_MS, windowsHide: true });
+    const { stdout } = await run(binaire, args, {
+      cwd,
+      timeout: GIT_TIMEOUT_MS,
+      windowsHide: true,
+    });
     return stdout.trim();
   } catch {
     // Not a repo, no git on PATH, timeout — all mean "no usable answer", and

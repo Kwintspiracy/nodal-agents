@@ -18,6 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { _resetGitBinaryCache } from '@nodal-agents/shared/git-binary';
 import { snapshot, gitAllowingMiss, listCheckpoints, diffFile } from './checkpoints';
 import {
   CheckpointError,
@@ -165,6 +166,10 @@ describe('les autres causes portent un AUTRE code @cap:executer-une-commande/mot
     await mkdir(sansGit, { recursive: true });
     const pathAvant = process.env['PATH'];
     process.env['PATH'] = sansGit;
+    // La résolution du binaire est MÉMOÏSÉE (#251) : sans cette remise à zéro,
+    // le chemin trouvé par les cas précédents survivrait au PATH vidé et
+    // l'instantané réussirait — le test ne prouverait plus rien.
+    _resetGitBinaryCache();
     try {
       const err = await refusDe(snapshot(store, ws, 'before run_command'));
       expect(err.code).toBe('git_missing');
@@ -175,6 +180,9 @@ describe('les autres causes portent un AUTRE code @cap:executer-une-commande/mot
     } finally {
       if (pathAvant === undefined) delete process.env['PATH'];
       else process.env['PATH'] = pathAvant;
+      // Le PATH est revenu : la réponse mémoïsée « aucun git » ne doit pas
+      // rester derrière lui pour les cas suivants.
+      _resetGitBinaryCache();
     }
   });
 
