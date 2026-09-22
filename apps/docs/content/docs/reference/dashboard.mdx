@@ -263,9 +263,15 @@ approve a command — or any other tool call an agent asked to make — and wher
 refuse one.
 
 Each card shows the tool input, the agent's stated **purpose** and **impact**, and
-a link to the run that asked. Approve or reject, optionally with a note. To allow
-a command once and for all instead of confirming it every time, set its rule on
-the agent's **Approvals** tab rather than here.
+a link to the run that asked. Approve or reject, optionally with a note. An
+approval covers that one call. To stop confirming every time, you allow the
+**tool** rather than the command: on the agent's **Approvals** tab, set
+`run_command` to **Run without asking**, for that agent, and — if you name one —
+only inside one of its folders. The card's **Approve for this project** writes
+that same rule for the folder the run is in. A rule never reads what the command
+says, so it cannot allow one command line and keep asking about another. **Yolo**,
+on the same tab, goes further: it drops the gate for every command that agent
+runs. See [Shell commands](/docs/guides/shell-commands).
 
 `?show=<id>` opens one request on its own, whatever its decision — it is what the
 sidebar's **Recents** rows link to. The list narrows to that card and the page

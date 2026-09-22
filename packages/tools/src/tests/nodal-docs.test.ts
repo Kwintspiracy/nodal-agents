@@ -243,11 +243,16 @@ describe('nodal_docs @cap:consulter-l-aide/moteur', () => {
 describe('the words a person actually types @cap:consulter-l-aide/moteur', () => {
   // Issue #332, remainder of #316. `nodal_docs` scores on the words of the
   // pages, so a page only answers a question asked in its own vocabulary:
-  // "remember this" reached the memory page, "remember something for later"
-  // reached a getting-started section about sending something, and "how do I
-  // approve a command" reached the section listing the commands that can NEVER
-  // be approved. The fix is in the documentation, the single source — a synonym
-  // table in the tool would be exactly the hand-written list #316 removed.
+  // "remember something for later" reached a getting-started section about
+  // sending something, and "how do I approve a command" reached the section
+  // listing the commands that can NEVER be approved. The fix is in the
+  // documentation, the single source — a synonym table in the tool would be
+  // exactly the hand-written list #316 removed.
+  //
+  // FIVE of the six cases below fail on the documentation as it stood before
+  // this change; "remember this" already reached the memory page and is pinned
+  // here so the word cannot be dropped from it. (Verified by running this file
+  // against main's docs-index.json: 5 failed, 1 passed.)
   //
   // Each case pins the page reached FIRST for a phrase a person types, so the
   // vocabulary cannot be edited back out of the pages without a red test.
