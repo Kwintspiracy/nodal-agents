@@ -12,10 +12,11 @@
 //     kill-switch (REFLECTION_ENABLED !== 'false') AND per-entity
 //     reflection_enabled=true. Opt-in — ships off by default.
 //   - Memory curation (runMemoryCuration): gated by the global kill-switch
-//     (MEMORY_CURATION_ENABLED !== 'false') AND per-entity
-//     memory_curation_enabled=true. Decoupled from reflection — ON by default,
-//     so memory curation runs even for entities that never opted into the
-//     skill-learning loop.
+//     (MEMORY_CURATION_ENABLED !== 'false') only. Decoupled from reflection —
+//     ON by default, so memory curation runs even for entities that never
+//     opted into the skill-learning loop. The per-entity column that once sat
+//     beside the kill-switch was dropped in migration 0122 (#411): no screen
+//     ever exposed it. "Do not touch this fact" is the pin on the fact.
 //   Per-entity, per-pass: runs only when the entity clears that pass's
 //   candidate threshold (CURATOR_MIN_SKILLS / CURATOR_MEMORY_MIN) AND the
 //   shared consolidation cadence allows it:
@@ -72,8 +73,8 @@ const SAFE_LIFECYCLE_DEFAULTS = {
   REFLECTION_ENABLED: 'false',
   // Conservative fallback for environments without DATABASE_URL (test envs) —
   // mirrors REFLECTION_ENABLED's safe default. The REAL production default
-  // (per-entity decides, ON since entities.memory_curation_enabled defaults
-  // true) comes from the zod schema in env.ts, not from this fallback.
+  // (ON for every entity — no per-entity gate since #411) comes from the zod
+  // schema in env.ts, not from this fallback.
   MEMORY_CURATION_ENABLED: 'false',
   REFLECTION_MODEL: undefined,
 } as const;
@@ -153,7 +154,7 @@ export async function runCuratorTick(
   // ── Phase 2: LLM consolidation (gated, per-pass) ──────────────────────────
   // Skill consolidation and memory curation are gated INDEPENDENTLY: reflection
   // is still opt-in (entities.reflection_enabled defaults false), while memory
-  // curation runs by default (entities.memory_curation_enabled defaults true).
+  // curation runs by default (kill-switch only, #411).
   // Each global kill-switch, when 'false', empties its Set entirely so that
   // pass never runs for any entity this tick — regardless of per-entity flags.
   const intervalMs = e.CURATOR_INTERVAL_DAYS * 24 * 60 * 60 * 1000;
@@ -181,13 +182,12 @@ export async function runCuratorTick(
 
   const memorySet = new Set<string>();
   if (e.MEMORY_CURATION_ENABLED !== 'false') {
-    // Candidates: >= CURATOR_MEMORY_MIN non-archived facts, entity opted in
-    // (memory_curation_enabled, ON by default — decoupled from reflection).
+    // Candidates: >= CURATOR_MEMORY_MIN non-archived facts. No per-entity
+    // opt-in any more (#411) — the global kill-switch above is the only gate.
     const memoryCandidates = await db
       .select({ entityId: agentMemory.entityId })
       .from(agentMemory)
-      .innerJoin(entities, eq(entities.id, agentMemory.entityId))
-      .where(and(eq(agentMemory.archived, false), eq(entities.memoryCurationEnabled, true)))
+      .where(eq(agentMemory.archived, false))
       .groupBy(agentMemory.entityId)
       .having(sql`count(${agentMemory.id}) >= ${e.CURATOR_MEMORY_MIN}`);
     for (const c of memoryCandidates) if (c.entityId) memorySet.add(c.entityId);

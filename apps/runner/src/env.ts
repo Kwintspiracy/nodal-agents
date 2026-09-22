@@ -111,12 +111,12 @@ const envSchema = z.object({
   // (Phase 2 LLM pass) specifically — decoupled from the skill-learning loop:
   //   MEMORY_CURATION_ENABLED='false'  → global kill: disables memory curation
   //                                       for every entity.
-  //   MEMORY_CURATION_ENABLED=''       → per-entity decides (production default
-  //       (unset)                         when the var is absent). Since
-  //                                       entities.memory_curation_enabled
-  //                                       defaults TRUE, memory curation runs
-  //                                       out of the box — unlike reflection.
-  //   MEMORY_CURATION_ENABLED='true'   → per-entity decides (same as unset).
+  //   MEMORY_CURATION_ENABLED=''       → memory curation runs for every entity
+  //       (unset)                         (production default when the var is
+  //                                       absent) — out of the box, unlike
+  //                                       reflection. No per-entity gate any
+  //                                       more (#411).
+  //   MEMORY_CURATION_ENABLED='true'   → same as unset.
   MEMORY_CURATION_ENABLED: z.string().default(''),
   // Optional. When set, the reflection + curator passes use THIS model id instead of
   // the agent's model — resolved against the agent's existing LLM key (ideal for an

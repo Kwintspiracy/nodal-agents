@@ -788,15 +788,17 @@ describe('curator â€” REFLECTION_MODEL override', () => {
 });
 
 // ── 13+14. Brick 2: memory curation decoupled from reflection ────────────────
-// memory_curation_enabled is a DEDICATED flag (default TRUE), independent from
-// reflection_enabled (the skill-learning opt-in). The memory pass must run when
-// reflection is off, and must NOT run when the memory flag itself is off.
+// Memory curation is gated by its own kill-switch (MEMORY_CURATION_ENABLED,
+// on by default), independent from reflection_enabled (the skill-learning
+// opt-in). The per-entity column that once sat beside it was dropped in
+// migration 0122 (#411). The memory pass must run when reflection is off,
+// and must NOT run when the memory kill-switch itself is off.
 describe('curator — memory curation decoupled from reflection_enabled', () => {
   it('runs the memory pass (set_importance) when reflection is OFF but memory curation is ON', async () => {
     const ts = Date.now();
 
-    // Entity opts OUT of reflection, memory_curation_enabled stays at its
-    // schema default (true, seedMinimal never touches it).
+    // Entity opts OUT of reflection; nothing per entity can opt out of
+    // memory curation any more (#411).
     await db
       .update(entities)
       .set({ reflectionEnabled: false })
@@ -878,7 +880,7 @@ describe('curator — memory curation decoupled from reflection_enabled', () => 
     expect(after?.importance).toBe(5);
   });
 
-  it('does NOT run the memory pass when memory_curation_enabled=false (global kill-switch)', async () => {
+  it('does NOT run the memory pass when MEMORY_CURATION_ENABLED=false (global kill-switch)', async () => {
     const ts = Date.now();
 
     await db

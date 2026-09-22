@@ -848,6 +848,13 @@
       "when": 1786001340000,
       "tag": "0121_entities_proof_repair_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1786001400000,
+      "tag": "0122_entities_drop_memory_curation_enabled",
+      "breakpoints": true
     }
   ]
 }
