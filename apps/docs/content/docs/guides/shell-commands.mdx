@@ -20,13 +20,18 @@ executes without passing that gate (or the Yolo exception below).
 3. That's it. The agent can now call `run_command`. On its next job it will
    pause for your approval before running any command.
 
-## How approval works
+## How approval works — you approve a command before it runs
 
 When the agent calls `run_command`, the runner creates an approval request and
 suspends the job. You see the exact command in the dashboard and approve or
 reject it. If you approve, the runner executes the command and the job resumes
 with the output. If you reject, the agent receives an error and can try a
 different approach.
+
+Where you approve a command: the [Approvals page](/docs/reference/dashboard) of
+the dashboard, which lists every command waiting for you. Nothing an agent
+proposes runs until you approve it, or until Yolo mode approves commands on your
+behalf.
 
 On a Telegram-bound agent, the agent gets a bounded number of turns to tell you
 via chat that it is waiting — so you are not left wondering why it went quiet.

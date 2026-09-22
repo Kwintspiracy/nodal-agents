@@ -255,13 +255,17 @@ job-status breakdown, the success rate, token usage and per-agent activity. It i
 no longer the screen Nodal opens on, and no menu entry points at it — it keeps its
 address for the links that already exist.
 
-## Approvals — `/approvals`
+## Approvals — approve or refuse a command, `/approvals`
 
 Everything that needs your sign-off, and everything that got it. Tabs:
-**pending**, **approved**, **rejected**, **expired**, **all**.
+**pending**, **approved**, **rejected**, **expired**, **all**. This is where you
+approve a command — or any other tool call an agent asked to make — and where you
+refuse one.
 
 Each card shows the tool input, the agent's stated **purpose** and **impact**, and
-a link to the run that asked. Approve or reject, optionally with a note.
+a link to the run that asked. Approve or reject, optionally with a note. To allow
+a command once and for all instead of confirming it every time, set its rule on
+the agent's **Approvals** tab rather than here.
 
 `?show=<id>` opens one request on its own, whatever its decision — it is what the
 sidebar's **Recents** rows link to. The list narrows to that card and the page

@@ -1,11 +1,15 @@
 ---
 title: Memory
-description: How agents store, recall, and automatically use persistent facts across jobs.
+description: How an agent remembers something for later, and how the fact comes back next time it works.
 ---
 
 Agents accumulate facts in a persistent `agent_memory` table. These facts survive
 across sessions, restarts, and model swaps — whenever a job runs, relevant memories
 are already waiting in the system prompt before the first LLM call.
+
+When you tell an agent to remember this, to keep something for later, or to do it
+this way next time, a memory is what you are asking for: the fact is written
+once, and read back on its own every time it is needed.
 
 ## What a memory contains
 
@@ -29,7 +33,7 @@ The four categories are:
 Facts can also carry an optional `valid_to` expiry and an `archived` flag so
 stale knowledge is never injected silently.
 
-## Auto-injection into every job
+## Auto-injection into every job — the fact is there next time
 
 Before a job starts, the runner selects memories from the entity-wide pool and
 injects them as a frozen block inside the agent's system prompt. No tool call is
@@ -88,10 +92,11 @@ variables (defined in `apps/runner/src/env.ts`):
 With `EMBEDDING_PROVIDER` left at `keyword`, the model/base-URL values are unused and
 `query_memory` runs the keyword path only.
 
-## Writing memories
+## Writing memories — remember this, for later
 
-Agents write memories with `save_memory`. Duplicate detection runs on a normalized
-hash of the fact text — an identical (non-archived) fact already in the store is
+Agents write memories with `save_memory` — the tool behind "remember that I
+prefer short answers" and "keep that for later". Duplicate detection runs on a
+normalized hash of the fact text — an identical (non-archived) fact already in the store is
 rejected before it reaches the DB, so the pool stays clean.
 
 Content is sanitized before storage to guard against injection payloads being
