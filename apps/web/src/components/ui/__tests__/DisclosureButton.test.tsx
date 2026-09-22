@@ -149,10 +149,17 @@ export function classNamesSurLaBalise(source: string): string[] {
         let k = j - 1;
         while (k >= 0 && /\s/.test(source[k]!)) k -= 1;
         if (k < 0 || /[(,=:[!&|?{};<>]/.test(source[k]!)) {
+          // Dans une classe de caractères (`[/}]`), un `/` ne ferme pas le
+          // littéral, et une accolade n'y compte pas (revue Codex, passe 3).
           let m = j + 1;
+          let classe = false;
           for (; m < source.length; m += 1) {
-            if (source[m] === '\\') m += 1;
-            else if (source[m] === '/' || source[m] === '\n') break;
+            const d = source[m];
+            if (d === '\\') m += 1;
+            else if (classe) {
+              if (d === ']') classe = false;
+            } else if (d === '[') classe = true;
+            else if (d === '/' || d === '\n') break;
           }
           j = m;
           continue;
@@ -282,6 +289,11 @@ describe('DisclosureButton — la garde du retrait', () => {
         <span className="px-4">Child</span>
       </DisclosureButton>`;
     expect(classNamesSurLaBalise(regex)).toEqual(['h-8']);
+    // Une classe de caractères qui contient `/` et `}` (revue Codex, passe 3).
+    const classe = `${NOM_BALISE} open={false} onClick={() => /[/}]/.test(value)} className="h-8">
+        <span className="px-4">Child</span>
+      </DisclosureButton>`;
+    expect(classNamesSurLaBalise(classe)).toEqual(['h-8']);
     // Un `//` dans une chaîne n'est pas un commentaire.
     const url = `${NOM_BALISE} open={o} onClick={() => go('https://x.y/z')} className="h-8">`;
     expect(classNamesSurLaBalise(url)).toEqual(['h-8']);
