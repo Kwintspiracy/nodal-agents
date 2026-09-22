@@ -615,17 +615,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       },
     },
     {
-      modelId: 'anthropic/claude-opus-5-fast',
-      label: 'Claude Opus 5 (fast)',
-      capabilities: {
-        tools: true,
-        forcedToolChoice: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
-      },
-      contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
-    },
-    {
       modelId: 'anthropic/claude-sonnet-5',
       label: 'Claude Sonnet 5',
       capabilities: {
@@ -847,17 +836,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       },
     },
     {
-      modelId: 'anthropic/claude-opus-4.7-fast',
-      label: 'Claude Opus 4.7 (fast)',
-      capabilities: {
-        tools: true,
-        forcedToolChoice: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
-      },
-      contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 30, outputPerMillionUsd: 150 },
-    },
-    {
       modelId: 'anthropic/claude-opus-4.8',
       label: 'Claude Opus 4.8',
       capabilities: {
@@ -872,17 +850,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         cacheReadPerMillionUsd: 0.5,
         cacheWritePerMillionUsd: 6.25,
       },
-    },
-    {
-      modelId: 'anthropic/claude-opus-4.8-fast',
-      label: 'Claude Opus 4.8 (fast)',
-      capabilities: {
-        tools: true,
-        forcedToolChoice: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
-      },
-      contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
     },
     {
       modelId: 'anthropic/claude-sonnet-4.6',
@@ -1596,7 +1563,10 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
 // ("depends on underlying model; conservative default"), which leaves this set
 // as the ONLY thing standing between an OpenRouter-routed model and an image.
 // Measured on main before the fix: the 3 native forms saw fine, the 8
-// OpenRouter forms (anthropic/claude-opus-5 and its -fast/sonnet/fable twins,
+// OpenRouter forms (anthropic/claude-opus-5 and its sonnet/fable twins — the
+// -fast twins were catalogued then, and dropped on 2026-09-22 (#416): OpenRouter
+// serves no anthropic/*-fast id, /models omits them and their endpoint lists are
+// empty —
 // openai/gpt-5.6-luna and its two siblings, qwen/qwen3.8-max) did not. After:
 // 0 of 11 blind.
 //
@@ -1615,11 +1585,8 @@ export const VISION_MODEL_IDS = new Set<string>([
   'anthropic/claude-fable-5',
   'anthropic/claude-haiku-4.5',
   'anthropic/claude-opus-4.7',
-  'anthropic/claude-opus-4.7-fast',
   'anthropic/claude-opus-4.8',
-  'anthropic/claude-opus-4.8-fast',
   'anthropic/claude-opus-5',
-  'anthropic/claude-opus-5-fast',
   'anthropic/claude-sonnet-4.6',
   'anthropic/claude-sonnet-5',
   'google/gemini-3.1-flash-lite-preview',

@@ -117,9 +117,6 @@ describe('catalogue — les prix de cache', () => {
         'deepseek/deepseek-chat',
         'deepseek/deepseek-reasoner',
         'minimax/MiniMax-M2',
-        'openrouter/anthropic/claude-opus-5-fast',
-        'openrouter/anthropic/claude-opus-4.7-fast',
-        'openrouter/anthropic/claude-opus-4.8-fast',
         'openrouter/qwen/qwen3.8-max',
       ].sort(),
     );
