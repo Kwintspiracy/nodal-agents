@@ -94,6 +94,15 @@ export interface ShellGateReason {
   details: string[];
 }
 
+/** `approval_requests.gate_reasons` as stored, read back for the approval card. */
+export const ShellGateReasonsSchema = z.array(
+  z.object({
+    category: z.enum(SHELL_CATEGORIES),
+    state: z.enum(['ask', 'never']),
+    details: z.array(z.string()),
+  }),
+);
+
 /** A path written in a command, before anything resolves it. */
 export interface PathWord {
   /** As written, quotes removed. */

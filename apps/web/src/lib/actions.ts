@@ -198,6 +198,13 @@ import {
   META_TOOL_NAMES,
   metaToolsForAgent,
   parseRootGrants,
+  resolveShellPolicy,
+  StoredShellPolicySchema,
+  SHELL_CATEGORIES,
+  SHELL_CATEGORY_STATES,
+  ShellGateReasonsSchema,
+  type ShellGateReason,
+  type ShellPolicy,
   redactSecretsForAudit,
   explainApproval,
   explainApprovalRules,
@@ -663,6 +670,12 @@ export type AgentRow = {
    * stay valid, and the edit loader (full row) has it.
    */
   mayChangeTeam?: boolean;
+  /**
+   * agents.shell_policy (migration 0125, #464): the states the owner set on
+   * the shell checklist. Raw, as stored; `resolveShellPolicy` reads it.
+   * Optional for the same reason as commandAllowlist.
+   */
+  shellPolicy?: unknown;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
@@ -6057,6 +6070,12 @@ export type ApprovalRow = {
    * plusieurs, un choix.
    */
   agentWorkspaces: Array<{ label: string; path: string }>;
+  /**
+   * Why the agent's shell checklist held this command (#464): the kinds of
+   * action it crosses, with the paths outside its folders or the script it
+   * wrote. Empty when the checklist had nothing to do with it.
+   */
+  gateReasons: ShellGateReason[];
 };
 
 /**
@@ -6066,6 +6085,21 @@ export type ApprovalRow = {
  * ne peut pas en porter un tout a zero.
  */
 const NO_AGENT = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * `approval_requests.gate_reasons` for the card (#464), masked like every other
+ * value the card shows. A stored value that does not parse is logged and shown
+ * as nothing: the card then says what the command does, as before.
+ */
+function readGateReasons(approvalId: string, raw: unknown): ShellGateReason[] {
+  if (raw === null || raw === undefined) return [];
+  const parsed = ShellGateReasonsSchema.safeParse(raw);
+  if (!parsed.success) {
+    console.warn(`[listApprovalsAction] unreadable gate_reasons on ${approvalId}`);
+    return [];
+  }
+  return parsed.data.map((r) => ({ ...r, details: r.details.map(redactSecretsInText) }));
+}
 
 export async function listApprovalsAction(
   opts: {
@@ -6117,6 +6151,7 @@ export async function listApprovalsAction(
         resolvedBy: approvalRequests.resolvedBy,
         expiresAt: approvalRequests.expiresAt,
         notes: approvalRequests.notes,
+        gateReasons: approvalRequests.gateReasons,
         jobTask: agentJobs.task,
         jobChannel: agentJobs.channel,
         conversationId: agentJobs.conversationId,
@@ -6282,6 +6317,7 @@ export async function listApprovalsAction(
           ),
           toolDefault: resolveToolDefaultApproval(r.toolName),
           agentWorkspaces: r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
+          gateReasons: readGateReasons(r.id, r.gateReasons),
         };
       }) as ApprovalRow[],
     );
@@ -7719,6 +7755,70 @@ export async function setAgentCommandAllowlistAction(raw: unknown): Promise<Acti
   }
 }
 
+// ─── Ce qu'un agent n'a pas le droit de faire avec un shell (#464) ────────────
+//
+// Une sorte d'action à la fois : `allow`, `ask` ou `never`. Réservé au
+// propriétaire, même garde que la liste de programmes : cette liste dit ce que
+// l'agent peut faire sans que personne regarde. L'écriture relit la valeur en
+// base DANS la transaction, verrou posé, et n'y change que la sorte demandée :
+// deux lignes changées à la suite ne s'écrasent pas l'une l'autre.
+
+const SetAgentShellPolicySchema = z.object({
+  agentId: z.string().guid(),
+  category: z.enum(SHELL_CATEGORIES),
+  state: z.enum(SHELL_CATEGORY_STATES),
+});
+
+export async function setAgentShellPolicyAction(raw: unknown): Promise<ActionResult<ShellPolicy>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentShellPolicySchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, category, state } = parsed.data;
+
+    if (env.AUTH_MODE !== 'local-trust') {
+      const [entityRow] = await getDb()
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail(
+          'forbidden',
+          'Only the workspace owner can change what an agent may do with a shell.',
+        );
+      }
+    }
+
+    const policy = await getDb().transaction(async (tx) => {
+      const [agent] = await tx
+        .select({ shellPolicy: agents.shellPolicy })
+        .from(agents)
+        .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+        .for('update');
+      if (!agent) return null;
+      // Ce qui est stocké, plus la sorte demandée. Une valeur illisible en
+      // base lève ici plutôt que d'être écrasée en silence.
+      const stored = StoredShellPolicySchema.parse(agent.shellPolicy ?? {});
+      const next = { ...stored, [category]: state };
+      await tx
+        .update(agents)
+        .set({ shellPolicy: next, updatedAt: new Date() })
+        .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+      return resolveShellPolicy(next);
+    });
+    if (!policy) return fail('not_found', 'Agent not found');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(policy);
+  } catch (err) {
+    console.error('[setAgentShellPolicyAction]', err);
+    return fail('db_error', 'Failed to save what this agent may do with a shell');
+  }
+}
+
 // ─── « Modifier sa propre équipe », par agent (#137) ─────────────────────────
 //
 // agents.may_change_team : ce réglage décide si `create_agent`, `attach_agent`
@@ -8041,6 +8141,12 @@ export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResul
 export type AutoRunPauseView = {
   autoRunPaused: boolean;
   isOwner: boolean;
+  /**
+   * The workspace autonomy (`entities.root_grants.autonomy`). The agent's
+   * Autonomy tab needs it to say what REALLY happens to a command (#464):
+   * under `destructive_gate` an ordinary command runs without a rule.
+   */
+  workspaceAutonomy: RootGrants['autonomy'];
 };
 
 export async function getAutoRunPauseAction(): Promise<ActionResult<AutoRunPauseView>> {
@@ -8048,13 +8154,18 @@ export async function getAutoRunPauseAction(): Promise<ActionResult<AutoRunPause
     const session = await getSession();
     const db = getDb();
     const [entityRow] = await db
-      .select({ userId: entities.userId, autoRunPaused: entities.autoRunPaused })
+      .select({
+        userId: entities.userId,
+        autoRunPaused: entities.autoRunPaused,
+        rootGrants: entities.rootGrants,
+      })
       .from(entities)
       .where(eq(entities.id, session.entityId));
     if (!entityRow) return fail('not_found', 'Workspace not found');
     return ok({
       autoRunPaused: entityRow.autoRunPaused,
       isOwner: entityRow.userId === session.userId,
+      workspaceAutonomy: parseRootGrants(entityRow.rootGrants).autonomy,
     });
   } catch (err) {
     console.error('[getAutoRunPauseAction]', err);

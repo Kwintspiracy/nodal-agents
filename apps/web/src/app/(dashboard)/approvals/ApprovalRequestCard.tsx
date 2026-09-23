@@ -22,6 +22,7 @@ import AgentAvatar from '@/components/ui/AgentAvatar';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import QuestionActions from './QuestionActions.tsx';
 import { useApprovals } from '@/components/ApprovalsProvider';
+import { SHELL_CATEGORY_COPY } from '@/lib/shell-checklist-copy.ts';
 
 type RuleAction = 'auto_approve' | 'require_approval' | 'block';
 
@@ -348,6 +349,31 @@ export default function ApprovalRequestCard({
               {x.target && <span className="text-ink-2">{` · ${x.target}`}</span>}
             </span>
           </p>
+
+          {/* Ce que la liste de l'agent a vu dans cette commande (#464) : la
+              sorte d'action, et les chemins hors de ses dossiers ou le script
+              qu'il a écrit. La personne juge sur ÇA, pas seulement sur la
+              commande brute. */}
+          {a.gateReasons.length > 0 && (
+            <ul className="flex flex-col gap-1" data-testid="approval-shell-reasons">
+              {a.gateReasons.map((reason) => (
+                <li key={reason.category} className="text-body-12 text-ink-2">
+                  <span className="text-medium-12 text-ink">
+                    {SHELL_CATEGORY_COPY[reason.category].label}
+                  </span>
+                  {reason.details.map((detail) => (
+                    <code
+                      key={detail}
+                      className="block break-all text-mono-12 text-run"
+                      data-testid="approval-shell-reason-detail"
+                    >
+                      {detail}
+                    </code>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          )}
 
           {x.provenance.kind === 'mcp' && x.provenance.supplied && (
             <p className="text-micro-10 text-ink-3">

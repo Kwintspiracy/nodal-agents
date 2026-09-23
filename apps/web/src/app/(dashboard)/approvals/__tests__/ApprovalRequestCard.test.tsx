@@ -83,6 +83,7 @@ function demande(over: Partial<Approval> = {}): Approval {
     ruleChain: [],
     toolDefault: 'require_approval',
     agentWorkspaces: [],
+    gateReasons: [],
     ...over,
   } as unknown as Approval;
 }
@@ -724,5 +725,42 @@ describe('la carte ne perd ni son échéance ni sa garde @cap:approuver-une-acti
     expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
     await cliquerLeCaret();
     expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
+  });
+});
+
+// #464 — la liste de l'agent a retenu la commande : la carte dit POURQUOI, avec
+// les chemins hors de ses dossiers et le script qu'il a écrit. Sans cela, la
+// personne ne voyait que la commande brute du 23/09, quatre chemins noyés dedans.
+describe('la carte dit ce que la liste de l’agent a vu (#464) @cap:approuver-une-action/ecran', () => {
+  it('nomme la sorte d’action, puis les chemins et le script', async () => {
+    await monter(
+      demande({
+        toolName: 'run_command',
+        gateReasons: [
+          {
+            category: 'outside_folders',
+            state: 'ask',
+            details: ['C:/Users/kwint/Downloads/earnings_2026_statement.csv'],
+          },
+          { category: 'own_script', state: 'ask', details: ['shared/scripts/_analyze.py'] },
+        ],
+      }),
+    );
+    const list = container!.querySelector('[data-testid="approval-shell-reasons"]');
+    expect(list?.textContent).toContain('Read or change files outside its folders');
+    expect(list?.textContent).toContain('Run code it wrote itself');
+    expect(
+      [...container!.querySelectorAll('[data-testid="approval-shell-reason-detail"]')].map(
+        (e) => e.textContent,
+      ),
+    ).toEqual([
+      'C:/Users/kwint/Downloads/earnings_2026_statement.csv',
+      'shared/scripts/_analyze.py',
+    ]);
+  });
+
+  it('rien quand la liste n’y est pour rien', async () => {
+    await monter(demande());
+    expect(container!.querySelector('[data-testid="approval-shell-reasons"]')).toBeNull();
   });
 });
