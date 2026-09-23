@@ -35,6 +35,7 @@ import type { RunnerEnv } from '../env.ts';
 import { runChatTurn } from '../chat/run-chat-turn.ts';
 import { runInLane } from '../chat/turn-lane.ts';
 import { withChatTurnStop } from '../chat/turn-stop.ts';
+import { withLiveTurn } from '../chat/live-turn.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import { sseEvent, SSE_HEADERS } from './sse.ts';
@@ -88,18 +89,25 @@ export async function chatStreamRoute(
       void (async () => {
         try {
           const result = await runInLane(conversationId, () =>
-            // Le tour en cours dépose son Stop (#456) : `/api/chat/stop` le
-            // déclenche pour CETTE conversation, et pour ce tour-là seulement.
-            withChatTurnStop(conversationId, (abortSignal) =>
-              runChatTurn({
-                deps,
-                entityId,
-                agentId,
-                conversationId,
-                message,
-                onTextDelta: (delta) => send('delta', { text: delta }),
-                abortSignal,
-              }),
+            // Le texte qui s'écrit est lisible d'une autre page (#457) : une
+            // page rouverte en plein tour s'y rebranche par `/api/chat/live`.
+            withLiveTurn(entityId, conversationId, (say) =>
+              // Le tour en cours dépose son Stop (#456) : `/api/chat/stop` le
+              // déclenche pour CETTE conversation, et pour ce tour-là seulement.
+              withChatTurnStop(conversationId, (abortSignal) =>
+                runChatTurn({
+                  deps,
+                  entityId,
+                  agentId,
+                  conversationId,
+                  message,
+                  onTextDelta: (delta) => {
+                    say(delta);
+                    send('delta', { text: delta });
+                  },
+                  abortSignal,
+                }),
+              ),
             ),
           );
           if (!result.ok) {
