@@ -63,6 +63,15 @@ async function expectComposerAnchored(page: Page): Promise<void> {
   expect(box!.y + box!.height, 'composer bottom inside the window').toBeLessThanOrEqual(
     viewport.height,
   );
+  // Et le texte MONTE : le dernier paragraphe écrit est visible, au-dessus de
+  // la saisie — pas en train de s'allonger dessous (Quentin, 23/09).
+  const last = page.getByText('Paragraphe 120 :');
+  await expect(last).toBeInViewport();
+  const lastBox = await last.boundingBox();
+  expect(lastBox, 'the last paragraph is rendered').not.toBeNull();
+  expect(lastBox!.y + lastBox!.height, 'last paragraph above the composer').toBeLessThanOrEqual(
+    box!.y,
+  );
   const stop = page.getByTestId('composer-stop');
   await expect(stop).toBeInViewport();
   await stop.click();

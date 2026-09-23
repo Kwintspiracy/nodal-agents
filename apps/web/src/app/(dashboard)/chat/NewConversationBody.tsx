@@ -19,6 +19,7 @@
 
 import type { ReactNode } from 'react';
 import PendingTurn, { usePendingTurn } from './PendingTurn.tsx';
+import ThreadScroller from './[id]/ThreadScroller.tsx';
 
 export default function NewConversationBody({
   greeting,
@@ -53,18 +54,24 @@ export default function NewConversationBody({
         parti ? '' : 'gap-8 pt-[30vh]'
       }`}
     >
-      <div
-        data-new-conversation-scroller=""
-        className={`w-full ${parti ? 'min-h-0 flex-1 overflow-y-auto pt-6 pb-4' : ''}`}
-      >
-        {parti ? (
-          <PendingTurn agentName={agentName} agentAvatarUrl={agentAvatarUrl} />
-        ) : (
-          // Display/28 de la planche, avec l'interlettrage du titre de page — la
-          // même paire que `PageHeader`, pas une valeur inventée ici.
+      {parti ? (
+        // La MÊME zone que le fil (`ThreadScroller`) : elle suit le bas pendant
+        // que la réponse s'écrit, comme dans tout chat — le dernier mot reste
+        // visible au-dessus de la saisie, le texte monte (Quentin, 23/09 : avant,
+        // il continuait sous la saisie). Remonter pour relire coupe le suivi.
+        <ThreadScroller className="min-h-0 w-full flex-1 overflow-y-auto pt-6 pb-4 [scrollbar-gutter:stable]">
+          {/* Un seul enfant : c'est LUI dont la hauteur est observée. */}
+          <div>
+            <PendingTurn agentName={agentName} agentAvatarUrl={agentAvatarUrl} />
+          </div>
+        </ThreadScroller>
+      ) : (
+        <div className="w-full">
+          {/* Display/28 de la planche, avec l'interlettrage du titre de page —
+              la même paire que `PageHeader`, pas une valeur inventée ici. */}
           <p className="text-center text-display-28 tracking-[-0.015em] text-ink">{greeting}</p>
-        )}
-      </div>
+        </div>
+      )}
       <div className={`w-full ${parti ? 'shrink-0 pt-2 pb-3' : ''}`}>{composer}</div>
     </div>
   );
