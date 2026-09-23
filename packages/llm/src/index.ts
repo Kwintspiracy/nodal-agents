@@ -11,6 +11,7 @@ export {
   RetryExhaustedError,
   ProviderConfigError,
   LLMTimeoutError,
+  LLMCallCancelledError,
   AllProvidersFailedError,
   isContextOverflowError,
 } from './errors';

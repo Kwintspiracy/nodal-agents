@@ -49,6 +49,7 @@ import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 import {
   QuotaExhaustedError,
   LLMTimeoutError,
+  LLMCallCancelledError,
   MessageStructureError,
   AllProvidersFailedError,
   isContextOverflowError,
@@ -711,6 +712,9 @@ export function timeoutErrorCode(faits: TimeoutFacts): string {
 export function timeoutStopLine(faits: TimeoutFacts): string {
   return `[stopped: llm timeout — ${faits.provider}/${faits.model}, turn ${faits.turn}, ${secondes(faits.elapsedMs)}]`;
 }
+
+/** Période de relecture du statut du travail pendant un appel au modèle (Stop). */
+export const STOP_POLL_MS = 2_000;
 
 /**
  * La consigne qui suit le texte partiel d'un tour coupé en pleine écriture
@@ -3350,6 +3354,28 @@ async function runJobTracked(
       const hbInterval = setInterval(() => {
         void touchJob(db, jobId as string).catch(() => {});
       }, 60_000);
+      // Stop arrête l'appel EN COURS. Le bouton n'écrit que `cancelled` en
+      // base ; sans cette lecture pendant l'appel, un tour streamé qui écrit
+      // sans s'arrêter ignorait le Stop jusqu'à sa fin (une heure au plus) et
+      // exécutait ensuite ses outils. Relu toutes les 2 s, comme la fenêtre
+      // d'approbation plus haut.
+      const arret = new AbortController();
+      let lectureArretEnCours = false;
+      const surveilleArret = setInterval(() => {
+        if (lectureArretEnCours || arret.signal.aborted) return;
+        lectureArretEnCours = true;
+        void db
+          .select({ status: agentJobs.status })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, jobId as string))
+          .then(([row]) => {
+            if (row?.status === 'cancelled') arret.abort();
+          })
+          .catch(() => {})
+          .finally(() => {
+            lectureArretEnCours = false;
+          });
+      }, STOP_POLL_MS);
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
       const appelCommenceA = Date.now();
       try {
@@ -3371,7 +3397,7 @@ async function runJobTracked(
           },
           // #440 : le tour est streamé sous deux horloges de silence, jamais
           // coupé tant qu'il écrit (packages/llm/src/turn-clocks.ts).
-          { streamed: true },
+          { streamed: true, abortSignal: arret.signal },
         );
       } catch (genErr) {
         // Un tour qui EXPIRE ne tue plus un travail qui avançait (#121).
@@ -3390,6 +3416,17 @@ async function runJobTracked(
         //
         // L'expiration se lit sous ses DEUX formes, `timeoutOfTurn` : en
         // direct, et au bout d'une chaîne de repli épuisée.
+        // Stop pendant l'appel : le travail s'arrête ICI, avec ce que le modèle
+        // avait écrit, et aucun outil n'est exécuté.
+        if (genErr instanceof LLMCallCancelledError) {
+          const ecrit = (partielCeTour + genErr.partialText).trim();
+          if (ecrit !== '') {
+            messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
+          }
+          trace('cancellation_observed', { turn, during: 'llm_call', partialChars: ecrit.length });
+          await cancelJob(db, jobId as string, runStats(), messages);
+          return { status: 'cancelled' };
+        }
         const expiration = timeoutOfTurn(genErr);
         if (expiration !== null) {
           msExpiresCeTour += Date.now() - appelCommenceA;
@@ -3550,6 +3587,7 @@ async function runJobTracked(
         throw genErr; // not this error, or budget spent → outer catch fails loud
       } finally {
         clearInterval(hbInterval);
+        clearInterval(surveilleArret);
       }
       // Le tour a répondu : son budget d'expiration repart à zéro, et le temps
       // perdu avec. Ce qui est compté plus bas est CE tour-ci, pas la mémoire
@@ -3700,6 +3738,25 @@ async function runJobTracked(
             evictedToolResults: ev.evicted,
           });
         }
+      }
+
+      // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
+      // pendant que la réponse se terminait, n'exécute aucun des outils
+      // qu'elle demande. Le texte du tour est gardé.
+      const [statutApresAppel] = await db
+        .select({ status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, jobId as string));
+      if (statutApresAppel?.status === 'cancelled') {
+        if (texteDuTour.trim() !== '') {
+          messages = [
+            ...messages,
+            { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
+          ];
+        }
+        trace('cancellation_observed', { turn, during: 'before_tools' });
+        await cancelJob(db, jobId as string, runStats(), messages);
+        return { status: 'cancelled' };
       }
 
       const rawToolCalls = response.toolCalls ?? [];

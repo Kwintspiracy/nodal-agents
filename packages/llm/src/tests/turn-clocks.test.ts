@@ -25,7 +25,7 @@ import {
   ABSOLUTE_CALL_MS,
 } from '../turn-clocks';
 import type { TurnClocks } from '../turn-clocks';
-import { LLMTimeoutError } from '../errors';
+import { LLMTimeoutError, LLMCallCancelledError } from '../errors';
 
 // ─── A stream the fake clock drives ───────────────────────────────────────────
 
@@ -261,6 +261,42 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     await vi.advanceTimersByTimeAsync(1_000 + BETWEEN_TOKENS_MS + 1);
 
     expect((state.error as LLMTimeoutError).resumable).toBe(true);
+  });
+
+  it('Stop ends a stream that is still writing, at once, with what it wrote', async () => {
+    const stop = new AbortController();
+    const tokens = Array.from({ length: 360 }, (_, i) => text(10_000 * (i + 1), 'w '));
+    const model = timedModel([textStart(0), ...tokens]);
+    const p = consumeUnderClocks(
+      (signal) =>
+        streamText({
+          model,
+          prompt: 'write',
+          abortSignal: signal,
+          maxRetries: 0,
+          onError: () => {},
+        }),
+      CLOUD,
+      PM,
+      stop.signal,
+    );
+    const state: { error?: unknown; done: boolean } = { done: false };
+    p.then(
+      () => (state.done = true),
+      (e: unknown) => {
+        state.error = e;
+        state.done = true;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(95_000);
+    expect(state.done).toBe(false);
+    stop.abort();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(state.done).toBe(true);
+    expect(state.error).toBeInstanceOf(LLMCallCancelledError);
+    expect((state.error as LLMCallCancelledError).partialText).toBe('w '.repeat(9));
   });
 
   it('a stream error BEFORE any text is thrown as the error it carries', async () => {

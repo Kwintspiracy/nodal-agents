@@ -98,6 +98,12 @@ export interface GenerateTextCallOptions {
    * clock fired comes back on `LLMTimeoutError.partialText`.
    */
   streamed?: boolean;
+  /**
+   * Aborts the call when the job it serves is cancelled. The call then
+   * rejects with `LLMCallCancelledError`, carrying the text written so far;
+   * it is never retried nor failed over.
+   */
+  abortSignal?: AbortSignal;
 }
 
 /**

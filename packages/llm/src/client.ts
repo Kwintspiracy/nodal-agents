@@ -4,7 +4,7 @@ import { generateText, streamText, generateObject } from 'ai';
 import type { ModelMessage, LanguageModel } from 'ai';
 
 import type { ProviderConfig, NodalLlmClient, ProviderCapabilities } from './types';
-import { ProviderConfigError, LLMTimeoutError } from './errors';
+import { ProviderConfigError, LLMTimeoutError, LLMCallCancelledError } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
 import { withRetry } from './retry';
@@ -399,6 +399,7 @@ export function createLlmClient(
                     } as Parameters<typeof streamText>[0]),
                   clocks,
                   providerModel,
+                  callOpts.abortSignal,
                 ),
               retryOpts,
             ),
@@ -431,6 +432,9 @@ export function createLlmClient(
                     // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
                     // for subsequent fresh-connection stale retries.
                     timeout: timeoutMs,
+                    // The job's Stop, when the caller passes it (one-shot
+                    // turns of the models that cannot stream).
+                    ...(callOpts?.abortSignal ? { abortSignal: callOpts.abortSignal } : {}),
                     // Disable AI SDK internal retry — we own retries via withRetry to
                     // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
                     maxRetries: 0,
@@ -446,6 +450,11 @@ export function createLlmClient(
       return result;
     } catch (err) {
       observe('generateText', args, null, err, startedAt);
+      // An abort by Stop reads as a timeout to the layers above (stale retry,
+      // then LLMTimeoutError). It is not one: nobody wants the answer.
+      if (callOpts?.abortSignal?.aborted) {
+        throw new LLMCallCancelledError(config.provider, config.model, '');
+      }
       throw err;
     }
   };

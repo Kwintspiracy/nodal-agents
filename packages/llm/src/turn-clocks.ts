@@ -27,7 +27,7 @@ import { asSchema } from 'ai';
 import type { generateText, streamText } from 'ai';
 
 import type { ProviderConfig } from './types';
-import { LLMTimeoutError } from './errors';
+import { LLMTimeoutError, LLMCallCancelledError } from './errors';
 import type { LlmTimeoutReason } from './errors';
 
 // ─── Defaults ──────────────────────────────────────────────────────────────────
@@ -216,9 +216,11 @@ export async function consumeUnderClocks(
   start: (signal: AbortSignal) => StreamResult,
   clocks: TurnClocks,
   providerModel: { provider: string; model: string },
+  /** The job's cancellation: aborting it ends the call at once (Stop). */
+  cancelSignal?: AbortSignal,
 ): Promise<GenerateResult> {
   const controller = new AbortController();
-  let expired: { reason: LlmTimeoutReason; limitMs: number } | null = null;
+  let expired: { reason: LlmTimeoutReason | 'cancelled'; limitMs: number } | null = null;
   let partialText = '';
   let sawModel = false;
   // A tool call (or its input) already on the wire makes the text alone a
@@ -234,7 +236,7 @@ export async function consumeUnderClocks(
     onExpired = () => resolve('expired');
   });
 
-  const expire = (reason: LlmTimeoutReason, limitMs: number): void => {
+  const expire = (reason: LlmTimeoutReason | 'cancelled', limitMs: number): void => {
     if (expired) return;
     expired = { reason, limitMs };
     controller.abort();
@@ -252,8 +254,17 @@ export async function consumeUnderClocks(
   };
   const absolute = setTimeout(() => expire('absolute', clocks.absoluteMs), clocks.absoluteMs);
 
+  // Stop wins over every clock, and over a stream still writing: the call is
+  // aborted the moment the job is cancelled, never at the end of the answer.
+  const onCancel = (): void => expire('cancelled', 0);
+  if (cancelSignal?.aborted) onCancel();
+  else cancelSignal?.addEventListener('abort', onCancel, { once: true });
+
   armSilence();
   try {
+    if (expired !== null) {
+      throw new LLMCallCancelledError(providerModel.provider, providerModel.model, '');
+    }
     const stream = start(controller.signal);
     const parts = stream.fullStream[Symbol.asyncIterator]();
     try {
@@ -294,6 +305,9 @@ export async function consumeUnderClocks(
     }
     if (expired !== null) {
       const { reason, limitMs } = expired;
+      if (reason === 'cancelled') {
+        throw new LLMCallCancelledError(providerModel.provider, providerModel.model, partialText);
+      }
       throw new LLMTimeoutError(providerModel.provider, providerModel.model, limitMs, {
         reason,
         partialText,
@@ -302,6 +316,7 @@ export async function consumeUnderClocks(
     }
     return await collectResult(stream);
   } finally {
+    cancelSignal?.removeEventListener('abort', onCancel);
     if (silence !== undefined) clearTimeout(silence);
     clearTimeout(absolute);
   }

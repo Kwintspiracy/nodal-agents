@@ -6,6 +6,7 @@ import {
   MessageStructureError,
   RetryExhaustedError,
   LLMTimeoutError,
+  LLMCallCancelledError,
 } from './errors';
 
 // 429 = transient rate-limit (billing 429 is caught before this set, see throwIfQuotaError)
@@ -214,6 +215,8 @@ function isRetryableError(err: unknown): boolean {
   // can take an actual decision — notify the user, switch model, give up.
   // Hermes' transport never retries on its stale timeout for the same reason.
   if (err instanceof LLMTimeoutError) return false;
+  // A cancelled call is over: the job it served was stopped.
+  if (err instanceof LLMCallCancelledError) return false;
 
   const msg = errorMessage(err).toLowerCase();
 

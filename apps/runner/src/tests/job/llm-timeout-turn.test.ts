@@ -26,6 +26,7 @@ import {
   createEmbeddingClient,
   AllProvidersFailedError,
   LLMTimeoutError,
+  LLMCallCancelledError,
   estimateContextTokens,
   estimateToolTokens,
 } from '@nodal-agents/llm';
@@ -40,6 +41,7 @@ import {
   timeoutOfTurn,
   timeoutStopLine,
   resumeInstruction,
+  STOP_POLL_MS,
 } from '../../job/execute.ts';
 
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
@@ -77,6 +79,18 @@ type MockTurn =
   | { cutWhileWriting: string; timesOut?: false; timesOutViaFailover?: false }
   | { cutAfterToolCall: string; timesOut?: false; timesOutViaFailover?: false }
   | { failsWith: Error; timesOut?: false; timesOutViaFailover?: false }
+  | {
+      stoppedWhileWriting: { jobId: string; partial: string };
+      timesOut?: false;
+      timesOutViaFailover?: false;
+    }
+  | {
+      stoppedThenAnswers: { jobId: string };
+      timesOut?: false;
+      timesOutViaFailover?: false;
+      text?: string;
+      toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+    }
   | {
       cancelThenCut: { jobId: string; partial: string };
       timesOut?: false;
@@ -151,7 +165,7 @@ function makeMockLlmClient(
       structuredOutputs: false,
       streaming: false,
     },
-    generateText: (args) => {
+    generateText: (args, opts) => {
       if (compteur) compteur.appels += 1;
       requetes?.push(JSON.parse(JSON.stringify(args.messages ?? [])) as unknown[]);
       argsBruts?.push(args);
@@ -194,6 +208,39 @@ function makeMockLlmClient(
                 partialText: partial,
               }),
             ),
+          ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
+      if (prevu && 'stoppedWhileWriting' in prevu) {
+        // Un tour qui écrit sans fin ; la personne appuie sur Stop une seconde
+        // après son début. L'appel ne se termine QUE si le runner l'abandonne.
+        callIndex++;
+        const { jobId: arrete, partial } = prevu.stoppedWhileWriting;
+        setTimeout(() => {
+          // Une requête Drizzle ne part qu'à l'attente : sans then, rien n'est écrit.
+          void db
+            .update(agentJobs)
+            .set({ status: 'cancelled' })
+            .where(eq(agentJobs.id, arrete))
+            .then(() => {});
+        }, 1_000);
+        return new Promise((_resolve, reject) => {
+          const signal = opts?.abortSignal;
+          if (!signal) return; // jamais abandonné : le test expire, c'est le rouge voulu
+          signal.addEventListener('abort', () =>
+            reject(new LLMCallCancelledError(PROVIDER, MODEL, partial)),
+          );
+        }) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
+      if (prevu && 'stoppedThenAnswers' in prevu) {
+        // Stop arrive pendant que la réponse se termine : elle revient quand même.
+        const { jobId: arrete } = (prevu as { stoppedThenAnswers: { jobId: string } })
+          .stoppedThenAnswers;
+        return db
+          .update(agentJobs)
+          .set({ status: 'cancelled' })
+          .where(eq(agentJobs.id, arrete))
+          .then(() =>
+            generateText({ ...args, model: mockModel } as Parameters<typeof generateText>[0]),
           ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
       }
       if (prevu && 'failsWith' in prevu) {
@@ -779,5 +826,52 @@ describe('un tour coupé EN PLEINE ÉCRITURE est repris, jamais rejoué (#441) @
     expect(compteur.appels).toBe(5);
     const row = await jobRow(jobId);
     expect(row.result ?? '').toContain('abcd');
+  });
+});
+
+describe('Stop arrête le travail PENDANT l’appel au modèle @cap:organiser-equipe/moteur', () => {
+  it('un tour qui écrit sans fin s’arrête dès le Stop, avec ce qu’il avait écrit', async () => {
+    const jobId = await insertJob();
+    const debut = Date.now();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { stoppedWhileWriting: { jobId, partial: 'Le début de la note' } },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('cancelled');
+    // Stop à 1 s, lu au plus une période plus tard : bien avant la fin d'un appel.
+    expect(Date.now() - debut).toBeLessThan(1_000 + STOP_POLL_MS + 3_000);
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('cancelled');
+    expect(JSON.stringify(row.messages ?? [])).toContain('Le début de la note');
+  }, 20_000);
+
+  it('une réponse qui revient APRÈS le Stop n’exécute aucun de ses outils', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        {
+          stoppedThenAnswers: { jobId },
+          text: 'Je termine.',
+          toolCalls: [
+            { toolCallId: 'rr-9', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    // return_result exécuté aurait terminé le travail : il ne l'est pas.
+    expect(outcome.status).toBe('cancelled');
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('cancelled');
+    expect(JSON.stringify(row.messages ?? [])).toContain('Je termine.');
+    expect(JSON.stringify(row.messages ?? [])).not.toContain('rr-9');
   });
 });

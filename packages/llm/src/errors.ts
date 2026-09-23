@@ -117,6 +117,26 @@ export type LlmTimeoutReason =
    */
   | 'stream_error';
 
+// ─── LLMCallCancelledError ─────────────────────────────────────────────────────
+
+/**
+ * The caller aborted the call (the job was cancelled: a person pressed Stop).
+ * Never retried, never failed over: nobody wants the answer any more. Carries
+ * what the model had written, so the cancelled job keeps it.
+ */
+export class LLMCallCancelledError extends Error {
+  readonly code = 'llm_call_cancelled' as const;
+
+  constructor(
+    public readonly provider: string,
+    public readonly model: string,
+    public readonly partialText: string,
+  ) {
+    super(`LLM call cancelled after ${partialText.length} chars received: ${provider}/${model}`);
+    this.name = 'LLMCallCancelledError';
+  }
+}
+
 // ─── RetryExhaustedError ───────────────────────────────────────────────────────
 
 /**
