@@ -710,6 +710,38 @@ export function timeoutStopLine(faits: TimeoutFacts): string {
   return `[stopped: llm timeout — ${faits.provider}/${faits.model}, turn ${faits.turn}, ${secondes(faits.elapsedMs)}]`;
 }
 
+/**
+ * La consigne qui suit le texte partiel d'un tour coupé en pleine écriture
+ * (#441). Une consigne de HARNAIS adressée au modèle, jamais montrée à
+ * l'utilisateur — même famille que les autres messages `[système]` de ce
+ * fichier. Elle ne vit que dans la requête de reprise : le transcript gardé
+ * ne porte ni elle ni le découpage, seulement le texte complet du tour.
+ */
+export function resumeInstruction(): string {
+  return (
+    '[système] Ta réponse précédente a été coupée par la connexion au milieu de son écriture. ' +
+    'Reprends EXACTEMENT au caractère où elle s’arrête, sans rien répéter ni résumer, ' +
+    'et termine le tour comme tu l’aurais fait.'
+  );
+}
+
+/**
+ * Les messages d'une requête de reprise : le transcript, le texte déjà écrit
+ * par le modèle comme sa réponse en cours, puis la consigne de reprendre.
+ * Pure — c'est ce que le test lit dans le corps de la seconde requête.
+ */
+export function messagesForResume(
+  messages: readonly ModelMessage[],
+  partial: string,
+): ModelMessage[] {
+  if (partial === '') return [...messages];
+  return [
+    ...messages,
+    { role: 'assistant', content: partial } as ModelMessage,
+    { role: 'user', content: resumeInstruction() } as ModelMessage,
+  ];
+}
+
 /** Des millisecondes en secondes entières, jamais négatives. */
 function secondes(ms: number): string {
   return `${Math.max(0, Math.round(ms / 1000))}s`;
@@ -3212,6 +3244,15 @@ async function runJobTracked(
   const MAX_LLM_TIMEOUT_TURN_RETRIES = 1;
   let expirationsCeTour = 0;
   let msExpiresCeTour = 0;
+  // Un tour coupé EN PLEINE ÉCRITURE n'est pas rejoué, il est REPRIS (#441) :
+  // le texte déjà reçu devient la réponse en cours, et l'appel suivant porte
+  // la consigne de continuer. Rejouer à l'identique repayait le même prompt
+  // pour le même résultat — trois fois sur le run 531c2692, zéro sortie. Les
+  // reprises ont leur propre budget (invariant #8) : trois par tour, chacune
+  // n'étant accordée que si la précédente a produit du texte.
+  const MAX_LLM_TURN_RESUMES = 3;
+  let reprisesCeTour = 0;
+  let partielCeTour = '';
 
   try {
     while (true) {
@@ -3304,15 +3345,26 @@ async function runJobTracked(
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
       const appelCommenceA = Date.now();
       try {
-        response = await llmClient.generateText({
-          system: systemPrompt,
-          // Resolve any image attachment (path → bytes for vision, or a routing
-          // note for non-vision) into a fresh array — the stored `messages` keep
-          // the lean path so it can still travel to a delegated child.
-          messages: await hydrateForLlm(messages, canSeeImages, imageCache),
-          tools: aiSdkTools,
-          toolChoice,
-        });
+        response = await llmClient.generateText(
+          {
+            system: systemPrompt,
+            // Resolve any image attachment (path → bytes for vision, or a routing
+            // note for non-vision) into a fresh array — the stored `messages` keep
+            // the lean path so it can still travel to a delegated child. A turn
+            // being resumed (#441) carries its partial text and the resume line
+            // on top, in the request only.
+            messages: await hydrateForLlm(
+              messagesForResume(messages, partielCeTour),
+              canSeeImages,
+              imageCache,
+            ),
+            tools: aiSdkTools,
+            toolChoice,
+          },
+          // #440 : le tour est streamé sous deux horloges de silence, jamais
+          // coupé tant qu'il écrit (packages/llm/src/turn-clocks.ts).
+          { streamed: true },
+        );
       } catch (genErr) {
         // Un tour qui EXPIRE ne tue plus un travail qui avançait (#121).
         //
@@ -3333,7 +3385,22 @@ async function runJobTracked(
         const expiration = timeoutOfTurn(genErr);
         if (expiration !== null) {
           msExpiresCeTour += Date.now() - appelCommenceA;
-          if (expirationsCeTour < MAX_LLM_TIMEOUT_TURN_RETRIES) {
+          // Coupé en pleine écriture : on REPREND, on ne rejoue pas (#441).
+          // Le compteur de tours ne bouge pas, et le rejeu à l'identique reste
+          // réservé au vrai silence (rien reçu).
+          if (expiration.partialText !== '' && reprisesCeTour < MAX_LLM_TURN_RESUMES) {
+            reprisesCeTour += 1;
+            partielCeTour += expiration.partialText;
+            trace('llm_turn_resume', {
+              turn,
+              attempt: reprisesCeTour,
+              reason: expiration.reason,
+              partialChars: partielCeTour.length,
+            });
+            turn -= 1;
+            continue;
+          }
+          if (expiration.partialText === '' && expirationsCeTour < MAX_LLM_TIMEOUT_TURN_RETRIES) {
             expirationsCeTour += 1;
             trace('llm_timeout_turn_retry', { turn, attempt: expirationsCeTour });
             // Le MÊME tour est rejoué : sans ce retrait, la boucle le compterait
@@ -3355,7 +3422,13 @@ async function runJobTracked(
             elapsedMs: msExpiresCeTour,
           };
           const code = timeoutErrorCode(faits);
-          const livrable = [lastAssistantTextSeen, timeoutStopLine(faits)]
+          // Le texte que CE tour avait écrit avant de rendre les armes fait
+          // partie du livrable (#441) : c'est souvent la note elle-même.
+          const livrable = [
+            lastAssistantTextSeen,
+            (partielCeTour + expiration.partialText).trim(),
+            timeoutStopLine(faits),
+          ]
             .filter((t) => t !== '')
             .join('\n\n');
           trace('llm_timeout_exhausted', { turn, elapsedMs: msExpiresCeTour });
@@ -3404,6 +3477,15 @@ async function runJobTracked(
       // d'un tour plus ancien qui, lui, s'est remis en marche.
       expirationsCeTour = 0;
       msExpiresCeTour = 0;
+      // Un tour repris (#441) : son texte est ce qu'il avait écrit avant la
+      // coupure, suivi de la suite. C'est ce texte complet — jamais la seule
+      // suite — que lisent le transcript, le livrable et les garde-fous plus bas.
+      const texteDuTour = partielCeTour + (response.text ?? '');
+      if (partielCeTour !== '') {
+        trace('llm_turn_resumed', { turn, resumes: reprisesCeTour, chars: texteDuTour.length });
+      }
+      partielCeTour = '';
+      reprisesCeTour = 0;
 
       // Accumulate token usage. Some providers may return undefined/NaN for
       // either field — coerce to 0 so we never persist NaN. Local providers
@@ -3545,7 +3627,7 @@ async function runJobTracked(
       trace('llm_call_done', {
         turn,
         toolCalls: rawToolCalls.map((tc) => tc.toolName),
-        textLen: (response.text ?? '').length,
+        textLen: texteDuTour.length,
         usage: {
           in: promptTok,
           cached: cachedT,
@@ -3604,14 +3686,14 @@ async function runJobTracked(
           ? { ...p, providerOptions: part.providerMetadata }
           : p;
       });
-      // HARNESS FIX: when a turn has BOTH a written answer (response.text) AND
+      // HARNESS FIX: when a turn has BOTH a written answer (texteDuTour) AND
       // tool calls, KEEP the text. Previously the text was dropped whenever tool
       // calls were present, so a model that writes its report as text alongside
       // return_result/dashboard_publish lost the whole report — it never reached
       // the persisted transcript, so result-capture/delivery found nothing. The
       // text part is placed before the tool-call parts (valid assistant content
       // shape for both Anthropic and OpenAI formats).
-      const hasText = (response.text ?? '').trim().length > 0;
+      const hasText = texteDuTour.trim().length > 0;
       // HARNESS FIX (tool-call thoughtSignature round-trip): a tool call from
       // `response.toolCalls` (== rawToolCalls) carries its signature in
       // `providerMetadata` (the OUTPUT channel) — same asymmetry as the
@@ -3644,15 +3726,15 @@ async function runJobTracked(
           rawToolCalls.length > 0
             ? [
                 ...reasoningParts,
-                ...(hasText ? [{ type: 'text' as const, text: response.text || '' }] : []),
+                ...(hasText ? [{ type: 'text' as const, text: texteDuTour }] : []),
                 ...toolCallParts,
               ]
             : reasoningParts.length > 0
-              ? [...reasoningParts, { type: 'text' as const, text: response.text || '' }]
-              : response.text || '',
+              ? [...reasoningParts, { type: 'text' as const, text: texteDuTour }]
+              : texteDuTour,
       };
       messages = [...messages, assistantMsg];
-      if ((response.text ?? '').trim() !== '') lastAssistantTextSeen = (response.text ?? '').trim();
+      if (texteDuTour.trim() !== '') lastAssistantTextSeen = texteDuTour.trim();
 
       // f. Note return_result presence — but do NOT short-circuit. If the LLM
       // returns it alongside other tools (e.g. [create_task, return_result]),
@@ -3661,7 +3743,7 @@ async function runJobTracked(
 
       // g. No tool calls
       if (rawToolCalls.length === 0) {
-        trace('no_tool_calls_branch', { turn, hasText: Boolean(response.text) });
+        trace('no_tool_calls_branch', { turn, hasText: Boolean(texteDuTour) });
         // An approval is pending (a gate fired on a prior turn) and the agent
         // produced no tool call this turn. We must NOT complete or fail — the
         // request still needs the user's decision. Suspend; the dashboard resume
@@ -3678,7 +3760,7 @@ async function runJobTracked(
           }
           return suspended;
         }
-        const textContent = response.text ?? '';
+        const textContent = texteDuTour;
         // `trim()`, et pas seulement « non vide » : trois espaces ne sont pas un
         // livrable, et ce `if` les finalisait en succès. La garde du vide, elle,
         // lit déjà le texte après `trim()` — les deux chemins disaient donc deux

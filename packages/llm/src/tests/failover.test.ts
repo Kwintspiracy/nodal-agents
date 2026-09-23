@@ -120,6 +120,28 @@ describe('createFailoverFromClients', () => {
     expect(backup.generateText).toHaveBeenCalledTimes(1);
   });
 
+  it('does NOT fail over a turn cut while writing: its text comes back to the caller (#441)', async () => {
+    const primary = fakeClient('p', () =>
+      Promise.reject(
+        new LLMTimeoutError('openrouter', 'p', 60_000, {
+          reason: 'idle_between_tokens',
+          partialText: 'Half of the note',
+        }),
+      ),
+    );
+    const backup = fakeClient('b', () => Promise.resolve({ text: 'ok' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    const err = await client.generateText(ARGS, { streamed: true }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect((err as LLMTimeoutError).partialText).toBe('Half of the note');
+    expect(backup.generateText).not.toHaveBeenCalled();
+    // The streamed option reaches the link: the job loop's request is not
+    // silently downgraded to a wall-clock call by the chain.
+    expect(primary.generateText).toHaveBeenCalledWith(ARGS, { streamed: true });
+  });
+
   it('throws AllProvidersFailedError when every provider is down', async () => {
     const a = fakeClient('a', () => Promise.reject(new LLMTimeoutError('openrouter', 'a', 1000)));
     const b = fakeClient('b', () => Promise.reject(new RetryExhaustedError(4, new Error('503'))));

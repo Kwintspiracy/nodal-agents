@@ -56,16 +56,44 @@ export class MessageStructureError extends Error {
  */
 export class LLMTimeoutError extends Error {
   readonly code = 'llm_timeout' as const;
+  /**
+   * Which clock fired (#440). `wall` = the fixed budget of a non-streamed
+   * call; the three others belong to a streamed turn (`turn-clocks.ts`).
+   */
+  readonly reason: LlmTimeoutReason;
+  /**
+   * Text the model had written when the clock fired. Empty for a non-streamed
+   * call (nothing comes back before the end) and for a stream that never
+   * spoke. Non-empty means the call was cut WHILE PRODUCING: the runner
+   * resumes from it instead of replaying the turn (#441).
+   */
+  readonly partialText: string;
 
   constructor(
     public readonly provider: string,
     public readonly model: string,
     public readonly timeoutMs: number,
+    details: { reason: LlmTimeoutReason; partialText: string } = {
+      reason: 'wall',
+      partialText: '',
+    },
   ) {
-    super(`LLM call timed out after ${timeoutMs}ms: ${provider}/${model}`);
+    super(
+      details.reason === 'wall'
+        ? `LLM call timed out after ${timeoutMs}ms: ${provider}/${model}`
+        : `LLM call timed out after ${timeoutMs}ms (${details.reason}, ${details.partialText.length} chars received): ${provider}/${model}`,
+    );
     this.name = 'LLMTimeoutError';
+    this.reason = details.reason;
+    this.partialText = details.partialText;
   }
 }
+
+export type LlmTimeoutReason =
+  | 'wall'
+  | 'idle_before_first_token'
+  | 'idle_between_tokens'
+  | 'absolute';
 
 // ─── RetryExhaustedError ───────────────────────────────────────────────────────
 

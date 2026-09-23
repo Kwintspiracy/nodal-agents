@@ -31,6 +31,11 @@ import { createLlmClient } from './client';
  * next provider would reject them identically, so they propagate as-is.
  */
 function isFailoverWorthy(err: unknown): boolean {
+  // A streamed turn cut WHILE IT WROTE is not a provider that can't serve:
+  // the provider was serving. The runner resumes it from what it wrote, on
+  // the same provider (#441); failing over would throw that text away and
+  // pay the whole prompt again on the next link.
+  if (err instanceof LLMTimeoutError && err.partialText !== '') return false;
   return (
     err instanceof RetryExhaustedError ||
     err instanceof LLMTimeoutError ||
@@ -142,9 +147,9 @@ export function createFailoverFromClients(clients: NodalLlmClient[]): NodalLlmCl
     get capabilities() {
       return clients[activeIndex]!.capabilities;
     },
-    generateText: ((args) =>
+    generateText: ((args, callOpts) =>
       runWithFailover(
-        (c) => c.generateText(args),
+        (c) => c.generateText(args, callOpts),
         'generateText',
       )) as NodalLlmClient['generateText'],
     streamText: ((args) =>

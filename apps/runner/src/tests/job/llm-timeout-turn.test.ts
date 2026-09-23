@@ -33,6 +33,7 @@ import {
   timeoutErrorCode,
   timeoutOfTurn,
   timeoutStopLine,
+  resumeInstruction,
 } from '../../job/execute.ts';
 
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
@@ -67,6 +68,7 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
  * cause (revue C de la PR #172).
  */
 type MockTurn =
+  | { cutWhileWriting: string; timesOut?: false; timesOutViaFailover?: false }
   | { timesOut: true; timesOutViaFailover?: false }
   | { timesOut?: false; timesOutViaFailover: true }
   | {
@@ -87,6 +89,7 @@ const MODEL = 'mock';
 function makeMockLlmClient(
   responses: MockTurn[],
   compteur?: { appels: number },
+  requetes?: unknown[][],
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
   const mockModel = new MockLanguageModelV3({
@@ -136,7 +139,19 @@ function makeMockLlmClient(
     },
     generateText: (args) => {
       if (compteur) compteur.appels += 1;
+      requetes?.push(JSON.parse(JSON.stringify(args.messages ?? [])) as unknown[]);
       const prevu = responses[callIndex];
+      if (prevu && 'cutWhileWriting' in prevu) {
+        // Un tour streamé coupé EN PLEINE ÉCRITURE (#440) : l'expiration porte
+        // le texte déjà reçu, comme la lève packages/llm/src/turn-clocks.ts.
+        callIndex++;
+        return Promise.reject(
+          new LLMTimeoutError(PROVIDER, MODEL, 60_000, {
+            reason: 'idle_between_tokens',
+            partialText: prevu.cutWhileWriting,
+          }),
+        ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
       if (prevu?.timesOut === true || prevu?.timesOutViaFailover === true) {
         callIndex++;
         const expiration = new LLMTimeoutError(PROVIDER, MODEL, 300_000);
@@ -458,5 +473,105 @@ describe('les faits d’un tour expiré, mis en mots @cap:organiser-equipe/moteu
 
   it('le code machine porte les mêmes faits', () => {
     expect(timeoutErrorCode(faits)).toBe('llm_timeout:openrouter/qwen/qwen3.8-max (turn 13, 452s)');
+  });
+});
+
+describe('un tour coupé EN PLEINE ÉCRITURE est repris, jamais rejoué (#441) @cap:organiser-equipe/moteur', () => {
+  const MOITIE = 'Note sur le scanner. Première moitié : les jonctions passent le test de préfixe';
+  const SUITE = ', parce que le chemin n’est pas résolu avant la comparaison.';
+
+  it('la seconde requête porte le partiel et la consigne ; le tour garde la note ENTIÈRE', async () => {
+    const jobId = await insertJob();
+    const compteur = { appels: 0 };
+    const requetes: unknown[][] = [];
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { cutWhileWriting: MOITIE },
+          {
+            text: SUITE,
+            toolCalls: [
+              { toolCallId: 'rr-3', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        compteur,
+        requetes,
+      ),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    expect(compteur.appels).toBe(3);
+    // La requête de reprise : le transcript du tour coupé (le même que la
+    // requête coupée), PUIS le partiel comme réponse en cours, PUIS la consigne.
+    // Rien de plus : pas le transcript deux fois.
+    const coupee = requetes[1]!;
+    const reprise = requetes[2]!;
+    expect(reprise).toHaveLength(coupee.length + 2);
+    expect(reprise.slice(0, coupee.length)).toEqual(coupee);
+    expect(reprise[coupee.length]).toEqual({ role: 'assistant', content: MOITIE });
+    expect(reprise[coupee.length + 1]).toEqual({ role: 'user', content: resumeInstruction() });
+
+    const row = await jobRow(jobId);
+    // Le tour repris ne compte pas pour deux.
+    expect(row.turn).toBe(2);
+    // Le livrable et le transcript portent la note entière, d'un seul tenant,
+    // et jamais la consigne de reprise.
+    expect(row.result ?? '').toContain(MOITIE + SUITE);
+    const transcript = JSON.stringify(row.messages ?? []);
+    expect(transcript).toContain(JSON.stringify(MOITIE + SUITE).slice(1, -1));
+    expect(transcript).not.toContain(JSON.stringify(resumeInstruction()).slice(1, -1));
+  });
+
+  it('coupé puis muet deux fois, le travail échoue en gardant la moitié écrite', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { cutWhileWriting: MOITIE },
+        { timesOut: true },
+        { timesOut: true },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    if (outcome.status !== 'failed') throw new Error('unreachable');
+    expect(outcome.exitReason).toBe('timeout');
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('failed');
+    expect(row.result ?? '').toContain(MOITIE);
+    expect(row.result ?? '').toContain('[stopped: llm timeout');
+    expect(row.result ?? '').toContain('douze fichiers');
+  });
+
+  it('les reprises ont un budget : la quatrième coupure termine le travail', async () => {
+    const jobId = await insertJob();
+    const compteur = { appels: 0 };
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { cutWhileWriting: 'a' },
+          { cutWhileWriting: 'b' },
+          { cutWhileWriting: 'c' },
+          { cutWhileWriting: 'd' },
+          { text: 'jamais demandé' },
+        ],
+        compteur,
+      ),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    // Un tour, puis la coupure et ses trois reprises : cinq appels, pas six.
+    expect(compteur.appels).toBe(5);
+    const row = await jobRow(jobId);
+    expect(row.result ?? '').toContain('abcd');
   });
 });
