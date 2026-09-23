@@ -9,7 +9,7 @@
 //      flux : son texte n'apparaît nulle part dans les fragments ;
 //   4. un second message sur le même fil ATTEND — la file par conversation
 //      (#149) n'a pas bougé ;
-//   5. quand `streamText` casse, `done` porte `streamed: false` ET la réponse
+//   5. quand le flux casse avant d'écrire, `done` porte `streamed: false` ET la réponse
 //      entière : ce qui a pu être montré mot à mot n'était pas elle, et le
 //      lecteur le sait au lieu de le deviner (invariant #4).
 //
@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
-import { generateText, streamText, simulateReadableStream } from 'ai';
+import { generateText, simulateReadableStream } from 'ai';
 import type { ModelMessage } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -32,19 +32,31 @@ import { createApp } from '../../server.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 
-const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
+const { getActiveLlmClient, setActiveLlmClient, mockModel, realClient } = vi.hoisted(() => {
   let active: RunnerDeps['llmClient'] | null = null;
   return {
     getActiveLlmClient: () => active,
     setActiveLlmClient: (c: RunnerDeps['llmClient']) => {
       active = c;
     },
+    /** Le modèle simulé que le VRAI client construit (voir le mock d'OpenRouter). */
+    mockModel: { current: null as unknown },
+    /** Le vrai `createLlmClient`, gardé avant que le mock ne le remplace. */
+    realClient: { create: null as unknown },
   };
+});
+
+// La réponse diffusée passe par le VRAI client (#458) : horloges et trace
+// comprises. Seul le modèle au bout du fil est simulé.
+vi.mock('../../../../../packages/llm/src/providers/openrouter', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, buildOpenRouterModel: () => mockModel.current };
 });
 
 vi.mock('@nodal-agents/llm', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
+  realClient.create = actual.createLlmClient;
   return {
     ...actual,
     createLlmClient: (..._args: Parameters<typeof actual.createLlmClient>) => {
@@ -191,9 +203,11 @@ function makeStreamingLlmClient(): RunnerDeps['llmClient'] {
       structuredOutputs: false,
       streaming: true,
     },
-    // Le recheck d'escalade et la relance sans outils passent par là. Ce texte
-    // ne doit jamais sortir dans le flux.
-    generateText: (args) => {
+    // La réponse diffusée passe par là (`streamed`), comme le recheck
+    // d'escalade et la relance sans outils — dont le texte ne doit jamais
+    // sortir dans le flux.
+    generateText: ((args: Parameters<RunnerDeps['llmClient']['generateText']>[0], opts) => {
+      if (opts?.streamed) return streamedReply(args, opts);
       const model = new MockLanguageModelV3({
         provider: 'mock',
         modelId: 'mock',
@@ -211,42 +225,57 @@ function makeStreamingLlmClient(): RunnerDeps['llmClient'] {
       return generateText({ ...args, model } as Parameters<typeof generateText>[0]) as ReturnType<
         RunnerDeps['llmClient']['generateText']
       >;
-    },
-    streamText: (args) => {
-      const messages = (args.messages ?? []) as ModelMessage[];
-      streamCalls.push(messages);
-      const last = messages.at(-1);
-      const asked = last ? flattenText([last]) : '';
-      const chunks = chunksFor(messages);
-      // Le premier tour reste bloqué jusqu'à `releaseFirst()` : un flux qui ne
-      // rend pas la main, exactement ce que le second message doit attendre.
-      // Le troisième CASSE : le tour retombera sur la relance sans outils.
-      const model = asked.includes(BROKEN)
-        ? new MockLanguageModelV3({
-            provider: 'mock',
-            modelId: 'mock',
-            doStream: () => Promise.reject(new Error('the stream broke')),
-          })
-        : chunks === FIRST_CHUNKS
-          ? new MockLanguageModelV3({
-              provider: 'mock',
-              modelId: 'mock',
-              doStream: async () => {
-                await firstGate;
-                return streamingModel(chunks).doStream(
-                  {} as Parameters<MockLanguageModelV3['doStream']>[0],
-                );
-              },
-            })
-          : streamingModel(chunks);
-      return streamText({ ...args, model } as Parameters<typeof streamText>[0]) as ReturnType<
-        RunnerDeps['llmClient']['streamText']
-      >;
+    }) as RunnerDeps['llmClient']['generateText'],
+    streamText: () => {
+      throw new Error('chat-stream.test: the chat no longer calls streamText (#458)');
     },
     generateObject: () => {
       throw new Error('generateObject not supported in mock');
     },
   };
+}
+
+/** La réponse diffusée : le VRAI client, sur le modèle simulé qu'appelle ce message. */
+function streamedReply(
+  args: Parameters<RunnerDeps['llmClient']['generateText']>[0],
+  opts: Parameters<RunnerDeps['llmClient']['generateText']>[1],
+): ReturnType<RunnerDeps['llmClient']['generateText']> {
+  const messages = (args.messages ?? []) as ModelMessage[];
+  streamCalls.push(messages);
+  const last = messages.at(-1);
+  const asked = last ? flattenText([last]) : '';
+  const chunks = chunksFor(messages);
+  // Le premier tour reste bloqué jusqu'à `releaseFirst()` : un flux qui ne
+  // rend pas la main, exactement ce que le second message doit attendre.
+  // Le troisième CASSE : le tour retombera sur la relance sans outils.
+  const model = asked.includes(BROKEN)
+    ? new MockLanguageModelV3({
+        provider: 'mock',
+        modelId: 'mock',
+        doStream: () => Promise.reject(new Error('the stream broke')),
+      })
+    : chunks === FIRST_CHUNKS
+      ? new MockLanguageModelV3({
+          provider: 'mock',
+          modelId: 'mock',
+          doStream: async () => {
+            await firstGate;
+            return streamingModel(chunks).doStream(
+              {} as Parameters<MockLanguageModelV3['doStream']>[0],
+            );
+          },
+        })
+      : streamingModel(chunks);
+  mockModel.current = model;
+  const create = realClient.create as (c: {
+    provider: string;
+    model: string;
+    apiKey: string;
+  }) => RunnerDeps['llmClient'];
+  return create({ provider: 'openrouter', model: 'z-ai/glm-5.2', apiKey: 'k' }).generateText(
+    args,
+    opts,
+  );
 }
 
 let db: TestDb;
@@ -392,12 +421,14 @@ describe('POST /api/chat/stream — la réponse mot à mot @cap:parler-a-un-agen
     expect(c1.deltas).toEqual(FIRST_CHUNKS);
     expect(c1.errors).toEqual([]);
     // `streamed: true` : ce qui vient d'être dit mot à mot EST la réponse.
-    // `stopped: false` : personne n'a appuyé sur Stop (#456).
+    // `stopped: false` : personne n'a appuyé sur Stop (#456) ; aucune horloge
+    // n'a coupé la réponse (#458).
     expect(c1.done).toEqual({
       reply: FIRST_REPLY,
       spawnedJobId: null,
       streamed: true,
       stopped: false,
+      cutReason: null,
     });
     // Le recheck d'escalade tourne après la réponse et ne fuit pas dans le flux.
     expect(c1.deltas.join('')).not.toContain(BLOCK_TEXT);

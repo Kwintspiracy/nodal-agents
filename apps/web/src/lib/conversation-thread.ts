@@ -78,10 +78,19 @@ export type ThreadMessage = {
    * (`chat_messages.stopped`) ; c'est ce fil qui le dit, avec ses mots.
    */
   stopped?: boolean;
+  /**
+   * Une horloge de silence a coupé cette réponse après qu'elle avait commencé
+   * à s'écrire (#458) : `content` est ce qui avait été écrit. Même règle que
+   * `stopped` : le runner pose le fait (`chat_messages.cut_reason`), le fil le dit.
+   */
+  cutReason?: string | null;
 };
 
 /** Ce que le fil dit sous une réponse que la personne a arrêtée (#456). */
 export const STOPPED_ANSWER_NOTE = 'You stopped this answer.';
+
+/** Ce que le fil dit sous une réponse coupée avant sa fin (#458). */
+export const CUT_ANSWER_NOTE = 'This answer was cut off: the model stopped responding.';
 
 /** Une commande de preuve d'un job (ou d'un de ses délégués) et son verdict. */
 export type ThreadProofRun = { command: string; verdict: string };
@@ -768,6 +777,8 @@ export function buildConversationThread(input: {
     // même quand rien n'avait encore été écrit.
     if (message.stopped === true) {
       items.push({ kind: 'note', text: STOPPED_ANSWER_NOTE, origin: 'thread' });
+    } else if (message.cutReason) {
+      items.push({ kind: 'note', text: CUT_ANSWER_NOTE, origin: 'thread' });
     }
 
     if (message.jobId === null) continue;

@@ -35,7 +35,8 @@ import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
-import { stoppedReplyNote, untilStopped } from './turn-stop.ts';
+import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
+import { LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
 // size — 20 large turns (verbose replies, or several escalation blocks with
@@ -129,14 +130,17 @@ export type ChatTurnResult =
        * `reply` est-elle EXACTEMENT ce que `onTextDelta` a dit ? (#152)
        *
        * Vrai quand le texte rendu est celui qui est passé par le flux. Faux
-       * partout ailleurs : aucun flux demandé, `streamText` qui casse et laisse
-       * la relance sans outils livrer la réponse d'un bloc, ou un flux resté
-       * vide dont cette même relance a pris le relais. L'appelant n'a donc pas
+       * partout ailleurs : aucun flux demandé, un flux qui casse avant d'écrire
+       * et laisse la relance sans outils livrer la réponse d'un bloc, un flux
+       * resté vide dont cette même relance a pris le relais, ou un modèle qui
+       * ne sait pas diffuser (#458). L'appelant n'a donc pas
        * à deviner si ce qu'il a montré mot à mot est bien la réponse.
        */
       streamed?: boolean;
       /** La personne a arrêté ce tour (#456) : `reply` est ce qui avait été écrit. */
       stopped?: boolean;
+      /** Une horloge a coupé ce tour (#458) : `reply` est ce qui avait été écrit. */
+      cutReason?: LlmTimeoutReason;
     }
   | { ok: false; error: string };
 
@@ -206,6 +210,8 @@ interface HistoryRow {
   content: string;
   /** Réponse arrêtée par la personne (#456) : le modèle doit le savoir. */
   stopped?: boolean;
+  /** Réponse coupée par une horloge (#458) : le modèle doit le savoir aussi. */
+  cutReason?: string | null;
   jobId: string | null;
   jobTask: string | null;
   jobStatus: string | null;
@@ -275,12 +281,15 @@ function buildHistoryBlock(
       },
     ];
   }
-  const content =
-    r.role === 'assistant' && r.stopped === true
-      ? `${truncateFn(r.content)}
-
-${stoppedReplyNote()}`
-      : truncateFn(r.content);
+  const note =
+    r.role !== 'assistant'
+      ? null
+      : r.stopped === true
+        ? stoppedReplyNote()
+        : r.cutReason
+          ? cutReplyNote()
+          : null;
+  const content = note ? `${truncateFn(r.content)}\n\n${note}` : truncateFn(r.content);
   return [{ role: r.role as 'user' | 'assistant', content }];
 }
 
@@ -468,6 +477,7 @@ export async function runChatTurn(opts: {
       role: chatMessages.role,
       content: chatMessages.content,
       stopped: chatMessages.stopped,
+      cutReason: chatMessages.cutReason,
       jobId: chatMessages.jobId,
       jobTask: agentJobs.task,
       jobStatus: agentJobs.status,
@@ -548,14 +558,17 @@ export async function runChatTurn(opts: {
   // à faux, tenu vrai par le seul chemin qui le diffuse, et remis à faux par
   // la relance sans outils qui, elle, ne diffuse rien.
   let streamed = false;
-  // Ce que le flux a déjà dit, gardé si la personne arrête le tour (#456).
+  // Ce que le flux a déjà dit, gardé si le tour s'arrête avant sa fin (#456, #458).
   let partial = '';
   /**
-   * Le tour arrêté par la personne : ce qui a été écrit, suivi de la ligne de
-   * plateforme, devient la réponse de ce tour. Aucun job, aucun recheck,
-   * aucune relance — la personne a demandé que ça s'arrête.
+   * Le tour qui s'arrête avant sa fin : ce qui a été écrit devient la réponse
+   * de ce tour, et la raison est un FAIT posé sur la ligne (`stopped` pour le
+   * Stop de la personne, `cutReason` pour une horloge), que l'écran dit.
+   * Aucun job, aucun recheck, aucune relance.
    */
-  const keepStoppedReply = async (): Promise<ChatTurnResult> => {
+  const keepPartialReply = async (
+    fact: { stopped: true } | { cutReason: LlmTimeoutReason },
+  ): Promise<ChatTurnResult> => {
     // Le flux remplit `partial` au fil de l'eau ; le chemin sans flux reçoit
     // sa réponse entière d'un coup dans `text`. Un Stop pendant la relance
     // d'escalade ne doit perdre ni l'un ni l'autre (revue Codex de #459, passe 3).
@@ -566,36 +579,38 @@ export async function runChatTurn(opts: {
       conversationId,
       role: 'assistant',
       content: reply,
-      stopped: true,
+      ...fact,
     });
     await db
       .update(conversations)
       .set({ updatedAt: new Date() })
       .where(eq(conversations.id, conversationId));
-    return { ok: true, reply, streamed: true, stopped: true };
+    return { ok: true, reply, streamed: true, ...fact };
   };
+  const keepStoppedReply = (): Promise<ChatTurnResult> => keepPartialReply({ stopped: true });
   try {
     if (onTextDelta) {
-      // Le MÊME appel, dit au fur et à mesure (#152). `streamText` rend son
-      // résultat tout de suite ; le texte complet et les appels d'outils ne
-      // sont connus qu'une fois le flux consommé, d'où les `await` après la
-      // boucle. L'escalade se lit donc exactement comme sur l'autre chemin.
-      const result = llmClient.streamText({
-        system: systemPrompt,
-        messages,
-        tools: CHAT_TOOLS,
-        ...(abortSignal ? { abortSignal } : {}),
-      });
-      for await (const delta of untilStopped(result.textStream, abortSignal)) {
-        partial += delta;
-        onTextDelta(delta);
-      }
+      // Le MÊME appel que celui des jobs, dit au fur et à mesure (#152, #458) :
+      // sous les deux horloges de silence et le filet d'une heure, tracé dans
+      // `llm_calls`, avec le retry et le failover du client. Chaque fragment
+      // passe à la page pendant que le modèle l'écrit. Un modèle qui ne sait
+      // pas diffuser (appels d'outils lus dans son texte) répond d'un bloc :
+      // aucun fragment, et `streamed` reste faux.
+      const response = await llmClient.generateText(
+        { system: systemPrompt, messages, tools: CHAT_TOOLS },
+        {
+          streamed: true,
+          onTextDelta: (delta) => {
+            partial += delta;
+            onTextDelta(delta);
+          },
+          ...(abortSignal ? { abortSignal } : {}),
+        },
+      );
       if (abortSignal?.aborted) return await keepStoppedReply();
-      text = ((await result.text) ?? '').trim();
-      runTask = ((await result.toolCalls) ?? []).find((tc) => tc.toolName === 'run_task');
-      // Après les `await` : une erreur en cours de flux passe par le catch, et
-      // le texte de ce tour viendra alors d'ailleurs.
-      streamed = true;
+      text = (response.text ?? '').trim();
+      runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+      streamed = partial !== '';
     } else {
       const response = await llmClient.generateText(
         { system: systemPrompt, messages, tools: CHAT_TOOLS },
@@ -608,6 +623,16 @@ export async function runChatTurn(opts: {
   } catch (err) {
     // Stop pendant l'appel : ce n'est pas une panne, rien ne se rejoue.
     if (abortSignal?.aborted) return await keepStoppedReply();
+    // Une horloge a coupé une réponse qui avait commencé à s'écrire (#458) :
+    // la personne a vu ce texte arriver, il reste la réponse de ce tour. Le
+    // rejouer sans outils l'effacerait pour une autre réponse, écrite de zéro.
+    // Rien d'écrit : c'est une panne comme une autre, la relance ci-dessous.
+    if (err instanceof LLMTimeoutError && partial.trim() !== '') {
+      console.warn(
+        `[run-chat-turn] reply cut by ${err.reason} after ${String(partial.length)} chars (${agentRow.slug})`,
+      );
+      return await keepPartialReply({ cutReason: err.reason });
+    }
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
     // invariant 4) and fall through to the tool-free retry so conversation works.

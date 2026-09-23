@@ -672,6 +672,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       content text NOT NULL,
       job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
       stopped boolean NOT NULL DEFAULT false,
+      cut_reason text,
       created_at timestamptz DEFAULT now()
     );
 

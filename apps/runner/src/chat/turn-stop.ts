@@ -52,37 +52,14 @@ export function stoppedReplyNote(): string {
 }
 
 /**
- * Parcourt `source` jusqu'à sa fin OU jusqu'au Stop, le premier des deux.
+ * Ce que le MODÈLE lit sous une réponse qu'une horloge de silence a coupée
+ * (#458). Même raison que la note d'arrêt : sans elle, il relirait un texte
+ * interrompu comme une réponse finie. La personne voit le fait
+ * (`chat_messages.cut_reason`), dit par l'écran.
  *
- * L'abandon passé au SDK ne suffit pas seul : ai 6.0.177 ne voit le signal que
- * quand un fragment passe, et un flux encore muet (le modèle qui réfléchit
- * avant son premier mot) garderait la boucle en attente malgré le Stop —
- * vérifié sur #449 avec un modèle simulé qui ne parle jamais. Chaque lecture
- * fait donc la course contre le Stop lui-même.
+ * (Le flux d'un tour de chat n'a plus besoin de sa propre course contre le
+ * Stop : il passe par `consumeUnderClocks`, qui la fait déjà, #458.)
  */
-export async function* untilStopped<T>(
-  source: AsyncIterable<T>,
-  signal: AbortSignal | undefined,
-): AsyncGenerator<T> {
-  const it = source[Symbol.asyncIterator]();
-  if (!signal) {
-    for (let next = await it.next(); !next.done; next = await it.next()) yield next.value;
-    return;
-  }
-  const stopped = new Promise<'stopped'>((resolve) => {
-    if (signal.aborted) resolve('stopped');
-    else signal.addEventListener('abort', () => resolve('stopped'), { once: true });
-  });
-  while (true) {
-    const read = it.next();
-    // Une lecture encore en attente au moment du Stop se règle plus tard, dans le vide.
-    read.catch(() => {});
-    const next = await Promise.race([read, stopped]);
-    if (next === 'stopped') {
-      void it.return?.()?.catch(() => {});
-      return;
-    }
-    if (next.done) return;
-    yield next.value;
-  }
+export function cutReplyNote(): string {
+  return "[système] Cette réponse a été coupée avant sa fin : le modèle a cessé d'écrire. Le texte ci-dessus est ce qui avait été écrit.";
 }

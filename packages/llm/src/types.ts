@@ -104,6 +104,15 @@ export interface GenerateTextCallOptions {
    * it is never retried nor failed over.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Each piece of visible text as the streamed call receives it (#458: the
+   * chat shows its reply live through this same call, clocks and trace
+   * included). Only a `streamed` call on a model that can stream calls it;
+   * the one-shot path never does, and the caller reads `text` at the end.
+   * Nothing is ever replayed through it: a call cut after writing is not
+   * retried nor failed over, so a piece is never said twice.
+   */
+  onTextDelta?: (text: string) => void;
 }
 
 /**
