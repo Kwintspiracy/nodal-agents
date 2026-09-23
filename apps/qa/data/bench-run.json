@@ -1,7 +1,7 @@
 {
   "run": {
-    "startedAt": "2026-09-22T11:28:47.903Z",
-    "gitSha": "13a9e118",
+    "startedAt": "2026-09-23T08:54:26.651Z",
+    "gitSha": "4d238e62",
     "sections": [
       {
         "sectionId": "architecture",
@@ -78,7 +78,7 @@
             "detail": []
           }
         ],
-        "durationMs": 966
+        "durationMs": 1038
       },
       {
         "sectionId": "gate",
@@ -136,7 +136,7 @@
             "direction": "exact"
           }
         ],
-        "durationMs": 10
+        "durationMs": 11
       },
       {
         "sectionId": "trust-boundary",
@@ -179,7 +179,7 @@
             "direction": "lower-is-better"
           }
         ],
-        "durationMs": 1
+        "durationMs": 0
       },
       {
         "sectionId": "catalog",
@@ -194,21 +194,21 @@
           {
             "id": "models",
             "label": "Models in the catalogue",
-            "value": 55,
+            "value": 66,
             "unit": "models",
             "direction": "higher-is-better"
           },
           {
             "id": "models_with_tools",
             "label": "Models declaring tools",
-            "value": 55,
+            "value": 66,
             "unit": "models",
             "direction": "higher-is-better"
           },
           {
             "id": "models_reasoning",
             "label": "Reasoning models",
-            "value": 32,
+            "value": 37,
             "unit": "models",
             "direction": "higher-is-better"
           },
@@ -251,7 +251,7 @@
             ]
           }
         ],
-        "durationMs": 0
+        "durationMs": 1
       }
     ]
   },
@@ -481,27 +481,27 @@
           "label": "Models in the catalogue",
           "unit": "models",
           "before": 55,
-          "after": 55,
-          "delta": 0,
-          "verdict": "unchanged"
+          "after": 66,
+          "delta": 11,
+          "verdict": "improved"
         },
         {
           "metricId": "models_with_tools",
           "label": "Models declaring tools",
           "unit": "models",
           "before": 55,
-          "after": 55,
-          "delta": 0,
-          "verdict": "unchanged"
+          "after": 66,
+          "delta": 11,
+          "verdict": "improved"
         },
         {
           "metricId": "models_reasoning",
           "label": "Reasoning models",
           "unit": "models",
           "before": 32,
-          "after": 32,
-          "delta": 0,
-          "verdict": "unchanged"
+          "after": 37,
+          "delta": 5,
+          "verdict": "improved"
         },
         {
           "metricId": "missing_context_window",
