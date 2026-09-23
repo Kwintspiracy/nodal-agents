@@ -142,6 +142,26 @@ describe('createFailoverFromClients', () => {
     expect(primary.generateText).toHaveBeenCalledWith(ARGS, { streamed: true });
   });
 
+  it('a cut after a tool call (not resumable) does not fail over either: the caller counts and replays it', async () => {
+    const primary = fakeClient('p', () =>
+      Promise.reject(
+        new LLMTimeoutError('openrouter', 'p', 60_000, {
+          reason: 'idle_between_tokens',
+          partialText: 'Calling the tool now.',
+          resumable: false,
+        }),
+      ),
+    );
+    const backup = fakeClient('b', () => Promise.resolve({ text: 'ok' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    const err = await client.generateText(ARGS, { streamed: true }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect((err as LLMTimeoutError).resumable).toBe(false);
+    expect(backup.generateText).not.toHaveBeenCalled();
+  });
+
   it('a fallback cut while writing becomes the active link: the continuation goes to it', async () => {
     const primary = fakeClient('p', () =>
       Promise.reject(new RetryExhaustedError(4, new Error('503'))),
