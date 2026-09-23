@@ -16,6 +16,11 @@ import { eq, agentJobs, chatMessages, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import { runChatTurn } from '../../chat/run-chat-turn.ts';
 import { stopChatTurn, withChatTurnStop } from '../../chat/turn-stop.ts';
+import { createApp } from '../../server.ts';
+import type { RunnerEnv } from '../../env.ts';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createEmbeddingClient } from '@nodal-agents/llm';
+import { LocalTrustProvider } from '@nodal-agents/auth';
 
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
   let active: RunnerDeps['llmClient'] | null = null;
@@ -154,6 +159,41 @@ function endlessClient(
   };
 }
 
+/** L'environnement d'un runner de test, pour la route `/api/chat`. */
+const ROUTE_ENV: RunnerEnv = {
+  DATABASE_URL: 'test://local',
+  LLM_PROVIDER: 'anthropic',
+  LLM_MODEL: 'mock',
+  LLM_API_KEY: 'test-key',
+  LLM_BASE_URL: undefined,
+  EMBEDDING_PROVIDER: 'keyword',
+  EMBEDDING_MODEL: undefined,
+  EMBEDDING_BASE_URL: undefined,
+  AUTH_MODE: 'local-trust',
+  WORKER_SECRET: 'test-secret',
+  BEARER_TOKEN: undefined,
+  PORT: 3099,
+  BIND: '127.0.0.1',
+  APP_URL: 'http://localhost:3099',
+  NODE_ENV: 'test',
+  REFLECTION_ENABLED: 'false',
+  REFLECTION_MAX_PER_HOUR: 6,
+  REFLECTION_MAX_TURNS: 3,
+  CURATOR_STALE_DAYS: 30,
+  CURATOR_ARCHIVE_DAYS: 90,
+  CURATOR_MIN_SKILLS: 5,
+  CURATOR_INTERVAL_DAYS: 7,
+  CURATOR_MAX_TURNS: 4,
+  CURATOR_MEMORY_STALE_DAYS: 60,
+  CURATOR_MEMORY_IMPORTANCE_MAX: 2,
+  CURATOR_MEMORY_MIN: 8,
+  MEMORY_CURATION_ENABLED: '',
+  RETENTION_DAYS: 0,
+  SKILL_UPDATE_CHECK_INTERVAL_HOURS: 24,
+  SKILL_UPDATE_CHECK_BATCH_SIZE: 10,
+  NODALAI_APPROVAL_GRACE_MS: 0,
+};
+
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string };
 let deps: RunnerDeps;
@@ -270,6 +310,94 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
       .from(agentJobs)
       .where(eq(agentJobs.conversationId, conv));
     expect(jobs).toEqual([]);
+  });
+
+  it('un Stop pendant la génération du TITRE : la réponse enregistrée est marquée arrêtée', async () => {
+    const conv = await newConversation('');
+    const client = slowRecheckClient();
+    setActiveLlmClient({
+      ...client,
+      generateText: ((args: { system?: string }, opts?: { abortSignal?: AbortSignal }) => {
+        if (typeof args.system === 'string' && args.system.length > 0) {
+          // L'appel qui nomme la conversation : la personne appuie sur Stop.
+          stopChatTurn(conv);
+          return opts?.abortSignal?.aborted
+            ? Promise.reject(new Error('aborted'))
+            : Promise.resolve({ text: 'Titre' });
+        }
+        // La relance d'escalade : pas d'escalade.
+        return Promise.resolve({ text: '', toolCalls: [] });
+      }) as unknown as RunnerDeps['llmClient']['generateText'],
+    });
+    const { turn } = playTurn(conv);
+
+    const result = await turn;
+
+    expect(result).toMatchObject({ ok: true, stopped: true, reply: 'Je vais chercher ça.' });
+    const rows = await db
+      .select({ content: chatMessages.content, stopped: chatMessages.stopped })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv));
+    expect(rows.filter((r) => r.stopped)).toEqual([
+      { content: 'Je vais chercher ça.', stopped: true },
+    ]);
+  });
+
+  it('le chemin de secours /api/chat s’arrête lui aussi', async () => {
+    const conv = await newConversation();
+    let called: () => void = () => {};
+    const turnStarted = new Promise<void>((r) => {
+      called = r;
+    });
+    // Le tour sans flux attend son modèle… jusqu'au Stop.
+    setActiveLlmClient({
+      ...endlessClient(),
+      generateText: ((_args: unknown, opts?: { abortSignal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          called();
+          opts?.abortSignal?.addEventListener('abort', () => reject(new Error('aborted')));
+        })) as unknown as RunnerDeps['llmClient']['generateText'],
+    });
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const app = createApp(
+      {
+        db: db as RunnerDeps['db'],
+        llmClient: getActiveLlmClient()!,
+        embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+        registry,
+        authProvider: new LocalTrustProvider(),
+        close: async () => {},
+      },
+      { ...ROUTE_ENV },
+    );
+    const post = (path: string, body: unknown) =>
+      app.fetch(
+        new Request(`http://localhost${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-secret' },
+          body: JSON.stringify(body),
+        }),
+      );
+
+    const chat = post('/api/chat', {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv,
+      message: 'Écris une très longue note',
+    });
+    await turnStarted;
+    const stop = await post('/api/chat/stop', { entityId: seed.entityId, conversationId: conv });
+
+    expect(await stop.json()).toEqual({ stopped: true });
+    expect((await chat).status).toBe(200);
+    const rows = await db
+      .select({ role: chatMessages.role, stopped: chatMessages.stopped })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv));
+    expect(rows.filter((r) => r.role === 'assistant')).toEqual([
+      { role: 'assistant', stopped: true },
+    ]);
   });
 
   it('arrête aussi un modèle encore muet, avant son premier mot', async () => {

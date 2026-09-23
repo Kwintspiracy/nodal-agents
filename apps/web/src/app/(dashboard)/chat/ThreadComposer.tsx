@@ -266,10 +266,12 @@ export default function ThreadComposer({
     if (target === null || stopping) return;
     setStopping(true);
     void stopChatTurn(target).then((r) => {
-      if (!r.ok) {
-        setStopping(false);
-        toast.error('Could not stop the answer');
-      }
+      if (r.stopped) return;
+      // Rien n'a été arrêté : Stop redevient cliquable, et un échec réel se
+      // dit. Un tour qui venait de finir (`stopped: false` sans erreur) n'a
+      // rien à dire — sa réponse arrive déjà.
+      setStopping(false);
+      if (!r.ok) toast.error('Could not stop the answer');
     });
   }
 

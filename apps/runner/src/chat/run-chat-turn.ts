@@ -590,11 +590,11 @@ export async function runChatTurn(opts: {
       // le texte de ce tour viendra alors d'ailleurs.
       streamed = true;
     } else {
-      const response = await llmClient.generateText({
-        system: systemPrompt,
-        messages,
-        tools: CHAT_TOOLS,
-      });
+      const response = await llmClient.generateText(
+        { system: systemPrompt, messages, tools: CHAT_TOOLS },
+        // Le chemin de secours (`/api/chat`) s'arrête lui aussi (#456).
+        abortSignal ? { abortSignal } : undefined,
+      );
       text = (response.text ?? '').trim();
       runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
     }
@@ -721,7 +721,10 @@ export async function runChatTurn(opts: {
       userMessage: message,
       agentReply: reply,
       generate: (system, prompt) =>
-        llmClient.generateText({ system, messages: [{ role: 'user', content: prompt }] }),
+        llmClient.generateText(
+          { system, messages: [{ role: 'user', content: prompt }] },
+          abortSignal ? { abortSignal } : undefined,
+        ),
     });
 
     // Stop arrivé PENDANT la création du job (#456, revue Codex de #459) : le
@@ -767,9 +770,10 @@ export async function runChatTurn(opts: {
     }
   }
   if (!replyText) return { ok: false, error: 'empty_reply' };
-  await db
+  const [replyRow] = await db
     .insert(chatMessages)
-    .values({ entityId, agentId, conversationId, role: 'assistant', content: replyText });
+    .values({ entityId, agentId, conversationId, role: 'assistant', content: replyText })
+    .returning({ id: chatMessages.id });
   await db
     .update(conversations)
     .set({ updatedAt: new Date() })
@@ -784,9 +788,22 @@ export async function runChatTurn(opts: {
     conversationId,
     userMessage: message,
     agentReply: replyText,
+    // Le Stop atteint aussi cet appel (revue Codex de #459, passe 2).
     generate: (system, prompt) =>
-      llmClient.generateText({ system, messages: [{ role: 'user', content: prompt }] }),
+      llmClient.generateText(
+        { system, messages: [{ role: 'user', content: prompt }] },
+        abortSignal ? { abortSignal } : undefined,
+      ),
   });
+
+  // Stop pendant la génération du titre : la réponse était déjà écrite et
+  // enregistrée ; elle est marquée arrêtée, et le tour le dit (#456).
+  if (abortSignal?.aborted) {
+    if (replyRow?.id) {
+      await db.update(chatMessages).set({ stopped: true }).where(eq(chatMessages.id, replyRow.id));
+    }
+    return { ok: true, reply: replyText, streamed, stopped: true };
+  }
 
   return { ok: true, reply: replyText, streamed };
 }

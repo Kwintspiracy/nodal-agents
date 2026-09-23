@@ -123,15 +123,20 @@ function failureMessage(code: string): string {
  * n'est donc PAS ici que le fil change. Ce qui revient ici dit seulement si la
  * demande est passée.
  */
-export async function stopChatTurn(conversationId: string): Promise<{ ok: boolean }> {
+export async function stopChatTurn(
+  conversationId: string,
+): Promise<{ ok: boolean; stopped: boolean }> {
   try {
     const res = await fetch('/api/chat/stop', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ conversationId }),
     });
-    return { ok: res.ok };
+    const data = (await res.json().catch(() => null)) as { stopped?: unknown } | null;
+    // `stopped: false` n'est PAS un succès (revue Codex de #459) : rien ne
+    // tournait à arrêter. L'appelant le traite comme tel.
+    return { ok: res.ok, stopped: res.ok && data?.stopped === true };
   } catch {
-    return { ok: false };
+    return { ok: false, stopped: false };
   }
 }

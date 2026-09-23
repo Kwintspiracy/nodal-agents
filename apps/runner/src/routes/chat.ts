@@ -11,6 +11,7 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { runChatTurn } from '../chat/run-chat-turn.ts';
 import { runInLane } from '../chat/turn-lane.ts';
+import { withChatTurnStop } from '../chat/turn-stop.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
@@ -45,8 +46,12 @@ export async function chatRoute(
   // Un tour à la fois par conversation : le dashboard envoie plusieurs messages
   // à la suite sans attendre la réponse, et chacun doit voir la réponse au
   // précédent dans son historique (Quentin, 18/09).
+  // Le chemin de secours du chat (le flux indisponible) : Stop l'atteint
+  // aussi (#456, revue Codex de #459, passe 2) — même registre, même tour.
   const result = await runInLane(conversationId, () =>
-    runChatTurn({ deps, entityId, agentId, conversationId, message }),
+    withChatTurnStop(conversationId, (abortSignal) =>
+      runChatTurn({ deps, entityId, agentId, conversationId, message, abortSignal }),
+    ),
   );
   if (!result.ok) {
     const notFound =
