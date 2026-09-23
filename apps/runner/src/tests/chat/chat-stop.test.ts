@@ -343,6 +343,51 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
     ]);
   });
 
+  it('sans flux, un Stop pendant la relance d’escalade garde la réponse déjà reçue', async () => {
+    const conv = await newConversation();
+    let rechecking: () => void = () => {};
+    const inRecheck = new Promise<void>((r) => {
+      rechecking = r;
+    });
+    let calls = 0;
+    setActiveLlmClient({
+      ...endlessClient(),
+      generateText: ((_args: unknown, opts?: { abortSignal?: AbortSignal }) => {
+        calls += 1;
+        // 1er appel : la réponse entière, d'un bloc (le chemin sans flux).
+        if (calls === 1) return Promise.resolve({ text: 'Réponse complète.', toolCalls: [] });
+        // 2e : la relance d'escalade, qui attend… jusqu'au Stop.
+        rechecking();
+        return new Promise((_resolve, reject) => {
+          opts?.abortSignal?.addEventListener('abort', () => reject(new Error('aborted')));
+        });
+      }) as unknown as RunnerDeps['llmClient']['generateText'],
+    });
+    const turn = withChatTurnStop(conv, (abortSignal) =>
+      runChatTurn({
+        deps,
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv,
+        message: 'Une question',
+        abortSignal,
+      }),
+    );
+
+    await inRecheck;
+    stopChatTurn(conv);
+    const result = await turn;
+
+    expect(result).toMatchObject({ ok: true, stopped: true, reply: 'Réponse complète.' });
+    const rows = await db
+      .select({ content: chatMessages.content, stopped: chatMessages.stopped })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv));
+    expect(rows.filter((r) => r.stopped)).toEqual([
+      { content: 'Réponse complète.', stopped: true },
+    ]);
+  });
+
   it('le chemin de secours /api/chat s’arrête lui aussi', async () => {
     const conv = await newConversation();
     let called: () => void = () => {};

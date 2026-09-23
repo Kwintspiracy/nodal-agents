@@ -552,7 +552,10 @@ export async function runChatTurn(opts: {
    * aucune relance — la personne a demandé que ça s'arrête.
    */
   const keepStoppedReply = async (): Promise<ChatTurnResult> => {
-    const reply = partial.trim();
+    // Le flux remplit `partial` au fil de l'eau ; le chemin sans flux reçoit
+    // sa réponse entière d'un coup dans `text`. Un Stop pendant la relance
+    // d'escalade ne doit perdre ni l'un ni l'autre (revue Codex de #459, passe 3).
+    const reply = (partial.trim() !== '' ? partial : text).trim();
     await db.insert(chatMessages).values({
       entityId,
       agentId,
