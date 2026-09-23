@@ -239,8 +239,12 @@ function buildHistoryBlock(
     const toolCallId = `hist-${r.jobId}`;
     const ackText = r.content ? truncateFn(r.content) : '';
     const dispatchOutput = truncateFn(buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError));
-    const outputValue =
+    const withLedger =
       ledgerLines.length > 0 ? `${dispatchOutput}\n\n${ledgerLines.join('\n')}` : dispatchOutput;
+    // Un Stop après l'escalade (#456) marque l'accusé `stopped` et annule le
+    // job : sans la note, le modèle suivant lirait une annulation ordinaire,
+    // pas la personne qui a arrêté (revue Codex de #459, passe 4).
+    const outputValue = r.stopped === true ? `${withLedger}\n\n${stoppedReplyNote()}` : withLedger;
     return [
       {
         role: 'assistant',

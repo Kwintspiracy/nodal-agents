@@ -15,7 +15,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, chatMessages, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import { runChatTurn } from '../../chat/run-chat-turn.ts';
-import { stopChatTurn, withChatTurnStop } from '../../chat/turn-stop.ts';
+import { stopChatTurn, stoppedReplyNote, withChatTurnStop } from '../../chat/turn-stop.ts';
 import { createApp } from '../../server.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
@@ -492,6 +492,47 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
       .from(chatMessages)
       .where(eq(chatMessages.conversationId, conv));
     expect(acks.filter((r) => r.stopped)).toHaveLength(1);
+  });
+
+  it('un Stop après l’escalade : le tour suivant dit au modèle que la personne a arrêté', async () => {
+    // Même scénario que ci-dessus : l'accusé porte un job ET l'arrêt.
+    const conv = await newConversation('');
+    const client = slowRecheckClient();
+    setActiveLlmClient({
+      ...client,
+      generateText: ((args: { system?: string }) => {
+        if (typeof args.system === 'string' && args.system.length > 0) {
+          stopChatTurn(conv);
+          return Promise.resolve({ text: 'Titre' });
+        }
+        return Promise.resolve({
+          text: '',
+          toolCalls: [{ toolName: 'run_task', input: { instruction: 'go' } }],
+        });
+      }) as unknown as RunnerDeps['llmClient']['generateText'],
+    });
+    await playTurn(conv).turn;
+
+    // Le tour suivant : on lit l'historique que le modèle reçoit.
+    let seen: unknown = null;
+    const next = endlessClient();
+    setActiveLlmClient({
+      ...next,
+      streamText: (args) => {
+        seen = (args as { messages?: unknown }).messages;
+        return next.streamText(args);
+      },
+    });
+    const { turn } = playTurn(conv);
+    await waitFor(() => seen !== null);
+    stopChatTurn(conv);
+    await turn;
+
+    const toolResults = (seen as Array<{ role: string; content: unknown }>)
+      .filter((m) => m.role === 'tool')
+      .map((m) => JSON.stringify(m.content));
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]).toContain(JSON.stringify(stoppedReplyNote()).slice(1, -1));
   });
 
   it('n’arrête que SA conversation, et dit quand rien ne tournait', async () => {

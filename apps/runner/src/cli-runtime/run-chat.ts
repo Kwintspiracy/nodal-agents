@@ -46,7 +46,7 @@ export async function runCliRuntimeChatTurn(args: {
   agentRow: CliRuntimeAgentRow;
   conversationId: string;
   message: string;
-  /** The person's Stop (#456): kills the CLI turn; the reply is the platform line. */
+  /** The person's Stop (#456): kills the CLI turn; the reply is what was said so far, marked `stopped`. */
   abortSignal?: AbortSignal;
 }): Promise<{ ok: true; reply: string; stopped?: boolean } | { ok: false; error: string }> {
   const { db, entityId, agentRow, message } = args;
@@ -112,8 +112,15 @@ export async function runCliRuntimeChatTurn(args: {
   const defaults = agentRow.cliDefaults?.[binding.provider] ?? {};
 
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
+  // Le texte que le runtime a DÉJÀ dit, message par message. Claude ne rend sa
+  // réponse finale que dans l'événement `result` ; un Stop qui tue le processus
+  // avant lui ne laisserait rien, alors que la personne a vu ce texte s'écrire
+  // (revue Codex de #459, passe 4).
+  const emittedTexts: string[] = [];
   const onEvent = (evt: ClaudeTurnEvent): void => {
-    if (evt.kind === 'tool_use' && evt.toolUseId && evt.toolName) {
+    if (evt.kind === 'assistant_text') {
+      if (evt.text) emittedTexts.push(evt.text);
+    } else if (evt.kind === 'tool_use' && evt.toolUseId && evt.toolName) {
       pending.set(evt.toolUseId, { name: evt.toolName, input: evt.input, startedAt: Date.now() });
     } else if (evt.kind === 'tool_result' && evt.toolUseId) {
       const started = pending.get(evt.toolUseId);
@@ -335,7 +342,7 @@ export async function runCliRuntimeChatTurn(args: {
   // pas une panne du runtime — c'est la réponse arrêtée : le texte final s'il
   // en était sorti un, et le FAIT de l'arrêt (`stopped`), que l'écran dit.
   if (args.abortSignal?.aborted) {
-    const reply = turn.finalText.trim();
+    const reply = turn.finalText.trim() || emittedTexts.join('\n\n').trim();
     await db.insert(chatMessages).values({
       entityId,
       agentId: agentRow.id,
