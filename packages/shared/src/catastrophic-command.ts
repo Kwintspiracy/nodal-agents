@@ -377,19 +377,157 @@ export function isInlineInterpreterEvalCommand(cmd: string): boolean {
 // Under `destructive_gate`, ordinary work auto-approves but THESE still require a
 // human OK. We deliberately err toward asking: a false "ask" is cheap, a silent
 // 13 GB install (`comfy install`) or an `rm` is not.
-const DESTRUCTIVE_PATTERNS: RegExp[] = [
-  /\b(rm|rmdir|unlink|shred)\b/i, // delete (unix)
-  /\bdel\s|\bRemove-Item\b|\brd\s+\/s/i, // delete (windows/ps)
-  /\bfind\b[^\n]*-delete\b/i, // find … -delete
-  /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
-  /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download\b|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
-  /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*\s-[oO]\b|\bInvoke-WebRequest\b|\biwr\b[^\n]*-OutFile/i, // large download / clone
-  /\b(kill|pkill|killall|taskkill)\b|\bStop-Process\b|\bStop-Service\b/i, // process kill
-  /\bsystemctl\b|\bsc\s+(stop|delete)\b|\bservice\b[^\n]*\b(stop|restart)\b/i, // service control
-  /\bmkfs(\.\w+)?\b|\bdd\b[^\n]*\bof=|\b(format|fdisk|parted|diskpart)\b/i, // disk ops
-  /\bchmod\s+-\S*R|\bchown\s+-\S*R|\bicacls\b/i, // recursive perms/ownership
-  /\bgit\s+push\b[^\n]*(--force|-f\b)|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-\S*f|\bgit\s+branch\s+-D\b/i, // destructive VCS
-];
+/**
+ * The same patterns, sorted by what a person would call them (#464). The
+ * autonomy checklist lets an owner allow, ask or forbid each KIND of action;
+ * their union below is still exactly what `destructive_gate` has always gated.
+ */
+export const STATIC_SHELL_CATEGORY_PATTERNS = {
+  delete_files: [
+    /\b(rm|rmdir|unlink|shred)\b/i, // delete (unix)
+    /\bdel\s|\bRemove-Item\b|\brd\s+\/s/i, // delete (windows/ps)
+    /\bfind\b[^\n]*-delete\b/i, // find … -delete
+    /\bgit\s+push\b[^\n]*(--force|-f\b)|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-\S*f|\bgit\s+branch\s+-D\b/i, // destructive VCS: work thrown away
+  ],
+  install_software: [
+    /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
+    /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download\b|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
+  ],
+  download: [
+    /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*\s-[oO]\b|\bInvoke-WebRequest\b|\biwr\b[^\n]*-OutFile/i, // large download / clone
+  ],
+  stop_programs: [
+    /\b(kill|pkill|killall|taskkill)\b|\bStop-Process\b|\bStop-Service\b/i, // process kill
+    /\bsystemctl\b|\bsc\s+(stop|delete)\b|\bservice\b[^\n]*\b(stop|restart)\b/i, // service control
+  ],
+  system_settings: [
+    /\bmkfs(\.\w+)?\b|\bdd\b[^\n]*\bof=|\b(format|fdisk|parted|diskpart)\b/i, // disk ops
+    /\bchmod\s+-\S*R|\bchown\s+-\S*R|\bicacls\b/i, // recursive perms/ownership
+  ],
+} as const satisfies Record<string, readonly RegExp[]>;
+
+export type StaticShellCategory = keyof typeof STATIC_SHELL_CATEGORY_PATTERNS;
+
+const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTERNS).flat();
+
+/**
+ * The kinds of action a command performs, read from its text alone (#464).
+ * The two that need context — a path outside the agent's folders, a script the
+ * agent wrote itself — are judged by the caller, which knows the folders and
+ * the job. An inline interpreter program (`python -c "…"`) IS code the agent
+ * wrote itself, and is returned here as `own_script`.
+ */
+export function staticShellCategories(cmd: string): Array<StaticShellCategory | 'own_script'> {
+  if (typeof cmd !== 'string' || cmd.trim() === '') return [];
+  const c = normalizeSlashes(cmd.trim());
+  const found: Array<StaticShellCategory | 'own_script'> = [];
+  for (const [category, patterns] of Object.entries(STATIC_SHELL_CATEGORY_PATTERNS) as Array<
+    [StaticShellCategory, readonly RegExp[]]
+  >) {
+    if (patterns.some((re) => re.test(c))) found.push(category);
+  }
+  if (isInlineInterpreterEvalCommand(cmd)) found.push('own_script');
+  return found;
+}
+
+/** Script extensions a shell runs directly, without naming an interpreter. */
+const DIRECT_SCRIPT = /\.(sh|bash|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)$/i;
+
+/**
+ * The script FILES a command runs (#464): the file handed to an interpreter
+ * (`python x.py`, `node x.js`, `bash x.sh`, `powershell -File x.ps1`), or a
+ * script started directly (`./x.sh`, `x.bat`). Paths as written, quotes
+ * removed; the caller resolves them. Flags and module names (`-m pkg`) are not
+ * files and are left out.
+ */
+export function scriptFilesRun(cmd: string): string[] {
+  if (typeof cmd !== 'string' || cmd.trim() === '') return [];
+  const files: string[] = [];
+  for (const seg of splitShellWords(cmd)) {
+    const rest = skipPassthroughLeaders(seg);
+    const head = rest[0];
+    if (head === undefined) continue;
+    const kind = interpreterKind(interpreterBasename(head));
+    if (kind) {
+      // The first non-flag argument is the script, unless a flag said the
+      // program comes inline or from a module.
+      for (let i = 1; i < rest.length; i++) {
+        const t = rest[i] ?? '';
+        const lower = t.toLowerCase();
+        if (isInlineEvalFlag(kind, lower) || lower === '-m') break;
+        if (kind === 'powershell') {
+          // Its options take values (`-ExecutionPolicy Bypass`): only `-File x`
+          // or a positional `.ps1` names a script.
+          if (/^-f(ile)?$/.test(lower)) {
+            const file = rest[i + 1];
+            if (file !== undefined) files.push(file);
+            break;
+          }
+          if (/\.ps1$/i.test(t)) {
+            files.push(t);
+            break;
+          }
+          continue;
+        }
+        if (t.startsWith('-')) continue;
+        files.push(t);
+        break;
+      }
+    } else if (DIRECT_SCRIPT.test(head)) {
+      files.push(head);
+    }
+  }
+  return files;
+}
+
+/**
+ * A command cut into its segments (`;`, `&&`, `||`, `|`, newlines) and each
+ * segment into words, quotes honoured: `python a.py "C:/My Files/x.csv"` is
+ * three words, not four (the 23/09 command had a path with a space). The
+ * quotes themselves are removed. Redirection targets (`> out.txt`) are kept as
+ * words: they are paths the command writes.
+ */
+export function splitShellWords(cmd: string): string[][] {
+  const segments: string[][] = [];
+  let words: string[] = [];
+  let word = '';
+  let inWord = false;
+  let quote: '"' | "'" | null = null;
+  const endWord = (): void => {
+    if (inWord) words.push(word);
+    word = '';
+    inWord = false;
+  };
+  const endSegment = (): void => {
+    endWord();
+    if (words.length > 0) segments.push(words);
+    words = [];
+  };
+  for (const ch of cmd) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else word += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      inWord = true;
+      continue;
+    }
+    if (ch === ';' || ch === '|' || ch === '&' || ch === '\n' || ch === '\r') {
+      endSegment();
+      continue;
+    }
+    if (ch === '>' || ch === '<' || /\s/.test(ch)) {
+      endWord();
+      continue;
+    }
+    word += ch;
+    inWord = true;
+  }
+  endSegment();
+  return segments;
+}
 
 /**
  * True when `cmd` performs a destructive or heavy, hard-to-undo action. Used by

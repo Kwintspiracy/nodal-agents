@@ -129,6 +129,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0107 : NULL = suivre entities.reflection_enabled
       reflection_enabled boolean,
       cli_daily_budget_usd real NOT NULL DEFAULT 10,
+      -- mirrors migration 0125 (#464) : NULL = tout demander
+      shell_policy jsonb,
       cli_defaults jsonb,
       runtime text NOT NULL DEFAULT 'nodal' CHECK (runtime IN ('nodal', 'claude-code', 'codex')),
       cli_permissions jsonb,
@@ -326,7 +328,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       resolved_by text,
       expires_at timestamptz DEFAULT now() + interval '1 hour',
       notes text,
-      executed_at timestamptz
+      executed_at timestamptz,
+      -- mirrors migration 0125 (#464)
+      gate_reasons jsonb
     );
 
     CREATE TABLE IF NOT EXISTS approval_rules (

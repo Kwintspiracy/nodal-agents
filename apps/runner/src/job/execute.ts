@@ -28,6 +28,7 @@ import type { ApprovalRequestRow, JobTriggerContext } from '@nodal-agents/db';
 import {
   metaToolsForAgent,
   parseRootGrants,
+  resolveShellPolicy,
   modelContextWindow,
   modelCanSeeImages,
   estimateCallCostUsd,
@@ -2089,6 +2090,21 @@ async function runJobTracked(
     .where(eq(entitiesTable.id, job.entityId ?? ''))
     .limit(1);
   const workspaceAutonomy = parseRootGrants(autonomyRow?.rootGrants).autonomy;
+
+  // ── 8c. Ce que l'agent n'a pas le droit de faire avec un shell (#464) ───────
+  // Lu une fois par job, passé à CHAQUE appel d'outil du tour : `executeTool`
+  // juge dessus toute commande que `run_command` ou `declare_verification`
+  // fera tourner. Pas au rejeu d'un appel déjà approuvé : la personne a vu
+  // cette commande-là. Une valeur illisible en base arrête le job et le dit —
+  // la lire comme « demander » affaiblirait en silence un « jamais ».
+  let agentShellPolicy: ReturnType<typeof resolveShellPolicy>;
+  try {
+    agentShellPolicy = resolveShellPolicy(agentRow.shellPolicy);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message.slice(0, 300) : String(err);
+    await failJob(db, jobId as string, `shell_policy_invalid: ${detail}`, runStats(), messages);
+    return { status: 'failed', error: 'shell_policy_invalid' };
+  }
 
   // ── 9. Initialize ChainCounters ───────────────────────────────────────────────
   const counters = new ChainCounters(DEFAULT_LIMITS);
@@ -4228,6 +4244,7 @@ async function runJobTracked(
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
         autonomy: workspaceAutonomy,
+        shellPolicy: agentShellPolicy,
         onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
       };
       const preExecuted = new Map<string, Awaited<ReturnType<typeof executeTool>>>();
@@ -4580,6 +4597,7 @@ async function runJobTracked(
               {
                 approvalRules: approvalRuleList,
                 autonomy: workspaceAutonomy,
+                shellPolicy: agentShellPolicy,
                 onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
               },
             );
