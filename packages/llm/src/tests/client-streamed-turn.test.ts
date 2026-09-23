@@ -11,6 +11,7 @@ import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
 import { mockTextResult } from './_mock-helpers';
 import type { LlmCallObservation } from '../observe';
+import { LLMCallCancelledError } from '../errors';
 
 let currentModel: MockLanguageModelV3;
 
@@ -59,6 +60,9 @@ describe('generateText streamed option @cap:organiser-equipe/moteur', () => {
     const res = await client.generateText(ARGS, { streamed: true });
 
     expect(res.text).toBe('from the stream');
+    // The generateText contract holds on the streamed path too.
+    expect(res.output).toBe('from the stream');
+    expect(res.experimental_output).toBe('from the stream');
     expect(currentModel.doStreamCalls).toHaveLength(1);
     expect(currentModel.doGenerateCalls).toHaveLength(0);
     expect(seen).toHaveLength(1);
@@ -119,6 +123,19 @@ describe('generateText streamed option @cap:organiser-equipe/moteur', () => {
 
     expect(res.text).toBe('from generate');
     expect(currentModel.doStreamCalls).toHaveLength(0);
+  });
+
+  it('a Stop on a one-shot call leaves at once as a cancellation, never re-sent', async () => {
+    const client = createLlmClient({ provider: 'openrouter', model: 'z-ai/glm-4.7', apiKey: 'k' });
+    const stop = new AbortController();
+    stop.abort();
+
+    const err = await client
+      .generateText(ARGS, { streamed: true, abortSignal: stop.signal })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(LLMCallCancelledError);
+    expect(currentModel.doGenerateCalls).toHaveLength(0);
   });
 
   it('keeps the one-shot call for a model whose tool calls are parsed from its text', async () => {

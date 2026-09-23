@@ -382,6 +382,7 @@ async function collectResult(stream: StreamResult): Promise<GenerateResult> {
     response,
     providerMetadata,
     steps,
+    output,
   ] = await Promise.all([
     stream.content,
     stream.text,
@@ -404,6 +405,7 @@ async function collectResult(stream: StreamResult): Promise<GenerateResult> {
     stream.response,
     stream.providerMetadata,
     stream.steps,
+    stream.output,
   ]);
   return {
     content,
@@ -427,5 +429,9 @@ async function collectResult(stream: StreamResult): Promise<GenerateResult> {
     response: { ...response, messages: response.messages },
     providerMetadata,
     steps,
+    // Part of generateText's contract, even for plain text (Codex review of
+    // #449, pass 10): the parsed output, and its deprecated alias.
+    output,
+    experimental_output: output,
   } as unknown as GenerateResult;
 }

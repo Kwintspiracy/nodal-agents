@@ -420,27 +420,34 @@ export function createLlmClient(
         (override) =>
           withRetry(
             () =>
-              withStaleRetry(
-                (timeoutMs) =>
-                  generateText({
-                    ...prepared,
-                    model,
-                    ...(override ? { toolChoice: override } : {}),
-                    // AI SDK native timeout via AbortSignal.timeout(). Survives
-                    // middleware wrapping unlike a passed-in abortSignal which their
-                    // internal retry can swallow. timeoutMs varies per attempt:
-                    // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
-                    // for subsequent fresh-connection stale retries.
-                    timeout: timeoutMs,
-                    // The job's Stop, when the caller passes it (one-shot
-                    // turns of the models that cannot stream).
-                    ...(callOpts?.abortSignal ? { abortSignal: callOpts.abortSignal } : {}),
-                    // Disable AI SDK internal retry — we own retries via withRetry to
-                    // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
-                    maxRetries: 0,
-                  } as Parameters<typeof generateText>[0]),
-                providerModel,
-              ),
+              withStaleRetry((timeoutMs) => {
+                // Stop is not a timeout: an aborted call leaves AT ONCE as a
+                // cancellation, never through the stale retry that would
+                // re-send it with the same dead signal (Codex review of #449,
+                // pass 10).
+                const stopped = (): LLMCallCancelledError =>
+                  new LLMCallCancelledError(config.provider, config.model, '');
+                if (callOpts?.abortSignal?.aborted) return Promise.reject(stopped());
+                return generateText({
+                  ...prepared,
+                  model,
+                  ...(override ? { toolChoice: override } : {}),
+                  // AI SDK native timeout via AbortSignal.timeout(). Survives
+                  // middleware wrapping unlike a passed-in abortSignal which their
+                  // internal retry can swallow. timeoutMs varies per attempt:
+                  // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
+                  // for subsequent fresh-connection stale retries.
+                  timeout: timeoutMs,
+                  // The job's Stop, when the caller passes it (one-shot
+                  // turns of the models that cannot stream).
+                  ...(callOpts?.abortSignal ? { abortSignal: callOpts.abortSignal } : {}),
+                  // Disable AI SDK internal retry — we own retries via withRetry to
+                  // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
+                  maxRetries: 0,
+                } as Parameters<typeof generateText>[0]).catch((err: unknown) => {
+                  throw callOpts?.abortSignal?.aborted ? stopped() : err;
+                });
+              }, providerModel),
             retryOpts,
           ),
         toolChoice,
