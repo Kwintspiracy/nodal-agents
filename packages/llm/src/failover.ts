@@ -35,7 +35,7 @@ function isFailoverWorthy(err: unknown): boolean {
   // the provider was serving. The runner resumes it from what it wrote, on
   // the same provider (#441); failing over would throw that text away and
   // pay the whole prompt again on the next link.
-  if (err instanceof LLMTimeoutError && err.partialText !== '') return false;
+  if (err instanceof LLMTimeoutError && err.resumable) return false;
   return (
     err instanceof RetryExhaustedError ||
     err instanceof LLMTimeoutError ||

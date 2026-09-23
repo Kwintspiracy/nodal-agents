@@ -235,6 +235,33 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     expect(err.partialText).toBe('x'.repeat(59));
   });
 
+  it('a stream cut AFTER a tool call keeps its text but is not resumable', async () => {
+    const state = run(
+      timedModel([
+        textStart(1_000),
+        text(1_000, 'I return my verdict.'),
+        textEnd(1_000),
+        { atMs: 2_000, part: { type: 'tool-input-start', id: 'c1', toolName: 'return_result' } },
+        { atMs: 2_000, part: { type: 'tool-input-delta', id: 'c1', delta: '{"status":' } },
+      ]),
+    );
+
+    await vi.advanceTimersByTimeAsync(2_000 + BETWEEN_TOKENS_MS + 1);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect(err.partialText).toBe('I return my verdict.');
+    expect(err.resumable).toBe(false);
+  });
+
+  it('a stream cut in plain text is resumable', async () => {
+    const state = run(timedModel([textStart(1_000), text(1_000, 'half a note')]));
+
+    await vi.advanceTimersByTimeAsync(1_000 + BETWEEN_TOKENS_MS + 1);
+
+    expect((state.error as LLMTimeoutError).resumable).toBe(true);
+  });
+
   it('a stream error part is thrown as the error it carries, not as a timeout', async () => {
     const boom = new Error('upstream 502');
     const state = run(

@@ -53,6 +53,7 @@ import {
   AllProvidersFailedError,
   isContextOverflowError,
   validateMessageStructure,
+  estimateContextTokens,
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
@@ -3385,10 +3386,38 @@ async function runJobTracked(
         const expiration = timeoutOfTurn(genErr);
         if (expiration !== null) {
           msExpiresCeTour += Date.now() - appelCommenceA;
+          // Un appel coupé EN ÉCRIVANT a été servi : le fournisseur a lu tout le
+          // prompt et produit ce texte, et il le facture. Aucun décompte ne
+          // revient d'un flux coupé avant sa fin, donc on l'ESTIME (caractères / 4)
+          // — sans quoi trois reprises repaieraient le prompt trois fois hors des
+          // plafonds de jetons et de coût (revue Codex de #449).
+          if (expiration.partialText !== '') {
+            const entreeEstimee = estimateContextTokens({
+              system: systemPrompt,
+              messages: messagesForResume(messages, partielCeTour),
+            });
+            const sortieEstimee = Math.ceil(expiration.partialText.length / 4);
+            inputTokens += entreeEstimee;
+            effectiveInputTokens += entreeEstimee;
+            outputTokens += sortieEstimee;
+            totalCostUsd += estimateCallCostUsd(expiration.provider, expiration.model, {
+              inputTokens: entreeEstimee,
+              outputTokens: sortieEstimee,
+              cachedTokens: 0,
+              cacheCreationTokens: 0,
+            });
+            trace('llm_cut_call_usage_estimated', {
+              turn,
+              inputTokens: entreeEstimee,
+              outputTokens: sortieEstimee,
+            });
+          }
           // Coupé en pleine écriture : on REPREND, on ne rejoue pas (#441).
           // Le compteur de tours ne bouge pas, et le rejeu à l'identique reste
           // réservé au vrai silence (rien reçu).
-          if (expiration.partialText !== '' && reprisesCeTour < MAX_LLM_TURN_RESUMES) {
+          // Un appel qui avait déjà émis un appel d'outil n'est pas reprenable
+          // (`resumable` faux) : son texte seul perdrait l'appel. Il est rejoué.
+          if (expiration.resumable && reprisesCeTour < MAX_LLM_TURN_RESUMES) {
             reprisesCeTour += 1;
             partielCeTour += expiration.partialText;
             trace('llm_turn_resume', {
@@ -3400,7 +3429,7 @@ async function runJobTracked(
             turn -= 1;
             continue;
           }
-          if (expiration.partialText === '' && expirationsCeTour < MAX_LLM_TIMEOUT_TURN_RETRIES) {
+          if (!expiration.resumable && expirationsCeTour < MAX_LLM_TIMEOUT_TURN_RETRIES) {
             expirationsCeTour += 1;
             trace('llm_timeout_turn_retry', { turn, attempt: expirationsCeTour });
             // Le MÊME tour est rejoué : sans ce retrait, la boucle le compterait
@@ -3467,6 +3496,16 @@ async function runJobTracked(
             } as ModelMessage,
           ];
           continue;
+        }
+        // Un tour en cours de reprise qui tombe sur AUTRE CHOSE qu'une expiration
+        // (quota, refus, réseau épuisé) : le texte déjà écrit ne vit encore que
+        // dans cette boucle. Il entre dans le transcript et devient le dernier
+        // texte vu, que la capture extérieure persiste avec le reste (revue
+        // Codex de #449) — le travail n'a pas à disparaître avec l'appel.
+        if (partielCeTour !== '') {
+          messages = [...messages, { role: 'assistant', content: partielCeTour } as ModelMessage];
+          lastAssistantTextSeen = partielCeTour.trim();
+          partielCeTour = '';
         }
         throw genErr; // not this error, or budget spent → outer catch fails loud
       } finally {

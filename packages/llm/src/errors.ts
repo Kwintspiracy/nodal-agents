@@ -68,12 +68,18 @@ export class LLMTimeoutError extends Error {
    * resumes from it instead of replaying the turn (#441).
    */
   readonly partialText: string;
+  /**
+   * True when the call can be RESUMED from `partialText`: the model wrote
+   * text and nothing else. A call that had already emitted a tool call is not
+   * resumable — the text alone would drop the call — and is replayed instead.
+   */
+  readonly resumable: boolean;
 
   constructor(
     public readonly provider: string,
     public readonly model: string,
     public readonly timeoutMs: number,
-    details: { reason: LlmTimeoutReason; partialText: string } = {
+    details: { reason: LlmTimeoutReason; partialText: string; resumable?: boolean } = {
       reason: 'wall',
       partialText: '',
     },
@@ -86,6 +92,7 @@ export class LLMTimeoutError extends Error {
     this.name = 'LLMTimeoutError';
     this.reason = details.reason;
     this.partialText = details.partialText;
+    this.resumable = details.resumable ?? details.partialText !== '';
   }
 }
 

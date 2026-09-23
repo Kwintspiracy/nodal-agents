@@ -164,6 +164,16 @@ type GenerateResult = Awaited<ReturnType<typeof generateText>>;
  */
 const FRAMING_PARTS = new Set(['start', 'start-step', 'finish-step', 'finish', 'abort', 'error']);
 
+/** Parts that are not text: once one is out, the reply cannot be resumed from its text. */
+const STRUCTURED_PARTS = new Set([
+  'tool-input-start',
+  'tool-input-delta',
+  'tool-input-end',
+  'tool-call',
+  'file',
+  'source',
+]);
+
 /**
  * Run one streamed call under its clocks and hand back the same result a
  * `generateText` call would have produced — the job loop reads `text`,
@@ -185,6 +195,9 @@ export async function consumeUnderClocks(
   let expired: { reason: LlmTimeoutReason; limitMs: number } | null = null;
   let partialText = '';
   let sawModel = false;
+  // A tool call (or its input) already on the wire makes the text alone a
+  // false picture of the reply: resuming from the text would drop the call.
+  let sawStructured = false;
 
   // Aborting the request is not enough on its own: the SDK only notices the
   // signal when a chunk moves, so a stream that stays mute would keep the loop
@@ -232,6 +245,7 @@ export async function consumeUnderClocks(
         if (part.type === 'error') throw part.error;
         if (FRAMING_PARTS.has(part.type)) continue;
         if (part.type === 'text-delta') partialText += part.text;
+        if (STRUCTURED_PARTS.has(part.type)) sawStructured = true;
         sawModel = true;
         armSilence();
       }
@@ -243,6 +257,7 @@ export async function consumeUnderClocks(
       throw new LLMTimeoutError(providerModel.provider, providerModel.model, limitMs, {
         reason,
         partialText,
+        resumable: partialText !== '' && !sawStructured,
       });
     }
     return await collectResult(stream);
