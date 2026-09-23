@@ -157,7 +157,13 @@ export async function judgeShellChecklist(
   let written: Set<string> | null = null;
   let jobStart: Date | null = null;
   for (const command of commands) {
-    for (const category of staticShellCategories(command)) hit(category);
+    const kinds = staticShellCategories(command);
+    for (const category of kinds) hit(category);
+    // Inline code (`python -c "open('/etc/passwd')"`) can name any path, and
+    // none of its words is one this reading resolves: when leaving the folders
+    // is restricted, it counts as leaving them, even for an agent allowed to
+    // run code it wrote (Codex review of #464, pass 3).
+    if (kinds.includes('own_script')) hit('outside_folders', command.slice(0, 200));
 
     if (policy.outside_folders !== 'allow') {
       for (const word of pathWords(command, process.platform)) {

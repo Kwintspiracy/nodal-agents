@@ -484,7 +484,9 @@ export function scriptFilesRun(cmd: string): string[] {
         files.push(t);
         break;
       }
-    } else if (DIRECT_SCRIPT.test(head)) {
+    } else if (DIRECT_SCRIPT.test(head) || /[\\/]/.test(head)) {
+      // A program named by its path (`./build`, `bin/run`) may be a file the
+      // agent just wrote, extension or not (Codex review of #464, pass 3).
       files.push(head);
     }
   }
@@ -577,7 +579,9 @@ export function splitShellTokens(cmd: string): ShellToken[][] {
       endWord();
       continue;
     }
-    if (ch === '$' || ch === '`') expands = true;
+    // An unquoted glob expands too: `cat *` may reach a link that leads out
+    // (Codex review of #464, pass 3).
+    if (ch === '$' || ch === '`' || ch === '*' || ch === '?' || ch === '[') expands = true;
     word += ch;
     inWord = true;
   }
