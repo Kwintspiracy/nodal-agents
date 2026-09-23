@@ -352,6 +352,27 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     expect(state.error).toBe(boom);
   });
 
+  it('a stream that breaks after REASONING only was served: counted, not resumable, not a raw error', async () => {
+    const boom = new Error('upstream 502');
+    const state = run(
+      timedModel([
+        { atMs: 0, part: { type: 'reasoning-start', id: 'r' } },
+        reasoning(1_000, 'r'.repeat(400)),
+        { atMs: 2_000, part: { type: 'error', error: boom } },
+      ]),
+    );
+
+    await vi.advanceTimersByTimeAsync(2_001);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect(err.reason).toBe('stream_error');
+    expect(err.served).toBe(true);
+    expect(err.resumable).toBe(false);
+    expect(err.partialText).toBe('');
+    expect(err.generatedChars).toBe(400);
+  });
+
   it('a stream that BREAKS after writing keeps its text as a resumable stream_error cut', async () => {
     const boom = new Error('upstream 502');
     const state = run(

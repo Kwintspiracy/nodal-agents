@@ -299,11 +299,15 @@ export async function consumeUnderClocks(
       // resumes from it instead of `withRetry` replaying from scratch (Codex
       // review of #449, pass 4). Before any text, the raw error is thrown and
       // the retry/failover layers handle it as they always did.
-      if (!expired && partialText !== '') {
+      // Served = the model had sent ANYTHING (text, reasoning, a tool call),
+      // not only visible text: a stream that thought or started a tool call
+      // before breaking was billed too, and must be counted and kept on its
+      // link rather than replayed from scratch (Codex review of #449, pass 8).
+      if (!expired && sawModel) {
         throw new LLMTimeoutError(providerModel.provider, providerModel.model, 0, {
           reason: 'stream_error',
           partialText,
-          resumable: !sawStructured,
+          resumable: partialText !== '' && !sawStructured,
           served: true,
           generatedChars,
           cause: err,
