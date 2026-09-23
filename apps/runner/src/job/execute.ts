@@ -3282,6 +3282,12 @@ async function runJobTracked(
       const currentTurnStatus = statusRow?.status;
       if (currentTurnStatus === 'cancelled') {
         trace('cancellation_observed', { turn });
+        // Un tour en cours de reprise (#441) a déjà écrit du texte : il fait
+        // partie du travail que l'annulation garde (revue Codex de #449).
+        if (partielCeTour !== '') {
+          messages = [...messages, { role: 'assistant', content: partielCeTour } as ModelMessage];
+          partielCeTour = '';
+        }
         await cancelJob(db, jobId as string, runStats(), messages);
         return { status: 'cancelled' };
       }
@@ -3411,6 +3417,35 @@ async function runJobTracked(
               inputTokens: entreeEstimee,
               outputTokens: sortieEstimee,
             });
+            // Les plafonds 1a et 1e ne tournent qu'après une réponse servie :
+            // sans ce contrôle ici, un appel coupé qui a fait déborder le budget
+            // en relancerait jusqu'à trois autres, payés (revue Codex de #449,
+            // passe 2). Mêmes plafonds, mêmes codes ; le texte déjà écrit est
+            // gardé dans le transcript.
+            const plafond =
+              effectiveInputTokens + outputTokens > maxTotalTokensPerJob
+                ? 'token_budget_exceeded'
+                : totalCostUsd > maxCostPerJobUsd
+                  ? 'cost_budget_exceeded'
+                  : null;
+            if (plafond !== null) {
+              messages = [
+                ...messages,
+                {
+                  role: 'assistant',
+                  content: partielCeTour + expiration.partialText,
+                } as ModelMessage,
+              ];
+              trace(plafond, {
+                turn,
+                effectiveInputTokens,
+                outputTokens,
+                totalCostUsd,
+                afterCutCall: true,
+              });
+              await failJob(db, jobId as string, plafond, runStats(), messages);
+              return { status: 'failed', error: plafond };
+            }
           }
           // Coupé en pleine écriture : on REPREND, on ne rejoue pas (#441).
           // Le compteur de tours ne bouge pas, et le rejeu à l'identique reste
