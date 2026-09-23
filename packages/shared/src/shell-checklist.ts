@@ -98,14 +98,15 @@ export interface ShellGateReason {
 export interface PathWord {
   /** As written, quotes removed. */
   raw: string;
-  /** Absolute (drive, UNC, root), in the home folder (`~`, %USERPROFILE%), or relative climbing out (`..`). */
+  /** Absolute (drive, UNC, root), in the home folder (`~`, %USERPROFILE%), or relative to where it runs. */
   kind: 'absolute' | 'home' | 'relative';
 }
 
 const WINDOWS_ABSOLUTE = /^[a-z]:[\\/]/i;
 const UNC = /^(\\\\|\/\/)[^\\/]/;
 const HOME = /^(~(?=[\\/]|$)|%userprofile%|%homepath%|\$home\b|\$env:userprofile\b)/i;
-const CLIMBS = /(^|[\\/])\.\.([\\/]|$)/;
+/** A URL is not a path, even with slashes in it. */
+const URL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 /**
  * The words of a command that name a path: an argument, an option's value
@@ -128,7 +129,13 @@ export function pathWords(cmd: string, platform: string): PathWord[] {
         if (unixPath) found.push({ raw: value, kind: 'absolute' });
       } else if (HOME.test(value)) {
         found.push({ raw: value, kind: 'home' });
-      } else if (CLIMBS.test(value)) {
+      } else if (!value.startsWith('-') && !URL.test(value)) {
+        // Every other word is a relative path candidate, not only those that
+        // climb (`..`): `cat link/secret`, where `link` is a symlink inside the
+        // folder pointing outside it, never climbs and still leaves (Codex
+        // review of #464, P1). The caller resolves each one as the file tools
+        // do, symlinks included; a word that is not a path (`status`, `42`)
+        // resolves inside the folder and says nothing.
         found.push({ raw: value, kind: 'relative' });
       }
     });

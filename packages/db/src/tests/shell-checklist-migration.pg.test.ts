@@ -50,7 +50,7 @@ describe('migration 0125_shell_checklist @cap:executer-une-commande/moteur', () 
     }
   });
 
-  it('la reprise : un agent Yolo garde tout sauf sortir de ses dossiers ; un autre reste à NULL', async () => {
+  it('la reprise : un agent Yolo (sans condition) garde tout sauf sortir de ses dossiers ; les autres restent à NULL', async () => {
     const { db, close } = createClient(harness().url, { max: 1 });
     try {
       await db.execute(sql`INSERT INTO users (id, email) VALUES
@@ -60,10 +60,15 @@ describe('migration 0125_shell_checklist @cap:executer-une-commande/moteur', () 
       await db.execute(sql`INSERT INTO agents (id, entity_id, name, slug, personality) VALUES
         ('00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000e1', 'Yolo', 'yolo', 'p'),
         ('00000000-0000-4000-8000-0000000000b2', '00000000-0000-4000-8000-0000000000e1', 'Prudent', 'prudent', 'p'),
-        ('00000000-0000-4000-8000-0000000000b3', '00000000-0000-4000-8000-0000000000e1', 'Bloque', 'bloque', 'p')`);
+        ('00000000-0000-4000-8000-0000000000b3', '00000000-0000-4000-8000-0000000000e1', 'Bloque', 'bloque', 'p'),
+        ('00000000-0000-4000-8000-0000000000b4', '00000000-0000-4000-8000-0000000000e1', 'Dossier', 'dossier', 'p')`);
       await db.execute(sql`INSERT INTO approval_rules (entity_id, agent_id, tool_name, action) VALUES
         ('00000000-0000-4000-8000-0000000000e1', '00000000-0000-4000-8000-0000000000b1', 'run_command', 'auto_approve'),
         ('00000000-0000-4000-8000-0000000000e1', '00000000-0000-4000-8000-0000000000b3', 'run_command', 'block')`);
+      // Yolo confiné à un dossier (#360) : ne vaut que là, et la reprise ne
+      // doit pas l'étendre à toute la liste (revue Codex de #464, P1).
+      await db.execute(sql`INSERT INTO approval_rules (entity_id, agent_id, tool_name, action, condition_json) VALUES
+        ('00000000-0000-4000-8000-0000000000e1', '00000000-0000-4000-8000-0000000000b4', 'run_command', 'auto_approve', '{"workspacePath":"D:/dev"}'::jsonb)`);
 
       // La reprise est le TROISIÈME ordre du fichier de migration, rejoué tel quel.
       const file = readFileSync(
@@ -79,6 +84,7 @@ describe('migration 0125_shell_checklist @cap:executer-une-commande/moteur', () 
       )) as unknown as Array<{ slug: string; shell_policy: unknown }>;
       expect(rows).toEqual([
         { slug: 'bloque', shell_policy: null },
+        { slug: 'dossier', shell_policy: null },
         { slug: 'prudent', shell_policy: null },
         {
           slug: 'yolo',

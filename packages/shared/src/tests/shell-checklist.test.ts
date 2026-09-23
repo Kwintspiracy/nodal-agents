@@ -105,23 +105,38 @@ describe('pathWords @cap:executer-une-commande/moteur', () => {
       { raw: '%USERPROFILE%\\notes.txt', kind: 'home' },
     ]);
     expect(pathWords('cp a.txt ../../elsewhere/', 'linux')).toEqual([
+      { raw: 'a.txt', kind: 'relative' },
       { raw: '../../elsewhere/', kind: 'relative' },
     ]);
     expect(pathWords('echo hi > /etc/motd', 'linux')).toEqual([
+      { raw: 'hi', kind: 'relative' },
       { raw: '/etc/motd', kind: 'absolute' },
     ]);
   });
 
   it('on Windows, /x is a flag, not a path', () => {
-    expect(pathWords('rd /s /q build', 'win32')).toEqual([]);
-    expect(pathWords('taskkill /F /PID 42', 'win32')).toEqual([]);
+    expect(pathWords('rd /s /q build', 'win32')).toEqual([{ raw: 'build', kind: 'relative' }]);
+    expect(pathWords('taskkill /F /PID 42', 'win32')).toEqual([{ raw: '42', kind: 'relative' }]);
     expect(pathWords('ls /c/Users/kwint', 'win32')).toEqual([
       { raw: '/c/Users/kwint', kind: 'absolute' },
     ]);
   });
 
-  it('a relative path that stays inside says nothing', () => {
-    expect(pathWords('python scripts/a.py data/x.csv', 'linux')).toEqual([]);
+  it('every other word is a relative candidate, for the gate to resolve (a symlink never climbs)', () => {
+    expect(pathWords('cat link/secret', 'linux')).toEqual([
+      { raw: 'link/secret', kind: 'relative' },
+    ]);
+    expect(pathWords('python scripts/a.py data/x.csv', 'linux')).toEqual([
+      { raw: 'scripts/a.py', kind: 'relative' },
+      { raw: 'data/x.csv', kind: 'relative' },
+    ]);
+  });
+
+  it('options and URLs are not paths', () => {
+    expect(pathWords('git clone --depth 1 https://github.com/x/y', 'linux')).toEqual([
+      { raw: 'clone', kind: 'relative' },
+      { raw: '1', kind: 'relative' },
+    ]);
   });
 });
 

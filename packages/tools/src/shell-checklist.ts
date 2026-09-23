@@ -70,14 +70,38 @@ async function canonical(ctx: ToolContext, p: string): Promise<string> {
   return process.platform === 'win32' ? unified.toLowerCase() : unified;
 }
 
+/**
+ * Did this audit row record a write that happened? `executeTool` stores the
+ * tool's own output on success, and a `{ outcome: 'error' | 'awaiting_approval' }`
+ * result otherwise — the same rows the conversation screen reads.
+ */
+function wasWritten(toolOutput: string | null): boolean {
+  if (toolOutput === null) return false;
+  try {
+    const parsed = JSON.parse(toolOutput) as { outcome?: unknown } | null;
+    return !(
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      (parsed.outcome === 'error' || parsed.outcome === 'awaiting_approval')
+    );
+  } catch {
+    // Not JSON: a tool returning plain text succeeded (errors are always JSON).
+    return true;
+  }
+}
+
 /** The files this agent wrote in this job, as the file tools resolved them. */
 async function filesWrittenThisJob(ctx: ToolContext): Promise<Set<string>> {
   const rows = await ctx.db
-    .select({ toolInput: toolCalls.toolInput })
+    .select({ toolInput: toolCalls.toolInput, toolOutput: toolCalls.toolOutput })
     .from(toolCalls)
     .where(and(eq(toolCalls.jobId, ctx.jobId), inArray(toolCalls.toolName, WRITING_TOOLS)));
   const written = new Set<string>();
   for (const row of rows) {
+    // Only a write that HAPPENED: a refused or failed one (no match for the
+    // edit, invalid input, held for approval) left the file as it was, and a
+    // script already there is not the agent's (Codex review of #464, P2).
+    if (!wasWritten(row.toolOutput)) continue;
     const path = (row.toolInput as { path?: unknown } | null)?.path;
     if (typeof path === 'string' && path !== '') written.add(await canonical(ctx, path));
   }
