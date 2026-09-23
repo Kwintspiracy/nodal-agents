@@ -234,6 +234,8 @@ export async function consumeUnderClocks(
   providerModel: { provider: string; model: string },
   /** The job's cancellation: aborting it ends the call at once (Stop). */
   cancelSignal?: AbortSignal,
+  /** Each piece of visible text as it arrives (the chat shows it live, #458). */
+  onTextDelta?: (text: string) => void,
 ): Promise<GenerateResult> {
   const controller = new AbortController();
   let expired: { reason: LlmTimeoutReason | 'cancelled'; limitMs: number } | null = null;
@@ -299,7 +301,10 @@ export async function consumeUnderClocks(
         const part = next.value;
         if (part.type === 'error') throw part.error;
         if (FRAMING_PARTS.has(part.type)) continue;
-        if (part.type === 'text-delta') partialText += part.text;
+        if (part.type === 'text-delta') {
+          partialText += part.text;
+          onTextDelta?.(part.text);
+        }
         if (part.type === 'text-delta' || part.type === 'reasoning-delta') {
           generatedChars += part.text.length;
         }

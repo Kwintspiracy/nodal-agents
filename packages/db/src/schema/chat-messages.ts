@@ -128,6 +128,11 @@ export const chatMessages = pgTable(
     // `content` est ce qui avait été écrit. Un FAIT, que l'écran dit avec ses
     // mots — le runner n'écrit aucune phrase pour ça (invariant #2).
     stopped: boolean('stopped').notNull().default(false),
+    // Une horloge de silence a coupé cette réponse après qu'elle avait commencé
+    // à s'écrire (#458) : `content` est ce qui avait été écrit, et ceci la raison
+    // (`LLMTimeoutError.reason`). NULL pour une réponse rendue entière. Même
+    // règle que `stopped` : un fait, que l'écran dit.
+    cutReason: text('cut_reason'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [

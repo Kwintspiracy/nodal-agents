@@ -71,6 +71,19 @@ describe('generateText streamed option @cap:organiser-equipe/moteur', () => {
     expect(seen[0]?.error).toBeNull();
   });
 
+  it('hands each piece of text to onTextDelta as it arrives, in order (#458)', async () => {
+    const client = createLlmClient({ provider: 'openrouter', model: 'z-ai/glm-5.2', apiKey: 'k' });
+    const pieces: string[] = [];
+
+    const res = await client.generateText(ARGS, {
+      streamed: true,
+      onTextDelta: (t) => pieces.push(t),
+    });
+
+    expect(pieces).toEqual(['from ', 'the stream']);
+    expect(res.text).toBe(pieces.join(''));
+  });
+
   it('sizes the first-token clock with the tool schemas it sends', async () => {
     // 200 large tool definitions ≈ 55K tokens: the first token may take 130 s
     // (over the 120 s base clock) without the call being cut.

@@ -14,7 +14,8 @@
 // Protocole (SSE) :
 //   event: delta  data: { "text": "…" }        un fragment de la réponse
 //   event: done   data: { "reply": "…", "spawnedJobId": …, "streamed": bool,
-//                         "stopped": bool }    stopped = la personne a appuyé sur Stop (#456)
+//                         "stopped": bool,     stopped = la personne a appuyé sur Stop (#456)
+//                         "cutReason": str|null } une horloge a coupé la réponse (#458)
 //   event: error  data: { "error": "code" }    le tour a échoué
 //
 // `done` porte la réponse ENTIÈRE, et c'est elle qui fait foi : un flux coupé
@@ -22,8 +23,9 @@
 // finale (invariant #4). Le lecteur d'en face remplace ce qu'il a accumulé.
 //
 // `streamed` dit si les fragments qui précèdent SONT cette réponse. Faux quand
-// `streamText` a cassé et que la relance sans outils a livré le texte d'un
-// bloc, ou quand l'agent tourne sur un runtime CLI qui ne diffuse rien. C'est
+// le flux a cassé avant d'écrire et que la relance sans outils a livré le
+// texte d'un bloc, quand le modèle ne sait pas diffuser (#458), ou quand
+// l'agent tourne sur un runtime CLI qui ne diffuse rien. C'est
 // un fait, pas une supposition laissée au lecteur (invariant #4).
 
 import type { Context } from 'hono';
@@ -109,6 +111,7 @@ export async function chatStreamRoute(
             spawnedJobId: result.spawnedJobId ?? null,
             streamed: result.streamed === true,
             stopped: result.stopped === true,
+            cutReason: result.cutReason ?? null,
           });
 
           // Le tour a escaladé : le travail part en fond, exactement comme sur

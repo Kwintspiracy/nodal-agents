@@ -10,6 +10,7 @@ import {
   buildConversationThread,
   JOB_GONE_NOTE,
   STOPPED_ANSWER_NOTE,
+  CUT_ANSWER_NOTE,
   UNCLASSIFIED_NOTE,
   olderTurnsNote,
 } from '../conversation-thread.ts';
@@ -606,6 +607,28 @@ describe('buildConversationThread — une conversation du dashboard', () => {
       jobs: [],
     });
     expect(items.map((i) => i.kind)).toEqual(['request', 'note']);
+  });
+
+  it('une réponse coupée par une horloge : ce qui était écrit, puis le fil le DIT (#458)', () => {
+    const { items } = buildConversationThread({
+      conversation: dashboard,
+      messages: [
+        { id: 'm1', role: 'user', content: 'la machine à vapeur', jobId: null, createdAt: null },
+        {
+          id: 'm2',
+          role: 'assistant',
+          content: 'Le cylindre reçoit la vapeur',
+          jobId: null,
+          createdAt: null,
+          cutReason: 'idle_between_tokens',
+        },
+        { id: 'm3', role: 'user', content: 'et ensuite ?', jobId: null, createdAt: null },
+        { id: 'm4', role: 'assistant', content: 'voilà', jobId: null, createdAt: null },
+      ],
+      jobs: [],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'note', 'request', 'turn']);
+    expect(items[2]).toEqual({ kind: 'note', text: CUT_ANSWER_NOTE, origin: 'thread' });
   });
 });
 

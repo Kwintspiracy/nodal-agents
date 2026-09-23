@@ -400,6 +400,7 @@ export function createLlmClient(
                   clocks,
                   providerModel,
                   callOpts.abortSignal,
+                  callOpts.onTextDelta,
                 ),
               retryOpts,
             ),

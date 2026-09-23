@@ -1,0 +1,12 @@
+-- UNE RÉPONSE COUPÉE PAR UNE HORLOGE EST UN FAIT, COMME UNE RÉPONSE ARRÊTÉE (#458).
+--
+-- La réponse du chat passe désormais sous les deux horloges de silence des
+-- jobs (#440). Quand l'une d'elles coupe une réponse qui avait commencé à
+-- s'écrire, ce texte est gardé comme la réponse du tour, et la raison de la
+-- coupure est enregistrée ici : `idle_before_first_token`,
+-- `idle_between_tokens`, `absolute` ou `stream_error` — les raisons de
+-- `LLMTimeoutError`. L'écran le dit avec ses mots ; le runner n'écrit aucune
+-- phrase (invariant #2, même décision que `stopped`, migration 0123).
+--
+-- NULL par défaut : toutes les réponses d'avant ont été rendues entières.
+ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "cut_reason" text;

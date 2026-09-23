@@ -862,6 +862,13 @@
       "when": 1786001500000,
       "tag": "0123_chat_messages_stopped",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1786001600000,
+      "tag": "0124_chat_messages_cut_reason",
+      "breakpoints": true
     }
   ]
 }

@@ -1567,6 +1567,7 @@ export async function getConversationThreadAction(
           content: chatMessages.content,
           jobId: chatMessages.jobId,
           stopped: chatMessages.stopped,
+          cutReason: chatMessages.cutReason,
           createdAt: chatMessages.createdAt,
         })
         .from(chatMessages)
@@ -1948,6 +1949,7 @@ export async function getConversationThreadAction(
         jobId: m.jobId,
         createdAt: m.createdAt,
         stopped: m.stopped,
+        cutReason: m.cutReason,
       })),
       jobs,
       truncated,

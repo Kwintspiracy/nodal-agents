@@ -9,7 +9,6 @@
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
-import { streamText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, chatMessages, conversations } from '@nodal-agents/db';
@@ -22,19 +21,24 @@ import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 
-const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
+const { getActiveLlmClient, setActiveLlmClient, mockModel, realClient } = vi.hoisted(() => {
   let active: RunnerDeps['llmClient'] | null = null;
   return {
     getActiveLlmClient: () => active,
     setActiveLlmClient: (c: RunnerDeps['llmClient']) => {
       active = c;
     },
+    /** Le modèle simulé que le VRAI client construit (voir le mock d'OpenRouter). */
+    mockModel: { current: null as unknown },
+    /** Le vrai `createLlmClient`, gardé avant que le mock ne le remplace. */
+    realClient: { create: null as unknown },
   };
 });
 
 vi.mock('@nodal-agents/llm', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
+  realClient.create = actual.createLlmClient;
   return {
     ...actual,
     createLlmClient: () => {
@@ -44,6 +48,44 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
     },
   };
 });
+
+// Le tour de chat passe par le VRAI client (#458) : horloges, Stop et trace
+// compris. Seul le modèle au bout du fil est simulé.
+vi.mock('../../../../../packages/llm/src/providers/openrouter', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, buildOpenRouterModel: () => mockModel.current };
+});
+
+/** Les appels SANS flux du tour : relance d'escalade, titre, chemin `/api/chat`. */
+type OneShot = (
+  args: { system?: string },
+  opts?: { abortSignal?: AbortSignal },
+) => Promise<unknown>;
+
+const noOneShot: OneShot = () => {
+  throw new Error('chat-stop.test: generateText must not run after a Stop');
+};
+
+/**
+ * Un vrai client sur `model` : l'appel diffusé de la réponse passe par le
+ * client réel ; les appels sans flux vont à `oneShot`.
+ */
+function clientOver(model: MockLanguageModelV3, oneShot: OneShot): RunnerDeps['llmClient'] {
+  mockModel.current = model;
+  const create = realClient.create as (c: {
+    provider: string;
+    model: string;
+    apiKey: string;
+  }) => RunnerDeps['llmClient'];
+  const real = create({ provider: 'openrouter', model: 'z-ai/glm-5.2', apiKey: 'k' });
+  return {
+    ...real,
+    generateText: ((args: { system?: string }, opts?: { streamed?: boolean }) =>
+      opts?.streamed
+        ? real.generateText(args as never, opts as never)
+        : oneShot(args, opts as never)) as unknown as RunnerDeps['llmClient']['generateText'],
+  };
+}
 
 /**
  * Un modèle qui écrit sans jamais finir : un fragment toutes les 10 ms, et, si
@@ -55,7 +97,7 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
  * (`generateText`) prend du temps et finirait par demander un `run_task` —
  * sauf si le Stop l'abandonne.
  */
-function slowRecheckClient(): RunnerDeps['llmClient'] {
+function slowRecheckClient(oneShot?: OneShot): RunnerDeps['llmClient'] {
   const model = new MockLanguageModelV3({
     provider: 'mock',
     modelId: 'mock',
@@ -79,34 +121,32 @@ function slowRecheckClient(): RunnerDeps['llmClient'] {
       }) as never,
     }),
   });
-  const client = endlessClient();
-  return {
-    ...client,
-    streamText: (args) =>
-      streamText({ ...args, model } as Parameters<typeof streamText>[0]) as ReturnType<
-        RunnerDeps['llmClient']['streamText']
-      >,
-    generateText: ((_args: unknown, opts?: { abortSignal?: AbortSignal }) =>
-      new Promise((resolve, reject) => {
-        const t = setTimeout(
-          () =>
-            resolve({
-              text: '',
-              toolCalls: [{ toolName: 'run_task', input: { instruction: 'go' } }],
-            }),
-          300,
-        );
-        opts?.abortSignal?.addEventListener('abort', () => {
-          clearTimeout(t);
-          reject(new Error('aborted'));
-        });
-      })) as unknown as RunnerDeps['llmClient']['generateText'],
-  };
+  const slowRecheck: OneShot = (_args, opts) =>
+    new Promise((resolve, reject) => {
+      const t = setTimeout(
+        () =>
+          resolve({
+            text: '',
+            toolCalls: [{ toolName: 'run_task', input: { instruction: 'go' } }],
+          }),
+        300,
+      );
+      opts?.abortSignal?.addEventListener('abort', () => {
+        clearTimeout(t);
+        reject(new Error('aborted'));
+      });
+    });
+  return clientOver(model, oneShot ?? slowRecheck);
 }
 
 function endlessClient(
   opts: { escalates?: boolean; mute?: boolean } = {},
+  oneShot: OneShot = noOneShot,
 ): RunnerDeps['llmClient'] {
+  return clientOver(endlessModel(opts), oneShot);
+}
+
+function endlessModel(opts: { escalates?: boolean; mute?: boolean } = {}): MockLanguageModelV3 {
   const model = new MockLanguageModelV3({
     provider: 'mock',
     modelId: 'mock',
@@ -137,26 +177,7 @@ function endlessClient(
       }) as never,
     }),
   });
-  return {
-    config: { provider: 'anthropic', model: 'mock' } as RunnerDeps['llmClient']['config'],
-    capabilities: {
-      toolUse: true,
-      promptCaching: false,
-      vision: false,
-      structuredOutputs: false,
-      streaming: true,
-    },
-    generateText: () => {
-      throw new Error('chat-stop.test: generateText must not run after a Stop');
-    },
-    streamText: (args) =>
-      streamText({ ...args, model } as Parameters<typeof streamText>[0]) as ReturnType<
-        RunnerDeps['llmClient']['streamText']
-      >,
-    generateObject: () => {
-      throw new Error('generateObject not used');
-    },
-  };
+  return model;
 }
 
 /** L'environnement d'un runner de test, pour la route `/api/chat`. */
@@ -314,10 +335,8 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
 
   it('un Stop pendant la génération du TITRE : la réponse enregistrée est marquée arrêtée', async () => {
     const conv = await newConversation('');
-    const client = slowRecheckClient();
-    setActiveLlmClient({
-      ...client,
-      generateText: ((args: { system?: string }, opts?: { abortSignal?: AbortSignal }) => {
+    setActiveLlmClient(
+      slowRecheckClient(((args: { system?: string }, opts?: { abortSignal?: AbortSignal }) => {
         if (typeof args.system === 'string' && args.system.length > 0) {
           // L'appel qui nomme la conversation : la personne appuie sur Stop.
           stopChatTurn(conv);
@@ -327,8 +346,8 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
         }
         // La relance d'escalade : pas d'escalade.
         return Promise.resolve({ text: '', toolCalls: [] });
-      }) as unknown as RunnerDeps['llmClient']['generateText'],
-    });
+      }) as OneShot),
+    );
     const { turn } = playTurn(conv);
 
     const result = await turn;
@@ -350,9 +369,8 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
       rechecking = r;
     });
     let calls = 0;
-    setActiveLlmClient({
-      ...endlessClient(),
-      generateText: ((_args: unknown, opts?: { abortSignal?: AbortSignal }) => {
+    setActiveLlmClient(
+      endlessClient({}, ((_args: unknown, opts?: { abortSignal?: AbortSignal }) => {
         calls += 1;
         // 1er appel : la réponse entière, d'un bloc (le chemin sans flux).
         if (calls === 1) return Promise.resolve({ text: 'Réponse complète.', toolCalls: [] });
@@ -361,8 +379,8 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
         return new Promise((_resolve, reject) => {
           opts?.abortSignal?.addEventListener('abort', () => reject(new Error('aborted')));
         });
-      }) as unknown as RunnerDeps['llmClient']['generateText'],
-    });
+      }) as OneShot),
+    );
     const turn = withChatTurnStop(conv, (abortSignal) =>
       runChatTurn({
         deps,
@@ -395,14 +413,16 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
       called = r;
     });
     // Le tour sans flux attend son modèle… jusqu'au Stop.
-    setActiveLlmClient({
-      ...endlessClient(),
-      generateText: ((_args: unknown, opts?: { abortSignal?: AbortSignal }) =>
-        new Promise((_resolve, reject) => {
-          called();
-          opts?.abortSignal?.addEventListener('abort', () => reject(new Error('aborted')));
-        })) as unknown as RunnerDeps['llmClient']['generateText'],
-    });
+    setActiveLlmClient(
+      endlessClient(
+        {},
+        ((_args: unknown, opts?: { abortSignal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            called();
+            opts?.abortSignal?.addEventListener('abort', () => reject(new Error('aborted')));
+          })) as OneShot,
+      ),
+    );
     const registry = createToolRegistry();
     registerBuiltins(registry);
     const app = createApp(
@@ -462,10 +482,8 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
     const conv = await newConversation('');
     // La relance demande une escalade ; le Stop tombe pendant l'appel qui nomme
     // la conversation — APRÈS la création du job, AVANT son lancement.
-    const client = slowRecheckClient();
-    setActiveLlmClient({
-      ...client,
-      generateText: ((args: { system?: string }) => {
+    setActiveLlmClient(
+      slowRecheckClient(((args: { system?: string }) => {
         if (typeof args.system === 'string' && args.system.length > 0) {
           stopChatTurn(conv);
           return Promise.resolve({ text: 'Titre' });
@@ -474,8 +492,8 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
           text: '',
           toolCalls: [{ toolName: 'run_task', input: { instruction: 'go' } }],
         });
-      }) as unknown as RunnerDeps['llmClient']['generateText'],
-    });
+      }) as OneShot),
+    );
     const { turn } = playTurn(conv);
 
     const result = await turn;
@@ -497,10 +515,8 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
   it('un Stop après l’escalade : le tour suivant dit au modèle que la personne a arrêté', async () => {
     // Même scénario que ci-dessus : l'accusé porte un job ET l'arrêt.
     const conv = await newConversation('');
-    const client = slowRecheckClient();
-    setActiveLlmClient({
-      ...client,
-      generateText: ((args: { system?: string }) => {
+    setActiveLlmClient(
+      slowRecheckClient(((args: { system?: string }) => {
         if (typeof args.system === 'string' && args.system.length > 0) {
           stopChatTurn(conv);
           return Promise.resolve({ text: 'Titre' });
@@ -509,26 +525,19 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
           text: '',
           toolCalls: [{ toolName: 'run_task', input: { instruction: 'go' } }],
         });
-      }) as unknown as RunnerDeps['llmClient']['generateText'],
-    });
+      }) as OneShot),
+    );
     await playTurn(conv).turn;
 
     // Le tour suivant : on lit l'historique que le modèle reçoit.
-    let seen: unknown = null;
-    const next = endlessClient();
-    setActiveLlmClient({
-      ...next,
-      streamText: (args) => {
-        seen = (args as { messages?: unknown }).messages;
-        return next.streamText(args);
-      },
-    });
+    const next = endlessModel();
+    setActiveLlmClient(clientOver(next, noOneShot));
     const { turn } = playTurn(conv);
-    await waitFor(() => seen !== null);
+    await waitFor(() => next.doStreamCalls.length > 0);
     stopChatTurn(conv);
     await turn;
 
-    const toolResults = (seen as Array<{ role: string; content: unknown }>)
+    const toolResults = (next.doStreamCalls[0]!.prompt as Array<{ role: string; content: unknown }>)
       .filter((m) => m.role === 'tool')
       .map((m) => JSON.stringify(m.content));
     expect(toolResults).toHaveLength(1);
