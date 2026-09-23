@@ -18,7 +18,7 @@
 // Pure: no filesystem, no `node:path` (the web imports this module too).
 
 import { z } from 'zod';
-import { splitShellWords, type StaticShellCategory } from './catastrophic-command';
+import { splitShellTokens, type StaticShellCategory } from './catastrophic-command';
 
 /** Every kind of action the checklist covers, in the order the screen lists them. */
 export const SHELL_CATEGORIES = [
@@ -98,13 +98,18 @@ export interface ShellGateReason {
 export interface PathWord {
   /** As written, quotes removed. */
   raw: string;
-  /** Absolute (drive, UNC, root), in the home folder (`~`, %USERPROFILE%), or relative to where it runs. */
-  kind: 'absolute' | 'home' | 'relative';
+  /**
+   * Absolute (drive, UNC, root), in the home folder (`~`, %USERPROFILE%),
+   * relative to where it runs, or `unresolved`: the shell will expand it
+   * (`${X}/y`, `$(…)`) into something this reading cannot know. An unresolved
+   * path is judged as outside the folders: nobody checked where it leads.
+   */
+  kind: 'absolute' | 'home' | 'relative' | 'unresolved';
 }
 
 const WINDOWS_ABSOLUTE = /^[a-z]:[\\/]/i;
 const UNC = /^(\\\\|\/\/)[^\\/]/;
-const HOME = /^(~(?=[\\/]|$)|%userprofile%|%homepath%|\$home\b|\$env:userprofile\b)/i;
+const HOME = /^(~(?=[\\/]|$)|%userprofile%|%homepath%|\$home\b|\$\{home\}|\$env:userprofile\b)/i;
 /** A URL is not a path, even with slashes in it. */
 const URL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
@@ -117,12 +122,17 @@ const URL = /^[a-z][a-z0-9+.-]*:\/\//i;
  */
 export function pathWords(cmd: string, platform: string): PathWord[] {
   const found: PathWord[] = [];
-  for (const segment of splitShellWords(cmd)) {
-    segment.forEach((word, index) => {
+  for (const segment of splitShellTokens(cmd)) {
+    segment.forEach(({ text: word, expands }, index) => {
       if (index === 0 && !/\.(sh|bash|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)$/i.test(word)) return;
       const value = /^--?[\w-]+=/.test(word) ? word.slice(word.indexOf('=') + 1) : word;
       if (value === '') return;
-      if (WINDOWS_ABSOLUTE.test(value) || UNC.test(value)) {
+      // The home folder is the one expansion this reading resolves; any other
+      // (`${X}`, `$(…)`, a backtick, `%VAR%`) leads where nobody checked
+      // (Codex review of #464, P1).
+      if (expands && !HOME.test(value)) {
+        found.push({ raw: value, kind: 'unresolved' });
+      } else if (WINDOWS_ABSOLUTE.test(value) || UNC.test(value)) {
         found.push({ raw: value, kind: 'absolute' });
       } else if (value.startsWith('/')) {
         const unixPath = platform !== 'win32' || value.indexOf('/', 1) > 0;
