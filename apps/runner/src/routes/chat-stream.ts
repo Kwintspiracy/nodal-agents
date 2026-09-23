@@ -31,6 +31,7 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { runChatTurn } from '../chat/run-chat-turn.ts';
 import { runInLane } from '../chat/turn-lane.ts';
+import { withChatTurnStop } from '../chat/turn-stop.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import { sseEvent, SSE_HEADERS } from './sse.ts';
@@ -84,14 +85,19 @@ export async function chatStreamRoute(
       void (async () => {
         try {
           const result = await runInLane(conversationId, () =>
-            runChatTurn({
-              deps,
-              entityId,
-              agentId,
-              conversationId,
-              message,
-              onTextDelta: (delta) => send('delta', { text: delta }),
-            }),
+            // Le tour en cours dépose son Stop (#456) : `/api/chat/stop` le
+            // déclenche pour CETTE conversation, et pour ce tour-là seulement.
+            withChatTurnStop(conversationId, (abortSignal) =>
+              runChatTurn({
+                deps,
+                entityId,
+                agentId,
+                conversationId,
+                message,
+                onTextDelta: (delta) => send('delta', { text: delta }),
+                abortSignal,
+              }),
+            ),
           );
           if (!result.ok) {
             send('error', { error: result.error });
@@ -101,6 +107,7 @@ export async function chatStreamRoute(
             reply: result.reply,
             spawnedJobId: result.spawnedJobId ?? null,
             streamed: result.streamed === true,
+            stopped: result.stopped === true,
           });
 
           // Le tour a escaladé : le travail part en fond, exactement comme sur

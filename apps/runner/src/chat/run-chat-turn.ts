@@ -35,6 +35,7 @@ import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
+import { CHAT_STOPPED_LINE, untilStopped } from './turn-stop.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
 // size — 20 large turns (verbose replies, or several escalation blocks with
@@ -134,6 +135,8 @@ export type ChatTurnResult =
        * à deviner si ce qu'il a montré mot à mot est bien la réponse.
        */
       streamed?: boolean;
+      /** La personne a arrêté ce tour (#456) : `reply` est ce qui avait été écrit. */
+      stopped?: boolean;
     }
   | { ok: false; error: string };
 
@@ -292,8 +295,15 @@ export async function runChatTurn(opts: {
    * quoi un texte tronqué passerait pour la réponse (invariant #4).
    */
   onTextDelta?: (delta: string) => void;
+  /**
+   * Le Stop de la personne (#456), posé par `withChatTurnStop`. Déclenché,
+   * il coupe l'appel en cours : ce qui a été écrit est gardé, suivi de
+   * `CHAT_STOPPED_LINE`, et rien d'autre ne se joue — ni recheck
+   * d'escalade, ni relance sans outils, ni job lancé.
+   */
+  abortSignal?: AbortSignal;
 }): Promise<ChatTurnResult> {
-  const { deps, entityId, agentId, conversationId, message, onTextDelta } = opts;
+  const { deps, entityId, agentId, conversationId, message, onTextDelta, abortSignal } = opts;
   const db = deps.db;
 
   // 1. Load + verify the agent belongs to this entity.
@@ -524,6 +534,30 @@ export async function runChatTurn(opts: {
   // à faux, tenu vrai par le seul chemin qui le diffuse, et remis à faux par
   // la relance sans outils qui, elle, ne diffuse rien.
   let streamed = false;
+  // Ce que le flux a déjà dit, gardé si la personne arrête le tour (#456).
+  let partial = '';
+  /**
+   * Le tour arrêté par la personne : ce qui a été écrit, suivi de la ligne de
+   * plateforme, devient la réponse de ce tour. Aucun job, aucun recheck,
+   * aucune relance — la personne a demandé que ça s'arrête.
+   */
+  const keepStoppedReply = async (): Promise<ChatTurnResult> => {
+    const kept = partial.trim();
+    const reply =
+      kept === ''
+        ? CHAT_STOPPED_LINE
+        : `${kept}
+
+${CHAT_STOPPED_LINE}`;
+    await db
+      .insert(chatMessages)
+      .values({ entityId, agentId, conversationId, role: 'assistant', content: reply });
+    await db
+      .update(conversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(conversations.id, conversationId));
+    return { ok: true, reply, streamed: true, stopped: true };
+  };
   try {
     if (onTextDelta) {
       // Le MÊME appel, dit au fur et à mesure (#152). `streamText` rend son
@@ -534,8 +568,13 @@ export async function runChatTurn(opts: {
         system: systemPrompt,
         messages,
         tools: CHAT_TOOLS,
+        ...(abortSignal ? { abortSignal } : {}),
       });
-      for await (const delta of result.textStream) onTextDelta(delta);
+      for await (const delta of untilStopped(result.textStream, abortSignal)) {
+        partial += delta;
+        onTextDelta(delta);
+      }
+      if (abortSignal?.aborted) return await keepStoppedReply();
       text = ((await result.text) ?? '').trim();
       runTask = ((await result.toolCalls) ?? []).find((tc) => tc.toolName === 'run_task');
       // Après les `await` : une erreur en cours de flux passe par le catch, et
@@ -551,6 +590,8 @@ export async function runChatTurn(opts: {
       runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
     }
   } catch (err) {
+    // Stop pendant l'appel : ce n'est pas une panne, rien ne se rejoue.
+    if (abortSignal?.aborted) return await keepStoppedReply();
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
     // invariant 4) and fall through to the tool-free retry so conversation works.
