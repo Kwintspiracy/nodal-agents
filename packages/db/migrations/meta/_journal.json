@@ -855,6 +855,13 @@
       "when": 1786001400000,
       "tag": "0122_entities_drop_memory_curation_enabled",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1786001500000,
+      "tag": "0123_chat_messages_stopped",
+      "breakpoints": true
     }
   ]
 }

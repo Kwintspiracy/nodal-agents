@@ -39,13 +39,17 @@ export function stopChatTurn(conversationId: string): boolean {
 }
 
 /**
- * La ligne de plateforme qui clôt une réponse arrêtée. Même nature que
- * `[stopped: llm timeout …]` des jobs : un FAIT posé par la plateforme, entre
- * crochets, jamais la voix de l'agent (invariant #2). Elle reste dans
- * l'historique, et le tour suivant sait donc que sa réponse d'avant a été
- * coupée par la personne.
+ * Ce que le MODÈLE lit, dans l'historique, sous une réponse arrêtée (#456).
+ *
+ * La personne, elle, ne lit jamais cette ligne : l'arrêt est un FAIT enregistré
+ * (`chat_messages.stopped`) que l'écran dit avec ses mots (invariant #2, revue
+ * Codex de #459). Le modèle en a besoin autrement : sans elle, il relirait sa
+ * réponse coupée comme une réponse finie. Même famille que les autres consignes
+ * `[système]` adressées au modèle.
  */
-export const CHAT_STOPPED_LINE = '[stopped by the user]';
+export function stoppedReplyNote(): string {
+  return '[système] La personne a arrêté cette réponse pendant son écriture ; le texte ci-dessus est ce qui avait été écrit.';
+}
 
 /**
  * Parcourt `source` jusqu'à sa fin OU jusqu'au Stop, le premier des deux.

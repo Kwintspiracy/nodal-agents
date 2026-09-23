@@ -35,7 +35,7 @@ import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
-import { CHAT_STOPPED_LINE, untilStopped } from './turn-stop.ts';
+import { stoppedReplyNote, untilStopped } from './turn-stop.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
 // size — 20 large turns (verbose replies, or several escalation blocks with
@@ -204,6 +204,8 @@ function totalHistoryChars(blocks: ReadonlyArray<ReadonlyArray<ModelMessage>>): 
 interface HistoryRow {
   role: string;
   content: string;
+  /** Réponse arrêtée par la personne (#456) : le modèle doit le savoir. */
+  stopped?: boolean;
   jobId: string | null;
   jobTask: string | null;
   jobStatus: string | null;
@@ -269,7 +271,13 @@ function buildHistoryBlock(
       },
     ];
   }
-  return [{ role: r.role as 'user' | 'assistant', content: truncateFn(r.content) }];
+  const content =
+    r.role === 'assistant' && r.stopped === true
+      ? `${truncateFn(r.content)}
+
+${stoppedReplyNote()}`
+      : truncateFn(r.content);
+  return [{ role: r.role as 'user' | 'assistant', content }];
 }
 
 export async function runChatTurn(opts: {
@@ -298,7 +306,7 @@ export async function runChatTurn(opts: {
   /**
    * Le Stop de la personne (#456), posé par `withChatTurnStop`. Déclenché,
    * il coupe l'appel en cours : ce qui a été écrit est gardé, suivi de
-   * `CHAT_STOPPED_LINE`, et rien d'autre ne se joue — ni recheck
+   * `chat_messages.stopped`, et rien d'autre ne se joue — ni recheck
    * d'escalade, ni relance sans outils, ni job lancé.
    */
   abortSignal?: AbortSignal;
@@ -455,6 +463,7 @@ export async function runChatTurn(opts: {
     .select({
       role: chatMessages.role,
       content: chatMessages.content,
+      stopped: chatMessages.stopped,
       jobId: chatMessages.jobId,
       jobTask: agentJobs.task,
       jobStatus: agentJobs.status,
@@ -543,16 +552,15 @@ export async function runChatTurn(opts: {
    * aucune relance — la personne a demandé que ça s'arrête.
    */
   const keepStoppedReply = async (): Promise<ChatTurnResult> => {
-    const kept = partial.trim();
-    const reply =
-      kept === ''
-        ? CHAT_STOPPED_LINE
-        : `${kept}
-
-${CHAT_STOPPED_LINE}`;
-    await db
-      .insert(chatMessages)
-      .values({ entityId, agentId, conversationId, role: 'assistant', content: reply });
+    const reply = partial.trim();
+    await db.insert(chatMessages).values({
+      entityId,
+      agentId,
+      conversationId,
+      role: 'assistant',
+      content: reply,
+      stopped: true,
+    });
     await db
       .update(conversations)
       .set({ updatedAt: new Date() })
@@ -685,14 +693,17 @@ ${CHAT_STOPPED_LINE}`;
     // (invariant #2) — content is empty and the UI shows just the dispatch card
     // + the eventual job result, never a fabricated runner string.
     const reply = text;
-    await db.insert(chatMessages).values({
-      entityId,
-      agentId,
-      conversationId,
-      role: 'assistant',
-      content: reply,
-      jobId: job?.id ?? null,
-    });
+    const [ackRow] = await db
+      .insert(chatMessages)
+      .values({
+        entityId,
+        agentId,
+        conversationId,
+        role: 'assistant',
+        content: reply,
+        jobId: job?.id ?? null,
+      })
+      .returning({ id: chatMessages.id });
     await db
       .update(conversations)
       .set({ updatedAt: new Date() })
@@ -712,6 +723,23 @@ ${CHAT_STOPPED_LINE}`;
       generate: (system, prompt) =>
         llmClient.generateText({ system, messages: [{ role: 'user', content: prompt }] }),
     });
+
+    // Stop arrivé PENDANT la création du job (#456, revue Codex de #459) : le
+    // job est né mais ne partira pas. Il est marqué annulé — il paraît donc
+    // tel quel dans Runs —, la réponse est marquée arrêtée, et l'appelant ne
+    // reçoit aucun job à lancer.
+    if (abortSignal?.aborted) {
+      if (job?.id) {
+        await db
+          .update(agentJobs)
+          .set({ status: 'cancelled', updatedAt: new Date() })
+          .where(eq(agentJobs.id, job.id));
+      }
+      if (ackRow?.id) {
+        await db.update(chatMessages).set({ stopped: true }).where(eq(chatMessages.id, ackRow.id));
+      }
+      return { ok: true, reply, streamed, stopped: true };
+    }
 
     return { ok: true, reply, spawnedJobId: job?.id, streamed };
   }

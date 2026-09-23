@@ -671,6 +671,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       role text NOT NULL CHECK (role IN ('user','assistant')),
       content text NOT NULL,
       job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      stopped boolean NOT NULL DEFAULT false,
       created_at timestamptz DEFAULT now()
     );
 

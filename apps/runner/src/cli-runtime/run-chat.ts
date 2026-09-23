@@ -37,7 +37,6 @@ import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.
 import { buildCliRuntimeJobContext } from './run-job.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
-import { CHAT_STOPPED_LINE } from '../chat/turn-stop.ts';
 
 const RUNTIME_CHAT_TIMEOUT_MS = 600_000;
 
@@ -333,22 +332,17 @@ export async function runCliRuntimeChatTurn(args: {
   }
 
   // Stop (#456) : le processus a été tué à la demande de la personne. Ce n'est
-  // pas une panne du runtime — c'est la réponse arrêtée, dite par la ligne de
-  // plateforme, suivie du texte final s'il en était sorti un.
+  // pas une panne du runtime — c'est la réponse arrêtée : le texte final s'il
+  // en était sorti un, et le FAIT de l'arrêt (`stopped`), que l'écran dit.
   if (args.abortSignal?.aborted) {
-    const kept = turn.finalText.trim();
-    const reply =
-      kept === ''
-        ? CHAT_STOPPED_LINE
-        : `${kept}
-
-${CHAT_STOPPED_LINE}`;
+    const reply = turn.finalText.trim();
     await db.insert(chatMessages).values({
       entityId,
       agentId: agentRow.id,
       conversationId,
       role: 'assistant',
       content: reply,
+      stopped: true,
     });
     await db
       .update(conversations)

@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildConversationThread,
   JOB_GONE_NOTE,
+  STOPPED_ANSWER_NOTE,
   UNCLASSIFIED_NOTE,
   olderTurnsNote,
 } from '../conversation-thread.ts';
@@ -571,6 +572,40 @@ describe('buildConversationThread — une conversation du dashboard', () => {
     });
     expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'note']);
     expect(items[2]).toEqual({ kind: 'note', text: JOB_GONE_NOTE, origin: 'thread' });
+  });
+
+  it('une réponse arrêtée par la personne : ce qui était écrit, puis le fil le DIT (#456)', () => {
+    const { items } = buildConversationThread({
+      conversation: dashboard,
+      messages: [
+        { id: 'm1', role: 'user', content: 'une longue note', jobId: null, createdAt: null },
+        {
+          id: 'm2',
+          role: 'assistant',
+          content: 'Le début de la note',
+          jobId: null,
+          createdAt: null,
+          stopped: true,
+        },
+        { id: 'm3', role: 'user', content: 'autre chose', jobId: null, createdAt: null },
+        { id: 'm4', role: 'assistant', content: 'voilà', jobId: null, createdAt: null },
+      ],
+      jobs: [],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'note', 'request', 'turn']);
+    expect(items[2]).toEqual({ kind: 'note', text: STOPPED_ANSWER_NOTE, origin: 'thread' });
+  });
+
+  it('arrêtée avant son premier mot : pas de tour vide, mais l’arrêt est dit', () => {
+    const { items } = buildConversationThread({
+      conversation: dashboard,
+      messages: [
+        { id: 'm1', role: 'user', content: 'une longue note', jobId: null, createdAt: null },
+        { id: 'm2', role: 'assistant', content: '', jobId: null, createdAt: null, stopped: true },
+      ],
+      jobs: [],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'note']);
   });
 });
 

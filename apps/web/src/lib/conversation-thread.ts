@@ -72,7 +72,16 @@ export type ThreadMessage = {
   /** Le travail que ce tour a déclenché, s'il en a déclenché un. */
   jobId: string | null;
   createdAt: Date | null;
+  /**
+   * La personne a arrêté cette réponse pendant qu'elle s'écrivait (#456) :
+   * `content` est ce qui avait été écrit. Le runner pose le FAIT
+   * (`chat_messages.stopped`) ; c'est ce fil qui le dit, avec ses mots.
+   */
+  stopped?: boolean;
 };
+
+/** Ce que le fil dit sous une réponse que la personne a arrêtée (#456). */
+export const STOPPED_ANSWER_NOTE = 'You stopped this answer.';
 
 /** Une commande de preuve d'un job (ou d'un de ses délégués) et son verdict. */
 export type ThreadProofRun = { command: string; verdict: string };
@@ -754,6 +763,11 @@ export function buildConversationThread(input: {
         // où l'agent a parlé (#135).
         at: message.createdAt,
       });
+    }
+    // Arrêtée par la personne : dit en marge, comme les autres aveux du fil,
+    // même quand rien n'avait encore été écrit.
+    if (message.stopped === true) {
+      items.push({ kind: 'note', text: STOPPED_ANSWER_NOTE, origin: 'thread' });
     }
 
     if (message.jobId === null) continue;

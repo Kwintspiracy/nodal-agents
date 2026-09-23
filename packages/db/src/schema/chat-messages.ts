@@ -14,7 +14,7 @@
 // jusqu'à ce qu'il en ouvre une autre, `/new` ou le « + »), et lui donner un
 // endroit où porter un état durable — aujourd'hui le projet courant.
 
-import { pgTable, text, uuid, timestamp, index, check } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, timestamp, index, check, boolean } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -124,6 +124,10 @@ export const chatMessages = pgTable(
     // Set when this (assistant) turn escalated into a real action job — lets the
     // UI render the job's dispatch/progress inline. NULL for pure conversation.
     jobId: uuid('job_id').references(() => agentJobs.id, { onDelete: 'set null' }),
+    // La personne a arrêté cette réponse pendant qu'elle s'écrivait (#456) :
+    // `content` est ce qui avait été écrit. Un FAIT, que l'écran dit avec ses
+    // mots — le runner n'écrit aucune phrase pour ça (invariant #2).
+    stopped: boolean('stopped').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [

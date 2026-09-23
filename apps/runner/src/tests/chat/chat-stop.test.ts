@@ -15,7 +15,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, chatMessages, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import { runChatTurn } from '../../chat/run-chat-turn.ts';
-import { CHAT_STOPPED_LINE, stopChatTurn, withChatTurnStop } from '../../chat/turn-stop.ts';
+import { stopChatTurn, withChatTurnStop } from '../../chat/turn-stop.ts';
 
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
   let active: RunnerDeps['llmClient'] | null = null;
@@ -171,10 +171,10 @@ beforeEach(async () => {
   await db.delete(agentJobs).where(eq(agentJobs.agentId, seed.agentId));
 });
 
-async function newConversation(): Promise<string> {
+async function newConversation(title = 'Stop test'): Promise<string> {
   const [conv] = await db
     .insert(conversations)
-    .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Stop test' })
+    .values({ entityId: seed.entityId, agentId: seed.agentId, title })
     .returning({ id: conversations.id });
   return conv!.id;
 }
@@ -217,14 +217,20 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
     expect(result).toMatchObject({ ok: true, stopped: true });
     if (!result.ok) throw new Error('unreachable');
     const written = shown.join('').trim();
-    expect(result.reply).toBe(`${written}\n\n${CHAT_STOPPED_LINE}`);
+    // Ce qui a été écrit, et RIEN d'ajouté : l'arrêt est un fait, pas une
+    // phrase du runner (invariant #2, revue Codex de #459).
+    expect(result.reply).toBe(written);
     const rows = await db
-      .select({ role: chatMessages.role, content: chatMessages.content })
+      .select({
+        role: chatMessages.role,
+        content: chatMessages.content,
+        stopped: chatMessages.stopped,
+      })
       .from(chatMessages)
       .where(eq(chatMessages.conversationId, conv));
     // Le message de la personne, puis UNE réponse : ce qui avait été écrit, arrêté.
     expect(rows.filter((r) => r.role === 'assistant')).toEqual([
-      { role: 'assistant', content: result.reply },
+      { role: 'assistant', content: result.reply, stopped: true },
     ]);
   });
 
@@ -258,9 +264,7 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
 
     expect(result).toMatchObject({ ok: true, stopped: true });
     if (!result.ok) throw new Error('unreachable');
-    expect(result.reply).toBe(`Je vais chercher ça.
-
-${CHAT_STOPPED_LINE}`);
+    expect(result.reply).toBe('Je vais chercher ça.');
     const jobs = await db
       .select({ id: agentJobs.id })
       .from(agentJobs)
@@ -277,7 +281,44 @@ ${CHAT_STOPPED_LINE}`);
     expect(stopChatTurn(conv)).toBe(true);
     const result = await turn;
 
-    expect(result).toMatchObject({ ok: true, stopped: true, reply: CHAT_STOPPED_LINE });
+    expect(result).toMatchObject({ ok: true, stopped: true, reply: '' });
+  });
+
+  it('un Stop pendant la CRÉATION du job d’escalade : le job est annulé, jamais lancé', async () => {
+    // Sans titre : le tour le nommera, et c'est pendant cet appel que Stop tombe.
+    const conv = await newConversation('');
+    // La relance demande une escalade ; le Stop tombe pendant l'appel qui nomme
+    // la conversation — APRÈS la création du job, AVANT son lancement.
+    const client = slowRecheckClient();
+    setActiveLlmClient({
+      ...client,
+      generateText: ((args: { system?: string }) => {
+        if (typeof args.system === 'string' && args.system.length > 0) {
+          stopChatTurn(conv);
+          return Promise.resolve({ text: 'Titre' });
+        }
+        return Promise.resolve({
+          text: '',
+          toolCalls: [{ toolName: 'run_task', input: { instruction: 'go' } }],
+        });
+      }) as unknown as RunnerDeps['llmClient']['generateText'],
+    });
+    const { turn } = playTurn(conv);
+
+    const result = await turn;
+
+    expect(result).toMatchObject({ ok: true, stopped: true });
+    expect(result.ok && result.spawnedJobId).toBeFalsy();
+    const jobs = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conv));
+    expect(jobs).toEqual([{ status: 'cancelled' }]);
+    const acks = await db
+      .select({ stopped: chatMessages.stopped })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv));
+    expect(acks.filter((r) => r.stopped)).toHaveLength(1);
   });
 
   it('n’arrête que SA conversation, et dit quand rien ne tournait', async () => {

@@ -143,6 +143,13 @@ export default function ThreadComposer({
    * revient : la file ne joue qu'un envoi à la fois.
    */
   const answering = useRef<string | null>(null);
+  /**
+   * Le même fait, en état React : c'est LUI qui fait paraître Stop (revue
+   * Codex de #459). `pendingTurn.inFlight` dit « un message attend » — aussi
+   * pendant qu'une conversation neuve s'ouvre, ou qu'un message patiente dans
+   * la file —, et Stop y aurait paru sans rien pouvoir arrêter.
+   */
+  const [answeringId, setAnsweringId] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
 
   /**
@@ -204,12 +211,14 @@ export default function ThreadComposer({
       // copie en attente, qui le montre à la place des trois points. Le repli
       // sur l'action serveur vit dans `sendChatMessage`, et il est explicite.
       answering.current = target;
+      setAnsweringId(target);
       const r = await sendChatMessage({
         conversationId: target,
         message: text,
         onText: (reply) => pendingTurn.stream(id, reply),
       });
       answering.current = null;
+      setAnsweringId(null);
       setStopping(false);
       if (!r.ok) {
         // Le même bloc d'échec qu'avant : le texte revient dans la zone, et
@@ -267,7 +276,7 @@ export default function ThreadComposer({
   // Stop prend la place d'Envoyer tant qu'une réponse s'écrit ET que la zone
   // est vide. Dès qu'on tape, c'est Envoyer qui revient : un message peut
   // partir pendant que le précédent attend (Quentin, 18/09).
-  const showStop = pendingTurn.inFlight && !canSend;
+  const showStop = answeringId !== null && !canSend;
 
   // P2bis — un CADRE, pas un champ posé à côté d'un bouton : le design pose
   // la saisie sur sa propre surface, collée en bas de la zone de contenu,
