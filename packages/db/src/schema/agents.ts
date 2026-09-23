@@ -89,6 +89,12 @@ export const agents = pgTable(
     // against this cap, bounded by the per-call timeout instead). 0 = no cap.
     // Enforced in the code_task builtin against SUM(cli_runs.cost_usd) today.
     cliDailyBudgetUsd: real('cli_daily_budget_usd').default(10).notNull(),
+    // What this agent may do with a shell, per kind of action (#464): only the
+    // states the owner set, `allow` | `ask` | `never` per category of
+    // `SHELL_CATEGORIES` (packages/shared/src/shell-checklist.ts). NULL, or a
+    // category left out, = ask. Read by `resolveShellPolicy`, which refuses a
+    // value it cannot parse rather than guess.
+    shellPolicy: jsonb('shell_policy'),
     // Per-provider defaults for code_task runs (étape B-bis): which model and
     // reasoning effort each coding CLI uses BY DEFAULT for this agent. The
     // LLM may still override per task (code_task's optional model/effort

@@ -6,6 +6,7 @@ import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { EmbeddingClient } from '@nodal-agents/llm';
 import type {
   ApprovalRuleCondition,
+  ShellPolicy,
   MutationTarget,
   OperationRiskLevel,
   ToolCard,
@@ -593,6 +594,19 @@ export interface ExecuteOptions {
    *   - `propose_confirm` / undefined → no relaxation (every gated tool still asks).
    */
   autonomy?: 'propose_confirm' | 'destructive_gate' | 'fully_autonomous';
+  /**
+   * What this agent may do with a shell, per kind of action (#464, resolved
+   * from `agents.shell_policy`). Judged on every command `run_command` and
+   * `declare_verification` will run, at every autonomy level: `never` blocks
+   * with the reason, `ask` holds the command for approval with the paths or
+   * script named. Under `destructive_gate` it REPLACES the heavy-command
+   * classifier for those two tools. The catastrophic floor still applies.
+   *
+   * The job loop passes it on every agent turn. It is absent on the replay of
+   * a call a human already approved (the person saw this exact command), and
+   * for callers that run no agent; absent, nothing is judged here.
+   */
+  shellPolicy?: ShellPolicy;
   /**
    * Called when a tool requires approval. Caller (runner) is responsible for
    * updating job status and polling. Returns void — execution stops here.

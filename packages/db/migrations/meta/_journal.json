@@ -869,6 +869,13 @@
       "when": 1786001600000,
       "tag": "0124_chat_messages_cut_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1786001700000,
+      "tag": "0125_shell_checklist",
+      "breakpoints": true
     }
   ]
 }
