@@ -3200,7 +3200,6 @@ function SettingsTab(props: {
 
   // ── Workspace management local state ─────────────────────────────────────
   const [wsLabel, setWsLabel] = useState('');
-  const [wsPath, setWsPath] = useState('');
   const [wsAdding, setWsAdding] = useState(false);
   const [wsPickerOpen, setWsPickerOpen] = useState(false);
   const [wsRemoveId, setWsRemoveId] = useState<string | null>(null);
@@ -3267,11 +3266,18 @@ function SettingsTab(props: {
     });
   }
 
-  function handleAddWorkspace() {
-    if (!wsLabel.trim() || !wsPath.trim()) return;
+  /**
+   * Attacher un dossier. Appelé par le sélecteur lui-même (#461) : valider la
+   * fenêtre de Browse… AJOUTE le dossier. Avant, elle ne faisait que remplir un
+   * champ, et le dossier n'était attaché qu'au clic suivant sur « Add » — un
+   * écran qui montrait le chemin choisi laissait croire que c'était fait
+   * (Quentin, 24/09 : son agent Excel a travaillé sans le dossier).
+   */
+  function handleAddWorkspace(label: string, path: string) {
+    if (!label.trim() || !path.trim()) return;
     startWsTransition(async () => {
       setWsAdding(true);
-      const result = await addAgentWorkspaceAction(agentId, wsLabel.trim(), wsPath.trim());
+      const result = await addAgentWorkspaceAction(agentId, label.trim(), path.trim());
       setWsAdding(false);
       if (!result.ok) {
         toast.error(result.message);
@@ -3281,7 +3287,6 @@ function SettingsTab(props: {
       const listResult = await listAgentWorkspacesAction(agentId);
       if (listResult.ok) onWorkspacesChange(listResult.data);
       setWsLabel('');
-      setWsPath('');
       toast.success('Folder added');
     });
   }
@@ -3852,41 +3857,24 @@ function SettingsTab(props: {
                 type="text"
                 value={wsLabel}
                 onChange={(e) => setWsLabel(e.target.value)}
-                placeholder="Label (e.g. notes)"
+                placeholder="Label (optional)"
                 maxLength={80}
                 className="w-28 shrink-0 !rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
               />
-              {/* Chemin choisi via Browse… — lecture seule : le sélecteur est
-                  LE mode canonique (décision Quentin 24/08, plus de saisie
-                  manuelle), donc pas de champ éditable en doublon. */}
-              <code
-                className={`min-w-0 flex-1 truncate rounded-lg border border-rule-2 bg-hover px-3 py-2 text-mono-13 ${
-                  wsPath ? 'text-ink-2' : 'text-ink-4'
-                }`}
-              >
-                {wsPath || 'No folder chosen yet'}
-              </code>
               <PrimaryButton
                 variant="neutral"
                 onClick={() => setWsPickerOpen(true)}
                 disabled={wsIsPending || wsAdding}
                 className="!h-auto shrink-0 !rounded-lg !px-4 !py-2 !text-body-14"
               >
-                Browse…
-              </PrimaryButton>
-              <PrimaryButton
-                variant="neutral"
-                onClick={handleAddWorkspace}
-                disabled={wsIsPending || wsAdding || !wsLabel.trim() || !wsPath.trim()}
-                className="!h-auto shrink-0 !rounded-lg !px-4 !py-2 !text-body-14"
-              >
-                {wsAdding ? 'Adding…' : 'Add'}
+                {wsAdding ? 'Adding…' : 'Browse…'}
               </PrimaryButton>
             </div>
           </Field>
           <p className="text-body-12 text-ink-4">
-            Pick a folder with Browse…. Label is the prefix the agent uses (e.g.{' '}
-            <code className="font-mono">notes/file.md</code>).
+            Browse… adds the folder you pick. The label is the prefix the agent uses (e.g.{' '}
+            <code className="font-mono">notes/file.md</code>); left empty, it is the folder&rsquo;s
+            name.
           </p>
         </div>
 
@@ -3916,18 +3904,15 @@ function SettingsTab(props: {
           onCancel={() => setWsDeleteTarget(null)}
         />
 
-        {/* Explorateur de dossiers côté serveur (bouton Browse…). Remplit le
-            champ path ; le label est pré-rempli avec le nom du dossier s'il
-            est vide (modifiable avant Add). */}
+        {/* Explorateur de dossiers côté serveur (bouton Browse…). Valider la
+            fenêtre ATTACHE le dossier (#461) : le libellé tapé avant, ou à
+            défaut le nom du dossier. */}
         <FolderPickerModal
           open={wsPickerOpen}
           onClose={() => setWsPickerOpen(false)}
           onSelect={(path) => {
-            setWsPath(path);
-            if (!wsLabel.trim()) {
-              const base = path.split(/[/\\]/).filter(Boolean).pop() ?? '';
-              setWsLabel(base.slice(0, 80));
-            }
+            const base = path.split(/[/\\]/).filter(Boolean).pop() ?? '';
+            handleAddWorkspace(wsLabel.trim() || base.slice(0, 80), path);
           }}
         />
       </SectionCard>
