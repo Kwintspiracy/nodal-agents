@@ -419,12 +419,23 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTE
  */
 export function staticShellCategories(cmd: string): Array<StaticShellCategory | 'own_script'> {
   if (typeof cmd !== 'string' || cmd.trim() === '') return [];
-  const c = normalizeSlashes(cmd.trim());
+  // The text as written, AND as the shell will run it: quotes, carets and
+  // POSIX backslashes removed, so `r""m`, `r^m` and `r\m` are read as the `rm`
+  // they run (Codex review of #464, P1). A text classifier still cannot be a
+  // sandbox; the OS-level one is the follow-up the ticket names.
+  const dequoted = splitShellWords(cmd)
+    .map((segment) => segment.join(' '))
+    .join(' ; ');
+  const forms = [
+    normalizeSlashes(cmd.trim()),
+    normalizeSlashes(dequoted),
+    normalizeSlashes(dequoted.replace(/\\(?=[A-Za-z])/g, '')),
+  ];
   const found: Array<StaticShellCategory | 'own_script'> = [];
   for (const [category, patterns] of Object.entries(STATIC_SHELL_CATEGORY_PATTERNS) as Array<
     [StaticShellCategory, readonly RegExp[]]
   >) {
-    if (patterns.some((re) => re.test(c))) found.push(category);
+    if (patterns.some((re) => forms.some((f) => re.test(f)))) found.push(category);
   }
   if (isInlineInterpreterEvalCommand(cmd)) found.push('own_script');
   return found;
@@ -488,30 +499,74 @@ export function scriptFilesRun(cmd: string): string[] {
  * words: they are paths the command writes.
  */
 export function splitShellWords(cmd: string): string[][] {
-  const segments: string[][] = [];
-  let words: string[] = [];
+  return splitShellTokens(cmd).map((segment) => segment.map((t) => t.text));
+}
+
+/** One word of a command, as the shell will see it. */
+export interface ShellToken {
+  /** Quotes and escapes removed: `r""m` and `r\m` are `rm` (Codex review of #464). */
+  text: string;
+  /**
+   * The shell will EXPAND something in it before running (`$HOME`, `${X}`,
+   * `$(…)`, a backtick, `%VAR%`), outside single quotes. What it becomes
+   * cannot be read here: a path built that way is a path nobody checked.
+   */
+  expands: boolean;
+}
+
+const WINDOWS_VAR = /%[A-Za-z_][A-Za-z0-9_]*%/;
+
+/** `splitShellWords`, keeping what the shell will do to each word. */
+export function splitShellTokens(cmd: string): ShellToken[][] {
+  const segments: ShellToken[][] = [];
+  let words: ShellToken[] = [];
   let word = '';
   let inWord = false;
+  let expands = false;
   let quote: '"' | "'" | null = null;
   const endWord = (): void => {
-    if (inWord) words.push(word);
+    if (inWord) words.push({ text: word, expands: expands || WINDOWS_VAR.test(word) });
     word = '';
     inWord = false;
+    expands = false;
   };
   const endSegment = (): void => {
     endWord();
     if (words.length > 0) segments.push(words);
     words = [];
   };
+  let escaped = false;
   for (const ch of cmd) {
-    if (quote) {
-      if (ch === quote) quote = null;
+    if (escaped) {
+      word += ch;
+      inWord = true;
+      escaped = false;
+      continue;
+    }
+    if (quote === "'") {
+      if (ch === "'") quote = null;
       else word += ch;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === '"') quote = null;
+      else {
+        if (ch === '$' || ch === '`') expands = true;
+        word += ch;
+      }
       continue;
     }
     if (ch === '"' || ch === "'") {
       quote = ch;
       inWord = true;
+      continue;
+    }
+    // POSIX `\` and cmd.exe `^` escape the next character: `r\m` runs `rm`.
+    // A Windows path keeps its backslashes (`C:\x`): only a backslash before
+    // a letter that is not a path separator position is ambiguous, so the
+    // backslash is kept in the text and only the caret is dropped.
+    if (ch === '^') {
+      escaped = true;
       continue;
     }
     if (ch === ';' || ch === '|' || ch === '&' || ch === '\n' || ch === '\r') {
@@ -522,6 +577,7 @@ export function splitShellWords(cmd: string): string[][] {
       endWord();
       continue;
     }
+    if (ch === '$' || ch === '`') expands = true;
     word += ch;
     inWord = true;
   }

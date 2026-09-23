@@ -21,7 +21,8 @@
 
 import { homedir } from 'node:os';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
-import { toolCalls, and, eq, inArray } from '@nodal-agents/db';
+import { stat } from 'node:fs/promises';
+import { agentJobs, toolCalls, and, eq, inArray } from '@nodal-agents/db';
 import {
   pathWords,
   scriptFilesRun,
@@ -36,7 +37,7 @@ import { resolveAndCheckPath } from './builtin/file-ops/workspace';
 /** The tools whose writes count as "a script it wrote itself". */
 const WRITING_TOOLS = ['file_write', 'file_edit'];
 
-const HOME_PREFIX = /^(~|%userprofile%|%homepath%|\$home|\$env:userprofile)(?=[\\/]|$)/i;
+const HOME_PREFIX = /^(~|%userprofile%|%homepath%|\$home|\$\{home\}|\$env:userprofile)(?=[\\/]|$)/i;
 
 /** Where a path word points, before the folder check. */
 function absoluteOf(raw: string, kind: 'absolute' | 'home' | 'relative', cwd: string): string {
@@ -90,6 +91,33 @@ function wasWritten(toolOutput: string | null): boolean {
   }
 }
 
+/** When this job began: a script changed after it was written during the run. */
+async function jobStartedAt(ctx: ToolContext): Promise<Date> {
+  const [row] = await ctx.db
+    .select({ createdAt: agentJobs.createdAt })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, ctx.jobId))
+    .limit(1);
+  // No row (a caller without a real job): every script counts as older, and
+  // only the file tools' own record decides.
+  return row?.createdAt ?? new Date(8.64e15);
+}
+
+/**
+ * A script written DURING this run by any means, not only the file tools: a
+ * shell command (`printf … > build.py`) leaves no file_write row (Codex review
+ * of #464, P1). Changed since the job began, or not there yet — then only this
+ * very command can be about to create it (`printf … > x.py && python x.py`).
+ */
+async function changedDuringJob(abs: string, jobStart: Date): Promise<boolean> {
+  try {
+    const info = await stat(abs);
+    return info.mtimeMs >= jobStart.getTime();
+  } catch {
+    return true;
+  }
+}
+
 /** The files this agent wrote in this job, as the file tools resolved them. */
 async function filesWrittenThisJob(ctx: ToolContext): Promise<Set<string>> {
   const rows = await ctx.db
@@ -127,11 +155,17 @@ export async function judgeShellChecklist(
   };
 
   let written: Set<string> | null = null;
+  let jobStart: Date | null = null;
   for (const command of commands) {
     for (const category of staticShellCategories(command)) hit(category);
 
     if (policy.outside_folders !== 'allow') {
       for (const word of pathWords(command, process.platform)) {
+        // A path the shell builds by expansion leads where nobody checked.
+        if (word.kind === 'unresolved') {
+          hit('outside_folders', word.raw);
+          continue;
+        }
         const abs = absoluteOf(word.raw, word.kind, cwd);
         if (!(await insideFolders(ctx, abs))) hit('outside_folders', word.raw);
       }
@@ -141,9 +175,12 @@ export async function judgeShellChecklist(
       const scripts = scriptFilesRun(command);
       if (scripts.length > 0) {
         written ??= await filesWrittenThisJob(ctx);
+        jobStart ??= await jobStartedAt(ctx);
         for (const script of scripts) {
           const abs = isAbsolute(script) ? script : resolvePath(cwd, script);
-          if (written.has(await canonical(ctx, abs))) hit('own_script', script);
+          if (written.has(await canonical(ctx, abs)) || (await changedDuringJob(abs, jobStart))) {
+            hit('own_script', script);
+          }
         }
       }
     }

@@ -15,7 +15,7 @@ import { z } from 'zod';
 import { eq } from '@nodal-agents/db';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { approvalRequests, toolCalls } from '@nodal-agents/db';
+import { agentJobs, approvalRequests, toolCalls } from '@nodal-agents/db';
 import { DEFAULT_SHELL_POLICY, type ShellPolicy } from '@nodal-agents/shared';
 import { executeTool } from '../execute';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
@@ -41,7 +41,13 @@ beforeAll(async () => {
   // A link INSIDE the agent's folder that leads outside it (a junction on
   // Windows needs no privilege).
   await symlink(outside, join(folder, 'downloads-link'), 'junction');
+  // The job began AFTER these files existed: they are not the agent's.
+  await setJobStart(new Date(Date.now() + 5_000));
 });
+
+async function setJobStart(at: Date): Promise<void> {
+  await db.update(agentJobs).set({ createdAt: at }).where(eq(agentJobs.id, seed.jobId));
+}
 
 afterAll(async () => {
   await rm(root, { recursive: true, force: true });
@@ -196,6 +202,46 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
     );
 
     expect(res.outcome).toBe('success');
+  });
+
+  it('a script made by the shell during the run is its own too (Codex pass 2, P1)', async () => {
+    await forgetWrites();
+    const never = gate({ ...DEFAULT_SHELL_POLICY, own_script: 'never' });
+
+    // Created and run in the same command: it does not exist yet.
+    const sameCommand = await run('printf "print(1)" > fresh.py && python fresh.py', never);
+    // Written by an earlier command of this run: changed after the job began.
+    await setJobStart(new Date(Date.now() - 60_000));
+    await writeFile(join(folder, 'made-by-shell.py'), 'print(2)\n');
+    const earlierCommand = await run('python made-by-shell.py', never);
+    await setJobStart(new Date(Date.now() + 5_000));
+
+    expect(sameCommand.outcome).toBe('error');
+    expect(earlierCommand.outcome).toBe('error');
+  });
+
+  it('a path built by the shell is judged outside: nobody checked where it leads (Codex pass 2, P1)', async () => {
+    await forgetWrites();
+
+    const res = await run(
+      'cat "${SECRET_DIR}/id_rsa"',
+      gate({ ...DEFAULT_SHELL_POLICY, outside_folders: 'never' }),
+    );
+
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toContain('${SECRET_DIR}/id_rsa');
+  });
+
+  it('a split command word is read as the program it runs (Codex pass 2, P1)', async () => {
+    await forgetWrites();
+
+    const res = await run(
+      'r""m -rf ./build',
+      gate({ ...DEFAULT_SHELL_POLICY, delete_files: 'never' }),
+    );
+
+    expect(res.outcome).toBe('error');
   });
 
   it('a Yolo rule does not reopen the folders: outside still asks', async () => {

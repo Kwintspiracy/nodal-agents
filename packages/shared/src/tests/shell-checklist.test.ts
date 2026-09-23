@@ -159,3 +159,28 @@ describe('resolveShellPolicy @cap:executer-une-commande/moteur', () => {
     expect(() => resolveShellPolicy({ format_disk: 'never' })).toThrow();
   });
 });
+
+describe('what the shell will do to a word (Codex review of #464, pass 2) @cap:executer-une-commande/moteur', () => {
+  it('reads a split or escaped command word as the program it runs', () => {
+    expect(staticShellCategories('r""m -rf ./build')).toEqual(['delete_files']);
+    expect(staticShellCategories('r^m -rf ./build')).toEqual(['delete_files']);
+  });
+
+  it('marks a path the shell builds by expansion as unresolved, the home folder excepted', () => {
+    expect(pathWords('cat "${SECRET}/id_rsa"', 'linux')).toEqual([
+      { raw: '${SECRET}/id_rsa', kind: 'unresolved' },
+    ]);
+    expect(pathWords('cat $(printf /etc/passwd)', 'linux')[0]).toEqual({
+      raw: '$(printf',
+      kind: 'unresolved',
+    });
+    expect(pathWords('cat "${HOME}/.ssh/id_rsa"', 'linux')).toEqual([
+      { raw: '${HOME}/.ssh/id_rsa', kind: 'home' },
+    ]);
+    // Single quotes do not expand: awk's $1 is not a path the shell builds.
+    expect(pathWords("awk '{print $1}' data.csv", 'linux')).toEqual([
+      { raw: '{print $1}', kind: 'relative' },
+      { raw: 'data.csv', kind: 'relative' },
+    ]);
+  });
+});
