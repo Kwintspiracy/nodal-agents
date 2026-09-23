@@ -8,7 +8,7 @@
 // database (the approval row and its reasons are read back).
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -38,6 +38,9 @@ beforeAll(async () => {
   for (const d of [folder, join(shared, 'scripts'), outside]) await mkdir(d, { recursive: true });
   await writeFile(join(shared, 'scripts', '_analyze_gains_file.py'), 'print(1)\n');
   await writeFile(join(outside, 'earnings_2026_statement.csv'), 'a,b\n');
+  // A link INSIDE the agent's folder that leads outside it (a junction on
+  // Windows needs no privilege).
+  await symlink(outside, join(folder, 'downloads-link'), 'junction');
 });
 
 afterAll(async () => {
@@ -161,6 +164,38 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
     expect(res.error).toContain(outsideFile());
     const after = await db.select({ id: approvalRequests.id }).from(approvalRequests);
     expect(after).toHaveLength(before.length);
+  });
+
+  it('a plain relative path through a link inside the folder is judged where it leads (Codex, P1)', async () => {
+    await forgetWrites();
+
+    const res = await run(
+      'type "downloads-link/earnings_2026_statement.csv"',
+      gate({ ...DEFAULT_SHELL_POLICY, outside_folders: 'never' }),
+    );
+
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toContain('downloads-link/earnings_2026_statement.csv');
+  });
+
+  it("a write that failed does not make a script the agent's own (Codex, P2)", async () => {
+    await forgetWrites();
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: seed.jobId,
+      toolName: 'file_edit',
+      toolInput: { path: 'shared/scripts/_analyze_gains_file.py', old: 'x', new: 'y' },
+      toolOutput: JSON.stringify({ outcome: 'error', error: 'match_not_found' }),
+      durationMs: 1,
+    });
+
+    const res = await run(
+      `python "${script()}"`,
+      gate({ ...DEFAULT_SHELL_POLICY, own_script: 'never' }),
+    );
+
+    expect(res.outcome).toBe('success');
   });
 
   it('a Yolo rule does not reopen the folders: outside still asks', async () => {
