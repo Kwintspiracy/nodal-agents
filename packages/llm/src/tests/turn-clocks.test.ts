@@ -291,6 +291,19 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     expect(err.generatedChars).toBe(300 + 2 + 50);
   });
 
+  it('a text-start with no token after it is framing: first-token clock, not served', async () => {
+    const state = run(timedModel([textStart(1_000)]));
+
+    // Past the between-tokens clock (61 s): still waiting for the first token.
+    await vi.advanceTimersByTimeAsync(1_000 + BETWEEN_TOKENS_MS + 1);
+    expect(state.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(FIRST_TOKEN_BASE_MS);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err.reason).toBe('idle_before_first_token');
+    expect(err.served).toBe(false);
+  });
+
   it('a stream silent from the start was not served', async () => {
     const state = run(timedModel([]));
 

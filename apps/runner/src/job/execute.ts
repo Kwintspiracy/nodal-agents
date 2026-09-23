@@ -3462,6 +3462,25 @@ async function runJobTracked(
         const expiration = timeoutOfTurn(genErr);
         if (expiration !== null) {
           msExpiresCeTour += Date.now() - appelCommenceA;
+          // Stop a pu tomber entre la dernière lecture et l'expiration : il
+          // l'emporte. Sans cette lecture, un plafond ou un budget d'expiration
+          // épuisé écrivait `failed` par-dessus l'annulation de la personne
+          // (revue Codex de #449, passe 9). L'appel coupé est compté, et ce
+          // qu'il avait écrit est gardé, comme au Stop pendant l'appel.
+          const [statutALExpiration] = await db
+            .select({ status: agentJobs.status })
+            .from(agentJobs)
+            .where(eq(agentJobs.id, jobId as string));
+          if (statutALExpiration?.status === 'cancelled') {
+            if (expiration.served) await compterAppelInterrompu(expiration);
+            const ecrit = (partielCeTour + expiration.partialText).trim();
+            if (ecrit !== '') {
+              messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
+            }
+            trace('cancellation_observed', { turn, during: 'llm_timeout' });
+            await cancelJob(db, jobId as string, runStats(), messages);
+            return { status: 'cancelled' };
+          }
           // Un appel coupé EN ÉCRIVANT a été servi : le fournisseur a lu tout le
           // prompt et produit ce texte, et il le facture. Aucun décompte ne
           // revient d'un flux coupé avant sa fin, donc on l'ESTIME (caractères / 4)

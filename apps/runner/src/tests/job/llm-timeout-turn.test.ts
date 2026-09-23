@@ -813,6 +813,26 @@ describe('un tour coupé EN PLEINE ÉCRITURE est repris, jamais rejoué (#441) @
     }
   });
 
+  it('un Stop qui tombe juste avant l’expiration l’emporte, même si le budget déborde', async () => {
+    vi.stubEnv('MAX_TOTAL_TOKENS_PER_JOB', '60');
+    try {
+      const jobId = await insertJob();
+      const deps = makeDeps(
+        makeMockLlmClient([PREMIER_TOUR, { cancelThenCut: { jobId, partial: MOITIE } }]),
+      );
+
+      const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+      expect(outcome.status).toBe('cancelled');
+      const row = await jobRow(jobId);
+      expect(row.status).toBe('cancelled');
+      expect(row.error ?? '').toBe('');
+      expect(JSON.stringify(row.messages ?? [])).toContain(MOITIE);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('une annulation pendant un appel coupé garde le texte qu’il avait écrit', async () => {
     const jobId = await insertJob();
     const compteur = { appels: 0 };

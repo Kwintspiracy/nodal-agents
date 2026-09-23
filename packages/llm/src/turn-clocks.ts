@@ -185,10 +185,26 @@ type StreamResult = ReturnType<typeof streamText>;
 type GenerateResult = Awaited<ReturnType<typeof generateText>>;
 
 /**
- * Parts the SDK emits on its own, before or after the model speaks. They say
- * nothing about the model being alive, so they reset no clock.
+ * Parts that carry no generated content: the SDK's own framing, and the
+ * open/close markers of a text or reasoning block (`text-start` can arrive
+ * before a single token). They say nothing about the model producing, so
+ * they reset no clock and do not make the call "served" — only deltas, tool
+ * calls and content do (Codex review of #449, pass 9: a `text-start` alone
+ * switched the first-token clock to the shorter between-tokens one).
  */
-const FRAMING_PARTS = new Set(['start', 'start-step', 'finish-step', 'finish', 'abort', 'error']);
+const FRAMING_PARTS = new Set([
+  'start',
+  'start-step',
+  'finish-step',
+  'finish',
+  'abort',
+  'error',
+  'raw',
+  'text-start',
+  'text-end',
+  'reasoning-start',
+  'reasoning-end',
+]);
 
 /** Parts that are not text: once one is out, the reply cannot be resumed from its text. */
 const STRUCTURED_PARTS = new Set([
