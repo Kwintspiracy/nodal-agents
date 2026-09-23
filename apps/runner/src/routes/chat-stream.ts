@@ -13,7 +13,8 @@
 //
 // Protocole (SSE) :
 //   event: delta  data: { "text": "…" }        un fragment de la réponse
-//   event: done   data: { "reply": "…", "spawnedJobId": …, "streamed": bool }
+//   event: done   data: { "reply": "…", "spawnedJobId": …, "streamed": bool,
+//                         "stopped": bool }    stopped = la personne a appuyé sur Stop (#456)
 //   event: error  data: { "error": "code" }    le tour a échoué
 //
 // `done` porte la réponse ENTIÈRE, et c'est elle qui fait foi : un flux coupé

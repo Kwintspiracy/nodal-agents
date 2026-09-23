@@ -392,7 +392,13 @@ describe('POST /api/chat/stream — la réponse mot à mot @cap:parler-a-un-agen
     expect(c1.deltas).toEqual(FIRST_CHUNKS);
     expect(c1.errors).toEqual([]);
     // `streamed: true` : ce qui vient d'être dit mot à mot EST la réponse.
-    expect(c1.done).toEqual({ reply: FIRST_REPLY, spawnedJobId: null, streamed: true });
+    // `stopped: false` : personne n'a appuyé sur Stop (#456).
+    expect(c1.done).toEqual({
+      reply: FIRST_REPLY,
+      spawnedJobId: null,
+      streamed: true,
+      stopped: false,
+    });
     // Le recheck d'escalade tourne après la réponse et ne fuit pas dans le flux.
     expect(c1.deltas.join('')).not.toContain(BLOCK_TEXT);
 
