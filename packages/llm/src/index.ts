@@ -11,10 +11,19 @@ export {
   RetryExhaustedError,
   ProviderConfigError,
   LLMTimeoutError,
+  LLMCallCancelledError,
   AllProvidersFailedError,
   isContextOverflowError,
 } from './errors';
-export type { MessageStructureErrorCode } from './errors';
+export type { MessageStructureErrorCode, LlmTimeoutReason } from './errors';
+export type { GenerateTextCallOptions } from './types';
+export {
+  computeTurnClocks,
+  isLocalEndpoint,
+  estimateContextTokens,
+  estimateToolTokens,
+} from './turn-clocks';
+export type { TurnClocks } from './turn-clocks';
 
 // Client factory
 export { createLlmClient } from './client';

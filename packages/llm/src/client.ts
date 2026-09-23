@@ -4,13 +4,19 @@ import { generateText, streamText, generateObject } from 'ai';
 import type { ModelMessage, LanguageModel } from 'ai';
 
 import type { ProviderConfig, NodalLlmClient, ProviderCapabilities } from './types';
-import { ProviderConfigError, LLMTimeoutError } from './errors';
+import { ProviderConfigError, LLMTimeoutError, LLMCallCancelledError } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
 import { withRetry } from './retry';
 import { generateWithToolChoiceFloor } from './tool-choice-floor';
 import { buildLlmCallObservation, emitLlmCall } from './observe';
 import type { LlmCallObserver, LlmClientMeta } from './observe';
+import {
+  computeTurnClocks,
+  consumeUnderClocks,
+  estimateContextTokens,
+  estimateToolTokens,
+} from './turn-clocks';
 
 import { buildAnthropicModel } from './providers/anthropic';
 import { withAnthropicPromptCaching, stripSystemCacheBoundary } from './providers/anthropic-cache';
@@ -20,7 +26,7 @@ import { buildOpenAICompatibleModel } from './providers/openai-compatible';
 import { buildGoogleModel } from './providers/google';
 import { buildMistralModel } from './providers/mistral';
 import { buildGroqModel } from './providers/groq';
-import { buildOpenRouterModel } from './providers/openrouter';
+import { buildOpenRouterModel, detectAgenticFamily } from './providers/openrouter';
 import { buildDeepSeekModel } from './providers/deepseek';
 import { buildMiniMaxModel } from './providers/minimax';
 import { buildMoonshotModel } from './providers/moonshot';
@@ -349,13 +355,64 @@ export function createLlmClient(
     );
   };
 
-  const clientGenerateText: NodalLlmClient['generateText'] = async (args) => {
+  // The OpenRouter families whose tool calls are parsed out of the TEXT
+  // (tool-call-middleware.ts) cannot stream: the parser needs the whole reply,
+  // and the middleware refuses `wrapStream` loud. Their streamed turns keep the
+  // wall-clock call below, unchanged — a property of the model, decided here
+  // once, not a recovery from a failed stream.
+  const canStreamTurns = !(
+    config.provider === 'openrouter' && detectAgenticFamily(config.model) !== null
+  );
+
+  const clientGenerateText: NodalLlmClient['generateText'] = async (args, callOpts) => {
     validateIfMessages(args as { messages?: unknown });
     const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
     const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
     const startedAt = Date.now();
+    if (callOpts?.streamed === true && canStreamTurns) {
+      // #440: the turn streams under two silence clocks, no working wall clock.
+      // Same layers as below minus withStaleRetry, whose job (re-asking a call
+      // that hung) the clocks now do without discarding what was written.
+      const clocks = computeTurnClocks(
+        config,
+        estimateContextTokens(prepared as { system?: unknown; messages?: unknown }) +
+          (await estimateToolTokens((prepared as { tools?: unknown }).tools)),
+      );
+      try {
+        const result = await generateWithToolChoiceFloor(
+          (override) =>
+            withRetry(
+              () =>
+                consumeUnderClocks(
+                  (signal) =>
+                    streamText({
+                      ...prepared,
+                      model,
+                      ...(override ? { toolChoice: override } : {}),
+                      abortSignal: signal,
+                      maxRetries: 0,
+                      // Errors are read from the stream itself and thrown by
+                      // consumeUnderClocks; the SDK's default would only log them.
+                      onError: () => {},
+                    } as Parameters<typeof streamText>[0]),
+                  clocks,
+                  providerModel,
+                  callOpts.abortSignal,
+                ),
+              retryOpts,
+            ),
+          toolChoice,
+          `${config.provider}/${config.model}`,
+        );
+        observe('generateText', args, result, null, startedAt);
+        return result;
+      } catch (err) {
+        observe('generateText', args, null, err, startedAt);
+        throw err;
+      }
+    }
     try {
       // tool_choice floor: if the provider rejects a forced tool_choice value
       // (some OpenRouter routes reject it), retry once with 'auto' — logged.
@@ -363,24 +420,34 @@ export function createLlmClient(
         (override) =>
           withRetry(
             () =>
-              withStaleRetry(
-                (timeoutMs) =>
-                  generateText({
-                    ...prepared,
-                    model,
-                    ...(override ? { toolChoice: override } : {}),
-                    // AI SDK native timeout via AbortSignal.timeout(). Survives
-                    // middleware wrapping unlike a passed-in abortSignal which their
-                    // internal retry can swallow. timeoutMs varies per attempt:
-                    // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
-                    // for subsequent fresh-connection stale retries.
-                    timeout: timeoutMs,
-                    // Disable AI SDK internal retry — we own retries via withRetry to
-                    // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
-                    maxRetries: 0,
-                  } as Parameters<typeof generateText>[0]),
-                providerModel,
-              ),
+              withStaleRetry((timeoutMs) => {
+                // Stop is not a timeout: an aborted call leaves AT ONCE as a
+                // cancellation, never through the stale retry that would
+                // re-send it with the same dead signal (Codex review of #449,
+                // pass 10).
+                const stopped = (): LLMCallCancelledError =>
+                  new LLMCallCancelledError(config.provider, config.model, '');
+                if (callOpts?.abortSignal?.aborted) return Promise.reject(stopped());
+                return generateText({
+                  ...prepared,
+                  model,
+                  ...(override ? { toolChoice: override } : {}),
+                  // AI SDK native timeout via AbortSignal.timeout(). Survives
+                  // middleware wrapping unlike a passed-in abortSignal which their
+                  // internal retry can swallow. timeoutMs varies per attempt:
+                  // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
+                  // for subsequent fresh-connection stale retries.
+                  timeout: timeoutMs,
+                  // The job's Stop, when the caller passes it (one-shot
+                  // turns of the models that cannot stream).
+                  ...(callOpts?.abortSignal ? { abortSignal: callOpts.abortSignal } : {}),
+                  // Disable AI SDK internal retry — we own retries via withRetry to
+                  // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
+                  maxRetries: 0,
+                } as Parameters<typeof generateText>[0]).catch((err: unknown) => {
+                  throw callOpts?.abortSignal?.aborted ? stopped() : err;
+                });
+              }, providerModel),
             retryOpts,
           ),
         toolChoice,
@@ -390,6 +457,11 @@ export function createLlmClient(
       return result;
     } catch (err) {
       observe('generateText', args, null, err, startedAt);
+      // An abort by Stop reads as a timeout to the layers above (stale retry,
+      // then LLMTimeoutError). It is not one: nobody wants the answer.
+      if (callOpts?.abortSignal?.aborted) {
+        throw new LLMCallCancelledError(config.provider, config.model, '');
+      }
       throw err;
     }
   };

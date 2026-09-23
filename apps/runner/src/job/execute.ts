@@ -49,10 +49,13 @@ import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 import {
   QuotaExhaustedError,
   LLMTimeoutError,
+  LLMCallCancelledError,
   MessageStructureError,
   AllProvidersFailedError,
   isContextOverflowError,
   validateMessageStructure,
+  estimateContextTokens,
+  estimateToolTokens,
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
@@ -708,6 +711,41 @@ export function timeoutErrorCode(faits: TimeoutFacts): string {
  */
 export function timeoutStopLine(faits: TimeoutFacts): string {
   return `[stopped: llm timeout — ${faits.provider}/${faits.model}, turn ${faits.turn}, ${secondes(faits.elapsedMs)}]`;
+}
+
+/** Période de relecture du statut du travail pendant un appel au modèle (Stop). */
+export const STOP_POLL_MS = 2_000;
+
+/**
+ * La consigne qui suit le texte partiel d'un tour coupé en pleine écriture
+ * (#441). Une consigne de HARNAIS adressée au modèle, jamais montrée à
+ * l'utilisateur — même famille que les autres messages `[système]` de ce
+ * fichier. Elle ne vit que dans la requête de reprise : le transcript gardé
+ * ne porte ni elle ni le découpage, seulement le texte complet du tour.
+ */
+export function resumeInstruction(): string {
+  return (
+    '[système] Ta réponse précédente a été coupée par la connexion au milieu de son écriture. ' +
+    'Reprends EXACTEMENT au caractère où elle s’arrête, sans rien répéter ni résumer, ' +
+    'et termine le tour comme tu l’aurais fait.'
+  );
+}
+
+/**
+ * Les messages d'une requête de reprise : le transcript, le texte déjà écrit
+ * par le modèle comme sa réponse en cours, puis la consigne de reprendre.
+ * Pure — c'est ce que le test lit dans le corps de la seconde requête.
+ */
+export function messagesForResume(
+  messages: readonly ModelMessage[],
+  partial: string,
+): ModelMessage[] {
+  if (partial === '') return [...messages];
+  return [
+    ...messages,
+    { role: 'assistant', content: partial } as ModelMessage,
+    { role: 'user', content: resumeInstruction() } as ModelMessage,
+  ];
 }
 
 /** Des millisecondes en secondes entières, jamais négatives. */
@@ -3212,6 +3250,15 @@ async function runJobTracked(
   const MAX_LLM_TIMEOUT_TURN_RETRIES = 1;
   let expirationsCeTour = 0;
   let msExpiresCeTour = 0;
+  // Un tour coupé EN PLEINE ÉCRITURE n'est pas rejoué, il est REPRIS (#441) :
+  // le texte déjà reçu devient la réponse en cours, et l'appel suivant porte
+  // la consigne de continuer. Rejouer à l'identique repayait le même prompt
+  // pour le même résultat — trois fois sur le run 531c2692, zéro sortie. Les
+  // reprises ont leur propre budget (invariant #8) : trois par tour, chacune
+  // n'étant accordée que si la précédente a produit du texte.
+  const MAX_LLM_TURN_RESUMES = 3;
+  let reprisesCeTour = 0;
+  let partielCeTour = '';
 
   try {
     while (true) {
@@ -3240,6 +3287,12 @@ async function runJobTracked(
       const currentTurnStatus = statusRow?.status;
       if (currentTurnStatus === 'cancelled') {
         trace('cancellation_observed', { turn });
+        // Un tour en cours de reprise (#441) a déjà écrit du texte : il fait
+        // partie du travail que l'annulation garde (revue Codex de #449).
+        if (partielCeTour !== '') {
+          messages = [...messages, { role: 'assistant', content: partielCeTour } as ModelMessage];
+          partielCeTour = '';
+        }
         await cancelJob(db, jobId as string, runStats(), messages);
         return { status: 'cancelled' };
       }
@@ -3301,18 +3354,82 @@ async function runJobTracked(
       const hbInterval = setInterval(() => {
         void touchJob(db, jobId as string).catch(() => {});
       }, 60_000);
+      // Stop arrête l'appel EN COURS. Le bouton n'écrit que `cancelled` en
+      // base ; sans cette lecture pendant l'appel, un tour streamé qui écrit
+      // sans s'arrêter ignorait le Stop jusqu'à sa fin (une heure au plus) et
+      // exécutait ensuite ses outils. Relu toutes les 2 s, comme la fenêtre
+      // d'approbation plus haut.
+      const arret = new AbortController();
+      let lectureArretEnCours = false;
+      const surveilleArret = setInterval(() => {
+        if (lectureArretEnCours || arret.signal.aborted) return;
+        lectureArretEnCours = true;
+        void db
+          .select({ status: agentJobs.status })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, jobId as string))
+          .then(([row]) => {
+            if (row?.status === 'cancelled') arret.abort();
+          })
+          .catch(() => {})
+          .finally(() => {
+            lectureArretEnCours = false;
+          });
+      }, STOP_POLL_MS);
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
       const appelCommenceA = Date.now();
-      try {
-        response = await llmClient.generateText({
-          system: systemPrompt,
-          // Resolve any image attachment (path → bytes for vision, or a routing
-          // note for non-vision) into a fresh array — the stored `messages` keep
-          // the lean path so it can still travel to a delegated child.
-          messages: await hydrateForLlm(messages, canSeeImages, imageCache),
-          tools: aiSdkTools,
-          toolChoice,
+      // Un appel interrompu (coupé, ou arrêté par Stop) après que le
+      // fournisseur a commencé à le servir est facturé sans que rien n'en
+      // revienne : on l'ESTIME (caractères / 4) — le prompt et les définitions
+      // d'outils envoyés, et TOUT ce que le modèle a généré, raisonnement et
+      // arguments d'outils compris (revue Codex de #449, passes 1, 4 et 7).
+      const compterAppelInterrompu = async (appel: {
+        provider: string;
+        model: string;
+        generatedChars: number;
+      }): Promise<void> => {
+        const entreeEstimee =
+          estimateContextTokens({
+            system: systemPrompt,
+            messages: messagesForResume(messages, partielCeTour),
+          }) + (await estimateToolTokens(aiSdkTools));
+        const sortieEstimee = Math.ceil(appel.generatedChars / 4);
+        inputTokens += entreeEstimee;
+        effectiveInputTokens += entreeEstimee;
+        outputTokens += sortieEstimee;
+        totalCostUsd += estimateCallCostUsd(appel.provider, appel.model, {
+          inputTokens: entreeEstimee,
+          outputTokens: sortieEstimee,
+          cachedTokens: 0,
+          cacheCreationTokens: 0,
         });
+        trace('llm_cut_call_usage_estimated', {
+          turn,
+          inputTokens: entreeEstimee,
+          outputTokens: sortieEstimee,
+        });
+      };
+      try {
+        response = await llmClient.generateText(
+          {
+            system: systemPrompt,
+            // Resolve any image attachment (path → bytes for vision, or a routing
+            // note for non-vision) into a fresh array — the stored `messages` keep
+            // the lean path so it can still travel to a delegated child. A turn
+            // being resumed (#441) carries its partial text and the resume line
+            // on top, in the request only.
+            messages: await hydrateForLlm(
+              messagesForResume(messages, partielCeTour),
+              canSeeImages,
+              imageCache,
+            ),
+            tools: aiSdkTools,
+            toolChoice,
+          },
+          // #440 : le tour est streamé sous deux horloges de silence, jamais
+          // coupé tant qu'il écrit (packages/llm/src/turn-clocks.ts).
+          { streamed: true, abortSignal: arret.signal },
+        );
       } catch (genErr) {
         // Un tour qui EXPIRE ne tue plus un travail qui avançait (#121).
         //
@@ -3330,10 +3447,95 @@ async function runJobTracked(
         //
         // L'expiration se lit sous ses DEUX formes, `timeoutOfTurn` : en
         // direct, et au bout d'une chaîne de repli épuisée.
+        // Stop pendant l'appel : le travail s'arrête ICI, avec ce que le modèle
+        // avait écrit, et aucun outil n'est exécuté.
+        if (genErr instanceof LLMCallCancelledError) {
+          if (genErr.served) await compterAppelInterrompu(genErr);
+          const ecrit = (partielCeTour + genErr.partialText).trim();
+          if (ecrit !== '') {
+            messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
+          }
+          trace('cancellation_observed', { turn, during: 'llm_call', partialChars: ecrit.length });
+          await cancelJob(db, jobId as string, runStats(), messages);
+          return { status: 'cancelled' };
+        }
         const expiration = timeoutOfTurn(genErr);
         if (expiration !== null) {
           msExpiresCeTour += Date.now() - appelCommenceA;
-          if (expirationsCeTour < MAX_LLM_TIMEOUT_TURN_RETRIES) {
+          // Stop a pu tomber entre la dernière lecture et l'expiration : il
+          // l'emporte. Sans cette lecture, un plafond ou un budget d'expiration
+          // épuisé écrivait `failed` par-dessus l'annulation de la personne
+          // (revue Codex de #449, passe 9). L'appel coupé est compté, et ce
+          // qu'il avait écrit est gardé, comme au Stop pendant l'appel.
+          const [statutALExpiration] = await db
+            .select({ status: agentJobs.status })
+            .from(agentJobs)
+            .where(eq(agentJobs.id, jobId as string));
+          if (statutALExpiration?.status === 'cancelled') {
+            if (expiration.served) await compterAppelInterrompu(expiration);
+            const ecrit = (partielCeTour + expiration.partialText).trim();
+            if (ecrit !== '') {
+              messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
+            }
+            trace('cancellation_observed', { turn, during: 'llm_timeout' });
+            await cancelJob(db, jobId as string, runStats(), messages);
+            return { status: 'cancelled' };
+          }
+          // Un appel coupé EN ÉCRIVANT a été servi : le fournisseur a lu tout le
+          // prompt et produit ce texte, et il le facture. Aucun décompte ne
+          // revient d'un flux coupé avant sa fin, donc on l'ESTIME (caractères / 4)
+          // — sans quoi trois reprises repaieraient le prompt trois fois hors des
+          // plafonds de jetons et de coût (revue Codex de #449).
+          if (expiration.served) {
+            await compterAppelInterrompu(expiration);
+            // Les plafonds 1a et 1e ne tournent qu'après une réponse servie :
+            // sans ce contrôle ici, un appel coupé qui a fait déborder le budget
+            // en relancerait jusqu'à trois autres, payés (revue Codex de #449,
+            // passe 2). Mêmes plafonds, mêmes codes ; le texte déjà écrit est
+            // gardé dans le transcript.
+            const plafond =
+              effectiveInputTokens + outputTokens > maxTotalTokensPerJob
+                ? 'token_budget_exceeded'
+                : totalCostUsd > maxCostPerJobUsd
+                  ? 'cost_budget_exceeded'
+                  : null;
+            if (plafond !== null) {
+              messages = [
+                ...messages,
+                {
+                  role: 'assistant',
+                  content: partielCeTour + expiration.partialText,
+                } as ModelMessage,
+              ];
+              trace(plafond, {
+                turn,
+                effectiveInputTokens,
+                outputTokens,
+                totalCostUsd,
+                afterCutCall: true,
+              });
+              await failJob(db, jobId as string, plafond, runStats(), messages);
+              return { status: 'failed', error: plafond };
+            }
+          }
+          // Coupé en pleine écriture : on REPREND, on ne rejoue pas (#441).
+          // Le compteur de tours ne bouge pas, et le rejeu à l'identique reste
+          // réservé au vrai silence (rien reçu).
+          // Un appel qui avait déjà émis un appel d'outil n'est pas reprenable
+          // (`resumable` faux) : son texte seul perdrait l'appel. Il est rejoué.
+          if (expiration.resumable && reprisesCeTour < MAX_LLM_TURN_RESUMES) {
+            reprisesCeTour += 1;
+            partielCeTour += expiration.partialText;
+            trace('llm_turn_resume', {
+              turn,
+              attempt: reprisesCeTour,
+              reason: expiration.reason,
+              partialChars: partielCeTour.length,
+            });
+            turn -= 1;
+            continue;
+          }
+          if (!expiration.resumable && expirationsCeTour < MAX_LLM_TIMEOUT_TURN_RETRIES) {
             expirationsCeTour += 1;
             trace('llm_timeout_turn_retry', { turn, attempt: expirationsCeTour });
             // Le MÊME tour est rejoué : sans ce retrait, la boucle le compterait
@@ -3355,7 +3557,13 @@ async function runJobTracked(
             elapsedMs: msExpiresCeTour,
           };
           const code = timeoutErrorCode(faits);
-          const livrable = [lastAssistantTextSeen, timeoutStopLine(faits)]
+          // Le texte que CE tour avait écrit avant de rendre les armes fait
+          // partie du livrable (#441) : c'est souvent la note elle-même.
+          const livrable = [
+            lastAssistantTextSeen,
+            (partielCeTour + expiration.partialText).trim(),
+            timeoutStopLine(faits),
+          ]
             .filter((t) => t !== '')
             .join('\n\n');
           trace('llm_timeout_exhausted', { turn, elapsedMs: msExpiresCeTour });
@@ -3395,15 +3603,42 @@ async function runJobTracked(
           ];
           continue;
         }
+        // Un tour en cours de reprise qui tombe sur AUTRE CHOSE qu'une expiration
+        // (quota, refus, réseau épuisé) : le texte déjà écrit ne vit encore que
+        // dans cette boucle. Il entre dans le transcript et devient le dernier
+        // texte vu, que la capture extérieure persiste avec le reste (revue
+        // Codex de #449) — le travail n'a pas à disparaître avec l'appel.
+        if (partielCeTour !== '') {
+          messages = [...messages, { role: 'assistant', content: partielCeTour } as ModelMessage];
+          lastAssistantTextSeen = partielCeTour.trim();
+          partielCeTour = '';
+        }
         throw genErr; // not this error, or budget spent → outer catch fails loud
       } finally {
         clearInterval(hbInterval);
+        clearInterval(surveilleArret);
       }
       // Le tour a répondu : son budget d'expiration repart à zéro, et le temps
       // perdu avec. Ce qui est compté plus bas est CE tour-ci, pas la mémoire
       // d'un tour plus ancien qui, lui, s'est remis en marche.
       expirationsCeTour = 0;
       msExpiresCeTour = 0;
+      // Un tour repris (#441) : son texte est ce qu'il avait écrit avant la
+      // coupure, suivi de la suite. C'est ce texte complet — jamais la seule
+      // suite — que lisent le transcript, le livrable et les garde-fous plus bas.
+      const texteDuTour = partielCeTour + (response.text ?? '');
+      if (partielCeTour !== '') {
+        trace('llm_turn_resumed', { turn, resumes: reprisesCeTour, chars: texteDuTour.length });
+      }
+      // Le tour repris garde son texte ENTIER jusqu'au bout, y compris si un
+      // plafond l'arrête juste en dessous (revue Codex de #449, passe 6).
+      const tourRepris = partielCeTour !== '';
+      partielCeTour = '';
+      reprisesCeTour = 0;
+      const avecTourRepris = (): ModelMessage[] =>
+        tourRepris && texteDuTour.trim() !== ''
+          ? [...messages, { role: 'assistant', content: texteDuTour.trim() } as ModelMessage]
+          : messages;
 
       // Accumulate token usage. Some providers may return undefined/NaN for
       // either field — coerce to 0 so we never persist NaN. Local providers
@@ -3486,6 +3721,27 @@ async function runJobTracked(
         servedProvider = rawProvider;
       }
 
+      // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
+      // pendant que la réponse se terminait, n'exécute aucun des outils
+      // qu'elle demande. Le texte du tour est gardé. Lue AVANT les plafonds
+      // (revue Codex de #449, passe 7) : un Stop suivi d'un débordement rend
+      // `cancelled`, pas `failed` — le parent et la tâche lisent ce statut.
+      const [statutApresAppel] = await db
+        .select({ status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, jobId as string));
+      if (statutApresAppel?.status === 'cancelled') {
+        if (texteDuTour.trim() !== '') {
+          messages = [
+            ...messages,
+            { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
+          ];
+        }
+        trace('cancellation_observed', { turn, during: 'before_tools' });
+        await cancelJob(db, jobId as string, runStats(), messages);
+        return { status: 'cancelled' };
+      }
+
       // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
       // input + output, not raw input. A job that re-sends a prompt-cached
       // history (the common long-running pattern: the growing transcript is read
@@ -3503,6 +3759,7 @@ async function runJobTracked(
           outputTokens,
           maxTotalTokensPerJob,
         });
+        messages = avecTourRepris();
         await failJob(db, jobId as string, 'token_budget_exceeded', runStats(), messages);
         return { status: 'failed', error: 'token_budget_exceeded' };
       }
@@ -3520,6 +3777,7 @@ async function runJobTracked(
           callCostUsd,
           maxCostPerJobUsd,
         });
+        messages = avecTourRepris();
         await failJob(db, jobId as string, 'cost_budget_exceeded', runStats(), messages);
         return { status: 'failed', error: 'cost_budget_exceeded' };
       }
@@ -3545,7 +3803,7 @@ async function runJobTracked(
       trace('llm_call_done', {
         turn,
         toolCalls: rawToolCalls.map((tc) => tc.toolName),
-        textLen: (response.text ?? '').length,
+        textLen: texteDuTour.length,
         usage: {
           in: promptTok,
           cached: cachedT,
@@ -3604,14 +3862,14 @@ async function runJobTracked(
           ? { ...p, providerOptions: part.providerMetadata }
           : p;
       });
-      // HARNESS FIX: when a turn has BOTH a written answer (response.text) AND
+      // HARNESS FIX: when a turn has BOTH a written answer (texteDuTour) AND
       // tool calls, KEEP the text. Previously the text was dropped whenever tool
       // calls were present, so a model that writes its report as text alongside
       // return_result/dashboard_publish lost the whole report — it never reached
       // the persisted transcript, so result-capture/delivery found nothing. The
       // text part is placed before the tool-call parts (valid assistant content
       // shape for both Anthropic and OpenAI formats).
-      const hasText = (response.text ?? '').trim().length > 0;
+      const hasText = texteDuTour.trim().length > 0;
       // HARNESS FIX (tool-call thoughtSignature round-trip): a tool call from
       // `response.toolCalls` (== rawToolCalls) carries its signature in
       // `providerMetadata` (the OUTPUT channel) — same asymmetry as the
@@ -3644,15 +3902,15 @@ async function runJobTracked(
           rawToolCalls.length > 0
             ? [
                 ...reasoningParts,
-                ...(hasText ? [{ type: 'text' as const, text: response.text || '' }] : []),
+                ...(hasText ? [{ type: 'text' as const, text: texteDuTour }] : []),
                 ...toolCallParts,
               ]
             : reasoningParts.length > 0
-              ? [...reasoningParts, { type: 'text' as const, text: response.text || '' }]
-              : response.text || '',
+              ? [...reasoningParts, { type: 'text' as const, text: texteDuTour }]
+              : texteDuTour,
       };
       messages = [...messages, assistantMsg];
-      if ((response.text ?? '').trim() !== '') lastAssistantTextSeen = (response.text ?? '').trim();
+      if (texteDuTour.trim() !== '') lastAssistantTextSeen = texteDuTour.trim();
 
       // f. Note return_result presence — but do NOT short-circuit. If the LLM
       // returns it alongside other tools (e.g. [create_task, return_result]),
@@ -3661,7 +3919,7 @@ async function runJobTracked(
 
       // g. No tool calls
       if (rawToolCalls.length === 0) {
-        trace('no_tool_calls_branch', { turn, hasText: Boolean(response.text) });
+        trace('no_tool_calls_branch', { turn, hasText: Boolean(texteDuTour) });
         // An approval is pending (a gate fired on a prior turn) and the agent
         // produced no tool call this turn. We must NOT complete or fail — the
         // request still needs the user's decision. Suspend; the dashboard resume
@@ -3678,7 +3936,7 @@ async function runJobTracked(
           }
           return suspended;
         }
-        const textContent = response.text ?? '';
+        const textContent = texteDuTour;
         // `trim()`, et pas seulement « non vide » : trois espaces ne sont pas un
         // livrable, et ce `if` les finalisait en succès. La garde du vide, elle,
         // lit déjà le texte après `trim()` — les deux chemins disaient donc deux

@@ -56,14 +56,107 @@ export class MessageStructureError extends Error {
  */
 export class LLMTimeoutError extends Error {
   readonly code = 'llm_timeout' as const;
+  /**
+   * Which clock fired (#440). `wall` = the fixed budget of a non-streamed
+   * call; the three others belong to a streamed turn (`turn-clocks.ts`).
+   */
+  readonly reason: LlmTimeoutReason;
+  /**
+   * Text the model had written when the clock fired. Empty for a non-streamed
+   * call (nothing comes back before the end) and for a stream that never
+   * spoke. Non-empty means the call was cut WHILE PRODUCING: the runner
+   * resumes from it instead of replaying the turn (#441).
+   */
+  readonly partialText: string;
+  /**
+   * True when the call can be RESUMED from `partialText`: the model wrote
+   * text and nothing else. A call that had already emitted a tool call is not
+   * resumable — the text alone would drop the call — and is replayed instead.
+   */
+  readonly resumable: boolean;
+  /**
+   * True when the provider SERVED the call before it was cut: it had sent
+   * text, reasoning or a tool call. Such a call was billed, is counted by the
+   * caller, and is never failed over — even with no text to resume from
+   * (Codex review of #449, pass 6: a tool-call-only cut looked silent).
+   */
+  readonly served: boolean;
+  /**
+   * Characters the model generated before the cut: text, reasoning and tool
+   * arguments. The provider bills them all, so the caller's usage estimate
+   * reads this, not the visible text alone (Codex review of #449, pass 7).
+   */
+  readonly generatedChars: number;
 
   constructor(
     public readonly provider: string,
     public readonly model: string,
     public readonly timeoutMs: number,
+    details: {
+      reason: LlmTimeoutReason;
+      partialText: string;
+      resumable?: boolean;
+      /** The provider had sent something (text, reasoning, tool call). */
+      served?: boolean;
+      /** Everything generated before the cut (text, reasoning, tool args). */
+      generatedChars?: number;
+      /** The stream error behind a `stream_error` cut. */
+      cause?: unknown;
+    } = {
+      reason: 'wall',
+      partialText: '',
+    },
   ) {
-    super(`LLM call timed out after ${timeoutMs}ms: ${provider}/${model}`);
+    super(
+      details.reason === 'wall'
+        ? `LLM call timed out after ${timeoutMs}ms: ${provider}/${model}`
+        : details.reason === 'stream_error'
+          ? `LLM stream broke after ${details.partialText.length} chars received (${details.cause instanceof Error ? details.cause.message.slice(0, 160) : String(details.cause).slice(0, 160)}): ${provider}/${model}`
+          : `LLM call timed out after ${timeoutMs}ms (${details.reason}, ${details.partialText.length} chars received): ${provider}/${model}`,
+      details.cause === undefined ? undefined : { cause: details.cause },
+    );
     this.name = 'LLMTimeoutError';
+    this.reason = details.reason;
+    this.partialText = details.partialText;
+    this.resumable = details.resumable ?? details.partialText !== '';
+    this.served = details.served ?? details.partialText !== '';
+    this.generatedChars = details.generatedChars ?? details.partialText.length;
+  }
+}
+
+export type LlmTimeoutReason =
+  | 'wall'
+  | 'idle_before_first_token'
+  | 'idle_between_tokens'
+  | 'absolute'
+  /**
+   * Not a clock: the stream broke with an error AFTER writing text. Carried
+   * on the same error so the whole cut path (no replay from scratch, no
+   * failover, resume from the text) applies to it unchanged.
+   */
+  | 'stream_error';
+
+// ─── LLMCallCancelledError ─────────────────────────────────────────────────────
+
+/**
+ * The caller aborted the call (the job was cancelled: a person pressed Stop).
+ * Never retried, never failed over: nobody wants the answer any more. Carries
+ * what the model had written, so the cancelled job keeps it.
+ */
+export class LLMCallCancelledError extends Error {
+  readonly code = 'llm_call_cancelled' as const;
+
+  constructor(
+    public readonly provider: string,
+    public readonly model: string,
+    public readonly partialText: string,
+    /** The provider had sent something before the Stop: the call was billed. */
+    public readonly served: boolean = partialText !== '',
+    /** Everything generated before the Stop (text, reasoning, tool args). */
+    public readonly generatedChars: number = partialText.length,
+  ) {
+    super(`LLM call cancelled after ${partialText.length} chars received: ${provider}/${model}`);
+    this.name = 'LLMCallCancelledError';
   }
 }
 

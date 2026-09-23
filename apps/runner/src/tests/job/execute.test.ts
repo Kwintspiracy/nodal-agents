@@ -1163,8 +1163,10 @@ describe('executeJob', () => {
   // ligne changée en base pendant que la boucle continue de brûler des tours.
   //
   // Ce que ce cas prouve, et que « le statut est cancelled » ne prouve pas :
-  // l'appel d'outil du tour SUIVANT n'a pas lieu, et la ligne du job n'est pas
-  // réécrite par-dessus l'annulation.
+  // AUCUN appel d'outil n'a lieu après le Stop — ni celui du tour suivant, ni
+  // celui que la réponse en cours demandait (#449 : le statut est relu entre
+  // la réponse et ses outils) —, et la ligne du job n'est pas réécrite
+  // par-dessus l'annulation.
   it('un job annulé s’arrête AVANT son prochain appel d’outil, et n’écrit plus rien @cap:suivre-execution/moteur', async () => {
     const job = await createTestJob(db, seed);
 
@@ -1189,13 +1191,13 @@ describe('executeJob', () => {
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
     expect(result.status).toBe('cancelled');
 
-    // UN SEUL appel d'outil : celui du tour qui tournait déjà. Le second,
-    // que le modèle avait préparé, n'a pas eu lieu.
+    // AUCUN appel d'outil : la réponse est arrivée après le Stop, ses outils
+    // ne sont pas exécutés ; le second tour n'a pas eu lieu.
     const appels = await db
       .select({ toolName: toolCalls.toolName })
       .from(toolCalls)
       .where(eq(toolCalls.jobId, job.id));
-    expect(appels).toHaveLength(1);
+    expect(appels).toHaveLength(0);
 
     const [row] = await db
       .select({

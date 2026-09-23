@@ -89,6 +89,23 @@ export interface ProviderConfig {
 
 // ─── NodalLlmClient ────────────────────────────────────────────────────────────
 
+/** How one `generateText` call is carried out; the result has the same shape either way. */
+export interface GenerateTextCallOptions {
+  /**
+   * Stream the call under the two silence clocks instead of a wall-clock
+   * budget (#440, `turn-clocks.ts`). The job loop sets it on every turn: a
+   * turn that is still writing is never cut, and what it wrote before a
+   * clock fired comes back on `LLMTimeoutError.partialText`.
+   */
+  streamed?: boolean;
+  /**
+   * Aborts the call when the job it serves is cancelled. The call then
+   * rejects with `LLMCallCancelledError`, carrying the text written so far;
+   * it is never retried nor failed over.
+   */
+  abortSignal?: AbortSignal;
+}
+
 /**
  * A configured LLM client scoped to a specific provider+model.
  * generateText / streamText / generateObject are pre-bound to the model —
@@ -101,6 +118,7 @@ export interface NodalLlmClient {
 
   generateText: (
     args: Omit<Parameters<typeof generateText>[0], 'model'>,
+    opts?: GenerateTextCallOptions,
   ) => ReturnType<typeof generateText>;
 
   streamText: (

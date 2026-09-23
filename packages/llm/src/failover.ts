@@ -31,6 +31,13 @@ import { createLlmClient } from './client';
  * next provider would reject them identically, so they propagate as-is.
  */
 function isFailoverWorthy(err: unknown): boolean {
+  // A streamed turn cut WHILE IT WROTE is not a provider that can't serve:
+  // the provider was serving. The runner resumes it from what it wrote (or
+  // replays it, when a tool call was already out), on the same provider
+  // (#441), and counts the cut call's usage. Failing over would throw that
+  // text away, pay the whole prompt again on the next link, and hide the cut
+  // call from the job's budgets (Codex review of #449, pass 5).
+  if (err instanceof LLMTimeoutError && err.served) return false;
   return (
     err instanceof RetryExhaustedError ||
     err instanceof LLMTimeoutError ||
@@ -68,6 +75,10 @@ export function createFailoverFromClients(clients: NodalLlmClient[]): NodalLlmCl
         return result;
       } catch (err) {
         lastErr = err;
+        // A cut while writing: THIS link was writing. It becomes the active one so
+        // the runner's continuation goes to the model that wrote the text, not
+        // back to a link that already failed (Codex review of #449, pass 3).
+        if (err instanceof LLMTimeoutError && err.served) activeIndex = i;
         if (!isFailoverWorthy(err)) throw err; // backup won't help → propagate
         const next = i + 1;
         if (next < clients.length) {
@@ -142,9 +153,9 @@ export function createFailoverFromClients(clients: NodalLlmClient[]): NodalLlmCl
     get capabilities() {
       return clients[activeIndex]!.capabilities;
     },
-    generateText: ((args) =>
+    generateText: ((args, callOpts) =>
       runWithFailover(
-        (c) => c.generateText(args),
+        (c) => c.generateText(args, callOpts),
         'generateText',
       )) as NodalLlmClient['generateText'],
     streamText: ((args) =>

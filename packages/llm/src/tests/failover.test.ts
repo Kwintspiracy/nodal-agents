@@ -120,6 +120,99 @@ describe('createFailoverFromClients', () => {
     expect(backup.generateText).toHaveBeenCalledTimes(1);
   });
 
+  it('does NOT fail over a turn cut while writing: its text comes back to the caller (#441)', async () => {
+    const primary = fakeClient('p', () =>
+      Promise.reject(
+        new LLMTimeoutError('openrouter', 'p', 60_000, {
+          reason: 'idle_between_tokens',
+          partialText: 'Half of the note',
+        }),
+      ),
+    );
+    const backup = fakeClient('b', () => Promise.resolve({ text: 'ok' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    const err = await client.generateText(ARGS, { streamed: true }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect((err as LLMTimeoutError).partialText).toBe('Half of the note');
+    expect(backup.generateText).not.toHaveBeenCalled();
+    // The streamed option reaches the link: the job loop's request is not
+    // silently downgraded to a wall-clock call by the chain.
+    expect(primary.generateText).toHaveBeenCalledWith(ARGS, { streamed: true });
+  });
+
+  it('a cut after a tool call (not resumable) does not fail over either: the caller counts and replays it', async () => {
+    const primary = fakeClient('p', () =>
+      Promise.reject(
+        new LLMTimeoutError('openrouter', 'p', 60_000, {
+          reason: 'idle_between_tokens',
+          partialText: 'Calling the tool now.',
+          resumable: false,
+        }),
+      ),
+    );
+    const backup = fakeClient('b', () => Promise.resolve({ text: 'ok' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    const err = await client.generateText(ARGS, { streamed: true }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect((err as LLMTimeoutError).resumable).toBe(false);
+    expect(backup.generateText).not.toHaveBeenCalled();
+  });
+
+  it('a cut that was served with no text (tool call only) does not fail over', async () => {
+    const primary = fakeClient('p', () =>
+      Promise.reject(
+        new LLMTimeoutError('openrouter', 'p', 60_000, {
+          reason: 'idle_between_tokens',
+          partialText: '',
+          resumable: false,
+          served: true,
+        }),
+      ),
+    );
+    const backup = fakeClient('b', () => Promise.resolve({ text: 'ok' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    const err = await client.generateText(ARGS, { streamed: true }).catch((e: unknown) => e);
+
+    expect((err as LLMTimeoutError).served).toBe(true);
+    expect(backup.generateText).not.toHaveBeenCalled();
+  });
+
+  it('a fallback cut while writing becomes the active link: the continuation goes to it', async () => {
+    const primary = fakeClient('p', () =>
+      Promise.reject(new RetryExhaustedError(4, new Error('503'))),
+    );
+    let backupCalls = 0;
+    const backup = fakeClient('b', () => {
+      backupCalls += 1;
+      return backupCalls === 1
+        ? Promise.reject(
+            new LLMTimeoutError('openrouter', 'b', 60_000, {
+              reason: 'idle_between_tokens',
+              partialText: 'Half written by b',
+            }),
+          )
+        : Promise.resolve({ text: 'the rest, by b' });
+    });
+    const client = createFailoverFromClients([primary, backup]);
+
+    await expect(client.generateText(ARGS, { streamed: true })).rejects.toBeInstanceOf(
+      LLMTimeoutError,
+    );
+    expect(client.config.model).toBe('b');
+    const res = (await client.generateText(ARGS, { streamed: true })) as unknown as {
+      text: string;
+    };
+
+    expect(res.text).toBe('the rest, by b');
+    // The failed primary is not asked to continue b's text.
+    expect(primary.generateText).toHaveBeenCalledTimes(1);
+  });
+
   it('throws AllProvidersFailedError when every provider is down', async () => {
     const a = fakeClient('a', () => Promise.reject(new LLMTimeoutError('openrouter', 'a', 1000)));
     const b = fakeClient('b', () => Promise.reject(new RetryExhaustedError(4, new Error('503'))));

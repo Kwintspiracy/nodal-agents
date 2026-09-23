@@ -22,7 +22,14 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, agents } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
-import { createEmbeddingClient, AllProvidersFailedError, LLMTimeoutError } from '@nodal-agents/llm';
+import {
+  createEmbeddingClient,
+  AllProvidersFailedError,
+  LLMTimeoutError,
+  LLMCallCancelledError,
+  estimateContextTokens,
+  estimateToolTokens,
+} from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
@@ -33,6 +40,8 @@ import {
   timeoutErrorCode,
   timeoutOfTurn,
   timeoutStopLine,
+  resumeInstruction,
+  STOP_POLL_MS,
 } from '../../job/execute.ts';
 
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
@@ -67,6 +76,31 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
  * cause (revue C de la PR #172).
  */
 type MockTurn =
+  | { cutWhileWriting: string; timesOut?: false; timesOutViaFailover?: false }
+  | { cutAfterToolCall: string; timesOut?: false; timesOutViaFailover?: false }
+  | {
+      cutThinking: { partial: string; generated: number };
+      timesOut?: false;
+      timesOutViaFailover?: false;
+    }
+  | { failsWith: Error; timesOut?: false; timesOutViaFailover?: false }
+  | {
+      stoppedWhileWriting: { jobId: string; partial: string };
+      timesOut?: false;
+      timesOutViaFailover?: false;
+    }
+  | {
+      stoppedThenAnswers: { jobId: string };
+      timesOut?: false;
+      timesOutViaFailover?: false;
+      text?: string;
+      toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+    }
+  | {
+      cancelThenCut: { jobId: string; partial: string };
+      timesOut?: false;
+      timesOutViaFailover?: false;
+    }
   | { timesOut: true; timesOutViaFailover?: false }
   | { timesOut?: false; timesOutViaFailover: true }
   | {
@@ -74,6 +108,8 @@ type MockTurn =
       timesOutViaFailover?: false;
       text?: string;
       toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+      /** Jetons d'entrée déclarés par le fournisseur simulé (10 par défaut). */
+      usageIn?: number;
     };
 
 const PROVIDER = 'anthropic';
@@ -87,6 +123,8 @@ const MODEL = 'mock';
 function makeMockLlmClient(
   responses: MockTurn[],
   compteur?: { appels: number },
+  requetes?: unknown[][],
+  argsBruts?: Array<Parameters<RunnerDeps['llmClient']['generateText']>[0]>,
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
   const mockModel = new MockLanguageModelV3({
@@ -94,6 +132,7 @@ function makeMockLlmClient(
     modelId: 'mock',
     doGenerate: async () => {
       const response = (responses[callIndex] ?? responses[responses.length - 1]!) as {
+        usageIn?: number;
         text?: string;
         toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
       };
@@ -118,7 +157,12 @@ function makeMockLlmClient(
           ? { unified: 'tool-calls' as const, raw: 'tool-calls' }
           : { unified: 'stop' as const, raw: 'stop' },
         usage: {
-          inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+          inputTokens: {
+            total: response.usageIn ?? 10,
+            noCache: response.usageIn ?? 10,
+            cacheRead: undefined,
+            cacheWrite: undefined,
+          },
           outputTokens: { total: 5, text: 5, reasoning: undefined },
         },
         warnings: [],
@@ -134,9 +178,107 @@ function makeMockLlmClient(
       structuredOutputs: false,
       streaming: false,
     },
-    generateText: (args) => {
+    generateText: (args, opts) => {
       if (compteur) compteur.appels += 1;
+      requetes?.push(JSON.parse(JSON.stringify(args.messages ?? [])) as unknown[]);
+      argsBruts?.push(args);
       const prevu = responses[callIndex];
+      if (prevu && 'cutWhileWriting' in prevu) {
+        // Un tour streamé coupé EN PLEINE ÉCRITURE (#440) : l'expiration porte
+        // le texte déjà reçu, comme la lève packages/llm/src/turn-clocks.ts.
+        callIndex++;
+        return Promise.reject(
+          new LLMTimeoutError(PROVIDER, MODEL, 60_000, {
+            reason: 'idle_between_tokens',
+            partialText: prevu.cutWhileWriting,
+          }),
+        ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
+      if (prevu && 'cutThinking' in prevu) {
+        // Coupé après avoir beaucoup RAISONNÉ et peu écrit : le fournisseur
+        // facture tout ce qu'il a généré, pas seulement le texte visible.
+        callIndex++;
+        const { partial, generated } = (
+          prevu as { cutThinking: { partial: string; generated: number } }
+        ).cutThinking;
+        return Promise.reject(
+          new LLMTimeoutError(PROVIDER, MODEL, 60_000, {
+            reason: 'idle_between_tokens',
+            partialText: partial,
+            served: true,
+            generatedChars: generated,
+          }),
+        ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
+      if (prevu && 'cutAfterToolCall' in prevu) {
+        // Coupé APRÈS avoir émis un appel d'outil : du texte, mais pas
+        // reprenable — le texte seul perdrait l'appel.
+        callIndex++;
+        return Promise.reject(
+          new LLMTimeoutError(PROVIDER, MODEL, 60_000, {
+            reason: 'idle_between_tokens',
+            partialText: prevu.cutAfterToolCall,
+            resumable: false,
+            served: true,
+          }),
+        ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
+      if (prevu && 'cancelThenCut' in prevu) {
+        // La personne annule PENDANT l'appel, qui est ensuite coupé en écrivant.
+        callIndex++;
+        const { jobId: annule, partial } = prevu.cancelThenCut;
+        return db
+          .update(agentJobs)
+          .set({ status: 'cancelled' })
+          .where(eq(agentJobs.id, annule))
+          .then(() =>
+            Promise.reject(
+              new LLMTimeoutError(PROVIDER, MODEL, 60_000, {
+                reason: 'idle_between_tokens',
+                partialText: partial,
+              }),
+            ),
+          ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
+      if (prevu && 'stoppedWhileWriting' in prevu) {
+        // Un tour qui écrit sans fin ; la personne appuie sur Stop une seconde
+        // après son début. L'appel ne se termine QUE si le runner l'abandonne.
+        callIndex++;
+        const { jobId: arrete, partial } = prevu.stoppedWhileWriting;
+        setTimeout(() => {
+          // Une requête Drizzle ne part qu'à l'attente : sans then, rien n'est écrit.
+          void db
+            .update(agentJobs)
+            .set({ status: 'cancelled' })
+            .where(eq(agentJobs.id, arrete))
+            .then(() => {});
+        }, 1_000);
+        return new Promise((_resolve, reject) => {
+          const signal = opts?.abortSignal;
+          if (!signal) return; // jamais abandonné : le test expire, c'est le rouge voulu
+          signal.addEventListener('abort', () =>
+            reject(new LLMCallCancelledError(PROVIDER, MODEL, partial, true, 4_000)),
+          );
+        }) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
+      if (prevu && 'stoppedThenAnswers' in prevu) {
+        // Stop arrive pendant que la réponse se termine : elle revient quand même.
+        const { jobId: arrete } = (prevu as { stoppedThenAnswers: { jobId: string } })
+          .stoppedThenAnswers;
+        return db
+          .update(agentJobs)
+          .set({ status: 'cancelled' })
+          .where(eq(agentJobs.id, arrete))
+          .then(() =>
+            generateText({ ...args, model: mockModel } as Parameters<typeof generateText>[0]),
+          ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
+      if (prevu && 'failsWith' in prevu) {
+        callIndex++;
+        return Promise.reject(prevu.failsWith) as ReturnType<
+          RunnerDeps['llmClient']['generateText']
+        >;
+      }
       if (prevu?.timesOut === true || prevu?.timesOutViaFailover === true) {
         callIndex++;
         const expiration = new LLMTimeoutError(PROVIDER, MODEL, 300_000);
@@ -458,5 +600,425 @@ describe('les faits d’un tour expiré, mis en mots @cap:organiser-equipe/moteu
 
   it('le code machine porte les mêmes faits', () => {
     expect(timeoutErrorCode(faits)).toBe('llm_timeout:openrouter/qwen/qwen3.8-max (turn 13, 452s)');
+  });
+});
+
+describe('un tour coupé EN PLEINE ÉCRITURE est repris, jamais rejoué (#441) @cap:organiser-equipe/moteur', () => {
+  const MOITIE = 'Note sur le scanner. Première moitié : les jonctions passent le test de préfixe';
+  const SUITE = ', parce que le chemin n’est pas résolu avant la comparaison.';
+
+  it('la seconde requête porte le partiel et la consigne ; le tour garde la note ENTIÈRE', async () => {
+    const jobId = await insertJob();
+    const compteur = { appels: 0 };
+    const requetes: unknown[][] = [];
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { cutWhileWriting: MOITIE },
+          {
+            text: SUITE,
+            toolCalls: [
+              { toolCallId: 'rr-3', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        compteur,
+        requetes,
+      ),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    expect(compteur.appels).toBe(3);
+    // La requête de reprise : le transcript du tour coupé (le même que la
+    // requête coupée), PUIS le partiel comme réponse en cours, PUIS la consigne.
+    // Rien de plus : pas le transcript deux fois.
+    const coupee = requetes[1]!;
+    const reprise = requetes[2]!;
+    expect(reprise).toHaveLength(coupee.length + 2);
+    expect(reprise.slice(0, coupee.length)).toEqual(coupee);
+    expect(reprise[coupee.length]).toEqual({ role: 'assistant', content: MOITIE });
+    expect(reprise[coupee.length + 1]).toEqual({ role: 'user', content: resumeInstruction() });
+
+    const row = await jobRow(jobId);
+    // Le tour repris ne compte pas pour deux.
+    expect(row.turn).toBe(2);
+    // Le livrable et le transcript portent la note entière, d'un seul tenant,
+    // et jamais la consigne de reprise.
+    expect(row.result ?? '').toContain(MOITIE + SUITE);
+    const transcript = JSON.stringify(row.messages ?? []);
+    expect(transcript).toContain(JSON.stringify(MOITIE + SUITE).slice(1, -1));
+    expect(transcript).not.toContain(JSON.stringify(resumeInstruction()).slice(1, -1));
+  });
+
+  it('coupé puis muet deux fois, le travail échoue en gardant la moitié écrite', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { cutWhileWriting: MOITIE },
+        { timesOut: true },
+        { timesOut: true },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    if (outcome.status !== 'failed') throw new Error('unreachable');
+    expect(outcome.exitReason).toBe('timeout');
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('failed');
+    expect(row.result ?? '').toContain(MOITIE);
+    expect(row.result ?? '').toContain('[stopped: llm timeout');
+    expect(row.result ?? '').toContain('douze fichiers');
+  });
+
+  it('l’appel coupé est COMPTÉ : ses jetons estimés entrent dans les totaux du travail', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { cutWhileWriting: MOITIE },
+        {
+          text: SUITE,
+          toolCalls: [
+            { toolCallId: 'rr-4', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    await executeJob(jobId as JobId, deps, testEnv);
+
+    const [row] = await db
+      .select({ inputTokens: agentJobs.inputTokens, outputTokens: agentJobs.outputTokens })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    // Deux appels servis (5 jetons de sortie chacun, décompte du fournisseur
+    // simulé) + l'appel coupé, estimé à caractères / 4.
+    expect(row!.outputTokens).toBe(5 + 5 + Math.ceil(MOITIE.length / 4));
+    // L'entrée de l'appel coupé est le prompt entier : bien plus que les 2 × 10
+    // des deux appels servis.
+    expect(row!.inputTokens ?? 0).toBeGreaterThan(20 + 100);
+  });
+
+  it('l’estimation de l’appel coupé compte le prompt ET les définitions d’outils envoyés', async () => {
+    const jobId = await insertJob();
+    const argsBruts: Array<Parameters<RunnerDeps['llmClient']['generateText']>[0]> = [];
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { cutWhileWriting: MOITIE },
+          {
+            text: SUITE,
+            toolCalls: [
+              { toolCallId: 'rr-6', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        undefined,
+        undefined,
+        argsBruts,
+      ),
+    );
+
+    await executeJob(jobId as JobId, deps, testEnv);
+
+    // Ce que l'appel coupé envoyait VRAIMENT : son système, ses messages, ses outils.
+    const coupe = argsBruts[1]! as { system?: unknown; messages?: unknown; tools?: unknown };
+    const outils = await estimateToolTokens(coupe.tools);
+    expect(outils).toBeGreaterThan(0);
+    const attendu =
+      estimateContextTokens({ system: coupe.system, messages: coupe.messages }) + outils;
+    const [row] = await db
+      .select({ inputTokens: agentJobs.inputTokens })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    // Deux appels servis à 10 jetons d'entrée chacun + l'appel coupé, estimé.
+    expect(row!.inputTokens).toBe(10 + 10 + attendu);
+  });
+
+  it('coupé APRÈS un appel d’outil, le tour est REJOUÉ, pas repris : l’appel n’est pas perdu', async () => {
+    const jobId = await insertJob();
+    const requetes: unknown[][] = [];
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { cutAfterToolCall: 'Je rends mon avis.' },
+          {
+            text: 'Je rends mon avis.',
+            toolCalls: [
+              { toolCallId: 'rr-5', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        undefined,
+        requetes,
+      ),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    // Le rejeu est la MÊME requête que l'appel coupé, sans partiel ni consigne.
+    expect(requetes[2]).toEqual(requetes[1]);
+    expect(JSON.stringify(requetes[2])).not.toContain(
+      JSON.stringify(resumeInstruction()).slice(1, -1),
+    );
+  });
+
+  it('une reprise qui tombe sur AUTRE CHOSE qu’une expiration garde la moitié écrite', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { cutWhileWriting: MOITIE },
+        { failsWith: new Error('upstream exploded') },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('failed');
+    expect(JSON.stringify(row.messages ?? [])).toContain(MOITIE);
+  });
+
+  it('un appel coupé qui fait DÉBORDER le budget de jetons n’est pas repris', async () => {
+    // PREMIER_TOUR coûte 15 jetons ; l'appel coupé, lui, porte tout le prompt.
+    vi.stubEnv('MAX_TOTAL_TOKENS_PER_JOB', '60');
+    try {
+      const jobId = await insertJob();
+      const compteur = { appels: 0 };
+      const deps = makeDeps(
+        makeMockLlmClient([PREMIER_TOUR, { cutWhileWriting: MOITIE }, { text: SUITE }], compteur),
+      );
+
+      const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+      expect(outcome).toMatchObject({ status: 'failed', error: 'token_budget_exceeded' });
+      // Aucune reprise payée au-delà du plafond : deux appels, pas trois.
+      expect(compteur.appels).toBe(2);
+      const row = await jobRow(jobId);
+      expect(row.error).toBe('token_budget_exceeded');
+      expect(JSON.stringify(row.messages ?? [])).toContain(MOITIE);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('un Stop qui tombe juste avant l’expiration l’emporte, même si le budget déborde', async () => {
+    vi.stubEnv('MAX_TOTAL_TOKENS_PER_JOB', '60');
+    try {
+      const jobId = await insertJob();
+      const deps = makeDeps(
+        makeMockLlmClient([PREMIER_TOUR, { cancelThenCut: { jobId, partial: MOITIE } }]),
+      );
+
+      const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+      expect(outcome.status).toBe('cancelled');
+      const row = await jobRow(jobId);
+      expect(row.status).toBe('cancelled');
+      expect(row.error ?? '').toBe('');
+      expect(JSON.stringify(row.messages ?? [])).toContain(MOITIE);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('une annulation pendant un appel coupé garde le texte qu’il avait écrit', async () => {
+    const jobId = await insertJob();
+    const compteur = { appels: 0 };
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [PREMIER_TOUR, { cancelThenCut: { jobId, partial: MOITIE } }, { text: SUITE }],
+        compteur,
+      ),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('cancelled');
+    expect(compteur.appels).toBe(2);
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('cancelled');
+    expect(JSON.stringify(row.messages ?? [])).toContain(MOITIE);
+  });
+
+  it('coupé après un appel d’outil SANS texte, l’appel est compté et rejoué, pas pris pour muet', async () => {
+    const jobId = await insertJob();
+    const requetes: unknown[][] = [];
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { cutAfterToolCall: '' },
+          {
+            toolCalls: [
+              { toolCallId: 'rr-10', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        undefined,
+        requetes,
+      ),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    expect(requetes[2]).toEqual(requetes[1]);
+    const [row] = await db
+      .select({ inputTokens: agentJobs.inputTokens })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    // Deux appels servis à 10 + l'appel coupé, servi lui aussi : estimé, donc bien plus.
+    expect(row!.inputTokens ?? 0).toBeGreaterThan(20 + 100);
+  });
+
+  it('un tour repris qu’un plafond arrête garde son texte ENTIER', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { cutWhileWriting: MOITIE },
+        // La suite arrive, mais son décompte fait déborder le plafond de jetons.
+        { text: SUITE, usageIn: 2_000_000 },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome).toMatchObject({ status: 'failed', error: 'token_budget_exceeded' });
+    const row = await jobRow(jobId);
+    expect(JSON.stringify(row.messages ?? [])).toContain(
+      JSON.stringify(MOITIE + SUITE).slice(1, -1),
+    );
+  });
+
+  it('la sortie estimée d’un appel coupé compte le raisonnement, pas seulement le texte', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { cutThinking: { partial: 'Bref.', generated: 40_000 } },
+        {
+          text: ' Suite.',
+          toolCalls: [
+            { toolCallId: 'rr-11', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    await executeJob(jobId as JobId, deps, testEnv);
+
+    const [row] = await db
+      .select({ outputTokens: agentJobs.outputTokens })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    // 5 + 5 servis, + 40 000 caractères générés / 4 — pas les 5 caractères visibles.
+    expect(row!.outputTokens).toBe(5 + 5 + 10_000);
+  });
+
+  it('les reprises ont un budget : la quatrième coupure termine le travail', async () => {
+    const jobId = await insertJob();
+    const compteur = { appels: 0 };
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { cutWhileWriting: 'a' },
+          { cutWhileWriting: 'b' },
+          { cutWhileWriting: 'c' },
+          { cutWhileWriting: 'd' },
+          { text: 'jamais demandé' },
+        ],
+        compteur,
+      ),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    // Un tour, puis la coupure et ses trois reprises : cinq appels, pas six.
+    expect(compteur.appels).toBe(5);
+    const row = await jobRow(jobId);
+    expect(row.result ?? '').toContain('abcd');
+  });
+});
+
+describe('Stop arrête le travail PENDANT l’appel au modèle @cap:organiser-equipe/moteur', () => {
+  it('un tour qui écrit sans fin s’arrête dès le Stop, avec ce qu’il avait écrit', async () => {
+    const jobId = await insertJob();
+    const debut = Date.now();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { stoppedWhileWriting: { jobId, partial: 'Le début de la note' } },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('cancelled');
+    // Stop à 1 s, lu au plus une période plus tard : bien avant la fin d'un appel.
+    expect(Date.now() - debut).toBeLessThan(1_000 + STOP_POLL_MS + 3_000);
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('cancelled');
+    expect(JSON.stringify(row.messages ?? [])).toContain('Le début de la note');
+    // L'appel arrêté était servi : il est compté (4 000 caractères générés / 4).
+    const [compte] = await db
+      .select({ outputTokens: agentJobs.outputTokens, inputTokens: agentJobs.inputTokens })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(compte!.outputTokens).toBe(5 + 1_000);
+    expect(compte!.inputTokens ?? 0).toBeGreaterThan(10 + 100);
+  }, 20_000);
+
+  it('un Stop suivi d’un débordement de budget rend « annulé », pas « échoué »', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { stoppedThenAnswers: { jobId }, text: 'Je termine.', usageIn: 2_000_000 },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('cancelled');
+  });
+
+  it('une réponse qui revient APRÈS le Stop n’exécute aucun de ses outils', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        {
+          stoppedThenAnswers: { jobId },
+          text: 'Je termine.',
+          toolCalls: [
+            { toolCallId: 'rr-9', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    // return_result exécuté aurait terminé le travail : il ne l'est pas.
+    expect(outcome.status).toBe('cancelled');
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('cancelled');
+    expect(JSON.stringify(row.messages ?? [])).toContain('Je termine.');
+    expect(JSON.stringify(row.messages ?? [])).not.toContain('rr-9');
   });
 });
