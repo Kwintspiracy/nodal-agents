@@ -11,7 +11,12 @@ import { withRetry } from './retry';
 import { generateWithToolChoiceFloor } from './tool-choice-floor';
 import { buildLlmCallObservation, emitLlmCall } from './observe';
 import type { LlmCallObserver, LlmClientMeta } from './observe';
-import { computeTurnClocks, consumeUnderClocks, estimateContextTokens } from './turn-clocks';
+import {
+  computeTurnClocks,
+  consumeUnderClocks,
+  estimateContextTokens,
+  estimateToolTokens,
+} from './turn-clocks';
 
 import { buildAnthropicModel } from './providers/anthropic';
 import { withAnthropicPromptCaching, stripSystemCacheBoundary } from './providers/anthropic-cache';
@@ -372,7 +377,8 @@ export function createLlmClient(
       // that hung) the clocks now do without discarding what was written.
       const clocks = computeTurnClocks(
         config,
-        estimateContextTokens(prepared as { system?: unknown; messages?: unknown }),
+        estimateContextTokens(prepared as { system?: unknown; messages?: unknown }) +
+          (await estimateToolTokens((prepared as { tools?: unknown }).tools)),
       );
       try {
         const result = await generateWithToolChoiceFloor(

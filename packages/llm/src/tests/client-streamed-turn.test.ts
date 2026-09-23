@@ -67,6 +67,51 @@ describe('generateText streamed option @cap:organiser-equipe/moteur', () => {
     expect(seen[0]?.error).toBeNull();
   });
 
+  it('sizes the first-token clock with the tool schemas it sends', async () => {
+    // 200 large tool definitions ≈ 55K tokens: the first token may take 130 s
+    // (over the 120 s base clock) without the call being cut.
+    const { z } = await import('zod');
+    const tools: Record<string, { description: string; inputSchema: unknown }> = {};
+    for (let i = 0; i < 200; i++) {
+      tools[`mcp__server__tool_${i}`] = {
+        description: 'd'.repeat(600),
+        inputSchema: z.object({ query: z.string().describe('q'.repeat(400)) }),
+      };
+    }
+    currentModel = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'm',
+      doStream: async () => ({
+        stream: simulateReadableStream({ chunks: streamed, initialDelayInMs: 130_000 }),
+      }),
+    });
+    const client = createLlmClient({ provider: 'openrouter', model: 'z-ai/glm-5.2', apiKey: 'k' });
+    vi.useFakeTimers();
+    try {
+      const call = client
+        .generateText({ ...ARGS, tools } as Parameters<typeof client.generateText>[0], {
+          streamed: true,
+        })
+        .then(
+          (r) => ({ ok: r.text }),
+          (e: unknown) => ({ err: e }),
+        );
+      // The schemas are sized before the request leaves: wait for the stream
+      // to start (and its 130 s delay to be armed) before moving the clock.
+      for (let i = 0; i < 1_000 && currentModel.doStreamCalls.length === 0; i++) {
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(currentModel.doStreamCalls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(130_001);
+      // The chunks after the first come on zero-delay timers: let them run
+      // (still well under the 150 s clock of a 50K+ prompt).
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await call).toEqual({ ok: 'from the stream' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the one-shot call when the option is absent', async () => {
     const client = createLlmClient({ provider: 'openrouter', model: 'z-ai/glm-5.2', apiKey: 'k' });
 

@@ -73,6 +73,10 @@ export function createFailoverFromClients(clients: NodalLlmClient[]): NodalLlmCl
         return result;
       } catch (err) {
         lastErr = err;
+        // A resumable cut: THIS link was writing. It becomes the active one so
+        // the runner's continuation goes to the model that wrote the text, not
+        // back to a link that already failed (Codex review of #449, pass 3).
+        if (err instanceof LLMTimeoutError && err.resumable) activeIndex = i;
         if (!isFailoverWorthy(err)) throw err; // backup won't help → propagate
         const next = i + 1;
         if (next < clients.length) {

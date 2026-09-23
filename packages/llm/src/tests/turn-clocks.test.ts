@@ -15,6 +15,7 @@ import {
   computeTurnClocks,
   consumeUnderClocks,
   estimateContextTokens,
+  estimateToolTokens,
   isLocalEndpoint,
   BETWEEN_TOKENS_MS,
   FIRST_TOKEN_BASE_MS,
@@ -314,6 +315,25 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
       expect(isLocalEndpoint({ provider: 'openai-compatible', baseURL: url }), url).toBe(false);
     }
     expect(isLocalEndpoint({ provider: 'openrouter' })).toBe(false);
+  });
+
+  it('counts the tool schemas: a large whitelist moves a call to a longer first-token clock', async () => {
+    const { z } = await import('zod');
+    const tools: Record<string, { description: string; inputSchema: unknown }> = {};
+    for (let i = 0; i < 200; i++) {
+      tools[`mcp__server__tool_${i}`] = {
+        description: 'd'.repeat(600),
+        inputSchema: z.object({
+          query: z.string().describe('q'.repeat(400)),
+          limit: z.number().optional(),
+        }),
+      };
+    }
+    const toolTokens = await estimateToolTokens(tools);
+    // 200 tools × (600 + 400 + schema framing) chars / 4 ≥ 50K tokens.
+    expect(toolTokens).toBeGreaterThan(50_000);
+    const clocks = computeTurnClocks({ provider: 'openrouter' }, 1_000 + toolTokens);
+    expect(clocks.firstTokenMs).toBeGreaterThan(FIRST_TOKEN_BASE_MS);
   });
 
   it('estimates the context from text, not from image bytes', () => {

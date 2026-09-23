@@ -142,6 +142,37 @@ describe('createFailoverFromClients', () => {
     expect(primary.generateText).toHaveBeenCalledWith(ARGS, { streamed: true });
   });
 
+  it('a fallback cut while writing becomes the active link: the continuation goes to it', async () => {
+    const primary = fakeClient('p', () =>
+      Promise.reject(new RetryExhaustedError(4, new Error('503'))),
+    );
+    let backupCalls = 0;
+    const backup = fakeClient('b', () => {
+      backupCalls += 1;
+      return backupCalls === 1
+        ? Promise.reject(
+            new LLMTimeoutError('openrouter', 'b', 60_000, {
+              reason: 'idle_between_tokens',
+              partialText: 'Half written by b',
+            }),
+          )
+        : Promise.resolve({ text: 'the rest, by b' });
+    });
+    const client = createFailoverFromClients([primary, backup]);
+
+    await expect(client.generateText(ARGS, { streamed: true })).rejects.toBeInstanceOf(
+      LLMTimeoutError,
+    );
+    expect(client.config.model).toBe('b');
+    const res = (await client.generateText(ARGS, { streamed: true })) as unknown as {
+      text: string;
+    };
+
+    expect(res.text).toBe('the rest, by b');
+    // The failed primary is not asked to continue b's text.
+    expect(primary.generateText).toHaveBeenCalledTimes(1);
+  });
+
   it('throws AllProvidersFailedError when every provider is down', async () => {
     const a = fakeClient('a', () => Promise.reject(new LLMTimeoutError('openrouter', 'a', 1000)));
     const b = fakeClient('b', () => Promise.reject(new RetryExhaustedError(4, new Error('503'))));

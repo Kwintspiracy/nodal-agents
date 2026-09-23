@@ -23,6 +23,7 @@
 // on the `LLMTimeoutError` (`partialText`), and the runner resumes the turn
 // from it instead of replaying it (#441).
 
+import { asSchema } from 'ai';
 import type { generateText, streamText } from 'ai';
 
 import type { ProviderConfig } from './types';
@@ -127,6 +128,31 @@ export function estimateContextTokens(args: { system?: unknown; messages?: unkno
   };
   add(args.system);
   add(args.messages);
+  return Math.ceil(chars / 4);
+}
+
+/**
+ * Rough token count of the tool definitions a call sends: name, description
+ * and JSON schema of each, characters / 4. An agent with a large MCP whitelist
+ * sends tens of thousands of tokens of schemas; leaving them out would put a
+ * big prompt on the short first-token clock (Codex review of #449, pass 3).
+ * A schema that cannot be converted counts for its name and description only.
+ */
+export async function estimateToolTokens(tools: unknown): Promise<number> {
+  if (!tools || typeof tools !== 'object') return 0;
+  let chars = 0;
+  for (const [name, def] of Object.entries(tools as Record<string, unknown>)) {
+    chars += name.length;
+    const tool = (def ?? {}) as { description?: unknown; inputSchema?: unknown };
+    if (typeof tool.description === 'string') chars += tool.description.length;
+    if (tool.inputSchema == null) continue;
+    try {
+      const schema = await asSchema(tool.inputSchema as Parameters<typeof asSchema>[0]).jsonSchema;
+      chars += JSON.stringify(schema).length;
+    } catch {
+      // Unconvertible schema: its name and description are already counted.
+    }
+  }
   return Math.ceil(chars / 4);
 }
 
