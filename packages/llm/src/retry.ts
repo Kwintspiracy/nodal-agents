@@ -334,6 +334,11 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
           : RATE_LIMIT_MAX_RETRIES
         : maxRetries;
 
+      // A call stopped by the person is not a failed attempt: it is never
+      // retried, and logging it as `attempt=1/4` read like the start of a
+      // retry loop. The runner traces the stop itself (cancellation_observed).
+      if (err instanceof LLMCallCancelledError) throw err;
+
       // Log the attempt outcome so live failures carry diagnosable info.
       // Without this, RetryExhaustedError stored only "Retry exhausted after N
       // attempts" and we burnt 3 patch cycles speculating on the cause.

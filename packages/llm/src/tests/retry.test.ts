@@ -2,7 +2,12 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { withRetry } from '../retry';
-import { QuotaExhaustedError, MessageStructureError, RetryExhaustedError } from '../errors';
+import {
+  QuotaExhaustedError,
+  MessageStructureError,
+  RetryExhaustedError,
+  LLMCallCancelledError,
+} from '../errors';
 
 // Override setTimeout globally for tests so backoff doesn't slow things down
 vi.useFakeTimers();
@@ -178,5 +183,26 @@ describe('withRetry', () => {
     const result = await promise;
     expect(result).toBe('ok');
     expect(fn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('withRetry — a call stopped by the person', () => {
+  it('is rethrown at once, never retried, and not logged as a failed attempt', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stopped = new LLMCallCancelledError('openrouter', 'm', 'half a note');
+    let calls = 0;
+
+    const err = await withRetry(
+      () => {
+        calls += 1;
+        return Promise.reject(stopped);
+      },
+      { provider: 'openrouter', model: 'm' },
+    ).catch((e: unknown) => e);
+
+    expect(err).toBe(stopped);
+    expect(calls).toBe(1);
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('[llm-attempt-failed]');
+    warn.mockRestore();
   });
 });
