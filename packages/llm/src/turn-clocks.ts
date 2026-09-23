@@ -226,6 +226,8 @@ export async function consumeUnderClocks(
   // A tool call (or its input) already on the wire makes the text alone a
   // false picture of the reply: resuming from the text would drop the call.
   let sawStructured = false;
+  // Every character the model generated, visible or not: what the provider bills.
+  let generatedChars = 0;
 
   // Aborting the request is not enough on its own: the SDK only notices the
   // signal when a chunk moves, so a stream that stays mute would keep the loop
@@ -282,6 +284,10 @@ export async function consumeUnderClocks(
         if (part.type === 'error') throw part.error;
         if (FRAMING_PARTS.has(part.type)) continue;
         if (part.type === 'text-delta') partialText += part.text;
+        if (part.type === 'text-delta' || part.type === 'reasoning-delta') {
+          generatedChars += part.text.length;
+        }
+        if (part.type === 'tool-input-delta') generatedChars += part.delta.length;
         if (STRUCTURED_PARTS.has(part.type)) sawStructured = true;
         sawModel = true;
         armSilence();
@@ -299,6 +305,7 @@ export async function consumeUnderClocks(
           partialText,
           resumable: !sawStructured,
           served: true,
+          generatedChars,
           cause: err,
         });
       }
@@ -307,13 +314,20 @@ export async function consumeUnderClocks(
     if (expired !== null) {
       const { reason, limitMs } = expired;
       if (reason === 'cancelled') {
-        throw new LLMCallCancelledError(providerModel.provider, providerModel.model, partialText);
+        throw new LLMCallCancelledError(
+          providerModel.provider,
+          providerModel.model,
+          partialText,
+          sawModel,
+          generatedChars,
+        );
       }
       throw new LLMTimeoutError(providerModel.provider, providerModel.model, limitMs, {
         reason,
         partialText,
         resumable: partialText !== '' && !sawStructured,
         served: sawModel,
+        generatedChars,
       });
     }
     return await collectResult(stream);

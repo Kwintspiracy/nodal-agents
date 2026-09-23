@@ -78,6 +78,11 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
 type MockTurn =
   | { cutWhileWriting: string; timesOut?: false; timesOutViaFailover?: false }
   | { cutAfterToolCall: string; timesOut?: false; timesOutViaFailover?: false }
+  | {
+      cutThinking: { partial: string; generated: number };
+      timesOut?: false;
+      timesOutViaFailover?: false;
+    }
   | { failsWith: Error; timesOut?: false; timesOutViaFailover?: false }
   | {
       stoppedWhileWriting: { jobId: string; partial: string };
@@ -189,6 +194,22 @@ function makeMockLlmClient(
           }),
         ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
       }
+      if (prevu && 'cutThinking' in prevu) {
+        // Coupé après avoir beaucoup RAISONNÉ et peu écrit : le fournisseur
+        // facture tout ce qu'il a généré, pas seulement le texte visible.
+        callIndex++;
+        const { partial, generated } = (
+          prevu as { cutThinking: { partial: string; generated: number } }
+        ).cutThinking;
+        return Promise.reject(
+          new LLMTimeoutError(PROVIDER, MODEL, 60_000, {
+            reason: 'idle_between_tokens',
+            partialText: partial,
+            served: true,
+            generatedChars: generated,
+          }),
+        ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
       if (prevu && 'cutAfterToolCall' in prevu) {
         // Coupé APRÈS avoir émis un appel d'outil : du texte, mais pas
         // reprenable — le texte seul perdrait l'appel.
@@ -236,7 +257,7 @@ function makeMockLlmClient(
           const signal = opts?.abortSignal;
           if (!signal) return; // jamais abandonné : le test expire, c'est le rouge voulu
           signal.addEventListener('abort', () =>
-            reject(new LLMCallCancelledError(PROVIDER, MODEL, partial)),
+            reject(new LLMCallCancelledError(PROVIDER, MODEL, partial, true, 4_000)),
           );
         }) as ReturnType<RunnerDeps['llmClient']['generateText']>;
       }
@@ -862,6 +883,31 @@ describe('un tour coupé EN PLEINE ÉCRITURE est repris, jamais rejoué (#441) @
     );
   });
 
+  it('la sortie estimée d’un appel coupé compte le raisonnement, pas seulement le texte', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { cutThinking: { partial: 'Bref.', generated: 40_000 } },
+        {
+          text: ' Suite.',
+          toolCalls: [
+            { toolCallId: 'rr-11', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    await executeJob(jobId as JobId, deps, testEnv);
+
+    const [row] = await db
+      .select({ outputTokens: agentJobs.outputTokens })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    // 5 + 5 servis, + 40 000 caractères générés / 4 — pas les 5 caractères visibles.
+    expect(row!.outputTokens).toBe(5 + 5 + 10_000);
+  });
+
   it('les reprises ont un budget : la quatrième coupure termine le travail', async () => {
     const jobId = await insertJob();
     const compteur = { appels: 0 };
@@ -908,7 +954,28 @@ describe('Stop arrête le travail PENDANT l’appel au modèle @cap:organiser-eq
     const row = await jobRow(jobId);
     expect(row.status).toBe('cancelled');
     expect(JSON.stringify(row.messages ?? [])).toContain('Le début de la note');
+    // L'appel arrêté était servi : il est compté (4 000 caractères générés / 4).
+    const [compte] = await db
+      .select({ outputTokens: agentJobs.outputTokens, inputTokens: agentJobs.inputTokens })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(compte!.outputTokens).toBe(5 + 1_000);
+    expect(compte!.inputTokens ?? 0).toBeGreaterThan(10 + 100);
   }, 20_000);
+
+  it('un Stop suivi d’un débordement de budget rend « annulé », pas « échoué »', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { stoppedThenAnswers: { jobId }, text: 'Je termine.', usageIn: 2_000_000 },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('cancelled');
+  });
 
   it('une réponse qui revient APRÈS le Stop n’exécute aucun de ses outils', async () => {
     const jobId = await insertJob();

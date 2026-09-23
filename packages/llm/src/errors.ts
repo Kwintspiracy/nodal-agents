@@ -81,6 +81,12 @@ export class LLMTimeoutError extends Error {
    * (Codex review of #449, pass 6: a tool-call-only cut looked silent).
    */
   readonly served: boolean;
+  /**
+   * Characters the model generated before the cut: text, reasoning and tool
+   * arguments. The provider bills them all, so the caller's usage estimate
+   * reads this, not the visible text alone (Codex review of #449, pass 7).
+   */
+  readonly generatedChars: number;
 
   constructor(
     public readonly provider: string,
@@ -92,6 +98,8 @@ export class LLMTimeoutError extends Error {
       resumable?: boolean;
       /** The provider had sent something (text, reasoning, tool call). */
       served?: boolean;
+      /** Everything generated before the cut (text, reasoning, tool args). */
+      generatedChars?: number;
       /** The stream error behind a `stream_error` cut. */
       cause?: unknown;
     } = {
@@ -112,6 +120,7 @@ export class LLMTimeoutError extends Error {
     this.partialText = details.partialText;
     this.resumable = details.resumable ?? details.partialText !== '';
     this.served = details.served ?? details.partialText !== '';
+    this.generatedChars = details.generatedChars ?? details.partialText.length;
   }
 }
 
@@ -141,6 +150,10 @@ export class LLMCallCancelledError extends Error {
     public readonly provider: string,
     public readonly model: string,
     public readonly partialText: string,
+    /** The provider had sent something before the Stop: the call was billed. */
+    public readonly served: boolean = partialText !== '',
+    /** Everything generated before the Stop (text, reasoning, tool args). */
+    public readonly generatedChars: number = partialText.length,
   ) {
     super(`LLM call cancelled after ${partialText.length} chars received: ${provider}/${model}`);
     this.name = 'LLMCallCancelledError';

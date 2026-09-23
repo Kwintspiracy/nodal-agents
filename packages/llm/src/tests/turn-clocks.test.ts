@@ -271,6 +271,26 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     expect(err.served).toBe(true);
   });
 
+  it('counts every generated character — reasoning and tool arguments — not only the text', async () => {
+    const state = run(
+      timedModel([
+        { atMs: 0, part: { type: 'reasoning-start', id: 'r' } },
+        reasoning(1_000, 'r'.repeat(300)),
+        { atMs: 1_000, part: { type: 'reasoning-end', id: 'r' } },
+        textStart(1_000),
+        text(1_000, 'hi'),
+        { atMs: 2_000, part: { type: 'tool-input-start', id: 'c1', toolName: 'save_memory' } },
+        { atMs: 2_000, part: { type: 'tool-input-delta', id: 'c1', delta: 'x'.repeat(50) } },
+      ]),
+    );
+
+    await vi.advanceTimersByTimeAsync(2_000 + BETWEEN_TOKENS_MS + 1);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err.partialText).toBe('hi');
+    expect(err.generatedChars).toBe(300 + 2 + 50);
+  });
+
   it('a stream silent from the start was not served', async () => {
     const state = run(timedModel([]));
 

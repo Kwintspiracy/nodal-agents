@@ -3378,6 +3378,37 @@ async function runJobTracked(
       }, STOP_POLL_MS);
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
       const appelCommenceA = Date.now();
+      // Un appel interrompu (coupé, ou arrêté par Stop) après que le
+      // fournisseur a commencé à le servir est facturé sans que rien n'en
+      // revienne : on l'ESTIME (caractères / 4) — le prompt et les définitions
+      // d'outils envoyés, et TOUT ce que le modèle a généré, raisonnement et
+      // arguments d'outils compris (revue Codex de #449, passes 1, 4 et 7).
+      const compterAppelInterrompu = async (appel: {
+        provider: string;
+        model: string;
+        generatedChars: number;
+      }): Promise<void> => {
+        const entreeEstimee =
+          estimateContextTokens({
+            system: systemPrompt,
+            messages: messagesForResume(messages, partielCeTour),
+          }) + (await estimateToolTokens(aiSdkTools));
+        const sortieEstimee = Math.ceil(appel.generatedChars / 4);
+        inputTokens += entreeEstimee;
+        effectiveInputTokens += entreeEstimee;
+        outputTokens += sortieEstimee;
+        totalCostUsd += estimateCallCostUsd(appel.provider, appel.model, {
+          inputTokens: entreeEstimee,
+          outputTokens: sortieEstimee,
+          cachedTokens: 0,
+          cacheCreationTokens: 0,
+        });
+        trace('llm_cut_call_usage_estimated', {
+          turn,
+          inputTokens: entreeEstimee,
+          outputTokens: sortieEstimee,
+        });
+      };
       try {
         response = await llmClient.generateText(
           {
@@ -3419,6 +3450,7 @@ async function runJobTracked(
         // Stop pendant l'appel : le travail s'arrête ICI, avec ce que le modèle
         // avait écrit, et aucun outil n'est exécuté.
         if (genErr instanceof LLMCallCancelledError) {
+          if (genErr.served) await compterAppelInterrompu(genErr);
           const ecrit = (partielCeTour + genErr.partialText).trim();
           if (ecrit !== '') {
             messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
@@ -3436,29 +3468,7 @@ async function runJobTracked(
           // — sans quoi trois reprises repaieraient le prompt trois fois hors des
           // plafonds de jetons et de coût (revue Codex de #449).
           if (expiration.served) {
-            // Le prompt ET les définitions d'outils : une liste MCP fournie pèse
-            // des dizaines de milliers de jetons, à chaque appel (revue Codex de
-            // #449, passe 4).
-            const entreeEstimee =
-              estimateContextTokens({
-                system: systemPrompt,
-                messages: messagesForResume(messages, partielCeTour),
-              }) + (await estimateToolTokens(aiSdkTools));
-            const sortieEstimee = Math.ceil(expiration.partialText.length / 4);
-            inputTokens += entreeEstimee;
-            effectiveInputTokens += entreeEstimee;
-            outputTokens += sortieEstimee;
-            totalCostUsd += estimateCallCostUsd(expiration.provider, expiration.model, {
-              inputTokens: entreeEstimee,
-              outputTokens: sortieEstimee,
-              cachedTokens: 0,
-              cacheCreationTokens: 0,
-            });
-            trace('llm_cut_call_usage_estimated', {
-              turn,
-              inputTokens: entreeEstimee,
-              outputTokens: sortieEstimee,
-            });
+            await compterAppelInterrompu(expiration);
             // Les plafonds 1a et 1e ne tournent qu'après une réponse servie :
             // sans ce contrôle ici, un appel coupé qui a fait déborder le budget
             // en relancerait jusqu'à trois autres, payés (revue Codex de #449,
@@ -3692,6 +3702,27 @@ async function runJobTracked(
         servedProvider = rawProvider;
       }
 
+      // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
+      // pendant que la réponse se terminait, n'exécute aucun des outils
+      // qu'elle demande. Le texte du tour est gardé. Lue AVANT les plafonds
+      // (revue Codex de #449, passe 7) : un Stop suivi d'un débordement rend
+      // `cancelled`, pas `failed` — le parent et la tâche lisent ce statut.
+      const [statutApresAppel] = await db
+        .select({ status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, jobId as string));
+      if (statutApresAppel?.status === 'cancelled') {
+        if (texteDuTour.trim() !== '') {
+          messages = [
+            ...messages,
+            { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
+          ];
+        }
+        trace('cancellation_observed', { turn, during: 'before_tools' });
+        await cancelJob(db, jobId as string, runStats(), messages);
+        return { status: 'cancelled' };
+      }
+
       // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
       // input + output, not raw input. A job that re-sends a prompt-cached
       // history (the common long-running pattern: the growing transcript is read
@@ -3747,25 +3778,6 @@ async function runJobTracked(
             evictedToolResults: ev.evicted,
           });
         }
-      }
-
-      // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
-      // pendant que la réponse se terminait, n'exécute aucun des outils
-      // qu'elle demande. Le texte du tour est gardé.
-      const [statutApresAppel] = await db
-        .select({ status: agentJobs.status })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, jobId as string));
-      if (statutApresAppel?.status === 'cancelled') {
-        if (texteDuTour.trim() !== '') {
-          messages = [
-            ...messages,
-            { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
-          ];
-        }
-        trace('cancellation_observed', { turn, during: 'before_tools' });
-        await cancelJob(db, jobId as string, runStats(), messages);
-        return { status: 'cancelled' };
       }
 
       const rawToolCalls = response.toolCalls ?? [];
