@@ -130,6 +130,10 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
       <PendingTurnProvider
         requests={feedRequests(feed.items)}
         awaitingReply={feedAwaitsReply(feed.items)}
+        // Une réponse qui s'écrit pendant qu'on était ailleurs : la page s'y
+        // rebranche (#457). Seulement là où l'on peut répondre : un fil de
+        // canal ne se joue pas par ce chat.
+        {...(canReply ? { conversationId: conversation.id } : {})}
       >
         <ThreadScreen
           // LA COLONNE DU FIL, 760 px centrés — la boîte de

@@ -140,3 +140,52 @@ export async function stopChatTurn(
     return { ok: false, stopped: false };
   }
 }
+
+/**
+ * Se rebrancher sur la réponse qui s'écrit dans cette conversation (#457) :
+ * une page ouverte PENDANT un tour lit ce qui a déjà été écrit, puis la suite.
+ *
+ * Rend `'none'` quand aucun tour ne tourne, `'ended'` quand le tour suivi est
+ * fini (sa ligne est en base : relire le fil), `'lost'` quand la lecture a
+ * cassé ou n'a pas pu s'ouvrir. `onText` reçoit le texte ENTIER connu à cet
+ * instant, comme pour l'envoi.
+ */
+export async function followLiveTurn(opts: {
+  conversationId: string;
+  onStart: (startedAt: number | null) => void;
+  onText: (text: string) => void;
+  signal: AbortSignal;
+}): Promise<'none' | 'ended' | 'lost'> {
+  let res: Response;
+  try {
+    res = await fetch('/api/chat/live', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: opts.conversationId }),
+      signal: opts.signal,
+    });
+  } catch {
+    return 'lost';
+  }
+  if (res.status === 204) return 'none';
+  if (!res.ok || res.body === null) return 'lost';
+  let accumulated = '';
+  try {
+    for await (const msg of readSseMessages(res.body)) {
+      const data = JSON.parse(msg.data) as { text?: unknown; startedAt?: unknown };
+      if (msg.event === 'start') {
+        opts.onStart(typeof data.startedAt === 'number' ? data.startedAt : null);
+        continue;
+      }
+      if (msg.event === 'delta' && typeof data.text === 'string') {
+        accumulated += data.text;
+        opts.onText(accumulated);
+        continue;
+      }
+      if (msg.event === 'end') return 'ended';
+    }
+  } catch {
+    return 'lost';
+  }
+  return 'lost';
+}

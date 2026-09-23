@@ -16,6 +16,7 @@ import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
 import { chatStreamRoute } from './routes/chat-stream.ts';
 import { chatStopRoute } from './routes/chat-stop.ts';
+import { chatLiveRoute } from './routes/chat-live.ts';
 import { webhookRoute } from './routes/webhook.ts';
 import { codeTaskDoctorRoute } from './routes/code-task-doctor.ts';
 import {
@@ -219,6 +220,7 @@ export function createApp(
   // le chemin en entier, donc `/api/chat` ne couvre pas `/api/chat/stream`.
   app.use('/api/chat/stream', requireRunnerAuth);
   app.use('/api/chat/stop', requireRunnerAuth);
+  app.use('/api/chat/live', requireRunnerAuth);
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
   // P11 — le diff d'un fichier écrit par un tour. Même garde que /api/approve :
@@ -240,6 +242,7 @@ export function createApp(
 
   app.post('/api/chat/stream', (c) => chatStreamRoute(c, deps, runnerEnv));
   app.post('/api/chat/stop', (c) => chatStopRoute(c, deps));
+  app.post('/api/chat/live', (c) => chatLiveRoute(c, deps));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 
