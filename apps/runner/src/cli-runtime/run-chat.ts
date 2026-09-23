@@ -37,6 +37,7 @@ import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.
 import { buildCliRuntimeJobContext } from './run-job.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
+import { CHAT_STOPPED_LINE } from '../chat/turn-stop.ts';
 
 const RUNTIME_CHAT_TIMEOUT_MS = 600_000;
 
@@ -46,7 +47,9 @@ export async function runCliRuntimeChatTurn(args: {
   agentRow: CliRuntimeAgentRow;
   conversationId: string;
   message: string;
-}): Promise<{ ok: true; reply: string } | { ok: false; error: string }> {
+  /** The person's Stop (#456): kills the CLI turn; the reply is the platform line. */
+  abortSignal?: AbortSignal;
+}): Promise<{ ok: true; reply: string; stopped?: boolean } | { ok: false; error: string }> {
   const { db, entityId, agentRow, message } = args;
   // Same shared-table guard as the job path — see assertRuntimeSessionKey.
   const conversationId = assertRuntimeSessionKey(args.conversationId);
@@ -244,6 +247,7 @@ export async function runCliRuntimeChatTurn(args: {
       effort: defaults.effort,
       resumeSessionId: existing?.sessionId,
       timeoutMs: RUNTIME_CHAT_TIMEOUT_MS,
+      ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
       // Same anti-loop cap as the job path (invariant #8).
       maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
       onEvent,
@@ -326,6 +330,31 @@ export async function runCliRuntimeChatTurn(args: {
       .catch((err: unknown) => {
         console.warn('[cli-runtime] chat cli_sessions upsert failed:', err);
       });
+  }
+
+  // Stop (#456) : le processus a été tué à la demande de la personne. Ce n'est
+  // pas une panne du runtime — c'est la réponse arrêtée, dite par la ligne de
+  // plateforme, suivie du texte final s'il en était sorti un.
+  if (args.abortSignal?.aborted) {
+    const kept = turn.finalText.trim();
+    const reply =
+      kept === ''
+        ? CHAT_STOPPED_LINE
+        : `${kept}
+
+${CHAT_STOPPED_LINE}`;
+    await db.insert(chatMessages).values({
+      entityId,
+      agentId: agentRow.id,
+      conversationId,
+      role: 'assistant',
+      content: reply,
+    });
+    await db
+      .update(conversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(conversations.id, conversationId));
+    return { ok: true, reply, stopped: true };
   }
 
   if (turn.isError || turn.finalText === '') {

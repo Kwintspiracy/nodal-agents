@@ -10,7 +10,6 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { streamText } from 'ai';
-import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, chatMessages, conversations } from '@nodal-agents/db';
@@ -46,6 +45,60 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
  * demandé, une demande d'escalade (`run_task`) glissée après le troisième. Il
  * n'y a QUE le Stop pour terminer ce tour. `mute` : il ne dit jamais rien.
  */
+/**
+ * Un modèle qui répond vite, SANS escalade, puis dont la relance d'escalade
+ * (`generateText`) prend du temps et finirait par demander un `run_task` —
+ * sauf si le Stop l'abandonne.
+ */
+function slowRecheckClient(): RunnerDeps['llmClient'] {
+  const model = new MockLanguageModelV3({
+    provider: 'mock',
+    modelId: 'mock',
+    doStream: async () => ({
+      stream: new ReadableStream<Record<string, unknown>>({
+        start(controller) {
+          controller.enqueue({ type: 'stream-start', warnings: [] });
+          controller.enqueue({ type: 'text-start', id: 't' });
+          controller.enqueue({ type: 'text-delta', id: 't', delta: 'Je vais chercher ça.' });
+          controller.enqueue({ type: 'text-end', id: 't' });
+          controller.enqueue({
+            type: 'finish',
+            finishReason: { unified: 'stop', raw: 'stop' },
+            usage: {
+              inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
+              outputTokens: { total: 1, text: 1, reasoning: undefined },
+            },
+          });
+          controller.close();
+        },
+      }) as never,
+    }),
+  });
+  const client = endlessClient();
+  return {
+    ...client,
+    streamText: (args) =>
+      streamText({ ...args, model } as Parameters<typeof streamText>[0]) as ReturnType<
+        RunnerDeps['llmClient']['streamText']
+      >,
+    generateText: ((_args: unknown, opts?: { abortSignal?: AbortSignal }) =>
+      new Promise((resolve, reject) => {
+        const t = setTimeout(
+          () =>
+            resolve({
+              text: '',
+              toolCalls: [{ toolName: 'run_task', input: { instruction: 'go' } }],
+            }),
+          300,
+        );
+        opts?.abortSignal?.addEventListener('abort', () => {
+          clearTimeout(t);
+          reject(new Error('aborted'));
+        });
+      })) as unknown as RunnerDeps['llmClient']['generateText'],
+  };
+}
+
 function endlessClient(
   opts: { escalates?: boolean; mute?: boolean } = {},
 ): RunnerDeps['llmClient'] {
@@ -53,7 +106,7 @@ function endlessClient(
     provider: 'mock',
     modelId: 'mock',
     doStream: async () => ({
-      stream: new ReadableStream<LanguageModelV3StreamPart>({
+      stream: new ReadableStream<Record<string, unknown>>({
         start(controller) {
           controller.enqueue({ type: 'stream-start', warnings: [] });
           if (opts.mute) return;
@@ -76,7 +129,7 @@ function endlessClient(
             }
           }, 10);
         },
-      }),
+      }) as never,
     }),
   });
   return {
@@ -185,6 +238,29 @@ describe('Stop dans le chat @cap:parler-a-un-agent/moteur', () => {
     const result = await turn;
 
     expect(result).toMatchObject({ ok: true, stopped: true });
+    const jobs = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conv));
+    expect(jobs).toEqual([]);
+  });
+
+  it('un Stop pendant la relance d’escalade : aucun job, la réponse gardée', async () => {
+    setActiveLlmClient(slowRecheckClient());
+    const conv = await newConversation();
+    const { turn, shown } = playTurn(conv);
+
+    // La réponse est écrite ; la relance d'escalade tourne (300 ms).
+    await waitFor(() => shown.join('').includes('chercher'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stopChatTurn(conv)).toBe(true);
+    const result = await turn;
+
+    expect(result).toMatchObject({ ok: true, stopped: true });
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.reply).toBe(`Je vais chercher ça.
+
+${CHAT_STOPPED_LINE}`);
     const jobs = await db
       .select({ id: agentJobs.id })
       .from(agentJobs)

@@ -101,6 +101,8 @@ export interface ClaudeTurnOptions {
   effort?: string;
   resumeSessionId?: string;
   timeoutMs: number;
+  /** The person's Stop (#456): kills the CLI process tree at once. */
+  abortSignal?: AbortSignal;
   /**
    * Anti-loop guard (invariant #8): kill the CLI past this many tool_use
    * events in one turn. The Nodal loop's maxToolCallsPerTurn does not see a
@@ -377,6 +379,7 @@ function spawnClaudeTurn(
     cwd: opts.cwd,
     stdin: opts.message,
     timeoutMs: opts.timeoutMs,
+    ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
     ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
     // Rend le NOMBRE d'appels d'outils de la ligne : c'est ce qui nourrit le
     // garde anti-boucle, que la mécanique de processus applique sans rien

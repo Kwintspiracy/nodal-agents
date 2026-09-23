@@ -390,6 +390,7 @@ export async function runChatTurn(opts: {
       },
       conversationId,
       message,
+      ...(abortSignal ? { abortSignal } : {}),
     });
   }
 
@@ -622,19 +623,26 @@ ${CHAT_STOPPED_LINE}`;
   //     aurait été un troisième prompt à tenir cohérent avec les deux autres.
   if (!runTask && text) {
     try {
-      const recheck = await llmClient.generateText({
-        messages: [
-          { role: 'user', content: message },
-          { role: 'assistant', content: text },
-          { role: 'user', content: ESCALATION_RECHECK },
-        ],
-        tools: CHAT_TOOLS,
-      });
+      const recheck = await llmClient.generateText(
+        {
+          messages: [
+            { role: 'user', content: message },
+            { role: 'assistant', content: text },
+            { role: 'user', content: ESCALATION_RECHECK },
+          ],
+          tools: CHAT_TOOLS,
+        },
+        abortSignal ? { abortSignal } : undefined,
+      );
       runTask = (recheck.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
     } catch {
       // Keep the original text reply — recovery is best-effort.
     }
   }
+
+  // Stop pendant la relance d'escalade (#456, revue Codex passe 8) : rien ne
+  // se lance après le Stop, pas même un job que la relance aurait demandé.
+  if (abortSignal?.aborted) return await keepStoppedReply();
 
   // 6a. ESCALATION: the agent wants to act → spawn a real job (the unit of work).
   //     The spawned job runs the ROOT with its full toolset (delegating to
@@ -716,12 +724,17 @@ ${CHAT_STOPPED_LINE}`;
   let replyText = text;
   if (!replyText) {
     try {
-      const retry = await llmClient.generateText({ system: systemPrompt, messages });
+      const retry = await llmClient.generateText(
+        { system: systemPrompt, messages },
+        abortSignal ? { abortSignal } : undefined,
+      );
+      if (abortSignal?.aborted) return await keepStoppedReply();
       replyText = (retry.text ?? '').trim();
       // Cette réponse-là n'est jamais passée par le flux : ce qui a pu être
       // montré mot à mot, s'il y a eu quoi que ce soit, n'était pas elle.
       streamed = false;
     } catch {
+      if (abortSignal?.aborted) return await keepStoppedReply();
       return { ok: false, error: 'llm_error' };
     }
   }
