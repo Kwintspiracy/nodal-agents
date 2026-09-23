@@ -16,7 +16,12 @@ export {
 } from './errors';
 export type { MessageStructureErrorCode, LlmTimeoutReason } from './errors';
 export type { GenerateTextCallOptions } from './types';
-export { computeTurnClocks, isLocalEndpoint, estimateContextTokens } from './turn-clocks';
+export {
+  computeTurnClocks,
+  isLocalEndpoint,
+  estimateContextTokens,
+  estimateToolTokens,
+} from './turn-clocks';
 export type { TurnClocks } from './turn-clocks';
 
 // Client factory

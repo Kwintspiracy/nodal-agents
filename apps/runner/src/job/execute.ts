@@ -54,6 +54,7 @@ import {
   isContextOverflowError,
   validateMessageStructure,
   estimateContextTokens,
+  estimateToolTokens,
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
@@ -3398,10 +3399,14 @@ async function runJobTracked(
           // — sans quoi trois reprises repaieraient le prompt trois fois hors des
           // plafonds de jetons et de coût (revue Codex de #449).
           if (expiration.partialText !== '') {
-            const entreeEstimee = estimateContextTokens({
-              system: systemPrompt,
-              messages: messagesForResume(messages, partielCeTour),
-            });
+            // Le prompt ET les définitions d'outils : une liste MCP fournie pèse
+            // des dizaines de milliers de jetons, à chaque appel (revue Codex de
+            // #449, passe 4).
+            const entreeEstimee =
+              estimateContextTokens({
+                system: systemPrompt,
+                messages: messagesForResume(messages, partielCeTour),
+              }) + (await estimateToolTokens(aiSdkTools));
             const sortieEstimee = Math.ceil(expiration.partialText.length / 4);
             inputTokens += entreeEstimee;
             effectiveInputTokens += entreeEstimee;

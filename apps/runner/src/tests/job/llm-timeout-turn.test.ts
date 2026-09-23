@@ -22,7 +22,13 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, agents } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
-import { createEmbeddingClient, AllProvidersFailedError, LLMTimeoutError } from '@nodal-agents/llm';
+import {
+  createEmbeddingClient,
+  AllProvidersFailedError,
+  LLMTimeoutError,
+  estimateContextTokens,
+  estimateToolTokens,
+} from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
@@ -97,6 +103,7 @@ function makeMockLlmClient(
   responses: MockTurn[],
   compteur?: { appels: number },
   requetes?: unknown[][],
+  argsBruts?: Array<Parameters<RunnerDeps['llmClient']['generateText']>[0]>,
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
   const mockModel = new MockLanguageModelV3({
@@ -147,6 +154,7 @@ function makeMockLlmClient(
     generateText: (args) => {
       if (compteur) compteur.appels += 1;
       requetes?.push(JSON.parse(JSON.stringify(args.messages ?? [])) as unknown[]);
+      argsBruts?.push(args);
       const prevu = responses[callIndex];
       if (prevu && 'cutWhileWriting' in prevu) {
         // Un tour streamé coupé EN PLEINE ÉCRITURE (#440) : l'expiration porte
@@ -618,6 +626,43 @@ describe('un tour coupé EN PLEINE ÉCRITURE est repris, jamais rejoué (#441) @
     // L'entrée de l'appel coupé est le prompt entier : bien plus que les 2 × 10
     // des deux appels servis.
     expect(row!.inputTokens ?? 0).toBeGreaterThan(20 + 100);
+  });
+
+  it('l’estimation de l’appel coupé compte le prompt ET les définitions d’outils envoyés', async () => {
+    const jobId = await insertJob();
+    const argsBruts: Array<Parameters<RunnerDeps['llmClient']['generateText']>[0]> = [];
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { cutWhileWriting: MOITIE },
+          {
+            text: SUITE,
+            toolCalls: [
+              { toolCallId: 'rr-6', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        undefined,
+        undefined,
+        argsBruts,
+      ),
+    );
+
+    await executeJob(jobId as JobId, deps, testEnv);
+
+    // Ce que l'appel coupé envoyait VRAIMENT : son système, ses messages, ses outils.
+    const coupe = argsBruts[1]! as { system?: unknown; messages?: unknown; tools?: unknown };
+    const outils = await estimateToolTokens(coupe.tools);
+    expect(outils).toBeGreaterThan(0);
+    const attendu =
+      estimateContextTokens({ system: coupe.system, messages: coupe.messages }) + outils;
+    const [row] = await db
+      .select({ inputTokens: agentJobs.inputTokens })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    // Deux appels servis à 10 jetons d'entrée chacun + l'appel coupé, estimé.
+    expect(row!.inputTokens).toBe(10 + 10 + attendu);
   });
 
   it('coupé APRÈS un appel d’outil, le tour est REJOUÉ, pas repris : l’appel n’est pas perdu', async () => {

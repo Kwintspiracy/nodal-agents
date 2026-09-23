@@ -276,6 +276,20 @@ export async function consumeUnderClocks(
         armSilence();
       }
     } catch (err) {
+      // A stream that BREAKS after writing (network drop, 5xx mid-stream) is
+      // the same loss as one that goes silent: the text it wrote is the work.
+      // It surfaces as a `stream_error` cut carrying that text, so the runner
+      // resumes from it instead of `withRetry` replaying from scratch (Codex
+      // review of #449, pass 4). Before any text, the raw error is thrown and
+      // the retry/failover layers handle it as they always did.
+      if (!expired && partialText !== '') {
+        throw new LLMTimeoutError(providerModel.provider, providerModel.model, 0, {
+          reason: 'stream_error',
+          partialText,
+          resumable: !sawStructured,
+          cause: err,
+        });
+      }
       if (!expired) throw err;
     }
     if (expired !== null) {

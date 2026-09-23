@@ -79,7 +79,13 @@ export class LLMTimeoutError extends Error {
     public readonly provider: string,
     public readonly model: string,
     public readonly timeoutMs: number,
-    details: { reason: LlmTimeoutReason; partialText: string; resumable?: boolean } = {
+    details: {
+      reason: LlmTimeoutReason;
+      partialText: string;
+      resumable?: boolean;
+      /** The stream error behind a `stream_error` cut. */
+      cause?: unknown;
+    } = {
       reason: 'wall',
       partialText: '',
     },
@@ -87,7 +93,10 @@ export class LLMTimeoutError extends Error {
     super(
       details.reason === 'wall'
         ? `LLM call timed out after ${timeoutMs}ms: ${provider}/${model}`
-        : `LLM call timed out after ${timeoutMs}ms (${details.reason}, ${details.partialText.length} chars received): ${provider}/${model}`,
+        : details.reason === 'stream_error'
+          ? `LLM stream broke after ${details.partialText.length} chars received (${details.cause instanceof Error ? details.cause.message.slice(0, 160) : String(details.cause).slice(0, 160)}): ${provider}/${model}`
+          : `LLM call timed out after ${timeoutMs}ms (${details.reason}, ${details.partialText.length} chars received): ${provider}/${model}`,
+      details.cause === undefined ? undefined : { cause: details.cause },
     );
     this.name = 'LLMTimeoutError';
     this.reason = details.reason;
@@ -100,7 +109,13 @@ export type LlmTimeoutReason =
   | 'wall'
   | 'idle_before_first_token'
   | 'idle_between_tokens'
-  | 'absolute';
+  | 'absolute'
+  /**
+   * Not a clock: the stream broke with an error AFTER writing text. Carried
+   * on the same error so the whole cut path (no replay from scratch, no
+   * failover, resume from the text) applies to it unchanged.
+   */
+  | 'stream_error';
 
 // ─── RetryExhaustedError ───────────────────────────────────────────────────────
 

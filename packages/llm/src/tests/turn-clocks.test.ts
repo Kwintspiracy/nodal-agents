@@ -263,19 +263,35 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     expect((state.error as LLMTimeoutError).resumable).toBe(true);
   });
 
-  it('a stream error part is thrown as the error it carries, not as a timeout', async () => {
+  it('a stream error BEFORE any text is thrown as the error it carries', async () => {
+    const boom = new Error('upstream 502');
+    const state = run(timedModel([{ atMs: 2_000, part: { type: 'error', error: boom } }]));
+
+    await vi.advanceTimersByTimeAsync(2_001);
+
+    expect(state.error).toBe(boom);
+  });
+
+  it('a stream that BREAKS after writing keeps its text as a resumable stream_error cut', async () => {
     const boom = new Error('upstream 502');
     const state = run(
       timedModel([
         textStart(1_000),
-        text(1_000, 'a'),
+        text(1_000, 'Half of the '),
+        text(1_500, 'note'),
         { atMs: 2_000, part: { type: 'error', error: boom } },
       ]),
     );
 
     await vi.advanceTimersByTimeAsync(2_001);
 
-    expect(state.error).toBe(boom);
+    const err = state.error as LLMTimeoutError;
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect(err.reason).toBe('stream_error');
+    expect(err.partialText).toBe('Half of the note');
+    expect(err.resumable).toBe(true);
+    expect(err.cause).toBe(boom);
+    expect(err.message).toContain('upstream 502');
   });
 });
 
