@@ -244,6 +244,37 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
     expect(res.outcome).toBe('error');
   });
 
+  it('an unquoted glob is judged outside: it may reach a link that leads out (Codex pass 3, P1)', async () => {
+    await forgetWrites();
+
+    const res = await run('type d*', gate({ ...DEFAULT_SHELL_POLICY, outside_folders: 'never' }));
+
+    expect(res.outcome).toBe('error');
+  });
+
+  it('inline code counts as leaving the folders when that is restricted (Codex pass 3, P1)', async () => {
+    await forgetWrites();
+
+    const res = await run(
+      `python -c "print(open('/etc/passwd').read())"`,
+      gate({ ...DEFAULT_SHELL_POLICY, own_script: 'allow', outside_folders: 'never' }),
+    );
+
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toContain('read or change files outside its folders');
+  });
+
+  it('a script without extension, run by its path, is judged like any script (Codex pass 3, P1)', async () => {
+    await forgetWrites();
+    await setJobStart(new Date(Date.now() - 60_000));
+    await writeFile(join(folder, 'build'), '#!/bin/sh\necho hi\n');
+    const res = await run('./build', gate({ ...DEFAULT_SHELL_POLICY, own_script: 'never' }));
+    await setJobStart(new Date(Date.now() + 5_000));
+
+    expect(res.outcome).toBe('error');
+  });
+
   it('a Yolo rule does not reopen the folders: outside still asks', async () => {
     await forgetWrites();
     const yolo: ApprovalRule = {
