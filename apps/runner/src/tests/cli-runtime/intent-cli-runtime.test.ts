@@ -15,6 +15,7 @@ import {
   agents,
   agentJobs,
   agentWorkspaces,
+  chatMessages,
   codeProjects,
   conversations,
   jobDeliverableVerificationState,
@@ -406,6 +407,44 @@ describe('run-chat : le jumeau, sans jobId @cap:verifier-un-livrable/moteur', ()
     await tourDeChat('write');
 
     expect(await epochOfChat(alpha)).toBe(1);
+  });
+
+  it('Stop avant le `result` de Claude : la réponse gardée est le texte déjà dit (#456) @cap:parler-a-un-agent/moteur', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, origin: 'user' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('insert conversation');
+    const stop = new AbortController();
+    // Claude a dit deux messages, puis le Stop tue le processus avant `result` :
+    // `finishTurn` rend alors un texte final vide.
+    fakeRun.mockImplementationOnce(async (opts: unknown) => {
+      const { onEvent } = opts as { onEvent: (e: ClaudeTurnEvent) => void };
+      onEvent({ kind: 'assistant_text', text: 'Premier paragraphe.' });
+      onEvent({ kind: 'assistant_text', text: 'Deuxième, coupé' });
+      stop.abort();
+      return { ...greenTurn(), finalText: '', isError: true, errorDetail: 'cli_stream_incomplete' };
+    });
+
+    const result = await runCliRuntimeChatTurn({
+      db: db as unknown as Parameters<typeof runCliRuntimeChatTurn>[0]['db'],
+      entityId: seed.entityId,
+      agentRow: { ...baseAgent, cliPermissions: { mode: 'read' } },
+      conversationId: conv.id,
+      message: 'écris',
+      abortSignal: stop.signal,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      reply: 'Premier paragraphe.\n\nDeuxième, coupé',
+      stopped: true,
+    });
+    const rows = await db
+      .select({ content: chatMessages.content, stopped: chatMessages.stopped })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv.id));
+    expect(rows).toEqual([{ content: 'Premier paragraphe.\n\nDeuxième, coupé', stopped: true }]);
   });
 
   it('read : rien n’est écrit, donc rien ne vieillit — pas même une ligne code_projects', async () => {

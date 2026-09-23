@@ -35,6 +35,7 @@ import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
+import { stoppedReplyNote, untilStopped } from './turn-stop.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
 // size — 20 large turns (verbose replies, or several escalation blocks with
@@ -134,6 +135,8 @@ export type ChatTurnResult =
        * à deviner si ce qu'il a montré mot à mot est bien la réponse.
        */
       streamed?: boolean;
+      /** La personne a arrêté ce tour (#456) : `reply` est ce qui avait été écrit. */
+      stopped?: boolean;
     }
   | { ok: false; error: string };
 
@@ -201,6 +204,8 @@ function totalHistoryChars(blocks: ReadonlyArray<ReadonlyArray<ModelMessage>>): 
 interface HistoryRow {
   role: string;
   content: string;
+  /** Réponse arrêtée par la personne (#456) : le modèle doit le savoir. */
+  stopped?: boolean;
   jobId: string | null;
   jobTask: string | null;
   jobStatus: string | null;
@@ -234,8 +239,12 @@ function buildHistoryBlock(
     const toolCallId = `hist-${r.jobId}`;
     const ackText = r.content ? truncateFn(r.content) : '';
     const dispatchOutput = truncateFn(buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError));
-    const outputValue =
+    const withLedger =
       ledgerLines.length > 0 ? `${dispatchOutput}\n\n${ledgerLines.join('\n')}` : dispatchOutput;
+    // Un Stop après l'escalade (#456) marque l'accusé `stopped` et annule le
+    // job : sans la note, le modèle suivant lirait une annulation ordinaire,
+    // pas la personne qui a arrêté (revue Codex de #459, passe 4).
+    const outputValue = r.stopped === true ? `${withLedger}\n\n${stoppedReplyNote()}` : withLedger;
     return [
       {
         role: 'assistant',
@@ -266,7 +275,13 @@ function buildHistoryBlock(
       },
     ];
   }
-  return [{ role: r.role as 'user' | 'assistant', content: truncateFn(r.content) }];
+  const content =
+    r.role === 'assistant' && r.stopped === true
+      ? `${truncateFn(r.content)}
+
+${stoppedReplyNote()}`
+      : truncateFn(r.content);
+  return [{ role: r.role as 'user' | 'assistant', content }];
 }
 
 export async function runChatTurn(opts: {
@@ -292,8 +307,15 @@ export async function runChatTurn(opts: {
    * quoi un texte tronqué passerait pour la réponse (invariant #4).
    */
   onTextDelta?: (delta: string) => void;
+  /**
+   * Le Stop de la personne (#456), posé par `withChatTurnStop`. Déclenché,
+   * il coupe l'appel en cours : ce qui a été écrit est gardé, suivi de
+   * `chat_messages.stopped`, et rien d'autre ne se joue — ni recheck
+   * d'escalade, ni relance sans outils, ni job lancé.
+   */
+  abortSignal?: AbortSignal;
 }): Promise<ChatTurnResult> {
-  const { deps, entityId, agentId, conversationId, message, onTextDelta } = opts;
+  const { deps, entityId, agentId, conversationId, message, onTextDelta, abortSignal } = opts;
   const db = deps.db;
 
   // 1. Load + verify the agent belongs to this entity.
@@ -380,6 +402,7 @@ export async function runChatTurn(opts: {
       },
       conversationId,
       message,
+      ...(abortSignal ? { abortSignal } : {}),
     });
   }
 
@@ -444,6 +467,7 @@ export async function runChatTurn(opts: {
     .select({
       role: chatMessages.role,
       content: chatMessages.content,
+      stopped: chatMessages.stopped,
       jobId: chatMessages.jobId,
       jobTask: agentJobs.task,
       jobStatus: agentJobs.status,
@@ -524,6 +548,32 @@ export async function runChatTurn(opts: {
   // à faux, tenu vrai par le seul chemin qui le diffuse, et remis à faux par
   // la relance sans outils qui, elle, ne diffuse rien.
   let streamed = false;
+  // Ce que le flux a déjà dit, gardé si la personne arrête le tour (#456).
+  let partial = '';
+  /**
+   * Le tour arrêté par la personne : ce qui a été écrit, suivi de la ligne de
+   * plateforme, devient la réponse de ce tour. Aucun job, aucun recheck,
+   * aucune relance — la personne a demandé que ça s'arrête.
+   */
+  const keepStoppedReply = async (): Promise<ChatTurnResult> => {
+    // Le flux remplit `partial` au fil de l'eau ; le chemin sans flux reçoit
+    // sa réponse entière d'un coup dans `text`. Un Stop pendant la relance
+    // d'escalade ne doit perdre ni l'un ni l'autre (revue Codex de #459, passe 3).
+    const reply = (partial.trim() !== '' ? partial : text).trim();
+    await db.insert(chatMessages).values({
+      entityId,
+      agentId,
+      conversationId,
+      role: 'assistant',
+      content: reply,
+      stopped: true,
+    });
+    await db
+      .update(conversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(conversations.id, conversationId));
+    return { ok: true, reply, streamed: true, stopped: true };
+  };
   try {
     if (onTextDelta) {
       // Le MÊME appel, dit au fur et à mesure (#152). `streamText` rend son
@@ -534,23 +584,30 @@ export async function runChatTurn(opts: {
         system: systemPrompt,
         messages,
         tools: CHAT_TOOLS,
+        ...(abortSignal ? { abortSignal } : {}),
       });
-      for await (const delta of result.textStream) onTextDelta(delta);
+      for await (const delta of untilStopped(result.textStream, abortSignal)) {
+        partial += delta;
+        onTextDelta(delta);
+      }
+      if (abortSignal?.aborted) return await keepStoppedReply();
       text = ((await result.text) ?? '').trim();
       runTask = ((await result.toolCalls) ?? []).find((tc) => tc.toolName === 'run_task');
       // Après les `await` : une erreur en cours de flux passe par le catch, et
       // le texte de ce tour viendra alors d'ailleurs.
       streamed = true;
     } else {
-      const response = await llmClient.generateText({
-        system: systemPrompt,
-        messages,
-        tools: CHAT_TOOLS,
-      });
+      const response = await llmClient.generateText(
+        { system: systemPrompt, messages, tools: CHAT_TOOLS },
+        // Le chemin de secours (`/api/chat`) s'arrête lui aussi (#456).
+        abortSignal ? { abortSignal } : undefined,
+      );
       text = (response.text ?? '').trim();
       runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
     }
   } catch (err) {
+    // Stop pendant l'appel : ce n'est pas une panne, rien ne se rejoue.
+    if (abortSignal?.aborted) return await keepStoppedReply();
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
     // invariant 4) and fall through to the tool-free retry so conversation works.
@@ -581,19 +638,26 @@ export async function runChatTurn(opts: {
   //     aurait été un troisième prompt à tenir cohérent avec les deux autres.
   if (!runTask && text) {
     try {
-      const recheck = await llmClient.generateText({
-        messages: [
-          { role: 'user', content: message },
-          { role: 'assistant', content: text },
-          { role: 'user', content: ESCALATION_RECHECK },
-        ],
-        tools: CHAT_TOOLS,
-      });
+      const recheck = await llmClient.generateText(
+        {
+          messages: [
+            { role: 'user', content: message },
+            { role: 'assistant', content: text },
+            { role: 'user', content: ESCALATION_RECHECK },
+          ],
+          tools: CHAT_TOOLS,
+        },
+        abortSignal ? { abortSignal } : undefined,
+      );
       runTask = (recheck.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
     } catch {
       // Keep the original text reply — recovery is best-effort.
     }
   }
+
+  // Stop pendant la relance d'escalade (#456, revue Codex passe 8) : rien ne
+  // se lance après le Stop, pas même un job que la relance aurait demandé.
+  if (abortSignal?.aborted) return await keepStoppedReply();
 
   // 6a. ESCALATION: the agent wants to act → spawn a real job (the unit of work).
   //     The spawned job runs the ROOT with its full toolset (delegating to
@@ -636,14 +700,17 @@ export async function runChatTurn(opts: {
     // (invariant #2) — content is empty and the UI shows just the dispatch card
     // + the eventual job result, never a fabricated runner string.
     const reply = text;
-    await db.insert(chatMessages).values({
-      entityId,
-      agentId,
-      conversationId,
-      role: 'assistant',
-      content: reply,
-      jobId: job?.id ?? null,
-    });
+    const [ackRow] = await db
+      .insert(chatMessages)
+      .values({
+        entityId,
+        agentId,
+        conversationId,
+        role: 'assistant',
+        content: reply,
+        jobId: job?.id ?? null,
+      })
+      .returning({ id: chatMessages.id });
     await db
       .update(conversations)
       .set({ updatedAt: new Date() })
@@ -661,8 +728,28 @@ export async function runChatTurn(opts: {
       userMessage: message,
       agentReply: reply,
       generate: (system, prompt) =>
-        llmClient.generateText({ system, messages: [{ role: 'user', content: prompt }] }),
+        llmClient.generateText(
+          { system, messages: [{ role: 'user', content: prompt }] },
+          abortSignal ? { abortSignal } : undefined,
+        ),
     });
+
+    // Stop arrivé PENDANT la création du job (#456, revue Codex de #459) : le
+    // job est né mais ne partira pas. Il est marqué annulé — il paraît donc
+    // tel quel dans Runs —, la réponse est marquée arrêtée, et l'appelant ne
+    // reçoit aucun job à lancer.
+    if (abortSignal?.aborted) {
+      if (job?.id) {
+        await db
+          .update(agentJobs)
+          .set({ status: 'cancelled', updatedAt: new Date() })
+          .where(eq(agentJobs.id, job.id));
+      }
+      if (ackRow?.id) {
+        await db.update(chatMessages).set({ stopped: true }).where(eq(chatMessages.id, ackRow.id));
+      }
+      return { ok: true, reply, streamed, stopped: true };
+    }
 
     return { ok: true, reply, spawnedJobId: job?.id, streamed };
   }
@@ -675,19 +762,25 @@ export async function runChatTurn(opts: {
   let replyText = text;
   if (!replyText) {
     try {
-      const retry = await llmClient.generateText({ system: systemPrompt, messages });
+      const retry = await llmClient.generateText(
+        { system: systemPrompt, messages },
+        abortSignal ? { abortSignal } : undefined,
+      );
+      if (abortSignal?.aborted) return await keepStoppedReply();
       replyText = (retry.text ?? '').trim();
       // Cette réponse-là n'est jamais passée par le flux : ce qui a pu être
       // montré mot à mot, s'il y a eu quoi que ce soit, n'était pas elle.
       streamed = false;
     } catch {
+      if (abortSignal?.aborted) return await keepStoppedReply();
       return { ok: false, error: 'llm_error' };
     }
   }
   if (!replyText) return { ok: false, error: 'empty_reply' };
-  await db
+  const [replyRow] = await db
     .insert(chatMessages)
-    .values({ entityId, agentId, conversationId, role: 'assistant', content: replyText });
+    .values({ entityId, agentId, conversationId, role: 'assistant', content: replyText })
+    .returning({ id: chatMessages.id });
   await db
     .update(conversations)
     .set({ updatedAt: new Date() })
@@ -702,9 +795,22 @@ export async function runChatTurn(opts: {
     conversationId,
     userMessage: message,
     agentReply: replyText,
+    // Le Stop atteint aussi cet appel (revue Codex de #459, passe 2).
     generate: (system, prompt) =>
-      llmClient.generateText({ system, messages: [{ role: 'user', content: prompt }] }),
+      llmClient.generateText(
+        { system, messages: [{ role: 'user', content: prompt }] },
+        abortSignal ? { abortSignal } : undefined,
+      ),
   });
+
+  // Stop pendant la génération du titre : la réponse était déjà écrite et
+  // enregistrée ; elle est marquée arrêtée, et le tour le dit (#456).
+  if (abortSignal?.aborted) {
+    if (replyRow?.id) {
+      await db.update(chatMessages).set({ stopped: true }).where(eq(chatMessages.id, replyRow.id));
+    }
+    return { ok: true, reply: replyText, streamed, stopped: true };
+  }
 
   return { ok: true, reply: replyText, streamed };
 }

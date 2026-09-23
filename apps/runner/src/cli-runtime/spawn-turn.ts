@@ -25,6 +25,12 @@ export interface SpawnTurnOptions<TResult> {
   stdin: string;
   timeoutMs: number;
   /**
+   * Le Stop de la personne (#456) : déclenché, il tue l'arbre de processus
+   * comme l'expiration le fait, sans attendre le délai. Le tour se termine
+   * sur l'issue du processus tué ; c'est l'appelant qui sait que c'était un Stop.
+   */
+  abortSignal?: AbortSignal;
+  /**
    * Garde anti-boucle (invariant #8) : au-delà de ce nombre d'appels d'outils
    * dans un tour, la CLI est tuée. Le compteur du loop Nodal ne voit pas la
    * boucle INTERNE d'une CLI ; c'est son équivalent à cette couture.
@@ -171,6 +177,7 @@ export function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      opts.abortSignal?.removeEventListener('abort', onStop);
       if (graceTimer) clearTimeout(graceTimer);
       // Vider une dernière ligne non terminée : la ligne de résultat finit
       // d'ordinaire par \n, mais on ne le suppose jamais.
@@ -191,6 +198,15 @@ export function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<
       killTree();
       graceTimer = setTimeout(() => finish(null), KILL_GRACE_MS);
     }, opts.timeoutMs);
+
+    // Stop : le même geste que l'expiration, tout de suite.
+    const onStop = (): void => {
+      if (settled) return;
+      killTree();
+      graceTimer ??= setTimeout(() => finish(null), KILL_GRACE_MS);
+    };
+    if (opts.abortSignal?.aborted) onStop();
+    else opts.abortSignal?.addEventListener('abort', onStop, { once: true });
 
     child.on('error', (err: Error) => {
       stderr += `\nspawn_error: ${err.message}`;

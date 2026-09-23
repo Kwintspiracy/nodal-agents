@@ -19,6 +19,7 @@
 
 import type { ReactNode } from 'react';
 import PendingTurn, { usePendingTurn } from './PendingTurn.tsx';
+import ThreadScroller from './[id]/ThreadScroller.tsx';
 
 export default function NewConversationBody({
   greeting,
@@ -38,19 +39,40 @@ export default function NewConversationBody({
   const parti = pending.length > 0 || inFlight;
 
   return (
-    // `overflow-y-auto` : un premier message long ne doit pas pousser la saisie
-    // hors de l'écran — la colonne défile, la saisie reste.
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-start gap-8 overflow-y-auto px-5 pt-[30vh] sm:px-8 lg:px-9">
+    // Deux dispositions, UN seul arbre. Au repos, l'accueil et la saisie sont
+    // posés au tiers de la hauteur. Dès qu'un message part, c'est un fil : la
+    // réponse défile dans SA zone et la saisie reste ANCRÉE en bas, comme sur
+    // `/chat/<id>`. Avant (Quentin, 23/09), la saisie vivait dans la colonne
+    // qui défile, sous la réponse : une réponse longue la poussait hors de
+    // l'écran au fil de l'écriture, et le bouton Stop avec elle.
+    //
+    // La saisie garde la MÊME place dans l'arbre dans les deux cas : la
+    // déplacer la remonterait, et le compositeur perdrait la conversation dont
+    // la réponse s'écrit — Stop ne saurait plus quoi arrêter.
+    <div
+      className={`flex min-h-0 flex-1 flex-col items-center justify-start px-5 sm:px-8 lg:px-9 ${
+        parti ? '' : 'gap-8 pt-[30vh]'
+      }`}
+    >
       {parti ? (
-        <div className="w-full">
-          <PendingTurn agentName={agentName} agentAvatarUrl={agentAvatarUrl} />
-        </div>
+        // La MÊME zone que le fil (`ThreadScroller`) : elle suit le bas pendant
+        // que la réponse s'écrit, comme dans tout chat — le dernier mot reste
+        // visible au-dessus de la saisie, le texte monte (Quentin, 23/09 : avant,
+        // il continuait sous la saisie). Remonter pour relire coupe le suivi.
+        <ThreadScroller className="min-h-0 w-full flex-1 overflow-y-auto pt-6 pb-4 [scrollbar-gutter:stable]">
+          {/* Un seul enfant : c'est LUI dont la hauteur est observée. */}
+          <div>
+            <PendingTurn agentName={agentName} agentAvatarUrl={agentAvatarUrl} />
+          </div>
+        </ThreadScroller>
       ) : (
-        // Display/28 de la planche, avec l'interlettrage du titre de page — la
-        // même paire que `PageHeader`, pas une valeur inventée ici.
-        <p className="text-center text-display-28 tracking-[-0.015em] text-ink">{greeting}</p>
+        <div className="w-full">
+          {/* Display/28 de la planche, avec l'interlettrage du titre de page —
+              la même paire que `PageHeader`, pas une valeur inventée ici. */}
+          <p className="text-center text-display-28 tracking-[-0.015em] text-ink">{greeting}</p>
+        </div>
       )}
-      <div className="w-full">{composer}</div>
+      <div className={`w-full ${parti ? 'shrink-0 pt-2 pb-3' : ''}`}>{composer}</div>
     </div>
   );
 }

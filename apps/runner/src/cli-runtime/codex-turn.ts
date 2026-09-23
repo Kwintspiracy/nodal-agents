@@ -539,6 +539,7 @@ export async function runCodexTurn(opts: CodexTurnOptions): Promise<CodexTurnRes
     cwd: opts.cwd,
     stdin: buildCodexStdin({ message: opts.message, personality: opts.personality }),
     timeoutMs: opts.timeoutMs,
+    ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
     ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
     // Codex ouvre un item d'outil par événement — jamais de lot, contrairement
     // aux appels parallèles de Claude. Le compte vaut donc 1 ou 0, mais il

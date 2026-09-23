@@ -135,6 +135,7 @@ export async function POST(req: Request): Promise<Response> {
               reply?: unknown;
               spawnedJobId?: unknown;
               streamed?: unknown;
+              stopped?: unknown;
             };
             // La réserve du masqueur n'a plus de suite à attendre : elle sort
             // ici, avant la réponse entière qui la remplace de toute façon.
@@ -149,6 +150,8 @@ export async function POST(req: Request): Promise<Response> {
               // Relayé tel quel : le runner sait si les fragments étaient bien
               // cette réponse, la porte web n'a rien à en juger.
               streamed: payload.streamed === true,
+              // La personne a arrêté ce tour (#456) : relayé tel quel.
+              stopped: payload.stopped === true,
             });
             continue;
           }

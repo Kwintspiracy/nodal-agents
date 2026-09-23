@@ -116,3 +116,27 @@ function failureMessage(code: string): string {
   if (code === 'conversation_not_found') return 'Conversation not found';
   return 'The agent did not reply';
 }
+
+/**
+ * Arrêter la réponse en cours de cette conversation (#456). Le tour arrêté
+ * rend son `done` par le flux déjà ouvert, avec ce qu'il avait écrit : ce
+ * n'est donc PAS ici que le fil change. Ce qui revient ici dit seulement si la
+ * demande est passée.
+ */
+export async function stopChatTurn(
+  conversationId: string,
+): Promise<{ ok: boolean; stopped: boolean }> {
+  try {
+    const res = await fetch('/api/chat/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId }),
+    });
+    const data = (await res.json().catch(() => null)) as { stopped?: unknown } | null;
+    // `stopped: false` n'est PAS un succès (revue Codex de #459) : rien ne
+    // tournait à arrêter. L'appelant le traite comme tel.
+    return { ok: res.ok, stopped: res.ok && data?.stopped === true };
+  } catch {
+    return { ok: false, stopped: false };
+  }
+}

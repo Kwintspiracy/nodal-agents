@@ -24,7 +24,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import ModelEffortChip, { type ComposerLlmKey } from './ModelEffortChip.tsx';
 import { usePendingTurn } from './PendingTurn.tsx';
-import { sendChatMessage } from './chat-stream.ts';
+import { sendChatMessage, stopChatTurn } from './chat-stream.ts';
 
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
@@ -137,6 +137,20 @@ export default function ThreadComposer({
    * traitée avant lui.
    */
   const queue = useRef<Promise<void>>(Promise.resolve());
+  /**
+   * La conversation dont la réponse s'écrit EN CE MOMENT (#456) — celle que
+   * Stop arrête. Posée quand l'envoi part vers le runner, retirée quand il
+   * revient : la file ne joue qu'un envoi à la fois.
+   */
+  const answering = useRef<string | null>(null);
+  /**
+   * Le même fait, en état React : c'est LUI qui fait paraître Stop (revue
+   * Codex de #459). `pendingTurn.inFlight` dit « un message attend » — aussi
+   * pendant qu'une conversation neuve s'ouvre, ou qu'un message patiente dans
+   * la file —, et Stop y aurait paru sans rien pouvoir arrêter.
+   */
+  const [answeringId, setAnsweringId] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   /**
    * Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le
@@ -196,11 +210,16 @@ export default function ThreadComposer({
       // La réponse arrive mot à mot (#152) : chaque état du texte va dans la
       // copie en attente, qui le montre à la place des trois points. Le repli
       // sur l'action serveur vit dans `sendChatMessage`, et il est explicite.
+      answering.current = target;
+      setAnsweringId(target);
       const r = await sendChatMessage({
         conversationId: target,
         message: text,
         onText: (reply) => pendingTurn.stream(id, reply),
       });
+      answering.current = null;
+      setAnsweringId(null);
+      setStopping(false);
       if (!r.ok) {
         // Le même bloc d'échec qu'avant : le texte revient dans la zone, et
         // rien de partiel ne reste à l'écran (`onText('')` l'a déjà effacé).
@@ -236,6 +255,30 @@ export default function ThreadComposer({
       await Promise.race([pendingTurn.rendered(id), sleep(RENDER_WAIT_MS)]);
     });
   }
+
+  /**
+   * Stop (#456) : arrêter la réponse qui s'écrit. Le tour arrêté rend ce qu'il
+   * avait écrit par le flux déjà ouvert, et le fil le montre comme toute
+   * réponse — rien à faire ici de plus que demander l'arrêt.
+   */
+  function stop(): void {
+    const target = answering.current;
+    if (target === null || stopping) return;
+    setStopping(true);
+    void stopChatTurn(target).then((r) => {
+      if (r.stopped) return;
+      // Rien n'a été arrêté : Stop redevient cliquable, et un échec réel se
+      // dit. Un tour qui venait de finir (`stopped: false` sans erreur) n'a
+      // rien à dire — sa réponse arrive déjà.
+      setStopping(false);
+      if (!r.ok) toast.error('Could not stop the answer');
+    });
+  }
+
+  // Stop prend la place d'Envoyer tant qu'une réponse s'écrit ET que la zone
+  // est vide. Dès qu'on tape, c'est Envoyer qui revient : un message peut
+  // partir pendant que le précédent attend (Quentin, 18/09).
+  const showStop = answeringId !== null && !canSend;
 
   // P2bis — un CADRE, pas un champ posé à côté d'un bouton : le design pose
   // la saisie sur sa propre surface, collée en bas de la zone de contenu,
@@ -306,14 +349,30 @@ export default function ThreadComposer({
             planche dès que le texte n'est pas vide — c'est le contraste le
             plus tranché sur cette surface ; neutre le reste du temps, où
             cliquer ne ferait rien. */}
-        <PrimaryButton
-          variant={canSend ? 'ink' : 'neutral'}
-          size="sm"
-          onClick={send}
-          disabled={!canSend}
-        >
-          Send
-        </PrimaryButton>
+        {showStop ? (
+          <PrimaryButton
+            variant="ink"
+            size="sm"
+            onClick={stop}
+            disabled={stopping}
+            aria-label="Stop the answer"
+            data-testid="composer-stop"
+          >
+            {/* Le carré de Stop, comme dans tout chat : un glyphe, pas un mot de plus. */}
+            <span aria-hidden="true" className="block size-2.5 rounded-[2px] bg-canvas" />
+            Stop
+          </PrimaryButton>
+        ) : (
+          <PrimaryButton
+            variant={canSend ? 'ink' : 'neutral'}
+            size="sm"
+            onClick={send}
+            disabled={!canSend}
+            data-testid="composer-send"
+          >
+            Send
+          </PrimaryButton>
+        )}
       </div>
     </div>
   );
