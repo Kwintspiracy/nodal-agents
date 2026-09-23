@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { Metadata } from 'next';
 import { RootProvider } from 'fumadocs-ui/provider/next';
 import {
   Archivo,
@@ -35,6 +36,39 @@ const plexMono = IBM_Plex_Mono({
   weight: ['400', '500'],
   variable: '--font-plexmono',
 });
+
+/**
+ * L'aperçu d'un lien partagé (Open Graph, et la carte large de X) : sans ces
+ * balises, un lien vers le site ne montrait qu'un titre, aucune image.
+ *
+ * `metadataBase` est l'hôte GitHub Pages du dépôt, où `docs.yml` publie ; les
+ * réseaux exigent une URL ABSOLUE. Le chemin de l'image porte `/nodal-agents`
+ * parce que le site vit sous ce préfixe (`basePath` dans next.config.mjs) et
+ * que Next ne l'ajoute pas aux URL de métadonnées.
+ *
+ * L'image est un JPG de 1200 × 630 (126 Ko) : certains aperçus ignorent les
+ * images trop lourdes, et le WebP est mal lu par d'autres. Les pages en
+ * héritent — aucune ne déclare son propre `openGraph`.
+ */
+export const metadata: Metadata = {
+  metadataBase: new URL('https://kwintspiracy.github.io'),
+  openGraph: {
+    type: 'website',
+    siteName: 'Nodal-Agents',
+    images: [
+      {
+        url: '/nodal-agents/og.jpg',
+        width: 1200,
+        height: 630,
+        alt: 'Nodal-Agents: herd your agents. Self-hosted AI agents on your own machine.',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    images: ['/nodal-agents/og.jpg'],
+  },
+};
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
