@@ -37,7 +37,7 @@ function isFailoverWorthy(err: unknown): boolean {
   // (#441), and counts the cut call's usage. Failing over would throw that
   // text away, pay the whole prompt again on the next link, and hide the cut
   // call from the job's budgets (Codex review of #449, pass 5).
-  if (err instanceof LLMTimeoutError && err.partialText !== '') return false;
+  if (err instanceof LLMTimeoutError && err.served) return false;
   return (
     err instanceof RetryExhaustedError ||
     err instanceof LLMTimeoutError ||
@@ -78,7 +78,7 @@ export function createFailoverFromClients(clients: NodalLlmClient[]): NodalLlmCl
         // A cut while writing: THIS link was writing. It becomes the active one so
         // the runner's continuation goes to the model that wrote the text, not
         // back to a link that already failed (Codex review of #449, pass 3).
-        if (err instanceof LLMTimeoutError && err.partialText !== '') activeIndex = i;
+        if (err instanceof LLMTimeoutError && err.served) activeIndex = i;
         if (!isFailoverWorthy(err)) throw err; // backup won't help → propagate
         const next = i + 1;
         if (next < clients.length) {

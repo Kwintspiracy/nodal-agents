@@ -162,6 +162,26 @@ describe('createFailoverFromClients', () => {
     expect(backup.generateText).not.toHaveBeenCalled();
   });
 
+  it('a cut that was served with no text (tool call only) does not fail over', async () => {
+    const primary = fakeClient('p', () =>
+      Promise.reject(
+        new LLMTimeoutError('openrouter', 'p', 60_000, {
+          reason: 'idle_between_tokens',
+          partialText: '',
+          resumable: false,
+          served: true,
+        }),
+      ),
+    );
+    const backup = fakeClient('b', () => Promise.resolve({ text: 'ok' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    const err = await client.generateText(ARGS, { streamed: true }).catch((e: unknown) => e);
+
+    expect((err as LLMTimeoutError).served).toBe(true);
+    expect(backup.generateText).not.toHaveBeenCalled();
+  });
+
   it('a fallback cut while writing becomes the active link: the continuation goes to it', async () => {
     const primary = fakeClient('p', () =>
       Promise.reject(new RetryExhaustedError(4, new Error('503'))),

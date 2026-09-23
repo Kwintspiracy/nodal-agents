@@ -74,6 +74,13 @@ export class LLMTimeoutError extends Error {
    * resumable — the text alone would drop the call — and is replayed instead.
    */
   readonly resumable: boolean;
+  /**
+   * True when the provider SERVED the call before it was cut: it had sent
+   * text, reasoning or a tool call. Such a call was billed, is counted by the
+   * caller, and is never failed over — even with no text to resume from
+   * (Codex review of #449, pass 6: a tool-call-only cut looked silent).
+   */
+  readonly served: boolean;
 
   constructor(
     public readonly provider: string,
@@ -83,6 +90,8 @@ export class LLMTimeoutError extends Error {
       reason: LlmTimeoutReason;
       partialText: string;
       resumable?: boolean;
+      /** The provider had sent something (text, reasoning, tool call). */
+      served?: boolean;
       /** The stream error behind a `stream_error` cut. */
       cause?: unknown;
     } = {
@@ -102,6 +111,7 @@ export class LLMTimeoutError extends Error {
     this.reason = details.reason;
     this.partialText = details.partialText;
     this.resumable = details.resumable ?? details.partialText !== '';
+    this.served = details.served ?? details.partialText !== '';
   }
 }
 

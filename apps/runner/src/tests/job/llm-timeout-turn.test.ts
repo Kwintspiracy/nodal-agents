@@ -103,6 +103,8 @@ type MockTurn =
       timesOutViaFailover?: false;
       text?: string;
       toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+      /** Jetons d'entrée déclarés par le fournisseur simulé (10 par défaut). */
+      usageIn?: number;
     };
 
 const PROVIDER = 'anthropic';
@@ -125,6 +127,7 @@ function makeMockLlmClient(
     modelId: 'mock',
     doGenerate: async () => {
       const response = (responses[callIndex] ?? responses[responses.length - 1]!) as {
+        usageIn?: number;
         text?: string;
         toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
       };
@@ -149,7 +152,12 @@ function makeMockLlmClient(
           ? { unified: 'tool-calls' as const, raw: 'tool-calls' }
           : { unified: 'stop' as const, raw: 'stop' },
         usage: {
-          inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+          inputTokens: {
+            total: response.usageIn ?? 10,
+            noCache: response.usageIn ?? 10,
+            cacheRead: undefined,
+            cacheWrite: undefined,
+          },
           outputTokens: { total: 5, text: 5, reasoning: undefined },
         },
         warnings: [],
@@ -190,6 +198,7 @@ function makeMockLlmClient(
             reason: 'idle_between_tokens',
             partialText: prevu.cutAfterToolCall,
             resumable: false,
+            served: true,
           }),
         ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
       }
@@ -800,6 +809,57 @@ describe('un tour coupé EN PLEINE ÉCRITURE est repris, jamais rejoué (#441) @
     const row = await jobRow(jobId);
     expect(row.status).toBe('cancelled');
     expect(JSON.stringify(row.messages ?? [])).toContain(MOITIE);
+  });
+
+  it('coupé après un appel d’outil SANS texte, l’appel est compté et rejoué, pas pris pour muet', async () => {
+    const jobId = await insertJob();
+    const requetes: unknown[][] = [];
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { cutAfterToolCall: '' },
+          {
+            toolCalls: [
+              { toolCallId: 'rr-10', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        undefined,
+        requetes,
+      ),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    expect(requetes[2]).toEqual(requetes[1]);
+    const [row] = await db
+      .select({ inputTokens: agentJobs.inputTokens })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    // Deux appels servis à 10 + l'appel coupé, servi lui aussi : estimé, donc bien plus.
+    expect(row!.inputTokens ?? 0).toBeGreaterThan(20 + 100);
+  });
+
+  it('un tour repris qu’un plafond arrête garde son texte ENTIER', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        { cutWhileWriting: MOITIE },
+        // La suite arrive, mais son décompte fait déborder le plafond de jetons.
+        { text: SUITE, usageIn: 2_000_000 },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome).toMatchObject({ status: 'failed', error: 'token_budget_exceeded' });
+    const row = await jobRow(jobId);
+    expect(JSON.stringify(row.messages ?? [])).toContain(
+      JSON.stringify(MOITIE + SUITE).slice(1, -1),
+    );
   });
 
   it('les reprises ont un budget : la quatrième coupure termine le travail', async () => {

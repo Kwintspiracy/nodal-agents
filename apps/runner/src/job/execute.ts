@@ -3435,7 +3435,7 @@ async function runJobTracked(
           // revient d'un flux coupé avant sa fin, donc on l'ESTIME (caractères / 4)
           // — sans quoi trois reprises repaieraient le prompt trois fois hors des
           // plafonds de jetons et de coût (revue Codex de #449).
-          if (expiration.partialText !== '') {
+          if (expiration.served) {
             // Le prompt ET les définitions d'outils : une liste MCP fournie pèse
             // des dizaines de milliers de jetons, à chaque appel (revue Codex de
             // #449, passe 4).
@@ -3601,8 +3601,15 @@ async function runJobTracked(
       if (partielCeTour !== '') {
         trace('llm_turn_resumed', { turn, resumes: reprisesCeTour, chars: texteDuTour.length });
       }
+      // Le tour repris garde son texte ENTIER jusqu'au bout, y compris si un
+      // plafond l'arrête juste en dessous (revue Codex de #449, passe 6).
+      const tourRepris = partielCeTour !== '';
       partielCeTour = '';
       reprisesCeTour = 0;
+      const avecTourRepris = (): ModelMessage[] =>
+        tourRepris && texteDuTour.trim() !== ''
+          ? [...messages, { role: 'assistant', content: texteDuTour.trim() } as ModelMessage]
+          : messages;
 
       // Accumulate token usage. Some providers may return undefined/NaN for
       // either field — coerce to 0 so we never persist NaN. Local providers
@@ -3702,6 +3709,7 @@ async function runJobTracked(
           outputTokens,
           maxTotalTokensPerJob,
         });
+        messages = avecTourRepris();
         await failJob(db, jobId as string, 'token_budget_exceeded', runStats(), messages);
         return { status: 'failed', error: 'token_budget_exceeded' };
       }
@@ -3719,6 +3727,7 @@ async function runJobTracked(
           callCostUsd,
           maxCostPerJobUsd,
         });
+        messages = avecTourRepris();
         await failJob(db, jobId as string, 'cost_budget_exceeded', runStats(), messages);
         return { status: 'failed', error: 'cost_budget_exceeded' };
       }

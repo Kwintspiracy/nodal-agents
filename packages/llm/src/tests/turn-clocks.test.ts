@@ -255,6 +255,30 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     expect(err.resumable).toBe(false);
   });
 
+  it('a stream cut after a tool call and NO text was still served: not resumable, not silent', async () => {
+    const state = run(
+      timedModel([
+        { atMs: 1_000, part: { type: 'tool-input-start', id: 'c1', toolName: 'return_result' } },
+        { atMs: 1_000, part: { type: 'tool-input-delta', id: 'c1', delta: '{"status":' } },
+      ]),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000 + BETWEEN_TOKENS_MS + 1);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err.partialText).toBe('');
+    expect(err.resumable).toBe(false);
+    expect(err.served).toBe(true);
+  });
+
+  it('a stream silent from the start was not served', async () => {
+    const state = run(timedModel([]));
+
+    await vi.advanceTimersByTimeAsync(FIRST_TOKEN_BASE_MS + 1);
+
+    expect((state.error as LLMTimeoutError).served).toBe(false);
+  });
+
   it('a stream cut in plain text is resumable', async () => {
     const state = run(timedModel([textStart(1_000), text(1_000, 'half a note')]));
 

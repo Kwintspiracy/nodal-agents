@@ -298,6 +298,7 @@ export async function consumeUnderClocks(
           reason: 'stream_error',
           partialText,
           resumable: !sawStructured,
+          served: true,
           cause: err,
         });
       }
@@ -312,6 +313,7 @@ export async function consumeUnderClocks(
         reason,
         partialText,
         resumable: partialText !== '' && !sawStructured,
+        served: sawModel,
       });
     }
     return await collectResult(stream);
