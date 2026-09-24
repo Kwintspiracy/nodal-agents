@@ -6114,6 +6114,12 @@ export async function listApprovalsAction(
      * process restait bloqué dessus.
      */
     jobIds?: string[];
+    /**
+     * Restreint aux approbations des travaux de CETTE conversation (#469) : le
+     * job de tête et ses délégués portent tous son `conversation_id`. C'est ce
+     * que le fil montre, pour qu'on réponde sans quitter la discussion.
+     */
+    conversationId?: string;
   } = {},
 ): Promise<ActionResult<ApprovalRow[]>> {
   try {
@@ -6130,7 +6136,9 @@ export async function listApprovalsAction(
           inArray(approvalRequests.jobId, opts.jobIds),
         )
       : eq(approvalRequests.entityId, session.entityId);
-    const baseConditions = scoped;
+    const baseConditions = opts.conversationId
+      ? and(scoped, eq(agentJobs.conversationId, opts.conversationId))
+      : scoped;
     const where =
       status === 'all' ? baseConditions : and(baseConditions, eq(approvalRequests.status, status));
 
