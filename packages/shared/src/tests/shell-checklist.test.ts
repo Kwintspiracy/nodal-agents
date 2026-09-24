@@ -15,6 +15,7 @@ import {
   DEFAULT_SHELL_POLICY,
   pathWords,
   resolveShellPolicy,
+  scriptPathLiterals,
   SHELL_CATEGORIES,
 } from '../shell-checklist';
 
@@ -182,5 +183,29 @@ describe('what the shell will do to a word (Codex review of #464, pass 2) @cap:e
       { raw: '{print $1}', kind: 'relative' },
       { raw: 'data.csv', kind: 'relative' },
     ]);
+  });
+});
+
+describe("scriptPathLiterals: the paths a script names (Quentin's test, 24/09) @cap:executer-une-commande/moteur", () => {
+  it('finds absolute and home paths in string literals, not routes or relative strings', () => {
+    const source = [
+      'PATH = r"C:/Users/kwint/Downloads/Exports_Generation_20260915_072934.xlsx"',
+      "OUT = '/home/q/report.csv'",
+      'KEY = "~/.ssh/id_rsa"',
+      'API = "/api/v1/users"',
+      'NAME = "data/x.csv"',
+      'URL = "https://example.com/a"',
+    ].join('\n');
+    expect(scriptPathLiterals(source, 'linux')).toEqual([
+      { raw: 'C:/Users/kwint/Downloads/Exports_Generation_20260915_072934.xlsx', kind: 'absolute' },
+      { raw: '/home/q/report.csv', kind: 'absolute' },
+      { raw: '~/.ssh/id_rsa', kind: 'home' },
+    ]);
+  });
+
+  it('reads escaped Windows paths as the path they spell', () => {
+    expect(
+      scriptPathLiterals('p = "C:\\\\Users\\\\kwint\\\\Documents\\\\a.xlsx"', 'win32'),
+    ).toEqual([{ raw: 'C:\\Users\\kwint\\Documents\\a.xlsx', kind: 'absolute' }]);
   });
 });
