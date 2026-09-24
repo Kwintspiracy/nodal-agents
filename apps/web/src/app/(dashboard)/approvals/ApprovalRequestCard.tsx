@@ -6,9 +6,11 @@ import { ShieldCheck, Warning } from '@phosphor-icons/react';
 import {
   resolveApprovalAction,
   setAgentApprovalRuleAction,
+  setAgentShellPolicyAction,
   listApprovalsAction,
   type ApprovalRow,
 } from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { readQuestionToolInput, toolDisplayName } from '@nodal-agents/shared';
 import type { ExplainedApprovalRule } from '@nodal-agents/shared';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -93,6 +95,7 @@ export default function ApprovalRequestCard({
 }) {
   const [isPending, startTransition] = useTransition();
   const [showRejectInput, setShowRejectInput] = useState(false);
+  const [neverOpen, setNeverOpen] = useState(false);
   const [notes, setNotes] = useState('');
   // Open ou Close, les deux variantes du dessin. En attente → Open ; tranchée
   // → Close ; `defaultOpen` force Open.
@@ -114,6 +117,9 @@ export default function ApprovalRequestCard({
   const x = a.explanation;
   const pending = a.status === 'pending';
   const agentName = a.agentName ?? 'no agent';
+  // Ce que la liste de l'agent a retenu ici (#464) : ce que « Never for this
+  // agent » passerait à Never (#470). Une carte sans elles n'offre pas le choix.
+  const neverKinds = (a.gateReasons ?? []).filter((r) => r.state === 'ask');
 
   if (statutVu !== a.status) {
     setStatutVu(a.status);
@@ -195,6 +201,38 @@ export default function ApprovalRequestCard({
       const r = await resolve('approve');
       if (!r.ok) toast.error(r.message);
       else toast.success(`Approved. ${a.toolName} now runs without asking in ${label}.`);
+    });
+  }
+
+  /**
+   * « Never for this agent » (#470, Quentin 24/09) : refuser, ET ne plus
+   * jamais le demander pour ces sortes d'action. Le réglage d'abord, la
+   * réponse ensuite, comme « Approve for this project » : un réglage qui
+   * n'est pas écrit laisse la demande en attente, ce qui se voit et se rejoue,
+   * au lieu d'un refus qui ferait croire que la suite est réglée.
+   */
+  function handleNever() {
+    const agentId = a.agentId;
+    if (agentId === null) return;
+    setNeverOpen(false);
+    startTransition(async () => {
+      for (const reason of neverKinds) {
+        const saved = await setAgentShellPolicyAction({
+          agentId,
+          category: reason.category,
+          state: 'never',
+        });
+        if (!saved.ok) {
+          // Le message du serveur finit souvent par un point : pas de « .. ».
+          toast.error(
+            `Setting not saved: ${saved.message.replace(/\.$/, '')}. The approval stays pending.`,
+          );
+          return;
+        }
+      }
+      const r = await resolve('reject');
+      if (!r.ok) toast.error(r.message);
+      else toast.success(`Rejected. ${agentName} will not be asked this again: it is refused.`);
     });
   }
 
@@ -563,6 +601,17 @@ export default function ApprovalRequestCard({
                     Cancel
                   </PrimaryButton>
                 )}
+                {a.agentId !== null && neverKinds.length > 0 && (
+                  <PrimaryButton
+                    variant="neutral"
+                    size="md"
+                    onClick={() => setNeverOpen(true)}
+                    disabled={isPending}
+                    data-testid="approval-never"
+                  >
+                    Never for this agent
+                  </PrimaryButton>
+                )}
                 {a.agentId !== null && a.agentWorkspaces.length > 1 && (
                   <Select
                     value={folder}
@@ -602,6 +651,25 @@ export default function ApprovalRequestCard({
             ))}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={neverOpen}
+        title={`Never allow this for ${agentName}?`}
+        message="This request is rejected, and from now on these are refused without asking you."
+        extra={
+          <ul className="flex flex-col gap-1" data-testid="approval-never-changes">
+            {neverKinds.map((reason) => (
+              <li key={reason.category} className="text-body-13 text-ink-2">
+                {SHELL_CATEGORY_COPY[reason.category].label}: Ask me → Never
+              </li>
+            ))}
+          </ul>
+        }
+        confirmLabel="Set to Never and reject"
+        destructive
+        onConfirm={handleNever}
+        onCancel={() => setNeverOpen(false)}
+      />
     </div>
   );
 }
