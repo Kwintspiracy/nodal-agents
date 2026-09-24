@@ -73,6 +73,11 @@ import {
   RUN_HOURS_MAX,
   FIRST_TOKEN_WAIT_MIN_S,
   FIRST_TOKEN_WAIT_MAX_S,
+  AGENT_BUDGET_DAILY_MAX_USD,
+  AGENT_BUDGET_MONTHLY_MAX_USD,
+  AGENT_BUDGET_ALERT_MIN_PCT,
+  AGENT_BUDGET_ALERT_MAX_PCT,
+  serverTimezone,
   readProofRepairAttempts,
   type DiscoveredCommand,
   type ProjectManifests,
@@ -148,6 +153,7 @@ import {
   jobDeliveries,
   constatedWrites,
   dropApprovalRulesForDetachedSkill,
+  readAgentBudgetState,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -639,8 +645,6 @@ export type AgentRow = {
   telegramBotToken: string | null;
   lastSeenChatIdTelegram: string | null;
   position: number;
-  /** Daily notional-USD cap on code_task (coding CLI) runs. 0 = no cap. */
-  cliDailyBudgetUsd: number;
   /**
    * Wait for the first token of a model call, in seconds (#442). NULL = the
    * platform decides. Optional so list queries that don't select it stay valid.
@@ -7077,62 +7081,28 @@ export async function codeTaskDoctorAction(
   }
 }
 
-// ─── Coding CLI daily budget ──────────────────────────────────────────────────
+// ─── The agent's budget (#447) ───────────────────────────────────────────────
 //
-// agents.cliDailyBudgetUsd (migration already shipped, default 10, 0 = no
-// cap) is what the code_task builtin enforces against SUM(cli_runs.cost_usd).
-// This action only writes the cap; getCliUsageTodayAction below reads today's
-// spend for the same agent so the UI can show both side by side.
+// One budget per agent, provider-agnostic: API calls of any provider and
+// coding-CLI runs count against the same daily and monthly ceilings (0 = none).
+// The spend is read by the SAME function the runner and the CLI guard use
+// (`readAgentBudgetState`, packages/db), so the screen cannot say something
+// the runner does not do. Replaces the coding-CLI-only daily cap (#447).
 
-const SetCliDailyBudgetSchema = z.object({
-  agentId: z.string().guid(),
-  budgetUsd: z.number().finite().min(0).max(1000),
-});
+export type AgentBudgetView = {
+  dailyUsd: number;
+  monthlyUsd: number;
+  alertPct: number;
+  todayUsd: number;
+  monthUsd: number;
+  timezone: string;
+  /** The window whose ceiling is reached: the agent's runs stop until it resets. */
+  reached: 'day' | 'month' | null;
+};
 
-export async function setCliDailyBudgetAction(raw: unknown): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    const parsed = SetCliDailyBudgetSchema.safeParse(raw);
-    if (!parsed.success) {
-      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-    }
-    const { agentId, budgetUsd } = parsed.data;
-
-    // Owner-only (non-local-trust) — a spend-control knob, same gate shape as
-    // the Yolo enable path above.
-    if (env.AUTH_MODE !== 'local-trust') {
-      const db = getDb();
-      const [entityRow] = await db
-        .select({ userId: entities.userId })
-        .from(entities)
-        .where(eq(entities.id, session.entityId));
-      if (!entityRow) return fail('not_found', 'Workspace not found');
-      if (entityRow.userId !== session.userId) {
-        return fail('forbidden', 'Only the workspace owner can change the coding CLI budget.');
-      }
-    }
-
-    const db = getDb();
-    const updated = await db
-      .update(agents)
-      .set({ cliDailyBudgetUsd: budgetUsd, updatedAt: new Date() })
-      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
-      .returning({ id: agents.id });
-    if (updated.length === 0) return fail('not_found', 'Agent not found');
-
-    revalidatePath(`/agents/${agentId}/edit`);
-    return ok(undefined);
-  } catch (err) {
-    console.error('[setCliDailyBudgetAction]', err);
-    return fail('db_error', 'Failed to save daily budget');
-  }
-}
-
-export type CliUsageTodayView = { spentUsd: number };
-
-export async function getCliUsageTodayAction(
+export async function getAgentBudgetAction(
   agentId: string,
-): Promise<ActionResult<CliUsageTodayView>> {
+): Promise<ActionResult<AgentBudgetView>> {
   try {
     const session = await getSession();
     if (!z.string().guid().safeParse(agentId).success) {
@@ -7144,22 +7114,63 @@ export async function getCliUsageTodayAction(
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
-
-    const [row] = await db
-      .select({ spent: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)` })
-      .from(cliRuns)
-      .where(
-        and(
-          eq(cliRuns.agentId, agentId),
-          eq(cliRuns.entityId, session.entityId),
-          sql`${cliRuns.createdAt} >= date_trunc('day', now())`,
-        ),
-      );
-
-    return ok({ spentUsd: Number(row?.spent ?? 0) });
+    const state = await readAgentBudgetState(db, agentId, serverTimezone());
+    if (!state) return fail('not_found', 'Agent not found');
+    return ok(state);
   } catch (err) {
-    console.error('[getCliUsageTodayAction]', err);
-    return fail('db_error', 'Failed to load coding CLI usage');
+    console.error('[getAgentBudgetAction]', err);
+    return fail('db_error', 'Failed to load the agent budget');
+  }
+}
+
+const SetAgentBudgetSchema = z.object({
+  agentId: z.string().guid(),
+  dailyUsd: z.number().finite().min(0).max(AGENT_BUDGET_DAILY_MAX_USD),
+  monthlyUsd: z.number().finite().min(0).max(AGENT_BUDGET_MONTHLY_MAX_USD),
+  alertPct: z.number().int().min(AGENT_BUDGET_ALERT_MIN_PCT).max(AGENT_BUDGET_ALERT_MAX_PCT),
+});
+
+export async function setAgentBudgetAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentBudgetSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, dailyUsd, monthlyUsd, alertPct } = parsed.data;
+
+    // Owner-only outside local-trust: a spend control, same gate as the other
+    // per-agent knobs of this file.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', "Only the workspace owner can change an agent's budget.");
+      }
+    }
+
+    const db = getDb();
+    const updated = await db
+      .update(agents)
+      .set({
+        budgetDailyUsd: dailyUsd,
+        budgetMonthlyUsd: monthlyUsd,
+        budgetAlertPct: alertPct,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+      .returning({ id: agents.id });
+    if (updated.length === 0) return fail('not_found', 'Agent not found');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentBudgetAction]', err);
+    return fail('db_error', 'Failed to save the agent budget');
   }
 }
 
@@ -7626,7 +7637,7 @@ export async function setAgentRuntimeAction(raw: unknown): Promise<ActionResult<
     }
     const { agentId, runtime } = parsed.data;
 
-    // Owner-only (non-local-trust) — same gate shape as setCliDailyBudgetAction.
+    // Owner-only (non-local-trust) — same gate shape as setAgentBudgetAction.
     if (env.AUTH_MODE !== 'local-trust') {
       const db = getDb();
       const [entityRow] = await db
@@ -8006,7 +8017,7 @@ export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResul
     }
     const { agentId, mode } = parsed.data;
 
-    // Owner-only (non-local-trust) — same gate shape as setCliDailyBudgetAction.
+    // Owner-only (non-local-trust) — same gate shape as setAgentBudgetAction.
     if (env.AUTH_MODE !== 'local-trust') {
       const db = getDb();
       const [entityRow] = await db

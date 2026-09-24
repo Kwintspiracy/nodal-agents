@@ -70,8 +70,6 @@ const actions = vi.hoisted(() => {
       data: undefined,
     })),
     setCodeTaskYoloAction: noop(),
-    setCliDailyBudgetAction: noop(),
-    getCliUsageTodayAction: vi.fn(async () => ({ ok: true as const, data: { usd: 0 } })),
     setCliDefaultsAction: noop(),
     setReviewerReadOnlyPresetAction: noop(),
     setAgentRuntimeAction: noop(),
@@ -181,7 +179,6 @@ async function render(
         ]}
         autoRunPaused={false}
         isOwner
-        cliDailyBudgetUsd={0}
         commandAllowlist={null}
         mayChangeTeam={false}
       />,
@@ -632,7 +629,6 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
           attachedSkills={[]}
           autoRunPaused={false}
           isOwner
-          cliDailyBudgetUsd={0}
           commandAllowlist={null}
           mayChangeTeam={false}
         />,

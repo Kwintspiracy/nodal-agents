@@ -110,6 +110,17 @@ not legitimately large). To genuinely raise the ceiling, set
 (supported models) also stretches the budget, since the budget counts effective
 input tokens.
 
+### `agent_budget_exceeded` (the agent's budget stopped the job)
+
+**Symptom.** A job fails with `agent_budget_exceeded`, or `code_task` refuses to
+start with the same code. The result ends with `[stopped: agent budget — …]`.
+
+**Cause.** The agent spent its daily or monthly ceiling: API calls of every
+provider and coding CLI runs, counted together.
+
+**Fix.** Raise or clear the ceiling on the agent's **Settings** tab, in **Budget**
+(`0` = none), or wait for the day or the month to end.
+
 ### `cost_budget_exceeded` or `run_time_exceeded` (the run budget stopped the job)
 
 **Symptom.** A job fails with `cost_budget_exceeded` or `run_time_exceeded`. Its
