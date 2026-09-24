@@ -312,6 +312,31 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
     expect(refused.outcome).toBe('error');
   });
 
+  it('an OLD script that names a path outside is judged too, whoever wrote it (run 2fb6bfca, 24/09)', async () => {
+    await forgetWrites();
+    // Written by an earlier run: older than this job, no file_write here.
+    const old = join(shared, 'scripts', '_inspect_old.py');
+    await writeFile(old, `PATH = r"${outsideFile().replace(/\\/g, '/')}"\n`);
+
+    const res = await run(
+      'python shared/scripts/_inspect_old.py',
+      gate({ ...DEFAULT_SHELL_POLICY, outside_folders: 'never' }),
+    );
+
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toContain('(in shared/scripts/_inspect_old.py)');
+  });
+
+  it('a script that is not there, and that the command does not create, is not "its own" (run 2fb6bfca)', async () => {
+    await forgetWrites();
+
+    // Named once, nowhere on disk: python will fail, there is nothing to ask.
+    const res = await run('python "_nowhere.py"', gate(DEFAULT_SHELL_POLICY));
+
+    expect(res.outcome).toBe('success');
+  });
+
   it('a Yolo rule does not reopen the folders: outside still asks', async () => {
     await forgetWrites();
     const yolo: ApprovalRule = {
