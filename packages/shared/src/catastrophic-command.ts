@@ -478,7 +478,7 @@ export function commandUnits(cmd: string, depth = 0): string[][] {
     // `FOO=1 rm -rf build`: variables set for the command are not the program
     // (review of PR #476).
     const tokens = skipPassthroughLeaders(
-      segment.filter((t, i) => !isAssignmentPrefix(segment, i)),
+      segment.filter((_, i) => !isAssignmentPrefix(segment, i)),
     );
     const head = tokens[0];
     if (head === undefined) continue;
