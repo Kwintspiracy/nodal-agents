@@ -30,7 +30,7 @@ function run(over: Partial<ExternalRunRow> = {}): ExternalRunRow {
 describe('la ligne d’un run venu de dehors @cap:parler-par-canal-externe/moteur', () => {
   it('ouvre la page du RUN, et porte la tâche comme titre', () => {
     const [ligne] = runRows({ runs: [run({ id: 'abc', task: 'Ranger le dépôt' })] });
-    expect(ligne?.href).toBe('/jobs/abc');
+    expect(ligne?.href).toBe('/chat/runs/abc');
     expect(ligne?.chatName).toBe('Ranger le dépôt');
     // Aucun agent : c'est le titre qui distingue un run d'un autre.
     expect(ligne?.agent).toBeNull();
@@ -43,7 +43,7 @@ describe('la ligne d’un run venu de dehors @cap:parler-par-canal-externe/moteu
       runs: [run({ id: 'r2', task: 'le second' }), run({ id: 'r1', task: 'le premier' })],
     });
     expect(rows.map((r) => r.chatName)).toEqual(['le second', 'le premier']);
-    expect(rows.map((r) => r.href)).toEqual(['/jobs/r2', '/jobs/r1']);
+    expect(rows.map((r) => r.href)).toEqual(['/chat/runs/r2', '/chat/runs/r1']);
   });
 
   it('date la ligne du DÉPART du run', () => {

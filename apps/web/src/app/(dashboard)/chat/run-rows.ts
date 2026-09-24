@@ -96,7 +96,9 @@ export function runRows(input: RunRowsInput): ConversationRowModel[] {
     id: r.id,
     key: r.id,
     // La ligne ouvre la page du RUN, pas un fil : il n'y en a pas.
-    href: `/jobs/${r.id}`,
+    // Sous `/chat`, pas `/jobs` : ouvrir un run depuis Work garde la barre
+    // latérale sur Work (`/jobs` est une route de Scheduled ; Quentin, 24/09).
+    href: `/chat/runs/${r.id}`,
     // AUCUN agent, comme dans « Nodal chats » : c'est le titre qui distingue
     // un run d'un autre, et l'avatar répété prendrait la moitié de la ligne.
     agent: null,

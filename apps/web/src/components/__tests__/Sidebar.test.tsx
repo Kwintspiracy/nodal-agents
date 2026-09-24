@@ -466,6 +466,9 @@ describe('la destination active suit la route @cap:installer-et-demarrer/ecran',
     // Une page de run n'a pas d'entrée dans le panneau, mais elle allume bien
     // une destination : un rail sans case active se lirait comme cassé.
     ['/jobs/j1', 'run', 'Scheduled'],
+    // Un run du dossier MCP ouvert DEPUIS Work reste dans Work (Quentin,
+    // 24/09 : la barre sautait sur Scheduled, « particulièrement irritant »).
+    ['/chat/runs/j1', 'work', 'Work'],
     // Les deux qui ont GAGNÉ un panneau en v2.
     ['/approvals', 'approvals', 'Approvals'],
     ['/settings', 'settings', 'Settings'],

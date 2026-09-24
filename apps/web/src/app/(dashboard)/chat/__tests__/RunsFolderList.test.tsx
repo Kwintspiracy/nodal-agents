@@ -143,7 +143,7 @@ function liens(): (string | null)[] {
 describe('le dossier MCP liste les runs venus de dehors @cap:parler-par-canal-externe/ecran', () => {
   it('affiche chaque run avec son titre, et mène à la page du run', async () => {
     await render(DEUX_RUNS);
-    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2']);
+    expect(liens()).toEqual(['/chat/runs/r-1', '/chat/runs/r-2']);
     expect(container.textContent).toContain('Résumer les tickets ouverts');
     expect(container.textContent).toContain('Publier la note de version');
   });
@@ -189,7 +189,7 @@ describe('la liste se charge page par page @cap:parler-par-canal-externe/ecran',
     expect(listExternalRunsAction).toHaveBeenCalledWith({
       cursor: '2026-09-18T09:00:00.000Z|r-2',
     });
-    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2', '/jobs/r-3']);
+    expect(liens()).toEqual(['/chat/runs/r-1', '/chat/runs/r-2', '/chat/runs/r-3']);
     expect(container.textContent).toContain('Trier la boîte');
     // Plus rien après : le bouton disparaît plutôt que de promettre une page vide.
     expect(document.body.textContent).not.toContain('Load more');
@@ -202,7 +202,7 @@ describe('la liste se charge page par page @cap:parler-par-canal-externe/ecran',
     });
     await render(DEUX_RUNS, 'curseur');
     await clic('Load more');
-    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2', '/jobs/r-4']);
+    expect(liens()).toEqual(['/chat/runs/r-1', '/chat/runs/r-2', '/chat/runs/r-4']);
   });
 
   it('DIT qu’une page n’a pas pu être lue, plutôt que de s’arrêter en silence', async () => {
@@ -242,7 +242,7 @@ describe('sélectionner et supprimer des runs @cap:parler-par-canal-externe/ecra
     expect(deleteExternalRunsAction).toHaveBeenCalledWith(['r-2']);
     // La ligne quitte l'écran sans attendre un rechargement, et la barre
     // latérale est prévenue — elle compte ces runs elle aussi.
-    expect(liens()).toEqual(['/jobs/r-1']);
+    expect(liens()).toEqual(['/chat/runs/r-1']);
     expect(toastSuccess).toHaveBeenCalledWith('1 run deleted');
     expect(refresh).toHaveBeenCalled();
   });
@@ -313,7 +313,7 @@ describe('sélectionner et supprimer des runs @cap:parler-par-canal-externe/ecra
     await confirmer('Delete');
 
     // La ligne refusée est TOUJOURS LÀ, celle qui est partie ne l'est plus.
-    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2']);
+    expect(liens()).toEqual(['/chat/runs/r-1', '/chat/runs/r-2']);
     expect(container.textContent).toContain('Publier la note de version');
     expect(container.textContent).not.toContain('Trier la boîte');
     // Et les deux messages disent la même chose que l'écran.
@@ -339,7 +339,7 @@ describe('sélectionner et supprimer des runs @cap:parler-par-canal-externe/ecra
     expect(toastError).toHaveBeenCalledWith(
       'These runs delegate deeper than this screen can follow. Nothing was deleted.',
     );
-    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2']);
+    expect(liens()).toEqual(['/chat/runs/r-1', '/chat/runs/r-2']);
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 });
