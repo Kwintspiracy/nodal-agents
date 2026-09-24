@@ -175,6 +175,50 @@ describe('FolderPickerModal @cap:travailler-sur-des-fichiers/ecran', () => {
     await act(async () => finir());
   });
 
+  it('pendant l’ajout, Échap ne ferme pas la fenêtre', async () => {
+    // Revue Reviewer A, passe 3 : seul Cancel était prouvé ; le verrou de la
+    // modale elle-même (Échap, clic à côté) ne l'était nulle part.
+    serve({ '<roots>': ROOTS, '/backup/notes': NOTES });
+    let closes = 0;
+    let finir: () => void = () => {};
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <FolderPickerModal
+          open
+          startPath="/backup/notes"
+          onClose={() => {
+            closes += 1;
+          }}
+          onSelect={() => new Promise<void>((r) => (finir = r))}
+        />,
+      );
+    });
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => selectButton().click());
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(closes).toBe(0);
+
+    await act(async () => finir());
+    expect(closes).toBe(1);
+  });
+
+  it('un browse qui ÉCHOUE ne laisse pas la fenêtre sur « Loading… »', async () => {
+    // Revue Reviewer A, passe 3 : un rejet de l'action laissait `loading` vrai.
+    actions.browseServerFoldersAction.mockImplementation(async () => {
+      throw new Error('fetch failed');
+    });
+    await render({ onSelect: () => {} });
+    expect(document.body.textContent).not.toContain('Loading…');
+    expect(document.body.textContent).toContain('fetch failed');
+  });
+
   it('un startPath disparu : les racines, et le dire', async () => {
     serve({ '<roots>': ROOTS });
     await render({ startPath: '/backup/gone', onSelect: () => {} });

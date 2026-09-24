@@ -122,7 +122,7 @@ import ConnectorsTabContent from './ConnectorsTabContent.tsx';
 import ChannelsTabContent from './ChannelsTabContent.tsx';
 import ToolsTab from './ToolsTabContent.tsx';
 import AgentDangerZone from './AgentDangerZone.tsx';
-import { MAX_FOLDER_LABEL, pickedFolderLabel } from './picked-folder-label.ts';
+import { MAX_FOLDER_LABEL, pickedFolderLabel, settled } from './picked-folder-label.ts';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor } from '@nodal-agents/shared';
 
@@ -3303,7 +3303,7 @@ function SettingsTab(props: {
       }
       setWsLabel('');
       setWsRetryPath(null);
-      const listResult = await listAgentWorkspacesAction(agentId);
+      const listResult = await settled(listAgentWorkspacesAction(agentId));
       if (!listResult.ok) {
         // Le dossier EST en base ; c'est la liste qui n'a pas suivi. Le dire,
         // sinon on réessaie et on heurte son propre libellé (revue passe 2).
