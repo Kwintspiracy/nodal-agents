@@ -24,11 +24,11 @@ import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { open, stat } from 'node:fs/promises';
 import { agentJobs, toolCalls, and, eq, inArray } from '@nodal-agents/db';
 import {
+  codeActionCategories,
   pathWords,
   scriptFilesRun,
   scriptPathLiterals,
   splitShellWords,
-  type PathWord,
   staticShellCategories,
   type ShellCategory,
   type ShellGateReason,
@@ -148,29 +148,32 @@ async function scriptLocation(ctx: ToolContext, script: string, cwd: string): Pr
 
 /** How many words of the command are this script, as written. */
 function timesNamed(command: string, script: string): number {
+  // `t.py`, `./t.py` and `.\\t.py` are the same script: `printf … > t.py &&
+  // python ./t.py` names it twice (review of PR #474, Reviewer A, P1).
+  const bare = (word: string) => word.replace(/^\.[\\/]/, '');
   return splitShellWords(command)
     .flat()
-    .filter((word) => word === script).length;
+    .filter((word) => bare(word) === bare(script)).length;
 }
 
 /** A script larger than this is not read: its first part is enough to find where it looks. */
 const SCRIPT_READ_CAP = 512 * 1024;
 
-/** The absolute and home paths a script's text names; nothing when it cannot be read. */
-async function scriptPaths(abs: string): Promise<PathWord[]> {
+/** A script's text (its first part); '' when it cannot be read. */
+async function scriptSource(abs: string): Promise<string> {
   try {
     const handle = await open(abs, 'r');
     try {
       const buffer = Buffer.alloc(SCRIPT_READ_CAP);
       const { bytesRead } = await handle.read(buffer, 0, SCRIPT_READ_CAP, 0);
-      return scriptPathLiterals(buffer.subarray(0, bytesRead).toString('utf8'), process.platform);
+      return buffer.subarray(0, bytesRead).toString('utf8');
     } finally {
       await handle.close();
     }
   } catch {
     // Not there yet (this very command creates it) or unreadable: nothing to
     // read, and the script already counts as the agent's own.
-    return [];
+    return '';
   }
 }
 
@@ -215,11 +218,22 @@ export async function judgeShellChecklist(
   for (const command of commands) {
     const kinds = staticShellCategories(command);
     for (const category of kinds) hit(category);
-    // Inline code (`python -c "open('/etc/passwd')"`) can name any path, and
-    // none of its words is one this reading resolves: when leaving the folders
-    // is restricted, it counts as leaving them, even for an agent allowed to
-    // run code it wrote (Codex review of #464, pass 3).
-    if (kinds.includes('own_script')) hit('outside_folders', command.slice(0, 200));
+    // Inline code (`python -c "open('/etc/passwd')"`): the paths it names
+    // are read in its text and judged like the command's. It no longer counts
+    // as leaving the folders by itself (review of PR #474, Reviewer A, P2): a
+    // migrated Yolo agent stopped on every `node -e` that touched nothing
+    // outside. What code can still do without naming a path is what the "run
+    // code it wrote itself" line stands for.
+    if (kinds.includes('own_script') && policy.outside_folders !== 'allow') {
+      // Read on the text and on its words once the shell has removed the outer
+      // quotes: `"print(open('/etc/passwd'))"` hides its path from a reading of
+      // the raw text, whose first quoted string is the whole program.
+      const code = [command, ...splitShellWords(command).flat()].join(' ');
+      for (const literal of scriptPathLiterals(code, process.platform)) {
+        const target = absoluteOf(literal.raw, literal.kind === 'home' ? 'home' : 'absolute', cwd);
+        if (!(await insideFolders(ctx, target))) hit('outside_folders', literal.raw);
+      }
+    }
 
     if (policy.outside_folders !== 'allow') {
       for (const word of pathWords(command, process.platform)) {
@@ -233,7 +247,7 @@ export async function judgeShellChecklist(
       }
     }
 
-    if (policy.own_script !== 'allow' || policy.outside_folders !== 'allow') {
+    {
       const scripts = scriptFilesRun(command);
       if (scripts.length > 0) {
         written ??= await filesWrittenThisJob(ctx);
@@ -262,8 +276,13 @@ export async function judgeShellChecklist(
           // was an old one from an earlier run — reading only new scripts let
           // it through a "Never". Read it, and judge its paths like the
           // command's.
+          const source = exists ? await scriptSource(abs) : '';
+          // What the script does through its interpreter's API
+          // (`shutil.rmtree`, `fs.rmSync`, `urlretrieve`…), whoever wrote it
+          // (review of PR #474, Reviewer A, P1).
+          for (const category of codeActionCategories(source)) hit(category, script);
           if (exists && policy.outside_folders !== 'allow') {
-            for (const literal of await scriptPaths(abs)) {
+            for (const literal of scriptPathLiterals(source, process.platform)) {
               const target = absoluteOf(
                 literal.raw,
                 literal.kind === 'home' ? 'home' : 'absolute',

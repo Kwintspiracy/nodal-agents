@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  codeActionCategories,
   isDestructiveOrHeavyCommand,
   scriptFilesRun,
   splitShellWords,
@@ -180,6 +181,71 @@ describe('resolveShellPolicy @cap:executer-une-commande/moteur', () => {
   it('refuses a stored value it cannot read, instead of guessing', () => {
     expect(() => resolveShellPolicy({ delete_files: 'maybe' })).toThrow();
     expect(() => resolveShellPolicy({ format_disk: 'never' })).toThrow();
+  });
+});
+
+describe('review of PR #474 (Reviewer A): the program that runs, not a word of the text @cap:executer-une-commande/moteur', () => {
+  const kinds = (cmd: string) => [...staticShellCategories(cmd)].sort();
+
+  it('a MENTION in an argument is not the action (P1, false red)', () => {
+    expect(kinds('git commit -m "rm old refs"')).toEqual([]);
+    expect(kinds('echo "please rm the temp file"')).toEqual([]);
+    expect(kinds('clang-format -i src.ts')).toEqual([]);
+    expect(kinds('git format-patch -1')).toEqual([]);
+  });
+
+  it('the action is still read where the shell runs it: wrappers, substitutions, paths', () => {
+    for (const cmd of [
+      'rm -rf build',
+      '/bin/rm -rf build',
+      'sudo rm -rf build',
+      'bash -c "rm -rf build"',
+      'cmd /c del build.txt',
+      'powershell -Command "Remove-Item build -Recurse"',
+      'find . -name "*.tmp" -exec rm {} \\;',
+      'ls | xargs rm',
+      'echo $(rm -rf build)',
+      'r""m -rf build',
+    ]) {
+      expect(kinds(cmd), cmd).toContain('delete_files');
+    }
+  });
+
+  it('closes the list gaps: npm i, pnpm add, curl > file, chmod, chown, net stop (P1)', () => {
+    expect(kinds('npm i express')).toContain('install_software');
+    expect(kinds('pnpm add lodash')).toContain('install_software');
+    expect(kinds('yarn add left-pad')).toContain('install_software');
+    expect(kinds('curl https://example.com/dump.zip > dump.zip')).toContain('download');
+    expect(kinds('curl https://example.com/dump.zip --output dump.zip')).toContain('download');
+    expect(kinds('chmod 666 secret.txt')).toContain('system_settings');
+    expect(kinds('chown root secret.txt')).toContain('system_settings');
+    expect(kinds('net stop Spooler')).toContain('stop_programs');
+    // A plain read of a URL is not a download to disk.
+    expect(kinds('curl https://example.com/status')).toEqual([]);
+  });
+
+  it('inline code is read for what its interpreter API does (P1)', () => {
+    expect(kinds(`python -c "import shutil; shutil.rmtree('build')"`)).toEqual([
+      'delete_files',
+      'own_script',
+    ]);
+    expect(kinds(`node -e "require('fs').rmSync('x', { recursive: true })"`)).toContain(
+      'delete_files',
+    );
+    expect(kinds(`python -c "import os; os.remove('report.pdf')"`)).toContain('delete_files');
+    expect(
+      codeActionCategories("import urllib.request\nurllib.request.urlretrieve(u, 'x.zip')"),
+    ).toEqual(['download']);
+    expect(codeActionCategories('print("hello")')).toEqual([]);
+  });
+
+  it('a program named by a relative path is a path; a system program by its absolute path is not (P2)', () => {
+    expect(pathWords('../Downloads/evil.exe report.xlsx', 'win32').map((w) => w.raw)).toContain(
+      '../Downloads/evil.exe',
+    );
+    expect(
+      pathWords('C:\\Python311\\python.exe tools/x.py', 'win32').map((w) => w.raw),
+    ).not.toContain('C:\\Python311\\python.exe');
   });
 });
 

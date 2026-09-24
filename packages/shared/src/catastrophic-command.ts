@@ -391,18 +391,19 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
   ],
   install_software: [
     /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
+    /\b(npm|pnpm|yarn|bun)\s+(i|add|ci)\b|\bInstall-(Module|Package)\b/i, // npm i, pnpm add, PowerShell modules
     /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download\b|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
   ],
   download: [
-    /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*\s-[oO]\b|\bInvoke-WebRequest\b|\biwr\b[^\n]*-OutFile/i, // large download / clone
+    /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*(\s-[oO]\b|\s--output\b|\s--remote-name\b)|\bInvoke-WebRequest\b|\biwr\b[^\n]*-OutFile|\bStart-BitsTransfer\b/i, // large download / clone
   ],
   stop_programs: [
     /\b(kill|pkill|killall|taskkill)\b|\bStop-Process\b|\bStop-Service\b/i, // process kill
-    /\bsystemctl\b|\bsc\s+(stop|delete)\b|\bservice\b[^\n]*\b(stop|restart)\b/i, // service control
+    /\bsystemctl\b|\bsc\s+(stop|delete)\b|\bservice\b[^\n]*\b(stop|restart)\b|\bnet\s+stop\b/i, // service control
   ],
   system_settings: [
     /\bmkfs(\.\w+)?\b|\bdd\b[^\n]*\bof=|\b(format|fdisk|parted|diskpart)\b/i, // disk ops
-    /\bchmod\s+-\S*R|\bchown\s+-\S*R|\bicacls\b/i, // recursive perms/ownership
+    /\b(chmod|chown|chgrp|takeown|icacls)\b|\bSet-Acl\b|\breg\s+(add|delete|import)\b/i, // permissions, ownership, registry
   ],
 } as const satisfies Record<string, readonly RegExp[]>;
 
@@ -419,26 +420,118 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTE
  */
 export function staticShellCategories(cmd: string): Array<StaticShellCategory | 'own_script'> {
   if (typeof cmd !== 'string' || cmd.trim() === '') return [];
-  // The text as written, AND as the shell will run it: quotes, carets and
-  // POSIX backslashes removed, so `r""m`, `r^m` and `r\m` are read as the `rm`
-  // they run (Codex review of #464, P1). A text classifier still cannot be a
-  // sandbox; the OS-level one is the follow-up the ticket names.
-  const dequoted = splitShellWords(cmd)
-    .map((segment) => segment.join(' '))
-    .join(' ; ');
-  const forms = [
-    normalizeSlashes(cmd.trim()),
-    normalizeSlashes(dequoted),
-    normalizeSlashes(dequoted.replace(/\\(?=[A-Za-z])/g, '')),
-  ];
-  const found: Array<StaticShellCategory | 'own_script'> = [];
-  for (const [category, patterns] of Object.entries(STATIC_SHELL_CATEGORY_PATTERNS) as Array<
-    [StaticShellCategory, readonly RegExp[]]
-  >) {
-    if (patterns.some((re) => forms.some((f) => re.test(f)))) found.push(category);
+  // Read from the PROGRAMS the command runs, never from any word of its text
+  // (review of PR #474, Reviewer A, P1): `git commit -m "rm old refs"` does not
+  // delete, and `clang-format` is not `format`. A pattern counts only where it
+  // matches at the start of a command the shell will run — each segment, and
+  // the commands wrapped in `bash -c`, `cmd /c`, `powershell -Command`,
+  // `xargs`, `find -exec` and `$(…)`. Quotes, carets and POSIX backslashes are
+  // removed by the tokenizer, so `r""m`, `r^m` and `r\m` still read as `rm`.
+  // A text reading still cannot be a sandbox; the OS-level one is the
+  // follow-up the ticket names.
+  const found = new Set<StaticShellCategory | 'own_script'>();
+  for (const unit of commandUnits(cmd)) {
+    const text = normalizeSlashes(unit.join(' '));
+    for (const [category, patterns] of Object.entries(STATIC_SHELL_CATEGORY_PATTERNS) as Array<
+      [StaticShellCategory, readonly RegExp[]]
+    >) {
+      if (patterns.some((re) => startsWithMatch(re, text))) found.add(category);
+    }
   }
-  if (isInlineInterpreterEvalCommand(cmd)) found.push('own_script');
-  return found;
+  // `curl URL > file` downloads without `-o`: the redirection is dropped by
+  // the tokenizer, so it is read on the text of that segment.
+  if (/(^|[;&|(]\s*)(curl|irm|Invoke-RestMethod)\b[^;&|\n]*>/i.test(cmd)) found.add('download');
+  if (isInlineInterpreterEvalCommand(cmd)) {
+    found.add('own_script');
+    // What inline code does through an interpreter's API has no program
+    // name to read (`python -c "import shutil; shutil.rmtree('x')"`): its
+    // common calls are read in the code itself.
+    for (const category of codeActionCategories(cmd)) found.add(category);
+  }
+  return [...found];
+}
+
+/** True when `re` matches at the very start of `text`. */
+function startsWithMatch(re: RegExp, text: string): boolean {
+  const m = new RegExp(re.source, re.flags.replace('g', '')).exec(text);
+  return m !== null && m.index === 0;
+}
+
+const SHELL_WRAPPERS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash', 'fish']);
+
+/**
+ * The commands a command line actually runs, as token lists whose first token
+ * is the program (its basename, lower-cased, without `.exe`): each segment,
+ * and what `bash -c`, `cmd /c`, `powershell -Command`, `xargs`, `find -exec`
+ * and `$(…)` / backticks run inside it.
+ */
+export function commandUnits(cmd: string, depth = 0): string[][] {
+  if (depth > 4 || typeof cmd !== 'string' || cmd.trim() === '') return [];
+  const units: string[][] = [];
+  const inner = (text: string) => units.push(...commandUnits(text, depth + 1));
+  for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
+  for (const segment of splitShellWords(cmd)) {
+    const tokens = skipPassthroughLeaders(segment);
+    const head = tokens[0];
+    if (head === undefined) continue;
+    const program = interpreterBasename(head);
+    const args = tokens.slice(1);
+    units.push([program, ...args]);
+    const lower = args.map((a) => a.toLowerCase());
+    if (SHELL_WRAPPERS.has(program)) {
+      const i = lower.indexOf('-c');
+      if (i >= 0 && args[i + 1] !== undefined) inner(args[i + 1] ?? '');
+    } else if (program === 'cmd') {
+      const i = lower.findIndex((a) => a === '/c' || a === '/k');
+      if (i >= 0) inner(args.slice(i + 1).join(' '));
+    } else if (program === 'powershell' || program === 'pwsh') {
+      const i = lower.findIndex((a) => a === '-command' || a === '-c');
+      if (i >= 0) inner(args.slice(i + 1).join(' '));
+    } else if (program === 'xargs') {
+      const rest = args.slice(args.findIndex((a) => !a.startsWith('-')));
+      if (rest.length > 0 && !rest[0]?.startsWith('-')) inner(rest.join(' '));
+    } else if (program === 'find') {
+      const i = lower.findIndex((a) => a === '-exec' || a === '-execdir' || a === '-ok');
+      if (i >= 0) {
+        const end = args.findIndex((a, j) => j > i && (a === ';' || a === '\\;' || a === '+'));
+        inner(args.slice(i + 1, end > i ? end : undefined).join(' '));
+      }
+    }
+  }
+  return units;
+}
+
+/**
+ * What code does through an interpreter's API, read in its text: inline code
+ * (`python -c`, `node -e`) and the scripts a command runs (#464, review of
+ * PR #474). A reading, not a sandbox: it finds the common calls, it does not
+ * prove their absence.
+ */
+export const CODE_ACTION_PATTERNS: Record<StaticShellCategory, readonly RegExp[]> = {
+  delete_files: [
+    /\bshutil\.rmtree\b|\bos\.(remove|unlink|rmdir|removedirs)\b|\.unlink\(|\bsend2trash\b/i,
+    /\.(rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\s*\(|\bFileUtils\.rm/i,
+    /\bRemove-Item\b|\b(File|Directory)\.Delete\b/i,
+  ],
+  install_software: [
+    /\b(pip3?|npm|pnpm|yarn|bun|apt|apt-get|brew|choco|winget|conda)\b[^\n]{0,40}\b(install|add)\b/i,
+    /\bInstall-(Module|Package)\b/i,
+  ],
+  download: [/\burlretrieve\b|\bInvoke-WebRequest\b|\bStart-BitsTransfer\b|\bwget\b|\bcurl\b/i],
+  stop_programs: [
+    /\bos\.kill\b|\bprocess\.kill\b|\bStop-Process\b|\bStop-Service\b|\btaskkill\b|\bpkill\b|\bkillall\b/i,
+  ],
+  system_settings: [
+    /\bos\.(chmod|chown)\b|\bfs\.(chmod|chown)(Sync)?\b|\bSet-Acl\b|\bicacls\b|\bwinreg\b|\breg\s+(add|delete)\b|\bdiskpart\b/i,
+  ],
+};
+
+/** The kinds of action a piece of code names through its interpreter's API. */
+export function codeActionCategories(source: string): StaticShellCategory[] {
+  if (typeof source !== 'string' || source === '') return [];
+  return (Object.entries(CODE_ACTION_PATTERNS) as Array<[StaticShellCategory, readonly RegExp[]]>)
+    .filter(([, patterns]) => patterns.some((re) => re.test(source)))
+    .map(([category]) => category);
 }
 
 /** Script extensions a shell runs directly, without naming an interpreter. */

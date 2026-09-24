@@ -410,4 +410,70 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
 
     expect(res.outcome).toBe('error');
   });
+
+  // ── Review of PR #474 (Reviewer A) ─────────────────────────────────────────
+
+  it('a script the command creates under another spelling is still its own (P1)', async () => {
+    await forgetWrites();
+    const res = await run(
+      'printf "print(1)" > t474.py && python ./t474.py',
+      gate({ ...DEFAULT_SHELL_POLICY, own_script: 'never', outside_folders: 'allow' }),
+    );
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toContain('run code it wrote itself');
+  });
+
+  it('what a script does through its interpreter API is judged, whoever wrote it (P1)', async () => {
+    await forgetWrites();
+    await writeFile(join(folder, 'cleanup474.py'), "import shutil\nshutil.rmtree('build')\n");
+    const res = await run(
+      'python cleanup474.py',
+      gate({
+        ...DEFAULT_SHELL_POLICY,
+        delete_files: 'never',
+        own_script: 'allow',
+        outside_folders: 'allow',
+      }),
+    );
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toContain('delete files or discard work (cleanup474.py)');
+  });
+
+  it('a migrated Yolo agent is not stopped by inline code that stays inside (P2)', async () => {
+    await forgetWrites();
+    const yolo: ApprovalRule = {
+      id: 'yolo474',
+      toolName: 'run_command',
+      action: 'auto_approve',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+    // What migration 0125 gives a Yolo agent: everything allowed but leaving
+    // its folders, which asks.
+    const migrated: ShellPolicy = {
+      outside_folders: 'ask',
+      own_script: 'allow',
+      delete_files: 'allow',
+      install_software: 'allow',
+      download: 'allow',
+      stop_programs: 'allow',
+      system_settings: 'allow',
+    };
+    const res = await run(
+      `node -e "console.log(JSON.parse(require('fs').readFileSync(0, 'utf8')))"`,
+      gate(migrated, [yolo]),
+    );
+    expect(res.outcome).toBe('success');
+  });
+
+  it('a mention of rm in a commit message does not refuse the commit (P1, false red)', async () => {
+    await forgetWrites();
+    const res = await run(
+      'git commit -m "rm old refs"',
+      gate({ ...DEFAULT_SHELL_POLICY, delete_files: 'never', outside_folders: 'allow' }),
+    );
+    expect(res.outcome).not.toBe('error');
+  });
 });
