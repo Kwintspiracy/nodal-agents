@@ -144,7 +144,12 @@ test.describe.configure({ timeout: 90_000 });
 
 async function openAutonomyTab(page: Page): Promise<void> {
   await page.goto(`/agents/${agentId}/edit?tab=autonomy`);
-  await expect(page.getByText('Allowed commands')).toBeVisible({ timeout: 20_000 });
+  // Sous « Advanced » depuis #464 : replié quand aucune liste n'est posée,
+  // ouvert d'office quand il y en a une.
+  const advanced = page.getByTestId('shell-advanced');
+  await expect(advanced).toBeVisible({ timeout: 20_000 });
+  if ((await advanced.getAttribute('aria-expanded')) !== 'true') await advanced.click();
+  await expect(page.getByText('Allowed commands')).toBeVisible();
 }
 
 test('an owner names two commands, reads them back, then removes the list @cap:assigner-outils/ecran', async ({

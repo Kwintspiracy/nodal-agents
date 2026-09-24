@@ -184,6 +184,8 @@ async function render(
         cliDailyBudgetUsd={0}
         commandAllowlist={null}
         mayChangeTeam={false}
+        shellPolicy={null}
+        workspaceAutonomy={null}
       />,
     );
   });
@@ -289,8 +291,19 @@ describe("les textes de l'onglet Approvals @cap:regler-autonomie/ecran", () => {
   });
 
   it('dit ce que sont les commandes, et la liste qui les borne', async () => {
-    const text = await render();
-    expect(text).toContain('Commands ask for your approval by default.');
+    await render();
+    // Plus de « asks by default » (#464) : ce que les commandes font VRAIMENT
+    // dépend de l'autonomie de l'espace, et sans elle la phrase le dit.
+    expect(container.textContent).not.toContain('Commands ask for your approval by default.');
+    expect(container.textContent).toContain('How commands run depends on the workspace autonomy.');
+    expect(container.textContent).toContain('What it may do with a shell');
+    expect(container.textContent).toContain('Run code written into a command');
+    // La liste de programmes est sous « Advanced », repliée quand aucune n'est posée.
+    expect(container.textContent).not.toContain('Allowed commands');
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="shell-advanced"]')!.click();
+    });
+    const text = container.textContent ?? '';
     expect(text).toContain('Run commands without asking');
     expect(text).toContain(
       'When on, the agent can run any permitted command immediately. Commands are still logged. Use this only for agents you trust.',
@@ -635,6 +648,8 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
           cliDailyBudgetUsd={0}
           commandAllowlist={null}
           mayChangeTeam={false}
+          shellPolicy={null}
+          workspaceAutonomy={null}
         />,
       );
     });

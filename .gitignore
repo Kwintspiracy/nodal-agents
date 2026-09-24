@@ -74,7 +74,6 @@ apps/runner/zim_*.png
 apps/web/tests/e2e/dogfood-audit*.spec.ts
 apps/web/tests/e2e/bell-diag.spec.ts
 apps/web/tests/e2e/bell-approval.spec.ts
-apps/web/tests/e2e/command-execution-yolo.spec.ts
 apps/web/playwright.local-trust.config.ts
 apps/web/pw-onboarding-verify.cjs
 apps/web/pw-onboarding-verify.mjs

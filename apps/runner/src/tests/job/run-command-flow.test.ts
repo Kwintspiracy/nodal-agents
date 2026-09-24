@@ -38,6 +38,7 @@ import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
+import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
 import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── LLM client interception (verbatim from delegation-parallel-tools.test.ts) ──
@@ -779,5 +780,54 @@ describe('run_command — E2E runner integration', () => {
     // re-gated — a second row would exist.
     const rcAuditRows = await db.select().from(toolCalls).where(eq(toolCalls.jobId, job.id));
     expect(rcAuditRows.filter((r) => r.toolName === 'run_command').length).toBe(1);
+  });
+});
+
+// ─── #464 : la liste de l'agent atteint la porte ──────────────────────────────
+//
+// Ce test prouve le CÂBLAGE du runner : la liste de l'agent (ici la valeur par
+// défaut, `agents.shell_policy` NULL, « demander » partout) atteint la porte
+// sur un vrai job, et la carte d'approbation porte la sorte d'action lue.
+describe('run_command — the agent checklist reaches the gate (#464) @cap:executer-une-commande/moteur', () => {
+  it('under destructive_gate, a delete suspends the job with the kind of action named', async () => {
+    const [before] = await db
+      .select({ rootGrants: entities.rootGrants })
+      .from(entities)
+      .where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' } })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      const job = await createJob();
+      const command = 'rm -rf build';
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-rc-464',
+              toolName: 'run_command',
+              args: { purpose: 'clean the build output', command },
+            },
+          ],
+        },
+      ]);
+
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+      expect(result.status).toBe('awaiting_approval');
+      const [row] = await db
+        .select({ gateReasons: approvalRequests.gateReasons })
+        .from(approvalRequests)
+        .where(eq(approvalRequests.jobId, job.id));
+      expect(row?.gateReasons).toEqual([
+        { category: 'delete_files', state: 'ask', details: [command] },
+      ]);
+    } finally {
+      await db
+        .update(entities)
+        .set({ rootGrants: before?.rootGrants ?? {} })
+        .where(eq(entities.id, seed.entityId));
+    }
   });
 });

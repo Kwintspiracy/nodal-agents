@@ -90,6 +90,9 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
 
   const autoRunPaused = pauseResult.ok ? pauseResult.data.autoRunPaused : false;
   const isOwner = pauseResult.ok ? pauseResult.data.isOwner : false;
+  // #464 : ce qui arrive VRAIMENT aux commandes dépend de ce niveau. Illisible,
+  // la phrase le dit au lieu de deviner.
+  const workspaceAutonomy = pauseResult.ok ? pauseResult.data.workspaceAutonomy : null;
 
   // Channels tab data — the agent existing is already confirmed above, so
   // these only fail on a genuine db_error; surface the first one as a banner
@@ -126,6 +129,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       allSkills={allSkills}
       autoRunPaused={autoRunPaused}
       isOwner={isOwner}
+      workspaceAutonomy={workspaceAutonomy}
       channelsError={channelsError}
       telegramCfg={telegramCfgResult.ok ? telegramCfgResult.data : null}
       telegramAllowedChats={telegramAllowedChatsResult.ok ? telegramAllowedChatsResult.data : []}
