@@ -230,7 +230,20 @@ export default function ApprovalRequestCard({
           return;
         }
       }
-      const r = await resolve('reject');
+      // What the AGENT reads with the refusal (run 2fb6bfca, 24/09): a bare
+      // "rejected" sent it looking for another way to the same files. The
+      // note says it is a Never, on what, and not to work around it.
+      const refused = neverKinds
+        .map((reason) => {
+          const kind = SHELL_CATEGORY_COPY[reason.category].label.toLowerCase();
+          return reason.details.length > 0 ? `${kind} (${reason.details.join(', ')})` : kind;
+        })
+        .join('; ');
+      const r = await resolve(
+        'reject',
+        `The owner answered Never: this agent may not ${refused}, now or later. ` +
+          'Do not look for another way to do it; report what you could not do.',
+      );
       if (!r.ok) toast.error(r.message);
       else toast.success(`Rejected. ${agentName} will not be asked this again: it is refused.`);
     });
