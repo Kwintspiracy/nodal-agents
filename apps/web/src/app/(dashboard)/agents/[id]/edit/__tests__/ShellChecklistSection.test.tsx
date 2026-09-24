@@ -146,17 +146,19 @@ describe('runCommandsTruth: what really happens to a command (#464) @cap:regler-
 
   it('says full autonomy does not cover the shell', () => {
     expect(runCommandsTruth({ rule: null, paused: false, autonomy: 'fully_autonomous' })).toBe(
-      'Every command asks for your approval. Full autonomy never covers the shell: only Yolo does.',
+      'Every command asks for your approval. Full autonomy never covers the shell: only Run without asking does.',
     );
   });
 
-  it('reads the rule before the level, and the brake before Yolo', () => {
+  it('reads the rule before the level, and the brake before Run without asking', () => {
     expect(runCommandsTruth({ rule: 'block', paused: false, autonomy: 'destructive_gate' })).toBe(
       'This agent cannot run commands: a rule blocks them.',
     );
     expect(
       runCommandsTruth({ rule: 'auto_approve', paused: true, autonomy: 'propose_confirm' }),
-    ).toBe('Yolo is paused by the auto-run brake: every command asks for your approval.');
+    ).toBe(
+      'Run without asking is paused by the auto-run brake: every command asks for your approval.',
+    );
     expect(
       runCommandsTruth({ rule: 'auto_approve', paused: false, autonomy: 'propose_confirm' }),
     ).toBe('Commands run without asking, except the kinds of action below set to Ask me or Never.');
