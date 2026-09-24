@@ -126,6 +126,55 @@ describe('FolderPickerModal @cap:travailler-sur-des-fichiers/ecran', () => {
     expect(recus).toEqual(['/backup/notes']);
   });
 
+  it('un ajout qui ÉCHOUE (action rejetée) garde la fenêtre ouverte et le dit', async () => {
+    // Revue Reviewer A, passe 2, P2 : un rejet (serveur qui redémarre, réseau
+    // coupé) fermait la fenêtre sans un mot, et le dossier n'était pas attaché.
+    serve({ '<roots>': ROOTS, '/backup/notes': NOTES });
+    let closed = false;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <FolderPickerModal
+          open
+          startPath="/backup/notes"
+          onClose={() => {
+            closed = true;
+          }}
+          onSelect={async () => {
+            throw new Error('fetch failed');
+          }}
+        />,
+      );
+    });
+    await act(async () => {});
+    await act(async () => {});
+
+    await act(async () => selectButton().click());
+
+    expect(closed).toBe(false);
+    expect(document.body.textContent).toContain('The folder was not added: fetch failed');
+    // Le bouton revient : on peut réessayer.
+    expect(selectButton().disabled).toBe(false);
+    expect(selectButton().textContent).toBe('Select this folder');
+  });
+
+  it('pendant l’ajout, Cancel est désactivé', async () => {
+    serve({ '<roots>': ROOTS, '/backup/notes': NOTES });
+    let finir: () => void = () => {};
+    await render({
+      startPath: '/backup/notes',
+      onSelect: () => new Promise<void>((r) => (finir = r)),
+    });
+    await act(async () => selectButton().click());
+    const cancel = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Cancel',
+    )!;
+    expect(cancel.disabled).toBe(true);
+    await act(async () => finir());
+  });
+
   it('un startPath disparu : les racines, et le dire', async () => {
     serve({ '<roots>': ROOTS });
     await render({ startPath: '/backup/gone', onSelect: () => {} });

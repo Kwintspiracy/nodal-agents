@@ -1457,7 +1457,10 @@ export async function addAgentWorkspaceAction(
       causeMsg.includes('unique') ||
       causeMsg.includes('23505')
     ) {
-      return fail('conflict', 'A workspace with this label already exists for this agent');
+      return fail(
+        'conflict',
+        `This agent already has a folder labelled “${label.trim()}”. Change the label, then Browse… again.`,
+      );
     }
     return fail('db_error', 'Failed to add workspace');
   }

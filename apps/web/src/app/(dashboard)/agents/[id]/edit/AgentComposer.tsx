@@ -3306,10 +3306,16 @@ function SettingsTab(props: {
         refuse(result.message);
         return;
       }
-      const listResult = await listAgentWorkspacesAction(agentId);
-      if (listResult.ok) onWorkspacesChange(listResult.data);
       setWsLabel('');
       setWsRetryPath(null);
+      const listResult = await listAgentWorkspacesAction(agentId);
+      if (!listResult.ok) {
+        // Le dossier EST en base ; c'est la liste qui n'a pas suivi. Le dire,
+        // sinon on réessaie et on heurte son propre libellé (revue passe 2).
+        toast.error(`Folder added, but the list could not be reloaded: ${listResult.message}`);
+        return;
+      }
+      onWorkspacesChange(listResult.data);
       toast.success('Folder added');
     } finally {
       setWsAdding(false);

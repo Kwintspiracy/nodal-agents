@@ -87,12 +87,19 @@ export default function FolderPickerModal({
     if (selectingRef.current) return;
     selectingRef.current = true;
     setSelecting(true);
+    setError(null);
     try {
       await onSelect(path);
+      onClose();
+    } catch (err) {
+      // Un REJET (serveur qui redémarre, réseau coupé) n'est pas un refus : le
+      // dossier n'est pas attaché, et fermer la fenêtre le cacherait (revue
+      // Reviewer A, passe 2). Elle reste ouverte, dit pourquoi, et Select
+      // redevient cliquable.
+      setError(`The folder was not added: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       selectingRef.current = false;
       setSelecting(false);
-      onClose();
     }
   }
 
@@ -102,11 +109,14 @@ export default function FolderPickerModal({
     <Modal
       open={open}
       onClose={onClose}
+      // Pendant l'ajout, ni Esc ni clic à côté : fermer n'arrêterait pas
+      // l'écriture, qui aboutirait sans que la fenêtre l'ait montré.
+      dismissable={!selecting}
       title="Choose a folder"
       className="!max-w-xl"
       footer={
         <ModalFooter>
-          <PrimaryButton variant="neutral" onClick={onClose}>
+          <PrimaryButton variant="neutral" onClick={onClose} disabled={selecting}>
             Cancel
           </PrimaryButton>
           <PrimaryButton
