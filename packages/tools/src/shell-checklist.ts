@@ -27,6 +27,7 @@ import {
   pathWords,
   scriptFilesRun,
   scriptPathLiterals,
+  splitShellWords,
   type PathWord,
   staticShellCategories,
   type ShellCategory,
@@ -108,8 +109,8 @@ async function jobStartedAt(ctx: ToolContext): Promise<Date> {
 /**
  * A script written DURING this run by any means, not only the file tools: a
  * shell command (`printf … > build.py`) leaves no file_write row (Codex review
- * of #464, P1). Changed since the job began, or not there yet — then only this
- * very command can be about to create it (`printf … > x.py && python x.py`).
+ * of #464, P1): changed since the job began. (A script not there yet is
+ * judged by the caller: the agent's own only if the command itself creates it.)
  */
 async function changedDuringJob(abs: string, jobStart: Date): Promise<boolean> {
   try {
@@ -143,6 +144,13 @@ async function scriptLocation(ctx: ToolContext, script: string, cwd: string): Pr
     }
   }
   return fromCwd;
+}
+
+/** How many words of the command are this script, as written. */
+function timesNamed(command: string, script: string): number {
+  return splitShellWords(command)
+    .flat()
+    .filter((word) => word === script).length;
 }
 
 /** A script larger than this is not read: its first part is enough to find where it looks. */
@@ -232,14 +240,29 @@ export async function judgeShellChecklist(
         jobStart ??= await jobStartedAt(ctx);
         for (const script of scripts) {
           const abs = await scriptLocation(ctx, script, cwd);
+          const exists = await stat(abs).then(
+            () => true,
+            () => false,
+          );
+          // Not there: only THIS command can be about to create it
+          // (`printf … > x.py && python x.py`), and then it names it twice.
+          // Named once, it will simply fail to run: nothing to ask about
+          // (run 2fb6bfca, 24/09: a wrong `cwd` made an old script "the
+          // agent's own", and the card asked Quentin about a command that
+          // could not run).
+          const createdHere = !exists && timesNamed(command, script) > 1;
           const own =
-            written.has(await canonical(ctx, abs)) || (await changedDuringJob(abs, jobStart));
-          if (!own) continue;
-          hit('own_script', script);
-          // What the script itself names (Quentin's test, 24/09, run ae424ac0):
-          // the command was `python script.py`, the Downloads path was IN the
-          // script. Read it, and judge its paths like the command's.
-          if (policy.outside_folders !== 'allow') {
+            createdHere ||
+            (exists &&
+              (written.has(await canonical(ctx, abs)) || (await changedDuringJob(abs, jobStart))));
+          if (own) hit('own_script', script);
+          // What the script itself names, whoever wrote it and whenever (runs
+          // ae424ac0 and 2fb6bfca, 24/09): the command was `python script.py`,
+          // the Downloads path was IN the script, and in 2fb6bfca the script
+          // was an old one from an earlier run — reading only new scripts let
+          // it through a "Never". Read it, and judge its paths like the
+          // command's.
+          if (exists && policy.outside_folders !== 'allow') {
             for (const literal of await scriptPaths(abs)) {
               const target = absoluteOf(
                 literal.raw,
