@@ -25,7 +25,7 @@ export function runCommandsTruth({
 }): string {
   if (rule === 'block') return 'This agent cannot run commands: a rule blocks them.';
   if (rule === 'auto_approve' && paused) {
-    return 'Yolo is paused by the auto-run brake: every command asks for your approval.';
+    return 'Run without asking is paused by the auto-run brake: every command asks for your approval.';
   }
   if (rule === 'auto_approve') {
     return 'Commands run without asking, except the kinds of action below set to Ask me or Never.';
@@ -36,7 +36,7 @@ export function runCommandsTruth({
     return 'Ordinary commands run without asking: the workspace only gates risky actions. The kinds of action below follow their setting.';
   }
   if (autonomy === 'fully_autonomous') {
-    return 'Every command asks for your approval. Full autonomy never covers the shell: only Yolo does.';
+    return 'Every command asks for your approval. Full autonomy never covers the shell: only Run without asking does.';
   }
   return 'Every command asks for your approval.';
 }

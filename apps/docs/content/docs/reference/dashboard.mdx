@@ -158,7 +158,7 @@ Eight tabs:
 | **Tools**      | The built-in tools this agent holds                                                                   |
 | **Connectors** | Connectors and MCP servers, with the per-operation allowlist                                          |
 | **Runs**       | This agent's runs                                                                                     |
-| **Approvals**  | Per-tool rule — **Run without asking**, **Ask for approval** or **Block** — plus the Yolo toggles     |
+| **Approvals**  | Per-tool rule — **Run without asking**, **Ask for approval** or **Block**, `run_command` included     |
 | **Settings**   | Workspaces, budgets, memory budget, team permissions, delete                                          |
 
 Tabs that mean nothing for an agent running on a coding CLI are disabled with a
@@ -269,9 +269,9 @@ approval covers that one call. To stop confirming every time, you allow the
 `run_command` to **Run without asking**, for that agent, and — if you name one —
 only inside one of its folders. The card's **Approve for this project** writes
 that same rule for the folder the run is in. A rule never reads what the command
-says, so it cannot allow one command line and keep asking about another. **Yolo**,
-on the same tab, goes further: it drops the gate for every command that agent
-runs. A third way does not come from that tab at all: with the workspace's
+says, so it cannot allow one command line and keep asking about another; set
+without a folder, it covers every command that agent runs. A second way does not
+come from that tab at all: with the workspace's
 [autonomy level](/docs/guides/root-agent) set to **Autonomous, gate
 destructive** and no rule on the tool, an ordinary command runs unasked, while a
 destructive or heavy one (deleting files, installing a package, killing a
