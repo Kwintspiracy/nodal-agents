@@ -24,6 +24,8 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
+import { randomBytes } from 'node:crypto';
+import { SHARED_POSTGRES_KEY, type SharedPostgres } from './shared-postgres';
 import { withPostgresClusterStart } from './cluster-lock';
 import {
   registerTestCluster,
@@ -47,6 +49,13 @@ interface EmbeddedPostgresLike {
   start(): Promise<void>;
   stop(): Promise<void>;
   createDatabase(name: string): Promise<void>;
+  /** Un client `pg` vers ce cluster ; n'exige pas que CETTE instance l'ait démarré. */
+  getPgClient(database?: string): PgClientLike;
+}
+interface PgClientLike {
+  connect(): Promise<void>;
+  query(sql: string): Promise<unknown>;
+  end(): Promise<void>;
 }
 type EmbeddedPostgresCtor = new (opts: {
   databaseDir: string;
@@ -175,7 +184,77 @@ export async function pickFreePort(
  * VRAIES migrations via `runMigrations` de @nodal-agents/db (ce harnais ne
  * dépend pas de db — db en dépend en dev, un cycle serait de trop).
  */
-export function startRealPostgres(): Promise<RealPostgres> {
+export async function startRealPostgres(): Promise<RealPostgres> {
+  // Le serveur du run, quand la config en déclare un (#471) : une base neuve
+  // dessus, en quelques dizaines de millisecondes, au lieu d'un `initdb`.
+  const shared = await sharedServerOfThisRun();
+  if (shared) return openDatabaseOn(shared);
+  return startOwnRealPostgres();
+}
+
+/**
+ * Le serveur partagé fourni par `pg-global-setup.ts`, ou `undefined` quand la
+ * config qui fait tourner ce fichier n'a pas de projet `pg` : le fichier
+ * démarre alors son propre cluster, comme avant #471. Ce n'est pas un repli
+ * caché : c'est la config qui choisit, et elle le dit.
+ *
+ * `vitest` est importé ICI, à l'appel : le reste de test-kit (les scanners
+ * d'architecture) est chargé hors de tout run vitest par le banc d'essai.
+ */
+async function sharedServerOfThisRun(): Promise<SharedPostgres | undefined> {
+  const { inject } = await import('vitest');
+  return inject(SHARED_POSTGRES_KEY);
+}
+
+/**
+ * Une base neuve sur le serveur du run, supprimée par `stop()`. Le nom porte
+ * le pid du worker et un aléa : deux fichiers qui démarrent ensemble ne se
+ * disputent rien.
+ */
+async function openDatabaseOn(shared: SharedPostgres): Promise<RealPostgres> {
+  const { ctor: EmbeddedPostgres } = await loadEmbeddedPostgres();
+  // Une instance CLIENTE : jamais `initialise()` ni `start()`, donc aucun
+  // processus à elle, et son `stop()` de sortie ne touche pas au serveur.
+  const cluster = new EmbeddedPostgres({
+    databaseDir: shared.dataDir,
+    user: PG_USER,
+    password: PG_PASSWORD,
+    port: shared.port,
+    persistent: true,
+  });
+  const name = `nodalai_t_${process.pid}_${randomBytes(4).toString('hex')}`;
+  const admin = async (sql: string): Promise<void> => {
+    const client = cluster.getPgClient(PG_DATABASE);
+    await client.connect();
+    try {
+      await client.query(sql);
+    } finally {
+      await client.end();
+    }
+  };
+  await admin(`CREATE DATABASE "${name}"`);
+
+  let stopped = false;
+  return {
+    url: `postgresql://${PG_USER}:${encodeURIComponent(PG_PASSWORD)}@localhost:${shared.port}/${name}`,
+    port: shared.port,
+    dataDir: shared.dataDir,
+    stop: async () => {
+      if (stopped) return;
+      stopped = true;
+      // FORCE : une connexion qu'un test a oubliée ne doit pas laisser la base
+      // derrière lui, ni faire rougir un fichier dont tout est passé.
+      await admin(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    },
+  };
+}
+
+/**
+ * Un cluster À SOI : data dir temporaire, port libre, `initdb`. C'est ce que
+ * `pg-global-setup.ts` démarre une fois par run, et ce que `startRealPostgres`
+ * fait encore quand aucune config ne fournit de serveur.
+ */
+export function startOwnRealPostgres(): Promise<RealPostgres> {
   // SOUS LE VERROU DE LA MACHINE (issue #130). `pnpm test` lance un `vitest run`
   // par paquet, en même temps : sérialiser ici est la seule façon d'empêcher
   // cinq `initdb` simultanés, qu'aucun réglage vitest ne voit. Le verrou couvre
