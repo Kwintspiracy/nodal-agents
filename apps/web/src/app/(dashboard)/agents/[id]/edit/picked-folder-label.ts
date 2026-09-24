@@ -1,0 +1,48 @@
+/**
+ * picked-folder-label.ts — le libellé sous lequel un dossier choisi par
+ * Browse… est attaché (#461).
+ *
+ * Valider la fenêtre de Browse… attache le dossier aussitôt : il n'y a plus
+ * d'écran intermédiaire où l'on voit le libellé avant qu'il parte en base.
+ * Ce qui se voyait avant doit donc se DIRE quand ça ne va pas, jamais
+ * s'abandonner en silence (invariant #4) :
+ *
+ *  - une racine (`/`) n'a pas de nom de dossier à prendre comme libellé ;
+ *  - un libellé déjà porté par un autre dossier de l'agent serait refusé par
+ *    la contrainte unique — on le dit avant l'aller-retour, avec le libellé
+ *    en cause, que l'utilisateur n'a peut-être jamais tapé.
+ */
+
+export const MAX_FOLDER_LABEL = 80;
+
+export type PickedFolderLabel =
+  | { ok: true; label: string }
+  | { ok: false; label: string; message: string };
+
+/** Le dernier segment d'un chemin POSIX, Windows ou UNC ; '' pour une racine. */
+export function folderName(path: string): string {
+  return path.split(/[/\\]/).filter(Boolean).pop() ?? '';
+}
+
+export function pickedFolderLabel(
+  typed: string,
+  path: string,
+  existingLabels: readonly string[],
+): PickedFolderLabel {
+  const label = (typed.trim() || folderName(path)).slice(0, MAX_FOLDER_LABEL);
+  if (!label) {
+    return {
+      ok: false,
+      label,
+      message: 'This folder has no name to use as a label. Type a label, then Browse… again.',
+    };
+  }
+  if (existingLabels.includes(label)) {
+    return {
+      ok: false,
+      label,
+      message: `This agent already has a folder labelled “${label}”. Change the label, then Browse… again.`,
+    };
+  }
+  return { ok: true, label };
+}
