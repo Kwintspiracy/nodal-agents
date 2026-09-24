@@ -428,6 +428,57 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
     expect(c.betweenTokensMs).toBe(BETWEEN_TOKENS_MS);
   });
 
+  // #442 : trois niveaux, l'explicite gagne toujours sur l'implicite.
+  it('the agent’s value replaces the implicit clock, raises and floors included', () => {
+    const agent = { firstTokenTimeoutMs: 600_000 };
+    // Plus haut que l'implicite : il gagne.
+    expect(computeTurnClocks({ provider: 'openrouter' }, 1_000, agent).firstTokenMs).toBe(600_000);
+    // Plus BAS que le relèvement de contexte et que le plancher d'effort : il gagne aussi.
+    const court = { firstTokenTimeoutMs: 45_000 };
+    expect(computeTurnClocks({ provider: 'openrouter' }, 150_000, court).firstTokenMs).toBe(45_000);
+    expect(
+      computeTurnClocks({ provider: 'anthropic', reasoningEffort: 'max' }, 1_000, court)
+        .firstTokenMs,
+    ).toBe(45_000);
+    // Posé sur un modèle local, il s'applique : c'est le propriétaire qui l'a voulu.
+    expect(computeTurnClocks({ provider: 'ollama' }, 1_000, court).firstTokenMs).toBe(45_000);
+    // Le silence entre deux jetons ne bouge jamais.
+    expect(computeTurnClocks({ provider: 'openrouter' }, 1_000, agent).betweenTokensMs).toBe(
+      BETWEEN_TOKENS_MS,
+    );
+  });
+
+  it('the run budget caps an IMPLICIT clock at half of what remains, never below 60 s', () => {
+    // Reste 4 min : l'implicite de 120 s tient déjà sous la moitié (120 s).
+    expect(
+      computeTurnClocks({ provider: 'openrouter' }, 1_000, { remainingRunMs: 240_000 })
+        .firstTokenMs,
+    ).toBe(FIRST_TOKEN_BASE_MS);
+    // Reste 3 min sur un effort max (600 s) : la moitié, 90 s.
+    expect(
+      computeTurnClocks({ provider: 'anthropic', reasoningEffort: 'max' }, 1_000, {
+        remainingRunMs: 180_000,
+      }).firstTokenMs,
+    ).toBe(90_000);
+    // Reste 20 s : le plancher de 60 s.
+    expect(
+      computeTurnClocks({ provider: 'openrouter' }, 1_000, { remainingRunMs: 20_000 }).firstTokenMs,
+    ).toBe(60_000);
+    // Un modèle local, infini sinon, est borné lui aussi.
+    expect(
+      computeTurnClocks({ provider: 'ollama' }, 1_000, { remainingRunMs: 600_000 }).firstTokenMs,
+    ).toBe(300_000);
+  });
+
+  it('the run budget never caps the agent’s explicit value', () => {
+    expect(
+      computeTurnClocks({ provider: 'openrouter' }, 1_000, {
+        firstTokenTimeoutMs: 600_000,
+        remainingRunMs: 60_000,
+      }).firstTokenMs,
+    ).toBe(600_000);
+  });
+
   it('knows a local endpoint by its host, never by the provider name alone', () => {
     expect(isLocalEndpoint({ provider: 'ollama' })).toBe(true);
     for (const url of [

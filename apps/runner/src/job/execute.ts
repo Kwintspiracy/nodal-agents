@@ -714,6 +714,77 @@ export function timeoutStopLine(faits: TimeoutFacts): string {
   return `[stopped: llm timeout — ${faits.provider}/${faits.model}, turn ${faits.turn}, ${secondes(faits.elapsedMs)}]`;
 }
 
+/** Ce qu'un budget arrêté rapporte : quoi, combien, contre quel plafond, où (#442). */
+export interface BudgetStopFacts {
+  kind: 'cost' | 'time' | 'tokens';
+  spent: number;
+  limit: number;
+  turn: number;
+}
+
+/** Le code d'erreur d'un run arrêté par son budget. Les deux premiers existaient déjà. */
+export function budgetErrorCode(kind: BudgetStopFacts['kind']): string {
+  return kind === 'cost'
+    ? 'cost_budget_exceeded'
+    : kind === 'tokens'
+      ? 'token_budget_exceeded'
+      : 'run_time_exceeded';
+}
+
+/**
+ * La ligne que l'utilisateur lit quand un run s'arrête sur son budget (#442).
+ *
+ * Même famille que `timeoutStopLine` : une ligne de PLATEFORME, entre
+ * crochets, faite de champs typés (ce qui a été dépensé, le plafond, le tour).
+ * Avant #442 ces arrêts écrivaient « ⚠️ The task could not be completed
+ * (cost_budget_exceeded) and no explanation was provided » et jetaient ce que
+ * le run avait déjà écrit.
+ */
+export function budgetStopLine(f: BudgetStopFacts): string {
+  if (f.kind === 'cost') {
+    return `[stopped: run budget — $${f.spent.toFixed(2)} spent, ceiling $${f.limit.toFixed(2)}, turn ${f.turn}]`;
+  }
+  if (f.kind === 'time') {
+    const h = (ms: number) => `${(ms / 3_600_000).toFixed(1)} h`;
+    return `[stopped: run budget — ${h(f.spent)} of work, ceiling ${h(f.limit)}, turn ${f.turn}]`;
+  }
+  const n = (x: number) => Math.round(x).toLocaleString('en-US');
+  return `[stopped: token budget — ${n(f.spent)} tokens, ceiling ${n(f.limit)}, turn ${f.turn}]`;
+}
+
+/**
+ * Ce qu'un run arrêté par son budget livre : ce qu'il a écrit avant (le
+ * dernier texte des tours précédents, puis celui du tour en cours s'il en a
+ * un), et la ligne qui dit pourquoi il s'arrête. Un texte identique n'est pas
+ * répété.
+ */
+export function budgetDeliverable(prior: string, current: string, line: string): string {
+  const parts = [prior.trim()];
+  if (current.trim() !== '' && current.trim() !== prior.trim()) parts.push(current.trim());
+  parts.push(line);
+  return parts.filter((t) => t !== '').join('\n\n');
+}
+
+/**
+ * Le plafond de coût d'un run, depuis le réglage de l'espace (#442).
+ * `0` = aucun plafond ; une ligne d'espace absente garde le défaut de la
+ * plateforme, qui est aussi le défaut de la colonne.
+ */
+export function runCostCeilingUsd(
+  settingUsd: number | null | undefined,
+  defaultUsd: number,
+): number {
+  if (settingUsd === null || settingUsd === undefined) return defaultUsd;
+  return settingUsd > 0 ? settingUsd : Infinity;
+}
+
+/** La durée maximale d'un run en ms, depuis `entities.max_run_hours` (`0` = aucune). */
+export function runTimeCeilingMs(settingHours: number | null | undefined): number {
+  return settingHours !== null && settingHours !== undefined && settingHours > 0
+    ? settingHours * 3_600_000
+    : Infinity;
+}
+
 /** Période de relecture du statut du travail pendant un appel au modèle (Stop). */
 export const STOP_POLL_MS = 2_000;
 
@@ -2085,7 +2156,12 @@ async function runJobTracked(
   // there AFTER explicit rules + the auto-run brake (job/approval-rules.ts) and BEFORE
   // the catastrophic-command hardline floor, so neither safety boundary is bypassed.
   const [autonomyRow] = await db
-    .select({ rootGrants: entitiesTable.rootGrants })
+    .select({
+      rootGrants: entitiesTable.rootGrants,
+      // Le budget de run de l'espace (#442), lu ici avec le reste des réglages.
+      maxRunCostUsd: entitiesTable.maxRunCostUsd,
+      maxRunHours: entitiesTable.maxRunHours,
+    })
     .from(entitiesTable)
     .where(eq(entitiesTable.id, job.entityId ?? ''))
     .limit(1);
@@ -2895,16 +2971,46 @@ async function runJobTracked(
     const n = raw ? Number(raw) : NaN;
     return Number.isFinite(n) && n > 0 ? n : DEFAULT_LIMITS.maxTotalTokensPerJob;
   })();
-  // Guard 1e — real dollar cost cap. Fail loud before acting on a turn's output
-  // when the cumulative billed cost exceeds the cap. Provider-reported cost
-  // (OpenRouter: `usage.cost` via providerMetadata.openrouter.usage.cost) is the
-  // signal; for providers that don't report cost this guard never fires (cost
-  // stays 0) and Guard 1a (token budget) remains the backstop.
-  const maxCostPerJobUsd = (() => {
-    const raw = process.env['MAX_COST_PER_JOB_USD'];
-    const n = raw ? Number(raw) : NaN;
-    return Number.isFinite(n) && n > 0 ? n : DEFAULT_LIMITS.maxCostPerJobUsd;
-  })();
+  // Guard 1e — real dollar cost cap. Stops the run before acting on a turn's
+  // output when the cumulative billed cost exceeds the cap. Provider-reported
+  // cost (OpenRouter: `usage.cost` via providerMetadata.openrouter.usage.cost)
+  // is the signal; for providers that don't report cost this guard never fires
+  // (cost stays 0) and Guard 1a (token budget) remains the backstop.
+  //
+  // #442 : le plafond est un réglage de l'ESPACE (`entities.max_run_cost_usd`,
+  // Settings → Run budget), plus la variable d'environnement
+  // `MAX_COST_PER_JOB_USD`. Un runner qui la trouve encore le dit, au lieu de
+  // laisser croire qu'elle compte.
+  const maxCostPerJobUsd = runCostCeilingUsd(
+    autonomyRow?.maxRunCostUsd,
+    DEFAULT_LIMITS.maxCostPerJobUsd,
+  );
+  if (process.env['MAX_COST_PER_JOB_USD']) {
+    trace('max_cost_env_ignored', {
+      env: process.env['MAX_COST_PER_JOB_USD'],
+      used: maxCostPerJobUsd,
+      setIn: 'Settings → Run budget',
+    });
+  }
+  // La durée maximale d'un run (#442) : du temps TRAVAILLÉ, attentes
+  // d'approbation et de délégation exclues (`dureeCumuleeMs`).
+  const maxRunMs = runTimeCeilingMs(autonomyRow?.maxRunHours);
+  // Ce que l'agent a posé pour l'attente du premier jeton (#442).
+  const agentFirstTokenMs =
+    agentRow.idleTimeoutSeconds !== null && agentRow.idleTimeoutSeconds !== undefined
+      ? agentRow.idleTimeoutSeconds * 1_000
+      : undefined;
+  /** Arrête le run sur un budget, en livrant ce qu'il a déjà écrit (#442). */
+  const arreterSurBudget = async (
+    faits: BudgetStopFacts,
+    texteCeTour: string,
+  ): Promise<ExecuteJobResult> => {
+    const code = budgetErrorCode(faits.kind);
+    const livrable = budgetDeliverable(lastAssistantTextSeen, texteCeTour, budgetStopLine(faits));
+    trace(code, { ...faits, afterText: livrable.length });
+    await failJob(db, jobId as string, code, runStats(), messages, livrable);
+    return { status: 'failed', error: code, result: livrable, toolsUsed, exitReason: 'budget' };
+  };
   // Guard 1c — context compaction threshold. We evict OLD tool-result bodies
   // before the model's context window overflows (a hard provider error no retry
   // recovers). Trigger = a turn's prompt crossing a fraction of the window.
@@ -3327,6 +3433,16 @@ async function runJobTracked(
         return { status: 'failed', error: 'turn_limit_exceeded' };
       }
 
+      // #442 : la durée maximale du run, entre deux tours — jamais au milieu
+      // d'un appel, qui garde ses propres horloges (bornées plus bas par ce
+      // qu'il reste). Un tour en reprise (#441) a déjà du texte : il est livré.
+      if (dureeCumuleeMs() > maxRunMs) {
+        return await arreterSurBudget(
+          { kind: 'time', spent: dureeCumuleeMs(), limit: maxRunMs, turn },
+          partielCeTour,
+        );
+      }
+
       // Issue #370: fresh rules at every turn boundary. One read of
       // approval_rules + one of the entity brake, both filtered by entity, per
       // turn. Without it a rule written mid-run only applied to the next job,
@@ -3444,7 +3560,16 @@ async function runJobTracked(
           },
           // #440 : le tour est streamé sous deux horloges de silence, jamais
           // coupé tant qu'il écrit (packages/llm/src/turn-clocks.ts).
-          { streamed: true, abortSignal: arret.signal },
+          {
+            streamed: true,
+            abortSignal: arret.signal,
+            // #442 : l'attente du premier jeton posée pour l'agent, et ce
+            // qu'il reste du budget de temps du run.
+            ...(agentFirstTokenMs !== undefined ? { firstTokenTimeoutMs: agentFirstTokenMs } : {}),
+            ...(Number.isFinite(maxRunMs)
+              ? { remainingRunMs: Math.max(0, maxRunMs - dureeCumuleeMs()) }
+              : {}),
+          },
         );
       } catch (genErr) {
         // Un tour qui EXPIRE ne tue plus un travail qui avançait (#121).
@@ -3509,29 +3634,22 @@ async function runJobTracked(
             // en relancerait jusqu'à trois autres, payés (revue Codex de #449,
             // passe 2). Mêmes plafonds, mêmes codes ; le texte déjà écrit est
             // gardé dans le transcript.
-            const plafond =
+            const plafond: BudgetStopFacts | null =
               effectiveInputTokens + outputTokens > maxTotalTokensPerJob
-                ? 'token_budget_exceeded'
+                ? {
+                    kind: 'tokens',
+                    spent: effectiveInputTokens + outputTokens,
+                    limit: maxTotalTokensPerJob,
+                    turn,
+                  }
                 : totalCostUsd > maxCostPerJobUsd
-                  ? 'cost_budget_exceeded'
+                  ? { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn }
                   : null;
             if (plafond !== null) {
-              messages = [
-                ...messages,
-                {
-                  role: 'assistant',
-                  content: partielCeTour + expiration.partialText,
-                } as ModelMessage,
-              ];
-              trace(plafond, {
-                turn,
-                effectiveInputTokens,
-                outputTokens,
-                totalCostUsd,
-                afterCutCall: true,
-              });
-              await failJob(db, jobId as string, plafond, runStats(), messages);
-              return { status: 'failed', error: plafond };
+              const ecrit = partielCeTour + expiration.partialText;
+              messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
+              // #442 : le texte déjà écrit est LIVRÉ, pas seulement gardé.
+              return await arreterSurBudget(plafond, ecrit);
             }
           }
           // Coupé en pleine écriture : on REPREND, on ne rejoue pas (#441).
@@ -3768,16 +3886,17 @@ async function runJobTracked(
       // Agnostic: no per-agent knowledge. Runaway coverage is unchanged —
       // maxTurns + the no-progress detector remain the loop backstops.
       if (effectiveInputTokens + outputTokens > maxTotalTokensPerJob) {
-        trace('token_budget_exceeded', {
-          turn,
-          effectiveInputTokens,
-          inputTokens,
-          outputTokens,
-          maxTotalTokensPerJob,
-        });
         messages = avecTourRepris();
-        await failJob(db, jobId as string, 'token_budget_exceeded', runStats(), messages);
-        return { status: 'failed', error: 'token_budget_exceeded' };
+        // #442 : ce que le run a écrit, ce tour compris, est livré.
+        return await arreterSurBudget(
+          {
+            kind: 'tokens',
+            spent: effectiveInputTokens + outputTokens,
+            limit: maxTotalTokensPerJob,
+            turn,
+          },
+          texteDuTour,
+        );
       }
 
       // Guard 1e — real dollar cost cap. Checked right after Guard 1a so both
@@ -3787,15 +3906,12 @@ async function runJobTracked(
       // leave totalCostUsd at 0 and this guard never trips — Guard 1a is the
       // fallback for those. Fail loud with cost details for observability.
       if (totalCostUsd > maxCostPerJobUsd) {
-        trace('cost_budget_exceeded', {
-          turn,
-          totalCostUsd,
-          callCostUsd,
-          maxCostPerJobUsd,
-        });
         messages = avecTourRepris();
-        await failJob(db, jobId as string, 'cost_budget_exceeded', runStats(), messages);
-        return { status: 'failed', error: 'cost_budget_exceeded' };
+        // #442 : ce que le run a écrit, ce tour compris, est livré.
+        return await arreterSurBudget(
+          { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn },
+          texteDuTour,
+        );
       }
 
       // Guard 1c — compact when THIS turn's prompt crossed the threshold. Evicting

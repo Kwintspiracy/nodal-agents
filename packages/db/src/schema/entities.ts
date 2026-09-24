@@ -7,6 +7,7 @@ import {
   jsonb,
   boolean,
   integer,
+  real,
   timestamp,
   uniqueIndex,
   index,
@@ -110,11 +111,31 @@ export const entities = pgTable(
      * ne passera jamais.
      */
     proofRepairAttempts: integer('proof_repair_attempts').notNull().default(1),
+    /**
+     * Ce qu'un run peut coûter, en dollars, avant d'être arrêté avec ce qu'il
+     * a déjà écrit (issue #442, migration 0126). Remplace la variable
+     * d'environnement `MAX_COST_PER_JOB_USD` ; défaut 2, la valeur qu'elle
+     * avait. `0` = aucun plafond.
+     */
+    maxRunCostUsd: real('max_run_cost_usd').notNull().default(2),
+    /**
+     * Combien d'heures un run peut TOURNER (attentes exclues), puis il est
+     * arrêté avec ce qu'il a déjà écrit (issue #442). `0` = aucune limite.
+     */
+    maxRunHours: real('max_run_hours').notNull().default(0),
   },
   (table) => [
     check(
       'entities_proof_repair_attempts_check',
       sql`${table.proofRepairAttempts} >= 0 AND ${table.proofRepairAttempts} <= 3`,
+    ),
+    check(
+      'entities_max_run_cost_usd_check',
+      sql`${table.maxRunCostUsd} >= 0 AND ${table.maxRunCostUsd} <= 1000`,
+    ),
+    check(
+      'entities_max_run_hours_check',
+      sql`${table.maxRunHours} >= 0 AND ${table.maxRunHours} <= 72`,
     ),
     uniqueIndex('entities_mcp_token_idx').on(table.mcpToken),
     index('idx_entities_user_id').on(table.userId),

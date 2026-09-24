@@ -379,6 +379,14 @@ export function createLlmClient(
         config,
         estimateContextTokens(prepared as { system?: unknown; messages?: unknown }) +
           (await estimateToolTokens((prepared as { tools?: unknown }).tools)),
+        {
+          ...(callOpts.firstTokenTimeoutMs !== undefined
+            ? { firstTokenTimeoutMs: callOpts.firstTokenTimeoutMs }
+            : {}),
+          ...(callOpts.remainingRunMs !== undefined
+            ? { remainingRunMs: callOpts.remainingRunMs }
+            : {}),
+        },
       );
       try {
         const result = await generateWithToolChoiceFloor(

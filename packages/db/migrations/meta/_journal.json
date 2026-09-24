@@ -876,6 +876,13 @@
       "when": 1786001700000,
       "tag": "0125_shell_checklist",
       "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1786001800000,
+      "tag": "0126_run_budget",
+      "breakpoints": true
     }
   ]
 }
