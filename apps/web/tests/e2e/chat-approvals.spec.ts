@@ -132,7 +132,7 @@ test.describe('Never for this agent, from the conversation @cap:regler-autonomie
     await card.getByTestId('approval-never').click();
     const dialog = page.getByRole('dialog', { name: /Never allow this for/ });
     await expect(dialog.getByTestId('approval-never-changes')).toHaveText(
-      'Run code it wrote itself: Ask me → Never',
+      'Delete files or discard changes: Ask me → Never',
     );
     await dialog.getByRole('button', { name: 'Set to Never and reject' }).click();
 
@@ -153,6 +153,6 @@ test.describe('Never for this agent, from the conversation @cap:regler-autonomie
         },
         { timeout: 15_000 },
       )
-      .toEqual({ own_script: 'never' });
+      .toEqual({ delete_files: 'never' });
   });
 });
