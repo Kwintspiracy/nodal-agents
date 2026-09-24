@@ -46,3 +46,20 @@ export function pickedFolderLabel(
   }
   return { ok: true, label };
 }
+
+/**
+ * Le résultat d'une action serveur, qu'elle réponde `{ ok: false }` ou qu'elle
+ * REJETTE (serveur qui redémarre, réseau coupé). Après un ajout réussi, le
+ * rechargement de la liste ne doit jamais lever : l'exception remontait
+ * jusqu'à la fenêtre, qui disait « The folder was not added » alors que le
+ * dossier était en base (revue de la PR #467, passe 3).
+ */
+export async function settled<T>(
+  call: Promise<{ ok: true; data: T } | { ok: false; message: string }>,
+): Promise<{ ok: true; data: T } | { ok: false; message: string }> {
+  try {
+    return await call;
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+}

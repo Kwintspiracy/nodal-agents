@@ -41,8 +41,16 @@ export default function FolderPickerModal({
   const browse = useCallback(async (path: string | null): Promise<boolean> => {
     setLoading(true);
     setError(null);
-    const result = await browseServerFoldersAction(path);
-    setLoading(false);
+    let result: Awaited<ReturnType<typeof browseServerFoldersAction>>;
+    try {
+      result = await browseServerFoldersAction(path);
+    } catch (err) {
+      // Un REJET ne doit pas laisser la fenêtre sur « Loading… » (revue passe 3).
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      setLoading(false);
+    }
     if (!result.ok) {
       // Un dossier illisible (droits OS) ne doit pas éjecter l'utilisateur de
       // la navigation : on affiche l'erreur et on reste sur la vue courante.

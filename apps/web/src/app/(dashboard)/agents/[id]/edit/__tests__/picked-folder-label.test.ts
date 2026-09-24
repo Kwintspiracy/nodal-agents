@@ -6,7 +6,7 @@
 // silence (invariant #4).
 
 import { describe, it, expect } from 'vitest';
-import { folderName, pickedFolderLabel } from '../picked-folder-label.ts';
+import { folderName, pickedFolderLabel, settled } from '../picked-folder-label.ts';
 
 describe('pickedFolderLabel @cap:travailler-sur-des-fichiers/ecran', () => {
   it('sans libellé tapé : le nom du dossier, POSIX, Windows ou UNC', () => {
@@ -51,6 +51,24 @@ describe('pickedFolderLabel @cap:travailler-sur-des-fichiers/ecran', () => {
     const long = 'x'.repeat(120);
     const r = pickedFolderLabel('', `/data/${long}`, []);
     expect(r).toEqual({ ok: true, label: 'x'.repeat(80) });
+  });
+
+  it('settled : un rejet devient un échec dit, jamais une exception', async () => {
+    // Revue passe 3 (A : P2, C : mineur) : le rechargement de la liste APRÈS
+    // un ajout réussi rejetait, l'exception remontait jusqu'à la fenêtre, qui
+    // disait « The folder was not added » alors que le dossier était en base.
+    expect(await settled(Promise.reject(new Error('fetch failed')))).toEqual({
+      ok: false,
+      message: 'fetch failed',
+    });
+    expect(await settled(Promise.resolve({ ok: true as const, data: [1] }))).toEqual({
+      ok: true,
+      data: [1],
+    });
+    expect(await settled(Promise.resolve({ ok: false as const, message: 'nope' }))).toEqual({
+      ok: false,
+      message: 'nope',
+    });
   });
 
   it('folderName rend "" pour une racine POSIX', () => {

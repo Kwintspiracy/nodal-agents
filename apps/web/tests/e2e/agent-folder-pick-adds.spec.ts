@@ -88,7 +88,8 @@ test.describe('Dossiers d’un agent @cap:travailler-sur-des-fichiers/ecran', ()
     const homeName = home.split(/[/\\]/).filter(Boolean).pop()!;
     await picker.getByRole('button', { name: 'Select this folder' }).click();
 
-    await expect(page.getByText('Folder added')).toBeVisible();
+    // Exact : « Folder added, but the list could not be reloaded » n'est pas un succès.
+    await expect(page.getByText('Folder added', { exact: true })).toBeVisible();
     expect(await foldersOfAgent()).toEqual([{ label: homeName, path: home }]);
 
     // 2. Le même dossier, sans libellé : le libellé est pris. Refusé, et dit.
