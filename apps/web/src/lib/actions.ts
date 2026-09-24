@@ -6096,8 +6096,7 @@ export type ApprovalRow = {
   agentWorkspaces: Array<{ label: string; path: string }>;
   /**
    * Why the agent's shell checklist held this command (#464): the kinds of
-   * action it crosses, with the paths outside its folders or the script it
-   * wrote. Empty when the checklist had nothing to do with it.
+   * action it read in it. Empty when the checklist had nothing to do with it.
    */
   gateReasons: ShellGateReason[];
 };

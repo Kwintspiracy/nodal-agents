@@ -1,15 +1,14 @@
 /**
  * shell-checklist.spec.ts — what an agent may NOT do with a shell (#464).
  *
- * Run 06a949cb → b4b493e8 (23/09): an agent ran a script on files in Downloads
- * and Documents, folders it had never been given, and nobody was asked. The
- * Autonomy tab now lists the kinds of action, each Allowed / Ask me / Never.
+ * The Autonomy tab lists the kinds of action Nodal reads in a command, each
+ * Allowed / Ask me / Never.
  *
  * What this journey proves, in a browser against the real database:
  *   - the tab is named Autonomy (#438: the guides always called it that);
  *   - a new agent shows "Ask me" on every row of the checklist;
- *   - a click on "Never" for files outside its folders is WRITTEN (the row read
- *     back from `agents.shell_policy`), and survives a reload;
+ *   - a click on "Never" for deleting files is WRITTEN (the row read back from
+ *     `agents.shell_policy`), and survives a reload;
  *   - the "Run commands" sentence says what really happens instead of
  *     "Commands ask for your approval by default".
  *
@@ -78,7 +77,7 @@ async function storedPolicy(): Promise<unknown> {
 }
 
 test.describe('the shell checklist @cap:regler-autonomie/ecran', () => {
-  test('a new agent asks for everything; "Never" outside its folders is saved and read back', async ({
+  test('a new agent asks for everything; "Never" for deleting is saved and read back', async ({
     page,
   }) => {
     await page.goto(`/agents/${agentId}/edit?tab=autonomy`);
@@ -87,26 +86,26 @@ test.describe('the shell checklist @cap:regler-autonomie/ecran', () => {
     });
     await expect(page.getByText('What it may do with a shell')).toBeVisible();
     await expect(page.getByText('Commands ask for your approval by default.')).toHaveCount(0);
-    for (const row of ['outside_folders', 'own_script', 'delete_files']) {
+    for (const row of ['inline_code', 'delete_files', 'download']) {
       await expect(page.getByTestId(`shell-btn-${row}-ask`)).toHaveAttribute(
         'aria-pressed',
         'true',
       );
     }
 
-    await page.getByTestId('shell-btn-outside_folders-never').click();
+    await page.getByTestId('shell-btn-delete_files-never').click();
 
     const saved = await pollDb(
       async () => {
-        const p = (await storedPolicy()) as { outside_folders?: string } | null;
-        return p?.outside_folders === 'never' ? p : null;
+        const p = (await storedPolicy()) as { delete_files?: string } | null;
+        return p?.delete_files === 'never' ? p : null;
       },
       { timeoutMs: 15_000, intervalMs: 300 },
     );
-    expect(saved).toEqual({ outside_folders: 'never' });
+    expect(saved).toEqual({ delete_files: 'never' });
 
     await page.reload();
-    await expect(page.getByTestId('shell-btn-outside_folders-never')).toHaveAttribute(
+    await expect(page.getByTestId('shell-btn-delete_files-never')).toHaveAttribute(
       'aria-pressed',
       'true',
       { timeout: 20_000 },

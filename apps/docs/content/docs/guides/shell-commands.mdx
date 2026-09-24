@@ -96,39 +96,41 @@ the code, so a tool added to the autonomy guard cannot be forgotten here.
 
 ## What an agent may not do with a shell
 
-Attaching folders to an agent confines its file tools to them. The shell is
-confined too: naming a path outside the agent's folders is one of seven kinds
-of action the agent's **Autonomy** tab lists under **What it may do with a
-shell**. Each one is **Allowed**, **Ask me** or **Never**:
+The agent's **Autonomy** tab lists, under **What it may do with a shell**, six
+kinds of action Nodal recognises in what the agent asks to run. Each one is
+**Allowed**, **Ask me** or **Never**:
 
-| Kind of action                               | Recognised by                                                                                                |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Read or change files outside its folders     | a path that is not in one of the agent's folders (its shared folder counts as its own)                       |
-| Run code it wrote itself                     | a script the agent wrote during the run with the file tools, or code passed inline (`python -c`, `node -e`…) |
-| Delete files or discard changes              | `rm`, `del`, `Remove-Item`, `git reset --hard`, `git clean`…                                                 |
-| Install software or packages                 | `npm`, `pip`, `winget`, `choco`, `brew install`…                                                             |
-| Download files from the internet             | `wget`, `curl -o`, `git clone`, `Invoke-WebRequest`…                                                         |
-| Stop other programs or services              | `kill`, `taskkill`, `Stop-Process`, `systemctl`…                                                             |
-| Change system settings, permissions or disks | `icacls`, `chmod -R`, `format`, `diskpart`…                                                                  |
+| Kind of action                               | Recognised by                                                          |
+| -------------------------------------------- | ---------------------------------------------------------------------- |
+| Run code written into a command              | `python -c`, `node -e`, `bash -c`, a script piped into an interpreter… |
+| Delete files or discard changes              | `rm`, `del`, `Remove-Item`, `git reset --hard`, `git clean`…           |
+| Install software or packages                 | `npm`, `pip`, `winget`, `choco`, `brew install`…                       |
+| Download files from the internet             | `wget`, `curl -o`, `git clone`, `Invoke-WebRequest`…                   |
+| Stop other programs or services              | `kill`, `taskkill`, `Stop-Process`, `systemctl`…                       |
+| Change system settings, permissions or disks | `icacls`, `chmod`, `format`, `diskpart`…                               |
 
-- **Ask me** waits for you, and the approval card names what it saw: the
-  paths outside the agent's folders, the script it wrote.
-- **Never** refuses it. The agent is told what it may not do and on what, so it
-  does not look for a way around.
+- **Ask me** waits for you, and the approval card names the kinds of action it
+  saw.
+- **Never** refuses it. The agent is told what it may not do, so it does not
+  look for a way around.
 - The list applies at **every** autonomy level, and under **Run without
   asking** too: it only ever adds a question or a refusal, it never removes
-  one. A rule that blocks `run_command` and the hard floor below still win.
-- A new agent asks for all seven. An agent already set to **Run without
-  asking** when this list appeared kept what it could do, except leaving its
-  folders.
+  one. A rule that blocks the shell tool, and the hard floor below, still win.
+- A new agent asks for all six. An agent already set to **Run without
+  asking** everywhere when this list appeared kept what it could do.
 - The checklist also judges a declared proof (`declare_verification`), because
   its steps run later without asking again.
-- Nodal spots each kind of action by reading what the agent asks to run: the program
-  it starts (`rm`, `npm i`, `curl … > file`), what `bash -c`, `cmd /c` or `$(…)` wrap, and
-  the common calls in inline code and in the scripts it runs
-  (`shutil.rmtree`, `urlretrieve`). A reading is not a sandbox: code the agent
-  writes itself can do any of these actions without naming them. To rule that
-  out, set **Run code it wrote itself** to **Never**.
+- Nodal recognises each kind by the program started (`rm`, `npm i`,
+  `curl … > file`), including what `bash -c`, `cmd /c` or `$(…)` wrap. A
+  mention in an argument (`git commit -m "rm old refs"`) is not the action.
+
+**What this list does not do.** It reads the text the agent asks to run, not
+what a program does once it runs. A script run from a file (`python
+analyse.py`) is not opened: it can read, delete or download anything your
+user account can reach without the list seeing it. The list does not keep the
+shell inside the agent's folders either; only the file tools are confined to
+them. Keeping a shell inside a folder takes an operating-system sandbox, which
+Nodal does not have yet.
 
 Folded under **Advanced**, the same tab keeps the older list of programs an
 agent may start, for people who know exactly what to write there.
@@ -181,13 +183,12 @@ The code inside the quotes is an opaque program that could do anything, so it
 cannot be safety-checked line by line. The same applies to **piping code into a
 bare interpreter** (`curl … | bash`, `echo '…' | python`) and to **`awk`
 programs that shell out** (`awk 'BEGIN{system(…)}'`). All of these require
-approval by default (they count as **Run code it wrote itself**), but they are
-not refused: once you approve one, it runs.
+approval by default (they count as **Run code written into a command**), but
+they are not refused: once you approve one, it runs.
 
-**This does not block scripts.** A script file the agent did not write during
-the run (`python my_script.py`, `node build.js`, `bash deploy.sh`) runs like any
-ordinary command. One it just wrote asks, like inline code, unless the agent's
-checklist lets it run code it wrote itself.
+**This does not block scripts.** A script file (`python my_script.py`,
+`node build.js`, `bash deploy.sh`) runs like any ordinary command, whoever
+wrote it.
 
 This floor is deliberately narrow: only the 8 machine-wide destroyers above are
 un-bypassable. The floor is the last-resort circuit breaker, not a general
@@ -199,8 +200,8 @@ safety net.
   quoting) work.
 - Working directory: the agent's workspace root. Pass a workspace-relative
   `cwd` to run somewhere else inside the workspace — the path cannot point
-  outside it. A path the command itself names outside the agent's folders is
-  judged by the [shell checklist](#what-an-agent-may-not-do-with-a-shell).
+  outside it. That sets where the command starts, not what it can reach: see
+  [what this list does not do](#what-an-agent-may-not-do-with-a-shell).
 - Default timeout: 300 seconds. Pass `timeout_seconds` to override. On timeout
   the command and its child processes are killed.
 - Output cap: approximately 100 000 characters per stream. For verbose commands,

@@ -46,9 +46,9 @@ export const approvalRequests = pgTable(
     answer: text('answer'),
     /**
      * Why the autonomy checklist held this command (#464): one entry per kind
-     * of action — `{ category, state, details }`, the details being the paths
-     * outside the agent's folders or the script it wrote. The approval card
-     * shows them; NULL when the checklist did not hold the call.
+     * of action — `{ category, state, details }`, the details being the
+     * commands that did it. The approval card shows them; NULL when the
+     * checklist did not hold the call.
      */
     gateReasons: jsonb('gate_reasons'),
     requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow(),

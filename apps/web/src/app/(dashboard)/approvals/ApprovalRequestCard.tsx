@@ -401,26 +401,14 @@ export default function ApprovalRequestCard({
             </span>
           </p>
 
-          {/* Ce que la liste de l'agent a vu dans cette commande (#464) : la
-              sorte d'action, et les chemins hors de ses dossiers ou le script
-              qu'il a écrit. La personne juge sur ÇA, pas seulement sur la
-              commande brute. */}
+          {/* Ce que la liste de l'agent a vu dans cette commande (#464) : les
+              sortes d'action qui l'ont retenue. La commande elle-même est déjà
+              sur la carte (les programmes lancés, puis « Tool input »). */}
           {a.gateReasons.length > 0 && (
             <ul className="flex flex-col gap-1" data-testid="approval-shell-reasons">
               {a.gateReasons.map((reason) => (
-                <li key={reason.category} className="text-body-12 text-ink-2">
-                  <span className="text-medium-12 text-ink">
-                    {SHELL_CATEGORY_COPY[reason.category].label}
-                  </span>
-                  {reason.details.map((detail) => (
-                    <code
-                      key={detail}
-                      className="block break-all text-mono-12 text-run"
-                      data-testid="approval-shell-reason-detail"
-                    >
-                      {detail}
-                    </code>
-                  ))}
+                <li key={reason.category} className="text-medium-12 text-ink">
+                  {SHELL_CATEGORY_COPY[reason.category].label}
                 </li>
               ))}
             </ul>

@@ -59,7 +59,7 @@ describe('setAgentShellPolicyAction @cap:regler-autonomie/moteur', () => {
 
     const first = await setAgentShellPolicyAction({
       agentId: seed.agentId,
-      category: 'outside_folders',
+      category: 'inline_code',
       state: 'never',
     });
     const second = await setAgentShellPolicyAction({
@@ -69,10 +69,10 @@ describe('setAgentShellPolicyAction @cap:regler-autonomie/moteur', () => {
     });
 
     expect(first.ok && second.ok).toBe(true);
-    expect(await storedPolicy()).toEqual({ outside_folders: 'never', delete_files: 'allow' });
+    expect(await storedPolicy()).toEqual({ inline_code: 'never', delete_files: 'allow' });
     expect(second.ok && second.data).toEqual({
       ...DEFAULT_SHELL_POLICY,
-      outside_folders: 'never',
+      inline_code: 'never',
       delete_files: 'allow',
     });
   });
@@ -133,8 +133,8 @@ describe('listApprovalsAction carries the gate reasons (#464) @cap:approuver-une
       toolInput: { command: 'type x', purpose: 'read' },
       status: 'pending',
       gateReasons: [
-        { category: 'outside_folders', state: 'ask', details: ['C:/Users/kwint/Downloads/a.csv'] },
-        { category: 'own_script', state: 'ask', details: [`/tmp/${secret}.py`] },
+        { category: 'download', state: 'ask', details: ['wget https://example.com/a.zip'] },
+        { category: 'inline_code', state: 'ask', details: [`python -c "print('${secret}')"`] },
       ],
     });
     const { listApprovalsAction } = await import('../actions.ts');
@@ -143,8 +143,8 @@ describe('listApprovalsAction carries the gate reasons (#464) @cap:approuver-une
 
     expect(res.ok).toBe(true);
     const row = res.ok ? res.data.find((r) => r.toolName === 'run_command') : undefined;
-    expect(row?.gateReasons.map((r) => r.category)).toEqual(['outside_folders', 'own_script']);
-    expect(row?.gateReasons[0]?.details).toEqual(['C:/Users/kwint/Downloads/a.csv']);
+    expect(row?.gateReasons.map((r) => r.category)).toEqual(['download', 'inline_code']);
+    expect(row?.gateReasons[0]?.details).toEqual(['wget https://example.com/a.zip']);
     expect(JSON.stringify(row?.gateReasons)).not.toContain(secret);
   });
 });

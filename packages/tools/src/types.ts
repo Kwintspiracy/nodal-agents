@@ -598,8 +598,8 @@ export interface ExecuteOptions {
    * What this agent may do with a shell, per kind of action (#464, resolved
    * from `agents.shell_policy`). Judged on every command `run_command` and
    * `declare_verification` will run, at every autonomy level: `never` blocks
-   * with the reason, `ask` holds the command for approval with the paths or
-   * script named. Under `destructive_gate` it REPLACES the heavy-command
+   * with the reason, `ask` holds the command for approval with the kinds of
+   * action named. Under `destructive_gate` it REPLACES the heavy-command
    * classifier for those two tools. The catastrophic floor still applies.
    *
    * The job loop passes it on every agent turn. It is absent on the replay of

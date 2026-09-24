@@ -80,17 +80,11 @@ test.beforeAll(async () => {
       agentId,
       toolName: 'run_command',
       toolInput: {
-        command: 'python shared/scripts/_inspect_exports_generation.py',
-        purpose: 'Inspect the workbook without changing it.',
+        command: 'rm -rf shared/scratch',
+        purpose: 'Clear the scratch folder.',
       },
       status: 'pending',
-      gateReasons: [
-        {
-          category: 'own_script',
-          state: 'ask',
-          details: ['shared/scripts/_inspect_exports_generation.py'],
-        },
-      ],
+      gateReasons: [{ category: 'delete_files', state: 'ask', details: ['rm -rf shared/scratch'] }],
     });
   } finally {
     await close();
@@ -117,8 +111,8 @@ test.describe('approvals in the conversation @cap:approuver-une-action/ecran', (
     await expect(inThread).toBeVisible({ timeout: 30_000 });
     const card = inThread.getByTestId('approval-card');
     await expect(card).toHaveCount(1);
-    await expect(card).toContainText('Inspect the workbook without changing it.');
-    await expect(card).toContainText('Run code it wrote itself');
+    await expect(card).toContainText('Clear the scratch folder.');
+    await expect(card).toContainText('Delete files or discard changes');
     await expect(card.getByTestId('approval-approve-once')).toBeVisible();
     // Still on the conversation: nothing sent the person elsewhere.
     expect(new URL(page.url()).pathname).toBe(`/chat/${conversationId}`);
@@ -138,7 +132,7 @@ test.describe('Never for this agent, from the conversation @cap:regler-autonomie
     await card.getByTestId('approval-never').click();
     const dialog = page.getByRole('dialog', { name: /Never allow this for/ });
     await expect(dialog.getByTestId('approval-never-changes')).toHaveText(
-      'Run code it wrote itself: Ask me → Never',
+      'Delete files or discard changes: Ask me → Never',
     );
     await dialog.getByRole('button', { name: 'Set to Never and reject' }).click();
 
@@ -159,6 +153,6 @@ test.describe('Never for this agent, from the conversation @cap:regler-autonomie
         },
         { timeout: 15_000 },
       )
-      .toEqual({ own_script: 'never' });
+      .toEqual({ delete_files: 'never' });
   });
 });

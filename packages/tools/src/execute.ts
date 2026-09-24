@@ -25,7 +25,6 @@ import type {
 import { InvalidInputError } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
 import { judgeShellChecklist, shellChecklistRefusal } from './shell-checklist';
-import { resolveAndCheckPath } from './builtin/file-ops/workspace';
 import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
 import {
@@ -113,25 +112,6 @@ export function isCodeExecutionTool(toolName: string): boolean {
  * Asking again is the honest outcome — a lightweight context that provides no
  * call id simply cannot resume, and says so by suspending.
  */
-/**
- * Where the commands of this call run, for the checklist (#464): the `cwd` of
- * `run_command` (its workspace root when absent), the project of
- * `declare_verification`. A place the file tools cannot resolve falls back to
- * the first folder — the command will not run there anyway, and relative
- * paths are then read from a place the agent was given.
- */
-async function shellCwd(toolName: string, input: unknown, ctx: ToolContext): Promise<string> {
-  const requested =
-    toolName === 'declare_verification'
-      ? (input as { project_path?: unknown })?.project_path
-      : (input as { cwd?: unknown })?.cwd;
-  try {
-    return await resolveAndCheckPath(ctx, typeof requested === 'string' ? requested : '.');
-  } catch {
-    return ctx.workspaces?.[0]?.path ?? process.cwd();
-  }
-}
-
 async function hasAnsweredQuestion(ctx: ToolContext, toolName: string): Promise<boolean> {
   if (!ctx.toolCallId) return false;
   const [row] = await ctx.db
@@ -415,9 +395,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // ne tournera.
       //
       // Avec la liste de l'agent (#464), c'est ELLE qui juge ces commandes,
-      // juste en dessous : ses sortes d'action couvrent exactement ce que le
-      // classifieur lourd couvrait (plus les deux qu'il ignorait), et le
-      // propriétaire y dit, sorte par sorte, s'il veut qu'on lui demande.
+      // juste en dessous : ses sortes d'action couvrent ce que le classifieur
+      // lourd couvrait (le code en ligne compris), et le propriétaire y dit,
+      // sorte par sorte, s'il veut qu'on lui demande.
       if (tool.name === 'run_command' || tool.name === 'declare_verification')
         isHeavy = opts.shellPolicy ? false : commandesJugees.some(isDestructiveOrHeavyCommand);
       // É-2 (audit sécu 2026-07-07): create_mcp with a stdio transport spawns an
@@ -476,27 +456,22 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
 
   // ── La liste de ce que l'agent n'a pas le droit de faire (#464) ─────────────
   //
-  // Run 06a949cb → b4b493e8 (23/09) : un script écrit par l'agent, lancé sur
-  // des fichiers de Downloads et Documents, sans que personne soit consulté.
-  // Chaque commande qui va tourner est lue sorte par sorte (hors des dossiers,
-  // script écrit par l'agent, suppression, installation, téléchargement, arrêt
-  // de programmes, réglages système) et l'état que le propriétaire a donné à
-  // chaque sorte s'applique : `never` bloque, `ask` retient pour approbation.
+  // Chaque commande qui va tourner est lue sorte par sorte (code en ligne,
+  // suppression, installation, téléchargement, arrêt de programmes, réglages
+  // système) et l'état que le propriétaire a donné à chaque sorte s'applique :
+  // `never` bloque, `ask` retient pour approbation. Une lecture du texte, comme
+  // celle de Hermes : elle ne suit pas ce qu'un script fait une fois lancé, et
+  // ne garde pas l'agent dans ses dossiers (il faudrait un bac à sable de l'OS).
   //
   // À TOUS les niveaux d'autonomie, et même sous une règle `auto_approve`
   // (le toggle Yolo) : cette liste ne fait que durcir, et durcir vaut toujours.
   // Une règle `block` reste plus forte (déjà réglée plus haut). Les raisons
-  // sont gardées pour la carte d'approbation : la personne voit les chemins
-  // et le script, pas seulement la commande.
+  // sont gardées pour la carte d'approbation : la personne voit quelle sorte
+  // d'action a retenu la commande.
   let gateReasons: ShellGateReason[] = [];
   let shellBlock: ShellGateReason[] | null = null;
   if (opts.shellPolicy && commandesJugees.length > 0 && effectiveAction !== 'block') {
-    gateReasons = await judgeShellChecklist(
-      commandesJugees,
-      ctx,
-      opts.shellPolicy,
-      await shellCwd(tool.name, validatedInput, ctx),
-    );
+    gateReasons = judgeShellChecklist(commandesJugees, opts.shellPolicy);
     const never = gateReasons.filter((r) => r.state === 'never');
     if (never.length > 0) {
       effectiveAction = 'block';
@@ -668,8 +643,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         kind: tool.asksUser === true ? 'question' : 'approval',
         status: 'pending',
         // Pourquoi la liste de l'agent a retenu la commande (#464) : les
-        // chemins hors de ses dossiers, le script qu'il a écrit. NULL quand
-        // elle n'y est pour rien.
+        // sortes d'action lues. NULL quand elle n'y est pour rien.
         gateReasons: gateReasons.length > 0 ? gateReasons : null,
       })
       .returning();

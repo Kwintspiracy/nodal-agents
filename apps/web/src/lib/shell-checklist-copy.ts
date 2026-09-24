@@ -8,14 +8,9 @@
 import type { ShellCategory } from '@nodal-agents/shared';
 
 export const SHELL_CATEGORY_COPY: Record<ShellCategory, { label: string; summary: string }> = {
-  outside_folders: {
-    label: 'Read or change files outside its folders',
-    summary: 'A path in the command that is not in one of this agent’s folders.',
-  },
-  own_script: {
-    label: 'Run code it wrote itself',
-    summary:
-      'A script it wrote, or code passed inline (python -c). Such code can do any of the actions below without naming them: set this to Never to rule that out.',
+  inline_code: {
+    label: 'Run code written into a command',
+    summary: 'python -c, node -e, a script piped into bash…',
   },
   delete_files: {
     label: 'Delete files or discard changes',

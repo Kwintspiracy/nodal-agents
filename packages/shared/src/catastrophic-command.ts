@@ -407,33 +407,34 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
   ],
 } as const satisfies Record<string, readonly RegExp[]>;
 
-export type StaticShellCategory = keyof typeof STATIC_SHELL_CATEGORY_PATTERNS;
+/**
+ * The kinds of action read from a command's text: the patterns above, plus
+ * inline code (`python -c "…"`), whose program is text nobody can read ahead.
+ */
+export type StaticShellCategory = keyof typeof STATIC_SHELL_CATEGORY_PATTERNS | 'inline_code';
 
 const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTERNS).flat();
 
 /**
  * The kinds of action a command performs, read from its text alone (#464).
- * The two that need context — a path outside the agent's folders, a script the
- * agent wrote itself — are judged by the caller, which knows the folders and
- * the job. An inline interpreter program (`python -c "…"`) IS code the agent
- * wrote itself, and is returned here as `own_script`.
+ * Inline code (`python -c "…"`, `node -e "…"`) is its own kind: what it does is
+ * not read, it is asked about, as `destructive_gate` always did.
  */
-export function staticShellCategories(cmd: string): Array<StaticShellCategory | 'own_script'> {
+export function staticShellCategories(cmd: string): StaticShellCategory[] {
   if (typeof cmd !== 'string' || cmd.trim() === '') return [];
   // Read from the PROGRAMS the command runs, never from any word of its text
   // (review of PR #474, Reviewer A, P1): `git commit -m "rm old refs"` does not
   // delete, and `clang-format` is not `format`. A pattern counts only where it
   // matches at the start of a command the shell will run — each segment, and
   // the commands wrapped in `bash -c`, `cmd /c`, `powershell -Command`,
-  // `xargs`, `find -exec` and `$(…)`. Quotes, carets and POSIX backslashes are
-  // removed by the tokenizer, so `r""m`, `r^m` and `r\m` still read as `rm`.
-  // A text reading still cannot be a sandbox; the OS-level one is the
-  // follow-up the ticket names.
-  const found = new Set<StaticShellCategory | 'own_script'>();
+  // `xargs`, `find -exec` and `$(…)`. Hermes Agent anchors its patterns the
+  // same way. Quotes and carets are removed by the tokenizer, so `r""m` and
+  // `r^m` still read as `rm`.
+  const found = new Set<StaticShellCategory>();
   for (const unit of commandUnits(cmd)) {
     const text = normalizeSlashes(unit.join(' '));
     for (const [category, patterns] of Object.entries(STATIC_SHELL_CATEGORY_PATTERNS) as Array<
-      [StaticShellCategory, readonly RegExp[]]
+      [keyof typeof STATIC_SHELL_CATEGORY_PATTERNS, readonly RegExp[]]
     >) {
       if (patterns.some((re) => startsWithMatch(re, text))) found.add(category);
     }
@@ -441,13 +442,7 @@ export function staticShellCategories(cmd: string): Array<StaticShellCategory | 
   // `curl URL > file` downloads without `-o`: the redirection is dropped by
   // the tokenizer, so it is read on the text of that segment.
   if (/(^|[;&|(]\s*)(curl|irm|Invoke-RestMethod)\b[^;&|\n]*>/i.test(cmd)) found.add('download');
-  if (isInlineInterpreterEvalCommand(cmd)) {
-    found.add('own_script');
-    // What inline code does through an interpreter's API has no program
-    // name to read (`python -c "import shutil; shutil.rmtree('x')"`): its
-    // common calls are read in the code itself.
-    for (const category of codeActionCategories(cmd)) found.add(category);
-  }
+  if (isInlineInterpreterEvalCommand(cmd)) found.add('inline_code');
   return [...found];
 }
 
@@ -502,128 +497,20 @@ export function commandUnits(cmd: string, depth = 0): string[][] {
 }
 
 /**
- * What code does through an interpreter's API, read in its text: inline code
- * (`python -c`, `node -e`) and the scripts a command runs (#464, review of
- * PR #474). A reading, not a sandbox: it finds the common calls, it does not
- * prove their absence.
- */
-export const CODE_ACTION_PATTERNS: Record<StaticShellCategory, readonly RegExp[]> = {
-  delete_files: [
-    /\bshutil\.rmtree\b|\bos\.(remove|unlink|rmdir|removedirs)\b|\.unlink\(|\bsend2trash\b/i,
-    /\.(rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\s*\(|\bFileUtils\.rm/i,
-    /\bRemove-Item\b|\b(File|Directory)\.Delete\b/i,
-  ],
-  install_software: [
-    /\b(pip3?|npm|pnpm|yarn|bun|apt|apt-get|brew|choco|winget|conda)\b[^\n]{0,40}\b(install|add)\b/i,
-    /\bInstall-(Module|Package)\b/i,
-  ],
-  download: [/\burlretrieve\b|\bInvoke-WebRequest\b|\bStart-BitsTransfer\b|\bwget\b|\bcurl\b/i],
-  stop_programs: [
-    /\bos\.kill\b|\bprocess\.kill\b|\bStop-Process\b|\bStop-Service\b|\btaskkill\b|\bpkill\b|\bkillall\b/i,
-  ],
-  system_settings: [
-    /\bos\.(chmod|chown)\b|\bfs\.(chmod|chown)(Sync)?\b|\bSet-Acl\b|\bicacls\b|\bwinreg\b|\breg\s+(add|delete)\b|\bdiskpart\b/i,
-  ],
-};
-
-/** The kinds of action a piece of code names through its interpreter's API. */
-export function codeActionCategories(source: string): StaticShellCategory[] {
-  if (typeof source !== 'string' || source === '') return [];
-  return (Object.entries(CODE_ACTION_PATTERNS) as Array<[StaticShellCategory, readonly RegExp[]]>)
-    .filter(([, patterns]) => patterns.some((re) => re.test(source)))
-    .map(([category]) => category);
-}
-
-/** Script extensions a shell runs directly, without naming an interpreter. */
-const DIRECT_SCRIPT = /\.(sh|bash|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)$/i;
-
-/**
- * The script FILES a command runs (#464): the file handed to an interpreter
- * (`python x.py`, `node x.js`, `bash x.sh`, `powershell -File x.ps1`), or a
- * script started directly (`./x.sh`, `x.bat`). Paths as written, quotes
- * removed; the caller resolves them. Flags and module names (`-m pkg`) are not
- * files and are left out.
- */
-export function scriptFilesRun(cmd: string): string[] {
-  if (typeof cmd !== 'string' || cmd.trim() === '') return [];
-  const files: string[] = [];
-  for (const seg of splitShellWords(cmd)) {
-    const rest = skipPassthroughLeaders(seg);
-    const head = rest[0];
-    if (head === undefined) continue;
-    const kind = interpreterKind(interpreterBasename(head));
-    if (kind) {
-      // The first non-flag argument is the script, unless a flag said the
-      // program comes inline or from a module.
-      for (let i = 1; i < rest.length; i++) {
-        const t = rest[i] ?? '';
-        const lower = t.toLowerCase();
-        if (isInlineEvalFlag(kind, lower) || lower === '-m') break;
-        if (kind === 'powershell') {
-          // Its options take values (`-ExecutionPolicy Bypass`): only `-File x`
-          // or a positional `.ps1` names a script.
-          if (/^-f(ile)?$/.test(lower)) {
-            const file = rest[i + 1];
-            if (file !== undefined) files.push(file);
-            break;
-          }
-          if (/\.ps1$/i.test(t)) {
-            files.push(t);
-            break;
-          }
-          continue;
-        }
-        if (t.startsWith('-')) continue;
-        files.push(t);
-        break;
-      }
-    } else if (DIRECT_SCRIPT.test(head) || /[\\/]/.test(head)) {
-      // A program named by its path (`./build`, `bin/run`) may be a file the
-      // agent just wrote, extension or not (Codex review of #464, pass 3).
-      files.push(head);
-    }
-  }
-  return files;
-}
-
-/**
  * A command cut into its segments (`;`, `&&`, `||`, `|`, newlines) and each
- * segment into words, quotes honoured: `python a.py "C:/My Files/x.csv"` is
- * three words, not four (the 23/09 command had a path with a space). The
- * quotes themselves are removed. Redirection targets (`> out.txt`) are kept as
- * words: they are paths the command writes.
+ * segment into words, quotes honoured and removed: `python a.py "C:/My
+ * Files/x.csv"` is three words, not four. Redirection targets are words too.
  */
 export function splitShellWords(cmd: string): string[][] {
-  return splitShellTokens(cmd).map((segment) => segment.map((t) => t.text));
-}
-
-/** One word of a command, as the shell will see it. */
-export interface ShellToken {
-  /** Quotes and escapes removed: `r""m` and `r\m` are `rm` (Codex review of #464). */
-  text: string;
-  /**
-   * The shell will EXPAND something in it before running (`$HOME`, `${X}`,
-   * `$(…)`, a backtick, `%VAR%`), outside single quotes. What it becomes
-   * cannot be read here: a path built that way is a path nobody checked.
-   */
-  expands: boolean;
-}
-
-const WINDOWS_VAR = /%[A-Za-z_][A-Za-z0-9_]*%/;
-
-/** `splitShellWords`, keeping what the shell will do to each word. */
-export function splitShellTokens(cmd: string): ShellToken[][] {
-  const segments: ShellToken[][] = [];
-  let words: ShellToken[] = [];
+  const segments: string[][] = [];
+  let words: string[] = [];
   let word = '';
   let inWord = false;
-  let expands = false;
   let quote: '"' | "'" | null = null;
   const endWord = (): void => {
-    if (inWord) words.push({ text: word, expands: expands || WINDOWS_VAR.test(word) });
+    if (inWord) words.push(word);
     word = '';
     inWord = false;
-    expands = false;
   };
   const endSegment = (): void => {
     endWord();
@@ -638,17 +525,9 @@ export function splitShellTokens(cmd: string): ShellToken[][] {
       escaped = false;
       continue;
     }
-    if (quote === "'") {
-      if (ch === "'") quote = null;
+    if (quote !== null) {
+      if (ch === quote) quote = null;
       else word += ch;
-      continue;
-    }
-    if (quote === '"') {
-      if (ch === '"') quote = null;
-      else {
-        if (ch === '$' || ch === '`') expands = true;
-        word += ch;
-      }
       continue;
     }
     if (ch === '"' || ch === "'") {
@@ -656,10 +535,8 @@ export function splitShellTokens(cmd: string): ShellToken[][] {
       inWord = true;
       continue;
     }
-    // POSIX `\` and cmd.exe `^` escape the next character: `r\m` runs `rm`.
-    // A Windows path keeps its backslashes (`C:\x`): only a backslash before
-    // a letter that is not a path separator position is ambiguous, so the
-    // backslash is kept in the text and only the caret is dropped.
+    // cmd.exe `^` escapes the next character: `r^m` runs `rm`. A backslash is
+    // kept: in a Windows path (`C:\x`) it is a separator, not an escape.
     if (ch === '^') {
       escaped = true;
       continue;
@@ -672,9 +549,6 @@ export function splitShellTokens(cmd: string): ShellToken[][] {
       endWord();
       continue;
     }
-    // An unquoted glob expands too: `cat *` may reach a link that leads out
-    // (Codex review of #464, pass 3).
-    if (ch === '$' || ch === '`' || ch === '*' || ch === '?' || ch === '[') expands = true;
     word += ch;
     inWord = true;
   }

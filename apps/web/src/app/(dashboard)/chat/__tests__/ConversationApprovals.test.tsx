@@ -58,7 +58,7 @@ const approval = (id: string, kind: 'approval' | 'question') => ({
   ruleChain: [],
   toolDefault: 'require_approval',
   agentWorkspaces: [],
-  gateReasons: [{ category: 'own_script', state: 'ask', details: ['shared/scripts/x.py'] }],
+  gateReasons: [{ category: 'delete_files', state: 'ask', details: ['rm -rf out'] }],
 });
 
 const { default: ConversationApprovals } = await import('../[id]/ConversationApprovals.tsx');
@@ -102,7 +102,7 @@ describe('approvals in the conversation (#469) @cap:approuver-une-action/ecran',
     ]);
     const cards = container.querySelectorAll('[data-testid="approval-card"]');
     expect(cards).toHaveLength(1);
-    expect(container.textContent).toContain('Run code it wrote itself');
+    expect(container.textContent).toContain('Delete files or discard changes');
   });
 
   it('"Approve once" answers from the thread: the card leaves and the thread is re-read', async () => {

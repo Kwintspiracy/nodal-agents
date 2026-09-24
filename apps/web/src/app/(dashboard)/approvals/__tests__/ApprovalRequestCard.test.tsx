@@ -730,35 +730,23 @@ describe('la carte ne perd ni son échéance ni sa garde @cap:approuver-une-acti
   });
 });
 
-// #464 — la liste de l'agent a retenu la commande : la carte dit POURQUOI, avec
-// les chemins hors de ses dossiers et le script qu'il a écrit. Sans cela, la
-// personne ne voyait que la commande brute du 23/09, quatre chemins noyés dedans.
+// #464 — la liste de l'agent a retenu la commande : la carte dit POURQUOI, par
+// sorte d'action. La commande elle-même est déjà affichée sur la carte.
 describe('la carte dit ce que la liste de l’agent a vu (#464) @cap:approuver-une-action/ecran', () => {
-  it('nomme la sorte d’action, puis les chemins et le script', async () => {
+  it('nomme chaque sorte d’action lue', async () => {
     await monter(
       demande({
         toolName: 'run_command',
         gateReasons: [
-          {
-            category: 'outside_folders',
-            state: 'ask',
-            details: ['C:/Users/kwint/Downloads/earnings_2026_statement.csv'],
-          },
-          { category: 'own_script', state: 'ask', details: ['shared/scripts/_analyze.py'] },
+          { category: 'install_software', state: 'ask', details: ['pip install x && rm -rf b'] },
+          { category: 'delete_files', state: 'ask', details: ['pip install x && rm -rf b'] },
         ],
       }),
     );
-    const list = container!.querySelector('[data-testid="approval-shell-reasons"]');
-    expect(list?.textContent).toContain('Read or change files outside its folders');
-    expect(list?.textContent).toContain('Run code it wrote itself');
-    expect(
-      [...container!.querySelectorAll('[data-testid="approval-shell-reason-detail"]')].map(
-        (e) => e.textContent,
-      ),
-    ).toEqual([
-      'C:/Users/kwint/Downloads/earnings_2026_statement.csv',
-      'shared/scripts/_analyze.py',
-    ]);
+    const items = [...container!.querySelectorAll('[data-testid="approval-shell-reasons"] li')].map(
+      (e) => e.textContent,
+    );
+    expect(items).toEqual(['Install software or packages', 'Delete files or discard changes']);
   });
 
   it('rien quand la liste n’y est pour rien', async () => {
@@ -778,12 +766,8 @@ describe('« Never for this agent » (#470) @cap:approuver-une-action/ecran', ()
       agentId: AGENT,
       agentName: 'Excel',
       gateReasons: [
-        { category: 'own_script', state: 'ask', details: ['shared/scripts/x.py'] },
-        {
-          category: 'outside_folders',
-          state: 'ask',
-          details: ['C:/Users/q/Downloads/a.xlsx (in shared/scripts/x.py)'],
-        },
+        { category: 'inline_code', state: 'ask', details: ['python -c "x()" && rm -rf out'] },
+        { category: 'delete_files', state: 'ask', details: ['python -c "x()" && rm -rf out'] },
       ],
     });
 
@@ -817,7 +801,7 @@ describe('« Never for this agent » (#470) @cap:approuver-une-action/ecran', ()
       parTestId('approval-never')!.click();
     });
     expect(document.body.querySelector('[data-testid="approval-never-changes"]')?.textContent).toBe(
-      'Run code it wrote itself: Ask me → NeverRead or change files outside its folders: Ask me → Never',
+      'Run code written into a command: Ask me → NeverDelete files or discard changes: Ask me → Never',
     );
     await act(async () => {
       [...document.body.querySelectorAll('button')]
@@ -827,8 +811,8 @@ describe('« Never for this agent » (#470) @cap:approuver-une-action/ecran', ()
     });
 
     expect(vi.mocked(setAgentShellPolicyAction).mock.calls.map((c) => c[0])).toEqual([
-      { agentId: AGENT, category: 'own_script', state: 'never' },
-      { agentId: AGENT, category: 'outside_folders', state: 'never' },
+      { agentId: AGENT, category: 'inline_code', state: 'never' },
+      { agentId: AGENT, category: 'delete_files', state: 'never' },
     ]);
     expect(vi.mocked(resolveApprovalAction).mock.calls.map((c) => c[0])).toEqual([
       {
@@ -836,8 +820,8 @@ describe('« Never for this agent » (#470) @cap:approuver-une-action/ecran', ()
         decision: 'reject',
         // The agent reads WHY (run 2fb6bfca): a Never, on what, and not to work around it.
         notes:
-          'The owner answered Never: this agent may not run code it wrote itself (shared/scripts/x.py); ' +
-          'read or change files outside its folders (C:/Users/q/Downloads/a.xlsx (in shared/scripts/x.py)), now or later. ' +
+          'The owner answered Never: this agent may not run code written into a command (python -c "x()" && rm -rf out); ' +
+          'delete files or discard changes (python -c "x()" && rm -rf out), now or later. ' +
           'Do not look for another way to do it; report what you could not do.',
       },
     ]);

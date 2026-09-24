@@ -301,7 +301,7 @@ describe("les textes de l'onglet Approvals @cap:regler-autonomie/ecran", () => {
     expect(container.textContent).not.toContain('Commands ask for your approval by default.');
     expect(container.textContent).toContain('How commands run depends on the workspace autonomy.');
     expect(container.textContent).toContain('What it may do with a shell');
-    expect(container.textContent).toContain('Read or change files outside its folders');
+    expect(container.textContent).toContain('Run code written into a command');
     // La liste de programmes est sous « Advanced », repliée quand aucune n'est posée.
     expect(container.textContent).not.toContain('Allowed commands');
     await act(async () => {
