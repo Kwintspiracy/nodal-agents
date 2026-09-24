@@ -819,7 +819,15 @@ describe('« Never for this agent » (#470) @cap:approuver-une-action/ecran', ()
       { agentId: AGENT, category: 'outside_folders', state: 'never' },
     ]);
     expect(vi.mocked(resolveApprovalAction).mock.calls.map((c) => c[0])).toEqual([
-      { approvalRequestId: 'a1', decision: 'reject' },
+      {
+        approvalRequestId: 'a1',
+        decision: 'reject',
+        // The agent reads WHY (run 2fb6bfca): a Never, on what, and not to work around it.
+        notes:
+          'The owner answered Never: this agent may not run code it wrote itself (shared/scripts/x.py); ' +
+          'read or change files outside its folders (C:/Users/q/Downloads/a.xlsx (in shared/scripts/x.py)), now or later. ' +
+          'Do not look for another way to do it; report what you could not do.',
+      },
     ]);
     const derniereEcriture = Math.max(
       ...vi.mocked(setAgentShellPolicyAction).mock.invocationCallOrder,
