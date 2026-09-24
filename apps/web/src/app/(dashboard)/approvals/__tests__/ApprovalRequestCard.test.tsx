@@ -83,6 +83,7 @@ function demande(over: Partial<Approval> = {}): Approval {
     ruleChain: [],
     toolDefault: 'require_approval',
     agentWorkspaces: [],
+    gateReasons: [],
     ...over,
   } as unknown as Approval;
 }
@@ -724,5 +725,30 @@ describe('la carte ne perd ni son échéance ni sa garde @cap:approuver-une-acti
     expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
     await cliquerLeCaret();
     expect(rendu().querySelectorAll('a[href="/jobs/j1"]')).toHaveLength(1);
+  });
+});
+
+// #464 — la liste de l'agent a retenu la commande : la carte dit POURQUOI, par
+// sorte d'action. La commande elle-même est déjà affichée sur la carte.
+describe('la carte dit ce que la liste de l’agent a vu (#464) @cap:approuver-une-action/ecran', () => {
+  it('nomme chaque sorte d’action lue', async () => {
+    await monter(
+      demande({
+        toolName: 'run_command',
+        gateReasons: [
+          { category: 'install_software', state: 'ask', details: ['pip install x && rm -rf b'] },
+          { category: 'delete_files', state: 'ask', details: ['pip install x && rm -rf b'] },
+        ],
+      }),
+    );
+    const items = [...container!.querySelectorAll('[data-testid="approval-shell-reasons"] li')].map(
+      (e) => e.textContent,
+    );
+    expect(items).toEqual(['Install software or packages', 'Delete files or discard changes']);
+  });
+
+  it('rien quand la liste n’y est pour rien', async () => {
+    await monter(demande());
+    expect(container!.querySelector('[data-testid="approval-shell-reasons"]')).toBeNull();
   });
 });

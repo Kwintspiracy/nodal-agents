@@ -82,6 +82,9 @@ import { SectionCard, SectionHead } from './SectionCard.tsx';
 import AutonomyToolRow from './AutonomyToolRow.tsx';
 import McpServerTools from './McpServerTools.tsx';
 import CommandAllowlistSection from './CommandAllowlistSection.tsx';
+import ShellChecklistSection from './ShellChecklistSection.tsx';
+import AdvancedShellSection from './AdvancedShellSection.tsx';
+import { runCommandsTruth } from './shell-truth.ts';
 import TeamChangeSection from './TeamChangeSection.tsx';
 import {
   MODEL_CATALOG,
@@ -129,7 +132,7 @@ import {
   settled,
 } from './picked-folder-label.ts';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
-import type { OperationDescriptor } from '@nodal-agents/shared';
+import type { OperationDescriptor, RootGrants } from '@nodal-agents/shared';
 
 /**
  * One built-in tool as returned by listInternalToolsAction.
@@ -268,6 +271,12 @@ interface Props {
   autoRunPaused?: boolean;
   /** Whether the current user is the workspace owner. */
   isOwner?: boolean;
+  /**
+   * The workspace autonomy (`entities.root_grants.autonomy`), for the sentence
+   * that says what really happens to this agent's commands (#464). `null`
+   * when it could not be read: the sentence then says it depends on it.
+   */
+  workspaceAutonomy?: RootGrants['autonomy'] | null;
   /** Channels tab data (see ChannelsTabContent.tsx) — null cfg fields signal
    *  `channelsError` happened; the tab renders a banner in that case. */
   channelsError: string | null;
@@ -293,6 +302,7 @@ export default function AgentComposer({
   allSkills,
   autoRunPaused = false,
   isOwner = false,
+  workspaceAutonomy = null,
   channelsError,
   telegramCfg,
   telegramAllowedChats,
@@ -696,6 +706,8 @@ export default function AgentComposer({
               cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
               commandAllowlist={agent.commandAllowlist ?? null}
               mayChangeTeam={agent.mayChangeTeam ?? false}
+              shellPolicy={agent.shellPolicy ?? null}
+              workspaceAutonomy={workspaceAutonomy}
             />
           </>
         )}
@@ -996,7 +1008,9 @@ function TabsBar({
     { id: 'runs', label: 'Runs', count: counts.runs },
     // L'identifiant reste `autonomy` : c'est le `?tab=` des liens déjà partagés.
     // Seul le mot que lit le propriétaire change (issue #382).
-    { id: 'autonomy', label: 'Approvals' },
+    // « Autonomy », comme la doc le dit depuis toujours (#438) : un onglet
+    // introuvable sous le nom que les guides lui donnent n'existe pas.
+    { id: 'autonomy', label: 'Autonomy' },
     { id: 'settings', label: 'Settings' },
   ];
   const TABS: TabItem<Tab>[] = BASE_TABS.map((t) =>
@@ -1673,6 +1687,8 @@ export function AutonomyTab({
   cliDailyBudgetUsd,
   commandAllowlist,
   mayChangeTeam,
+  shellPolicy,
+  workspaceAutonomy,
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
@@ -1686,6 +1702,10 @@ export function AutonomyTab({
   commandAllowlist: string[] | null;
   /** agents.may_change_team — false = the three team tools are not in the list. */
   mayChangeTeam: boolean;
+  /** agents.shell_policy as stored (#464). */
+  shellPolicy: unknown;
+  /** The workspace autonomy, for the honest sentence of "Run commands" (#464). */
+  workspaceAutonomy: RootGrants['autonomy'] | null;
 }) {
   /**
    * Les règles ET l'agent auxquelles elles appartiennent (revue Reviewer C,
@@ -2090,21 +2110,30 @@ export function AutonomyTab({
         onRulesChange={setRules}
         autoRunPaused={autoRunPaused}
         isOwner={isOwner}
+        workspaceAutonomy={workspaceAutonomy}
       />
 
       {/*
-        Next to the Yolo toggle above, and deliberately NOT gated on the
-        command-execution skill: it is the control an owner sets BEFORE handing
-        an agent a shell, and a safety list that only appears once the danger is
-        on is a list nobody sets in time. The section says so itself when the
-        tool group is off.
+        What the agent may NOT do with a shell, kind by kind (#464). Not gated
+        on the command-execution skill, for the same reason as the list of
+        programs below: it is what an owner sets BEFORE handing over a shell.
       */}
-      <CommandAllowlistSection
-        agentId={agentId}
-        allowlist={commandAllowlist}
-        hasCommandSkill={attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG)}
-        isOwner={isOwner}
-      />
+      <ShellChecklistSection agentId={agentId} storedPolicy={shellPolicy} isOwner={isOwner} />
+
+      {/*
+        The list of programs, under Advanced (#464): what a person can judge
+        is the checklist above, and "even I would not know which command to
+        write there" (Quentin, 24/09). Open by default when a list is set, so
+        a restriction in force is never folded out of sight.
+      */}
+      <AdvancedShellSection defaultOpen={commandAllowlist !== null}>
+        <CommandAllowlistSection
+          agentId={agentId}
+          allowlist={commandAllowlist}
+          hasCommandSkill={attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG)}
+          isOwner={isOwner}
+        />
+      </AdvancedShellSection>
 
       {/*
         Next to the command allowlist, and for the same reason: both name what
@@ -2188,6 +2217,7 @@ function CommandExecutionSection({
   onRulesChange,
   autoRunPaused,
   isOwner,
+  workspaceAutonomy,
 }: {
   agentId: string;
   attachedSkills: SkillRow[];
@@ -2197,6 +2227,8 @@ function CommandExecutionSection({
   autoRunPaused: boolean;
   /** Whether the current user is the workspace owner. */
   isOwner: boolean;
+  /** The workspace autonomy: what an agent WITHOUT a rule really does (#464). */
+  workspaceAutonomy: RootGrants['autonomy'] | null;
 }) {
   const hasSkill = attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG);
 
@@ -2285,82 +2317,97 @@ function CommandExecutionSection({
   }
 
   return (
-    <SectionCard>
-      <SectionHead label="Run commands" hint="Commands ask for your approval by default." />
+    // Anchored for the Playwright journey: the tab holds other switches.
+    <div data-testid="command-execution-section">
+      <SectionCard>
+        {/*
+        What REALLY happens, not "asks by default" (#464): under
+        destructive_gate an ordinary command ran without asking while this
+        line promised the opposite.
+      */}
+        <SectionHead
+          label="Run commands"
+          hint={runCommandsTruth({
+            rule: rules.find((r) => r.toolName === RUN_COMMAND_TOOL)?.action ?? null,
+            paused: autoRunPaused,
+            autonomy: workspaceAutonomy,
+          })}
+        />
 
-      <div className="flex items-start gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-medium-14 text-ink">Run commands without asking</span>
-            <MonoMicroTag tone="err">irreversible</MonoMicroTag>
-            {isDormant && <MonoMicroTag tone="warn">paused</MonoMicroTag>}
+        <div className="flex items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-medium-14 text-ink">Run commands without asking</span>
+              <MonoMicroTag tone="err">irreversible</MonoMicroTag>
+              {isDormant && <MonoMicroTag tone="warn">paused</MonoMicroTag>}
+            </div>
+            <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
+              When on, the agent can run any permitted command immediately. Commands are still
+              logged. Use this only for agents you trust.
+            </p>
+            {isDormant && (
+              <p className="mt-2 text-body-12 text-warn">
+                This agent&apos;s Yolo is <b className="font-semibold">paused</b> — the workspace
+                brake is on, so its commands still require approval. Release the brake in{' '}
+                <Link
+                  href="/settings"
+                  className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+                >
+                  Settings → Auto-run brake
+                </Link>{' '}
+                to re-arm it.
+              </p>
+            )}
+            {!canToggle && (
+              <p className="mt-2 text-body-12 text-ink-4">
+                Only the workspace owner can toggle Yolo per agent.
+              </p>
+            )}
           </div>
-          <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
-            When on, the agent can run any permitted command immediately. Commands are still logged.
-            Use this only for agents you trust.
-          </p>
-          {isDormant && (
-            <p className="mt-2 text-body-12 text-warn">
-              This agent&apos;s Yolo is <b className="font-semibold">paused</b> — the workspace
-              brake is on, so its commands still require approval. Release the brake in{' '}
-              <Link
-                href="/settings"
-                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
-              >
-                Settings → Auto-run brake
-              </Link>{' '}
-              to re-arm it.
-            </p>
-          )}
-          {!canToggle && (
-            <p className="mt-2 text-body-12 text-ink-4">
-              Only the workspace owner can toggle Yolo per agent.
-            </p>
-          )}
+
+          {/* Toggle */}
+          <div className="mt-0.5">
+            <Switch
+              checked={yoloEnabled}
+              onChange={() => handleToggle(!yoloEnabled)}
+              disabled={saving || !canToggle}
+            />
+          </div>
         </div>
 
-        {/* Toggle */}
-        <div className="mt-0.5">
-          <Switch
-            checked={yoloEnabled}
-            onChange={() => handleToggle(!yoloEnabled)}
-            disabled={saving || !canToggle}
-          />
-        </div>
-      </div>
+        {/* Confirm dialog — ESLint bans window.confirm; use ConfirmDialog instead */}
+        <ConfirmDialog
+          open={confirmOpen}
+          title="Enable Yolo mode?"
+          message="Yolo mode lets this agent run ANY shell command on this machine with no approval. Only enable for an agent you fully trust. The command is still logged."
+          confirmLabel="Enable Yolo"
+          destructive
+          onConfirm={() => {
+            setConfirmOpen(false);
+            void doSet(true);
+          }}
+          onCancel={() => setConfirmOpen(false)}
+        />
 
-      {/* Confirm dialog — ESLint bans window.confirm; use ConfirmDialog instead */}
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Enable Yolo mode?"
-        message="Yolo mode lets this agent run ANY shell command on this machine with no approval. Only enable for an agent you fully trust. The command is still logged."
-        confirmLabel="Enable Yolo"
-        destructive
-        onConfirm={() => {
-          setConfirmOpen(false);
-          void doSet(true);
-        }}
-        onCancel={() => setConfirmOpen(false)}
-      />
-
-      {/*
+        {/*
         Éteindre la bascule SUPPRIME la règle. Quand cette règle ne valait que
         dans un dossier, ce que le propriétaire perd n'est pas « le mode Yolo »
         mais une permission qu'il avait posée dossier par dossier, et que cet
         onglet ne sait pas recréer (revue Reviewer C, passe 4, C3).
       */}
-      <ConfirmDialog
-        open={confirmDropFolder}
-        title="Delete the rule for this folder?"
-        message={`Commands run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a command for that folder again from its approval card.`}
-        confirmLabel="Delete the rule"
-        onConfirm={() => {
-          setConfirmDropFolder(false);
-          void doSet(false);
-        }}
-        onCancel={() => setConfirmDropFolder(false)}
-      />
-    </SectionCard>
+        <ConfirmDialog
+          open={confirmDropFolder}
+          title="Delete the rule for this folder?"
+          message={`Commands run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a command for that folder again from its approval card.`}
+          confirmLabel="Delete the rule"
+          onConfirm={() => {
+            setConfirmDropFolder(false);
+            void doSet(false);
+          }}
+          onCancel={() => setConfirmDropFolder(false)}
+        />
+      </SectionCard>
+    </div>
   );
 }
 
