@@ -95,6 +95,28 @@ describe('pathWords @cap:executer-une-commande/moteur', () => {
     ]);
   });
 
+  it('the null device is not a path: 2>nul, > /dev/null, > $null', () => {
+    // Revue de la PR #474 : Reviewer C a lancé `dir /b x 2>nul` ; `nul` était
+    // lu comme un chemin relatif, que Windows résout en `\\.\nul`, hors des
+    // dossiers : une question pour une commande qui n'écrit nulle part.
+    const words = (cmd: string, platform: string) => pathWords(cmd, platform).map((w) => w.raw);
+    const nullDevice = /^(nul:?|\/dev\/null|\$null)$/i;
+    for (const [cmd, platform, path] of [
+      ['dir /b packages 2>nul', 'win32', 'packages'],
+      ['dir /b packages >NUL 2>&1', 'win32', 'packages'],
+      ['ls src > /dev/null 2>&1', 'linux', 'src'],
+      ['Get-Item src > $null', 'win32', 'src'],
+    ] as const) {
+      expect(words(cmd, platform), cmd).toContain(path);
+      expect(
+        words(cmd, platform).filter((w) => nullDevice.test(w)),
+        cmd,
+      ).toEqual([]);
+    }
+    // Un vrai fichier qui s'appellerait « nullable » reste un chemin.
+    expect(pathWords('cat nullable', 'linux').map((w) => w.raw)).toEqual(['nullable']);
+  });
+
   it('reads option values, home paths, climbing relatives and redirections', () => {
     expect(pathWords('tool --out=C:\\tmp\\x.txt', 'win32')).toEqual([
       { raw: 'C:\\tmp\\x.txt', kind: 'absolute' },

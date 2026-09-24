@@ -159,6 +159,9 @@ export function scriptPathLiterals(source: string, platform: string): PathWord[]
   return found;
 }
 
+/** The null device of every shell the runner starts: cmd, POSIX sh, PowerShell. */
+const NULL_DEVICE = /^(nul:?|\/dev\/null|\$null)$/i;
+
 /**
  * The words of a command that name a path: an argument, an option's value
  * (`--out=C:\x`), a redirection target. The program each segment starts with
@@ -173,6 +176,10 @@ export function pathWords(cmd: string, platform: string): PathWord[] {
       if (index === 0 && !/\.(sh|bash|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)$/i.test(word)) return;
       const value = /^--?[\w-]+=/.test(word) ? word.slice(word.indexOf('=') + 1) : word;
       if (value === '') return;
+      // The null device writes nowhere: `2>nul`, `> /dev/null`, `> $null`.
+      // Resolved as a path, Windows turns `nul` into the device path, outside
+      // the folders (review of PR #474).
+      if (NULL_DEVICE.test(value)) return;
       // The home folder is the one expansion this reading resolves; any other
       // (`${X}`, `$(…)`, a backtick, `%VAR%`) leads where nobody checked
       // (Codex review of #464, P1).
