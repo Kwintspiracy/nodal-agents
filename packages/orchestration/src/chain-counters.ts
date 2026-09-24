@@ -99,7 +99,9 @@ export const DEFAULT_LIMITS: ChainLimits = {
   // This default spares all current legit jobs AND catches the known runaways.
   // Per-agent cost caps (for expensive models like Claude Opus, GPT-4o) are a
   // future follow-up — those cost more per job legitimately, so a global $2
-  // cap would need to be raised for them. Override via MAX_COST_PER_JOB_USD.
+  // cap would need to be raised for them. Since #442 this is only the default of
+  // the workspace setting `entities.max_run_cost_usd` (Settings → Run budget),
+  // which the runner reads instead of an environment variable.
   maxCostPerJobUsd: 2.0,
 };
 

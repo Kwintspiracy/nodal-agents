@@ -113,6 +113,19 @@ export interface GenerateTextCallOptions {
    * retried nor failed over, so a piece is never said twice.
    */
   onTextDelta?: (text: string) => void;
+  /**
+   * The wait for the first token set for the agent (#442,
+   * `agents.idle_timeout_seconds`). EXPLICIT: it replaces the implicit clock,
+   * context and effort raises included (Hermes: `_stale_timeout_is_explicit`).
+   */
+  firstTokenTimeoutMs?: number;
+  /**
+   * What the run may still spend in time (#442, `entities.max_run_hours`). An
+   * IMPLICIT first-token clock never exceeds half of it, with a 60 s floor
+   * (Hermes, run_agent.py:601-605): one silent call must not eat the rest of
+   * the run. An explicit value is not capped.
+   */
+  remainingRunMs?: number;
 }
 
 /**

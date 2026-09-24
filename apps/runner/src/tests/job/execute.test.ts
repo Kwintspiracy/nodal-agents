@@ -4710,6 +4710,29 @@ describe('reliability guards', () => {
     });
   }
 
+  // #442 : le budget de run est un réglage de l'ESPACE, plus une variable
+  // d'environnement. Posé le temps du test, puis rendu à ses défauts.
+  async function withRunBudget(
+    budget: { costUsd?: number; hours?: number },
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    await db
+      .update(entities)
+      .set({
+        ...(budget.costUsd !== undefined ? { maxRunCostUsd: budget.costUsd } : {}),
+        ...(budget.hours !== undefined ? { maxRunHours: budget.hours } : {}),
+      })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      await fn();
+    } finally {
+      await db
+        .update(entities)
+        .set({ maxRunCostUsd: 2, maxRunHours: 0 })
+        .where(eq(entities.id, seed.entityId));
+    }
+  }
+
   it('Guard 1a: fails token_budget_exceeded once cumulative tokens cross the ceiling', async () => {
     const job = await createTestJob(db, seed);
     // Budget 1 token: the first turn's 15 tokens trip it AFTER accumulation,
@@ -5418,7 +5441,7 @@ describe('reliability guards', () => {
     // The job does NOT call return_result, so it continues until a guard fires.
     // With cap $2.00, the THIRD turn (cumulative $2.40 > $2.00) must fail loud
     // BEFORE acting on its output. Turns 1 ($0.80) and 2 ($1.60) are ≤ $2.00 → proceed.
-    await withEnv('MAX_COST_PER_JOB_USD', '2.0', async () => {
+    await withRunBudget({ costUsd: 2.0 }, async () => {
       const llmClient = makeMockLlmClient([
         {
           costUsd: 0.8,
@@ -5432,6 +5455,7 @@ describe('reliability guards', () => {
         },
         {
           costUsd: 0.8,
+          text: 'Two sources read: the tariff of 2024 and its amendment.',
           toolCalls: [
             {
               toolCallId: 'tc-2',
@@ -5442,6 +5466,7 @@ describe('reliability guards', () => {
         },
         {
           costUsd: 0.8,
+          text: 'The amendment lowers the rate to 4 %.',
           toolCalls: [
             {
               toolCallId: 'tc-3',
@@ -5456,27 +5481,144 @@ describe('reliability guards', () => {
       if (result.status === 'failed') expect(result.error).toBe('cost_budget_exceeded');
     });
 
-    // The DB row reflects the loud failure with the accumulated cost persisted.
+    // The DB row reflects the stop with the accumulated cost persisted, and
+    // (#442) DELIVERS what the run wrote: the earlier turn, this turn, and the
+    // line saying why it stopped. Before #442 the result was the generic
+    // "could not be completed … no explanation" line and the text was lost.
     const [row] = await db
       .select({
         status: agentJobs.status,
         error: agentJobs.error,
         totalCostUsd: agentJobs.totalCostUsd,
+        result: agentJobs.result,
       })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
     expect(row?.error).toBe('cost_budget_exceeded');
+    expect(row?.result).toBe(
+      'Two sources read: the tariff of 2024 and its amendment.\n\n' +
+        'The amendment lowers the rate to 4 %.\n\n' +
+        '[stopped: run budget — $2.40 spent, ceiling $2.00, turn 3]',
+    );
     // The cumulative cost at failure is $2.40 (three $0.80 calls — the third
     // turn's cost is accumulated before the guard fires and failJob persists it).
     expect(row?.totalCostUsd).toBeCloseTo(2.4, 5);
+  });
+
+  // ─── #442 — the run budget of the workspace, and the agent's first-token wait ─
+
+  /** The mock client, with the options each call really carried. */
+  function capturingClient(responses: Parameters<typeof makeMockLlmClient>[0]) {
+    const base = makeMockLlmClient(responses);
+    const options: Array<Record<string, unknown>> = [];
+    const client: RunnerDeps['llmClient'] = {
+      ...base,
+      generateText: (args, opts) => {
+        options.push({ ...(opts ?? {}) });
+        return base.generateText(args, opts);
+      },
+    };
+    return { client, options };
+  }
+
+  it('#442: a run past its hours stops before the next call, and says why @cap:suivre-execution/moteur', async () => {
+    const job = await createTestJob(db, seed);
+    // A run that already WORKED 2 h 00 min 01 s over earlier segments (the
+    // accumulator excludes approval and delegation waits).
+    await db
+      .update(agentJobs)
+      .set({ totalDurationMs: 2 * 3_600_000 + 1_000 })
+      .where(eq(agentJobs.id, job.id));
+    const { client, options } = capturingClient([{ text: 'never sent' }]);
+
+    await withRunBudget({ hours: 2 }, async () => {
+      const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') expect(result.error).toBe('run_time_exceeded');
+    });
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('run_time_exceeded');
+    expect(row?.result).toBe('[stopped: run budget — 2.0 h of work, ceiling 2.0 h, turn 1]');
+    // Nothing was asked of the model once the budget was spent.
+    expect(options).toEqual([]);
+  });
+
+  it('#442: under its hours, a run carries what remains, and the agent’s first-token wait, to the model', async () => {
+    const job = await createTestJob(db, seed);
+    await db.update(agents).set({ idleTimeoutSeconds: 600 }).where(eq(agents.id, seed.agentId));
+    const { client, options } = capturingClient([
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    try {
+      await withRunBudget({ hours: 1 }, async () => {
+        const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+        expect(result.status).toBe('completed');
+      });
+    } finally {
+      await db.update(agents).set({ idleTimeoutSeconds: null }).where(eq(agents.id, seed.agentId));
+    }
+
+    expect(options[0]?.['streamed']).toBe(true);
+    expect(options[0]?.['firstTokenTimeoutMs']).toBe(600_000);
+    const remaining = options[0]?.['remainingRunMs'] as number;
+    expect(remaining).toBeLessThanOrEqual(3_600_000);
+    expect(remaining).toBeGreaterThan(3_600_000 - 60_000);
+  });
+
+  it('#442: with no hours and no agent value, the call carries neither', async () => {
+    const job = await createTestJob(db, seed);
+    const { client, options } = capturingClient([
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    expect(result.status).toBe('completed');
+    expect(options[0]).not.toHaveProperty('firstTokenTimeoutMs');
+    expect(options[0]).not.toHaveProperty('remainingRunMs');
+  });
+
+  it('#442: a cost ceiling of 0 means none — the $2 default no longer applies', async () => {
+    const job = await createTestJob(db, seed);
+    await withRunBudget({ costUsd: 0 }, async () => {
+      const llmClient = makeMockLlmClient([
+        {
+          costUsd: 5,
+          text: 'Done.',
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+    });
+    const [row] = await db
+      .select({ totalCostUsd: agentJobs.totalCostUsd })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.totalCostUsd).toBeCloseTo(5, 5);
   });
 
   it('Guard 1e: a job under budget completes normally and persists total_cost_usd as the sum', async () => {
     const job = await createTestJob(db, seed);
     // Two turns costing $0.30 and $0.20 → total $0.50, well under $2.00 cap.
     // The job must complete and persist the real cost.
-    await withEnv('MAX_COST_PER_JOB_USD', '2.0', async () => {
+    await withRunBudget({ costUsd: 2.0 }, async () => {
       const llmClient = makeMockLlmClient([
         {
           costUsd: 0.3,
@@ -5521,7 +5663,7 @@ describe('reliability guards', () => {
     // with token_budget_exceeded, NOT cost_budget_exceeded.
     await withEnv('MAX_TOTAL_TOKENS_PER_JOB', '1', async () => {
       // Very low cost cap too — but cost is 0 so it must NOT fire.
-      await withEnv('MAX_COST_PER_JOB_USD', '0.0001', async () => {
+      await withRunBudget({ costUsd: 0.0001 }, async () => {
         const llmClient = makeMockLlmClient([{ text: 'answer' }]); // no costUsd
         const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
         expect(result.status).toBe('failed');
@@ -5564,7 +5706,7 @@ describe('reliability guards', () => {
     // above this turn's token count so it's the cost derivation under test that
     // decides the outcome, not an incidental token-budget trip.
     await withEnv('MAX_TOTAL_TOKENS_PER_JOB', '10000000', async () => {
-      await withEnv('MAX_COST_PER_JOB_USD', '1000', async () => {
+      await withRunBudget({ costUsd: 1000 }, async () => {
         const llmClient = makeMockLlmClient(
           [
             {
@@ -5607,7 +5749,7 @@ describe('reliability guards', () => {
     // budget is raised out of the way (see the test above) so it's the cost
     // guard that fires, not an incidental token-budget trip.
     await withEnv('MAX_TOTAL_TOKENS_PER_JOB', '10000000', async () => {
-      await withEnv('MAX_COST_PER_JOB_USD', '0.1', async () => {
+      await withRunBudget({ costUsd: 0.1 }, async () => {
         const llmClient = makeMockLlmClient(
           [
             {

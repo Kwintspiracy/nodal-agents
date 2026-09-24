@@ -158,25 +158,59 @@ export async function estimateToolTokens(tools: unknown): Promise<number> {
 
 // ─── Clocks ────────────────────────────────────────────────────────────────────
 
-/** The clocks of one streamed call, from the model config and the size of what it sends. */
+/** The floor of an implicit first-token clock capped by the run budget (Hermes: `max(60, …)`). */
+export const RUN_BUDGET_CAP_FLOOR_MS = 60_000;
+
+/** What the agent and the run add to the clocks of a call (#442). */
+export interface TurnClockOverrides {
+  /** `agents.idle_timeout_seconds`, in ms: replaces the implicit first-token clock. */
+  firstTokenTimeoutMs?: number;
+  /** Time left in the run budget: caps an implicit first-token clock at half of it. */
+  remainingRunMs?: number;
+}
+
+/**
+ * The clocks of one streamed call, from the model config and the size of what
+ * it sends. Three levels for the first token, the explicit one always winning:
+ * the agent's value (#442) if set, else the implicit clock (context size,
+ * reasoning effort, local endpoint), which the run budget then caps.
+ */
 export function computeTurnClocks(
   config: Pick<ProviderConfig, 'provider' | 'baseURL' | 'reasoningEffort'>,
   contextTokens: number,
+  overrides: TurnClockOverrides = {},
 ): TurnClocks {
-  if (isLocalEndpoint(config)) {
-    return { firstTokenMs: Infinity, betweenTokensMs: Infinity, absoluteMs: ABSOLUTE_CALL_MS };
+  const local = isLocalEndpoint(config);
+  const betweenTokensMs = local ? Infinity : BETWEEN_TOKENS_MS;
+  if (overrides.firstTokenTimeoutMs !== undefined) {
+    return {
+      firstTokenMs: overrides.firstTokenTimeoutMs,
+      betweenTokensMs,
+      absoluteMs: ABSOLUTE_CALL_MS,
+    };
   }
-  let firstTokenMs =
-    contextTokens > 100_000
-      ? FIRST_TOKEN_OVER_100K_MS
-      : contextTokens > 50_000
-        ? FIRST_TOKEN_OVER_50K_MS
-        : FIRST_TOKEN_BASE_MS;
-  if (config.reasoningEffort === 'high')
-    firstTokenMs = Math.max(firstTokenMs, FIRST_TOKEN_HIGH_EFFORT_MS);
-  if (config.reasoningEffort === 'max')
-    firstTokenMs = Math.max(firstTokenMs, FIRST_TOKEN_MAX_EFFORT_MS);
-  return { firstTokenMs, betweenTokensMs: BETWEEN_TOKENS_MS, absoluteMs: ABSOLUTE_CALL_MS };
+  let firstTokenMs: number;
+  if (local) {
+    firstTokenMs = Infinity;
+  } else {
+    firstTokenMs =
+      contextTokens > 100_000
+        ? FIRST_TOKEN_OVER_100K_MS
+        : contextTokens > 50_000
+          ? FIRST_TOKEN_OVER_50K_MS
+          : FIRST_TOKEN_BASE_MS;
+    if (config.reasoningEffort === 'high')
+      firstTokenMs = Math.max(firstTokenMs, FIRST_TOKEN_HIGH_EFFORT_MS);
+    if (config.reasoningEffort === 'max')
+      firstTokenMs = Math.max(firstTokenMs, FIRST_TOKEN_MAX_EFFORT_MS);
+  }
+  if (overrides.remainingRunMs !== undefined && Number.isFinite(overrides.remainingRunMs)) {
+    firstTokenMs = Math.min(
+      firstTokenMs,
+      Math.max(RUN_BUDGET_CAP_FLOOR_MS, overrides.remainingRunMs * 0.5),
+    );
+  }
+  return { firstTokenMs, betweenTokensMs, absoluteMs: ABSOLUTE_CALL_MS };
 }
 
 // ─── Consuming a stream under the clocks ───────────────────────────────────────
