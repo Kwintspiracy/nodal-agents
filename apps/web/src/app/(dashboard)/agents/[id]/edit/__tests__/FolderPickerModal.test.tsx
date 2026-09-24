@@ -35,6 +35,14 @@ const NOTES: Listing = {
   truncated: false,
 };
 
+const ROOTS_OF_BACKUP: Listing = {
+  path: '/backup',
+  parent: null,
+  home: '/home/ada',
+  dirs: [{ name: 'notes', path: '/backup/notes' }],
+  truncated: false,
+};
+
 const actions = vi.hoisted(() => ({
   browseServerFoldersAction: vi.fn(
     async (
@@ -154,10 +162,32 @@ describe('FolderPickerModal @cap:travailler-sur-des-fichiers/ecran', () => {
     await act(async () => selectButton().click());
 
     expect(closed).toBe(false);
-    expect(document.body.textContent).toContain('The folder was not added: fetch failed');
+    // « may not » : un rejet peut arriver APRÈS l'écriture (réponse perdue) ;
+    // la fenêtre ne sait pas, et ne l'affirme pas (revue finale, Reviewer A).
+    expect(document.body.textContent).toContain(
+      'The folder may not have been added: fetch failed. Check the list before trying again.',
+    );
     // Le bouton revient : on peut réessayer.
     expect(selectButton().disabled).toBe(false);
     expect(selectButton().textContent).toBe('Select this folder');
+  });
+
+  it('pendant l’ajout, la navigation est verrouillée aussi', async () => {
+    // Revue finale (Reviewer A, P2) : Up, Home et les dossiers restaient
+    // cliquables ; un clic effaçait l'erreur ou faisait attacher un autre dossier.
+    serve({ '<roots>': ROOTS, '/backup/notes': NOTES, '/backup': ROOTS_OF_BACKUP });
+    let finir: () => void = () => {};
+    await render({
+      startPath: '/backup/notes',
+      onSelect: () => new Promise<void>((r) => (finir = r)),
+    });
+    await act(async () => selectButton().click());
+    const nav = Array.from(document.body.querySelectorAll('button')).filter((b) =>
+      /Up|Home/.test(b.textContent ?? ''),
+    );
+    expect(nav.length).toBe(2);
+    expect(nav.every((b) => b.disabled)).toBe(true);
+    await act(async () => finir());
   });
 
   it('pendant l’ajout, Cancel est désactivé', async () => {

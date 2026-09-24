@@ -19,9 +19,23 @@ export type PickedFolderLabel =
   | { ok: true; label: string }
   | { ok: false; label: string; message: string };
 
-/** Le dernier segment d'un chemin POSIX, Windows ou UNC ; '' pour une racine. */
+/**
+ * Le dernier segment d'un chemin POSIX, Windows ou UNC ; '' pour une racine,
+ * y compris une racine de lecteur (`D:\` rendait « D: », revue finale).
+ */
 export function folderName(path: string): string {
-  return path.split(/[/\\]/).filter(Boolean).pop() ?? '';
+  const last = path.split(/[/\\]/).filter(Boolean).pop() ?? '';
+  return /^[A-Za-z]:$/.test(last) ? '' : last;
+}
+
+/**
+ * Ce que le champ Libellé devient après un refus. Le libellé en cause n'y va
+ * que quand c'est LUI le problème (conflit, ou refus avant le serveur) : après
+ * une erreur de base, le dossier suivant partait sous le nom de l'ancien
+ * (revue finale, Reviewer A, P2). Sinon, le champ garde ce qui y était tapé.
+ */
+export function labelAfterRefusal(code: string, derived: string, typed: string): string {
+  return code === 'conflict' || code === 'refused_before_server' ? derived : typed;
 }
 
 export function pickedFolderLabel(

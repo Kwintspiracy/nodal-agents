@@ -109,7 +109,7 @@ async function workspacesDe(agentId: string) {
     .orderBy(agentWorkspaces.label);
 }
 
-describe('addAgentWorkspaceAction', () => {
+describe('addAgentWorkspaceAction @cap:travailler-sur-des-fichiers/moteur', () => {
   it('écrit la ligne — label découpé, chemin gardé, entité recopiée depuis l’agent', async () => {
     const { addAgentWorkspaceAction } = await import('../actions.ts');
     const chemin = join(racine, 'notes');
