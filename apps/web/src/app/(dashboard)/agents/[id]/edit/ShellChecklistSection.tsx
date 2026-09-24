@@ -85,7 +85,10 @@ export default function ShellChecklistSection({
     <SectionCard>
       <SectionHead
         label="What it may do with a shell"
-        hint="Each kind of action runs, asks you first, or is refused. At every autonomy level, Yolo included."
+        // Honest about what a reading can promise (review of PR #474): Nodal
+        // spots these actions in the command it reads; code the agent writes
+        // itself can do them without naming them, which the own_script line says.
+        hint="Nodal spots each kind of action in the command, then runs it, asks you first, or refuses it. At every autonomy level, Yolo included."
       />
       {policy === null ? (
         <p className="text-body-13 text-err" data-testid="shell-checklist-unreadable">

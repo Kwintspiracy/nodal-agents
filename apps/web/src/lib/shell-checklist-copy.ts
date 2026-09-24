@@ -14,7 +14,8 @@ export const SHELL_CATEGORY_COPY: Record<ShellCategory, { label: string; summary
   },
   own_script: {
     label: 'Run code it wrote itself',
-    summary: 'A script it wrote during the run, or code passed inline (python -c).',
+    summary:
+      'A script it wrote, or code passed inline (python -c). Such code can do any of the actions below without naming them: set this to Never to rule that out.',
   },
   delete_files: {
     label: 'Delete files or discard changes',

@@ -70,6 +70,18 @@ describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
     expect(container.textContent).toContain('Run code it wrote itself');
   });
 
+  it('says what a reading can promise, and where the real protection is (review of PR #474)', async () => {
+    await render(null);
+    // A reading of the command is not a sandbox: the screen says "spots", and
+    // the own-code line says that code can do the rest without naming it.
+    expect(container.textContent).toContain(
+      'Nodal spots each kind of action in the command, then runs it, asks you first, or refuses it.',
+    );
+    expect(container.textContent).toContain(
+      'Such code can do any of the actions below without naming them: set this to Never to rule that out.',
+    );
+  });
+
   it('shows what is stored', async () => {
     await render({ delete_files: 'never', download: 'allow' });
     expect(pressed('delete_files')).toBe('never');

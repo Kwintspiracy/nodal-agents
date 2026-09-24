@@ -123,6 +123,12 @@ shell**. Each one is **Allowed**, **Ask me** or **Never**:
   folders.
 - The checklist also judges a declared proof (`declare_verification`), because
   its steps run later without asking again.
+- Nodal spots each kind of action by reading what the agent asks to run: the program
+  it starts (`rm`, `npm i`, `curl … > file`), what `bash -c`, `cmd /c` or `$(…)` wrap, and
+  the common calls in inline code and in the scripts it runs
+  (`shutil.rmtree`, `urlretrieve`). A reading is not a sandbox: code the agent
+  writes itself can do any of these actions without naming them. To rule that
+  out, set **Run code it wrote itself** to **Never**.
 
 Folded under **Advanced**, the same tab keeps the older list of programs an
 agent may start, for people who know exactly what to write there.
