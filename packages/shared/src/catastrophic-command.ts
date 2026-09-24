@@ -392,10 +392,13 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
   install_software: [
     /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
     /\b(npm|pnpm|yarn|bun)\s+(i|add|ci)\b|\bInstall-(Module|Package)\b/i, // npm i, pnpm add, PowerShell modules
+    /\buv\s+(pip\s+install|add|tool\s+install)\b/i, // uv (review of PR #476)
     /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download\b|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
   ],
   download: [
-    /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*(\s-[oO]\b|\s--output\b|\s--remote-name\b)|\bInvoke-WebRequest\b|\biwr\b[^\n]*-OutFile|\bStart-BitsTransfer\b/i, // large download / clone
+    // `curl -sLo x`: the output flag may close a group of short options, and
+    // `iwr` is Invoke-WebRequest's alias (review of PR #476).
+    /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*(\s-[A-Za-z]*[oO]\b|\s--output\b|\s--remote-name\b)|\bInvoke-WebRequest\b|\biwr\b|\bStart-BitsTransfer\b/i, // large download / clone
   ],
   stop_programs: [
     /\b(kill|pkill|killall|taskkill)\b|\bStop-Process\b|\bStop-Service\b/i, // process kill
@@ -454,11 +457,17 @@ function startsWithMatch(re: RegExp, text: string): boolean {
 
 const SHELL_WRAPPERS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash', 'fish']);
 
+/** `FOO=1` at index `i` of a segment, before any program word: an assignment, not the program. */
+function isAssignmentPrefix(segment: readonly string[], i: number): boolean {
+  return segment.slice(0, i + 1).every((t) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(t));
+}
+
 /**
  * The commands a command line actually runs, as token lists whose first token
  * is the program (its basename, lower-cased, without `.exe`): each segment,
- * and what `bash -c`, `cmd /c`, `powershell -Command`, `xargs`, `find -exec`
- * and `$(…)` / backticks run inside it.
+ * the module of `python -m`, and what `bash -c`, `cmd /c`,
+ * `powershell -Command`, `xargs`, `find -exec` and `$(…)` / backticks run
+ * inside it.
  */
 export function commandUnits(cmd: string, depth = 0): string[][] {
   if (depth > 4 || typeof cmd !== 'string' || cmd.trim() === '') return [];
@@ -466,13 +475,24 @@ export function commandUnits(cmd: string, depth = 0): string[][] {
   const inner = (text: string) => units.push(...commandUnits(text, depth + 1));
   for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
   for (const segment of splitShellWords(cmd)) {
-    const tokens = skipPassthroughLeaders(segment);
+    // `FOO=1 rm -rf build`: variables set for the command are not the program
+    // (review of PR #476).
+    const tokens = skipPassthroughLeaders(
+      segment.filter((t, i) => !isAssignmentPrefix(segment, i)),
+    );
     const head = tokens[0];
     if (head === undefined) continue;
     const program = interpreterBasename(head);
     const args = tokens.slice(1);
     units.push([program, ...args]);
     const lower = args.map((a) => a.toLowerCase());
+    // `python -m pip install x` runs pip: the module is the program (review of
+    // PR #476; main caught it by reading the whole text).
+    if (interpreterKind(program) === 'python') {
+      const m = lower.indexOf('-m');
+      const module = m >= 0 ? args[m + 1] : undefined;
+      if (module !== undefined) units.push([module.toLowerCase(), ...args.slice(m + 2)]);
+    }
     if (SHELL_WRAPPERS.has(program)) {
       const i = lower.indexOf('-c');
       if (i >= 0 && args[i + 1] !== undefined) inner(args[i + 1] ?? '');
