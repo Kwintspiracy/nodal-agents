@@ -21,11 +21,13 @@
 
 import { homedir } from 'node:os';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
-import { stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 import { agentJobs, toolCalls, and, eq, inArray } from '@nodal-agents/db';
 import {
   pathWords,
   scriptFilesRun,
+  scriptPathLiterals,
+  type PathWord,
   staticShellCategories,
   type ShellCategory,
   type ShellGateReason,
@@ -118,6 +120,52 @@ async function changedDuringJob(abs: string, jobStart: Date): Promise<boolean> {
   }
 }
 
+/**
+ * Where a script a command runs actually is. The agent names it the way the
+ * file tools taught it, label first (`shared/scripts/x.py`, run ae424ac0), or
+ * relative to where the command runs: the first of the two that exists wins,
+ * and the command's own directory when neither does yet.
+ */
+async function scriptLocation(ctx: ToolContext, script: string, cwd: string): Promise<string> {
+  const fromCwd = isAbsolute(script) ? script : resolvePath(cwd, script);
+  const candidates = [fromCwd];
+  try {
+    candidates.unshift(await resolveAndCheckPath(ctx, script));
+  } catch {
+    // Not a path the file tools resolve: only the command's directory remains.
+  }
+  for (const candidate of candidates) {
+    try {
+      await stat(candidate);
+      return candidate;
+    } catch {
+      // Not there: try the next reading.
+    }
+  }
+  return fromCwd;
+}
+
+/** A script larger than this is not read: its first part is enough to find where it looks. */
+const SCRIPT_READ_CAP = 512 * 1024;
+
+/** The absolute and home paths a script's text names; nothing when it cannot be read. */
+async function scriptPaths(abs: string): Promise<PathWord[]> {
+  try {
+    const handle = await open(abs, 'r');
+    try {
+      const buffer = Buffer.alloc(SCRIPT_READ_CAP);
+      const { bytesRead } = await handle.read(buffer, 0, SCRIPT_READ_CAP, 0);
+      return scriptPathLiterals(buffer.subarray(0, bytesRead).toString('utf8'), process.platform);
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    // Not there yet (this very command creates it) or unreadable: nothing to
+    // read, and the script already counts as the agent's own.
+    return [];
+  }
+}
+
 /** The files this agent wrote in this job, as the file tools resolved them. */
 async function filesWrittenThisJob(ctx: ToolContext): Promise<Set<string>> {
   const rows = await ctx.db
@@ -177,15 +225,31 @@ export async function judgeShellChecklist(
       }
     }
 
-    if (policy.own_script !== 'allow') {
+    if (policy.own_script !== 'allow' || policy.outside_folders !== 'allow') {
       const scripts = scriptFilesRun(command);
       if (scripts.length > 0) {
         written ??= await filesWrittenThisJob(ctx);
         jobStart ??= await jobStartedAt(ctx);
         for (const script of scripts) {
-          const abs = isAbsolute(script) ? script : resolvePath(cwd, script);
-          if (written.has(await canonical(ctx, abs)) || (await changedDuringJob(abs, jobStart))) {
-            hit('own_script', script);
+          const abs = await scriptLocation(ctx, script, cwd);
+          const own =
+            written.has(await canonical(ctx, abs)) || (await changedDuringJob(abs, jobStart));
+          if (!own) continue;
+          hit('own_script', script);
+          // What the script itself names (Quentin's test, 24/09, run ae424ac0):
+          // the command was `python script.py`, the Downloads path was IN the
+          // script. Read it, and judge its paths like the command's.
+          if (policy.outside_folders !== 'allow') {
+            for (const literal of await scriptPaths(abs)) {
+              const target = absoluteOf(
+                literal.raw,
+                literal.kind === 'home' ? 'home' : 'absolute',
+                cwd,
+              );
+              if (!(await insideFolders(ctx, target))) {
+                hit('outside_folders', `${literal.raw} (in ${script})`);
+              }
+            }
           }
         }
       }

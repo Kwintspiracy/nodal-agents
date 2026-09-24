@@ -113,6 +113,43 @@ const HOME = /^(~(?=[\\/]|$)|%userprofile%|%homepath%|\$home\b|\$\{home\}|\$env:
 /** A URL is not a path, even with slashes in it. */
 const URL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
+/** Where a file system starts on Linux and macOS. */
+const UNIX_ROOTS = /^\/(home|Users|etc|root|var|tmp|mnt|media|opt|srv|usr|Volumes|private)\//;
+
+/** A quoted string in source code: `"…"` or `'…'`, on one line. */
+const QUOTED = /(["'])((?:\\.|(?!\1)[^\\\n])*)\1/g;
+
+/**
+ * The paths a SCRIPT's text names in its string literals (#464, Quentin's test
+ * of 24/09, run ae424ac0): the agent wrote
+ * `PATH = r"C:/Users/<user>/Downloads/….xlsx"` into a script, then ran
+ * `python script.py`: the command line named no path, the script did.
+ * Absolute and home paths only (drive, UNC, root with a second segment, `~`):
+ * a relative literal in code is too often not a path at all. A path the code
+ * BUILDS at run time is not here, and cannot be: only an OS-level sandbox
+ * sees that.
+ */
+export function scriptPathLiterals(source: string, platform: string): PathWord[] {
+  const found: PathWord[] = [];
+  const seen = new Set<string>();
+  for (const match of source.matchAll(QUOTED)) {
+    const value = (match[2] ?? '').replace(/\\\\/g, '\\');
+    if (value === '' || seen.has(value)) continue;
+    let kind: PathWord['kind'] | null = null;
+    if (WINDOWS_ABSOLUTE.test(value) || UNC.test(value)) kind = 'absolute';
+    // A literal starting with `/` is as often an API route (`"/api/users"`) as
+    // a file: only the roots of a real file system count, and on Windows the
+    // `/c/Users/…` form of Git Bash.
+    else if (UNIX_ROOTS.test(value) || (platform === 'win32' && /^\/[a-z]\//i.test(value))) {
+      kind = 'absolute';
+    } else if (HOME.test(value)) kind = 'home';
+    if (kind === null) continue;
+    seen.add(value);
+    found.push({ raw: value, kind });
+  }
+  return found;
+}
+
 /**
  * The words of a command that name a path: an argument, an option's value
  * (`--out=C:\x`), a redirection target. The program each segment starts with

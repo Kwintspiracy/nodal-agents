@@ -275,6 +275,43 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
     expect(res.outcome).toBe('error');
   });
 
+  it("a path written INSIDE the agent's own script is judged too (Quentin's test, 24/09, run ae424ac0)", async () => {
+    await forgetWrites();
+    // The run of 24/09: the command names no path, the script does.
+    const inspect = join(shared, 'scripts', '_inspect_exports_generation.py');
+    await writeFile(inspect, `PATH = r"${outsideFile().replace(/\\/g, '/')}"\nprint(PATH)\n`);
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: seed.jobId,
+      toolName: 'file_write',
+      toolInput: { path: 'shared/scripts/_inspect_exports_generation.py', content: '…' },
+      toolOutput: '{"ok":true}',
+      durationMs: 1,
+    });
+    const command = 'python shared/scripts/_inspect_exports_generation.py';
+
+    const asked = await run(command, gate(DEFAULT_SHELL_POLICY));
+    const refused = await run(command, gate({ ...DEFAULT_SHELL_POLICY, outside_folders: 'never' }));
+
+    expect(asked.outcome).toBe('awaiting_approval');
+    if (asked.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(asked.approvalRequestId)).toEqual([
+      {
+        category: 'own_script',
+        state: 'ask',
+        details: ['shared/scripts/_inspect_exports_generation.py'],
+      },
+      {
+        category: 'outside_folders',
+        state: 'ask',
+        details: [
+          `${outsideFile().replace(/\\/g, '/')} (in shared/scripts/_inspect_exports_generation.py)`,
+        ],
+      },
+    ]);
+    expect(refused.outcome).toBe('error');
+  });
+
   it('a Yolo rule does not reopen the folders: outside still asks', async () => {
     await forgetWrites();
     const yolo: ApprovalRule = {
