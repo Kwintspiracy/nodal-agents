@@ -4,7 +4,7 @@
 // absente du journal y passerait inaperçue. Ce test applique les VRAIES
 // migrations, prouve que les deux colonnes arrivent, et rejoue la reprise des
 // agents « Yolo » sur des lignes posées ici : un agent qui avait déjà le shell
-// sans demander garde tout, SAUF sortir de ses dossiers ; les autres restent à NULL.
+// sans demander garde tout ; les autres restent à NULL.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -50,7 +50,7 @@ describe('migration 0125_shell_checklist @cap:executer-une-commande/moteur', () 
     }
   });
 
-  it('la reprise : un agent Yolo (sans condition) garde tout sauf sortir de ses dossiers ; les autres restent à NULL', async () => {
+  it('la reprise : un agent Yolo (sans condition) garde tout ; les autres restent à NULL', async () => {
     const { db, close } = createClient(harness().url, { max: 1 });
     try {
       await db.execute(sql`INSERT INTO users (id, email) VALUES
