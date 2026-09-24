@@ -28,11 +28,13 @@ import type {
   NetworkView,
   SecurityView,
   ProofRepairView,
+  RunBudgetView,
   VerificationSurfacesView,
   WorkspaceRow,
 } from '@/lib/actions.ts';
 import { AUTONOMY_OPTIONS } from '@/lib/autonomy.ts';
 import { VERIFICATION_SURFACE_LABELS } from '@/lib/verification-runs-view.ts';
+import { runBudgetValue } from './run-budget-copy.ts';
 
 export type SettingGroup = 'access' | 'safety' | 'workspace' | 'advanced';
 
@@ -44,6 +46,7 @@ export type SettingId =
   | 'auto-run-brake'
   | 'verification'
   | 'repair-turns'
+  | 'run-budget'
   | 'root-agent'
   | 'mcp-server'
   | 'timezone'
@@ -76,6 +79,7 @@ export type SettingsSource = {
   autoRunPause: AutoRunPauseView | null;
   verification: VerificationSurfacesView | null;
   proofRepair: ProofRepairView | null;
+  runBudget: RunBudgetView | null;
   mcpServer: McpServerSwitchView | null;
   timezone: { timezone: string; isExplicit: boolean } | null;
   installNotes: string | null;
@@ -245,6 +249,18 @@ export function buildSettingRows(src: SettingsSource): SettingRow[] {
       src.proofRepair === null
         ? { variant: 'warn', label: 'UNREAD' }
         : { variant: 'ok', label: `${src.proofRepair.repairAttempts} MAX` },
+  });
+
+  rows.push({
+    id: 'run-budget',
+    group: 'safety',
+    name: 'Run budget',
+    lede: 'What one run may cost and how long it may work. A run that reaches it stops and keeps what it wrote.',
+    value:
+      src.runBudget === null
+        ? UNREAD
+        : runBudgetValue(src.runBudget.maxRunCostUsd, src.runBudget.maxRunHours),
+    ...(src.runBudget === null ? { tag: { variant: 'warn' as const, label: 'UNREAD' } } : {}),
   });
 
   rows.push({

@@ -40,6 +40,7 @@ export * from './untrusted';
 export * from './redact-transcript';
 export * from './agent-slug';
 export * from './catastrophic-command';
+export * from './run-budget';
 export * from './shell-checklist';
 export * from './shell-programs';
 export * from './project-key';

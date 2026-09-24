@@ -110,17 +110,16 @@ not legitimately large). To genuinely raise the ceiling, set
 (supported models) also stretches the budget, since the budget counts effective
 input tokens.
 
-### `cost_budget_exceeded` (cost cap killed the job)
+### `cost_budget_exceeded` or `run_time_exceeded` (the run budget stopped the job)
 
-**Symptom.** A job fails with `cost_budget_exceeded`.
+**Symptom.** A job fails with `cost_budget_exceeded` or `run_time_exceeded`. Its
+result keeps what it wrote, then a `[stopped: run budget — …]` line.
 
-**Cause.** The provider-reported dollar cost for the job crossed the cap. The
-default is **$2.00** per job. (Only fires for providers that report cost — e.g.
-OpenRouter with usage cost; for providers that don't report cost this guard never
-fires and the token budget is the backstop.)
+**Cause.** The run crossed the workspace's run budget: its cost (default
+**$2.00** per run) or its working time (no limit by default).
 
-**Fix.** Raise the cap by setting `MAX_COST_PER_JOB_USD` in the runner's
-environment (e.g. `MAX_COST_PER_JOB_USD=5`).
+**Fix.** Raise or clear the ceiling in **Settings → Safety → Run budget** (`0` =
+none). The `MAX_COST_PER_JOB_USD` environment variable is no longer read.
 
 ## Local stack
 
