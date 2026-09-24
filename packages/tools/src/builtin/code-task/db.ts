@@ -15,22 +15,31 @@ import {
   sql,
   type AnyDrizzleDb,
   type CliRunInsert,
+  readAgentBudgetState,
 } from '@nodal-agents/db';
-import { projectKey } from '@nodal-agents/shared';
+import { projectKey, serverTimezone } from '@nodal-agents/shared';
 
 /** A write lock older than this is considered abandoned and can be stolen. */
 const LOCK_STALE_MINUTES = 30;
 
-// ─── Daily budget ────────────────────────────────────────────────────────────
+// ─── The agent's budget (#447) ───────────────────────────────────────────────
 
-export class CliBudgetExceededError extends Error {
-  constructor(spentUsd: number, budgetUsd: number) {
+/**
+ * The agent reached its budget: no CLI run starts. The budget counts API calls
+ * of every provider AND coding-CLI runs (packages/db `readAgentSpend`), so this
+ * can trip on an agent whose CLI runs cost nothing (Codex) but whose API calls
+ * did — it is the agent's ceiling, not the CLI's.
+ */
+export class AgentBudgetExceededError extends Error {
+  constructor(window: 'day' | 'month', spentUsd: number, ceilingUsd: number) {
+    const when = window === 'day' ? 'today' : 'this month';
     super(
-      `cli_daily_budget_exceeded: this agent has already spent $${spentUsd.toFixed(2)} ` +
-        `(notional) on coding-CLI runs today, at or over its $${budgetUsd.toFixed(2)}/day cap. ` +
-        `No CLI run was started. The owner can raise the cap in the agent's Autonomy settings.`,
+      `agent_budget_exceeded: this agent has spent $${spentUsd.toFixed(2)} ${when} ` +
+        `(API calls and coding-CLI runs), at or over its $${ceilingUsd.toFixed(2)} ceiling ` +
+        `for ${window === 'day' ? 'the day' : 'the month'}. No CLI run was started. ` +
+        `The owner sets the budget in the agent's Settings tab.`,
     );
-    this.name = 'CliBudgetExceededError';
+    this.name = 'AgentBudgetExceededError';
   }
 }
 
@@ -75,60 +84,34 @@ export function assertCliProviderEnabled(
 }
 
 /**
- * Les fournisseurs qui ne rapportent AUCUN coût.
+ * Refuse a CLI run when the agent reached its budget (#447), and return the
+ * agent's CLI config (one call serves both needs). 0 = no ceiling. Fails loud,
+ * never silently skips the run.
  *
- * Codex n'en écrit pas dans `cli_runs` : ses tours n'ajoutent rien à la somme,
- * et le plafond en dollars ne peut donc rien borner chez lui. L'interface le dit
- * (`CLI_RUNTIME_REPORTS_COST`, apps/web/src/lib/cli-runtimes.ts) et cesse de
- * proposer le champ.
+ * Every provider is judged, Codex included. Before #447 a Codex run was
+ * exempt because the cap only summed CLI runs and Codex reports no cost, so
+ * the cap could say nothing about it. The budget is now the AGENT's: an agent
+ * that spent its day on API calls stops, whatever runs its next turn.
+ *
+ * The windows start at midnight in the workspace's timezone, the server's when
+ * the workspace recorded none.
  */
-const UNMETERED_PROVIDERS = new Set(['codex']);
-
-/**
- * Enforce the per-agent daily cap on notional CLI cost BEFORE spawning, and
- * return the agent's CLI config (one roundtrip serves both needs).
- * Budget 0 = uncapped. Fails loud — never silently skips the run.
- *
- * `provider` : quand il ne rapporte aucun coût, la garde ne s'applique pas.
- *
- * Sans ce paramètre, l'écran et le runner se contredisaient (revue Codex,
- * 27/08) : la carte annonçait « aucun plafond en dollars ne borne ce harnais »
- * et masquait le champ, pendant que le runner sommait TOUTES les dépenses de
- * l'agent — Claude et `code_task` compris. Un agent basculé sur Codex après une
- * journée de travail sous Claude se retrouvait bloqué jusqu'au lendemain, pour
- * un plafond qu'on venait de lui dire inapplicable, et sans champ pour le
- * relever.
- *
- * Ça ne desserre rien : un tour Codex n'ajoute aucun dollar à la somme, donc le
- * sauter ne laisse passer aucune dépense. Ce qui borne un tour Codex, c'est le
- * délai par tour et le plafond d'appels d'outils.
- */
-export async function assertCliBudget(
+export async function assertAgentBudget(
   db: AnyDrizzleDb,
   agentId: string,
-  provider?: string,
 ): Promise<CliAgentConfig> {
   const [agentRow] = await db
-    .select({ budget: agents.cliDailyBudgetUsd, defaults: agents.cliDefaults })
+    .select({ defaults: agents.cliDefaults })
     .from(agents)
     .where(eq(agents.id, agentId))
     .limit(1);
   const config: CliAgentConfig = { defaults: agentRow?.defaults ?? null };
-  if (provider !== undefined && UNMETERED_PROVIDERS.has(provider)) return config;
-  const budget = agentRow?.budget ?? 0;
-  if (budget <= 0) return config; // 0 = no cap (same convention as daily_token_limit)
-
-  const [row] = await db
-    .select({
-      spent: sql<number>`coalesce(sum(${cliRuns.costUsd}), 0)`,
-    })
-    .from(cliRuns)
-    .where(
-      and(eq(cliRuns.agentId, agentId), sql`${cliRuns.createdAt} >= date_trunc('day', now())`),
-    );
-  const spent = Number(row?.spent ?? 0);
-  if (spent >= budget) {
-    throw new CliBudgetExceededError(spent, budget);
+  const state = await readAgentBudgetState(db, agentId, serverTimezone());
+  if (state?.reached === 'day') {
+    throw new AgentBudgetExceededError('day', state.todayUsd, state.dailyUsd);
+  }
+  if (state?.reached === 'month') {
+    throw new AgentBudgetExceededError('month', state.monthUsd, state.monthlyUsd);
   }
   return config;
 }

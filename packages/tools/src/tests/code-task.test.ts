@@ -23,12 +23,12 @@ import {
 } from '../builtin/code-task/providers';
 import { buildSpawnArgv, resolveCliPath } from '../builtin/code-task/process';
 import {
-  assertCliBudget,
+  assertAgentBudget,
   assertCliProviderEnabled,
   recordCliRun,
   acquireWorkspaceLock,
   releaseWorkspaceLock,
-  CliBudgetExceededError,
+  AgentBudgetExceededError,
   CliProviderDisabledError,
   WorkspaceLockedError,
   workspaceLockKey,
@@ -448,8 +448,12 @@ describe('code_task DB seams', () => {
     jobId = seed.jobId;
   });
 
-  it('budget: under the cap passes; at the cap fails loud with the spent amount', async () => {
-    await assertCliBudget(db, agentId); // default $10, nothing spent
+  // #447 : le budget est celui de l'AGENT (Settings), tous fournisseurs
+  // confondus, et il vaut 0 (aucun plafond) tant que personne ne l'a posé.
+  it('budget: under the ceiling passes; at the ceiling fails loud with the spent amount', async () => {
+    await assertAgentBudget(db, agentId); // no ceiling set: nothing blocks
+    await db.update(agents).set({ budgetDailyUsd: 10 }).where(eq(agents.id, agentId));
+    await assertAgentBudget(db, agentId); // $10 a day, nothing spent
 
     await recordCliRun(db, {
       entityId,
@@ -462,32 +466,33 @@ describe('code_task DB seams', () => {
       cliVersion: '2.1.234 (Claude Code)',
       exitCode: 0,
     });
-    await expect(assertCliBudget(db, agentId)).rejects.toThrow(CliBudgetExceededError);
-    await expect(assertCliBudget(db, agentId)).rejects.toThrow(/\$10\.50/);
+    await expect(assertAgentBudget(db, agentId)).rejects.toThrow(AgentBudgetExceededError);
+    await expect(assertAgentBudget(db, agentId)).rejects.toThrow(
+      /agent_budget_exceeded: this agent has spent \$10\.50 today .* \$10\.00 ceiling for the day/,
+    );
   });
 
-  it('un fournisseur SANS coût rapporté n’est pas bloqué par les dépenses des autres', async () => {
-    // Constat de la revue Codex (27/08). L'écran annonce « aucun plafond en
-    // dollars ne borne ce harnais » et masque le champ — parce que Codex
-    // n'écrit aucun coût. Mais le runner sommait TOUTES les dépenses de
-    // l'agent, Claude et code_task compris : un agent basculé sur Codex après
-    // une journée sous Claude se retrouvait bloqué jusqu'au lendemain, pour un
-    // plafond qu'on venait de lui dire inapplicable, et sans champ pour le
-    // relever. L'écran et le runner se contredisaient.
-    //
-    // Le plafond mord toujours pour Claude — c'est la ligne au-dessus qui le
-    // prouve, avec les mêmes $10.50 déjà dépensés.
-    await expect(assertCliBudget(db, agentId, 'claude')).rejects.toThrow(CliBudgetExceededError);
-    await assertCliBudget(db, agentId, 'codex');
-    // Et sans fournisseur nommé, la garde s'applique comme avant : aucun
-    // appelant ne perd sa protection en n'ayant rien changé.
-    await expect(assertCliBudget(db, agentId)).rejects.toThrow(CliBudgetExceededError);
+  it('the budget counts the agent’s API calls too, whatever runs the next turn', async () => {
+    // Before #447 a Codex run was exempt: the cap only summed CLI runs and
+    // Codex reports no cost. The budget is now the agent's, API calls
+    // included, so an agent over its day stops, Codex or not (the guard no
+    // longer takes the provider).
+    await db.update(agents).set({ budgetDailyUsd: 12 }).where(eq(agents.id, agentId));
+    await assertAgentBudget(db, agentId); // $10.50 spent < $12
+    await db.execute(sql`
+      INSERT INTO llm_calls (entity_id, agent_id, source, model_effective, provider, cost_usd)
+      VALUES (${entityId}, ${agentId}, 'job', 'deepseek-chat', 'deepseek', 2)`);
+    await expect(assertAgentBudget(db, agentId)).rejects.toThrow(/\$12\.50 today/);
   });
 
-  it('budget 0 = uncapped (same convention as daily_token_limit)', async () => {
-    await db.update(agents).set({ cliDailyBudgetUsd: 0 }).where(eq(agents.id, agentId));
-    await assertCliBudget(db, agentId); // $10.50 spent, no cap → passes
-    await db.update(agents).set({ cliDailyBudgetUsd: 10 }).where(eq(agents.id, agentId));
+  it('a monthly ceiling stops the agent too, and 0 means no ceiling', async () => {
+    await db
+      .update(agents)
+      .set({ budgetDailyUsd: 0, budgetMonthlyUsd: 12 })
+      .where(eq(agents.id, agentId));
+    await expect(assertAgentBudget(db, agentId)).rejects.toThrow(/this month .* for the month/);
+    await db.update(agents).set({ budgetMonthlyUsd: 0 }).where(eq(agents.id, agentId));
+    await assertAgentBudget(db, agentId); // $12.50 spent, no ceiling → passes
   });
 
   it('the budget sums cost_usd rows, not a guess: the row we wrote is really there', async () => {

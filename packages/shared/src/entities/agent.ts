@@ -26,8 +26,6 @@ export const AgentSchema = z
     task_context_template: z.string().nullable(),
     avatar_url: z.string().nullable(),
     system_agent: z.boolean(),
-    // 0 = unlimited per DB comment
-    max_tokens_per_job: z.number().int().min(0),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
   })
@@ -49,7 +47,6 @@ export const AgentInsertSchema = AgentSchema.omit({
   telegram_bot_username: z.string().nullable().optional(),
   task_context_template: z.string().nullable().optional(),
   avatar_url: z.string().nullable().optional(),
-  max_tokens_per_job: z.number().int().min(0).max(500_000).default(0),
 });
 
 export type Agent = z.infer<typeof AgentSchema>;

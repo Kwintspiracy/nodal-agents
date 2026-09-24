@@ -13,7 +13,7 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, sql } from '@nodal-agents/db';
 import {
   agentJobs,
   jobDeliveries,
@@ -5590,6 +5590,51 @@ describe('reliability guards', () => {
     expect(result.status).toBe('completed');
     expect(options[0]).not.toHaveProperty('firstTokenTimeoutMs');
     expect(options[0]).not.toHaveProperty('remainingRunMs');
+  });
+
+  it('#447: an agent over its daily budget stops before its next call, and says why @cap:voir-le-cout/moteur', async () => {
+    const job = await createTestJob(db, seed);
+    // What the agent already spent today, on an earlier job and another provider.
+    await db.execute(sql`
+      INSERT INTO llm_calls (entity_id, agent_id, source, model_effective, provider, cost_usd)
+      VALUES (${seed.entityId}, ${seed.agentId}, 'job', 'deepseek-chat', 'deepseek', 1.2)`);
+    await db.update(agents).set({ budgetDailyUsd: 1 }).where(eq(agents.id, seed.agentId));
+    const { client, options } = capturingClient([{ text: 'never sent' }]);
+    try {
+      const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') expect(result.error).toBe('agent_budget_exceeded');
+    } finally {
+      await db.update(agents).set({ budgetDailyUsd: 0 }).where(eq(agents.id, seed.agentId));
+    }
+
+    const [row] = await db
+      .select({ error: agentJobs.error, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.error).toBe('agent_budget_exceeded');
+    expect(row?.result).toBe('[stopped: agent budget — $1.20 spent today, ceiling $1.00, turn 1]');
+    expect(options).toEqual([]);
+  });
+
+  it('#447: under its budget, the same agent runs', async () => {
+    const job = await createTestJob(db, seed);
+    await db.update(agents).set({ budgetDailyUsd: 100 }).where(eq(agents.id, seed.agentId));
+    const { client, options } = capturingClient([
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    try {
+      const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+      expect(result.status).toBe('completed');
+    } finally {
+      await db.update(agents).set({ budgetDailyUsd: 0 }).where(eq(agents.id, seed.agentId));
+    }
+    expect(options).toHaveLength(1);
   });
 
   it('#442: a cost ceiling of 0 means none — the $2 default no longer applies', async () => {

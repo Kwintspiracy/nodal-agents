@@ -23,12 +23,14 @@ import {
   getDecryptedCredentialById,
   getChannelBinding,
   readScheduleState,
+  readAgentBudgetState,
 } from '@nodal-agents/db';
 import type { ApprovalRequestRow, JobTriggerContext } from '@nodal-agents/db';
 import {
   metaToolsForAgent,
   parseRootGrants,
   resolveShellPolicy,
+  serverTimezone,
   modelContextWindow,
   modelCanSeeImages,
   estimateCallCostUsd,
@@ -714,9 +716,13 @@ export function timeoutStopLine(faits: TimeoutFacts): string {
   return `[stopped: llm timeout — ${faits.provider}/${faits.model}, turn ${faits.turn}, ${secondes(faits.elapsedMs)}]`;
 }
 
-/** Ce qu'un budget arrêté rapporte : quoi, combien, contre quel plafond, où (#442). */
+/**
+ * Ce qu'un budget arrêté rapporte : quoi, combien, contre quel plafond, où.
+ * `cost`, `time`, `tokens` : le budget du RUN (#442). `agent_day`,
+ * `agent_month` : le budget de l'AGENT, tous fournisseurs (#447).
+ */
 export interface BudgetStopFacts {
-  kind: 'cost' | 'time' | 'tokens';
+  kind: 'cost' | 'time' | 'tokens' | 'agent_day' | 'agent_month';
   spent: number;
   limit: number;
   turn: number;
@@ -724,6 +730,7 @@ export interface BudgetStopFacts {
 
 /** Le code d'erreur d'un run arrêté par son budget. Les deux premiers existaient déjà. */
 export function budgetErrorCode(kind: BudgetStopFacts['kind']): string {
+  if (kind === 'agent_day' || kind === 'agent_month') return 'agent_budget_exceeded';
   return kind === 'cost'
     ? 'cost_budget_exceeded'
     : kind === 'tokens'
@@ -743,6 +750,10 @@ export function budgetErrorCode(kind: BudgetStopFacts['kind']): string {
 export function budgetStopLine(f: BudgetStopFacts): string {
   if (f.kind === 'cost') {
     return `[stopped: run budget — $${f.spent.toFixed(2)} spent, ceiling $${f.limit.toFixed(2)}, turn ${f.turn}]`;
+  }
+  if (f.kind === 'agent_day' || f.kind === 'agent_month') {
+    const when = f.kind === 'agent_day' ? 'today' : 'this month';
+    return `[stopped: agent budget — $${f.spent.toFixed(2)} spent ${when}, ceiling $${f.limit.toFixed(2)}, turn ${f.turn}]`;
   }
   if (f.kind === 'time') {
     const h = (ms: number) => `${(ms / 3_600_000).toFixed(1)} h`;
@@ -3439,6 +3450,24 @@ async function runJobTracked(
       if (dureeCumuleeMs() > maxRunMs) {
         return await arreterSurBudget(
           { kind: 'time', spent: dureeCumuleeMs(), limit: maxRunMs, turn },
+          partielCeTour,
+        );
+      }
+
+      // #447 : le budget de l'AGENT (Settings de l'agent), relu à chaque tour —
+      // un plafond baissé pendant le run compte dès le tour suivant. Il somme
+      // tout ce que l'agent a dépensé dans la fenêtre, ce run compris (chaque
+      // appel est déjà dans `llm_calls`), tous fournisseurs et CLI confondus.
+      const budgetAgent = await readAgentBudgetState(db, agentRow.id, serverTimezone());
+      if (budgetAgent?.reached === 'day' || budgetAgent?.reached === 'month') {
+        const jour = budgetAgent.reached === 'day';
+        return await arreterSurBudget(
+          {
+            kind: jour ? 'agent_day' : 'agent_month',
+            spent: jour ? budgetAgent.todayUsd : budgetAgent.monthUsd,
+            limit: jour ? budgetAgent.dailyUsd : budgetAgent.monthlyUsd,
+            turn,
+          },
           partielCeTour,
         );
       }

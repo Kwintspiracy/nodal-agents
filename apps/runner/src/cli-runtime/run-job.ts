@@ -28,7 +28,7 @@ import {
   type ConversationContext,
 } from '@nodal-agents/orchestration';
 import {
-  assertCliBudget,
+  assertAgentBudget,
   recordCliRun,
   assertRuntimeSessionKey,
   writeMutationIntent,
@@ -387,9 +387,9 @@ export async function runCliRuntimeJob(args: {
 
   // Daily notional budget — same counter as code_task (cli_runs).
   try {
-    await assertCliBudget(db, agentRow.id, binding.provider);
+    await assertAgentBudget(db, agentRow.id);
   } catch (err) {
-    return fail(err instanceof Error ? err.message.slice(0, 300) : 'cli_daily_budget_exceeded');
+    return fail(err instanceof Error ? err.message.slice(0, 300) : 'agent_budget_exceeded');
   }
 
   // Session continuity: one CLI session per (agent, conversation).
