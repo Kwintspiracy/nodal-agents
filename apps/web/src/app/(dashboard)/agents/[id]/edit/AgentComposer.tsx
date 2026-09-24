@@ -44,8 +44,6 @@ import {
   listInternalToolsAction,
   setRunCommandRuleAction,
   setCodeTaskYoloAction,
-  setCliDailyBudgetAction,
-  getCliUsageTodayAction,
   setCliDefaultsAction,
   setReviewerReadOnlyPresetAction,
   setAgentRuntimeAction,
@@ -127,6 +125,7 @@ import ToolsTab from './ToolsTabContent.tsx';
 import AgentDangerZone from './AgentDangerZone.tsx';
 import { MAX_FOLDER_LABEL, pickedFolderLabel } from './picked-folder-label.ts';
 import FirstTokenWaitField from './FirstTokenWaitField.tsx';
+import AgentBudgetSection from './AgentBudgetSection.tsx';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor, RootGrants } from '@nodal-agents/shared';
 
@@ -699,7 +698,6 @@ export default function AgentComposer({
               attachedSkills={attachedSkills}
               autoRunPaused={autoRunPaused}
               isOwner={isOwner}
-              cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
               commandAllowlist={agent.commandAllowlist ?? null}
               mayChangeTeam={agent.mayChangeTeam ?? false}
               shellPolicy={agent.shellPolicy ?? null}
@@ -751,7 +749,6 @@ export default function AgentComposer({
             onChangeRuntime={setRuntime}
             cliMode={cliMode}
             onChangeCliMode={setCliMode}
-            cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
             idleTimeoutSeconds={agent.idleTimeoutSeconds ?? null}
             cliDefaults={agent.cliDefaults}
             isOwner={isOwner}
@@ -1681,7 +1678,6 @@ export function AutonomyTab({
   attachedSkills,
   autoRunPaused,
   isOwner,
-  cliDailyBudgetUsd,
   commandAllowlist,
   mayChangeTeam,
   shellPolicy,
@@ -1694,7 +1690,6 @@ export function AutonomyTab({
   attachedSkills: SkillRow[];
   autoRunPaused: boolean;
   isOwner: boolean;
-  cliDailyBudgetUsd: number;
   /** agents.command_allowlist — NULL = no list (see CommandAllowlistSection). */
   commandAllowlist: string[] | null;
   /** agents.may_change_team — false = the three team tools are not in the list. */
@@ -2146,7 +2141,6 @@ export function AutonomyTab({
         onRulesChange={setRules}
         autoRunPaused={autoRunPaused}
         isOwner={isOwner}
-        cliDailyBudgetUsd={cliDailyBudgetUsd}
       />
 
       <ReadOnlyAgentSection
@@ -2445,7 +2439,6 @@ function CodeTaskSection({
   onRulesChange,
   autoRunPaused,
   isOwner,
-  cliDailyBudgetUsd,
 }: {
   agentId: string;
   attachedSkills: SkillRow[];
@@ -2456,7 +2449,6 @@ function CodeTaskSection({
   /** Whether the current user is the workspace owner. */
   isOwner: boolean;
   /** agents.cli_daily_budget_usd — 0 means no cap. */
-  cliDailyBudgetUsd: number;
 }) {
   const hasSkill = attachedSkills.some((s) => s.slug === CODE_TASK_SKILL_SLUG);
 
@@ -2523,36 +2515,6 @@ function CodeTaskSection({
           : 'Yolo mode disabled. Coding tasks require approval again.',
       );
     }
-  }
-
-  // ── Daily budget + today's spend ───────────────────────────────────────────
-  const [budgetInput, setBudgetInput] = useState<string>(String(cliDailyBudgetUsd));
-  const [savingBudget, setSavingBudget] = useState(false);
-  const [spentUsd, setSpentUsd] = useState<number | null>(null);
-  const [usageError, setUsageError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!hasSkill) return;
-    getCliUsageTodayAction(agentId).then((result) => {
-      if (result.ok) setSpentUsd(result.data.spentUsd);
-      else setUsageError(result.message);
-    });
-  }, [agentId, hasSkill]);
-
-  async function handleSaveBudget() {
-    const parsed = Number(budgetInput);
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1000) {
-      toast.error('Enter a number between 0 and 1000');
-      return;
-    }
-    setSavingBudget(true);
-    const result = await setCliDailyBudgetAction({ agentId, budgetUsd: parsed });
-    setSavingBudget(false);
-    if (!result.ok) {
-      toast.error(result.message);
-      return;
-    }
-    toast.success('Daily budget saved');
   }
 
   if (!hasSkill) {
@@ -2638,36 +2600,11 @@ function CodeTaskSection({
         Model, effort and diagnostics live in the Tools tab.
       </p>
 
-      <div className="mt-6">
-        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
-          Daily budget (USD)
-        </div>
-        <p className="mt-1 text-body-12 text-ink-4">0 means no cap.</p>
-        <div className="mt-2 flex items-center gap-2">
-          <TextInput
-            type="number"
-            min={0}
-            max={1000}
-            step={0.5}
-            value={budgetInput}
-            onChange={(e) => setBudgetInput(e.target.value)}
-            className="w-28 font-mono"
-          />
-          <PrimaryButton
-            variant="neutral"
-            type="button"
-            onClick={() => void handleSaveBudget()}
-            disabled={savingBudget}
-          >
-            {savingBudget ? 'Saving…' : 'Save'}
-          </PrimaryButton>
-        </div>
-        <p className="mt-2 text-body-13 text-ink-3">
-          {spentUsd !== null
-            ? `Spent today: $${spentUsd.toFixed(2)}`
-            : (usageError ?? 'Loading spend…')}
-        </p>
-      </div>
+      {/* #447 : le budget n'est plus ici. Il est celui de l'agent, tous
+          fournisseurs confondus, dans son onglet Settings. */}
+      <p className="mt-2 text-body-12 text-ink-4" data-testid="code-task-budget-pointer">
+        What its runs cost counts in the agent&apos;s budget, in the Settings tab.
+      </p>
     </SectionCard>
   );
 }
@@ -3138,7 +3075,6 @@ function SettingsTab(props: {
   /** CLI posture, lifted so the hero badge and the runtime card never disagree. */
   cliMode: 'read' | 'write';
   onChangeCliMode: (v: 'read' | 'write') => void;
-  cliDailyBudgetUsd: number;
   /** `agents.idle_timeout_seconds` (#442) — null = the platform decides. */
   idleTimeoutSeconds: number | null;
   cliDefaults: AgentRow['cliDefaults'];
@@ -3187,7 +3123,6 @@ function SettingsTab(props: {
     onChangeRuntime,
     cliMode,
     onChangeCliMode,
-    cliDailyBudgetUsd,
     idleTimeoutSeconds,
     cliDefaults,
     isOwner,
@@ -3789,11 +3724,19 @@ function SettingsTab(props: {
           runtime={runtime}
           mode={cliMode}
           onChangeMode={onChangeCliMode}
-          cliDailyBudgetUsd={cliDailyBudgetUsd}
           cliDefaults={cliDefaults}
           workspaces={workspaces}
         />
       )}
+
+      {/* #447 : le budget de l'agent, tous fournisseurs confondus. */}
+      <SectionCard>
+        <SectionHead
+          label="Budget"
+          hint="What this agent may spend, per day and per month. Reached, its runs stop between two turns and keep what they wrote."
+        />
+        <AgentBudgetSection agentId={agentId} canChange={canChangeRuntime} />
+      </SectionCard>
 
       {/* Knowledge — folder list + file upload. MCP servers live in Connectors tab. */}
       <SectionCard>
@@ -4073,7 +4016,6 @@ function ClaudeCodeRuntimeCard({
   runtime,
   mode,
   onChangeMode,
-  cliDailyBudgetUsd,
   cliDefaults,
   workspaces,
 }: {
@@ -4082,7 +4024,6 @@ function ClaudeCodeRuntimeCard({
   /** Lifted to AgentComposer — the hero badge renders the same value. */
   mode: 'read' | 'write';
   onChangeMode: (v: 'read' | 'write') => void;
-  cliDailyBudgetUsd: number;
   cliDefaults: AgentRow['cliDefaults'];
   workspaces: AgentWorkspaceRow[];
 }) {
@@ -4111,35 +4052,6 @@ function ClaudeCodeRuntimeCard({
     } else {
       void applyMode('read');
     }
-  }
-
-  // ── Daily budget + today's spend — same actions as CodeTaskSection (Autonomy). ──
-  const [budgetInput, setBudgetInput] = useState<string>(String(cliDailyBudgetUsd));
-  const [savingBudget, setSavingBudget] = useState(false);
-  const [spentUsd, setSpentUsd] = useState<number | null>(null);
-  const [usageError, setUsageError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getCliUsageTodayAction(agentId).then((result) => {
-      if (result.ok) setSpentUsd(result.data.spentUsd);
-      else setUsageError(result.message);
-    });
-  }, [agentId]);
-
-  async function handleSaveBudget() {
-    const parsed = Number(budgetInput);
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1000) {
-      toast.error('Enter a number between 0 and 1000');
-      return;
-    }
-    setSavingBudget(true);
-    const result = await setCliDailyBudgetAction({ agentId, budgetUsd: parsed });
-    setSavingBudget(false);
-    if (!result.ok) {
-      toast.error(result.message);
-      return;
-    }
-    toast.success('Daily budget saved');
   }
 
   async function handleSaveDefaults(model: string | null, effort: string | null) {
@@ -4215,51 +4127,16 @@ function ClaudeCodeRuntimeCard({
         />
       </div>
 
-      <div className="mt-6">
-        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
-          Daily budget (USD)
-        </div>
-        {reportsCost ? (
-          <>
-            <p className="mt-1 text-body-12 text-ink-4">0 means no cap.</p>
-            <div className="mt-2 flex items-center gap-2">
-              <TextInput
-                type="number"
-                min={0}
-                max={1000}
-                step={0.5}
-                value={budgetInput}
-                onChange={(e) => setBudgetInput(e.target.value)}
-                className="w-28 font-mono"
-              />
-              <PrimaryButton
-                variant="neutral"
-                type="button"
-                onClick={() => void handleSaveBudget()}
-                disabled={savingBudget}
-              >
-                {savingBudget ? 'Saving…' : 'Save'}
-              </PrimaryButton>
-            </div>
-            <p className="mt-2 text-body-13 text-ink-3">
-              {spentUsd !== null
-                ? `Spent today: $${spentUsd.toFixed(2)}`
-                : (usageError ?? 'Loading spend…')}
-            </p>
-          </>
-        ) : (
-          // Le champ ne s'affiche PAS pour un harnais qui ne rapporte aucun coût
-          // (constat P1 de la revue Codex, 27/08). Le plafond se calcule en
-          // sommant `cli_runs.cost_usd` ; Codex n'en écrit aucun, donc la somme
-          // reste à zéro et le plafond n'est jamais atteint. Laisser saisir un
-          // nombre qui ne borne rien, sous une carte affirmant que Nodal fait
-          // respecter le budget, serait un mensonge d'écran.
-          <p className="mt-1 text-body-13 leading-[1.5]! text-ink-3">
-            {label} reports no cost, so a dollar cap cannot bound it. What bounds a turn here is the
-            per-turn time limit and the tool-call cap. Runs still show up in the Runs list.
-          </p>
-        )}
-      </div>
+      {/* #447 : le budget est celui de l'agent, dans la carte Budget plus bas. Un
+          harnais qui ne rapporte aucun coût ne l'entame pas, et on le dit. */}
+      <p
+        className="mt-6 text-body-13 leading-[1.5]! text-ink-3"
+        data-testid="cli-runtime-budget-note"
+      >
+        {reportsCost
+          ? `What ${label} reports it cost counts in this agent's budget, below.`
+          : `${label} reports no cost, so its turns do not count in this agent's budget. What bounds a turn here is the per-turn time limit and the tool-call cap.`}
+      </p>
     </SectionCard>
   );
 }

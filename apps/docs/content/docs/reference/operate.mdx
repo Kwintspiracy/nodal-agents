@@ -58,6 +58,9 @@ The runner stops a run that crosses one of these ceilings, between two turns. It
 | Cost of one run | **Settings → Safety → Run budget** | `$2.00` (`0` = none) | `cost_budget_exceeded` |
 | Working time of one run | **Settings → Safety → Run budget** | none | `run_time_exceeded` |
 | Tokens of one run | `MAX_TOTAL_TOKENS_PER_JOB` on the runner | `1500000` (1.5M) | `token_budget_exceeded` |
+| What one agent spends in a day or a month | the agent's **Settings → Budget** | none | `agent_budget_exceeded` |
+
+The agent's budget counts every API call of that agent, whatever the provider, and the cost its coding CLI runs report. Days and months start at midnight and on the 1st in the workspace time zone. Once a ceiling is reached, each of the agent's runs stops before its next call until the window ends, and a coding CLI run does not start.
 
 The working time counts only the time the run spends working: waiting for an approval or for a delegated agent does not count. While a time ceiling is set, one model call never waits for its first token longer than half of what remains, with a 60 s floor.
 

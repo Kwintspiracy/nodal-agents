@@ -104,21 +104,26 @@ Approve and the run starts. Reject and the agent gets an error it can act on.
 Yolo mode skips this gate per agent, on the **Autonomy** tab — the same control
 and the same caveats as [shell commands](/docs/guides/shell-commands).
 
-## The daily budget
+## The budget
 
-Each agent has a daily cap, **10 USD by default**, on the notional cost of its
-coding runs. Set it to `0` to remove the cap.
+A coding run counts in the **agent's budget**, set on the agent's **Settings**
+tab: a daily and a monthly ceiling in USD (`0` = none). The same ceilings count
+the agent's API calls to any provider, so one number says what the agent may
+spend, whatever does the work.
 
-Two things are worth knowing about that number, because it is easy to misread:
+Two things are worth knowing about what a coding run adds:
 
 - It is **notional**. Claude Code reports a cost even when the work is covered by
-  your subscription, and that reported figure is what the cap counts. It is a
-  brake on runaway usage, not a bill.
-- **Codex reports no cost at all**, so its runs count as zero against the cap.
-  What bounds them is the per-call timeout, not the budget.
+  your subscription, and that reported figure is what counts. It is a brake on
+  runaway usage, not a bill.
+- **Codex reports no cost at all**, so its runs add nothing. What bounds them is
+  the per-call timeout. An agent that already spent its day on API calls is
+  still stopped, Codex or not.
 
-When the cap is reached, `code_task` refuses to start and says so. It does not
-silently downgrade or wait.
+When a ceiling is reached, `code_task` refuses to start and says so, and the
+agent's runs stop between two turns, keeping what they wrote, until the day or
+the month ends. Before 0.9.3 this was a daily cap on coding runs only, on the
+Autonomy tab; an agent that had it keeps it as its daily ceiling.
 
 ## Watching the work
 
