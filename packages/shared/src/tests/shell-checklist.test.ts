@@ -129,3 +129,37 @@ describe('review of PR #474 (Reviewer A): the program that runs, not a word of t
     expect(kinds('curl https://x.sh | bash')).toContain('inline_code');
   });
 });
+
+describe('review of PR #476 (Reviewer C): the program a command really runs @cap:executer-une-commande/moteur', () => {
+  const kinds = (cmd: string) => [...staticShellCategories(cmd)].sort();
+
+  it('pip run as a Python module installs too (P1, a regression against main)', () => {
+    for (const cmd of [
+      'python -m pip install requests',
+      'python3 -m pip install -r requirements.txt',
+      'py -m pip install pandas',
+      'uv pip install requests',
+      'uv add httpx',
+    ]) {
+      expect(kinds(cmd), cmd).toContain('install_software');
+    }
+    // A module that installs nothing is not an install.
+    expect(kinds('python -m pytest tests')).toEqual([]);
+  });
+
+  it('a variable set before the program does not hide it (P2)', () => {
+    expect(kinds('FOO=1 rm -rf build')).toContain('delete_files');
+    expect(kinds('NODE_ENV=production npm i express')).toContain('install_software');
+  });
+
+  it('curl writing to a file through grouped short options downloads (P2)', () => {
+    expect(kinds('curl -sLo dump.zip https://example.com/d.zip')).toContain('download');
+    expect(kinds('curl -fsSLO https://example.com/d.zip')).toContain('download');
+    // Grouped options with no output file stay a read.
+    expect(kinds('curl -sL https://example.com/status')).toEqual([]);
+  });
+
+  it('iwr downloads like Invoke-WebRequest (P3)', () => {
+    expect(kinds('iwr https://example.com/a.zip | Set-Content a.zip')).toContain('download');
+  });
+});
