@@ -20,33 +20,28 @@ import { describe, expect, it, vi } from 'vitest';
 
 import Home from '../../app/home';
 import {
+  AUTHOR,
   BASE_PATH,
-  CATALOG,
-  CATALOG_FIGURES,
-  CHANNEL_ICONS,
-  CI_JOBS,
-  CONNECTOR_ICONS,
-  DEFINITIONS,
-  EXAMPLES,
-  FEATURE_SLUGS,
-  FIGURES,
-  FORMULA,
-  HERO,
-  LINK_GITHUB,
-  SCREENS_TITLE,
-  MCP_ICONS,
-  INVARIANTS,
-  PILLARS,
-  PRACTICES,
-  PRINCIPLES,
-  PROOF_RECORDS,
-  ROADMAP,
+  BUILDING_BLOCKS,
   CAPABILITIES,
   CAPABILITIES_VERIFIED,
+  FEEDBACK,
+  FIGURES,
+  HARNESS_POINTS,
+  HERO,
+  LINK_ISSUES,
+  LINK_START,
   MEASURED_COMMIT,
   MEASURED_ON,
   MEASURED_RUN_URL,
+  PRACTICES,
+  QUESTIONS,
+  QUESTIONS_NOTE,
+  SCREENS_TITLE,
   SECTIONS,
+  STATUS,
+  STORY,
+  TRY_NOTE,
   VERSION,
 } from '../../app/home-content';
 import { parseYaml } from './yaml-lite';
@@ -75,6 +70,16 @@ const BUILD_JOB = DOCS_WORKFLOW.jobs.build;
 const runsInBuildJob = (fragment: string): boolean =>
   BUILD_JOB.steps.some((step) => (step.run ?? '').includes(fragment));
 
+/** What `renderToStaticMarkup` writes for a text: `'` becomes `&#x27;`. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
 function figure(label: string): string {
   const found = FIGURES.find((f) => f.label === label);
   if (!found) throw new Error(`no figure labelled "${label}"`);
@@ -82,29 +87,25 @@ function figure(label: string): string {
 }
 
 describe('homepage rendering', () => {
-  it('renders every declared section, with its anchor and its title', () => {
-    expect(SECTIONS).toHaveLength(6);
+  it('renders every declared section, with its anchor, title, label and claim', () => {
+    expect(SECTIONS).toHaveLength(5);
     for (const section of SECTIONS) {
       expect(markup).toContain(`id="${section.id}"`);
       expect(markup).toContain(section.title);
       expect(markup).toContain(section.label);
+      expect(markup).toContain(section.claim);
     }
   });
 
-  it('states the ten invariants, numbered one to ten', () => {
-    expect(INVARIANTS.map((i) => i.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    for (const invariant of INVARIANTS) {
-      expect(markup).toContain(invariant.text);
-    }
-  });
-
-  it('points at the quality portal, in the nav and in the engineering section', () => {
+  it('points at the quality report, in the nav and in the building section', () => {
     expect(markup.split(`href="${BASE_PATH}/qa/"`).length - 1).toBe(2);
-    expect(markup).toContain('Open the portal');
+    expect(markup).toContain('See the quality report');
   });
 
-  it('carries the two outbound links and the install command', () => {
+  it('carries the outbound links, the setup guide and the install command', () => {
     expect(markup).toContain('https://github.com/Kwintspiracy/nodal-agents');
+    expect(markup).toContain(`href="${LINK_ISSUES}"`);
+    expect(markup).toContain(`href="${LINK_START}"`);
     expect(markup).toContain(`href="${BASE_PATH}/docs"`);
     expect(markup).toContain('npm install -g nodal-agents');
     expect(markup).toContain('nodal-agents up');
@@ -120,13 +121,16 @@ describe('homepage rendering', () => {
   // its own source file says it makes.
   it('renders every copy block it declares, not just the ones a case names', () => {
     const blocks: ReadonlyArray<readonly [string, readonly string[]]> = [
-      ['pillars', PILLARS.flatMap((p) => [p.title, p.body])],
-      ['formula', FORMULA.flatMap((f) => [f.term, f.body])],
-      ['definitions', DEFINITIONS.flatMap((d) => [d.term, d.body])],
-      ['principles', PRINCIPLES.flatMap((p) => [p.title, p.body])],
-      ['proof records', PROOF_RECORDS.flatMap((r) => [r.term, r.body])],
+      ['author', [AUTHOR]],
+      ['story', STORY],
+      ['questions', QUESTIONS.flatMap((q) => [q.title, q.question, q.test])],
+      ['questions note', [QUESTIONS_NOTE]],
+      ['harness', HARNESS_POINTS.flatMap((p) => [p.title, p.body])],
+      ['building blocks', BUILDING_BLOCKS.flatMap((d) => [d.term, d.body])],
       ['practices', PRACTICES.flatMap((p) => [p.title, p.body])],
-      ['CI jobs', CI_JOBS.flatMap((j) => [j.name, j.body])],
+      ['status', STATUS.flatMap((d) => [d.term, d.body])],
+      ['try note', [TRY_NOTE]],
+      ['feedback', FEEDBACK],
       [
         'hero',
         [
@@ -137,29 +141,35 @@ describe('homepage rendering', () => {
         ],
       ],
       ['screens title', [SCREENS_TITLE]],
-      ['roadmap', ROADMAP],
     ];
     for (const [name, texts] of blocks) {
       expect(texts.length, `${name} declares nothing`).toBeGreaterThan(0);
-      const missing = texts.filter((t) => !markup.includes(t));
+      const missing = texts.filter((t) => !markup.includes(escapeHtml(t)));
       expect(missing, `${name}: not rendered`).toEqual([]);
     }
   });
 
-  // The four records are the product's answer to "the agent said it was done".
-  // Stated as four because they answer four different questions: collapsing
-  // them into one line is how a page ends up claiming a green tick proves work.
-  it('names the four separate records a run leaves behind', () => {
-    expect(PROOF_RECORDS).toHaveLength(4);
-    expect(PROOF_RECORDS.map((r) => r.term)).toEqual([
-      'What it wrote',
-      'What proves it works',
-      'What a second agent found',
-      'What it looked like before',
-    ]);
-    // And says where each one is read, which is the part that differs: the
-    // snapshot is deliberately not in the product.
-    expect(markup).toContain('The fourth stays in the command line');
+  // The owner's request of 2026-09-24: an exploration used by one person,
+  // measured in its claims. These are the sentences that say so, and the
+  // marketing lines the page carried before must not come back.
+  it('says what it is: one user, pre-1.0, nothing tried at scale', () => {
+    expect(markup).toContain('One user so far');
+    expect(markup).toContain('Nothing here has been tried at scale.');
+    expect(markup).toContain('Nodal is still pre-1.0.');
+    for (const gone of [
+      'Herd your agents',
+      'personal production',
+      'from the first command to production',
+      'Memory that compounds',
+    ]) {
+      expect(markup, `the old claim "${gone}" is back`).not.toContain(gone);
+    }
+  });
+
+  it('asks each of the four questions with what can be tested in Nodal', () => {
+    expect(QUESTIONS).toHaveLength(4);
+    expect(markup.split('<dt>The question</dt>').length - 1).toBe(4);
+    expect(markup.split('<dt>What I can test in Nodal</dt>').length - 1).toBe(4);
   });
 
   it('opens on a hero band whose background is the illustration shipped with the site', () => {
@@ -196,9 +206,9 @@ describe('homepage rendering', () => {
   });
 
   // Every section opens the same way since 2026-09-22: the title, then one
-  // claim in the display face with the accent bar. Six sections, six claims,
-  // and no section left on the old plain intro.
-  it('opens every section on a claim with the accent bar, the same style six times', () => {
+  // claim in the display face with the accent bar, and no section left on the
+  // old plain intro.
+  it('opens every section on a claim with the accent bar, the same style each time', () => {
     expect(markup.split('class="home-claim"').length - 1).toBe(SECTIONS.length);
     expect(markup).not.toContain('home-intro');
   });
@@ -252,107 +262,6 @@ describe('homepage rendering', () => {
   });
 });
 
-describe('the catalog section only shows what the product actually ships', () => {
-  it('gives every connector icon a slug that is in the connector catalog', () => {
-    expect(CONNECTOR_ICONS.length).toBeGreaterThan(0);
-    for (const icon of CONNECTOR_ICONS) {
-      expect(CATALOG.connectorSlugs).toContain(icon.slug);
-      expect(markup).toContain(`${BASE_PATH}/home/icons/${icon.file}.svg`);
-    }
-  });
-
-  it('gives every MCP icon a slug that is in the MCP catalog', () => {
-    expect(MCP_ICONS.length).toBeGreaterThan(0);
-    for (const icon of MCP_ICONS) {
-      expect(CATALOG.mcpSlugs).toContain(icon.slug);
-    }
-  });
-
-  it('shows the four channels the product actually speaks', () => {
-    expect(CHANNEL_ICONS.map((c) => c.slug)).toEqual(['telegram', 'discord', 'slack', 'whatsapp']);
-  });
-
-  it('prints the catalog counts the generator recorded', () => {
-    const value = (label: string) => {
-      const found = CATALOG_FIGURES.find((f) => f.label === label);
-      if (!found) throw new Error(`no catalog figure labelled "${label}"`);
-      return found.value;
-    };
-    expect(value('connectors in the catalog')).toBe(String(CATALOG.connectors));
-    expect(value('MCP servers in the catalog')).toBe(String(CATALOG.mcpServers));
-    expect(value('system skills')).toBe(String(CATALOG.systemSkills));
-    expect(value('connector tools')).toBe(String(CATALOG.connectorTools));
-    expect(value('built-in tools')).toBe(String(CATALOG.builtinTools));
-    expect(value('models pre-configured')).toBe(String(CATALOG.models));
-    for (const f of CATALOG_FIGURES) expect(markup).toContain(f.label);
-  });
-
-  // The page states how many built-in tools an agent gets before it holds a
-  // single skill. Typing that number would put a second source of truth next
-  // to the generator, which is the drift `catalog-facts.json` exists to close.
-  it('splits the built-in tools with the counted figure, not a typed one', () => {
-    expect(CATALOG.alwaysOnTools).toBeGreaterThan(0);
-    expect(CATALOG.alwaysOnTools).toBeLessThan(CATALOG.builtinTools);
-    expect(CATALOG.alwaysOnTools + CATALOG.gatedTools).toBe(CATALOG.builtinTools);
-    expect(markup).toContain(`${CATALOG.alwaysOnTools} are on for every agent`);
-  });
-
-  it('offers a wide, unordered scatter of examples rather than a short menu', () => {
-    expect(EXAMPLES.length).toBeGreaterThanOrEqual(8);
-    // Heterogeneous on purpose: two examples sharing a domain tag would read as
-    // a category, and a category reads as the list the section denies having.
-    const tags = EXAMPLES.map((e) => e.tag);
-    expect(new Set(tags).size).toBe(tags.length);
-    for (const e of EXAMPLES) {
-      expect(markup).toContain(e.body);
-      // One line each. The section failed twice by explaining two cases at
-      // length, which is what made them read as the only two.
-      expect(e.body.length).toBeLessThan(110);
-    }
-    // Telegram is a way to reach an agent, not a thing you build with one. It
-    // may appear as the channel of an example, never as its subject.
-    expect(markup).toContain('There is no list of supported use cases');
-  });
-
-  it('builds every example out of things that are really in the catalog', () => {
-    const known = new Set([
-      ...CATALOG.connectorSlugs,
-      ...CATALOG.mcpSlugs,
-      ...CATALOG.systemSkillSlugs,
-      ...FEATURE_SLUGS,
-    ]);
-    const unknown = EXAMPLES.flatMap((e) =>
-      e.uses.filter((u) => !known.has(u)).map((u) => `${e.tag}: ${u}`),
-    );
-    expect(unknown).toEqual([]);
-    for (const e of EXAMPLES) expect(e.uses.length).toBeGreaterThan(0);
-  });
-
-  it('says how much of each catalog the grid is not showing', () => {
-    const connectorsLeft = CATALOG.connectors - CONNECTOR_ICONS.length;
-    const serversLeft = CATALOG.mcpPreconfigured - MCP_ICONS.length;
-    expect(connectorsLeft).toBeGreaterThan(0);
-    expect(serversLeft).toBeGreaterThan(0);
-    expect(markup).toContain(`+ ${connectorsLeft} more`);
-    expect(markup).toContain(`+ ${serversLeft} more`);
-    // The two "add your own" sentinels are not servers anybody can connect to,
-    // so counting them here would overstate the catalog by two.
-    expect(CATALOG.mcpPreconfigured).toBe(CATALOG.mcpServers - 2);
-    // Channels are the one grid that IS the whole list, so it claims no more.
-    expect(CHANNEL_ICONS.length).toBe(4);
-  });
-
-  // Verified in the dashboard source, not assumed: McpAddForm plus the two
-  // custom-* catalog sentinels for servers, InstallCommunitySkillModal and
-  // SkillForm for skills, and no form at all for a new connector type, which
-  // ConnectorsClient.tsx states outright ("custom passe par un MCP server").
-  it('claims you can add servers and skills, and does not claim it for connectors', () => {
-    expect(markup).toContain('You can add your own, over HTTP or as a local process');
-    expect(markup).toContain('You cannot add a connector type yourself');
-    expect(markup).toContain('any community skill file');
-  });
-});
-
 describe('homepage assets and configuration', () => {
   it('prefixes its own links with the basePath the build actually uses', () => {
     const config = readFileSync(join(docsRoot, 'next.config.mjs'), 'utf8');
@@ -375,11 +284,6 @@ describe('homepage assets and configuration', () => {
       const onDisk = join(docsRoot, 'public', src.slice(BASE_PATH.length + 1));
       expect(statSync(onDisk).size).toBeLessThan(250 * 1024);
     }
-    // Screenshots and brand icons both, so a renamed icon file is caught here
-    // rather than by a visitor looking at a broken image.
-    expect(sources.filter((s) => s.endsWith('.svg')).length).toBe(
-      CONNECTOR_ICONS.length + MCP_ICONS.length + CHANNEL_ICONS.length,
-    );
   });
 
   // The portal is a standalone HTML document rendered by `apps/qa/build.mjs`,

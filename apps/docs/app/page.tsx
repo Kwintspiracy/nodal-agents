@@ -3,9 +3,9 @@ import Home from './home';
 import './home.css';
 
 export const metadata: Metadata = {
-  title: 'Nodal-Agents · your AI agents, your data, your machine',
+  title: 'Nodal-Agents · an ongoing exploration of agent orchestration',
   description:
-    'A self-hosted platform that runs a team of AI agents on your own hardware. Any model, your own keys, an embedded database, and a dashboard. Open source, pre-1.0.',
+    'A personal project to understand how agent harnesses work by building one: delegation, autonomy, and following what agents do. Runs on your machine, pre-1.0, used by one person so far.',
 };
 
 export default function HomePage() {
