@@ -20,6 +20,8 @@
 //                     turbo lance un vitest par paquet, et aucun réglage vitest
 //                     ne voit au-delà du sien (issue #130).
 //   cluster-registry— un cluster de test meurt avec son lanceur, Ctrl+C compris.
+//   shared-postgres — un serveur par run, une base par fichier `.pg` (#471) ;
+//                     son `globalSetup` est `pg-global-setup.ts`.
 //
 // Ce paquet est privé et ne part jamais dans le tarball : il n'est référencé que
 // par des devDependencies.
@@ -32,3 +34,4 @@ export * from './architecture';
 export * from './real-postgres';
 export * from './cluster-lock';
 export * from './cluster-registry';
+export * from './shared-postgres';

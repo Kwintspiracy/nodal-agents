@@ -30,19 +30,39 @@ if (isWindowsCi) {
   );
 }
 
+const EXCLUDE = [
+  '**/node_modules/**',
+  '**/dist/**',
+  '**/.next/**',
+  '**/.turbo/**',
+  '**/.claude/**',
+];
+const PG_TESTS = '**/*.pg.test.ts';
+
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    exclude: [
-      '**/node_modules/**',
-      '**/dist/**',
-      '**/.next/**',
-      '**/.turbo/**',
-      '**/.claude/**',
-      ...(isWindowsCi ? ['**/*.pg.test.ts'] : []),
-    ],
+    exclude: EXCLUDE,
     testTimeout: 60_000,
     hookTimeout: 60_000,
+    // Les `.pg` partagent UN Postgres par run (#471) : voir la config racine et
+    // packages/test-kit/src/shared-postgres.ts. Pas de projet `pg` du tout sur
+    // Windows CI, où ils ne tournent pas.
+    projects: [
+      { extends: true, test: { name: 'unit', exclude: [...EXCLUDE, PG_TESTS] } },
+      ...(isWindowsCi
+        ? []
+        : [
+            {
+              extends: true,
+              test: {
+                name: 'pg',
+                include: [PG_TESTS],
+                globalSetup: ['../test-kit/src/pg-global-setup.ts'],
+              },
+            },
+          ]),
+    ],
   },
 });

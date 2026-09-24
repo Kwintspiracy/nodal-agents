@@ -29,10 +29,32 @@ if (isWindowsCi) {
   );
 }
 
+const PG_TESTS = '**/*.pg.test.ts';
+
 export default defineConfig({
   test: {
     setupFiles: ['./src/tests/setup-workspaces-root.ts'],
-    ...(isWindowsCi ? { exclude: ['**/node_modules/**', '**/dist/**', '**/*.pg.test.ts'] } : {}),
+    // Les `.pg` partagent UN Postgres par run (#471) : voir la config racine et
+    // packages/test-kit/src/shared-postgres.ts. Pas de projet `pg` du tout sur
+    // Windows CI, où ils ne tournent pas.
+    projects: [
+      {
+        extends: true,
+        test: { name: 'unit', exclude: ['**/node_modules/**', '**/dist/**', PG_TESTS] },
+      },
+      ...(isWindowsCi
+        ? []
+        : [
+            {
+              extends: true,
+              test: {
+                name: 'pg',
+                include: [PG_TESTS],
+                globalSetup: ['../../packages/test-kit/src/pg-global-setup.ts'],
+              },
+            },
+          ]),
+    ],
     // This per-package config SHADOWS the root vitest.config.ts entirely —
     // the root's generous timeouts must be replicated here or runner tests
     // fall back to the 5s default and flake on oversubscribed CI runners
