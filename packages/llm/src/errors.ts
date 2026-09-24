@@ -250,7 +250,7 @@ export class ProviderConfigError extends Error {
  * a false positive only changes the error label, never the fact that it failed.
  */
 export function isContextOverflowError(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
+  const msg = (err === undefined || err === null ? '' : describeThrown(err)).toLowerCase();
   if (!msg) return false;
   return (
     msg.includes('context length') ||
@@ -263,4 +263,79 @@ export function isContextOverflowError(err: unknown): boolean {
     msg.includes('too many tokens') ||
     (msg.includes('reduce') && msg.includes('length') && msg.includes('token'))
   );
+}
+
+// ─── Stream error parts that are not Error objects (#478) ─────────────────────
+
+/**
+ * What a provider sent as an error part of a stream, when it was not an
+ * `Error`. OpenRouter forwards an upstream failure mid-stream as a plain object
+ * (`{ error: { code, message } }` or `{ code, message }`), and the AI SDK hands
+ * it on untouched. Thrown as is, it was logged as `[object Object]`, classified
+ * `unknown`, never retried, and the job failed as `unknown_error` with no
+ * reason (jobs c71d90f1 and 0afde65b, 24/09). Wrapped here, the message and
+ * the HTTP-like code survive, so the retry policy and the context-overflow
+ * check can read them.
+ */
+export class LLMStreamPartError extends Error {
+  /** The code the provider gave, when it is an HTTP status (retry.ts reads it). */
+  readonly statusCode: number | undefined;
+
+  constructor(
+    message: string,
+    statusCode: number | undefined,
+    /** The value the stream carried, untouched. */
+    public readonly raw: unknown,
+  ) {
+    super(message);
+    this.name = 'LLMStreamPartError';
+    this.statusCode = statusCode;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function httpLike(value: unknown): number | undefined {
+  const n = typeof value === 'string' && /^\d{3}$/.test(value) ? Number(value) : value;
+  return typeof n === 'number' && Number.isInteger(n) && n >= 100 && n <= 599 ? n : undefined;
+}
+
+/**
+ * A thrown value, said in words: an `Error`'s message, else what the object
+ * carries (`message`, `error.message`), else its JSON. Capped: it goes into
+ * logs and into `llm_calls.error`. Never `[object Object]`.
+ */
+export function describeThrown(value: unknown, max = 500): string {
+  if (value instanceof Error) return value.message.slice(0, max);
+  const record = asRecord(value);
+  if (record) {
+    const inner = asRecord(record['error']);
+    const message = inner?.['message'] ?? record['message'];
+    const code = inner?.['code'] ?? record['code'] ?? record['status'];
+    if (typeof message === 'string' && message !== '') {
+      return (code !== undefined ? `${String(code)}: ${message}` : message).slice(0, max);
+    }
+    try {
+      return JSON.stringify(value).slice(0, max);
+    } catch {
+      return Object.prototype.toString.call(value);
+    }
+  }
+  return String(value).slice(0, max);
+}
+
+/** An error part of a stream, as an `Error` the rest of the client can read. */
+export function streamPartError(value: unknown): Error {
+  if (value instanceof Error) return value;
+  const record = asRecord(value);
+  const inner = asRecord(record?.['error']);
+  const statusCode =
+    httpLike(inner?.['code']) ??
+    httpLike(inner?.['status']) ??
+    httpLike(record?.['code']) ??
+    httpLike(record?.['status']) ??
+    httpLike(record?.['statusCode']);
+  return new LLMStreamPartError(describeThrown(value), statusCode, value);
 }

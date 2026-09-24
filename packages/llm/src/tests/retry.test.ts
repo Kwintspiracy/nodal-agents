@@ -7,6 +7,8 @@ import {
   MessageStructureError,
   RetryExhaustedError,
   LLMCallCancelledError,
+  streamPartError,
+  describeThrown,
 } from '../errors';
 
 // Override setTimeout globally for tests so backoff doesn't slow things down
@@ -204,5 +206,44 @@ describe('withRetry — a call stopped by the person', () => {
     expect(calls).toBe(1);
     expect(warn.mock.calls.flat().join(' ')).not.toContain('[llm-attempt-failed]');
     warn.mockRestore();
+  });
+});
+
+// #478: an error part a provider sent as a plain object, made an Error by the
+// stream reader, is read by the retry policy like any provider error.
+describe('withRetry — a provider error part that was a plain object (#478)', () => {
+  it('a 502 is retried, and the failed attempt is logged with its message', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    const promise = withRetry(
+      () => {
+        calls += 1;
+        return calls === 1
+          ? Promise.reject(
+              streamPartError({ error: { code: 502, message: 'Provider returned error' } }),
+            )
+          : Promise.resolve('ok');
+      },
+      { maxRetries: 3, baseDelayMs: 10, provider: 'openrouter', model: 'm' },
+    );
+    await vi.runAllTimersAsync();
+
+    expect(await promise).toBe('ok');
+    expect(calls).toBe(2);
+    const logged = warn.mock.calls.flat().join(' ');
+    expect(logged).toContain('msg="502: Provider returned error"');
+    expect(logged).toContain('status=502');
+    expect(logged).not.toContain('[object Object]');
+    warn.mockRestore();
+  });
+
+  it('describes any thrown value by what it carries, never [object Object]', () => {
+    expect(describeThrown({ error: { code: 400, message: 'context too long' } })).toBe(
+      '400: context too long',
+    );
+    expect(describeThrown({ message: 'upstream reset' })).toBe('upstream reset');
+    expect(describeThrown({ reason: 'x' })).toBe('{"reason":"x"}');
+    expect(describeThrown(new Error('plain'))).toBe('plain');
+    expect(describeThrown('text')).toBe('text');
   });
 });

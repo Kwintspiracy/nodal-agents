@@ -27,7 +27,7 @@ import { asSchema } from 'ai';
 import type { generateText, streamText } from 'ai';
 
 import type { ProviderConfig } from './types';
-import { LLMTimeoutError, LLMCallCancelledError } from './errors';
+import { LLMTimeoutError, LLMCallCancelledError, streamPartError } from './errors';
 import type { LlmTimeoutReason } from './errors';
 
 // ─── Defaults ──────────────────────────────────────────────────────────────────
@@ -299,7 +299,10 @@ export async function consumeUnderClocks(
         }
         if (next.done) break;
         const part = next.value;
-        if (part.type === 'error') throw part.error;
+        // A provider can send a plain object here (OpenRouter forwards an
+        // upstream failure mid-stream): made an Error so its message and code
+        // reach the log and the retry policy (#478).
+        if (part.type === 'error') throw streamPartError(part.error);
         if (FRAMING_PARTS.has(part.type)) continue;
         if (part.type === 'text-delta') {
           partialText += part.text;

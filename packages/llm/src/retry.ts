@@ -7,6 +7,7 @@ import {
   RetryExhaustedError,
   LLMTimeoutError,
   LLMCallCancelledError,
+  describeThrown,
 } from './errors';
 
 // 429 = transient rate-limit (billing 429 is caught before this set, see throwIfQuotaError)
@@ -191,8 +192,7 @@ function throwIfQuotaError(err: unknown, provider: string, model: string): Verdi
 }
 
 function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return describeThrown(err, 10_000);
 }
 
 function getStatusCode(err: unknown): number | null {
@@ -411,7 +411,8 @@ function logAttempt({
   cas429?: string;
 }): void {
   const errName = err instanceof Error ? err.name : 'unknown';
-  const errMsg = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
+  // Never `[object Object]` (#478): a plain object is said by what it carries.
+  const errMsg = describeThrown(err, 200);
   const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
   const causeName = cause instanceof Error ? cause.name : undefined;
   const causeMsg = cause instanceof Error ? cause.message.slice(0, 160) : undefined;

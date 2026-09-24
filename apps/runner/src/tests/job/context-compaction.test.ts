@@ -126,7 +126,12 @@ describe('describeLlmError', () => {
     expect(describeLlmError(new Error('plain failure'))).toBe('plain failure');
   });
 
-  it('returns unknown_error for a non-Error', () => {
-    expect(describeLlmError('nope')).toBe('unknown_error');
+  // #478: a provider's plain-object error said nothing ("unknown_error").
+  it('says what a non-Error carries, and unknown_error only when there is nothing', () => {
+    expect(describeLlmError({ error: { code: 502, message: 'Provider returned error' } })).toBe(
+      '502: Provider returned error',
+    );
+    expect(describeLlmError('nope')).toBe('nope');
+    expect(describeLlmError(undefined)).toBe('unknown_error');
   });
 });
