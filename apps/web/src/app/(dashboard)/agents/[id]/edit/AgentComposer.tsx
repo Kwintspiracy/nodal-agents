@@ -2311,94 +2311,97 @@ function CommandExecutionSection({
   }
 
   return (
-    <SectionCard>
-      {/*
+    // Anchored for the Playwright journey: the tab holds other switches.
+    <div data-testid="command-execution-section">
+      <SectionCard>
+        {/*
         What REALLY happens, not "asks by default" (#464): under
         destructive_gate an ordinary command ran without asking while this
         line promised the opposite.
       */}
-      <SectionHead
-        label="Run commands"
-        hint={runCommandsTruth({
-          rule: rules.find((r) => r.toolName === RUN_COMMAND_TOOL)?.action ?? null,
-          paused: autoRunPaused,
-          autonomy: workspaceAutonomy,
-        })}
-      />
+        <SectionHead
+          label="Run commands"
+          hint={runCommandsTruth({
+            rule: rules.find((r) => r.toolName === RUN_COMMAND_TOOL)?.action ?? null,
+            paused: autoRunPaused,
+            autonomy: workspaceAutonomy,
+          })}
+        />
 
-      <div className="flex items-start gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-medium-14 text-ink">Run commands without asking</span>
-            <MonoMicroTag tone="err">irreversible</MonoMicroTag>
-            {isDormant && <MonoMicroTag tone="warn">paused</MonoMicroTag>}
+        <div className="flex items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-medium-14 text-ink">Run commands without asking</span>
+              <MonoMicroTag tone="err">irreversible</MonoMicroTag>
+              {isDormant && <MonoMicroTag tone="warn">paused</MonoMicroTag>}
+            </div>
+            <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
+              When on, the agent can run any permitted command immediately. Commands are still
+              logged. Use this only for agents you trust.
+            </p>
+            {isDormant && (
+              <p className="mt-2 text-body-12 text-warn">
+                This agent&apos;s Yolo is <b className="font-semibold">paused</b> — the workspace
+                brake is on, so its commands still require approval. Release the brake in{' '}
+                <Link
+                  href="/settings"
+                  className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+                >
+                  Settings → Auto-run brake
+                </Link>{' '}
+                to re-arm it.
+              </p>
+            )}
+            {!canToggle && (
+              <p className="mt-2 text-body-12 text-ink-4">
+                Only the workspace owner can toggle Yolo per agent.
+              </p>
+            )}
           </div>
-          <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
-            When on, the agent can run any permitted command immediately. Commands are still logged.
-            Use this only for agents you trust.
-          </p>
-          {isDormant && (
-            <p className="mt-2 text-body-12 text-warn">
-              This agent&apos;s Yolo is <b className="font-semibold">paused</b> — the workspace
-              brake is on, so its commands still require approval. Release the brake in{' '}
-              <Link
-                href="/settings"
-                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
-              >
-                Settings → Auto-run brake
-              </Link>{' '}
-              to re-arm it.
-            </p>
-          )}
-          {!canToggle && (
-            <p className="mt-2 text-body-12 text-ink-4">
-              Only the workspace owner can toggle Yolo per agent.
-            </p>
-          )}
+
+          {/* Toggle */}
+          <div className="mt-0.5">
+            <Switch
+              checked={yoloEnabled}
+              onChange={() => handleToggle(!yoloEnabled)}
+              disabled={saving || !canToggle}
+            />
+          </div>
         </div>
 
-        {/* Toggle */}
-        <div className="mt-0.5">
-          <Switch
-            checked={yoloEnabled}
-            onChange={() => handleToggle(!yoloEnabled)}
-            disabled={saving || !canToggle}
-          />
-        </div>
-      </div>
+        {/* Confirm dialog — ESLint bans window.confirm; use ConfirmDialog instead */}
+        <ConfirmDialog
+          open={confirmOpen}
+          title="Enable Yolo mode?"
+          message="Yolo mode lets this agent run ANY shell command on this machine with no approval. Only enable for an agent you fully trust. The command is still logged."
+          confirmLabel="Enable Yolo"
+          destructive
+          onConfirm={() => {
+            setConfirmOpen(false);
+            void doSet(true);
+          }}
+          onCancel={() => setConfirmOpen(false)}
+        />
 
-      {/* Confirm dialog — ESLint bans window.confirm; use ConfirmDialog instead */}
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Enable Yolo mode?"
-        message="Yolo mode lets this agent run ANY shell command on this machine with no approval. Only enable for an agent you fully trust. The command is still logged."
-        confirmLabel="Enable Yolo"
-        destructive
-        onConfirm={() => {
-          setConfirmOpen(false);
-          void doSet(true);
-        }}
-        onCancel={() => setConfirmOpen(false)}
-      />
-
-      {/*
+        {/*
         Éteindre la bascule SUPPRIME la règle. Quand cette règle ne valait que
         dans un dossier, ce que le propriétaire perd n'est pas « le mode Yolo »
         mais une permission qu'il avait posée dossier par dossier, et que cet
         onglet ne sait pas recréer (revue Reviewer C, passe 4, C3).
       */}
-      <ConfirmDialog
-        open={confirmDropFolder}
-        title="Delete the rule for this folder?"
-        message={`Commands run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a command for that folder again from its approval card.`}
-        confirmLabel="Delete the rule"
-        onConfirm={() => {
-          setConfirmDropFolder(false);
-          void doSet(false);
-        }}
-        onCancel={() => setConfirmDropFolder(false)}
-      />
-    </SectionCard>
+        <ConfirmDialog
+          open={confirmDropFolder}
+          title="Delete the rule for this folder?"
+          message={`Commands run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a command for that folder again from its approval card.`}
+          confirmLabel="Delete the rule"
+          onConfirm={() => {
+            setConfirmDropFolder(false);
+            void doSet(false);
+          }}
+          onCancel={() => setConfirmDropFolder(false)}
+        />
+      </SectionCard>
+    </div>
   );
 }
 
