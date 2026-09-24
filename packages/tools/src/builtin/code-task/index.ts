@@ -31,7 +31,7 @@ import {
 } from './providers';
 import { assertSandboxEnforced } from './sandbox';
 import {
-  assertCliBudget,
+  assertAgentBudget,
   assertCliProviderEnabled,
   assertNotReadOnlyAgent,
   recordCliRun,
@@ -44,14 +44,14 @@ import {
 
 export { runCliDoctor, type CliDoctorReport } from './doctor';
 export {
-  CliBudgetExceededError,
+  AgentBudgetExceededError,
   CliProviderDisabledError,
   WorkspaceLockedError,
   workspaceLockKey,
   ReadOnlyAgentError,
 } from './db';
 export {
-  assertCliBudget,
+  assertAgentBudget,
   assertCliProviderEnabled,
   recordCliRun,
   acquireWorkspaceLock,
@@ -283,8 +283,8 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     assertWorkspacesConfigured(ctx);
     const cwd = await resolveAndCheckPath(ctx, input.cwd ?? '.');
 
-    // Budget gate BEFORE any spawn (fail loud, run never starts).
-    const cliConfig = await assertCliBudget(ctx.db, ctx.agentId, input.provider);
+    // The agent's budget (#447) BEFORE any spawn (fail loud, run never starts).
+    const cliConfig = await assertAgentBudget(ctx.db, ctx.agentId);
 
     // Owner allow-list: a provider the owner switched off is refused loud
     // BEFORE resolving the binary (invariant #9 at the provider level).

@@ -6,7 +6,6 @@ import {
   AgentJobInsertSchema,
   AgentTaskSchema,
   AgentMemorySchema,
-  AgentSchema,
   EntitySchema,
   EntityMemberSchema,
   CredentialSchema,
@@ -439,36 +438,6 @@ describe('EntitySchema: slug must be lowercase alphanumeric with hyphens', () =>
       updated_at: now,
     };
     expect(() => EntitySchema.parse(base)).not.toThrow();
-  });
-});
-
-// ─── Agent max_tokens_per_job ──────────────────────────────────────────────────
-
-describe('AgentSchema: max_tokens_per_job must be non-negative', () => {
-  it('rejects negative token limit', () => {
-    const base = {
-      id: uuid,
-      entity_id: uuid2,
-      name: 'Boris',
-      slug: 'boris',
-      personality: 'You are Boris.',
-      model: 'claude-sonnet-4-6',
-      active: true,
-      is_default: false,
-      role: 'agent' as const,
-      orchestrator_mode: null,
-      telegram_bot_token: null,
-      telegram_bot_username: null,
-      telegram_offset: null,
-      capabilities: [],
-      task_context_template: null,
-      avatar_url: null,
-      system_agent: false,
-      max_tokens_per_job: -1,
-      created_at: now,
-      updated_at: now,
-    };
-    expect(() => AgentSchema.parse(base)).toThrow();
   });
 });
 

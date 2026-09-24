@@ -36,7 +36,6 @@ const expectedTables = [
   'agent_mcp_servers',
   'mcp_connections',
   'agent_assignments',
-  'agent_budgets',
   'code_projects',
   // auth tables (better-auth)
   'sessions',
