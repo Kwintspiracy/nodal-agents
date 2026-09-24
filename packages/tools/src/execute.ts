@@ -12,6 +12,7 @@ import {
   type ConstatedWrite,
   type MutationTarget,
   type ChainWorkspace,
+  type ShellGateReason,
 } from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type {
@@ -23,6 +24,7 @@ import type {
 } from './types';
 import { InvalidInputError } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
+import { judgeShellChecklist, shellChecklistRefusal } from './shell-checklist';
 import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
 import {
@@ -391,8 +393,13 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // commande la plus lourde est la seule lecture qui ne laisse pas passer
       // la lourde. Une liste vide n'est lourde en rien, et c'est exact : rien
       // ne tournera.
+      //
+      // Avec la liste de l'agent (#464), c'est ELLE qui juge ces commandes,
+      // juste en dessous : ses sortes d'action couvrent ce que le classifieur
+      // lourd couvrait (le code en ligne compris), et le propriétaire y dit,
+      // sorte par sorte, s'il veut qu'on lui demande.
       if (tool.name === 'run_command' || tool.name === 'declare_verification')
-        isHeavy = commandesJugees.some(isDestructiveOrHeavyCommand);
+        isHeavy = opts.shellPolicy ? false : commandesJugees.some(isDestructiveOrHeavyCommand);
       // É-2 (audit sécu 2026-07-07): create_mcp with a stdio transport spawns an
       // arbitrary local subprocess (npx/uvx <cmd>) — RCE-equivalent to
       // run_command — so it must stay gated under destructive_gate. Its declared
@@ -445,6 +452,33 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   ) {
     const dynamic = await tool.computeApproval(validatedInput, ctx);
     if (dynamic === 'require_approval') effectiveAction = 'require_approval';
+  }
+
+  // ── La liste de ce que l'agent n'a pas le droit de faire (#464) ─────────────
+  //
+  // Chaque commande qui va tourner est lue sorte par sorte (code en ligne,
+  // suppression, installation, téléchargement, arrêt de programmes, réglages
+  // système) et l'état que le propriétaire a donné à chaque sorte s'applique :
+  // `never` bloque, `ask` retient pour approbation. Une lecture du texte, comme
+  // celle de Hermes : elle ne suit pas ce qu'un script fait une fois lancé, et
+  // ne garde pas l'agent dans ses dossiers (il faudrait un bac à sable de l'OS).
+  //
+  // À TOUS les niveaux d'autonomie, et même sous une règle `auto_approve`
+  // (le toggle Yolo) : cette liste ne fait que durcir, et durcir vaut toujours.
+  // Une règle `block` reste plus forte (déjà réglée plus haut). Les raisons
+  // sont gardées pour la carte d'approbation : la personne voit quelle sorte
+  // d'action a retenu la commande.
+  let gateReasons: ShellGateReason[] = [];
+  let shellBlock: ShellGateReason[] | null = null;
+  if (opts.shellPolicy && commandesJugees.length > 0 && effectiveAction !== 'block') {
+    gateReasons = judgeShellChecklist(commandesJugees, opts.shellPolicy);
+    const never = gateReasons.filter((r) => r.state === 'never');
+    if (never.length > 0) {
+      effectiveAction = 'block';
+      shellBlock = never;
+    } else if (gateReasons.length > 0) {
+      effectiveAction = 'require_approval';
+    }
   }
 
   // ── Hardline floor ─────────────────────────────────────────────────────────
@@ -544,11 +578,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // loop: a read-only reviewer needs to be TOLD the posture is intentional).
     const result: ToolExecutionResult = {
       outcome: 'error',
-      error:
-        `blocked: an approval rule forbids "${tool.name}" for this agent. This is an ` +
-        `intentional restriction set by the owner — do NOT retry it and do NOT work around it ` +
-        `via other tools or sub-agents. Use your allowed tools, or report the limitation in ` +
-        `your result.`,
+      error: shellBlock
+        ? // Ce que la liste interdit, et sur quoi (#464) : le modèle sait
+          // quoi ne pas refaire, au lieu de chercher un détour.
+          shellChecklistRefusal(shellBlock)
+        : `blocked: an approval rule forbids "${tool.name}" for this agent. This is an ` +
+          `intentional restriction set by the owner — do NOT retry it and do NOT work around it ` +
+          `via other tools or sub-agents. Use your allowed tools, or report the limitation in ` +
+          `your result.`,
     };
     await _writeToolCall(
       ctx,
@@ -605,6 +642,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         // montrer « approuver / refuser » ou une liste d'options.
         kind: tool.asksUser === true ? 'question' : 'approval',
         status: 'pending',
+        // Pourquoi la liste de l'agent a retenu la commande (#464) : les
+        // sortes d'action lues. NULL quand elle n'y est pour rien.
+        gateReasons: gateReasons.length > 0 ? gateReasons : null,
       })
       .returning();
 

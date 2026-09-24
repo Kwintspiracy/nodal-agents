@@ -377,19 +377,184 @@ export function isInlineInterpreterEvalCommand(cmd: string): boolean {
 // Under `destructive_gate`, ordinary work auto-approves but THESE still require a
 // human OK. We deliberately err toward asking: a false "ask" is cheap, a silent
 // 13 GB install (`comfy install`) or an `rm` is not.
-const DESTRUCTIVE_PATTERNS: RegExp[] = [
-  /\b(rm|rmdir|unlink|shred)\b/i, // delete (unix)
-  /\bdel\s|\bRemove-Item\b|\brd\s+\/s/i, // delete (windows/ps)
-  /\bfind\b[^\n]*-delete\b/i, // find … -delete
-  /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
-  /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download\b|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
-  /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*\s-[oO]\b|\bInvoke-WebRequest\b|\biwr\b[^\n]*-OutFile/i, // large download / clone
-  /\b(kill|pkill|killall|taskkill)\b|\bStop-Process\b|\bStop-Service\b/i, // process kill
-  /\bsystemctl\b|\bsc\s+(stop|delete)\b|\bservice\b[^\n]*\b(stop|restart)\b/i, // service control
-  /\bmkfs(\.\w+)?\b|\bdd\b[^\n]*\bof=|\b(format|fdisk|parted|diskpart)\b/i, // disk ops
-  /\bchmod\s+-\S*R|\bchown\s+-\S*R|\bicacls\b/i, // recursive perms/ownership
-  /\bgit\s+push\b[^\n]*(--force|-f\b)|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-\S*f|\bgit\s+branch\s+-D\b/i, // destructive VCS
-];
+/**
+ * The same patterns, sorted by what a person would call them (#464). The
+ * autonomy checklist lets an owner allow, ask or forbid each KIND of action;
+ * their union below is still exactly what `destructive_gate` has always gated.
+ */
+export const STATIC_SHELL_CATEGORY_PATTERNS = {
+  delete_files: [
+    /\b(rm|rmdir|unlink|shred)\b/i, // delete (unix)
+    /\bdel\s|\bRemove-Item\b|\brd\s+\/s/i, // delete (windows/ps)
+    /\bfind\b[^\n]*-delete\b/i, // find … -delete
+    /\bgit\s+push\b[^\n]*(--force|-f\b)|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-\S*f|\bgit\s+branch\s+-D\b/i, // destructive VCS: work thrown away
+  ],
+  install_software: [
+    /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
+    /\b(npm|pnpm|yarn|bun)\s+(i|add|ci)\b|\bInstall-(Module|Package)\b/i, // npm i, pnpm add, PowerShell modules
+    /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download\b|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
+  ],
+  download: [
+    /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*(\s-[oO]\b|\s--output\b|\s--remote-name\b)|\bInvoke-WebRequest\b|\biwr\b[^\n]*-OutFile|\bStart-BitsTransfer\b/i, // large download / clone
+  ],
+  stop_programs: [
+    /\b(kill|pkill|killall|taskkill)\b|\bStop-Process\b|\bStop-Service\b/i, // process kill
+    /\bsystemctl\b|\bsc\s+(stop|delete)\b|\bservice\b[^\n]*\b(stop|restart)\b|\bnet\s+stop\b/i, // service control
+  ],
+  system_settings: [
+    /\bmkfs(\.\w+)?\b|\bdd\b[^\n]*\bof=|\b(format|fdisk|parted|diskpart)\b/i, // disk ops
+    /\b(chmod|chown|chgrp|takeown|icacls)\b|\bSet-Acl\b|\breg\s+(add|delete|import)\b/i, // permissions, ownership, registry
+  ],
+} as const satisfies Record<string, readonly RegExp[]>;
+
+/**
+ * The kinds of action read from a command's text: the patterns above, plus
+ * inline code (`python -c "…"`), whose program is text nobody can read ahead.
+ */
+export type StaticShellCategory = keyof typeof STATIC_SHELL_CATEGORY_PATTERNS | 'inline_code';
+
+const DESTRUCTIVE_PATTERNS: RegExp[] = Object.values(STATIC_SHELL_CATEGORY_PATTERNS).flat();
+
+/**
+ * The kinds of action a command performs, read from its text alone (#464).
+ * Inline code (`python -c "…"`, `node -e "…"`) is its own kind: what it does is
+ * not read, it is asked about, as `destructive_gate` always did.
+ */
+export function staticShellCategories(cmd: string): StaticShellCategory[] {
+  if (typeof cmd !== 'string' || cmd.trim() === '') return [];
+  // Read from the PROGRAMS the command runs, never from any word of its text
+  // (review of PR #474, Reviewer A, P1): `git commit -m "rm old refs"` does not
+  // delete, and `clang-format` is not `format`. A pattern counts only where it
+  // matches at the start of a command the shell will run — each segment, and
+  // the commands wrapped in `bash -c`, `cmd /c`, `powershell -Command`,
+  // `xargs`, `find -exec` and `$(…)`. Hermes Agent anchors its patterns the
+  // same way. Quotes and carets are removed by the tokenizer, so `r""m` and
+  // `r^m` still read as `rm`.
+  const found = new Set<StaticShellCategory>();
+  for (const unit of commandUnits(cmd)) {
+    const text = normalizeSlashes(unit.join(' '));
+    for (const [category, patterns] of Object.entries(STATIC_SHELL_CATEGORY_PATTERNS) as Array<
+      [keyof typeof STATIC_SHELL_CATEGORY_PATTERNS, readonly RegExp[]]
+    >) {
+      if (patterns.some((re) => startsWithMatch(re, text))) found.add(category);
+    }
+  }
+  // `curl URL > file` downloads without `-o`: the redirection is dropped by
+  // the tokenizer, so it is read on the text of that segment.
+  if (/(^|[;&|(]\s*)(curl|irm|Invoke-RestMethod)\b[^;&|\n]*>/i.test(cmd)) found.add('download');
+  if (isInlineInterpreterEvalCommand(cmd)) found.add('inline_code');
+  return [...found];
+}
+
+/** True when `re` matches at the very start of `text`. */
+function startsWithMatch(re: RegExp, text: string): boolean {
+  const m = new RegExp(re.source, re.flags.replace('g', '')).exec(text);
+  return m !== null && m.index === 0;
+}
+
+const SHELL_WRAPPERS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash', 'fish']);
+
+/**
+ * The commands a command line actually runs, as token lists whose first token
+ * is the program (its basename, lower-cased, without `.exe`): each segment,
+ * and what `bash -c`, `cmd /c`, `powershell -Command`, `xargs`, `find -exec`
+ * and `$(…)` / backticks run inside it.
+ */
+export function commandUnits(cmd: string, depth = 0): string[][] {
+  if (depth > 4 || typeof cmd !== 'string' || cmd.trim() === '') return [];
+  const units: string[][] = [];
+  const inner = (text: string) => units.push(...commandUnits(text, depth + 1));
+  for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
+  for (const segment of splitShellWords(cmd)) {
+    const tokens = skipPassthroughLeaders(segment);
+    const head = tokens[0];
+    if (head === undefined) continue;
+    const program = interpreterBasename(head);
+    const args = tokens.slice(1);
+    units.push([program, ...args]);
+    const lower = args.map((a) => a.toLowerCase());
+    if (SHELL_WRAPPERS.has(program)) {
+      const i = lower.indexOf('-c');
+      if (i >= 0 && args[i + 1] !== undefined) inner(args[i + 1] ?? '');
+    } else if (program === 'cmd') {
+      const i = lower.findIndex((a) => a === '/c' || a === '/k');
+      if (i >= 0) inner(args.slice(i + 1).join(' '));
+    } else if (program === 'powershell' || program === 'pwsh') {
+      const i = lower.findIndex((a) => a === '-command' || a === '-c');
+      if (i >= 0) inner(args.slice(i + 1).join(' '));
+    } else if (program === 'xargs') {
+      const rest = args.slice(args.findIndex((a) => !a.startsWith('-')));
+      if (rest.length > 0 && !rest[0]?.startsWith('-')) inner(rest.join(' '));
+    } else if (program === 'find') {
+      const i = lower.findIndex((a) => a === '-exec' || a === '-execdir' || a === '-ok');
+      if (i >= 0) {
+        const end = args.findIndex((a, j) => j > i && (a === ';' || a === '\\;' || a === '+'));
+        inner(args.slice(i + 1, end > i ? end : undefined).join(' '));
+      }
+    }
+  }
+  return units;
+}
+
+/**
+ * A command cut into its segments (`;`, `&&`, `||`, `|`, newlines) and each
+ * segment into words, quotes honoured and removed: `python a.py "C:/My
+ * Files/x.csv"` is three words, not four. Redirection targets are words too.
+ */
+export function splitShellWords(cmd: string): string[][] {
+  const segments: string[][] = [];
+  let words: string[] = [];
+  let word = '';
+  let inWord = false;
+  let quote: '"' | "'" | null = null;
+  const endWord = (): void => {
+    if (inWord) words.push(word);
+    word = '';
+    inWord = false;
+  };
+  const endSegment = (): void => {
+    endWord();
+    if (words.length > 0) segments.push(words);
+    words = [];
+  };
+  let escaped = false;
+  for (const ch of cmd) {
+    if (escaped) {
+      word += ch;
+      inWord = true;
+      escaped = false;
+      continue;
+    }
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      else word += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      inWord = true;
+      continue;
+    }
+    // cmd.exe `^` escapes the next character: `r^m` runs `rm`. A backslash is
+    // kept: in a Windows path (`C:\x`) it is a separator, not an escape.
+    if (ch === '^') {
+      escaped = true;
+      continue;
+    }
+    if (ch === ';' || ch === '|' || ch === '&' || ch === '\n' || ch === '\r') {
+      endSegment();
+      continue;
+    }
+    if (ch === '>' || ch === '<' || /\s/.test(ch)) {
+      endWord();
+      continue;
+    }
+    word += ch;
+    inWord = true;
+  }
+  endSegment();
+  return segments;
+}
 
 /**
  * True when `cmd` performs a destructive or heavy, hard-to-undo action. Used by
