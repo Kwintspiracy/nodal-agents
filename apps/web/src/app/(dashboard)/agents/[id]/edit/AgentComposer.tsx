@@ -123,7 +123,12 @@ import ConnectorsTabContent from './ConnectorsTabContent.tsx';
 import ChannelsTabContent from './ChannelsTabContent.tsx';
 import ToolsTab from './ToolsTabContent.tsx';
 import AgentDangerZone from './AgentDangerZone.tsx';
-import { MAX_FOLDER_LABEL, pickedFolderLabel, settled } from './picked-folder-label.ts';
+import {
+  MAX_FOLDER_LABEL,
+  labelAfterRefusal,
+  pickedFolderLabel,
+  settled,
+} from './picked-folder-label.ts';
 import FirstTokenWaitField from './FirstTokenWaitField.tsx';
 import AgentBudgetSection from './AgentBudgetSection.tsx';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
@@ -3290,20 +3295,20 @@ function SettingsTab(props: {
     );
     // Un refus se DIT, et garde ce qu'il faut pour réessayer : le libellé en
     // cause dans le champ, le dossier pour la prochaine ouverture de Browse….
-    const refuse = (message: string) => {
+    const refuse = (message: string, code: string) => {
       toast.error(message);
-      setWsLabel(picked.label);
+      setWsLabel(labelAfterRefusal(code, picked.label, wsLabel));
       setWsRetryPath(path);
     };
     if (!picked.ok) {
-      refuse(picked.message);
+      refuse(picked.message, 'refused_before_server');
       return;
     }
     setWsAdding(true);
     try {
       const result = await addAgentWorkspaceAction(agentId, picked.label, path);
       if (!result.ok) {
-        refuse(result.message);
+        refuse(result.message, result.code);
         return;
       }
       setWsLabel('');

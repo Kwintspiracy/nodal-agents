@@ -6,7 +6,12 @@
 // silence (invariant #4).
 
 import { describe, it, expect } from 'vitest';
-import { folderName, pickedFolderLabel, settled } from '../picked-folder-label.ts';
+import {
+  folderName,
+  labelAfterRefusal,
+  pickedFolderLabel,
+  settled,
+} from '../picked-folder-label.ts';
 
 describe('pickedFolderLabel @cap:travailler-sur-des-fichiers/ecran', () => {
   it('sans libellé tapé : le nom du dossier, POSIX, Windows ou UNC', () => {
@@ -69,6 +74,25 @@ describe('pickedFolderLabel @cap:travailler-sur-des-fichiers/ecran', () => {
       ok: false,
       message: 'nope',
     });
+  });
+
+  it('une racine de lecteur Windows n’a pas de nom non plus', () => {
+    // Revue finale (Reviewer A) : « D:\\ » donnait le libellé « D: ».
+    expect(folderName('D:\\')).toBe('');
+    expect(folderName('c:/')).toBe('');
+    expect(pickedFolderLabel('', 'D:\\', []).ok).toBe(false);
+    // Un libellé tapé reste possible sur une racine.
+    expect(pickedFolderLabel('disque', 'D:\\', [])).toEqual({ ok: true, label: 'disque' });
+  });
+
+  it('labelAfterRefusal : le libellé en cause ne remplit le champ que pour un conflit', () => {
+    // Revue finale (Reviewer A, P2) : TOUT refus écrivait le libellé dérivé dans
+    // le champ ; après une erreur de base, le dossier suivant partait sous le
+    // nom de l'ancien.
+    expect(labelAfterRefusal('conflict', 'notes', '')).toBe('notes');
+    expect(labelAfterRefusal('refused_before_server', 'notes', '')).toBe('notes');
+    expect(labelAfterRefusal('db_error', 'notes', '')).toBe('');
+    expect(labelAfterRefusal('validation_failed', 'notes', 'tapé')).toBe('tapé');
   });
 
   it('folderName rend "" pour une racine POSIX', () => {

@@ -66,6 +66,9 @@ export default function FolderPickerModal({
   const openAtStart = useEffectEvent(async () => {
     selectingRef.current = false;
     setSelecting(false);
+    // La liste d'une ouverture précédente ne doit pas se faire passer pour le
+    // dossier de départ (revue finale : l'e2e passait sur l'état résiduel).
+    setListing(null);
     if (!startPath) {
       await browse(null);
       return;
@@ -104,7 +107,11 @@ export default function FolderPickerModal({
       // dossier n'est pas attaché, et fermer la fenêtre le cacherait (revue
       // Reviewer A, passe 2). Elle reste ouverte, dit pourquoi, et Select
       // redevient cliquable.
-      setError(`The folder was not added: ${err instanceof Error ? err.message : String(err)}`);
+      // « may not » : un rejet peut arriver APRÈS l'écriture (réponse perdue) ;
+      // la fenêtre ne le sait pas, et ne l'affirme pas (revue finale).
+      setError(
+        `The folder may not have been added: ${err instanceof Error ? err.message : String(err)}. Check the list before trying again.`,
+      );
     } finally {
       selectingRef.current = false;
       setSelecting(false);
@@ -145,7 +152,7 @@ export default function FolderPickerModal({
             variant="neutral"
             size="sm"
             onClick={() => void browse(listing?.parent ?? null)}
-            disabled={loading || !listing || (atPath === null && !listing?.parent)}
+            disabled={selecting || loading || !listing || (atPath === null && !listing?.parent)}
           >
             ↑ Up
           </PrimaryButton>
@@ -153,7 +160,7 @@ export default function FolderPickerModal({
             variant="neutral"
             size="sm"
             onClick={() => listing && void browse(listing.home)}
-            disabled={loading || !listing}
+            disabled={selecting || loading || !listing}
           >
             Home
           </PrimaryButton>
@@ -180,6 +187,7 @@ export default function FolderPickerModal({
                 <li key={d.path}>
                   <RowActionButton
                     onClick={() => void browse(d.path)}
+                    disabled={selecting}
                     className="!h-auto !w-full !justify-start !rounded-none !border-transparent !bg-transparent !px-3 !py-1.5 !text-body-13"
                   >
                     <span className="flex min-w-0 items-center gap-2">
