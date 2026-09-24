@@ -205,7 +205,13 @@ describe('addAgentWorkspaceAction', () => {
 
     expect(premier.ok).toBe(true);
     expect(second.ok, 'le doublon de label a été accepté').toBe(false);
-    if (!second.ok) expect(second.code).toBe('conflict');
+    if (!second.ok) {
+      expect(second.code).toBe('conflict');
+      // Le libellé en cause, et quoi faire : la même phrase que le refus client.
+      expect(second.message).toBe(
+        'This agent already has a folder labelled “Unique”. Change the label, then Browse… again.',
+      );
+    }
 
     const lignes = (await workspacesDe(seed.agentId)).filter((l) => l.label === 'Unique');
     expect(lignes).toHaveLength(1);
