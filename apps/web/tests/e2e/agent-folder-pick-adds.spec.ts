@@ -5,67 +5,115 @@
  * validé la fenêtre, et vu le chemin s'afficher. Rien n'était attaché : il
  * fallait encore cliquer sur « Add ». L'agent a travaillé sans le dossier.
  *
- * Ce que ce parcours prouve, au navigateur : Browse… → « Select this folder »
- * suffit. Le dossier paraît dans la liste, est ENREGISTRÉ pour l'agent, et il
- * n'existe plus de bouton « Add » à oublier.
+ * Ce que ce parcours prouve, au navigateur et dans la base :
+ *  - Browse… → « Select this folder » suffit : la ligne enregistrée porte LE
+ *    chemin choisi, et pour libellé le nom de ce dossier ;
+ *  - choisir un dossier dont le libellé est déjà pris le DIT, met ce libellé
+ *    dans le champ, et Browse… rouvre sur le même dossier : corriger le libellé
+ *    et revalider l'attache (revue de la PR #467).
+ *
+ * L'agent est créé pour le parcours et supprimé après (ses dossiers partent
+ * avec lui) : un libellé resté d'un autre essai ne peut pas le faire rougir.
  *
  * Conventions : requireLiveStack() en beforeAll, storageState via la config.
  */
 
 import { test, expect } from '@playwright/test';
-import { and, eq, agents, agentWorkspaces } from '@nodal-agents/db';
-import { makeDbClient, requireLiveStack, resolveActingUser } from './helpers.ts';
+import { eq, agents, agentWorkspaces } from '@nodal-agents/db';
+import { makeDbClient, requireLiveStack, resolveActingUser, testSlugSuffix } from './helpers.ts';
+
+let agentId = '';
 
 test.beforeAll(async () => {
   await requireLiveStack();
+  const acting = await resolveActingUser();
+  const { db, close } = makeDbClient();
+  try {
+    const [agent] = await db
+      .insert(agents)
+      .values({
+        entityId: acting.entityId,
+        name: `Folder Pick ${testSlugSuffix()}`,
+        slug: `e2e-folder-pick-${testSlugSuffix()}`,
+        personality: 'E2E fixture, never executed.',
+        active: true,
+      })
+      .returning({ id: agents.id });
+    agentId = agent!.id;
+  } finally {
+    await close();
+  }
 });
 
+test.afterAll(async () => {
+  if (!agentId) return;
+  const { db, close } = makeDbClient();
+  try {
+    await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, agentId));
+    await db.delete(agents).where(eq(agents.id, agentId));
+  } finally {
+    await close();
+  }
+});
+
+async function foldersOfAgent() {
+  const { db, close } = makeDbClient();
+  try {
+    const rows = await db
+      .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.agentId, agentId));
+    return rows.sort((a, b) => a.label.localeCompare(b.label));
+  } finally {
+    await close();
+  }
+}
+
 test.describe('Dossiers d’un agent @cap:travailler-sur-des-fichiers/ecran', () => {
-  test('choisir un dossier dans Browse… l’ajoute, sans autre clic', async ({ page }) => {
-    const { entityId } = await resolveActingUser();
-    const { db, close } = makeDbClient();
-    try {
-      const [agent] = await db
-        .select({ id: agents.id })
-        .from(agents)
-        .where(eq(agents.entityId, entityId))
-        .limit(1);
-      test.skip(!agent, 'no agent to attach a folder to');
-      const agentId = agent!.id;
-      const before = await db
-        .select({ id: agentWorkspaces.id })
-        .from(agentWorkspaces)
-        .where(eq(agentWorkspaces.agentId, agentId));
+  test('choisir un dossier dans Browse… l’ajoute ; un libellé pris se dit et se corrige', async ({
+    page,
+  }) => {
+    await page.goto(`/agents/${agentId}/edit?tab=settings`);
+    // Plus de bouton « Add » à oublier.
+    await expect(page.getByRole('button', { name: 'Add', exact: true })).toHaveCount(0);
 
-      await page.goto(`/agents/${agentId}/edit?tab=settings`);
-      // Plus de bouton « Add » à oublier.
-      await expect(page.getByRole('button', { name: 'Add', exact: true })).toHaveCount(0);
+    // 1. Browse… → Home → Select : attaché, sous le nom du dossier.
+    await page.getByRole('button', { name: 'Browse…', exact: true }).click();
+    const picker = page.getByRole('dialog');
+    await expect(picker.getByText('Choose a folder')).toBeVisible();
+    await picker.getByRole('button', { name: 'Home', exact: true }).click();
+    const shownPath = picker.locator('code').first();
+    await expect(shownPath).not.toHaveText('Drives');
+    const home = (await shownPath.textContent())!.trim();
+    const homeName = home.split(/[/\\]/).filter(Boolean).pop()!;
+    await picker.getByRole('button', { name: 'Select this folder' }).click();
 
-      await page.getByRole('button', { name: 'Browse…', exact: true }).click();
-      // La fenêtre de sélection (ses boutons n'existent qu'en elle).
-      await expect(page.getByText('Choose a folder')).toBeVisible();
-      await page.getByRole('button', { name: 'Home', exact: true }).click();
-      const select = page.getByRole('button', { name: 'Select this folder' });
-      await expect(select).toBeEnabled();
-      await select.click();
+    await expect(page.getByText('Folder added')).toBeVisible();
+    expect(await foldersOfAgent()).toEqual([{ label: homeName, path: home }]);
 
-      // Ajouté, et dit.
-      await expect(page.getByText('Folder added')).toBeVisible();
-      const after = await db
-        .select({ id: agentWorkspaces.id, label: agentWorkspaces.label })
-        .from(agentWorkspaces)
-        .where(eq(agentWorkspaces.agentId, agentId));
-      expect(after.length).toBe(before.length + 1);
-      const added = after.find((w) => !before.some((b) => b.id === w.id))!;
-      // Sans libellé tapé : le nom du dossier.
-      expect(added.label.length).toBeGreaterThan(0);
-      await expect(page.getByText(added.label, { exact: true }).first()).toBeVisible();
+    // 2. Le même dossier, sans libellé : le libellé est pris. Refusé, et dit.
+    await page.getByRole('button', { name: 'Browse…', exact: true }).click();
+    await picker.getByRole('button', { name: 'Home', exact: true }).click();
+    await expect(shownPath).toHaveText(home);
+    await picker.getByRole('button', { name: 'Select this folder' }).click();
+    await expect(
+      page.getByText(
+        `This agent already has a folder labelled “${homeName}”. Change the label, then Browse… again.`,
+      ),
+    ).toBeVisible();
+    const labelField = page.getByPlaceholder('Label (optional)');
+    await expect(labelField).toHaveValue(homeName);
 
-      await db
-        .delete(agentWorkspaces)
-        .where(and(eq(agentWorkspaces.agentId, agentId), eq(agentWorkspaces.id, added.id)));
-    } finally {
-      await close();
-    }
+    // 3. Corriger le libellé ; Browse… rouvre sur le même dossier, sans Home.
+    await labelField.fill('e2e-second');
+    await page.getByRole('button', { name: 'Browse…', exact: true }).click();
+    await expect(shownPath).toHaveText(home);
+    await picker.getByRole('button', { name: 'Select this folder' }).click();
+    await expect.poll(foldersOfAgent).toEqual(
+      [
+        { label: homeName, path: home },
+        { label: 'e2e-second', path: home },
+      ].sort((a, b) => a.label.localeCompare(b.label)),
+    );
   });
 });

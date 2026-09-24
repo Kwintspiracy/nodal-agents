@@ -125,6 +125,7 @@ import ConnectorsTabContent from './ConnectorsTabContent.tsx';
 import ChannelsTabContent from './ChannelsTabContent.tsx';
 import ToolsTab from './ToolsTabContent.tsx';
 import AgentDangerZone from './AgentDangerZone.tsx';
+import { MAX_FOLDER_LABEL, pickedFolderLabel } from './picked-folder-label.ts';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor, RootGrants } from '@nodal-agents/shared';
 
@@ -3249,6 +3250,9 @@ function SettingsTab(props: {
   const [wsLabel, setWsLabel] = useState('');
   const [wsAdding, setWsAdding] = useState(false);
   const [wsPickerOpen, setWsPickerOpen] = useState(false);
+  // Le dossier d'un ajout refusé (libellé en conflit, racine sans nom) : Browse…
+  // rouvre DESSUS, pour qu'on n'ait qu'à corriger le libellé et revalider.
+  const [wsRetryPath, setWsRetryPath] = useState<string | null>(null);
   const [wsRemoveId, setWsRemoveId] = useState<string | null>(null);
   const [wsIsPending, startWsTransition] = useTransition();
 
@@ -3320,22 +3324,38 @@ function SettingsTab(props: {
    * écran qui montrait le chemin choisi laissait croire que c'était fait
    * (Quentin, 24/09 : son agent Excel a travaillé sans le dossier).
    */
-  function handleAddWorkspace(label: string, path: string) {
-    if (!label.trim() || !path.trim()) return;
-    startWsTransition(async () => {
-      setWsAdding(true);
-      const result = await addAgentWorkspaceAction(agentId, label.trim(), path.trim());
-      setWsAdding(false);
+  async function handleAddWorkspace(path: string): Promise<void> {
+    const picked = pickedFolderLabel(
+      wsLabel,
+      path,
+      workspaces.map((w) => w.label),
+    );
+    // Un refus se DIT, et garde ce qu'il faut pour réessayer : le libellé en
+    // cause dans le champ, le dossier pour la prochaine ouverture de Browse….
+    const refuse = (message: string) => {
+      toast.error(message);
+      setWsLabel(picked.label);
+      setWsRetryPath(path);
+    };
+    if (!picked.ok) {
+      refuse(picked.message);
+      return;
+    }
+    setWsAdding(true);
+    try {
+      const result = await addAgentWorkspaceAction(agentId, picked.label, path);
       if (!result.ok) {
-        toast.error(result.message);
+        refuse(result.message);
         return;
       }
-      // Reload folder list
       const listResult = await listAgentWorkspacesAction(agentId);
       if (listResult.ok) onWorkspacesChange(listResult.data);
       setWsLabel('');
+      setWsRetryPath(null);
       toast.success('Folder added');
-    });
+    } finally {
+      setWsAdding(false);
+    }
   }
 
   function handleRemoveWorkspace(id: string) {
@@ -3905,7 +3925,7 @@ function SettingsTab(props: {
                 value={wsLabel}
                 onChange={(e) => setWsLabel(e.target.value)}
                 placeholder="Label (optional)"
-                maxLength={80}
+                maxLength={MAX_FOLDER_LABEL}
                 className="w-28 shrink-0 !rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
               />
               <PrimaryButton
@@ -3953,14 +3973,13 @@ function SettingsTab(props: {
 
         {/* Explorateur de dossiers côté serveur (bouton Browse…). Valider la
             fenêtre ATTACHE le dossier (#461) : le libellé tapé avant, ou à
-            défaut le nom du dossier. */}
+            défaut le nom du dossier. Un refus rouvre la fenêtre sur le
+            même dossier. */}
         <FolderPickerModal
           open={wsPickerOpen}
+          startPath={wsRetryPath}
           onClose={() => setWsPickerOpen(false)}
-          onSelect={(path) => {
-            const base = path.split(/[/\\]/).filter(Boolean).pop() ?? '';
-            handleAddWorkspace(wsLabel.trim() || base.slice(0, 80), path);
-          }}
+          onSelect={handleAddWorkspace}
         />
       </SectionCard>
 
