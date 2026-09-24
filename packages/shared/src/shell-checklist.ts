@@ -173,7 +173,17 @@ export function pathWords(cmd: string, platform: string): PathWord[] {
   const found: PathWord[] = [];
   for (const segment of splitShellTokens(cmd)) {
     segment.forEach(({ text: word, expands }, index) => {
-      if (index === 0 && !/\.(sh|bash|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)$/i.test(word)) return;
+      // The program itself is not a path, EXCEPT a script, or a program named
+      // by a relative or network path: `../Downloads/evil.exe` runs a file
+      // from outside the folders (review of PR #474, Reviewer A, P2). A system
+      // program by its absolute path (`C:\Python311\python.exe`) is not judged.
+      if (
+        index === 0 &&
+        !/\.(sh|bash|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)$/i.test(word) &&
+        !(/[\\/]/.test(word) && !WINDOWS_ABSOLUTE.test(word) && !word.startsWith('/')) &&
+        !UNC.test(word)
+      )
+        return;
       const value = /^--?[\w-]+=/.test(word) ? word.slice(word.indexOf('=') + 1) : word;
       if (value === '') return;
       // The null device writes nowhere: `2>nul`, `> /dev/null`, `> $null`.
