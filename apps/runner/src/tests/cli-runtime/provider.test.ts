@@ -234,6 +234,9 @@ describe('les quatre listes de runtimes disent la même chose', () => {
   });
 
   it('un harnais SANS coût rapporté ne se voit pas proposer de plafond en dollars', () => {
+    // #447 : la carte n'a plus AUCUN champ de budget (le budget est celui de
+    // l'agent, onglet Settings). Elle lit toujours la table pour DIRE si le
+    // harnais entame ce budget ou non.
     // Constat P1 de la revue Codex (27/08). Le plafond quotidien se calcule en
     // sommant `cli_runs.cost_usd` ; Codex n'en écrit aucun, donc la somme reste
     // à zéro et le plafond n'est jamais atteint. Le champ était affiché quand
@@ -243,8 +246,11 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     expect(table, 'Codex est annoncé comme rapportant un coût').toMatch(/codex:\s*false/);
     expect(table).toMatch(/'claude-code':\s*true/);
 
-    // Et la carte lit cette table plutôt que d'afficher le champ sans condition.
+    // Et la carte lit cette table pour le dire, sans champ de plafond à elle.
     const card = read('apps/web/src/app/(dashboard)/agents/[id]/edit/AgentComposer.tsx');
-    expect(card, 'le plafond en dollars est affiché sans condition').toContain('reportsCost ? (');
+    expect(card, 'la carte ne lit plus la table').toMatch(/\{reportsCost\s*\?/);
+    expect(card, 'un champ de plafond en dollars est revenu sur la carte').not.toContain(
+      'Daily budget (USD)',
+    );
   });
 });
