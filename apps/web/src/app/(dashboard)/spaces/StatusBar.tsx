@@ -188,6 +188,14 @@ function Seg({
 
 // ─── Le panneau « What this work cost » ─────────────────────────────────────
 
+/** La phrase du budget de run (#442), sous le coût. Exportée pour son test. */
+export function runBudgetLine(b: { maxRunCostUsd: number; maxRunHours: number }): string {
+  const cost = b.maxRunCostUsd > 0 ? `once it has cost ${formatCost(b.maxRunCostUsd)}` : null;
+  const time = b.maxRunHours > 0 ? `after ${b.maxRunHours} h of work` : null;
+  if (!cost && !time) return 'The workspace sets no run budget (Settings, Safety).';
+  return `The workspace stops a run ${[cost, time].filter(Boolean).join(' or ')} (Settings, Safety).`;
+}
+
 function sentences(cost: SpaceCostView): string[] {
   const t = cost.totals;
   const out: string[] = [];
@@ -207,6 +215,8 @@ function sentences(cost: SpaceCostView): string[] {
   } else {
     out.push('Its cost is unknown: no call was on a model with a known price.');
   }
+  // #442 — le plafond que le runner oppose à ce run, là où l'on lit ce qu'il a coûté.
+  if (cost.runBudget) out.push(runBudgetLine(cost.runBudget));
   if (t.humanWaitMs > 0) {
     out.push(
       `${formatMs(t.humanWaitMs)} of it was spent waiting for you to approve something, not working.`,

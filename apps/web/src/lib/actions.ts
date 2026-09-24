@@ -69,6 +69,10 @@ import {
   VerificationSurfacesSchema,
   parseVerificationSurfaces,
   PROOF_REPAIR_ATTEMPTS_MAX,
+  RUN_COST_MAX_USD,
+  RUN_HOURS_MAX,
+  FIRST_TOKEN_WAIT_MIN_S,
+  FIRST_TOKEN_WAIT_MAX_S,
   readProofRepairAttempts,
   type DiscoveredCommand,
   type ProjectManifests,
@@ -645,6 +649,11 @@ export type AgentRow = {
   position: number;
   /** Daily notional-USD cap on code_task (coding CLI) runs. 0 = no cap. */
   cliDailyBudgetUsd: number;
+  /**
+   * Wait for the first token of a model call, in seconds (#442). NULL = the
+   * platform decides. Optional so list queries that don't select it stay valid.
+   */
+  idleTimeoutSeconds?: number | null;
   /**
    * Per-provider model/effort defaults for code_task. NULL/absent key = the
    * CLI's own default. `enabled` false = the owner switched this provider off
@@ -2693,13 +2702,21 @@ export async function getSpaceConversationAction(
       // enchaînées : le rapport se lit sur les jobs que les verdicts désignent.
       readReviewVerdicts(db, session.entityId, relevantIds),
     ]);
-    const cost = aggregateSpaceCost({
-      calls: costRows,
-      approvals: approvalRows,
-      proofMs: verificationRunRows.reduce((acc, r) => acc + (r.durationMs ?? 0), 0),
-      startedAt: job.createdAt,
-      endedAt: job.completedAt,
-    });
+    // #442 : le budget de run de l'espace, que le panneau de coût nomme.
+    const [budgetRow] = await db
+      .select({ maxRunCostUsd: entities.maxRunCostUsd, maxRunHours: entities.maxRunHours })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    const cost = {
+      ...aggregateSpaceCost({
+        calls: costRows,
+        approvals: approvalRows,
+        proofMs: verificationRunRows.reduce((acc, r) => acc + (r.durationMs ?? 0), 0),
+        startedAt: job.createdAt,
+        endedAt: job.completedAt,
+      }),
+      ...(budgetRow ? { runBudget: budgetRow } : {}),
+    };
     const verification = {
       sequences: groupVerificationRuns(verificationRunRows),
       skippedSurfaces: mergeSkippedSurfaces([
@@ -8339,6 +8356,124 @@ export async function setProofRepairAction(raw: unknown): Promise<ActionResult<v
   } catch (err) {
     console.error('[setProofRepairAction]', err);
     return fail('db_error', 'Failed to save the repair setting');
+  }
+}
+
+// ─── Budget de run (issue #442) ──────────────────────────────────────────────
+//
+// Ce qu'un run peut coûter et combien de temps il peut travailler, par espace
+// (`entities.max_run_cost_usd`, `entities.max_run_hours`, migration 0126). Le
+// runner les relit à chaque job et arrête le run entre deux tours en livrant
+// ce qu'il a écrit. `0` = aucun plafond. Même garde owner que les réglages
+// voisins : `entities.userId`, jamais `entityMembers.role`.
+
+export type RunBudgetView = {
+  maxRunCostUsd: number;
+  maxRunHours: number;
+  isOwner: boolean;
+};
+
+export async function getRunBudgetAction(): Promise<ActionResult<RunBudgetView>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [row] = await db
+      .select({
+        userId: entities.userId,
+        maxRunCostUsd: entities.maxRunCostUsd,
+        maxRunHours: entities.maxRunHours,
+      })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!row) return fail('not_found', 'Workspace not found');
+    return ok({
+      maxRunCostUsd: row.maxRunCostUsd,
+      maxRunHours: row.maxRunHours,
+      isOwner: row.userId === session.userId,
+    });
+  } catch (err) {
+    console.error('[getRunBudgetAction]', err);
+    return fail('db_error', 'Failed to load the run budget');
+  }
+}
+
+const SetRunBudgetSchema = z.object({
+  maxRunCostUsd: z.number().finite().min(0).max(RUN_COST_MAX_USD),
+  maxRunHours: z.number().finite().min(0).max(RUN_HOURS_MAX),
+});
+
+export async function setRunBudgetAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetRunBudgetSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can change the run budget.');
+    }
+    await db
+      .update(entities)
+      .set({ maxRunCostUsd: parsed.data.maxRunCostUsd, maxRunHours: parsed.data.maxRunHours })
+      .where(eq(entities.id, session.entityId));
+    revalidatePath('/settings');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setRunBudgetAction]', err);
+    return fail('db_error', 'Failed to save the run budget');
+  }
+}
+
+// ─── Attente du premier jeton, par agent (issue #442) ────────────────────────
+//
+// `agents.idle_timeout_seconds` : combien de temps un appel au modèle peut
+// rester muet avant son premier mot, pour CET agent. `null` = la plateforme
+// décide (packages/llm/src/turn-clocks.ts). Posée, la valeur remplace
+// l'horloge implicite, relèvements compris.
+
+const SetAgentFirstTokenWaitSchema = z.object({
+  agentId: z.string().guid(),
+  seconds: z.number().int().min(FIRST_TOKEN_WAIT_MIN_S).max(FIRST_TOKEN_WAIT_MAX_S).nullable(),
+});
+
+export async function setAgentFirstTokenWaitAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentFirstTokenWaitSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, seconds } = parsed.data;
+    // Owner-only hors local-trust : même forme que le budget du CLI de code.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change this setting.');
+      }
+    }
+    const db = getDb();
+    const updated = await db
+      .update(agents)
+      .set({ idleTimeoutSeconds: seconds, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+      .returning({ id: agents.id });
+    if (updated.length === 0) return fail('not_found', 'Agent not found');
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentFirstTokenWaitAction]', err);
+    return fail('db_error', 'Failed to save the wait for the first token');
   }
 }
 

@@ -98,6 +98,7 @@ async function rowsFromDb(overrides: Partial<Parameters<Rows['buildSettingRows']
     autoRunPause,
     verification,
     proofRepair,
+    runBudget,
     mcpServer,
     timezone,
     installNotes,
@@ -108,6 +109,7 @@ async function rowsFromDb(overrides: Partial<Parameters<Rows['buildSettingRows']
     a.getAutoRunPauseAction(),
     a.getVerificationSurfacesAction(),
     a.getProofRepairAction(),
+    a.getRunBudgetAction(),
     a.getMcpServerSwitchAction(),
     a.getWorkspaceTimezoneAction(),
     a.getInstallNotesAction(),
@@ -119,6 +121,7 @@ async function rowsFromDb(overrides: Partial<Parameters<Rows['buildSettingRows']
   expect(autoRunPause.ok, 'getAutoRunPauseAction').toBe(true);
   expect(verification.ok, 'getVerificationSurfacesAction').toBe(true);
   expect(proofRepair.ok, 'getProofRepairAction').toBe(true);
+  expect(runBudget.ok, 'getRunBudgetAction').toBe(true);
   expect(mcpServer.ok, 'getMcpServerSwitchAction').toBe(true);
   expect(timezone.ok, 'getWorkspaceTimezoneAction').toBe(true);
   expect(installNotes.ok, 'getInstallNotesAction').toBe(true);
@@ -131,6 +134,7 @@ async function rowsFromDb(overrides: Partial<Parameters<Rows['buildSettingRows']
     autoRunPause: autoRunPause.ok ? autoRunPause.data : null,
     verification: verification.ok ? verification.data : null,
     proofRepair: proofRepair.ok ? proofRepair.data : null,
+    runBudget: runBudget.ok ? runBudget.data : null,
     mcpServer: mcpServer.ok ? mcpServer.data : null,
     timezone: timezone.ok ? timezone.data : null,
     installNotes: installNotes.ok ? installNotes.data : null,
@@ -237,6 +241,31 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     });
   });
 
+  it('Run budget dit les plafonds ÉCRITS, et « aucun » pour zéro (#442)', async () => {
+    const a = await actions();
+
+    // Les défauts de la migration 0126 : le plafond que le runner appliquait déjà.
+    let rows = await rowsFromDb();
+    expect(value(rows, 'run-budget')).toBe('$2.00 per run, no time limit');
+
+    expect((await a.setRunBudgetAction({ maxRunCostUsd: 5, maxRunHours: 1.5 })).ok).toBe(true);
+    rows = await rowsFromDb();
+    expect(value(rows, 'run-budget')).toBe('$5.00 per run, 1.5 h of work');
+
+    expect((await a.setRunBudgetAction({ maxRunCostUsd: 0, maxRunHours: 0 })).ok).toBe(true);
+    rows = await rowsFromDb();
+    expect(value(rows, 'run-budget')).toBe('No cost ceiling, no time limit');
+
+    // Au-delà des CHECK, l'action REFUSE — la base ne voit jamais la valeur.
+    expect((await a.setRunBudgetAction({ maxRunCostUsd: 1001, maxRunHours: 0 })).ok).toBe(false);
+    expect((await a.setRunBudgetAction({ maxRunCostUsd: 1, maxRunHours: 73 })).ok).toBe(false);
+    rows = await rowsFromDb();
+    expect(value(rows, 'run-budget')).toBe('No cost ceiling, no time limit');
+
+    // Remis aux défauts pour les cas suivants.
+    expect((await a.setRunBudgetAction({ maxRunCostUsd: 2, maxRunHours: 0 })).ok).toBe(true);
+  });
+
   it('Repair turns dit la borne ÉCRITE, y compris zéro', async () => {
     const a = await actions();
 
@@ -301,7 +330,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     }
   });
 
-  it('les quatorze lignes existent, groupées dans l’ordre Access, Safety, Workspace, Advanced', async () => {
+  it('les quinze lignes existent, groupées dans l’ordre Access, Safety, Workspace, Advanced', async () => {
     const rows = await rowsFromDb({ authMode: 'local-auth' });
 
     expect(rows.map((r) => r.id)).toEqual([
@@ -312,6 +341,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'auto-run-brake',
       'verification',
       'repair-turns',
+      'run-budget',
       'root-agent',
       'mcp-server',
       'timezone',
@@ -330,6 +360,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'safety',
       'safety',
       'safety',
+      'safety',
       'workspace',
       'workspace',
       'workspace',
@@ -342,7 +373,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     for (const mode of ['local-trust', 'bearer-token'] as const) {
       const rows = await rowsFromDb({ authMode: mode });
       expect(rows.map((r) => r.id)).not.toContain('password');
-      expect(rows).toHaveLength(13);
+      expect(rows).toHaveLength(14);
     }
   });
 });
@@ -356,6 +387,7 @@ describe('buildSettingRows — la config et l’environnement @cap:installer-et-
     autoRunPause: null,
     verification: null,
     proofRepair: null,
+    runBudget: null,
     mcpServer: null,
     timezone: null,
     installNotes: null,
@@ -485,6 +517,7 @@ describe('filterSettingRows @cap:installer-et-demarrer/moteur', () => {
       autoRunPause: null,
       verification: null,
       proofRepair: null,
+      runBudget: null,
       mcpServer: null,
       timezone: null,
       installNotes: null,
