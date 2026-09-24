@@ -198,7 +198,7 @@ export {
   extractClaudeUsage,
   extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
-  assertCliBudget,
+  assertAgentBudget,
   recordCliRun,
   acquireWorkspaceLock,
   releaseWorkspaceLock,

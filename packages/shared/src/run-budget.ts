@@ -13,3 +13,10 @@ export const RUN_HOURS_MAX = 72;
 /** `agents.idle_timeout_seconds` : 30 s à 1 h, ou NULL (la plateforme décide). */
 export const FIRST_TOKEN_WAIT_MIN_S = 30;
 export const FIRST_TOKEN_WAIT_MAX_S = 3600;
+
+/** Le budget d'un agent (issue #447, migration 0127) : 0 = aucun plafond. */
+export const AGENT_BUDGET_DAILY_MAX_USD = 1000;
+export const AGENT_BUDGET_MONTHLY_MAX_USD = 10000;
+/** À partir de quelle part d'un plafond l'écran prévient. */
+export const AGENT_BUDGET_ALERT_MIN_PCT = 1;
+export const AGENT_BUDGET_ALERT_MAX_PCT = 100;

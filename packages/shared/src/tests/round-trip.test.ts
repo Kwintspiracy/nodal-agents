@@ -106,7 +106,6 @@ describe('AgentSchema round-trip', () => {
       task_context_template: null,
       avatar_url: null,
       system_agent: false,
-      max_tokens_per_job: 0,
       created_at: now,
       updated_at: now,
     };
