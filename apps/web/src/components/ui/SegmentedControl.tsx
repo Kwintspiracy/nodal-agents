@@ -15,7 +15,12 @@ type Option<T extends string> = {
 
 type Props<T extends string> = {
   options: Option<T>[];
-  value: T;
+  /**
+   * `null` : aucun segment choisi. Pour un réglage qui n'a pas de valeur
+   * propre et suit un défaut décrit ailleurs (#468) : en allumer un
+   * affirmerait un choix que personne n'a fait.
+   */
+  value: T | null;
   onChange: (next: T) => void;
   disabled?: boolean;
   ariaLabel?: string;

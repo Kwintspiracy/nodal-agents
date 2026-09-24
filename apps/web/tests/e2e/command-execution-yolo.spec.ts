@@ -1,23 +1,20 @@
 /**
- * Playwright e2e — "Run commands" on the agent's Autonomy tab: the Yolo switch.
+ * Playwright e2e — "Run commands" on the agent's Autonomy tab.
  *
- * REWRITTEN 24/09 (#464). The previous version was written for the 17/07 Tools
- * tab, where `command-execution` was a tool-group switch. Since 25/08 it is a
- * skill again (it carries a discipline: never install heavyweight software on
- * your own initiative — `apps/web/src/lib/skill-tool-groups.ts`), attached from
- * the Skills tab, and the Autonomy copy changed since (#382): the old journey
- * waited for a Tools switch and a heading that no longer exist, and failed at
- * its second step on every stack. It was not in the nightly measure, so nobody
- * saw it.
+ * REWRITTEN 24/09 (#464), then for #468: the Yolo switch became the same three
+ * choices as every other tool (Run without asking / Ask for approval / Block),
+ * with no choice lit when the agent has no rule. Block could not be set from
+ * any screen before.
  *
  * What this journey proves, in a browser against the real database:
- *   1. without the skill, the Autonomy tab has no "Run commands" switch;
+ *   1. without the skill, the Autonomy tab has no "Run commands" row;
  *   2. attaching "Command execution" from the Skills tab makes it appear, with
- *      the sentence saying what really happens to a command (#464);
- *   3. turning Yolo on asks first in the in-app ConfirmDialog (never
- *      window.confirm); cancelling changes nothing;
- *   4. confirming writes the `run_command → auto_approve` rule (read back in
- *      the database) and survives a reload; turning it off removes the rule.
+ *      no choice lit and the line saying the workspace autonomy decides;
+ *   3. "Run without asking" asks first in the in-app ConfirmDialog (never
+ *      window.confirm); cancelling writes nothing;
+ *   4. Block writes the `run_command → block` rule (read back in the
+ *      database) and a reload shows it lit; Ask writes `require_approval`;
+ *   5. "Let the workspace autonomy decide" removes the rule.
  *
  * Its own agent, created before and deleted after: no state leaks between runs.
  * Conventions: requireLiveStack() in beforeAll, storageState via the config.
@@ -46,7 +43,7 @@ test.beforeAll(async () => {
       .insert(agents)
       .values({
         entityId: acting.entityId,
-        name: `Yolo E2E ${testSlugSuffix()}`,
+        name: `Run Commands E2E ${testSlugSuffix()}`,
         slug: `e2e-yolo-${testSlugSuffix()}`,
         personality: 'E2E fixture, never executed.',
         role: 'agent',
@@ -95,16 +92,26 @@ async function yoloRule(): Promise<string | null> {
   }
 }
 
-const yoloSwitch = (page: Page) =>
-  page.getByTestId('command-execution-section').getByRole('switch');
+const choice = (page: Page, action: 'auto_approve' | 'require_approval' | 'block') =>
+  page.getByTestId(`autonomy-btn-run_command-${action}`);
 
-test('Run commands: attach the skill, then Yolo asks first, writes its rule, and comes back off @cap:executer-une-commande/ecran', async ({
+/** Waits until the database holds `expected` as the agent's rule. */
+async function ruleBecomes(expected: string | null): Promise<void> {
+  expect(
+    await pollDb(async () => ((await yoloRule()) === expected ? 'yes' : null), {
+      timeoutMs: 15_000,
+      intervalMs: 300,
+    }),
+  ).toBe('yes');
+}
+
+test('Run commands: three choices, Block reads back, and no rule lets the workspace decide @cap:executer-une-commande/ecran', async ({
   page,
 }) => {
-  // 1. No skill, no switch.
+  // 1. No skill, no row.
   await openTab(page, 'autonomy');
   await expect(page.getByText('What it may do with a shell')).toBeVisible();
-  await expect(page.getByText('Run commands without asking')).toHaveCount(0);
+  await expect(page.getByText('Run commands on this machine')).toHaveCount(0);
 
   // 2. Attach "Command execution" from the Skills tab.
   await openTab(page, 'skills');
@@ -118,42 +125,37 @@ test('Run commands: attach the skill, then Yolo asks first, writes its rule, and
   ).toBeVisible({ timeout: 10_000 });
 
   await openTab(page, 'autonomy');
-  await expect(page.getByText('Run commands without asking')).toBeVisible();
+  await expect(page.getByText('Run commands on this machine')).toBeVisible();
   // #464: the sentence says what really happens, never "asks by default".
   await expect(page.getByText('Commands ask for your approval by default.')).toHaveCount(0);
-  const toggle = yoloSwitch(page);
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  // #468: no rule, no choice lit.
+  await expect(page.getByTestId('run-command-no-rule')).toBeVisible();
+  for (const action of ['auto_approve', 'require_approval', 'block'] as const) {
+    await expect(choice(page, action)).toHaveAttribute('aria-pressed', 'false');
+  }
 
-  // 3. Turning it on asks first; cancelling changes nothing.
-  await toggle.click();
-  const confirm = page.getByRole('dialog', { name: 'Enable Yolo mode?' });
+  // 3. "Run without asking" asks first; cancelling writes nothing.
+  await choice(page, 'auto_approve').click();
+  const confirm = page.getByRole('dialog', { name: 'Run commands without asking?' });
   await expect(confirm).toBeVisible();
   await confirm.getByRole('button', { name: 'Cancel' }).click();
   await expect(confirm).toHaveCount(0);
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await expect(choice(page, 'auto_approve')).toHaveAttribute('aria-pressed', 'false');
   expect(await yoloRule()).toBeNull();
 
-  // 4. Confirming writes the rule, and a reload reads it back.
-  await toggle.click();
-  await page
-    .getByRole('dialog', { name: 'Enable Yolo mode?' })
-    .getByRole('button', { name: 'Enable Yolo' })
-    .click();
-  expect(
-    await pollDb(async () => ((await yoloRule()) === 'auto_approve' ? 'auto_approve' : null), {
-      timeoutMs: 15_000,
-      intervalMs: 300,
-    }),
-  ).toBe('auto_approve');
+  // 4. Block writes its rule, and a reload shows it.
+  await choice(page, 'block').click();
+  await ruleBecomes('block');
   await openTab(page, 'autonomy');
-  await expect(yoloSwitch(page)).toHaveAttribute('aria-checked', 'true');
+  await expect(choice(page, 'block')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('This agent cannot run commands: a rule blocks them.')).toBeVisible();
 
-  // Off again: the rule is gone.
-  await yoloSwitch(page).click();
-  await pollDb(async () => ((await yoloRule()) === null ? true : null), {
-    timeoutMs: 15_000,
-    intervalMs: 300,
-  });
+  await choice(page, 'require_approval').click();
+  await ruleBecomes('require_approval');
+
+  // 5. Back to no rule.
+  await page.getByTestId('run-command-reset').click();
+  await ruleBecomes(null);
   await openTab(page, 'autonomy');
-  await expect(yoloSwitch(page)).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByTestId('run-command-no-rule')).toBeVisible();
 });
