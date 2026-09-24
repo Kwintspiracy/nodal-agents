@@ -129,6 +129,43 @@ describe('generateText streamed option @cap:organiser-equipe/moteur', () => {
     }
   });
 
+  // #442 : la valeur de l'agent arrive jusqu'à l'horloge du premier jeton.
+  it('an agent’s first-token wait lets a slow thinker through; without it the call is cut', async () => {
+    const slow = () =>
+      new MockLanguageModelV3({
+        provider: 'openrouter',
+        modelId: 'm',
+        doStream: async () => ({
+          stream: simulateReadableStream({ chunks: streamed, initialDelayInMs: 400_000 }),
+        }),
+      });
+    const run = async (opts: { firstTokenTimeoutMs?: number }) => {
+      currentModel = slow();
+      const client = createLlmClient({
+        provider: 'openrouter',
+        model: 'z-ai/glm-5.2',
+        apiKey: 'k',
+      });
+      vi.useFakeTimers();
+      try {
+        const call = client.generateText(ARGS, { streamed: true, ...opts }).then(
+          (r) => ({ ok: r.text }),
+          (e: unknown) => ({ err: (e as Error).name }),
+        );
+        for (let i = 0; i < 1_000 && currentModel.doStreamCalls.length === 0; i++) {
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        await vi.advanceTimersByTimeAsync(401_000);
+        return await call;
+      } finally {
+        vi.useRealTimers();
+      }
+    };
+
+    expect(await run({})).toEqual({ err: 'LLMTimeoutError' });
+    expect(await run({ firstTokenTimeoutMs: 600_000 })).toEqual({ ok: 'from the stream' });
+  });
+
   it('keeps the one-shot call when the option is absent', async () => {
     const client = createLlmClient({ provider: 'openrouter', model: 'z-ai/glm-5.2', apiKey: 'k' });
 
