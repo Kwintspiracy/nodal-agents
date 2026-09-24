@@ -466,7 +466,7 @@ describe('le dossier MCP lit ce que la base en dit @cap:parler-par-canal-externe
     const rows = runRows({ runs: await runsDeDehors(), waiting: await attentes() });
     const ligne = rows.find((r) => r.id === runDeDehors);
     expect(ligne?.waiting).toBe('question');
-    expect(ligne?.href).toBe(`/jobs/${runDeDehors}`);
+    expect(ligne?.href).toBe(`/chat/runs/${runDeDehors}`);
     // L'autre run n'a rien : une demande ne se pose pas sur la première ligne
     // venue.
     expect(rows.find((r) => r.id !== runDeDehors)?.waiting).toBeNull();
