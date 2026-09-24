@@ -24,6 +24,7 @@ import { truncate } from '@/lib/format-time';
 import ThreadComposer from '../ThreadComposer.tsx';
 import ThreadScreen from './ThreadScreen.tsx';
 import ThreadHeader from './ThreadHeader.tsx';
+import ConversationApprovals from './ConversationApprovals.tsx';
 import PendingTurn, { PendingTurnProvider } from '../PendingTurn.tsx';
 import { feedAwaitsReply, feedRequests } from '../feed-requests.ts';
 
@@ -174,6 +175,9 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
             deliverables={verification.deliverables}
             density={density}
           />
+          {/* Ce que les travaux de cette conversation attendent de la personne,
+              répondu ICI, sans passer par la page Approvals (#469). */}
+          <ConversationApprovals conversationId={conversation.id} />
           <PendingTurn
             agentName={conversation.agentName ?? 'Agent'}
             agentAvatarUrl={conversation.agentAvatarUrl}
