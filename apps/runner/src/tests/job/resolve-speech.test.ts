@@ -49,7 +49,7 @@ describe('resolveSpeechGenerator @cap:travailler-sur-des-fichiers/moteur', () =>
     const sent: Array<{ url: string; auth: string | null }> = [];
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       sent.push({ url: String(input), auth: new Headers(init?.headers).get('authorization') });
-      return new Response(new Uint8Array([1, 2, 3]), {
+      return new Response(new Uint8Array([1, 2, 3, 4]), {
         status: 200,
         headers: { 'content-type': 'audio/pcm' },
       });
@@ -62,7 +62,7 @@ describe('resolveSpeechGenerator @cap:travailler-sur-des-fichiers/moteur', () =>
       { url: 'https://openrouter.ai/api/v1/audio/speech', auth: 'Bearer sk-or-live' },
     ]);
     // The raw samples, behind the WAV header packages/llm adds.
-    expect([...audio.bytes.subarray(44)]).toEqual([1, 2, 3]);
+    expect([...audio.bytes.subarray(44)]).toEqual([1, 2, 3, 4]);
     expect(audio.mediaType).toBe('audio/wav');
   });
 

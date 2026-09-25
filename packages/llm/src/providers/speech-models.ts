@@ -90,9 +90,13 @@ export function pcmToWav(pcm: Uint8Array, sampleRate: number): Uint8Array {
   return out;
 }
 
-/** `audio/pcm;rate=16000` → 16000; no rate named → the Gemini default. */
+/**
+ * `audio/pcm;rate=16000` → 16000; no rate named → the Gemini default. Only a
+ * `rate` PARAMETER counts: `bitrate=64000` is not a sample rate (review of
+ * PR #489).
+ */
 function sampleRateOf(contentType: string): number {
-  const match = /rate=(\d+)/i.exec(contentType);
+  const match = /(?:^|;)\s*rate=(\d+)/i.exec(contentType);
   return match ? Number(match[1]) : GEMINI_TTS_SAMPLE_RATE;
 }
 
@@ -135,14 +139,24 @@ export function createOpenRouterSpeech(
       outputFormat: 'pcm',
       maxRetries: 0,
     });
+    // The AI SDK copies the fetch Headers, whose keys are lower-case.
     const contentType = result.responses[0]?.headers?.['content-type'] ?? '';
     // A 200 whose body is not audio (an error page) is said, never wrapped
-    // into a broken file.
+    // into a broken file. An answer naming no type at all is taken as the pcm
+    // it was asked for: the odd-length check below still catches a cut stream.
     if (contentType !== '' && !/^audio\//i.test(contentType)) {
       throw new Error(`${request.model} answered ${contentType}, not audio`);
     }
+    const pcm = result.audio.uint8Array;
+    // 16-bit samples come in pairs of bytes: an odd count is a cut stream, and
+    // its WAV would be malformed (review of PR #489).
+    if (pcm.byteLength % 2 !== 0) {
+      throw new Error(
+        `${request.model} answered ${pcm.byteLength} bytes of 16-bit audio: an odd count, the stream was cut`,
+      );
+    }
     return {
-      bytes: pcmToWav(result.audio.uint8Array, sampleRateOf(contentType)),
+      bytes: pcmToWav(pcm, sampleRateOf(contentType)),
       mediaType: 'audio/wav',
     };
   };
