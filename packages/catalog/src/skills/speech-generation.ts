@@ -13,6 +13,9 @@ export const speechGenerationSkill: SystemSkill = {
     'Turn text into mp3 audio files in the agent folders, through OpenRouter ' +
     '(Gemini 3.8 Flash TTS or Flash Lite TTS). Uses the workspace OpenRouter key.',
   requiredBuiltins: ['generate_speech'],
+  // Its value is the tool it unlocks: the switch lives in the Tools tab, the
+  // text rides along as the tool's guidance.
+  toolGroup: true,
   content: `## Speech generation
 
 This tool group gives you \`generate_speech\`: it turns text into an **mp3 file** written in one of your folders, and returns its path.
