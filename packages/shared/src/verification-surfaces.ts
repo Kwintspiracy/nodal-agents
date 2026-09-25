@@ -82,6 +82,8 @@ export const VERIFICATION_SURFACE_TOOLS: Readonly<
     'xlsx_unmerge_cells',
     'xlsx_set_column_widths',
     'xlsx_freeze_panes',
+    // An audio file written in the agent's folders is a file like the others (#487).
+    'generate_speech',
   ],
   shell: ['run_command', 'run_skill_script'],
 });

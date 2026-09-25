@@ -33,6 +33,7 @@ import { spreadsheetEditingSkill } from './skills/spreadsheet-editing';
 import { documentEditingSkill } from './skills/document-editing';
 import { presentationEditingSkill } from './skills/presentation-editing';
 import { commandExecutionSkill } from './skills/command-execution';
+import { speechGenerationSkill } from './skills/speech-generation';
 import { codeTaskSkill } from './skills/code-task';
 import { devSkill } from './skills/dev';
 import { codeReviewSkill } from './skills/code-review';
@@ -49,6 +50,7 @@ export { spreadsheetEditingSkill } from './skills/spreadsheet-editing';
 export { documentEditingSkill } from './skills/document-editing';
 export { presentationEditingSkill } from './skills/presentation-editing';
 export { commandExecutionSkill } from './skills/command-execution';
+export { speechGenerationSkill } from './skills/speech-generation';
 export { codeTaskSkill } from './skills/code-task';
 export { devSkill } from './skills/dev';
 export { codeReviewSkill } from './skills/code-review';
@@ -73,6 +75,7 @@ export const systemSkills: SystemSkill[] = [
   documentEditingSkill,
   presentationEditingSkill,
   commandExecutionSkill,
+  speechGenerationSkill,
   codeTaskSkill,
   devSkill,
   codeReviewSkill,
