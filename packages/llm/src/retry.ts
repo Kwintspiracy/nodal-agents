@@ -186,7 +186,9 @@ function throwIfQuotaError(err: unknown, provider: string, model: string): Verdi
   const msg = errorMessage(err).toLowerCase();
   const verdict = classify429Body(msg);
   if (verdict.classe === 'facturation') {
-    throw new QuotaExhaustedError(provider, model, `${msg} [cas=${verdict.cas}]`);
+    // Classé sur le texte entier, stocké plafonné : `agent_jobs.error` n'a pas
+    // à garder un corps de fournisseur de dix mille caractères (revue de #479).
+    throw new QuotaExhaustedError(provider, model, `${msg.slice(0, 400)} [cas=${verdict.cas}]`);
   }
   return verdict;
 }

@@ -370,6 +370,8 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     expect(err.message).toBe('502: Provider returned error');
     expect(err.statusCode).toBe(502);
     expect(err.raw).toBe(payload);
+    // Kept for the code that needs it, never written out by a serialiser.
+    expect(JSON.stringify(err)).not.toContain('Provider returned error');
   });
 
   it('a stream error BEFORE any text is thrown as the error it carries', async () => {

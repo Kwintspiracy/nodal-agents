@@ -282,15 +282,18 @@ export class LLMStreamPartError extends Error {
   /** The code the provider gave, when it is an HTTP status (retry.ts reads it). */
   readonly statusCode: number | undefined;
 
-  constructor(
-    message: string,
-    statusCode: number | undefined,
-    /** The value the stream carried, untouched. */
-    public readonly raw: unknown,
-  ) {
+  /**
+   * The value the stream carried, untouched. Not enumerable (review of PR
+   * #479): it may echo the request, and a layer that serialises the whole
+   * error must not write it out.
+   */
+  declare readonly raw: unknown;
+
+  constructor(message: string, statusCode: number | undefined, raw: unknown) {
     super(message);
     this.name = 'LLMStreamPartError';
     this.statusCode = statusCode;
+    Object.defineProperty(this, 'raw', { value: raw, enumerable: false });
   }
 }
 
