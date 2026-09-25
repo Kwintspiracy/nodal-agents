@@ -6939,9 +6939,10 @@ export async function setRunCommandRuleAction(raw: unknown): Promise<ActionResul
 // that the workspace owner has installed and logged in on the runner machine
 // (packages/tools/src/builtin/code-task). Same safety shape as run_command:
 // defaultApproval:'require_approval', so "Yolo mode" is an explicit
-// auto_approve row — see setRunCommandYoloAction above, which this mirrors
-// exactly (same gate, same transactional delete-then-insert on the
-// UNIQUE(entity_id, agent_id, tool_name) row).
+// auto_approve row. Same owner gate and same transactional delete-then-insert
+// on the UNIQUE(entity_id, agent_id, tool_name) row as setRunCommandRuleAction
+// above, but still a two-state switch: run_command takes three actions or
+// none since #468, code_task does not (review of PR #481).
 
 const SetCodeTaskYoloSchema = z.object({
   agentId: z.string().guid(),
@@ -6959,7 +6960,7 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
 
     // Gate (non-local-trust only): only the workspace owner may change a
     // per-agent Yolo rule — in EITHER direction, same reasoning as
-    // setRunCommandYoloAction. Le pré-requis « master switch » a disparu
+    // setRunCommandRuleAction. Le pré-requis « master switch » a disparu
     // (0082) : le toggle par agent est la SEULE clé d'activation, et le frein
     // auto_run_paused ne fait que mettre les règles en dormance à l'exécution.
     if (env.AUTH_MODE !== 'local-trust') {
@@ -6983,8 +6984,8 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // Delete-then-insert wrapped in a transaction (R2, mirrors
-    // setRunCommandYoloAction) — approval_rules carries a
+    // Delete-then-insert wrapped in a transaction (R2, as in
+    // setRunCommandRuleAction) — approval_rules carries a
     // UNIQUE(entity_id, agent_id, tool_name) constraint, so two overlapping
     // calls could otherwise race on the insert.
     // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine deja a
