@@ -14,6 +14,8 @@ export {
   LLMCallCancelledError,
   AllProvidersFailedError,
   isContextOverflowError,
+  LLMStreamPartError,
+  describeThrown,
 } from './errors';
 export type { MessageStructureErrorCode, LlmTimeoutReason } from './errors';
 export type { GenerateTextCallOptions } from './types';

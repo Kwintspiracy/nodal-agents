@@ -54,6 +54,7 @@ import {
   MessageStructureError,
   AllProvidersFailedError,
   isContextOverflowError,
+  describeThrown,
   validateMessageStructure,
   estimateContextTokens,
   estimateToolTokens,
@@ -526,7 +527,8 @@ async function hydrateForLlm(
  * splice those in so a failed job's `error` is actionable instead of opaque.
  */
 export function describeLlmError(err: unknown): string {
-  if (!(err instanceof Error)) return 'unknown_error';
+  // A plain object says what it carries (#478), instead of nothing at all.
+  if (!(err instanceof Error)) return err == null ? 'unknown_error' : describeThrown(err, 400);
   const e = err as { statusCode?: number; responseBody?: unknown; data?: unknown };
   const body =
     typeof e.responseBody === 'string' && e.responseBody.trim().length > 0 ? e.responseBody : '';

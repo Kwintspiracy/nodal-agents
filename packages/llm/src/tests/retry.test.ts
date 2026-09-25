@@ -7,6 +7,8 @@ import {
   MessageStructureError,
   RetryExhaustedError,
   LLMCallCancelledError,
+  streamPartError,
+  describeThrown,
 } from '../errors';
 
 // Override setTimeout globally for tests so backoff doesn't slow things down
@@ -204,5 +206,93 @@ describe('withRetry — a call stopped by the person', () => {
     expect(calls).toBe(1);
     expect(warn.mock.calls.flat().join(' ')).not.toContain('[llm-attempt-failed]');
     warn.mockRestore();
+  });
+});
+
+// #478: an error part a provider sent as a plain object, made an Error by the
+// stream reader, is read by the retry policy like any provider error.
+describe('withRetry — a provider error part that was a plain object (#478)', () => {
+  it('a 502 is retried, and the failed attempt is logged with its message', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    const promise = withRetry(
+      () => {
+        calls += 1;
+        return calls === 1
+          ? Promise.reject(
+              streamPartError({ error: { code: 502, message: 'Provider returned error' } }),
+            )
+          : Promise.resolve('ok');
+      },
+      { maxRetries: 3, baseDelayMs: 10, provider: 'openrouter', model: 'm' },
+    );
+    await vi.runAllTimersAsync();
+
+    expect(await promise).toBe('ok');
+    expect(calls).toBe(2);
+    const logged = warn.mock.calls.flat().join(' ');
+    expect(logged).toContain('msg="502: Provider returned error"');
+    expect(logged).toContain('status=502');
+    expect(logged).not.toContain('[object Object]');
+    warn.mockRestore();
+  });
+
+  it('a definitive code is not retried: a 401 plain object fails at once (review of PR #479)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    const err = await withRetry(
+      () => {
+        calls += 1;
+        return Promise.reject(
+          streamPartError({ error: { code: 401, message: 'invalid api key' } }),
+        );
+      },
+      { maxRetries: 3, baseDelayMs: 10, provider: 'openrouter', model: 'm' },
+    ).catch((e: unknown) => e);
+
+    expect(calls).toBe(1);
+    expect((err as Error).message).toContain('invalid api key');
+    warn.mockRestore();
+  });
+
+  it('a 429 plain object that says the credits are gone is a quota refusal, not a retry', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    const err = await withRetry(
+      () => {
+        calls += 1;
+        return Promise.reject(
+          streamPartError({
+            error: { code: 429, message: 'Insufficient credits on this account' },
+          }),
+        );
+      },
+      { maxRetries: 3, baseDelayMs: 10, provider: 'openrouter', model: 'm' },
+    ).catch((e: unknown) => e);
+
+    expect(calls).toBe(1);
+    expect(err).toBeInstanceOf(QuotaExhaustedError);
+    warn.mockRestore();
+  });
+
+  it('never writes the raw object: without a message, only its keys are said (review of PR #479)', () => {
+    const said = describeThrown({
+      request: { messages: ['the whole prompt'] },
+      headers: { x: 'y' },
+    });
+    expect(said).not.toContain('the whole prompt');
+    expect(said).toBe('object with keys: request, headers');
+    // A code that is not a string or a number is not printed.
+    expect(describeThrown({ code: { nested: true }, message: 'boom' })).toBe('boom');
+  });
+
+  it('describes any thrown value by what it carries, never [object Object]', () => {
+    expect(describeThrown({ error: { code: 400, message: 'context too long' } })).toBe(
+      '400: context too long',
+    );
+    expect(describeThrown({ message: 'upstream reset' })).toBe('upstream reset');
+    expect(describeThrown({ reason: 'x' })).toBe('object with keys: reason');
+    expect(describeThrown(new Error('plain'))).toBe('plain');
+    expect(describeThrown('text')).toBe('text');
   });
 });

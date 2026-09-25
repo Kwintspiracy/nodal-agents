@@ -11,6 +11,8 @@
 // table). Emitting never throws and never delays the call — a broken
 // observer must not break inference.
 
+import { describeThrown } from './errors';
+
 /**
  * Caller-supplied identity of one chain link, echoed verbatim into every
  * observation from that client. `modelRequested` is what the agent/link ASKED
@@ -133,7 +135,7 @@ export function buildLlmCallObservation(args: {
         ? null
         : args.error instanceof Error
           ? `${args.error.name}: ${args.error.message}`.slice(0, 500)
-          : String(args.error).slice(0, 500),
+          : describeThrown(args.error, 500),
     meta: args.meta,
   };
 }
