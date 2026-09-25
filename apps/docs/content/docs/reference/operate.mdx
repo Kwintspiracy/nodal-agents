@@ -51,14 +51,19 @@ rather than being given a guessed cache lifetime.
 
 ## Cost and budget caps
 
-The runner enforces two hard per-job backstops against runaway loops. Both have conservative defaults and are overridable per deployment via environment variables on the runner.
+The runner stops a run that crosses one of these ceilings, between two turns. It keeps what the run already wrote: the result holds that text, then a line such as `[stopped: run budget — $2.40 spent, ceiling $2.00, turn 3]`.
 
-| Guard | Env var | Default | Behavior |
-| ----- | ------- | ------- | -------- |
-| Token budget | `MAX_TOTAL_TOKENS_PER_JOB` | `1500000` (1.5M) | When a job's cumulative input + output tokens exceed this, the job fails with `token_budget_exceeded`. |
-| Dollar cost | `MAX_COST_PER_JOB_USD` | `2.0` | When the provider-reported cumulative cost exceeds this, the job fails with `cost_budget_exceeded`. |
+| Ceiling | Where it is set | Default | Error code |
+| ------- | --------------- | ------- | ---------- |
+| Cost of one run | **Settings → Safety → Run budget** | `$2.00` (`0` = none) | `cost_budget_exceeded` |
+| Working time of one run | **Settings → Safety → Run budget** | none | `run_time_exceeded` |
+| Tokens of one run | `MAX_TOTAL_TOKENS_PER_JOB` on the runner | `1500000` (1.5M) | `token_budget_exceeded` |
 
-The cost cap only fires for providers that report per-call cost — today that means **OpenRouter** (with `usage:{include:true}`), and no other provider we support. For providers that don't, the cost stays `$0` and the **token budget is the fallback backstop**. Both caps are deliberately set far above where legitimate jobs sit (typical jobs use tens of thousands of tokens) while staying below the multi-million-token burns that motivated the guards.
+The working time counts only the time the run spends working: waiting for an approval or for a delegated agent does not count. While a time ceiling is set, one model call never waits for its first token longer than half of what remains, with a 60 s floor.
+
+The cost is what the provider reports per call, or, when it reports nothing, the tokens times the model's list price from the catalogue. A model with neither stays at `$0`, and the token ceiling is then the backstop.
+
+Before 0.9.3 the cost ceiling was the `MAX_COST_PER_JOB_USD` environment variable. It is no longer read: a runner that still has it writes `max_cost_env_ignored` in its log.
 
 These are last-resort backstops. The anti-loop guards baked into the runtime — max delegation depth, max tool calls per turn, max chain length, and a no-progress detector — stop most runaways long before a budget cap is reached.
 

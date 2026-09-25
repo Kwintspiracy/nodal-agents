@@ -21,6 +21,7 @@ import {
   getAutoRunPauseAction,
   getVerificationSurfacesAction,
   getProofRepairAction,
+  getRunBudgetAction,
   getMcpServerSwitchAction,
   getInstallNotesAction,
   getWorkspaceTimezoneAction,
@@ -35,6 +36,7 @@ import RootAgentSection from './RootAgentSection.tsx';
 import AutoRunPauseSection from './AutoRunPauseSection.tsx';
 import VerificationSurfacesSection from './VerificationSurfacesSection.tsx';
 import ProofRepairSection from './ProofRepairSection.tsx';
+import RunBudgetSection from './RunBudgetSection.tsx';
 import McpServerSection from './McpServerSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
@@ -48,22 +50,6 @@ import MonoCode from '@/components/ui/MonoCode';
 import CopyablePath from '@/components/ui/CopyablePath';
 
 export const dynamic = 'force-dynamic';
-
-const SETTING_IDS: ReadonlySet<string> = new Set<SettingId>([
-  'sign-in',
-  'network',
-  'password',
-  'worker-secret',
-  'auto-run-brake',
-  'verification',
-  'root-agent',
-  'mcp-server',
-  'timezone',
-  'install-notes',
-  'workspaces',
-  'urls',
-  'session',
-]);
 
 type PageProps = {
   /** `?page=` choisit la page ; `?open=<réglage>` (liens d'avant le 20/09) y mène aussi. */
@@ -82,6 +68,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     autoRunPauseResult,
     verificationSurfacesResult,
     proofRepairResult,
+    runBudgetResult,
     mcpSwitchResult,
     installNotesResult,
     tzResult,
@@ -95,6 +82,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     getAutoRunPauseAction(),
     getVerificationSurfacesAction(),
     getProofRepairAction(),
+    getRunBudgetAction(),
     getMcpServerSwitchAction(),
     getInstallNotesAction(),
     getWorkspaceTimezoneAction(),
@@ -122,6 +110,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     autoRunPause: autoRunPauseResult.ok ? autoRunPauseResult.data : null,
     verification: verificationSurfacesResult.ok ? verificationSurfacesResult.data : null,
     proofRepair: proofRepairResult.ok ? proofRepairResult.data : null,
+    runBudget: runBudgetResult.ok ? runBudgetResult.data : null,
     mcpServer: mcpSwitchResult.ok ? mcpSwitchResult.data : null,
     timezone: tzResult.ok ? tzResult.data : null,
     installNotes: installNotesResult.ok ? installNotesResult.data : null,
@@ -147,6 +136,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     'repair-turns': proofRepairResult.ok ? (
       <ProofRepairSection initial={proofRepairResult.data} />
     ) : null,
+    'run-budget': runBudgetResult.ok ? <RunBudgetSection initial={runBudgetResult.data} /> : null,
     'root-agent': (
       <RootAgentSection
         agents={agentsResult.ok ? agentsResult.data : []}
@@ -207,7 +197,10 @@ export default async function SettingsPage({ searchParams }: PageProps) {
   // ouvre Access, et ne casse rien.
   const page = resolveSettingsPage(sp);
   const ids = new Set<string>(page.ids);
-  const pageRows = rows.filter((r) => SETTING_IDS.has(r.id) && ids.has(r.id));
+  // UNE liste décide de ce qu'une page montre : `SETTINGS_PAGES`. Un second
+  // ensemble d'identifiants, recopié ici, a caché « Repair turns » (#392) de la
+  // page dès son ajout, parce que personne ne l'y avait ajouté (trouvé par #442).
+  const pageRows = rows.filter((r) => ids.has(r.id));
 
   return (
     <PageShell title={page.label} subtitle={page.lede}>

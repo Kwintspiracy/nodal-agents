@@ -63,6 +63,13 @@ export const agents = pgTable(
     avatarUrl: text('avatar_url'),
     systemAgent: boolean('system_agent').default(false),
     maxTokensPerJob: integer('max_tokens_per_job').default(0).notNull(),
+    /**
+     * Combien de secondes un appel au modèle peut attendre son premier jeton
+     * pour CET agent (issue #442, migration 0126). NULL = la plateforme décide
+     * (packages/llm/src/turn-clocks.ts). Posée, elle gagne sur la valeur
+     * implicite, relèvements compris.
+     */
+    idleTimeoutSeconds: integer('idle_timeout_seconds'),
     // Cap on characters of agent_memory injected into the system prompt per job
     // (Memory Sprint 2). Pure char budget — token estimation done at call site
     // (length/4). 1500 chars ≈ ~375 tokens, similar to Hermes' 2200+1375 split.
@@ -180,6 +187,10 @@ export const agents = pgTable(
       sql`${table.orchestratorMode} IN ('router', 'planner') OR ${table.orchestratorMode} IS NULL`,
     ),
     check('agents_max_tokens_per_job_check', sql`${table.maxTokensPerJob} >= 0`),
+    check(
+      'agents_idle_timeout_seconds_check',
+      sql`${table.idleTimeoutSeconds} IS NULL OR (${table.idleTimeoutSeconds} >= 30 AND ${table.idleTimeoutSeconds} <= 3600)`,
+    ),
     check('agents_runtime_check', sql`${table.runtime} IN ('nodal', 'claude-code', 'codex')`),
     // F-6 (audit #2): slug was UNIQUE GLOBALLY, so a 2nd workspace/entity
     // installing the same community skill's companion agent (or any agent

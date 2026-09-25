@@ -131,6 +131,7 @@ import {
   pickedFolderLabel,
   settled,
 } from './picked-folder-label.ts';
+import FirstTokenWaitField from './FirstTokenWaitField.tsx';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor, RootGrants } from '@nodal-agents/shared';
 
@@ -756,6 +757,7 @@ export default function AgentComposer({
             cliMode={cliMode}
             onChangeCliMode={setCliMode}
             cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
+            idleTimeoutSeconds={agent.idleTimeoutSeconds ?? null}
             cliDefaults={agent.cliDefaults}
             isOwner={isOwner}
           />
@@ -3177,6 +3179,8 @@ function SettingsTab(props: {
   cliMode: 'read' | 'write';
   onChangeCliMode: (v: 'read' | 'write') => void;
   cliDailyBudgetUsd: number;
+  /** `agents.idle_timeout_seconds` (#442) — null = the platform decides. */
+  idleTimeoutSeconds: number | null;
   cliDefaults: AgentRow['cliDefaults'];
   isOwner: boolean;
 }) {
@@ -3224,6 +3228,7 @@ function SettingsTab(props: {
     cliMode,
     onChangeCliMode,
     cliDailyBudgetUsd,
+    idleTimeoutSeconds,
     cliDefaults,
     isOwner,
   } = props;
@@ -3814,6 +3819,12 @@ function SettingsTab(props: {
                 </Field>
               </div>
             )}
+            {/* #442 : l'attente du premier mot, pour cet agent. */}
+            <FirstTokenWaitField
+              agentId={agentId}
+              initialSeconds={idleTimeoutSeconds}
+              canChange={canChangeRuntime}
+            />
           </>
         )}
       </SectionCard>

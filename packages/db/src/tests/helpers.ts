@@ -76,7 +76,14 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0121
       proof_repair_attempts integer NOT NULL DEFAULT 1
         CONSTRAINT entities_proof_repair_attempts_check
-        CHECK (proof_repair_attempts >= 0 AND proof_repair_attempts <= 3)
+        CHECK (proof_repair_attempts >= 0 AND proof_repair_attempts <= 3),
+      -- mirrors migration 0126
+      max_run_cost_usd real NOT NULL DEFAULT 2
+        CONSTRAINT entities_max_run_cost_usd_check
+        CHECK (max_run_cost_usd >= 0 AND max_run_cost_usd <= 1000),
+      max_run_hours real NOT NULL DEFAULT 0
+        CONSTRAINT entities_max_run_hours_check
+        CHECK (max_run_hours >= 0 AND max_run_hours <= 72)
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (
@@ -125,6 +132,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       avatar_url text,
       system_agent boolean DEFAULT false,
       max_tokens_per_job integer NOT NULL DEFAULT 0 CHECK (max_tokens_per_job >= 0),
+      -- mirrors migration 0126 : NULL = la plateforme décide
+      idle_timeout_seconds integer
+        CONSTRAINT agents_idle_timeout_seconds_check
+        CHECK (idle_timeout_seconds IS NULL OR (idle_timeout_seconds >= 30 AND idle_timeout_seconds <= 3600)),
       memory_token_budget integer NOT NULL DEFAULT 1500,
       -- mirrors migration 0107 : NULL = suivre entities.reflection_enabled
       reflection_enabled boolean,

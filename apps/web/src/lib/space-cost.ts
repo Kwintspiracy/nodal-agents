@@ -54,6 +54,12 @@ export type SpaceCostView = {
    * reprend après une délégation. `resumes === 0` ⇒ rien à montrer.
    */
   cacheLost: CacheLostView;
+  /**
+   * #442 — le budget de run de l'espace, tel que le runner l'oppose à ce run
+   * (`entities.max_run_cost_usd`, `max_run_hours`, 0 = aucun). Absent là où
+   * la vue ne décrit pas un run (le fil d'une conversation).
+   */
+  runBudget?: { maxRunCostUsd: number; maxRunHours: number };
 };
 
 /**

@@ -254,3 +254,30 @@ describe('StatusBar — cache expiry @cap:voir-le-cout/ecran', () => {
     expect(html).not.toContain('$0.0000');
   });
 });
+
+describe('StatusBar — the run budget in the cost panel (#442) @cap:suivre-execution/ecran', () => {
+  it('names the ceilings the runner holds this run to', () => {
+    const html = renderToStaticMarkup(
+      <CostPanel
+        cost={{ ...cost, runBudget: { maxRunCostUsd: 2, maxRunHours: 1.5 } }}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain(
+      'The workspace stops a run once it has cost $2.00 or after 1.5 h of work (Settings, Safety).',
+    );
+  });
+
+  it('says there is none when both are zero, and nothing on a view that is not a run', () => {
+    const none = renderToStaticMarkup(
+      <CostPanel
+        cost={{ ...cost, runBudget: { maxRunCostUsd: 0, maxRunHours: 0 } }}
+        onClose={() => {}}
+      />,
+    );
+    expect(none).toContain('The workspace sets no run budget (Settings, Safety).');
+    const thread = renderToStaticMarkup(<CostPanel cost={cost} onClose={() => {}} />);
+    expect(thread).not.toContain('run budget');
+    expect(thread).not.toContain('stops a run');
+  });
+});
