@@ -1,13 +1,46 @@
 import { defineConfig } from 'vitest/config';
 
+// Never discover tests inside build output or leftover git worktrees
+// (.claude/worktrees/* are stale copies of the tree, not its source) — a
+// root-level `vitest <path>` glob would otherwise match those duplicates.
+const EXCLUDE = [
+  '**/node_modules/**',
+  '**/dist/**',
+  '**/.next/**',
+  '**/.turbo/**',
+  '**/.claude/**',
+];
+const PG_TESTS = '**/*.pg.test.ts';
+// Même garde que packages/db et apps/runner (revue de la PR #499) : sur Windows
+// CI, le postmaster est refusé sous compte administrateur et les `.pg` ne
+// tournent pas. `pnpm test` passe par turbo, donc par les configs des paquets,
+// mais un `vitest run` lancé à la racine sur ce runner les aurait lancés.
+const isWindowsCi = process.platform === 'win32' && !!process.env['CI'];
+
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    // Never discover tests inside build output or leftover git worktrees
-    // (.claude/worktrees/* are stale copies of the tree, not its source) — a
-    // root-level `vitest <path>` glob would otherwise match those duplicates.
-    exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/.turbo/**', '**/.claude/**'],
+    exclude: EXCLUDE,
+    // Deux projets (#471). Les fichiers `.pg.test.ts` partagent UN Postgres
+    // par run, démarré par le `globalSetup` de leur projet — vitest ne
+    // l'appelle que si le run contient au moins un de ces fichiers. Voir
+    // packages/test-kit/src/shared-postgres.ts.
+    projects: [
+      { extends: true, test: { name: 'unit', exclude: [...EXCLUDE, PG_TESTS] } },
+      ...(isWindowsCi
+        ? []
+        : [
+            {
+              extends: true,
+              test: {
+                name: 'pg',
+                include: [PG_TESTS],
+                globalSetup: ['./packages/test-kit/src/pg-global-setup.ts'],
+              },
+            },
+          ]),
+    ],
     // Bootstrap tests in apps/runner spin up an embedded pglite DB before
     // their first assertion — that setup alone takes ~10s under parallel
     // turbo runs. The vitest default 5s per-test + hook timeout times out
