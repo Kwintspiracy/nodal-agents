@@ -12,6 +12,7 @@ import type { RunnerEnv } from '../env.ts';
 import { runChatTurn } from '../chat/run-chat-turn.ts';
 import { runInLane } from '../chat/turn-lane.ts';
 import { withChatTurnStop } from '../chat/turn-stop.ts';
+import { withLiveTurn } from '../chat/live-turn.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
@@ -48,9 +49,13 @@ export async function chatRoute(
   // précédent dans son historique (Quentin, 18/09).
   // Le chemin de secours du chat (le flux indisponible) : Stop l'atteint
   // aussi (#456, revue Codex de #459, passe 2) — même registre, même tour.
+  // Le tour est lisible d'une autre page pendant qu'il tourne (#457) : ce
+  // chemin ne diffuse aucun texte, mais une page rouverte sait qu'il répond.
   const result = await runInLane(conversationId, () =>
-    withChatTurnStop(conversationId, (abortSignal) =>
-      runChatTurn({ deps, entityId, agentId, conversationId, message, abortSignal }),
+    withLiveTurn(entityId, conversationId, () =>
+      withChatTurnStop(conversationId, (abortSignal) =>
+        runChatTurn({ deps, entityId, agentId, conversationId, message, abortSignal }),
+      ),
     ),
   );
   if (!result.ok) {

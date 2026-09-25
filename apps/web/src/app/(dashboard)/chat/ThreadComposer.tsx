@@ -150,7 +150,8 @@ export default function ThreadComposer({
    * la file —, et Stop y aurait paru sans rien pouvoir arrêter.
    */
   const [answeringId, setAnsweringId] = useState<string | null>(null);
-  const [stopping, setStopping] = useState(false);
+  /** Le tour dont l'arrêt est demandé (sa clé, voir `stopKey`), ou aucun. */
+  const [stoppingFor, setStoppingFor] = useState<string | null>(null);
 
   /**
    * Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le
@@ -159,6 +160,12 @@ export default function ThreadComposer({
    */
   const canSend = message.trim() !== '';
   const pendingTurn = usePendingTurn();
+  // Ce que Stop arrêterait : l'envoi de cette page, sinon le tour qu'elle suit
+  // (#457). La clé change d'un tour à l'autre : un arrêt demandé pour l'un ne
+  // grise jamais le bouton du suivant.
+  const stopKey =
+    answeringId ?? (pendingTurn.live !== null ? `live:${pendingTurn.live.seq}` : null);
+  const stopping = stopKey !== null && stoppingFor === stopKey;
 
   /** Vider la zone, et la remesurer VIDE — voir le commentaire dans `send`. */
   function clearBox(): void {
@@ -219,7 +226,7 @@ export default function ThreadComposer({
       });
       answering.current = null;
       setAnsweringId(null);
-      setStopping(false);
+      setStoppingFor(null);
       if (!r.ok) {
         // Le même bloc d'échec qu'avant : le texte revient dans la zone, et
         // rien de partiel ne reste à l'écran (`onText('')` l'a déjà effacé).
@@ -262,15 +269,16 @@ export default function ThreadComposer({
    * réponse — rien à faire ici de plus que demander l'arrêt.
    */
   function stop(): void {
-    const target = answering.current;
-    if (target === null || stopping) return;
-    setStopping(true);
+    // L'envoi de cette page, ou le tour qu'elle suit depuis qu'on y est revenu (#457).
+    const target = answering.current ?? (pendingTurn.live !== null ? conversationId : null);
+    if (target === null || stopKey === null || stopping) return;
+    setStoppingFor(stopKey);
     void stopChatTurn(target).then((r) => {
       if (r.stopped) return;
       // Rien n'a été arrêté : Stop redevient cliquable, et un échec réel se
       // dit. Un tour qui venait de finir (`stopped: false` sans erreur) n'a
       // rien à dire — sa réponse arrive déjà.
-      setStopping(false);
+      setStoppingFor(null);
       if (!r.ok) toast.error('Could not stop the answer');
     });
   }
@@ -278,7 +286,8 @@ export default function ThreadComposer({
   // Stop prend la place d'Envoyer tant qu'une réponse s'écrit ET que la zone
   // est vide. Dès qu'on tape, c'est Envoyer qui revient : un message peut
   // partir pendant que le précédent attend (Quentin, 18/09).
-  const showStop = answeringId !== null && !canSend;
+  // Un tour suivi depuis une autre page (#457) s'arrête aussi d'ici.
+  const showStop = stopKey !== null && !canSend;
 
   // P2bis — un CADRE, pas un champ posé à côté d'un bouton : le design pose
   // la saisie sur sa propre surface, collée en bas de la zone de contenu,

@@ -32,12 +32,29 @@
 // ce qui n'a pas changé, c'est qui fait foi. Le tour relu prend le relais ; et
 // quand le flux échoue, la copie ENTIÈRE quitte le fil — sa phrase à moitié
 // écrite avec elle, plutôt que figée là comme si c'était la réponse (inv. #4).
+//
+// Depuis #457, une page ouverte PENDANT un tour — la personne est partie
+// ailleurs et revient — se rebranche sur lui : le fil rendu se termine sur une
+// demande sans réponse, aucun envoi de CETTE page n'est en vol, et le runner
+// dit qu'un tour tourne (`followLiveTurn`). Elle montre alors ce qui a déjà été
+// écrit, puis la suite, et relit le fil quand le tour est fini. Avant, la
+// question restait seule jusqu'à ce que la réponse entière tombe d'un coup.
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+  type ReactNode,
+} from 'react';
+import { useRouter } from 'next/navigation';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import Markdown from '@/components/Markdown.tsx';
 import ClampedText from '@/app/(dashboard)/spaces/ClampedText.tsx';
 import { originLabel } from '@/app/(dashboard)/spaces/format.ts';
+import { followLiveTurn } from './chat-stream.ts';
 
 type Pending = {
   id: number;
@@ -64,6 +81,14 @@ type Store = {
   /** Ce que l'envoi en cours a reçu de sa réponse jusqu'ici — le premier
    *  envoi non joué, celui que le runner traite. */
   streamingReply: string;
+  /** Le tour qu'une AUTRE page a lancé et que celle-ci suit (#457) : ce qui a
+   *  été écrit jusqu'ici, et depuis quand il tourne. `null` : rien à suivre. */
+  /**
+   * `seq` : le numéro du tour suivi, compté par cette page. Il distingue deux
+   * tours même quand le runner n'a pas donné d'heure de départ (revue de la
+   * PR #502 : deux tours sans `startedAt` partageaient la clé de Stop).
+   */
+  live: { reply: string; startedAt: number | null; seq: number } | null;
   begin: (text: string) => number;
   /** La réponse ENTIÈRE connue à cet instant, pour cet envoi. Pas un
    *  fragment : l'appelant accumule, ce porteur ne fait qu'afficher. */
@@ -88,6 +113,7 @@ const NOOP: Store = {
   inFlight: false,
   awaitingReply: false,
   streamingReply: '',
+  live: null,
   begin: () => 0,
   stream: () => {},
   settle: () => {},
@@ -111,16 +137,79 @@ export function stillPending(pending: readonly Pending[], requests: readonly str
 export function PendingTurnProvider({
   requests,
   awaitingReply,
+  conversationId,
   children,
 }: {
   /** Les demandes que le serveur a rendues, dans l'ordre du fil. */
   requests: readonly string[];
   /** Le fil rendu se termine sur une demande sans réponse. */
   awaitingReply: boolean;
+  /** La conversation du fil, pour se rebrancher sur un tour en cours (#457).
+   *  Absente (conversation neuve) : il n'y a rien à suivre. */
+  conversationId?: string;
   children: ReactNode;
 }) {
   const [all, setAll] = useState<readonly Pending[]>([]);
   const nextId = useRef(0);
+  const router = useRouter();
+  const inFlight = all.some((p) => !p.settled);
+  // Suivre le tour en cours n'a de sens que si le fil attend une réponse et
+  // qu'aucun envoi de CETTE page n'est en vol : celui-là montre déjà la sienne.
+  const follow = conversationId !== undefined && awaitingReply && !inFlight;
+  const [followed, setFollowed] = useState<{
+    reply: string;
+    startedAt: number | null;
+    seq: number;
+  } | null>(null);
+  const toursSuivis = useRef(0);
+  // La relecture du fil à la fin d'un tour suivi, DANS une transition : on sait
+  // ainsi quand elle est rendue (revue de la PR #502).
+  const [relecture, lancerRelecture] = useTransition();
+  /** Le numéro du tour fini dont le texte part après la relecture, ou null. */
+  const aEffacerApresRelecture = useRef<number | null>(null);
+  // Une nouvelle demande dans le fil, c'est un nouveau tour à suivre.
+  const requestCount = requests.length;
+  useEffect(() => {
+    if (!follow || conversationId === undefined) return;
+    const ctrl = new AbortController();
+    void followLiveTurn({
+      conversationId,
+      signal: ctrl.signal,
+      onStart: (startedAt) => setFollowed({ reply: '', startedAt, seq: ++toursSuivis.current }),
+      onText: (reply) =>
+        setFollowed((prev) => ({
+          reply,
+          startedAt: prev?.startedAt ?? null,
+          seq: prev?.seq ?? ++toursSuivis.current,
+        })),
+    }).then((outcome) => {
+      if (ctrl.signal.aborted) return;
+      if (outcome === 'ended') {
+        // Fini : le fil relu montre la réponse. Le texte suivi reste affiché
+        // jusqu'à ce que la relecture soit RENDUE, pour qu'il ne disparaisse
+        // pas un instant avant de revenir ; il part ensuite. Sans cela, un tour
+        // fini en ERREUR (aucune réponse en base, le fil relu attend toujours)
+        // laissait la demi-réponse figée comme si c'était elle, pour toujours
+        // (invariant #4, revue de la PR #502).
+        aEffacerApresRelecture.current = toursSuivis.current;
+        lancerRelecture(() => router.refresh());
+        return;
+      }
+      if (outcome === 'none') router.refresh();
+      // Rien à suivre, ou lecture cassée : on ne fige pas une demi-réponse.
+      setFollowed(null);
+    });
+    return () => ctrl.abort();
+  }, [follow, conversationId, requestCount, router]);
+  useEffect(() => {
+    const fini = aEffacerApresRelecture.current;
+    if (relecture || fini === null) return;
+    aEffacerApresRelecture.current = null;
+    // CE tour-là seulement : une question posée pendant la relecture ouvre un
+    // tour suivant, dont le texte ne doit pas partir avec (revue de la PR #502,
+    // passe 2).
+    setFollowed((prev) => (prev !== null && prev.seq <= fini ? null : prev));
+  }, [relecture]);
   // Une dérivation, pas un effet : rien à synchroniser, rien à oublier.
   const pending = stillPending(all, requests);
   const isRendered = (id: number): boolean => {
@@ -140,12 +229,15 @@ export function PendingTurnProvider({
   });
   const store: Store = {
     pending,
-    inFlight: all.some((p) => !p.settled),
+    inFlight,
     awaitingReply,
     // Celui que le runner traite : le premier envoi dont le tour n'est pas
     // joué. Lu sur `all` et non sur `pending`, parce qu'une copie peut déjà
     // avoir quitté l'écran (le fil l'a rendue) pendant que sa réponse arrive.
     streamingReply: all.find((p) => !p.settled)?.reply ?? '',
+    // Dérivé, pas remis à zéro par un effet : dès que le fil ne l'attend plus
+    // (relu avec sa réponse) ou qu'un envoi d'ici part, plus rien à suivre.
+    live: follow ? followed : null,
     begin: (text) => {
       const id = ++nextId.current;
       const baseline =
@@ -182,15 +274,34 @@ export function usePendingTurn(): Store {
 
 /** L'agent, à gauche : son en-tête, puis sa réponse en train de s'écrire —
  *  ou, tant qu'aucun mot n'est arrivé, trois points qui battent. */
+/** Depuis combien de temps le tour suivi tourne : « 42s », « 3m 05s ». */
+export function elapsedLabel(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${String(s)}s`;
+  return `${String(Math.floor(s / 60))}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <span data-testid="pending-elapsed">{elapsedLabel(now - since)}</span>;
+}
+
 function Thinking({
   agentName,
   agentAvatarUrl,
   reply = '',
+  startedAt = null,
 }: {
   agentName: string;
   agentAvatarUrl: string | null;
   /** Le texte déjà reçu (#152). Vide : l'agent n'a encore rien dit. */
   reply?: string;
+  /** Un tour suivi depuis une autre page (#457) : depuis quand il tourne. */
+  startedAt?: number | null;
 }) {
   return (
     <div className="min-w-0 pt-6" data-testid="pending-thinking">
@@ -206,6 +317,12 @@ function Thinking({
             <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning [animation-delay:300ms]" />
           </span>
           <span>thinking</span>
+          {startedAt !== null && (
+            <>
+              <span aria-hidden="true">·</span>
+              <Elapsed since={startedAt} />
+            </>
+          )}
         </div>
       ) : (
         // Rendu comme la réponse le sera une fois le fil relu — même Markdown,
@@ -225,18 +342,24 @@ export default function PendingTurn({
   agentName: string;
   agentAvatarUrl?: string | null;
 }) {
-  const { pending, inFlight, awaitingReply, streamingReply } = usePendingTurn();
+  const { pending, inFlight, awaitingReply, streamingReply, live } = usePendingTurn();
   // Le loader est sous le message que le runner traite : celui que le fil
   // rendu porte déjà sans réponse — si un envoi est en vol : un fil qui se
   // termine sur une demande sans réponse (un tour qui a échoué hier) ne fait
   // pas réfléchir l'agent pour de faux — sinon la première copie en attente.
-  const thinkingAfterFeed = awaitingReply && inFlight;
+  // Un tour lancé d'une autre page et suivi d'ici (#457) compte aussi.
+  const thinkingAfterFeed = awaitingReply && (inFlight || live !== null);
   if (pending.length === 0 && !thinkingAfterFeed) return null;
 
   return (
     <div className="mx-auto max-w-[760px]" data-testid="pending-turn" aria-live="polite">
       {thinkingAfterFeed && (
-        <Thinking agentName={agentName} agentAvatarUrl={agentAvatarUrl} reply={streamingReply} />
+        <Thinking
+          agentName={agentName}
+          agentAvatarUrl={agentAvatarUrl}
+          reply={inFlight ? streamingReply : (live?.reply ?? '')}
+          startedAt={inFlight ? null : (live?.startedAt ?? null)}
+        />
       )}
       {pending.map((p, i) => (
         <div key={p.id}>
