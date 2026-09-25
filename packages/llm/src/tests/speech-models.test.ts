@@ -96,4 +96,15 @@ describe('createOpenRouterSpeech @cap:travailler-sur-des-fichiers/moteur', () =>
       provider: { options: { 'google-ai-studio': { speech_metadata: { style: 'whispering' } } } },
     });
   });
+
+  it('withGeminiStyle merges into a provider field already there, never replaces it (review of PR #488)', () => {
+    const body = JSON.stringify({ model: 'm', provider: { order: ['google-ai-studio'] } });
+    expect(JSON.parse(withGeminiStyle(body, 'calm'))).toEqual({
+      model: 'm',
+      provider: {
+        order: ['google-ai-studio'],
+        options: { 'google-ai-studio': { speech_metadata: { style: 'calm' } } },
+      },
+    });
+  });
 });

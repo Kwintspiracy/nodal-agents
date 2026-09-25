@@ -38,8 +38,17 @@ export type SpeechGenerator = (request: SpeechRequest) => Promise<GeneratedSpeec
 /** Adds the Gemini delivery style to an `/audio/speech` request body. */
 export function withGeminiStyle(body: string, style: string): string {
   const parsed = JSON.parse(body) as Record<string, unknown>;
+  // Merged, never replaced: a routing field already in `provider` stays
+  // (review of PR #488).
+  const provider = (parsed['provider'] ?? {}) as Record<string, unknown>;
+  const options = (provider['options'] ?? {}) as Record<string, unknown>;
+  const google = (options['google-ai-studio'] ?? {}) as Record<string, unknown>;
   parsed['provider'] = {
-    options: { 'google-ai-studio': { speech_metadata: { style } } },
+    ...provider,
+    options: {
+      ...options,
+      'google-ai-studio': { ...google, speech_metadata: { style } },
+    },
   };
   return JSON.stringify(parsed);
 }
