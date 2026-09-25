@@ -152,4 +152,34 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(() => input({ text: 'x'.repeat(5_001), path: 'a.mp3' })).toThrow();
     expect(() => input({ text: 'x', path: 'a.mp3', model: 'openai/gpt-5' })).toThrow();
   });
+
+  // Review of PR #488 (Reviewer C, minor findings).
+  it('a 200 answer that is not mp3 audio is refused, and nothing is written', async () => {
+    const res = await generateSpeechTool.execute(
+      input({ text: 'x', path: 'a.mp3' }),
+      ctx({
+        speechGenerator: async () => ({
+          bytes: new TextEncoder().encode('{"error":{"message":"upstream"}}'),
+          mediaType: 'audio/mp3',
+        }),
+      }),
+    );
+
+    expect(res).toEqual({
+      ok: false,
+      reason: 'google/gemini-3.8-flash-tts answered, but not with mp3 audio. Nothing was written.',
+    });
+    await expect(readFile(join(WORKSPACE, 'a.mp3'))).rejects.toThrow();
+  });
+
+  it('accepts an MPEG frame sync as well as an ID3 tag, and writes .MP3 as .mp3', async () => {
+    const frame = new Uint8Array([0xff, 0xfb, 0x90, 0x44, 0, 0]);
+    const res = await generateSpeechTool.execute(
+      input({ text: 'x', path: 'audio/INTRO.MP3' }),
+      ctx({ speechGenerator: async () => ({ bytes: frame, mediaType: 'audio/mp3' }) }),
+    );
+
+    expect(res.ok && res.path).toBe(join(WORKSPACE, 'audio', 'INTRO.mp3'));
+    expect([...(await readFile(join(WORKSPACE, 'audio', 'INTRO.mp3')))]).toEqual([...frame]);
+  });
 });

@@ -89,11 +89,25 @@ export type GenerateSpeechOutput =
   | { ok: true; written: true; path: string; bytes: number; model: string; voice: string }
   | { ok: false; reason: string };
 
-/** `intro` → `intro.mp3`; any other extension is refused (the file is mp3). */
+/** `intro` → `intro.mp3`, `intro.MP3` → `intro.mp3`; any other extension is refused. */
 function mp3Path(path: string): string | null {
-  const ext = extname(path).toLowerCase();
+  const ext = extname(path);
   if (ext === '') return `${path}.mp3`;
-  return ext === '.mp3' ? path : null;
+  return ext.toLowerCase() === '.mp3' ? `${path.slice(0, -ext.length)}.mp3` : null;
+}
+
+/**
+ * Does this start like an mp3: an ID3 tag, or an MPEG audio frame sync? A 200
+ * answer whose body is not audio (an error page, a truncated reply) would
+ * otherwise be written as a broken .mp3 with no failure said (review of PR
+ * #488). The AI SDK names the type from the requested format, so the bytes
+ * are what can be checked.
+ */
+export function looksLikeMp3(bytes: Uint8Array): boolean {
+  if (bytes.length >= 3 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
+    return true;
+  }
+  return bytes.length >= 2 && bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0;
 }
 
 export const generateSpeechTool: ToolDefinition<
@@ -159,6 +173,12 @@ export const generateSpeechTool: ToolDefinition<
       });
       if (audio.bytes.byteLength === 0) {
         return { ok: false, reason: `${input.model} returned no audio for this text.` };
+      }
+      if (!looksLikeMp3(audio.bytes)) {
+        return {
+          ok: false,
+          reason: `${input.model} answered, but not with mp3 audio. Nothing was written.`,
+        };
       }
       if (audio.bytes.byteLength > MAX_SPEECH_BYTES) {
         return {
