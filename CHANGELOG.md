@@ -10,6 +10,98 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.3 — Sep 25, 2026
+
+A release about long runs and about who decides. A turn no longer dies on a
+300 s wall clock: it streams under two silence clocks, resumes from what it had
+written, and Stop really stops it, in a job as in the chat. What a run may cost
+and how long it may work is now set by the workspace, and each agent has its
+own budget, API providers and coding CLIs counted together; a run stopped by a
+budget delivers what it wrote instead of losing it. A shell command is judged
+per kind of action, and the owner answers an approval without leaving the
+conversation. Agents can also write audio files from text, and the Delivered
+card now shows, plays and downloads a delivered image, track or video. Twenty
+pull requests, six migrations (`0123` to `0128`).
+
+**Upgrading: what changes for you**
+
+- **`MAX_COST_PER_JOB_USD` is no longer read.** The ceiling of one run lives in
+  Settings, Safety, Run budget (default $2, the value the runner applied until
+  now; 0 means none). A runner that still has the variable logs
+  `max_cost_env_ignored`.
+- **The coding-CLI daily budget becomes the agent's daily budget**, and only for
+  agents it applied to (CLI runtime or code-task tool). It now also counts the
+  agent's API calls. **Agents on the Codex runtime were exempt before and now
+  get an active ceiling** ($10 a day by default): check their Settings, Budget.
+- **"Run commands" is no longer a Yolo switch.** It has the three choices of
+  every other tool (run without asking, ask, block), and each agent has a shell
+  checklist per kind of action. Agents that were on Yolo keep running every
+  kind without asking (migration `0125`).
+
+**Long runs**
+
+- **A turn streams under two silence clocks instead of one 300 s wall clock**:
+  the wait for the first token (120 s, longer on a large context or a high
+  reasoning effort) and the silence between tokens (60 s). Reasoning counts as
+  activity; a local endpoint has neither clock. A turn cut mid-writing resumes
+  from its partial text instead of being replayed identically. (#449)
+- **Stop stops.** In the chat, Send becomes Stop while the agent answers, and
+  Stop ends the answer, including on the Claude Code and Codex runtimes.
+  (#459)
+- **Chat replies run under the same clocks as a job turn** and leave their
+  `llm_calls` row, so a long reply is observed and a mute one ends. (#466)
+- **A page opened while the agent is answering shows the answer as it is
+  written**, instead of hiding it until it is finished. (#502)
+- **An error the provider sends as a plain object keeps its message and
+  code**: it is retried when it should be, and never said as
+  "[object Object]". (#479)
+
+**Budgets**
+
+- **The workspace sets what a run may cost and how long it may work** (Settings,
+  Safety, Run budget). A stop on a budget delivers what the run wrote, then a
+  line saying why it stopped. An agent can set its own wait for the first word.
+  (#495)
+- **One budget per agent**, daily and monthly, in the agent's Settings, with a
+  warning threshold. API providers and coding CLIs are counted together, in
+  the workspace time zone. (#496)
+
+**Control**
+
+- **A shell command is judged per kind of action** read from the programs it
+  runs: inline code, deleting files, installing software, downloading,
+  stopping programs, system settings. Each kind is allowed, asked or never,
+  per agent. It is a reading of the command, not a sandbox: it does not follow
+  what a script does once it runs. (#476, #497)
+- **"Run commands" has the three choices of every other tool.** (#481)
+- **A pending approval is answered in the conversation**, with the same card as
+  the Approvals page. (#482)
+- **"Never for this agent" on an approval card** refuses the call and sets that
+  kind of action to Never, once confirmed. (#486)
+
+**Files and media**
+
+- **Agents write audio files from text** with the new `generate_speech` tool
+  (Gemini 3.8 Flash TTS and Flash Lite TTS through OpenRouter, WAV output). It
+  is switched on per agent in the Tools tab and uses the workspace OpenRouter
+  key. The delivery proof reads a WAV by its header. (#488, #489)
+- **The Delivered card shows, plays and downloads** a delivered image, audio or
+  video file. The file is served only if that run wrote it, inside the
+  workspace folders, from a closed list of types. (#493)
+- **Choosing a folder in Browse… adds it to the agent** at once; no second Add
+  click. (#467)
+- **A run opened from the MCP folder keeps the sidebar on Work.** (#500)
+
+**Under the hood**
+
+- The `.pg` test files share one Postgres per run, one fresh database each, so
+  the full suite no longer fails at random. (#499)
+- A test that compared a Windows short path with a real path is fixed; the
+  Windows CI is green again. (#503)
+- A shared link to the docs site shows a preview image. (#460)
+
+---
+
 ## v0.9.2 — Sep 23, 2026
 
 A release about saying the right thing. A run whose agent answered through
