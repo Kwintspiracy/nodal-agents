@@ -65,10 +65,17 @@ const actions = vi.hoisted(() => {
         { ok: true; data: undefined } | { ok: false; code: string; message: string }
       > => ({ ok: true, data: undefined }),
     ),
-    setRunCommandYoloAction: vi.fn(async (_raw: { agentId: string; enabled: boolean }) => ({
-      ok: true as const,
-      data: undefined,
-    })),
+    setRunCommandRuleAction: vi.fn(
+      async (_raw: {
+        agentId: string;
+        action: 'auto_approve' | 'require_approval' | 'block' | null;
+      }): Promise<
+        { ok: true; data: undefined } | { ok: false; code: string; message: string }
+      > => ({
+        ok: true,
+        data: undefined,
+      }),
+    ),
     setCodeTaskYoloAction: noop(),
     setCliDailyBudgetAction: noop(),
     getCliUsageTodayAction: vi.fn(async () => ({ ok: true as const, data: { usd: 0 } })),
@@ -304,9 +311,12 @@ describe("les textes de l'onglet Approvals @cap:regler-autonomie/ecran", () => {
       container.querySelector<HTMLButtonElement>('[data-testid="shell-advanced"]')!.click();
     });
     const text = container.textContent ?? '';
-    expect(text).toContain('Run commands without asking');
+    expect(text).toContain('Run commands on this machine');
     expect(text).toContain(
-      'When on, the agent can run any permitted command immediately. Commands are still logged. Use this only for agents you trust.',
+      'Any command the agent writes, in a shell on this machine. Every command is logged.',
+    );
+    expect(text).toContain(
+      'No choice set: the workspace autonomy decides, as the line above says.',
     );
     expect(text).toContain('Allowed commands');
     expect(text).toContain('Leave the list empty to allow any command.');
@@ -684,11 +694,11 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
     expect(control('file_write', 'block').disabled).toBe(false);
   });
 
-  it('prévient avant que la bascule Yolo ne supprime une règle de dossier', async () => {
-    // Revue Reviewer C, passe 4, C3 : « approuvé seulement dans Dev » allume
-    // aussi cette bascule, et l'éteindre SUPPRIME la règle. Une permission
-    // posée dossier par dossier disparaissait sans un mot, et rien sur cet
-    // onglet ne sait la recréer.
+  it('prévient avant que la ligne Run commands ne remplace une règle de dossier', async () => {
+    // Revue Reviewer C, passe 4, C3, puis #468 : changer la ligne REMPLACE la
+    // règle. Quand elle ne valait que dans un dossier, c'est une permission
+    // posée dossier par dossier qui disparaît, et rien sur cet onglet ne sait
+    // la recréer.
     await render(
       [],
       [
@@ -701,30 +711,94 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
         },
       ],
     );
-    actions.setRunCommandYoloAction.mockClear();
+    actions.setRunCommandRuleAction.mockClear();
 
-    const yolo = [...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]')].find(
-      (b) => b.getAttribute('aria-checked') === 'true',
-    );
-    expect(yolo).toBeDefined();
+    expect(control('run_command', 'auto_approve').getAttribute('aria-pressed')).toBe('true');
+    expect(
+      container.querySelector('[data-testid="autonomy-folder-run_command"]')?.textContent,
+    ).toBe('in Dev');
     await act(async () => {
-      yolo!.click();
+      control('run_command', 'block').click();
     });
 
-    expect(dialogText()).toContain('Delete the rule for this folder?');
+    expect(dialogText()).toContain('Replace the rule for this folder?');
     expect(dialogText()).toContain(
-      'Commands run without asking only in Dev today. Turning this off deletes that rule.',
+      'Commands run without asking only in Dev today. Changing this replaces that rule with one for every folder.',
     );
-    expect(actions.setRunCommandYoloAction.mock.calls).toEqual([]);
+    expect(actions.setRunCommandRuleAction.mock.calls).toEqual([]);
 
     await act(async () => {
       [...document.body.querySelectorAll('button')]
-        .find((b) => b.textContent === 'Delete the rule')!
+        .find((b) => b.textContent === 'Replace the rule')!
         .click();
     });
-    expect(actions.setRunCommandYoloAction.mock.calls.at(-1)?.[0]).toEqual({
+    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
       agentId: AGENT_ID,
-      enabled: false,
+      action: 'block',
+    });
+  });
+
+  // Revue de la PR #481 (Reviewer A) : le dialogue disait « Run without asking
+  // only in Dev » quelle que soit la règle, promettait un remplacement que le
+  // serveur refuse, et disait « Replace » pour une suppression.
+  it('dit ce que la règle de dossier fait vraiment, et ce que le geste en fera', async () => {
+    await render(
+      [],
+      [
+        {
+          id: 'r7',
+          toolName: 'run_command',
+          action: 'block',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
+      ],
+    );
+    actions.setRunCommandRuleAction.mockClear();
+
+    await act(async () => {
+      control('run_command', 'require_approval').click();
+    });
+    expect(dialogText()).toContain('Replace the rule for this folder?');
+    expect(dialogText()).toContain('A rule blocks commands in Dev today.');
+    expect(dialogText()).not.toContain('run without asking only in Dev');
+    await act(async () => {
+      [...document.body.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Cancel')!
+        .click();
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="run-command-reset"]')!.click();
+    });
+    expect(dialogText()).toContain('Remove the rule for this folder?');
+    expect(dialogText()).toContain('The workspace autonomy then decides everywhere.');
+    expect(actions.setRunCommandRuleAction.mock.calls).toEqual([]);
+  });
+
+  it('Run without asking par-dessus une règle de dossier ne promet pas un remplacement : le serveur tranche', async () => {
+    await render(
+      [],
+      [
+        {
+          id: 'r8',
+          toolName: 'run_command',
+          action: 'block',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
+      ],
+    );
+    actions.setRunCommandRuleAction.mockClear();
+
+    await act(async () => {
+      control('run_command', 'auto_approve').click();
+    });
+
+    expect(dialogText()).not.toContain('Replace the rule');
+    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      action: 'auto_approve',
     });
   });
 
@@ -1064,5 +1138,119 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
     expect(text).toContain(
       "A rule on one tool wins over the server's rule. These rows show the rules set for this agent.",
     );
+  });
+});
+
+describe('Run commands : les trois choix de tout outil (#468) @cap:regler-autonomie/ecran', () => {
+  function control(action: string): HTMLButtonElement {
+    const el = container.querySelector<HTMLButtonElement>(
+      `[data-testid="autonomy-btn-run_command-${action}"]`,
+    );
+    if (!el) throw new Error(`no run_command control for ${action}`);
+    return el;
+  }
+
+  function pressed(): string[] {
+    return ['auto_approve', 'require_approval', 'block'].filter(
+      (a) => control(a).getAttribute('aria-pressed') === 'true',
+    );
+  }
+
+  const RULE = (action: 'auto_approve' | 'require_approval' | 'block'): Rule => ({
+    id: 'rc',
+    toolName: 'run_command',
+    action,
+    conditionJson: null,
+    workspaceLabel: null,
+  });
+
+  beforeEach(() => {
+    actions.setRunCommandRuleAction.mockClear();
+    actions.setRunCommandRuleAction.mockImplementation(async () => ({
+      ok: true,
+      data: undefined,
+    }));
+  });
+
+  it('sans règle, AUCUN choix n’est allumé, et la ligne dit qui décide', async () => {
+    await render([], []);
+    expect(pressed()).toEqual([]);
+    expect(container.querySelector('[data-testid="run-command-no-rule"]')?.textContent).toBe(
+      'No choice set: the workspace autonomy decides, as the line above says.',
+    );
+    expect(container.querySelector('[data-testid="run-command-reset"]')).toBeNull();
+  });
+
+  it('chaque règle allume SON choix', async () => {
+    for (const action of ['auto_approve', 'require_approval', 'block'] as const) {
+      await render([], [RULE(action)]);
+      expect(pressed(), action).toEqual([action]);
+      act(() => root.unmount());
+      document.body.innerHTML = '';
+    }
+    await render([], []);
+  });
+
+  it('Block et Ask s’enregistrent sans confirmation, et envoient LEUR action', async () => {
+    await render([], []);
+    await act(async () => {
+      control('block').click();
+    });
+    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      action: 'block',
+    });
+    expect(pressed()).toEqual(['block']);
+
+    await act(async () => {
+      control('require_approval').click();
+    });
+    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      action: 'require_approval',
+    });
+  });
+
+  it('« Run without asking » demande d’abord, et n’écrit rien avant la réponse', async () => {
+    await render([], []);
+    await act(async () => {
+      control('auto_approve').click();
+    });
+    expect(document.body.textContent).toContain('Run commands without asking?');
+    expect(actions.setRunCommandRuleAction.mock.calls).toEqual([]);
+
+    await act(async () => {
+      [...document.body.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Run without asking' && b.closest('[role="dialog"]'))!
+        .click();
+    });
+    expect(actions.setRunCommandRuleAction.mock.calls).toEqual([
+      [{ agentId: AGENT_ID, action: 'auto_approve' }],
+    ]);
+  });
+
+  it('« Let the workspace autonomy decide » retire la règle', async () => {
+    await render([], [RULE('block')]);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="run-command-reset"]')!.click();
+    });
+    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      action: null,
+    });
+    expect(pressed()).toEqual([]);
+  });
+
+  it('un refus du serveur remet le choix d’avant', async () => {
+    actions.setRunCommandRuleAction.mockImplementation(async () => ({
+      ok: false,
+      code: 'forbidden',
+      message: 'Only the workspace owner can change how this agent runs commands.',
+    }));
+    await render([], [RULE('require_approval')]);
+    await act(async () => {
+      control('block').click();
+    });
+    expect(pressed()).toEqual(['require_approval']);
   });
 });

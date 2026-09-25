@@ -6678,10 +6678,19 @@ async function refuseGlobalGrantOverFolderRule(
     // transaction autour de ce garde et de son ecriture.
     .for('update');
   const folder = (existing?.conditionJson as ApprovalRuleCondition | null)?.workspacePath;
-  if (!existing || existing.action !== 'auto_approve' || typeof folder !== 'string') return null;
+  if (!existing || typeof folder !== 'string') return null;
+  if (existing.action === 'auto_approve') {
+    return (
+      `${toolName} is already approved for this agent only inside ${folder}. ` +
+      'Change that rule on the approval card before allowing it everywhere.'
+    );
+  }
+  // A Block or Ask rule confined to a folder is not a grant, but replacing it
+  // with a grant everywhere removes it AND widens the tool (review of PR #481,
+  // Reviewer A, P2). Refused the same way: the owner removes it first.
   return (
-    `${toolName} is already approved for this agent only inside ${folder}. ` +
-    'Change that rule on the approval card before allowing it everywhere.'
+    `${toolName} has a rule for this agent inside ${folder} (${existing.action === 'block' ? 'Block' : 'Ask for approval'}). ` +
+    'Remove that rule before allowing it everywhere.'
   );
 }
 
@@ -6809,42 +6818,37 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
   }
 }
 
-// ─── Command execution (run_command) yolo action ─────────────────────────────
+// ─── Command execution (run_command) rule ────────────────────────────────────
 //
-// run_command declares defaultApproval:'require_approval', meaning the ABSENCE
-// of an approval_rules row means every execution pauses for human approval.
-// "Yolo mode" is an explicit auto_approve row — the opposite of every other tool.
+// The "Run commands" row of the Autonomy tab (#468): the same three choices as
+// every other tool, plus "no rule", which leaves the workspace autonomy to
+// decide. Before #468 it was a Yolo switch (on = auto_approve, off = no rule):
+// Block could not be set from any screen, and Off read as "always asks" where
+// under destructive_gate an ordinary command still runs.
 //
-// enabled=true  → upsert an auto_approve row (delete-then-insert avoids dupes)
-// enabled=false → delete the row (reverts to safe default: require_approval)
-//
-// Server-enforces the Yolo gate. Two paths allow enabling:
-//   1. local-trust mode (single-user loopback — no auth at all).
-//   2. The active entity's owner has opted in via `entities.lan_command_yolo = true`
-//      AND the calling user is that entity's owner (entities.userId).
-// Disabling (enabled=false) is always permitted — it only removes permissions.
+// Gate (non-local-trust only): only the workspace owner may change it, in
+// EVERY direction. Making it stricter is the safe direction, but a non-owner
+// flipping it would still disrupt the owner's automations. The workspace brake
+// (auto_run_paused) does not condition the rule: it makes an auto_approve rule
+// DORMANT at run time (8b of execute.ts).
 
-const SetRunCommandYoloSchema = z.object({
+const RUN_COMMAND_ACTIONS = ['auto_approve', 'require_approval', 'block'] as const;
+
+const SetRunCommandRuleSchema = z.object({
   agentId: z.string().guid(),
-  enabled: z.boolean(),
+  /** `null` removes the rule: the workspace autonomy decides. */
+  action: z.enum(RUN_COMMAND_ACTIONS).nullable(),
 });
 
-export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResult<void>> {
+export async function setRunCommandRuleAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    const parsed = SetRunCommandYoloSchema.safeParse(raw);
+    const parsed = SetRunCommandRuleSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { agentId, enabled } = parsed.data;
+    const { agentId, action } = parsed.data;
 
-    // Gate (non-local-trust only): only the workspace owner may change a
-    // per-agent Yolo rule — in EITHER direction. Disabling is the safe direction
-    // (it only removes auto-approval) but a non-owner flipping it off would
-    // disrupt the owner's automations, so we owner-gate both. Le pré-requis
-    // « master switch » a disparu (0082) : le toggle par agent est la SEULE
-    // clé d'activation ; le frein auto_run_paused met les règles en dormance
-    // à l'exécution (8b d'execute.ts) sans conditionner leur création.
     if (env.AUTH_MODE !== 'local-trust') {
       const db = getDb();
       const [entityRow] = await db
@@ -6853,7 +6857,10 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
         .where(eq(entities.id, session.entityId));
       if (!entityRow) return fail('not_found', 'Workspace not found');
       if (entityRow.userId !== session.userId) {
-        return fail('forbidden', 'Only the workspace owner can change command auto-run.');
+        return fail(
+          'forbidden',
+          'Only the workspace owner can change how this agent runs commands.',
+        );
       }
     }
 
@@ -6867,18 +6874,20 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
     if (!agent) return fail('not_found', 'Agent not found');
 
     // Delete-then-insert wrapped in a transaction (R2, audit #2 follow-up):
-    // approval_rules now carries a UNIQUE(entity_id, agent_id, tool_name)
+    // approval_rules carries a UNIQUE(entity_id, agent_id, tool_name)
     // constraint (DB-1) — two overlapping calls (double-click, two tabs) could
     // both pass the delete and then race on the insert, throwing on the
     // constraint instead of leaving one clean row. db.transaction plus
-    // onConflictDoUpdate makes the whole toggle atomic and idempotent.
-    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine deja a
-    // un dossier, l'ecraser elargirait la permission en silence (revue
-    // Reviewer C, passe 1) : on refuse, en nommant le dossier. Le garde vit
-    // DANS la transaction et verrouille la ligne, sans quoi un geste concurrent
-    // passerait entre la lecture et l'ecriture (passe 2).
+    // onConflictDoUpdate makes the whole change atomic and idempotent.
+    // "Run without asking" from this row grants the tool EVERYWHERE. If a rule
+    // already confines it to a folder, overwriting it would widen the
+    // permission in silence (Reviewer C, pass 1): refused, naming the folder.
+    // The guard lives INSIDE the transaction and locks the row, or a
+    // concurrent gesture would slip between the read and the write (pass 2).
+    // Block and Ask only narrow: they replace a folder rule, which the screen
+    // confirms first.
     const refus = await db.transaction(async (tx) => {
-      if (enabled) {
+      if (action === 'auto_approve') {
         const message = await refuseGlobalGrantOverFolderRule(
           tx,
           session.entityId,
@@ -6898,18 +6907,18 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
           ),
         );
 
-      if (enabled) {
+      if (action !== null) {
         await tx
           .insert(approvalRules)
           .values({
             entityId: session.entityId,
             agentId,
             toolName: 'run_command',
-            action: 'auto_approve',
+            action,
           })
           .onConflictDoUpdate({
             target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
-            set: { action: 'auto_approve', updatedAt: new Date() },
+            set: { action, conditionJson: {}, updatedAt: new Date() },
           });
       }
       return null;
@@ -6919,7 +6928,7 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
   } catch (err) {
-    console.error('[setRunCommandYoloAction]', err);
+    console.error('[setRunCommandRuleAction]', err);
     return fail('db_error', 'Failed to save command execution setting');
   }
 }
@@ -6930,9 +6939,10 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
 // that the workspace owner has installed and logged in on the runner machine
 // (packages/tools/src/builtin/code-task). Same safety shape as run_command:
 // defaultApproval:'require_approval', so "Yolo mode" is an explicit
-// auto_approve row — see setRunCommandYoloAction above, which this mirrors
-// exactly (same gate, same transactional delete-then-insert on the
-// UNIQUE(entity_id, agent_id, tool_name) row).
+// auto_approve row. Same owner gate and same transactional delete-then-insert
+// on the UNIQUE(entity_id, agent_id, tool_name) row as setRunCommandRuleAction
+// above, but still a two-state switch: run_command takes three actions or
+// none since #468, code_task does not (review of PR #481).
 
 const SetCodeTaskYoloSchema = z.object({
   agentId: z.string().guid(),
@@ -6950,7 +6960,7 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
 
     // Gate (non-local-trust only): only the workspace owner may change a
     // per-agent Yolo rule — in EITHER direction, same reasoning as
-    // setRunCommandYoloAction. Le pré-requis « master switch » a disparu
+    // setRunCommandRuleAction. Le pré-requis « master switch » a disparu
     // (0082) : le toggle par agent est la SEULE clé d'activation, et le frein
     // auto_run_paused ne fait que mettre les règles en dormance à l'exécution.
     if (env.AUTH_MODE !== 'local-trust') {
@@ -6974,8 +6984,8 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // Delete-then-insert wrapped in a transaction (R2, mirrors
-    // setRunCommandYoloAction) — approval_rules carries a
+    // Delete-then-insert wrapped in a transaction (R2, as in
+    // setRunCommandRuleAction) — approval_rules carries a
     // UNIQUE(entity_id, agent_id, tool_name) constraint, so two overlapping
     // calls could otherwise race on the insert.
     // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine deja a

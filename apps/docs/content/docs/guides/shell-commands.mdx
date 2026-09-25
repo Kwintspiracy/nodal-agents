@@ -33,15 +33,15 @@ different approach.
 
 Where you approve a command: the [Approvals page](/docs/reference/dashboard) of
 the dashboard, which lists every command waiting for you. By default, nothing an
-agent proposes runs until you approve that call. Three things let commands
-through without that question: a **Run without asking** rule on `run_command`
-for that agent, optionally confined to one of its folders — the card's
-**Approve for this project** writes exactly that rule; the workspace's
+agent proposes runs until you approve that call. Two things let commands
+through without that question: a **Run without asking** choice on the agent's
+**Run commands** row, optionally confined to one of its folders — the card's
+**Approve for this project** writes exactly that choice for one folder; and,
+when the agent has no choice set, the workspace's
 [autonomy level](/docs/guides/root-agent) set to **Autonomous, gate
-destructive**, under which an ordinary command runs unasked; and Yolo mode,
-which drops the gate for ordinary commands. In all three cases, the agent's
-[shell checklist](#what-an-agent-may-not-do-with-a-shell) still applies: a kind
-of action set to **Ask me** asks, one set to **Never** is refused.
+destructive**, under which an ordinary command runs unasked. In both cases, the
+agent's [shell checklist](#what-an-agent-may-not-do-with-a-shell) still applies:
+a kind of action set to **Ask me** asks, one set to **Never** is refused.
 
 The **Run commands** section of the Autonomy tab says in one sentence what
 really happens for that agent, given its rule and the workspace level.
@@ -49,21 +49,23 @@ really happens for that agent, given its rule and the workspace level.
 On a Telegram-bound agent, the agent gets a bounded number of turns to tell you
 via chat that it is waiting — so you are not left wondering why it went quiet.
 
-## Yolo mode — auto-run without approval
+## The Run commands row: three choices
 
-Yolo mode skips the per-command approval gate. The agent runs commands
-immediately. Commands are still logged.
+On the agent's **Autonomy** tab, **Run commands** offers the same three choices
+as every other tool, in every auth mode:
 
-### Turning it on
+- **Run without asking**: the agent runs commands immediately, after you
+  confirm the choice once. Commands are still logged, and the kinds of action on
+  the agent's shell checklist still follow their setting.
+- **Ask for approval**: every command waits for you.
+- **Block**: the agent cannot run commands.
 
-Yolo is set per agent, in every auth mode:
+With no choice set, none is lit and the workspace autonomy decides; the sentence
+above the row says what that means for this agent. **Let the workspace autonomy
+decide** removes a choice. Before 0.9.3 this row was a "Yolo" switch, whose Off
+position could not block and did not always mean "asks".
 
-1. Open the agent's edit page and go to the **Autonomy** tab.
-2. Toggle **Run commands without asking** on.
-3. Confirm. Ordinary commands now run without asking. The kinds of action on
-   the agent's shell checklist still follow their setting.
-
-**Only the workspace owner can toggle it**, both in the dashboard and on the
+**Only the workspace owner can change it**, both in the dashboard and on the
 approval card. That was already true on both sides, which is why the separate
 LAN-only master switch was removed in 0.8.7: it was a second lock for the same
 key, and it only existed outside `local-trust` — a red button that works in one
@@ -111,11 +113,11 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
   saw.
 - **Never** refuses it. The agent is told what it may not do, so it does not
   look for a way around.
-- The list applies at **every** autonomy level, and under Yolo too: it only
-  ever adds a question or a refusal, it never removes one. A rule that blocks
-  the shell tool, and the hard floor below, still win.
-- A new agent asks for all six. An agent that already had Yolo everywhere when
-  this list appeared kept what it could do.
+- The list applies at **every** autonomy level, and under **Run without
+  asking** too: it only ever adds a question or a refusal, it never removes
+  one. A rule that blocks the shell tool, and the hard floor below, still win.
+- A new agent asks for all six. An agent already set to **Run without
+  asking** everywhere when this list appeared kept what it could do.
 - The checklist also judges a declared proof (`declare_verification`), because
   its steps run later without asking again.
 - Nodal recognises each kind by the program started (`rm`, `npm i`,
@@ -142,7 +144,8 @@ differently.
 
 A small, fixed set of commands is **machine-wide destructive**: wiping the disk
 root, formatting a drive, repartitioning, or powering off/rebooting the
-machine. These patterns can never run, in Yolo mode or not, approved or not:
+machine. These patterns can never run, with Run without asking or not, approved
+or not:
 
 - `rm -rf` (or `Remove-Item -Recurse -Force`, `del /s /q`, `rd /s /q`) against
   `/`, `~`, a Windows drive root, or a wildcard

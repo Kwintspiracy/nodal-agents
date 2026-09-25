@@ -168,10 +168,10 @@ describe('rien n’élargit une règle de dossier en silence @cap:approuver-une-
   });
 
   it('la bascule Yolo de run_command est refusée plutôt que d’écraser le dossier', async () => {
-    const { setAgentApprovalRuleAction, setRunCommandYoloAction } = await import('../actions.ts');
+    const { setAgentApprovalRuleAction, setRunCommandRuleAction } = await import('../actions.ts');
     expect((await poserRegleDossier('run_command')).ok).toBe(true);
 
-    const r = await setRunCommandYoloAction({ agentId: seed.agentId, enabled: true });
+    const r = await setRunCommandRuleAction({ agentId: seed.agentId, action: 'auto_approve' });
     expect(r.ok).toBe(false);
 
     const row = await rowFor('run_command');
@@ -179,9 +179,7 @@ describe('rien n’élargit une règle de dossier en silence @cap:approuver-une-
     expect(row!.action).toBe('auto_approve');
 
     // Et l'éteindre reste possible : cela ne fait que retirer une permission.
-    expect((await setRunCommandYoloAction({ agentId: seed.agentId, enabled: false })).ok).toBe(
-      true,
-    );
+    expect((await setRunCommandRuleAction({ agentId: seed.agentId, action: null })).ok).toBe(true);
     expect(await rowFor('run_command')).toBeUndefined();
     void setAgentApprovalRuleAction;
   });

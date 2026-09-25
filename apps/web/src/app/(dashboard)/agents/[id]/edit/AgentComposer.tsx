@@ -42,7 +42,7 @@ import {
   listAgentApprovalRulesAction,
   setAgentApprovalRuleAction,
   listInternalToolsAction,
-  setRunCommandYoloAction,
+  setRunCommandRuleAction,
   setCodeTaskYoloAction,
   setCliDailyBudgetAction,
   getCliUsageTodayAction,
@@ -2237,79 +2237,82 @@ function CommandExecutionSection({
   const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
 
   const [saving, setSaving] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const yoloEnabled = rules.some(
-    (r) => r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve',
-  );
+  /** Le choix qui attend une confirmation, et laquelle. */
+  const [pending, setPending] = useState<{
+    action: RunCommandChoice;
+    ask: 'grant' | 'dropFolder';
+  } | null>(null);
 
   /**
-   * Le dossier auquel la règle Yolo est confinée, s'il y en a un (revue
-   * Reviewer C, passe 4, C3).
-   *
-   * « approuvé, mais seulement dans Dev » allume aussi cette bascule. L'éteindre
-   * SUPPRIME la règle : une permission que le propriétaire avait posée dossier
-   * par dossier disparaissait sans un mot, et rien sur cet onglet ne sait la
-   * recréer.
+   * La règle de l'agent sur `run_command`, ou `null` : sans règle, AUCUN
+   * choix n'est allumé (#468). En allumer un affirmerait un réglage que
+   * personne n'a fait ; ce qui se passe alors est dit par la phrase de la
+   * section, calculée depuis l'autonomie de l'espace.
    */
-  const yoloFolder =
-    rules.find((r) => r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve')
-      ?.workspaceLabel ?? null;
-  const [confirmDropFolder, setConfirmDropFolder] = useState(false);
+  const current = rules.find((r) => r.toolName === RUN_COMMAND_TOOL) ?? null;
+  const action: RunCommandChoice = current?.action ?? null;
 
-  // 0082 : plus de pré-condition workspace — ce toggle est la SEULE clé
-  // (owner-only hors local-trust, confirmation à l'activation). Le frein
-  // auto_run_paused ne conditionne pas la création de la règle : il la rend
-  // DORMANTE à l'exécution (8b d'execute.ts), affichée grise ci-dessous.
-  const canToggle = isLocalTrust || isOwner;
-  const isDormant = yoloEnabled && autoRunPaused;
+  /**
+   * Le dossier auquel la règle est confinée, s'il y en a un (#361, revue
+   * Reviewer C, passe 4, C3). « Approuvé, mais seulement dans Dev » : changer
+   * la ligne REMPLACE cette règle, et rien sur cet onglet ne sait la recréer.
+   */
+  const folder = current?.workspaceLabel ?? null;
 
-  function applyOptimistic(enabled: boolean) {
+  // 0082 : plus de pré-condition workspace — cette ligne est la SEULE clé
+  // (owner-only hors local-trust, confirmation avant « Run without asking »).
+  // Le frein auto_run_paused ne conditionne pas la règle : il la rend
+  // DORMANTE à l'exécution (8b d'execute.ts), affichée ci-dessous.
+  const canChange = isLocalTrust || isOwner;
+  const isDormant = action === 'auto_approve' && autoRunPaused;
+
+  function applyOptimistic(next: RunCommandChoice) {
+    const others = rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL);
     onRulesChange(
-      enabled
-        ? [
-            ...rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
+      next === null
+        ? others
+        : [
+            ...others,
             {
               id: '',
               toolName: RUN_COMMAND_TOOL,
-              action: 'auto_approve' as const,
+              action: next,
               conditionJson: null,
               workspaceLabel: null,
             },
-          ]
-        : rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
+          ],
     );
   }
 
-  function handleToggle(next: boolean) {
-    if (next) {
-      // Enable: show warning confirm first
-      setConfirmOpen(true);
-    } else if (yoloFolder !== null) {
-      // Disable: nothing to warn about, EXCEPT when what it deletes is a rule
-      // confined to a folder (issue #361, and Reviewer C pass 4).
-      setConfirmDropFolder(true);
-    } else {
-      void doSet(false);
-    }
+  function request(next: RunCommandChoice) {
+    if (next === action) return;
+    // « Run without asking » par-dessus une règle de dossier, quelle qu'elle
+    // soit, est refusé par le serveur, qui dit pourquoi : aucun dialogue ne
+    // promet un remplacement qui n'aura pas lieu, et rien ne s'allume avant sa
+    // réponse (revue de la PR #481, Reviewer A).
+    if (folder !== null && next === 'auto_approve') void save(next, { optimistic: false });
+    // Les autres choix remplacent ou retirent la règle de dossier après
+    // confirmation : ce que le propriétaire perd a été posé pour ce dossier.
+    else if (folder !== null) setPending({ action: next, ask: 'dropFolder' });
+    else if (next === 'auto_approve') setPending({ action: next, ask: 'grant' });
+    else void save(next);
   }
 
-  async function doSet(enabled: boolean) {
+  async function save(next: RunCommandChoice, { optimistic = true } = {}) {
+    const before = current;
     setSaving(true);
-    applyOptimistic(enabled);
-    const result = await setRunCommandYoloAction({ agentId, enabled });
+    if (optimistic) applyOptimistic(next);
+    const result = await setRunCommandRuleAction({ agentId, action: next });
     setSaving(false);
     if (!result.ok) {
       toast.error(result.message);
-      // Revert optimistic update
-      applyOptimistic(!enabled);
-    } else {
-      toast.success(
-        enabled
-          ? 'Yolo mode enabled — commands run without approval.'
-          : 'Yolo mode disabled — commands require approval again.',
-      );
+      onRulesChange([
+        ...rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
+        ...(before ? [before] : []),
+      ]);
+      return;
     }
+    toast.success(RUN_COMMAND_SAVED[next ?? 'none']);
   }
 
   if (!hasSkill) {
@@ -2317,7 +2320,7 @@ function CommandExecutionSection({
   }
 
   return (
-    // Anchored for the Playwright journey: the tab holds other switches.
+    // Anchored for the Playwright journey: the tab holds other controls.
     <div data-testid="command-execution-section">
       <SectionCard>
         {/*
@@ -2328,88 +2331,138 @@ function CommandExecutionSection({
         <SectionHead
           label="Run commands"
           hint={runCommandsTruth({
-            rule: rules.find((r) => r.toolName === RUN_COMMAND_TOOL)?.action ?? null,
+            rule: action,
             paused: autoRunPaused,
             autonomy: workspaceAutonomy,
+            folder,
           })}
         />
 
-        <div className="flex items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="text-medium-14 text-ink">Run commands without asking</span>
-              <MonoMicroTag tone="err">irreversible</MonoMicroTag>
-              {isDormant && <MonoMicroTag tone="warn">paused</MonoMicroTag>}
-            </div>
-            <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
-              When on, the agent can run any permitted command immediately. Commands are still
-              logged. Use this only for agents you trust.
-            </p>
-            {isDormant && (
-              <p className="mt-2 text-body-12 text-warn">
-                This agent&apos;s Yolo is <b className="font-semibold">paused</b> — the workspace
-                brake is on, so its commands still require approval. Release the brake in{' '}
-                <Link
-                  href="/settings"
-                  className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
-                >
-                  Settings → Auto-run brake
-                </Link>{' '}
-                to re-arm it.
-              </p>
-            )}
-            {!canToggle && (
-              <p className="mt-2 text-body-12 text-ink-4">
-                Only the workspace owner can toggle Yolo per agent.
-              </p>
-            )}
-          </div>
-
-          {/* Toggle */}
-          <div className="mt-0.5">
-            <Switch
-              checked={yoloEnabled}
-              onChange={() => handleToggle(!yoloEnabled)}
-              disabled={saving || !canToggle}
-            />
-          </div>
+        {/*
+        The same three choices as every other tool (#468). It was a Yolo
+        switch: Block could not be set from any screen, and Off read as
+        "always asks" where the workspace autonomy may let commands run.
+      */}
+        <div className="overflow-hidden rounded-xl border border-rule-2">
+          <AutonomyToolRow
+            slug={RUN_COMMAND_TOOL}
+            label="Run commands on this machine"
+            summary="Any command the agent writes, in a shell on this machine. Every command is logged."
+            risk="destructive"
+            value={action}
+            saving={saving || !canChange}
+            onChange={request}
+            {...(folder === null ? {} : { folder })}
+          />
         </div>
 
-        {/* Confirm dialog — ESLint bans window.confirm; use ConfirmDialog instead */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-body-12 text-ink-4">
+          {action === null ? (
+            <span data-testid="run-command-no-rule">
+              No choice set: the workspace autonomy decides, as the line above says.
+            </span>
+          ) : (
+            canChange && (
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
+                onClick={() => request(null)}
+                disabled={saving}
+                data-testid="run-command-reset"
+              >
+                Let the workspace autonomy decide
+              </PrimaryButton>
+            )
+          )}
+          {!canChange && <span>Only the workspace owner can change this.</span>}
+        </div>
+
+        {isDormant && (
+          <p className="mt-2 text-body-12 text-warn">
+            <b className="font-semibold">Paused</b>: the workspace brake is on, so this agent&apos;s
+            commands still ask for approval. Release the brake in{' '}
+            <Link
+              href="/settings"
+              className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+            >
+              Settings → Auto-run brake
+            </Link>{' '}
+            to re-arm it.
+          </p>
+        )}
+
+        {/* Confirm dialogs — ESLint bans window.confirm; use ConfirmDialog instead */}
         <ConfirmDialog
-          open={confirmOpen}
-          title="Enable Yolo mode?"
-          message="Yolo mode lets this agent run ANY shell command on this machine with no approval. Only enable for an agent you fully trust. The command is still logged."
-          confirmLabel="Enable Yolo"
+          open={pending?.ask === 'grant'}
+          title="Run commands without asking?"
+          message="This agent will run ANY shell command on this machine with no approval, except the kinds of action below set to Ask me or Never. Only do this for an agent you fully trust. Every command is still logged."
+          confirmLabel="Run without asking"
           destructive
           onConfirm={() => {
-            setConfirmOpen(false);
-            void doSet(true);
+            const next = pending?.action ?? null;
+            setPending(null);
+            void save(next);
           }}
-          onCancel={() => setConfirmOpen(false)}
+          onCancel={() => setPending(null)}
         />
 
-        {/*
-        Éteindre la bascule SUPPRIME la règle. Quand cette règle ne valait que
-        dans un dossier, ce que le propriétaire perd n'est pas « le mode Yolo »
-        mais une permission qu'il avait posée dossier par dossier, et que cet
-        onglet ne sait pas recréer (revue Reviewer C, passe 4, C3).
-      */}
         <ConfirmDialog
-          open={confirmDropFolder}
-          title="Delete the rule for this folder?"
-          message={`Commands run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a command for that folder again from its approval card.`}
-          confirmLabel="Delete the rule"
+          open={pending?.ask === 'dropFolder'}
+          title={
+            pending?.action === null
+              ? 'Remove the rule for this folder?'
+              : 'Replace the rule for this folder?'
+          }
+          message={folderRuleLoss(action, folder ?? '', pending?.action ?? null)}
+          confirmLabel={pending?.action === null ? 'Remove the rule' : 'Replace the rule'}
           onConfirm={() => {
-            setConfirmDropFolder(false);
-            void doSet(false);
+            const next = pending?.action ?? null;
+            setPending(null);
+            void save(next);
           }}
-          onCancel={() => setConfirmDropFolder(false)}
+          onCancel={() => setPending(null)}
         />
       </SectionCard>
     </div>
   );
 }
+
+type RunCommandChoice = 'auto_approve' | 'require_approval' | 'block' | null;
+
+/**
+ * What replacing or removing a folder rule loses, said from the rule that
+ * exists and the gesture made (review of PR #481, Reviewer A): it said "run
+ * without asking only in Dev" for a Block rule, and "replaces" for a removal.
+ */
+function folderRuleLoss(
+  existing: RunCommandChoice,
+  folder: string,
+  next: RunCommandChoice,
+): string {
+  const today =
+    existing === 'block'
+      ? `A rule blocks commands in ${folder} today.`
+      : existing === 'require_approval'
+        ? `Every command asks for your approval in ${folder} today.`
+        : `Commands run without asking only in ${folder} today.`;
+  const change =
+    next === null
+      ? 'Removing it drops that rule. The workspace autonomy then decides everywhere.'
+      : 'Changing this replaces that rule with one for every folder.';
+  const back =
+    existing === 'auto_approve'
+      ? ' To put it back, approve a command for that folder again from its approval card.'
+      : '';
+  return `${today} ${change}${back}`;
+}
+
+/** What the toast says once a choice is saved. */
+const RUN_COMMAND_SAVED: Record<NonNullable<RunCommandChoice> | 'none', string> = {
+  auto_approve: 'Commands now run without asking.',
+  require_approval: 'Every command now asks for your approval.',
+  block: 'This agent can no longer run commands.',
+  none: 'The workspace autonomy now decides how commands run.',
+};
 
 // ─── Coding CLI (code_task) section ───────────────────────────────────────────
 //

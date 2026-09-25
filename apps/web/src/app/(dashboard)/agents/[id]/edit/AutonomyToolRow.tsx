@@ -40,7 +40,8 @@ export default function AutonomyToolRow({
   label: string;
   summary: string;
   risk: 'read' | 'write' | 'destructive';
-  value: AutonomyAction;
+  /** `null` : pas de règle, rien n'est choisi (`run_command`, #468). */
+  value: AutonomyAction | null;
   saving: boolean;
   onChange: (action: AutonomyAction) => void;
   /**

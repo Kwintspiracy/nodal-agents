@@ -147,16 +147,16 @@ describe('setAgentApprovalRuleAction — upsert on (entity, agent, tool) — DB-
   });
 });
 
-// ─── R2: setRunCommandYoloAction — transactional toggle on approval_rules ─────
+// ─── R2: setRunCommandRuleAction — transactional change on approval_rules ─────
 
-describe('setRunCommandYoloAction — re-toggle never leaves a duplicate row — R2 (audit #2 follow-up)', () => {
+describe('setRunCommandRuleAction — re-setting never leaves a duplicate row — R2 (audit #2 follow-up)', () => {
   it('enable, then enable again (re-toggle race) leaves exactly ONE auto_approve row', async () => {
     const agentId = await makeAgent('Audit2 Yolo Agent');
-    const { setRunCommandYoloAction } = await import('../src/lib/actions.ts');
+    const { setRunCommandRuleAction } = await import('../src/lib/actions.ts');
 
-    const first = await setRunCommandYoloAction({ agentId, enabled: true });
+    const first = await setRunCommandRuleAction({ agentId, action: 'auto_approve' });
     expect(first.ok).toBe(true);
-    const second = await setRunCommandYoloAction({ agentId, enabled: true });
+    const second = await setRunCommandRuleAction({ agentId, action: 'auto_approve' });
     expect(second.ok).toBe(true);
 
     const rows = await _testDb!
@@ -175,10 +175,10 @@ describe('setRunCommandYoloAction — re-toggle never leaves a duplicate row —
 
   it('disable removes the row', async () => {
     const agentId = await makeAgent('Audit2 Yolo Agent Off');
-    const { setRunCommandYoloAction } = await import('../src/lib/actions.ts');
+    const { setRunCommandRuleAction } = await import('../src/lib/actions.ts');
 
-    await setRunCommandYoloAction({ agentId, enabled: true });
-    const off = await setRunCommandYoloAction({ agentId, enabled: false });
+    await setRunCommandRuleAction({ agentId, action: 'auto_approve' });
+    const off = await setRunCommandRuleAction({ agentId, action: null });
     expect(off.ok).toBe(true);
 
     const rows = await _testDb!
@@ -195,7 +195,7 @@ describe('setRunCommandYoloAction — re-toggle never leaves a duplicate row —
   });
 });
 
-// ─── setCodeTaskYoloAction — mirrors setRunCommandYoloAction's R2 guarantee ───
+// ─── setCodeTaskYoloAction — mirrors setRunCommandRuleAction's R2 guarantee ───
 
 describe('setCodeTaskYoloAction — re-toggle never leaves a duplicate row', () => {
   it('enable, then enable again (re-toggle race) leaves exactly ONE auto_approve row', async () => {
@@ -244,10 +244,10 @@ describe('setCodeTaskYoloAction — re-toggle never leaves a duplicate row', () 
 
   it('does not touch a run_command rule on the same agent (distinct tool_name rows)', async () => {
     const agentId = await makeAgent('Audit2 CodeTask And RunCommand Agent');
-    const { setRunCommandYoloAction, setCodeTaskYoloAction } =
+    const { setRunCommandRuleAction, setCodeTaskYoloAction } =
       await import('../src/lib/actions.ts');
 
-    await setRunCommandYoloAction({ agentId, enabled: true });
+    await setRunCommandRuleAction({ agentId, action: 'auto_approve' });
     await setCodeTaskYoloAction({ agentId, enabled: true });
 
     const rows = await _testDb!
