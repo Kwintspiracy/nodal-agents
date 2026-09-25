@@ -115,6 +115,26 @@ describe('readAgentBudgetState @cap:voir-le-cout/moteur', () => {
     expect(state!.reached).toBe('day');
   });
 
+  // Review of PR #496: a stored timezone that is not IANA made `AT TIME ZONE`
+  // throw on every read, so every budget check of the workspace failed on a
+  // database error instead of giving a verdict.
+  it('a stored timezone that is not a real one falls back to the server zone, and still gives a verdict', async () => {
+    await db
+      .update(entities)
+      .set({ timezone: 'Mars/Olympus_Mons' })
+      .where(eq(entities.id, seed.entityId));
+    await db
+      .update(agents)
+      .set({ budgetDailyUsd: 1, budgetMonthlyUsd: 0 })
+      .where(eq(agents.id, seed.agentId));
+
+    const state = await readAgentBudgetState(db, seed.agentId, 'UTC');
+
+    expect(state!.timezone).toBe('UTC');
+    expect(state!.todayUsd).toBeGreaterThanOrEqual(2);
+    expect(state!.reached).toBe('day');
+  });
+
   it('budgetReached: 0 means no ceiling, the day before the month', () => {
     expect(budgetReached({ dailyUsd: 0, monthlyUsd: 0 }, { todayUsd: 999, monthUsd: 999 })).toBe(
       null,
