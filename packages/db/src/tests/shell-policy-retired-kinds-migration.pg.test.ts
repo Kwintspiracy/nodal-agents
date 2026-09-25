@@ -80,7 +80,8 @@ describe('migration 0128_shell_policy_retired_kinds @cap:executer-une-commande/m
         ('00000000-0000-4000-8000-0000000001b3', ${E}, 'Both', 'both', 'p', '{"own_script":"never","inline_code":"ask"}'::jsonb),
         ('00000000-0000-4000-8000-0000000001b4', ${E}, 'Propre', 'propre', 'p', '{"delete_files":"never"}'::jsonb),
         ('00000000-0000-4000-8000-0000000001b5', ${E}, 'Rien', 'rien', 'p', NULL),
-        ('00000000-0000-4000-8000-0000000001b6', ${E}, 'Never', 'never', 'p', '{"own_script":"never"}'::jsonb)`);
+        ('00000000-0000-4000-8000-0000000001b6', ${E}, 'Never', 'never', 'p', '{"own_script":"never"}'::jsonb),
+        ('00000000-0000-4000-8000-0000000001b7', ${E}, 'Nul', 'nul', 'p', '{"own_script":"ask","inline_code":null}'::jsonb)`);
 
       await replay(db);
 
@@ -96,6 +97,8 @@ describe('migration 0128_shell_policy_retired_kinds @cap:executer-une-commande/m
         { slug: 'excel', shell_policy: null },
         // Une interdiction posée sur own_script survit sur inline_code (revue de la PR #497).
         { slug: 'never', shell_policy: { inline_code: 'never' } },
+        // `inline_code` à null JSON n'est pas un réglage : own_script le remplace.
+        { slug: 'nul', shell_policy: { inline_code: 'ask' } },
         { slug: 'propre', shell_policy: { delete_files: 'never' } },
         { slug: 'rien', shell_policy: null },
         {
@@ -134,7 +137,9 @@ describe('migration 0128_shell_policy_retired_kinds @cap:executer-une-commande/m
         ('00000000-0000-4000-8000-0000000001c1', ${E}, ${job!.id}, 'run_command', '{}'::jsonb, 'pending',
           '[{"category":"outside_folders","state":"ask","details":["C:/x"]},{"category":"delete_files","state":"ask","details":["rm x"]},{"state":"ask","details":["sans catégorie"]}]'::jsonb),
         ('00000000-0000-4000-8000-0000000001c2', ${E}, ${job!.id}, 'run_command', '{}'::jsonb, 'pending',
-          '[{"category":"own_script","state":"ask","details":["a.py"]}]'::jsonb)`);
+          '[{"category":"own_script","state":"ask","details":["a.py"]}]'::jsonb),
+        ('00000000-0000-4000-8000-0000000001c3', ${E}, ${job!.id}, 'run_command', '{}'::jsonb, 'pending',
+          '{"category":"own_script"}'::jsonb)`);
 
       await replay(db);
 
@@ -144,14 +149,14 @@ describe('migration 0128_shell_policy_retired_kinds @cap:executer-une-commande/m
       expect(rows).toEqual([
         {
           id: '00000000-0000-4000-8000-0000000001c1',
-          // Un élément sans catégorie n'est pas une sorte retirée : il reste
-          // (revue de la PR #497 ; `NULL NOT IN (…)` l'écartait en silence).
-          gate_reasons: [
-            { category: 'delete_files', state: 'ask', details: ['rm x'] },
-            { state: 'ask', details: ['sans catégorie'] },
-          ],
+          // Seules les raisons lisibles restent : un élément sans catégorie
+          // part aussi, sinon la carte perdait le tableau entier, `delete_files`
+          // compris (revue de la PR #497, passe 2).
+          gate_reasons: [{ category: 'delete_files', state: 'ask', details: ['rm x'] }],
         },
         { id: '00000000-0000-4000-8000-0000000001c2', gate_reasons: null },
+        // Pas un tableau : laissé tel quel, sans erreur (revue de la PR #497).
+        { id: '00000000-0000-4000-8000-0000000001c3', gate_reasons: { category: 'own_script' } },
       ]);
     } finally {
       await close();
