@@ -385,4 +385,26 @@ describe('DeliveryBlock — un média livré se montre, se joue, se télécharge
       vi.unstubAllGlobals();
     }
   });
+
+  it('un fichier vide se dit vide (la route répond 416 sans corps)', async () => {
+    // Revue de la PR #493 : la note disait « Cannot show this file (HTTP 416) ».
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 416 })),
+    );
+    try {
+      await render(<DeliveryBlock summary={MEDIAS} jobId="job-7" filesJobId="job-7" />);
+      await act(async () => {
+        container.querySelector('audio')?.dispatchEvent(new Event('error'));
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(container.querySelector('[data-testid="delivery-media-failure"]')?.textContent).toBe(
+        'This file is empty.',
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

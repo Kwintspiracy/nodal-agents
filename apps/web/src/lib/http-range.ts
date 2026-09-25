@@ -5,6 +5,10 @@
  * Le morceau demandé par `Range: bytes=a-b` (une seule plage, la forme que les
  * lecteurs des navigateurs envoient). null = tout le fichier ; 'unsatisfiable'
  * = une plage hors du fichier, que HTTP refuse en 416.
+ *
+ * Un en-tête à plusieurs plages (`bytes=0-1,3-4`) ou mal formé rend le fichier
+ * entier, ce que la RFC 7233 permet : servir du multipart pour un lecteur qui
+ * n'en demande jamais serait du code sans appelant (revue de la PR #493).
  */
 export function parseRange(
   header: string | null,
