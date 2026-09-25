@@ -759,18 +759,27 @@ export function budgetStopLine(f: BudgetStopFacts): string {
     return `[stopped: agent budget — $${f.spent.toFixed(2)} spent ${when}, ceiling $${f.limit.toFixed(2)}, turn ${f.turn}]`;
   }
   if (f.kind === 'time') {
-    const h = (ms: number) => `${(ms / 3_600_000).toFixed(1)} h`;
-    return `[stopped: run budget — ${h(f.spent)} of work, ceiling ${h(f.limit)}, turn ${f.turn}]`;
+    // À la minute, et le temps passé ARRONDI AU-DESSUS : coupé à 2 h 00 min
+    // 01 s sous un plafond de 2 h, la ligne disait « 2.0 h of work, ceiling
+    // 2.0 h », un dépassement illisible (revue de la PR #495).
+    const hm = (minutes: number) =>
+      `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`;
+    return `[stopped: run budget — ${hm(Math.ceil(f.spent / 60_000))} of work, ceiling ${hm(Math.floor(f.limit / 60_000))}, turn ${f.turn}]`;
   }
   const n = (x: number) => Math.round(x).toLocaleString('en-US');
   return `[stopped: token budget — ${n(f.spent)} tokens, ceiling ${n(f.limit)}, turn ${f.turn}]`;
 }
 
 /**
- * Ce qu'un run arrêté par son budget livre : ce qu'il a écrit avant (le
- * dernier texte des tours précédents, puis celui du tour en cours s'il en a
- * un), et la ligne qui dit pourquoi il s'arrête. Un texte identique n'est pas
- * répété.
+ * Ce qu'un run arrêté par son budget livre : son DERNIER texte des tours
+ * précédents (relu dans la transcription enregistrée, donc aussi d'avant une
+ * suspension), puis celui du tour en cours s'il en a un, et la ligne qui dit
+ * pourquoi il s'arrête. Un texte identique n'est pas répété.
+ *
+ * Le dernier texte, pas tous : c'est l'état le plus récent de ce que l'agent
+ * rendait, la même lecture que le livrable d'un run qui finit normalement
+ * (`lastAssistantTextSeen`). Empiler chaque texte intermédiaire livrerait des
+ * brouillons que l'agent a lui-même dépassés (revue de la PR #495).
  */
 export function budgetDeliverable(prior: string, current: string, line: string): string {
   const parts = [prior.trim()];
