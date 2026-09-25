@@ -1,11 +1,12 @@
-// execute-ready-conversation.test.ts — a task-board child belongs to its
-// creator's conversation (#469, review of PR #482).
+// execute-ready-conversation.test.ts — a task-board child two levels down
+// still belongs to the conversation (#469, review of PR #482).
 //
 // The chat shows the pending approvals of every run that carries the
-// conversation's id. The delegation path copies it (delegate.test.ts, "inherits
-// conversation_id"); the task-board path, the root's other way of handing out
-// work, had no test. Without it, an approval held by a task-board child would
-// show on /approvals and never in the conversation it belongs to.
+// conversation's id. Depth 1 of the task-board path is already proven
+// (apps/runner/src/cron/tests/execute-ready.test.ts, "inherits conversation_id
+// from the CREATOR (root) job"), and the delegation path too (delegate.test.ts).
+// What this adds is depth 2: a task created by a task-board child, whose
+// approval must still show in the conversation it belongs to.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';

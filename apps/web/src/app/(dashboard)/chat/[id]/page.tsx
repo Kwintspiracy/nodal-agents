@@ -177,7 +177,10 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
           />
           {/* Ce que les travaux de cette conversation attendent de la personne,
               répondu ICI, sans passer par la page Approvals (#469). */}
-          <ConversationApprovals conversationId={conversation.id} />
+          {/* Keyed by the conversation: moving to another one starts from an
+              empty list, never the previous conversation's cards (review of
+              PR #482). */}
+          <ConversationApprovals key={conversation.id} conversationId={conversation.id} />
           <PendingTurn
             agentName={conversation.agentName ?? 'Agent'}
             agentAvatarUrl={conversation.agentAvatarUrl}
