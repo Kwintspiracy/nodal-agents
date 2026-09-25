@@ -5,7 +5,7 @@
 // where it landed, and the reason the agent gets when it cannot.
 
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { mkdtemp, readFile, rm, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpeechRequest } from '@nodal-agents/llm';
@@ -16,8 +16,12 @@ let WORKSPACE: string;
 let OUTSIDE: string;
 
 beforeEach(async () => {
-  WORKSPACE = await mkdtemp(join(tmpdir(), 'nodal-speech-ws-'));
-  OUTSIDE = await mkdtemp(join(tmpdir(), 'nodal-speech-outside-'));
+  // Le chemin RÉEL : l'outil rend celui que `realpath` donne, et sous Windows
+  // le dossier temporaire peut porter un nom court 8.3 (`RUNNER~1` sur la CI
+  // Windows, au lieu de `runneradmin`). Sans cela, le chemin rendu ne se compare
+  // plus au chemin attendu, et la CI Windows était rouge depuis #488.
+  WORKSPACE = await realpath(await mkdtemp(join(tmpdir(), 'nodal-speech-ws-')));
+  OUTSIDE = await realpath(await mkdtemp(join(tmpdir(), 'nodal-speech-outside-')));
 });
 
 afterAll(async () => {
