@@ -54,9 +54,58 @@ export function withGeminiStyle(body: string, style: string): string {
 }
 
 /**
+ * Gemini TTS answers raw PCM: signed 16-bit little-endian, mono, 24 kHz, as
+ * Google documents its speech output. Used when the answer's content type
+ * names no rate.
+ */
+export const GEMINI_TTS_SAMPLE_RATE = 24_000;
+
+/**
+ * Raw 16-bit mono PCM wrapped in a WAV (RIFF) header, so any player opens it.
+ * No transcoding: the samples are copied as they came.
+ */
+export function pcmToWav(pcm: Uint8Array, sampleRate: number): Uint8Array {
+  const channels = 1;
+  const bitsPerSample = 16;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const out = new Uint8Array(44 + pcm.byteLength);
+  const view = new DataView(out.buffer);
+  const ascii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i++) out[offset + i] = text.charCodeAt(i);
+  };
+  ascii(0, 'RIFF');
+  view.setUint32(4, 36 + pcm.byteLength, true);
+  ascii(8, 'WAVE');
+  ascii(12, 'fmt ');
+  view.setUint32(16, 16, true); // fmt chunk size
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true); // byte rate
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  ascii(36, 'data');
+  view.setUint32(40, pcm.byteLength, true);
+  out.set(pcm, 44);
+  return out;
+}
+
+/**
+ * `audio/pcm;rate=16000` → 16000; no rate named → the Gemini default. Only a
+ * `rate` PARAMETER counts: `bitrate=64000` is not a sample rate (review of
+ * PR #489).
+ */
+function sampleRateOf(contentType: string): number {
+  const match = /(?:^|;)\s*rate=(\d+)/i.exec(contentType);
+  return match ? Number(match[1]) : GEMINI_TTS_SAMPLE_RATE;
+}
+
+/**
  * A speech generator on OpenRouter for one API key (already decrypted by the
- * caller). mp3 only for now: OpenRouter offers mp3 or raw pcm, and a raw pcm
- * file is not playable as is.
+ * caller). The audio comes back as a WAV file: Gemini TTS through OpenRouter
+ * only answers `response_format: "pcm"` (it refuses mp3: "Gemini TTS only
+ * supports response_format=\"pcm\"", run 16052ae6, 2026-09-25), and raw PCM
+ * is not playable as is, so the samples get a WAV header.
  */
 export function createOpenRouterSpeech(
   apiKey: string,
@@ -87,9 +136,28 @@ export function createOpenRouterSpeech(
       model: provider.speech(request.model),
       text: request.text,
       voice: request.voice,
-      outputFormat: 'mp3',
+      outputFormat: 'pcm',
       maxRetries: 0,
     });
-    return { bytes: result.audio.uint8Array, mediaType: result.audio.mediaType };
+    // The AI SDK copies the fetch Headers, whose keys are lower-case.
+    const contentType = result.responses[0]?.headers?.['content-type'] ?? '';
+    // A 200 whose body is not audio (an error page) is said, never wrapped
+    // into a broken file. An answer naming no type at all is taken as the pcm
+    // it was asked for: the odd-length check below still catches a cut stream.
+    if (contentType !== '' && !/^audio\//i.test(contentType)) {
+      throw new Error(`${request.model} answered ${contentType}, not audio`);
+    }
+    const pcm = result.audio.uint8Array;
+    // 16-bit samples come in pairs of bytes: an odd count is a cut stream, and
+    // its WAV would be malformed (review of PR #489).
+    if (pcm.byteLength % 2 !== 0) {
+      throw new Error(
+        `${request.model} answered ${pcm.byteLength} bytes of 16-bit audio: an odd count, the stream was cut`,
+      );
+    }
+    return {
+      bytes: pcmToWav(pcm, sampleRateOf(contentType)),
+      mediaType: 'audio/wav',
+    };
   };
 }

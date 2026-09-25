@@ -55,7 +55,8 @@ const documentDeliverableType = 'document' as const;
  * ces règles, ou une écriture dans le fichier pendant la preuve. Ce commentaire
  * n'en disait qu'une (passe 8, constat R3).
  */
-export const DOCUMENT_MANIFEST_HASH = 'document-rules/v1';
+// v2 (#487) : les règles binaires (WAV) ont rejoint les règles texte.
+export const DOCUMENT_MANIFEST_HASH = 'document-rules/v2';
 
 /**
  * L'empreinte du CONTENU du fichier au moment où la configuration est lue —
@@ -512,6 +513,31 @@ const FORM_RULES: Readonly<Record<string, { readonly name: string; readonly chec
   '.xml': { name: 'xml', check: xmlParses },
 };
 
+/**
+ * Les fichiers BINAIRES : leur preuve lit leur en-tête, jamais un décodage
+ * texte. Run 4078068d (25/09) : `generate_speech` avait écrit un WAV valide,
+ * et la preuve le disait rouge sur « the file is not valid UTF-8 » — aucun
+ * fichier audio ne peut l'être (#487). `null` = bien formé, sinon ce qui manque.
+ *
+ * Même profondeur que les règles texte : l'en-tête dit la forme, pas le
+ * contenu. Un WAV à l'en-tête juste mais au corps tronqué passe cette preuve
+ * (revue de la PR #489) ; `generate_speech` refuse déjà un flux coupé avant
+ * d'écrire.
+ */
+const BINARY_FORM_RULES: Readonly<
+  Record<string, { readonly name: string; readonly check: (bytes: Buffer) => string | null }>
+> = {
+  '.wav': {
+    name: 'wav',
+    check: (bytes) =>
+      bytes.length >= 12 &&
+      bytes.toString('ascii', 0, 4) === 'RIFF' &&
+      bytes.toString('ascii', 8, 12) === 'WAVE'
+        ? null
+        : 'no RIFF/WAVE header: this is not a WAV file',
+  },
+};
+
 // ─── Le vérificateur ────────────────────────────────────────────────────────
 
 export const documentVerifier: DeliverableVerifier = {
@@ -620,6 +646,19 @@ export const documentVerifier: DeliverableVerifier = {
       return done();
     }
     await emit(ok('not-empty'));
+
+    // 3 bis · un fichier binaire est prouvé par son en-tête, puis s'arrête là
+    const binary = BINARY_FORM_RULES[extname(path).toLowerCase()];
+    if (binary !== undefined) {
+      const tb = Date.now();
+      const fault = binary.check(bytes);
+      await emit(
+        fault === null
+          ? ok(`well-formed:${binary.name}`, '', Date.now() - tb)
+          : ko(`well-formed:${binary.name}`, fault, Date.now() - tb),
+      );
+      return done();
+    }
 
     // 3 · il se décode en UTF-8
     const t1 = Date.now();

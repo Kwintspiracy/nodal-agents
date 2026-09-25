@@ -149,6 +149,28 @@ describe('document — les trois constats communs', () => {
     expect(records.at(-1)).toMatchObject({ command: 'utf8', verdict: 'red' });
   });
 
+  // Run 4078068d (2026-09-25): generate_speech wrote a valid WAV, and the
+  // proof went red on "the file is not valid UTF-8". An audio file is binary:
+  // its proof reads its header, never a text decoding.
+  it('un WAV est prouvé par son en-tête, pas décodé en UTF-8', async () => {
+    const header = Buffer.alloc(44);
+    header.write('RIFF', 0, 'ascii');
+    header.write('WAVE', 8, 'ascii');
+    header.write('fmt ', 12, 'ascii');
+    header.write('data', 36, 'ascii');
+    const p = write('voix.wav', Buffer.concat([header, Buffer.from([0xff, 0xfe, 0x01, 0x80])]));
+    const { verdict, records } = await prove(p);
+    expect(verdict).toBe('green');
+    expect(records.map((r) => r.command)).toEqual(['exists', 'not-empty', 'well-formed:wav']);
+  });
+
+  it('un .wav qui n’a pas d’en-tête RIFF/WAVE est rouge, et le dit', async () => {
+    const p = write('faux.wav', Buffer.from('{"error":"upstream"}'));
+    const { verdict, records } = await prove(p);
+    expect(verdict).toBe('red');
+    expect(records.at(-1)).toMatchObject({ command: 'well-formed:wav', verdict: 'red' });
+  });
+
   it('chaque constat est rendu au fil de l’eau — l’appelant les persiste un par un', async () => {
     const p = write('ok.md', '# Titre\n\ncorps\n');
     const { records, seen } = await prove(p);
