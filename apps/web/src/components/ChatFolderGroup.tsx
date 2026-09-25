@@ -75,6 +75,7 @@ import {
   type FolderThreadsSnapshot,
 } from '@/lib/folder-threads-actions.ts';
 import { usePolling, SIDEBAR_POLL_MS } from '@/lib/use-polling';
+import { conversationIdOfHref } from '@/lib/run-page.ts';
 
 /**
  * L'icône d'un dossier. Les logos de marque quand le paquet d'icônes en a un —
@@ -293,35 +294,39 @@ export default function ChatFolderGroup() {
                 ) : fils.length === 0 ? (
                   <p className={SIDEBAR_NOTE}>Nothing here yet</p>
                 ) : (
-                  fils.map((t) => (
-                    <SidebarRow
-                      key={t.key}
-                      href={t.href}
-                      title={t.title}
-                      depth="thread"
-                      // Le fil OUVERT s'allume (Quentin, 20/09) : la route est
-                      // son adresse, ou commence par elle.
-                      active={pathname === t.href || pathname.startsWith(`${t.href}/`)}
-                      markCurrent
-                      // Les trois points, sur un FIL seulement (20/09) : un run
-                      // (`/jobs/<id>`) ne se renomme ni ne se supprime d'ici.
-                      menu={
-                        t.href.startsWith('/chat/') ? (
-                          <RowActions
-                            kind="conversation"
-                            id={t.href.slice('/chat/'.length)}
-                            name={t.title}
-                            href={t.href}
-                            onDone={relire}
-                          />
-                        ) : undefined
-                      }
-                      testId={`folder-thread-${f.key}`}
-                    >
-                      <ThreadDot thread={t} />
-                      <span className="flex-1 truncate leading-5">{t.title}</span>
-                    </SidebarRow>
-                  ))
+                  fils.map((t) => {
+                    // Les trois points, sur un FIL seulement (20/09) : un run ne
+                    // se renomme ni ne se supprime d'ici, même rangé sous `/chat`
+                    // depuis #472 (revue de la PR #500).
+                    const conversationId = conversationIdOfHref(t.href);
+                    return (
+                      <SidebarRow
+                        key={t.key}
+                        href={t.href}
+                        title={t.title}
+                        depth="thread"
+                        // Le fil OUVERT s'allume (Quentin, 20/09) : la route est
+                        // son adresse, ou commence par elle.
+                        active={pathname === t.href || pathname.startsWith(`${t.href}/`)}
+                        markCurrent
+                        menu={
+                          conversationId !== null ? (
+                            <RowActions
+                              kind="conversation"
+                              id={conversationId}
+                              name={t.title}
+                              href={t.href}
+                              onDone={relire}
+                            />
+                          ) : undefined
+                        }
+                        testId={`folder-thread-${f.key}`}
+                      >
+                        <ThreadDot thread={t} />
+                        <span className="flex-1 truncate leading-5">{t.title}</span>
+                      </SidebarRow>
+                    );
+                  })
                 )}
                 {/* « See all » mène à la liste ENTIÈRE du dossier — depuis le
                     19/09/2026, c'est la SEULE chose du sous-menu qui y mène,
