@@ -165,7 +165,8 @@ export function PendingTurnProvider({
   // La relecture du fil à la fin d'un tour suivi, DANS une transition : on sait
   // ainsi quand elle est rendue (revue de la PR #502).
   const [relecture, lancerRelecture] = useTransition();
-  const aEffacerApresRelecture = useRef(false);
+  /** Le numéro du tour fini dont le texte part après la relecture, ou null. */
+  const aEffacerApresRelecture = useRef<number | null>(null);
   // Une nouvelle demande dans le fil, c'est un nouveau tour à suivre.
   const requestCount = requests.length;
   useEffect(() => {
@@ -190,7 +191,7 @@ export function PendingTurnProvider({
         // fini en ERREUR (aucune réponse en base, le fil relu attend toujours)
         // laissait la demi-réponse figée comme si c'était elle, pour toujours
         // (invariant #4, revue de la PR #502).
-        aEffacerApresRelecture.current = true;
+        aEffacerApresRelecture.current = toursSuivis.current;
         lancerRelecture(() => router.refresh());
         return;
       }
@@ -201,9 +202,13 @@ export function PendingTurnProvider({
     return () => ctrl.abort();
   }, [follow, conversationId, requestCount, router]);
   useEffect(() => {
-    if (relecture || !aEffacerApresRelecture.current) return;
-    aEffacerApresRelecture.current = false;
-    setFollowed(null);
+    const fini = aEffacerApresRelecture.current;
+    if (relecture || fini === null) return;
+    aEffacerApresRelecture.current = null;
+    // CE tour-là seulement : une question posée pendant la relecture ouvre un
+    // tour suivant, dont le texte ne doit pas partir avec (revue de la PR #502,
+    // passe 2).
+    setFollowed((prev) => (prev !== null && prev.seq <= fini ? null : prev));
   }, [relecture]);
   // Une dérivation, pas un effet : rien à synchroniser, rien à oublier.
   const pending = stillPending(all, requests);
