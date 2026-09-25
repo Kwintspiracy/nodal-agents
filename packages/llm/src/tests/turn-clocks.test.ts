@@ -25,7 +25,7 @@ import {
   ABSOLUTE_CALL_MS,
 } from '../turn-clocks';
 import type { TurnClocks } from '../turn-clocks';
-import { LLMTimeoutError, LLMCallCancelledError } from '../errors';
+import { LLMTimeoutError, LLMCallCancelledError, LLMStreamPartError } from '../errors';
 
 // ─── A stream the fake clock drives ───────────────────────────────────────────
 
@@ -354,6 +354,24 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     expect(state.done).toBe(true);
     expect(state.error).toBeInstanceOf(LLMCallCancelledError);
     expect((state.error as LLMCallCancelledError).partialText).toBe('w '.repeat(9));
+  });
+
+  // #478: OpenRouter forwards an upstream failure mid-stream as a PLAIN OBJECT.
+  // Thrown as is, it was logged "[object Object]", never retried, and the job
+  // failed as unknown_error (jobs c71d90f1 and 0afde65b, 24/09).
+  it('a stream error that is a plain object becomes an Error that keeps its message and code', async () => {
+    const payload = { error: { code: 502, message: 'Provider returned error' } };
+    const state = run(timedModel([{ atMs: 2_000, part: { type: 'error', error: payload } }]));
+
+    await vi.advanceTimersByTimeAsync(2_001);
+
+    const err = state.error as LLMStreamPartError;
+    expect(err).toBeInstanceOf(LLMStreamPartError);
+    expect(err.message).toBe('502: Provider returned error');
+    expect(err.statusCode).toBe(502);
+    expect(err.raw).toBe(payload);
+    // Kept for the code that needs it, never written out by a serialiser.
+    expect(JSON.stringify(err)).not.toContain('Provider returned error');
   });
 
   it('a stream error BEFORE any text is thrown as the error it carries', async () => {

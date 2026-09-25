@@ -7,6 +7,7 @@ import {
   RetryExhaustedError,
   LLMTimeoutError,
   LLMCallCancelledError,
+  describeThrown,
 } from './errors';
 
 // 429 = transient rate-limit (billing 429 is caught before this set, see throwIfQuotaError)
@@ -185,14 +186,15 @@ function throwIfQuotaError(err: unknown, provider: string, model: string): Verdi
   const msg = errorMessage(err).toLowerCase();
   const verdict = classify429Body(msg);
   if (verdict.classe === 'facturation') {
-    throw new QuotaExhaustedError(provider, model, `${msg} [cas=${verdict.cas}]`);
+    // Classé sur le texte entier, stocké plafonné : `agent_jobs.error` n'a pas
+    // à garder un corps de fournisseur de dix mille caractères (revue de #479).
+    throw new QuotaExhaustedError(provider, model, `${msg.slice(0, 400)} [cas=${verdict.cas}]`);
   }
   return verdict;
 }
 
 function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return describeThrown(err, 10_000);
 }
 
 function getStatusCode(err: unknown): number | null {
@@ -411,7 +413,8 @@ function logAttempt({
   cas429?: string;
 }): void {
   const errName = err instanceof Error ? err.name : 'unknown';
-  const errMsg = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
+  // Never `[object Object]` (#478): a plain object is said by what it carries.
+  const errMsg = describeThrown(err, 200);
   const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
   const causeName = cause instanceof Error ? cause.name : undefined;
   const causeMsg = cause instanceof Error ? cause.message.slice(0, 160) : undefined;
