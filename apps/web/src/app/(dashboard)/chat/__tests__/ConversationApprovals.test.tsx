@@ -15,6 +15,13 @@ const router = vi.hoisted(() => ({ refresh, push: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => router }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// The rail's pending list, as ApprovalsProvider would hand it: set per test,
+// then re-rendered to play a poll.
+const rail = vi.hoisted(() => ({ pending: [] as Array<{ id: string }> }));
+vi.mock('@/components/ApprovalsProvider', () => ({
+  useApprovals: () => ({ pending: rail.pending, refresh: async () => {} }),
+}));
+
 const listApprovalsAction = vi.hoisted(() => vi.fn());
 const resolveApprovalAction = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/actions.ts', () => ({
@@ -78,7 +85,20 @@ async function render(): Promise<void> {
   });
 }
 
+async function poll(pending: Array<{ id: string }>): Promise<void> {
+  rail.pending = pending;
+  await act(async () => {
+    root.render(<ConversationApprovals conversationId="conv-1" />);
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
+const ids = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `p-${i}` }));
+
 beforeEach(() => {
+  rail.pending = [];
   refresh.mockReset();
   resolveApprovalAction.mockReset();
   listApprovalsAction.mockReset();
@@ -132,5 +152,45 @@ describe('approvals in the conversation (#469) @cap:approuver-une-action/ecran',
     listApprovalsAction.mockResolvedValue({ ok: true, data: [] });
     await render();
     expect(container.querySelector('[data-testid="conversation-approvals"]')).toBeNull();
+  });
+
+  // Review of PR #482 (Reviewer A, P2 and P3).
+  it('a new request anywhere re-reads; a poll with the same ids does not', async () => {
+    rail.pending = [{ id: 'x' }];
+    await render();
+    expect(listApprovalsAction).toHaveBeenCalledTimes(1);
+
+    await poll([{ id: 'x' }]);
+    expect(listApprovalsAction).toHaveBeenCalledTimes(1);
+
+    await poll([{ id: 'x' }, { id: 'y' }]);
+    expect(listApprovalsAction).toHaveBeenCalledTimes(2);
+  });
+
+  it('once the rail list is full, every poll re-reads: an older request may have been answered', async () => {
+    rail.pending = ids(100);
+    await render();
+    expect(listApprovalsAction).toHaveBeenCalledTimes(1);
+
+    await poll(ids(100));
+    expect(listApprovalsAction).toHaveBeenCalledTimes(2);
+  });
+
+  it('a read that lands after the answer does not bring the card back', async () => {
+    resolveApprovalAction.mockResolvedValue({
+      ok: true,
+      data: { jobId: 'j1', decision: 'approve', answer: null },
+    });
+    await render();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="approval-approve-once"]')!.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.querySelector('[data-testid="approval-card"]')).toBeNull();
+
+    // A read started before the answer still returns the request.
+    await poll([{ id: 'z' }]);
+    expect(listApprovalsAction).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-testid="approval-card"]')).toBeNull();
   });
 });

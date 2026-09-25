@@ -265,6 +265,7 @@ import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
 import { ROLLUP_MAX_DEPTH, rollupRoot, pipelineMembers } from './coding-rollup.ts';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { APPROVALS_READ_LIMIT } from './approvals-window.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -6190,7 +6191,7 @@ export async function listApprovalsAction(
       )
       .where(where)
       .orderBy(desc(approvalRequests.requestedAt))
-      .limit(100);
+      .limit(APPROVALS_READ_LIMIT);
 
     // La TÊTE de chaque chaîne (18/09). Une seule remontée pour toute la page,
     // par génération : un délégué d'un run venu de dehors ne dit rien de sa

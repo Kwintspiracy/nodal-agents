@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, approvalRequests, conversations } from '@nodal-agents/db';
+import { agentJobs, approvalRequests, conversations, entities, users } from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -94,5 +94,46 @@ describe('listApprovalsAction by conversation (#469) @cap:approuver-une-action/m
       ? res.data.map((r) => (r.toolInput as { command: string }).command).sort()
       : [];
     expect(commands).toEqual(['echo root', 'python shared/scripts/x.py']);
+  });
+
+  // Review of PR #482 (Reviewer A, P3): another workspace, even with a job that
+  // carries the same conversation id, never shows here.
+  it('never shows a request of another workspace, even one carrying the same conversation id', async () => {
+    const mine = await conversation();
+    const [otherUser] = await testDb
+      .insert(users)
+      .values({ email: 'other-482@test.local' })
+      .returning({ id: users.id });
+    const [otherEntity] = await testDb
+      .insert(entities)
+      .values({ userId: otherUser!.id, name: 'Other', slug: 'other-482' })
+      .returning({ id: entities.id });
+    const [foreignJob] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: otherEntity!.id,
+        channel: 'dashboard',
+        task: 't',
+        status: 'awaiting_approval',
+        conversationId: mine,
+      })
+      .returning({ id: agentJobs.id });
+    await testDb.insert(approvalRequests).values({
+      entityId: otherEntity!.id,
+      jobId: foreignJob!.id,
+      toolName: 'run_command',
+      toolInput: { command: 'echo foreign', purpose: 'p' },
+      status: 'pending',
+    });
+    await pendingApproval(await job(mine), 'echo mine');
+    const { listApprovalsAction } = await import('../actions.ts');
+
+    const res = await listApprovalsAction({ status: 'pending', conversationId: mine });
+
+    expect(res.ok).toBe(true);
+    const commands = res.ok
+      ? res.data.map((r) => (r.toolInput as { command: string }).command)
+      : [];
+    expect(commands).toEqual(['echo mine']);
   });
 });
