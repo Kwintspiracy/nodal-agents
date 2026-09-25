@@ -23,6 +23,9 @@ describe('isToolGroupSkill', () => {
     expect(isToolGroupSkill(duCatalogue('spreadsheet-editing'))).toBe(true);
     expect(isToolGroupSkill(duCatalogue('document-editing'))).toBe(true);
     expect(isToolGroupSkill(duCatalogue('presentation-editing'))).toBe(true);
+    // Speech generation (#487): its value is generate_speech, its switch lives
+    // in Tools. It was merged without the flag and showed under Skills.
+    expect(isToolGroupSkill(duCatalogue('speech-generation'))).toBe(true);
   });
 
   it('un skill de l’UTILISATEUR au même nom reste gérable dans Skills', () => {
