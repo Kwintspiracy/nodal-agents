@@ -49,6 +49,7 @@ vi.mock('../../../../../packages/llm/src/providers/openrouter', async (importOri
 
 /** Un modèle qui écrit sans jamais finir : un mot toutes les 10 ms. Seul Stop l'arrête. */
 function endlessModel(): MockLanguageModelV3 {
+  let tick: ReturnType<typeof setInterval> | undefined;
   return new MockLanguageModelV3({
     provider: 'openrouter',
     modelId: 'z-ai/glm-5.2',
@@ -58,7 +59,7 @@ function endlessModel(): MockLanguageModelV3 {
           controller.enqueue({ type: 'stream-start', warnings: [] });
           controller.enqueue({ type: 'text-start', id: 't' });
           let n = 0;
-          const tick = setInterval(() => {
+          tick = setInterval(() => {
             n += 1;
             try {
               controller.enqueue({ type: 'text-delta', id: 't', delta: `mot${n} ` });
@@ -66,6 +67,11 @@ function endlessModel(): MockLanguageModelV3 {
               clearInterval(tick);
             }
           }, 10);
+        },
+        // Stop annule le flux : le tic s'arrête avec lui, au lieu de tourner
+        // jusqu'à la fin du processus de test (revue de la PR #502).
+        cancel() {
+          clearInterval(tick);
         },
       }) as never,
     }),

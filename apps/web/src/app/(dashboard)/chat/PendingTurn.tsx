@@ -40,7 +40,15 @@
 // écrit, puis la suite, et relit le fil quand le tour est fini. Avant, la
 // question restait seule jusqu'à ce que la réponse entière tombe d'un coup.
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+  type ReactNode,
+} from 'react';
 import { useRouter } from 'next/navigation';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import Markdown from '@/components/Markdown.tsx';
@@ -75,7 +83,12 @@ type Store = {
   streamingReply: string;
   /** Le tour qu'une AUTRE page a lancé et que celle-ci suit (#457) : ce qui a
    *  été écrit jusqu'ici, et depuis quand il tourne. `null` : rien à suivre. */
-  live: { reply: string; startedAt: number | null } | null;
+  /**
+   * `seq` : le numéro du tour suivi, compté par cette page. Il distingue deux
+   * tours même quand le runner n'a pas donné d'heure de départ (revue de la
+   * PR #502 : deux tours sans `startedAt` partageaient la clé de Stop).
+   */
+  live: { reply: string; startedAt: number | null; seq: number } | null;
   begin: (text: string) => number;
   /** La réponse ENTIÈRE connue à cet instant, pour cet envoi. Pas un
    *  fragment : l'appelant accumule, ce porteur ne fait qu'afficher. */
@@ -143,9 +156,16 @@ export function PendingTurnProvider({
   // Suivre le tour en cours n'a de sens que si le fil attend une réponse et
   // qu'aucun envoi de CETTE page n'est en vol : celui-là montre déjà la sienne.
   const follow = conversationId !== undefined && awaitingReply && !inFlight;
-  const [followed, setFollowed] = useState<{ reply: string; startedAt: number | null } | null>(
-    null,
-  );
+  const [followed, setFollowed] = useState<{
+    reply: string;
+    startedAt: number | null;
+    seq: number;
+  } | null>(null);
+  const toursSuivis = useRef(0);
+  // La relecture du fil à la fin d'un tour suivi, DANS une transition : on sait
+  // ainsi quand elle est rendue (revue de la PR #502).
+  const [relecture, lancerRelecture] = useTransition();
+  const aEffacerApresRelecture = useRef(false);
   // Une nouvelle demande dans le fil, c'est un nouveau tour à suivre.
   const requestCount = requests.length;
   useEffect(() => {
@@ -154,19 +174,37 @@ export function PendingTurnProvider({
     void followLiveTurn({
       conversationId,
       signal: ctrl.signal,
-      onStart: (startedAt) => setFollowed({ reply: '', startedAt }),
-      onText: (reply) => setFollowed((prev) => ({ reply, startedAt: prev?.startedAt ?? null })),
+      onStart: (startedAt) => setFollowed({ reply: '', startedAt, seq: ++toursSuivis.current }),
+      onText: (reply) =>
+        setFollowed((prev) => ({
+          reply,
+          startedAt: prev?.startedAt ?? null,
+          seq: prev?.seq ?? ++toursSuivis.current,
+        })),
     }).then((outcome) => {
       if (ctrl.signal.aborted) return;
-      // Fini, ou déjà fini quand la page s'est ouverte : la réponse est en
-      // base, le fil relu la montre. Le texte suivi reste affiché jusque-là,
-      // pour qu'il ne disparaisse pas un instant avant de revenir.
-      if (outcome === 'ended' || outcome === 'none') router.refresh();
-      // Lecture cassée : on ne fige pas une demi-réponse comme si c'était elle.
-      if (outcome !== 'ended') setFollowed(null);
+      if (outcome === 'ended') {
+        // Fini : le fil relu montre la réponse. Le texte suivi reste affiché
+        // jusqu'à ce que la relecture soit RENDUE, pour qu'il ne disparaisse
+        // pas un instant avant de revenir ; il part ensuite. Sans cela, un tour
+        // fini en ERREUR (aucune réponse en base, le fil relu attend toujours)
+        // laissait la demi-réponse figée comme si c'était elle, pour toujours
+        // (invariant #4, revue de la PR #502).
+        aEffacerApresRelecture.current = true;
+        lancerRelecture(() => router.refresh());
+        return;
+      }
+      if (outcome === 'none') router.refresh();
+      // Rien à suivre, ou lecture cassée : on ne fige pas une demi-réponse.
+      setFollowed(null);
     });
     return () => ctrl.abort();
   }, [follow, conversationId, requestCount, router]);
+  useEffect(() => {
+    if (relecture || !aEffacerApresRelecture.current) return;
+    aEffacerApresRelecture.current = false;
+    setFollowed(null);
+  }, [relecture]);
   // Une dérivation, pas un effet : rien à synchroniser, rien à oublier.
   const pending = stillPending(all, requests);
   const isRendered = (id: number): boolean => {

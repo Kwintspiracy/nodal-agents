@@ -164,8 +164,7 @@ export default function ThreadComposer({
   // (#457). La clé change d'un tour à l'autre : un arrêt demandé pour l'un ne
   // grise jamais le bouton du suivant.
   const stopKey =
-    answeringId ??
-    (pendingTurn.live !== null ? `live:${String(pendingTurn.live.startedAt)}` : null);
+    answeringId ?? (pendingTurn.live !== null ? `live:${pendingTurn.live.seq}` : null);
   const stopping = stopKey !== null && stoppingFor === stopKey;
 
   /** Vider la zone, et la remesurer VIDE — voir le commentaire dans `send`. */
