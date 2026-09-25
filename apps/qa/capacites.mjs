@@ -181,8 +181,9 @@ export const CAPACITES = [
     nom: 'Run a command',
     question: 'Can I let it run a command on my machine?',
     exigee: true,
-    ecranAttendu:
-      'That an agent allowed to run a command shows it on screen, asks for permission when it must, and renders its output in the thread.',
+    // #468 (24/09) a posé le test d'écran de cette capacité
+    // (`command-execution-yolo.spec.ts`, les trois choix de Run commands) ; la
+    // mesure du 25/09 l'a enregistré, et la phrase d'attente est tombée.
   },
   {
     slug: 'travailler-sur-des-fichiers',
