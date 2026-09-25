@@ -18,7 +18,7 @@ import {
 } from '@nodal-agents/db';
 import { randomUUID } from 'node:crypto';
 import {
-  assertCliBudget,
+  assertAgentBudget,
   recordCliRun,
   assertRuntimeSessionKey,
   SHARED_WORKSPACE_LABEL,
@@ -85,11 +85,11 @@ export async function runCliRuntimeChatTurn(args: {
   if (!cwd) return { ok: false, error: 'workspace_not_configured' };
 
   try {
-    await assertCliBudget(db, agentRow.id, binding.provider);
+    await assertAgentBudget(db, agentRow.id);
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message.slice(0, 300) : 'cli_daily_budget_exceeded',
+      error: err instanceof Error ? err.message.slice(0, 300) : 'agent_budget_exceeded',
     };
   }
 

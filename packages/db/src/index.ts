@@ -50,6 +50,8 @@ export {
   archiveAgentSkill,
 } from './repos/skills.ts';
 export { pruneOldJobs } from './repos/retention.ts';
+export { readAgentSpend, readAgentBudgetState, budgetReached } from './repos/agent-spend.ts';
+export type { AgentSpend, AgentBudgetState } from './repos/agent-spend.ts';
 export {
   readScheduleState,
   writeScheduleState,

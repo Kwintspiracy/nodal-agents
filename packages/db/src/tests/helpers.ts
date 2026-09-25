@@ -131,7 +131,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       task_context_template text,
       avatar_url text,
       system_agent boolean DEFAULT false,
-      max_tokens_per_job integer NOT NULL DEFAULT 0 CHECK (max_tokens_per_job >= 0),
       -- mirrors migration 0126 : NULL = la plateforme décide
       idle_timeout_seconds integer
         CONSTRAINT agents_idle_timeout_seconds_check
@@ -139,7 +138,16 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       memory_token_budget integer NOT NULL DEFAULT 1500,
       -- mirrors migration 0107 : NULL = suivre entities.reflection_enabled
       reflection_enabled boolean,
-      cli_daily_budget_usd real NOT NULL DEFAULT 10,
+      -- mirrors migration 0127 (#447) : le budget de l'agent, tous fournisseurs
+      budget_daily_usd real NOT NULL DEFAULT 0
+        CONSTRAINT agents_budget_daily_usd_check
+        CHECK (budget_daily_usd >= 0 AND budget_daily_usd <= 1000),
+      budget_monthly_usd real NOT NULL DEFAULT 0
+        CONSTRAINT agents_budget_monthly_usd_check
+        CHECK (budget_monthly_usd >= 0 AND budget_monthly_usd <= 10000),
+      budget_alert_pct integer NOT NULL DEFAULT 80
+        CONSTRAINT agents_budget_alert_pct_check
+        CHECK (budget_alert_pct >= 1 AND budget_alert_pct <= 100),
       -- mirrors migration 0125 (#464) : NULL = tout demander
       shell_policy jsonb,
       cli_defaults jsonb,
@@ -704,18 +712,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     CREATE INDEX IF NOT EXISTS idx_conversation_reads_conversation
       ON conversation_reads(conversation_id);
 
-    CREATE TABLE IF NOT EXISTS agent_budgets (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      agent_id uuid UNIQUE REFERENCES agents(id) ON DELETE CASCADE,
-      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
-      daily_token_limit bigint DEFAULT 0,
-      monthly_token_limit bigint DEFAULT 0,
-      alert_threshold_pct integer DEFAULT 80 CHECK (alert_threshold_pct >= 0 AND alert_threshold_pct <= 100),
-      auto_pause boolean DEFAULT false,
-      max_job_tokens integer DEFAULT 150000,
-      created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now()
-    );
 
     -- ── app_settings (migration 0045) ────────────────────────────────────────
 

@@ -99,7 +99,6 @@ type AgentKeysOk = HasKeys<
     'taskContextTemplate',
     'avatarUrl',
     'systemAgent',
-    'maxTokensPerJob',
     'createdAt',
     'updatedAt',
   ]

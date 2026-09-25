@@ -1,4 +1,4 @@
-// agents table + agent_assignments + agent_budgets
+// agents table + agent_assignments
 
 import {
   pgTable,
@@ -62,7 +62,6 @@ export const agents = pgTable(
     taskContextTemplate: text('task_context_template'),
     avatarUrl: text('avatar_url'),
     systemAgent: boolean('system_agent').default(false),
-    maxTokensPerJob: integer('max_tokens_per_job').default(0).notNull(),
     /**
      * Combien de secondes un appel au modèle peut attendre son premier jeton
      * pour CET agent (issue #442, migration 0126). NULL = la plateforme décide
@@ -90,12 +89,15 @@ export const agents = pgTable(
      * faire réutilisable ; c'est celui qui PRODUIT qui en accumule.
      */
     reflectionEnabled: boolean('reflection_enabled'),
-    // Daily budget for coding-CLI runs (code_task, étape B of the
-    // subscription-runtimes plan), in NOTIONAL USD — the cost the claude CLI
-    // reports even under subscription (codex reports none; its runs count 0
-    // against this cap, bounded by the per-call timeout instead). 0 = no cap.
-    // Enforced in the code_task builtin against SUM(cli_runs.cost_usd) today.
-    cliDailyBudgetUsd: real('cli_daily_budget_usd').default(10).notNull(),
+    // The agent's budget (#447, migration 0127), in USD, provider-agnostic:
+    // API calls of any provider (`llm_calls.cost_usd`) and coding-CLI runs
+    // (`cli_runs.cost_usd`, notional for the claude CLI; codex reports none)
+    // count against the same ceilings. 0 = no ceiling. Enforced between turns
+    // in the job loop and before every CLI run (packages/db/src/repos/agent-spend.ts).
+    budgetDailyUsd: real('budget_daily_usd').default(0).notNull(),
+    budgetMonthlyUsd: real('budget_monthly_usd').default(0).notNull(),
+    /** From this share of a ceiling (1-100 %), the screen warns. */
+    budgetAlertPct: integer('budget_alert_pct').default(80).notNull(),
     // What this agent may do with a shell, per kind of action (#464): only the
     // states the owner set, `allow` | `ask` | `never` per category of
     // `SHELL_CATEGORIES` (packages/shared/src/shell-checklist.ts). NULL, or a
@@ -186,7 +188,18 @@ export const agents = pgTable(
       'agents_orchestrator_mode_check',
       sql`${table.orchestratorMode} IN ('router', 'planner') OR ${table.orchestratorMode} IS NULL`,
     ),
-    check('agents_max_tokens_per_job_check', sql`${table.maxTokensPerJob} >= 0`),
+    check(
+      'agents_budget_daily_usd_check',
+      sql`${table.budgetDailyUsd} >= 0 AND ${table.budgetDailyUsd} <= 1000`,
+    ),
+    check(
+      'agents_budget_monthly_usd_check',
+      sql`${table.budgetMonthlyUsd} >= 0 AND ${table.budgetMonthlyUsd} <= 10000`,
+    ),
+    check(
+      'agents_budget_alert_pct_check',
+      sql`${table.budgetAlertPct} >= 1 AND ${table.budgetAlertPct} <= 100`,
+    ),
     check(
       'agents_idle_timeout_seconds_check',
       sql`${table.idleTimeoutSeconds} IS NULL OR (${table.idleTimeoutSeconds} >= 30 AND ${table.idleTimeoutSeconds} <= 3600)`,
@@ -242,33 +255,3 @@ export const agentAssignments = pgTable(
 
 export type AgentAssignmentRow = typeof agentAssignments.$inferSelect;
 export type AgentAssignmentInsert = typeof agentAssignments.$inferInsert;
-
-// ─── agent_budgets ────────────────────────────────────────────────────────────
-
-export const agentBudgets = pgTable(
-  'agent_budgets',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    agentId: uuid('agent_id')
-      .unique()
-      .references(() => agents.id, { onDelete: 'cascade' }),
-    entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
-    dailyTokenLimit: bigint('daily_token_limit', { mode: 'number' }).default(0),
-    monthlyTokenLimit: bigint('monthly_token_limit', { mode: 'number' }).default(0),
-    alertThresholdPct: integer('alert_threshold_pct').default(80),
-    autoPause: boolean('auto_pause').default(false),
-    maxJobTokens: integer('max_job_tokens').default(150000),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-  },
-  (table) => [
-    index('idx_agent_budgets_entity_id').on(table.entityId),
-    check(
-      'agent_budgets_alert_threshold_pct_check',
-      sql`${table.alertThresholdPct} >= 0 AND ${table.alertThresholdPct} <= 100`,
-    ),
-  ],
-);
-
-export type AgentBudgetRow = typeof agentBudgets.$inferSelect;
-export type AgentBudgetInsert = typeof agentBudgets.$inferInsert;
