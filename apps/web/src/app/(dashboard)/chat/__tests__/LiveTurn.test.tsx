@@ -123,6 +123,26 @@ describe('se rebrancher sur la réponse qui s’écrit @cap:parler-a-un-agent/ec
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  // Revue de la PR #502 : un tour suivi qui finit en ERREUR n'écrit aucune
+  // réponse en base. Le fil relu attend toujours, et la demi-réponse suivie
+  // restait à l'écran, figée, comme si c'était la réponse.
+  it('un tour fini SANS réponse en base ne laisse pas sa demi-réponse figée', async () => {
+    await render(<Screen items={[{ kind: 'request', text: 'la machine à vapeur' }]} />);
+    await flush();
+    emit('start', { startedAt: Date.now() - 5_000 });
+    emit('delta', { text: 'La vapeur pou' });
+    await flush();
+    expect(replyShown()).toContain('La vapeur pou');
+
+    // Le tour s'arrête ; la relecture (ici, le faux routeur) rend le MÊME fil,
+    // toujours sans réponse.
+    emit('end', {});
+    await flush();
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(replyShown()).not.toContain('La vapeur pou');
+  });
+
   it('avant le premier mot, dit que l’agent réfléchit et depuis combien de temps', async () => {
     await render(<Screen items={[{ kind: 'request', text: 'une longue note' }]} />);
     await flush();
