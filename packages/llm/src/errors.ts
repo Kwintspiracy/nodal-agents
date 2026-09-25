@@ -250,7 +250,8 @@ export class ProviderConfigError extends Error {
  * a false positive only changes the error label, never the fact that it failed.
  */
 export function isContextOverflowError(err: unknown): boolean {
-  const msg = (err === undefined || err === null ? '' : describeThrown(err)).toLowerCase();
+  // Read to the end: an overflow phrase can sit far into a provider message.
+  const msg = (err === undefined || err === null ? '' : describeThrown(err, 100_000)).toLowerCase();
   if (!msg) return false;
   return (
     msg.includes('context length') ||
@@ -304,8 +305,12 @@ function httpLike(value: unknown): number | undefined {
 
 /**
  * A thrown value, said in words: an `Error`'s message, else what the object
- * carries (`message`, `error.message`), else its JSON. Capped: it goes into
- * logs and into `llm_calls.error`. Never `[object Object]`.
+ * carries (`message`, `error.message`, and a string or number `code`). Capped:
+ * it goes into logs and into `llm_calls.error`. Never `[object Object]`.
+ *
+ * Never the object itself (review of PR #479): a gateway can echo the request
+ * (the prompt, headers) in its error, and that must not land in logs or the
+ * database. Without a message, only the object's keys are said.
  */
 export function describeThrown(value: unknown, max = 500): string {
   if (value instanceof Error) return value.message.slice(0, max);
@@ -313,15 +318,12 @@ export function describeThrown(value: unknown, max = 500): string {
   if (record) {
     const inner = asRecord(record['error']);
     const message = inner?.['message'] ?? record['message'];
-    const code = inner?.['code'] ?? record['code'] ?? record['status'];
+    const rawCode = inner?.['code'] ?? record['code'] ?? record['status'];
+    const code = typeof rawCode === 'string' || typeof rawCode === 'number' ? rawCode : undefined;
     if (typeof message === 'string' && message !== '') {
       return (code !== undefined ? `${String(code)}: ${message}` : message).slice(0, max);
     }
-    try {
-      return JSON.stringify(value).slice(0, max);
-    } catch {
-      return Object.prototype.toString.call(value);
-    }
+    return `object with keys: ${Object.keys(record).join(', ')}`.slice(0, max);
   }
   return String(value).slice(0, max);
 }

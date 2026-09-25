@@ -92,6 +92,17 @@ describe('isContextOverflowError', () => {
     }
   });
 
+  // Review of PR #479: a provider error that arrives as a plain object, and a
+  // long message whose overflow phrase sits past the 500th character.
+  it('reads a plain-object provider error and a long message to the end', () => {
+    expect(
+      isContextOverflowError({ error: { code: 400, message: 'context length exceeded' } }),
+    ).toBe(true);
+    expect(isContextOverflowError(new Error(`${'x'.repeat(600)} maximum context length`))).toBe(
+      true,
+    );
+  });
+
   it('does not fire on unrelated errors', () => {
     expect(isContextOverflowError(new Error('rate limit exceeded'))).toBe(false);
     expect(isContextOverflowError(new Error('invalid api key'))).toBe(false);
