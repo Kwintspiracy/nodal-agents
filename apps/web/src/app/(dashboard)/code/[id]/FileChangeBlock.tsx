@@ -51,7 +51,7 @@ import type { FileChangeGesture, FileChangeGroup } from '@/lib/file-change-group
  * qu'aucun outil l'ait nommé — deux gestes que le vocabulaire d'avant ne
  * savait pas dire.
  */
-const GESTE_LIBELLE: Record<FileChangeGesture, string> = {
+export const GESTE_LIBELLE: Record<FileChangeGesture, string> = {
   added: 'added',
   modified: 'modified',
   deleted: 'deleted',

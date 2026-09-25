@@ -269,3 +269,142 @@ describe('DeliveryBlock — le diff de chaque fichier @cap:travailler-sur-des-fi
     expect(container.textContent).not.toContain('No text recorded for this change.');
   });
 });
+
+describe('DeliveryBlock — un média livré se montre, se joue, se télécharge (#490) @cap:travailler-sur-des-fichiers/ecran', () => {
+  const MEDIAS: DeliverySummary = {
+    ...EMPTY,
+    files: 4,
+    fileChanges: [
+      {
+        path: 'outputs/voix off.wav',
+        addedLines: 0,
+        removedLines: 0,
+        changeKind: 'written' as const,
+      },
+      { path: 'outputs/cover.png', addedLines: 0, removedLines: 0, changeKind: 'added' as const },
+      { path: 'outputs/clip.mp4', addedLines: 0, removedLines: 0, changeKind: 'added' as const },
+      { path: 'src/a.ts', addedLines: 3, removedLines: 1, changeKind: 'modified' as const },
+    ],
+  };
+
+  it('la piste, l’image et la vidéo à la place du diff, servies par la route du run', async () => {
+    await render(<DeliveryBlock summary={MEDIAS} jobId="job-7" filesJobId="job-7" />);
+
+    const blocs = [...container.querySelectorAll('[data-testid="delivery-media"]')];
+    expect(blocs.map((b) => b.getAttribute('data-media-kind'))).toEqual([
+      'audio',
+      'image',
+      'video',
+    ]);
+
+    // Le lecteur lit LE fichier de ce run : chemin affiché et rang, jamais un
+    // chemin disque.
+    const audio = blocs[0]?.querySelector('audio');
+    expect(audio?.hasAttribute('controls')).toBe(true);
+    expect(audio?.getAttribute('src')).toBe(
+      '/api/runs/job-7/media?path=outputs%2Fvoix+off.wav&n=0',
+    );
+    expect(blocs[1]?.querySelector('img')?.getAttribute('src')).toBe(
+      '/api/runs/job-7/media?path=outputs%2Fcover.png&n=0',
+    );
+    expect(blocs[2]?.querySelector('video')?.hasAttribute('controls')).toBe(true);
+
+    // Télécharger : un vrai lien de téléchargement, pas une navigation.
+    const telecharger = blocs[0]?.querySelector('a[download]');
+    expect(telecharger?.getAttribute('href')).toBe(
+      '/api/runs/job-7/media?path=outputs%2Fvoix+off.wav&n=0&download=1',
+    );
+    expect(telecharger?.getAttribute('aria-label')).toBe('Download');
+
+    // La rangée garde le geste et le chemin, comme une plaque.
+    expect(blocs[0]?.textContent).toContain('written');
+    expect(blocs[0]?.textContent).toContain('outputs/voix off.wav');
+
+    // Le fichier de code garde SA plaque de diff, et les médias n'en ont pas.
+    const plaques = [...container.querySelectorAll('[data-testid="file-change-kind"]')];
+    expect(plaques).toHaveLength(1);
+    expect(plaques[0]?.closest('button')?.textContent).toContain('src/a.ts');
+    // Rien n'a été demandé pour les fragments : un média ne les déclenche pas.
+    expect(getRunFileChangesAction).not.toHaveBeenCalled();
+  });
+
+  it('deux médias au même chemin affiché demandent chacun le sien, par leur rang', async () => {
+    const masque = 'cles/[secret].wav';
+    await render(
+      <DeliveryBlock
+        summary={{
+          ...EMPTY,
+          files: 2,
+          fileChanges: [
+            { path: masque, addedLines: 0, removedLines: 0, changeKind: 'added' as const },
+            { path: masque, addedLines: 0, removedLines: 0, changeKind: 'added' as const },
+          ],
+        }}
+        jobId="job-7"
+        filesJobId="job-7"
+      />,
+    );
+    const srcs = [...container.querySelectorAll('audio')].map((a) => a.getAttribute('src'));
+    expect(srcs).toEqual([
+      '/api/runs/job-7/media?path=cles%2F%5Bsecret%5D.wav&n=0',
+      '/api/runs/job-7/media?path=cles%2F%5Bsecret%5D.wav&n=1',
+    ]);
+  });
+
+  it('un média que la route refuse DIT pourquoi, au lieu d’un lecteur muet', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: 'gone' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await render(<DeliveryBlock summary={MEDIAS} jobId="job-7" filesJobId="job-7" />);
+      const audio = container.querySelector('audio');
+      await act(async () => {
+        audio?.dispatchEvent(new Event('error'));
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/runs/job-7/media?path=outputs%2Fvoix+off.wav&n=0',
+        {
+          headers: { Range: 'bytes=0-0' },
+        },
+      );
+      const note = container.querySelector('[data-testid="delivery-media-failure"]');
+      expect(note?.textContent).toBe('This file is no longer on disk.');
+      // Le lecteur a laissé la place au motif ; les autres médias sont intacts.
+      expect(container.querySelectorAll('audio')).toHaveLength(0);
+      expect(container.querySelectorAll('img')).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('un fichier vide se dit vide (la route répond 416 sans corps)', async () => {
+    // Revue de la PR #493 : la note disait « Cannot show this file (HTTP 416) ».
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 416 })),
+    );
+    try {
+      await render(<DeliveryBlock summary={MEDIAS} jobId="job-7" filesJobId="job-7" />);
+      await act(async () => {
+        container.querySelector('audio')?.dispatchEvent(new Event('error'));
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(container.querySelector('[data-testid="delivery-media-failure"]')?.textContent).toBe(
+        'This file is empty.',
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
