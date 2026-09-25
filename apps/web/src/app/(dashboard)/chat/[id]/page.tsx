@@ -24,6 +24,7 @@ import { truncate } from '@/lib/format-time';
 import ThreadComposer from '../ThreadComposer.tsx';
 import ThreadScreen from './ThreadScreen.tsx';
 import ThreadHeader from './ThreadHeader.tsx';
+import ConversationApprovals from './ConversationApprovals.tsx';
 import PendingTurn, { PendingTurnProvider } from '../PendingTurn.tsx';
 import { feedAwaitsReply, feedRequests } from '../feed-requests.ts';
 
@@ -174,6 +175,12 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
             deliverables={verification.deliverables}
             density={density}
           />
+          {/* Ce que les travaux de cette conversation attendent de la personne,
+              répondu ICI, sans passer par la page Approvals (#469). */}
+          {/* Keyed by the conversation: moving to another one starts from an
+              empty list, never the previous conversation's cards (review of
+              PR #482). */}
+          <ConversationApprovals key={conversation.id} conversationId={conversation.id} />
           <PendingTurn
             agentName={conversation.agentName ?? 'Agent'}
             agentAvatarUrl={conversation.agentAvatarUrl}
