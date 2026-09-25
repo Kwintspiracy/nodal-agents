@@ -723,7 +723,7 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
 
     expect(dialogText()).toContain('Replace the rule for this folder?');
     expect(dialogText()).toContain(
-      'Commands run without asking only in Dev today. Changing this replaces that rule.',
+      'Commands run without asking only in Dev today. Changing this replaces that rule with one for every folder.',
     );
     expect(actions.setRunCommandRuleAction.mock.calls).toEqual([]);
 
@@ -735,6 +735,70 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
     expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
       agentId: AGENT_ID,
       action: 'block',
+    });
+  });
+
+  // Revue de la PR #481 (Reviewer A) : le dialogue disait « Run without asking
+  // only in Dev » quelle que soit la règle, promettait un remplacement que le
+  // serveur refuse, et disait « Replace » pour une suppression.
+  it('dit ce que la règle de dossier fait vraiment, et ce que le geste en fera', async () => {
+    await render(
+      [],
+      [
+        {
+          id: 'r7',
+          toolName: 'run_command',
+          action: 'block',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
+      ],
+    );
+    actions.setRunCommandRuleAction.mockClear();
+
+    await act(async () => {
+      control('run_command', 'require_approval').click();
+    });
+    expect(dialogText()).toContain('Replace the rule for this folder?');
+    expect(dialogText()).toContain('A rule blocks commands in Dev today.');
+    expect(dialogText()).not.toContain('run without asking only in Dev');
+    await act(async () => {
+      [...document.body.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Cancel')!
+        .click();
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="run-command-reset"]')!.click();
+    });
+    expect(dialogText()).toContain('Remove the rule for this folder?');
+    expect(dialogText()).toContain('The workspace autonomy then decides everywhere.');
+    expect(actions.setRunCommandRuleAction.mock.calls).toEqual([]);
+  });
+
+  it('Run without asking par-dessus une règle de dossier ne promet pas un remplacement : le serveur tranche', async () => {
+    await render(
+      [],
+      [
+        {
+          id: 'r8',
+          toolName: 'run_command',
+          action: 'block',
+          conditionJson: { workspacePath: 'D:\APPS\Dev' },
+          workspaceLabel: 'Dev',
+        },
+      ],
+    );
+    actions.setRunCommandRuleAction.mockClear();
+
+    await act(async () => {
+      control('run_command', 'auto_approve').click();
+    });
+
+    expect(dialogText()).not.toContain('Replace the rule');
+    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+      agentId: AGENT_ID,
+      action: 'auto_approve',
     });
   });
 

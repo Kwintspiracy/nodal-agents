@@ -2286,19 +2286,22 @@ function CommandExecutionSection({
 
   function request(next: RunCommandChoice) {
     if (next === action) return;
-    // Une règle de dossier se remplace après confirmation, quel que soit le
-    // choix : ce que le propriétaire perd est une permission posée dossier par
-    // dossier. « Run without asking » par-dessus est de toute façon refusé
-    // par le serveur, qui ne l'élargit jamais en silence.
-    if (folder !== null) setPending({ action: next, ask: 'dropFolder' });
+    // « Run without asking » par-dessus une règle de dossier, quelle qu'elle
+    // soit, est refusé par le serveur, qui dit pourquoi : aucun dialogue ne
+    // promet un remplacement qui n'aura pas lieu, et rien ne s'allume avant sa
+    // réponse (revue de la PR #481, Reviewer A).
+    if (folder !== null && next === 'auto_approve') void save(next, { optimistic: false });
+    // Les autres choix remplacent ou retirent la règle de dossier après
+    // confirmation : ce que le propriétaire perd a été posé pour ce dossier.
+    else if (folder !== null) setPending({ action: next, ask: 'dropFolder' });
     else if (next === 'auto_approve') setPending({ action: next, ask: 'grant' });
     else void save(next);
   }
 
-  async function save(next: RunCommandChoice) {
+  async function save(next: RunCommandChoice, { optimistic = true } = {}) {
     const before = current;
     setSaving(true);
-    applyOptimistic(next);
+    if (optimistic) applyOptimistic(next);
     const result = await setRunCommandRuleAction({ agentId, action: next });
     setSaving(false);
     if (!result.ok) {
@@ -2331,6 +2334,7 @@ function CommandExecutionSection({
             rule: action,
             paused: autoRunPaused,
             autonomy: workspaceAutonomy,
+            folder,
           })}
         />
 
@@ -2404,9 +2408,13 @@ function CommandExecutionSection({
 
         <ConfirmDialog
           open={pending?.ask === 'dropFolder'}
-          title="Replace the rule for this folder?"
-          message={`Commands run without asking only in ${folder ?? ''} today. Changing this replaces that rule. To put it back, approve a command for that folder again from its approval card.`}
-          confirmLabel="Replace the rule"
+          title={
+            pending?.action === null
+              ? 'Remove the rule for this folder?'
+              : 'Replace the rule for this folder?'
+          }
+          message={folderRuleLoss(action, folder ?? '', pending?.action ?? null)}
+          confirmLabel={pending?.action === null ? 'Remove the rule' : 'Replace the rule'}
           onConfirm={() => {
             const next = pending?.action ?? null;
             setPending(null);
@@ -2420,6 +2428,33 @@ function CommandExecutionSection({
 }
 
 type RunCommandChoice = 'auto_approve' | 'require_approval' | 'block' | null;
+
+/**
+ * What replacing or removing a folder rule loses, said from the rule that
+ * exists and the gesture made (review of PR #481, Reviewer A): it said "run
+ * without asking only in Dev" for a Block rule, and "replaces" for a removal.
+ */
+function folderRuleLoss(
+  existing: RunCommandChoice,
+  folder: string,
+  next: RunCommandChoice,
+): string {
+  const today =
+    existing === 'block'
+      ? `A rule blocks commands in ${folder} today.`
+      : existing === 'require_approval'
+        ? `Every command asks for your approval in ${folder} today.`
+        : `Commands run without asking only in ${folder} today.`;
+  const change =
+    next === null
+      ? 'Removing it drops that rule. The workspace autonomy then decides everywhere.'
+      : 'Changing this replaces that rule with one for every folder.';
+  const back =
+    existing === 'auto_approve'
+      ? ' To put it back, approve a command for that folder again from its approval card.'
+      : '';
+  return `${today} ${change}${back}`;
+}
 
 /** What the toast says once a choice is saved. */
 const RUN_COMMAND_SAVED: Record<NonNullable<RunCommandChoice> | 'none', string> = {

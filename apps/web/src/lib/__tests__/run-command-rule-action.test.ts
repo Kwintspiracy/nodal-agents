@@ -103,12 +103,12 @@ async function asNonOwner(run: () => Promise<void>) {
   }
 }
 
-async function folderRule() {
+async function folderRule(action: 'auto_approve' | 'require_approval' | 'block' = 'auto_approve') {
   await testDb.insert(approvalRules).values({
     entityId: seed.entityId,
     agentId: seed.agentId,
     toolName: 'run_command',
-    action: 'auto_approve',
+    action,
     conditionJson: { workspacePath: FOLDER },
   });
 }
@@ -167,6 +167,29 @@ describe('setRunCommandRuleAction @cap:assigner-outils/moteur', () => {
       true,
     );
     expect(await rule()).toEqual({ action: 'block', conditionJson: {} });
+  });
+
+  // Revue de la PR #481 (Reviewer A, P2) : une règle de dossier Block ou Ask
+  // devenait une permission GLOBALE sans refus du serveur.
+  it('« Run without asking » ne remplace pas non plus une règle de dossier Block ou Ask', async () => {
+    const { setRunCommandRuleAction } = await import('../actions.ts');
+    for (const existing of ['block', 'require_approval'] as const) {
+      await testDb
+        .delete(approvalRules)
+        .where(
+          and(eq(approvalRules.agentId, seed.agentId), eq(approvalRules.toolName, 'run_command')),
+        );
+      await folderRule(existing);
+
+      const partout = await setRunCommandRuleAction({
+        agentId: seed.agentId,
+        action: 'auto_approve',
+      });
+
+      expect(partout.ok, `${existing} de dossier élargi en permission globale`).toBe(false);
+      if (!partout.ok) expect(partout.message).toContain(FOLDER);
+      expect(await rule()).toEqual({ action: existing, conditionJson: { workspacePath: FOLDER } });
+    }
   });
 
   it('refuse une action inconnue sans rien écrire', async () => {

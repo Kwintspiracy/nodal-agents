@@ -6678,10 +6678,19 @@ async function refuseGlobalGrantOverFolderRule(
     // transaction autour de ce garde et de son ecriture.
     .for('update');
   const folder = (existing?.conditionJson as ApprovalRuleCondition | null)?.workspacePath;
-  if (!existing || existing.action !== 'auto_approve' || typeof folder !== 'string') return null;
+  if (!existing || typeof folder !== 'string') return null;
+  if (existing.action === 'auto_approve') {
+    return (
+      `${toolName} is already approved for this agent only inside ${folder}. ` +
+      'Change that rule on the approval card before allowing it everywhere.'
+    );
+  }
+  // A Block or Ask rule confined to a folder is not a grant, but replacing it
+  // with a grant everywhere removes it AND widens the tool (review of PR #481,
+  // Reviewer A, P2). Refused the same way: the owner removes it first.
   return (
-    `${toolName} is already approved for this agent only inside ${folder}. ` +
-    'Change that rule on the approval card before allowing it everywhere.'
+    `${toolName} has a rule for this agent inside ${folder} (${existing.action === 'block' ? 'Block' : 'Ask for approval'}). ` +
+    'Remove that rule before allowing it everywhere.'
   );
 }
 
