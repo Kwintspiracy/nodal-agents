@@ -810,9 +810,9 @@ describe('« Never for this agent » (#470) @cap:approuver-une-action/ecran', ()
       await new Promise((r) => setTimeout(r, 0));
     });
 
+    // ONE write for every kind: all saved or none (review of PR #486).
     expect(vi.mocked(setAgentShellPolicyAction).mock.calls.map((c) => c[0])).toEqual([
-      { agentId: AGENT, category: 'inline_code', state: 'never' },
-      { agentId: AGENT, category: 'delete_files', state: 'never' },
+      { agentId: AGENT, categories: ['inline_code', 'delete_files'], state: 'never' },
     ]);
     expect(vi.mocked(resolveApprovalAction).mock.calls.map((c) => c[0])).toEqual([
       {
@@ -846,6 +846,26 @@ describe('« Never for this agent » (#470) @cap:approuver-une-action/ecran', ()
     expect(vi.mocked(resolveApprovalAction)).not.toHaveBeenCalled();
     expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual([
       'Setting not saved: Only the workspace owner can change what an agent may do with a shell. The approval stays pending.',
+    ]);
+  });
+
+  // Review of PR #486 (Reviewer A, P2): the settings were saved and only the
+  // rejection failed; the card said nothing of the settings, so a plain Reject
+  // would follow and the agent would lose its note.
+  it('réglages écrits mais refus échoué : la carte dit que les réglages sont en place', async () => {
+    vi.mocked(setAgentShellPolicyAction).mockResolvedValue({ ok: true, data: {} as never });
+    vi.mocked(resolveApprovalAction).mockResolvedValue({
+      ok: false,
+      code: 'runner_unreachable',
+      message: 'Runner did not respond.',
+    } as never);
+    await monter(retenue());
+
+    await confirmer();
+
+    expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual([
+      'Saved: Run code written into a command, Delete files or discard changes now set to Never. ' +
+        'The rejection failed (Runner did not respond): use Never for this agent again to reject with its note.',
     ]);
   });
 });
