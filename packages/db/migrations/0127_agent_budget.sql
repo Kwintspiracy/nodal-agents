@@ -13,12 +13,16 @@
 -- 1. Trois colonnes : plafond du jour, plafond du mois (0 = aucun), et le
 --    pourcentage à partir duquel l'écran prévient (80 par défaut, la valeur de
 --    l'ancienne `agent_budgets.alert_threshold_pct`).
--- 2. LE REPLI NE CHANGE LE COMPORTEMENT DE PERSONNE : le plafond CLI d'un
---    agent devient son plafond du jour SEULEMENT là où il s'appliquait (runtime
---    CLI, ou outil code-task rattaché). Ailleurs il ne bornait rien, et en
---    faire un plafond de 10 $ sur les appels d'API arrêterait des agents qui
---    ne l'ont jamais eu. Il compte désormais aussi leurs appels d'API : c'est
---    la décision, et l'écran le dit.
+-- 2. Le plafond CLI d'un agent devient son plafond du jour SEULEMENT là où il
+--    s'appliquait (runtime CLI, ou outil code-task rattaché). Ailleurs il ne
+--    bornait rien, et en faire un plafond de 10 $ sur les appels d'API
+--    arrêterait des agents qui ne l'ont jamais eu. Il compte désormais aussi
+--    leurs appels d'API : c'est la décision, et l'écran le dit.
+--    UNE EXCEPTION, voulue : un agent au runtime Codex. L'ancienne garde
+--    l'exemptait, son plafond (10 $ par défaut) ne bornait donc rien ; il
+--    devient un plafond actif, puisque Codex n'est plus exempté (#447). Ces
+--    agents GAGNENT un plafond qu'ils n'avaient pas en pratique, visible dans
+--    leur onglet Settings (revue de la PR #496).
 -- 3. Les colonnes et la table mortes partent.
 --
 -- IDEMPOTENTE : le repli ne tourne que tant que la colonne CLI existe.

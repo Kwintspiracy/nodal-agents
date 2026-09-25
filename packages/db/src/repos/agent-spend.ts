@@ -51,6 +51,10 @@ export async function readAgentSpend(
   // Une requête, sur la ligne de l'agent, par le constructeur de Drizzle : même
   // forme de résultat sous postgres-js et sous PGlite (un `db.execute` brut rend
   // un tableau chez l'un, `{ rows }` chez l'autre).
+  // Par AGENT seul, et c'est voulu : un identifiant d'agent est un UUID unique
+  // à toute la base, et `llm_calls.entity_id` peut être NULL. Filtrer aussi par
+  // espace ferait disparaître du compte des appels réellement payés (revue de
+  // la PR #496).
   const sum = (table: 'llm_calls' | 'cli_runs', from: typeof day) =>
     sql`coalesce((SELECT sum(cost_usd) FROM ${sql.raw(table)} WHERE agent_id = ${agents.id} AND created_at >= ${from}), 0)`;
   const rows = await db
@@ -89,9 +93,27 @@ export async function readAgentBudgetState(
     .where(eq(agents.id, agentId))
     .limit(1);
   if (!row) return null;
-  const timezone = row.timezone ?? fallbackTimezone;
+  const timezone =
+    row.timezone !== null && isValidTimezone(row.timezone) ? row.timezone : fallbackTimezone;
   const spend = await readAgentSpend(db, agentId, timezone);
   return { ...row, timezone, ...spend, reached: budgetReached(row, spend) };
+}
+
+/**
+ * Un nom de fuseau IANA que Postgres et Intl comprennent. Même règle que
+ * `isValidTimezone` de @nodal-agents/shared, que ce paquet n'importe pas :
+ * un fuseau enregistré invalide faisait échouer `AT TIME ZONE` à CHAQUE
+ * lecture, donc la garde de chaque tour et de chaque run CLI de l'espace,
+ * sur une erreur de base au lieu d'un verdict de budget (revue de la PR #496).
+ */
+function isValidTimezone(tz: string): boolean {
+  if (tz.trim() === '') return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** La fenêtre dont le plafond est atteint (0 = aucun plafond). Pure. */
