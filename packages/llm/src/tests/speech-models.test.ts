@@ -67,6 +67,26 @@ describe('createOpenRouterSpeech @cap:travailler-sur-des-fichiers/moteur', () =>
     expect(new DataView(audio.bytes.buffer).getUint32(24, true)).toBe(16000);
   });
 
+  // Review of PR #489: only a `rate` parameter is a sample rate.
+  it('a bitrate parameter is not read as the sample rate', async () => {
+    const speak = createOpenRouterSpeech('sk-or-test', {
+      fetch: stubFetch(new Uint8Array([9, 0]), [], 'audio/pcm; bitrate=64000'),
+    });
+    const audio = await speak({ model: 'google/gemini-3.8-flash-tts', text: 'x', voice: 'Kore' });
+    expect(new DataView(audio.bytes.buffer).getUint32(24, true)).toBe(GEMINI_TTS_SAMPLE_RATE);
+  });
+
+  it('an odd number of bytes is a cut stream: refused, never wrapped', async () => {
+    const speak = createOpenRouterSpeech('sk-or-test', {
+      fetch: stubFetch(new Uint8Array([1, 0, 2]), []),
+    });
+    await expect(
+      speak({ model: 'google/gemini-3.8-flash-tts', text: 'x', voice: 'Kore' }),
+    ).rejects.toThrow(
+      'google/gemini-3.8-flash-tts answered 3 bytes of 16-bit audio: an odd count, the stream was cut',
+    );
+  });
+
   it('a 200 that is not audio is said, never wrapped into a broken file', async () => {
     const speak = createOpenRouterSpeech('sk-or-test', {
       fetch: stubFetch(new TextEncoder().encode('{"error":1}'), [], 'application/json'),
@@ -93,7 +113,7 @@ describe('createOpenRouterSpeech @cap:travailler-sur-des-fichiers/moteur', () =>
   it('sends a Gemini delivery style as provider options, never inside the spoken text', async () => {
     const sent: Sent[] = [];
     const speak = createOpenRouterSpeech('sk-or-test', {
-      fetch: stubFetch(new Uint8Array([1]), sent),
+      fetch: stubFetch(new Uint8Array([1, 0]), sent),
     });
 
     await speak({
@@ -112,7 +132,7 @@ describe('createOpenRouterSpeech @cap:travailler-sur-des-fichiers/moteur', () =>
   it('adds no Google option for a model that is not Google, nor for an empty style', async () => {
     const sent: Sent[] = [];
     const speak = createOpenRouterSpeech('sk-or-test', {
-      fetch: stubFetch(new Uint8Array([1]), sent),
+      fetch: stubFetch(new Uint8Array([1, 0]), sent),
     });
 
     await speak({ model: 'openai/gpt-4o-mini-tts', text: 'x', voice: 'nova', style: 'calm' });

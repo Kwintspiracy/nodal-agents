@@ -518,6 +518,11 @@ const FORM_RULES: Readonly<Record<string, { readonly name: string; readonly chec
  * texte. Run 4078068d (25/09) : `generate_speech` avait écrit un WAV valide,
  * et la preuve le disait rouge sur « the file is not valid UTF-8 » — aucun
  * fichier audio ne peut l'être (#487). `null` = bien formé, sinon ce qui manque.
+ *
+ * Même profondeur que les règles texte : l'en-tête dit la forme, pas le
+ * contenu. Un WAV à l'en-tête juste mais au corps tronqué passe cette preuve
+ * (revue de la PR #489) ; `generate_speech` refuse déjà un flux coupé avant
+ * d'écrire.
  */
 const BINARY_FORM_RULES: Readonly<
   Record<string, { readonly name: string; readonly check: (bytes: Buffer) => string | null }>
