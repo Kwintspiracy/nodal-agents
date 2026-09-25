@@ -51,7 +51,7 @@ describe('resolveSpeechGenerator @cap:travailler-sur-des-fichiers/moteur', () =>
       sent.push({ url: String(input), auth: new Headers(init?.headers).get('authorization') });
       return new Response(new Uint8Array([1, 2, 3]), {
         status: 200,
-        headers: { 'content-type': 'audio/mpeg' },
+        headers: { 'content-type': 'audio/pcm' },
       });
     });
 
@@ -61,7 +61,9 @@ describe('resolveSpeechGenerator @cap:travailler-sur-des-fichiers/moteur', () =>
     expect(sent).toEqual([
       { url: 'https://openrouter.ai/api/v1/audio/speech', auth: 'Bearer sk-or-live' },
     ]);
-    expect([...audio.bytes]).toEqual([1, 2, 3]);
+    // The raw samples, behind the WAV header packages/llm adds.
+    expect([...audio.bytes.subarray(44)]).toEqual([1, 2, 3]);
+    expect(audio.mediaType).toBe('audio/wav');
   });
 
   it('a key that cannot be decrypted is said as such, not as "no key"', async () => {

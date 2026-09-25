@@ -64,7 +64,12 @@ export {
 export type { GeneratedImage } from './providers/image-models';
 
 // Speech generation (text in, audio file out) — #487
-export { createOpenRouterSpeech, withGeminiStyle } from './providers/speech-models';
+export {
+  createOpenRouterSpeech,
+  withGeminiStyle,
+  pcmToWav,
+  GEMINI_TTS_SAMPLE_RATE,
+} from './providers/speech-models';
 export type { SpeechGenerator, SpeechRequest, GeneratedSpeech } from './providers/speech-models';
 
 // Le sous-ensemble de JSON Schema que Gemini accepte (#119). Exporté pour que

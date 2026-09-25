@@ -1,5 +1,7 @@
-// Built-in: generate_speech — text in, an mp3 file written in the agent's
-// folders (#487).
+// Built-in: generate_speech — text in, a WAV audio file written in the
+// agent's folders (#487). WAV, not mp3: Gemini TTS through OpenRouter only
+// answers raw PCM (it refused mp3 in run 16052ae6), which packages/llm wraps
+// in a WAV header; there is no encoder to make an mp3 of it.
 //
 // The owner, 2026-09-25: "ce que je veux, c'est être capable de générer des
 // fichiers audio à partir de texte". Not a talking agent: a file, like any
@@ -52,8 +54,8 @@ export const GenerateSpeechInputSchema = z.object({
     .string()
     .min(1)
     .describe(
-      'Where to write the audio, relative to one of your folders, ending in .mp3 ' +
-        '(e.g. "audio/intro.mp3"). Missing folders are created.',
+      'Where to write the audio, relative to one of your folders, ending in .wav ' +
+        '(e.g. "audio/intro.wav"). Missing folders are created.',
     ),
   model: z
     .enum(SPEECH_MODEL_IDS)
@@ -89,25 +91,20 @@ export type GenerateSpeechOutput =
   | { ok: true; written: true; path: string; bytes: number; model: string; voice: string }
   | { ok: false; reason: string };
 
-/** `intro` → `intro.mp3`, `intro.MP3` → `intro.mp3`; any other extension is refused. */
-function mp3Path(path: string): string | null {
+/** `intro` → `intro.wav`, `intro.WAV` → `intro.wav`; any other extension is refused. */
+function wavPath(path: string): string | null {
   const ext = extname(path);
-  if (ext === '') return `${path}.mp3`;
-  return ext.toLowerCase() === '.mp3' ? `${path.slice(0, -ext.length)}.mp3` : null;
+  if (ext === '') return `${path}.wav`;
+  return ext.toLowerCase() === '.wav' ? `${path.slice(0, -ext.length)}.wav` : null;
 }
 
 /**
- * Does this start like an mp3: an ID3 tag, or an MPEG audio frame sync? A 200
- * answer whose body is not audio (an error page, a truncated reply) would
- * otherwise be written as a broken .mp3 with no failure said (review of PR
- * #488). The AI SDK names the type from the requested format, so the bytes
- * are what can be checked.
+ * Does this start like a WAV file (RIFF … WAVE)? Anything else would be
+ * written as a broken file with no failure said (review of PR #488).
  */
-export function looksLikeMp3(bytes: Uint8Array): boolean {
-  if (bytes.length >= 3 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
-    return true;
-  }
-  return bytes.length >= 2 && bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0;
+export function looksLikeWav(bytes: Uint8Array): boolean {
+  const tag = (offset: number) => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  return bytes.length >= 12 && tag(0) === 'RIFF' && tag(8) === 'WAVE';
 }
 
 export const generateSpeechTool: ToolDefinition<
@@ -116,9 +113,9 @@ export const generateSpeechTool: ToolDefinition<
 > = {
   name: 'generate_speech',
   label: 'Generate speech',
-  summary: 'Turn text into an mp3 file in one of the agent folders.',
+  summary: 'Turn text into a WAV audio file in one of the agent folders.',
   description:
-    'Turn text into speech and write it as an mp3 file in your folders. Give the exact words ' +
+    'Turn text into speech and write it as a WAV audio file in your folders. Give the exact words ' +
     'to speak in `text` (no stage directions: they would be read aloud), the file `path`, and ' +
     'optionally the `model`, the `voice` and a delivery `style`. Returns the path of the file.',
   inputSchema: GenerateSpeechInputSchema,
@@ -130,7 +127,7 @@ export const generateSpeechTool: ToolDefinition<
       : failureText(output.reason),
   mutatesWorkspace: true,
   resolveMutationTargets: async (input, ctx) => {
-    const target = mp3Path(input.path);
+    const target = wavPath(input.path);
     if (target === null) return [];
     let path: string;
     try {
@@ -143,16 +140,16 @@ export const generateSpeechTool: ToolDefinition<
     ];
   },
   computeApproval: async (input, ctx) => {
-    const target = mp3Path(input.path);
+    const target = wavPath(input.path);
     if (target === null) return undefined;
     return computeSharedOverwriteApproval(ctx, target);
   },
   execute: async (input, ctx) => {
-    const target = mp3Path(input.path);
+    const target = wavPath(input.path);
     if (target === null) {
       return {
         ok: false,
-        reason: `The file is mp3: "${input.path}" must end in .mp3 (or have no extension).`,
+        reason: `The file is WAV: "${input.path}" must end in .wav (or have no extension).`,
       };
     }
     if (!ctx.speechGenerator) {
@@ -174,10 +171,10 @@ export const generateSpeechTool: ToolDefinition<
       if (audio.bytes.byteLength === 0) {
         return { ok: false, reason: `${input.model} returned no audio for this text.` };
       }
-      if (!looksLikeMp3(audio.bytes)) {
+      if (!looksLikeWav(audio.bytes)) {
         return {
           ok: false,
-          reason: `${input.model} answered, but not with mp3 audio. Nothing was written.`,
+          reason: `${input.model} answered, but not with audio. Nothing was written.`,
         };
       }
       if (audio.bytes.byteLength > MAX_SPEECH_BYTES) {
