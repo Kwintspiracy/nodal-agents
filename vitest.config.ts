@@ -11,6 +11,11 @@ const EXCLUDE = [
   '**/.claude/**',
 ];
 const PG_TESTS = '**/*.pg.test.ts';
+// Même garde que packages/db et apps/runner (revue de la PR #499) : sur Windows
+// CI, le postmaster est refusé sous compte administrateur et les `.pg` ne
+// tournent pas. `pnpm test` passe par turbo, donc par les configs des paquets,
+// mais un `vitest run` lancé à la racine sur ce runner les aurait lancés.
+const isWindowsCi = process.platform === 'win32' && !!process.env['CI'];
 
 export default defineConfig({
   test: {
@@ -23,14 +28,18 @@ export default defineConfig({
     // packages/test-kit/src/shared-postgres.ts.
     projects: [
       { extends: true, test: { name: 'unit', exclude: [...EXCLUDE, PG_TESTS] } },
-      {
-        extends: true,
-        test: {
-          name: 'pg',
-          include: [PG_TESTS],
-          globalSetup: ['./packages/test-kit/src/pg-global-setup.ts'],
-        },
-      },
+      ...(isWindowsCi
+        ? []
+        : [
+            {
+              extends: true,
+              test: {
+                name: 'pg',
+                include: [PG_TESTS],
+                globalSetup: ['./packages/test-kit/src/pg-global-setup.ts'],
+              },
+            },
+          ]),
     ],
     // Bootstrap tests in apps/runner spin up an embedded pglite DB before
     // their first assertion — that setup alone takes ~10s under parallel

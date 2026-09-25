@@ -16,6 +16,13 @@
 // — et chaque fichier y reçoit sa base, créée par `CREATE DATABASE`. Chaque
 // fichier applique toujours les VRAIES migrations, sur une base vide qui n'est
 // qu'à lui.
+//
+// DEUX FICHIERS `.pg` N'Y PASSENT PAS, et c'est voulu : ceux d'`apps/cli`
+// (`postgres-auth-stop`, `postgres-logging`). Ils testent le CYCLE DE VIE d'un
+// cluster (démarrage, arrêt, journaux) par `startEmbeddedPostgres`, pas une
+// base par `startRealPostgres` : un serveur partagé leur retirerait justement
+// ce qu'ils prouvent. Leur paquet n'a donc pas de projet `pg`, et ils gardent
+// chacun leur cluster (revue de la PR #499).
 
 /** La clé `provide`/`inject` du serveur partagé. */
 export const SHARED_POSTGRES_KEY = 'nodalSharedPostgres';
