@@ -63,6 +63,7 @@ import {
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
+import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
@@ -1428,6 +1429,8 @@ async function runJobTracked(
   // configured provider when it has one; undefined ⇒ web_search falls back to
   // its keyless DuckDuckGo path. Resolved once per job.
   const searchBackend = await resolveSearchBackend(db, agentRow.id);
+  // generate_speech (#487): built on the workspace OpenRouter key, like searchBackend.
+  const speechGenerator = await resolveSpeechGenerator(db, job.entityId ?? null);
 
   // ── Per-agent LLM client resolution (Brique 24/25) ───────────────────────
   // Agents MUST have an llmKeyId pointing at an active entity_llm_keys row.
@@ -2442,6 +2445,7 @@ async function runJobTracked(
                   fileWritableSkillSlugs,
                   provisioning: TOOL_PROVISIONING,
                   searchBackend,
+                  ...(speechGenerator ? { speechGenerator } : {}),
                   resolveAgentToolNames: (targetAgentId: string) =>
                     resolveAgentToolNames(db, targetAgentId),
                 },
@@ -4386,6 +4390,7 @@ async function runJobTracked(
         fileWritableSkillSlugs,
         provisioning: TOOL_PROVISIONING,
         searchBackend,
+        ...(speechGenerator ? { speechGenerator } : {}),
         resolveAgentToolNames: (targetAgentId: string) => resolveAgentToolNames(db, targetAgentId),
       };
       const sharedToolOpts = {
@@ -4738,6 +4743,7 @@ async function runJobTracked(
                 fileWritableSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
                 searchBackend,
+                ...(speechGenerator ? { speechGenerator } : {}),
                 resolveAgentToolNames: (targetAgentId: string) =>
                   resolveAgentToolNames(db, targetAgentId),
               },

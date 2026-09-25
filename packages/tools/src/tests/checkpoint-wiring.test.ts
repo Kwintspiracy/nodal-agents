@@ -52,6 +52,7 @@ const MINIMAL_INPUT: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   // d'intention (office-ops/index.ts) et passent par le même seam.
   docx_create: { path: 'rapport.docx', paragraphs: [{ text: 'Bonjour' }] },
   file_write: { path: 'nouveau.txt', content: 'x' },
+  generate_speech: { text: 'x', path: 'audio.mp3' },
   file_edit: { path: 'a-editer.txt', old_string: 'avant', new_string: 'apres' },
   run_command: { purpose: 'test', command: 'echo ok' },
   run_skill_script: { purpose: 'test', skill: 'skill-inexistante', script: 'scripts/x.js' },
