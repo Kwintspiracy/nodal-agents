@@ -169,4 +169,18 @@ describe('runCommandsTruth: what really happens to a command (#464) @cap:regler-
       'How commands run depends on the workspace autonomy.',
     );
   });
+  // Review of PR #481 (Reviewer A, P2): a rule confined to a folder only holds
+  // there, and the sentence said "run without asking" everywhere.
+  it('names the folder of a confined rule, and says the workspace decides elsewhere', () => {
+    const base = { paused: false, autonomy: 'propose_confirm' as const, folder: 'Dev' };
+    expect(runCommandsTruth({ ...base, rule: 'auto_approve' })).toBe(
+      'In Dev, commands run without asking, except the kinds of action below set to Ask me or Never. Elsewhere, the workspace autonomy decides.',
+    );
+    expect(runCommandsTruth({ ...base, rule: 'block' })).toBe(
+      'In Dev, a rule blocks commands. Elsewhere, the workspace autonomy decides.',
+    );
+    expect(runCommandsTruth({ ...base, rule: 'require_approval' })).toBe(
+      'In Dev, every command asks for your approval. Elsewhere, the workspace autonomy decides.',
+    );
+  });
 });
