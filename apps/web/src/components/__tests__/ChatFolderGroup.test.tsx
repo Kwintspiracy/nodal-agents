@@ -485,6 +485,36 @@ describe('les derniers fils d’un dossier @cap:reprendre-conversation/ecran', (
     ]);
   });
 
+  // Revue de la PR #500 : depuis #472, un run du dossier MCP s'ouvre sous
+  // `/chat/runs/<id>`. Le menu d'un fil (Rename, Delete) se posait sur toute
+  // adresse `/chat/…`, et le run l'avait gagné avec l'identifiant `runs/<id>`.
+  it('un RUN du dossier MCP s’allume sur sa page, et n’a pas le menu d’un fil', async () => {
+    const run: FolderThread = {
+      key: 'r1',
+      title: 'Review PR #497',
+      href: '/chat/runs/r1',
+      waiting: false,
+      running: false,
+      unread: false,
+    };
+    seedThreads({ mcp: [run], telegram: [fil('t1', 'Invoice for March')] });
+    pathname = '/chat/runs/r1';
+    await renderGroup({ channels: ['telegram'], externalRuns: 1 });
+    await click(container.querySelector('[data-testid="folder-caret-mcp"]')!);
+    await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);
+
+    const [ligne] = threadRows('mcp');
+    expect(ligne?.getAttribute('href')).toBe('/chat/runs/r1');
+    expect(ligne?.getAttribute('aria-current')).toBe('page');
+    const bloc = (folder: string) =>
+      container.querySelector(`[data-testid="folder-threads-${folder}"]`)!;
+    expect(bloc('mcp').querySelectorAll('[data-testid="row-menu-conversation"]')).toHaveLength(0);
+    // Un FIL garde son menu.
+    expect(bloc('telegram').querySelectorAll('[data-testid="row-menu-conversation"]')).toHaveLength(
+      1,
+    );
+  });
+
   it('ferme le sous-menu par « See all », vers la liste du dossier', async () => {
     // ONZE fils : il y en a plus que le menu n'en dessine, donc un « See all ».
     // Depuis le 19/09/2026 au soir il n'apparaît QUE dans ce cas — en dessous

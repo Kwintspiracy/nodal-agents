@@ -28,6 +28,7 @@ import {
   type ConversationRowModel,
   type RowWaiting,
 } from './conversation-rows.ts';
+import { runPageHref } from '@/lib/run-page.ts';
 
 // `runTitle` et `runIsRunning` vivent dans `lib/external-runs.ts` depuis le
 // 18/09/2026 : le sous-menu d'un dossier de la barre latérale nomme les mêmes
@@ -98,7 +99,7 @@ export function runRows(input: RunRowsInput): ConversationRowModel[] {
     // La ligne ouvre la page du RUN, pas un fil : il n'y en a pas.
     // Sous `/chat`, pas `/jobs` : ouvrir un run depuis Work garde la barre
     // latérale sur Work (`/jobs` est une route de Scheduled ; Quentin, 24/09).
-    href: `/chat/runs/${r.id}`,
+    href: runPageHref(r.id),
     // AUCUN agent, comme dans « Nodal chats » : c'est le titre qui distingue
     // un run d'un autre, et l'avatar répété prendrait la moitié de la ligne.
     agent: null,
