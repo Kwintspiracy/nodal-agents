@@ -1,14 +1,16 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { ShieldCheck, Warning } from '@phosphor-icons/react';
 import {
   resolveApprovalAction,
   setAgentApprovalRuleAction,
+  setAgentShellPolicyAction,
   listApprovalsAction,
   type ApprovalRow,
 } from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { readQuestionToolInput, toolDisplayName } from '@nodal-agents/shared';
 import type { ExplainedApprovalRule } from '@nodal-agents/shared';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -93,6 +95,8 @@ export default function ApprovalRequestCard({
 }) {
   const [isPending, startTransition] = useTransition();
   const [showRejectInput, setShowRejectInput] = useState(false);
+  const [neverOpen, setNeverOpen] = useState(false);
+  const neverRunning = useRef(false);
   const [notes, setNotes] = useState('');
   // Open ou Close, les deux variantes du dessin. En attente → Open ; tranchée
   // → Close ; `defaultOpen` force Open.
@@ -114,6 +118,9 @@ export default function ApprovalRequestCard({
   const x = a.explanation;
   const pending = a.status === 'pending';
   const agentName = a.agentName ?? 'no agent';
+  // Ce que la liste de l'agent a retenu ici (#464) : ce que « Never for this
+  // agent » passerait à Never (#470). Une carte sans elles n'offre pas le choix.
+  const neverKinds = (a.gateReasons ?? []).filter((r) => r.state === 'ask');
 
   if (statutVu !== a.status) {
     setStatutVu(a.status);
@@ -196,6 +203,70 @@ export default function ApprovalRequestCard({
       if (!r.ok) toast.error(r.message);
       else toast.success(`Approved. ${a.toolName} now runs without asking in ${label}.`);
     });
+  }
+
+  /**
+   * « Never for this agent » (#470, Quentin 24/09) : refuser, ET ne plus
+   * jamais le demander pour ces sortes d'action. Le réglage d'abord, la
+   * réponse ensuite, comme « Approve for this project » : un réglage qui
+   * n'est pas écrit laisse la demande en attente, ce qui se voit et se rejoue,
+   * au lieu d'un refus qui ferait croire que la suite est réglée.
+   */
+  function handleNever() {
+    const agentId = a.agentId;
+    if (agentId === null || neverRunning.current) return;
+    // Un seul passage, même si le bouton du dialogue est cliqué deux fois
+    // pendant que la réponse part (revue de la PR #486).
+    neverRunning.current = true;
+    setNeverOpen(false);
+    startTransition(async () => {
+      try {
+        await applyNever(agentId);
+      } finally {
+        neverRunning.current = false;
+      }
+    });
+  }
+
+  async function applyNever(agentId: string) {
+    // TOUTES les sortes en une seule écriture : tout est enregistré, ou rien
+    // (revue de la PR #486, Reviewer A — une boucle pouvait s'arrêter à
+    // moitié et dire « rien n'a été enregistré »).
+    const saved = await setAgentShellPolicyAction({
+      agentId,
+      categories: neverKinds.map((reason) => reason.category),
+      state: 'never',
+    });
+    if (!saved.ok) {
+      // Le message du serveur finit souvent par un point : pas de « .. ».
+      toast.error(
+        `Setting not saved: ${saved.message.replace(/\.$/, '')}. The approval stays pending.`,
+      );
+      return;
+    }
+    // What the AGENT reads with the refusal (run 2fb6bfca, 24/09): a bare
+    // "rejected" sent it looking for another way to the same files. The
+    // note says it is a Never, on what, and not to work around it.
+    const refused = neverKinds
+      .map((reason) => {
+        const kind = SHELL_CATEGORY_COPY[reason.category].label.toLowerCase();
+        return reason.details.length > 0 ? `${kind} (${reason.details.join(', ')})` : kind;
+      })
+      .join('; ');
+    const r = await resolve(
+      'reject',
+      `The owner answered Never: this agent may not ${refused}, now or later. ` +
+        'Do not look for another way to do it; report what you could not do.',
+    );
+    if (!r.ok) {
+      // Les réglages SONT en place ; seul le refus a échoué. Le dire, sinon la
+      // personne refait un « Reject » simple et l'agent perd la note
+      // (revue de la PR #486, Reviewer A).
+      toast.error(
+        `Saved: ${neverKinds.map((reason) => SHELL_CATEGORY_COPY[reason.category].label).join(', ')} now set to Never. ` +
+          `The rejection failed (${r.message.replace(/\.$/, '')}): use Never for this agent again to reject with its note.`,
+      );
+    } else toast.success(`Rejected. ${agentName} will not be asked this again: it is refused.`);
   }
 
   function handleReject() {
@@ -551,6 +622,17 @@ export default function ApprovalRequestCard({
                     Cancel
                   </PrimaryButton>
                 )}
+                {a.agentId !== null && neverKinds.length > 0 && (
+                  <PrimaryButton
+                    variant="neutral"
+                    size="md"
+                    onClick={() => setNeverOpen(true)}
+                    disabled={isPending}
+                    data-testid="approval-never"
+                  >
+                    Never for this agent
+                  </PrimaryButton>
+                )}
                 {a.agentId !== null && a.agentWorkspaces.length > 1 && (
                   <Select
                     value={folder}
@@ -590,6 +672,25 @@ export default function ApprovalRequestCard({
             ))}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={neverOpen}
+        title={`Never allow this for ${agentName}?`}
+        message="This request is rejected, and from now on these are refused without asking you."
+        extra={
+          <ul className="flex flex-col gap-1" data-testid="approval-never-changes">
+            {neverKinds.map((reason) => (
+              <li key={reason.category} className="text-body-13 text-ink-2">
+                {SHELL_CATEGORY_COPY[reason.category].label}: Ask me → Never
+              </li>
+            ))}
+          </ul>
+        }
+        confirmLabel="Set to Never and reject"
+        destructive
+        onConfirm={handleNever}
+        onCancel={() => setNeverOpen(false)}
+      />
     </div>
   );
 }

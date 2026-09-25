@@ -118,3 +118,41 @@ test.describe('approvals in the conversation @cap:approuver-une-action/ecran', (
     expect(new URL(page.url()).pathname).toBe(`/chat/${conversationId}`);
   });
 });
+
+// #470 — on a card the checklist held, « Never for this agent » sets those kinds
+// of action to Never (read back in the database) before rejecting. The reject
+// itself goes through the runner; the setting is written first, which is what
+// this journey reads.
+test.describe('Never for this agent, from the conversation @cap:regler-autonomie/ecran', () => {
+  test('confirming sets the kind of action to Never for that agent', async ({ page }) => {
+    await page.goto(`/chat/${conversationId}`);
+    const card = page.getByTestId('conversation-approvals').getByTestId('approval-card');
+    await expect(card).toHaveCount(1, { timeout: 30_000 });
+
+    await card.getByTestId('approval-never').click();
+    const dialog = page.getByRole('dialog', { name: /Never allow this for/ });
+    await expect(dialog.getByTestId('approval-never-changes')).toHaveText(
+      'Delete files or discard changes: Ask me → Never',
+    );
+    await dialog.getByRole('button', { name: 'Set to Never and reject' }).click();
+
+    const { agents, eq } = await import('@nodal-agents/db');
+    await expect
+      .poll(
+        async () => {
+          const { db, close } = makeDbClient();
+          try {
+            const [row] = await db
+              .select({ shellPolicy: agents.shellPolicy })
+              .from(agents)
+              .where(eq(agents.id, agentId));
+            return row?.shellPolicy ?? null;
+          } finally {
+            await close();
+          }
+        },
+        { timeout: 15_000 },
+      )
+      .toEqual({ delete_files: 'never' });
+  });
+});

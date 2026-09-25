@@ -27,6 +27,7 @@ vi.mock('next/link', () => ({
 vi.mock('@/lib/actions.ts', () => ({
   resolveApprovalAction: vi.fn(),
   setAgentApprovalRuleAction: vi.fn(),
+  setAgentShellPolicyAction: vi.fn(),
   listApprovalsAction: vi.fn(),
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -39,6 +40,7 @@ import ApprovalRequestCard from '../ApprovalRequestCard.tsx';
 import {
   resolveApprovalAction,
   setAgentApprovalRuleAction,
+  setAgentShellPolicyAction,
   listApprovalsAction,
 } from '@/lib/actions.ts';
 
@@ -750,5 +752,120 @@ describe('la carte dit ce que la liste de l’agent a vu (#464) @cap:approuver-u
   it('rien quand la liste n’y est pour rien', async () => {
     await monter(demande());
     expect(container!.querySelector('[data-testid="approval-shell-reasons"]')).toBeNull();
+  });
+});
+
+// #470 — « Never for this agent » : refuser ET ne plus jamais le demander pour
+// ces sortes d'action (Quentin, 24/09 : il cherchait Never sur la carte). Le
+// réglage d'abord, la réponse ensuite : un réglage non écrit laisse la
+// demande en attente.
+describe('« Never for this agent » (#470) @cap:approuver-une-action/ecran', () => {
+  const retenue = () =>
+    demande({
+      toolName: 'run_command',
+      agentId: AGENT,
+      agentName: 'Excel',
+      gateReasons: [
+        { category: 'inline_code', state: 'ask', details: ['python -c "x()" && rm -rf out'] },
+        { category: 'delete_files', state: 'ask', details: ['python -c "x()" && rm -rf out'] },
+      ],
+    });
+
+  const confirmer = async (): Promise<void> => {
+    await act(async () => {
+      parTestId('approval-never')!.click();
+    });
+    const bouton = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Set to Never and reject',
+    );
+    if (!bouton) throw new Error('no confirm button');
+    await act(async () => {
+      bouton.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  };
+
+  it("n'existe que sur une carte que la liste de l'agent a retenue", async () => {
+    await monter(demande());
+    expect(parTestId('approval-never')).toBeNull();
+    await act(async () => root!.unmount());
+    container!.remove();
+    await monter(retenue());
+    expect(parTestId('approval-never')).not.toBeNull();
+  });
+
+  it('dit ce qui change, puis passe chaque sorte à Never AVANT de refuser', async () => {
+    vi.mocked(setAgentShellPolicyAction).mockResolvedValue({ ok: true, data: {} as never });
+    await monter(retenue());
+    await act(async () => {
+      parTestId('approval-never')!.click();
+    });
+    expect(document.body.querySelector('[data-testid="approval-never-changes"]')?.textContent).toBe(
+      'Run code written into a command: Ask me → NeverDelete files or discard changes: Ask me → Never',
+    );
+    await act(async () => {
+      [...document.body.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Set to Never and reject')!
+        .click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // ONE write for every kind: all saved or none (review of PR #486).
+    expect(vi.mocked(setAgentShellPolicyAction).mock.calls.map((c) => c[0])).toEqual([
+      { agentId: AGENT, categories: ['inline_code', 'delete_files'], state: 'never' },
+    ]);
+    expect(vi.mocked(resolveApprovalAction).mock.calls.map((c) => c[0])).toEqual([
+      {
+        approvalRequestId: 'a1',
+        decision: 'reject',
+        // The agent reads WHY (run 2fb6bfca): a Never, on what, and not to work around it.
+        notes:
+          'The owner answered Never: this agent may not run code written into a command (python -c "x()" && rm -rf out); ' +
+          'delete files or discard changes (python -c "x()" && rm -rf out), now or later. ' +
+          'Do not look for another way to do it; report what you could not do.',
+      },
+    ]);
+    const derniereEcriture = Math.max(
+      ...vi.mocked(setAgentShellPolicyAction).mock.invocationCallOrder,
+    );
+    expect(vi.mocked(resolveApprovalAction).mock.invocationCallOrder[0]).toBeGreaterThan(
+      derniereEcriture,
+    );
+  });
+
+  it('un réglage non écrit ne refuse rien : la demande reste en attente, et la carte le dit', async () => {
+    vi.mocked(setAgentShellPolicyAction).mockResolvedValue({
+      ok: false,
+      code: 'forbidden',
+      message: 'Only the workspace owner can change what an agent may do with a shell.',
+    } as never);
+    await monter(retenue());
+
+    await confirmer();
+
+    expect(vi.mocked(resolveApprovalAction)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual([
+      'Setting not saved: Only the workspace owner can change what an agent may do with a shell. The approval stays pending.',
+    ]);
+  });
+
+  // Review of PR #486 (Reviewer A, P2): the settings were saved and only the
+  // rejection failed; the card said nothing of the settings, so a plain Reject
+  // would follow and the agent would lose its note.
+  it('réglages écrits mais refus échoué : la carte dit que les réglages sont en place', async () => {
+    vi.mocked(setAgentShellPolicyAction).mockResolvedValue({ ok: true, data: {} as never });
+    vi.mocked(resolveApprovalAction).mockResolvedValue({
+      ok: false,
+      code: 'runner_unreachable',
+      message: 'Runner did not respond.',
+    } as never);
+    await monter(retenue());
+
+    await confirmer();
+
+    expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual([
+      'Saved: Run code written into a command, Delete files or discard changes now set to Never. ' +
+        'The rejection failed (Runner did not respond): use Never for this agent again to reject with its note.',
+    ]);
   });
 });

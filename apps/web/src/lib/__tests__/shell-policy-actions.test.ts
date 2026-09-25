@@ -106,6 +106,41 @@ describe('setAgentShellPolicyAction @cap:regler-autonomie/moteur', () => {
     });
     expect(res.ok).toBe(false);
   });
+
+  // Review of PR #486 (Reviewer A, P2): "Never for this agent" sets several
+  // kinds at once, and must save all of them or none.
+  it('sets several kinds to one state in one write, or none of them', async () => {
+    const { setAgentShellPolicyAction } = await import('../actions.ts');
+    const before = await storedPolicy();
+
+    const bad = await setAgentShellPolicyAction({
+      agentId: seed.agentId,
+      categories: ['stop_programs', 'format_disk'],
+      state: 'never',
+    });
+    expect(bad.ok).toBe(false);
+    expect(await storedPolicy()).toEqual(before);
+
+    const both = await setAgentShellPolicyAction({
+      agentId: seed.agentId,
+      category: 'download',
+      categories: ['download'],
+      state: 'never',
+    });
+    expect(both.ok, 'one category and a list at once').toBe(false);
+
+    const good = await setAgentShellPolicyAction({
+      agentId: seed.agentId,
+      categories: ['stop_programs', 'system_settings'],
+      state: 'never',
+    });
+    expect(good.ok).toBe(true);
+    expect(await storedPolicy()).toEqual({
+      ...((before as Record<string, string> | null) ?? {}),
+      stop_programs: 'never',
+      system_settings: 'never',
+    });
+  });
 });
 
 describe('getAutoRunPauseAction gives the workspace autonomy (#464) @cap:regler-autonomie/moteur', () => {

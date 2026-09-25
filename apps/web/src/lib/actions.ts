@@ -7784,11 +7784,20 @@ export async function setAgentCommandAllowlistAction(raw: unknown): Promise<Acti
 // base DANS la transaction, verrou posé, et n'y change que la sorte demandée :
 // deux lignes changées à la suite ne s'écrasent pas l'une l'autre.
 
-const SetAgentShellPolicySchema = z.object({
-  agentId: z.string().guid(),
-  category: z.enum(SHELL_CATEGORIES),
-  state: z.enum(SHELL_CATEGORY_STATES),
-});
+// One kind of action (the Autonomy tab's rows), or several set to the same
+// state in ONE transaction: "Never for this agent" on the approval card writes
+// all its kinds or none (review of PR #486, Reviewer A: a loop of single
+// writes could stop half way and say "nothing was saved").
+const SetAgentShellPolicySchema = z
+  .object({
+    agentId: z.string().guid(),
+    category: z.enum(SHELL_CATEGORIES).optional(),
+    categories: z.array(z.enum(SHELL_CATEGORIES)).min(1).optional(),
+    state: z.enum(SHELL_CATEGORY_STATES),
+  })
+  .refine((v) => (v.category === undefined) !== (v.categories === undefined), {
+    message: 'Give one category or a list of categories, not both.',
+  });
 
 export async function setAgentShellPolicyAction(raw: unknown): Promise<ActionResult<ShellPolicy>> {
   try {
@@ -7797,7 +7806,8 @@ export async function setAgentShellPolicyAction(raw: unknown): Promise<ActionRes
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { agentId, category, state } = parsed.data;
+    const { agentId, state } = parsed.data;
+    const kinds = parsed.data.categories ?? [parsed.data.category!];
 
     if (env.AUTH_MODE !== 'local-trust') {
       const [entityRow] = await getDb()
@@ -7820,10 +7830,10 @@ export async function setAgentShellPolicyAction(raw: unknown): Promise<ActionRes
         .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
         .for('update');
       if (!agent) return null;
-      // Ce qui est stocké, plus la sorte demandée. Une valeur illisible en
+      // Ce qui est stocké, plus les sortes demandées. Une valeur illisible en
       // base lève ici plutôt que d'être écrasée en silence.
       const stored = StoredShellPolicySchema.parse(agent.shellPolicy ?? {});
-      const next = { ...stored, [category]: state };
+      const next = { ...stored, ...Object.fromEntries(kinds.map((k) => [k, state])) };
       await tx
         .update(agents)
         .set({ shellPolicy: next, updatedAt: new Date() })
