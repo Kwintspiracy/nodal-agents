@@ -5544,8 +5544,66 @@ describe('reliability guards', () => {
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
     expect(row?.error).toBe('run_time_exceeded');
-    expect(row?.result).toBe('[stopped: run budget — 2.0 h of work, ceiling 2.0 h, turn 1]');
+    expect(row?.result).toBe(
+      '[stopped: run budget — 2 h 01 min of work, ceiling 2 h 00 min, turn 1]',
+    );
     // Nothing was asked of the model once the budget was spent.
+    expect(options).toEqual([]);
+  });
+
+  // Review of PR #495 (Reviewer C): does a stop in a RESUMED segment deliver
+  // the text written before the suspension? The segment starts from the
+  // stored transcript, not from an empty in-memory variable.
+  it('#442: a run resumed after a suspension delivers the text of the earlier segment when it stops on its budget', async () => {
+    const job = await createTestJob(db, seed);
+    await db
+      .update(agentJobs)
+      .set({
+        totalDurationMs: 2 * 3_600_000 + 1_000,
+        chainCount: 1,
+        messages: [
+          { role: 'user', content: 'Run a test task' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'Here is the analysis: the amendment lowers the rate to 4 %.' },
+              {
+                type: 'tool-call',
+                toolCallId: 'tc-old',
+                toolName: 'save_memory',
+                input: { fact: 'rate 4 %', category: 'context' },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'tc-old',
+                toolName: 'save_memory',
+                output: { type: 'json', value: { ok: true } },
+              },
+            ],
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, job.id));
+    const { client, options } = capturingClient([{ text: 'never sent' }]);
+
+    await withRunBudget({ hours: 2 }, async () => {
+      await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    });
+
+    const [row] = await db
+      .select({ error: agentJobs.error, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.error).toBe('run_time_exceeded');
+    expect(row?.result).toBe(
+      'Here is the analysis: the amendment lowers the rate to 4 %.\n\n' +
+        '[stopped: run budget — 2 h 01 min of work, ceiling 2 h 00 min, turn 1]',
+    );
     expect(options).toEqual([]);
   });
 

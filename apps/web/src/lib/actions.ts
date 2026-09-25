@@ -2702,7 +2702,10 @@ export async function getSpaceConversationAction(
       // enchaînées : le rapport se lit sur les jobs que les verdicts désignent.
       readReviewVerdicts(db, session.entityId, relevantIds),
     ]);
-    // #442 : le budget de run de l'espace, que le panneau de coût nomme.
+    // #442 : le budget de run de l'espace, que le panneau de coût nomme. Ce
+    // chargeur décrit UN run (pages /jobs, /scheduled, page d'un run) : c'est
+    // bien la vue où `SpaceCostView.runBudget` doit être présent. Le fil d'une
+    // conversation a son propre chargeur, qui ne le pose pas (revue de la PR #495).
     const [budgetRow] = await db
       .select({ maxRunCostUsd: entities.maxRunCostUsd, maxRunHours: entities.maxRunHours })
       .from(entities)
