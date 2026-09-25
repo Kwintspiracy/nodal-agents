@@ -22,14 +22,11 @@
 
 import 'server-only';
 import { z } from 'zod';
-import { eq, and, inArray, agentJobs, toolCalls } from '@nodal-agents/db';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
-import { collectDescendants } from './job-feed.ts';
 import { entityWorkspaceRoots } from './workspace-roots.ts';
-import { redactAuditRow } from './redact-presented.ts';
-import { parsePresented } from './tool-card-payload.ts';
+import { loadRunAuditRows } from './run-audit-rows.ts';
 import { fileChangesOfAuditRows, type FileChangeGroup } from './file-change-groups.ts';
 
 export type ActionResult<T = void> =
@@ -78,51 +75,11 @@ export async function getRunFileChangesAction(
     if (!session.entityId) return fail('no_entity', 'No active entity');
 
     // Garde IDOR, la même que `getFileDiffAction` : la session authentifie, elle
-    // ne dit rien de l'appartenance de CE travail. « Pas trouvé » couvre les
-    // deux cas — inexistant, ou appartenant à quelqu'un d'autre — pour ne pas
-    // révéler l'existence d'un travail voisin.
+    // ne dit rien de l'appartenance de CE travail (`loadRunAuditRows`).
     const db = getDb();
-    const [job] = await db
-      .select({ id: agentJobs.id })
-      .from(agentJobs)
-      .where(and(eq(agentJobs.id, parsed.data.jobId), eq(agentJobs.entityId, session.entityId)))
-      .limit(1);
-    if (!job) return fail('not_found', 'Job not found');
-
-    // La descendance ENTIÈRE, comme le fil : un petit-enfant qui écrit compte
-    // dans l'encart de son tour, et sa plaque doit s'ouvrir comme les autres.
-    const descendants = await collectDescendants(db, session.entityId, [parsed.data.jobId]);
-    const jobIds = [parsed.data.jobId, ...descendants.map((d) => d.id)];
-
-    const rows = await db
-      .select({
-        toolName: toolCalls.toolName,
-        toolInput: toolCalls.toolInput,
-        toolOutput: toolCalls.toolOutput,
-        presented: toolCalls.presented,
-      })
-      .from(toolCalls)
-      .where(and(eq(toolCalls.entityId, session.entityId), inArray(toolCalls.jobId, jobIds)))
-      .orderBy(toolCalls.createdAt);
-
+    const audit = await loadRunAuditRows(db, session.entityId, parsed.data.jobId);
+    if (audit === null) return fail('not_found', 'Job not found');
     const workspaceRoots = await entityWorkspaceRoots(db, session.entityId);
-    // MASQUÉ À LA PORTE, comme le chargeur du fil (#150, Reviewer C du 18/09) :
-    // ces fragments sont DESSINÉS tels quels, et une clé écrite dans un fichier
-    // se lirait en clair sur la plaque. Les chemins bruts partent à côté, pour
-    // la seule identité des fichiers (#161) — ils ne sortent pas d'ici.
-    const audit = rows.map((row) => {
-      const dite =
-        row.presented !== null &&
-        typeof row.presented === 'object' &&
-        (row.presented as { card?: unknown }).card === 'files';
-      const brut = dite ? parsePresented(row.presented) : null;
-      return {
-        ...redactAuditRow(row),
-        rawFilePaths:
-          brut !== null && brut.card === 'files' ? brut.files.map((f) => f.path) : undefined,
-      };
-    });
-
     return ok(fileChangesOfAuditRows(audit, workspaceRoots));
   } catch (err) {
     console.error('[getRunFileChangesAction]', err);

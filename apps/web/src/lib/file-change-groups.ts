@@ -151,33 +151,71 @@ export type AuditRowForChanges = {
  * d'approbation) ne compte pas non plus, et un appel REFUSÉ par le harnais n'a
  * écrit aucun fragment (`isRefusedToolCall`).
  */
+/** Ce que la carte a dit d'un fichier livré, avec le chemin brut qui l'identifie. */
+type DisplayedFile = { path: string; changeKind: FileChangeGesture; rawPath: string };
+
+/**
+ * LA LISTE DES FICHIERS LIVRÉS, telle que les cartes la disent : clé canonique
+ * brute → ce que la carte a dit, dans l'ordre d'écriture. Un seul parcours pour
+ * l'encart (`fileChangesOfAuditRows`) et pour la route qui sert un média
+ * (`deliveredFileSources`, #490) : les deux listes sont la même, dans le même
+ * ordre, et le rang d'un fichier désigne le même des deux côtés.
+ */
+function displayedFiles(
+  rows: readonly AuditRowForChanges[],
+  workspaceRoots: readonly string[],
+): Map<string, DisplayedFile> {
+  const display = new Map<string, DisplayedFile>();
+  for (const row of rows) {
+    if (!callHappened(outcomeOfToolOutput(row.toolOutput))) continue;
+    const p = parsePresented(row.presented);
+    if (p === null || p.card !== 'files') continue;
+    p.files.forEach((f, i) => {
+      if (f.action === 'listed') return;
+      const rawPath = row.rawFilePaths?.[i] ?? f.path;
+      const key = canonicalChangePath(rawPath, workspaceRoots);
+      // Le geste vient de la CARTE, pas des fragments (#369) : la plaque est
+      // repliée d'abord, ses fragments n'arrivent qu'au clic, et un mot déduit
+      // d'eux aurait dit « modified » sur un fichier créé jusqu'au dépli.
+      // C'est le PREMIER appel qui nomme le fichier qui décide — un fichier
+      // écrit puis retouché a bien été créé.
+      if (!display.has(key)) {
+        display.set(key, {
+          path: canonicalChangePath(f.path, workspaceRoots),
+          changeKind: f.action === 'created' ? 'added' : f.action,
+          rawPath,
+        });
+      }
+    });
+  }
+  return display;
+}
+
+/**
+ * LES FICHIERS LIVRÉS AVEC LEUR CHEMIN BRUT, pour la seule route qui sert un
+ * média (#490). Même liste, même ordre que `fileChangesOfAuditRows`. Le
+ * chemin brut est celui que l'outil a présenté (absolu pour `file_write` et
+ * `generate_speech`, relatif pour `file_edit`) : il ne sort JAMAIS du serveur,
+ * il sert à retrouver le fichier sur le disque.
+ */
+export function deliveredFileSources(
+  rows: readonly AuditRowForChanges[],
+  workspaceRoots: readonly string[],
+): { filePath: string; rawPath: string }[] {
+  return [...displayedFiles(rows, workspaceRoots).values()].map((d) => ({
+    filePath: d.path,
+    rawPath: d.rawPath,
+  }));
+}
+
 export function fileChangesOfAuditRows(
   rows: readonly AuditRowForChanges[],
   workspaceRoots: readonly string[],
 ): FileChangeGroup[] {
-  /** Clé canonique brute → ce que la carte a dit, dans l'ordre d'écriture. */
-  const display = new Map<string, { path: string; changeKind: FileChangeGesture }>();
+  const display = displayedFiles(rows, workspaceRoots);
   const calls: FileChangeCall[] = [];
   for (const row of rows) {
     if (!callHappened(outcomeOfToolOutput(row.toolOutput))) continue;
-    const p = parsePresented(row.presented);
-    if (p !== null && p.card === 'files') {
-      p.files.forEach((f, i) => {
-        if (f.action === 'listed') return;
-        const key = canonicalChangePath(row.rawFilePaths?.[i] ?? f.path, workspaceRoots);
-        // Le geste vient de la CARTE, pas des fragments (#369) : la plaque est
-        // repliée d'abord, ses fragments n'arrivent qu'au clic, et un mot déduit
-        // d'eux aurait dit « modified » sur un fichier créé jusqu'au dépli.
-        // C'est le PREMIER appel qui nomme le fichier qui décide — un fichier
-        // écrit puis retouché a bien été créé.
-        if (!display.has(key)) {
-          display.set(key, {
-            path: canonicalChangePath(f.path, workspaceRoots),
-            changeKind: f.action === 'created' ? 'added' : f.action,
-          });
-        }
-      });
-    }
     if (isRefusedToolCall(row.toolOutput)) continue;
     const change = extractChange(row.toolName, row.toolInput);
     if (change !== null) calls.push({ change });
