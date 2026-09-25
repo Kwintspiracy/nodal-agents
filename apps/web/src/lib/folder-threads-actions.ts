@@ -41,6 +41,7 @@ import {
   type FolderThreadSource,
 } from './chat-folders.ts';
 import { runIsRunning, runTitle } from './external-runs.ts';
+import { runPageHref } from './run-page.ts';
 import { listApprovalsAction } from './actions.ts';
 import {
   getChatFoldersAction,
@@ -177,7 +178,8 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
       title: runTitle(r.task),
       // Un run venu de dehors n'a pas de fil : sa ligne ouvre sa page, comme
       // dans la liste du dossier.
-      href: `/jobs/${r.id}`,
+      // Sous `/chat` : la barre latérale reste sur Work (Quentin, 24/09).
+      href: runPageHref(r.id),
       waiting: attendSurRun.has(r.id),
       // Un run sans conversation n'est dans aucun `runningConversationIds` :
       // c'est son STATUT qui dit s'il avance, la même règle que sa ligne dans
