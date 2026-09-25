@@ -49,7 +49,7 @@ describe('parseVerificationSurfaces', () => {
 });
 
 describe('VERIFICATION_SURFACE_TOOLS', () => {
-  it('table exhaustive et disjointe : les cinq outils mutants d’origine + les vingt outils Office écrivains, aucun dans deux clés', () => {
+  it('table exhaustive et disjointe : les cinq outils mutants d’origine + les vingt outils Office écrivains + generate_speech, aucun dans deux clés', () => {
     const all = VERIFICATION_SURFACE_KEYS.flatMap((k) => [...VERIFICATION_SURFACE_TOOLS[k]]);
     const office = [
       'docx_create',
@@ -74,7 +74,15 @@ describe('VERIFICATION_SURFACE_TOOLS', () => {
       'xlsx_freeze_panes',
     ];
     expect([...all].sort()).toEqual(
-      ['code_task', 'file_edit', 'file_write', 'run_command', 'run_skill_script', ...office].sort(),
+      [
+        'code_task',
+        'file_edit',
+        'file_write',
+        'generate_speech',
+        'run_command',
+        'run_skill_script',
+        ...office,
+      ].sort(),
     );
     expect(new Set(all).size).toBe(all.length);
     // Les lecteurs Office ne mutent rien : jamais sur une surface (revue PR #46).

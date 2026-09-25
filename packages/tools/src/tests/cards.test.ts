@@ -119,6 +119,7 @@ const EXPECTED_CARDS: Record<string, ToolCard> = {
   file_read: 'read',
   file_search: 'search',
   file_write: 'files',
+  generate_speech: 'files',
   list_conversations: 'text',
   list_models: 'text',
   list_schedules: 'text',

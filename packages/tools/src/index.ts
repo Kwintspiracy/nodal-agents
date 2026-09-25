@@ -173,6 +173,8 @@ export {
   DocsIndexUnavailableError,
   searchHistoryTool,
   webSearchTool,
+  generateSpeechTool,
+  MAX_SPEECH_CHARS,
   dashboardPublishTool,
   DashboardPublishInputSchema,
   buildChildEnv,

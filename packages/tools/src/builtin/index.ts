@@ -12,6 +12,7 @@ import { searchHistoryTool } from './search-history';
 import { markMemoryHelpfulTool } from './mark-memory-helpful';
 import { markMemoryOutdatedTool } from './mark-memory-outdated';
 import { webSearchTool } from './web-search';
+import { generateSpeechTool } from './generate-speech';
 import { dashboardPublishTool } from './dashboard-publish';
 import {
   fileReadTool,
@@ -61,6 +62,7 @@ export { searchHistoryTool } from './search-history';
 export { markMemoryHelpfulTool } from './mark-memory-helpful';
 export { markMemoryOutdatedTool } from './mark-memory-outdated';
 export { webSearchTool } from './web-search';
+export { generateSpeechTool, MAX_SPEECH_CHARS } from './generate-speech';
 export { dashboardPublishTool, DashboardPublishInputSchema } from './dashboard-publish';
 export type { DashboardPublishInput } from './dashboard-publish';
 export {
@@ -223,6 +225,9 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // declare_verification — offert avec les outils d'écriture de fichiers : un
   // agent qui produit doit pouvoir dire comment on vérifie ce qu'il a produit.
   registry.register(declareVerificationTool);
+  // generate_speech — gated behind the "speech-generation" tool group (Tools
+  // tab) via requiredBuiltins, NOT always-on (#487).
+  registry.register(generateSpeechTool);
 }
 
 /**
