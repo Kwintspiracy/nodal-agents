@@ -24,11 +24,13 @@ WHERE "shell_policy" ?| ARRAY['outside_folders', 'own_script'];
 UPDATE "agents" SET "shell_policy" = NULL WHERE "shell_policy" = '{}'::jsonb;
 --> statement-breakpoint
 -- Les raisons déjà posées sur une demande : la carte ne sait plus les nommer.
+-- Seules les deux sortes retirées partent ; un élément sans catégorie reste
+-- (`NULL NOT IN (…)` n'est pas vrai, il aurait disparu en silence).
 UPDATE "approval_requests"
 SET "gate_reasons" = (
   SELECT jsonb_agg(e)
   FROM jsonb_array_elements("gate_reasons") AS e
-  WHERE e ->> 'category' NOT IN ('outside_folders', 'own_script')
+  WHERE e ->> 'category' IS NULL OR e ->> 'category' NOT IN ('outside_folders', 'own_script')
 )
 WHERE jsonb_typeof("gate_reasons") = 'array'
   AND EXISTS (
