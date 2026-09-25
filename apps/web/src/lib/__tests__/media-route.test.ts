@@ -18,6 +18,7 @@ const JOB = '11111111-2222-4333-8444-555555555555';
 let ROOT: string;
 let audit: AuditRowForChanges[] | null;
 let signedIn = true;
+let dbDown = false;
 
 vi.mock('@/lib/server.ts', () => ({
   getDb: () => ({}),
@@ -27,8 +28,10 @@ vi.mock('@/lib/server.ts', () => ({
   },
 }));
 vi.mock('@/lib/run-audit-rows.ts', () => ({
-  loadRunAuditRows: async (_db: unknown, entityId: string, jobId: string) =>
-    entityId === 'e' && jobId === JOB ? audit : null,
+  loadRunAuditRows: async (_db: unknown, entityId: string, jobId: string) => {
+    if (dbDown) throw new Error('connect ECONNREFUSED 127.0.0.1:25444');
+    return entityId === 'e' && jobId === JOB ? audit : null;
+  },
 }));
 vi.mock('@/lib/workspace-roots.ts', () => ({
   entityWorkspaceRoots: async () => [ROOT],
@@ -58,6 +61,7 @@ beforeEach(async () => {
     },
   ];
   signedIn = true;
+  dbDown = false;
 });
 
 afterEach(async () => {
@@ -140,7 +144,23 @@ describe('GET /api/runs/<jobId>/media @cap:travailler-sur-des-fichiers/moteur', 
     expect(parti.status).toBe(404);
     expect(await parti.json()).toEqual({ error: 'gone' });
 
+    // Un refus porte `nosniff` lui aussi (revue de la PR #493).
+    expect(parti.headers.get('x-content-type-options')).toBe('nosniff');
+
     expect((await get('n=0')).status).toBe(400);
     expect((await get('path=x&n=0', {}, 'pas-un-uuid')).status).toBe(400);
+  });
+
+  it('une base en panne se dit en 500 db_error, sans détail Postgres', async () => {
+    // Revue de la PR #493 : sans garde, l'erreur remontait en 500 brut.
+    dbDown = true;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await get('path=outputs%2Fvoix.wav&n=0');
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: 'db_error' });
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

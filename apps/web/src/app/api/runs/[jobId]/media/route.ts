@@ -41,7 +41,8 @@ const REFUSAL_STATUS: Readonly<Record<DeliveredMediaRefusal, number>> = {
 function refuse(error: string, status: number): Response {
   return new Response(JSON.stringify({ error }), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    // `nosniff` sur les refus aussi, comme sur les fichiers servis (revue de la PR #493).
+    headers: { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' },
   });
 }
 
@@ -73,9 +74,18 @@ export async function GET(
   if (!query.success) return refuse('validation_failed', 400);
 
   const db = getDb();
-  const audit = await loadRunAuditRows(db, session.entityId, jobId);
+  // Une base en panne se dit, comme dans `getRunFileChangesAction`, au lieu
+  // d'un 500 brut (revue de la PR #493).
+  let audit: Awaited<ReturnType<typeof loadRunAuditRows>>;
+  let roots: string[];
+  try {
+    audit = await loadRunAuditRows(db, session.entityId, jobId);
+    roots = audit === null ? [] : await entityWorkspaceRoots(db, session.entityId);
+  } catch (err) {
+    console.error('[GET /api/runs/media]', err);
+    return refuse('db_error', 500);
+  }
   if (audit === null) return refuse('job_not_found', 404);
-  const roots = await entityWorkspaceRoots(db, session.entityId);
   const found = await resolveDeliveredMedia(audit, roots, query.data.path, query.data.n);
   if (!found.ok) return refuse(found.code, REFUSAL_STATUS[found.code]);
   const media = found.media;
@@ -98,6 +108,10 @@ export async function GET(
       headers: { ...headers, 'Content-Range': `bytes */${media.size}` },
     });
   }
+  // La taille vient du `stat` du résolveur : un fichier raccourci entre ce
+  // `stat` et la lecture rend un corps plus court que `Content-Length`, et le
+  // navigateur voit une réponse interrompue. Sans verrou, aucun serveur de
+  // fichiers n'y échappe ; un média livré ne change plus (revue de la PR #493).
   const start = range?.start ?? 0;
   const end = range?.end ?? media.size - 1;
   const body =

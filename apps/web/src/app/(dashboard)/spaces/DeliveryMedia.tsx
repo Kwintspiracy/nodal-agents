@@ -40,6 +40,7 @@ const REFUSAL_NOTE: Readonly<Record<string, string>> = {
   not_media: 'This file cannot be previewed.',
   job_not_found: 'Run not found.',
   unauthorized: 'Sign in to see this file.',
+  db_error: 'The dashboard could not read this run.',
 };
 
 export default function DeliveryMedia({
@@ -67,6 +68,12 @@ export default function DeliveryMedia({
       .then(async (res) => {
         if (res.ok) {
           setFailure('Your browser cannot play this file.');
+          return;
+        }
+        // Le premier octet d'un fichier VIDE n'existe pas : la route répond 416,
+        // sans corps (revue de la PR #493).
+        if (res.status === 416) {
+          setFailure('This file is empty.');
           return;
         }
         const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
