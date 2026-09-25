@@ -1,4 +1,4 @@
-// generate-speech.test.ts — text in, an mp3 file in the agent's folders (#487).
+// generate-speech.test.ts — text in, a WAV file in the agent's folders (#487).
 //
 // Real folders on disk; the speech generator is a stub standing for the one
 // the runner builds on the OpenRouter key. What is read back: the file's bytes,
@@ -41,13 +41,25 @@ function ctx(overrides: Partial<ToolContext> = {}): ToolContext {
   };
 }
 
-const MP3 = new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0, 1, 2, 3]);
+/** A minimal WAV: RIFF header then two samples, as packages/llm builds it. */
+const WAV = new Uint8Array([
+  ...new TextEncoder().encode('RIFF'),
+  0,
+  0,
+  0,
+  0,
+  ...new TextEncoder().encode('WAVE'),
+  1,
+  0,
+  2,
+  0,
+]);
 
 function recorder() {
   const calls: SpeechRequest[] = [];
   const speechGenerator = async (request: SpeechRequest) => {
     calls.push(request);
-    return { bytes: MP3, mediaType: 'audio/mp3' };
+    return { bytes: WAV, mediaType: 'audio/wav' };
   };
   return { calls, speechGenerator };
 }
@@ -61,7 +73,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     const res = await generateSpeechTool.execute(
       input({
         text: 'Bonjour Quentin.',
-        path: 'audio/intro.mp3',
+        path: 'audio/intro.wav',
         voice: 'Puck',
         style: 'warm and friendly',
       }),
@@ -70,9 +82,9 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
 
     expect(res.ok).toBe(true);
     if (!res.ok) throw new Error(res.reason);
-    expect(res.path).toBe(join(WORKSPACE, 'audio', 'intro.mp3'));
-    expect([...(await readFile(res.path))]).toEqual([...MP3]);
-    expect(res.bytes).toBe(MP3.byteLength);
+    expect(res.path).toBe(join(WORKSPACE, 'audio', 'intro.wav'));
+    expect([...(await readFile(res.path))]).toEqual([...WAV]);
+    expect(res.bytes).toBe(WAV.byteLength);
     expect(calls).toEqual([
       {
         model: 'google/gemini-3.8-flash-tts',
@@ -83,7 +95,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     ]);
   });
 
-  it('defaults to Gemini 3.8 Flash TTS and the voice Kore, and adds .mp3 to a bare name', async () => {
+  it('defaults to Gemini 3.8 Flash TTS and the voice Kore, and adds .wav to a bare name', async () => {
     const { calls, speechGenerator } = recorder();
 
     const res = await generateSpeechTool.execute(
@@ -91,7 +103,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
       ctx({ speechGenerator }),
     );
 
-    expect(res.ok && res.path).toBe(join(WORKSPACE, 'note.mp3'));
+    expect(res.ok && res.path).toBe(join(WORKSPACE, 'note.wav'));
     expect(calls[0]).toEqual({ model: 'google/gemini-3.8-flash-tts', text: 'x', voice: 'Kore' });
   });
 
@@ -99,7 +111,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     const { calls, speechGenerator } = recorder();
 
     const res = await generateSpeechTool.execute(
-      input({ text: 'x', path: join(OUTSIDE, 'escape.mp3') }),
+      input({ text: 'x', path: join(OUTSIDE, 'escape.wav') }),
       ctx({ speechGenerator }),
     );
 
@@ -107,23 +119,23 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(calls).toEqual([]);
   });
 
-  it('refuses another extension: the file is mp3', async () => {
+  it('refuses another extension: the file is WAV', async () => {
     const { calls, speechGenerator } = recorder();
 
     const res = await generateSpeechTool.execute(
-      input({ text: 'x', path: 'audio/intro.wav' }),
+      input({ text: 'x', path: 'audio/intro.mp3' }),
       ctx({ speechGenerator }),
     );
 
     expect(res).toEqual({
       ok: false,
-      reason: 'The file is mp3: "audio/intro.wav" must end in .mp3 (or have no extension).',
+      reason: 'The file is WAV: "audio/intro.mp3" must end in .wav (or have no extension).',
     });
     expect(calls).toEqual([]);
   });
 
   it('says there is no OpenRouter key when the runner provided no generator', async () => {
-    const res = await generateSpeechTool.execute(input({ text: 'x', path: 'a.mp3' }), ctx());
+    const res = await generateSpeechTool.execute(input({ text: 'x', path: 'a.wav' }), ctx());
 
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error('unreachable');
@@ -132,7 +144,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
 
   it('reports the provider error and writes nothing', async () => {
     const res = await generateSpeechTool.execute(
-      input({ text: 'x', path: 'a.mp3' }),
+      input({ text: 'x', path: 'a.wav' }),
       ctx({
         speechGenerator: async () => {
           throw new Error('400: unknown voice "Nobody"');
@@ -145,41 +157,40 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
       reason: 'Speech generation failed: 400: unknown voice "Nobody"',
     });
     await mkdir(WORKSPACE, { recursive: true });
-    await expect(readFile(join(WORKSPACE, 'a.mp3'))).rejects.toThrow();
+    await expect(readFile(join(WORKSPACE, 'a.wav'))).rejects.toThrow();
   });
 
   it('refuses text longer than the model takes, and an unknown model, at the schema', () => {
-    expect(() => input({ text: 'x'.repeat(5_001), path: 'a.mp3' })).toThrow();
-    expect(() => input({ text: 'x', path: 'a.mp3', model: 'openai/gpt-5' })).toThrow();
+    expect(() => input({ text: 'x'.repeat(5_001), path: 'a.wav' })).toThrow();
+    expect(() => input({ text: 'x', path: 'a.wav', model: 'openai/gpt-5' })).toThrow();
   });
 
   // Review of PR #488 (Reviewer C, minor findings).
-  it('a 200 answer that is not mp3 audio is refused, and nothing is written', async () => {
+  it('an answer that is not a WAV file is refused, and nothing is written', async () => {
     const res = await generateSpeechTool.execute(
-      input({ text: 'x', path: 'a.mp3' }),
+      input({ text: 'x', path: 'a.wav' }),
       ctx({
         speechGenerator: async () => ({
           bytes: new TextEncoder().encode('{"error":{"message":"upstream"}}'),
-          mediaType: 'audio/mp3',
+          mediaType: 'audio/wav',
         }),
       }),
     );
 
     expect(res).toEqual({
       ok: false,
-      reason: 'google/gemini-3.8-flash-tts answered, but not with mp3 audio. Nothing was written.',
+      reason: 'google/gemini-3.8-flash-tts answered, but not with audio. Nothing was written.',
     });
-    await expect(readFile(join(WORKSPACE, 'a.mp3'))).rejects.toThrow();
+    await expect(readFile(join(WORKSPACE, 'a.wav'))).rejects.toThrow();
   });
 
-  it('accepts an MPEG frame sync as well as an ID3 tag, and writes .MP3 as .mp3', async () => {
-    const frame = new Uint8Array([0xff, 0xfb, 0x90, 0x44, 0, 0]);
+  it('writes .WAV as .wav', async () => {
     const res = await generateSpeechTool.execute(
-      input({ text: 'x', path: 'audio/INTRO.MP3' }),
-      ctx({ speechGenerator: async () => ({ bytes: frame, mediaType: 'audio/mp3' }) }),
+      input({ text: 'x', path: 'audio/INTRO.WAV' }),
+      ctx({ speechGenerator: async () => ({ bytes: WAV, mediaType: 'audio/wav' }) }),
     );
 
-    expect(res.ok && res.path).toBe(join(WORKSPACE, 'audio', 'INTRO.mp3'));
-    expect([...(await readFile(join(WORKSPACE, 'audio', 'INTRO.mp3')))]).toEqual([...frame]);
+    expect(res.ok && res.path).toBe(join(WORKSPACE, 'audio', 'INTRO.wav'));
+    expect([...(await readFile(join(WORKSPACE, 'audio', 'INTRO.wav')))]).toEqual([...WAV]);
   });
 });
