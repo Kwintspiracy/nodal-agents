@@ -22,6 +22,8 @@
 
 import { useState } from 'react';
 import FileChangeBlock from '@/app/(dashboard)/code/[id]/FileChangeBlock.tsx';
+import DeliveryMedia from './DeliveryMedia.tsx';
+import { mediaTypeOfPath } from '@/lib/media-kinds.ts';
 import { getRunFileChangesAction } from '@/lib/run-file-changes-actions.ts';
 import type { CodingChangeView } from '@/lib/coding-changes.ts';
 import type { DeliveryFileChange } from '@/lib/conversation-feed.ts';
@@ -78,6 +80,20 @@ export default function DeliveryFiles({
       {files.map((f) => {
         const n = rang.get(f.path) ?? 0;
         rang.set(f.path, n + 1);
+        // Une image, une piste, une vidéo : pas de diff à peindre, le média
+        // lui-même à la place (#490).
+        const media = mediaTypeOfPath(f.path);
+        if (media !== null) {
+          return (
+            <DeliveryMedia
+              key={`${f.path}#${n}`}
+              file={f}
+              kind={media.kind}
+              jobId={jobId}
+              rank={n}
+            />
+          );
+        }
         return (
           <FileChangeBlock
             key={`${f.path}#${n}`}

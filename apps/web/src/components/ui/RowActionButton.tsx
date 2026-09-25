@@ -34,8 +34,23 @@ type LabeledProps = CommonProps & {
 type BaseProps = SquareProps | LabeledProps;
 
 type Props =
-  | (BaseProps & { href: string; onClick?: undefined; type?: undefined })
-  | (BaseProps & { href?: undefined; onClick?: () => void; type?: 'button' | 'submit' });
+  | (BaseProps & {
+      href: string;
+      /**
+       * Le lien TÉLÉCHARGE ce qu'il désigne (un média livré, #490) : un `<a
+       * download>` et non un `<Link>`, que Next précharge et route côté client
+       * — précharger un fichier le téléchargerait sans que personne ne clique.
+       */
+      download?: boolean;
+      onClick?: undefined;
+      type?: undefined;
+    })
+  | (BaseProps & {
+      href?: undefined;
+      download?: undefined;
+      onClick?: () => void;
+      type?: 'button' | 'submit';
+    });
 
 const TONE_STYLES: Record<Tone, string> = {
   default: 'border-rule-2 text-ink-2 hover:bg-hover hover:text-ink',
@@ -115,6 +130,20 @@ export default function RowActionButton(props: Props) {
     const classes = `inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-md border bg-paper transition-colors disabled:opacity-40 ${SQUARE_TONE_STYLES[tone]} ${className}`;
 
     if ('href' in props && props.href) {
+      if (props.download) {
+        return (
+          <a
+            href={props.href}
+            download
+            title={title}
+            aria-label={title}
+            aria-disabled={disabled || undefined}
+            className={classes}
+          >
+            {icon}
+          </a>
+        );
+      }
       return (
         <Link
           href={props.href}
@@ -151,6 +180,21 @@ export default function RowActionButton(props: Props) {
   const labelEl = <span className={responsive ? 'hidden sm:inline' : ''}>{children}</span>;
 
   if ('href' in props && props.href) {
+    if (props.download) {
+      return (
+        <a
+          href={props.href}
+          download
+          title={title}
+          aria-label={title}
+          aria-disabled={disabled || undefined}
+          className={classes}
+        >
+          {iconEl}
+          {labelEl}
+        </a>
+      );
+    }
     return (
       <Link
         href={props.href}
