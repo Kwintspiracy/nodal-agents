@@ -43,14 +43,19 @@ export function finDuJournal(texte, n) {
 }
 
 /**
- * Toute réponse HTTP compte, redirection comprise : un dashboard en mode
- * `local-auth` répond 307 vers /login, et c'est une stack prête.
+ * Le critère de `curl -f`, que les deux workflows utilisaient : une réponse
+ * sous 400. Une redirection compte (un dashboard en `local-auth` répond 307
+ * vers /login, et c'est une stack prête) ; une 404 ou une 500 non.
  */
+export function estPrete(status) {
+  return status < 400;
+}
+
 async function repond(url) {
   if (!url) return false;
   try {
     const r = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(5_000) });
-    return r.status < 500;
+    return estPrete(r.status);
   } catch {
     return false;
   }

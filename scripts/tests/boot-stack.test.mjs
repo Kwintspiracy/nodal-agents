@@ -19,7 +19,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { attendreLaStack, lancerEtAttendre, finDuJournal } from '../lib/boot-stack.mjs';
+import { attendreLaStack, lancerEtAttendre, finDuJournal, estPrete } from '../lib/boot-stack.mjs';
 
 describe('attendreLaStack', () => {
   // Horloge et sondes simulées : chaque appel à `attendre` avance le temps.
@@ -59,6 +59,15 @@ describe('attendreLaStack', () => {
     const m = monde({ repondA: 4_000, meurtA: 4_000, codeDeSortie: 0 });
     const v = await attendreLaStack({ ...m, plafondMs: 60_000, pasMs: 2_000 });
     expect(v.etat).toBe('prete');
+  });
+});
+
+describe('estPrete', () => {
+  // Le critère de `curl -f` que les workflows utilisaient avant : ne pas
+  // l'élargir en silence. Une 404 pendant que le web démarre n'est pas un dashboard.
+  it('2xx et 3xx : prête ; 4xx et 5xx : pas prête', () => {
+    expect([200, 204, 302, 307].map(estPrete)).toEqual([true, true, true, true]);
+    expect([400, 404, 500, 503].map(estPrete)).toEqual([false, false, false, false]);
   });
 });
 
