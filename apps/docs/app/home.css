@@ -257,9 +257,10 @@
   font-weight: 700;
   color: var(--hero-ink);
   letter-spacing: -0.033em;
-  /* One line (owner, 2026-09-22). The size follows the viewport, so the
-     line holds down to 900px; below that it may wrap (see the media query). */
-  white-space: nowrap;
+  /* The 2026-09-24 title is a sentence, not a slogan: it wraps inside the
+     column (two or three lines at 90px), balanced so no line is left with a
+     single word. */
+  text-wrap: balance;
 }
 .home-hero-lede {
   margin: 0;
@@ -876,6 +877,14 @@
   letter-spacing: -0.015em;
   margin: 8px 0 8px;
 }
+/* Every paragraph of the box reads alike: the feedback box (2026-09-24) holds
+   two, and only the last one was styled. */
+.home-portal h3 ~ p {
+  margin: 0 0 10px;
+  color: var(--home-ink-soft);
+  font-size: 16px;
+  max-width: 64ch;
+}
 .home-portal p:last-child {
   margin: 0;
   color: var(--home-ink-soft);
@@ -1056,4 +1065,35 @@
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
+}
+
+/* ── The story and the questions (2026-09-24 rewrite) ──────────────────── */
+
+.home-author {
+  margin: 0 0 18px;
+}
+.home-story {
+  max-width: 68ch;
+}
+.home-story p {
+  margin: 0 0 16px;
+  color: var(--home-ink-soft);
+  font-size: 17px;
+  line-height: 1.6;
+}
+/* The two halves of a question sit inside a block of the two-column grid:
+   stacked, not side by side, and tighter than a full-width definition list. */
+.home-question {
+  margin-top: 14px;
+}
+.home-question > div {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding-block: 12px;
+}
+.home-question dt {
+  font-size: 14px;
+}
+.home-question dd {
+  font-size: 15px;
 }
