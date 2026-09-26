@@ -146,18 +146,17 @@ jobs:
       # drapeau ; sans lui ces parcours tentent un vrai échange de jeton chez le
       # fournisseur et échouent quoi que vaille le produit (revue Codex).
       # Posé sur CETTE stack de test isolée, jamais ailleurs.
+      #
+      # Le lancement et l'attente sont UN script, le même que `ci.yml` (#514) :
+      # il suit le processus du CLI, s'arrête dès que la stack répond ou meurt,
+      # et garde toute sa sortie dans `stack.log` (publié plus bas). Avant, un
+      # `&` perdait la sortie à la fin de l'étape et une boucle sondait 5 min à
+      # l'aveugle, même un CLI déjà mort.
       - name: Boot the stack
+        timeout-minutes: 14
         env:
           NODALAI_ALLOW_OAUTH_MOCK: '1'
-        run: pnpm --filter nodal-agents exec tsx src/index.ts --dev &
-
-      - name: Wait for the dashboard
-        run: |
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:3000/ > /dev/null; then echo "web up"; exit 0; fi
-            sleep 5
-          done
-          echo "dashboard never answered on :3000"; exit 1
+        run: node scripts/boot-stack.mjs --log "$RUNNER_TEMP/stack.log"
 
       # TOUS les parcours, pas les deux de `ci.yml`. C'est le point de ce
       # workflow : le 10/09/2026, la première exécution des 28 parcours que la
@@ -207,6 +206,17 @@ jobs:
           retention-days: 14
           # Rien à publier = tous les parcours sont verts. Ce n'est pas une
           # anomalie, et l'avertissement par défaut ferait chercher une panne.
+          if-no-files-found: ignore
+
+      # Ce que la stack a écrit pendant toute la nuit : son démarrage, et ce
+      # qu'elle a dit pendant que les parcours la testaient (#514).
+      - name: Publier le journal de la stack
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-log
+          path: ${{ runner.temp }}/stack.log
+          retention-days: 14
           if-no-files-found: ignore
 
       # La sortie JSON de Playwright peut être précédée d'une ligne du
