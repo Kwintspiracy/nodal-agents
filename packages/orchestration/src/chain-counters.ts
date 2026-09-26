@@ -56,10 +56,10 @@ export const DEFAULT_LIMITS: ChainLimits = {
   // before 12 identical reads, so this only catches genuinely degenerate loops —
   // and maxTurns (50) is the ultimate backstop above it.
   maxNoProgressRepeats: 12,
-  // Guard 1d — no-delivery runaway detector. Keys on turns WITHOUT any delivery
-  // tool call or return_result (not on identical args, so it catches runaways
-  // where the agent varies queries but never delivers — the forensic pattern of
-  // jobs 0ff86a1f / ac31d982 / 394b13f4). Calibration against REAL job history:
+  // Guard 1d — progress reminder. Keys on turns WITHOUT any delivery tool call
+  // or return_result (not on identical args, so it reaches agents that vary
+  // queries but never deliver — the forensic pattern of jobs 0ff86a1f /
+  // ac31d982 / 394b13f4). Calibration against REAL job history:
   //   - Median legit job ≈ 4 turns; 92% of legit jobs are ≤8 turns.
   //   - The legit TAIL is long: most jobs deliver only on their FINAL turn, so a
   //     legit COMPLETED job can reach a max non-delivery run of 47 turns. Runaways
@@ -72,21 +72,22 @@ export const DEFAULT_LIMITS: ChainLimits = {
   //   - sameToolStreakNudgeAt=8: 8 consecutive turns using the SAME single tool
   //     with no delivery is a textbook scope-creep/empty-resource loop (jobs
   //     0ff86a1f, 394b13f4). Fires sooner than noDeliveryNudgeAt for those cases.
-  //   - maxNoDeliveryNudges=2: two forced prompts before the hard fail.
+  //   - maxNoDeliveryNudges=2: two reminders per run at most.
   //   - nudgeSpacing=3: minimum turns between nudges to avoid flooding.
-  //   - noDeliveryFailAt=40: hard fail after 40 turns without delivery (post-nudge
-  //     budget exhausted). The second-highest legit max non-delivery run is 38, so
-  //     40 spares all legit-ish completions and sits just below maxTurns=50. The
-  //     only job it catches early is c66f1db0 (run 47) — the known
-  //     MCP-empty-structuredContent 2.4M-token bug-burn. The nudge above is the
-  //     PRIMARY mechanism; this is just a clearer-error, slightly-earlier backstop
-  //     below the turn cap.
-  // All five overridable via env — see execute.ts.
+  // It never stops the run (#504). Until 0.9.4 a `noDeliveryFailAt=40` hard fail
+  // (`no_delivery_runaway`) sat under maxTurns: "a clearer-error, slightly-
+  // earlier backstop", as this comment called it. It measured progress by
+  // MESSAGES sent, so it also killed long productions (files, builds, renders),
+  // and the reminder that preceded it ordered "STOP gathering now", which an
+  // agent read as a stop (Motage, job 4781aacc). The stops now belong to the
+  // run's own limits, the same for every agent: maxTurns (which delivers what
+  // was written), the run budget (#442), the token budget, and the
+  // no-progress detector above for identical loops.
+  // All four overridable via env — see execute.ts.
   noDeliveryNudgeAt: 12,
   sameToolStreakNudgeAt: 8,
   maxNoDeliveryNudges: 2,
   nudgeSpacing: 3,
-  noDeliveryFailAt: 40,
   // Guard 1e — real dollar cost cap per job.
   //
   // 2.0 is a deliberate starting point, not a calibrated ceiling: we now have

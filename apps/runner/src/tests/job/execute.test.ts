@@ -3720,24 +3720,18 @@ describe('executeJob', () => {
 
   // ─── Turn cap (invariant 8) ───────────────────────────────────────────────────
 
-  it('turn cap: job that loops forever fails with turn_limit_exceeded after DEFAULT_LIMITS.maxTurns turns (Guard 1d disabled)', async () => {
+  it('turn cap: job that loops forever stops with turn_limit_exceeded after DEFAULT_LIMITS.maxTurns turns, and DELIVERS its last text (#504)', async () => {
     // Import DEFAULT_LIMITS to drive the assertion — the test must not hardcode 50.
     const { DEFAULT_LIMITS } = await import('@nodal-agents/orchestration');
 
-    // Guard 1d (no-delivery runaway detector) normally fires BEFORE the turn cap
-    // for a same-work-tool loop (that is its purpose: catch runaways early). To
-    // verify the turn cap (maxTurns=50) still works as a backstop, we disable
-    // Guard 1d by setting its thresholds to values higher than maxTurns so only
-    // the turn cap fires. This validates the guard is still in place for edge
-    // cases not caught by Guard 1d (e.g. extremely spaced out tool patterns).
+    // The progress reminder (Guard 1d) is silenced so the transcript holds only
+    // the loop; it never stops a run anyway (#504).
     const savedEnv = {
       NO_DELIVERY_NUDGE_AT: process.env['NO_DELIVERY_NUDGE_AT'],
       SAME_TOOL_STREAK_NUDGE_AT: process.env['SAME_TOOL_STREAK_NUDGE_AT'],
-      NO_DELIVERY_FAIL_AT: process.env['NO_DELIVERY_FAIL_AT'],
     };
     process.env['NO_DELIVERY_NUDGE_AT'] = '999';
     process.env['SAME_TOOL_STREAK_NUDGE_AT'] = '999';
-    process.env['NO_DELIVERY_FAIL_AT'] = '999';
 
     try {
       const job = await createTestJob(db, seed);
@@ -3753,8 +3747,11 @@ describe('executeJob', () => {
       // targets — a real agent looping on ONE tool for 51 turns is exactly
       // the pattern Guard 1f exists to catch, so this test deliberately
       // avoids that shape to isolate the turn cap instead.
+      // Turn 41 writes a text alongside its tool call: the state of the work
+      // that the stop must hand over instead of throwing away.
       const loopingLlmClient = makeMockLlmClient(
         Array.from({ length: DEFAULT_LIMITS.maxTurns + 1 }, (_, i) => ({
+          ...(i === 40 ? { text: 'Scenes 1 to 4 rendered to scenes/.' } : {}),
           toolCalls: [
             {
               toolCallId: `tc-loop-${i}`,
@@ -3770,18 +3767,26 @@ describe('executeJob', () => {
 
       // Return value assertion
       expect(result.status).toBe('failed');
+      const attendu = `Scenes 1 to 4 rendered to scenes/.\n\n[stopped: turn limit — ${DEFAULT_LIMITS.maxTurns} turns, ceiling ${DEFAULT_LIMITS.maxTurns}]`;
       if (result.status === 'failed') {
         expect(result.error).toBe('turn_limit_exceeded');
+        expect(result.result).toBe(attendu);
       }
 
-      // Real DB row assertion — failJob must have persisted the error code
+      // Real DB row assertion — the stop persisted the error code AND the deliverable
       const rows = await db
-        .select({ status: agentJobs.status, error: agentJobs.error, turn: agentJobs.turn })
+        .select({
+          status: agentJobs.status,
+          error: agentJobs.error,
+          turn: agentJobs.turn,
+          result: agentJobs.result,
+        })
         .from(agentJobs)
         .where(eq(agentJobs.id, job.id));
 
       expect(rows[0]?.status).toBe('failed');
       expect(rows[0]?.error).toBe('turn_limit_exceeded');
+      expect(rows[0]?.result).toBe(attendu);
       // The cap check fires AFTER `turn += 1`, so when `turn > maxTurns` (51 > 50), the
       // persisted turn value is 51. The LLM was called exactly maxTurns (50) times.
       expect(rows[0]?.turn).toBe(DEFAULT_LIMITS.maxTurns + 1);
@@ -5219,155 +5224,150 @@ describe('reliability guards', () => {
     }
   });
 
-  // ─── Guard 1d — no-delivery runaway detector ─────────────────────────────
-  // Regression for real failed jobs 0ff86a1f / ac31d982 / 394b13f4:
-  // the agent looped calling varying work-tool queries without ever delivering,
-  // running to the 50-turn wall. Guard 1b (no-progress) was defeated because args
-  // varied each turn. Guard 1d keys on turns-without-delivery and same-tool streak.
+  // ─── Guard 1d — progress reminder (#504) ─────────────────────────────────
+  // Regression for real failed jobs 0ff86a1f / ac31d982 / 394b13f4: the agent
+  // looped calling varying work-tool queries without ever delivering. Guard 1d
+  // keys on turns-without-delivery and same-tool streak, and REMINDS.
+  //
+  // #504: it used to order "STOP gathering now" and then fail the job at 40
+  // turns (`no_delivery_runaway`). It counted every non-message turn as
+  // gathering, file writes, builds and renders included, so a production run
+  // read the reminder as a stop (Motage, job 4781aacc) and long builds died.
+  // It now gives the facts and never stops: the run's own limits do.
 
-  it('Guard 1d (no-delivery runaway): same work tool every turn → nudge injected, then no_delivery_runaway fail', async () => {
-    // Use short thresholds via env so the test doesn't need 12+ turns.
-    // sameToolStreakNudgeAt=3, maxNoDeliveryNudges=2, nudgeSpacing=1, noDeliveryFailAt=5
-    // Turn 1-3: save_memory (streak=3 → nudge 1 at turn 3)
-    // Turn 4-6: save_memory (streak continues, nudge 2 at turn 6 after spacing)
-    // Turn 7+: streak/delivery counter keeps climbing past noDeliveryFailAt=5 → fail
-    const savedEnv = {
-      SAME_TOOL_STREAK_NUDGE_AT: process.env['SAME_TOOL_STREAK_NUDGE_AT'],
-      MAX_NO_DELIVERY_NUDGES: process.env['MAX_NO_DELIVERY_NUDGES'],
-      NO_DELIVERY_NUDGE_SPACING: process.env['NO_DELIVERY_NUDGE_SPACING'],
-      NO_DELIVERY_FAIL_AT: process.env['NO_DELIVERY_FAIL_AT'],
-      NO_DELIVERY_NUDGE_AT: process.env['NO_DELIVERY_NUDGE_AT'],
-    };
-    process.env['SAME_TOOL_STREAK_NUDGE_AT'] = '3';
-    process.env['MAX_NO_DELIVERY_NUDGES'] = '2';
-    process.env['NO_DELIVERY_NUDGE_SPACING'] = '1';
-    process.env['NO_DELIVERY_FAIL_AT'] = '5';
-    process.env['NO_DELIVERY_NUDGE_AT'] = '99'; // disable noDeliveryNudgeAt trigger so only streak fires
-
+  /** Runs `fn` with these env values, restoring the previous ones after. */
+  async function withEnvValues(
+    values: Record<string, string>,
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    const saved = Object.fromEntries(Object.keys(values).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, values);
     try {
-      const job = await createTestJob(db, seed);
-
-      // Build enough turns: the mock repeats its last entry, so 20 entries is enough.
-      const saveTurn = (i: number) => ({
-        toolCalls: [
-          {
-            toolCallId: `sm-streak-${i}`,
-            toolName: 'save_memory',
-            args: { fact: `fact ${i}`, category: 'context', importance: 3 },
-          },
-        ],
-      });
-
-      // We never call return_result or dashboard_publish — it loops forever until the guard fires.
-      const llmClient = makeMockLlmClient(Array.from({ length: 20 }, (_, i) => saveTurn(i + 1)));
-      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-
-      // (a) Job must fail with the dedicated error code before turn 50.
-      expect(result.status).toBe('failed');
-      if (result.status === 'failed') {
-        expect(result.error).toBe('no_delivery_runaway');
+      await fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
       }
+    }
+  }
 
-      // (b) Assert the forcing control message actually appears in the persisted
-      // messages array (assert on real transcript, not call counts).
-      const [row] = await db
-        .select({ messages: agentJobs.messages, turn: agentJobs.turn, error: agentJobs.error })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, job.id));
-
-      expect(row?.error).toBe('no_delivery_runaway');
-      const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
-      const nudgeMsg = msgs.find(
+  /** The reminders the model received, read from the persisted transcript. */
+  async function remindersOf(jobId: string): Promise<string[]> {
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return ((row?.messages ?? []) as Array<{ role: string; content: unknown }>)
+      .filter(
         (m) =>
           m.role === 'user' &&
           typeof m.content === 'string' &&
-          m.content.includes('STOP gathering now'),
-      );
-      expect(nudgeMsg).toBeDefined();
+          m.content.startsWith('[system] Progress note:'),
+      )
+      .map((m) => m.content as string);
+  }
 
-      // (c) It failed well before maxTurns=50 — guard fired at the expected turn.
-      // With sameToolStreakNudgeAt=3, maxNoDeliveryNudges=2, noDeliveryFailAt=5:
-      // first nudge at turn 3, second at turn 5 (spacing=1), fail at turn >5
-      // once delivery counter passes noDeliveryFailAt. Well before 50.
-      expect(row?.turn ?? 50).toBeLessThan(30);
-    } finally {
-      // Restore env regardless of test outcome.
-      for (const [k, v] of Object.entries(savedEnv)) {
-        if (v === undefined) {
-          delete process.env[k];
-        } else {
-          process.env[k] = v;
+  it('Guard 1d (same-tool streak): the reminder states the facts, and the agent that keeps working past the old 40-turn stop finishes completed', async () => {
+    // Streak path only. Before #504 this shape failed with no_delivery_runaway
+    // at turn 6 (NO_DELIVERY_FAIL_AT=5); the variable no longer exists and the
+    // run goes on to its own end.
+    await withEnvValues(
+      {
+        SAME_TOOL_STREAK_NUDGE_AT: '3',
+        MAX_NO_DELIVERY_NUDGES: '2',
+        NO_DELIVERY_NUDGE_SPACING: '1',
+        NO_DELIVERY_NUDGE_AT: '99',
+        NO_DELIVERY_FAIL_AT: '5',
+      },
+      async () => {
+        const job = await createTestJob(db, seed);
+        const work = Array.from({ length: 9 }, (_, i) => ({
+          toolCalls: [
+            {
+              toolCallId: `sm-streak-${i + 1}`,
+              toolName: 'save_memory',
+              args: { fact: `fact ${i + 1}`, category: 'context', importance: 3 },
+            },
+          ],
+        }));
+        const llmClient = makeMockLlmClient([
+          ...work,
+          {
+            text: 'All nine facts are saved.',
+            toolCalls: [
+              { toolCallId: 'rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ]);
+        const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+        // Nothing stopped it: it ran its 10 turns and completed.
+        expect(result.status).toBe('completed');
+        const [row] = await db
+          .select({ status: agentJobs.status, turn: agentJobs.turn, error: agentJobs.error })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, job.id));
+        expect(row?.status).toBe('completed');
+        expect(row?.error).toBeNull();
+        expect(row?.turn).toBe(10);
+
+        // Two reminders (the cap), each saying it is not a stop and naming the
+        // run's real turn limit and where the run stands.
+        const reminders = await remindersOf(job.id);
+        expect(reminders).toHaveLength(2);
+        expect(reminders[0]).toContain('3 turns since you last sent a result');
+        expect(reminders[0]).toContain('This is information, not a stop.');
+        expect(reminders[0]).toContain('turn 50 (this is turn 3)');
+        for (const r of reminders) {
+          expect(r).not.toMatch(/STOP|Do NOT|dashboard_publish/);
         }
-      }
-    }
+      },
+    );
   });
 
-  it('Guard 1d (turnsSinceDelivery path): varying work tools without delivery → nudge then fail', async () => {
-    // Tests the noDeliveryNudgeAt path (not same-tool streak): each turn uses a
-    // DIFFERENT tool, varying the arg; Guard 1b (same signature) would NOT fire.
-    const savedEnv = {
-      NO_DELIVERY_NUDGE_AT: process.env['NO_DELIVERY_NUDGE_AT'],
-      MAX_NO_DELIVERY_NUDGES: process.env['MAX_NO_DELIVERY_NUDGES'],
-      NO_DELIVERY_NUDGE_SPACING: process.env['NO_DELIVERY_NUDGE_SPACING'],
-      NO_DELIVERY_FAIL_AT: process.env['NO_DELIVERY_FAIL_AT'],
-      SAME_TOOL_STREAK_NUDGE_AT: process.env['SAME_TOOL_STREAK_NUDGE_AT'],
-    };
-    process.env['NO_DELIVERY_NUDGE_AT'] = '3';
-    process.env['MAX_NO_DELIVERY_NUDGES'] = '2';
-    process.env['NO_DELIVERY_NUDGE_SPACING'] = '1';
-    process.env['NO_DELIVERY_FAIL_AT'] = '5';
-    process.env['SAME_TOOL_STREAK_NUDGE_AT'] = '99'; // disable streak path
-
-    try {
-      const job = await createTestJob(db, seed);
-
-      // Alternating save_memory / query_memory so args AND tool names vary (defeats Guard 1b).
-      const mixedTurns = Array.from({ length: 20 }, (_, i) => ({
-        toolCalls: [
+  it('Guard 1d (turnsSinceDelivery path): varying work tools, reminder sent, the run is not stopped', async () => {
+    // The turns-without-delivery path (not the same-tool streak): each turn
+    // alternates tools and args, so Guard 1b (same signature) never fires.
+    await withEnvValues(
+      {
+        NO_DELIVERY_NUDGE_AT: '3',
+        MAX_NO_DELIVERY_NUDGES: '2',
+        NO_DELIVERY_NUDGE_SPACING: '1',
+        SAME_TOOL_STREAK_NUDGE_AT: '99',
+      },
+      async () => {
+        const job = await createTestJob(db, seed);
+        const mixed = Array.from({ length: 8 }, (_, i) => ({
+          toolCalls: [
+            {
+              toolCallId: `mixed-${i}`,
+              toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
+              args:
+                i % 2 === 0
+                  ? { fact: `varying fact ${i}`, category: 'context', importance: 3 }
+                  : { query: `varying query ${i}` },
+            },
+          ],
+        }));
+        const llmClient = makeMockLlmClient([
+          ...mixed,
           {
-            toolCallId: `mixed-${i}`,
-            toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
-            args:
-              i % 2 === 0
-                ? { fact: `varying fact ${i}`, category: 'context', importance: 3 }
-                : { query: `varying query ${i}` },
+            text: 'Done.',
+            toolCalls: [
+              { toolCallId: 'rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
           },
-        ],
-      }));
+        ]);
+        const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
-      const llmClient = makeMockLlmClient(mixedTurns);
-      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-
-      expect(result.status).toBe('failed');
-      if (result.status === 'failed') {
-        expect(result.error).toBe('no_delivery_runaway');
-      }
-
-      const [row] = await db
-        .select({ messages: agentJobs.messages, turn: agentJobs.turn })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, job.id));
-
-      // Nudge message in transcript.
-      const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
-      const nudge = msgs.find(
-        (m) =>
-          m.role === 'user' &&
-          typeof m.content === 'string' &&
-          m.content.includes('STOP gathering now'),
-      );
-      expect(nudge).toBeDefined();
-      // Failed before turn 50.
-      expect(row?.turn ?? 50).toBeLessThan(30);
-    } finally {
-      for (const [k, v] of Object.entries(savedEnv)) {
-        if (v === undefined) {
-          delete process.env[k];
-        } else {
-          process.env[k] = v;
-        }
-      }
-    }
+        expect(result.status).toBe('completed');
+        const reminders = await remindersOf(job.id);
+        expect(reminders.length).toBeGreaterThanOrEqual(1);
+        expect(reminders[0]).toContain('3 turns since you last sent a result');
+        expect(reminders[0]).toContain('call return_result');
+      },
+    );
   });
 
   it('Guard 1d (false positive check): a normal job completes within threshold — no nudge injected', async () => {
@@ -5422,7 +5422,7 @@ describe('reliability guards', () => {
       (m) =>
         m.role === 'user' &&
         typeof m.content === 'string' &&
-        m.content.includes('STOP gathering now'),
+        m.content.startsWith('[system] Progress note:'),
     );
     expect(nudge).toBeUndefined();
     // Completed in exactly 3 turns — no extra turns from nudges.
