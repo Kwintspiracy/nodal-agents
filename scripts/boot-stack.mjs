@@ -15,10 +15,23 @@
 // NODALAI_RUNNER_HEALTH_MS) et s'arrête, ce que ce script voit tout de suite.
 // Les workflows lui laissent une marge (`timeout-minutes` de l'étape et du job)
 // pour qu'il puisse toujours imprimer le journal avant d'être coupé.
+//
+// Linux et macOS seulement, et c'est dit plutôt que tenté : sous Windows `pnpm`
+// est un `.cmd`, que Node ne lance qu'à travers `cmd`, et un `cmd` détaché
+// perd la sortie de ses petits-enfants — le journal serait vide et mentirait.
+// Les deux workflows tournent sur ubuntu ; sur un poste Windows, la commande
+// de CLAUDE.md fait la même chose à la main.
 
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { lancerEtAttendre, finDuJournal } from './lib/boot-stack.mjs';
+
+if (process.platform === 'win32') {
+  console.error(
+    'boot-stack: not supported on Windows (a detached pnpm.cmd loses its output). Run the dev command from CLAUDE.md instead: pnpm --filter nodal-agents exec tsx src/index.ts --dev',
+  );
+  process.exit(2);
+}
 
 const { values } = parseArgs({
   options: {
@@ -44,7 +57,6 @@ if (!Number.isFinite(plafondMin) || plafondMin <= 0) {
 const v = await lancerEtAttendre({
   commande: 'pnpm',
   args: ['--filter', 'nodal-agents', 'exec', 'tsx', 'src/index.ts', '--dev'],
-  shell: process.platform === 'win32',
   url: values.url,
   journal: values.log,
   plafondMs: plafondMin * 60_000,

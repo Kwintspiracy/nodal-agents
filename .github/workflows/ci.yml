@@ -98,6 +98,9 @@ jobs:
             turbo-${{ runner.os }}-checks-
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
@@ -216,6 +219,9 @@ jobs:
             turbo-${{ runner.os }}-test-${{ matrix.shard }}-
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Unit tests (${{ matrix.shard }})
@@ -254,6 +260,9 @@ jobs:
             turbo-${{ runner.os }}-build-
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Build
@@ -287,6 +296,9 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Pack, install clean, boot
@@ -328,6 +340,9 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       # `--with-deps` shells out to apt-get, which can hang forever on a stuck

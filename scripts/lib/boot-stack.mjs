@@ -80,8 +80,9 @@ async function repond(url) {
  * ensuite ne serait pas la stack, et les étapes suivantes testeraient autre chose
  * (revue Codex de la PR #516).
  *
- * `shell` : sous Windows, `pnpm` est un `.cmd`, que Node refuse de lancer sans
- * shell (`spawn EINVAL`).
+ * `detached` est ce qui fait survivre l'enfant : sous Linux un nouveau groupe
+ * de processus, sous Windows la sortie du « job » que libuv tue avec le parent.
+ * Sans shell : `boot-stack.mjs` ne tourne pas sous Windows (voir ce fichier).
  */
 export async function lancerEtAttendre({
   commande,
@@ -91,34 +92,17 @@ export async function lancerEtAttendre({
   journal,
   plafondMs,
   pasMs = 2_000,
-  shell = false,
 }) {
   const adresse = () => (typeof url === 'function' ? url() : url);
   if (await repond(adresse())) return { etat: 'occupee', apresMs: 0, pid: null };
 
   const fd = openSync(journal, 'a');
-  // En mode shell, Node concatène les arguments sans les échapper (DEP0190) :
-  // la ligne est donc écrite ici, et un argument qui contient un espace ou un
-  // guillemet est refusé plutôt que découpé en silence par `cmd`.
-  if (shell && args.some((a) => /[\s"'^&|<>()%]/.test(a))) {
-    closeSync(fd);
-    throw new Error(
-      `boot-stack: an argument cannot go through a shell unescaped: ${JSON.stringify(args)}`,
-    );
-  }
-  // `detached` sert à survivre à ce script sous Linux et macOS (nouveau groupe
-  // de processus). Sous Windows un enfant survit déjà à son parent, et
-  // `detached` lui donne une console à lui : la sortie de ses propres enfants
-  // (pnpm → node) n'arrive plus dans le journal.
-  const options = {
-    detached: process.platform !== 'win32',
+  const enfant = spawn(commande, args, {
+    detached: true,
     stdio: ['ignore', fd, fd],
     env,
     windowsHide: true,
-  };
-  const enfant = shell
-    ? spawn([commande, ...args].join(' '), { ...options, shell })
-    : spawn(commande, args, options);
+  });
   closeSync(fd);
   let fin = null;
   enfant.on('exit', (code) => {

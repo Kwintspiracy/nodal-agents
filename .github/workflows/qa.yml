@@ -71,6 +71,9 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       # ── Couverture, paquet par paquet ──────────────────────────────────────
@@ -248,6 +251,11 @@ jobs:
       # horodatage et un commit frais : des mesures périmées présentées comme
       # celles du jour. C'est précisément le mensonge que ce portail existe pour
       # empêcher (revue Codex). Mieux vaut une case vide qu'une case fausse.
+      #
+      # Un rapport ILLISIBLE compte comme absent : les parcours coupés par leur
+      # borne laissent un JSON à moitié écrit, et un `JSON.parse` qui jette ici
+      # faisait sauter la collecte et l'enregistrement de toute la nuit (revue
+      # Codex de la PR #516, passe 3).
       - name: Normaliser le rapport
         run: |
           node -e "
@@ -257,13 +265,15 @@ jobs:
             let brut='';
             try { brut=fs.readFileSync('apps/web/playwright-raw.json','utf8'); } catch {}
             const i=brut.indexOf('{');
-            if(i<0){
+            let rapport=null;
+            if(i>=0){ try { rapport=JSON.parse(brut.slice(i)); } catch {} }
+            if(rapport===null){
               if(fs.existsSync(cible)) fs.rmSync(cible);
-              console.log('::warning::Playwright n a emis aucun rapport — l ancien est efface plutot que servi comme neuf.');
+              console.log('::warning::Playwright n a emis aucun rapport lisible — l ancien est efface plutot que servi comme neuf.');
               process.exit(0);
             }
             fs.writeFileSync(cible, brut.slice(i));
-            const s=JSON.parse(brut.slice(i)).stats||{};
+            const s=rapport.stats||{};
             console.log('verts',s.expected,'rouges',s.unexpected,'ignores',s.skipped);
           "
 

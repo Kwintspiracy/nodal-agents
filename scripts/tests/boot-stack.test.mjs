@@ -18,6 +18,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { attendreLaStack, lancerEtAttendre, finDuJournal, estPrete } from '../lib/boot-stack.mjs';
@@ -156,6 +157,47 @@ describe('lancerEtAttendre, sur de VRAIS processus', () => {
     process.kill(v.pid);
   });
 
+  it('la stack SURVIT à la fin du processus qui l’a lancée (l’étape suivante du workflow la teste)', async () => {
+    // Le test précédent vérifie l'enfant tant que Vitest vit : il resterait vert
+    // si le script retenait son enfant ou l'emportait en sortant. Ici un vrai
+    // processus intermédiaire fait ce que fait `boot-stack.mjs` — lancer,
+    // attendre, SORTIR — et la sonde passe APRÈS sa sortie (revue Codex de la
+    // PR #516, passe 3).
+    dossier = mkdtempSync(join(tmpdir(), 'boot-stack-'));
+    const portFile = join(dossier, 'port');
+    const serveur = join(dossier, 'serveur.cjs');
+    writeFileSync(
+      serveur,
+      "const s=require('http').createServer((q,r)=>{r.writeHead(307,{location:'/login'});r.end()});\n" +
+        "s.listen(0,'127.0.0.1',()=>require('fs').writeFileSync(process.env.PORT_FILE,String(s.address().port)));\n" +
+        'setTimeout(()=>process.exit(0),30000);\n',
+    );
+    const lanceur = join(dossier, 'lanceur.mjs');
+    writeFileSync(
+      lanceur,
+      `import { readFileSync } from 'node:fs';\n` +
+        `import { lancerEtAttendre } from ${JSON.stringify(new URL('../lib/boot-stack.mjs', import.meta.url).href)};\n` +
+        `const v = await lancerEtAttendre({ commande: process.execPath, args: [${JSON.stringify(serveur)}],\n` +
+        `  env: { ...process.env, PORT_FILE: ${JSON.stringify(portFile)} },\n` +
+        `  url: () => { try { return 'http://127.0.0.1:' + readFileSync(${JSON.stringify(portFile)}, 'utf8') + '/'; } catch { return null; } },\n` +
+        `  journal: ${JSON.stringify(join(dossier, 'stack.log'))}, plafondMs: 20000, pasMs: 200 });\n` +
+        `console.log(JSON.stringify(v));\n`,
+    );
+    const sortie = await new Promise((ok, ko) => {
+      execFile(process.execPath, [lanceur], { timeout: 25_000 }, (err, stdout) =>
+        err ? ko(err) : ok(stdout),
+      );
+    });
+    const v = JSON.parse(sortie.trim());
+    expect(v.etat).toBe('prete');
+    // Le lanceur est SORTI (execFile a rendu la main) ; le serveur répond encore.
+    const r = await fetch(`http://127.0.0.1:${readFileSync(portFile, 'utf8')}/`, {
+      redirect: 'manual',
+    });
+    expect(r.status).toBe(307);
+    process.kill(v.pid);
+  }, 40_000);
+
   it('l’adresse répond AVANT le lancement : rien n’est lancé, et le verdict le dit', async () => {
     // Sans ce contrôle, un service déjà en place sur :3000 faisait passer pour
     // prête une stack que son CLI n'avait même pas pu démarrer (port pris), et
@@ -187,39 +229,29 @@ describe('lancerEtAttendre, sur de VRAIS processus', () => {
     }
   });
 
-  it('en mode shell, un argument que `cmd` découperait est refusé, jamais lancé à moitié', async () => {
-    dossier = mkdtempSync(join(tmpdir(), 'boot-stack-'));
-    await expect(
-      lancerEtAttendre({
+  // Sous Windows, `pnpm` est un `.cmd` que Node ne lance pas sans shell, et
+  // `boot-stack.mjs` y refuse de tourner (voir ce fichier) : le cas n'existe pas.
+  it.skipIf(process.platform === 'win32')(
+    'la vraie chaîne `pnpm exec` : la mort de l’enfant remonte, avec son code',
+    async () => {
+      // Le script lance `pnpm … exec tsx …`, pas `node` : si pnpm survivait à son
+      // enfant, la mort du CLI resterait invisible (revue Codex de la PR #516).
+      dossier = mkdtempSync(join(tmpdir(), 'boot-stack-'));
+      const journal = join(dossier, 'stack.log');
+      const enfant = join(dossier, 'enfant.mjs');
+      writeFileSync(enfant, "console.log('child up');\nprocess.exit(7);\n");
+      const v = await lancerEtAttendre({
         commande: 'pnpm',
-        args: ['exec', 'node', '-e', "console.log('x')"],
-        shell: true,
+        args: ['exec', 'node', enfant],
         url: 'http://127.0.0.1:9/',
-        journal: join(dossier, 'stack.log'),
-        plafondMs: 1_000,
-      }),
-    ).rejects.toThrow('cannot go through a shell unescaped');
-  });
-
-  it('la vraie chaîne `pnpm exec` : la mort de l’enfant remonte, avec son code', async () => {
-    // Le script lance `pnpm … exec tsx …`, pas `node` : si pnpm survivait à son
-    // enfant, la mort du CLI resterait invisible (revue Codex de la PR #516).
-    dossier = mkdtempSync(join(tmpdir(), 'boot-stack-'));
-    const journal = join(dossier, 'stack.log');
-    // Un vrai fichier, pas un `-e` : sous Windows la ligne passe par `cmd`.
-    const enfant = join(dossier, 'enfant.mjs');
-    writeFileSync(enfant, "console.log('child up');\nprocess.exit(7);\n");
-    const v = await lancerEtAttendre({
-      commande: 'pnpm',
-      args: ['exec', 'node', enfant],
-      shell: process.platform === 'win32',
-      url: 'http://127.0.0.1:9/',
-      journal,
-      plafondMs: 60_000,
-      pasMs: 200,
-    });
-    expect(v.etat).toBe('morte');
-    expect(v.code).toBe(7);
-    expect(readFileSync(journal, 'utf8')).toContain('child up');
-  }, 60_000);
+        journal,
+        plafondMs: 60_000,
+        pasMs: 200,
+      });
+      expect(v.etat).toBe('morte');
+      expect(v.code).toBe(7);
+      expect(readFileSync(journal, 'utf8')).toContain('child up');
+    },
+    60_000,
+  );
 });
