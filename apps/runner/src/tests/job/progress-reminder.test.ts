@@ -10,6 +10,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   progressReminder,
+  progressStateFromTranscript,
+  PROGRESS_REMINDER_MARK,
   budgetStopLine,
   budgetErrorCode,
   type ProgressFacts,
@@ -30,7 +32,7 @@ const base: ProgressFacts = {
 describe('progressReminder', () => {
   it('dit les faits et les vraies limites du run, sans ordre', () => {
     expect(progressReminder(base)).toBe(
-      '[system] Progress note: 12 turns since you last sent a result. ' +
+      `[system] ${PROGRESS_REMINDER_MARK} Progress note: 12 turns since you last sent a result. ` +
         'This is information, not a stop. If you already have what was asked, deliver it now ' +
         'and call return_result. If the work still needs more steps, continue. ' +
         'Limits of this run: turn 50 (this is turn 13); run budget $2.00 ($0.40 spent); ' +
@@ -53,6 +55,64 @@ describe('progressReminder', () => {
     const texte = progressReminder(base);
     expect(texte).not.toMatch(/dashboard_publish|telegram_send_message/);
     expect(texte).not.toMatch(/\bSTOP\b|Do NOT|must stop/);
+  });
+});
+
+describe('progressStateFromTranscript — the reminder state survives a resume', () => {
+  const livraison = new Set(['return_result', 'dashboard_publish']);
+  const tour = (...noms: string[]) => ({
+    role: 'assistant',
+    content: noms.map((toolName, i) => ({ type: 'tool-call', toolCallId: `c${i}`, toolName })),
+  });
+  const resultat = { role: 'tool', content: [] };
+  const rappel = { role: 'user', content: `[system] ${PROGRESS_REMINDER_MARK} Progress note: …` };
+
+  it('compte les tours de travail depuis la dernière livraison, et les rappels déjà envoyés', () => {
+    const etat = progressStateFromTranscript(
+      [
+        { role: 'user', content: 'the task' },
+        tour('web_search'),
+        resultat,
+        tour('dashboard_publish'), // livraison : le compteur repart à zéro
+        resultat,
+        tour('file_write'),
+        resultat,
+        tour('file_write'),
+        resultat,
+        rappel,
+        tour('run_command'),
+        resultat,
+      ],
+      livraison,
+      20,
+    );
+    expect(etat).toEqual({
+      turnsSinceDelivery: 3,
+      sameToolStreak: 1,
+      lastSingleToolName: 'run_command',
+      remindersSent: 1,
+      // Un tour de travail depuis le rappel : il est parti au tour 19.
+      turnOfLastReminder: 19,
+    });
+  });
+
+  it('une série du même outil est reprise où elle en était', () => {
+    const etat = progressStateFromTranscript(
+      [tour('file_write'), resultat, tour('file_write'), resultat, tour('file_write'), resultat],
+      livraison,
+      3,
+    );
+    expect(etat.sameToolStreak).toBe(3);
+    expect(etat.turnOfLastReminder).toBe(-Infinity);
+  });
+
+  it('un message d’utilisateur qui recopie le texte sans la marque n’est pas un rappel', () => {
+    const etat = progressStateFromTranscript(
+      [{ role: 'user', content: '[system] Progress note: 12 turns since you last sent a result.' }],
+      livraison,
+      1,
+    );
+    expect(etat.remindersSent).toBe(0);
   });
 });
 
