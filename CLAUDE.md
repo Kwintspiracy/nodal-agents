@@ -27,6 +27,7 @@ to rediscover it):
 | Layering (adapters, db driver) | dependency-cruiser, `pnpm deps:check` |
 | #5 (tests assert real results) | review discipline — no mechanical check |
 | #3, #4, #7, #8, #9 | review discipline, plus the targeted suites named in each rule |
+| #11 (fix the platform) | review discipline: every PR states the other usages its change reaches |
 
 1. **No hardcoded agent metadata.** Skills, routing, team blocks, sub-agent descriptions: 100% from DB.
 2. **No hardcoded user-facing text in runner.** LLM speaks or runner stays silent.
@@ -38,6 +39,12 @@ to rediscover it):
 8. **Anti-loop guards baked in** (max 15 chains, max 50 tool calls/turn, max 3 delegation depth). Raised from the original 5 on 2026-05-19 (`packages/orchestration/src/chain-counters.ts`) once sequential-delegation workflows needed more resumes than a runaway-detection cap calibrated without empirical data allowed; the `failed_delegations_count` cap and `maxDelegationDepth` guards absorbed the actual runaway risk, so `chain_count` could safely become a resume budget instead.
 9. **Tool whitelist explicit per agent** — no defaults, list calculated from DB per job.
 10. **No native browser dialogs** — `window.confirm` / `window.alert` / `window.prompt` are banned. Use `<ConfirmDialog />` (`apps/web/src/components/ConfirmDialog.tsx`) for confirmations and the Sonner toaster for notifications. Enforced by ESLint `no-restricted-globals` in `apps/web/eslint.config.mjs`.
+11. **Fix the platform, never a special case.** Quentin's rule, 2026-09-26, set before 0.9.4 as an absolute one: "think platform, think product, think users". A fix names the mechanism at fault and makes it right for every agent, runtime, provider, channel and user. It is never an exception carved around the run that revealed the bug. That run is a symptom, not the specification.
+   - A fix that reads "except when…" or "if it is X, then…" added to an existing behaviour is a corner case: find the general form. If only a special case is available, do not code it; say what the general form would cost.
+   - Prefer removing or unifying a mechanism to adding a branch: fewer paths, not more.
+   - Every PR states which other usages go through the code it changes, and what the change does to them.
+   - Tests prove the general behaviour on more than the ticket's scenario.
+   - Every brief given to an agent that writes code carries this rule.
 
 ## Workflow rules
 
