@@ -787,6 +787,84 @@ export function budgetStopLine(f: BudgetStopFacts): string {
  * (`lastAssistantTextSeen`). Empiler chaque texte intermédiaire livrerait des
  * brouillons que l'agent a lui-même dépassés (revue de la PR #495).
  */
+/**
+ * La marque du rappel de progression, pour le RECONNAÎTRE dans une
+ * transcription relue. Elle porte un caractère de contrôle, comme
+ * `EMPTY_DELIVERABLE_NUDGE_MARK` : un message d'utilisateur ne la produit pas
+ * par accident.
+ */
+export const PROGRESS_REMINDER_MARK = '[système:progression:\u0001]';
+
+/** L'état du rappel de progression, reconstruit depuis une transcription. */
+export interface ProgressState {
+  turnsSinceDelivery: number;
+  sameToolStreak: number;
+  lastSingleToolName: string | null;
+  remindersSent: number;
+  /** Le tour du dernier rappel, ou `-Infinity` s'il n'y en a pas eu. */
+  turnOfLastReminder: number;
+}
+
+/**
+ * Relit dans la transcription ce que les compteurs du rappel auraient compté,
+ * avec les mêmes règles que la boucle : un tour de l'assistant qui appelle des
+ * outils est un tour de travail, sauf s'il appelle un outil de livraison (le
+ * compteur repart à zéro) ; un message qui porte la marque est un rappel
+ * envoyé. `currentTurn` est le compteur cumulé du job au moment de la reprise.
+ */
+export function progressStateFromTranscript(
+  messages: readonly unknown[],
+  deliveryToolNames: ReadonlySet<string>,
+  currentTurn: number,
+): ProgressState {
+  let turnsSinceDelivery = 0;
+  let sameToolStreak = 0;
+  let lastSingleToolName: string | null = null;
+  let remindersSent = 0;
+  let toursDepuisLeRappel: number | null = null;
+  for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+    if (!m) continue;
+    if (m.role === 'user') {
+      if (typeof m.content === 'string' && m.content.includes(PROGRESS_REMINDER_MARK)) {
+        remindersSent += 1;
+        toursDepuisLeRappel = 0;
+      }
+      continue;
+    }
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    const noms = (m.content as Array<{ type?: unknown; toolName?: unknown }>)
+      .filter((p) => p?.type === 'tool-call' && typeof p.toolName === 'string')
+      .map((p) => p.toolName as string);
+    if (noms.length === 0) continue;
+    if (toursDepuisLeRappel !== null) toursDepuisLeRappel += 1;
+    if (noms.some((n) => deliveryToolNames.has(n))) {
+      turnsSinceDelivery = 0;
+      sameToolStreak = 0;
+      lastSingleToolName = null;
+      continue;
+    }
+    turnsSinceDelivery += 1;
+    const uniques = [...new Set(noms)];
+    if (uniques.length === 1 && uniques[0] === lastSingleToolName) {
+      sameToolStreak += 1;
+    } else if (uniques.length === 1) {
+      sameToolStreak = 1;
+      lastSingleToolName = uniques[0] ?? null;
+    } else {
+      sameToolStreak = 0;
+      lastSingleToolName = null;
+    }
+  }
+  return {
+    turnsSinceDelivery,
+    sameToolStreak,
+    lastSingleToolName,
+    remindersSent,
+    turnOfLastReminder:
+      toursDepuisLeRappel === null ? -Infinity : currentTurn - toursDepuisLeRappel,
+  };
+}
+
 /** Ce que le rappel de progression sait du run au moment où il part (#504). */
 export interface ProgressFacts {
   /** Tours d'affilée sans résultat envoyé (`return_result`, publication, message). */
@@ -833,7 +911,7 @@ export function progressReminder(f: ProgressFacts): string {
     limites.push(`${n(f.tokenCeiling)} tokens (${n(f.tokensSpent)} used)`);
   }
   return (
-    `[system] Progress note: ${f.turnsSinceDelivery} turns since you last sent a result. ` +
+    `[system] ${PROGRESS_REMINDER_MARK} Progress note: ${f.turnsSinceDelivery} turns since you last sent a result. ` +
     `This is information, not a stop. If you already have what was asked, deliver it now ` +
     `and call return_result. If the work still needs more steps, continue. ` +
     `Limits of this run: ${limites.join('; ')}.`
@@ -3188,12 +3266,17 @@ async function runJobTracked(
       stopsBelongTo: 'turn cap, Settings → Run budget, token budget',
     });
   }
-  // Per-run state for Guard 1d.
-  let turnsSinceDelivery = 0;
-  let sameToolStreak = 0;
-  let lastSingleToolName: string | null = null;
-  let noDeliveryNudgesIssued = 0;
-  let turnOfLastNudge = -Infinity;
+  // State for Guard 1d, READ FROM THE TRANSCRIPT: a resume (after an approval
+  // or a delegation) starts a new execution, and in-memory counters would
+  // restart at zero — the reminder would then say "12 turns" after 20, and a
+  // job would get two reminders per execution instead of two in its life
+  // (review of #504). Same answer as the empty-deliverable mark above.
+  const etatDuRappel = progressStateFromTranscript(messages, DELIVERY_OR_TERMINAL_TOOL_NAMES, turn);
+  let turnsSinceDelivery = etatDuRappel.turnsSinceDelivery;
+  let sameToolStreak = etatDuRappel.sameToolStreak;
+  let lastSingleToolName: string | null = etatDuRappel.lastSingleToolName;
+  let noDeliveryNudgesIssued = etatDuRappel.remindersSent;
+  let turnOfLastNudge = etatDuRappel.turnOfLastReminder;
 
   // Guard 1f — non-progress detector. Tracks two signals over the raw
   // SEQUENCE OF TOOL CALLS (not turns, unlike 1b/1d above): S1 = same tool

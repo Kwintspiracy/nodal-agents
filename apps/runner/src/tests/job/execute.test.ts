@@ -5263,7 +5263,7 @@ describe('reliability guards', () => {
         (m) =>
           m.role === 'user' &&
           typeof m.content === 'string' &&
-          m.content.startsWith('[system] Progress note:'),
+          m.content.includes('Progress note:'),
       )
       .map((m) => m.content as string);
   }
@@ -5322,6 +5322,95 @@ describe('reliability guards', () => {
         for (const r of reminders) {
           expect(r).not.toMatch(/STOP|Do NOT|dashboard_publish/);
         }
+      },
+    );
+  });
+
+  it('Guard 1d across a resume: the reminder state is read from the transcript, so the two-per-job cap and the turn count survive (review of #504)', async () => {
+    // A job resumed after an approval or a delegation starts a new execution.
+    // Its transcript already holds 6 work turns and the 2 reminders it got:
+    // the resumed execution must count on from there, and send no third one.
+    const { PROGRESS_REMINDER_MARK } = await import('../../job/execute.js');
+    await withEnvValues(
+      {
+        NO_DELIVERY_NUDGE_AT: '3',
+        MAX_NO_DELIVERY_NUDGES: '2',
+        NO_DELIVERY_NUDGE_SPACING: '1',
+        SAME_TOOL_STREAK_NUDGE_AT: '99',
+      },
+      async () => {
+        const job = await createTestJob(db, seed);
+        const tour = (i: number) => [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: `prev-${i}`,
+                toolName: 'query_memory',
+                input: { query: `previous ${i}` },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: `prev-${i}`,
+                toolName: 'query_memory',
+                output: { type: 'json', value: { results: [] } },
+              },
+            ],
+          },
+        ];
+        const rappel = (n: number) => ({
+          role: 'user',
+          content: `[system] ${PROGRESS_REMINDER_MARK} Progress note: ${n} turns since you last sent a result.`,
+        });
+        const transcript = [
+          { role: 'user', content: 'Run a test task' },
+          ...tour(1),
+          ...tour(2),
+          ...tour(3),
+          rappel(3),
+          ...tour(4),
+          rappel(4),
+          ...tour(5),
+          ...tour(6),
+        ];
+        await db
+          .update(agentJobs)
+          .set({ messages: transcript, turn: 6 })
+          .where(eq(agentJobs.id, job.id));
+
+        const llmClient = makeMockLlmClient([
+          ...Array.from({ length: 4 }, (_, i) => ({
+            toolCalls: [
+              {
+                toolCallId: `after-${i}`,
+                toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
+                args:
+                  i % 2 === 0
+                    ? { fact: `after ${i}`, category: 'context', importance: 3 }
+                    : { query: `after ${i}` },
+              },
+            ],
+          })),
+          {
+            text: 'Done.',
+            toolCalls: [
+              { toolCallId: 'rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ]);
+        const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+        expect(result.status).toBe('completed');
+        // Still the two reminders of before: no third one after the resume,
+        // although the resumed execution did 4 more turns without delivering.
+        const reminders = await remindersOf(job.id);
+        expect(reminders).toHaveLength(2);
       },
     );
   });
@@ -5420,9 +5509,7 @@ describe('reliability guards', () => {
     const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
     const nudge = msgs.find(
       (m) =>
-        m.role === 'user' &&
-        typeof m.content === 'string' &&
-        m.content.startsWith('[system] Progress note:'),
+        m.role === 'user' && typeof m.content === 'string' && m.content.includes('Progress note:'),
     );
     expect(nudge).toBeUndefined();
     // Completed in exactly 3 turns — no extra turns from nudges.
