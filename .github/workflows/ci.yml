@@ -312,7 +312,11 @@ jobs:
   # rapporte ; la mesure nocturne (`qa.yml`) les joue TOUS.
   e2e-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Worst case, every bounded step at its bound: ~3 min setup + install, 12
+    # Playwright install, 10 boot, ~5 journeys. 35 leaves the boot step room to
+    # print the stack log and the upload steps room to run (review of PR #516):
+    # a JOB timeout kills everything, a step timeout still runs `if: failure()`.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
 
@@ -350,8 +354,10 @@ jobs:
       # (uploaded on failure below). Before, `&` lost everything the stack
       # printed once this step ended — the log always stopped at "Starting
       # embedded Postgres…" — and a blind 5-min loop kept polling a dead CLI.
+      # The script's own cap is 8 min, a net under the CLI's 300 s health
+      # budget; 10 here leaves it time to print before the step is cut.
       - name: Boot the stack
-        timeout-minutes: 14
+        timeout-minutes: 10
         run: node scripts/boot-stack.mjs --log "$RUNNER_TEMP/stack.log"
 
       # Les autres parcours ne sont pas ici pour une raison de COÛT, pas de

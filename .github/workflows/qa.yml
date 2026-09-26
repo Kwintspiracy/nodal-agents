@@ -151,9 +151,10 @@ jobs:
       # il suit le processus du CLI, s'arrête dès que la stack répond ou meurt,
       # et garde toute sa sortie dans `stack.log` (publié plus bas). Avant, un
       # `&` perdait la sortie à la fin de l'étape et une boucle sondait 5 min à
-      # l'aveugle, même un CLI déjà mort.
+      # l'aveugle, même un CLI déjà mort. Le plafond du script est de 8 min ; 10
+      # ici lui laissent le temps d'imprimer avant que l'étape soit coupée.
       - name: Boot the stack
-        timeout-minutes: 14
+        timeout-minutes: 10
         env:
           NODALAI_ALLOW_OAUTH_MOCK: '1'
         run: node scripts/boot-stack.mjs --log "$RUNNER_TEMP/stack.log"

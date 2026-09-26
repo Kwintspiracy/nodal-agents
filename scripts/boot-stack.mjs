@@ -3,12 +3,18 @@
 // quand le dashboard répond. Utilisé par `ci.yml` (e2e-smoke) et `qa.yml`, qui
 // avaient chacun leur boucle d'attente aveugle (#514).
 //
-//   node scripts/boot-stack.mjs --log <fichier> [--url http://localhost:3000/] [--plafond-min 12]
+//   node scripts/boot-stack.mjs --log <fichier> [--url http://localhost:3000/] [--plafond-min 8]
 //
 // Sortie 0 : la stack répond et CONTINUE de tourner (les étapes suivantes la
-// testent). Sortie 1 : la stack est morte, ou le filet est atteint — les
-// dernières lignes du journal sont imprimées, et le journal entier reste dans
-// `--log` pour l'artefact.
+// testent). Sortie 1 : l'adresse était déjà prise, la stack est morte, ou le
+// filet est atteint — les dernières lignes du journal sont imprimées, et le
+// journal entier reste dans `--log` pour l'artefact.
+//
+// Le plafond par défaut (8 min) est un FILET sous le délai du CLI : celui-ci
+// abandonne après 300 s d'attente de santé (NODALAI_WEB_HEALTH_MS,
+// NODALAI_RUNNER_HEALTH_MS) et s'arrête, ce que ce script voit tout de suite.
+// Les workflows lui laissent une marge (`timeout-minutes` de l'étape et du job)
+// pour qu'il puisse toujours imprimer le journal avant d'être coupé.
 
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
@@ -18,7 +24,7 @@ const { values } = parseArgs({
   options: {
     log: { type: 'string' },
     url: { type: 'string', default: 'http://localhost:3000/' },
-    'plafond-min': { type: 'string', default: '12' },
+    'plafond-min': { type: 'string', default: '8' },
   },
 });
 if (!values.log) {
@@ -33,14 +39,12 @@ if (!Number.isFinite(plafondMin) || plafondMin <= 0) {
   process.exit(2);
 }
 
-// La même commande que CLAUDE.md et les deux workflows : le CLI, depuis les
-// sources, en mode --dev (Postgres embarqué, migrations, runner, web HMR). Ses
-// propres délais de santé (NODALAI_WEB_HEALTH_MS, NODALAI_RUNNER_HEALTH_MS) sont
-// ceux qui décident : s'ils expirent, le CLI s'arrête, et ce script le voit.
-const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+// La même commande que CLAUDE.md : le CLI, depuis les sources, en mode --dev
+// (Postgres embarqué, migrations, runner, web HMR).
 const v = await lancerEtAttendre({
-  commande: pnpm,
+  commande: 'pnpm',
   args: ['--filter', 'nodal-agents', 'exec', 'tsx', 'src/index.ts', '--dev'],
+  shell: process.platform === 'win32',
   url: values.url,
   journal: values.log,
   plafondMs: plafondMin * 60_000,
@@ -53,6 +57,12 @@ if (v.etat === 'prete') {
   );
   process.exit(0);
 }
+if (v.etat === 'occupee') {
+  console.error(
+    `boot-stack: ${values.url} already answers before the stack was started; nothing was launched, so the next steps would test something else`,
+  );
+  process.exit(1);
+}
 
 let journal = '';
 try {
@@ -64,7 +74,7 @@ console.error(finDuJournal(journal, 80));
 console.error('');
 if (v.etat === 'morte') {
   console.error(
-    `boot-stack: the stack exited with code ${v.code} after ${secondes}s, before ${values.url} answered`,
+    `boot-stack: the stack exited with code ${v.code} after ${secondes}s, before it was ready at ${values.url}`,
   );
 } else {
   // Le filet : le CLI vit encore mais ne sert pas. Ce n'est PAS le délai du

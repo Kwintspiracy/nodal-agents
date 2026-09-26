@@ -16,7 +16,8 @@
 // qu'un filet, et il le dit.
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { attendreLaStack, lancerEtAttendre, finDuJournal, estPrete } from '../lib/boot-stack.mjs';
@@ -53,12 +54,29 @@ describe('attendreLaStack', () => {
     expect(v).toEqual({ etat: 'plafond', apresMs: 10_000 });
   });
 
-  it('une stack qui répond au moment où le CLI sort encore : la réponse l’emporte', async () => {
-    // Le CLI de dev ne sort pas une fois prêt, mais un lanceur qui rend la main
-    // (un `up` détaché) sort en code 0 APRÈS avoir servi : ce n'est pas une mort.
-    const m = monde({ repondA: 4_000, meurtA: 4_000, codeDeSortie: 0 });
+  it('le CLI est mort et l’adresse répond quand même : c’est le CLI qui décide, la stack est morte', async () => {
+    // Le CLI dont le délai de santé expire s'arrête en laissant parfois des
+    // enfants qui finissent par répondre. Il a déclaré l'échec : une réponse
+    // tardive d'un orphelin ne le contredit pas (revue Codex de la PR #516).
+    const m = monde({ repondA: 4_000, meurtA: 4_000, codeDeSortie: 1 });
     const v = await attendreLaStack({ ...m, plafondMs: 60_000, pasMs: 2_000 });
-    expect(v.etat).toBe('prete');
+    expect(v).toEqual({ etat: 'morte', code: 1, apresMs: 4_000 });
+  });
+
+  it('le CLI meurt PENDANT la sonde qui réussit : morte, pas prête', async () => {
+    let mort = false;
+    const v = await attendreLaStack({
+      maintenant: () => 0,
+      attendre: async () => {},
+      sonder: async () => {
+        mort = true; // la mort arrive pendant l'aller-retour HTTP
+        return true;
+      },
+      sortie: () => (mort ? { code: 9 } : null),
+      plafondMs: 60_000,
+      pasMs: 2_000,
+    });
+    expect(v).toEqual({ etat: 'morte', code: 9, apresMs: 0 });
   });
 });
 
@@ -137,4 +155,71 @@ describe('lancerEtAttendre, sur de VRAIS processus', () => {
     expect(() => process.kill(v.pid, 0)).not.toThrow();
     process.kill(v.pid);
   });
+
+  it('l’adresse répond AVANT le lancement : rien n’est lancé, et le verdict le dit', async () => {
+    // Sans ce contrôle, un service déjà en place sur :3000 faisait passer pour
+    // prête une stack que son CLI n'avait même pas pu démarrer (port pris), et
+    // les parcours testaient autre chose (revue Codex de la PR #516).
+    dossier = mkdtempSync(join(tmpdir(), 'boot-stack-'));
+    const journal = join(dossier, 'stack.log');
+    const marque = join(dossier, 'lance');
+    const deja = createServer((_q, r) => {
+      r.writeHead(200);
+      r.end('someone else');
+    });
+    await new Promise((ok) => deja.listen(0, '127.0.0.1', ok));
+    try {
+      const v = await lancerEtAttendre({
+        commande: process.execPath,
+        args: ['-e', `require('fs').writeFileSync(${JSON.stringify(marque)}, 'x')`],
+        url: `http://127.0.0.1:${deja.address().port}/`,
+        journal,
+        plafondMs: 30_000,
+        pasMs: 200,
+      });
+      expect(v).toEqual({ etat: 'occupee', apresMs: 0, pid: null });
+      // La commande n'a PAS tourné : ni sa marque, ni journal ouvert.
+      await new Promise((r) => setTimeout(r, 500));
+      expect(existsSync(marque)).toBe(false);
+      expect(existsSync(journal)).toBe(false);
+    } finally {
+      await new Promise((ok) => deja.close(ok));
+    }
+  });
+
+  it('en mode shell, un argument que `cmd` découperait est refusé, jamais lancé à moitié', async () => {
+    dossier = mkdtempSync(join(tmpdir(), 'boot-stack-'));
+    await expect(
+      lancerEtAttendre({
+        commande: 'pnpm',
+        args: ['exec', 'node', '-e', "console.log('x')"],
+        shell: true,
+        url: 'http://127.0.0.1:9/',
+        journal: join(dossier, 'stack.log'),
+        plafondMs: 1_000,
+      }),
+    ).rejects.toThrow('cannot go through a shell unescaped');
+  });
+
+  it('la vraie chaîne `pnpm exec` : la mort de l’enfant remonte, avec son code', async () => {
+    // Le script lance `pnpm … exec tsx …`, pas `node` : si pnpm survivait à son
+    // enfant, la mort du CLI resterait invisible (revue Codex de la PR #516).
+    dossier = mkdtempSync(join(tmpdir(), 'boot-stack-'));
+    const journal = join(dossier, 'stack.log');
+    // Un vrai fichier, pas un `-e` : sous Windows la ligne passe par `cmd`.
+    const enfant = join(dossier, 'enfant.mjs');
+    writeFileSync(enfant, "console.log('child up');\nprocess.exit(7);\n");
+    const v = await lancerEtAttendre({
+      commande: 'pnpm',
+      args: ['exec', 'node', enfant],
+      shell: process.platform === 'win32',
+      url: 'http://127.0.0.1:9/',
+      journal,
+      plafondMs: 60_000,
+      pasMs: 200,
+    });
+    expect(v.etat).toBe('morte');
+    expect(v.code).toBe(7);
+    expect(readFileSync(journal, 'utf8')).toContain('child up');
+  }, 60_000);
 });
