@@ -39,7 +39,16 @@ concurrency:
 jobs:
   mesure:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Chaque étape longue a sa borne, et leur somme passe sous celle du job :
+    # ~2 min de mise en place, couverture 35, banc 5, Playwright 12, démarrage
+    # 10, parcours 20, ~3 pour la suite = 87. Mesuré sur les nuits du 24 au
+    # 26/09 : couverture 21-22 min, parcours 11,3, job 30-35. Sans ces bornes,
+    # une étape figée consommait le job entier, et ce qui la suit (le journal
+    # de la stack, la collecte, l'enregistrement) ne tournait jamais (revue
+    # Codex de la PR #516). Un dépassement de JOB tue tout ; un dépassement
+    # d'ÉTAPE avec `continue-on-error` la marque en échec et laisse la nuit
+    # enregistrer ce qu'elle a mesuré.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:
@@ -87,7 +96,14 @@ jobs:
       # couverture : c'est lui qui alimente la mémoire test par test, donc
       # l'instabilité — qu'aucune exécution isolée ne sait voir. Même passage,
       # deux sorties : la mesure ne coûte pas un run de plus.
+      #
+      # Chaque paquet a 15 min (`timeout 900`) : un paquet figé rend le code 124,
+      # écrit dans son témoin comme tout autre échec, et la boucle passe au
+      # suivant. L'étape entière a 35 min ; au-delà elle est marquée en échec et
+      # la nuit continue (voir la borne du job).
       - name: Couverture par paquet
+        timeout-minutes: 35
+        continue-on-error: true
         run: |
           hors_mesure=$(node apps/qa/collect.mjs --hors-mesure)
           echo "hors mesure (volontaire) : ${hors_mesure:-aucun}"
@@ -100,7 +116,7 @@ jobs:
             fi
             echo "::group::$name"
             rm -rf "$d/coverage"
-            if (cd "$d" && npx vitest run --coverage --coverage.reporter=json-summary --reporter=dot --reporter=json --outputFile=tests-run.json); then
+            if (cd "$d" && timeout 900 npx vitest run --coverage --coverage.reporter=json-summary --reporter=dot --reporter=json --outputFile=tests-run.json); then
               echo "  (mesuré)"
             else
               code=$?
@@ -126,6 +142,8 @@ jobs:
       # rapport Playwright a déjà sa garde, dans « Normaliser le rapport »
       # (revue Codex, 3e passe).
       - name: Banc d'essai
+        timeout-minutes: 5
+        continue-on-error: true
         run: |
           mkdir -p apps/qa/data
           rm -f apps/qa/data/bench-run.json
@@ -175,6 +193,8 @@ jobs:
       # `playwright test tests/e2e` ferait passer les trente parcours pour
       # jamais joués sur la page Journeys.
       - name: Tous les parcours
+        timeout-minutes: 20
+        continue-on-error: true
         run: |
           mapfile -t specs < <(ls tests/e2e/*.spec.ts)
           echo "${#specs[@]} parcours à jouer"
