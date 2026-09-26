@@ -98,6 +98,9 @@ jobs:
             turbo-${{ runner.os }}-checks-
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
@@ -216,6 +219,9 @@ jobs:
             turbo-${{ runner.os }}-test-${{ matrix.shard }}-
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Unit tests (${{ matrix.shard }})
@@ -254,6 +260,9 @@ jobs:
             turbo-${{ runner.os }}-build-
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Build
@@ -287,6 +296,9 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Pack, install clean, boot
@@ -312,7 +324,11 @@ jobs:
   # rapporte ; la mesure nocturne (`qa.yml`) les joue TOUS.
   e2e-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Worst case, every bounded step at its bound: ~3 min setup + install, 12
+    # Playwright install, 10 boot, ~5 journeys. 35 leaves the boot step room to
+    # print the stack log and the upload steps room to run (review of PR #516):
+    # a JOB timeout kills everything, a step timeout still runs `if: failure()`.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
 
@@ -324,6 +340,9 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       # `--with-deps` shells out to apt-get, which can hang forever on a stuck
@@ -343,16 +362,18 @@ jobs:
       # a globally-installed `nodal-agents` binary, which does not exist on a
       # runner checking out source. First attempt died on `spawn ENOENT`.
       # The dev stack from source brings up embedded Postgres + runner + web.
+      #
+      # Boot and wait are ONE script, shared with `qa.yml` (#514). It follows
+      # the CLI's process: it returns when the dashboard answers, fails at once
+      # when the CLI dies, and keeps the stack's whole output in `stack.log`
+      # (uploaded on failure below). Before, `&` lost everything the stack
+      # printed once this step ended — the log always stopped at "Starting
+      # embedded Postgres…" — and a blind 5-min loop kept polling a dead CLI.
+      # The script's own cap is 8 min, a net under the CLI's 300 s health
+      # budget; 10 here leaves it time to print before the step is cut.
       - name: Boot the stack
-        run: pnpm --filter nodal-agents exec tsx src/index.ts --dev &
-
-      - name: Wait for the dashboard
-        run: |
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:3000/ > /dev/null; then echo "web up"; exit 0; fi
-            sleep 5
-          done
-          echo "dashboard never answered on :3000"; exit 1
+        timeout-minutes: 10
+        run: node scripts/boot-stack.mjs --log "$RUNNER_TEMP/stack.log"
 
       # Les autres parcours ne sont pas ici pour une raison de COÛT, pas de
       # capacité : depuis la sortie d'`agent-flows.spec.ts` (issue #110), plus
@@ -388,3 +409,12 @@ jobs:
           name: playwright-report
           path: apps/web/playwright-report/
           retention-days: 7
+
+      - name: Upload the stack log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-log
+          path: ${{ runner.temp }}/stack.log
+          retention-days: 7
+          if-no-files-found: ignore

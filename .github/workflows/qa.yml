@@ -39,7 +39,16 @@ concurrency:
 jobs:
   mesure:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Chaque étape longue a sa borne, et leur somme passe sous celle du job :
+    # ~2 min de mise en place, couverture 35, banc 5, Playwright 12, démarrage
+    # 10, parcours 20, ~3 pour la suite = 87. Mesuré sur les nuits du 24 au
+    # 26/09 : couverture 21-22 min, parcours 11,3, job 30-35. Sans ces bornes,
+    # une étape figée consommait le job entier, et ce qui la suit (le journal
+    # de la stack, la collecte, l'enregistrement) ne tournait jamais (revue
+    # Codex de la PR #516). Un dépassement de JOB tue tout ; un dépassement
+    # d'ÉTAPE avec `continue-on-error` la marque en échec et laisse la nuit
+    # enregistrer ce qu'elle a mesuré.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:
@@ -62,6 +71,9 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
+        # Bounded: a registry stall must not eat the job budget that the steps
+        # after it (boot, stack log, uploads) count on (review of PR #516).
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       # ── Couverture, paquet par paquet ──────────────────────────────────────
@@ -87,7 +99,14 @@ jobs:
       # couverture : c'est lui qui alimente la mémoire test par test, donc
       # l'instabilité — qu'aucune exécution isolée ne sait voir. Même passage,
       # deux sorties : la mesure ne coûte pas un run de plus.
+      #
+      # Chaque paquet a 15 min (`timeout 900`) : un paquet figé rend le code 124,
+      # écrit dans son témoin comme tout autre échec, et la boucle passe au
+      # suivant. L'étape entière a 35 min ; au-delà elle est marquée en échec et
+      # la nuit continue (voir la borne du job).
       - name: Couverture par paquet
+        timeout-minutes: 35
+        continue-on-error: true
         run: |
           hors_mesure=$(node apps/qa/collect.mjs --hors-mesure)
           echo "hors mesure (volontaire) : ${hors_mesure:-aucun}"
@@ -100,7 +119,7 @@ jobs:
             fi
             echo "::group::$name"
             rm -rf "$d/coverage"
-            if (cd "$d" && npx vitest run --coverage --coverage.reporter=json-summary --reporter=dot --reporter=json --outputFile=tests-run.json); then
+            if (cd "$d" && timeout 900 npx vitest run --coverage --coverage.reporter=json-summary --reporter=dot --reporter=json --outputFile=tests-run.json); then
               echo "  (mesuré)"
             else
               code=$?
@@ -126,6 +145,8 @@ jobs:
       # rapport Playwright a déjà sa garde, dans « Normaliser le rapport »
       # (revue Codex, 3e passe).
       - name: Banc d'essai
+        timeout-minutes: 5
+        continue-on-error: true
         run: |
           mkdir -p apps/qa/data
           rm -f apps/qa/data/bench-run.json
@@ -146,18 +167,18 @@ jobs:
       # drapeau ; sans lui ces parcours tentent un vrai échange de jeton chez le
       # fournisseur et échouent quoi que vaille le produit (revue Codex).
       # Posé sur CETTE stack de test isolée, jamais ailleurs.
+      #
+      # Le lancement et l'attente sont UN script, le même que `ci.yml` (#514) :
+      # il suit le processus du CLI, s'arrête dès que la stack répond ou meurt,
+      # et garde toute sa sortie dans `stack.log` (publié plus bas). Avant, un
+      # `&` perdait la sortie à la fin de l'étape et une boucle sondait 5 min à
+      # l'aveugle, même un CLI déjà mort. Le plafond du script est de 8 min ; 10
+      # ici lui laissent le temps d'imprimer avant que l'étape soit coupée.
       - name: Boot the stack
+        timeout-minutes: 10
         env:
           NODALAI_ALLOW_OAUTH_MOCK: '1'
-        run: pnpm --filter nodal-agents exec tsx src/index.ts --dev &
-
-      - name: Wait for the dashboard
-        run: |
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:3000/ > /dev/null; then echo "web up"; exit 0; fi
-            sleep 5
-          done
-          echo "dashboard never answered on :3000"; exit 1
+        run: node scripts/boot-stack.mjs --log "$RUNNER_TEMP/stack.log"
 
       # TOUS les parcours, pas les deux de `ci.yml`. C'est le point de ce
       # workflow : le 10/09/2026, la première exécution des 28 parcours que la
@@ -175,6 +196,8 @@ jobs:
       # `playwright test tests/e2e` ferait passer les trente parcours pour
       # jamais joués sur la page Journeys.
       - name: Tous les parcours
+        timeout-minutes: 20
+        continue-on-error: true
         run: |
           mapfile -t specs < <(ls tests/e2e/*.spec.ts)
           echo "${#specs[@]} parcours à jouer"
@@ -209,6 +232,17 @@ jobs:
           # anomalie, et l'avertissement par défaut ferait chercher une panne.
           if-no-files-found: ignore
 
+      # Ce que la stack a écrit pendant toute la nuit : son démarrage, et ce
+      # qu'elle a dit pendant que les parcours la testaient (#514).
+      - name: Publier le journal de la stack
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-log
+          path: ${{ runner.temp }}/stack.log
+          retention-days: 14
+          if-no-files-found: ignore
+
       # La sortie JSON de Playwright peut être précédée d'une ligne du
       # global-setup ; on repart de la première accolade.
       # Si Playwright n'émet aucun rapport, l'ANCIEN est effacé.
@@ -217,6 +251,11 @@ jobs:
       # horodatage et un commit frais : des mesures périmées présentées comme
       # celles du jour. C'est précisément le mensonge que ce portail existe pour
       # empêcher (revue Codex). Mieux vaut une case vide qu'une case fausse.
+      #
+      # Un rapport ILLISIBLE compte comme absent : les parcours coupés par leur
+      # borne laissent un JSON à moitié écrit, et un `JSON.parse` qui jette ici
+      # faisait sauter la collecte et l'enregistrement de toute la nuit (revue
+      # Codex de la PR #516, passe 3).
       - name: Normaliser le rapport
         run: |
           node -e "
@@ -226,13 +265,15 @@ jobs:
             let brut='';
             try { brut=fs.readFileSync('apps/web/playwright-raw.json','utf8'); } catch {}
             const i=brut.indexOf('{');
-            if(i<0){
+            let rapport=null;
+            if(i>=0){ try { rapport=JSON.parse(brut.slice(i)); } catch {} }
+            if(rapport===null){
               if(fs.existsSync(cible)) fs.rmSync(cible);
-              console.log('::warning::Playwright n a emis aucun rapport — l ancien est efface plutot que servi comme neuf.');
+              console.log('::warning::Playwright n a emis aucun rapport lisible — l ancien est efface plutot que servi comme neuf.');
               process.exit(0);
             }
             fs.writeFileSync(cible, brut.slice(i));
-            const s=JSON.parse(brut.slice(i)).stats||{};
+            const s=rapport.stats||{};
             console.log('verts',s.expected,'rouges',s.unexpected,'ignores',s.skipped);
           "
 
