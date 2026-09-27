@@ -266,6 +266,10 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
 
     // ── 3. La décision terminale — lève le marqueur ───────────────────────
     let landed: boolean;
+    // Un livrable que le root avait DÉCLARÉ n'est pas vérifié (#509) : la
+    // primitive a écrit `failed`, et le parent doit recevoir cet échec, pas
+    // le texte compilé comme un succès.
+    let echecDeclare: { error: string; result: string } | null = null;
     if (rootStatus === 'completed') {
       const outcome = await finalizeJobSuccess(
         db,
@@ -296,6 +300,9 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         },
       );
       landed = outcome.kind !== 'already_terminal';
+      if (outcome.kind === 'failed' && outcome.failure) {
+        echecDeclare = { error: outcome.failure.errorCode, result: outcome.failure.result };
+      }
     } else if (rootStatus === 'failed') {
       landed = await failJob(
         db,
@@ -327,11 +334,13 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         ExecuteJobResult,
         { status: 'completed' | 'failed' | 'cancelled' }
       > =
-        rootStatus === 'completed'
-          ? { status: 'completed', result: compiledResult }
-          : rootStatus === 'failed'
-            ? { status: 'failed', error: rootError ?? 'all_tasks_failed', result: compiledResult }
-            : { status: 'cancelled' };
+        echecDeclare !== null
+          ? { status: 'failed', ...echecDeclare }
+          : rootStatus === 'completed'
+            ? { status: 'completed', result: compiledResult }
+            : rootStatus === 'failed'
+              ? { status: 'failed', error: rootError ?? 'all_tasks_failed', result: compiledResult }
+              : { status: 'cancelled' };
       await maybeResumeParent(rootJobId as JobId, resumeOutcome, { db });
     } catch (err) {
       // This root was already finalized above — only the parent resume failed

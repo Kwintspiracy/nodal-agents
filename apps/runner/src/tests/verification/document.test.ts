@@ -179,6 +179,104 @@ describe('document — les trois constats communs', () => {
   });
 });
 
+// Issue #509. Le WAV était le SEUL fichier binaire que la preuve savait lire
+// (#487) : une vidéo, une image, un PDF rendus par une commande seraient partis
+// rouges sur « not valid UTF-8 ». La règle vaut maintenant pour TOUT fichier,
+// par des tables — texte connu, signatures binaires connues — et une seule
+// heuristique pour le reste (un octet NUL dans les 8 premiers Ko, celle de git).
+describe('document — texte ou binaire, une règle pour tous les fichiers', () => {
+  /** Une boîte `ftyp` d'MP4 : taille sur 4 octets, puis `ftyp` à l'offset 4. */
+  const mp4Bytes = (): Buffer => {
+    const b = Buffer.alloc(64);
+    b.writeUInt32BE(32, 0);
+    b.write('ftypisom', 4, 'ascii');
+    b.write('moov', 36, 'ascii');
+    b[40] = 0xff;
+    return b;
+  };
+
+  it('un MP4 (en-tête ftyp) est vert sans jamais être décodé en UTF-8', async () => {
+    const p = write('film.mp4', mp4Bytes());
+    const { verdict, records } = await prove(p);
+    expect(verdict).toBe('green');
+    expect(records.map((r) => [r.command, r.verdict])).toEqual([
+      ['exists', 'green'],
+      ['not-empty', 'green'],
+      ['well-formed:mp4', 'green'],
+    ]);
+  });
+
+  it('chaque format de la table se reconnaît à sa signature', async () => {
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(16),
+    ]);
+    const cas: Array<[string, Buffer, string]> = [
+      ['image.png', png, 'png'],
+      ['photo.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]), 'jpeg'],
+      ['anim.gif', Buffer.from('GIF89a\u0001\u0000', 'latin1'), 'gif'],
+      ['rapport.pdf', Buffer.from('%PDF-1.7\n%âã', 'latin1'), 'pdf'],
+      ['tableau.xlsx', Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0, 0, 0]), 'zip'],
+      ['piste.mp3', Buffer.from('ID3\u0004\u0000\u0000', 'latin1'), 'mp3'],
+      ['brut.mp3', Buffer.from([0xff, 0xfb, 0x90, 0x64, 0x00]), 'mp3'],
+      [
+        'image.webp',
+        Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBPVP8 ')]),
+        'webp',
+      ],
+      ['clip.mov', mp4Bytes(), 'mp4'],
+    ];
+    for (const [name, bytes, format] of cas) {
+      const { verdict, records } = await prove(write(name, bytes));
+      expect(verdict, name).toBe('green');
+      expect(records.at(-1)?.command, name).toBe(`well-formed:${format}`);
+    }
+  });
+
+  it('un binaire dont l’en-tête ne correspond pas à son extension est rouge, et le NOMME', async () => {
+    // Un PNG écrit sous le nom d'un MP4 : exister et ne pas être vide ne suffit pas.
+    const p = write(
+      'faux-film.mp4',
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+    );
+    const { verdict, records } = await prove(p);
+    expect(verdict).toBe('red');
+    expect(records.at(-1)).toMatchObject({ command: 'well-formed:mp4', verdict: 'red' });
+    expect(records.at(-1)?.stderrTail).toMatch(/ftyp/);
+    expect(records.at(-1)?.stderrTail).toMatch(/this file is not MP4/);
+  });
+
+  it('un corps d’erreur texte écrit sous un nom de vidéo est rouge sur son en-tête', async () => {
+    // La forme exacte d'un rendu raté qui aurait quand même écrit quelque chose.
+    const p = write('rendu.mp4', Buffer.from('{"error":"render failed"}'));
+    const { verdict, records } = await prove(p);
+    expect(verdict).toBe('red');
+    expect(records.at(-1)).toMatchObject({ command: 'well-formed:mp4', verdict: 'red' });
+  });
+
+  it('un binaire inconnu : existe, n’est pas vide, et « pas de règle d’en-tête » est DIT', async () => {
+    const p = write('modele.bin', Buffer.from([0x13, 0x37, 0x00, 0x01, 0xfe, 0x80, 0x00]));
+    const { verdict, records } = await prove(p);
+    expect(verdict).toBe('green');
+    expect(records.map((r) => r.command)).toEqual(['exists', 'not-empty', 'binary']);
+    expect(records.at(-1)?.stdoutTail).toMatch(/no header rule for \.bin/i);
+  });
+
+  it('un .md écrit en UTF-16 reste ROUGE sur utf8 — avec ou sans BOM', async () => {
+    const texte = '# Titre\n\ncorps\n';
+    const avecBom = write(
+      'utf16-bom.md',
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(texte, 'utf16le')]),
+    );
+    const sansBom = write('utf16-nu.md', Buffer.from(texte, 'utf16le'));
+    for (const p of [avecBom, sansBom]) {
+      const { verdict, records } = await prove(p);
+      expect(verdict, p).toBe('red');
+      expect(records.at(-1), p).toMatchObject({ command: 'utf8', verdict: 'red' });
+    }
+  });
+});
+
 describe('document — le chemin RÉEL, pas la clé repliée en casse', () => {
   it('la preuve ouvre le chemin d’affichage quand il est donné, pas la clé en minuscules', async () => {
     // Revue Codex post-merge de la PR #66, constat C2. La clé d'un document

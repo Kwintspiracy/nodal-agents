@@ -478,6 +478,66 @@ async function bumpProjectEpoch(
 }
 
 /**
+ * LA ligne d'état d'un livrable, rendue SALE : insérée à la génération 1, ou
+ * sa génération `+ 1`. Rend la génération posée.
+ *
+ * UN SEUL GESTE pour les deux portes qui salissent un livrable : l'intention
+ * de mutation d'un outil qui écrit, et la DÉCLARATION d'un livrable par
+ * l'agent (`return_result.deliverables`, issue #509). Deux copies de cet
+ * upsert finiraient par ne plus poser la même chose — et la preuve lit ces
+ * lignes-là, et aucune autre.
+ *
+ * Les deux drapeaux ne descendent JAMAIS : une cible d'abord vue par
+ * précaution puis NOMMÉE devient un livrable, un fichier écrit par un outil
+ * puis promis par l'agent devient déclaré ; l'inverse n'est pas vrai — une
+ * écriture suivante ne retire pas une promesse.
+ *
+ * Appelé DANS la transaction de l'appelant, sous le verrou du job.
+ */
+export async function markStateDirty(
+  tx: AnyDrizzleDb,
+  jobId: string,
+  deliverable: {
+    readonly deliverableType: DeliverableType;
+    readonly key: string;
+    readonly path: string;
+    readonly addressed: boolean;
+    readonly declared: boolean;
+  },
+): Promise<number> {
+  const [state] = await tx
+    .insert(jobDeliverableVerificationState)
+    .values({
+      jobId,
+      deliverableType: deliverable.deliverableType,
+      canonicalKey: deliverable.key,
+      displayPathSnapshot: deliverable.path,
+      dirtyGeneration: 1,
+      decisionStatus: DECISION_STATUS_DIRTY,
+      addressed: deliverable.addressed,
+      declared: deliverable.declared,
+    })
+    .onConflictDoUpdate({
+      target: [
+        jobDeliverableVerificationState.jobId,
+        jobDeliverableVerificationState.deliverableType,
+        jobDeliverableVerificationState.canonicalKey,
+      ],
+      set: {
+        dirtyGeneration: sql`${jobDeliverableVerificationState.dirtyGeneration} + 1`,
+        decisionStatus: DECISION_STATUS_DIRTY,
+        displayPathSnapshot: deliverable.path,
+        ...(deliverable.addressed ? { addressed: true } : {}),
+        ...(deliverable.declared ? { declared: true } : {}),
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ dirtyGeneration: jobDeliverableVerificationState.dirtyGeneration });
+  if (!state?.dirtyGeneration) throw new IntentFailure('intent_state_write_failed');
+  return state.dirtyGeneration;
+}
+
+/**
  * Pose l'intention de mutation, en UNE transaction courte.
  *
  * Séquence imposée par le plan (§ « Le protocole transactionnel ») :
@@ -635,42 +695,19 @@ export async function writeMutationIntent(
         )
           throw new IntentFailure('intent_epoch_missing');
 
-        const [state] = await tx
-          .insert(jobDeliverableVerificationState)
-          .values({
-            jobId,
-            deliverableType: deliverable.deliverableType,
-            canonicalKey: deliverable.key,
-            displayPathSnapshot: deliverable.path,
-            dirtyGeneration: 1,
-            decisionStatus: DECISION_STATUS_DIRTY,
-            addressed: deliverable.addressed,
-          })
-          .onConflictDoUpdate({
-            target: [
-              jobDeliverableVerificationState.jobId,
-              jobDeliverableVerificationState.deliverableType,
-              jobDeliverableVerificationState.canonicalKey,
-            ],
-            set: {
-              dirtyGeneration: sql`${jobDeliverableVerificationState.dirtyGeneration} + 1`,
-              decisionStatus: DECISION_STATUS_DIRTY,
-              displayPathSnapshot: deliverable.path,
-              // Une cible d'abord vue par précaution puis NOMMÉE devient un
-              // livrable ; l'inverse n'est pas vrai — on ne rétrograde jamais
-              // ce qu'un outil a explicitement visé.
-              ...(deliverable.addressed ? { addressed: true } : {}),
-              updatedAt: new Date(),
-            },
-          })
-          .returning({ dirtyGeneration: jobDeliverableVerificationState.dirtyGeneration });
-        if (!state?.dirtyGeneration) throw new IntentFailure('intent_state_write_failed');
+        const dirtyGeneration = await markStateDirty(tx, jobId, {
+          deliverableType: deliverable.deliverableType,
+          key: deliverable.key,
+          path: deliverable.path,
+          addressed: deliverable.addressed,
+          declared: false,
+        });
 
         dirtied.push({
           deliverableType: deliverable.deliverableType,
           key: deliverable.key,
           path: deliverable.path,
-          dirtyGeneration: state.dirtyGeneration,
+          dirtyGeneration,
           verificationEpoch,
           addressed: deliverable.addressed,
         });

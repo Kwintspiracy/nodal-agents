@@ -88,6 +88,7 @@ const detail = (over: Partial<CodingProcessDetail> = {}): CodingProcessDetail =>
   verificationSkippedSurfaces: [],
   constatedBy: [],
   verificationUnconfigured: [],
+  declaredUnverified: [],
   ...over,
 });
 
@@ -223,6 +224,51 @@ describe('code-run-view — ce qui a été livré @cap:suivre-execution/ecran', 
     expect(summary?.costUsd).toBe(1.92);
     // Le bloc nomme QUI a relu ; un verdict de code ne porte pas ce nom.
     expect(summary?.reviews).toEqual([]);
+  });
+
+  // #509 — la MÊME règle que le fil et la page d'un run : un fichier promis
+  // jamais constaté interdit « Verified » et se nomme dans la preuve.
+  it('un fichier PROMIS non vert interdit « green » ici aussi @cap:verifier-un-livrable/ecran', () => {
+    const summary = codeDelivery(
+      detail({
+        changes: [{ filePath: 'src/film.tsx', addedLines: 3, removedLines: 0, edits: [] }],
+        verificationRuns: [
+          {
+            sequenceId: 's1',
+            jobId: JOB,
+            deliverableType: 'document',
+            canonicalKey: 'd:/nodal/film.tsx',
+            verdict: 'green',
+            startedAt: '2026-09-25T09:58:00.000Z',
+            source: 'job',
+            sourceAgentName: null,
+            runs: [
+              {
+                jobId: JOB,
+                sequenceId: 's1',
+                commandRank: 1,
+                command: 'exists',
+                exitCode: 0,
+                outcomeKind: 'exit',
+                durationMs: 1,
+                verdict: 'green',
+                testedGeneration: 1,
+                testedEpoch: 0,
+                source: 'job',
+                sourceAgentName: null,
+                createdAt: '2026-09-25T09:58:00.000Z',
+              },
+            ],
+          },
+        ],
+        declaredUnverified: [{ path: 'D:/Nodal/film.mp4', status: 'infra_error' }],
+      }),
+    );
+    expect(summary?.verdict).toBeNull();
+    expect(summary?.checks).toEqual([
+      { command: 'exists', ok: true },
+      { command: 'D:/Nodal/film.mp4: not verified (infra_error)', ok: false },
+    ]);
   });
 
   // #375 — un run réparé porte DEUX séquences sur le même livrable. Cet

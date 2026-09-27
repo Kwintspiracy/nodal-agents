@@ -831,6 +831,19 @@ export async function runCliRuntimeJob(args: {
     // été écrit, rien ne part — l'ancien code envoyait quand même.
     return { status: 'failed', error: 'already_handled' };
   }
+  // Un livrable DÉCLARÉ non vérifié (#509) : la primitive a écrit `failed`.
+  // Le runtime CLI n'appelle pas `return_result` et ne déclare donc rien
+  // aujourd'hui ; la porte est la même pour tous, il en lit l'issue.
+  if (outcome.kind === 'failed') {
+    try {
+      await drainDeliveries(db, { jobId });
+    } catch (err) {
+      console.error(
+        `[cli-runtime] DELIVERY_DRAIN_FAILED job=${jobId} error=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return { status: 'failed', error: outcome.failure?.errorCode ?? 'deliverable_not_verified' };
+  }
 
   // Drain immédiat — la latence d'aujourd'hui (un envoi dans la seconde, pas
   // au prochain tick). Une panne ICI ne défait pas un job déjà commis : elle

@@ -897,6 +897,13 @@
       "when": 1786002000000,
       "tag": "0128_shell_policy_retired_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1786002100000,
+      "tag": "0129_deliverable_declared",
+      "breakpoints": true
     }
   ]
 }

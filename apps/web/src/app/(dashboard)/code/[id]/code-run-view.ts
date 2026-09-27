@@ -16,6 +16,7 @@ import type { DeliverySummary, Step, TurnUsage } from '@/lib/conversation-feed.t
 import { outcomeOfToolOutput } from '@/lib/tool-card-payload.ts';
 import { lastReviewVerdict } from '@/lib/review-state.ts';
 import { lastSequenceViewPerDeliverable } from '@/lib/verification-repairs.ts';
+import { concludeProof } from '@/lib/declared-proof.ts';
 import { reviewBlocksDelivery } from '@nodal-agents/shared';
 import { liveKind } from '@/lib/job-live.ts';
 import type { ThreadAgent } from '@/app/(dashboard)/spaces/format.ts';
@@ -238,8 +239,9 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
     durationMs: header.durationMs,
     costUsd: header.costUsd > 0 ? header.costUsd : null,
     reviews: [],
-    checks: commands.map((r) => ({ command: r.command, ok: r.verdict === 'green' })),
-    verdict: commands.length === 0 ? null : passed === commands.length ? 'green' : 'red',
+    // La MÊME conclusion que le fil et la page d'un run : un fichier PROMIS
+    // non vert interdit « Verified » et se nomme (#509).
+    ...concludeProof(commands, detail.declaredUnverified, []),
     // #59 — la relecture du pipeline, déjà lue pour la section Review juste
     // dessous. Le bloc dit « Delivered » quoi qu'il arrive et pose ce verdict à
     // côté ; c'est là que « Changes requested » ou « Approved » se lit.
