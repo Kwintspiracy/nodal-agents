@@ -23,7 +23,19 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agents, agentAssignments, agentMemory, agentTasks } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agents,
+  agentAssignments,
+  agentMemory,
+  agentTasks,
+  constatedWrites,
+  jobDeliverableVerificationState,
+} from '@nodal-agents/db';
+import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -31,6 +43,7 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
+import { SAME_AGENT_FAILURE_CAP } from '@nodal-agents/orchestration';
 
 // ─── LLM client interception ──────────────────────────────────────────────────
 
@@ -373,10 +386,14 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
     if (!childRow) throw new Error('child agent missing');
     const assignToolName = `assign_${childRow.slug.replace(/-/g, '_')}`;
 
-    // Pre-seed the parent so the same-slug retry is refused on the next assign.
+    // Pre-seed the parent so the same-slug retry is refused on the next assign:
+    // the child has failed as many times in a row as the cap allows (#510).
     await db
       .update(agentJobs)
-      .set({ lastFailedDelegationSlug: childRow.slug })
+      .set({
+        lastFailedDelegationSlug: childRow.slug,
+        lastFailedDelegationStreak: SAME_AGENT_FAILURE_CAP,
+      })
       .where(eq(agentJobs.id, jobId));
 
     // LLM script:
@@ -446,6 +463,175 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
       : [];
     expect(toolResultIds).toContain('tc-assign-kept');
     expect(toolResultIds).toContain('tc-assign-deferred');
+
+    // Revue Codex de #510, P1 : le refus lit la MÊME consigne que le payload
+    // d'échec (failedDelegationGuidance) — un autre agent seulement si sa
+    // fiche montre les moyens, soi-même seulement si ses outils couvrent —
+    // et reste neutre de canal : ce job vient de l'API, pas de Telegram.
+    const refusal = (
+      toolMsg!.content as Array<{
+        type?: string;
+        toolCallId?: string;
+        output?: { value?: unknown };
+      }>
+    ).find((b) => b.toolCallId === 'tc-assign-kept');
+    const refusalText = JSON.stringify(refusal?.output?.value ?? '');
+    expect(refusalText).toContain('delegation_retry_blocked');
+    expect(refusalText).toContain('DO NOT retry the same specialist');
+    expect(refusalText).toContain('ONLY if its entry in your team roster shows');
+    expect(refusalText).toContain(
+      'do the work yourself ONLY if your own tools and folders cover it',
+    );
+    expect(refusalText).not.toContain('telegram');
+  });
+
+  // #510 — run 8dfe4684 : le gate refusait le même agent dès son PREMIER
+  // échec, et l'orchestrateur a dispersé le travail vers des agents qui ne
+  // pouvaient pas le faire. Un échec laisse maintenant UNE relance ciblée.
+  it('#510: after ONE failure, the same agent is delegated to again (not refused)', async () => {
+    const jobId = await createOrchestratorJob();
+    const [childRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, childAgentId));
+    if (!childRow) throw new Error('child agent missing');
+    const assignToolName = `assign_${childRow.slug.replace(/-/g, '_')}`;
+    await db
+      .update(agentJobs)
+      .set({ lastFailedDelegationSlug: childRow.slug, lastFailedDelegationStreak: 1 })
+      .where(eq(agentJobs.id, jobId));
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-retry', toolName: assignToolName, args: { task: 'le point précis' } },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-pub-r', toolName: 'dashboard_publish', args: { text: 'done' } },
+          { toolCallId: 'tc-rr-child-r', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-rr-parent-r', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // The child really ran, on the brief the parent gave it.
+    const children = await db
+      .select({ task: agentJobs.task, agentId: agentJobs.agentId })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, jobId));
+    expect(children.map((c) => c.agentId)).toEqual([childAgentId]);
+    expect(children[0]?.task).toContain('le point précis');
+
+    const [parentRow] = await db
+      .select({
+        messages: agentJobs.messages,
+        streak: agentJobs.lastFailedDelegationStreak,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(JSON.stringify(parentRow?.messages)).not.toContain('delegation_retry_blocked');
+    // The retry succeeded: the streak is cleared.
+    expect(parentRow?.streak).toBe(0);
+  });
+
+  // Revue Codex de #510, passe 3 : le refus du 3e appel disait « Nothing it
+  // was asked has been delivered » alors que le 2e échec avait laissé un
+  // fichier intact, que resumeDelegated venait de dire au parent de garder.
+  // Le refus lit les fichiers du DERNIER enfant en échec, par la même fonction.
+  it('#510: the refused third call keeps the file the last failed child left, never "nothing delivered"', async () => {
+    const jobId = await createOrchestratorJob();
+    const [childRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, childAgentId));
+    if (!childRow) throw new Error('child agent missing');
+    const assignToolName = `assign_${childRow.slug.replace(/-/g, '_')}`;
+    await db
+      .update(agentJobs)
+      .set({
+        lastFailedDelegationSlug: childRow.slug,
+        lastFailedDelegationStreak: SAME_AGENT_FAILURE_CAP,
+      })
+      .where(eq(agentJobs.id, jobId));
+
+    // The two failed children of this agent under this job; the LAST one
+    // left a file that is still exactly what it wrote.
+    const folder = mkdtempSync(join(tmpdir(), 'nodal-510-'));
+    const path = join(folder, 'voix-off.wav').split(String.fromCharCode(92)).join('/');
+    const content = 'x'.repeat(2048);
+    writeFileSync(path, content);
+    for (const n of [1, 2]) {
+      const [child] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: childAgentId,
+          parentJobId: jobId,
+          channel: 'internal',
+          task: `attempt ${n}`,
+          status: 'failed',
+          createdAt: new Date(Date.now() - (3 - n) * 1000),
+        })
+        .returning({ id: agentJobs.id });
+      if (n === 2) {
+        await db.insert(jobDeliverableVerificationState).values({
+          jobId: child!.id,
+          deliverableType: 'document',
+          canonicalKey: path,
+          displayPathSnapshot: path,
+          dirtyGeneration: 1,
+          addressed: true,
+          produced: true,
+          declared: false,
+          decisionStatus: 'dirty',
+        });
+        await db.insert(constatedWrites).values({
+          jobId: child!.id,
+          turn: 1,
+          path: realpathSync(path).split(String.fromCharCode(92)).join('/'),
+          changeKind: 'modified',
+          constatedBy: 'disk',
+          contentSha256: createHash('sha256').update(content).digest('hex'),
+        });
+      }
+    }
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [{ toolCallId: 'tc-third', toolName: assignToolName, args: { task: 'again' } }],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-rr-third', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+
+    const [parentRow] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const transcript = JSON.stringify(parentRow?.messages ?? []);
+    const at = transcript.indexOf('delegation_retry_blocked');
+    expect(at).toBeGreaterThan(-1);
+    const refusal = transcript.slice(at, at + 4000);
+    expect(refusal).toContain('DO NOT redo that work');
+    expect(refusal).toContain('voix-off.wav');
+    expect(refusal).toContain('written_by_child_unchanged');
+    expect(refusal).not.toContain('Nothing it was asked has been delivered');
   });
 
   it('REGRESSION: same pair in reverse emission order [save_memory, assign_<child>] also succeeds', async () => {

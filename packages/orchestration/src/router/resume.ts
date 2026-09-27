@@ -6,6 +6,7 @@ import { agentJobs } from '@nodal-agents/db';
 import type { JobFailureHint } from '@nodal-agents/shared';
 import { OrchestrationError } from '../errors';
 import { reviewBlocksDelivery, REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
+import { nextFailedDelegationState, failedDelegationGuidance } from './failed-delegation';
 import { readDeliveredReviewVerdict } from './review-verdict';
 import type { ReviewVerdictRecord } from './review-verdict';
 import { filesTheChildWrote, readFilesWrittenBy } from './delegated-files';
@@ -365,6 +366,7 @@ export async function resumeDelegated(
       chainCount: agentJobs.chainCount,
       delegationDepth: agentJobs.delegationDepth,
       lastFailedDelegationSlug: agentJobs.lastFailedDelegationSlug,
+      lastFailedDelegationStreak: agentJobs.lastFailedDelegationStreak,
       parentJobId: agentJobs.parentJobId,
       task: agentJobs.task,
       channel: agentJobs.channel,
@@ -493,7 +495,16 @@ export async function resumeDelegated(
   // Cleared on success → so subsequent same-slug delegations are allowed
   // once any progress has been made on the parent.
   const failedSlug = isFailure ? childSlugFromToolName(toolName) : null;
-  const nextLastFailedSlug = isFailure ? failedSlug : null;
+  // The streak counts consecutive failures of that slug (#510): the gate
+  // refuses a retry only from the second one, so the first failure leaves
+  // room for ONE targeted retry of the agent that has the means.
+  const nextFailedState = nextFailedDelegationState(
+    {
+      slug: parent.lastFailedDelegationSlug ?? null,
+      streak: parent.lastFailedDelegationStreak ?? 0,
+    },
+    failedSlug,
+  );
 
   // The parent MUST NOT be able to turn a failed delegation into a promise.
   // The incident this closes (#107, job f1852d35): the child produced nothing,
@@ -511,16 +522,15 @@ export async function resumeDelegated(
   // re-read. One absent, changed since, never written by the child, or in an
   // unknown state is not work to build on, and saying it is would make the
   // parent deliver nothing, or someone else's file.
+  //
+  // The moves themselves, and their order, live in failed-delegation.ts
+  // (#510), which also says what the child left.
   const fichiersDeLEnfant = filesTheChildWrote(outcome.files_written);
-  const failureGuidance =
-    fichiersDeLEnfant.length > 0
-      ? 'This delegation stopped before it finished, but it left files. Those in files_written with "state": "written_by_child_unchanged" are exactly what the specialist wrote. Those with "state": "written_by_child_unverified" were written by the specialist, but their content has no fingerprint, so it cannot be proven they did not change since: read them before relying on them. DO NOT redo that work and DO NOT delegate it again: check those files and build on them. Any other state means that file is NOT the specialist\'s finished output (absent, changed since, never written by it, or unknown): that part is not done. For anything these files do not cover, DO NOT retry'
-      : 'This delegation delivered NOTHING usable. DO NOT retry';
   const errorValue = isFailure
     ? `${DELEGATION_FAILED_MARKER}
 ${renderDelegationOutcome(outcome)}
 
-${failureGuidance} the same specialist (assign_${(failedSlug ?? '').replace(/-/g, '_')}). DO NOT tell the user the work is in progress, launched, or coming later: it is not, and nothing else will arrive. Your only options are: (1) do the work yourself with your own tools, (2) delegate to a DIFFERENT specialist whose skills match, or (3) tell the user the truth about what failed via your delivery tool. Then call return_result with the honest status.`
+${failedDelegationGuidance(nextFailedState, { childLeftFiles: fichiersDeLEnfant.length > 0 })}`
     : '';
 
   const primaryOutput: ToolResultOutput = isFailure
@@ -587,7 +597,8 @@ ${failureGuidance} the same specialist (assign_${(failedSlug ?? '').replace(/-/g
       status: 'pending',
       pendingDelegation: null,
       chainCount: nextChainCount,
-      lastFailedDelegationSlug: nextLastFailedSlug,
+      lastFailedDelegationSlug: nextFailedState.slug,
+      lastFailedDelegationStreak: nextFailedState.streak,
       updatedAt: new Date(),
     })
     .where(

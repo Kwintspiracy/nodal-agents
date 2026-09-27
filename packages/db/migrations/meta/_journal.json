@@ -911,6 +911,13 @@
       "when": 1786002200000,
       "tag": "0130_constated_writes_content_sha256",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1786002300000,
+      "tag": "0131_failed_delegation_streak",
+      "breakpoints": true
     }
   ]
 }

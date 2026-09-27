@@ -11,6 +11,7 @@ import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs } from '@nodal-agents/db';
 import { resumeDelegated } from '../../router/resume';
 import { readFilesWrittenBy } from '../../router/delegated-files';
+import { isSameAgentRetryBlocked } from '../../router/failed-delegation';
 import { OrchestrationError } from '../../errors';
 import type { JobId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -320,7 +321,7 @@ describe('resumeDelegated', () => {
     // behaviour is the same: the column always holds the LAST failed slug.
   });
 
-  it('error-text wording on failure tells the LLM to fall back to a different specialist', async () => {
+  it('error-text wording on failure names the legal moves, retry of the same agent first', async () => {
     const { entityId, orchId } = await seedContext(db);
     const toolUseId = 'tu_perslug_msg';
     const childJob = await seedChildJob(db, entityId, orchId);
@@ -345,12 +346,14 @@ describe('resumeDelegated', () => {
     const last = msgs[msgs.length - 1];
     const tr = last?.content.find((c) => c.type === 'tool-result');
     expect(tr?.output?.type).toBe('error-text');
-    // Wording must invite a fallback, not just "DO NOT retry" — and it must
-    // forbid the waiting message the incident produced (#107).
+    // Wording must name the legal moves — and it must forbid the waiting
+    // message the incident produced (#107). A FIRST failure no longer forbids
+    // retrying the same agent: it allows one targeted retry (#510, below).
     expect(tr?.output?.value).toContain('"status": "failed"');
-    expect(tr?.output?.value).toContain('DO NOT retry the same specialist');
+    expect(tr?.output?.value).toContain('ONCE more');
     expect(tr?.output?.value).toContain('DO NOT tell the user the work is in progress');
-    expect(tr?.output?.value).toMatch(/different specialist|tell the user the truth/i);
+    expect(tr?.output?.value).toMatch(/DIFFERENT agent ONLY if/);
+    expect(tr?.output?.value).toMatch(/tell the user the truth/);
     expect(tr?.output?.value).toContain('return_result');
   });
 
@@ -788,5 +791,89 @@ describe('resumeDelegated — what a stopped child wrote, as it is now (#491) @c
     expect(recordOf(out.value)['files_written']).toMatchObject([
       { kind: 'file', path: md, state: 'written_by_child_unchanged', bytes: 5 },
     ]);
+  });
+});
+
+// #510 — après un échec, le même agent a droit à UNE relance ciblée ; le
+// deuxième échec d'affilée le bloque. Run 8dfe4684 : le blocage tombait dès le
+// premier échec, et la consigne poussait vers « un AUTRE spécialiste » — le
+// rendu est parti vers une équipe qui n'avait ni le dossier ni le shell.
+describe('resumeDelegated — relance du même agent après un échec (#510)', () => {
+  async function failOnce(prev: { slug: string | null; streak: number }, tuId: string) {
+    const { entityId, orchId } = await seedContext(db);
+    const childJob = await seedChildJob(db, entityId, orchId);
+    const parentJob = await seedParentJob(db, entityId, orchId, tuId, childJob.id);
+    await db
+      .update(agentJobs)
+      .set({ lastFailedDelegationSlug: prev.slug, lastFailedDelegationStreak: prev.streak })
+      .where(eq(agentJobs.id, parentJob.id));
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'Le MP4 source n’existe pas sur disque' },
+      db,
+    );
+    const [after] = await db
+      .select({
+        slug: agentJobs.lastFailedDelegationSlug,
+        streak: agentJobs.lastFailedDelegationStreak,
+        messages: agentJobs.messages,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    const msgs = after?.messages as Array<{
+      content: Array<{ type: string; output?: { value: string } }>;
+    }>;
+    const payload =
+      msgs[msgs.length - 1]?.content.find((c) => c.type === 'tool-result')?.output?.value ?? '';
+    return { slug: after?.slug, streak: after?.streak, payload };
+  }
+
+  it('premier échec : série à 1, la consigne propose UNE relance ciblée du même agent', async () => {
+    const r = await failOnce({ slug: null, streak: 0 }, 'tu_510_first');
+    expect(r.slug).toBe('test-agent');
+    expect(r.streak).toBe(1);
+    expect(r.payload).toContain('call assign_test_agent ONCE more');
+    expect(r.payload).not.toContain('DO NOT retry the same specialist');
+    // Un autre agent seulement sur la foi de son entrée du roster.
+    expect(r.payload).toContain('ONLY if its entry in your team roster shows');
+  });
+
+  it('deuxième échec d’affilée du même agent : série à 2, il est bloqué', async () => {
+    const r = await failOnce({ slug: 'test-agent', streak: 1 }, 'tu_510_second');
+    expect(r.streak).toBe(2);
+    expect(r.payload).toContain('DO NOT retry the same specialist');
+    expect(r.payload).not.toContain('ONCE more');
+  });
+
+  it('l’échec d’un AUTRE agent remet la série à 1', async () => {
+    const r = await failOnce({ slug: 'someone-else', streak: 1 }, 'tu_510_other');
+    expect(r.slug).toBe('test-agent');
+    expect(r.streak).toBe(1);
+  });
+
+  it('un succès remet la série à 0', async () => {
+    const { entityId, orchId } = await seedContext(db);
+    const childJob = await seedChildJob(db, entityId, orchId);
+    const parentJob = await seedParentJob(db, entityId, orchId, 'tu_510_ok', childJob.id);
+    await db
+      .update(agentJobs)
+      .set({ lastFailedDelegationSlug: 'test-agent', lastFailedDelegationStreak: 1 })
+      .where(eq(agentJobs.id, parentJob.id));
+    await resumeDelegated(parentJob.id as JobId, childJob.id as JobId, 'rendu fait', db);
+    const [after] = await db
+      .select({ streak: agentJobs.lastFailedDelegationStreak })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.streak).toBe(0);
+  });
+});
+
+describe('isSameAgentRetryBlocked (#510)', () => {
+  it('bloque le même agent seulement à partir du deuxième échec d’affilée', () => {
+    expect(isSameAgentRetryBlocked({ slug: 'montage', streak: 1 }, 'montage')).toBe(false);
+    expect(isSameAgentRetryBlocked({ slug: 'montage', streak: 2 }, 'montage')).toBe(true);
+    expect(isSameAgentRetryBlocked({ slug: 'montage', streak: 2 }, 'lead')).toBe(false);
+    expect(isSameAgentRetryBlocked({ slug: null, streak: 0 }, 'montage')).toBe(false);
   });
 });
