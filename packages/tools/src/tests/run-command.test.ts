@@ -4,7 +4,7 @@
 // `node -e` for cross-platform portability (node is always present in the test env).
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommandTool } from '../builtin/run-command';
@@ -110,38 +110,50 @@ describe('run_command builtin @cap:executer-une-commande/moteur', () => {
   });
 
   it('times out and kills a long-running command (with its children)', async () => {
-    // Le processus écrit son pid AVANT de dormir : c'est lui, le petit-enfant
-    // de cmd.exe / sh, qu'on veut voir mort. Le test précédent n'assertait que
-    // `timedOut` et passait avec le tree-kill cassé (sonde du 03/09 : le
-    // petit-enfant survivait 3 fois sur 3).
+    // Le petit-enfant de cmd.exe / sh est celui qu'on veut voir mort. Le test
+    // d'origine n'assertait que `timedOut` et passait avec le tree-kill cassé
+    // (sonde du 03/09 : le petit-enfant survivait 3 fois sur 3).
+    //
+    // POURQUOI IL N'EST PLUS LU PAR SON PID (rouge sous la charge de la suite
+    // complète, 27/09). Deux choses dépendaient de la charge : un délai d'UNE
+    // seconde, que le démarrage de `node` peut dépasser avant d'avoir rien
+    // écrit, et `process.kill(pid, 0)` 1,5 s après, qui répond « vivant » dès
+    // que Windows a RÉUTILISÉ ce pid pour un autre processus (la suite en lance
+    // des centaines) — le test tuait alors un inconnu. Le petit-enfant bat donc
+    // dans un fichier toutes les 50 ms : vivant, le fichier grandit ; mort, il
+    // ne bouge plus. C'est SON battement, aucun autre processus n'y écrit.
+    const beat = join(workspaceDir, 'kill-beat.txt');
     const out = await runCommandTool.execute(
       {
         purpose: 'run test command',
-        command: `node -e "process.stdout.write(String(process.pid)); setTimeout(()=>{}, 60000)"`,
-        timeout_seconds: 1,
+        // Il s'arrête seul au bout de 90 s, au-delà de la limite du test : un
+        // tree-kill cassé fait rougir le test sans laisser de processus orphelin.
+        command: `node -e "const fs=require('fs');setInterval(()=>fs.appendFileSync('kill-beat.txt','.'),50);setTimeout(()=>process.exit(0),90000)"`,
+        // Assez pour que `node` démarre sous charge.
+        timeout_seconds: 5,
       },
       ctx(),
     );
     expect(out.timedOut).toBe(true);
     expect(out.exitCode).not.toBe(0); // killed → no clean exit
-    const pid = Number(out.stdout.trim());
-    expect(Number.isInteger(pid) && pid > 0).toBe(true);
-    await new Promise((r) => setTimeout(r, 1500));
-    let alive = true;
-    try {
-      process.kill(pid, 0);
-    } catch {
-      alive = false;
+
+    // Il a bien tourné avant le délai : sans cela, « ne grandit plus » ne
+    // prouverait rien.
+    const taille = async (): Promise<number> => (await stat(beat)).size;
+    expect(await taille()).toBeGreaterThan(0);
+
+    // Mort = le battement s'arrête. On attend qu'il reste immobile une
+    // seconde entière (vingt battements manqués), dans une limite de 20 s :
+    // un tree-kill cassé laisse le fichier grandir jusqu'à la limite.
+    const limite = Date.now() + 20_000;
+    let immobile = false;
+    while (!immobile && Date.now() < limite) {
+      const avant = await taille();
+      await new Promise((r) => setTimeout(r, 1_000));
+      immobile = (await taille()) === avant;
     }
-    if (alive) {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        /* déjà mort */
-      }
-    }
-    expect(alive).toBe(false);
-  });
+    expect(immobile).toBe(true);
+  }, 60_000);
 
   it('caps very large output (truncated=true, ≤ cap)', async () => {
     const out = await runCommandTool.execute(
