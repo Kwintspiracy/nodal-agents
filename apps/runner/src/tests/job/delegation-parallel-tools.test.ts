@@ -33,11 +33,11 @@ import {
   constatedWrites,
   jobDeliverableVerificationState,
 } from '@nodal-agents/db';
-import { mkdtempSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createToolRegistry, registerBuiltins, cheminConstate } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { RunnerDeps } from '../../deps.ts';
@@ -600,7 +600,11 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
         await db.insert(constatedWrites).values({
           jobId: child!.id,
           turn: 1,
-          path: realpathSync(path).split(String.fromCharCode(92)).join('/'),
+          // LA normalisation du produit (`cheminConstate`, realpath natif), et
+          // aucune autre : `realpathSync` (JS) garde un nom court 8.3
+          // (`RUNNER~1`) que le produit développe, et la CI Windows ne
+          // retrouvait plus le fichier (run 36332165216).
+          path: await cheminConstate(path),
           changeKind: 'modified',
           constatedBy: 'disk',
           contentSha256: createHash('sha256').update(content).digest('hex'),
