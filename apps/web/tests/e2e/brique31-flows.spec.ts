@@ -308,12 +308,12 @@ test.describe('Test C — Send-task with Telegram checkbox (Brique 31 acceptance
     // Submit the form
     await page.getByRole('button', { name: /^send task$/i }).click();
 
-    // Wait for redirect to /jobs/<id>
-    await page.waitForURL(/\/jobs\//, { timeout: 15_000 });
+    // A task sent from Runs is a Work run (#501): /runs/<id> lands on /chat/runs/<id>.
+    await page.waitForURL(/\/chat\/runs\//, { timeout: 15_000 });
 
     // Extract the job ID from the URL
     const jobUrl = page.url();
-    const jobIdMatch = jobUrl.match(/\/jobs\/([^/?#]+)/);
+    const jobIdMatch = jobUrl.match(/\/chat\/runs\/([^/?#]+)/);
     const jobId = jobIdMatch?.[1];
     expect(jobId, 'Should have a job ID in the URL').toBeTruthy();
 
