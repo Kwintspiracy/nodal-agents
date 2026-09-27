@@ -269,6 +269,27 @@ describe('nodal_docs answers "what changed in version X" @cap:consulter-l-aide/m
     });
   }
 
+  // Revue Codex de #452, passe 2 : un numéro rattaché à un AUTRE produit n'est
+  // pas une version de Nodal, même précédé d'un « v » ou du mot « version ».
+  for (const question of [
+    'Does Node v22.0 support this connector?',
+    'Which OAuth version 2.0 does the Gmail connector use?',
+  ]) {
+    it(`does not read "${question}" as a question about Nodal releases`, async () => {
+      const hits = await ask(question);
+      expect(hits.some((h) => h.url.startsWith('/nodal-agents/docs/changelog'))).toBe(false);
+      expect(hits.some((h) => h.title.startsWith('No release notes'))).toBe(false);
+    });
+  }
+
+  it('says a version named WITH the product has no notes ("nodal 0.9.99")', async () => {
+    const hits = await ask('nodal 0.9.99');
+    expect(hits[0]?.title).toBe('No release notes for 0.9.99');
+    // A number outside the shape of published versions still counts when the
+    // question names the product.
+    expect((await ask('is there a nodal 1.0.0'))[0]?.title).toBe('No release notes for 1.0.0');
+  });
+
   // Revue Codex de #452, P1 : une version nommée et absente de l'index était
   // servie par ses voisines (« 0.9.99 » → v0.9.0, v0.9.1, v0.9.2). Elle le DIT.
   it('says a named version has no release notes, and names the latest, instead of serving its neighbours', async () => {

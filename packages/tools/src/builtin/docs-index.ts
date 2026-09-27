@@ -23,7 +23,7 @@ export interface DocsSection {
   heading: string;
   url: string;
   text: string;
-  /** A section of the release notes (#452); see `asksAboutReleases`. */
+  /** A section of the release notes (#452); see `nodalReleaseIntent`. */
   release?: boolean;
 }
 
@@ -230,17 +230,84 @@ function versionIn(text: string): string | null {
   return m?.[1] ?? null;
 }
 
+/** A question that names Nodal itself, or "my / this version". */
+const NAMES_NODAL = /\bnodal(?:-agents)?\b|\b(?:my|this) version\b|\b(?:ma|cette) version\b/i;
+
 /**
- * True when the question is about releases. The intent comes from WORDS
- * (version, release, changelog, what's new, what changed, nouveautés) or a
- * `v` written before the number — never from a bare decimal: "GPT-5.2",
- * "OAuth 2.0" and "temperature 0.7" served release notes first before this
- * rule (Codex review of #452, P1).
+ * Words that may stand right before a version number without tying it to
+ * another product: grammar, release vocabulary, Nodal's own name. Any other
+ * word there names what the number belongs to — "Node v22.0", "OAuth version
+ * 2.0", "temperature 0.7" (Codex review of #452, pass 2).
  */
-export function asksAboutReleases(question: string): boolean {
-  if (/(?:^|[^a-z0-9])v\d+\.\d+/i.test(question)) return true;
-  if (/what'?s new|what (?:has )?changed/i.test(question)) return true;
-  return normalizeWords(question).some((w) => RELEASE_WORDS.has(w));
+const LINK_WORDS = new Set([
+  ...STOPWORDS,
+  ...RELEASE_WORDS,
+  'nodal',
+  'agents',
+  'notes',
+  'changed',
+  'new',
+  'since',
+  'between',
+  'de',
+  'la',
+  'le',
+  'les',
+  'du',
+  'des',
+  'en',
+  'depuis',
+  'dans',
+  'entre',
+  'et',
+  'ma',
+  'cette',
+]);
+
+/**
+ * The version a question names, and whether something ties it to ANOTHER
+ * product: a word attached by a hyphen ("GPT-5.2"), or a product word right
+ * before it, skipping a `v` and the word "version".
+ */
+function versionMention(question: string): { version: string; foreign: boolean } | null {
+  const m = /(?:^|[^\d.])v?(\d+\.\d+(?:\.\d+)?)(?![\d.]*\d)/i.exec(question);
+  if (!m?.[1]) return null;
+  const numberAt = m.index + m[0].indexOf(m[1]);
+  const before = question.slice(0, numberAt).replace(/v$/i, '');
+  if (/[a-z0-9]-$/i.test(before)) return { version: m[1], foreign: true };
+  const words = normalizeWords(before);
+  while (words.length > 0 && /^versions?$/.test(words[words.length - 1]!)) words.pop();
+  const last = words[words.length - 1];
+  return { version: m[1], foreign: last !== undefined && !LINK_WORDS.has(last) };
+}
+
+/**
+ * Is this a question about NODAL's releases, and which version does it name?
+ *
+ * About Nodal when it names the product ("Nodal", "nodal-agents", "my
+ * version"), or when its number has the shape of Nodal's published versions
+ * (three parts, the major of the latest release) and nothing ties it to
+ * another product. Without a number, the release words decide (changelog,
+ * release, version, what's new, what changed, nouveautés). A bare decimal
+ * never does (pass 1: "GPT-5.2", "OAuth 2.0", "temperature 0.7"), nor a
+ * number another product owns (pass 2: "Node v22.0", "OAuth version 2.0").
+ */
+export function nodalReleaseIntent(
+  question: string,
+  latestMajor: string | null,
+): { asks: boolean; version: string | null } {
+  const namesNodal = NAMES_NODAL.test(question);
+  const mention = versionMention(question);
+  if (mention) {
+    const shaped =
+      /^\d+\.\d+\.\d+$/.test(mention.version) && mention.version.split('.')[0] === latestMajor;
+    const ours = !mention.foreign && (namesNodal || shaped);
+    return { asks: namesNodal || ours, version: ours ? mention.version : null };
+  }
+  const worded =
+    /what'?s new|what (?:has )?changed/i.test(question) ||
+    normalizeWords(question).some((w) => RELEASE_WORDS.has(w));
+  return { asks: namesNodal || worded, version: null };
 }
 
 function headingVersion(entry: Indexed): string | null {
@@ -357,8 +424,6 @@ export function searchDocs(index: DocsIndex, question: string, limit: number): D
   // release section repeats every product noun and would outrank the guide.
   // So they are eligible only for a question about releases, and a question
   // naming a version puts that version's section first.
-  const releases = asksAboutReleases(question);
-  const version = versionIn(question);
 
   // A version the question names but the release notes do not carry is SAID,
   // with the latest one documented (Codex review of #452, P1): serving its
@@ -366,6 +431,11 @@ export function searchDocs(index: DocsIndex, question: string, limit: number): D
   // answer and is not one.
   const indexed = indexedSections(index);
   const releaseEntries = indexed.filter((e) => e.section.release === true);
+  // Newest first: the release notes keep CHANGELOG.md's order.
+  const latestMajor = releaseEntries[0]
+    ? (headingVersion(releaseEntries[0])?.split('.')[0] ?? null)
+    : null;
+  const { asks: releases, version } = nodalReleaseIntent(question, latestMajor);
   const unknownVersion =
     releases &&
     version !== null &&
