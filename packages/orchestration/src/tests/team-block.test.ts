@@ -12,6 +12,7 @@ import {
   agentWorkspaces,
 } from '@nodal-agents/db';
 import { buildTeamBlock } from '../team-block';
+import { holdersOfPath } from '../path-holders';
 import { resolveRunWorkspaces } from '@nodal-agents/tools';
 import type { AgentId } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -460,6 +461,22 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     // La règle de vérité couvre aussi les dossiers : un dossier absent du
     // roster n'est à personne, l'orchestrateur le dit au lieu d'inventer.
     expect(block).toMatch(/folder/i);
+    // Revue Codex de #506, passe 3 : la liste ne donne que des RACINES. La
+    // phrase de vérité doit dire qu'un agent a aussi tout ce qu'elles
+    // contiennent, qu'un dossier nommé se cherche SOUS une racine listée, et
+    // qu'il n'est à personne seulement s'il n'est sous aucune.
+    expect(block).toContain('and everything inside them');
+    expect(block).toContain('look for it UNDER the listed folders');
+    expect(block).toContain('belongs to nobody only when its path is under none of them');
+    expect(block).not.toContain('if no agent has it, say so');
+    // Et « Nodal-Video » sous la racine de Montage se rattache par ce que le
+    // bloc donne : le chemin de la racine, lu par la même règle que le bloc dit.
+    expect(montage).toContain('Montage = C:\\Users\\u\\Nodal\\Montage');
+    expect(
+      holdersOfPath('C:\\Users\\u\\Nodal\\Montage\\Nodal-Video', [
+        { agent: w.name, folders: [{ label: 'Montage', path: 'C:\\Users\\u\\Nodal\\Montage' }] },
+      ]),
+    ).toEqual({ kind: 'held', agents: [w.name] });
   });
 
   // Revue Codex de #506, passe 2 (P1) : une borne avec « +N more » faisait

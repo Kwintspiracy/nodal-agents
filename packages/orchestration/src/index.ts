@@ -128,6 +128,8 @@ export { checkRootJobComplete, getPendingTasksForRoot } from './planner/completi
 // ─── Team block (auto-generated from DB) ─────────────────────────────────────
 export { buildTeamBlock } from './team-block';
 export { resolveBuiltinToolNames } from './builtin-tool-names';
+export { holdersOfPath } from './path-holders';
+export type { PathHolders, RosterFolders } from './path-holders';
 export type { BuiltinToolNames } from './builtin-tool-names';
 
 // ─── System prompt assembly ───────────────────────────────────────────────────

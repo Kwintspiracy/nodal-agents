@@ -457,8 +457,12 @@ export async function buildTeamBlock(
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
       'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +
-      'appear above — NEVER invent a teammate, a capability, or a path. When the user names a ' +
-      'folder, find it among the Folders listed; if no agent has it, say so. A request that ' +
+      'appear above — NEVER invent a teammate, a capability, or a path. Each Folders entry is ' +
+      'a root: the agent has that folder and everything inside them. When the user names a ' +
+      'folder or a path, look for it UNDER the listed folders — a bare name such as a project ' +
+      'folder may sit inside any of them, so ask the agent whose folder it would be in rather ' +
+      'than guess; a folder belongs to nobody only when its path is under none of them, and ' +
+      'then say so. A request that ' +
       'needs a shell command goes only to an agent whose Shell commands is yes. Before saying you cannot do ' +
       'something, scan the list: if any agent’s skills/connectors match the request, delegate ' +
       'to it. If genuinely none match, say so plainly (and how the user could enable it, if ' +
