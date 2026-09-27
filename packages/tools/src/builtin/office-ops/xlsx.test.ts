@@ -804,6 +804,65 @@ describe('xlsx_freeze_panes', () => {
 
 // ─── xlsx_find_cells ──────────────────────────────────────────────────────────────
 
+describe('xlsx_find_cells — une formule se lit par son RÉSULTAT, comme xlsx_read (#463)', () => {
+  // Un classeur enregistré avec ses résultats en cache, formule PARTAGÉE
+  // comprise : c'est la forme d'un fichier sauvé par Excel. Avant #463 l'outil
+  // lisait `cell.value`, qui pour une formule partagée ne porte pas son champ
+  // `formula` : il rendait le texte de la formule, et un agent a conclu que le
+  // classeur « ne contenait que des formules ».
+  async function classeurAvecResultats(): Promise<void> {
+    const wb = new ExcelJS.Workbook();
+    const s = wb.addWorksheet('CULTS');
+    s.getCell('A1').value = 'Month';
+    s.getCell('B1').value = 'Sales';
+    s.getCell('C1').value = 'SGDIncome';
+    s.getCell('A2').value = 'Nov';
+    s.getCell('B2').value = 6;
+    s.getCell('C2').value = { formula: 'B2*5.93', result: 35.58 };
+    s.getCell('A3').value = 'Dec';
+    s.getCell('B3').value = 8;
+    s.getCell('C3').value = { sharedFormula: 'C2', result: 47.44 };
+    await writeFile(join(WORKSPACE, 'earnings.xlsx'), Buffer.from(await wb.xlsx.writeBuffer()));
+  }
+  const cherche = (query: string) =>
+    xlsxFindCellsTool.execute(
+      { path: 'earnings.xlsx', query, regex: false, case_sensitive: false, max_results: 50 },
+      ctx(),
+    );
+
+  it('une valeur que seul le résultat d’une formule montre est trouvée, et rendue comme le nombre', async () => {
+    await classeurAvecResultats();
+    const r = await cherche('47.44');
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.matches).toEqual([
+      { sheet: 'CULTS', cell: 'C3', value: '47.44', formula: '=B3*5.93' },
+    ]);
+  });
+
+  it('un texte présent SEULEMENT dans une formule ne correspond pas à sa valeur', async () => {
+    await classeurAvecResultats();
+    const r = await cherche('5.93');
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.matches).toEqual([]);
+  });
+
+  it('la correspondance porte la formule, pour que l’agent voie le nombre ET sa fabrication', async () => {
+    await classeurAvecResultats();
+    const r = await cherche('35.58');
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.matches[0]).toEqual({
+      sheet: 'CULTS',
+      cell: 'C2',
+      value: '35.58',
+      formula: '=B2*5.93',
+    });
+    // Une cellule qui n'est pas une formule ne porte pas de champ formula.
+    const n = await cherche('Nov');
+    if (!n.ok) throw new Error(n.reason);
+    expect(n.matches[0]).toEqual({ sheet: 'CULTS', cell: 'A2', value: 'Nov' });
+  });
+});
+
 describe('xlsx_find_cells', () => {
   it('finds matching cells by substring, case-insensitively by default', async () => {
     await createSampleXlsx('test.xlsx');
