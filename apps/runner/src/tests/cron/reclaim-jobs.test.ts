@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agentTasks } from '@nodal-agents/db';
+import { eq, agentJobs, agentTasks, jobDeliverableVerificationState } from '@nodal-agents/db';
 import {
   reclaimJobsOfDeadRunners,
   runnerRestartedStopLine,
@@ -265,6 +265,56 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
 
     expect(result.reclaimed).toBeGreaterThanOrEqual(1);
     expect((await jobRow(jobId)).status).toBe('failed');
+  });
+
+  // #491 — run e2e794db : Motage a écrit sa voix off, le runner a redémarré
+  // pendant sa réponse, et Alfred n'a reçu qu'un échec nu. Il a refait le
+  // travail. L'enfant repris rend désormais ce qu'il a produit : son dernier
+  // texte ET le fichier écrit.
+  it('le parent reçoit le dernier texte de l’enfant ET le fichier qu’il a écrit (#491)', async () => {
+    const { parentId, childId } = await seedDelegationCoupee('assign-r491');
+    await db
+      .update(agentJobs)
+      .set({
+        task: 'fais la voix off',
+        messages: [
+          { role: 'user', content: 'fais la voix off' },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'La voix off est générée, je vérifie le fichier.' }],
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, childId));
+    const wav = '/ws/shared/outputs/voiceover-agentic-harness.wav';
+    await db.insert(jobDeliverableVerificationState).values({
+      jobId: childId,
+      deliverableType: 'document',
+      canonicalKey: wav,
+      displayPathSnapshot: wav,
+      dirtyGeneration: 1,
+      addressed: true,
+      produced: true,
+      decisionStatus: 'dirty',
+    });
+
+    await reclaimJobsOfDeadRunners(db);
+
+    const child = await jobRow(childId);
+    expect(child.result ?? '').toContain('La voix off est générée, je vérifie le fichier.');
+    expect(child.result ?? '').toContain('[stopped: runner restarted');
+
+    const parent = await jobRow(parentId);
+    const last = (parent.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
+    const value = (last.content[0] as { output: { value: string } }).output.value;
+    const record = JSON.parse(value.slice(value.indexOf('{'), value.lastIndexOf('}') + 1)) as {
+      summary: string;
+      files_written: unknown;
+    };
+    expect(record.summary).toContain('La voix off est générée, je vérifie le fichier.');
+    expect(record.summary).toContain('[stopped: runner restarted');
+    expect(record.files_written).toEqual([{ path: wav, declared: false, proof: 'dirty' }]);
+    expect(value).not.toContain('delivered NOTHING');
   });
 });
 

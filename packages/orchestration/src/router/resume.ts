@@ -8,6 +8,8 @@ import { OrchestrationError } from '../errors';
 import { reviewBlocksDelivery, REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
 import { readDeliveredReviewVerdict } from './review-verdict';
 import type { ReviewVerdictRecord } from './review-verdict';
+import { readFilesWrittenBy } from './delegated-files';
+import type { DelegatedFile } from './delegated-files';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
 
 /**
@@ -76,6 +78,16 @@ export interface DelegationOutcomeRecord {
    * jamais par une réparation faite ailleurs dans l'arbre.
    */
   sub_delegations?: SubDelegationOutcome[];
+  /**
+   * Les fichiers que l'enfant a ÉCRITS ou DÉCLARÉS, relus par `resumeDelegated`
+   * sur les lignes d'état de vérification de l'enfant (issue #491) — jamais
+   * fournis par l'appelant, jamais lus dans une phrase.
+   *
+   * Un enfant arrêté (budget, plafond de tours, runner redémarré, livrable
+   * déclaré non vérifié…) a souvent déjà écrit son livrable. Sans ce champ, le
+   * parent ne recevait qu'un échec et refaisait le travail.
+   */
+  files_written?: DelegatedFile[];
 }
 
 /**
@@ -153,6 +165,8 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
       // Toujours présent, `[]` quand le sous-arbre n'a rien à dire — même
       // raison que les deux champs ci-dessus (#116).
       sub_delegations: result.sub_delegations ?? [],
+      // Toujours présent, `[]` quand l'enfant n'a rien écrit (#491).
+      files_written: result.files_written ?? [],
     },
     null,
     2,
@@ -451,11 +465,14 @@ export async function resumeDelegated(
   // phrase par laquelle il l'annonce (issue #124). On le lit sur ses lignes
   // `tool_calls` et on le met dans le record TYPÉ, seul objet que le parent
   // reçoive : sans cela le parent redélègue la même revue.
-  const outcome = await withDeliveredReviewVerdict(
-    normalizeDelegationOutcome(childOutcome),
-    childJobId,
-    db,
-  );
+  const outcome = {
+    ...(await withDeliveredReviewVerdict(normalizeDelegationOutcome(childOutcome), childJobId, db)),
+    // Relu ICI, point de passage de TOUTE issue de délégation — l'enfant
+    // exécuté en ligne, celui qu'un runner mort laisse au faucheur, celui
+    // qu'une approbation reprend plus tard : un seul endroit, une seule
+    // réponse, quelle que soit la façon dont l'enfant s'est arrêté (#491).
+    files_written: await readFilesWrittenBy(db, childJobId),
+  };
   const isFailure = outcome.status !== 'completed';
 
   // Per-slug delegation cap: track the slug of the LAST failed child so the
@@ -481,11 +498,19 @@ export async function resumeDelegated(
   // lancée, je te renvoie la synthèse" — a result that had already failed to
   // exist. So the failure payload names the three legal moves and forbids the
   // fourth. LLM-channel text only; it never reaches the user (invariant #2).
+  //
+  // #491 — a child stopped AFTER writing files did deliver something: those
+  // files. Telling the parent "NOTHING usable" made it redo the work and
+  // overwrite them, so the payload then says what exists and forbids the redo.
+  const failureGuidance =
+    outcome.files_written.length > 0
+      ? 'This delegation stopped before it finished, but the files listed in files_written exist: the specialist wrote them before it stopped. DO NOT redo that work and DO NOT delegate it again: read or check those files and build on them. For anything they do not cover, DO NOT retry'
+      : 'This delegation delivered NOTHING usable. DO NOT retry';
   const errorValue = isFailure
     ? `${DELEGATION_FAILED_MARKER}
 ${renderDelegationOutcome(outcome)}
 
-This delegation delivered NOTHING usable. DO NOT retry the same specialist (assign_${(failedSlug ?? '').replace(/-/g, '_')}). DO NOT tell the user the work is in progress, launched, or coming later: it is not, and nothing else will arrive. Your only options are: (1) do the work yourself with your own tools, (2) delegate to a DIFFERENT specialist whose skills match, or (3) tell the user the truth about what failed via your delivery tool. Then call return_result with the honest status.`
+${failureGuidance} the same specialist (assign_${(failedSlug ?? '').replace(/-/g, '_')}). DO NOT tell the user the work is in progress, launched, or coming later: it is not, and nothing else will arrive. Your only options are: (1) do the work yourself with your own tools, (2) delegate to a DIFFERENT specialist whose skills match, or (3) tell the user the truth about what failed via your delivery tool. Then call return_result with the honest status.`
     : '';
 
   const primaryOutput: ToolResultOutput = isFailure

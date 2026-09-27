@@ -37,7 +37,8 @@ import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resumeDelegated } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
-import { failJob } from '../job/state.ts';
+import { failJob, lastTextOfRun } from '../job/state.ts';
+import { budgetDeliverable } from '../job/execute.ts';
 import { notifyJobFailure } from './reset-orphans.ts';
 
 /** Le battement qu'un runner vivant pose sur chaque job qu'il tient. */
@@ -103,6 +104,8 @@ export async function reclaimJobsOfDeadRunners(
       status: agentJobs.status,
       updatedAt: agentJobs.updatedAt,
       parentJobId: agentJobs.parentJobId,
+      task: agentJobs.task,
+      messages: agentJobs.messages,
     })
     .from(agentJobs)
     .where(and(eq(agentJobs.status, 'processing'), lt(agentJobs.updatedAt, cutoff)));
@@ -127,15 +130,20 @@ export async function reclaimJobsOfDeadRunners(
 
     const idleMs = now.getTime() - (job.updatedAt?.getTime() ?? now.getTime());
     const ligne = runnerRestartedStopLine({ status: job.status ?? 'processing', idleMs });
+    // Ce que le job avait déjà écrit, suivi de la ligne d'arrêt — la même forme
+    // qu'un arrêt sur budget (#442). Sans le texte, le parent ne recevait
+    // qu'un échec nu et refaisait le travail (#491) ; les FICHIERS écrits, eux,
+    // sont relus par `resumeDelegated` pour toute délégation.
+    const livrable = budgetDeliverable(lastTextOfRun(job.messages, job.task ?? ''), '', ligne);
 
     // `failJob` est conditionnelle sur un statut non terminal : un job qui
     // vient de se terminer entre la lecture et ici n'est pas écrasé.
-    const landed = await failJob(db, job.id, RUNNER_RESTARTED_CODE, undefined, undefined, ligne);
+    const landed = await failJob(db, job.id, RUNNER_RESTARTED_CODE, undefined, undefined, livrable);
     if (!landed) continue;
     out.reclaimed += 1;
     await notifyJobFailure(db, job.id, ligne);
 
-    if (await resumeParentOfReclaimedChild(db, job.id, job.parentJobId, ligne)) {
+    if (await resumeParentOfReclaimedChild(db, job.id, job.parentJobId, livrable)) {
       out.parentsResumed += 1;
     }
   }
@@ -169,7 +177,7 @@ async function resumeParentOfReclaimedChild(
   db: AnyDrizzleDb,
   childJobId: string,
   parentJobId: string | null,
-  ligne: string,
+  livrable: string,
 ): Promise<boolean> {
   if (!parentJobId) return false;
 
@@ -202,7 +210,7 @@ async function resumeParentOfReclaimedChild(
       childJobId as JobId,
       {
         status: 'failed',
-        summary: ligne,
+        summary: livrable,
         error: RUNNER_RESTARTED_CODE,
         exit_reason: RUNNER_RESTARTED_CODE,
         tools_used: [],
