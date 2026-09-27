@@ -6,6 +6,7 @@ import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'node:url';
 import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
 import { rotateLogIfNeeded } from './log-rotation.ts';
+import { childProcessEnv, type ChildEnv } from './env.ts';
 import {
   confirmRecordedPid,
   confirmTree,
@@ -741,10 +742,7 @@ export function spawnWiring(logFile: string, detach: boolean): Partial<Options> 
  *   apps/runner's devDeps. On Windows we resolve the .CMD wrapper
  *   explicitly because Node's spawn doesn't auto-add the .CMD extension.
  */
-export function spawnRunner(
-  env: Record<string, string>,
-  opts: SpawnServiceOptions = {},
-): ResultPromise {
+export function spawnRunner(env: ChildEnv, opts: SpawnServiceOptions = {}): ResultPromise {
   const logFile = join(LOG_DIR, 'runner.log');
   rotateLogIfNeeded(logFile);
   const outStream = createWriteStream(logFile, { flags: 'a' });
@@ -775,7 +773,11 @@ export function spawnRunner(
   const wiring = spawnWiring(logFile, opts.detach === true);
   const child = execa(bin, args, {
     cwd,
-    env: { ...process.env, ...env },
+    // The child's WHOLE environment, removals applied (#454): with execa's
+    // default `extendEnv`, the launcher's variables would be merged back
+    // underneath and a removed key would reappear.
+    env: childProcessEnv(process.env, env),
+    extendEnv: false,
     ...wiring,
     windowsHide: true,
     reject: false,
@@ -814,7 +816,7 @@ export interface SpawnWebOptions extends SpawnServiceOptions {
  *   available without the source tree).
  * - Dev mode: `next dev` or `next start` from apps/web/.
  */
-export function spawnWeb(env: Record<string, string>, opts: SpawnWebOptions = {}): ResultPromise {
+export function spawnWeb(env: ChildEnv, opts: SpawnWebOptions = {}): ResultPromise {
   const logFile = join(LOG_DIR, 'web.log');
   rotateLogIfNeeded(logFile);
   const outStream = createWriteStream(logFile, { flags: 'a' });
@@ -856,7 +858,11 @@ export function spawnWeb(env: Record<string, string>, opts: SpawnWebOptions = {}
   const wiring = spawnWiring(logFile, opts.detach === true);
   const child = execa(bin, args, {
     cwd,
-    env: { ...process.env, ...env },
+    // The child's WHOLE environment, removals applied (#454): with execa's
+    // default `extendEnv`, the launcher's variables would be merged back
+    // underneath and a removed key would reappear.
+    env: childProcessEnv(process.env, env),
+    extendEnv: false,
     ...wiring,
     windowsHide: true,
     reject: false,
