@@ -1225,8 +1225,43 @@ async function failOnUncaughtError(
   const message = err instanceof Error ? err.message : String(err);
   const code = /^([a-z][a-z0-9_]*):/.exec(message)?.[1] ?? 'job_crashed';
   console.error(`[exec ${jobId}] uncaught_error`, JSON.stringify({ code, message }));
-  await failJob(deps.db, jobId as string, code, undefined, undefined, `[stopped: ${code}]`);
-  return { status: 'failed', error: code, result: `[stopped: ${code}]` };
+  const ligne = `[stopped: ${code}]`;
+  if (await failJob(deps.db, jobId as string, code, undefined, undefined, ligne)) {
+    return { status: 'failed', error: code, result: ligne };
+  }
+  // L'écriture gardée n'a rien fait : le job a été annulé ou fini entre
+  // l'exception et ici. Ce qui est propagé est TOUJOURS ce que la ligne dit
+  // (revue Codex de #507, passe 3) — sinon le parent recevait un faux échec
+  // pendant que la ligne disait `cancelled`.
+  return outcomeFromRow(deps, jobId);
+}
+
+/** L'issue d'un job telle que SA LIGNE la dit, pour un job déjà terminé. */
+async function outcomeFromRow(
+  deps: Pick<RunnerDeps, 'db'>,
+  jobId: JobId,
+): Promise<ExecuteJobResult> {
+  const [row] = await deps.db
+    .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId as string))
+    .limit(1);
+  switch (row?.status) {
+    case 'cancelled':
+      return { status: 'cancelled' };
+    case 'failed':
+      return {
+        status: 'failed',
+        error: row.error ?? 'unknown',
+        ...(row.result !== null ? { result: row.result } : {}),
+      };
+    case 'completed':
+      return { status: row.status, result: row.result ?? '' };
+    default:
+      // Aucune ligne, ou un statut qu'une écriture gardée n'aurait pas refusé :
+      // quelqu'un d'autre tient ce job, il n'a rien à propager d'ici.
+      return { status: 'already_handled' };
+  }
 }
 
 /**
