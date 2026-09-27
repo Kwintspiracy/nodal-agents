@@ -18,6 +18,11 @@
 // of the same agent in a row blocks it: the anti-loop guard (invariant #8)
 // stays, one step later.
 
+import { and, desc, eq } from '@nodal-agents/db';
+import { agents, agentJobs } from '@nodal-agents/db';
+import { filesTheChildWrote, readFilesWrittenBy } from './delegated-files';
+import type { AnyDrizzleDb, JobId } from '../types';
+
 /** Consecutive failures of the same agent after which a retry is refused. */
 export const SAME_AGENT_FAILURE_CAP = 2;
 
@@ -101,4 +106,45 @@ export function failedDelegationGuidance(
     `(a second failure in a row blocks it); (2) ${elsewhere}; (3) ${yourself}; (4) ${truth}. ` +
     'Then call return_result with the honest status.'
   );
+}
+
+/**
+ * The refusal the runner gives a delegation to an agent blocked on this job
+ * (execute.ts, `delegation_retry_blocked`).
+ *
+ * It reads what the LAST failed child of that agent under this job left, with
+ * the very functions resumeDelegated used a moment earlier (readFilesWrittenBy,
+ * filesTheChildWrote): the second failure may have left a file the parent was
+ * just told to keep, and a refusal saying "nothing delivered" would contradict
+ * it, and invite a redo that overwrites it (Codex review of #510, pass 3). One
+ * source for both messages.
+ */
+export async function retryBlockedMessage(
+  db: AnyDrizzleDb,
+  args: { parentJobId: JobId; entityId: string; childSlug: string; state: FailedDelegationState },
+): Promise<string> {
+  const [childAgent] = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.slug, args.childSlug), eq(agents.entityId, args.entityId)))
+    .limit(1);
+  const [lastChild] = childAgent
+    ? await db
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.parentJobId, args.parentJobId as string),
+            eq(agentJobs.agentId, childAgent.id),
+          ),
+        )
+        .orderBy(desc(agentJobs.createdAt))
+        .limit(1)
+    : [];
+  const files = lastChild ? await readFilesWrittenBy(db, lastChild.id as JobId) : [];
+  const kept = filesTheChildWrote(files);
+  const guidance = failedDelegationGuidance(args.state, { childLeftFiles: kept.length > 0 });
+  return kept.length > 0
+    ? `delegation_retry_blocked: ${guidance}\n\n${JSON.stringify({ files_written: files }, null, 2)}`
+    : `delegation_retry_blocked: ${guidance}`;
 }

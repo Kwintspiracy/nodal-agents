@@ -126,7 +126,7 @@ import {
   VERIFY_BEFORE_ASSERT_NUDGE,
   readFinalReviewVerdict,
   isSameAgentRetryBlocked,
-  failedDelegationGuidance,
+  retryBlockedMessage,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -5017,12 +5017,18 @@ async function runJobTracked(
               toolCallId: call.id,
               toolName: call.name,
               output: toResultOutput({
-                // The SAME guidance as the failure payload (Codex review of
-                // #510, P1): one source, channel-neutral.
-                error: `delegation_retry_blocked: ${failedDelegationGuidance({
-                  slug: job.lastFailedDelegationSlug ?? null,
-                  streak: job.lastFailedDelegationStreak,
-                })}`,
+                // The SAME guidance as the failure payload, and the SAME
+                // reading of what the last failed child left (Codex review of
+                // #510, passes 1 and 3): one source, channel-neutral.
+                error: await retryBlockedMessage(db, {
+                  parentJobId: jobId as JobId,
+                  entityId: job.entityId ?? '',
+                  childSlug,
+                  state: {
+                    slug: job.lastFailedDelegationSlug ?? null,
+                    streak: job.lastFailedDelegationStreak,
+                  },
+                }),
               }),
             });
 

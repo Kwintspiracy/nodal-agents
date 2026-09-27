@@ -51,6 +51,7 @@ export {
   isSameAgentRetryBlocked,
   nextFailedDelegationState,
   failedDelegationGuidance,
+  retryBlockedMessage,
 } from './router/failed-delegation';
 export type { FailedDelegationState } from './router/failed-delegation';
 

@@ -23,7 +23,19 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agents, agentAssignments, agentMemory, agentTasks } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agents,
+  agentAssignments,
+  agentMemory,
+  agentTasks,
+  constatedWrites,
+  jobDeliverableVerificationState,
+} from '@nodal-agents/db';
+import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -531,6 +543,95 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
     expect(JSON.stringify(parentRow?.messages)).not.toContain('delegation_retry_blocked');
     // The retry succeeded: the streak is cleared.
     expect(parentRow?.streak).toBe(0);
+  });
+
+  // Revue Codex de #510, passe 3 : le refus du 3e appel disait « Nothing it
+  // was asked has been delivered » alors que le 2e échec avait laissé un
+  // fichier intact, que resumeDelegated venait de dire au parent de garder.
+  // Le refus lit les fichiers du DERNIER enfant en échec, par la même fonction.
+  it('#510: the refused third call keeps the file the last failed child left, never "nothing delivered"', async () => {
+    const jobId = await createOrchestratorJob();
+    const [childRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, childAgentId));
+    if (!childRow) throw new Error('child agent missing');
+    const assignToolName = `assign_${childRow.slug.replace(/-/g, '_')}`;
+    await db
+      .update(agentJobs)
+      .set({
+        lastFailedDelegationSlug: childRow.slug,
+        lastFailedDelegationStreak: SAME_AGENT_FAILURE_CAP,
+      })
+      .where(eq(agentJobs.id, jobId));
+
+    // The two failed children of this agent under this job; the LAST one
+    // left a file that is still exactly what it wrote.
+    const folder = mkdtempSync(join(tmpdir(), 'nodal-510-'));
+    const path = join(folder, 'voix-off.wav').split(String.fromCharCode(92)).join('/');
+    const content = 'x'.repeat(2048);
+    writeFileSync(path, content);
+    for (const n of [1, 2]) {
+      const [child] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: childAgentId,
+          parentJobId: jobId,
+          channel: 'internal',
+          task: `attempt ${n}`,
+          status: 'failed',
+          createdAt: new Date(Date.now() - (3 - n) * 1000),
+        })
+        .returning({ id: agentJobs.id });
+      if (n === 2) {
+        await db.insert(jobDeliverableVerificationState).values({
+          jobId: child!.id,
+          deliverableType: 'document',
+          canonicalKey: path,
+          displayPathSnapshot: path,
+          dirtyGeneration: 1,
+          addressed: true,
+          produced: true,
+          declared: false,
+          decisionStatus: 'dirty',
+        });
+        await db.insert(constatedWrites).values({
+          jobId: child!.id,
+          turn: 1,
+          path: realpathSync(path).split(String.fromCharCode(92)).join('/'),
+          changeKind: 'modified',
+          constatedBy: 'disk',
+          contentSha256: createHash('sha256').update(content).digest('hex'),
+        });
+      }
+    }
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [{ toolCallId: 'tc-third', toolName: assignToolName, args: { task: 'again' } }],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-rr-third', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+
+    const [parentRow] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const transcript = JSON.stringify(parentRow?.messages ?? []);
+    const at = transcript.indexOf('delegation_retry_blocked');
+    expect(at).toBeGreaterThan(-1);
+    const refusal = transcript.slice(at, at + 4000);
+    expect(refusal).toContain('DO NOT redo that work');
+    expect(refusal).toContain('voix-off.wav');
+    expect(refusal).toContain('written_by_child_unchanged');
+    expect(refusal).not.toContain('Nothing it was asked has been delivered');
   });
 
   it('REGRESSION: same pair in reverse emission order [save_memory, assign_<child>] also succeeds', async () => {
