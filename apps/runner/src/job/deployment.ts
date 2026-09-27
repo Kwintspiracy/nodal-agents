@@ -67,6 +67,10 @@ export async function getDeploymentContext(
 
   const authMode = process.env['AUTH_MODE'] ?? 'local-trust';
 
+  // Passed by the launcher from the installed package (#454). Absent on a
+  // runner started by hand: the Runtime block then says it is unknown.
+  const version = process.env['NODAL_VERSION']?.trim() || undefined;
+
   const lanAddresses = networkMode === 'lan' ? getLanAddresses() : undefined;
 
   // Containerized: check for /.dockerenv (Docker standard) or explicit env flag.
@@ -102,6 +106,7 @@ export async function getDeploymentContext(
 
   return {
     os: detectOs(),
+    ...(version !== undefined ? { version } : {}),
     networkMode,
     authMode,
     ...(lanAddresses !== undefined ? { lanAddresses } : {}),

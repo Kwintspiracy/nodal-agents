@@ -22,6 +22,23 @@ beforeAll(async () => {
 // ─── buildRuntimeBlock unit tests ─────────────────────────────────────────────
 
 describe('buildRuntimeBlock', () => {
+  // #454 — « le changelog de la 0.9.2 ? » → « Quel logiciel ? », alors que
+  // Nodal servait la 0.9.2. Le bloc dit maintenant QUELLE version tourne.
+  it('states the running Nodal-Agents version it is given, whatever it is (#454)', () => {
+    const base: DeploymentContext = {
+      os: 'Linux',
+      networkMode: 'loopback',
+      authMode: 'local-trust',
+    };
+    for (const version of ['0.9.3', '1.4.0-rc.2']) {
+      expect(buildRuntimeBlock({ ...base, version })).toContain(
+        `You run Nodal-Agents version ${version}`,
+      );
+    }
+    // Unknown is SAID, never guessed and never silently dropped.
+    expect(buildRuntimeBlock(base)).toContain('The Nodal-Agents version is unknown');
+  });
+
   it('(i) loopback, no notes — renders correct heading and localhost guidance', () => {
     const d: DeploymentContext = {
       os: 'macOS',

@@ -2,7 +2,7 @@
 
 import { randomBytes } from 'crypto';
 import type { Config } from './config.ts';
-import { getInstalledVersion } from './version.ts';
+import { getInstalledVersion, readInstalledVersion } from './version.ts';
 import { LEGACY_PG_PASSWORD, buildPgUrl } from './postgres.ts';
 
 /**
@@ -21,6 +21,13 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
     APP_URL: `http://localhost:${config.ports.runner}`,
     NODE_ENV: 'production',
   };
+
+  // The version this install runs, the one `nodal-agents --version` prints
+  // (#454): the runner states it in every agent's Runtime block, so "the
+  // 0.9.2" or "my version" can be tied to the product. Left out when it cannot
+  // be read, and the block then says it is unknown — never a guessed value.
+  const version = readInstalledVersion();
+  if (version) env['NODAL_VERSION'] = version;
 
   // llm section is optional (Brique 25): runner reads LLM config from DB at
   // runtime. Set env vars when present so the seeder can populate entity_llm_keys
