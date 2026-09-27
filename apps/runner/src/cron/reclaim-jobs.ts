@@ -25,12 +25,15 @@
 // serait repris alors qu'il pourrait repartir. Le prix est assumé : un job qui
 // ne bat plus depuis deux minutes et demie n'avance plus, pour de bon.
 //
-// CE QU'ON EN FAIT : on ÉCHOUE, on ne reprend pas. Reprendre la transcription
-// d'un enfant coupé en plein appel demanderait de savoir ce que le tour
-// interrompu avait déjà fait sortir (un message envoyé, un fichier écrit), et
-// rejouerait ces gestes. L'échec typé, lui, remonte au parent par le porteur de
-// la PR #170, et c'est le PARENT qui décide — redéléguer, faire lui-même, ou le
-// dire à la personne. C'est la version la plus petite qui soit vraie.
+// CE QU'ON EN FAIT (#443) : une seule décision, `orphanDecision`. Un job qui a
+// un point de reprise — au moins un tour complet sauvegardé — et qui n'a pas
+// épuisé ses reprises REPART de ce tour (`pending`, `resumed_from_turn`) : un
+// run de trois heures survit à une mise à jour ou un redémarrage. Le tour
+// interrompu est rejoué depuis sa sauvegarde, et les gestes qu'il avait déjà
+// faits peuvent l'être une seconde fois : c'est le prix assumé, dit dans
+// `orphanDecision`. Sans point de reprise, ou reprises épuisées, le job
+// ÉCHOUE : l'échec typé remonte au parent par le porteur de la PR #170, avec
+// ce que le job avait écrit (#491), et c'est le PARENT qui décide.
 
 import { and, eq, inArray, lt } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
@@ -54,6 +57,48 @@ export const RUNNER_LIVENESS_WINDOW_MS = 2 * RUNNER_HEARTBEAT_MS + 30_000;
 /** Le code machine, pour `agent_jobs.error` — celui que l'issue nomme. */
 export const RUNNER_RESTARTED_CODE = 'runner_restarted';
 
+/**
+ * Combien de fois un même job peut être REPRIS après un redémarrage (#443).
+ * Au-delà, il échoue avec `RESTART_RESUME_LIMIT_CODE` : un job qui fait tomber
+ * le runner à chaque reprise ne doit pas reprendre sans fin.
+ */
+export const MAX_RESTART_RESUMES = 3;
+
+/** Le code d'un job qui a épuisé ses reprises après redémarrage (#443). */
+export const RESTART_RESUME_LIMIT_CODE = 'restart_resume_limit';
+
+/**
+ * Ce que le faucheur fait d'un job orphelin — UNE décision, deux issues (#443).
+ *
+ * Le point de reprise est le dernier tour que la boucle a sauvegardé
+ * (`saveCheckpoint`, à la fin de chaque tour complet : messages cohérents,
+ * appels d'outil et résultats appariés). Un job qui en a un (`turn >= 1`) et
+ * qui n'a pas épuisé ses reprises repart de ce tour ; sinon il échoue, avec ce
+ * qu'il avait écrit (#491). Ce qui n'en a pas : un job mort pendant son
+ * premier tour, et un job de runtime CLI, qui ne tient pas de compteur `turn`
+ * (cli-runtime/run-job.ts) — tous deux échouent comme avant.
+ *
+ * Le tour interrompu à moitié n'est jamais dans la transcription reprise : la
+ * sauvegarde n'a lieu qu'en fin de tour, et le texte partiel d'un appel en
+ * cours vivait dans la mémoire du runner mort. Le tour est donc REJOUÉ depuis
+ * sa sauvegarde ; les outils qu'il avait peut-être déjà lancés avant la mort
+ * peuvent l'être une seconde fois — c'est le prix assumé de la reprise.
+ */
+export function orphanDecision(job: {
+  turn: number | null;
+  restartResumes: number | null;
+}):
+  | { kind: 'resume'; fromTurn: number }
+  | { kind: 'fail'; code: string; resumesExhausted: boolean } {
+  const tour = job.turn ?? 0;
+  const reprises = job.restartResumes ?? 0;
+  if (tour < 1) return { kind: 'fail', code: RUNNER_RESTARTED_CODE, resumesExhausted: false };
+  if (reprises >= MAX_RESTART_RESUMES) {
+    return { kind: 'fail', code: RESTART_RESUME_LIMIT_CODE, resumesExhausted: true };
+  }
+  return { kind: 'resume', fromTurn: tour };
+}
+
 /** Des millisecondes en minutes et secondes, jamais négatives. */
 function duree(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
@@ -75,9 +120,15 @@ export function runnerRestartedStopLine(faits: {
   idleMs: number;
   /** Faux quand aucun texte de CE run n'a pu être relu (#491). */
   textRecovered?: boolean;
+  /** Le nombre de reprises après redémarrage déjà épuisées, quand il l'est (#443). */
+  resumesExhausted?: number;
 }): string {
   const perte = faits.textRecovered === false ? '; no text of this run could be recovered' : '';
-  return `[stopped: runner restarted — status ${faits.status}, no heartbeat for ${duree(faits.idleMs)}${perte}]`;
+  const reprises =
+    faits.resumesExhausted !== undefined
+      ? `; already resumed ${String(faits.resumesExhausted)} times after a restart`
+      : '';
+  return `[stopped: runner restarted — status ${faits.status}, no heartbeat for ${duree(faits.idleMs)}${reprises}${perte}]`;
 }
 
 /** Ce qu'une passe de reprise a fait, pour le tick et pour les journaux. */
@@ -86,11 +137,16 @@ export interface ReclaimResult {
   reclaimed: number;
   /** Parents remis en marche avec l'échec de leur enfant. */
   parentsResumed: number;
+  /** Jobs remis en `pending` à leur dernier tour sauvegardé (#443). */
+  resumed: number;
+  /** Leurs ids, pour que le démarrage les relance sans attendre le cron. */
+  resumedJobIds: string[];
 }
 
 /**
- * Reprend les jobs `processing` qu'aucun runner vivant ne tient : ils
- * ÉCHOUENT avec `runner_restarted`, et le parent qui les attendait repart avec
+ * Reprend les jobs `processing` qu'aucun runner vivant ne tient : ceux qui ont
+ * un point de reprise repartent de leur dernier tour sauvegardé (#443) ; les
+ * autres ÉCHOUENT avec leur code, et le parent qui les attendait repart avec
  * cet échec dans son enregistrement de délégation.
  *
  * Appelée AU DÉMARRAGE (le cas de l'issue : le processus qui les tenait vient
@@ -112,11 +168,13 @@ export async function reclaimJobsOfDeadRunners(
       parentJobId: agentJobs.parentJobId,
       task: agentJobs.task,
       messages: agentJobs.messages,
+      turn: agentJobs.turn,
+      restartResumes: agentJobs.restartResumes,
     })
     .from(agentJobs)
     .where(and(eq(agentJobs.status, 'processing'), lt(agentJobs.updatedAt, cutoff)));
 
-  const out: ReclaimResult = { reclaimed: 0, parentsResumed: 0 };
+  const out: ReclaimResult = { reclaimed: 0, parentsResumed: 0, resumed: 0, resumedJobIds: [] };
 
   for (const job of candidates) {
     // Un orchestrateur qui a réparti son travail sur le tableau de tâches reste
@@ -135,6 +193,34 @@ export async function reclaimJobsOfDeadRunners(
     if (tacheEnCours) continue;
 
     const idleMs = now.getTime() - (job.updatedAt?.getTime() ?? now.getTime());
+    const decision = orphanDecision(job);
+
+    if (decision.kind === 'resume') {
+      // Repart de son dernier tour sauvegardé (#443) : `pending`, le worker le
+      // reprend avec ses messages et son `turn` persistés (la boucle amorce
+      // tout depuis la ligne). Gardée sur `processing` : un job terminé entre
+      // la lecture et ici n'est pas ressuscité. Le parent qui l'attend reste
+      // `awaiting_delegation` — il sera repris quand l'enfant finira.
+      const repris = await db
+        .update(agentJobs)
+        .set({
+          status: 'pending',
+          resumedFromTurn: decision.fromTurn,
+          restartResumes: (job.restartResumes ?? 0) + 1,
+          updatedAt: now,
+        })
+        .where(and(eq(agentJobs.id, job.id), eq(agentJobs.status, 'processing')))
+        .returning({ id: agentJobs.id });
+      if (repris.length === 0) continue;
+      out.resumed += 1;
+      out.resumedJobIds.push(job.id);
+      console.warn(
+        `[reclaim-jobs] resumed_after_restart job=${job.id} from_turn=${String(decision.fromTurn)} ` +
+          `resumes=${String((job.restartResumes ?? 0) + 1)}/${String(MAX_RESTART_RESUMES)}`,
+      );
+      continue;
+    }
+
     // Ce que CE run avait déjà écrit, suivi de la ligne d'arrêt — la même forme
     // qu'un arrêt sur budget (#442). Sans le texte, le parent ne recevait
     // qu'un échec nu et refaisait le travail (#491) ; les FICHIERS écrits, eux,
@@ -145,24 +231,25 @@ export async function reclaimJobsOfDeadRunners(
       status: job.status ?? 'processing',
       idleMs,
       textRecovered: texte !== '',
+      ...(decision.resumesExhausted ? { resumesExhausted: job.restartResumes ?? 0 } : {}),
     });
     const livrable = budgetDeliverable(texte, '', ligne);
 
     // `failJob` est conditionnelle sur un statut non terminal : un job qui
     // vient de se terminer entre la lecture et ici n'est pas écrasé.
-    const landed = await failJob(db, job.id, RUNNER_RESTARTED_CODE, undefined, undefined, livrable);
+    const landed = await failJob(db, job.id, decision.code, undefined, undefined, livrable);
     if (!landed) continue;
     out.reclaimed += 1;
     await notifyJobFailure(db, job.id, ligne);
 
-    if (await resumeParentOfReclaimedChild(db, job.id, job.parentJobId, livrable)) {
+    if (await resumeParentOfReclaimedChild(db, job.id, job.parentJobId, livrable, decision.code)) {
       out.parentsResumed += 1;
     }
   }
 
-  if (out.reclaimed > 0) {
+  if (out.reclaimed > 0 || out.resumed > 0) {
     console.warn(
-      `[reclaim-jobs] ${out.reclaimed} job(s) reclaimed from a dead runner, ${out.parentsResumed} parent(s) resumed`,
+      `[reclaim-jobs] ${out.reclaimed} job(s) failed and ${out.resumed} resumed from a dead runner, ${out.parentsResumed} parent(s) resumed`,
     );
   }
 
@@ -190,6 +277,7 @@ async function resumeParentOfReclaimedChild(
   childJobId: string,
   parentJobId: string | null,
   livrable: string,
+  code: string,
 ): Promise<boolean> {
   if (!parentJobId) return false;
 
@@ -223,8 +311,8 @@ async function resumeParentOfReclaimedChild(
       {
         status: 'failed',
         summary: livrable,
-        error: RUNNER_RESTARTED_CODE,
-        exit_reason: RUNNER_RESTARTED_CODE,
+        error: code,
+        exit_reason: code,
         tools_used: [],
       },
       db,

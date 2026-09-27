@@ -298,6 +298,14 @@ export const agentJobs = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     /**
+     * Le tour sauvegardé d'où ce job a repris après un redémarrage du runner
+     * (#443, migration 0133). NULL : jamais repris ainsi. Un FAIT typé, que
+     * l'écran dit (#444), jamais une phrase du runner.
+     */
+    resumedFromTurn: integer('resumed_from_turn'),
+    /** Combien de fois ce job a été repris après un redémarrage (#443) — la borne anti-boucle. */
+    restartResumes: integer('restart_resumes').notNull().default(0),
+    /**
      * Le projet ENREGISTRÉ auquel ce travail s'est rattaché (0093, P5).
      *
      * Posé UNE SEULE FOIS, par `attachProductionToProject` : le premier projet

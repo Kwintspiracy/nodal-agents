@@ -210,7 +210,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   const reclaim = await guardPhase(
     'reclaimJobsOfDeadRunners',
     () => reclaimJobsOfDeadRunners(deps.db),
-    { reclaimed: 0, parentsResumed: 0 },
+    { reclaimed: 0, parentsResumed: 0, resumed: 0, resumedJobIds: [] },
   );
 
   const orphanJobsReset = await guardPhase(
