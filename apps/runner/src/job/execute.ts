@@ -71,7 +71,7 @@ import {
   estimateToolTokens,
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
-import { watchCallProgress } from './call-progress.ts';
+import { liveCallProgress, watchCallProgress } from './call-progress.ts';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
 import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
@@ -1659,12 +1659,13 @@ async function runJobTracked(
       userMessage,
       hint,
     );
-  const cancelJob: typeof cancelJobRow = (base, id, stats, msgs) =>
+  const cancelJob: typeof cancelJobRow = (base, id, stats, msgs, partialResult) =>
     cancelJobRow(
       base,
       id,
       stats,
       msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      partialResult,
     );
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
   // Agents MUST have an llmKeyId — if absent we fail loud (invariant 4).
@@ -1829,10 +1830,12 @@ async function runJobTracked(
   const lacherLeJob = async (
     perte: Extract<JobAuthority, { kind: 'lost' }>,
     moment: string,
+    // #444 — ce que l'appel arrêté avait écrit devient le résultat du run annulé.
+    partiel?: string,
   ): Promise<ExecuteJobResult> => {
     trace('authority_lost', { turn, moment, status: perte.status, ownClaim: perte.ownClaim });
     if (perte.ownClaim && perte.status === 'cancelled') {
-      await cancelJob(db, jobId as string, runStats(), messages);
+      await cancelJob(db, jobId as string, runStats(), messages, partiel);
       return { status: 'cancelled' };
     }
     return { status: 'already_handled' };
@@ -4325,6 +4328,18 @@ async function runJobTracked(
       const productionDeLAppel = watchCallProgress((faits) =>
         trace('llm_call_progress', { turn, ...faits }),
       );
+      // #444 — la MÊME mesure, lisible par la page du run tant que l'appel tourne.
+      // Sous la prise de ce run, quel que soit le statut (#566) : l'effacement
+      // final tombe après un Stop, sur une ligne déjà `cancelled` qu'il tient.
+      const progresEnDirect = liveCallProgress(
+        (valeur) =>
+          db
+            .update(agentJobs)
+            .set({ liveProgress: valeur })
+            .where(ownJobRow(jobId as string, null))
+            .then(() => undefined),
+        { turn },
+      );
       // Stop arrête l'appel EN COURS. Le bouton n'écrit que `cancelled` en
       // base ; sans cette lecture pendant l'appel, un tour streamé qui écrit
       // sans s'arrêter ignorait le Stop jusqu'à sa fin (une heure au plus) et
@@ -4397,7 +4412,10 @@ async function runJobTracked(
           {
             streamed: true,
             abortSignal: veille.signal,
-            onProgress: productionDeLAppel.onProgress,
+            onProgress: (progres) => {
+              productionDeLAppel.onProgress(progres);
+              progresEnDirect.onProgress(progres);
+            },
             // #442 : l'attente du premier jeton posée pour l'agent, et ce
             // qu'il reste du budget de temps du run.
             ...(agentFirstTokenMs !== undefined ? { firstTokenTimeoutMs: agentFirstTokenMs } : {}),
@@ -4453,8 +4471,8 @@ async function runJobTracked(
             partialChars: ecrit.length,
             produced: productionDeLAppel.produced(),
           });
-          if (coupe) return await lacherLeJob(coupe, 'llm_call');
-          await cancelJob(db, jobId as string, runStats(), messages);
+          if (coupe) return await lacherLeJob(coupe, 'llm_call', ecrit);
+          await cancelJob(db, jobId as string, runStats(), messages, ecrit);
           return { status: 'cancelled' };
         }
         const expiration = timeoutOfTurn(genErr);
@@ -4474,7 +4492,7 @@ async function runJobTracked(
             if (ecrit !== '') {
               messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
             }
-            return await lacherLeJob(perteALExpiration, 'llm_timeout');
+            return await lacherLeJob(perteALExpiration, 'llm_timeout', ecrit);
           }
           // Un appel coupé EN ÉCRIVANT a été servi : le fournisseur a lu tout le
           // prompt et produit ce texte, et il le facture. Aucun décompte ne
@@ -4609,6 +4627,7 @@ async function runJobTracked(
       } finally {
         veille.stop();
         productionDeLAppel.stop();
+        await progresEnDirect.stop();
       }
       // Le tour a répondu : son budget d'expiration repart à zéro, et le temps
       // perdu avec. Ce qui est compté plus bas est CE tour-ci, pas la mémoire

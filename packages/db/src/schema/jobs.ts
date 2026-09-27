@@ -32,6 +32,19 @@ import { agentSchedules } from './schedules.ts';
  * the human-readable name at fire time; `triggeredAt` is the ISO timestamp the
  * runner received the request.
  */
+/** #444 — l'appel au modèle en cours, tel que son flux le rapporte (#484). */
+export type JobLiveProgress = {
+  turn: number;
+  textChars: number;
+  reasoningChars: number;
+  toolInputChars: number;
+  toolName: string | null;
+  /** ISO : début de l'appel. */
+  callStartedAt: string;
+  /** ISO : dernier morceau reçu ; `null` tant que rien n'est venu. */
+  lastProgressAt: string | null;
+};
+
 export type JobTriggerContext =
   | {
       type: 'cron';
@@ -256,6 +269,12 @@ export const agentJobs = pgTable(
      * identity (Anthropic, Ollama, etc.) or when the field was absent.
      */
     servedProvider: text('served_provider'),
+    /**
+     * #444 — ce que l'appel au modèle EN COURS a produit (le flux de #484),
+     * posé par le runner pendant l'appel et remis à NULL à sa fin. La page
+     * d'un run le montre tant que le job est `processing`. Migration 0133.
+     */
+    liveProgress: jsonb('live_progress').$type<JobLiveProgress>(),
     delegationDepth: integer('delegation_depth').default(0),
     /**
      * The slug of the last delegated child that failed on this parent job.
