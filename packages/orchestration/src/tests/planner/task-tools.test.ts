@@ -6,6 +6,7 @@ import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import {
   agents,
+  agentAssignments,
   agentTasks,
   agentJobs,
   agentSkills,
@@ -59,6 +60,12 @@ async function seedContext(db: TestDb) {
       active: true,
     })
     .returning();
+
+  // The worker is on the planner's team: create_task reaches the team, and
+  // only the team — the same rule as assign_* (#473).
+  await db
+    .insert(agentAssignments)
+    .values({ orchestratorId: planner!.id, subAgentId: worker!.id, entityId: entity!.id });
 
   const [job] = await db
     .insert(agentJobs)
@@ -168,18 +175,70 @@ describe('generateTaskTools', () => {
       const [createTask] = generateTaskTools(plannerId as AgentId, db);
       const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
 
-      const result = await createTask!.execute(
-        { title: 'Cross-entity assignment attempt', assigned_to: foreignAgent!.slug },
-        ctx,
-      );
-
-      const [row] = await db
-        .select({ assignedAgentId: agentTasks.assignedAgentId })
+      // The foreign agent's slug must not resolve. It used to create the task
+      // UNASSIGNED, which the cron tick never picks up (execute-ready.ts
+      // filters on a non-null assignee): the run froze in silence. Now loud.
+      await expect(
+        createTask!.execute(
+          { title: 'Cross-entity assignment attempt', assigned_to: foreignAgent!.slug },
+          ctx,
+        ),
+      ).rejects.toThrow(/no agent with the handle/);
+      const rows = await db
+        .select({ id: agentTasks.id })
         .from(agentTasks)
-        .where(eq(agentTasks.id, result.taskId));
+        .where(eq(agentTasks.rootJobId, jobId));
+      expect(rows).toHaveLength(0);
+    });
 
-      // The foreign agent's slug must not resolve — task created unassigned.
-      expect(row?.assignedAgentId).toBeNull();
+    // #473 — job d23e3bc9 : la délégation ne voyait que l'équipe, le tableau
+    // des tâches tout l'espace. Deux chemins, deux règles. Une seule
+    // désormais : on confie du travail à SON équipe, par l'une ou l'autre voie.
+    it('refuses an agent of the workspace that is outside the team, and names who holds it', async () => {
+      const { entityId, plannerId, jobId } = await seedContext(db);
+      const [lead] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: 'Lead',
+          slug: `lead-${Date.now()}`,
+          personality: 'p',
+          role: 'orchestrator',
+          active: true,
+        })
+        .returning();
+      const [reviewerA] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: 'Reviewer A',
+          slug: `reviewer-a-${Date.now()}`,
+          personality: 'p',
+          role: 'agent',
+          active: true,
+        })
+        .returning();
+      await db
+        .insert(agentAssignments)
+        .values({ orchestratorId: lead!.id, subAgentId: reviewerA!.id, entityId });
+
+      const [createTask] = generateTaskTools(plannerId as AgentId, db);
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
+
+      const err = await createTask!
+        .execute({ title: 'Review PR', assigned_to: reviewerA!.slug }, ctx)
+        .then(
+          () => null,
+          (e: unknown) => (e instanceof Error ? e.message : String(e)),
+        );
+      expect(err).toContain('Reviewer A exists in this workspace');
+      expect(err).toContain('not on your team');
+      expect(err).toContain('Lead');
+      const rows = await db
+        .select({ id: agentTasks.id })
+        .from(agentTasks)
+        .where(eq(agentTasks.rootJobId, jobId));
+      expect(rows).toHaveLength(0);
     });
 
     it('sets rootJobId from context', async () => {

@@ -20,6 +20,7 @@ import { modelCanSeeImages } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
+import { loadWorkspaceReach, describeOutsideAgent } from './reach';
 
 // ─── buildTeamBlock ───────────────────────────────────────────────────────────
 
@@ -457,10 +458,26 @@ export async function buildTeamBlock(
     );
   }
 
+  // The rest of the workspace (#473): agents that exist but are not on this
+  // team. Neither `assign_*` nor `create_task` reaches them; the line says who
+  // holds each one and through which teammate it is reached, so the model
+  // neither denies that an agent exists nor looks for a side door.
+  const { outside } = await loadWorkspaceReach(parentAgentId, db);
+  if (outside.length > 0) {
+    lines.push(
+      '\nAgents of this workspace outside your team. They exist; you cannot hand them work ' +
+        'yourself, by either route:',
+    );
+    for (const a of outside) {
+      lines.push(`- **${a.name}** (\`${a.slug}\`): ${describeOutsideAgent(a)}`);
+    }
+  }
+
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
       'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +
-      'appear above — NEVER invent a teammate, a capability, or a path. Each Folders entry is ' +
+      'appear above — NEVER invent a teammate, a capability, or a path, and never say that an ' +
+      'agent listed outside your team does not exist. Each Folders entry is ' +
       'a root: the agent has that folder and everything inside them. When the user names a ' +
       'folder or a path, look for it UNDER the listed folders — a bare name such as a project ' +
       'folder may sit inside any of them, so ask the agent whose folder it would be in rather ' +

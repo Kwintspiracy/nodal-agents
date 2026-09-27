@@ -578,3 +578,37 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     expect(entryOf(block, subOrch.name)).toContain('Shell commands: no');
   });
 });
+
+// #473 — « Reviewer A n'existe pas dans ce workspace » : faux, il était dans
+// l'équipe de Lead. Le bloc nomme donc les agents de l'espace HORS de
+// l'équipe, qui les tient, et par qui on les atteint.
+describe('buildTeamBlock — les agents de l’espace hors de l’équipe (#473) @cap:organiser-equipe/moteur', () => {
+  it('nomme chaque agent hors équipe, son orchestrateur, et le chemin qui l’atteint', async () => {
+    const { entityId } = await seedContext(db);
+    const t = Date.now();
+    const root = await seedAgent(db, entityId, `test-root-473-${t}`, 'orchestrator');
+    const lead = await seedAgent(db, entityId, `test-lead-473-${t}`, 'orchestrator');
+    const revA = await seedAgent(db, entityId, `test-rev-a-473-${t}`, 'agent');
+    const revC = await seedAgent(db, entityId, `test-rev-c-473-${t}`, 'agent');
+    const loner = await seedAgent(db, entityId, `test-loner-473-${t}`, 'agent');
+    await assignChild(db, root.id, lead.id, entityId);
+    await assignChild(db, root.id, revC.id, entityId);
+    await assignChild(db, lead.id, revA.id, entityId);
+    await assignChild(db, lead.id, revC.id, entityId);
+
+    const block = await buildTeamBlock(root.id as AgentId, db);
+
+    expect(block).toContain('outside your team');
+    const outside = block.slice(block.indexOf('outside your team'));
+    const lineOf = (name: string): string =>
+      outside.split('\n').find((l) => l.includes(`**${name}**`)) ?? '';
+    // Reviewer A existe, chez Lead, et Lead est dans l'équipe : on passe par lui.
+    expect(lineOf(revA.name)).toContain(`on the team of ${lead.name}`);
+    expect(lineOf(revA.name)).toContain(`through **${lead.name}**`);
+    // Un agent d'aucune équipe existe aussi, et personne ne peut lui confier de travail.
+    expect(lineOf(loner.name)).toContain('on no team');
+    // Les membres de l'équipe et l'agent lui-même n'y sont pas.
+    expect(outside).not.toContain(`**${revC.name}**`);
+    expect(outside).not.toContain(`**${root.name}**`);
+  });
+});
