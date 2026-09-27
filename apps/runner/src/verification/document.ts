@@ -58,7 +58,7 @@ const documentDeliverableType = 'document' as const;
  */
 // v2 (#487) : les règles binaires (WAV) ont rejoint les règles texte.
 // v3 (#509) : texte ou binaire se décide pour tout fichier, par des tables.
-export const DOCUMENT_MANIFEST_HASH = 'document-rules/v4';
+export const DOCUMENT_MANIFEST_HASH = 'document-rules/v5';
 
 /**
  * L'empreinte du CONTENU du fichier au moment où la configuration est lue —
@@ -1059,50 +1059,19 @@ export const documentVerifier: DeliverableVerifier = {
       return done();
     }
 
-    // 3c · un texte se décode en UTF-8, sans octet NUL — un texte écrit en
-    // UTF-16 sans BOM se décode sans erreur, et ses NUL le trahissent.
-    // Un texte au-delà de la limite n'est pas gardé en mémoire : UTF-8 et NUL
-    // ont été constatés en flux sur tous ses octets, comme pour un petit. Seule
-    // la FORME (JSON, XML…) demande le texte entier : elle n'est pas vérifiée à
-    // cette taille, et c'est dit — comme « no well-formedness rule » l'est pour
-    // un type qui n'en a pas, jamais tu.
-    if (lu.full === null) {
-      const t = Date.now();
-      if (!lu.utf8) {
-        await emit(ko('utf8', 'the file is not valid UTF-8', Date.now() - t));
-        return done();
-      }
-      if (lu.nul) {
-        await emit(
-          ko(
-            'utf8',
-            'the file contains NUL bytes: text written as UTF-16, or binary',
-            Date.now() - t,
-          ),
-        );
-        return done();
-      }
-      const forme = FORM_RULES[ext];
-      await emit(
-        ok(
-          'utf8',
-          forme === undefined
-            ? `decoded in stream (${size} bytes); no well-formedness rule for ${ext || 'a file without extension'}`
-            : `decoded in stream (${size} bytes); ${forme.name} form not checked: above the ${TEXT_DECODE_LIMIT} bytes a proof parses`,
-          Date.now() - t,
-        ),
-      );
-      return done();
-    }
+    // 3c · un texte. UTF-8 et NUL ont été constatés en flux sur TOUS ses octets
+    // (`lireUneFois`), quelle que soit sa taille.
+    //
+    // Un octet NUL est toujours un défaut : un texte écrit en UTF-16, ou un
+    // binaire sous un nom de texte. L'UTF-8, lui, dépend du FORMAT (décision de
+    // Quentin, 27/09, revue Codex de #509) : JSON, XML, HTML, SVG, Markdown et
+    // CSS l'exigent — ce sont les formats dont la preuve vérifie la forme
+    // (`FORM_RULES`) —, alors qu'un CSV, un SRT, un .ini ou un .bat produits par
+    // une commande sont légitimes dans un encodage 8 bits (Windows-1252, OEM),
+    // que l'application qui les lit comprend. Les faire rougir ferait échouer un
+    // run qui livre un fichier bon.
     const t1 = Date.now();
-    let text: string;
-    try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(lu.full);
-    } catch {
-      await emit(ko('utf8', 'the file is not valid UTF-8', Date.now() - t1));
-      return done();
-    }
-    if (text.includes('\u0000')) {
+    if (lu.nul) {
       await emit(
         ko(
           'utf8',
@@ -1113,6 +1082,37 @@ export const documentVerifier: DeliverableVerifier = {
       return done();
     }
     const rule = FORM_RULES[ext];
+    if (!lu.utf8) {
+      if (rule !== undefined) {
+        await emit(
+          ko('utf8', `the file is not valid UTF-8, which ${rule.name} requires`, Date.now() - t1),
+        );
+        return done();
+      }
+      await emit(
+        ok(
+          'text',
+          `not UTF-8: an 8-bit encoding (Windows-1252, OEM…), allowed for ${ext || 'a file without extension'}; not decoded`,
+          Date.now() - t1,
+        ),
+      );
+      return done();
+    }
+    // Un texte au-delà de la limite n'est pas gardé en mémoire : seule la FORME
+    // demande le texte entier, et à cette taille elle n'est pas vérifiée — c'est
+    // dit, comme « no well-formedness rule » l'est pour un type qui n'en a pas.
+    if (lu.full === null) {
+      await emit(
+        ok(
+          'utf8',
+          rule === undefined
+            ? `decoded in stream (${size} bytes); no well-formedness rule for ${ext || 'a file without extension'}`
+            : `decoded in stream (${size} bytes); ${rule.name} form not checked: above the ${TEXT_DECODE_LIMIT} bytes a proof parses`,
+          Date.now() - t1,
+        ),
+      );
+      return done();
+    }
     if (rule === undefined) {
       // Dit, pas tu : l'écran verra que la vérification s'est arrêtée ici et pourquoi.
       await emit(
@@ -1124,6 +1124,7 @@ export const documentVerifier: DeliverableVerifier = {
       );
       return done();
     }
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(lu.full);
     await emit(ok('utf8', 'decoded', Date.now() - t1));
 
     // 4 · il est bien formé pour ce qu'il est

@@ -278,9 +278,13 @@ describe('document — texte ou binaire, une règle pour tous les fichiers', () 
     expect(texte.records.at(-1)).toMatchObject({ command: 'utf8', verdict: 'green' });
     expect(texte.records.at(-1)?.stdoutTail).toMatch(/decoded in stream/);
 
-    // Un octet invalide TOUT AU BOUT : le flux le voit.
-    const casse = await prove(write('casse.log', Buffer.concat([gros, Buffer.from([0xc3])])));
+    // Un octet invalide TOUT AU BOUT : le flux le voit. Un JSON doit être de
+    // l'UTF-8 : rouge. Un journal peut être en 8 bits : dit, pas rouge.
+    const finInvalide = Buffer.concat([gros, Buffer.from([0xc3])]);
+    const casse = await prove(write('casse.json', finInvalide));
     expect(casse.records.at(-1)).toMatchObject({ command: 'utf8', verdict: 'red' });
+    const huitBits = await prove(write('huit-bits.log', finInvalide));
+    expect(huitBits.records.at(-1)).toMatchObject({ command: 'text', verdict: 'green' });
     // Un NUL au milieu : aussi.
     const avecNul = Buffer.from(gros);
     avecNul[20 * 1024 * 1024] = 0x00;
@@ -293,6 +297,27 @@ describe('document — texte ou binaire, une règle pour tous les fichiers', () 
     const film = await prove(write('gros-film.mp4', Buffer.concat([mp4Bytes(), gros])));
     expect(film.verdict).toBe('green');
     expect(film.records.at(-1)?.command).toBe('well-formed:mp4');
+  });
+
+  it('l’encodage dépend du format : un CSV Windows-1252 est vert (dit), un JSON qui n’est pas en UTF-8 est rouge, un NUL est toujours rouge (décision de Quentin, 27/09)', async () => {
+    // « Café;Prix\n » en Windows-1252 : é = 0xE9, invalide en UTF-8.
+    const cp1252 = Buffer.from([0x43, 0x61, 0x66, 0xe9, 0x3b, 0x50, 0x72, 0x69, 0x78, 0x0a]);
+    const csv = await prove(write('export.csv', cp1252));
+    expect(csv.verdict).toBe('green');
+    expect(csv.records.at(-1)).toMatchObject({ command: 'text', verdict: 'green' });
+    expect(csv.records.at(-1)?.stdoutTail).toMatch(/not UTF-8: an 8-bit encoding/);
+    const srt = await prove(write('sous-titres.srt', cp1252));
+    expect(srt.verdict).toBe('green');
+
+    const json = await prove(write('donnees.json', Buffer.from('{"nom":"Caf\xe9"}', 'latin1')));
+    expect(json.verdict).toBe('red');
+    expect(json.records.at(-1)?.stderrTail).toBe(
+      'the file is not valid UTF-8, which json requires',
+    );
+
+    const utf16csv = await prove(write('utf16.csv', Buffer.from('a;b\n', 'utf16le')));
+    expect(utf16csv.verdict).toBe('red');
+    expect(utf16csv.records.at(-1)?.stderrTail).toMatch(/NUL bytes/);
   });
 
   it('un corps d’erreur texte écrit sous un nom de vidéo est rouge sur son en-tête', async () => {
