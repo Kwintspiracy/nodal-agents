@@ -418,6 +418,15 @@ export interface FinalizeFailureInput {
   readonly messages?: unknown[];
   /** L'explication rendue à l'utilisateur, quand l'appelant en a une. */
   readonly userMessage?: string;
+  /**
+   * `userMessage` REMPLACE le résultat déjà écrit, dans la transaction qui pose
+   * l'échec. Par défaut `failJob` ne remplit qu'un résultat vide ; quand un
+   * texte a été publié (« Film livré. ») et que l'échec dit pourquoi il est
+   * faux, les deux doivent atterrir ensemble — une seconde écriture après coup
+   * laissait, sur une panne entre les deux, un échec dont le résultat ne disait
+   * que « livré » (revue Codex de #509, passe 3).
+   */
+  readonly replaceResult?: boolean;
   /** Livraison à préparer dans la même transaction que l'écriture terminale. */
   readonly delivery?: TerminalDelivery;
 }
@@ -1328,6 +1337,12 @@ export async function finalizeJobFailure(
       input.messages,
       input.userMessage,
     );
+    if (landed && input.replaceResult && input.userMessage !== undefined) {
+      await tx
+        .update(agentJobs)
+        .set({ result: toDbSafeString(input.userMessage), updatedAt: new Date() })
+        .where(eq(agentJobs.id, input.jobId));
+    }
     if (landed && input.delivery && deps.prepareDelivery) {
       await deps.prepareDelivery(tx, { jobId: input.jobId, ...input.delivery });
     }

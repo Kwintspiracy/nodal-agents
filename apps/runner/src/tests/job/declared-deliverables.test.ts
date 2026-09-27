@@ -388,6 +388,70 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
     expect(row.result).toContain('faux-film.mp4: well-formed:mp4 (no ISO media box header');
   });
 
+  it('réparé en changeant de fichier : la liste corrigée REMPLACE l’ancienne, completed (revue Codex, passe 3)', async () => {
+    // Le brouillon est invalide ; au tour de réparation l'agent rend le film
+    // final et ne déclare plus que lui. Avant : le brouillon restait déclaré et
+    // rouge, et le run échouait alors que tout ce qu'il livrait était bon.
+    await writeFile(join(ws, 'draft.mp4'), '{"error":"half render"}');
+    await writeFile(join(ws, 'final.mp4'), mp4Bytes());
+    const id = await createJob('rends le film, corrige si besoin');
+    const { client } = makeMockLlmClient([
+      rendu('rr-1', 'Film livré.', ['draft.mp4']),
+      rendu('rr-2', 'Film final livré.', ['final.mp4']),
+    ]);
+
+    await executeJob(id as JobId, makeDeps(client), testEnv);
+
+    const row = await jobRow(id);
+    expect(row.status).toBe('completed');
+    expect(row.error).toBeNull();
+    const states = await statesOf(id);
+    const parCle = new Map(states.map((s) => [s.canonicalKey, s.declared]));
+    expect(parCle.get(keyOf(normalizePath(join(ws, 'draft.mp4'))))).toBe(false);
+    expect(parCle.get(keyOf(normalizePath(join(ws, 'final.mp4'))))).toBe(true);
+  });
+
+  it('un texte DÉJÀ publié par un outil de livraison reçoit la ligne d’arrêt, écrite AVEC l’échec (revue Codex, passe 3)', async () => {
+    // Un outil de livraison a déjà écrit « Film livré. » dans le résultat ;
+    // puis la déclaration s'avère impossible à vérifier. Le résultat doit dire
+    // les deux — et dans la transaction qui pose l'échec, pas par une seconde
+    // écriture qu'une panne pourrait perdre.
+    const dehors = normalizePath(join(tmpdir(), `hors-dossier-publie-${Date.now()}`, 'film.mp4'));
+    const id = await createJob('rends un film ailleurs, texte déjà publié');
+    await db.update(agentJobs).set({ result: 'Film livré.' }).where(eq(agentJobs.id, id));
+    const { client } = makeMockLlmClient([
+      rendu('rr-1', '', [dehors]),
+      rendu('rr-2', '', [dehors]),
+    ]);
+
+    await executeJob(id as JobId, makeDeps(client), testEnv);
+
+    const row = await jobRow(id);
+    expect(row.status).toBe('failed');
+    expect(row.result).toBe(
+      `Film livré.\n\n${deliverableNotVerifiedLine([
+        { path: dehors, check: 'unresolved', detail: 'path_traversal_blocked' },
+      ])}`,
+    );
+  });
+
+  it('réparé SANS répéter la liste (champ omis) : la promesse tient, le brouillon rouge fait échouer', async () => {
+    // Omettre le champ ne retire rien : un agent qui oublie de répéter sa liste
+    // ne se libère pas en silence d'un fichier qu'il a promis.
+    await writeFile(join(ws, 'brouillon.mp4'), '{"error":"half render"}');
+    const id = await createJob('rends le film');
+    const { client } = makeMockLlmClient([
+      rendu('rr-1', 'Film livré.', ['brouillon.mp4']),
+      rendu('rr-2', 'Film livré, cette fois.'),
+    ]);
+
+    await executeJob(id as JobId, makeDeps(client), testEnv);
+
+    const row = await jobRow(id);
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('deliverable_not_verified');
+  });
+
   it('zéro réparation accordée par l’espace : échec DIRECT, sans tour de plus', async () => {
     await db.update(entities).set({ proofRepairAttempts: 0 }).where(eq(entities.id, seed.entityId));
     const id = await createJob('rends le film sans filet');

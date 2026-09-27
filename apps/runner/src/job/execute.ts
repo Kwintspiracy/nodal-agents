@@ -2997,6 +2997,7 @@ async function runJobTracked(
     payload: string,
     suffixeCle: string,
     userMessage?: string,
+    replaceResult = false,
   ): Promise<void> => {
     const notice = harnessNoticeDelivery(payload);
     await finalizeJobFailure(
@@ -3006,7 +3007,7 @@ async function runJobTracked(
         errorCode,
         stats: runStats(),
         messages,
-        ...(userMessage !== undefined ? { userMessage } : {}),
+        ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
         ...(notice
           ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
           : {}),
@@ -3056,9 +3057,10 @@ async function runJobTracked(
   const echouerSurDeclaration = async (items: DeclarationItem[]): Promise<ExecuteJobResult> => {
     const line = deliverableNotVerifiedLine(items);
     // Le texte que le run aurait livré — ce qu'un outil de livraison a déjà
-    // écrit, sinon le dernier texte de l'agent —, puis la ligne. `failJob` ne
-    // remplit qu'un `result` vide : un texte déjà publié y resterait SANS la
-    // ligne, d'où la réécriture juste après.
+    // écrit, sinon le dernier texte de l'agent —, puis la ligne. Il REMPLACE le
+    // résultat dans la transaction qui pose l'échec : une seconde écriture après
+    // coup laissait, sur une panne entre les deux, un échec dont le résultat ne
+    // disait que « livré » (revue Codex de #509, passe 3).
     const [dejaEcrit] = await db
       .select({ result: agentJobs.result })
       .from(agentJobs)
@@ -3072,15 +3074,8 @@ async function runJobTracked(
       line,
       DELIVERABLE_NOT_VERIFIED,
       livrable,
+      true,
     );
-    if (texte !== '' && texte === (dejaEcrit?.result ?? '').trim()) {
-      await db
-        .update(agentJobs)
-        .set({ result: livrable, updatedAt: new Date() })
-        .where(
-          and(eq(agentJobs.id, jobId as string), eq(agentJobs.error, DELIVERABLE_NOT_VERIFIED)),
-        );
-    }
     return {
       status: 'failed',
       error: DELIVERABLE_NOT_VERIFIED,
@@ -5895,9 +5890,13 @@ async function runJobTracked(
         // les gardes qui peuvent encore renvoyer ce `return_result` : un appel
         // renvoyé n'a rien promis. Sur un run qui a créé des tâches, elles
         // attendent la finalisation du cron, qui lit les mêmes lignes.
-        const declares = ((returnResultCall.input as { deliverables?: unknown } | undefined)
-          ?.deliverables ?? []) as string[];
-        if (rrStatus === 'success' && declares.length > 0) {
+        // PRÉSENT (même vide), le champ est la liste complète et remplace la
+        // précédente ; ABSENT, il ne change rien — un agent qui oublie de la
+        // répéter au tour de réparation ne retire pas sa promesse sans le dire.
+        const champ = (returnResultCall.input as { deliverables?: unknown } | undefined)
+          ?.deliverables;
+        const declares = Array.isArray(champ) ? (champ as string[]) : [];
+        if (rrStatus === 'success' && Array.isArray(champ)) {
           const declaration = await declareDeliverables(sharedToolCtx, declares);
           if (declaration.kind === 'already_terminal') {
             trace('terminal_write_lost_race', { turn, writer: 'declare_deliverables', jobId });

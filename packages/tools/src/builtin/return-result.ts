@@ -28,7 +28,9 @@ export const ReturnResultInputSchema = z.object({
         'attached folder). List EVERY file you deliver, whatever tool or command produced ' +
         'it: a render, a build output, an export, a file you wrote. Nodal checks each one ' +
         'before the run can end as a success; a missing or broken file is reported, never ' +
-        'accepted. Omit it when the task delivers no file.',
+        'accepted. When present, the list is COMPLETE: it replaces any list you gave earlier in ' +
+        'this run, so a file you no longer deliver is simply left out. Omit the field to keep ' +
+        'your earlier list, or when the task delivers no file.',
     ),
 });
 

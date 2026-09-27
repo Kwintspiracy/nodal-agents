@@ -200,4 +200,29 @@ describe('declareDeliverables — une ligne d’état par fichier promis @cap:ve
     await declareDeliverables(ctx(), ['film.mp4', ' film.mp4 ']);
     expect(await statesOf(jobId)).toHaveLength(1);
   });
+
+  it('une nouvelle liste REMPLACE la précédente : ce qui n’est plus nommé cesse d’être déclaré (revue Codex)', async () => {
+    await declareDeliverables(ctx(), ['draft.mp4', 'rapport.pdf']);
+    await declareDeliverables(ctx(), ['final.mp4', 'rapport.pdf']);
+    const declares = (await statesOf(jobId))
+      .map((r) => [r.canonicalKey, r.declared] as const)
+      .sort(([a], [b]) => a.localeCompare(b));
+    const k = async (p: string) => keyOf(await resolveAndCheckPath(ctx(), p));
+    expect(declares).toEqual(
+      [
+        [await k('draft.mp4'), false],
+        [await k('final.mp4'), true],
+        [await k('rapport.pdf'), true],
+      ].sort(([a], [b]) => String(a).localeCompare(String(b))),
+    );
+  });
+
+  it('une liste VIDE retire toute promesse ; la ligne et sa preuve restent', async () => {
+    await declareDeliverables(ctx(), ['draft.mp4']);
+    const out = await declareDeliverables(ctx(), []);
+    expect(out.kind).toBe('written');
+    const rows = await statesOf(jobId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.declared).toBe(false);
+  });
 });

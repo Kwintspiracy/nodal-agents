@@ -36,7 +36,7 @@
 // raisons d'un chemin irrésolu sont celles du résolveur des outils de
 // fichiers, que l'agent lit déjà quand un `file_write` le refuse.
 
-import { agentJobs, eq } from '@nodal-agents/db';
+import { agentJobs, and, eq, jobDeliverableVerificationState, notInArray } from '@nodal-agents/db';
 import { isTerminalJobStatus, type MutationTarget } from '@nodal-agents/shared';
 import type { ToolContext } from '../types';
 import { WorkspaceError, resolveAndCheckPath } from '../builtin/file-ops/workspace';
@@ -153,8 +153,6 @@ export async function declareDeliverables(
     );
     return { kind: 'unresolved', unresolved };
   }
-  if (keyed.length === 0) return { kind: 'written', deliverables: [] };
-
   try {
     return await ctx.db.transaction(async (tx) => {
       // Le MÊME verrou que l'intention : un job terminal ne reçoit plus rien.
@@ -168,6 +166,27 @@ export async function declareDeliverables(
       if (job.status !== null && isTerminalJobStatus(job.status)) {
         return { kind: 'already_terminal' } as const;
       }
+      // La liste REMPLACE la précédente (revue Codex de #509, passe 3) : un
+      // agent qui déclare `draft.mp4`, le trouve invalide au tour de réparation
+      // et rend `final.mp4` à la place ne livre plus le brouillon. Ce qui n'est
+      // plus nommé cesse d'être DÉCLARÉ — sa ligne et sa preuve restent, et
+      // retombent dans la règle commune des livrables non déclarés. Dans la
+      // même transaction que les nouvelles déclarations : aucun état où la
+      // liste serait à moitié remplacée.
+      const gardees = keyed.map((k) => k.key);
+      await tx
+        .update(jobDeliverableVerificationState)
+        .set({ declared: false })
+        .where(
+          and(
+            eq(jobDeliverableVerificationState.jobId, jobId),
+            eq(jobDeliverableVerificationState.deliverableType, DECLARED_DELIVERABLE_TYPE),
+            eq(jobDeliverableVerificationState.declared, true),
+            ...(gardees.length > 0
+              ? [notInArray(jobDeliverableVerificationState.canonicalKey, gardees)]
+              : []),
+          ),
+        );
       const deliverables: DeclaredDeliverable[] = [];
       for (const k of keyed) {
         const dirtyGeneration = await markStateDirty(tx, jobId, {
