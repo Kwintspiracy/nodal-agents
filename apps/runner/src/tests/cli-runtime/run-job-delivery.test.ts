@@ -242,12 +242,34 @@ describe('run-job : porte terminale + outbox', () => {
     const jobId = await newJob(CHAT);
     fakeRun.mockResolvedValueOnce(greenTurn('le texte final'));
 
-    const t0 = Date.now();
+    // « Sans attendre le tick » se prouve par l'ORDRE, jamais par une durée
+    // (l'ancien `elapsed < 2000` rougissait sous la charge de la suite) :
+    //   1. aucun tick ne tourne dans ce test : le seul drain possible est celui
+    //      de `runCliRuntimeJob`, et il est limité à CE job (`{ jobId }`), là où
+    //      le tick draine tout (`{}`, cron/tick.ts) ;
+    //   2. l'envoi a lieu AVANT que `runCliRuntimeJob` ne rende la main ;
+    //   3. au moment de l'envoi, le job est déjà `completed`, et sa ligne
+    //      d'outbox, commise avec ce statut, est celle que le drain a réclamée
+    //      (`attempted`) : commise d'abord, envoyée ensuite.
+    let rendu = false;
+    const auMomentDeLEnvoi: Array<{ rendu: boolean; statut: string | null; ligne: string | null }> =
+      [];
+    sendText.mockImplementationOnce(async () => {
+      const [ligne] = await deliveriesOf(jobId);
+      auMomentDeLEnvoi.push({
+        rendu,
+        statut: (await jobRow(jobId)).status,
+        ligne: ligne?.outcome ?? null,
+      });
+      return { messageId: '42' };
+    });
+
     const outcome = await runJob(jobId, CHAT);
-    const elapsed = Date.now() - t0;
+    rendu = true;
 
     expect(outcome).toEqual({ status: 'completed', result: 'le texte final' });
-    expect(elapsed).toBeLessThan(2000);
+    expect(drainImpl.mock.calls.map((c) => c[1])).toEqual([{ jobId }]);
+    expect(auMomentDeLEnvoi).toEqual([{ rendu: false, statut: 'completed', ligne: 'attempted' }]);
     expect(sendText).toHaveBeenCalledTimes(1);
     expect(sendText.mock.calls[0]?.[1]).toBe(CHAT);
     expect(sendText.mock.calls[0]?.[2]).toBe('le texte final');
