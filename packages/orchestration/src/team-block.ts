@@ -12,8 +12,11 @@ import {
   connectors as connectorsTable,
   agentMcpServers,
   mcpServers,
+  agentWorkspaces,
 } from '@nodal-agents/db';
+import { asc, inArray } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { CLI_RUNTIME_RUNS_SHELL_COMMANDS } from '@nodal-agents/tools';
 import { modelCanSeeImages } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
@@ -78,6 +81,8 @@ export async function buildTeamBlock(
       agentActive: agents.active,
       agentPersonality: agents.personality,
       agentModel: agents.model,
+      agentRuntime: agents.runtime,
+      agentCommandAllowlist: agents.commandAllowlist,
     })
     .from(agentAssignments)
     .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
@@ -119,6 +124,7 @@ export async function buildTeamBlock(
           skillName: agentSkills.name,
           skillSlug: agentSkills.slug,
           skillDescription: agentSkills.description,
+          requiredBuiltins: agentSkills.requiredBuiltins,
         })
         .from(agentSkillAssignments)
         .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
@@ -131,12 +137,38 @@ export async function buildTeamBlock(
   // Names-only here is exactly why a router confabulated a fake image agent
   // instead of delegating to the teammate holding the ComfyUI skill.
   const skillMap = new Map<string, { name: string; desc: string | null }[]>();
+  // The builtins those skills unlock — `run_command` among them. The same
+  // union the runner makes for the job's whitelist (resolve-agent-tools.ts).
+  const builtinMap = new Map<string, Set<string>>();
   for (const batch of skillRows) {
     for (const r of batch) {
       const existing = skillMap.get(r.agentId) ?? [];
       existing.push({ name: r.skillName, desc: r.skillDescription });
       skillMap.set(r.agentId, existing);
+      const builtins = builtinMap.get(r.agentId) ?? new Set<string>();
+      for (const n of r.requiredBuiltins ?? []) builtins.add(n);
+      builtinMap.set(r.agentId, builtins);
     }
+  }
+
+  // Where each agent works (#506). Run 0b505b0d: the owner named a folder that
+  // was inside Montage's own, and the orchestrator — seeing no folder for anyone
+  // — invented `shared/Nodal-Video`. The folders are facts from
+  // `agent_workspaces`; an agent with none is said to have none.
+  const workspaceRows = await db
+    .select({
+      agentId: agentWorkspaces.agentId,
+      label: agentWorkspaces.label,
+      path: agentWorkspaces.path,
+    })
+    .from(agentWorkspaces)
+    .where(inArray(agentWorkspaces.agentId, childIds as string[]))
+    .orderBy(asc(agentWorkspaces.position), asc(agentWorkspaces.label));
+  const folderMap = new Map<string, string[]>();
+  for (const r of workspaceRows) {
+    const existing = folderMap.get(r.agentId) ?? [];
+    existing.push(`${r.label} = ${r.path}`);
+    folderMap.set(r.agentId, existing);
   }
 
   // Load connector tool inventories for all children — the orchestrator needs
@@ -237,6 +269,37 @@ export async function buildTeamBlock(
     if (mcp) names.push(...mcp.map((c) => c.slug));
     if (names.length === 0) return '';
     return `\n  Connectors: ${[...new Set(names)].join(', ')}`;
+  }
+
+  // Whether the agent can run a shell command (#506), from the database and
+  // the same way for every agent. On the Nodal runtime it is the `run_command`
+  // tool, unlocked by a skill and narrowed by `command_allowlist` (an EMPTY
+  // list refuses everything). On a CLI runtime that tool does not exist: the
+  // CLI's own posture decides, which `CLI_RUNTIME_RUNS_SHELL_COMMANDS` states
+  // next to the argv that produces it. Run 8dfe4684 sent a render to an agent
+  // on the claude-code runtime, which refuses every command.
+  function formatShellTag(
+    subAgentId: string,
+    runtime: string,
+    allowlist: readonly string[] | null,
+  ): string {
+    let canRun: boolean;
+    if (runtime === 'nodal') {
+      canRun = (builtinMap.get(subAgentId)?.has('run_command') ?? false) && allowlist?.length !== 0;
+    } else {
+      const cli = CLI_RUNTIME_RUNS_SHELL_COMMANDS[runtime];
+      // The DB check constraint admits no other value; a newer base that
+      // does must be taught here, never guessed (invariant #4).
+      if (cli === undefined) {
+        throw new Error(`buildTeamBlock: unknown agent runtime "${runtime}" for ${subAgentId}`);
+      }
+      canRun = cli;
+    }
+    if (!canRun) return '\n  Shell commands: no';
+    if (runtime === 'nodal' && allowlist && allowlist.length > 0) {
+      return `\n  Shell commands: yes, only these programs: ${allowlist.join(', ')}`;
+    }
+    return '\n  Shell commands: yes';
   }
 
   // Unified orchestrator: every orchestrator receives BOTH delegation toolsets at
@@ -343,6 +406,8 @@ export async function buildTeamBlock(
       instructions,
       agentPersonality,
       agentModel,
+      agentRuntime,
+      agentCommandAllowlist,
     } = row;
     const toolSlug = agentSlug.replace(/-/g, '_');
     // What the agent is FOR (summary of its personality) — drives correct routing.
@@ -366,23 +431,30 @@ export async function buildTeamBlock(
             .join('; ')}`
         : '';
     const connectorsTag = formatConnectorsTag(subAgentId);
+    const folders = folderMap.get(subAgentId);
+    const foldersTag = `\n  Folders: ${folders ? folders.join('; ') : 'none'}`;
+    const runtimeTag = `\n  Runtime: ${agentRuntime}`;
+    const shellTag = formatShellTag(subAgentId, agentRuntime, agentCommandAllowlist);
+    const capabilityTags = `${connectorsTag}${foldersTag}${runtimeTag}${shellTag}`;
     const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
     const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
     lines.push(
       canDelegate
         ? `- **${agentName}**${roleTag} — assign tool \`assign_${toolSlug}\`, task handle ` +
-            `\`${agentSlug}\`${purposeTag}${visionTag}${skillsTag}${connectorsTag}${instrTag}`
+            `\`${agentSlug}\`${purposeTag}${visionTag}${skillsTag}${capabilityTags}${instrTag}`
         : // No tool name: naming `assign_x` to an agent that cannot call it is
           // precisely what turned this roster into an invitation to hallucinate.
           `- **${agentName}**${roleTag} (\`${agentSlug}\`)` +
-            `${purposeTag}${visionTag}${skillsTag}${connectorsTag}${instrTag}`,
+            `${purposeTag}${visionTag}${skillsTag}${capabilityTags}${instrTag}`,
     );
   }
 
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
-      'capabilities. ONLY ever reference agents, skills, connectors, or tools that appear ' +
-      'above — NEVER invent a teammate or a capability. Before saying you cannot do ' +
+      'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +
+      'appear above — NEVER invent a teammate, a capability, or a path. When the user names a ' +
+      'folder, find it among the Folders listed; if no agent has it, say so. A request that ' +
+      'needs a shell command goes only to an agent whose Shell commands is yes. Before saying you cannot do ' +
       'something, scan the list: if any agent’s skills/connectors match the request, delegate ' +
       'to it. If genuinely none match, say so plainly (and how the user could enable it, if ' +
       'you know) — do NOT fabricate an agent name or claim a tool you were not given.',

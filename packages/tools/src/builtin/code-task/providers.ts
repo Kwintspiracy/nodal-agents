@@ -85,6 +85,29 @@ export interface NormalizedCliResult {
  */
 export const CLAUDE_READONLY_DISALLOWED = 'Write,Edit,MultiEdit,NotebookEdit,Bash';
 
+// ─── Shell commands, per CLI runtime (#506) ─────────────────────────────────
+
+/**
+ * Whether an agent whose `agents.runtime` is a coding CLI can run a shell
+ * command inside a Nodal job, keyed by that runtime value.
+ *
+ * For such an agent the answer does NOT come from `run_command` (a Nodal tool
+ * the CLI never sees) but from the argv the runtime is started with:
+ *   - `claude-code`: read mode removes `Bash` (`CLAUDE_READONLY_DISALLOWED`);
+ *     write mode is `--permission-mode acceptEdits`, where every shell call
+ *     needs a permission nobody can grant in `-p` (#494). No command runs.
+ *   - `codex`: confined by its OS sandbox (`read-only` / `workspace-write`),
+ *     inside which commands do run without approval.
+ *
+ * The team block reads this to tell an orchestrator which teammate can run a
+ * command (run 8dfe4684 sent a render to a claude-code agent). The argv tests
+ * hold it to the flags: change one without the other and they go red.
+ */
+export const CLI_RUNTIME_RUNS_SHELL_COMMANDS: Readonly<Record<string, boolean>> = {
+  'claude-code': false,
+  codex: true,
+};
+
 // ─── argv builders ───────────────────────────────────────────────────────────
 
 /**
