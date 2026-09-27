@@ -20,7 +20,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { agents, agentJobs, entities, and, eq, isNotNull } from '@nodal-agents/db';
+import { agents, agentJobs, entities, and, eq, inArray, isNotNull } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { runTaskInputSchema, RUN_TASK_DESCRIPTION } from './tools';
 
@@ -43,14 +43,23 @@ export interface McpServerOptions {
   name?: string;
   version?: string;
   /**
-   * Plafond de jobs créés par ce processus serveur. Les compteurs anti-boucle
-   * de Nodal vivent DANS un job (tours, outils, profondeur) — ils ne bornent
-   * pas le nombre de jobs racines qu'une surface externe injecte. Un client en
-   * boucle créerait sinon des racines payantes sans limite (constat review).
-   * Le processus est jetable : relancer le serveur remet le compteur à zéro,
-   * ce qui est un geste HUMAIN — c'est exactement la friction voulue.
+   * Plafond de jobs MCP EN COURS dans ce workspace (pas encore terminés). Les
+   * compteurs anti-boucle de Nodal vivent DANS un job (tours, outils,
+   * profondeur) — ils ne bornent pas le nombre de jobs racines qu'une surface
+   * externe injecte. Un client en boucle créerait sinon des racines payantes
+   * sans limite (constat review du 23/08).
+   *
+   * #498 : c'était un compte de jobs CRÉÉS par le processus, sur toute sa vie,
+   * que seul un redémarrage remettait à zéro. Une session normale l'atteignait
+   * (revues, relances après un délai dépassé) alors que tous ses jobs étaient
+   * finis. Ce qui borne une boucle, c'est ce qui tourne en même temps ; ce qui
+   * borne l'argent, c'est le budget de chaque agent (#447), appliqué à tout
+   * job, MCP compris. Le compte est lu en base, dans la transaction qui
+   * insère, sous le verrou de la ligne workspace : il vaut pour TOUS les
+   * processus MCP du workspace, et une salve d'appels simultanés ne le
+   * dépasse pas.
    */
-  maxJobsPerProcess?: number;
+  maxJobsInFlight?: number;
   /**
    * Où réveiller le worker après la création d'un job. Sans ça, un job `mcp`
    * attend le repêchage périodique du cron (âge > 30 s + tick de 120 s) —
@@ -76,7 +85,10 @@ export interface McpServerOptions {
   };
 }
 
-const DEFAULT_MAX_JOBS_PER_PROCESS = 20;
+const DEFAULT_MAX_JOBS_IN_FLIGHT = 5;
+
+/** Les statuts d'un job qui n'est pas terminé. */
+const EN_COURS = ['pending', 'processing', 'awaiting_approval', 'awaiting_delegation'];
 
 /**
  * L'interrupteur maitre. Defaut FERME (migration 0081) : un point d'entree
@@ -167,20 +179,19 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
     version: opts.version ?? '0.1.0',
   });
 
-  // Valide FORT plutot que de tolerer : `jobsCreated >= NaN` est toujours
+  // Valide FORT plutot que de tolerer : `enVol.length >= NaN` est toujours
   // faux, donc un NaN — le resultat typique d un Number(process.env.X) mal
   // ecrit — desactivait le plafond EN SILENCE. Infinity pareil, et 2.5
   // autorisait trois jobs au lieu des deux annonces. Une protection anti-boucle
   // qui disparait sans un mot est pire qu absente : on croit couverte une
   // surface qui ne l est pas (invariant #4).
-  const maxJobs = opts.maxJobsPerProcess ?? DEFAULT_MAX_JOBS_PER_PROCESS;
+  const maxJobs = opts.maxJobsInFlight ?? DEFAULT_MAX_JOBS_IN_FLIGHT;
   if (!Number.isInteger(maxJobs) || maxJobs < 1) {
     throw new Error(
-      `mcp_invalid_job_cap: maxJobsPerProcess must be a positive integer, got ` +
+      `mcp_invalid_job_cap: maxJobsInFlight must be a positive integer, got ` +
         `${String(maxJobs)}. Refusing to start with a cap that cannot enforce anything.`,
     );
   }
-  let jobsCreated = 0;
 
   server.registerTool(
     'run_task',
@@ -189,32 +200,7 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
       inputSchema: runTaskInputSchema.shape,
     },
     async (args: unknown) => {
-      // Le siege est RESERVE avant l attente, pas verifie puis incremente
-      // apres : la premiere version faisait contrele -> insert (await) ->
-      // increment, et dix appels concurrents observaient tous la meme valeur
-      // avant qu aucun ne l incremente — dix jobs payants sous un plafond de
-      // deux (constat passe 2). L increment synchrone AVANT le premier await
-      // ferme la fenetre : Node n intercale rien entre ces deux lignes.
-      // Un insert qui echoue rend son siege dans le catch.
-      let seated = false;
       try {
-        if (jobsCreated >= maxJobs) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: 'text' as const,
-                text:
-                  `mcp_job_cap_reached: this server process already created ${maxJobs} jobs. ` +
-                  `The cap exists because MCP calls live outside Nodal's per-job loop ` +
-                  `guards. Restart the server to reset it — deliberately a human gesture.`,
-              },
-            ],
-          };
-        }
-        jobsCreated += 1;
-        seated = true;
-
         const { instruction, caller, agent: targetSlug } = runTaskInputSchema.parse(args);
 
         // La CIBLE se choisit, l'ENTITÉ jamais — c'est la ligne exacte que la
@@ -341,6 +327,29 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
                 'Enable it in the dashboard (Settings) before connecting clients.',
             );
           }
+          // Le plafond, sous le MÊME verrou (#498) : compter puis insérer dans
+          // la transaction qui tient la ligne workspace. Deux appels simultanés,
+          // du même processus ou de deux, passent l'un après l'autre et le
+          // second voit le job du premier — une salve ne dépasse pas le plafond
+          // (le constat de la passe 2 de la revue du 23/08 tient toujours).
+          const enVol = await tx
+            .select({ id: agentJobs.id, status: agentJobs.status })
+            .from(agentJobs)
+            .where(
+              and(
+                eq(agentJobs.entityId, entityId),
+                eq(agentJobs.channel, 'mcp'),
+                inArray(agentJobs.status, EN_COURS),
+              ),
+            );
+          if (enVol.length >= maxJobs) {
+            const liste = enVol.map((j) => `${j.id.slice(0, 8)} (${j.status})`).join(', ');
+            throw new Error(
+              `mcp_jobs_in_flight: ${enVol.length} MCP jobs of this workspace are still running, ` +
+                `and the cap is ${maxJobs}: ${liste}. A new job can start as soon as one of ` +
+                `them finishes; they are on the Runs page.`,
+            );
+          }
           const inserted = await tx
             .insert(agentJobs)
             .values({
@@ -420,9 +429,6 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
           ],
         };
       } catch (err) {
-        // Un appel qui n a pas abouti rend son siege — sinon des erreurs de
-        // validation epuiseraient le plafond sans creer un seul job.
-        if (seated) jobsCreated -= 1;
         return {
           isError: true,
           content: [

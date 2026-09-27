@@ -6,7 +6,7 @@
 // chat — UN outil, `run_task`, qui crée un vrai job. Chaque test ci-dessous
 // épingle un des constats pour qu'il ne revienne pas.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs, entities, eq } from '@nodal-agents/db';
@@ -35,6 +35,36 @@ beforeAll(async () => {
   // Les tests de l'interrupteur lui-meme le referment localement.
   await db.update(entities).set({ mcpServerEnabled: true }).where(eq(entities.id, seed.entityId));
 });
+
+// Un worker termine les jobs qu'un test crée ; ici personne ne les exécute.
+// Sans ce geste, les jobs MCP `pending` s'accumuleraient d'un test à l'autre
+// dans le workspace partagé, et le plafond de jobs EN COURS (#498) refuserait
+// les suivants : ce serait la base de test, pas le produit, qui mentirait.
+afterEach(async () => {
+  await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.channel, 'mcp'));
+});
+
+/** Un workspace neuf, serveur MCP ouvert, avec un agent : le plafond compte PAR workspace. */
+async function nouveauWorkspace(nom: string): Promise<{ entityId: string; agentId: string }> {
+  const [ent] = await db
+    .insert(entities)
+    .values({ userId: seed.userId, name: `WS ${nom}`, slug: `ws-${nom}`, mcpServerEnabled: true })
+    .returning();
+  const entityId = (ent as { id: string }).id;
+  const [ag] = await db
+    .insert(agents)
+    .values({
+      entityId,
+      name: `Agent ${nom}`,
+      slug: `agent-${nom}`,
+      personality: 'x',
+      model: 'test-model',
+      role: 'agent',
+      active: true,
+    })
+    .returning();
+  return { entityId, agentId: (ag as { id: string }).id };
+}
 
 /** Un client MCP réel branché en mémoire — vrai protocole, zéro processus. */
 async function connect(
@@ -107,20 +137,14 @@ describe('le contrat run_task', () => {
     await expect(connect((dormant as { id: string }).id)).rejects.toThrow(/mcp_agent_not_found/);
   });
 
-  it('plafonne le nombre de jobs par processus', async () => {
+  it('plafonne les jobs MCP EN COURS, et un job fini rend sa place (#498)', async () => {
     // Constat « contournement global des compteurs anti-boucle » : les gardes
     // de Nodal vivent DANS un job ; rien ne bornait le nombre de racines
-    // injectées. Le plafond par processus est cette borne — le réarmer est un
-    // redémarrage, donc un geste humain.
-    const server = await buildNodalMcpServer({
-      db,
-      agentId: seed.agentId,
-      maxJobsPerProcess: 2,
-    });
-    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-    const client = new Client({ name: 'test', version: '0.0.1' });
-    await Promise.all([server.connect(serverT), client.connect(clientT)]);
-
+    // injectées. #498 : le plafond comptait les jobs CRÉÉS sur la vie du
+    // processus, et une session dont tous les jobs étaient finis restait
+    // bloquée jusqu'à un redémarrage. Il compte maintenant ce qui tourne.
+    const ws = await nouveauWorkspace('en-cours');
+    const client = await connect(ws.agentId, { maxJobsInFlight: 2 });
     const call = () =>
       client.callTool({ name: 'run_task', arguments: { instruction: 'petite tache' } });
     const a = await call();
@@ -130,25 +154,71 @@ describe('le contrat run_task', () => {
     expect(a.isError ?? false).toBe(false);
     expect(b.isError ?? false).toBe(false);
     expect(c.isError, 'le troisième appel aurait dû être refusé').toBe(true);
-    expect((c.content as Array<{ text: string }>)[0]!.text).toMatch(/mcp_job_cap_reached/);
+    const refus = (c.content as Array<{ text: string }>)[0]!.text;
+    expect(refus).toMatch(
+      /^mcp_jobs_in_flight: 2 MCP jobs of this workspace are still running, and the cap is 2: /,
+    );
+    // Le refus nomme les jobs qui tiennent la place.
+    const idA = (JSON.parse((a.content as Array<{ text: string }>)[0]!.text) as { jobId: string })
+      .jobId;
+    expect(refus).toContain(`${idA.slice(0, 8)} (pending)`);
+
+    // Le job A se termine : sa place est rendue, sans redémarrer quoi que ce soit.
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, idA));
+    const d = await call();
+    expect(d.isError ?? false, 'un job fini doit rendre sa place').toBe(false);
+    await client.close();
+  });
+
+  it('le plafond vaut pour le WORKSPACE, pas pour un processus : un second serveur ne le contourne pas', async () => {
+    const ws = await nouveauWorkspace('deux-serveurs');
+    const premier = await connect(ws.agentId, { maxJobsInFlight: 2 });
+    const second = await connect(ws.agentId, { maxJobsInFlight: 2 });
+    const call = (c: Client) =>
+      c.callTool({ name: 'run_task', arguments: { instruction: 'petite tache' } });
+    expect((await call(premier)).isError ?? false).toBe(false);
+    expect((await call(premier)).isError ?? false).toBe(false);
+    const refus = await call(second);
+    expect(refus.isError, 'un second processus contournait le plafond').toBe(true);
+    expect((refus.content as Array<{ text: string }>)[0]!.text).toMatch(/^mcp_jobs_in_flight:/);
+    await premier.close();
+    await second.close();
+  });
+
+  it('les jobs d un AUTRE workspace et ceux des autres canaux ne comptent pas', async () => {
+    const ws = await nouveauWorkspace('autres-canaux');
+    // Un job de chat en cours dans ce workspace, et un job MCP en cours ailleurs.
+    await db.insert(agentJobs).values({
+      entityId: ws.entityId,
+      agentId: ws.agentId,
+      channel: 'api',
+      task: 'un job de chat',
+      status: 'processing',
+      messages: [],
+    });
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'mcp',
+      task: 'un job mcp ailleurs',
+      status: 'processing',
+      messages: [],
+    });
+    const client = await connect(ws.agentId, { maxJobsInFlight: 1 });
+    const r = await client.callTool({ name: 'run_task', arguments: { instruction: 'seul' } });
+    expect(r.isError ?? false).toBe(false);
     await client.close();
   });
 });
 
 describe('le plafond sous la concurrence', () => {
   it('tient quand dix appels partent EN MÊME TEMPS', async () => {
-    // Constat de la passe 2 : contrôle -> insert (await) -> incrément laissait
-    // dix appels concurrents observer la même valeur avant qu'aucun ne
-    // l'incrémente — dix jobs payants sous un plafond de deux. Le test
-    // séquentiel ne pouvait pas le voir ; celui-ci lance la salve d'un coup.
-    const server = await buildNodalMcpServer({
-      db,
-      agentId: seed.agentId,
-      maxJobsPerProcess: 2,
-    });
-    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-    const client = new Client({ name: 'test', version: '0.0.1' });
-    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+    // Constat de la passe 2 (revue du 23/08) : contrôle -> insert laissait dix
+    // appels concurrents observer la même valeur — dix jobs payants sous un
+    // plafond de deux. Le compte se fait maintenant sous le verrou de la ligne
+    // workspace, dans la transaction qui insère.
+    const ws = await nouveauWorkspace('salve');
+    const client = await connect(ws.agentId, { maxJobsInFlight: 2 });
 
     const salve = await Promise.all(
       Array.from({ length: 10 }, (_, i) =>
@@ -168,7 +238,7 @@ describe('le plafond refuse les valeurs qui ne plafonnent rien', () => {
     // Number(process.env.X) mal écrit lançait un serveur SANS plafond, sans un
     // mot. Une protection qui disparaît en silence est pire qu'absente.
     await expect(
-      buildNodalMcpServer({ db, agentId: seed.agentId, maxJobsPerProcess: cap }),
+      buildNodalMcpServer({ db, agentId: seed.agentId, maxJobsInFlight: cap }),
     ).rejects.toThrow(/mcp_invalid_job_cap/);
   });
 });
