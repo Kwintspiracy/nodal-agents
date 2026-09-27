@@ -26,7 +26,7 @@ export {
   estimateContextTokens,
   estimateToolTokens,
 } from './turn-clocks';
-export type { TurnClocks } from './turn-clocks';
+export type { TurnClocks, CallProgress } from './turn-clocks';
 
 // Client factory
 export { createLlmClient } from './client';

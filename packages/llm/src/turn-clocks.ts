@@ -209,6 +209,25 @@ export function computeTurnClocks(
 
 // ─── Consuming a stream under the clocks ───────────────────────────────────────
 
+/**
+ * What a streamed call has produced so far, by kind (#484).
+ *
+ * Job 82ecec67 produced 12,030 tokens in 21 minutes and nothing said what: no
+ * text, no finished tool call. Reasoning and tool arguments reset the clocks
+ * (a model writing is not dead), so the only way to see a call that produces
+ * without end is to say WHAT it produces, while it produces it.
+ */
+export interface CallProgress {
+  /** Visible text, in characters. */
+  textChars: number;
+  /** Reasoning, in characters. */
+  reasoningChars: number;
+  /** Tool arguments, in characters, every tool of the call counted. */
+  toolInputChars: number;
+  /** The tool whose arguments are being written last, or `null`. */
+  toolName: string | null;
+}
+
 type StreamResult = ReturnType<typeof streamText>;
 type GenerateResult = Awaited<ReturnType<typeof generateText>>;
 
@@ -264,6 +283,8 @@ export async function consumeUnderClocks(
   cancelSignal?: AbortSignal,
   /** Each piece of visible text as it arrives (the chat shows it live, #458). */
   onTextDelta?: (text: string) => void,
+  /** What the call has produced so far, after every piece of content (#484). */
+  onProgress?: (progress: CallProgress) => void,
 ): Promise<GenerateResult> {
   const controller = new AbortController();
   let expired: { reason: LlmTimeoutReason | 'cancelled'; limitMs: number } | null = null;
@@ -274,6 +295,12 @@ export async function consumeUnderClocks(
   let sawStructured = false;
   // Every character the model generated, visible or not: what the provider bills.
   let generatedChars = 0;
+  const progress: CallProgress = {
+    textChars: 0,
+    reasoningChars: 0,
+    toolInputChars: 0,
+    toolName: null,
+  };
 
   // Aborting the request is not enough on its own: the SDK only notices the
   // signal when a chunk moves, so a stream that stays mute would keep the loop
@@ -340,6 +367,11 @@ export async function consumeUnderClocks(
           generatedChars += part.text.length;
         }
         if (part.type === 'tool-input-delta') generatedChars += part.delta.length;
+        if (part.type === 'text-delta') progress.textChars += part.text.length;
+        if (part.type === 'reasoning-delta') progress.reasoningChars += part.text.length;
+        if (part.type === 'tool-input-start') progress.toolName = part.toolName;
+        if (part.type === 'tool-input-delta') progress.toolInputChars += part.delta.length;
+        onProgress?.({ ...progress });
         if (STRUCTURED_PARTS.has(part.type)) sawStructured = true;
         sawModel = true;
         armSilence();

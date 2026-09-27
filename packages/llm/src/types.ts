@@ -2,6 +2,7 @@
 
 import type { generateText, streamText, generateObject } from 'ai';
 import type { ReasoningEffort } from '@nodal-agents/shared';
+import type { CallProgress } from './turn-clocks';
 
 // ─── Provider names ────────────────────────────────────────────────────────────
 
@@ -113,6 +114,13 @@ export interface GenerateTextCallOptions {
    * retried nor failed over, so a piece is never said twice.
    */
   onTextDelta?: (text: string) => void;
+  /**
+   * What the streamed call has produced so far — text, reasoning, tool
+   * arguments and the tool being filled — after every piece of content
+   * (#484). A call that writes for twenty minutes without a word of text is
+   * otherwise invisible until it ends.
+   */
+  onProgress?: (progress: CallProgress) => void;
   /**
    * The wait for the first token set for the agent (#442,
    * `agents.idle_timeout_seconds`). EXPLICIT: it replaces the implicit clock,

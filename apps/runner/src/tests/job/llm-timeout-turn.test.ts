@@ -34,6 +34,7 @@ import {
   estimateContextTokens,
   estimateToolTokens,
 } from '@nodal-agents/llm';
+import type { CallProgress } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
@@ -89,7 +90,7 @@ type MockTurn =
     }
   | { failsWith: Error; timesOut?: false; timesOutViaFailover?: false }
   | {
-      stoppedWhileWriting: { jobId: string; partial: string };
+      stoppedWhileWriting: { jobId: string; partial: string; producing?: CallProgress };
       timesOut?: false;
       timesOutViaFailover?: false;
     }
@@ -248,7 +249,8 @@ function makeMockLlmClient(
         // Un tour qui écrit sans fin ; la personne appuie sur Stop une seconde
         // après son début. L'appel ne se termine QUE si le runner l'abandonne.
         callIndex++;
-        const { jobId: arrete, partial } = prevu.stoppedWhileWriting;
+        const { jobId: arrete, partial, producing } = prevu.stoppedWhileWriting;
+        if (producing) opts?.onProgress?.(producing);
         setTimeout(() => {
           // Une requête Drizzle ne part qu'à l'attente : sans then, rien n'est écrit.
           void db
@@ -985,6 +987,42 @@ describe('Stop arrête le travail PENDANT l’appel au modèle @cap:organiser-eq
       .where(eq(agentJobs.id, jobId));
     expect(compte!.outputTokens).toBe(5 + 1_000);
     expect(compte!.inputTokens ?? 0).toBeGreaterThan(10 + 100);
+  }, 20_000);
+
+  // #484 — job 82ecec67 : Stop après vingt et une minutes, et la trace disait
+  // `partialChars: 0`, rien d'autre. Elle dit maintenant ce que l'appel
+  // produisait : ici les arguments d'un `file_write`.
+  it('la trace du Stop dit ce que l’appel produisait : l’outil et ses arguments (#484)', async () => {
+    const jobId = await insertJob();
+    const producing: CallProgress = {
+      textChars: 0,
+      reasoningChars: 1_200,
+      toolInputChars: 48_000,
+      toolName: 'file_write',
+    };
+    const lignes: string[] = [];
+    const espion = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      lignes.push(a.map(String).join(' '));
+    });
+    try {
+      await executeJob(
+        jobId as JobId,
+        makeDeps(
+          makeMockLlmClient([
+            PREMIER_TOUR,
+            { stoppedWhileWriting: { jobId, partial: '', producing } },
+          ]),
+        ),
+        testEnv,
+      );
+    } finally {
+      espion.mockRestore();
+    }
+
+    const arret = lignes.find((l) => l.includes(jobId) && l.includes('cancellation_observed'));
+    expect(arret).toBeDefined();
+    const faits = JSON.parse(arret!.slice(arret!.indexOf('{'))) as { produced: unknown };
+    expect(faits.produced).toEqual(producing);
   }, 20_000);
 
   it('un Stop suivi d’un débordement de budget rend « annulé », pas « échoué »', async () => {
