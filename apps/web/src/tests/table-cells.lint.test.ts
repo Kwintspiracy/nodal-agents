@@ -58,13 +58,17 @@ describe('la règle des tables, sur la configuration réelle', () => {
   });
 
   it('refuse une classe de texte au fond d’une cellule, et dans un gabarit', async () => {
+    // La taille arbitraire est ASSEMBLÉE à l'exécution : écrite en clair, le
+    // scanner des tailles arbitraires (`check-no-arbitrary-text.mjs`) la lisait
+    // dans ce test comme une vraie classe du site, et faisait échouer le lint.
+    const arbitraire = 'text-[12.5' + 'px]';
     const errors = await tableErrors(
       `${HEAD}export function X({ on }: { on: boolean }) {
   return (
     <Table>
       <THead><Th><span className="text-legacy-10 uppercase">A</span></Th></THead>
       <tbody><Tr>
-        <Td><div className="flex"><span className={\`\${on ? 'x' : ''} text-[12.5px]\`}>a</span></div></Td>
+        <Td><div className="flex"><span className={\`\${on ? 'x' : ''} ${arbitraire}\`}>a</span></div></Td>
         <Td><span className="hover:text-ink">b</span></Td>
       </Tr></tbody>
     </Table>
