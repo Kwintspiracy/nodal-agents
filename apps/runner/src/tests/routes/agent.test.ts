@@ -2,7 +2,7 @@
 // Asserts on the real DB row, not just call counts (invariant 5).
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Mock } from 'vitest';
@@ -236,6 +236,30 @@ describe('POST /api/agent', () => {
     const parentJobId = await parentWithFolder(folder);
     expect((await post({ task: 'enfant', parentJobId, jobFolder: folder })).status).toBe(202);
   });
+
+  // Revue Codex de #507, passe 4 : l'égalité était LEXICALE. Le même dossier,
+  // atteint par une jonction ou écrit avec une autre casse sous Windows, était
+  // refusé à tort. C'est l'identité réelle qui compte (realpath, puis la clé
+  // de chemin de la plateforme).
+  it('the same folder reached through a junction/symlink is the parent’s folder (#507)', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'job-folder-real-'));
+    const lien = join(mkdtempSync(join(tmpdir(), 'job-folder-link-')), 'vers-parent');
+    symlinkSync(folder, lien, 'junction');
+    const parentJobId = await parentWithFolder(folder);
+
+    expect((await post({ task: 'enfant', parentJobId, jobFolder: lien })).status).toBe(202);
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'the same folder in another case is the parent’s folder on Windows (#507)',
+    async () => {
+      const folder = mkdtempSync(join(tmpdir(), 'job-folder-case-'));
+      const parentJobId = await parentWithFolder(folder);
+      const autreCasse = folder.replace(/job-folder-case-/, 'JOB-FOLDER-CASE-');
+
+      expect((await post({ task: 'enfant', parentJobId, jobFolder: autreCasse })).status).toBe(202);
+    },
+  );
 
   it('returns 400 on missing task', async () => {
     const res = await app.fetch(

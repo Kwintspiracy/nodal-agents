@@ -1212,9 +1212,9 @@ export async function executeJob(
  * `processing` pour toujours, son parent et son tableau de tâches avec lui.
  *
  * Le code est celui que l'erreur porte en tête (`code: …`, la convention des
- * erreurs du runner), sinon `job_crashed`. La ligne lue par la personne est
- * une ligne de plateforme faite de ce code (invariant #2) ; l'erreur entière
- * va au journal. `failJob` est conditionnelle : un job déjà terminé n'est pas
+ * erreurs du runner), sinon `job_crashed`. Il voyage dans `error`, et rien
+ * d'autre : aucun texte du runner (invariant #2). L'erreur entière va au
+ * journal. `failJob` est conditionnelle : un job déjà terminé n'est pas
  * réécrit.
  */
 async function failOnUncaughtError(
@@ -1225,9 +1225,11 @@ async function failOnUncaughtError(
   const message = err instanceof Error ? err.message : String(err);
   const code = /^([a-z][a-z0-9_]*):/.exec(message)?.[1] ?? 'job_crashed';
   console.error(`[exec ${jobId}] uncaught_error`, JSON.stringify({ code, message }));
-  const ligne = `[stopped: ${code}]`;
-  if (await failJob(deps.db, jobId as string, code, undefined, undefined, ligne)) {
-    return { status: 'failed', error: code, result: ligne };
+  // Le code dans `error`, et AUCUN texte du runner dans le résultat propagé
+  // (invariant #2, revue Codex passe 4) : le parent reçoit l'échec typé par le
+  // chemin de délégation, qui sait déjà le dire au modèle.
+  if (await failJob(deps.db, jobId as string, code)) {
+    return { status: 'failed', error: code };
   }
   // L'écriture gardée n'a rien fait : le job a été annulé ou fini entre
   // l'exception et ici. Ce qui est propagé est TOUJOURS ce que la ligne dit

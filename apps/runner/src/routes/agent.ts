@@ -5,7 +5,9 @@
 
 import type { Context } from 'hono';
 import { z } from 'zod';
+import { realpathSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
+import { projectKey } from '@nodal-agents/shared';
 import { isExistingDirectory } from '@nodal-agents/tools';
 import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
@@ -32,6 +34,24 @@ export const AgentRequestSchema = z.object({
 });
 
 export type AgentRequest = z.infer<typeof AgentRequestSchema>;
+
+/**
+ * Deux chemins désignent-ils le MÊME dossier ? L'identité réelle (revue Codex
+ * de #507, passe 4) : le chemin résolu sur le disque (une jonction ou un lien
+ * mène à sa cible), puis la clé de chemin de la plateforme (`projectKey` :
+ * insensible à la casse et au séparateur sous Windows, telle quelle ailleurs).
+ * Un chemin qui n'existe plus garde sa forme résolue lexicalement.
+ */
+function memeDossier(a: string, b: string): boolean {
+  const reel = (p: string): string => {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  return projectKey(reel(a)) === projectKey(reel(b));
+}
 
 // ─── agentRoute ───────────────────────────────────────────────────────────────
 
@@ -179,10 +199,7 @@ export async function agentRoute(
     }
     conversationId = parentJob.conversationId;
     const dossierDuParent = parentJob.jobFolder ?? null;
-    if (
-      jobFolder &&
-      (dossierDuParent === null || resolve(jobFolder) !== resolve(dossierDuParent))
-    ) {
+    if (jobFolder && (dossierDuParent === null || !memeDossier(jobFolder, dossierDuParent))) {
       return c.json(
         {
           error: 'job_folder_differs_from_parent',

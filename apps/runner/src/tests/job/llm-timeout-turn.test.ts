@@ -1116,7 +1116,8 @@ describe('une erreur de préparation échoue le job et reprend le parent (#507) 
       undefined,
     ).finally(() => err.mockRestore());
 
-    expect(outcome).toMatchObject({ status: 'failed', error: 'job_folder_missing' });
+    // Le code, et RIEN d'écrit par le runner (invariant #2, revue Codex passe 4).
+    expect(outcome).toEqual({ status: 'failed', error: 'job_folder_missing' });
     const enfant = await jobRow(childId);
     expect(enfant.status).toBe('failed');
     expect(enfant.error).toBe('job_folder_missing');
@@ -1125,6 +1126,15 @@ describe('une erreur de préparation échoue le job et reprend le parent (#507) 
       .from(agentJobs)
       .where(eq(agentJobs.id, parentId));
     expect(parent!.status).toBe('pending');
-    expect(JSON.stringify(parent!.messages)).toContain('job_folder_missing');
+    // La STRUCTURE que le parent reçoit : l'échec typé de la délégation, avec
+    // le code dans `error` et aucun résumé fabriqué par le runner.
+    const dernier = (parent!.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
+    expect(dernier.role).toBe('tool');
+    const sortie = (dernier.content[0] as { output: { type: string; value: string } }).output;
+    expect(sortie.type).toBe('error-text');
+    const record = JSON.parse(
+      sortie.value.slice(sortie.value.indexOf('{'), sortie.value.lastIndexOf('}') + 1),
+    ) as Record<string, unknown>;
+    expect(record).toMatchObject({ status: 'failed', error: 'job_folder_missing', summary: '' });
   });
 });
