@@ -1002,6 +1002,38 @@ describe('Stop arrête le travail PENDANT l’appel au modèle @cap:organiser-eq
     expect(compte!.inputTokens ?? 0).toBeGreaterThan(10 + 100);
   }, 20_000);
 
+  // #444 — Stop GARDE le partiel : il était dans le transcript, et le résultat
+  // du run restait vide. La page d'un run montre `result` ; le partiel en est
+  // maintenant le texte, et le statut `cancelled` dit que la personne a arrêté.
+  // L'appel est fini : sa progression en direct est remise à NULL.
+  it('Stop pendant l’écriture : le partiel devient le RÉSULTAT, et la progression en direct est effacée (#444) @cap:suivre-execution/moteur', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        PREMIER_TOUR,
+        {
+          stoppedWhileWriting: {
+            jobId,
+            partial: 'Le début de la note',
+            producing: { textChars: 19, reasoningChars: 0, toolInputChars: 0, toolName: null },
+          },
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('cancelled');
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('cancelled');
+    expect(row.result).toBe('Le début de la note');
+    const [direct] = await db
+      .select({ liveProgress: agentJobs.liveProgress })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(direct!.liveProgress).toBeNull();
+  }, 20_000);
+
   // #484 — job 82ecec67 : Stop après vingt et une minutes, et la trace disait
   // `partialChars: 0`, rien d'autre. Elle dit maintenant ce que l'appel
   // produisait : ici les arguments d'un `file_write`.

@@ -55,3 +55,70 @@ export function watchCallProgress(
     stop: () => clearInterval(timer),
   };
 }
+
+/** La période à laquelle la page d'un run voit l'appel en cours avancer (#444). */
+export const LIVE_PROGRESS_PERIOD_MS = 5_000;
+
+/** Ce que la page d'un run lit de l'appel en cours (`agent_jobs.live_progress`). */
+export type LiveProgress = CallProgress & {
+  turn: number;
+  callStartedAt: string;
+  lastProgressAt: string | null;
+};
+
+/** Le suivi en direct d'UN appel, pour la page du run. */
+export interface LiveCallProgress {
+  /** À brancher sur `onProgress`, à côté de `watchCallProgress`. */
+  onProgress: (progress: CallProgress) => void;
+  /** Arrête les écritures et remet la colonne à NULL ; dans le `finally` de l'appel. */
+  stop: () => Promise<void>;
+}
+
+/**
+ * LA MÊME MESURE que `watchCallProgress` (le flux de l'appel, #484), rendue
+ * lisible par la page d'un run (#444) : `write` pose la valeur sur la ligne du
+ * job. Dès le début de l'appel (l'appel est là, rien n'est venu), puis au plus
+ * une fois par période quand le flux a rapporté du neuf — jamais une écriture
+ * par morceau — et NULL à la fin : ce qui fait foi ensuite, c'est le
+ * transcript et `llm_calls`.
+ */
+export function liveCallProgress(
+  write: (value: LiveProgress | null) => Promise<void>,
+  opts: { turn: number; periodMs?: number },
+): LiveCallProgress {
+  const callStartedAt = new Date().toISOString();
+  let last: CallProgress = RIEN_ENCORE;
+  let lastProgressAt: string | null = null;
+  let dirty = false;
+  let stopped = false;
+  const snapshot = (): LiveProgress => ({
+    turn: opts.turn,
+    ...last,
+    callStartedAt,
+    lastProgressAt,
+  });
+  // Une écriture qui échoue ne casse pas l'appel : la page perd un battement,
+  // le travail continue, et la panne se dit dans le journal.
+  const safeWrite = (value: LiveProgress | null): Promise<void> =>
+    write(value).catch((err: unknown) => {
+      console.warn('[call-progress] live_progress write failed', (err as Error).message);
+    });
+  void safeWrite(snapshot());
+  const timer = setInterval(() => {
+    if (!dirty || stopped) return;
+    dirty = false;
+    void safeWrite(snapshot());
+  }, opts.periodMs ?? LIVE_PROGRESS_PERIOD_MS);
+  return {
+    onProgress: (progress) => {
+      last = progress;
+      lastProgressAt = new Date().toISOString();
+      dirty = true;
+    },
+    stop: async () => {
+      stopped = true;
+      clearInterval(timer);
+      await safeWrite(null);
+    },
+  };
+}

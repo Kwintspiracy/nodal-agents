@@ -62,7 +62,7 @@ import {
   estimateToolTokens,
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
-import { watchCallProgress } from './call-progress.ts';
+import { liveCallProgress, watchCallProgress } from './call-progress.ts';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
 import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
@@ -3944,6 +3944,16 @@ async function runJobTracked(
       const productionDeLAppel = watchCallProgress((faits) =>
         trace('llm_call_progress', { turn, ...faits }),
       );
+      // #444 — la MÊME mesure, lisible par la page du run tant que l'appel tourne.
+      const progresEnDirect = liveCallProgress(
+        (valeur) =>
+          db
+            .update(agentJobs)
+            .set({ liveProgress: valeur })
+            .where(eq(agentJobs.id, jobId as string))
+            .then(() => undefined),
+        { turn },
+      );
       const hbInterval = setInterval(() => {
         void touchJob(db, jobId as string).catch(() => {});
       }, 60_000);
@@ -4024,7 +4034,10 @@ async function runJobTracked(
           {
             streamed: true,
             abortSignal: arret.signal,
-            onProgress: productionDeLAppel.onProgress,
+            onProgress: (progres) => {
+              productionDeLAppel.onProgress(progres);
+              progresEnDirect.onProgress(progres);
+            },
             // #442 : l'attente du premier jeton posée pour l'agent, et ce
             // qu'il reste du budget de temps du run.
             ...(agentFirstTokenMs !== undefined ? { firstTokenTimeoutMs: agentFirstTokenMs } : {}),
@@ -4064,7 +4077,7 @@ async function runJobTracked(
             partialChars: ecrit.length,
             produced: productionDeLAppel.produced(),
           });
-          await cancelJob(db, jobId as string, runStats(), messages);
+          await cancelJob(db, jobId as string, runStats(), messages, ecrit);
           return { status: 'cancelled' };
         }
         const expiration = timeoutOfTurn(genErr);
@@ -4086,7 +4099,7 @@ async function runJobTracked(
               messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
             }
             trace('cancellation_observed', { turn, during: 'llm_timeout' });
-            await cancelJob(db, jobId as string, runStats(), messages);
+            await cancelJob(db, jobId as string, runStats(), messages, ecrit);
             return { status: 'cancelled' };
           }
           // Un appel coupé EN ÉCRIVANT a été servi : le fournisseur a lu tout le
@@ -4222,6 +4235,7 @@ async function runJobTracked(
       } finally {
         clearInterval(hbInterval);
         productionDeLAppel.stop();
+        await progresEnDirect.stop();
         clearInterval(surveilleArret);
       }
       // Le tour a répondu : son budget d'expiration repart à zéro, et le temps

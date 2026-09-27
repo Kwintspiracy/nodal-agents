@@ -932,6 +932,13 @@
       "when": 1786002500000,
       "tag": "0133_job_restart_resume",
       "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "7",
+      "when": 1786002400000,
+      "tag": "0133_job_live_progress",
+      "breakpoints": true
     }
   ]
 }

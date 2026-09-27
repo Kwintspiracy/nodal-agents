@@ -168,7 +168,7 @@ import { selectVerificationRuns } from './verification-runs-query.ts';
 import { lastReviewVerdict } from './review-state.ts';
 import { readJobRoots } from './job-lineage.ts';
 import { chatFailureText } from './chat-failure.ts';
-import type { JobTriggerContext, AnyDrizzleDb } from '@nodal-agents/db';
+import type { JobTriggerContext, AnyDrizzleDb, JobLiveProgress } from '@nodal-agents/db';
 import {
   DeliveryError,
   getTelegramBotInfo,
@@ -2461,6 +2461,12 @@ export type SpaceConversationView = {
      * l'agent au propriétaire, pas une sortie d'outil.
      */
     result: string | null;
+    /**
+     * #444 — l'appel au modèle EN COURS, tel que le runner le pose pendant
+     * l'appel (`agent_jobs.live_progress`, le flux de #484), NULL entre deux
+     * appels et après. La bande du run ne le montre que pendant `processing`.
+     */
+    liveProgress: JobLiveProgress | null;
   };
   feed: ConversationFeed;
   /** P3 — ce que la preuve a fait pour ce travail et ses délégués (même lecture que le détail Code). */
@@ -2826,6 +2832,7 @@ export async function getSpaceConversationAction(
       job: {
         id: job.id,
         task: displayTask,
+        liveProgress: job.liveProgress ?? null,
         channel: job.channel,
         status: job.status,
         agentName: row.agentName,
