@@ -4,7 +4,8 @@
 // `node -e` for cross-platform portability (node is always present in the test env).
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, readFile } from 'node:fs/promises';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommandTool } from '../builtin/run-command';
@@ -110,38 +111,73 @@ describe('run_command builtin @cap:executer-une-commande/moteur', () => {
   });
 
   it('times out and kills a long-running command (with its children)', async () => {
-    // Le processus écrit son pid AVANT de dormir : c'est lui, le petit-enfant
-    // de cmd.exe / sh, qu'on veut voir mort. Le test précédent n'assertait que
-    // `timedOut` et passait avec le tree-kill cassé (sonde du 03/09 : le
-    // petit-enfant survivait 3 fois sur 3).
+    // Le petit-enfant de cmd.exe / sh est celui qu'on veut voir mort. Le test
+    // d'origine n'assertait que `timedOut` et passait avec le tree-kill cassé
+    // (sonde du 03/09 : le petit-enfant survivait 3 fois sur 3).
+    //
+    // LA PREUVE DE MORT EST DONNÉE PAR L'OS, jamais par un pid ni par une
+    // absence d'activité (rouge sous la charge de la suite complète, 27/09).
+    //   - `process.kill(pid, 0)` répond « vivant » dès que Windows a RÉUTILISÉ
+    //     le pid pour un autre processus : la suite en lance des centaines ;
+    //   - « le fichier ne grandit plus » passe aussi pour un processus SUSPENDU
+    //     ou affamé de processeur sous charge, alors vivant (revue Codex, P1).
+    // Le petit-enfant ouvre donc un serveur TCP sur un port éphémère et écrit
+    // ce port. Tant que le processus vit, même suspendu, le noyau accepte la
+    // connexion ; le port n'est libéré qu'à sa mort, et la connexion est alors
+    // REFUSÉE. C'est ce refus qu'on attend.
+    const portFile = join(workspaceDir, 'kill-port.txt');
     const out = await runCommandTool.execute(
       {
         purpose: 'run test command',
-        command: `node -e "process.stdout.write(String(process.pid)); setTimeout(()=>{}, 60000)"`,
-        timeout_seconds: 1,
+        // Il s'arrête seul au bout de 90 s, au-delà de la limite du test : un
+        // tree-kill cassé fait rougir le test sans laisser de processus orphelin.
+        command: `node -e "const s=require('net').createServer().listen(0,'127.0.0.1',()=>require('fs').writeFileSync('kill-port.txt',String(s.address().port)));setTimeout(()=>process.exit(0),90000)"`,
+        // Un délai LARGE, pour que l'écoute ait lieu avant lui même sous forte
+        // charge (revue Codex, passe 2) : un `node` pas encore prêt au moment
+        // du kill faisait rougir le test alors que le tree-kill marchait. Le
+        // petit-enfant sort seul à 90 s, au-delà de ce délai et de l'attente
+        // du refus ci-dessous (20 + 20 s).
+        timeout_seconds: 20,
       },
       ctx(),
     );
     expect(out.timedOut).toBe(true);
     expect(out.exitCode).not.toBe(0); // killed → no clean exit
-    const pid = Number(out.stdout.trim());
-    expect(Number.isInteger(pid) && pid > 0).toBe(true);
-    await new Promise((r) => setTimeout(r, 1500));
-    let alive = true;
-    try {
-      process.kill(pid, 0);
-    } catch {
-      alive = false;
+
+    // Il a bien écouté avant le délai : sans ce port, « refusé » ne prouverait
+    // rien. Son absence se DIT, plutôt qu'un ENOENT brut qui ferait croire à
+    // une panne du tree-kill.
+    const portText = await readFile(portFile, 'utf8').catch(() => null);
+    if (portText === null) {
+      throw new Error('the grandchild never started listening within 20 s (no kill-port.txt)');
     }
-    if (alive) {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        /* déjà mort */
-      }
+    const port = Number(portText);
+    expect(Number.isInteger(port) && port > 0).toBe(true);
+
+    /** `true` : la connexion est refusée, donc plus personne n'écoute. */
+    const refusee = (): Promise<boolean> =>
+      new Promise((resolve) => {
+        const socket = connect({ host: '127.0.0.1', port });
+        socket.once('connect', () => {
+          socket.destroy();
+          resolve(false);
+        });
+        socket.once('error', (err: NodeJS.ErrnoException) => {
+          socket.destroy();
+          resolve(err.code === 'ECONNREFUSED');
+        });
+      });
+
+    // Jusqu'à 20 s : le temps que taskkill / SIGKILL aboutisse sous charge. Un
+    // tree-kill cassé laisse le petit-enfant écouter jusqu'à la limite.
+    const limite = Date.now() + 20_000;
+    let mort = await refusee();
+    while (!mort && Date.now() < limite) {
+      await new Promise((r) => setTimeout(r, 200));
+      mort = await refusee();
     }
-    expect(alive).toBe(false);
-  });
+    expect(mort).toBe(true);
+  }, 90_000);
 
   it('caps very large output (truncated=true, ≤ cap)', async () => {
     const out = await runCommandTool.execute(
