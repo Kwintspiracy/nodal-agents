@@ -26,16 +26,18 @@ import {
   GENERATED_SUBDIRS,
   EXCLUDED_PAGES,
   DOCS_URL_BASE,
+  releaseSectionsOf,
 } from '../../scripts/docs-index';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = join(here, '..', '..');
 const contentDir = join(appRoot, 'content', 'docs');
 const committedIndex = join(appRoot, '..', '..', 'packages', 'tools', 'docs-index.json');
+const changelogSource = readFileSync(join(appRoot, '..', '..', 'CHANGELOG.md'), 'utf8');
 
 describe('the documentation index @cap:consulter-l-aide/moteur', () => {
   it('is exactly what the current pages produce — the committed file, byte for byte', () => {
-    const regenerated = serializeDocsIndex(buildDocsIndex(contentDir));
+    const regenerated = serializeDocsIndex(buildDocsIndex(contentDir, changelogSource));
     const committed = readFileSync(committedIndex, 'utf8');
     // Named up front so the failure message says what to do, not just "strings
     // differ over 270 kB".
@@ -71,6 +73,24 @@ describe('the documentation index @cap:consulter-l-aide/moteur', () => {
     expect(pages).toContain('guides/telegram.mdx');
     expect(pages).toContain('guides/automations.mdx');
     expect(pages).toContain('reference/dashboard.mdx');
+  });
+
+  // #452 — the release notes come from the root CHANGELOG.md (the docs page
+  // is generated from it and gitignored), one section per release, flagged so
+  // the search can keep them out of how-to questions.
+  it('carries one release section per `## v` heading of CHANGELOG.md', () => {
+    const sections = releaseSectionsOf(changelogSource);
+    const releases = changelogSource.match(/^## v/gm) ?? [];
+    expect(sections).toHaveLength(releases.length);
+    const v092 = sections.find((s) => s.heading.startsWith('v0.9.2'));
+    expect(v092?.release).toBe(true);
+    expect(v092?.page).toBe('changelog');
+    expect(v092?.url).toBe(`${DOCS_URL_BASE}/changelog#${anchorOf(v092!.heading)}`);
+    expect(v092?.text.length).toBeGreaterThan(200);
+    // A page section is never flagged as a release.
+    const index = buildDocsIndex(contentDir, changelogSource);
+    expect(index.sections.filter((s) => s.release === true)).toHaveLength(releases.length);
+    expect(index.sections.filter((s) => s.page === 'changelog' && !s.release)).toHaveLength(0);
   });
 
   it('splits the Telegram guide into sections that carry the steps and a working URL', () => {
@@ -320,7 +340,7 @@ describe('the documentation index @cap:consulter-l-aide/moteur', () => {
     // self-closing slash only ever comes from a tag. A lowercase angle
     // placeholder (`<agent-slug>`, `<package>`, `<sha>`) is the opposite case
     // entirely: it is code the reader needs, and eating it is the bug C1 was.
-    const index = buildDocsIndex(contentDir);
+    const index = buildDocsIndex(contentDir, changelogSource);
     const offenders = index.sections.filter((s) =>
       /<[A-Z][A-Za-z]*[\s/>]|href=|className=|\/>/.test(s.text),
     );

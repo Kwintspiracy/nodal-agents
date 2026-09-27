@@ -68,7 +68,8 @@ export const nodalDocsTool: ToolDefinition<typeof NodalDocsInputSchema, NodalDoc
     'Returns the best two or three passages, each with the page it comes from and its URL. ' +
     'Use it BEFORE telling anyone that something is unsupported, impossible, or needs to be ' +
     'built: channels (Telegram, Discord, Slack, WhatsApp), automations, projects, approvals, ' +
-    'memory, connectors and every dashboard screen are documented here. Use it to answer ' +
+    'memory, connectors and every dashboard screen are documented here, and so is what ' +
+    'changed in each version (the release notes). Use it to answer ' +
     '"how do I ..." with the exact place in the dashboard rather than a general description. ' +
     'Offline and instant: it reads an index shipped with the product, no network, no model.',
   inputSchema: NodalDocsInputSchema,

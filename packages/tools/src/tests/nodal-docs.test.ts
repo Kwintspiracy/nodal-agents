@@ -240,6 +240,142 @@ describe('nodal_docs @cap:consulter-l-aide/moteur', () => {
   });
 });
 
+// #452 — run fb60655b : « le changelog de la 0.9.2 », 7 tours, 290 154 jetons,
+// 5 min 17 s, parce que le changelog était exclu de l'index et que l'agent a
+// dû aller le chercher sur GitHub. Il revient, une section par version,
+// éligible SEULEMENT quand la question parle de versions.
+describe('nodal_docs answers "what changed in version X" @cap:consulter-l-aide/moteur', () => {
+  it('answers "what changed in 0.9.2" with the v0.9.2 release section first', async () => {
+    const hits = await ask('what changed in 0.9.2');
+    expect(hits[0]?.title).toMatch(/^v0\.9\.2\b/);
+    expect(hits[0]?.url).toMatch(/^\/nodal-agents\/docs\/changelog#v092/);
+  });
+
+  it('answers "changelog" and "nouveautés de la 0.9.1" from the release notes', async () => {
+    expect((await ask('changelog'))[0]?.url).toMatch(/^\/nodal-agents\/docs\/changelog#/);
+    expect((await ask('nouveautés de la 0.9.1'))[0]?.title).toMatch(/^v0\.9\.1\b/);
+  });
+
+  // Word matching alone puts the wrong release first for these (measured with
+  // the version rule disabled: v0.9.0, v0.8.0, v0.9.1): digits split into
+  // single-character terms every release heading shares.
+  for (const [question, version] of [
+    ['changelog 0.8.9', '0.8.9'],
+    ['release notes 0.8.11', '0.8.11'],
+    ['version 0.9.0', '0.9.0'],
+  ] as const) {
+    it(`answers "${question}" with the v${version} section, whatever the words`, async () => {
+      expect((await ask(question))[0]?.title.startsWith(`v${version} `)).toBe(true);
+    });
+  }
+
+  // Revue Codex de #452, passe 2 : un numéro rattaché à un AUTRE produit n'est
+  // pas une version de Nodal, même précédé d'un « v » ou du mot « version ».
+  for (const question of [
+    'Does Node v22.0 support this connector?',
+    'Which OAuth version 2.0 does the Gmail connector use?',
+    // Shaped like a Nodal version, but another product's number: the word
+    // before it decides, not the shape (without this case the shape alone
+    // would make the product check look proven).
+    'Does the shell step work with ffmpeg 0.9.2?',
+    'Is Node v0.9.1 enough to run a script?',
+  ]) {
+    it(`does not read "${question}" as a question about Nodal releases`, async () => {
+      const hits = await ask(question);
+      expect(hits.some((h) => h.url.startsWith('/nodal-agents/docs/changelog'))).toBe(false);
+      expect(hits.some((h) => h.title.startsWith('No release notes'))).toBe(false);
+    });
+  }
+
+  // Revue Codex de #452, passe 3 : un MOT de version ou un « v » collé au
+  // numéro suffit, quel que soit le format du numéro — sauf produit nommé juste
+  // avant. Le format ne décide que sans mot ni « v ». Deux parties = une version.
+  it('a version word or a "v" makes it a Nodal release question, whatever the number', async () => {
+    expect((await ask('what changed in version 1.0.0?'))[0]?.title).toBe(
+      'No release notes for 1.0.0',
+    );
+    expect((await ask('v1.0.0'))[0]?.title).toBe('No release notes for 1.0.0');
+  });
+
+  // Revue Codex de #452, passe 4 (P2) : seule la PREMIÈRE version était lue,
+  // et la limite de trois résultats pouvait faire disparaître la seconde série.
+  it('reads EVERY version a question names, and shares the limit between the series', async () => {
+    const hits = await ask('what changed between versions 0.8 and 0.9?');
+    expect(hits.length).toBeLessThanOrEqual(NODAL_DOCS_MAX_SECTIONS);
+    expect(hits.some((h) => /^v0\.8\.\d+ /.test(h.title))).toBe(true);
+    expect(hits.some((h) => /^v0\.9\.\d+ /.test(h.title))).toBe(true);
+    // Lists of versions link their numbers ("0.8 vs 0.9.1", "0.8.11, 0.9.0").
+    const list = await ask('changelog 0.8 vs 0.9.1');
+    expect(list.some((h) => h.title.startsWith('v0.9.1 '))).toBe(true);
+    expect(list.some((h) => /^v0\.8\.\d+ /.test(h.title))).toBe(true);
+    const three = await ask('release notes of 0.8.11, 0.9.0 and 0.6');
+    for (const v of [/^v0\.8\.11 /, /^v0\.9\.0 /, /^v0\.6\.\d+ /]) {
+      expect(three.some((h) => v.test(h.title))).toBe(true);
+    }
+    // Where scores alone fill the three results with ONE series, the shared
+    // limit keeps the other (measured with the sharing disabled: three 0.9.x).
+    const shared = await ask('changelog 0.8 vs 0.9');
+    expect(shared.some((h) => /^v0\.8\.\d+ /.test(h.title))).toBe(true);
+    expect(shared.some((h) => /^v0\.9\.\d+ /.test(h.title))).toBe(true);
+    // One series present, one absent: the section AND the notice.
+    const mixed = await ask('what changed between version 0.9.2 and 0.9.99?');
+    expect(mixed.some((h) => h.title.startsWith('v0.9.2 '))).toBe(true);
+    expect(mixed.some((h) => h.title === 'No release notes for 0.9.99')).toBe(true);
+  });
+
+  it('a two-part version covers its releases: "version 0.9?" serves a v0.9.x section', async () => {
+    const hits = await ask('version 0.9?');
+    expect(hits[0]?.title).toMatch(/^v0\.9\.\d+ /);
+    expect(hits.some((h) => h.title.startsWith('No release notes'))).toBe(false);
+  });
+
+  it('says a version named WITH the product has no notes ("nodal 0.9.99")', async () => {
+    const hits = await ask('nodal 0.9.99');
+    expect(hits[0]?.title).toBe('No release notes for 0.9.99');
+    // A number outside the shape of published versions still counts when the
+    // question names the product.
+    expect((await ask('is there a nodal 1.0.0'))[0]?.title).toBe('No release notes for 1.0.0');
+  });
+
+  // Revue Codex de #452, P1 : une version nommée et absente de l'index était
+  // servie par ses voisines (« 0.9.99 » → v0.9.0, v0.9.1, v0.9.2). Elle le DIT.
+  it('says a named version has no release notes, and names the latest, instead of serving its neighbours', async () => {
+    const hits = await ask('what changed in 0.9.99');
+    expect(hits[0]?.title).toBe('No release notes for 0.9.99');
+    expect(hits[0]?.text).toMatch(/latest documented release is v\d+\.\d+\.\d+/);
+    expect(hits.slice(1).some((h) => h.url.startsWith('/nodal-agents/docs/changelog'))).toBe(false);
+  });
+
+  // Revue Codex de #452, P1 : un nombre décimal nu n'est pas une question de
+  // version. L'intention vient des MOTS, ou d'un « v » devant le numéro.
+  for (const question of ['GPT-5.2', 'OAuth 2.0', 'temperature 0.7']) {
+    it(`does not read "${question}" as a question about releases`, async () => {
+      const hits = await ask(question);
+      expect(hits.some((h) => h.url.startsWith('/nodal-agents/docs/changelog'))).toBe(false);
+    });
+  }
+
+  it('reads a "v" before the number as a question about that release', async () => {
+    expect((await ask('v0.9.1'))[0]?.title.startsWith('v0.9.1 ')).toBe(true);
+  });
+
+  it('keeps release notes out of a how-to question: its ranking is the one without them', () => {
+    // The ticket's own example; the property proven is the general one — for a
+    // question that does not ask about releases, the release sections change
+    // nothing, so the how-to ranking stays whatever the pages make it.
+    const index = loadDocsIndex();
+    expect(index.sections.some((s) => s.release === true)).toBe(true);
+    const withoutReleases = { ...index, sections: index.sections.filter((s) => !s.release) };
+    for (const question of ['schedule a task every morning', 'configure Telegram', 'cron']) {
+      const hits = searchDocs(index, question, NODAL_DOCS_MAX_SECTIONS);
+      expect(hits.some((h) => h.url.startsWith('/nodal-agents/docs/changelog'))).toBe(false);
+      expect(hits.map((h) => h.url)).toEqual(
+        searchDocs(withoutReleases, question, NODAL_DOCS_MAX_SECTIONS).map((h) => h.url),
+      );
+    }
+  });
+});
+
 describe('the words a person actually types @cap:consulter-l-aide/moteur', () => {
   // Issue #332, remainder of #316. `nodal_docs` scores on the words of the
   // pages, so a page only answers a question asked in its own vocabulary:
