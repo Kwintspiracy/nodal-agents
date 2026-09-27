@@ -48,10 +48,13 @@ export const AskUserInputSchema = z.object({
 export type AskUserInput = z.infer<typeof AskUserInputSchema>;
 
 export type AskUserOutput = {
-  /** L'option choisie, telle qu'elle a été proposée. */
+  /** L'option choisie telle qu'elle a été proposée, ou la réponse écrite par la personne. */
   answer: string;
-  /** Son rang dans `options` — pratique pour l'agent, jamais la source de vérité. */
-  option_index: number;
+  /**
+   * Le rang de l'option dans `options` — pratique pour l'agent, jamais la
+   * source de vérité. `null` : la personne a répondu dans ses mots (#465).
+   */
+  option_index: number | null;
 };
 
 /**
@@ -125,13 +128,10 @@ export const askUserTool: ToolDefinition<typeof AskUserInputSchema, AskUserOutpu
       // du genre « prends la première option ».
       throw new Error('question_unanswered');
     }
+    // Une réponse hors options est une réponse LIBRE (#465) : la résolution
+    // n'en écrit une que lorsque la personne l'a dite comme telle
+    // (`approvals/resolve.ts`). L'agent la reçoit telle quelle, sans rang.
     const index = input.options.indexOf(row.answer);
-    if (index === -1) {
-      // La résolution refuse déjà toute réponse hors options. Une ligne faite
-      // ainsi est une incohérence de données, pas un cas d'usage : on la dit
-      // plutôt que de rendre un `option_index: -1` que l'agent croirait valide.
-      throw new Error('question_answer_invalid');
-    }
-    return { answer: row.answer, option_index: index };
+    return { answer: row.answer, option_index: index === -1 ? null : index };
   },
 };

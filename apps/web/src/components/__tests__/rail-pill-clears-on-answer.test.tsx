@@ -11,11 +11,11 @@
 // les deux qui manquait. Une seule vérité : le provider. Personne ne tient de
 // compte à côté.
 //
-// ⚠️ QUATRE SURFACES répondent dans le produit, et chacune a son cas ici : la
+// ⚠️ TROIS SURFACES répondent dans le produit, et chacune a son cas ici : la
 // carte de la page Approvals (`ApprovalRequestCard`, la carte entière), la
-// carte de question de cette même page (`QuestionActions`), la carte de question
-// DANS LE FIL (`spaces/QuestionCard`), et le bouton Approve de la CLOCHE
-// (`NotificationsBell`). La troisième manquait au premier jet (Reviewer C,
+// carte de question DANS LE FIL (`spaces/QuestionCard`), et le bouton Approve
+// de la CLOCHE (`NotificationsBell`). La page Approvals ne répond plus aux
+// questions depuis #465 : elle renvoie au fil ou au run qui les porte. La troisième manquait au premier jet (Reviewer C,
 // passe 1) : elle faisait `router.refresh()`, ce qui refait le rendu serveur du
 // fil mais ne touche pas un état client. La quatrième était remplacée par du
 // vide ici (passe 2), ce qui laissait passer un `onApproved()` non attendu.
@@ -91,7 +91,6 @@ import {
   listSidebarRecentApprovalsAction,
 } from '@/lib/sidebar-actions.ts';
 import ApprovalRequestCard from '@/app/(dashboard)/approvals/ApprovalRequestCard.tsx';
-import QuestionActions from '@/app/(dashboard)/approvals/QuestionActions.tsx';
 import QuestionCard from '@/app/(dashboard)/spaces/QuestionCard.tsx';
 
 let container: HTMLDivElement | null = null;
@@ -410,17 +409,6 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
     expect(vi.mocked(resolveApprovalAction).mock.calls[0]?.[0]).toEqual({
       approvalRequestId: 'a1',
       decision: 'approve',
-    });
-    expect(caseApprovals()).toBe('Approvals');
-  });
-
-  it('RÉPONDRE À UNE QUESTION de la page la fait tomber', async () => {
-    await monter(<QuestionActions approvalId={ATTENTE.id} options={['Yes', 'No']} />);
-    await cliquer('Yes');
-    expect(vi.mocked(resolveApprovalAction).mock.calls[0]?.[0]).toEqual({
-      approvalRequestId: 'a1',
-      decision: 'approve',
-      answer: 'Yes',
     });
     expect(caseApprovals()).toBe('Approvals');
   });

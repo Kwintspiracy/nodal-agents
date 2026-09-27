@@ -168,6 +168,56 @@ describe('resolveApprovalDecision — une question', () => {
     expect(await jobStatus()).toBe('awaiting_approval');
   });
 
+  it('#465 — une réponse LIBRE, dite comme telle, est écrite telle quelle et le job repart', async () => {
+    const approval = await insertQuestion();
+    const texte = 'Le fichier est dans D:/ventes, sous un autre nom : ventes-sept.xlsx';
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'approve',
+      answer: `  ${texte}  `,
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.answer).toBe(texte);
+    const row = await readBack(approval.id);
+    expect(row.status).toBe('approved');
+    expect(row.answer).toBe(texte);
+    expect(await jobStatus()).toBe('pending');
+  });
+
+  it('#465 — une réponse libre VIDE est refusée, et rien n’a bougé', async () => {
+    const approval = await insertQuestion();
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'approve',
+      answer: '   ',
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result).toEqual({ ok: false, code: 'answer_empty' });
+    expect((await readBack(approval.id)).status).toBe('pending');
+    expect(await jobStatus()).toBe('awaiting_approval');
+  });
+
+  it('#465 — une réponse libre sur une approbation ordinaire est refusée', async () => {
+    const approval = await insertQuestion();
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'reject',
+      answer: 'Autre chose',
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result).toEqual({ ok: false, code: 'answer_not_expected' });
+  });
+
   it('approuver une question SANS réponse est refusé', async () => {
     const approval = await insertQuestion();
 

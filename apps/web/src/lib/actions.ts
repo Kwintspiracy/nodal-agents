@@ -6340,7 +6340,12 @@ const ResolveApprovalSchema = z.object({
    * la transporter, et un libellé qui n'est plus une option revient en erreur
    * plutôt que d'être écrit.
    */
-  answer: z.string().max(400).optional(),
+  answer: z.string().max(2000).optional(),
+  /**
+   * #465 — `answer` est une réponse LIBRE, écrite par la personne sous
+   * « Something else ». Le runner ne la compare alors à aucune option.
+   */
+  free: z.boolean().optional(),
 });
 
 /**

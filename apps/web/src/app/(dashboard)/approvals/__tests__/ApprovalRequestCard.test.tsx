@@ -669,6 +669,31 @@ describe('la carte a deux états, Open et Close @cap:approuver-une-action/ecran'
     expect(parTestId('approval-decision-note')!.textContent).toContain('Answered: main');
     expect(rendu().querySelector('a[href="/runs/j1"]')!.textContent).toContain('Open Run');
   });
+
+  it('#465 — une QUESTION en attente ne se répond pas ici : la carte renvoie là où elle vit', async () => {
+    const entree = { question: 'Which branch do I target?', options: ['main', 'develop'] };
+
+    // Venue d'une conversation : on y répond, dans le fil.
+    await monter(
+      demande({ kind: 'question', toolInput: entree, conversationId: 'c42' } as Partial<Approval>),
+    );
+    const boutons = [...rendu().querySelectorAll('button')].map((b) => b.textContent?.trim());
+    expect(boutons).not.toContain('main');
+    expect(boutons).not.toContain('develop');
+    expect(rendu().querySelector('a[href="/chat/c42"]')!.textContent).toContain(
+      'Answer in the conversation',
+    );
+
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+
+    // Sans conversation (une automatisation) : sur la page du run.
+    await monter(demande({ kind: 'question', toolInput: entree } as Partial<Approval>));
+    const liens = [...rendu().querySelectorAll('a[href="/runs/j1"]')].map((l) =>
+      l.textContent?.trim(),
+    );
+    expect(liens).toContain('Answer on the run');
+  });
 });
 
 // ─── Ce que la revue a trouvé ─────────────────────────────────────────────────
