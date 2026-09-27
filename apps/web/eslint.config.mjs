@@ -65,10 +65,12 @@ const rawFormElementSelectors = ['button', 'input', 'select', 'textarea'].map((e
 //      `text-[…]`), police, graisse, interlignage, espacement, casse, couleur.
 //      Il reste permis d'y écrire la MISE EN PAGE (`hidden md:table-cell`,
 //      `max-w-[320px]`, `w-8`, `mt-1.5`) et l'alignement (`text-right`).
-// La règle lit les classes ÉCRITES dans le JSX (chaîne ou gabarit) ; une classe
-// passée par une variable, ou dessinée par un composant défini ailleurs, lui
-// échappe. C'est la limite connue : les composants de page qui vivent dans une
-// cellule (MemoryFact, ImportanceStars…) ne portent pas de recette de cellule.
+// La règle lit les classes ÉCRITES dans le JSX (chaîne ou gabarit) ; dans une
+// cellule, une classe passée par une variable ou un appel est refusée (voir
+// plus bas), pour qu'aucune ne lui échappe. Reste la limite connue : un
+// composant défini ailleurs dessine ses propres classes — les composants de
+// page qui vivent dans une cellule (MemoryFact, ImportanceStars…) ne portent
+// pas de recette de cellule.
 const TEXT_CLASS = String.raw`(^|[\s:!])(text-(?!(left|right|center|justify|start|end|wrap|nowrap|balance|pretty|ellipsis|clip)(\s|$))|font-|leading-|tracking-|uppercase|lowercase|capitalize|italic|tabular-nums)`;
 const tableSelectors = [
   {
@@ -86,6 +88,20 @@ const tableSelectors = [
     }=/${TEXT_CLASS}/]`,
     message:
       'No text class inside a table cell: use the cell vocabulary of components/ui/Table (CellTitle, CellAgent, CellText, CellMono, CellMuted, CellActions). Layout classes (hidden md:table-cell, max-w-*, w-*) stay allowed.',
+  })),
+  // Une classe que la règle ne peut pas LIRE lui échappait : `className={cls}`,
+  // `className={cn(…)}`, `className={styles.x}` (revue Codex de la PR #525).
+  // Dans l'arbre d'une cellule, une classe s'écrit donc en clair — chaîne,
+  // gabarit, ou condition entre chaînes —, là où la règle ci-dessus la contrôle.
+  ...[
+    '> JSXExpressionContainer > :matches(Identifier, CallExpression, MemberExpression)',
+    '> JSXExpressionContainer > ConditionalExpression > :matches(Identifier, CallExpression, MemberExpression).consequent',
+    '> JSXExpressionContainer > ConditionalExpression > :matches(Identifier, CallExpression, MemberExpression).alternate',
+    '> JSXExpressionContainer > LogicalExpression > :matches(Identifier, CallExpression, MemberExpression).right',
+  ].map((tail) => ({
+    selector: `JSXElement[openingElement.name.name=/^(Td|Th)$/] JSXAttribute[name.name='className'] ${tail}`,
+    message:
+      'Inside a table cell, write classes in the clear (a string, a template, or a condition between strings) so the cell rule can read them; a variable or a call hides them.',
   })),
 ];
 

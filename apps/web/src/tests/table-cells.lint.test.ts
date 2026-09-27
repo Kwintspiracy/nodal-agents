@@ -74,6 +74,42 @@ describe('la règle des tables, sur la configuration réelle', () => {
     expect(errors).toHaveLength(3);
   });
 
+  it('refuse une classe que la règle ne peut pas lire : variable, appel, propriété, même dans une condition (revue Codex de la PR #525)', async () => {
+    const errors = await tableErrors(
+      `${HEAD}const cellClass = 'text-sm text-red-500';
+const cn = (...c: string[]) => c.join(' ');
+const styles = { cell: 'font-mono' };
+export function X({ on }: { on: boolean }) {
+  return (
+    <Table><tbody><Tr>
+      <Td className={cellClass}>a</Td>
+      <Td><span className={cn('text-xs')}>b</span></Td>
+      <Td><span className={styles.cell}>c</span></Td>
+      <Td><span className={on ? cellClass : 'flex'}>d</span></Td>
+      <Td><span className={on && cellClass}>e</span></Td>
+    </Tr></tbody></Table>
+  );
+}\n`,
+    );
+    // Les cinq classes illisibles, plus la chaîne `'text-xs'` passée à `cn(…)`,
+    // que la règle des classes de texte lit et refuse aussi.
+    expect(errors.filter((e) => e.includes('write classes in the clear'))).toHaveLength(5);
+    expect(errors.filter((e) => e.includes('No text class inside a table cell'))).toHaveLength(1);
+  });
+
+  it('laisse passer une condition entre chaînes, dont le test est une variable', async () => {
+    const errors = await tableErrors(
+      `${HEAD}export function X({ on }: { on: boolean }) {
+  return (
+    <Table><tbody><Tr>
+      <Td><span className={on ? 'rotate-90' : 'flex'}>a</span></Td>
+    </Tr></tbody></Table>
+  );
+}\n`,
+    );
+    expect(errors).toEqual([]);
+  });
+
   it('refuse une table écrite à la main', async () => {
     const errors = await tableErrors(
       `export function X() {
