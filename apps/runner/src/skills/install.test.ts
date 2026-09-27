@@ -1229,7 +1229,7 @@ describe('installCommunitySkill — a skill installed from a catalog card', () =
     global.fetch = origFetch;
   });
 
-  function mockComfyFolder() {
+  function mockComfyFolder(manifestName = 'comfy') {
     global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
       const url = String(input);
       if (url.includes('/repos/Comfy-Org/comfy-cli/contents/comfy_cli/skills/comfy?ref=')) {
@@ -1256,7 +1256,7 @@ describe('installCommunitySkill — a skill installed from a catalog card', () =
       }
       if (url.includes('raw.githubusercontent.com') && url.endsWith('/SKILL.md')) {
         return new Response(
-          '---\nname: comfy\ndescription: Generate images via ComfyUI.\n---\nYou have access to `comfy`.',
+          `---\nname: ${manifestName}\ndescription: Generate images via ComfyUI.\n---\nYou have access to comfy.`,
           { status: 200 },
         );
       }
@@ -1291,6 +1291,34 @@ describe('installCommunitySkill — a skill installed from a catalog card', () =
       expect(row?.name).toBe('Comfy (official)');
       expect(row?.source).toBe('Comfy-Org/comfy-cli/comfy_cli/skills/comfy');
       expect(row?.installedScripts).toBeNull();
+    } finally {
+      await rm(store, { recursive: true, force: true });
+    }
+  });
+
+  it('a catalog source that now serves ANOTHER skill is refused: the card name is never lent to it', async () => {
+    const { db } = await spinUpTestDb();
+    const seed = await seedMinimal(db);
+    mockComfyFolder('other-skill');
+    const store = await mkdtemp(join(tmpdir(), 'nodal-catalog-name-3-'));
+    try {
+      await expect(
+        installCommunitySkill({
+          db: db as never,
+          source: 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy',
+          skillStoreDir: store,
+          entityId: seed.entityId,
+        }),
+      ).rejects.toThrow(
+        /installs the skill "comfy", but its source now serves a skill named "other-skill"/,
+      );
+      const rows = await db
+        .select({ slug: agentSkills.slug, name: agentSkills.name })
+        .from(agentSkills)
+        .where(eq(agentSkills.entityId, seed.entityId));
+      expect(rows.filter((r) => r.slug === 'other-skill' || r.name.includes('(official)'))).toEqual(
+        [],
+      );
     } finally {
       await rm(store, { recursive: true, force: true });
     }

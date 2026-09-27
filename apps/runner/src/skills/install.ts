@@ -163,8 +163,18 @@ export async function installCommunitySkill(
     // A skill installed from a card of the curated catalog keeps the card's
     // name ("Comfy (official)"), whoever asks for the install: the screen or
     // an agent. Any other source keeps the name its SKILL.md declares.
-    const name =
-      COMMUNITY_SKILL_CATALOG.find((e) => e.source === opts.source.trim())?.name ?? manifestName;
+    // The card vouches for ONE skill: a catalog source tracks a moving branch,
+    // and if what it serves today is another skill (moved, renamed, replaced
+    // upstream), labelling it with the card's name would be a false statement
+    // to the owner and to every agent reading the skill list. Refuse instead.
+    const card = COMMUNITY_SKILL_CATALOG.find((e) => e.source === opts.source.trim());
+    if (card && card.slug !== slug) {
+      throw new SkillInstallError(
+        `The catalog card "${card.name}" installs the skill "${card.slug}", but its source now ` +
+          `serves a skill named "${slug}". Nothing was installed.`,
+      );
+    }
+    const name = card?.name ?? manifestName;
 
     // P2b (F-6 follow-up): refuse a slug reserved by the system catalog
     // outright, in ANY entity — before any insert/update. Not reachable as a
