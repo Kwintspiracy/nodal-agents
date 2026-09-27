@@ -133,7 +133,7 @@ export interface JobContext {
    * Absent ⇒ repli sur la requête DB, pour les appelants qui n'ont pas de
    * runtime sous la main (l'aperçu du dashboard, par exemple).
    */
-  workspaces?: ReadonlyArray<{ label: string; path: string }>;
+  workspaces?: ReadonlyArray<{ label: string; path: string; jobFolder?: boolean }>;
   /**
    * Git state of the workspace, probed by the runner at job start
    * (apps/runner/src/lib/workspace-git.ts). Undefined when the workspace is not
@@ -666,7 +666,7 @@ function buildBuiltinCapabilitiesBlock(): string {
 // exactly which workspaces exist and how to address files in each.
 // Data-driven from DB (agent_workspaces) — no hardcoded agent text (invariant 2).
 function buildWorkspacesBlock(
-  workspaceList: ReadonlyArray<{ label: string; path: string }>,
+  workspaceList: ReadonlyArray<{ label: string; path: string; jobFolder?: boolean }>,
   /**
    * Quels outils de fichiers a la surface qui lit ce bloc.
    *
@@ -683,8 +683,15 @@ function buildWorkspacesBlock(
 ): string {
   if (workspaceList.length === 0) return '';
 
+  // The folder attached to this request (#507) is named as such: it is where
+  // the owner asked this run to work, not a folder of this agent.
+  const note = (ws: { jobFolder?: boolean }): string =>
+    ws.jobFolder ? ' (this job’s folder: attached to this request, work here first)' : '';
+  const line = (ws: { label: string; path: string; jobFolder?: boolean }): string =>
+    `- **${ws.label}**: \`${ws.path}\`${note(ws)}`;
+
   if (fileTools === 'none') {
-    const lines = workspaceList.map((ws) => `- **${ws.label}**: \`${ws.path}\``).join('\n');
+    const lines = workspaceList.map(line).join('\n');
     return (
       `\n\n## Workspace${workspaceList.length > 1 ? 's' : ''}\n\n` +
       `${lines}\n\n` +
@@ -700,7 +707,7 @@ function buildWorkspacesBlock(
   // Nodal's builtins, not a real relative path, so a CLI told to use it would
   // resolve it against its own cwd and miss.
   if (!nodalFileTools) {
-    const lines = workspaceList.map((ws) => `- **${ws.label}**: \`${ws.path}\``).join('\n');
+    const lines = workspaceList.map(line).join('\n');
     return (
       `\n\n## Workspace${workspaceList.length > 1 ? 's' : ''}\n\n` +
       `${lines}\n\n` +
@@ -714,14 +721,14 @@ function buildWorkspacesBlock(
     const ws = workspaceList[0]!;
     return (
       `\n\n## Workspace\n\n` +
-      `Your workspace label is **${ws.label}** (path: \`${ws.path}\`). ` +
+      `Your workspace label is **${ws.label}** (path: \`${ws.path}\`)${note(ws)}. ` +
       `When using file_read / file_write / file_edit / file_list / file_search, ` +
       `you may use bare relative paths (e.g. \`notes.md\`) or prefix with the label ` +
       `(e.g. \`${ws.label}/notes.md\`). Both resolve to the same root.`
     );
   }
 
-  const lines = workspaceList.map((ws) => `- **${ws.label}**: \`${ws.path}\``).join('\n');
+  const lines = workspaceList.map(line).join('\n');
   const example = workspaceList[0]!;
   return (
     `\n\n## Workspaces\n\n` +

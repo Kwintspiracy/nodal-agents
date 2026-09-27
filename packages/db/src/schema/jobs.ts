@@ -266,6 +266,15 @@ export const agentJobs = pgTable(
      * same agent blocks it (`isSameAgentRetryBlocked`, chain-counters.ts).
      */
     lastFailedDelegationStreak: integer('last_failed_delegation_streak').default(0).notNull(),
+    /**
+     * The working folder the owner attached to THIS request (migration 0132,
+     * issue #507): an absolute path, or NULL. Every job the run delegates or
+     * puts on the task board is born with the same value, and each agent sees
+     * it FIRST among its folders for that run (tools, file-ops/workspace-list.ts,
+     * `withJobFolder`). It is never written to `agent_workspaces`: attaching a
+     * folder to a request grants it for that run, not for good.
+     */
+    jobFolder: text('job_folder'),
     pendingDelegation: jsonb('pending_delegation'),
     /**
      * Marks a root job as being finalized RIGHT NOW by the delivery cron

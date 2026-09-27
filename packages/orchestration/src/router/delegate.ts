@@ -92,6 +92,15 @@ export async function handleDelegation(
   const childContent: unknown =
     imageParts.length > 0 ? [{ type: 'text', text: childTask }, ...imageParts] : childTask;
 
+  // The folder the owner attached to this run (#507) travels down with the
+  // work. Read from the parent's ROW: the AgentJob shape the runner passes in
+  // does not carry it, and a second source would be a second truth.
+  const [parentFolderRow] = await db
+    .select({ jobFolder: agentJobs.jobFolder })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, parentJob.id as string))
+    .limit(1);
+
   // 2. Create the child job
   const [childJob] = await db
     .insert(agentJobs)
@@ -107,6 +116,7 @@ export async function handleDelegation(
       // Jobs page grouping (migration 0059): a delegated child is the SAME
       // conversation as its parent, not a new one.
       conversationId: parentJob.conversationId ?? undefined,
+      jobFolder: parentFolderRow?.jobFolder ?? undefined,
       messages: [{ role: 'user', content: childContent }],
     })
     .returning();

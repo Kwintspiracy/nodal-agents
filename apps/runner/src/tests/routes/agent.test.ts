@@ -2,6 +2,9 @@
 // Asserts on the real DB row, not just call counts (invariant 5).
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Mock } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -132,6 +135,41 @@ describe('POST /api/agent', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, body.jobId));
     expect(rows[0]?.conversationId).toBeNull();
+  });
+
+  // #507 — un dossier attaché à la demande : il est ÉCRIT sur le job, jamais
+  // sur l'agent ; un chemin relatif ou absent est refusé, jamais deviné.
+  it('stores the job folder the request attaches (#507)', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'job-folder-route-'));
+    const res = await app.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: 'monte la vidéo', jobFolder: folder }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { jobId: string };
+    const [row] = await db
+      .select({ jobFolder: agentJobs.jobFolder })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, body.jobId));
+    expect(row?.jobFolder).toBe(folder);
+  });
+
+  it('refuses a job folder that is relative or does not exist (#507)', async () => {
+    for (const jobFolder of ['relative/path', join(tmpdir(), 'no-such-folder-507-xyz')]) {
+      const res = await app.fetch(
+        new Request('http://localhost/api/agent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task: 'x', jobFolder }),
+        }),
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe('job_folder_invalid');
+    }
   });
 
   it('returns 400 on missing task', async () => {

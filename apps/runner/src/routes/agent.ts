@@ -5,6 +5,8 @@
 
 import type { Context } from 'hono';
 import { z } from 'zod';
+import { isAbsolute } from 'node:path';
+import { isExistingDirectory } from '@nodal-agents/tools';
 import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
@@ -20,6 +22,12 @@ export const AgentRequestSchema = z.object({
     .default('api'),
   chatId: z.string().optional().nullable(),
   parentJobId: z.string().guid().optional().nullable(),
+  /**
+   * A working folder attached to THIS request (#507): an absolute path to an
+   * existing directory. It goes on the job row and down the delegation tree
+   * of the run, never onto an agent.
+   */
+  jobFolder: z.string().min(1).max(1024).optional().nullable(),
   triggerImmediately: z.boolean().default(true),
 });
 
@@ -39,7 +47,21 @@ export async function agentRoute(
     return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
   }
 
-  const { task, agentSlug, channel, chatId, parentJobId, triggerImmediately } = parsed.data;
+  const { task, agentSlug, channel, chatId, parentJobId, jobFolder, triggerImmediately } =
+    parsed.data;
+
+  // Refused, never guessed: a relative path would resolve against whatever the
+  // runner's cwd happens to be, and a missing one would fail deep in a
+  // delegate, long after the owner sent the request (invariant #4).
+  if (jobFolder && (!isAbsolute(jobFolder) || !isExistingDirectory(jobFolder))) {
+    return c.json(
+      {
+        error: 'job_folder_invalid',
+        message: `The job folder must be an absolute path to an existing directory: ${jobFolder}`,
+      },
+      400,
+    );
+  }
 
   // Resolve agentSlug → agentId (entity-scoped via caller — finding #4/#5).
   // A trusted caller (web via WORKER_SECRET, local-trust) may or may not
@@ -157,6 +179,7 @@ export async function agentRoute(
       chatId: chatId ?? undefined,
       parentJobId: parentJobId ?? undefined,
       conversationId: conversationId ?? undefined,
+      jobFolder: jobFolder ?? undefined,
       status: 'pending',
       messages: [{ role: 'user', content: task }],
     })

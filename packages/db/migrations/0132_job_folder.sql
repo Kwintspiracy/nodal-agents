@@ -1,0 +1,12 @@
+-- job_folder — le dossier de travail que le propriétaire attache à UNE
+-- demande (issue #507).
+--
+-- Les dossiers n'existaient que par agent. Le 25/09 (run 0b505b0d), le
+-- propriétaire a nommé un dossier qui était dans celui de Montage ;
+-- l'orchestrateur, qui ne voyait aucun dossier, a inventé `shared/Nodal-Video`.
+-- Un dossier de job est posé sur la demande, descend tout l'arbre de
+-- délégation de ce run (assign_* et tableau des tâches), et chaque agent le
+-- voit en premier parmi ses dossiers. Il n'est jamais ajouté à un agent.
+--
+-- NULL : aucun dossier attaché, comportement inchangé.
+ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS job_folder text;

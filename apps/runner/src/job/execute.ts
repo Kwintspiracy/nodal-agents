@@ -87,6 +87,8 @@ import {
   exposeStatedPurpose,
   declareDeliverables,
   resolveRunWorkspaces,
+  withJobFolder,
+  isExistingDirectory,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -1555,6 +1557,21 @@ async function runJobTracked(
   const resolved = await resolveRunWorkspaces(db, agentRow.id, job.entityId);
   const agentWorkspacesList: Array<{ label: string; path: string }> = resolved.workspaces;
   const sharedWorkspacePath: string | null = resolved.sharedPath;
+
+  // Le dossier attaché à la demande (#507), en tête pour ce run seulement.
+  // Vérifié ICI, à chaque job de l'arbre : un dossier supprimé entre la
+  // demande et un délégué fait échouer ce job en le nommant, jamais un
+  // repli silencieux sur les dossiers de l'agent (invariant #4).
+  if (job.jobFolder) {
+    if (!isExistingDirectory(job.jobFolder)) {
+      throw new Error(
+        `job_folder_missing: the folder attached to this request does not exist: ${job.jobFolder}`,
+      );
+    }
+    const withJob = withJobFolder(agentWorkspacesList, job.jobFolder);
+    agentWorkspacesList.length = 0;
+    agentWorkspacesList.push(...withJob);
+  }
 
   // ── 3.55 Runtime divert (étape E) ─────────────────────────────────────────
   // An agent whose runtime is not 'nodal' IS a coding-CLI session (Claude Code

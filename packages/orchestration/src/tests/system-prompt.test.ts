@@ -977,6 +977,33 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
     ).not.toContain('Both resolve to the same root');
   });
 
+  it('le dossier attaché à la demande est nommé comme celui du job, en tête (#507)', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'AvecDossierDeJob',
+        slug: `jobdir-${Date.now()}`,
+        personality: 'p',
+        role: 'agent',
+      })
+      .returning();
+
+    const prompt = await buildSystemPrompt(makeAgent(agentRow!.id, entityId, 'p'), db, {
+      origin: 'api',
+      workspaces: [
+        { label: 'job', path: 'D:\\Projets\\Nodal-Video', jobFolder: true },
+        { label: 'Dev', path: 'C:\\Users\\kwint\\Documents\\Dev' },
+      ],
+    } as JobContext);
+
+    const jobLine = prompt.split('\n').find((l) => l.includes('D:\\Projets\\Nodal-Video')) ?? '';
+    expect(jobLine).toContain('this job’s folder');
+    const devLine = prompt.split('\n').find((l) => l.includes('Documents\\Dev')) ?? '';
+    expect(devLine).not.toContain('this job’s folder');
+  });
+
   it('sans liste du runtime, le prompt retombe sur la requête DB', async () => {
     // Repli pour les appelants qui n'ont pas de runtime sous la main —
     // l'aperçu du prompt dans le dashboard, par exemple. Il vaut mieux la

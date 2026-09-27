@@ -35,7 +35,7 @@
 // tout le monde garde le partagé, et le prompt liste ce que les outils ont.
 
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { eq } from '@nodal-agents/db';
 import { agentWorkspaces } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
@@ -46,6 +46,48 @@ import { SHARED_WORKSPACE_LABEL } from './workspace';
 export interface WorkspaceEntry {
   label: string;
   path: string;
+  /** Le dossier attaché à la demande de ce run (#507), pas un dossier de l'agent. */
+  jobFolder?: boolean;
+}
+
+/** Vrai quand `path` désigne un dossier existant. */
+export function isExistingDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Le label sous lequel les outils et le prompt présentent le dossier du job. */
+export const JOB_FOLDER_LABEL = 'job';
+
+/**
+ * La liste d'un run dont la demande porte un dossier (#507) : ce dossier EN
+ * TÊTE — le prompt présente le premier comme le dossier de référence, et une
+ * session de CLI y démarre —, puis ceux de l'agent.
+ *
+ * Un dossier que l'agent a déjà est déplacé en tête sous SON label, jamais
+ * listé deux fois. Un dossier de l'agent déjà nommé `job` rendrait `job/x`
+ * ambigu : on échoue fort plutôt que de choisir (invariant #4).
+ */
+export function withJobFolder(
+  list: ReadonlyArray<WorkspaceEntry>,
+  jobFolder: string | null,
+): WorkspaceEntry[] {
+  if (!jobFolder) return [...list];
+  const same = list.find((w) => w.path === jobFolder);
+  if (same) {
+    return [{ ...same, jobFolder: true }, ...list.filter((w) => w !== same)];
+  }
+  if (list.some((w) => w.label === JOB_FOLDER_LABEL)) {
+    throw new Error(
+      `job_folder_label_taken: this agent already has a folder labelled ` +
+        `"${JOB_FOLDER_LABEL}", so the folder attached to this request (${jobFolder}) ` +
+        `cannot be addressed. Rename that folder of the agent.`,
+    );
+  }
+  return [{ label: JOB_FOLDER_LABEL, path: jobFolder, jobFolder: true }, ...list];
 }
 
 /**

@@ -18,6 +18,10 @@
 // emitted as [save_memory, assign] worked before the fix only by accident.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { JOB_FOLDER_LABEL } from '@nodal-agents/tools';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -632,6 +636,58 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
     expect(refusal).toContain('voix-off.wav');
     expect(refusal).toContain('written_by_child_unchanged');
     expect(refusal).not.toContain('Nothing it was asked has been delivered');
+  });
+
+  // #507 — le dossier attaché à la demande descend jusqu'au délégué, et ses
+  // OUTILS l'ont : le fichier écrit sous `job/` atterrit dans ce dossier-là.
+  it('#507: a delegated child writes into the folder attached to the request', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'job-folder-run-'));
+    const jobId = await createOrchestratorJob();
+    await db.update(agentJobs).set({ jobFolder: folder }).where(eq(agentJobs.id, jobId));
+    const [childRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, childAgentId));
+    if (!childRow) throw new Error('child agent missing');
+    const assignToolName = `assign_${childRow.slug.replace(/-/g, '_')}`;
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-jf-assign', toolName: assignToolName, args: { task: 'écris le plan' } },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-jf-write',
+            toolName: 'file_write',
+            args: { path: `${JOB_FOLDER_LABEL}/plan.md`, content: 'plan du montage' },
+          },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-jf-rr-child', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-jf-rr-parent', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+
+    const [child] = await db
+      .select({ jobFolder: agentJobs.jobFolder })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, jobId));
+    expect(child?.jobFolder).toBe(folder);
+    expect(readFileSync(join(folder, 'plan.md'), 'utf8')).toBe('plan du montage');
   });
 
   it('REGRESSION: same pair in reverse emission order [save_memory, assign_<child>] also succeeds', async () => {
