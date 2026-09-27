@@ -17,6 +17,18 @@
 //     question est reposée juste avant de remplacer le fichier, et un fichier
 //     qui n'est plus le nôtre n'est pas écrasé : l'appel est refusé, et le
 //     rappeler passera par la porte, donc par la personne.
+//
+// LA LIMITE ASSUMÉE (revue Codex de #505, passe 3). Entre la lecture du
+// contenu actuel et le `rename`, il reste une fenêtre : DEUX APPELS SYSTÈME
+// CONSÉCUTIFS, la fin de la lecture du fichier (`fingerprint`, qui la fait en
+// DERNIER, après la requête en base) et le `rename`, séparés seulement par
+// le calcul synchrone de l'empreinte et le retour des promesses. Un écrivain
+// qui ne coopère pas — une personne dans son éditeur, un autre processus — et
+// qui écrit exactement dans cet intervalle voit son écriture remplacée. Aucun
+// verrou multiplateforme ne la ferme : Windows, macOS et Linux n'offrent pas
+// de verrou que cet écrivain respecterait, ni de « rename si inchangé »
+// atomique. Elle n'est pas élargie : aucune entrée-sortie ne s'y glisse
+// (`current-content-window.test.ts`).
 
 import { createHash, randomBytes } from 'node:crypto';
 import { rename, unlink, writeFile } from 'node:fs/promises';

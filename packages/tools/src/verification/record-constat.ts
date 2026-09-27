@@ -217,13 +217,17 @@ export async function currentContentWrittenByJob(
   absPath: string,
 ): Promise<boolean> {
   if (!jobId) return false;
-  const actuel = await fingerprint(absPath);
-  if (actuel.kind !== 'file') return false;
   const lignes = await db
     .select({ jobId: constatedWrites.jobId, sha: constatedWrites.contentSha256 })
     .from(constatedWrites)
     .where(eq(constatedWrites.path, await cheminConstate(absPath)))
     .orderBy(desc(constatedWrites.createdAt));
+  // Le disque EN DERNIER (revue Codex de #505, passe 3) : l'écriture atomique
+  // remplace le fichier juste après cette réponse, et rien — ni la requête en
+  // base, ni la résolution du chemin — ne doit plus séparer la lecture du
+  // contenu du `rename`. Tout ce qui suit est synchrone.
+  const actuel = await fingerprint(absPath);
+  if (actuel.kind !== 'file') return false;
   const derniereDuJob = lignes.find((l) => l.jobId === jobId);
   if (derniereDuJob?.sha !== actuel.sha256) return false;
   return !lignes.some((l) => l.jobId !== jobId && l.sha === actuel.sha256);
