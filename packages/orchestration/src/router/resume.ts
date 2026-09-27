@@ -502,9 +502,13 @@ export async function resumeDelegated(
   // #491 — a child stopped AFTER writing files did deliver something: those
   // files. Telling the parent "NOTHING usable" made it redo the work and
   // overwrite them, so the payload then says what exists and forbids the redo.
+  // ONLY what is on disk now counts (Codex review, P1): a file declared but
+  // never written, or written then removed, is not work to build on, and
+  // saying it exists would make the parent deliver nothing.
+  const fichiersPresents = outcome.files_written.filter((f) => f.on_disk);
   const failureGuidance =
-    outcome.files_written.length > 0
-      ? 'This delegation stopped before it finished, but the files listed in files_written exist: the specialist wrote them before it stopped. DO NOT redo that work and DO NOT delegate it again: read or check those files and build on them. For anything they do not cover, DO NOT retry'
+    fichiersPresents.length > 0
+      ? 'This delegation stopped before it finished, but the files in files_written with "on_disk": true exist now: the specialist wrote them before it stopped. DO NOT redo that work and DO NOT delegate it again: read or check those files and build on them. A file with "on_disk": false is NOT there, so that part is not done. For anything the present files do not cover, DO NOT retry'
       : 'This delegation delivered NOTHING usable. DO NOT retry';
   const errorValue = isFailure
     ? `${DELEGATION_FAILED_MARKER}

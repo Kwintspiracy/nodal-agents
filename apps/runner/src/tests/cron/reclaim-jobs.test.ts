@@ -9,6 +9,9 @@
 // pas touché.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, agentTasks, jobDeliverableVerificationState } from '@nodal-agents/db';
@@ -286,7 +289,12 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
         ],
       })
       .where(eq(agentJobs.id, childId));
-    const wav = '/ws/shared/outputs/voiceover-agentic-harness.wav';
+    // Un VRAI fichier : le parent reçoit l'état du disque, pas l'historique.
+    const dossier = await mkdtemp(join(tmpdir(), 'nodal-reclaim-491-'));
+    const wav = join(dossier, 'voiceover-agentic-harness.wav')
+      .split(String.fromCharCode(92))
+      .join('/');
+    await writeFile(wav, Buffer.alloc(979));
     await db.insert(jobDeliverableVerificationState).values({
       jobId: childId,
       deliverableType: 'document',
@@ -313,7 +321,9 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
     };
     expect(record.summary).toContain('La voix off est générée, je vérifie le fichier.');
     expect(record.summary).toContain('[stopped: runner restarted');
-    expect(record.files_written).toEqual([{ path: wav, declared: false, proof: 'dirty' }]);
+    expect(record.files_written).toEqual([
+      { path: wav, written: true, declared: false, on_disk: true, bytes: 979, proof: 'dirty' },
+    ]);
     expect(value).not.toContain('delivered NOTHING');
   });
 });
