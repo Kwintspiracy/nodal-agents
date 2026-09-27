@@ -38,6 +38,17 @@ export type CliShellSetting = 'none' | 'auto';
 /** La CLI qui sert le tour. La règle tient à ELLE, pas au nom du runtime. */
 export type CodingCli = 'claude' | 'codex';
 
+/**
+ * La CLI qui sert chaque valeur de `agents.runtime` autre que `nodal`. Le
+ * registre du runner (`apps/runner/src/cli-runtime/provider.ts`) doit s'y
+ * aligner, et un test l'y tient ; le bloc d'équipe la lit pour annoncer la
+ * posture shell d'un coéquipier, sans importer le runner.
+ */
+export const RUNTIME_CLI: Readonly<Record<string, CodingCli>> = {
+  'claude-code': 'claude',
+  codex: 'codex',
+};
+
 /** Ce qu'un tour peut faire d'un shell. */
 export type CliShellPosture =
   /**
