@@ -762,6 +762,30 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
     expect(cli).not.toContain('## The platform you are running in');
   });
 
+  // #455 — run 6f08b1b8 : « le changelog de la 0.9.2 » confié au Researcher,
+  // 192 074 jetons pour conclure qu'il n'existait pas. Une question SUR Nodal
+  // est celle de l'agent qui la reçoit. Et run 06a949cb : une délégation qui
+  // disait « et sur disque » a envoyé l'agent Excel hors de ses dossiers.
+  it('says a question about Nodal is never delegated, and a delegation never widens a folder scope (#455)', async () => {
+    const { entityId, agentRow } = await seedPlatformAgent('SP Platform Root');
+    const agent = makeAgent(agentRow.id, entityId, agentRow.personality);
+
+    const withIt = await buildSystemPrompt(agent, db, {
+      origin: 'api',
+      availableToolNames: ['query_memory', 'nodal_docs'],
+    });
+    expect(withIt).toContain('### A question about Nodal is yours');
+    expect(withIt).toContain('never delegate it');
+    expect(withIt).toContain('### A delegation never widens where a teammate works');
+
+    // Sans l'outil, ni la règle ni une promesse qu'il ne pourrait tenir.
+    const without = await buildSystemPrompt(agent, db, {
+      origin: 'api',
+      availableToolNames: ['query_memory'],
+    });
+    expect(without).not.toContain('### A question about Nodal is yours');
+  });
+
   it('follows the whitelist it is given, not a constant', async () => {
     const { entityId, agentRow } = await seedPlatformAgent('SP Platform Whitelist Agent');
     const agent = makeAgent(agentRow.id, entityId, agentRow.personality);

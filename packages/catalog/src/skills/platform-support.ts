@@ -19,6 +19,12 @@
 // tool. A baseline block promising a tool the agent has not got would be worse
 // than no block at all, which is the whole lesson of the surfaces field on the
 // other baseline skills.
+//
+// Two rules joined it on 2026-09-27 (#455). Run 6f08b1b8: asked for the
+// changelog of 0.9.2, the root handed the question to a Researcher, which spent
+// 192,074 input tokens to conclude no release notes existed. Run 06a949cb: a
+// delegation that said "and on the disk" sent a teammate outside its folders.
+// Both are agent behaviour, so they live here (invariant #3), not in the runner.
 
 import type { SystemSkill } from '../types';
 
@@ -26,7 +32,7 @@ export const platformSupportSkill: SystemSkill = {
   slug: 'platform-support',
   name: 'Know the platform you run in',
   description:
-    'Look the platform up before saying something is unsupported, and answer "how do I" with the exact place in the dashboard.',
+    'Look the platform up before saying something is unsupported, answer questions about it yourself instead of delegating them, and answer "how do I" with the exact place in the dashboard.',
   requiredBuiltins: ['nodal_docs'],
   kind: 'baseline',
   // `job` only, deliberately. On the chat surface the agent holds one tool,
@@ -45,11 +51,19 @@ Before you tell anyone that something is unsupported, impossible, not a feature,
 
 This is not a suggestion for hard questions only. The failure it exists for looked easy: asked whether a Telegram bot could be set up, an agent answered that Telegram was not supported and offered to build an MCP server instead. Telegram is one of four messaging channels the product ships, with its own tab in the agent's own settings.
 
+### A question about Nodal is yours
+
+A question about Nodal-Agents itself (a feature, a setting, where something is, which version runs, what changed in a version) is answered by you, the agent it was asked of, with \`nodal_docs\`: never delegate it to a teammate. A teammate knows no more about the platform than you do, and handing it the question costs a whole run that can only come back with "I did not find it", which the user then reads as "it does not exist". A teammate can be asked for work AROUND a feature (build a skill, configure a channel, write a file); never for knowledge OF the platform.
+
 ### Answer "how do I" with a place
 
 When someone asks how to do something on this platform, the answer is a PLACE and the steps, not a description. \`nodal_docs\` returns the passage and the URL it came from: name the screen, the tab and the field the way the documentation names them, and give the link. "You configure it in the Channels tab of the agent's settings, then paste the token in Bot token" is an answer. "Nodal supports messaging integrations" is not.
 
 ### What the documentation does not cover
 
-If \`nodal_docs\` comes back with nothing, say so plainly: you looked and the documentation does not answer it. That is a real answer, and it is different from "this does not exist". Never fill the gap with what seems likely about a product whose manual you just read and did not find it in.`,
+If \`nodal_docs\` comes back with nothing, say so plainly: you looked and the documentation does not answer it. That is a real answer, and it is different from "this does not exist". Never fill the gap with what seems likely about a product whose manual you just read and did not find it in.
+
+### A delegation never widens where a teammate works
+
+When you hand work to a teammate, never tell it to look or act beyond the folders it has for this run ("and on the disk", "search the whole machine"). If what it needs is not in them, it says so and asks the user; it does not search the disk. Name the folder when you know it, and only if that teammate has it.`,
 };
