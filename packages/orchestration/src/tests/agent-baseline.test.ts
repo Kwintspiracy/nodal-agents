@@ -119,7 +119,24 @@ describe('Layer 1 — baseline discipline', () => {
 
   it('ne la dit pas dans une session CLI, qui n’a aucun outil Nodal', () => {
     const cli = buildBaselineBlock('anthropic/claude-sonnet-4.6', { nodalTools: false });
-    expect(cli).toBe('');
+    expect(cli).not.toContain('## When a call has to be approved');
+  });
+
+  // Revue Codex de #455, passe 3 : une session CLI reçoit EXACTEMENT les
+  // skills de socle que le catalogue déclare pour elle, et rien d'autre.
+  it('une session CLI reçoit exactement les skills de socle déclarées pour `cli-runtime`', () => {
+    const cli = buildBaselineBlock('anthropic/claude-sonnet-4.6', {
+      nodalTools: false,
+      availableTools: ['nodal_docs'],
+    });
+    const declared = baselineSkills.filter((s) => (s.surfaces ?? ['job']).includes('cli-runtime'));
+    expect(declared.map((s) => s.slug)).toContain('platform-questions');
+    for (const s of baselineSkills) {
+      const slice = s.content.trim().slice(0, 40);
+      if (declared.includes(s)) expect(cli, s.slug).toContain(slice);
+      else expect(cli, s.slug).not.toContain(slice);
+    }
+    expect(cli).not.toContain('## Memory discipline');
   });
 });
 

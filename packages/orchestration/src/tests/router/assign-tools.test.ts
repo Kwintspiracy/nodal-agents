@@ -5,6 +5,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
 import { generateAssignTools } from '../../router/assign-tools';
+import { DELEGATION_SCOPE_RULE } from '../../router/delegation-scope';
 import { DelegationPendingError } from '../../errors';
 import type { AgentId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -139,6 +140,27 @@ describe('generateAssignTools', () => {
     expect(tool.description).toContain('Worker test-data-bot');
     // Instructions from DB must appear
     expect(tool.description).toContain('Always check duplicates first');
+  });
+
+  // Codex review of #455, P2 — run 06a949cb: a brief saying "and on the disk"
+  // sent a teammate outside its folders. The rule belongs to delegation itself,
+  // so it is in the description of every delegation tool.
+  it('tool description says a delegation never widens where the teammate works (#455)', async () => {
+    const { entityId } = await seedEntity(db);
+    const orch = await seedOrchestrator(db, entityId, `orch-scope-${Date.now()}`);
+    const w = await seedWorker(db, entityId, `test-scope-${Date.now()}`);
+    await assignChild(db, orch.id, w.id, entityId);
+    const [tool] = await generateAssignTools(orch.id as AgentId, db);
+    expect(tool?.description).toContain(DELEGATION_SCOPE_RULE);
+  });
+
+  // Codex review of #455, pass 2 (P1): "never look or act beyond the folders"
+  // also forbade an e-mail, a Notion page or a web search. The rule is about
+  // the FILE SYSTEM only, and says so.
+  it('the scope rule is about files and folders only, never connectors or the web', () => {
+    expect(DELEGATION_SCOPE_RULE).toMatch(/folders? .*reads? or writes?|files/i);
+    expect(DELEGATION_SCOPE_RULE).toMatch(/connectors?.*web|web.*connectors?/i);
+    expect(DELEGATION_SCOPE_RULE).not.toMatch(/look or act beyond/i);
   });
 
   it('tool description includes skill names from DB', async () => {

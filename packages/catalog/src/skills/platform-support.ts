@@ -19,6 +19,18 @@
 // tool. A baseline block promising a tool the agent has not got would be worse
 // than no block at all, which is the whole lesson of the surfaces field on the
 // other baseline skills.
+//
+// Its promise that `nodal_docs` answers "what changed in each version" holds
+// only once the release notes are in the index (#452).
+//
+// The RULE that a question about Nodal is the agent's own does not live here:
+// it depends on no tool, so it goes to every surface and runtime from its own
+// skill, `platform-questions` (#455, Codex review pass 3). This skill keeps the
+// tool guidance: how to look, with `nodal_docs`.
+//
+// The companion rule of run 06a949cb ("a delegation never widens a teammate's
+// folders") does NOT live here: it is a rule of delegation, carried by the
+// delegation tools themselves (orchestration/router/delegation-scope.ts).
 
 import type { SystemSkill } from '../types';
 
@@ -26,7 +38,7 @@ export const platformSupportSkill: SystemSkill = {
   slug: 'platform-support',
   name: 'Know the platform you run in',
   description:
-    'Look the platform up before saying something is unsupported, and answer "how do I" with the exact place in the dashboard.',
+    'Look the platform up with nodal_docs before saying something is unsupported, and answer "how do I" with the exact place in the dashboard.',
   requiredBuiltins: ['nodal_docs'],
   kind: 'baseline',
   // `job` only, deliberately. On the chat surface the agent holds one tool,
@@ -37,7 +49,7 @@ export const platformSupportSkill: SystemSkill = {
   surfaces: ['job'],
   content: `## The platform you are running in
 
-You run inside **Nodal-Agents**: the dashboard your owner is looking at, the runner executing this job, the database holding your memory. Its features are documented, and \`nodal_docs\` searches that documentation offline, in one call, with no model and no network.
+You run inside **Nodal-Agents**: the dashboard your owner is looking at, the runner executing this job, the database holding your memory. Its features are documented, and so is what changed in each version: \`nodal_docs\` searches that documentation offline, in one call, with no model and no network.
 
 ### Look before you say no
 

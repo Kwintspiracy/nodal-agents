@@ -1,5 +1,7 @@
 // system-prompt.test.ts — buildSystemPrompt tests
 
+import { nodalDocsTool } from '@nodal-agents/tools';
+import { systemSkills } from '@nodal-agents/catalog';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import {
@@ -760,6 +762,58 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
 
     expect(chat).not.toContain('## The platform you are running in');
     expect(cli).not.toContain('## The platform you are running in');
+  });
+
+  // #455 — run 6f08b1b8 : « le changelog de la 0.9.2 » confié au Researcher,
+  // 192 074 jetons pour conclure qu'il n'existait pas. Une question SUR Nodal
+  // est celle de l'agent qui la reçoit. Et run 06a949cb : une délégation qui
+  // disait « et sur disque » a envoyé l'agent Excel hors de ses dossiers.
+  it('says a question about Nodal is never delegated (#455)', async () => {
+    const { entityId, agentRow } = await seedPlatformAgent('SP Platform Root');
+    const agent = makeAgent(agentRow.id, entityId, agentRow.personality);
+
+    const withIt = await buildSystemPrompt(agent, db, {
+      origin: 'api',
+      availableToolNames: ['query_memory', 'nodal_docs'],
+    });
+    expect(withIt).toContain('### A question about Nodal is yours');
+    expect(withIt).toContain('never delegate it');
+    // The scope rule is a rule of DELEGATION: it lives in the delegation tools'
+    // descriptions, which every delegating agent sees, not in a job-only skill
+    // (Codex review of #455, P2). One home.
+    expect(withIt).not.toContain('### A delegation never widens where a teammate works');
+
+    // Revue Codex de #455, passe 3 : la RÈGLE est portable, la CONSIGNE
+    // d'outil ne l'est pas. Sans nodal_docs, la règle reste ; la promesse
+    // d'un outil absent part.
+    const without = await buildSystemPrompt(agent, db, {
+      origin: 'api',
+      availableToolNames: ['query_memory'],
+    });
+    expect(without).toContain('### A question about Nodal is yours');
+    expect(without).not.toContain('Look before you say no');
+
+    // Et sur les surfaces sans aucun outil de Nodal : le chat, et une session
+    // de CLI (Claude Code, Codex), sous-agents natifs compris.
+    const chat = await buildSystemPrompt(agent, db, { origin: 'dashboard', surface: 'chat' });
+    expect(chat).toContain('### A question about Nodal is yours');
+    const cli = await buildSystemPrompt(agent, db, { origin: 'api', surface: 'cli-runtime' });
+    expect(cli).toContain('### A question about Nodal is yours');
+    expect(cli).toContain('sub-agent');
+    expect(cli).not.toContain('nodal_docs');
+  });
+
+  // Codex review of #455, P1: the skill promises that `nodal_docs` answers
+  // "what changed in a version". The promise is held against the SHIPPED
+  // index (it depends on #452, which puts the release notes in it).
+  it('keeps its promise: nodal_docs answers a version question from the shipped index (#455)', async () => {
+    const skill = systemSkills.find((s) => s.slug === 'platform-support');
+    expect(skill?.content).toContain('what changed in each version');
+    const hits = await nodalDocsTool.execute(
+      { question: 'what changed in 0.9.2' },
+      {} as Parameters<typeof nodalDocsTool.execute>[1],
+    );
+    expect(hits[0]?.title.startsWith('v0.9.2 ')).toBe(true);
   });
 
   it('follows the whitelist it is given, not a constant', async () => {

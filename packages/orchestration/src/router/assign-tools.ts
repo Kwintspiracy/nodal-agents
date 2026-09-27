@@ -1,6 +1,7 @@
 // router/assign-tools.ts — generate assign_* tools from DB
 // Reads children from agent_assignments table. Never hardcodes agent slugs.
 
+import { DELEGATION_SCOPE_RULE } from './delegation-scope';
 import { z } from 'zod';
 import { eq, and } from '@nodal-agents/db';
 import {
@@ -240,7 +241,7 @@ export async function generateAssignTools(
     const instrNote = instructions ? ` Instructions: ${instructions}` : '';
 
     const description =
-      `Assign a task to ${agentName}${roleNote}.${purposeDesc}${skillsDesc}${toolsDesc}${instrNote}`.trim();
+      `Assign a task to ${agentName}${roleNote}.${purposeDesc}${skillsDesc}${toolsDesc}${instrNote} ${DELEGATION_SCOPE_RULE}`.trim();
 
     // Capture in closure
     const capturedSlug = agentSlug;
