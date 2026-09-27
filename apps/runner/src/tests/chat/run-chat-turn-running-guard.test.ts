@@ -1,0 +1,351 @@
+// run-chat-turn-running-guard.test.ts — #453 : un second `run_task` pendant
+// qu'un travail de la MÊME conversation court.
+//
+// Conversation e0ad53f8 (23/09) : la personne précise sa demande deux fois à
+// 2,4 s d'écart ; le premier tour lance un travail, le second répond « c'est
+// exactement ce que j'ai lancé » ET relance le même travail, reformulé. Trois
+// jobs, 725 306 jetons d'entrée, pour une question. L'historique montrait bien
+// le premier job en cours : c'est le modèle qui re-déclenche par-dessus.
+//
+// LE CONTRAT, générique, sur `run_task` dans le chat : tant qu'un travail lancé
+// depuis CETTE conversation court, un nouveau `run_task` est REFUSÉ au modèle,
+// qui reçoit le travail en cours (id, tâche, état) et la règle : dire qu'il est
+// déjà dessus, ou rappeler avec `alongside: true` pour un travail DIFFÉRENT en
+// parallèle. Jamais un appel jeté en silence.
+//
+// Les assertions portent sur les LIGNES `agent_jobs` et sur le CORPS du second
+// appel au modèle (le tool_result du refus), jamais sur un compte d'appels.
+//
+// Mutation vérifiée : la garde retirée (`runningHeads` forcé à `[]`) → « un
+// run_task pendant qu'un travail court » rougit sur le nombre de jobs (2 au
+// lieu de 1).
+
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { MockLanguageModelV3 } from 'ai/test';
+import { generateText } from 'ai';
+import type { ModelMessage } from 'ai';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { and, eq, isNull } from '@nodal-agents/db';
+import { agentJobs, chatMessages, conversations } from '@nodal-agents/db';
+import type { RunnerDeps } from '../../deps.ts';
+import { runChatTurn } from '../../chat/run-chat-turn.ts';
+import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
+
+const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
+  let active: RunnerDeps['llmClient'] | null = null;
+  return {
+    getActiveLlmClient: () => active,
+    setActiveLlmClient: (c: RunnerDeps['llmClient']) => {
+      active = c;
+    },
+  };
+});
+
+vi.mock('@nodal-agents/llm', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
+  return {
+    ...actual,
+    createLlmClient: () => {
+      const active = getActiveLlmClient();
+      if (!active) throw new Error('no active LLM client');
+      return active;
+    },
+  };
+});
+
+type Etape = { text?: string; runTask?: { instruction: string; alongside?: boolean } };
+
+/**
+ * Un modèle scripté appel par appel, qui capture ce que chaque appel de la
+ * RÉPONSE a reçu. Les appels de titre (consigne `TITLE_SYSTEM_PROMPT`) rendent
+ * un titre et ne consomment pas le scénario.
+ */
+function modele(scenario: readonly Etape[], captured: ModelMessage[][]): RunnerDeps['llmClient'] {
+  let appel = 0;
+  let titre = false;
+  const mockModel = new MockLanguageModelV3({
+    provider: 'mock',
+    modelId: 'mock',
+    doGenerate: async () => {
+      const usage = {
+        inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+        outputTokens: { total: 5, text: 5, reasoning: undefined },
+      };
+      if (titre) {
+        return {
+          content: [{ type: 'text' as const, text: 'Changelog' }],
+          finishReason: { unified: 'stop' as const, raw: 'stop' },
+          usage,
+          warnings: [],
+        };
+      }
+      const etape = scenario[Math.min(appel, scenario.length - 1)] ?? {};
+      appel += 1;
+      return {
+        content: [
+          ...(etape.text ? [{ type: 'text' as const, text: etape.text }] : []),
+          ...(etape.runTask
+            ? [
+                {
+                  type: 'tool-call' as const,
+                  toolCallId: `tc-${appel}`,
+                  toolName: 'run_task',
+                  input: JSON.stringify(etape.runTask),
+                },
+              ]
+            : []),
+        ],
+        finishReason: etape.runTask
+          ? { unified: 'tool-calls' as const, raw: 'tool_use' }
+          : { unified: 'stop' as const, raw: 'stop' },
+        usage,
+        warnings: [],
+      };
+    },
+  });
+  return {
+    config: { provider: 'anthropic', model: 'mock' } as RunnerDeps['llmClient']['config'],
+    capabilities: {
+      toolUse: true,
+      promptCaching: false,
+      vision: false,
+      structuredOutputs: false,
+      streaming: false,
+    },
+    generateText: (args) => {
+      titre = args.system === TITLE_SYSTEM_PROMPT;
+      if (!titre) captured.push((args.messages ?? []) as ModelMessage[]);
+      return generateText({ ...args, model: mockModel } as Parameters<
+        typeof generateText
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+    },
+    streamText: () => {
+      throw new Error('streamText not supported in mock');
+    },
+    generateObject: () => {
+      throw new Error('generateObject not supported in mock');
+    },
+  };
+}
+
+/** Le texte de tous les tool_result d'un appel. */
+function toolResults(messages: readonly ModelMessage[]): string {
+  const out: string[] = [];
+  for (const m of messages) {
+    if (m.role !== 'tool' || !Array.isArray(m.content)) continue;
+    for (const p of m.content) {
+      const value = (p as { output?: { value?: unknown } }).output?.value;
+      if (typeof value === 'string') out.push(value);
+    }
+  }
+  return out.join('\n');
+}
+
+let db: TestDb;
+let seed: { userId: string; entityId: string; agentId: string };
+let deps: RunnerDeps;
+let conversationId = '';
+let premierJob = '';
+
+beforeAll(async () => {
+  const result = await spinUpTestDb();
+  db = result.db;
+  seed = await seedMinimal(db);
+  deps = { db } as unknown as RunnerDeps;
+});
+
+/** La conversation du ticket : un premier tour a lancé un travail. */
+async function conversationAvecTravail(status: string): Promise<void> {
+  await db.delete(chatMessages);
+  await db.delete(agentJobs).where(eq(agentJobs.agentId, seed.agentId));
+  await db.delete(conversations);
+  const [c] = await db
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      title: 'Changelog',
+      origin: 'user',
+      channel: 'dashboard',
+    })
+    .returning({ id: conversations.id });
+  conversationId = c!.id;
+  const [j] = await db
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      status,
+      channel: 'dashboard',
+      conversationId,
+      task: 'Find the changelog of nodal-agents 0.9.2',
+    })
+    .returning({ id: agentJobs.id });
+  premierJob = j!.id;
+  await db.insert(chatMessages).values([
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      role: 'user',
+      content: 'nodal-agents',
+    },
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      role: 'assistant',
+      content: 'On it.',
+      jobId: premierJob,
+    },
+  ]);
+}
+
+async function travauxDuFil(): Promise<Array<{ id: string; task: string }>> {
+  return db
+    .select({ id: agentJobs.id, task: agentJobs.task })
+    .from(agentJobs)
+    .where(and(eq(agentJobs.conversationId, conversationId), isNull(agentJobs.parentJobId)));
+}
+
+beforeEach(() => {
+  conversationId = '';
+  premierJob = '';
+});
+
+describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un-agent/moteur', () => {
+  it('un run_task pendant qu’un travail court est REFUSÉ au modèle : un seul job, et le refus nomme le travail', async () => {
+    await conversationAvecTravail('processing');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
+          { text: 'I am already on it, the research is still running.' },
+        ],
+        captured,
+      ),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'i mean nodal-agents',
+    });
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.spawnedJobId).toBeUndefined();
+    expect(r.reply).toBe('I am already on it, the research is still running.');
+    // UNE ligne : le travail d'origine, et lui seul.
+    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
+
+    // Le second appel a reçu le refus, dans le résultat de SON appel d'outil :
+    // l'id, la tâche et l'état du travail qui court, et la règle `alongside`.
+    const refus = toolResults(captured[1] ?? []);
+    expect(refus).toContain(premierJob);
+    expect(refus).toContain('Find the changelog of nodal-agents 0.9.2');
+    expect(refus).toContain('processing');
+    expect(refus).toContain('alongside: true');
+
+    // La réponse du tour est écrite, sans job rattaché.
+    const [dernier] = await db
+      .select({ content: chatMessages.content, jobId: chatMessages.jobId })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversationId))
+      .orderBy(chatMessages.createdAt)
+      .then((rows) => rows.slice(-1));
+    expect(dernier).toEqual({
+      content: 'I am already on it, the research is still running.',
+      jobId: null,
+    });
+  });
+
+  it('`alongside: true` d’emblée lance un travail DIFFÉRENT en parallèle : deux jobs', async () => {
+    await conversationAvecTravail('processing');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          {
+            text: 'Launching it too.',
+            runTask: { instruction: 'Draft the release post', alongside: true },
+          },
+        ],
+        captured,
+      ),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'and draft the release post meanwhile',
+    });
+
+    expect(r.ok).toBe(true);
+    const jobs = await travauxDuFil();
+    expect(jobs.map((j) => j.task).sort()).toEqual([
+      'Draft the release post',
+      'Find the changelog of nodal-agents 0.9.2',
+    ]);
+    // Aucun refus : un seul appel de réponse.
+    expect(captured).toHaveLength(1);
+  });
+
+  it('après le refus, le modèle peut rappeler avec `alongside: true` : deux jobs, explicitement', async () => {
+    await conversationAvecTravail('awaiting_delegation');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          { runTask: { instruction: 'Draft the release post' } },
+          {
+            text: 'Different work, launching it alongside.',
+            runTask: { instruction: 'Draft the release post', alongside: true },
+          },
+        ],
+        captured,
+      ),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'also draft the release post',
+    });
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.spawnedJobId).toBeTruthy();
+    expect((await travauxDuFil()).map((j) => j.task).sort()).toEqual([
+      'Draft the release post',
+      'Find the changelog of nodal-agents 0.9.2',
+    ]);
+  });
+
+  it('un travail TERMINÉ ne retient rien : run_task lance comme avant', async () => {
+    await conversationAvecTravail('completed');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele([{ runTask: { instruction: 'Find the 0.9.3 changelog' } }], captured),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'and the 0.9.3 one?',
+    });
+
+    expect(r.ok).toBe(true);
+    expect(await travauxDuFil()).toHaveLength(2);
+  });
+});
