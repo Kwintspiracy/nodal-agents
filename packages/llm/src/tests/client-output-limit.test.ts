@@ -200,3 +200,44 @@ describe('a turn cut on the output-token cap is refused @cap:suivre-execution/mo
     expect(backup.doGenerateCalls).toHaveLength(0);
   });
 });
+
+// Revue Codex de #555, P1 : une sonde de conformance propose un outil pour
+// LIRE l'appel, jamais pour l'exécuter. Refuser la réponse coupée la faisait
+// conclure « ne sait pas appeler d'outil » devant un appel bien formé.
+describe('a caller that only inspects gets the cut response as is @cap:suivre-execution/moteur', () => {
+  it('inspectOnly: one-shot and streamed return the response with its length finish', async () => {
+    useModel('length');
+    const oneShot = await client().generateText(ARGS, { inspectOnly: true });
+    expect(oneShot.finishReason).toBe('length');
+    expect((oneShot.toolCalls ?? []).map((c) => c.toolName)).toEqual(['save_memory', 'file_write']);
+
+    const streamed = await client().generateText(ARGS, { streamed: true, inspectOnly: true });
+    expect(streamed.finishReason).toBe('length');
+    expect((streamed.toolCalls ?? []).map((c) => c.toolName)).toEqual(['save_memory']);
+  });
+
+  it('the tool-call probe judges a well-formed call that hit the cap as well formed', async () => {
+    const { toolCallSingle } = await import('../conformance/probes');
+    currentModel = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.3',
+      doGenerate: async () => ({
+        content: [
+          {
+            type: 'tool-call' as const,
+            toolCallId: 'w1',
+            toolName: 'get_weather',
+            input: '{"city":"Lyon"}',
+          },
+        ],
+        finishReason: { unified: 'length', raw: 'length' },
+        usage: mockUsage(50, 256),
+        warnings: [],
+      }),
+    });
+
+    const verdict = await toolCallSingle.run({ client: client() } as never);
+
+    expect(verdict.status).toBe('pass');
+  });
+});

@@ -397,12 +397,17 @@ export function createLlmClient(
     args: Parameters<NodalLlmClient['generateText']>[0],
     result: GenerateTextResult,
     startedAt: number,
+    inspectOnly: boolean,
   ): GenerateTextResult => {
     const tools = (args as { tools?: unknown }).tools;
     const offersTools =
       typeof tools === 'object' && tools !== null && Object.keys(tools).length > 0;
+    // A caller that only READS the response (a conformance probe) acts on none
+    // of it, so a cut response is a fact for it to judge, not a turn to refuse
+    // (Codex review of #555, P1: a well-formed call followed by the cap read
+    // as a model that cannot call tools).
     const refusal =
-      offersTools && result.finishReason === 'length'
+      offersTools && !inspectOnly && result.finishReason === 'length'
         ? new LLMOutputLimitError(
             config.provider,
             config.model,
@@ -474,7 +479,7 @@ export function createLlmClient(
         observe('generateText', args, null, err, startedAt);
         throw err;
       }
-      return refuseCutTurn(args, streamedResult, startedAt);
+      return refuseCutTurn(args, streamedResult, startedAt, callOpts.inspectOnly === true);
     }
     let result: GenerateTextResult;
     try {
@@ -526,7 +531,7 @@ export function createLlmClient(
       }
       throw err;
     }
-    return refuseCutTurn(args, result, startedAt);
+    return refuseCutTurn(args, result, startedAt, callOpts?.inspectOnly === true);
   };
 
   const clientStreamText: NodalLlmClient['streamText'] = (args) => {

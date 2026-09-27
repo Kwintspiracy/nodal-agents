@@ -709,8 +709,20 @@ export async function runChatTurn(opts: {
         abortSignal ? { abortSignal } : undefined,
       );
       runTask = (recheck.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
-    } catch {
-      // Keep the original text reply — recovery is best-effort.
+    } catch (err) {
+      // #554 (revue Codex de #555, P1) : la relance s'est arrêtée sur le
+      // plafond de jetons. Garder la réponse d'origine la présenterait comme
+      // un tour réussi, alors que la relance voulait peut-être lancer le
+      // travail que cette réponse promet. Le tour échoue avec son code, comme
+      // l'appel principal.
+      if (err instanceof LLMOutputLimitError && !abortSignal?.aborted) {
+        console.warn(
+          `[run-chat-turn] escalation recheck stopped on the output-token cap (${agentRow.slug}):`,
+          err.message,
+        );
+        return { ok: false, error: err.code };
+      }
+      // Any other failure: keep the original text reply, recovery is best-effort.
     }
   }
 

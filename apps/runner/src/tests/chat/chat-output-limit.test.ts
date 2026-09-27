@@ -154,3 +154,95 @@ describe('a chat reply cut on the output-token cap does not act @cap:suivre-exec
     });
   }
 });
+
+/**
+ * The reply promises an action but calls no tool (`stop`); the escalation
+ * recheck that follows then emits `run_task` and stops on the cap. Calls are
+ * counted across both entry points: the first is the reply, the second the
+ * recheck, whichever path each takes.
+ */
+function replyThenCutRecheck(): MockLanguageModelV3 {
+  let calls = 0;
+  const usage = (out: number) => ({
+    inputTokens: { total: 900, noCache: 900, cacheRead: undefined, cacheWrite: undefined },
+    outputTokens: { total: out, text: out, reasoning: undefined },
+  });
+  const promise = 'I will draw the series now.';
+  const call = {
+    type: 'tool-call' as const,
+    toolCallId: 'rt-2',
+    toolName: 'run_task',
+    input: JSON.stringify({ instruction: INSTRUCTION }),
+  };
+  const next = () => {
+    calls += 1;
+    return calls === 1
+      ? { content: [{ type: 'text' as const, text: promise }], finish: 'stop' as const, out: 12 }
+      : { content: [call], finish: 'length' as const, out: 131_072 };
+  };
+  return new MockLanguageModelV3({
+    provider: 'openrouter',
+    modelId: 'z-ai/glm-5.3',
+    doStream: async () => {
+      const r = next();
+      const parts = r.content.flatMap((c) =>
+        c.type === 'text'
+          ? [
+              { type: 'text-start' as const, id: 't' },
+              { type: 'text-delta' as const, id: 't', delta: c.text },
+              { type: 'text-end' as const, id: 't' },
+            ]
+          : [c],
+      );
+      return {
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            ...parts,
+            {
+              type: 'finish',
+              finishReason: { unified: r.finish, raw: r.finish },
+              usage: usage(r.out),
+            },
+          ],
+        }) as never,
+      };
+    },
+    doGenerate: async () => {
+      const r = next();
+      return {
+        content: r.content,
+        finishReason: { unified: r.finish, raw: r.finish },
+        usage: usage(r.out),
+        warnings: [],
+      };
+    },
+  });
+}
+
+// Revue Codex de #555, P1 : la relance d'escalade avalait l'erreur et gardait
+// la promesse d'origine comme une réponse réussie, sans aucun job.
+describe('an escalation recheck cut on the output-token cap fails the turn @cap:suivre-execution/moteur', () => {
+  for (const streamed of [true, false]) {
+    const path = streamed ? 'streamed' : 'one-shot';
+
+    it(`${path}: the promise is not kept as a successful reply, no job, output_limit_reached`, async () => {
+      mockModel.current = replyThenCutRecheck();
+      const conversationId = await newConversation();
+
+      const result = await runChatTurn({
+        deps,
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId,
+        message: 'Draw the series',
+        ...(streamed ? { onTextDelta: () => {} } : {}),
+      });
+
+      expect(result).toEqual({ ok: false, error: 'output_limit_reached' });
+      const after = await effects(conversationId);
+      expect(after.jobs).toEqual([]);
+      expect(after.assistantRows).toEqual([]);
+    });
+  }
+});

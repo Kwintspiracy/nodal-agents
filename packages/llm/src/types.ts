@@ -126,6 +126,14 @@ export interface GenerateTextCallOptions {
    * the run. An explicit value is not capped.
    */
   remainingRunMs?: number;
+  /**
+   * The caller READS the response and acts on nothing in it: it runs no tool
+   * call and hands no text on as an answer (a conformance probe inspecting
+   * whether a call is well formed). Only then is a response that stopped on
+   * the output-token cap returned as is, `finishReason` included. Every other
+   * caller gets `LLMOutputLimitError` (#554): its default is to act.
+   */
+  inspectOnly?: true;
 }
 
 /**
