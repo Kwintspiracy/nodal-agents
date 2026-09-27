@@ -5896,6 +5896,25 @@ async function runJobTracked(
         const champ = (returnResultCall.input as { deliverables?: unknown } | undefined)
           ?.deliverables;
         const declares = Array.isArray(champ) ? (champ as string[]) : [];
+        // ABSENT alors qu'une déclaration renvoyée est encore DUE : la promesse
+        // précédente tient (c'est le contrat du champ), et elle ne désigne
+        // aucun fichier vérifiable. Accepter cet appel solderait la dette sans
+        // rien prouver — un succès sur un fichier que Nodal n'a pas trouvé
+        // (revue Codex de la PR #523). Le renvoi a déjà eu lieu : échec.
+        if (rrStatus === 'success' && !Array.isArray(champ)) {
+          const dueRetour = declarationDue(messages);
+          if (dueRetour !== null && dueRetour.length > 0) {
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: returnResultCall.toolCallId,
+              toolName: 'return_result',
+              output: toResultOutput({ acknowledged: true }),
+            });
+            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
+            return await echouerSurDeclaration(dueRetour);
+          }
+        }
         if (rrStatus === 'success' && Array.isArray(champ)) {
           const declaration = await declareDeliverables(sharedToolCtx, declares);
           if (declaration.kind === 'already_terminal') {

@@ -520,6 +520,28 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
     );
   });
 
+  it('renvoyé, l’agent rappelle return_result en OMETTANT le champ : la promesse tient, le run échoue (revue Codex de la PR #523)', async () => {
+    // Omettre, ce n'est pas retirer : le champ absent garde la liste
+    // précédente, et elle ne désigne rien de vérifiable.
+    const dehors = normalizePath(join(tmpdir(), `hors-dossier-omis-${Date.now()}`, 'film.mp4'));
+    const id = await createJob('rends un film ailleurs, puis rappelle sans la liste');
+    const { client } = makeMockLlmClient([
+      rendu('rr-1', 'Film livré.', [dehors]),
+      rendu('rr-2', 'Film livré, promis.'),
+    ]);
+
+    await executeJob(id as JobId, makeDeps(client), testEnv);
+
+    const row = await jobRow(id);
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('deliverable_not_verified');
+    expect(row.result).toContain(
+      deliverableNotVerifiedLine([
+        { path: dehors, check: 'unresolved', detail: 'path_traversal_blocked' },
+      ]),
+    );
+  });
+
   it('renvoyé, l’agent rappelle return_result SANS le fichier (il le retire) : la dette est soldée, completed', async () => {
     // Le renvoi dit « corrige-les, ou retire ceux que tu ne livres pas » :
     // retirer est une réponse légitime, et le nouveau return_result solde la dette.
