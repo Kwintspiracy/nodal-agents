@@ -349,6 +349,62 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
     ]);
     expect(value).not.toContain('delivered NOTHING');
   });
+
+  // Revue Codex de #491, passe 3 : sans frontière de tour, le dernier texte
+  // était cherché dans TOUTE la transcription — un message d'historique rejoué
+  // devenait le « livrable partiel » de l'enfant. Pas de repli : aucun texte,
+  // et la ligne d'arrêt le dit.
+  it('sans la tâche dans la transcription, aucun texte d’historique n’est rendu comme livrable (#491)', async () => {
+    const { parentId, childId } = await seedDelegationCoupee('assign-r491-b');
+    await db
+      .update(agentJobs)
+      .set({
+        task: 'fais la voix off',
+        messages: [
+          { role: 'user', content: 'une demande d’un tour précédent' },
+          { role: 'assistant', content: [{ type: 'text', text: 'Réponse d’un AUTRE tour.' }] },
+        ],
+      })
+      .where(eq(agentJobs.id, childId));
+
+    await reclaimJobsOfDeadRunners(db);
+
+    const child = await jobRow(childId);
+    expect(child.result ?? '').not.toContain('Réponse d’un AUTRE tour.');
+    expect(child.result ?? '').toContain('no text of this run could be recovered');
+    const parent = await jobRow(parentId);
+    const last = (parent.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
+    const value = (last.content[0] as { output: { value: string } }).output.value;
+    expect(value).not.toContain('Réponse d’un AUTRE tour.');
+    expect(value).toContain('no text of this run could be recovered');
+  });
+
+  it('un tour courant fait d’appels d’outil seulement ne rend aucun texte, et le dit (#491)', async () => {
+    const { childId } = await seedDelegationCoupee('assign-r491-c');
+    await db
+      .update(agentJobs)
+      .set({
+        task: 'fais la voix off',
+        messages: [
+          { role: 'user', content: 'une demande d’un tour précédent' },
+          { role: 'assistant', content: [{ type: 'text', text: 'Réponse d’un AUTRE tour.' }] },
+          { role: 'user', content: 'fais la voix off' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool-call', toolCallId: 'g1', toolName: 'generate_speech', input: {} },
+            ],
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, childId));
+
+    await reclaimJobsOfDeadRunners(db);
+
+    const child = await jobRow(childId);
+    expect(child.result ?? '').not.toContain('Réponse d’un AUTRE tour.');
+    expect(child.result ?? '').toContain('no text of this run could be recovered');
+  });
 });
 
 describe('les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur', () => {

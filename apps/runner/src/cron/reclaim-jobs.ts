@@ -70,8 +70,14 @@ function duree(ms: number): string {
  * statut où le job a été trouvé, et depuis combien de temps il ne battait plus.
  * Le harnais ne raconte rien, il pose les faits qu'il a (invariant #2).
  */
-export function runnerRestartedStopLine(faits: { status: string; idleMs: number }): string {
-  return `[stopped: runner restarted — status ${faits.status}, no heartbeat for ${duree(faits.idleMs)}]`;
+export function runnerRestartedStopLine(faits: {
+  status: string;
+  idleMs: number;
+  /** Faux quand aucun texte de CE run n'a pu être relu (#491). */
+  textRecovered?: boolean;
+}): string {
+  const perte = faits.textRecovered === false ? '; no text of this run could be recovered' : '';
+  return `[stopped: runner restarted — status ${faits.status}, no heartbeat for ${duree(faits.idleMs)}${perte}]`;
 }
 
 /** Ce qu'une passe de reprise a fait, pour le tick et pour les journaux. */
@@ -129,12 +135,18 @@ export async function reclaimJobsOfDeadRunners(
     if (tacheEnCours) continue;
 
     const idleMs = now.getTime() - (job.updatedAt?.getTime() ?? now.getTime());
-    const ligne = runnerRestartedStopLine({ status: job.status ?? 'processing', idleMs });
-    // Ce que le job avait déjà écrit, suivi de la ligne d'arrêt — la même forme
+    // Ce que CE run avait déjà écrit, suivi de la ligne d'arrêt — la même forme
     // qu'un arrêt sur budget (#442). Sans le texte, le parent ne recevait
     // qu'un échec nu et refaisait le travail (#491) ; les FICHIERS écrits, eux,
-    // sont relus par `resumeDelegated` pour toute délégation.
-    const livrable = budgetDeliverable(lastTextOfRun(job.messages, job.task ?? ''), '', ligne);
+    // sont relus par `resumeDelegated` pour toute délégation. Aucun texte de
+    // ce run retrouvé : la ligne le dit, jamais un texte d'historique à la place.
+    const texte = lastTextOfRun(job.messages, job.task ?? '');
+    const ligne = runnerRestartedStopLine({
+      status: job.status ?? 'processing',
+      idleMs,
+      textRecovered: texte !== '',
+    });
+    const livrable = budgetDeliverable(texte, '', ligne);
 
     // `failJob` est conditionnelle sur un statut non terminal : un job qui
     // vient de se terminer entre la lecture et ici n'est pas écrasé.

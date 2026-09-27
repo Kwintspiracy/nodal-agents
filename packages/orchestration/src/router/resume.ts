@@ -467,10 +467,13 @@ export async function resumeDelegated(
   // reçoive : sans cela le parent redélègue la même revue.
   const outcome = {
     ...(await withDeliveredReviewVerdict(normalizeDelegationOutcome(childOutcome), childJobId, db)),
-    // Relu ICI, point de passage de TOUTE issue de délégation — l'enfant
-    // exécuté en ligne, celui qu'un runner mort laisse au faucheur, celui
-    // qu'une approbation reprend plus tard : un seul endroit, une seule
-    // réponse, quelle que soit la façon dont l'enfant s'est arrêté (#491).
+    // Relu ICI, point de passage de toute issue de délégation qu'un parent
+    // ATTEND — l'enfant exécuté en ligne, celui qu'un runner mort laisse au
+    // faucheur, celui qu'une approbation reprend plus tard : un seul endroit,
+    // une seule réponse, quelle que soit la façon dont l'enfant s'est arrêté
+    // (#491). Sauf l'annulation : annuler un enfant annule aussi le parent qui
+    // l'attend (execute.ts, `maybeResumeParent` et la délégation en ligne),
+    // donc personne n'attend son résultat, et elle ne passe pas par ici.
     files_written: await readFilesWrittenBy(db, childJobId),
   };
   const isFailure = outcome.status !== 'completed';
