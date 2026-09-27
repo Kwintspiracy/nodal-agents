@@ -18,9 +18,6 @@
 // emitted as [save_memory, assign] worked before the fix only by accident.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { JOB_FOLDER_LABEL } from '@nodal-agents/tools';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
@@ -36,7 +33,7 @@ import {
   constatedWrites,
   jobDeliverableVerificationState,
 } from '@nodal-agents/db';
-import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
