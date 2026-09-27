@@ -13,8 +13,17 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { and, eq, sql, agentJobs, agents, agentWorkspaces, toolCalls } from '@nodal-agents/db';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import {
+  and,
+  eq,
+  sql,
+  agentJobs,
+  agents,
+  agentWorkspaces,
+  approvalRequests,
+  toolCalls,
+} from '@nodal-agents/db';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
@@ -168,10 +177,14 @@ function modele(tours: Tour[]): { llm: RunnerDeps['llmClient']; relacher: () => 
   return { llm, relacher };
 }
 
-function deps(llm: RunnerDeps['llmClient']): RunnerDeps {
+function deps(
+  llm: RunnerDeps['llmClient'],
+  remplacer?: (registry: ReturnType<typeof createToolRegistry>) => void,
+): RunnerDeps {
   client.current = llm;
   const registry = createToolRegistry();
   registerBuiltins(registry);
+  remplacer?.(registry);
   return {
     db: db as RunnerDeps['db'],
     llmClient: llm,
@@ -507,5 +520,143 @@ describe('la reprise ne refait jamais un effet (#443) @cap:organiser-equipe/mote
     const r = await row(job!.id);
     expect(r).toMatchObject({ status: 'failed', error: RUNTIME_NOT_RESUMABLE_CODE });
     expect(r.result ?? '').toContain('runtime claude-code cannot resume');
+  });
+});
+
+// Revue Codex de #443, passe 2 : la ligne d'audit s'écrivait APRÈS l'outil. Une
+// mort entre l'effet et cette ligne ne laissait aucune trace, et la reprise
+// rejouait l'effet. Une MARQUE d'intention est écrite avant tout outil qui ne
+// fait pas que lire ; le faucheur la voit.
+describe('une mort entre l’effet et sa ligne d’audit ne rejoue pas l’effet (#443) @cap:organiser-equipe/moteur', () => {
+  it('file_write fait son effet puis le runner meurt avant l’audit : pas de reprise, un seul effet', async () => {
+    const dossier = mkdtempSync(join(tmpdir(), 'restart-audit-'));
+    const [ws] = await db
+      .insert(agentWorkspaces)
+      .values({ agentId: seed.agentId, label: 'Travail', path: dossier, position: 0 })
+      .returning({ id: agentWorkspaces.id });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'internal',
+          task: TACHE,
+          status: 'pending',
+          messages: [{ role: 'user', content: TACHE }],
+        })
+        .returning({ id: agentJobs.id });
+      const jobId = job!.id;
+      const avant = modele([
+        { outil: 'b1' },
+        { outil: 'b2' },
+        { outil: 'b3' },
+        { outil: 'b4' },
+        { outil: 'w5', nom: 'file_write', entree: { path: 'effet.txt', content: 'une fois' } },
+      ]);
+      // L'outil fait son VRAI effet, puis le runner meurt : rien ne revient,
+      // ni le résultat, ni la ligne d'audit écrite après lui.
+      void executeJob(
+        jobId as JobId,
+        deps(avant.llm, (registry) => {
+          const vrai = registry.get('file_write')!;
+          registry.register({
+            ...vrai,
+            execute: async (input: unknown, c: Parameters<typeof vrai.execute>[1]) => {
+              await vrai.execute(input, c);
+              return new Promise<never>(() => {});
+            },
+          });
+        }),
+      ).catch(() => undefined);
+      const effet = join(dossier, 'effet.txt');
+      const limite = Date.now() + 15_000;
+      while (!existsSync(effet) && Date.now() < limite) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      await new Promise((r) => setTimeout(r, 100));
+      await db
+        .update(agentJobs)
+        .set({ updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000) })
+        .where(eq(agentJobs.id, jobId));
+
+      const reprise = await reclaimJobsOfDeadRunners(db);
+
+      expect(reprise.resumedJobIds).not.toContain(jobId);
+      const [r] = await db
+        .select({
+          status: agentJobs.status,
+          error: agentJobs.error,
+          restartBlockedBy: agentJobs.restartBlockedBy,
+        })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, jobId));
+      expect(r).toEqual({
+        status: 'failed',
+        error: RESTART_AFTER_SIDE_EFFECT_CODE,
+        restartBlockedBy: ['file_write'],
+      });
+      expect(readFileSync(effet, 'utf8')).toBe('une fois');
+      // La marque : UNE ligne, écrite avant l'outil, sans sortie — « peut-être fait ».
+      const marques = await db
+        .select({ output: toolCalls.toolOutput, turn: toolCalls.turn })
+        .from(toolCalls)
+        .where(and(eq(toolCalls.jobId, jobId), eq(toolCalls.toolName, 'file_write')));
+      expect(marques).toEqual([{ output: null, turn: 5 }]);
+    } finally {
+      warn.mockRestore();
+      err.mockRestore();
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, ws!.id));
+    }
+  }, 60_000);
+});
+
+// Même trou pour une APPROBATION : sa demande est posée avant sa ligne d'audit.
+// Un job `processing` qui porte une demande en attente l'a posée pendant le
+// tour interrompu (une demande d'un tour précédent l'aurait suspendu) : le
+// rejouer reposerait la question, et deux « oui » feraient deux exécutions.
+describe('une demande d’approbation en attente empêche la reprise (#443) @cap:organiser-equipe/moteur', () => {
+  it('pas de reprise, et la demande est nommée dans le fait', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: TACHE,
+        status: 'processing',
+        turn: 4,
+        messages: [{ role: 'user', content: TACHE }],
+        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+      })
+      .returning({ id: agentJobs.id });
+    await db.insert(approvalRequests).values({
+      entityId: seed.entityId,
+      jobId: job!.id,
+      agentId: seed.agentId,
+      toolName: 'run_command',
+      toolInput: { command: 'npm publish' },
+      status: 'pending',
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const reprise = await reclaimJobsOfDeadRunners(db).finally(() => warn.mockRestore());
+
+    expect(reprise.resumedJobIds).not.toContain(job!.id);
+    const [r] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        blocked: agentJobs.restartBlockedBy,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(r).toEqual({
+      status: 'failed',
+      error: RESTART_AFTER_SIDE_EFFECT_CODE,
+      blocked: ['run_command'],
+    });
   });
 });

@@ -36,7 +36,7 @@
 // ce que le job avait écrit (#491), et c'est le PARENT qui décide.
 
 import { and, asc, eq, gt, inArray, isNull, lt, or } from '@nodal-agents/db';
-import { agentJobs, agentTasks, agents, toolCalls } from '@nodal-agents/db';
+import { agentJobs, agentTasks, agents, approvalRequests, toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resumeDelegated } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
@@ -136,10 +136,13 @@ export function orphanDecision(
 }
 
 /**
- * Les outils que le tour interrompu a exécutés et qui ne font pas que lire :
- * les lignes `tool_calls` du job postérieures au tour sauvegardé (ou sans
- * tour), dont le `risk_level` n'est pas `read` — NULL compris, comme les
- * lignes `cli:*`. Une par nom, dans l'ordre d'écriture.
+ * Les outils que le tour interrompu a exécutés — ou peut-être exécutés — et
+ * qui ne font pas que lire : les lignes `tool_calls` du job postérieures au
+ * tour sauvegardé (ou sans tour), dont le `risk_level` n'est pas `read` —
+ * NULL compris, comme les lignes `cli:*`. La MARQUE d'intention qu'un tel
+ * outil écrit avant de tourner (packages/tools, `markToolStarted`) en est
+ * une : sans sortie, elle veut dire « peut-être fait ». Plus les demandes
+ * d'approbation en attente. Une par nom, dans l'ordre d'écriture.
  */
 async function effectsAfterCheckpoint(
   db: AnyDrizzleDb,
@@ -158,6 +161,15 @@ async function effectsAfterCheckpoint(
     if (r.riskLevel === 'read') continue;
     if (!noms.includes(r.toolName)) noms.push(r.toolName);
   }
+  // Une demande d'approbation EN ATTENTE est posée avant sa ligne d'audit :
+  // un job `processing` qui en porte une l'a posée pendant le tour interrompu
+  // (une demande d'un tour précédent l'aurait suspendu). Rejouer ce tour
+  // reposerait la question, et deux « oui » feraient deux exécutions.
+  const demandes = await db
+    .select({ toolName: approvalRequests.toolName })
+    .from(approvalRequests)
+    .where(and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.status, 'pending')));
+  for (const d of demandes) if (!noms.includes(d.toolName)) noms.push(d.toolName);
   return noms;
 }
 

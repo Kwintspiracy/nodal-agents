@@ -1405,7 +1405,29 @@ describe('executeTool — une délégation laisse une ligne d’audit', () => {
   });
 
   it('une écriture d’audit qui échoue ne mange pas non plus le signal', async () => {
-    // Base en panne au moment d'écrire la ligne : la délégation prime.
+    // La marque d'intention est posée (#443), puis la base tombe au moment de
+    // COMPLÉTER la ligne après le signal : la délégation prime.
+    const vraie = db as unknown as ToolContext['db'];
+    const ctxCasse = makeCtx({
+      db: {
+        ...vraie,
+        insert: vraie.insert.bind(vraie),
+        select: vraie.select.bind(vraie),
+        update: () => {
+          throw new Error('db update boom');
+        },
+      } as unknown as ToolContext['db'],
+    });
+    await expect(
+      executeTool(makeAssignTool(), { task: 'db-en-panne' }, ctxCasse, makeOpts()),
+    ).rejects.toMatchObject({ name: 'DelegationPendingError' });
+  });
+
+  // #443 (revue Codex passe 2) : pas d'effet sans marque. Un outil qui ne fait
+  // pas que lire — une délégation comprise — ne tourne pas si sa marque
+  // d'intention ne peut pas être écrite : le modèle reçoit un résultat
+  // d'erreur (aucun appel d'outil sans réponse), et rien n'est lancé.
+  it('sans marque d’intention possible, un outil qui écrit ne tourne pas', async () => {
     const ctxCasse = makeCtx({
       db: {
         ...(db as unknown as ToolContext['db']),
@@ -1414,8 +1436,16 @@ describe('executeTool — une délégation laisse une ligne d’audit', () => {
         },
       } as unknown as ToolContext['db'],
     });
-    await expect(
-      executeTool(makeAssignTool(), { task: 'db-en-panne' }, ctxCasse, makeOpts()),
-    ).rejects.toMatchObject({ name: 'DelegationPendingError' });
+    const result = await executeTool(
+      makeAssignTool(),
+      { task: 'db-en-panne' },
+      ctxCasse,
+      makeOpts(),
+    );
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') {
+      expect(result.error).toContain('tool_intent_unrecorded');
+      expect(result.error).toContain('did NOT run');
+    }
   });
 });
