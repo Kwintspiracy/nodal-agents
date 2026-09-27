@@ -6,7 +6,7 @@
 // clé, le chemin, les drapeaux et la génération que la finalisation lira.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -17,7 +17,6 @@ import { executeTool } from '../execute';
 import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { returnResultTool } from '../builtin/return-result';
 import { declareDeliverables } from '../verification/declared-deliverables';
-import { resolveAndCheckPath } from '../builtin/file-ops/workspace';
 import type { ExecuteOptions, ToolContext } from '../types';
 
 let db: TestDb;
@@ -108,7 +107,13 @@ describe('declareDeliverables — une ligne d’état par fichier promis @cap:ve
     const out = await declareDeliverables(ctx(), ['film.mp4']);
     expect(out.kind).toBe('written');
 
-    const abs = await resolveAndCheckPath(ctx(), 'film.mp4');
+    // La clé se lit sur le dossier TEL QU'IL EST CONFIGURÉ, pas sur le chemin
+    // réel que rend le résolveur : la plateforme ramène l'un sur l'autre
+    // (`officeFileDeliverables`), si bien qu'un dossier écrit en nom court DOS
+    // (`RUNNER~1` sur le runner Windows de GitHub) et le même en nom long font
+    // UNE ligne. Attendre la clé du chemin réel comparait deux écritures d'un
+    // même chemin (CI Windows rouge sur main après #523).
+    const abs = join(ws, 'film.mp4');
     const rows = await statesOf(jobId);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -201,13 +206,40 @@ describe('declareDeliverables — une ligne d’état par fichier promis @cap:ve
     expect(await statesOf(jobId)).toHaveLength(1);
   });
 
+  it('un dossier configuré par un AUTRE nom que son chemin réel (lien, nom court DOS) : écrit puis déclaré, UNE ligne, clé du nom configuré', async () => {
+    // Le cas du runner Windows de GitHub (`RUNNER~1` configuré, `runneradmin`
+    // réel), reproduit sur tout système par un lien : le résolveur rend le
+    // chemin RÉEL, la clé suit le dossier CONFIGURÉ, et file_write comme la
+    // déclaration retombent sur la même ligne.
+    const alias = join(root, 'alias-ws');
+    await symlink(ws, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const parAlias = ctx({ workspaces: [{ label: 'work', path: alias }] } as Partial<ToolContext>);
+
+    const written = await executeTool(
+      fileWriteTool,
+      { path: 'notes/rapport.md', content: '# Rapport\n', create_dirs: true },
+      parAlias,
+      opts,
+    );
+    expect(written.outcome).toBe('success');
+    await declareDeliverables(parAlias, ['notes/rapport.md']);
+
+    const rows = await statesOf(jobId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      canonicalKey: keyOf(join(alias, 'notes', 'rapport.md')),
+      declared: true,
+    });
+  });
+
   it('une nouvelle liste REMPLACE la précédente : ce qui n’est plus nommé cesse d’être déclaré (revue Codex)', async () => {
     await declareDeliverables(ctx(), ['draft.mp4', 'rapport.pdf']);
     await declareDeliverables(ctx(), ['final.mp4', 'rapport.pdf']);
     const declares = (await statesOf(jobId))
       .map((r) => [r.canonicalKey, r.declared] as const)
       .sort(([a], [b]) => a.localeCompare(b));
-    const k = async (p: string) => keyOf(await resolveAndCheckPath(ctx(), p));
+    // La clé du dossier tel qu'il est configuré (voir le premier cas).
+    const k = async (p: string) => keyOf(join(ws, p));
     expect(declares).toEqual(
       [
         [await k('draft.mp4'), false],
