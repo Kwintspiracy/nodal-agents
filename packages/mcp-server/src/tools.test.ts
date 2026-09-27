@@ -11,6 +11,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs, entities, eq } from '@nodal-agents/db';
 import { buildNodalMcpServer } from './server';
+import { MCP_MAX_JOBS_IN_FLIGHT } from '@nodal-agents/shared';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -207,6 +208,25 @@ describe('le contrat run_task', () => {
     const client = await connect(ws.agentId, { maxJobsInFlight: 1 });
     const r = await client.callTool({ name: 'run_task', arguments: { instruction: 'seul' } });
     expect(r.isError ?? false).toBe(false);
+    await client.close();
+  });
+});
+
+describe('le plafond PAR DÉFAUT est la constante que la carte Settings affiche', () => {
+  it('sans option, le serveur refuse le job qui dépasserait MCP_MAX_JOBS_IN_FLIGHT', async () => {
+    // La carte lit la même constante : si le serveur en appliquait une autre,
+    // l'écran annoncerait un chiffre faux (revue Codex de la PR #521).
+    const ws = await nouveauWorkspace('defaut');
+    const client = await connect(ws.agentId);
+    const call = () => client.callTool({ name: 'run_task', arguments: { instruction: 'x' } });
+    for (let i = 0; i < MCP_MAX_JOBS_IN_FLIGHT; i++) {
+      expect((await call()).isError ?? false, `job ${i + 1}`).toBe(false);
+    }
+    const refus = await call();
+    expect(refus.isError).toBe(true);
+    expect((refus.content as Array<{ text: string }>)[0]!.text).toContain(
+      `and the cap is ${MCP_MAX_JOBS_IN_FLIGHT}:`,
+    );
     await client.close();
   });
 });

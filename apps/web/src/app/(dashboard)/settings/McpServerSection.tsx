@@ -24,6 +24,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import Switch from '@/components/ui/Switch';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
+import { MCP_MAX_JOBS_IN_FLIGHT } from '@nodal-agents/shared';
 
 /**
  * La commande complète, prête à coller. `nodal-agents mcp serve` résout
@@ -64,11 +65,12 @@ export default function McpServerSection({ initial }: Props) {
             <MonoMicroTag tone={enabled ? 'agent' : 'ink'}>{enabled ? 'on' : 'off'}</MonoMicroTag>
           </div>
           <p className="mt-1 text-body-13 leading-[1.5]! text-ink-3">
-            Lets an external MCP client — your terminal, a coding agent — hand work to this
-            workspace&apos;s root agent. Jobs arrive on the Runs page with channel <code>mcp</code>{' '}
-            and the caller&apos;s self-chosen label. MCP jobs can never use the configuration tools
-            (create agents, skills, connectors, automations) — that is enforced in the runner, not
-            by this switch.
+            Lets a program on this computer (your terminal, a coding agent) hand work to an agent of
+            this workspace: the root agent, unless the caller names another. Nothing is opened to
+            the network. Jobs arrive on the Runs page with channel <code>mcp</code> and the label
+            the caller gives. MCP jobs never get the configuration tools (create agents, skills,
+            connectors, automations); the runner enforces that, not this switch. At most{' '}
+            {MCP_MAX_JOBS_IN_FLIGHT} MCP jobs run at once; a finished one frees its place.
           </p>
           {enabled && (
             <>
@@ -98,10 +100,11 @@ export default function McpServerSection({ initial }: Props) {
         open={confirming}
         title="Enable the MCP server?"
         message={
-          'Any process on this machine that knows the database URL will be able to hand work ' +
-          'to your root agent — under its approval rules and budgets, and never with the ' +
-          'configuration tools. Turning this off later also cuts clients that are already ' +
-          'connected.'
+          'Any program on this machine that can read Nodal’s settings or knows its database URL ' +
+          'will be able to hand work to an agent of this workspace: the root agent, unless it ' +
+          'names another. The work runs under that agent’s approval rules and budget, and never ' +
+          'with the configuration tools. Turning this off later also cuts clients that are ' +
+          'already connected.'
         }
         confirmLabel="Enable"
         onConfirm={() => {

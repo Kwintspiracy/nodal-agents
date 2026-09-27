@@ -22,6 +22,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { agents, agentJobs, entities, and, eq, inArray, isNotNull } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { MCP_MAX_JOBS_IN_FLIGHT } from '@nodal-agents/shared';
 import { runTaskInputSchema, RUN_TASK_DESCRIPTION } from './tools';
 
 export interface McpServerOptions {
@@ -85,7 +86,8 @@ export interface McpServerOptions {
   };
 }
 
-const DEFAULT_MAX_JOBS_IN_FLIGHT = 5;
+// Une seule valeur, partagée avec la carte Settings qui la dit (#480).
+const DEFAULT_MAX_JOBS_IN_FLIGHT = MCP_MAX_JOBS_IN_FLIGHT;
 
 /** Les statuts d'un job qui n'est pas terminé. */
 const EN_COURS = ['pending', 'processing', 'awaiting_approval', 'awaiting_delegation'];

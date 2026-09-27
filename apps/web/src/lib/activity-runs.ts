@@ -65,6 +65,14 @@ export function originOfRun(input: RunOriginInput): RunOrigin {
   if (input.channel === 'webhook' || ctx?.type === 'webhook') {
     return { label: 'Webhook', detail: ctx?.type === 'webhook' ? ctx.webhookName : null };
   }
+  // Un run MCP porte l'étiquette que son appelant s'est donnée (`caller`) : le
+  // serveur l'enregistre précisément pour rendre « qui a demandé ça ? » lisible
+  // ici, comme le nom d'une automatisation. La carte Settings le promettait, et
+  // rien ne la lisait (revue Codex de la PR #521). Déclarative, elle ne dit que
+  // ce que le client a dit de lui-même.
+  if (input.channel === 'mcp' || ctx?.type === 'mcp') {
+    return { label: 'MCP', detail: ctx?.type === 'mcp' ? (ctx.caller ?? null) : null };
+  }
   const known = CHANNEL_LABELS[input.channel];
   if (known !== undefined) return { label: known, detail: null };
   if (input.channel === 'dashboard') {
