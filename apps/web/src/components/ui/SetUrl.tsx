@@ -1,6 +1,7 @@
 'use client';
 
 import { toast } from 'sonner';
+import { copyText } from '@/lib/clipboard';
 
 /**
  * SetUrl — URL display block with optional Copy button.
@@ -8,36 +9,12 @@ import { toast } from 'sonner';
  */
 export function SetUrl({ subtitle, url }: { subtitle: string; url: string }) {
   async function copy() {
-    // navigator.clipboard n'existe qu'en contexte sécurisé — or le dashboard
-    // se sert AUSSI en http sur une IP LAN (bind=lan), où le bouton Copy est
-    // l'affordance principale. Repli execCommand pour ce cas.
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-      } else {
-        legacyCopy(url);
-      }
+      await copyText(url);
       toast.success('Copied');
     } catch {
-      try {
-        legacyCopy(url);
-        toast.success('Copied');
-      } catch {
-        toast.error('Could not copy');
-      }
+      toast.error('Could not copy');
     }
-  }
-
-  function legacyCopy(text: string) {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    ta.remove();
-    if (!ok) throw new Error('copy_failed');
   }
 
   return (
