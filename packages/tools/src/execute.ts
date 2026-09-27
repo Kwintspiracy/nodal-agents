@@ -24,6 +24,7 @@ import type {
 } from './types';
 import { InvalidInputError } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
+import { alreadyRejectedInstruction, priorRejectionOfSameCall } from './rejected-call';
 import { judgeShellChecklist, shellChecklistRefusal } from './shell-checklist';
 import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
@@ -598,6 +599,27 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   }
 
   if (effectiveAction === 'require_approval') {
+    // ── 2.4 Un appel déjà refusé dans ce run n'est pas reposé (#492) ─────────
+    // Avant la raison : un appel identique à celui que le propriétaire vient
+    // de refuser n'a pas besoin d'une phrase de plus, il a déjà sa réponse.
+    // Voir `rejected-call.ts` pour ce qui compte comme « le même appel ».
+    const dejaRefuse =
+      tool.asksUser === true ? null : await priorRejectionOfSameCall(ctx, tool, validatedInput);
+    if (dejaRefuse) {
+      const result: ToolExecutionResult = {
+        outcome: 'error',
+        error: alreadyRejectedInstruction(tool.name, dejaRefuse),
+      };
+      await _writeToolCall(
+        ctx,
+        auditTool,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
+
     // ── 2.5 Une demande sans raison n'est pas posée ──────────────────────────
     // Tout ce qui suit fabrique une carte qu'une personne devra lire. Sans la
     // phrase de l'agent, cette carte ne peut que dire qu'il n'a rien dit — et

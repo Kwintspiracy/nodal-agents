@@ -229,13 +229,21 @@ const purposeField = z
 export function attachPurpose(schema: z.ZodTypeAny): {
   schema: z.ZodTypeAny;
   injected: boolean;
+  /** The server declares `purpose` itself: a real argument (see ToolDefinition.purposeIsArgument). */
+  serverOwnsPurpose: boolean;
 } {
-  if (!(schema instanceof z.ZodObject)) return { schema, injected: false };
+  if (!(schema instanceof z.ZodObject)) {
+    return { schema, injected: false, serverOwnsPurpose: false };
+  }
   const shape = schema.shape as Record<string, unknown>;
   if (Object.prototype.hasOwnProperty.call(shape, PURPOSE_KEY)) {
-    return { schema, injected: false };
+    return { schema, injected: false, serverOwnsPurpose: true };
   }
-  return { schema: schema.extend({ [PURPOSE_KEY]: purposeField }), injected: true };
+  return {
+    schema: schema.extend({ [PURPOSE_KEY]: purposeField }),
+    injected: true,
+    serverOwnsPurpose: false,
+  };
 }
 
 /**
@@ -253,9 +261,11 @@ function buildMcpToolDefinition(
   getClient: () => Promise<Client>,
 ): ToolDefinition<z.ZodTypeAny, unknown> {
   const originalName = mcpTool.name;
-  const { schema: inputSchema, injected: purposeInjected } = attachPurpose(
-    jsonSchemaToZod(mcpTool.inputSchema),
-  );
+  const {
+    schema: inputSchema,
+    injected: purposeInjected,
+    serverOwnsPurpose,
+  } = attachPurpose(jsonSchemaToZod(mcpTool.inputSchema));
   return {
     name: `${slugToPrefix(slug)}__${originalName}`,
     description: frameMcpDescription(mcpTool.description, slug, originalName),
@@ -279,6 +289,7 @@ function buildMcpToolDefinition(
     // `auto_approve` approval_rules row from the dashboard — the existing
     // mechanism, unchanged.
     defaultApproval: 'require_approval',
+    ...(serverOwnsPurpose ? { purposeIsArgument: true } : {}),
     async execute(input) {
       const client = await getClient();
       const args = { ...((input ?? {}) as Record<string, unknown>) };

@@ -47,7 +47,8 @@ export const TEST_JOB_ID = '00000000-0000-0000-0000-0000000000j1'.replace('j', '
 // ─── ToolContext ──────────────────────────────────────────────────────────────
 
 /**
- * A `db` stub that satisfies the approval gate's only DB need: inserting an
+ * A `db` stub that satisfies the approval gate's two DB needs: reading the
+ * run's earlier REJECTED requests, newest first (#492: none, here) and inserting an
  * `approval_requests` row and returning its id.
  *
  * Deliberately NOT a full mock. A test that needs real rows should use a real
@@ -57,6 +58,12 @@ export const TEST_JOB_ID = '00000000-0000-0000-0000-0000000000j1'.replace('j', '
 export function aStubDb(overrides?: { approvalRowId?: string }) {
   const id = overrides?.approvalRowId ?? 'approval-row-1';
   return {
+    select: () => ({
+      // A read answers no rows, ordered or not (#492 orders the refusals).
+      from: () => ({
+        where: () => Object.assign(Promise.resolve([]), { orderBy: async () => [] }),
+      }),
+    }),
     insert: () => ({
       values: () => ({ returning: async () => [{ id }] }),
     }),
