@@ -129,6 +129,8 @@ export type LlmTimeoutReason =
   | 'idle_before_first_token'
   | 'idle_between_tokens'
   | 'absolute'
+  /** Only reasoning or tool arguments for too long, nothing delivered (#484). */
+  | 'invisible_production'
   /**
    * Not a clock: the stream broke with an error AFTER writing text. Carried
    * on the same error so the whole cut path (no replay from scratch, no

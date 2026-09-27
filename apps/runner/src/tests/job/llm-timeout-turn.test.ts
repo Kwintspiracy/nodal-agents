@@ -102,6 +102,13 @@ type MockTurn =
       toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
     }
   | {
+      /** Un appel qui produit pendant `ms` (horloge simulée), puis répond. */
+      producesFor: { ms: number; producing: CallProgress };
+      text: string;
+      timesOut?: false;
+      timesOutViaFailover?: false;
+    }
+  | {
       cancelThenCut: { jobId: string; partial: string };
       timesOut?: false;
       timesOutViaFailover?: false;
@@ -244,6 +251,12 @@ function makeMockLlmClient(
               }),
             ),
           ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+      }
+      if (prevu && 'producesFor' in prevu) {
+        // Le temps passe PENDANT l'appel : les battements tombent, puis la
+        // réponse arrive par le modèle simulé, qui lit son texte.
+        opts?.onProgress?.(prevu.producesFor.producing);
+        vi.advanceTimersByTime(prevu.producesFor.ms);
       }
       if (prevu && 'stoppedWhileWriting' in prevu) {
         // Un tour qui écrit sans fin ; la personne appuie sur Stop une seconde
@@ -1175,4 +1188,41 @@ describe('une erreur de préparation échoue le job et reprend le parent (#507) 
     ) as Record<string, unknown>;
     expect(record).toMatchObject({ status: 'failed', error: 'job_folder_missing', summary: '' });
   });
+});
+
+// #484, revue Codex — le BATTEMENT de l'appel dit ce qu'il produit. Un appel
+// qui tourne plus d'une minute laisse une ligne `llm_call_progress` par minute,
+// avec sa durée, ses caractères de texte, de raisonnement et d'arguments, et
+// l'outil en cours de remplissage.
+describe('le battement d’un appel au modèle dit ce qu’il produit (#484) @cap:organiser-equipe/moteur', () => {
+  it('au-delà de 60 s, une ligne llm_call_progress porte la production de l’appel', async () => {
+    const jobId = await insertJob();
+    const producing: CallProgress = {
+      textChars: 0,
+      reasoningChars: 900,
+      toolInputChars: 30_000,
+      toolName: 'file_write',
+    };
+    const lignes: string[] = [];
+    const espion = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      lignes.push(a.map(String).join(' '));
+    });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      await executeJob(
+        jobId as JobId,
+        makeDeps(makeMockLlmClient([{ producesFor: { ms: 61_000, producing }, text: 'Fait.' }])),
+        testEnv,
+      );
+    } finally {
+      vi.useRealTimers();
+      espion.mockRestore();
+    }
+
+    const battement = lignes.find((l) => l.includes(jobId) && l.includes('llm_call_progress'));
+    expect(battement).toBeDefined();
+    const faits = JSON.parse(battement!.slice(battement!.indexOf('{'))) as Record<string, unknown>;
+    expect(faits).toMatchObject({ turn: 1, ...producing });
+    expect(faits['elapsedMs']).toBeGreaterThanOrEqual(60_000);
+  }, 20_000);
 });
