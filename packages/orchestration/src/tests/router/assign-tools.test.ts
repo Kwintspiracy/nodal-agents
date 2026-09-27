@@ -154,6 +154,15 @@ describe('generateAssignTools', () => {
     expect(tool?.description).toContain(DELEGATION_SCOPE_RULE);
   });
 
+  // Codex review of #455, pass 2 (P1): "never look or act beyond the folders"
+  // also forbade an e-mail, a Notion page or a web search. The rule is about
+  // the FILE SYSTEM only, and says so.
+  it('the scope rule is about files and folders only, never connectors or the web', () => {
+    expect(DELEGATION_SCOPE_RULE).toMatch(/folders? .*reads? or writes?|files/i);
+    expect(DELEGATION_SCOPE_RULE).toMatch(/connectors?.*web|web.*connectors?/i);
+    expect(DELEGATION_SCOPE_RULE).not.toMatch(/look or act beyond/i);
+  });
+
   it('tool description includes skill names from DB', async () => {
     const { entityId } = await seedEntity(db);
     const orch = await seedOrchestrator(db, entityId, `orch-skills-${Date.now()}`);
