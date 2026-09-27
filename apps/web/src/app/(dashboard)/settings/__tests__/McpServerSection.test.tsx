@@ -67,3 +67,19 @@ describe('La carte du serveur MCP, ce que la page Runs montre', () => {
     );
   });
 });
+
+describe('La confirmation d’activation', () => {
+  it('dit que tout agent de l’espace peut être visé, la racine par défaut, sans tiret cadratin (revue Codex de la PR #521)', async () => {
+    await render(false);
+    const bouton = container.querySelector<HTMLButtonElement>('button[role="switch"]')!;
+    await act(async () => {
+      bouton.click();
+    });
+    const texte = document.body.textContent!.replace(/\s+/g, ' ');
+    expect(texte).toContain(
+      'will be able to hand work to an agent of this workspace: the root agent, unless it names another.',
+    );
+    expect(texte).not.toContain('to your root agent');
+    expect(texte).not.toContain('—');
+  });
+});

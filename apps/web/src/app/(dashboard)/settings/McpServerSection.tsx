@@ -100,10 +100,11 @@ export default function McpServerSection({ initial }: Props) {
         open={confirming}
         title="Enable the MCP server?"
         message={
-          'Any process on this machine that knows the database URL will be able to hand work ' +
-          'to your root agent — under its approval rules and budgets, and never with the ' +
-          'configuration tools. Turning this off later also cuts clients that are already ' +
-          'connected.'
+          'Any program on this machine that can read Nodal’s settings or knows its database URL ' +
+          'will be able to hand work to an agent of this workspace: the root agent, unless it ' +
+          'names another. The work runs under that agent’s approval rules and budget, and never ' +
+          'with the configuration tools. Turning this off later also cuts clients that are ' +
+          'already connected.'
         }
         confirmLabel="Enable"
         onConfirm={() => {
