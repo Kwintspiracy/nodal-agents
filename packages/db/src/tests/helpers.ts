@@ -229,6 +229,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0133 (#443) : reprise après un redémarrage du runner
       resumed_from_turn integer,
       restart_resumes integer NOT NULL DEFAULT 0,
+      restart_blocked_by jsonb,
       -- project_id (0093) references code_projects, created further below — la
       -- FK est ajoutée par un ALTER TABLE juste après cette table, comme pour
       -- schedule_id ci-dessus.

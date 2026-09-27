@@ -13,7 +13,10 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agents } from '@nodal-agents/db';
+import { and, eq, sql, agentJobs, agents, agentWorkspaces, toolCalls } from '@nodal-agents/db';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -24,12 +27,37 @@ import {
   reclaimJobsOfDeadRunners,
   MAX_RESTART_RESUMES,
   RESTART_RESUME_LIMIT_CODE,
+  RESTART_AFTER_SIDE_EFFECT_CODE,
+  RUNTIME_NOT_RESUMABLE_CODE,
   RUNNER_LIVENESS_WINDOW_MS,
 } from '../../cron/reclaim-jobs.ts';
 
 const { client } = vi.hoisted(() => ({
   client: { current: null as RunnerDeps['llmClient'] | null },
 }));
+
+/**
+ * La mort du runner APRÈS les outils d'un tour et AVANT sa sauvegarde : la
+ * sauvegarde du tour nommé ne revient jamais (#443, revue Codex passe 1).
+ */
+const { mortALaSauvegarde } = vi.hoisted(() => ({
+  mortALaSauvegarde: { tour: null as number | null, relacher: () => {} },
+}));
+
+vi.mock('../../job/state.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../job/state.ts')>();
+  return {
+    ...actual,
+    saveCheckpoint: async (...args: Parameters<typeof actual.saveCheckpoint>) => {
+      if (mortALaSauvegarde.tour !== null && args[2].turn === mortALaSauvegarde.tour) {
+        return new Promise<void>((_, reject) => {
+          mortALaSauvegarde.relacher = () => reject(new Error('the runner is gone'));
+        });
+      }
+      return actual.saveCheckpoint(...args);
+    },
+  };
+});
 
 vi.mock('@nodal-agents/llm', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
@@ -55,7 +83,10 @@ beforeAll(async () => {
 });
 
 /** Un tour du modèle : un appel d'outil (un tour qui continue) ou le mot de la fin. */
-type Tour = { outil: string } | { fin: string } | 'meurt';
+type Tour =
+  | { outil: string; nom?: string; entree?: Record<string, unknown> }
+  | { fin: string }
+  | 'meurt';
 
 /**
  * Un modèle scripté, tour par tour. `'meurt'` : l'appel ne revient jamais —
@@ -84,8 +115,8 @@ function modele(tours: Tour[]): { llm: RunnerDeps['llmClient']; relacher: () => 
             {
               type: 'tool-call' as const,
               toolCallId: tour.outil,
-              toolName: 'list_models',
-              input: '{}',
+              toolName: tour.nom ?? 'list_models',
+              input: JSON.stringify(tour.entree ?? {}),
             },
           ],
           finishReason: { unified: 'tool-calls' as const, raw: 'tool-calls' },
@@ -311,5 +342,170 @@ describe('un job survit à un redémarrage du runner (#443) @cap:organiser-equip
 
     const r = await row(job!.id);
     expect(r).toMatchObject({ status: 'failed', error: 'runner_restarted', resumedFromTurn: null });
+  });
+});
+
+// Revue Codex de #443, passe 1 : rejouer le tour interrompu REFAISAIT un effet
+// déjà fait (un envoi, une écriture, une commande) que le point de reprise ne
+// porte pas. La reprise n'est permise que si ce tour n'a fait que lire.
+describe('la reprise ne refait jamais un effet (#443) @cap:organiser-equipe/moteur', () => {
+  /** Le job fait quatre tours de lecture, puis un cinquième qui meurt avant sa sauvegarde. */
+  async function mortApresLeTour5(
+    tour5: Tour,
+  ): Promise<{ jobId: string; relacher: () => void; abandonne: Promise<unknown> }> {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: TACHE,
+        status: 'pending',
+        messages: [{ role: 'user', content: TACHE }],
+      })
+      .returning({ id: agentJobs.id });
+    const jobId = job!.id;
+    mortALaSauvegarde.tour = 5;
+    const avant = modele([
+      { outil: 'a1' },
+      { outil: 'a2' },
+      { outil: 'a3' },
+      { outil: 'a4' },
+      tour5,
+    ]);
+    const abandonne = executeJob(jobId as JobId, deps(avant.llm)).catch(() => undefined);
+    // Le tour 5 a exécuté ses outils : sa ligne `tool_calls` est écrite.
+    const limite = Date.now() + 15_000;
+    for (;;) {
+      const [l] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(toolCalls)
+        .where(and(eq(toolCalls.jobId, jobId), eq(toolCalls.turn, 5)));
+      if ((l?.n ?? 0) > 0 || Date.now() > limite) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await row(jobId)).turn).toBe(4);
+    await db
+      .update(agentJobs)
+      .set({ updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000) })
+      .where(eq(agentJobs.id, jobId));
+    return {
+      jobId,
+      relacher: () => {
+        mortALaSauvegarde.tour = null;
+        mortALaSauvegarde.relacher();
+        avant.relacher();
+      },
+      abandonne,
+    };
+  }
+
+  it('un outil qui écrit, mort après l’effet et avant la sauvegarde : pas de reprise, l’effet existe une fois', async () => {
+    const dossier = mkdtempSync(join(tmpdir(), 'restart-effect-'));
+    const [ws] = await db
+      .insert(agentWorkspaces)
+      .values({ agentId: seed.agentId, label: 'Travail', path: dossier, position: 0 })
+      .returning({ id: agentWorkspaces.id });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const mort = await mortApresLeTour5({
+        outil: 'w5',
+        nom: 'file_write',
+        entree: { path: 'effet.txt', content: 'une fois' },
+      });
+
+      const reprise = await reclaimJobsOfDeadRunners(db);
+      mort.relacher();
+      await mort.abandonne;
+
+      expect(reprise.resumedJobIds).not.toContain(mort.jobId);
+      const r = await db
+        .select({
+          status: agentJobs.status,
+          error: agentJobs.error,
+          result: agentJobs.result,
+          restartBlockedBy: agentJobs.restartBlockedBy,
+          resumedFromTurn: agentJobs.resumedFromTurn,
+        })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, mort.jobId));
+      expect(r[0]).toMatchObject({
+        status: 'failed',
+        error: RESTART_AFTER_SIDE_EFFECT_CODE,
+        restartBlockedBy: ['file_write'],
+        resumedFromTurn: null,
+      });
+      expect(r[0]!.result ?? '').toContain(
+        'not resumed, the interrupted turn had already run: file_write',
+      );
+      // L'effet existe UNE fois : le fichier, et une seule exécution de l'outil.
+      expect(readFileSync(join(dossier, 'effet.txt'), 'utf8')).toBe('une fois');
+      const ecritures = await db
+        .select({ id: toolCalls.id })
+        .from(toolCalls)
+        .where(and(eq(toolCalls.jobId, mort.jobId), eq(toolCalls.toolName, 'file_write')));
+      expect(ecritures).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      err.mockRestore();
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, ws!.id));
+    }
+  }, 60_000);
+
+  it('un tour interrompu qui n’a fait que lire est repris', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const mort = await mortApresLeTour5({ outil: 'r5' });
+
+      const reprise = await reclaimJobsOfDeadRunners(db);
+
+      expect(reprise.resumedJobIds).toContain(mort.jobId);
+      expect(await row(mort.jobId)).toMatchObject({ status: 'pending', resumedFromTurn: 4 });
+      // Le runner abandonné n'est PAS relâché : un vrai runner mort ne revient
+      // pas écrire, et le relâcher ici lui ferait échouer le job repris.
+      mortALaSauvegarde.tour = null;
+    } finally {
+      warn.mockRestore();
+      err.mockRestore();
+    }
+  }, 60_000);
+
+  it('un runtime sans point de reprise Nodal échoue, et le dit par son code', async () => {
+    const [cli] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Agent CLI',
+        slug: `agent-cli-${Date.now()}`,
+        personality: 'p',
+        role: 'agent',
+        active: true,
+        runtime: 'claude-code',
+      })
+      .returning({ id: agents.id });
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: cli!.id,
+        channel: 'internal',
+        task: TACHE,
+        status: 'processing',
+        turn: 3,
+        messages: [{ role: 'user', content: TACHE }],
+        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+      })
+      .returning({ id: agentJobs.id });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const reprise = await reclaimJobsOfDeadRunners(db).finally(() => warn.mockRestore());
+
+    expect(reprise.resumedJobIds).not.toContain(job!.id);
+    const r = await row(job!.id);
+    expect(r).toMatchObject({ status: 'failed', error: RUNTIME_NOT_RESUMABLE_CODE });
+    expect(r.result ?? '').toContain('runtime claude-code cannot resume');
   });
 });

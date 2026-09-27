@@ -35,14 +35,16 @@
 // ÉCHOUE : l'échec typé remonte au parent par le porteur de la PR #170, avec
 // ce que le job avait écrit (#491), et c'est le PARENT qui décide.
 
-import { and, eq, inArray, lt } from '@nodal-agents/db';
-import { agentJobs, agentTasks } from '@nodal-agents/db';
+import { and, asc, eq, gt, inArray, isNull, lt, or } from '@nodal-agents/db';
+import { agentJobs, agentTasks, agents, toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resumeDelegated } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
 import { failJob, lastTextOfRun } from '../job/state.ts';
 import { budgetDeliverable } from '../job/execute.ts';
 import { notifyJobFailure } from './reset-orphans.ts';
+import { restartResumeOf } from '../lib/runtime-restart.ts';
+import type { RestartResume } from '../lib/runtime-restart.ts';
 
 /** Le battement qu'un runner vivant pose sur chaque job qu'il tient. */
 export const RUNNER_HEARTBEAT_MS = 60_000;
@@ -67,36 +69,96 @@ export const MAX_RESTART_RESUMES = 3;
 /** Le code d'un job qui a épuisé ses reprises après redémarrage (#443). */
 export const RESTART_RESUME_LIMIT_CODE = 'restart_resume_limit';
 
+/** Le code d'un job dont le runtime ne sait pas reprendre après un redémarrage (#443). */
+export const RUNTIME_NOT_RESUMABLE_CODE = 'runtime_not_resumable';
+
 /**
- * Ce que le faucheur fait d'un job orphelin — UNE décision, deux issues (#443).
- *
- * Le point de reprise est le dernier tour que la boucle a sauvegardé
- * (`saveCheckpoint`, à la fin de chaque tour complet : messages cohérents,
- * appels d'outil et résultats appariés). Un job qui en a un (`turn >= 1`) et
- * qui n'a pas épuisé ses reprises repart de ce tour ; sinon il échoue, avec ce
- * qu'il avait écrit (#491). Ce qui n'en a pas : un job mort pendant son
- * premier tour, et un job de runtime CLI, qui ne tient pas de compteur `turn`
- * (cli-runtime/run-job.ts) — tous deux échouent comme avant.
- *
- * Le tour interrompu à moitié n'est jamais dans la transcription reprise : la
- * sauvegarde n'a lieu qu'en fin de tour, et le texte partiel d'un appel en
- * cours vivait dans la mémoire du runner mort. Le tour est donc REJOUÉ depuis
- * sa sauvegarde ; les outils qu'il avait peut-être déjà lancés avant la mort
- * peuvent l'être une seconde fois — c'est le prix assumé de la reprise.
+ * Le code d'un job dont le tour interrompu avait déjà fait autre chose que
+ * lire (#443, revue Codex passe 1) : le rejouer le referait.
  */
-export function orphanDecision(job: {
+export const RESTART_AFTER_SIDE_EFFECT_CODE = 'restart_after_side_effect';
+
+/** Ce que le faucheur sait d'un job orphelin pour décider. */
+export interface OrphanFacts {
+  /** La capacité de reprise de son runtime (`lib/runtime-restart.ts`). */
+  resume: RestartResume;
+  /** Le dernier tour sauvegardé. */
   turn: number | null;
   restartResumes: number | null;
-}):
+  /**
+   * Les outils exécutés APRÈS le point de reprise — le tour interrompu — qui
+   * ne font pas que lire (`risk_level` autre que `read`, ou inconnu).
+   */
+  effectsAfterCheckpoint: readonly string[];
+}
+
+/**
+ * Ce que le faucheur fait d'un job orphelin — UNE décision (#443).
+ *
+ * Reprendre, c'est rejouer le tour interrompu depuis le dernier tour
+ * sauvegardé (`saveCheckpoint`, en fin de tour complet : appels d'outil et
+ * résultats appariés ; le texte partiel d'un appel en cours vivait dans le
+ * processus mort). Ce n'est permis que si ce rejeu ne REFAIT rien : pas
+ * d'envoi, pas d'écriture, pas de commande — pour un outil approuvé, la
+ * personne a approuvé UNE exécution. Sinon le job échoue, avec ce qu'il avait
+ * écrit (#491), et le code dit pourquoi :
+ *
+ *   runtime_not_resumable      son runtime n'a pas de point de reprise Nodal
+ *   runner_restarted           mort avant d'avoir sauvegardé un seul tour
+ *   restart_resume_limit       déjà repris MAX_RESTART_RESUMES fois
+ *   restart_after_side_effect  le tour interrompu avait déjà fait un effet
+ */
+export function orphanDecision(
+  job: OrphanFacts,
+):
   | { kind: 'resume'; fromTurn: number }
-  | { kind: 'fail'; code: string; resumesExhausted: boolean } {
+  | { kind: 'fail'; code: string; resumesExhausted: boolean; blockedBy: readonly string[] } {
+  const echec = (
+    code: string,
+    extra: { resumesExhausted?: boolean; blockedBy?: readonly string[] } = {},
+  ) =>
+    ({
+      kind: 'fail',
+      code,
+      resumesExhausted: extra.resumesExhausted ?? false,
+      blockedBy: extra.blockedBy ?? [],
+    }) as const;
+  if (job.resume !== 'from_checkpoint') return echec(RUNTIME_NOT_RESUMABLE_CODE);
   const tour = job.turn ?? 0;
-  const reprises = job.restartResumes ?? 0;
-  if (tour < 1) return { kind: 'fail', code: RUNNER_RESTARTED_CODE, resumesExhausted: false };
-  if (reprises >= MAX_RESTART_RESUMES) {
-    return { kind: 'fail', code: RESTART_RESUME_LIMIT_CODE, resumesExhausted: true };
+  if (tour < 1) return echec(RUNNER_RESTARTED_CODE);
+  if ((job.restartResumes ?? 0) >= MAX_RESTART_RESUMES) {
+    return echec(RESTART_RESUME_LIMIT_CODE, { resumesExhausted: true });
+  }
+  if (job.effectsAfterCheckpoint.length > 0) {
+    return echec(RESTART_AFTER_SIDE_EFFECT_CODE, { blockedBy: job.effectsAfterCheckpoint });
   }
   return { kind: 'resume', fromTurn: tour };
+}
+
+/**
+ * Les outils que le tour interrompu a exécutés et qui ne font pas que lire :
+ * les lignes `tool_calls` du job postérieures au tour sauvegardé (ou sans
+ * tour), dont le `risk_level` n'est pas `read` — NULL compris, comme les
+ * lignes `cli:*`. Une par nom, dans l'ordre d'écriture.
+ */
+async function effectsAfterCheckpoint(
+  db: AnyDrizzleDb,
+  jobId: string,
+  savedTurn: number,
+): Promise<string[]> {
+  const rows = await db
+    .select({ toolName: toolCalls.toolName, riskLevel: toolCalls.riskLevel })
+    .from(toolCalls)
+    .where(
+      and(eq(toolCalls.jobId, jobId), or(gt(toolCalls.turn, savedTurn), isNull(toolCalls.turn))),
+    )
+    .orderBy(asc(toolCalls.seq));
+  const noms: string[] = [];
+  for (const r of rows) {
+    if (r.riskLevel === 'read') continue;
+    if (!noms.includes(r.toolName)) noms.push(r.toolName);
+  }
+  return noms;
 }
 
 /** Des millisecondes en minutes et secondes, jamais négatives. */
@@ -122,13 +184,25 @@ export function runnerRestartedStopLine(faits: {
   textRecovered?: boolean;
   /** Le nombre de reprises après redémarrage déjà épuisées, quand il l'est (#443). */
   resumesExhausted?: number;
+  /** Les outils déjà exécutés par le tour interrompu, qui empêchent de le rejouer (#443). */
+  sideEffects?: readonly string[];
+  /** Le runtime qui ne sait pas reprendre, quand c'est la raison (#443). */
+  runtimeNotResumable?: string;
 }): string {
   const perte = faits.textRecovered === false ? '; no text of this run could be recovered' : '';
   const reprises =
     faits.resumesExhausted !== undefined
       ? `; already resumed ${String(faits.resumesExhausted)} times after a restart`
       : '';
-  return `[stopped: runner restarted — status ${faits.status}, no heartbeat for ${duree(faits.idleMs)}${reprises}${perte}]`;
+  const effets =
+    faits.sideEffects && faits.sideEffects.length > 0
+      ? `; not resumed, the interrupted turn had already run: ${faits.sideEffects.join(', ')}`
+      : '';
+  const runtime =
+    faits.runtimeNotResumable !== undefined
+      ? `; runtime ${faits.runtimeNotResumable} cannot resume`
+      : '';
+  return `[stopped: runner restarted — status ${faits.status}, no heartbeat for ${duree(faits.idleMs)}${reprises}${effets}${runtime}${perte}]`;
 }
 
 /** Ce qu'une passe de reprise a fait, pour le tick et pour les journaux. */
@@ -170,8 +244,10 @@ export async function reclaimJobsOfDeadRunners(
       messages: agentJobs.messages,
       turn: agentJobs.turn,
       restartResumes: agentJobs.restartResumes,
+      runtime: agents.runtime,
     })
     .from(agentJobs)
+    .leftJoin(agents, eq(agents.id, agentJobs.agentId))
     .where(and(eq(agentJobs.status, 'processing'), lt(agentJobs.updatedAt, cutoff)));
 
   const out: ReclaimResult = { reclaimed: 0, parentsResumed: 0, resumed: 0, resumedJobIds: [] };
@@ -193,7 +269,18 @@ export async function reclaimJobsOfDeadRunners(
     if (tacheEnCours) continue;
 
     const idleMs = now.getTime() - (job.updatedAt?.getTime() ?? now.getTime());
-    const decision = orphanDecision(job);
+    const resume = restartResumeOf(job.runtime);
+    const decision = orphanDecision({
+      resume,
+      turn: job.turn,
+      restartResumes: job.restartResumes,
+      // Lu seulement quand la question se pose : un runtime qui ne reprend pas,
+      // ou un job sans tour sauvegardé, n'a pas de tour à rejouer.
+      effectsAfterCheckpoint:
+        resume === 'from_checkpoint' && (job.turn ?? 0) >= 1
+          ? await effectsAfterCheckpoint(db, job.id, job.turn ?? 0)
+          : [],
+    });
 
     if (decision.kind === 'resume') {
       // Repart de son dernier tour sauvegardé (#443) : `pending`, le worker le
@@ -232,6 +319,10 @@ export async function reclaimJobsOfDeadRunners(
       idleMs,
       textRecovered: texte !== '',
       ...(decision.resumesExhausted ? { resumesExhausted: job.restartResumes ?? 0 } : {}),
+      ...(decision.blockedBy.length > 0 ? { sideEffects: decision.blockedBy } : {}),
+      ...(decision.code === RUNTIME_NOT_RESUMABLE_CODE
+        ? { runtimeNotResumable: job.runtime ?? 'unknown' }
+        : {}),
     });
     const livrable = budgetDeliverable(texte, '', ligne);
 
@@ -240,6 +331,14 @@ export async function reclaimJobsOfDeadRunners(
     const landed = await failJob(db, job.id, decision.code, undefined, undefined, livrable);
     if (!landed) continue;
     out.reclaimed += 1;
+    // Le FAIT, porté par le job : quels outils déjà exécutés ont empêché la
+    // reprise (#443). L'écran le dira (#444).
+    if (decision.blockedBy.length > 0) {
+      await db
+        .update(agentJobs)
+        .set({ restartBlockedBy: [...decision.blockedBy] })
+        .where(eq(agentJobs.id, job.id));
+    }
     await notifyJobFailure(db, job.id, ligne);
 
     if (await resumeParentOfReclaimedChild(db, job.id, job.parentJobId, livrable, decision.code)) {

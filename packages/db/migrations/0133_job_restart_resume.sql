@@ -11,6 +11,11 @@
 --   restart_resumes    combien de fois il a été repris ainsi. Borne
 --                      anti-boucle : un job qui meurt à chaque reprise finit par
 --                      échouer avec son code, au lieu de reprendre sans fin.
+--   restart_blocked_by les outils que le tour interrompu avait DÉJÀ exécutés
+--                      et qui ne font pas que lire (tableau de noms). Rejouer
+--                      ce tour les referait : le job n'est pas repris, il
+--                      échoue (`restart_after_side_effect`). NULL ailleurs.
 ALTER TABLE agent_jobs
   ADD COLUMN IF NOT EXISTS resumed_from_turn integer,
-  ADD COLUMN IF NOT EXISTS restart_resumes integer NOT NULL DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS restart_resumes integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS restart_blocked_by jsonb;
