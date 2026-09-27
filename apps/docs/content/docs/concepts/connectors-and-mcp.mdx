@@ -171,10 +171,12 @@ they appear in **Logs → Activity** like any other run.
 
 What the door never grants, whatever the switch says: the configuration tools.
 An MCP job can ask for work; it cannot create agents, skills, connectors or
-automations — that is enforced in the runner. Each server process also caps
-how many jobs it can create; restarting the client resets the cap, which is
-deliberately a human gesture. Turning the switch off cuts clients that are
-already connected — the server re-checks it on every call.
+automations — that is enforced in the runner. At most 5 MCP jobs of a
+workspace run at the same time, whichever client or server process started
+them: a sixth is refused with the list of the running ones, and a job that
+finishes frees its place. What a job may spend is bounded by its agent's own
+budget. Turning the switch off cuts clients that are already connected — the
+server re-checks it on every call.
 
 ---
 
