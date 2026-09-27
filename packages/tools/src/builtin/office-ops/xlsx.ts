@@ -1622,8 +1622,9 @@ export const xlsxFindCellsTool: ToolDefinition<typeof XlsxFindCellsInput, XlsxFi
   summary: 'Find the cells whose shown value matches a text or a pattern, and get their addresses.',
   description:
     'Search a workbook for cells whose displayed value matches a string or regular expression. ' +
-    'Formula cells are matched against their cached result, never against the formula text, and ' +
-    'a formula cell also returns its `formula`. Returns cell addresses and values — ' +
+    'Cells are matched against what xlsx_read shows: a formula by its cached result, or by its ' +
+    'formula text only when the workbook holds no computed result for it (a formula just written ' +
+    'by a tool). A formula cell also returns its `formula`. Returns cell addresses and values — ' +
     'use this to locate the cells to change before calling xlsx_set_cell/xlsx_format_range, ' +
     'instead of guessing coordinates from xlsx_read.',
   inputSchema: XlsxFindCellsInput,
