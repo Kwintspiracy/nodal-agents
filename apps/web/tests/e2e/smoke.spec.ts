@@ -271,8 +271,9 @@ test.describe('agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-
     await dialog.getByRole('button', { name: /^new task$/i }).click();
 
     // ── Verify job exists ─────────────────────────────────────────────────
-    // sendTaskAction redirects to /jobs/<id> on success.
-    await page.waitForURL(/\/jobs\/[0-9a-f-]{36}/, { timeout: 15_000 });
+    // The form opens the run through /runs/<id>, which lands a dashboard task
+    // on its Work address (#501).
+    await page.waitForURL(/\/chat\/runs\/[0-9a-f-]{36}/, { timeout: 15_000 });
     // The task text should appear somewhere on the job detail page.
     await expect(page.getByText(title).first()).toBeVisible({ timeout: 10_000 });
   });

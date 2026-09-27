@@ -39,6 +39,7 @@ import RowActionButton from '@/components/ui/RowActionButton';
 import ToolBlock from '../spaces/ToolBlock.tsx';
 import { formatMs, formatCost } from '../spaces/format.ts';
 import ModelCallBlock from './ModelCallBlock.tsx';
+import { openRunHref } from '@/lib/run-page.ts';
 
 /** Combien d'appels une page de dépliage porte, et ce que « show more » ajoute. */
 export const CALLS_PAGE_SIZE = 50;
@@ -228,7 +229,7 @@ export default function RunRow({
         <TableDetailRow
           colSpan={columns}
           label="Calls"
-          action={<RowActionButton href={`/jobs/${run.id}`}>Open run</RowActionButton>}
+          action={<RowActionButton href={openRunHref(run.id)}>Open run</RowActionButton>}
           data-testid={`run-calls-${run.id}`}
         >
           {error !== null && (
