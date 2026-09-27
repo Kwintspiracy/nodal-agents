@@ -428,7 +428,7 @@ describe('update-flow', () => {
         skillStoreDir: store,
       });
 
-      expect(outcome).toEqual({ kind: 'not_found' });
+      expect(outcome).toEqual({ kind: 'not_found', reason: expect.stringMatching(/HTTP 404/) });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
       expect(after!.updateAvailable).toBe(false);

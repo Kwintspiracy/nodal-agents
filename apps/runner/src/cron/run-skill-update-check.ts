@@ -49,7 +49,7 @@ export interface SkillUpdateCheckTickResult {
   checked: number;
   /** Of `checked`, how many turned up an actual content/script change. */
   updatesFound: number;
-  /** Of `checked`, how many had a vanished upstream source (404-shaped). */
+  /** Of `checked`, how many skills were no longer at their source (404, or another skill there). */
   notFound: number;
   /** Skills whose check threw an unexpected error — stamped and skipped. */
   errored: number;
@@ -149,7 +149,7 @@ export async function runSkillUpdateCheckTick(
     if (outcome.kind === 'not_found') {
       notFound += 1;
       console.warn(
-        `[skill-update-check] skill "${row.slug}" (${row.id}) source no longer resolves upstream.`,
+        `[skill-update-check] skill "${row.slug}" (${row.id}) is no longer at its source: ${outcome.reason}`,
       );
       continue;
     }

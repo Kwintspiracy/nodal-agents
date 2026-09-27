@@ -1,7 +1,7 @@
 // skills/check-updates.ts — detect whether an installed community skill has
 // an upstream update available, WITHOUT writing any files. Re-runs the same
 // download + parse steps as installCommunitySkill (parseSkillSource →
-// downloadAndExtract → pickManifest → parseSkillMarkdown → buildContent) and
+// downloadAndExtract → readInstalledSkillSource → buildContent) and
 // diffs the result against what's stored: `defaultContent` for the wrapped
 // SKILL.md body, and a path-set + sha256 compare (computeScriptsChanged,
 // fs-util.ts) for the bundled scripts against what's actually on disk in the
@@ -14,14 +14,13 @@
 // Applying an update (writing files, revoking script authorization) is a
 // separate, explicit action: applySkillUpdate in install.ts.
 
-import { dirname, join } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { eq, agentSkills, type AnyDrizzleDb } from '@nodal-agents/db';
 import { parseSkillSource, SkillSourceError } from './source';
 import { downloadAndExtract, SkillFetchError } from './fetch';
-import { parseSkillMarkdown } from './frontmatter';
+import { FrontmatterError } from './frontmatter';
 import { detectScripts } from './detect-scripts';
-import { pickManifest, buildContent, SkillInstallError } from './install';
+import { readInstalledSkillSource, buildContent, SkillInstallError } from './install';
 import { buildNestedSkillExclusion, computeScriptsState } from './fs-util';
 
 export interface SkillUpdateCheckSkill {
@@ -54,13 +53,16 @@ export type SkillUpdateCheckOutcome =
       scriptsState: 'clean' | 'update' | 'conflict' | 'local-only';
     }
   /**
-   * Upstream no longer resolves (repo/ref/subdir/SKILL.md gone, HTTP 404).
+   * The skill this row tracks is no longer at its source: repo/ref/subdir/
+   * SKILL.md gone (HTTP 404), a SKILL.md that is no longer a valid skill, or
+   * one that declares ANOTHER skill (a different slug — never reported as an
+   * update, see readInstalledSkillSource). `reason` is the error that said so.
    * The tracking columns WERE written (update_available=false) so a vanished
    * source doesn't get misreported as "changed" — but last_update_check_at is
    * still stamped, so it's picked up again after the normal throttle interval
    * in case the outage is transient.
    */
-  | { kind: 'not_found' }
+  | { kind: 'not_found'; reason: string }
   /**
    * GitHub API rate limit hit (HTTP 403/429, or GitHub's explicit rate-limit
    * body). NOTHING was written — the caller (cron phase) should stop
@@ -144,31 +146,29 @@ export async function checkSkillUpdate(
       if (isRateLimitError(err)) return { kind: 'rate_limited' };
       if (isNotFoundError(err)) {
         await markNotFound(db, skill.id);
-        return { kind: 'not_found' };
+        return { kind: 'not_found', reason: err.message };
       }
     }
     throw err;
   }
 
   try {
-    let manifestRel: string;
+    let upstream: Awaited<ReturnType<typeof readInstalledSkillSource>>;
     try {
-      manifestRel = await pickManifest(extracted.extractRoot, source.subdir, source.skillName);
+      upstream = await readInstalledSkillSource(extracted.extractRoot, source, skill.slug);
     } catch (err) {
-      // The repo resolved but no longer has a (unambiguous) SKILL.md at the
-      // path this install came from — treat it the same as "source vanished"
-      // rather than crashing the cron phase over a repo restructure.
-      if (err instanceof SkillInstallError) {
+      // The repo resolved but the skill this row tracks is not there any more:
+      // no (unambiguous) SKILL.md at the path this install came from, one that
+      // is no longer a valid skill, or one that is ANOTHER skill (a different
+      // slug). Each is "source vanished" for THIS skill — never an update of
+      // it — rather than a crash of the cron phase over a repo restructure.
+      if (err instanceof SkillInstallError || err instanceof FrontmatterError) {
         await markNotFound(db, skill.id);
-        return { kind: 'not_found' };
+        return { kind: 'not_found', reason: err.message };
       }
       throw err;
     }
-
-    const skillDirAbs = join(extracted.extractRoot, dirname(manifestRel));
-    const manifestAbs = join(extracted.extractRoot, manifestRel);
-    const text = await readFile(manifestAbs, 'utf8');
-    const { body } = parseSkillMarkdown(text);
+    const { skillDirAbs, body } = upstream;
 
     const isExcluded = await buildNestedSkillExclusion(skillDirAbs);
     const freshScripts = await detectScripts(skillDirAbs, isExcluded);

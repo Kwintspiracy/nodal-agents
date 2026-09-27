@@ -12,7 +12,7 @@ import { dirname, join, basename, sep, resolve } from 'node:path';
 import { eq, and, agentSkills, agentSkillAssignments, type AnyDrizzleDb } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { COMMUNITY_SKILL_CATALOG } from '@nodal-agents/shared';
-import { parseSkillSource } from './source';
+import { parseSkillSource, type SkillSource } from './source';
 import { downloadAndExtract, findSkillManifests, isFile } from './fetch';
 import { parseSkillMarkdown, validateFrontmatter } from './frontmatter';
 import { detectScripts, type DetectedScript } from './detect-scripts';
@@ -146,6 +146,47 @@ export async function pickManifest(
   );
 }
 
+/**
+ * Read the SKILL.md a source serves today: locate it, parse it, validate its
+ * frontmatter. The one reader of an upstream manifest — install goes through
+ * it, and so does every path that re-reads the source of an installed skill
+ * (readInstalledSkillSource below).
+ */
+async function readSourceManifest(
+  extractRoot: string,
+  source: SkillSource,
+): Promise<{ skillDirAbs: string; body: string; slug: string; name: string; description: string }> {
+  const manifestRel = await pickManifest(extractRoot, source.subdir, source.skillName);
+  const text = await readFile(join(extractRoot, manifestRel), 'utf8');
+  const { frontmatter, body } = parseSkillMarkdown(text);
+  const { slug, name, description } = validateFrontmatter(frontmatter);
+  return { skillDirAbs: join(extractRoot, dirname(manifestRel)), body, slug, name, description };
+}
+
+/**
+ * The same read for a skill ALREADY installed under `installedSlug`: the
+ * background update check, the update preview, its apply, and « keep my
+ * version ». A source tracks a moving ref, and what it serves today may be
+ * another skill (renamed, moved, replaced upstream). That is not an update of
+ * the installed skill: taking it would put another skill's text and files
+ * behind this row's slug and name. Refuse, naming both slugs, before any
+ * caller has written anything.
+ */
+export async function readInstalledSkillSource(
+  extractRoot: string,
+  source: SkillSource,
+  installedSlug: string,
+): Promise<{ skillDirAbs: string; body: string }> {
+  const manifest = await readSourceManifest(extractRoot, source);
+  if (manifest.slug !== installedSlug) {
+    throw new SkillInstallError(
+      `The installed skill "${installedSlug}" is not at its source any more: the source now ` +
+        `serves a skill named "${manifest.slug}". Nothing was changed.`,
+    );
+  }
+  return { skillDirAbs: manifest.skillDirAbs, body: manifest.body };
+}
+
 export async function installCommunitySkill(
   opts: InstallSkillOptions,
 ): Promise<InstallSkillResult> {
@@ -153,13 +194,13 @@ export async function installCommunitySkill(
   const { extractRoot, cleanup } = await downloadAndExtract(source);
 
   try {
-    const manifestRel = await pickManifest(extractRoot, source.subdir, source.skillName);
-    const skillDirAbs = join(extractRoot, dirname(manifestRel));
-    const manifestAbs = join(extractRoot, manifestRel);
-
-    const text = await readFile(manifestAbs, 'utf8');
-    const { frontmatter, body } = parseSkillMarkdown(text);
-    const { slug, name: manifestName, description } = validateFrontmatter(frontmatter);
+    const {
+      skillDirAbs,
+      body,
+      slug,
+      name: manifestName,
+      description,
+    } = await readSourceManifest(extractRoot, source);
     // A skill installed from a card of the curated catalog keeps the card's
     // name ("Comfy (official)"), whoever asks for the install: the screen or
     // an agent. Any other source keeps the name its SKILL.md declares.
@@ -492,7 +533,7 @@ async function loadUpdatableSkill(opts: ApplySkillUpdateOptions): Promise<{
  */
 async function resolveUpstreamContent(
   extractRoot: string,
-  source: ReturnType<typeof parseSkillSource>,
+  source: SkillSource,
   slug: string,
 ): Promise<{
   skillDirAbs: string;
@@ -501,11 +542,7 @@ async function resolveUpstreamContent(
   /** Nested-skill filter, reused by the apply's file copy. */
   isExcluded: (src: string) => boolean;
 }> {
-  const manifestRel = await pickManifest(extractRoot, source.subdir, source.skillName);
-  const skillDirAbs = join(extractRoot, dirname(manifestRel));
-  const manifestAbs = join(extractRoot, manifestRel);
-  const text = await readFile(manifestAbs, 'utf8');
-  const { body } = parseSkillMarkdown(text);
+  const { skillDirAbs, body } = await readInstalledSkillSource(extractRoot, source, slug);
 
   const isExcluded = await buildNestedSkillExclusion(skillDirAbs);
   const scripts = await detectScripts(skillDirAbs, isExcluded);
@@ -676,11 +713,7 @@ export async function acknowledgeSkillUpdate(
   const source = parseSkillSource(existing.source);
   const { extractRoot, cleanup } = await downloadAndExtract(source);
   try {
-    const manifestRel = await pickManifest(extractRoot, source.subdir, source.skillName);
-    const skillDirAbs = join(extractRoot, dirname(manifestRel));
-    const manifestAbs = join(extractRoot, manifestRel);
-    const text = await readFile(manifestAbs, 'utf8');
-    const { body } = parseSkillMarkdown(text);
+    const { skillDirAbs, body } = await readInstalledSkillSource(extractRoot, source, opts.slug);
 
     const isExcluded = await buildNestedSkillExclusion(skillDirAbs);
     const scripts = await detectScripts(skillDirAbs, isExcluded);
