@@ -160,6 +160,39 @@ export class LLMCallCancelledError extends Error {
   }
 }
 
+// ─── LLMOutputLimitError ──────────────────────────────────────────────────────
+
+/**
+ * A turn whose response stopped on the model's OUTPUT-token cap (#554).
+ *
+ * `finishReason === 'length'`, as the AI SDK unifies it for every provider. A
+ * response cut there is not a finished turn: its tool calls may be partial or
+ * degenerate (run 04229144: ~25 calls parsed out of a 131 072-token reply,
+ * `file_write` without content, a real `register_project`, three memories
+ * written, a placeholder `ask_user`). The client refuses such a turn instead of
+ * returning it, so NO caller can act on it. Never retried, never failed over:
+ * the same prompt on the same cap would be cut again, and a retry is a separate
+ * decision. Carries the billed usage, so the caller can still count the call.
+ */
+export class LLMOutputLimitError extends Error {
+  readonly code = 'output_limit_reached' as const;
+
+  constructor(
+    public readonly provider: string,
+    public readonly model: string,
+    /** What the cut call billed. The provider served it in full. */
+    public readonly usage: { inputTokens: number; outputTokens: number },
+    /** The tool calls parsed out of the cut response, none of them executed. */
+    public readonly toolCallCount: number,
+  ) {
+    super(
+      `LLM response stopped on the output-token cap (${usage.outputTokens} output tokens, ` +
+        `${toolCallCount} tool call(s) not executed): ${provider}/${model}`,
+    );
+    this.name = 'LLMOutputLimitError';
+  }
+}
+
 // ─── RetryExhaustedError ───────────────────────────────────────────────────────
 
 /**

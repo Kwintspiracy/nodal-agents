@@ -36,7 +36,7 @@ import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
-import { LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
+import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
 import { TERMINAL_STATUSES } from '../job/state.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
@@ -314,6 +314,28 @@ function buildHistoryBlock(
           : null;
   const content = note ? `${truncateFn(r.content)}\n\n${note}` : truncateFn(r.content);
   return [{ role: r.role as 'user' | 'assistant', content }];
+}
+
+/**
+ * #554 : un appel du tour qui PROPOSAIT des outils s'est arrêté sur le plafond
+ * de jetons de sortie, et le client l'a refusé. Le tour en a trois (la réponse,
+ * la relance d'escalade, la réponse après un `run_task` refusé) et la règle est
+ * la même pour chacun : le tour échoue avec ce code. Aucune relance ne le
+ * rattrape, ni ne garde la réponse d'avant : ce serait un nouvel essai, que rien
+ * ici ne décide, et un tour présenté comme réussi (revue Codex de #555, P1 ×2).
+ * `null` pour toute autre erreur, que l'appelant traite comme avant.
+ */
+function failedOnOutputCap(
+  err: unknown,
+  which: string,
+  agentSlug: string,
+): { ok: false; error: string } | null {
+  if (!(err instanceof LLMOutputLimitError)) return null;
+  console.warn(
+    `[run-chat-turn] ${which} stopped on the output-token cap (${agentSlug}):`,
+    err.message,
+  );
+  return { ok: false, error: err.code };
 }
 
 export async function runChatTurn(opts: {
@@ -656,6 +678,8 @@ export async function runChatTurn(opts: {
       );
       return await keepPartialReply({ cutReason: err.reason });
     }
+    const capped = failedOnOutputCap(err, 'reply', agentRow.slug);
+    if (capped) return capped;
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
     // invariant 4) and fall through to the tool-free retry so conversation works.
@@ -698,8 +722,11 @@ export async function runChatTurn(opts: {
         abortSignal ? { abortSignal } : undefined,
       );
       runTask = (recheck.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
-    } catch {
-      // Keep the original text reply — recovery is best-effort.
+    } catch (err) {
+      if (abortSignal?.aborted) return await keepStoppedReply();
+      const capped = failedOnOutputCap(err, 'escalation recheck', agentRow.slug);
+      if (capped) return capped;
+      // Any other failure: keep the original text reply, recovery is best-effort.
     }
   }
 
@@ -794,6 +821,8 @@ export async function runChatTurn(opts: {
       runTask = (again.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
     } catch (err) {
       if (abortSignal?.aborted) return await keepStoppedReply();
+      const capped = failedOnOutputCap(err, 'reply after a refused run_task', agentRow.slug);
+      if (capped) return capped;
       console.warn(
         `[run-chat-turn] reply after a refused run_task failed (${agentRow.slug}):`,
         (err as Error).message,
