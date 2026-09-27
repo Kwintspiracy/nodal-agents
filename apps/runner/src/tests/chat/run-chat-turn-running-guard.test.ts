@@ -19,6 +19,12 @@
 // Mutation vérifiée : la garde retirée (`runningHeads` forcé à `[]`) → « un
 // run_task pendant qu'un travail court » rougit sur le nombre de jobs (2 au
 // lieu de 1).
+// Revue Codex (P1) : la garde n'est atomique avec l'insertion que parce que
+// chaque tour passe par la file de sa conversation (`runInLane`). Mutations :
+//   - la file neutralisée (`work()` lancé sans attendre le tour précédent) →
+//     « deux tours SIMULTANÉS » rougit (2 têtes) ;
+//   - `runInLane` retiré de `routes/chat.ts` → le scan des appelants rougit en
+//     nommant le fichier.
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -30,6 +36,9 @@ import { and, eq, isNull } from '@nodal-agents/db';
 import { agentJobs, chatMessages, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import { runChatTurn } from '../../chat/run-chat-turn.ts';
+import { runInLane } from '../../chat/turn-lane.ts';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
@@ -347,5 +356,77 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
 
     expect(r.ok).toBe(true);
     expect(await travauxDuFil()).toHaveLength(2);
+  });
+
+  it('deux tours SIMULTANÉS sur le même fil, par la file des routes : UNE seule tête (revue Codex, P1)', async () => {
+    // Les deux entrées du chat (`routes/chat.ts`, `routes/chat-stream.ts`)
+    // passent chaque tour par `runInLane(conversationId, …)`. C'est ce qui rend
+    // la garde atomique avec l'insertion : le second tour ne lit « une tête en
+    // cours ? » qu'une fois le premier fini, job inséré compris. La même file
+    // couvre les agents à runtime CLI : elle entoure `runChatTurn` en entier,
+    // avant sa sortie vers `runCliRuntimeChatTurn`.
+    await conversationAvecTravail('completed');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
+          {
+            runTask: {
+              instruction: 'Find the changelog of nodal-agents 0.9.2, i mean nodal-agents',
+            },
+          },
+          { text: 'Already on it.' },
+        ],
+        captured,
+      ),
+    );
+    const tour = (message: string) =>
+      runInLane(conversationId, () =>
+        runChatTurn({
+          deps,
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          conversationId,
+          message,
+        }),
+      );
+
+    const [a, b] = await Promise.all([tour('nodal-agents'), tour('i mean nodal-agents')]);
+
+    expect(a.ok && b.ok).toBe(true);
+    const nouvelles = (await travauxDuFil()).filter((j) => j.id !== premierJob);
+    expect(nouvelles).toHaveLength(1);
+    expect(nouvelles[0]!.task).toBe('Find the nodal-agents 0.9.2 changelog');
+  });
+});
+
+describe('toute entrée du chat passe par la file de sa conversation (#453, revue Codex P1)', () => {
+  it('chaque appel de runChatTurn hors des tests est enveloppé dans runInLane(conversationId, …)', () => {
+    // La garde de #453 n'est atomique avec l'insertion du job QUE parce qu'un
+    // seul tour par conversation court à la fois. Une entrée de plus qui
+    // appellerait `runChatTurn` sans la file rouvrirait la course : deux têtes
+    // pour une demande (cas ci-dessus, mutation « sans file » → 2 têtes).
+    const src = path.resolve(import.meta.dirname, '../..');
+    const fichiers: string[] = [];
+    const parcourir = (dir: string): void => {
+      for (const nom of readdirSync(dir)) {
+        const plein = path.join(dir, nom);
+        if (statSync(plein).isDirectory()) {
+          if (nom !== 'tests') parcourir(plein);
+        } else if (nom.endsWith('.ts')) fichiers.push(plein);
+      }
+    };
+    parcourir(src);
+    const appelants = fichiers.filter(
+      (f) =>
+        !f.endsWith(path.join('chat', 'run-chat-turn.ts')) &&
+        /\brunChatTurn\(/.test(readFileSync(f, 'utf8')),
+    );
+    expect(appelants.length).toBeGreaterThan(0);
+    const sansFile = appelants.filter(
+      (f) => !/runInLane\(conversationId,/.test(readFileSync(f, 'utf8')),
+    );
+    expect(sansFile).toEqual([]);
   });
 });
