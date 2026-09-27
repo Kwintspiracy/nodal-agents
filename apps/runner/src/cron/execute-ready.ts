@@ -171,12 +171,15 @@ export async function executeReadyTasks(
     // creator/root job's conversation_id — stays null (not a conversation)
     // when there's no root, same as any other cron-spawned job.
     let childConversationId: string | null = null;
+    // The folder attached to the run (#507) travels the same way.
+    let childJobFolder: string | null = null;
     if (task.rootJobId) {
       const [creatorRow] = await db
         .select({
           delegationDepth: agentJobs.delegationDepth,
           status: agentJobs.status,
           conversationId: agentJobs.conversationId,
+          jobFolder: agentJobs.jobFolder,
         })
         .from(agentJobs)
         .where(eq(agentJobs.id, task.rootJobId))
@@ -212,6 +215,7 @@ export async function executeReadyTasks(
       }
       childDepth = (creatorRow?.delegationDepth ?? 0) + 1;
       childConversationId = creatorRow?.conversationId ?? null;
+      childJobFolder = creatorRow?.jobFolder ?? null;
     }
 
     // Create child job
@@ -225,6 +229,7 @@ export async function executeReadyTasks(
         parentJobId: task.rootJobId ?? undefined,
         delegationDepth: childDepth,
         conversationId: childConversationId ?? undefined,
+        jobFolder: childJobFolder ?? undefined,
         status: 'pending',
         messages: [{ role: 'user', content: taskText }],
       })

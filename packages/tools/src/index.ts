@@ -267,6 +267,10 @@ export {
   resolveWorkspaceList,
   resolveRunWorkspaces,
   ensureSharedWorkspace,
+  // Le dossier attaché à la demande d'un run (#507).
+  withJobFolder,
+  isExistingDirectory,
+  JOB_FOLDER_LABEL,
 } from './builtin/file-ops/workspace-list';
 export type { WorkspaceEntry } from './builtin/file-ops/workspace-list';
 export { workspacesRoot } from './builtin/file-ops/workspaces-root';

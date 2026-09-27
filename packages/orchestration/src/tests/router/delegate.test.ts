@@ -263,6 +263,31 @@ describe('handleDelegation', () => {
     expect(childRow?.conversationId).toBe(parentConversationId);
   });
 
+  // #507 — le dossier que le propriétaire attache à une demande descend tout
+  // l'arbre de délégation de ce run.
+  it('inherits the job folder from the parent job row (#507)', async () => {
+    const { entityId, orchId, workerSlug, parentJobId } = await seedContext(db);
+    await db
+      .update(agentJobs)
+      .set({ jobFolder: 'D:/Projets/Nodal-Video' })
+      .where(eq(agentJobs.id, parentJobId));
+
+    const result = await handleDelegation(
+      makeParentJob(parentJobId, orchId, entityId),
+      workerSlug,
+      'tu_test_job_folder',
+      { task: 'monte la vidéo' },
+      [],
+      db,
+    );
+
+    const [childRow] = await db
+      .select({ jobFolder: agentJobs.jobFolder })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, result.childJobId as string));
+    expect(childRow?.jobFolder).toBe('D:/Projets/Nodal-Video');
+  });
+
   it('leaves the child conversation_id null when the parent has none', async () => {
     const { entityId, orchId, workerSlug, parentJobId } = await seedContext(db);
     const parentJob = makeParentJob(parentJobId, orchId, entityId);

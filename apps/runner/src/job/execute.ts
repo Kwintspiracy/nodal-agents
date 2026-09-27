@@ -87,6 +87,8 @@ import {
   exposeStatedPurpose,
   declareDeliverables,
   resolveRunWorkspaces,
+  withJobFolder,
+  isExistingDirectory,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -1189,7 +1191,12 @@ export async function executeJob(
   runnerEnv?: RunnerEnv,
   opts?: ExecuteJobOpts,
 ): Promise<ExecuteJobResult> {
-  const result = await runJob(jobId, deps, runnerEnv, opts);
+  let result: ExecuteJobResult;
+  try {
+    result = await runJob(jobId, deps, runnerEnv, opts);
+  } catch (err) {
+    result = await failOnUncaughtError(deps, jobId, err);
+  }
   if (
     !opts?.inlineDelegation &&
     (result.status === 'completed' || result.status === 'failed' || result.status === 'cancelled')
@@ -1197,6 +1204,68 @@ export async function executeJob(
     await maybeResumeParent(jobId, result, deps, runnerEnv);
   }
   return result;
+}
+
+/**
+ * Une erreur LEVÉE par le run — le plus souvent pendant sa préparation (#507,
+ * revue Codex passe 2 : `job_folder_missing`, `job_folder_label_taken`) —
+ * finit le job par le chemin d'échec NORMAL. Avant, elle sortait
+ * d'`executeJob`, le worker l'avalait (`routes/worker.ts`), et le job restait
+ * `processing` pour toujours, son parent et son tableau de tâches avec lui.
+ *
+ * Le code est celui que l'erreur porte en tête (`code: …`, la convention des
+ * erreurs du runner), sinon `job_crashed`. Il voyage dans `error`, et rien
+ * d'autre : aucun texte du runner (invariant #2). L'erreur entière va au
+ * journal. `failJob` est conditionnelle : un job déjà terminé n'est pas
+ * réécrit.
+ */
+async function failOnUncaughtError(
+  deps: Pick<RunnerDeps, 'db'>,
+  jobId: JobId,
+  err: unknown,
+): Promise<ExecuteJobResult> {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = /^([a-z][a-z0-9_]*):/.exec(message)?.[1] ?? 'job_crashed';
+  console.error(`[exec ${jobId}] uncaught_error`, JSON.stringify({ code, message }));
+  // Le code dans `error`, et AUCUN texte du runner dans le résultat propagé
+  // (invariant #2, revue Codex passe 4) : le parent reçoit l'échec typé par le
+  // chemin de délégation, qui sait déjà le dire au modèle.
+  if (await failJob(deps.db, jobId as string, code)) {
+    return { status: 'failed', error: code };
+  }
+  // L'écriture gardée n'a rien fait : le job a été annulé ou fini entre
+  // l'exception et ici. Ce qui est propagé est TOUJOURS ce que la ligne dit
+  // (revue Codex de #507, passe 3) — sinon le parent recevait un faux échec
+  // pendant que la ligne disait `cancelled`.
+  return outcomeFromRow(deps, jobId);
+}
+
+/** L'issue d'un job telle que SA LIGNE la dit, pour un job déjà terminé. */
+async function outcomeFromRow(
+  deps: Pick<RunnerDeps, 'db'>,
+  jobId: JobId,
+): Promise<ExecuteJobResult> {
+  const [row] = await deps.db
+    .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId as string))
+    .limit(1);
+  switch (row?.status) {
+    case 'cancelled':
+      return { status: 'cancelled' };
+    case 'failed':
+      return {
+        status: 'failed',
+        error: row.error ?? 'unknown',
+        ...(row.result !== null ? { result: row.result } : {}),
+      };
+    case 'completed':
+      return { status: row.status, result: row.result ?? '' };
+    default:
+      // Aucune ligne, ou un statut qu'une écriture gardée n'aurait pas refusé :
+      // quelqu'un d'autre tient ce job, il n'a rien à propager d'ici.
+      return { status: 'already_handled' };
+  }
 }
 
 /**
@@ -1558,6 +1627,21 @@ async function runJobTracked(
   const agentWorkspacesList: Array<{ label: string; path: string }> = resolved.workspaces;
   const sharedWorkspacePath: string | null = resolved.sharedPath;
 
+  // Le dossier attaché à la demande (#507), en tête pour ce run seulement.
+  // Vérifié ICI, à chaque job de l'arbre : un dossier supprimé entre la
+  // demande et un délégué fait échouer ce job en le nommant, jamais un
+  // repli silencieux sur les dossiers de l'agent (invariant #4).
+  if (job.jobFolder) {
+    if (!isExistingDirectory(job.jobFolder)) {
+      throw new Error(
+        `job_folder_missing: the folder attached to this request does not exist: ${job.jobFolder}`,
+      );
+    }
+    const withJob = withJobFolder(agentWorkspacesList, job.jobFolder);
+    agentWorkspacesList.length = 0;
+    agentWorkspacesList.push(...withJob);
+  }
+
   // ── 3.55 Runtime divert (étape E) ─────────────────────────────────────────
   // An agent whose runtime is not 'nodal' IS a coding-CLI session (Claude Code
   // or Codex): the whole Nodal LLM loop below is skipped and the turn is served
@@ -1742,8 +1826,10 @@ async function runJobTracked(
   //
   // Le dossier ATTACHÉ quand il y en a un, le partagé sinon — la règle et son
   // pourquoi vivent dans `gitProbeTarget` (lib/workspace-git.ts).
+  // La liste FINALE, dossier du job en tête (#507) — celle que le prompt
+  // présente, pour que les deux blocs parlent du même endroit.
   const gitProbePath = gitProbeTarget(
-    resolved.attached.map((w) => w.path),
+    agentWorkspacesList.map((w) => w.path),
     sharedWorkspacePath,
   );
   const workspaceGit = gitProbePath ? await probeWorkspaceGit(gitProbePath) : null;

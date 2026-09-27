@@ -20,7 +20,11 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agents } from '@nodal-agents/db';
+import { eq, agentJobs, agents, agentWorkspaces } from '@nodal-agents/db';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import {
   createEmbeddingClient,
@@ -1020,5 +1024,117 @@ describe('Stop arrête le travail PENDANT l’appel au modèle @cap:organiser-eq
     expect(row.status).toBe('cancelled');
     expect(JSON.stringify(row.messages ?? [])).toContain('Je termine.');
     expect(JSON.stringify(row.messages ?? [])).not.toContain('rr-9');
+  });
+});
+
+// Revue Codex de #507, P2 : la sonde git regardait les lignes de l'agent en
+// base (`wsRows`), pas la liste finale où le dossier du job passe en tête. Elle
+// ne voyait le bon dossier que parce que les deux tableaux étaient le MÊME
+// objet, muté sur place — un alias que personne ne lisait. La liste finale lui
+// est désormais passée ; le prompt décrit le dépôt du dossier du JOB.
+describe('la sonde git regarde le dossier du job (#507) @cap:organiser-equipe/moteur', () => {
+  it('le bloc git du prompt décrit le dépôt du dossier attaché, pas celui de l’agent', async () => {
+    const depot = (branche: string): string => {
+      const d = mkdtempSync(join(tmpdir(), `git-${branche}-`));
+      const g = (...a: string[]) => execFileSync('git', a, { cwd: d, stdio: 'ignore' });
+      g('init', '-b', branche);
+      g('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'x');
+      return d;
+    };
+    const dossierAgent = depot('branche-de-l-agent');
+    const dossierJob = depot('branche-du-job');
+    const [ws] = await db
+      .insert(agentWorkspaces)
+      .values({ agentId: seed.agentId, label: 'Agent', path: dossierAgent, position: 0 })
+      .returning({ id: agentWorkspaces.id });
+    try {
+      const jobId = await insertJob({ jobFolder: dossierJob });
+      const argsBruts: Array<Parameters<RunnerDeps['llmClient']['generateText']>[0]> = [];
+      await executeJob(
+        jobId as JobId,
+        makeDeps(
+          makeMockLlmClient(
+            [
+              {
+                text: 'Fait.',
+                toolCalls: [
+                  { toolCallId: 'rr-git', toolName: 'return_result', args: { status: 'success' } },
+                ],
+              },
+            ],
+            undefined,
+            undefined,
+            argsBruts,
+          ),
+        ),
+        testEnv,
+      );
+
+      const systeme = String((argsBruts[0] as { system?: unknown }).system ?? '');
+      expect(systeme).toContain('branch: branche-du-job');
+      expect(systeme).not.toContain('branch: branche-de-l-agent');
+    } finally {
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, ws!.id));
+    }
+  }, 30_000);
+});
+
+// Revue Codex de #507, passe 2 : une erreur LEVÉE pendant la préparation d'un
+// job (dossier du job disparu, étiquette `job` déjà prise…) sortait
+// d'`executeJob`, et le worker l'avalait : le job restait `processing` pour
+// toujours et son parent n'était jamais repris. Toute erreur non rattrapée
+// passe désormais par le chemin d'échec normal : `failJob` avec son code, puis
+// la reprise du parent comme pour tout échec.
+describe('une erreur de préparation échoue le job et reprend le parent (#507) @cap:organiser-equipe/moteur', () => {
+  it('dossier du job supprimé après la création : ligne failed avec le code, parent repris', async () => {
+    const dossier = mkdtempSync(join(tmpdir(), 'job-folder-gone-'));
+    const toolUseId = 'assign-gone';
+    const parentId = await insertJob({
+      status: 'awaiting_delegation',
+      jobFolder: dossier,
+      messages: [
+        { role: 'user', content: 'parent' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: toolUseId, toolName: 'assign_x', input: {} }],
+        },
+      ],
+    });
+    const childId = await insertJob({ parentJobId: parentId, jobFolder: dossier });
+    await db
+      .update(agentJobs)
+      .set({
+        pendingDelegation: { type: 'single', toolUseId, toolName: 'assign_x', subJobId: childId },
+      })
+      .where(eq(agentJobs.id, parentId));
+    rmSync(dossier, { recursive: true, force: true });
+
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outcome = await executeJob(
+      childId as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'jamais appelé' }])),
+      undefined,
+    ).finally(() => err.mockRestore());
+
+    // Le code, et RIEN d'écrit par le runner (invariant #2, revue Codex passe 4).
+    expect(outcome).toEqual({ status: 'failed', error: 'job_folder_missing' });
+    const enfant = await jobRow(childId);
+    expect(enfant.status).toBe('failed');
+    expect(enfant.error).toBe('job_folder_missing');
+    const [parent] = await db
+      .select({ status: agentJobs.status, messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    expect(parent!.status).toBe('pending');
+    // La STRUCTURE que le parent reçoit : l'échec typé de la délégation, avec
+    // le code dans `error` et aucun résumé fabriqué par le runner.
+    const dernier = (parent!.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
+    expect(dernier.role).toBe('tool');
+    const sortie = (dernier.content[0] as { output: { type: string; value: string } }).output;
+    expect(sortie.type).toBe('error-text');
+    const record = JSON.parse(
+      sortie.value.slice(sortie.value.indexOf('{'), sortie.value.lastIndexOf('}') + 1),
+    ) as Record<string, unknown>;
+    expect(record).toMatchObject({ status: 'failed', error: 'job_folder_missing', summary: '' });
   });
 });
