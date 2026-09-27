@@ -36,7 +36,6 @@ const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
 });
 
 vi.mock('@nodal-agents/llm', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
   return {
     ...actual,
