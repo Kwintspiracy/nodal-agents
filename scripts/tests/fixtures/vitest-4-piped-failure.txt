@@ -1,0 +1,46 @@
+
+ RUN  v4.1.6 /repo/apps/web
+
+ ❯ |unit| src/components/Composer.test.tsx (3 tests | 2 failed) 70ms
+     × keeps the draft when the send fails 3ms
+     × times out 65ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/components/Composer.test.tsx > Composer > keeps the draft when the send fails
+AssertionError: expected 'hello' to be '' // Object.is equality
+
+- Expected
++ Received
+
++ hello
+
+ ❯ src/components/Composer.test.tsx:4:21
+      2| describe('Composer', () => {
+      3|   it('keeps the draft when the send fails', () => {
+      4|     expect('hello').toBe('');
+       |                     ^
+      5|   });
+      6|   it('times out', async () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  |unit| src/components/Composer.test.tsx > Composer > times out
+Error: Test timed out in 50ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/components/Composer.test.tsx:6:3
+      4|     expect('hello').toBe('');
+      5|   });
+      6|   it('times out', async () => {
+       |   ^
+      7|     await new Promise((r) => setTimeout(r, 500));
+      8|   }, 50);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 passed (3)
+   Start at  03:26:35
+   Duration  279ms (transform 23ms, setup 27ms, import 15ms, tests 70ms, environment 0ms)
+

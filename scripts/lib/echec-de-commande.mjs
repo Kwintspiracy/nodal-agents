@@ -28,23 +28,48 @@ const RANGS = [
 /** Les codes de couleur ANSI, qu'une sortie forcée en couleur mêle au texte. */
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 
+/** Le préfixe de tâche que turbo pose sur chaque ligne (`@nodal-agents/web:test: `). */
+const PREFIXE_TURBO = /^\S+:\S+: ?/;
+
+/**
+ * Une ligne qui NOMME un test en échec dit lequel, jamais pourquoi : vitest
+ * écrit la cause sur la ligne suivante (`AssertionError: …` ou
+ * `Error: Test timed out in 5000ms.` sous `FAIL`, `→ …` sous `×`). Sans elle,
+ * un test qui expire — la forme la plus courante d'un test instable — perdait
+ * sa cause, et deux tests rouges se partageaient des `AssertionError` qu'on ne
+ * savait plus attribuer (#512). La ligne suivante est donc gardée, collée à son
+ * test, sauf si elle est vide (préfixe turbo ôté) : c'est alors la fin du bloc ;
+ * ou si elle nomme elle-même un test rouge : elle est retenue pour son compte,
+ * avec SA cause, qu'on perdrait si elle passait pour celle de la précédente.
+ */
+function causeQuiSuit(lignes, i) {
+  const suivante = lignes[i + 1];
+  if (suivante === undefined) return false;
+  if (RANGS[0].some((re) => re.test(suivante))) return false;
+  return suivante.replace(PREFIXE_TURBO, '').trim() !== '';
+}
+
 /**
  * Les lignes qui nomment l'échec, au plus `max`, les plus précises d'abord
- * (voir `RANGS`), chacune à sa place dans la sortie au sein de son rang ; puis
- * une ligne qui dit combien il en reste.
+ * (voir `RANGS`), chacune à sa place dans la sortie au sein de son rang, un
+ * test rouge suivi de sa cause (voir `causeQuiSuit`) ; puis une ligne qui dit
+ * combien il en reste.
  */
 export function lignesDeLEchec(sortie, max = 40) {
   const lignes = sortie.replace(ANSI, '').split(/\r?\n/);
   const retenues = [];
   const vues = new Set();
-  for (const motifs of RANGS) {
+  RANGS.forEach((motifs, rang) => {
     lignes.forEach((l, i) => {
-      if (!vues.has(i) && motifs.some((re) => re.test(l))) {
-        vues.add(i);
-        retenues.push(l);
+      if (vues.has(i) || !motifs.some((re) => re.test(l))) return;
+      vues.add(i);
+      retenues.push(l);
+      if (rang === 0 && !vues.has(i + 1) && causeQuiSuit(lignes, i)) {
+        vues.add(i + 1);
+        retenues.push(lignes[i + 1]);
       }
     });
-  }
+  });
   if (retenues.length <= max) return retenues;
   return [
     ...retenues.slice(0, max),

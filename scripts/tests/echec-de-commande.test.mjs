@@ -10,7 +10,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { lignesDeLEchec, rapportDEchec, lancerOuRapporter } from '../lib/echec-de-commande.mjs';
 
 // La forme réelle d'une sortie turbo + vitest : chaque ligne préfixée par la tâche.
@@ -191,5 +192,112 @@ describe('review of PR #519', () => {
     });
     expect(message).toContain('FAIL  src/a.test.ts > case');
     expect(message).toMatch(/full output could not be written to .*pnpm-test\.log: E[A-Z]+/);
+  });
+});
+
+// Une VRAIE sortie de vitest 4.1.6, écrite dans un tube comme `release:check`
+// la lit (pas de TTY, donc le reporter non interactif) : deux tests rouges, une
+// assertion et une expiration. Seuls les chemins sont ramenés à `/repo`.
+// Capturée le 28/09/2026 ; turbo préfixe chaque ligne par sa tâche.
+const vitestReel = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'vitest-4-piped-failure.txt'),
+  'utf8',
+);
+const sousTurbo = (sortie, tache) =>
+  [
+    ...sortie.split('\n').map((l) => `${tache}: ${l}`),
+    ' Tasks:    33 successful, 34 total',
+    'Failed:    @nodal-agents/web#test',
+    ' ERROR  run failed: command  exited (1)',
+  ].join('\n');
+
+describe('un test rouge est suivi de sa CAUSE (#512, sortie réelle de vitest)', () => {
+  let dossier;
+  afterEach(() => {
+    if (dossier) rmSync(dossier, { recursive: true, force: true });
+  });
+
+  it('chaque FAIL garde la ligne qui suit : l’assertion, et l’expiration qu’aucun motif ne reconnaît', () => {
+    const lignes = lignesDeLEchec(sousTurbo(vitestReel, '@nodal-agents/web:test'));
+    const p = '@nodal-agents/web:test: ';
+    const assertion = lignes.indexOf(
+      `${p} FAIL  |unit| src/components/Composer.test.tsx > Composer > keeps the draft when the send fails`,
+    );
+    expect(assertion).toBeGreaterThanOrEqual(0);
+    expect(lignes[assertion + 1]).toBe(
+      `${p}AssertionError: expected 'hello' to be '' // Object.is equality`,
+    );
+    const expiration = lignes.indexOf(
+      `${p} FAIL  |unit| src/components/Composer.test.tsx > Composer > times out`,
+    );
+    expect(expiration).toBeGreaterThanOrEqual(0);
+    expect(lignes[expiration + 1]).toBe(`${p}Error: Test timed out in 50ms.`);
+    // Les deux lignes `×` du résumé par fichier, et aucune ligne vide de turbo.
+    expect(lignes.filter((l) => l.includes(' × '))).toEqual([
+      `${p}     × keeps the draft when the send fails 3ms`,
+      `${p}     × times out 65ms`,
+    ]);
+    expect(lignes.some((l) => l.replace(/^\S+:\S+: ?/, '').trim() === '')).toBe(false);
+  });
+
+  it('sans turbo aussi (vitest lancé seul) : le test et sa cause, collés', () => {
+    const lignes = lignesDeLEchec(vitestReel);
+    const i = lignes.indexOf(
+      ' FAIL  |unit| src/components/Composer.test.tsx > Composer > times out',
+    );
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(lignes[i + 1]).toBe('Error: Test timed out in 50ms.');
+  });
+
+  it('la flèche du reporter détaillé sous `×` est gardée avec lui', () => {
+    const sortie = [
+      '@nodal-agents/web:test:    × keeps the draft when the send fails 88ms',
+      '@nodal-agents/web:test:      → expected "hello" to be "" // Object.is equality',
+      '@nodal-agents/web:test:    ✓ passes 1ms',
+    ].join('\n');
+    expect(lignesDeLEchec(sortie)).toEqual([
+      '@nodal-agents/web:test:    × keeps the draft when the send fails 88ms',
+      '@nodal-agents/web:test:      → expected "hello" to be "" // Object.is equality',
+    ]);
+  });
+
+  it('deux `×` qui se suivent : chacun garde SA cause, aucun ne passe pour celle de l’autre', () => {
+    const sortie = [
+      '@nodal-agents/web:test:    × first 3ms',
+      '@nodal-agents/web:test:    × second 65ms',
+      '@nodal-agents/web:test:      → Test timed out in 5000ms.',
+    ].join('\n');
+    expect(lignesDeLEchec(sortie)).toEqual([
+      '@nodal-agents/web:test:    × first 3ms',
+      '@nodal-agents/web:test:    × second 65ms',
+      '@nodal-agents/web:test:      → Test timed out in 5000ms.',
+    ]);
+  });
+
+  it('le message de release:check nomme le fichier, le test ET la cause, et le journal garde tout', () => {
+    dossier = mkdtempSync(join(tmpdir(), 'release-check-'));
+    const sortie = sousTurbo(vitestReel, '@nodal-agents/web:test');
+    const { message, fichier } = rapportDEchec({ commande: 'pnpm test', sortie, dossier });
+    expect(message).toContain(
+      ' FAIL  |unit| src/components/Composer.test.tsx > Composer > times out\n' +
+        '    @nodal-agents/web:test: Error: Test timed out in 50ms.',
+    );
+    expect(message).toContain('Failed:    @nodal-agents/web#test');
+    expect(message).toContain(`full output: ${fichier}`);
+    // Le journal garde aussi ce que le message ne montre pas : le cadre du code.
+    expect(readFileSync(fichier, 'utf8')).toContain("expect('hello').toBe('');");
+  });
+
+  it('une étape rouge dont la sortie ne nomme aucun test le dit et renvoie au journal', () => {
+    dossier = mkdtempSync(join(tmpdir(), 'release-check-'));
+    const { message, fichier } = rapportDEchec({
+      commande: 'node scripts/smoke-pack.mjs',
+      sortie: 'installing tarball\nbooting\nrunner did not answer on :3001 within 60s',
+      dossier,
+    });
+    expect(message).toContain('no line names the failure; last lines:');
+    expect(message).toContain('runner did not answer on :3001 within 60s');
+    expect(message).toContain(`full output: ${fichier}`);
+    expect(readFileSync(fichier, 'utf8')).toContain('installing tarball');
   });
 });
