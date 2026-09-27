@@ -6,6 +6,7 @@ import {
 } from '@/lib/credentials.ts';
 import PageShell from '@/components/ui/PageShell';
 import CredentialsClient from './CredentialsClient.tsx';
+import Banner from '@/components/ui/Banner';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,9 +21,7 @@ export default async function CredentialsPage({ searchParams }: PageProps) {
   if (!result.ok) {
     return (
       <PageShell title="Credentials">
-        <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
-          {result.message}
-        </div>
+        <Banner variant="warn">{result.message}</Banner>
       </PageShell>
     );
   }

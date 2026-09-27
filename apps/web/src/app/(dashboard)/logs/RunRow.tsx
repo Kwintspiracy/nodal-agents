@@ -20,14 +20,21 @@
 //     `router.refresh()` ne saurait pas remplir.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
-import { CaretRight } from '@phosphor-icons/react';
 import { listRunCallsAction, type ActivityRunRow, type RunCall } from '@/lib/actions.ts';
 import { runIsLive } from '@/lib/activity-runs.ts';
 import { truncate } from '@/lib/format-time';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
-import AgentAvatar from '@/components/ui/AgentAvatar';
-import { Tr, Td } from '@/components/ui/Table';
+import Banner from '@/components/ui/Banner';
+import {
+  Tr,
+  Td,
+  CellAgent,
+  CellChevron,
+  CellMono,
+  CellText,
+  TableDetailNote,
+  TableDetailRow,
+} from '@/components/ui/Table';
 import RowActionButton from '@/components/ui/RowActionButton';
 import ToolBlock from '../spaces/ToolBlock.tsx';
 import { formatMs, formatCost } from '../spaces/format.ts';
@@ -94,11 +101,14 @@ export function durationText(run: ActivityRunRow): string {
 export default function RunRow({
   run,
   columns,
+  costDecimals,
   defaultExpanded = false,
 }: {
   run: ActivityRunRow;
   /** Le nombre de colonnes de la table, pour la ligne dépliée. */
   columns: number;
+  /** La précision de la colonne des coûts, la même pour toutes ses lignes. */
+  costDecimals?: 2 | 4;
   /** Lien profond : la ligne s'ouvre déjà dépliée. */
   defaultExpanded?: boolean;
 }) {
@@ -180,118 +190,88 @@ export default function RunRow({
     <>
       <Tr
         interactive
-        hover={!expanded}
-        className={expanded ? 'bg-hover' : ''}
+        expanded={expanded}
         onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
         data-testid={`run-row-${run.id}`}
       >
-        <Td top className="w-8">
-          <CaretRight
-            size={12}
-            className={`text-ink-4 transition-transform ${expanded ? 'rotate-90' : ''}`}
-            aria-hidden
-          />
+        <Td className="w-8">
+          <CellChevron expanded={expanded} />
         </Td>
-        <Td top data-testid="run-agent">
-          <div className="flex items-center gap-2.5">
-            <AgentAvatar
-              name={run.agentName ?? 'Unknown'}
-              imageUrl={run.agentAvatarUrl}
-              size="md"
-              shape="round"
-            />
-            <span className="truncate text-medium-14 text-ink">{run.agentName ?? 'Unknown'}</span>
-          </div>
+        <Td data-testid="run-agent">
+          <CellAgent name={run.agentName} imageUrl={run.agentAvatarUrl} />
         </Td>
-        <Td top className="hidden md:table-cell" data-testid="run-origin">
-          <span className="text-body-13 text-ink-2">{run.origin.label}</span>
-          {run.origin.detail !== null && (
-            <div className="truncate text-mono-11 text-ink-4">{run.origin.detail}</div>
-          )}
+        <Td className="hidden md:table-cell" data-testid="run-origin">
+          <CellText meta={run.origin.detail ?? undefined}>{run.origin.label}</CellText>
         </Td>
-        <Td top className="max-w-[320px]" data-testid="run-task">
-          <span className="line-clamp-1 text-body-14 text-ink-2" title={run.task}>
+        <Td className="max-w-[320px]" data-testid="run-task">
+          <CellText title={run.task} clamp>
             {truncate(run.task, 72)}
-          </span>
+          </CellText>
         </Td>
-        <Td top data-testid="run-status">
+        <Td data-testid="run-status">
           <StatusPill variant={statusVariant(run.status)} label={statusLabel(run.status)} />
         </Td>
-        <Td
-          top
-          className="hidden font-mono text-xs text-ink-3 lg:table-cell"
-          data-testid="run-duration"
-        >
-          {durationText(run)}
+        <Td align="right" className="hidden lg:table-cell" data-testid="run-duration">
+          <CellMono>{durationText(run)}</CellMono>
         </Td>
-        <Td
-          top
-          className="hidden font-mono text-xs text-ink-3 lg:table-cell"
-          data-testid="run-cost"
-        >
-          {formatCost(run.costUsd)}
+        <Td align="right" className="hidden lg:table-cell" data-testid="run-cost">
+          <CellMono>{formatCost(run.costUsd, costDecimals)}</CellMono>
         </Td>
-        <Td top align="right" className="font-mono text-xs text-ink-3" data-testid="run-calls">
-          {count} {count === 1 ? 'call' : 'calls'}
+        <Td align="right" data-testid="run-calls">
+          <CellMono>
+            {count} {count === 1 ? 'call' : 'calls'}
+          </CellMono>
         </Td>
       </Tr>
 
       {expanded && (
-        <Tr hover={false} className="bg-canvas" data-testid={`run-calls-${run.id}`}>
-          <Td colSpan={columns} className="py-4">
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-legacy-10 uppercase tracking-wider text-ink-3">Calls</span>
-              <Link
-                href={`/jobs/${run.id}`}
-                className="text-medium-13 text-ink-3 transition-colors hover:text-ink"
-              >
-                Open run
-              </Link>
-            </div>
+        <TableDetailRow
+          colSpan={columns}
+          label="Calls"
+          action={<RowActionButton href={`/jobs/${run.id}`}>Open run</RowActionButton>}
+          data-testid={`run-calls-${run.id}`}
+        >
+          {error !== null && (
+            <Banner variant="warn" role="alert" className="mb-3">
+              {error}
+            </Banner>
+          )}
 
-            {error !== null && (
-              <div className="rounded-md border border-err/25 bg-paper px-3 py-2 text-mono-12 text-err">
-                {error}
-              </div>
+          {error === null && calls.length === 0 && !loading && (
+            <TableDetailNote>No call recorded for this run.</TableDetailNote>
+          )}
+
+          {loading && calls.length === 0 && <TableDetailNote>Loading calls…</TableDetailNote>}
+
+          <div className="space-y-1.5">
+            {calls.map((call) =>
+              call.kind === 'tool' ? (
+                <ToolBlock key={call.id} step={call.step} />
+              ) : (
+                <ModelCallBlock key={call.id} call={call} />
+              ),
             )}
+          </div>
 
-            {error === null && calls.length === 0 && !loading && (
-              <div className="text-body-13 text-ink-4">No call recorded for this run.</div>
-            )}
-
-            {loading && calls.length === 0 && (
-              <div className="text-body-13 text-ink-4">Loading calls…</div>
-            )}
-
-            <div className="space-y-1.5">
-              {calls.map((call) =>
-                call.kind === 'tool' ? (
-                  <ToolBlock key={call.id} step={call.step} />
-                ) : (
-                  <ModelCallBlock key={call.id} call={call} />
-                ),
-              )}
-            </div>
-
-            {stoppedFollowing && runIsLive(run.status) && (
-              <div className="mt-3 text-body-13 text-ink-4" data-testid="run-follow-stopped">
+          {stoppedFollowing && runIsLive(run.status) && (
+            <div className="mt-3">
+              <TableDetailNote data-testid="run-follow-stopped">
                 Stopped following, reload to resume.
-              </div>
-            )}
+              </TableDetailNote>
+            </div>
+          )}
 
-            {hasMore && (
-              <div className="mt-3">
-                <RowActionButton
-                  onClick={() => void loadPage(pageCount.current + 1)}
-                  disabled={loading}
-                >
-                  Show {CALLS_PAGE_SIZE} more
-                </RowActionButton>
-              </div>
-            )}
-          </Td>
-        </Tr>
+          {hasMore && (
+            <div className="mt-3">
+              <RowActionButton
+                onClick={() => void loadPage(pageCount.current + 1)}
+                disabled={loading}
+              >
+                Show {CALLS_PAGE_SIZE} more
+              </RowActionButton>
+            </div>
+          )}
+        </TableDetailRow>
       )}
     </>
   );

@@ -12,7 +12,16 @@ import {
 } from '@phosphor-icons/react';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import type { SkillProvenanceSegment } from '@/lib/skill-provenance.ts';
-import Table, { THead, Th, Tr, Td, TableSegmentRow } from '@/components/ui/Table';
+import Table, {
+  THead,
+  Th,
+  Tr,
+  Td,
+  TableSegmentRow,
+  CellTitle,
+  CellMuted,
+  CellActions,
+} from '@/components/ui/Table';
 import { deleteSkillAction, uninstallCommunitySkillAction } from '@/lib/actions.ts';
 import AvatarStack from '@/components/ui/AvatarStack';
 import CountPill from '@/components/ui/CountPill';
@@ -100,24 +109,20 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
   return (
     <Tr>
       <Td>
-        <div className="flex items-center gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="text-medium-13 leading-[1.2]! text-ink">{skill.name}</span>
-              {/* Provenance is carried by the segment header row — no
-                  per-row tag needed here. */}
-              {skill.isCommunity && skill.updateAvailable && (
-                <StatusPill variant="warn" label="Update available" />
-              )}
-            </div>
-            <div
-              className="mt-0.5 line-clamp-2 max-w-[460px] text-body-12 leading-[1.3]! text-ink-3"
-              title={skill.description ?? skill.slug}
-            >
-              {skill.description ?? <span className="font-mono text-ink-4">{skill.slug}</span>}
-            </div>
-          </div>
-        </div>
+        {/* La provenance est portée par la ligne de segment : aucune étiquette
+            par ligne ici. Sans description, le slug en tient lieu, à la
+            recette `meta`. */}
+        <CellTitle
+          badge={
+            skill.isCommunity && skill.updateAvailable ? (
+              <StatusPill variant="warn" label="Update available" />
+            ) : undefined
+          }
+          description={skill.description ?? undefined}
+          meta={skill.description ? undefined : skill.slug}
+        >
+          {skill.name}
+        </CellTitle>
       </Td>
 
       <Td>
@@ -130,7 +135,7 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
             label={`${skill.assignmentCount} ${skill.assignmentCount === 1 ? 'agent' : 'agents'}`}
           />
         ) : (
-          <span className="text-mono-11 text-ink-4">Unassigned</span>
+          <CellMuted>Unassigned</CellMuted>
         )}
       </Td>
 
@@ -138,12 +143,12 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
         {skill.requiredBuiltins.length > 0 ? (
           <CountPill items={skill.requiredBuiltins} noun="built-in" />
         ) : (
-          <span className="text-mono-11 text-ink-4">none</span>
+          <CellMuted>none</CellMuted>
         )}
       </Td>
 
-      <Td>
-        <div className="flex items-center justify-end gap-2">
+      <Td align="right">
+        <CellActions>
           {skill.isCommunity && skill.updateAvailable && (
             <SkillUpdateAction
               slug={skill.slug}
@@ -213,7 +218,7 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
               onClick={() => setConfirmOpen(true)}
             />
           )}
-        </div>
+        </CellActions>
         <ConfirmDialog
           open={confirmOpen}
           title={`Delete skill "${skill.name}"?`}

@@ -12,9 +12,7 @@
 //
 // Pas de sélection ni de suppression ici : on ne jette pas un interlocuteur.
 
-import Link from 'next/link';
-import AgentAvatar from '@/components/ui/AgentAvatar';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import Table, { THead, Th, Tr, Td, CellAgent, CellText, CellMono } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import { relativeTime, truncate } from '@/lib/format-time';
 import { chatLabel, type ChannelChatRow } from '@/lib/chat-list.ts';
@@ -85,15 +83,7 @@ export default function ChannelChatsTable({
           {rows.map((r) => (
             <Tr key={r.key}>
               <Td>
-                <div className="flex items-center gap-2">
-                  <AgentAvatar
-                    name={r.agentName ?? ''}
-                    imageUrl={r.agentAvatarUrl}
-                    size="sm"
-                    shape="square"
-                  />
-                  <span className="truncate text-body-13 text-ink-2">{r.agentName ?? '—'}</span>
-                </div>
+                <CellAgent name={r.agentName} imageUrl={r.agentAvatarUrl} />
               </Td>
               <Td>
                 {/* Sans fil courant désigné, PAS de lien : on ne devine pas où
@@ -101,37 +91,33 @@ export default function ChannelChatsTable({
                     dit pourquoi il n'ouvre rien (invariant #4 — jamais un repli
                     silencieux qui présente une estimation comme un fait). */}
                 {r.currentConversationId !== null ? (
-                  <Link
-                    href={`/chat/${r.currentConversationId}`}
-                    className="text-body-13 text-ink hover:underline"
-                  >
-                    {chatLabel(r)}
-                  </Link>
+                  <CellText href={`/chat/${r.currentConversationId}`}>{chatLabel(r)}</CellText>
                 ) : (
                   // L'état est DIT sur la ligne, pas seulement suggéré par une
                   // nuance de gris et l'absence de lien : sur cinquante chats,
                   // il fallait sinon deviner lequel n'ouvre rien (revue Codex,
                   // PR #48, passe 8).
-                  <span className="text-body-13 text-ink-3">
-                    {chatLabel(r)} <MonoMicroTag tone="ink">unavailable</MonoMicroTag>
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <CellText>{chatLabel(r)}</CellText>
+                    <MonoMicroTag tone="ink">unavailable</MonoMicroTag>
+                  </div>
                 )}
               </Td>
               <Td className="hidden md:table-cell">
                 <MonoMicroTag tone="ink">{channelLabel(r.channel)}</MonoMicroTag>
               </Td>
               <Td className="hidden lg:table-cell">
-                <span className="text-body-12 text-ink-3">
-                  {r.lastPreview !== null ? truncate(r.lastPreview, 60) : ''}
-                </span>
+                {r.lastPreview !== null && (
+                  <CellText quiet clamp title={r.lastPreview}>
+                    {truncate(r.lastPreview, 60)}
+                  </CellText>
+                )}
               </Td>
               <Td align="right" className="hidden sm:table-cell">
-                <span className="text-mono-11 text-ink-4">{r.conversationCount}</span>
+                <CellMono>{r.conversationCount}</CellMono>
               </Td>
               <Td className="hidden lg:table-cell">
-                <span className="text-mono-11 text-ink-4">
-                  {r.updatedAt ? relativeTime(r.updatedAt) : ''}
-                </span>
+                {r.updatedAt && <CellMono>{relativeTime(r.updatedAt)}</CellMono>}
               </Td>
             </Tr>
           ))}

@@ -19,10 +19,22 @@ export function formatTokens(n: number): string {
 }
 
 /** null → "n/a" : un coût inconnu n'est pas un coût nul. */
-export function formatCost(usd: number | null): string {
+export function formatCost(usd: number | null, decimals?: 2 | 4): string {
   if (usd === null) return 'n/a';
+  if (decimals !== undefined) return `$${usd.toFixed(decimals)}`;
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
+}
+
+/**
+ * La précision d'une COLONNE de coûts : une seule pour toutes ses lignes. Dans
+ * une table, `$0.0080` au-dessus de `$0.01` se lit mal — les chiffres ne
+ * s'alignent plus. Quatre décimales dès qu'un coût non nul de la colonne est
+ * sous le centime (sinon il s'afficherait `$0.00`), deux sinon. Au fil d'une
+ * phrase, un coût garde sa précision à lui (`formatCost` sans colonne).
+ */
+export function costColumnDecimals(costs: readonly (number | null)[]): 2 | 4 {
+  return costs.some((c) => c !== null && c > 0 && c < 0.01) ? 4 : 2;
 }
 
 /** D'où vient la demande, en un mot ou deux. */

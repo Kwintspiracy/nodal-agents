@@ -413,3 +413,17 @@ describe('RunRow — suivre un run coûte, et ça s’arrête @cap:suivre-execut
     }
   });
 });
+
+describe('costColumnDecimals — une colonne de coûts, une précision', () => {
+  it('quatre décimales dès qu’un coût non nul passe sous le centime, deux sinon', async () => {
+    const { costColumnDecimals, formatCost } = await import('../../spaces/format.ts');
+    const colonne = [0.008, 0.0123, null, 0];
+    const d = costColumnDecimals(colonne);
+    expect(d).toBe(4);
+    expect(colonne.map((c) => formatCost(c, d))).toEqual(['$0.0080', '$0.0123', 'n/a', '$0.0000']);
+    expect(costColumnDecimals([0.52, 1.2, 0])).toBe(2);
+    // Au fil du texte, sans colonne, un coût garde sa précision à lui.
+    expect(formatCost(0.04)).toBe('$0.04');
+    expect(formatCost(0.008)).toBe('$0.0080');
+  });
+});

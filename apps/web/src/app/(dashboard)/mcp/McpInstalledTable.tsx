@@ -3,10 +3,18 @@
 import { useState } from 'react';
 import { PencilSimple } from '@phosphor-icons/react';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
-import Disc from '@/components/ui/Disc';
-import { connIcon, connEmoji } from '../connectors/connector-brand.ts';
+import ConnectorDisc from '../connectors/ConnectorDisc.tsx';
 import MonoCode from '@/components/ui/MonoCode';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import Table, {
+  THead,
+  Th,
+  Tr,
+  Td,
+  CellTitle,
+  CellMono,
+  CellMuted,
+  CellActions,
+} from '@/components/ui/Table';
 import StatusPill from '@/components/ui/StatusPill';
 import RowActionButton from '@/components/ui/RowActionButton';
 import Modal from '@/components/ui/Modal';
@@ -69,51 +77,31 @@ function McpRow({
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const glyph = catalogLabel.slice(0, 2).toUpperCase();
-  const iconSrc = connIcon(instance.slug);
-  const emoji = connEmoji(instance.slug);
 
   return (
     <>
       <Tr>
-        {/* Server */}
         <Td>
-          <div className="flex items-center gap-3">
-            <Disc
-              variant="conn"
-              size="sm"
-              shape="square"
-              background={iconSrc || emoji ? '#ffffff' : MCP_BLUE}
-            >
-              {iconSrc ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={iconSrc} alt="" className="h-4 w-4 object-contain" />
-              ) : emoji ? (
-                <span className="text-body-15 leading-none!">{emoji}</span>
-              ) : (
-                <span className="font-mono text-micro-10 tracking-[0.04em]">{glyph}</span>
-              )}
-            </Disc>
-            <div className="min-w-0">
-              <div className="text-medium-13 leading-[1.2]! text-ink">{instance.name}</div>
-              <div className="mt-0.5 text-mono-11 uppercase tracking-[0.12em] text-ink-4">
-                {catalogLabel}
-              </div>
-            </div>
-          </div>
+          <CellTitle
+            lead={<ConnectorDisc slug={instance.slug} glyph={glyph} color={MCP_BLUE} />}
+            meta={catalogLabel}
+          >
+            {instance.name}
+          </CellTitle>
         </Td>
 
-        {/* Tools */}
         <Td>
-          <span className="text-mono-13 text-ink-2">{instance.toolCount}</span>
-          {instance.toolCount === 0 && <span className="ml-1 text-mono-11 text-ink-4">none</span>}
+          {instance.toolCount === 0 ? (
+            <CellMuted>none</CellMuted>
+          ) : (
+            <CellMono>{instance.toolCount}</CellMono>
+          )}
         </Td>
 
-        {/* Transport */}
         <Td>
           <MonoCode>{transport}</MonoCode>
         </Td>
 
-        {/* Status */}
         <Td>
           <StatusPill
             variant={instance.active ? 'done' : 'warn'}
@@ -121,16 +109,15 @@ function McpRow({
           />
         </Td>
 
-        {/* Actions */}
-        <Td>
-          <div className="flex items-center justify-end gap-2">
+        <Td align="right">
+          <CellActions>
             <RowActionButton
               square
               icon={<PencilSimple size={16} />}
               title="Edit"
               onClick={() => setEditOpen(true)}
             />
-          </div>
+          </CellActions>
         </Td>
       </Tr>
 

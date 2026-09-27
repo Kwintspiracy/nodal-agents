@@ -8,6 +8,8 @@ import {
 import { runIsLive } from '@/lib/activity-runs.ts';
 import PageShell from '@/components/ui/PageShell';
 import EmptyState from '@/components/ui/EmptyState';
+import Banner from '@/components/ui/Banner';
+import { TablePagination } from '@/components/ui/Table';
 import SendTaskForm from '@/components/SendTaskForm.tsx';
 import LiveRefresh from '../spaces/LiveRefresh.tsx';
 import LogFilters from './LogFilters.tsx';
@@ -80,9 +82,7 @@ export default async function LogsPage({ searchParams }: PageProps) {
         {logsResult.ok ? (
           <ServiceLogsPanel initial={logsResult.data} />
         ) : (
-          <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
-            {logsResult.message}
-          </div>
+          <Banner variant="warn">{logsResult.message}</Banner>
         )}
       </PageShell>
     );
@@ -108,9 +108,7 @@ export default async function LogsPage({ searchParams }: PageProps) {
   if (!result.ok) {
     return (
       <PageShell title="Runs">
-        <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
-          {result.message}
-        </div>
+        <Banner variant="warn">{result.message}</Banner>
       </PageShell>
     );
   }
@@ -148,6 +146,11 @@ export default async function LogsPage({ searchParams }: PageProps) {
   );
 }
 
+/**
+ * Les deux liens de la pagination : les paramètres de la page (filtres, vue,
+ * run déplié) sont gardés, seul `page` change. Le dessin est celui de toutes
+ * les tables (`TablePagination`).
+ */
 function Pagination({
   page,
   hasMore,
@@ -167,30 +170,10 @@ function Pagination({
   prev.set('page', String(Math.max(1, page - 1)));
 
   return (
-    <div className="flex items-center justify-between text-xs text-ink-3">
-      <span>Page {page}</span>
-      <div className="flex gap-2">
-        {page > 1 ? (
-          <Link
-            href={`/logs?${prev.toString()}`}
-            className="rounded-md border border-rule-2 px-3 py-1.5 transition-colors hover:border-rule hover:text-ink"
-          >
-            Previous
-          </Link>
-        ) : (
-          <span className="rounded-md border border-rule px-3 py-1.5 text-ink-4">Previous</span>
-        )}
-        {hasMore ? (
-          <Link
-            href={`/logs?${next.toString()}`}
-            className="rounded-md border border-rule-2 px-3 py-1.5 transition-colors hover:border-rule hover:text-ink"
-          >
-            Next
-          </Link>
-        ) : (
-          <span className="rounded-md border border-rule px-3 py-1.5 text-ink-4">Next</span>
-        )}
-      </div>
-    </div>
+    <TablePagination
+      page={page}
+      prevHref={page > 1 ? `/logs?${prev.toString()}` : null}
+      nextHref={hasMore ? `/logs?${next.toString()}` : null}
+    />
   );
 }

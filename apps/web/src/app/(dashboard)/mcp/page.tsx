@@ -1,6 +1,7 @@
 import { listMcpServersAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import McpClient from './McpClient.tsx';
+import Banner from '@/components/ui/Banner';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,9 +11,7 @@ export default async function McpPage() {
   if (!result.ok) {
     return (
       <PageShell title="MCP Servers">
-        <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
-          {result.message}
-        </div>
+        <Banner variant="warn">{result.message}</Banner>
       </PageShell>
     );
   }

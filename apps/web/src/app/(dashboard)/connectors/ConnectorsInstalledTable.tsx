@@ -10,15 +10,24 @@ import {
 } from '@/lib/actions.ts';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog.ts';
-import Disc from '@/components/ui/Disc';
 import StatusPill from '@/components/ui/StatusPill';
 import CountPill from '@/components/ui/CountPill';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import Table, {
+  THead,
+  Th,
+  Tr,
+  Td,
+  CellTitle,
+  CellText,
+  CellMuted,
+  CellActions,
+} from '@/components/ui/Table';
 import RowActionButton from '@/components/ui/RowActionButton';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import Modal from '@/components/ui/Modal';
 import ConnectorForm from './ConnectorForm.tsx';
-import { CONN_BRAND_COLORS, connGlyph, connIcon } from './connector-brand.ts';
+import { CONN_BRAND_COLORS, connGlyph } from './connector-brand.ts';
+import ConnectorDisc from './ConnectorDisc.tsx';
 
 type Props = {
   instances: ConnectorRow[];
@@ -28,7 +37,7 @@ type Props = {
 /**
  * ConnectorsInstalledTable — the design's `.conn-tbl` pattern.
  * One row per installed connector instance with:
- *   Provider (brand Disc + name + auth-type mono)
+ *   Provider (ConnectorDisc + name + auth-type meta line)
  *   Account (account name from credential)
  *   Scopes (compact count pill — hover for the full list; the raw OAuth scope
  *           URLs used to blow the table width out)
@@ -99,9 +108,6 @@ function ConnectorRow({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  const brandColor = CONN_BRAND_COLORS[instance.slug];
-  const glyph = connGlyph(instance.slug, catalogEntry.label);
-  const iconSrc = connIcon(instance.slug);
   const isConnected = instance.active;
   const scopeList = instance.credentialScopes
     ? instance.credentialScopes.split(/\s+/).filter(Boolean)
@@ -119,50 +125,33 @@ function ConnectorRow({
   return (
     <>
       <Tr>
-        {/* Provider */}
         <Td>
-          <div className="flex items-center gap-3">
-            <Disc
-              variant="conn"
-              size="sm"
-              shape="square"
-              background={iconSrc ? '#ffffff' : brandColor}
-            >
-              {iconSrc ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={iconSrc} alt="" className="h-4 w-4 object-contain" />
-              ) : (
-                <span className="font-mono text-micro-10 tracking-[0.04em]">{glyph}</span>
-              )}
-            </Disc>
-            <div className="min-w-0">
-              <div className="text-medium-13 leading-[1.2]! text-ink">{catalogEntry.label}</div>
-              <div className="mt-0.5 text-mono-11 uppercase tracking-[0.12em] text-ink-4">
-                {catalogEntry.authType}
-              </div>
-            </div>
-          </div>
+          <CellTitle
+            lead={
+              <ConnectorDisc
+                slug={instance.slug}
+                glyph={connGlyph(instance.slug, catalogEntry.label)}
+                color={CONN_BRAND_COLORS[instance.slug]}
+              />
+            }
+            meta={catalogEntry.authType}
+          >
+            {catalogEntry.label}
+          </CellTitle>
         </Td>
 
-        {/* Account */}
         <Td>
-          <span className="font-sans text-body-13 leading-[1.3]! text-ink-2">
-            {instance.credentialAccountName ?? instance.name}
-          </span>
+          <CellText>{instance.credentialAccountName ?? instance.name}</CellText>
         </Td>
 
-        {/* Scopes */}
         <Td>
           {scopeList.length > 0 ? (
             <CountPill items={scopeList} noun="scope" />
           ) : (
-            <span className="text-mono-11 text-ink-4">
-              {instance.authType === 'api_key' ? 'api_key' : '—'}
-            </span>
+            <CellMuted>{instance.authType === 'api_key' ? 'api_key' : 'none'}</CellMuted>
           )}
         </Td>
 
-        {/* Status */}
         <Td>
           <StatusPill
             variant={isConnected ? 'done' : 'warn'}
@@ -170,9 +159,8 @@ function ConnectorRow({
           />
         </Td>
 
-        {/* Actions */}
-        <Td>
-          <div className="flex items-center justify-end gap-2">
+        <Td align="right">
+          <CellActions>
             <RowActionButton
               square
               icon={<PencilSimple size={16} />}
@@ -187,7 +175,7 @@ function ConnectorRow({
               disabled={isPending}
               onClick={() => setConfirmOpen(true)}
             />
-          </div>
+          </CellActions>
         </Td>
       </Tr>
 

@@ -9,6 +9,7 @@ import TelegramChannelCard from '../channels/TelegramChannelCard.tsx';
 import DiscordChannelCard from '../channels/DiscordChannelCard.tsx';
 import SlackChannelCard from '../channels/SlackChannelCard.tsx';
 import WhatsAppChannelCard from '../channels/WhatsAppChannelCard.tsx';
+import Banner from '@/components/ui/Banner';
 
 /**
  * ChannelsTabContent — the Channels tab panel on the agent composer.
@@ -51,11 +52,7 @@ export default function ChannelsTabContent({
   whatsappAllowedConversations: ChannelAllowedConversationView[];
 }) {
   if (error || !telegramCfg || !discordCfg || !slackCfg) {
-    return (
-      <div className="rounded-xl border border-err/30 bg-warn-bg px-5 py-4 text-sm text-err">
-        {error ?? 'Failed to load channels.'}
-      </div>
-    );
+    return <Banner variant="warn">{error ?? 'Failed to load channels.'}</Banner>;
   }
 
   return (

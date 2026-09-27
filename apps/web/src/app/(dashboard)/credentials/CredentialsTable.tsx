@@ -6,7 +6,18 @@ import { PencilSimple, ArrowClockwise, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import CountPill from '@/components/ui/CountPill';
 import StatusPill from '@/components/ui/StatusPill';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import Table, {
+  THead,
+  Th,
+  Tr,
+  Td,
+  CellTitle,
+  CellText,
+  CellMuted,
+  CellActions,
+  TableDetailRow,
+} from '@/components/ui/Table';
+import Banner from '@/components/ui/Banner';
 import RowActionButton from '@/components/ui/RowActionButton';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import TextInput from '@/components/ui/TextInput';
@@ -140,50 +151,45 @@ function CredentialRow({
   return (
     <>
       <Tr>
-        {/* Provider */}
         <Td>
-          <div className="flex items-center gap-2.5">
-            <span className="inline-flex shrink-0 rounded bg-indigo-500/15 px-2 py-0.5 font-mono text-micro-10 tracking-wider text-indigo-400 uppercase">
-              {typeLabel}
-            </span>
-            <span className="truncate text-medium-13 text-ink">{credential.name}</span>
-          </div>
+          <CellTitle meta={typeLabel}>{credential.name}</CellTitle>
         </Td>
 
-        {/* Account */}
-        <Td className="text-body-13 text-ink-2">{credential.accountName ?? '—'}</Td>
+        <Td>
+          {credential.accountName !== null ? (
+            <CellText>{credential.accountName}</CellText>
+          ) : (
+            <CellMuted>none</CellMuted>
+          )}
+        </Td>
 
-        {/* Scopes */}
         <Td>
           {scopeList.length > 0 ? (
             <CountPill items={scopeList} noun="scope" />
           ) : (
-            <span className="text-mono-11 text-ink-4">—</span>
+            <CellMuted>none</CellMuted>
           )}
         </Td>
 
-        {/* Status */}
         <Td>
           <StatusPill variant={status.variant} label={status.label} />
           {!supportsRefresh && !credential.decryptError && credential.expiresAt && (
-            <div className="mt-0.5 text-micro-11 text-ink-4">
-              {formatExpiry(credential.expiresAt)}
+            <div>
+              <CellMuted>{formatExpiry(credential.expiresAt)}</CellMuted>
             </div>
           )}
         </Td>
 
-        {/* Used by */}
         <Td>
           {usedBy.length > 0 ? (
             <CountPill items={usedBy} noun="connector" />
           ) : (
-            <span className="text-mono-11 text-ink-4">—</span>
+            <CellMuted>none</CellMuted>
           )}
         </Td>
 
-        {/* Actions */}
-        <Td>
-          <div className="flex items-center justify-end gap-2">
+        <Td align="right">
+          <CellActions>
             <RowActionButton
               square
               icon={<PencilSimple size={16} />}
@@ -208,21 +214,18 @@ function CredentialRow({
               onClick={() => setDeleteOpen(true)}
               disabled={isPending || isRefreshing}
             />
-          </div>
+          </CellActions>
         </Td>
       </Tr>
 
-      {/* Decrypt-error sub-row */}
+      {/* La clé illisible : une notice attachée à la ligne, sous elle. */}
       {credential.decryptError && (
-        <Tr hover={false}>
-          <td colSpan={6} className="px-5 pb-3">
-            <div className="rounded border border-err/30 bg-warn-bg px-3 py-2 text-xs text-err">
-              <span className="font-semibold">Cannot decrypt this credential.</span> The encrypted
-              payload could not be read (master key changed or row corrupted). Delete and recreate
-              it.
-            </div>
-          </td>
-        </Tr>
+        <TableDetailRow colSpan={6}>
+          <Banner variant="warn" title="Cannot decrypt this credential.">
+            The encrypted payload could not be read (master key changed or row corrupted). Delete
+            and recreate it.
+          </Banner>
+        </TableDetailRow>
       )}
 
       {/* Rename — non-dismissable Modal (UX-B6), replaces the old inline

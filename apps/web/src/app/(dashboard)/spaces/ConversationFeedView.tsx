@@ -10,7 +10,7 @@ import StatusPill from '@/components/ui/StatusPill';
 import StopRunButton from '@/components/ui/StopRunButton';
 import { canStopRun } from '@/lib/job-live.ts';
 import ClampedText from './ClampedText.tsx';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import Table, { THead, Th, Tr, Td, CellMono } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import type { CardPayloadFor, TableEntry } from '@nodal-agents/shared';
 import { readQuestionToolInput } from '@nodal-agents/shared';
@@ -499,9 +499,9 @@ function TableBody({ entry, notes = [] }: { entry: TableEntry; notes?: readonly 
                   <Td
                     key={ci}
                     align={typeof cell === 'number' ? 'right' : 'left'}
-                    className="max-w-[40ch] truncate text-mono-12 text-ink-2 whitespace-nowrap"
+                    className="max-w-[40ch] truncate"
                   >
-                    {cell === null ? '' : String(cell)}
+                    <CellMono>{cell === null ? '' : String(cell)}</CellMono>
                   </Td>
                 ))}
               </Tr>

@@ -35,7 +35,6 @@
  */
 
 import { useState, useMemo, useEffect, useTransition } from 'react';
-import Link from 'next/link';
 import { toast } from 'sonner';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
@@ -45,12 +44,21 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import MetricCard from '@/components/ui/MetricCard';
 import ChipRow, { type ChipItem } from '@/components/ui/ChipRow';
 import Disc from '@/components/ui/Disc';
-import AgentAvatar from '@/components/ui/AgentAvatar';
 import LiveDot from '@/components/ui/LiveDot';
 import RowActionButton from '@/components/ui/RowActionButton';
 import EmptyState from '@/components/ui/EmptyState';
 import StarRating from '@/components/ui/StarRating';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import Table, {
+  THead,
+  Th,
+  Tr,
+  Td,
+  CellActions,
+  CellAgent,
+  CellMono,
+  CellMuted,
+  CellText,
+} from '@/components/ui/Table';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react';
 import NewMemoryModal from './NewMemoryModal';
@@ -156,7 +164,7 @@ function MemoryFact({ fact }: { fact: string }) {
           setExpanded((v) => !v);
         }
       }}
-      className="cursor-pointer break-words text-body-13 leading-snug! text-ink"
+      className="cursor-pointer"
     >
       <span className={expanded ? '' : 'line-clamp-2'}>{fact}</span>{' '}
       <span className="text-micro-11 text-ink-4 hover:text-ink-2">
@@ -199,7 +207,7 @@ function RowActions({ id, archived }: { id: string; archived: boolean }) {
 
   return (
     <>
-      <div className="flex items-center justify-end gap-1.5">
+      <CellActions>
         <RowActionButton
           square
           icon={
@@ -217,7 +225,7 @@ function RowActions({ id, archived }: { id: string; archived: boolean }) {
           disabled={isPending}
           onClick={() => setConfirmOpen(true)}
         />
-      </div>
+      </CellActions>
       <ConfirmDialog
         open={confirmOpen}
         title="Delete memory?"
@@ -489,48 +497,45 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                           below), and the other cells should stay pinned to the top of
                           the row instead of re-centering when that happens. */}
                     <Td top>
-                      <div className="flex items-start gap-3">
-                        <Disc
-                          variant="neutral"
-                          size="md"
-                          shape="square"
-                          background={meta.color}
-                          className="mt-0.5 shrink-0 [&_svg]:h-[14px] [&_svg]:w-[14px]"
+                      {/* max-w caps the column so a long, space-free fact (a pasted URL
+                            or token) breaks and wraps instead of stretching the whole
+                            table wider than its container (the "catastrophique" overflow
+                            at 1280px) — `break-words` on CellText does the actual
+                            wrapping once this box stops growing. */}
+                      <div className="max-w-[214px]">
+                        <CellText
+                          lead={
+                            <Disc
+                              variant="neutral"
+                              size="md"
+                              shape="square"
+                              background={meta.color}
+                              className="[&_svg]:h-[14px] [&_svg]:w-[14px]"
+                            >
+                              {meta.icon}
+                            </Disc>
+                          }
+                          meta={
+                            // Heure LOCALE du navigateur : le serveur la rend dans la
+                            // sienne, et React relit la bonne au montage sans crier
+                            // (même garde que CronBuilder).
+                            <span suppressHydrationWarning>
+                              {m.created_at ? new Date(m.created_at).toLocaleString() : 'none'}
+                              {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
+                            </span>
+                          }
                         >
-                          {meta.icon}
-                        </Disc>
-                        {/* max-w caps the column so a long, space-free fact (a pasted URL
-                              or token) breaks and wraps instead of stretching the whole
-                              table wider than its container (the "catastrophique" overflow
-                              at 1280px) — `break-words` on MemoryFact does the actual
-                              wrapping once this box stops growing. */}
-                        <div className="min-w-0 max-w-[170px]">
                           <MemoryFact fact={m.fact} />
-                          {/* Heure LOCALE du navigateur : le serveur la rend dans la sienne, et
-                              React relit la bonne au montage sans crier (même garde que CronBuilder). */}
-                          <div
-                            className="mt-0.5 break-words text-mono-11 text-ink-4"
-                            suppressHydrationWarning
-                          >
-                            {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
-                            {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
-                          </div>
-                        </div>
+                        </CellText>
                       </div>
                     </Td>
 
                     {/* Agent */}
                     <Td top className="hidden md:table-cell">
                       {m.agentName ? (
-                        <Link
-                          href={`/agents`}
-                          className="inline-flex items-center gap-2 text-body-12 text-ink-2 transition-colors hover:text-ink"
-                        >
-                          <AgentAvatar name={m.agentName} size="sm" />
-                          {m.agentName}
-                        </Link>
+                        <CellAgent name={m.agentName} href="/agents" />
                       ) : (
-                        <span className="text-ink-4">—</span>
+                        <CellMuted>none</CellMuted>
                       )}
                     </Td>
 
@@ -551,10 +556,10 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
 
                     {/* Last accessed */}
                     <Td top className="hidden xl:table-cell">
-                      <span className="inline-flex items-center gap-1.5 text-mono-12 text-ink-3">
+                      <CellMono>
                         {relativeTime(m.last_accessed_at)}
-                        {recent && <LiveDot variant="ok" size="sm" />}
-                      </span>
+                        {recent && <LiveDot variant="ok" size="sm" className="ml-1.5" />}
+                      </CellMono>
                     </Td>
 
                     {/* Actions */}

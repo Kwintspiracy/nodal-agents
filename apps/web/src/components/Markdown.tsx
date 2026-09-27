@@ -18,7 +18,7 @@ import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import { toString as mdastToString } from 'mdast-util-to-string';
 import type { Nodes, RootContent, TableCell, TableRow } from 'mdast';
-import Table, { THead, Th, Tr, Td } from './ui/Table';
+import Table, { THead, Th, Tr, Td, CellText } from './ui/Table';
 import CodeBlock from './ui/CodeBlock';
 
 export type MarkdownTone = 'agent' | 'user';
@@ -295,8 +295,8 @@ function MdTable({
   const body = rows.slice(1);
   const align = (i: number): 'left' | 'right' => (node.align?.[i] === 'right' ? 'right' : 'left');
   return (
-    <div className="mb-3 overflow-x-auto rounded-lg border border-rule-2">
-      <Table frame={false}>
+    <div className="mb-3">
+      <Table>
         {head && (
           <THead>
             {(head.children as TableCell[]).map((cell, i) => (
@@ -310,8 +310,8 @@ function MdTable({
           {body.map((row, ri) => (
             <Tr key={ri}>
               {(row.children as TableCell[]).map((cell, ci) => (
-                <Td key={ci} align={align(ci)} className="text-body-13 text-ink-2">
-                  {kids(cell, tone)}
+                <Td key={ci} align={align(ci)}>
+                  <CellText>{kids(cell, tone)}</CellText>
                 </Td>
               ))}
             </Tr>

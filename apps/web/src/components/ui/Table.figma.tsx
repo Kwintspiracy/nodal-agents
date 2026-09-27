@@ -1,20 +1,66 @@
 import figma from '@figma/code-connect';
-import Table, { THead, Th, Tr, Td, TableSegmentRow } from './Table';
+import Table, {
+  THead,
+  Th,
+  Tr,
+  Td,
+  TableSegmentRow,
+  CellTitle,
+  CellAgent,
+  CellMono,
+  CellMuted,
+  CellActions,
+} from './Table';
+import RowActionButton from './RowActionButton';
 
-// Composant assemblé (cadre + THead + rows) — node 230:427
+// Composant assemblé (cadre + THead + rows) — node 230:427.
+//
+// Les cellules y sont écrites avec le vocabulaire de #522 (CellTitle,
+// CellAgent, CellMono, CellMuted, CellActions) : c'est la composition que la
+// planche doit montrer. Ces cellules n'ont pas encore de composant Figma à
+// elles ; tant qu'elles n'en ont pas, elles vivent dans cet exemple, et aucun
+// `figma.connect` ne pointe vers un nœud inventé.
 figma.connect(Table, 'https://www.figma.com/design/GWXBALe90DMFR3XYGccofJ?node-id=230-427', {
   example: () => (
     <Table>
       <THead>
         <Th>Skill</Th>
         <Th>Assigned to</Th>
+        <Th align="right">Runs</Th>
         <Th align="right">Actions</Th>
       </THead>
       <tbody>
         <Tr>
-          <Td>Citation discipline</Td>
-          <Td>Unassigned</Td>
-          <Td align="right">Edit</Td>
+          <Td>
+            <CellTitle description="Cite the source of every claim.">Citation discipline</CellTitle>
+          </Td>
+          <Td>
+            <CellAgent name="Agent name" meta="agent-slug" />
+          </Td>
+          <Td align="right">
+            <CellMono>12</CellMono>
+          </Td>
+          <Td align="right">
+            <CellActions>
+              <RowActionButton square icon={null} title="Edit" />
+            </CellActions>
+          </Td>
+        </Tr>
+        <Tr>
+          <Td>
+            <CellTitle meta="note-taking">Meeting notes</CellTitle>
+          </Td>
+          <Td>
+            <CellMuted>Unassigned</CellMuted>
+          </Td>
+          <Td align="right">
+            <CellMono>0</CellMono>
+          </Td>
+          <Td align="right">
+            <CellActions>
+              <RowActionButton square icon={null} title="Edit" />
+            </CellActions>
+          </Td>
         </Tr>
       </tbody>
     </Table>

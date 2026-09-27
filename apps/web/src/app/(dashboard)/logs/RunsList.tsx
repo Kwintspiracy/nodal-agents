@@ -9,6 +9,7 @@
 import Table, { THead, Th } from '@/components/ui/Table';
 import type { ActivityRunRow } from '@/lib/actions.ts';
 import RunRow from './RunRow.tsx';
+import { costColumnDecimals } from '../spaces/format.ts';
 
 /** Chevron, agent, origine, tâche, statut, durée, coût, appels. */
 const COLUMNS = 8;
@@ -21,6 +22,8 @@ export default function RunsList({
   /** Le run que le lien profond désigne : il s'ouvre déplié. */
   expandedRunId?: string | null;
 }) {
+  // Une colonne de coûts, une précision (voir costColumnDecimals).
+  const costDecimals = costColumnDecimals(runs.map((r) => r.costUsd));
   return (
     <Table>
       <THead>
@@ -29,8 +32,12 @@ export default function RunsList({
         <Th className="hidden md:table-cell">From</Th>
         <Th>Task</Th>
         <Th>Status</Th>
-        <Th className="hidden lg:table-cell">Duration</Th>
-        <Th className="hidden lg:table-cell">Cost</Th>
+        <Th align="right" className="hidden lg:table-cell">
+          Duration
+        </Th>
+        <Th align="right" className="hidden lg:table-cell">
+          Cost
+        </Th>
         <Th align="right">Calls</Th>
       </THead>
       <tbody>
@@ -39,6 +46,7 @@ export default function RunsList({
             key={run.id}
             run={run}
             columns={COLUMNS}
+            costDecimals={costDecimals}
             defaultExpanded={run.id === expandedRunId}
           />
         ))}
