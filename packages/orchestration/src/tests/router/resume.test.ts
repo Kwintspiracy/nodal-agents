@@ -2,13 +2,15 @@
 // Asserts on real DB message rows.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs } from '@nodal-agents/db';
 import { resumeDelegated } from '../../router/resume';
+import { readFilesWrittenBy } from '../../router/delegated-files';
 import { OrchestrationError } from '../../errors';
 import type { JobId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -526,11 +528,10 @@ describe('resumeDelegated', () => {
 // Run e2e794db (25/09/2026) : un spécialiste écrit sa voix off, le runner
 // redémarre pendant sa réponse, et le parent ne reçoit qu'un échec nu — il
 // redélègue le même travail. Le parent reçoit désormais, dans le record TYPÉ,
-// les fichiers que l'enfant a écrits ou déclarés, dans l'état où ils sont SUR
-// LE DISQUE au moment de la reprise : présent (avec sa taille) ou absent. La
-// consigne « ne refais pas » ne porte que sur les fichiers présents (revue
-// Codex, P1 : l'historique seul pouvait affirmer qu'un fichier supprimé, ou
-// jamais écrit, existait).
+// ce que l'enfant a écrit ou déclaré, dans l'état où c'est AU MOMENT de la
+// reprise, et la PROVENANCE se prouve par l'empreinte des octets que l'enfant
+// a écrits (#505) : « ne refais pas » ne vaut que pour un fichier présent ET
+// inchangé depuis (revue Codex de #491, passes 1 et 2).
 
 let dir: string;
 beforeAll(async () => {
@@ -540,27 +541,42 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-async function seedWrittenFile(
-  db: TestDb,
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+const slash = (p: string) => p.split(String.fromCharCode(92)).join('/');
+
+async function stateRow(
   jobId: string,
   path: string,
-  flags: { produced: boolean; declared?: boolean; decisionStatus?: string },
+  flags: { produced: boolean; declared?: boolean; type?: 'document' | 'code_project' },
 ) {
   const { jobDeliverableVerificationState } = await import('@nodal-agents/db');
   await db.insert(jobDeliverableVerificationState).values({
     jobId,
-    deliverableType: 'document',
+    deliverableType: flags.type ?? 'document',
     canonicalKey: path,
     displayPathSnapshot: path,
     dirtyGeneration: 1,
     addressed: true,
     produced: flags.produced,
     declared: flags.declared ?? false,
-    decisionStatus: flags.decisionStatus ?? 'dirty',
+    decisionStatus: 'dirty',
   });
 }
 
-async function injectedToolResult(db: TestDb, parentJobId: string) {
+/** Le constat d'une écriture de l'enfant, avec l'empreinte de ce qu'il a écrit. */
+async function constat(jobId: string, path: string, written: string) {
+  const { constatedWrites } = await import('@nodal-agents/db');
+  await db.insert(constatedWrites).values({
+    jobId,
+    turn: 1,
+    path: slash(await realpath(path).catch(() => path)),
+    changeKind: 'modified',
+    constatedBy: 'disk',
+    contentSha256: sha(written),
+  });
+}
+
+async function injectedToolResult(parentJobId: string) {
   const [row] = await db
     .select({ messages: agentJobs.messages })
     .from(agentJobs)
@@ -588,78 +604,157 @@ const STOPPED = {
   exit_reason: 'runner_restarted',
 };
 
-async function resumeWithFile(
-  toolUseId: string,
-  flags: { produced: boolean; declared?: boolean; decisionStatus?: string },
-  onDisk: string | null,
-) {
+async function scenario(toolUseId: string) {
   const { entityId, orchId } = await seedContext(db);
-  const childJob = await seedChildJob(db, entityId, orchId);
-  const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
-  const path = join(dir, `${toolUseId}.wav`).replace(/\\/g, '/');
-  if (onDisk !== null) await writeFile(path, onDisk);
-  await seedWrittenFile(db, childJob.id, path, flags);
-  await resumeDelegated(parentJob.id as JobId, childJob.id as JobId, STOPPED, db);
-  return { path, out: await injectedToolResult(db, parentJob.id) };
+  const child = await seedChildJob(db, entityId, orchId);
+  const parent = await seedParentJob(db, entityId, orchId, toolUseId, child.id);
+  return {
+    child: child.id,
+    resume: async () => {
+      await resumeDelegated(parent.id as JobId, child.id as JobId, STOPPED, db);
+      return injectedToolResult(parent.id);
+    },
+  };
 }
 
-describe('resumeDelegated — the files a stopped child wrote, as they are on disk (#491) @cap:organiser-equipe/moteur', () => {
-  it('a written file still on disk is handed over with its size, and the parent is told not to redo it', async () => {
-    const { path, out } = await resumeWithFile('tu_491_a', { produced: true }, 'x'.repeat(1234));
+describe('resumeDelegated — what a stopped child wrote, as it is now (#491) @cap:organiser-equipe/moteur', () => {
+  it('a file the child wrote, still unchanged: its size, and the parent is told not to redo it', async () => {
+    const s = await scenario('tu_491_a');
+    const path = slash(join(dir, 'a.wav'));
+    await writeFile(path, 'x'.repeat(1234));
+    await stateRow(s.child, path, { produced: true });
+    await constat(s.child, path, 'x'.repeat(1234));
 
-    expect(out.type).toBe('error-text');
+    const out = await s.resume();
+
     expect(recordOf(out.value)['files_written']).toEqual([
-      { path, written: true, declared: false, on_disk: true, bytes: 1234, proof: 'dirty' },
+      {
+        kind: 'file',
+        path,
+        declared: false,
+        state: 'written_by_child_unchanged',
+        bytes: 1234,
+        proof: 'dirty',
+      },
     ]);
-    expect(out.value).not.toContain('delivered NOTHING');
     expect(out.value).toContain('DO NOT redo');
+    expect(out.value).not.toContain('delivered NOTHING');
   });
 
-  it('a file DECLARED but never written is said absent, and the parent is NOT told it exists', async () => {
-    const { path, out } = await resumeWithFile(
-      'tu_491_b',
-      { produced: false, declared: true, decisionStatus: 'red' },
-      null,
-    );
+  it('a file changed since the child wrote it is said changed, and the parent is NOT told to keep it', async () => {
+    const s = await scenario('tu_491_b');
+    const path = slash(join(dir, 'b.wav'));
+    await writeFile(path, 'edited by someone');
+    await stateRow(s.child, path, { produced: true });
+    await constat(s.child, path, 'what the child wrote');
 
-    expect(recordOf(out.value)['files_written']).toEqual([
-      { path, written: false, declared: true, on_disk: false, bytes: null, proof: 'red' },
+    const out = await s.resume();
+
+    expect(recordOf(out.value)['files_written']).toMatchObject([
+      { kind: 'file', path, state: 'changed_since_child_wrote' },
     ]);
     expect(out.value).not.toContain('DO NOT redo');
     expect(out.value).toContain('delivered NOTHING usable');
   });
 
-  it('a file written then REMOVED is said absent, and the parent is NOT told it exists', async () => {
-    const { path, out } = await resumeWithFile('tu_491_c', { produced: true }, null);
+  it('a DECLARED file present on disk that the child never wrote is not credited to it', async () => {
+    const s = await scenario('tu_491_c');
+    const path = slash(join(dir, 'c.mp4'));
+    await writeFile(path, 'put there by someone else');
+    await stateRow(s.child, path, { produced: false, declared: true });
 
-    expect(recordOf(out.value)['files_written']).toEqual([
-      { path, written: true, declared: false, on_disk: false, bytes: null, proof: 'dirty' },
+    const out = await s.resume();
+
+    expect(recordOf(out.value)['files_written']).toMatchObject([
+      { kind: 'file', path, declared: true, state: 'not_written_by_child' },
     ]);
     expect(out.value).not.toContain('DO NOT redo');
+  });
+
+  it('a file written then removed is said absent', async () => {
+    const s = await scenario('tu_491_d');
+    const path = slash(join(dir, 'd.wav'));
+    await stateRow(s.child, path, { produced: true });
+    await constat(s.child, path, 'gone');
+
+    const out = await s.resume();
+
+    expect(recordOf(out.value)['files_written']).toEqual([
+      { kind: 'file', path, declared: false, state: 'absent', bytes: null, proof: 'dirty' },
+    ]);
     expect(out.value).toContain('delivered NOTHING usable');
   });
 
-  it('a file the child only TRIED to write (addressed, never produced) is not handed over', async () => {
-    const { out } = await resumeWithFile('tu_491_d', { produced: false }, 'left by someone else');
+  it('only ENOENT means absent: another stat error is an UNKNOWN state, with its code', async () => {
+    const s = await scenario('tu_491_e');
+    const path = slash(join(dir, 'e.wav'));
+    await writeFile(path, 'e');
+    await stateRow(s.child, path, { produced: true });
+    await constat(s.child, path, 'e');
+    const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
 
-    expect(recordOf(out.value)['files_written']).toEqual([]);
-    expect(out.value).toContain('delivered NOTHING usable');
+    const lus = await readFilesWrittenBy(db, s.child as JobId, {
+      stat: async () => {
+        throw eacces;
+      },
+    });
+
+    expect(lus).toMatchObject([{ kind: 'file', path, state: 'unknown: EACCES', bytes: null }]);
+  });
+
+  it('a code project is handed over as a PROJECT, with the files the child changed in it', async () => {
+    const s = await scenario('tu_491_f');
+    const projet = slash(join(dir, 'site'));
+    await mkdir(projet, { recursive: true });
+    const index = `${projet}/index.html`;
+    const style = `${projet}/style.css`;
+    await writeFile(index, '<h1>ok</h1>');
+    await writeFile(style, 'changed later');
+    await stateRow(s.child, projet, { produced: true, type: 'code_project' });
+    await constat(s.child, index, '<h1>ok</h1>');
+    await constat(s.child, style, 'body{}');
+
+    const out = await s.resume();
+
+    const [entree] = recordOf(out.value)['files_written'] as Array<Record<string, unknown>>;
+    expect(entree).toMatchObject({ kind: 'project', path: projet, declared: false });
+    expect(entree!['files']).toEqual([
+      {
+        kind: 'file',
+        path: slash(await realpath(index)),
+        declared: false,
+        state: 'written_by_child_unchanged',
+        bytes: 11,
+        proof: 'dirty',
+      },
+      {
+        kind: 'file',
+        path: slash(await realpath(style)),
+        declared: false,
+        state: 'changed_since_child_wrote',
+        bytes: 13,
+        proof: 'dirty',
+      },
+    ]);
+    // Un fichier du projet est prouvé : le parent peut s'appuyer dessus.
+    expect(out.value).toContain('DO NOT redo');
   });
 
   it('a completed child carries the same field, so the contract never changes shape', async () => {
     const { entityId, orchId } = await seedContext(db);
-    const childJob = await seedChildJob(db, entityId, orchId);
-    const parentJob = await seedParentJob(db, entityId, orchId, 'tu_491_e', childJob.id);
-    const md = join(dir, 'notes.md').replace(/\\/g, '/');
+    const child = await seedChildJob(db, entityId, orchId);
+    const parent = await seedParentJob(db, entityId, orchId, 'tu_491_g', child.id);
+    const md = slash(join(dir, 'notes.md'));
     await writeFile(md, 'notes');
-    await seedWrittenFile(db, childJob.id, md, { produced: true, decisionStatus: 'green' });
+    await stateRow(child.id, md, { produced: true });
+    await constat(child.id, md, 'notes');
 
-    await resumeDelegated(parentJob.id as JobId, childJob.id as JobId, 'Voici les notes.', db);
+    await resumeDelegated(parent.id as JobId, child.id as JobId, 'Voici les notes.', db);
 
-    const out = await injectedToolResult(db, parentJob.id);
+    const out = await injectedToolResult(parent.id);
     expect(out.type).toBe('text');
-    expect(recordOf(out.value)['files_written']).toEqual([
-      { path: md, written: true, declared: false, on_disk: true, bytes: 5, proof: 'green' },
+    expect(recordOf(out.value)['files_written']).toMatchObject([
+      { kind: 'file', path: md, state: 'written_by_child_unchanged', bytes: 5 },
     ]);
   });
 });

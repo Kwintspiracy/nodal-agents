@@ -9,12 +9,19 @@
 // pas touché.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agentTasks, jobDeliverableVerificationState } from '@nodal-agents/db';
+import {
+  eq,
+  agentJobs,
+  agentTasks,
+  constatedWrites,
+  jobDeliverableVerificationState,
+} from '@nodal-agents/db';
 import {
   reclaimJobsOfDeadRunners,
   runnerRestartedStopLine,
@@ -295,6 +302,15 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
       .split(String.fromCharCode(92))
       .join('/');
     await writeFile(wav, Buffer.alloc(979));
+    // Le constat de l'écriture de l'enfant, avec l'empreinte de ses octets (#505).
+    await db.insert(constatedWrites).values({
+      jobId: childId,
+      turn: 1,
+      path: (await realpath(wav)).split(String.fromCharCode(92)).join('/'),
+      changeKind: 'added',
+      constatedBy: 'disk',
+      contentSha256: createHash('sha256').update(Buffer.alloc(979)).digest('hex'),
+    });
     await db.insert(jobDeliverableVerificationState).values({
       jobId: childId,
       deliverableType: 'document',
@@ -322,7 +338,14 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
     expect(record.summary).toContain('La voix off est générée, je vérifie le fichier.');
     expect(record.summary).toContain('[stopped: runner restarted');
     expect(record.files_written).toEqual([
-      { path: wav, written: true, declared: false, on_disk: true, bytes: 979, proof: 'dirty' },
+      {
+        kind: 'file',
+        path: wav,
+        declared: false,
+        state: 'written_by_child_unchanged',
+        bytes: 979,
+        proof: 'dirty',
+      },
     ]);
     expect(value).not.toContain('delivered NOTHING');
   });
