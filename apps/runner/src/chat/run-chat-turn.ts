@@ -11,7 +11,7 @@
 // after the escalation shipped, and a comment that states a rule gets read as
 // one (revue Codex de la dette de la PR #73, passe 3).
 
-import { eq, and, asc, desc, sql } from '@nodal-agents/db';
+import { eq, and, asc, desc, isNull, notInArray, or, sql } from '@nodal-agents/db';
 import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
@@ -37,6 +37,7 @@ import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
+import { TERMINAL_STATUSES } from '../job/state.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
 // size — 20 large turns (verbose replies, or several escalation blocks with
@@ -101,7 +102,10 @@ export const CHAT_TOOLS: Record<
       'destination they named). If the conversation spans turns, make the instruction ' +
       'self-contained by carrying the user’s intent across turns — NOT by enriching it.\n' +
       'Never decline an action the user asks for — escalate it here. For plain conversation or ' +
-      'recalling facts, reply in text instead (do not call this).',
+      'recalling facts, reply in text instead (do not call this).\n' +
+      'While a job you launched from this conversation is still running, a new call is refused ' +
+      'and you are shown that job: the person is often just clarifying the same request. ' +
+      'Different work starts once it has finished, or from a new conversation.',
     inputSchema: z.object({ instruction: z.string().min(1).max(16000) }),
   },
 };
@@ -143,6 +147,25 @@ export type ChatTurnResult =
       cutReason?: LlmTimeoutReason;
     }
   | { ok: false; error: string };
+
+/** A head job of this conversation that has not reached a terminal status (#453). */
+type RunningHead = { id: string; task: string; status: string | null };
+
+/**
+ * The tool-result of a `run_task` refused because work launched from this
+ * conversation is still running (#453). LLM-facing: a bracketed platform line
+ * built from the running jobs' typed fields, never shown as the reply.
+ */
+export function runTaskRefusal(running: readonly RunningHead[]): string {
+  const jobs = running
+    .map((j) => `job ${j.id} (status: ${j.status ?? 'unknown'}) task: "${j.task}"`)
+    .join('; ');
+  return (
+    `[run_task refused: work launched from this conversation is still running: ${jobs}. ` +
+    'Nothing was launched. Tell the person you are already on it; its result will arrive in ' +
+    'this conversation. Different work starts once it has finished, or from a new conversation.]'
+  );
+}
 
 /**
  * Build the run_task tool-result for a PRIOR chat escalation, reflecting the
@@ -545,7 +568,7 @@ export async function runChatTurn(opts: {
       buildHistoryBlock(r, truncateHeadTail, ledgerLinesByJobId.get(r.jobId ?? '') ?? []),
     );
   }
-  const messages: ModelMessage[] = blocks.flatMap((b) => b);
+  let messages: ModelMessage[] = blocks.flatMap((b) => b);
 
   // 5. One LLM call. The agent may reply in text (pure conversation) and/or call
   //    run_task to escalate an action into a real job. Guarded: some providers
@@ -683,6 +706,103 @@ export async function runChatTurn(opts: {
   // Stop pendant la relance d'escalade (#456, revue Codex passe 8) : rien ne
   // se lance après le Stop, pas même un job que la relance aurait demandé.
   if (abortSignal?.aborted) return await keepStoppedReply();
+
+  // 5c. UN TRAVAIL DU FIL COURT DÉJÀ (#453). La personne qui précise sa demande
+  //     pendant que le premier travail tourne faisait lancer un second travail
+  //     identique : l'historique montrait bien le premier en cours, le modèle
+  //     re-déclenchait par-dessus. Le contrat, pour tout agent : l'appel est
+  //     REFUSÉ au modèle, qui reçoit le travail en cours dans le résultat de son
+  //     appel d'outil et répond une seconde fois : il est déjà dessus. Un
+  //     travail différent se lance quand celui-ci est fini, ou depuis une
+  //     nouvelle conversation.
+  //
+  //     AUCUNE échappatoire « en parallèle » (revue Codex, passe 3). Un champ
+  //     `alongside` a existé : une reformulation passait sous la comparaison
+  //     de textes, et il ne reposait que sur la parole du modèle. Il est
+  //     retiré plutôt que rafistolé (invariant #11).
+  //
+  //     Un second appel encore retenu ne garde PAS sa phrase : « je lance
+  //     l'autre tâche » posée au-dessus d'un appel jeté annoncerait un travail
+  //     qui n'existe pas. Le texte est vidé, et la relance SANS outils (6b)
+  //     répond avec les deux refus sous les yeux. Rien ne se jette en silence :
+  //     chaque refus est ce que le modèle lit.
+  let refusals = 0;
+  while (runTask) {
+    const runningHeads: RunningHead[] = await db
+      .select({ id: agentJobs.id, task: agentJobs.task, status: agentJobs.status })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          eq(agentJobs.conversationId, conversationId),
+          isNull(agentJobs.parentJobId),
+          // Non terminal = pas encore fini. `NULL NOT IN (…)` vaut « inconnu » en
+          // SQL et EXCLUT la ligne : une tête sans statut, que l'historique dit
+          // « still running », laissait passer un doublon (revue Codex, passe 4).
+          or(isNull(agentJobs.status), notInArray(agentJobs.status, TERMINAL_STATUSES)),
+        ),
+      );
+    if (runningHeads.length === 0) break;
+
+    const toolCallId =
+      (runTask as { toolCallId?: unknown }).toolCallId !== undefined
+        ? String((runTask as { toolCallId?: unknown }).toolCallId)
+        : `run-task-refused-${String(refusals)}`;
+    // L'historique porte déjà le message de ce tour (écrit en 1b).
+    messages = [
+      ...messages,
+      {
+        role: 'assistant',
+        content: [
+          ...(text ? [{ type: 'text' as const, text }] : []),
+          {
+            type: 'tool-call' as const,
+            toolCallId,
+            toolName: 'run_task',
+            input: runTask.input ?? {},
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result' as const,
+            toolCallId,
+            toolName: 'run_task',
+            output: { type: 'text' as const, value: runTaskRefusal(runningHeads) },
+          },
+        ],
+      },
+    ];
+    // Ce qui a pu passer par le flux n'est plus la réponse.
+    streamed = false;
+    if (refusals >= 1) {
+      // Second refus : ni son appel ni sa phrase ne restent. La relance sans
+      // outils (6b) écrit la réponse, refus compris.
+      text = '';
+      runTask = undefined;
+      break;
+    }
+    refusals += 1;
+    try {
+      const again = await llmClient.generateText(
+        { system: systemPrompt, messages, tools: CHAT_TOOLS },
+        abortSignal ? { abortSignal } : undefined,
+      );
+      text = (again.text ?? '').trim();
+      runTask = (again.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+    } catch (err) {
+      if (abortSignal?.aborted) return await keepStoppedReply();
+      console.warn(
+        `[run-chat-turn] reply after a refused run_task failed (${agentRow.slug}):`,
+        (err as Error).message,
+      );
+      text = '';
+      runTask = undefined;
+    }
+    if (abortSignal?.aborted) return await keepStoppedReply();
+  }
 
   // 6a. ESCALATION: the agent wants to act → spawn a real job (the unit of work).
   //     The spawned job runs the ROOT with its full toolset (delegating to
