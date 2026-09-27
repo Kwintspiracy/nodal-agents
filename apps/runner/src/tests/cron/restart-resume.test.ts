@@ -26,7 +26,11 @@ import {
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import {
+  createToolRegistry,
+  registerBuiltins,
+  executeTool as executeToolReel,
+} from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { JobId } from '@nodal-agents/orchestration';
@@ -758,5 +762,78 @@ describe('une marque posée après le point de reprise, quel que soit son tour (
       error: RESTART_AFTER_SIDE_EFFECT_CODE,
       blocked: ['run_command'],
     });
+  });
+});
+
+// Revue Codex de #443, passe 4 : le faucheur comptait TOUTE ligne non-read
+// postérieure au point de reprise, y compris celles que la porte écrit pour un
+// appel REFUSÉ, qui n'a jamais tourné (règle block, refus déjà prononcé,
+// purpose manquant). Le job échouait en disant que l'outil « had already
+// run » : c'était faux. Seule la marque posée juste avant \`tool.execute\`
+// (\`execution_started\`) compte.
+describe('un appel refusé par la porte n’est pas un effet (#443) @cap:organiser-equipe/moteur', () => {
+  it('run_command bloqué par une règle, enregistré après le point de reprise, puis mort : reprise', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: TACHE,
+        status: 'pending',
+        turn: 4,
+        messages: [{ role: 'user', content: TACHE }],
+      })
+      .returning({ id: agentJobs.id });
+    const jobId = job!.id;
+    await saveCheckpointReel(db as never, jobId, {
+      messages: [{ role: 'user', content: TACHE }],
+      turn: 4,
+      chainCount: 0,
+      toolsUsed: [],
+    });
+    // La VRAIE porte refuse l'appel et écrit sa ligne : l'outil ne tourne pas.
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const refus = await executeToolReel(
+      registry.get('run_command')!,
+      { command: 'echo hi', purpose: 'dire bonjour' },
+      {
+        jobId,
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+        db: db as never,
+        jobChatId: null,
+        turn: 5,
+      },
+      {
+        approvalRules: [
+          {
+            id: 'bloque',
+            toolName: 'run_command',
+            action: 'block',
+            agentId: seed.agentId,
+            entityId: seed.entityId,
+          },
+        ],
+        onApprovalRequired: async () => {},
+      },
+    );
+    expect(refus.outcome).toBe('error');
+    await db
+      .update(agentJobs)
+      .set({
+        status: 'processing',
+        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+      })
+      .where(eq(agentJobs.id, jobId));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const reprise = await reclaimJobsOfDeadRunners(db).finally(() => warn.mockRestore());
+
+    expect(reprise.resumedJobIds).toContain(jobId);
+    const r = await row(jobId);
+    expect(r).toMatchObject({ status: 'pending', resumedFromTurn: 4 });
+    expect(r.result ?? '').not.toContain('had already run');
   });
 });

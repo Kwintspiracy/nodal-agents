@@ -26,3 +26,13 @@ ALTER TABLE agent_jobs
   ADD COLUMN IF NOT EXISTS checkpoint_tool_seq bigint,
   ADD COLUMN IF NOT EXISTS restart_resumes integer NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS restart_blocked_by jsonb;
+
+-- tool_calls.execution_started (revue Codex de #443, passe 4) : cette ligne
+-- enregistre-t-elle une exécution qui a COMMENCÉ ? `true` pour la marque
+-- d'intention posée juste avant `tool.execute` et pour la ligne écrite après
+-- une exécution ; `false` pour la ligne d'un appel que la porte a refusé et
+-- qui n'a jamais tourné. Le faucheur ne compte que les exécutions commencées.
+-- NULL : ligne antérieure à cette colonne, ou ligne `cli:*` — on ne sait
+-- pas, donc elle compte (côté prudent).
+ALTER TABLE tool_calls
+  ADD COLUMN IF NOT EXISTS execution_started boolean;

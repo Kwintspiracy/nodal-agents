@@ -878,6 +878,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       durationMs,
       { value: output },
       marque,
+      true,
     );
 
     // ── 3.5 Le REGISTRE des projets (P5), APRÈS l'écriture ────────────────────
@@ -1078,6 +1079,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           Date.now() - startMs,
           undefined,
           marque,
+          true,
         );
       } catch (auditErr) {
         // Une ligne d'audit ne vaut JAMAIS un signal de contrôle perdu : sans
@@ -1117,6 +1119,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       Date.now() - startMs,
       undefined,
       marque,
+      true,
     );
     return result;
   }
@@ -1531,6 +1534,11 @@ async function _writeToolCall(
   produced?: { value: unknown },
   /** The intent mark written before the tool ran (#443): completed, never duplicated. */
   markId?: string,
+  /**
+   * Did the tool START running? (#443) False for a call the gate refused,
+   * which never ran; the reaper does not count those as effects.
+   */
+  ran = false,
 ): Promise<void> {
   const toolName = tool.name;
   // P1 (plan « De la maquette au produit »): the row carries the card the tool
@@ -1573,6 +1581,7 @@ async function _writeToolCall(
     await ctx.db.insert(toolCalls).values({
       entityId: ctx.entityId,
       jobId: ctx.jobId,
+      executionStarted: ran,
       toolName,
       card,
       presented,
@@ -1627,6 +1636,9 @@ async function markToolStarted(
         riskLevel: tool.riskLevel,
         toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
         toolOutput: null,
+        // La marque EST une exécution commencée (#443) : c'est elle, et elle
+        // seule parmi les lignes d'un appel non-lecture, que le faucheur compte.
+        executionStarted: true,
         turn: ctx.turn ?? null,
         toolCallId: ctx.toolCallId ?? null,
       })

@@ -35,7 +35,7 @@
 // ÉCHOUE : l'échec typé remonte au parent par le porteur de la PR #170, avec
 // ce que le job avait écrit (#491), et c'est le PARENT qui décide.
 
-import { and, asc, eq, gt, inArray, lt } from '@nodal-agents/db';
+import { and, asc, eq, gt, inArray, isNull, lt, or } from '@nodal-agents/db';
 import { agentJobs, agentTasks, agents, approvalRequests, toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resumeDelegated } from '@nodal-agents/orchestration';
@@ -153,10 +153,22 @@ async function effectsAfterCheckpoint(
   // le rejeu d'un appel APPROUVÉ écrit sa marque au tour déjà sauvegardé, et
   // la compter par `turn > sauvegardé` la laissait passer. Sans ordre connu
   // (sauvegardé avant cette colonne), tout ce que le job a fait compte.
+  //
+  // Et seulement les exécutions COMMENCÉES (passe 4) : la porte écrit aussi
+  // une ligne pour un appel qu'elle REFUSE (règle `block`, refus déjà
+  // prononcé, purpose manquant…), qui n'a jamais tourné. La compter faisait
+  // dire au job que l'outil « had already run » : faux. `execution_started`
+  // NULL (ligne antérieure, ou `cli:*`) compte, faute de savoir.
   const rows = await db
     .select({ toolName: toolCalls.toolName, riskLevel: toolCalls.riskLevel })
     .from(toolCalls)
-    .where(and(eq(toolCalls.jobId, jobId), gt(toolCalls.seq, checkpointToolSeq ?? 0)))
+    .where(
+      and(
+        eq(toolCalls.jobId, jobId),
+        gt(toolCalls.seq, checkpointToolSeq ?? 0),
+        or(eq(toolCalls.executionStarted, true), isNull(toolCalls.executionStarted)),
+      ),
+    )
     .orderBy(asc(toolCalls.seq));
   const noms: string[] = [];
   for (const r of rows) {
