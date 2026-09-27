@@ -236,6 +236,24 @@ export interface ToolContext {
    * test légers) n'a posé AUCUNE intention, donc rien avec quoi diverger.
    */
   declaredMutationTargets?: readonly MutationTarget[];
+  /**
+   * La porte d'écrasement du dossier partagé a laissé passer CET appel sans
+   * personne (issue #505) : fichier neuf, ou contenu que ce job a écrit. Posé
+   * par le seam sur le contexte d'exécution, et lu par l'écriture atomique
+   * (`writeFileAtomically`), qui refait la même question JUSTE AVANT de
+   * remplacer le fichier : entre la porte et l'écriture, quelqu'un a pu le
+   * changer. Absent après une approbation humaine ou en autonomie totale :
+   * la personne a déjà tranché, ou n'a rien demandé.
+   */
+  sharedOverwriteUnattended?: boolean;
+  /**
+   * Rapporte l'empreinte (sha-256) des OCTETS qu'un outil vient d'écrire à
+   * `absPath` (issue #505). Le seam la range avec le constat : c'est elle, et
+   * non une relecture tardive du disque, qui prouve plus tard que le contenu
+   * est celui de ce job. Un outil qui ne la rapporte pas n'accorde aucune
+   * propriété.
+   */
+  reportWrittenContent?: (absPath: string, sha256: string) => void;
 }
 
 // ─── ToolProvisioning ──────────────────────────────────────────────────────────

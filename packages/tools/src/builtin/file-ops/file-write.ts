@@ -1,8 +1,8 @@
 // file-ops/file-write.ts — atomic write (tempfile + rename) within workspace
 
-import { writeFile, rename, mkdir, unlink } from 'node:fs/promises';
-import { dirname, basename } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { writeFileAtomically } from './atomic-write';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { failureText, writtenFile } from '../../presenters';
@@ -173,16 +173,9 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
               'document',
             )
           : null;
-      // Atomic write: tempfile in same dir (same filesystem → rename is atomic)
-      const tmp = `${dir}/.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`;
-      try {
-        await writeFile(tmp, input.content, 'utf8');
-        await rename(tmp, path);
-      } catch (err) {
-        // Best-effort cleanup of tempfile if rename failed
-        await unlink(tmp).catch(() => undefined);
-        throw err;
-      }
+      // Atomic write: tempfile in same dir (same filesystem → rename is atomic),
+      // last ownership check and written-content fingerprint (#505).
+      await writeFileAtomically(ctx, path, input.content);
       return {
         ok: true,
         written: true,

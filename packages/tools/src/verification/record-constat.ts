@@ -126,6 +126,13 @@ export async function recordConstatedWrites(input: {
   readonly jobId: string | null | undefined;
   readonly turn: number | null | undefined;
   readonly lignes: readonly LigneDeConstat[];
+  /**
+   * L'empreinte des OCTETS que l'outil a écrits, par chemin (#505,
+   * `ctx.reportWrittenContent`). Un chemin absent de cette carte n'a pas
+   * d'empreinte : une écriture que l'outil n'a pas décrite (shell, harnais,
+   * bureautique) n'accorde aucune propriété.
+   */
+  readonly contenusEcrits?: ReadonlyMap<string, string>;
 }): Promise<number> {
   const { db, jobId, lignes } = input;
   // Sans job, il n'y a pas de run à qui rattacher le constat — un appel d'outil
@@ -133,6 +140,11 @@ export async function recordConstatedWrites(input: {
   // d'anormal : on ne journalise pas un cas normal.
   if (!jobId || lignes.length === 0) return 0;
   const turn = input.turn ?? 0;
+  // Les clés des empreintes ramenées au chemin RÉEL, comme les lignes.
+  const empreintes = new Map<string, string>();
+  for (const [chemin, sha] of input.contenusEcrits ?? []) {
+    empreintes.set(await cheminConstate(chemin), sha);
+  }
   const vus = new Set<string>();
   const values = [];
   for (const l of lignes) {
@@ -141,10 +153,11 @@ export async function recordConstatedWrites(input: {
     const path = await cheminConstate(l.path);
     if (vus.has(path)) continue;
     vus.add(path);
-    // L'empreinte de ce que l'écriture a LAISSÉ (revue Codex de #505) : c'est
-    // elle que la porte d'écrasement compare au disque, jamais l'ordre des
-    // lignes. Une suppression ou un fichier illisible n'en a pas.
-    const apres = l.kind === 'deleted' ? null : await fingerprint(path);
+    // L'empreinte de ce que l'outil a ÉCRIT (revue Codex de #505, passes 1 et
+    // 2) : c'est elle que la porte d'écrasement compare au disque, jamais
+    // l'ordre des lignes, ni une relecture du disque faite ici — un autre
+    // écrivain a pu passer entre l'écriture et ce constat.
+    const empreinte = l.kind === 'deleted' ? null : (empreintes.get(path) ?? null);
     values.push({
       jobId,
       turn,
@@ -152,7 +165,7 @@ export async function recordConstatedWrites(input: {
       changeKind: l.kind,
       constatedBy: l.constatedBy,
       renamedFrom: l.renamedFrom ?? null,
-      contentSha256: apres?.kind === 'file' ? apres.sha256 : null,
+      contentSha256: empreinte,
     });
   }
   try {

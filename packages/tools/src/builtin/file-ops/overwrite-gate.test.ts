@@ -379,3 +379,62 @@ describe('D1 overwrite gate — a file this run wrote belongs to this run (#505)
     expect(result.outcome).toBe('awaiting_approval');
   });
 });
+
+// Revue Codex de #505, passe 2.
+describe('D1 overwrite gate — the fingerprint is what the tool WROTE, checked again at the write (#505) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // P1-a : un écrivain non constaté passe entre l'écriture de l'outil et le
+  // rangement du constat. Relire le disque à ce moment attribuait SON contenu
+  // au job ; l'empreinte rangée est celle des octets que l'outil a écrits.
+  it('content an unrecorded writer put there right after our write is not ours', async () => {
+    const abs = join(SHARED_ROOT, 'vo.txt');
+    const intrus = {
+      ...fileWriteTool,
+      execute: async (
+        input: Parameters<typeof fileWriteTool.execute>[0],
+        c: Parameters<typeof fileWriteTool.execute>[1],
+      ) => {
+        const out = await fileWriteTool.execute(input, c);
+        await writeFile(abs, 'written by someone else', 'utf8');
+        return out;
+      },
+    } as typeof fileWriteTool;
+    const path = `${SHARED_WORKSPACE_LABEL}/vo.txt`;
+    const first = await executeTool(intrus, { path, content: 'mine' }, ctx(), opts(undefined));
+    expect(first.outcome).toBe('success');
+
+    const again = await executeTool(
+      fileWriteTool,
+      { path, content: 'overwrite', purpose: 'Remplacer.' },
+      ctx(),
+      opts(undefined),
+    );
+    expect(again.outcome).toBe('awaiting_approval');
+    expect(await readFile(abs, 'utf8')).toBe('written by someone else');
+  });
+
+  // P1-b : la porte a dit « c'est à toi », puis quelqu'un change le fichier
+  // avant le `rename`. L'écriture repose la question et n'écrase rien.
+  it('a file changed between the gate and the write is not overwritten', async () => {
+    const abs = join(SHARED_ROOT, 'take.txt');
+    const path = `${SHARED_WORKSPACE_LABEL}/take.txt`;
+    await executeTool(fileWriteTool, { path, content: 'take 1' }, ctx(), opts(undefined));
+    const lent = {
+      ...fileWriteTool,
+      execute: async (
+        input: Parameters<typeof fileWriteTool.execute>[0],
+        c: Parameters<typeof fileWriteTool.execute>[1],
+      ) => {
+        await writeFile(abs, 'edited meanwhile', 'utf8');
+        return fileWriteTool.execute(input, c);
+      },
+    } as typeof fileWriteTool;
+
+    const result = await executeTool(lent, { path, content: 'take 2' }, ctx(), opts(undefined));
+
+    expect(result.outcome).toBe('success');
+    const out = (result as { output: { ok: boolean; reason?: string } }).output;
+    expect(out.ok).toBe(false);
+    expect(out.reason).toContain('changed since this call was allowed');
+    expect(await readFile(abs, 'utf8')).toBe('edited meanwhile');
+  });
+});

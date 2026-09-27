@@ -68,14 +68,16 @@ export class WorkspaceError extends Error {
     | 'path_traversal_blocked'
     | 'workspace_invalid'
     | 'workspace_label_required'
-    | 'workspace_label_unknown';
+    | 'workspace_label_unknown'
+    | 'shared_file_changed';
   constructor(
     code:
       | 'workspace_not_configured'
       | 'path_traversal_blocked'
       | 'workspace_invalid'
       | 'workspace_label_required'
-      | 'workspace_label_unknown',
+      | 'workspace_label_unknown'
+      | 'shared_file_changed',
     message: string,
   ) {
     super(message);
