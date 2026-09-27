@@ -5,6 +5,7 @@ import {
   text,
   uuid,
   integer,
+  bigint,
   real,
   jsonb,
   timestamp,
@@ -297,6 +298,26 @@ export const agentJobs = pgTable(
     verificationSkippedSurfaces: jsonb('verification_skipped_surfaces')
       .notNull()
       .default(sql`'[]'::jsonb`),
+    /**
+     * Le tour sauvegardé d'où ce job a repris après un redémarrage du runner
+     * (#443, migration 0133). NULL : jamais repris ainsi. Un FAIT typé, que
+     * l'écran dit (#444), jamais une phrase du runner.
+     */
+    resumedFromTurn: integer('resumed_from_turn'),
+    /** Combien de fois ce job a été repris après un redémarrage (#443) — la borne anti-boucle. */
+    restartResumes: integer('restart_resumes').notNull().default(0),
+    /**
+     * Les outils que le tour interrompu par la mort du runner avait déjà
+     * exécutés et qui ne font pas que lire (#443) : rejouer ce tour les
+     * referait, donc le job n'a pas été repris. NULL ailleurs.
+     */
+    restartBlockedBy: jsonb('restart_blocked_by').$type<string[]>(),
+    /**
+     * Le dernier `tool_calls.seq` du job au moment de son point de reprise
+     * (`saveCheckpoint`, #443). Le faucheur compte ce qui a été écrit après,
+     * par ORDRE d'écriture — jamais par numéro de tour.
+     */
+    checkpointToolSeq: bigint('checkpoint_tool_seq', { mode: 'number' }),
     /**
      * Le projet ENREGISTRÉ auquel ce travail s'est rattaché (0093, P5).
      *

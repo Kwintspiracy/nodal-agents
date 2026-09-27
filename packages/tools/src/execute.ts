@@ -825,6 +825,29 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
   };
+  // ── 2.95 La MARQUE d'intention, AVANT tout outil qui ne fait pas que lire ──
+  //
+  // (#443, revue Codex passe 2.) La ligne d'audit s'écrit APRÈS l'outil, et
+  // son échec n'est pas fatal : un runner mort entre l'effet et elle ne
+  // laissait aucune trace, et la reprise après redémarrage rejouait l'effet.
+  // La ligne `tool_calls` naît donc ICI, sans sortie (« commencé »), et elle
+  // est COMPLÉTÉE après. Une marque sans sortie veut dire « peut-être fait » :
+  // le faucheur ne reprend pas un tour qui en porte une. Si elle ne peut pas
+  // être écrite, l'outil ne tourne pas — pas d'effet sans marque. Une lecture
+  // n'en a pas besoin : la rejouer ne refait rien. Le coût : une écriture de
+  // plus par appel d'outil qui n'est pas une lecture.
+  const marque =
+    auditTool.riskLevel !== 'read' && ctx.jobId
+      ? await markToolStarted(ctx, auditTool, validatedInput)
+      : undefined;
+  if (marque === null) {
+    return {
+      outcome: 'error',
+      error:
+        `tool_intent_unrecorded: "${tool.name}" did NOT run. Its start could not be recorded, ` +
+        `and a tool that changes something never runs without that record. Call it again.`,
+    };
+  }
   try {
     // ── L'ÉCRITURE MONTE L'ÉPOQUE, elle aussi (issue #101) ──────────────────
     //
@@ -847,9 +870,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       }
     }
     const durationMs = Date.now() - startMs;
-    await _writeToolCall(ctx, auditTool, validatedInput, JSON.stringify(output), durationMs, {
-      value: output,
-    });
+    await _writeToolCall(
+      ctx,
+      auditTool,
+      validatedInput,
+      JSON.stringify(output),
+      durationMs,
+      { value: output },
+      marque,
+      true,
+    );
 
     // ── 3.5 Le REGISTRE des projets (P5), APRÈS l'écriture ────────────────────
     //
@@ -1047,6 +1077,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             to: signal.childSlug ?? null,
           }),
           Date.now() - startMs,
+          undefined,
+          marque,
+          true,
         );
       } catch (auditErr) {
         // Une ligne d'audit ne vaut JAMAIS un signal de contrôle perdu : sans
@@ -1084,6 +1117,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       validatedInput,
       JSON.stringify(result),
       Date.now() - startMs,
+      undefined,
+      marque,
+      true,
     );
     return result;
   }
@@ -1496,6 +1532,13 @@ async function _writeToolCall(
   durationMs: number,
   /** The tool's ACTUAL output — only on a successful execution; absent, the row records no payload. */
   produced?: { value: unknown },
+  /** The intent mark written before the tool ran (#443): completed, never duplicated. */
+  markId?: string,
+  /**
+   * Did the tool START running? (#443) False for a call the gate refused,
+   * which never ran; the reaper does not count those as effects.
+   */
+  ran = false,
 ): Promise<void> {
   const toolName = tool.name;
   // P1 (plan « De la maquette au produit »): the row carries the card the tool
@@ -1521,9 +1564,24 @@ async function _writeToolCall(
     }
   }
   try {
+    if (markId) {
+      await ctx.db
+        .update(toolCalls)
+        .set({
+          card,
+          presented,
+          presentationError,
+          toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
+          toolOutput: output,
+          durationMs,
+        })
+        .where(eq(toolCalls.id, markId));
+      return;
+    }
     await ctx.db.insert(toolCalls).values({
       entityId: ctx.entityId,
       jobId: ctx.jobId,
+      executionStarted: ran,
       toolName,
       card,
       presented,
@@ -1554,6 +1612,44 @@ async function _writeToolCall(
       `[tools] tool_calls audit insert failed (job=${ctx.jobId}, tool=${toolName}):`,
       err,
     );
+  }
+}
+
+/**
+ * La marque d'intention d'un outil qui ne fait pas que lire (#443) : sa ligne
+ * `tool_calls`, écrite AVANT qu'il tourne, sans sortie. Rend son id, ou
+ * `null` quand l'écriture a échoué — et l'appelant ne lance pas l'outil.
+ */
+async function markToolStarted(
+  ctx: ToolContext,
+  tool: ToolDefinition<z.ZodTypeAny, unknown>,
+  input: unknown,
+): Promise<string | null> {
+  try {
+    const [row] = await ctx.db
+      .insert(toolCalls)
+      .values({
+        entityId: ctx.entityId,
+        jobId: ctx.jobId,
+        toolName: tool.name,
+        card: typeof tool.card === 'string' ? tool.card : 'generic',
+        riskLevel: tool.riskLevel,
+        toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
+        toolOutput: null,
+        // La marque EST une exécution commencée (#443) : c'est elle, et elle
+        // seule parmi les lignes d'un appel non-lecture, que le faucheur compte.
+        executionStarted: true,
+        turn: ctx.turn ?? null,
+        toolCallId: ctx.toolCallId ?? null,
+      })
+      .returning({ id: toolCalls.id });
+    return row?.id ?? null;
+  } catch (err) {
+    console.error(
+      `[tools] TOOL_INTENT_MARK_FAILED job=${ctx.jobId} tool=${tool.name} — the tool does not run:`,
+      err,
+    );
+    return null;
   }
 }
 
