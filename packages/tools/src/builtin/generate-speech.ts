@@ -17,9 +17,9 @@
 // Offered through the "Speech generation" tool group (Tools tab), never on by
 // default (invariant #9).
 
-import { writeFile, rename, mkdir, unlink } from 'node:fs/promises';
-import { dirname, basename, extname } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { dirname, extname } from 'node:path';
+import { writeFileAtomically } from './file-ops/atomic-write';
 import { z } from 'zod';
 import { DEFAULT_SPEECH_VOICE, SPEECH_MODELS, SPEECH_MODEL_IDS } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../types';
@@ -185,14 +185,8 @@ export const generateSpeechTool: ToolDefinition<
       }
       const dir = dirname(path);
       await mkdir(dir, { recursive: true });
-      const tmp = `${dir}/.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`;
-      try {
-        await writeFile(tmp, audio.bytes);
-        await rename(tmp, path);
-      } catch (err) {
-        await unlink(tmp).catch(() => undefined);
-        throw err;
-      }
+      // Atomic write, last ownership check and written-content fingerprint (#505).
+      await writeFileAtomically(ctx, path, audio.bytes);
       return {
         ok: true,
         written: true,

@@ -110,6 +110,31 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
     }
   });
 
+  // #505 — job 8c763150 : l'agent a lu « suspends this job » comme un arrêt,
+  // a rendu `blocked` en disant que le runtime avait stoppé ses appels, et n'a
+  // jamais rappelé l'outil. Rien n'était arrêté. Le refus le dit, et dit le
+  // geste : le même appel, avec le champ qui manque.
+  it('le refus dit que RIEN n’est arrêté et que le même appel, avec `purpose`, suffit (#505)', async () => {
+    const { tool } = aTool('gated_not_halted', { defaultApproval: 'require_approval' });
+
+    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts());
+
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') {
+      // Les DEUX faits, et le texte exact (revue Codex de #505, passe 4) :
+      // le job continue, mais CET appel n'a pas tourné. « nothing was
+      // refused » était faux — l'appel rend une erreur et n'a rien exécuté.
+      expect(result.error).toBe(
+        'approval_purpose_required: missing field `purpose`. "gated_not_halted" needs a ' +
+          "person's approval, and a request without a reason is not sent, so nothing was " +
+          'submitted to anyone. This call did NOT run. This job is NOT stopped: call ' +
+          '"gated_not_halted" again with the same input plus a `purpose` field: one sentence, ' +
+          'for the person who approves, saying what you need this for and why.',
+      );
+      expect(result.error).not.toContain('nothing was refused');
+    }
+  });
+
   it('une raison faite d’espaces ne compte pas — la carte la lirait comme absente', async () => {
     const { tool } = aTool('gated_blank_reason', { defaultApproval: 'require_approval' });
 

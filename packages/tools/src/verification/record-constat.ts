@@ -18,7 +18,7 @@
 // rendrait un échec d'outil pour une écriture qui a eu lieu. Une panne se dit
 // par un code et n'empêche rien.
 
-import { constatedWrites } from '@nodal-agents/db';
+import { constatedWrites, desc, eq, sql } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { ConstatedBy, ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { normalizePath } from '@nodal-agents/shared';
@@ -126,6 +126,13 @@ export async function recordConstatedWrites(input: {
   readonly jobId: string | null | undefined;
   readonly turn: number | null | undefined;
   readonly lignes: readonly LigneDeConstat[];
+  /**
+   * L'empreinte des OCTETS que l'outil a écrits, par chemin (#505,
+   * `ctx.reportWrittenContent`). Un chemin absent de cette carte n'a pas
+   * d'empreinte : une écriture que l'outil n'a pas décrite (shell, harnais,
+   * bureautique) n'accorde aucune propriété.
+   */
+  readonly contenusEcrits?: ReadonlyMap<string, string>;
 }): Promise<number> {
   const { db, jobId, lignes } = input;
   // Sans job, il n'y a pas de run à qui rattacher le constat — un appel d'outil
@@ -133,6 +140,11 @@ export async function recordConstatedWrites(input: {
   // d'anormal : on ne journalise pas un cas normal.
   if (!jobId || lignes.length === 0) return 0;
   const turn = input.turn ?? 0;
+  // Les clés des empreintes ramenées au chemin RÉEL, comme les lignes.
+  const empreintes = new Map<string, string>();
+  for (const [chemin, sha] of input.contenusEcrits ?? []) {
+    empreintes.set(await cheminConstate(chemin), sha);
+  }
   const vus = new Set<string>();
   const values = [];
   for (const l of lignes) {
@@ -141,6 +153,11 @@ export async function recordConstatedWrites(input: {
     const path = await cheminConstate(l.path);
     if (vus.has(path)) continue;
     vus.add(path);
+    // L'empreinte de ce que l'outil a ÉCRIT (revue Codex de #505, passes 1 et
+    // 2) : c'est elle que la porte d'écrasement compare au disque, jamais
+    // l'ordre des lignes, ni une relecture du disque faite ici — un autre
+    // écrivain a pu passer entre l'écriture et ce constat.
+    const empreinte = l.kind === 'deleted' ? null : (empreintes.get(path) ?? null);
     values.push({
       jobId,
       turn,
@@ -148,13 +165,70 @@ export async function recordConstatedWrites(input: {
       changeKind: l.kind,
       constatedBy: l.constatedBy,
       renamedFrom: l.renamedFrom ?? null,
+      contentSha256: empreinte,
     });
   }
   try {
-    await db.insert(constatedWrites).values(values).onConflictDoNothing();
+    // Le même fichier réécrit dans le MÊME tour reste une ligne (l'unicité de
+    // #199), mais son empreinte suit la DERNIÈRE écriture : sinon la porte
+    // comparerait le disque au premier jet et redemanderait pour le troisième.
+    await db
+      .insert(constatedWrites)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [constatedWrites.jobId, constatedWrites.turn, constatedWrites.path],
+        set: { contentSha256: sql`excluded.content_sha256` },
+      });
     return values.length;
   } catch (err) {
     console.warn(`[verification] CONSTAT_WRITE_FAILED job=${jobId} turn=${turn}`, err);
     return 0;
   }
+}
+
+/**
+ * Le contenu ACTUEL de ce fichier est-il celui que CE job y a écrit ?
+ * (issue #505, revue Codex P1-a et P1-b)
+ *
+ * C'est la question que pose la porte d'écrasement du dossier partagé : elle
+ * protège le travail d'un AUTRE, et un run qui réécrit le fichier qu'il vient
+ * de produire n'écrase le travail de personne. Job 8c763150 : six voix off
+ * régénérées aux mêmes chemins, six demandes d'approbation pour un travail
+ * qui était le sien.
+ *
+ * La réponse se lit sur le CONTENU, pas sur l'ordre des lignes :
+ *
+ *  - l'empreinte actuelle du fichier doit égaler celle de la dernière écriture
+ *    constatée de CE job. Une édition faite hors de Nodal (une personne, un
+ *    CLI, une restauration) ne laisse aucun constat, mais elle change
+ *    l'empreinte : la porte redemande ;
+ *  - aucun AUTRE job ne doit avoir constaté ce même contenu à ce chemin. Les
+ *    constats sont rangés APRÈS l'écriture, dans un ordre qui n'est pas celui
+ *    des écritures : un run qui range son constat après qu'un autre a réécrit
+ *    le fichier y lit le contenu de l'autre. Ce contenu porte alors deux noms,
+ *    et un contenu qui n'est pas prouvablement le nôtre se protège.
+ *
+ * Fichier absent, illisible, ou constat sans empreinte (suppression, ligne
+ * d'avant 0131) : pas de propriété, la porte demande.
+ */
+export async function currentContentWrittenByJob(
+  db: AnyDrizzleDb,
+  jobId: string | null | undefined,
+  absPath: string,
+): Promise<boolean> {
+  if (!jobId) return false;
+  const lignes = await db
+    .select({ jobId: constatedWrites.jobId, sha: constatedWrites.contentSha256 })
+    .from(constatedWrites)
+    .where(eq(constatedWrites.path, await cheminConstate(absPath)))
+    .orderBy(desc(constatedWrites.createdAt));
+  // Le disque EN DERNIER (revue Codex de #505, passe 3) : l'écriture atomique
+  // remplace le fichier juste après cette réponse, et rien — ni la requête en
+  // base, ni la résolution du chemin — ne doit plus séparer la lecture du
+  // contenu du `rename`. Tout ce qui suit est synchrone.
+  const actuel = await fingerprint(absPath);
+  if (actuel.kind !== 'file') return false;
+  const derniereDuJob = lignes.find((l) => l.jobId === jobId);
+  if (derniereDuJob?.sha !== actuel.sha256) return false;
+  return !lignes.some((l) => l.jobId !== jobId && l.sha === actuel.sha256);
 }

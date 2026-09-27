@@ -7,9 +7,8 @@
 // If the model's quote is wrong by one char, we fail loud — the model sees
 // the error and corrects. Empirically far more reliable across model families.
 
-import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
-import { dirname, basename } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { writeFileAtomically } from './atomic-write';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { detailOf, failureText, writtenFile } from '../../presenters';
@@ -184,16 +183,8 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
               'document',
             )
           : null;
-      // Atomic write
-      const dir = dirname(path);
-      const tmp = `${dir}/.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`;
-      try {
-        await writeFile(tmp, updated, 'utf8');
-        await rename(tmp, path);
-      } catch (err) {
-        await unlink(tmp).catch(() => undefined);
-        throw err;
-      }
+      // Atomic write, last ownership check and written-content fingerprint (#505).
+      await writeFileAtomically(ctx, path, updated);
       return {
         ok: true,
         edited: true,

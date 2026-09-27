@@ -1026,6 +1026,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       change_kind text NOT NULL,
       constated_by text NOT NULL,
       renamed_from text,
+      content_sha256 text,
       created_at timestamptz NOT NULL DEFAULT now(),
       CONSTRAINT constated_writes_job_turn_path_unique UNIQUE (job_id, turn, path),
       CONSTRAINT constated_writes_change_kind_check
@@ -1034,6 +1035,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
         CHECK (constated_by IN ('git', 'disk'))
     );
     CREATE INDEX IF NOT EXISTS idx_constated_writes_job ON constated_writes (job_id);
+    -- 0130 : l'empreinte du contenu écrit, et la recherche par chemin.
+    CREATE INDEX IF NOT EXISTS idx_constated_writes_path_created
+      ON constated_writes (path, created_at DESC);
   `);
 
   const db = drizzle(pg, { schema });

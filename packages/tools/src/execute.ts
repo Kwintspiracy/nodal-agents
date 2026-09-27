@@ -435,6 +435,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     }
   }
 
+  let porteLaisseePasserSansPersonne = false;
   // ── Per-call dynamic gate (D1) ─────────────────────────────────────────────
   // Complements the static defaultApproval fallback above: a tool declaring
   // `computeApproval` decides, PER CALL, whether THIS specific input is
@@ -453,6 +454,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   ) {
     const dynamic = await tool.computeApproval(validatedInput, ctx);
     if (dynamic === 'require_approval') effectiveAction = 'require_approval';
+    // La porte a laissé passer sans personne : l'écriture reposera la même
+    // question juste avant de remplacer le fichier (#505, `atomic-write.ts`).
+    else porteLaisseePasserSansPersonne = true;
   }
 
   // ── La liste de ce que l'agent n'a pas le droit de faire (#464) ─────────────
@@ -812,8 +816,15 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // fenêtre de course, la table `code_projects` pouvant changer entre les deux
   // lectures, au bout de laquelle la carte et l'état posé ne parlaient plus du
   // même livrable (revue C, dette #88). Voir `declaredMutationTargets`.
-  const execCtx: ToolContext =
-    mutationTargets === null ? ctx : { ...ctx, declaredMutationTargets: mutationTargets };
+  // Les empreintes des octets que l'outil ÉCRIT (#505) : rangées avec le
+  // constat, jamais relues sur le disque après coup.
+  const contenusEcrits = new Map<string, string>();
+  const execCtx: ToolContext = {
+    ...ctx,
+    ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
+    ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
+    reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
+  };
   try {
     // ── L'ÉCRITURE MONTE L'ÉPOQUE, elle aussi (issue #101) ──────────────────
     //
@@ -950,6 +961,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         jobId: ctx.jobId,
         turn: ctx.turn,
         lignes: lignesDeConstat,
+        contenusEcrits,
       });
 
       // Un dossier visé dont RIEN n'a été constaté se dit ici, par un code

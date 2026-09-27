@@ -14,6 +14,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { resolve as resolvePath, sep, isAbsolute } from 'node:path';
 import type { ToolContext } from '../../types';
+import { currentContentWrittenByJob } from '../../verification/record-constat';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -67,14 +68,16 @@ export class WorkspaceError extends Error {
     | 'path_traversal_blocked'
     | 'workspace_invalid'
     | 'workspace_label_required'
-    | 'workspace_label_unknown';
+    | 'workspace_label_unknown'
+    | 'shared_file_changed';
   constructor(
     code:
       | 'workspace_not_configured'
       | 'path_traversal_blocked'
       | 'workspace_invalid'
       | 'workspace_label_required'
-      | 'workspace_label_unknown',
+      | 'workspace_label_unknown'
+      | 'shared_file_changed',
     message: string,
   ) {
     super(message);
@@ -515,6 +518,13 @@ export const WORKFLOW_TEMPLATE_PROTECTED_MESSAGE =
  * Resolution failures (bad path, no workspace configured, path traversal…)
  * return undefined — the call is about to fail loud in execute() anyway;
  * there is nothing destructive to gate.
+ *
+ * A file whose CURRENT content is the one THIS run wrote is not another
+ * run's work (#505): re-writing it overwrites nothing anyone else made, so it
+ * is not gated. Content, not record order, decides (see
+ * `currentContentWrittenByJob`): an edit made outside Nodal, or a later write
+ * by another run, puts the gate back. Every caller (file_write, file_edit, generate_speech) gets the same
+ * answer from the same record, `constated_writes`.
  */
 export async function computeSharedOverwriteApproval(
   ctx: ToolContext,
@@ -531,5 +541,8 @@ export async function computeSharedOverwriteApproval(
     () => true,
     () => false,
   );
-  return exists ? 'require_approval' : undefined;
+  if (!exists) return undefined;
+  return (await currentContentWrittenByJob(ctx.db, ctx.jobId, resolved))
+    ? undefined
+    : 'require_approval';
 }
