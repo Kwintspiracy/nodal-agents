@@ -301,3 +301,45 @@ describe('un test rouge est suivi de sa CAUSE (#512, sortie réelle de vitest)',
     expect(readFileSync(fichier, 'utf8')).toContain('installing tarball');
   });
 });
+
+// Revue Codex de #557 : la VOISINE d'un test rouge n'est pas sa cause, et la
+// limite ne sépare jamais un test de sa cause.
+describe('review of PR #557: only a cause is a cause, and a cause stays with its test', () => {
+  it('a passing `✓` right after a `×` is not taken as its cause', () => {
+    const lignes = lignesDeLEchec(['     × fails 3ms', '     ✓ passes 1ms', ''].join('\n'));
+    expect(lignes).toEqual(['     × fails 3ms']);
+  });
+
+  it('a line from ANOTHER turbo task, interleaved, is not taken as the cause', () => {
+    const sortie = [
+      '@nodal-agents/web:test:  FAIL  |unit| src/a.test.ts > fails',
+      '@nodal-agents/runner:test: Error: connect ECONNREFUSED 127.0.0.1:3001',
+      '@nodal-agents/web:test: AssertionError: expected 1 to be 2',
+    ].join('\n');
+    const lignes = lignesDeLEchec(sortie);
+    const i = lignes.indexOf('@nodal-agents/web:test:  FAIL  |unit| src/a.test.ts > fails');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(lignes[i + 1]).not.toBe(
+      '@nodal-agents/runner:test: Error: connect ECONNREFUSED 127.0.0.1:3001',
+    );
+    expect(lignes).not.toContain(
+      '@nodal-agents/runner:test: Error: connect ECONNREFUSED 127.0.0.1:3001',
+    );
+  });
+
+  it('the limit never keeps a test and drops its cause', () => {
+    const resume = Array.from({ length: 39 }, (_, n) => `     × summary ${n} 1ms`);
+    const sortie = [
+      ...resume,
+      '',
+      ' FAIL  |unit| src/a.test.ts > times out',
+      'Error: Test timed out in 50ms.',
+    ].join('\n');
+    const lignes = lignesDeLEchec(sortie, 40);
+    const i = lignes.indexOf(' FAIL  |unit| src/a.test.ts > times out');
+    // Either the pair is kept whole, or neither line is: never the name alone.
+    if (i >= 0) expect(lignes[i + 1]).toBe('Error: Test timed out in 50ms.');
+    else expect(lignes).not.toContain('Error: Test timed out in 50ms.');
+    expect(lignes.at(-1)).toMatch(/more failure lines in the full log$/);
+  });
+});
