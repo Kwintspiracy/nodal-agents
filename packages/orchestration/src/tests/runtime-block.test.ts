@@ -36,7 +36,10 @@ describe('buildRuntimeBlock', () => {
       );
     }
     // Unknown is SAID, never guessed and never silently dropped.
-    expect(buildRuntimeBlock(base)).toContain('The Nodal-Agents version is unknown');
+    // The fact only, never a guessed cause (Codex review of #454, P1).
+    const unknown = buildRuntimeBlock(base);
+    expect(unknown).toContain('This runner does not know which Nodal-Agents version it is.');
+    expect(unknown).not.toMatch(/launcher|started without/);
   });
 
   it('(i) loopback, no notes — renders correct heading and localhost guidance', () => {

@@ -11,21 +11,28 @@
 // (run-job, run-chat), qui ont dérivé. Il n'en existe plus qu'un, et c'est lui
 // qu'on épingle ici.
 
+import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { describe, it, expect } from 'vitest';
 import { buildCliRuntimeJobContext } from '../../cli-runtime/run-job.ts';
 
 const GIT = { root: 'D:/repo', branch: 'main', dirtyCount: 3, head: 'abc1234' };
 
+const DEPLOY: DeploymentContext = { os: 'Linux', networkMode: 'loopback', authMode: 'local-trust' };
+
 describe('buildCliRuntimeJobContext', () => {
   it('transmet la sonde git — LE champ oublié', () => {
-    const ctx = buildCliRuntimeJobContext({ origin: 'api', workspaceGit: GIT });
+    const ctx = buildCliRuntimeJobContext({ origin: 'api', deployment: DEPLOY, workspaceGit: GIT });
     expect(ctx?.workspaceGit, "sans ce champ, aucun bloc git n'est rendu").toEqual(GIT);
   });
 
   it("omet le champ quand la sonde n'a rien répondu", () => {
     // `null` = pas un dépôt, ou git n'a pas su répondre. Rendre un bloc vide
     // dirait quelque chose de faux sur l'état du dépôt.
-    const ctx = buildCliRuntimeJobContext({ origin: 'api', workspaceGit: null });
+    const ctx = buildCliRuntimeJobContext({
+      origin: 'api',
+      deployment: DEPLOY,
+      workspaceGit: null,
+    });
     expect(ctx && 'workspaceGit' in ctx).toBe(false);
   });
 
@@ -33,11 +40,14 @@ describe('buildCliRuntimeJobContext', () => {
     // C'est ce drapeau qui retire les blocs décrivant un outillage que cette
     // session n'a pas. L'oublier redonnerait à l'agent 22 Ko d'ordres
     // inexécutables.
-    expect(buildCliRuntimeJobContext({ origin: 'api' })?.surface).toBe('cli-runtime');
+    expect(buildCliRuntimeJobContext({ origin: 'api', deployment: DEPLOY })?.surface).toBe(
+      'cli-runtime',
+    );
   });
 
   it('porte la tâche et le chat quand ils existent, et rien sinon', () => {
     const complet = buildCliRuntimeJobContext({
+      deployment: DEPLOY,
       origin: 'telegram',
       task: 'analyse le repo',
       chatId: '4242',
@@ -45,7 +55,12 @@ describe('buildCliRuntimeJobContext', () => {
     expect(complet?.task).toBe('analyse le repo');
     expect(complet?.telegramChatId).toBe('4242');
 
-    const nu = buildCliRuntimeJobContext({ origin: 'api', task: null, chatId: null });
+    const nu = buildCliRuntimeJobContext({
+      origin: 'api',
+      deployment: DEPLOY,
+      task: null,
+      chatId: null,
+    });
     expect(nu && 'task' in nu).toBe(false);
     expect(nu && 'telegramChatId' in nu).toBe(false);
   });

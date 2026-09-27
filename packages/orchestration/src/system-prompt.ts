@@ -316,10 +316,11 @@ export function buildRuntimeBlock(
     `You run locally inside Nodal-Agents on the user's own machine (${d.os}). You are NOT a cloud or hosted agent — your process and the user's machine are the same host.`,
     // Which version (#454). Asked "the changelog of the 0.9.2" while serving
     // 0.9.2, an agent answered "which software?": nothing tied a bare version
-    // number to the product it runs in. Unknown is said, never guessed.
+    // number to the product it runs in. Unknown is said as a fact, with no
+    // cause attached: a cause would be a guess (Codex review of #454, P1).
     d.version
       ? `You run Nodal-Agents version ${sanitizePromptField(d.version, 40)}. A version number or "my version" in a question refers to this product unless the user names another one.`
-      : `The Nodal-Agents version is unknown: the runner was started without the launcher that reports it.`,
+      : `This runner does not know which Nodal-Agents version it is.`,
     ``,
     nodalTools
       ? `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`

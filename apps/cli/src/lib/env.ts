@@ -25,7 +25,8 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
   // The version this install runs, the one `nodal-agents --version` prints
   // (#454): the runner states it in every agent's Runtime block, so "the
   // 0.9.2" or "my version" can be tied to the product. Left out when it cannot
-  // be read, and the block then says it is unknown — never a guessed value.
+  // be read (resolution, read or JSON failed): the block then says the runner
+  // does not know it — never a guessed value, never a guessed cause.
   const version = readInstalledVersion();
   if (version) env['NODAL_VERSION'] = version;
 
