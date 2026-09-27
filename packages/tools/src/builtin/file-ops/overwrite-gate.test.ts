@@ -17,6 +17,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
@@ -287,19 +288,14 @@ describe('D1 overwrite gate — a file this run wrote belongs to this run (#505)
     expect(await readFile(join(SHARED_ROOT, 'notes.md'), 'utf8')).toBe('bye world');
   });
 
-  it('a file whose LAST recorded write is another run’s still asks the owner', async () => {
-    const path = `${SHARED_WORKSPACE_LABEL}/shared-report.md`;
+  // Revue Codex de #505, P1-a : une édition faite HORS de Nodal (la personne
+  // dans son éditeur, un CLI, une restauration) ne laisse aucun constat. Seule
+  // l'empreinte du contenu la voit : le fichier n'est plus celui que ce run a
+  // écrit, la porte redemande.
+  it('a file edited outside Nodal after this run wrote it asks the owner again', async () => {
+    const path = `${SHARED_WORKSPACE_LABEL}/report.md`;
     await executeTool(fileWriteTool, { path, content: 'mine' }, ctx(), opts(undefined));
-    // Un autre run l'a réécrit après nous : ce n'est plus notre fichier.
-    const other = await otherJob();
-    await db.insert(constatedWrites).values({
-      jobId: other,
-      turn: 99,
-      path: await cheminConstate(join(SHARED_ROOT, 'shared-report.md')),
-      changeKind: 'modified',
-      constatedBy: 'disk',
-      createdAt: new Date(Date.now() + 1_000),
-    });
+    await writeFile(join(SHARED_ROOT, 'report.md'), 'edited by a person', 'utf8');
 
     const again = await executeTool(
       fileWriteTool,
@@ -308,6 +304,68 @@ describe('D1 overwrite gate — a file this run wrote belongs to this run (#505)
       opts(undefined),
     );
     expect(again.outcome).toBe('awaiting_approval');
+    expect(await readFile(join(SHARED_ROOT, 'report.md'), 'utf8')).toBe('edited by a person');
+  });
+
+  // P1-b : l'ordre d'INSERTION des constats n'est pas l'ordre des écritures.
+  // Un autre run a écrit APRÈS nous mais son constat est rangé AVANT le nôtre :
+  // le contenu du disque est le sien, et c'est lui qui décide.
+  it('another run’s later write, recorded BEFORE ours, still asks the owner', async () => {
+    const path = `${SHARED_WORKSPACE_LABEL}/race.md`;
+    const abs = join(SHARED_ROOT, 'race.md');
+    await executeTool(fileWriteTool, { path, content: 'mine' }, ctx(), opts(undefined));
+    await writeFile(abs, 'theirs', 'utf8');
+    const other = await otherJob();
+    await db.insert(constatedWrites).values({
+      jobId: other,
+      turn: 99,
+      path: await cheminConstate(abs),
+      changeKind: 'modified',
+      constatedBy: 'disk',
+      contentSha256: createHash('sha256').update('theirs').digest('hex'),
+      createdAt: new Date(Date.now() - 60_000),
+    });
+
+    const again = await executeTool(
+      fileWriteTool,
+      { path, content: 'overwrite', purpose: 'Remplacer.' },
+      ctx(),
+      opts(undefined),
+    );
+    expect(again.outcome).toBe('awaiting_approval');
+    expect(await readFile(abs, 'utf8')).toBe('theirs');
+  });
+
+  it('content another run ALSO recorded is not provably ours: the owner is asked', async () => {
+    const path = `${SHARED_WORKSPACE_LABEL}/same.md`;
+    const abs = join(SHARED_ROOT, 'same.md');
+    await executeTool(fileWriteTool, { path, content: 'same' }, ctx(), opts(undefined));
+    const other = await otherJob();
+    await db.insert(constatedWrites).values({
+      jobId: other,
+      turn: 7,
+      path: await cheminConstate(abs),
+      changeKind: 'modified',
+      constatedBy: 'disk',
+      contentSha256: createHash('sha256').update('same').digest('hex'),
+    });
+
+    const again = await executeTool(
+      fileWriteTool,
+      { path, content: 'overwrite', purpose: 'Remplacer.' },
+      ctx(),
+      opts(undefined),
+    );
+    expect(again.outcome).toBe('awaiting_approval');
+  });
+
+  it('three writes of the same file in one turn: the last content is ours, no approval', async () => {
+    const path = `${SHARED_WORKSPACE_LABEL}/takes.md`;
+    for (const take of ['take 1', 'take 2', 'take 3']) {
+      const r = await executeTool(fileWriteTool, { path, content: take }, ctx(), opts(undefined));
+      expect(r.outcome).toBe('success');
+    }
+    expect(await readFile(join(SHARED_ROOT, 'takes.md'), 'utf8')).toBe('take 3');
   });
 
   it('a shared file no run of ours wrote still asks the owner', async () => {

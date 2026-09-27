@@ -18,7 +18,7 @@
 // rendrait un échec d'outil pour une écriture qui a eu lieu. Une panne se dit
 // par un code et n'empêche rien.
 
-import { constatedWrites, desc, eq } from '@nodal-agents/db';
+import { constatedWrites, desc, eq, sql } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { ConstatedBy, ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { normalizePath } from '@nodal-agents/shared';
@@ -141,6 +141,10 @@ export async function recordConstatedWrites(input: {
     const path = await cheminConstate(l.path);
     if (vus.has(path)) continue;
     vus.add(path);
+    // L'empreinte de ce que l'écriture a LAISSÉ (revue Codex de #505) : c'est
+    // elle que la porte d'écrasement compare au disque, jamais l'ordre des
+    // lignes. Une suppression ou un fichier illisible n'en a pas.
+    const apres = l.kind === 'deleted' ? null : await fingerprint(path);
     values.push({
       jobId,
       turn,
@@ -148,10 +152,20 @@ export async function recordConstatedWrites(input: {
       changeKind: l.kind,
       constatedBy: l.constatedBy,
       renamedFrom: l.renamedFrom ?? null,
+      contentSha256: apres?.kind === 'file' ? apres.sha256 : null,
     });
   }
   try {
-    await db.insert(constatedWrites).values(values).onConflictDoNothing();
+    // Le même fichier réécrit dans le MÊME tour reste une ligne (l'unicité de
+    // #199), mais son empreinte suit la DERNIÈRE écriture : sinon la porte
+    // comparerait le disque au premier jet et redemanderait pour le troisième.
+    await db
+      .insert(constatedWrites)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [constatedWrites.jobId, constatedWrites.turn, constatedWrites.path],
+        set: { contentSha256: sql`excluded.content_sha256` },
+      });
     return values.length;
   } catch (err) {
     console.warn(`[verification] CONSTAT_WRITE_FAILED job=${jobId} turn=${turn}`, err);
@@ -160,36 +174,44 @@ export async function recordConstatedWrites(input: {
 }
 
 /**
- * La DERNIÈRE écriture constatée de ce fichier est-elle celle de CE job ?
- * (issue #505)
+ * Le contenu ACTUEL de ce fichier est-il celui que CE job y a écrit ?
+ * (issue #505, revue Codex P1-a et P1-b)
  *
  * C'est la question que pose la porte d'écrasement du dossier partagé : elle
- * protège le travail d'un AUTRE run, et un run qui réécrit le fichier qu'il
- * vient de produire n'écrase le travail de personne. Job 8c763150 : six voix
- * off régénérées aux mêmes chemins, six demandes d'approbation pour un
- * travail qui était le sien.
+ * protège le travail d'un AUTRE, et un run qui réécrit le fichier qu'il vient
+ * de produire n'écrase le travail de personne. Job 8c763150 : six voix off
+ * régénérées aux mêmes chemins, six demandes d'approbation pour un travail
+ * qui était le sien.
  *
- * La réponse se lit sur `constated_writes`, que le seam d'exécution remplit
- * pour TOUT outil qui écrit (fichier, voix, bureautique, shell constaté par
- * git), et sur rien d'autre : le dernier constat de ce chemin, tous jobs
- * confondus, doit être de ce job, et ne pas être une suppression. Un autre run
- * passé derrière nous reprend donc la main — et la porte redemande.
+ * La réponse se lit sur le CONTENU, pas sur l'ordre des lignes :
  *
- * Ce qu'elle ne voit pas, assumé : une écriture faite HORS de Nodal (la
- * personne dans son éditeur) ne laisse aucun constat. Dans ce cas précis, le
- * fichier reste celui de ce run.
+ *  - l'empreinte actuelle du fichier doit égaler celle de la dernière écriture
+ *    constatée de CE job. Une édition faite hors de Nodal (une personne, un
+ *    CLI, une restauration) ne laisse aucun constat, mais elle change
+ *    l'empreinte : la porte redemande ;
+ *  - aucun AUTRE job ne doit avoir constaté ce même contenu à ce chemin. Les
+ *    constats sont rangés APRÈS l'écriture, dans un ordre qui n'est pas celui
+ *    des écritures : un run qui range son constat après qu'un autre a réécrit
+ *    le fichier y lit le contenu de l'autre. Ce contenu porte alors deux noms,
+ *    et un contenu qui n'est pas prouvablement le nôtre se protège.
+ *
+ * Fichier absent, illisible, ou constat sans empreinte (suppression, ligne
+ * d'avant 0131) : pas de propriété, la porte demande.
  */
-export async function lastConstatedWriteIsJob(
+export async function currentContentWrittenByJob(
   db: AnyDrizzleDb,
   jobId: string | null | undefined,
   absPath: string,
 ): Promise<boolean> {
   if (!jobId) return false;
-  const [last] = await db
-    .select({ jobId: constatedWrites.jobId, changeKind: constatedWrites.changeKind })
+  const actuel = await fingerprint(absPath);
+  if (actuel.kind !== 'file') return false;
+  const lignes = await db
+    .select({ jobId: constatedWrites.jobId, sha: constatedWrites.contentSha256 })
     .from(constatedWrites)
     .where(eq(constatedWrites.path, await cheminConstate(absPath)))
-    .orderBy(desc(constatedWrites.createdAt))
-    .limit(1);
-  return last !== undefined && last.jobId === jobId && last.changeKind !== 'deleted';
+    .orderBy(desc(constatedWrites.createdAt));
+  const derniereDuJob = lignes.find((l) => l.jobId === jobId);
+  if (derniereDuJob?.sha !== actuel.sha256) return false;
+  return !lignes.some((l) => l.jobId !== jobId && l.sha === actuel.sha256);
 }

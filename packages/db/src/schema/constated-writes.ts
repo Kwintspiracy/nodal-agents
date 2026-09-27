@@ -47,11 +47,20 @@ export const constatedWrites = pgTable(
     constatedBy: text('constated_by').notNull().$type<ConstatedBy>(),
     /** Le nom d'avant, pour un renommage seulement. */
     renamedFrom: text('renamed_from'),
+    /**
+     * L'empreinte (sha-256) du contenu que l'écriture a laissé sur le disque
+     * (migration 0131, revue Codex de #505). C'est elle, et non l'ordre des
+     * lignes, qui dit si un fichier est encore celui que ce run a écrit.
+     * NULL pour une suppression ou un fichier illisible.
+     */
+    contentSha256: text('content_sha256'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     unique('constated_writes_job_turn_path_unique').on(table.jobId, table.turn, table.path),
     index('idx_constated_writes_job').on(table.jobId),
+    // La porte d'écrasement cherche par chemin, tous jobs confondus (0131).
+    index('idx_constated_writes_path_created').on(table.path, table.createdAt.desc()),
     check(
       'constated_writes_change_kind_check',
       sql`${table.changeKind} IN ('added', 'modified', 'deleted', 'renamed')`,

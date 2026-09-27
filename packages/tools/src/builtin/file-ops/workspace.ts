@@ -14,7 +14,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { resolve as resolvePath, sep, isAbsolute } from 'node:path';
 import type { ToolContext } from '../../types';
-import { lastConstatedWriteIsJob } from '../../verification/record-constat';
+import { currentContentWrittenByJob } from '../../verification/record-constat';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -517,9 +517,11 @@ export const WORKFLOW_TEMPLATE_PROTECTED_MESSAGE =
  * return undefined — the call is about to fail loud in execute() anyway;
  * there is nothing destructive to gate.
  *
- * A file whose last recorded write is THIS run's is not another run's work
- * (#505): re-writing it overwrites nothing anyone else made, so it is not
- * gated. Every caller (file_write, file_edit, generate_speech) gets the same
+ * A file whose CURRENT content is the one THIS run wrote is not another
+ * run's work (#505): re-writing it overwrites nothing anyone else made, so it
+ * is not gated. Content, not record order, decides (see
+ * `currentContentWrittenByJob`): an edit made outside Nodal, or a later write
+ * by another run, puts the gate back. Every caller (file_write, file_edit, generate_speech) gets the same
  * answer from the same record, `constated_writes`.
  */
 export async function computeSharedOverwriteApproval(
@@ -538,7 +540,7 @@ export async function computeSharedOverwriteApproval(
     () => false,
   );
   if (!exists) return undefined;
-  return (await lastConstatedWriteIsJob(ctx.db, ctx.jobId, resolved))
+  return (await currentContentWrittenByJob(ctx.db, ctx.jobId, resolved))
     ? undefined
     : 'require_approval';
 }
