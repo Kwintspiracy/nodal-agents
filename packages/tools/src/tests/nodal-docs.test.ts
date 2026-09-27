@@ -287,6 +287,22 @@ describe('nodal_docs answers "what changed in version X" @cap:consulter-l-aide/m
     });
   }
 
+  // Revue Codex de #452, passe 3 : un MOT de version ou un « v » collé au
+  // numéro suffit, quel que soit le format du numéro — sauf produit nommé juste
+  // avant. Le format ne décide que sans mot ni « v ». Deux parties = une version.
+  it('a version word or a "v" makes it a Nodal release question, whatever the number', async () => {
+    expect((await ask('what changed in version 1.0.0?'))[0]?.title).toBe(
+      'No release notes for 1.0.0',
+    );
+    expect((await ask('v1.0.0'))[0]?.title).toBe('No release notes for 1.0.0');
+  });
+
+  it('a two-part version covers its releases: "version 0.9?" serves a v0.9.x section', async () => {
+    const hits = await ask('version 0.9?');
+    expect(hits[0]?.title).toMatch(/^v0\.9\.\d+ /);
+    expect(hits.some((h) => h.title.startsWith('No release notes'))).toBe(false);
+  });
+
   it('says a version named WITH the product has no notes ("nodal 0.9.99")', async () => {
     const hits = await ask('nodal 0.9.99');
     expect(hits[0]?.title).toBe('No release notes for 0.9.99');

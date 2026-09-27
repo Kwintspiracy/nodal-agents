@@ -269,44 +269,68 @@ const LINK_WORDS = new Set([
  * product: a word attached by a hyphen ("GPT-5.2"), or a product word right
  * before it, skipping a `v` and the word "version".
  */
-function versionMention(question: string): { version: string; foreign: boolean } | null {
+function versionMention(
+  question: string,
+): { version: string; foreign: boolean; prefixedV: boolean } | null {
   const m = /(?:^|[^\d.])v?(\d+\.\d+(?:\.\d+)?)(?![\d.]*\d)/i.exec(question);
   if (!m?.[1]) return null;
   const numberAt = m.index + m[0].indexOf(m[1]);
-  const before = question.slice(0, numberAt).replace(/v$/i, '');
-  if (/[a-z0-9]-$/i.test(before)) return { version: m[1], foreign: true };
+  const rawBefore = question.slice(0, numberAt);
+  // A `v` glued to the number, as a word of its own: "v1.0.0", not "dev1.0".
+  const prefixedV = /(?:^|[^a-z0-9])v$/i.test(rawBefore);
+  const before = prefixedV ? rawBefore.slice(0, -1) : rawBefore;
+  if (/[a-z0-9]-$/i.test(before)) return { version: m[1], foreign: true, prefixedV };
   const words = normalizeWords(before);
   while (words.length > 0 && /^versions?$/.test(words[words.length - 1]!)) words.pop();
   const last = words[words.length - 1];
-  return { version: m[1], foreign: last !== undefined && !LINK_WORDS.has(last) };
+  return { version: m[1], foreign: last !== undefined && !LINK_WORDS.has(last), prefixedV };
+}
+
+/**
+ * Does the release named in `heading` answer a question about `asked`? Equal
+ * versions do, and a two-part version covers every release of that series:
+ * "0.9" is answered by 0.9.0, 0.9.1, 0.9.2 (Codex review of #452, pass 3).
+ */
+export function versionCovers(asked: string, heading: string | null): boolean {
+  if (heading === null) return false;
+  if (asked === heading) return true;
+  return asked.split('.').length === 2 && heading.startsWith(`${asked}.`);
 }
 
 /**
  * Is this a question about NODAL's releases, and which version does it name?
  *
- * About Nodal when it names the product ("Nodal", "nodal-agents", "my
- * version"), or when its number has the shape of Nodal's published versions
- * (three parts, the major of the latest release) and nothing ties it to
- * another product. Without a number, the release words decide (changelog,
- * release, version, what's new, what changed, nouveautés). A bare decimal
- * never does (pass 1: "GPT-5.2", "OAuth 2.0", "temperature 0.7"), nor a
- * number another product owns (pass 2: "Node v22.0", "OAuth version 2.0").
+ * A number another product owns is never Nodal's: a product word right before
+ * it, or a hyphen ("Node v22.0", "OAuth version 2.0", "GPT-5.2"). Otherwise it
+ * is, when the question names the product ("Nodal", "my version"), carries a
+ * release word (version, release, changelog, what's new, what changed,
+ * nouveautés) or glues a `v` to the number — whatever the number's form. Only
+ * a bare number is judged by its form: two or three parts on the latest
+ * release's major ("temperature 0.7" is excluded by its product word, not its
+ * form). Without a number, the release words decide.
  */
 export function nodalReleaseIntent(
   question: string,
   latestMajor: string | null,
 ): { asks: boolean; version: string | null } {
   const namesNodal = NAMES_NODAL.test(question);
-  const mention = versionMention(question);
-  if (mention) {
-    const shaped =
-      /^\d+\.\d+\.\d+$/.test(mention.version) && mention.version.split('.')[0] === latestMajor;
-    const ours = !mention.foreign && (namesNodal || shaped);
-    return { asks: namesNodal || ours, version: ours ? mention.version : null };
-  }
   const worded =
     /what'?s new|what (?:has )?changed/i.test(question) ||
     normalizeWords(question).some((w) => RELEASE_WORDS.has(w));
+  const mention = versionMention(question);
+  if (mention) {
+    // A number another product owns is never ours ("Node v22.0", "OAuth
+    // version 2.0", "GPT-5.2"), whatever words surround it.
+    if (mention.foreign) return { asks: namesNodal, version: null };
+    // A version word, a glued `v` or the product's name is enough, whatever
+    // the number's form (pass 3: "version 1.0.0", "v1.0.0", "version 0.9").
+    // The form decides only for a bare number: Nodal's published shape, two or
+    // three parts on the latest release's major.
+    const shaped =
+      /^\d+\.\d+(?:\.\d+)?$/.test(mention.version) && mention.version.split('.')[0] === latestMajor;
+    const ours = namesNodal || worded || mention.prefixedV || shaped;
+    return { asks: ours, version: ours ? mention.version : null };
+  }
   return { asks: namesNodal || worded, version: null };
 }
 
@@ -440,13 +464,17 @@ export function searchDocs(index: DocsIndex, question: string, limit: number): D
     releases &&
     version !== null &&
     releaseEntries.length > 0 &&
-    !releaseEntries.some((e) => headingVersion(e) === version);
+    !releaseEntries.some((e) => versionCovers(version, headingVersion(e)));
 
   const scored: DocsHit[] = [];
   for (const entry of indexed) {
     if (entry.section.release === true && (!releases || unknownVersion)) continue;
     let score = scoreSection(entry, terms);
-    if (entry.section.release === true && version !== null && headingVersion(entry) === version) {
+    if (
+      entry.section.release === true &&
+      version !== null &&
+      versionCovers(version, headingVersion(entry))
+    ) {
       score += WEIGHT_NAMED_VERSION;
     }
     if (score > 0) scored.push({ ...entry.section, score });
