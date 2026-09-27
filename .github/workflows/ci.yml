@@ -324,11 +324,12 @@ jobs:
   # rapporte ; la mesure nocturne (`qa.yml`) les joue TOUS.
   e2e-smoke:
     runs-on: ubuntu-latest
-    # Worst case, every bounded step at its bound: ~3 min setup + install, 12
-    # Playwright install, 10 boot, ~5 journeys. 35 leaves the boot step room to
-    # print the stack log and the upload steps room to run (review of PR #516):
-    # a JOB timeout kills everything, a step timeout still runs `if: failure()`.
-    timeout-minutes: 35
+    # The job bound is the SUM of its steps' bounds, so no step can be cut by
+    # the job before its own bound (review of PR #516): ~2 setup, 10 install,
+    # 12 Playwright install, 10 boot, 10 journeys, ~2 uploads = 46. Measured on
+    # this PR: install 0.1 min, Playwright 0.4, boot 0.5, journeys 2.0. A JOB
+    # timeout kills everything; a step timeout still runs `if: failure()`.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v5
 
@@ -393,6 +394,7 @@ jobs:
       # proof that a narrow row does not draw over itself. The nightly would
       # tell us a day after the screen shipped.
       - name: Six journeys — boot/navigation, the autonomy tab, delegation outcomes, memory, the runs list, a narrow row
+        timeout-minutes: 10
         run: >
           pnpm --filter @nodal-agents/web exec playwright test
           tests/e2e/smoke.spec.ts

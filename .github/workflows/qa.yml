@@ -39,16 +39,17 @@ concurrency:
 jobs:
   mesure:
     runs-on: ubuntu-latest
-    # Chaque étape longue a sa borne, et leur somme passe sous celle du job :
-    # ~2 min de mise en place, couverture 35, banc 5, Playwright 12, démarrage
-    # 10, parcours 20, ~3 pour la suite = 87. Mesuré sur les nuits du 24 au
+    # Chaque étape longue a sa borne, et le job vaut au moins leur SOMME :
+    # ~2 min de mise en place, installation 10, couverture 35, banc 5,
+    # Playwright 12, démarrage 10, parcours 20, collecte 5, enregistrement 5,
+    # ~3 pour le reste = 107 Mesuré sur les nuits du 24 au
     # 26/09 : couverture 21-22 min, parcours 11,3, job 30-35. Sans ces bornes,
     # une étape figée consommait le job entier, et ce qui la suit (le journal
     # de la stack, la collecte, l'enregistrement) ne tournait jamais (revue
     # Codex de la PR #516). Un dépassement de JOB tue tout ; un dépassement
     # d'ÉTAPE avec `continue-on-error` la marque en échec et laisse la nuit
     # enregistrer ce qu'elle a mesuré.
-    timeout-minutes: 90
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@v5
         with:
@@ -282,6 +283,7 @@ jobs:
       # échouaient, et le portail publiait un tableau marqué ABSENT chaque nuit —
       # mieux qu'un Kanban vide, mais toujours pas le vrai (revue Codex 11/09).
       - name: Collecter
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node apps/qa/collect.mjs
@@ -306,6 +308,7 @@ jobs:
       # passe). Le premier `git diff` compte aussi les fichiers NON SUIVIS :
       # une première nuit n'écrit que des fichiers neufs.
       - name: Enregistrer la mesure
+        timeout-minutes: 5
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
