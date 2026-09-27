@@ -30,7 +30,7 @@
 //   - un AUTRE run : la décision appartient au run où elle a été prise. Si le
 //     propriétaire veut qu'on réessaie, il le dit, et c'est un nouveau run.
 
-import { approvalRequests, toolCalls, and, eq, gt, desc, sql } from '@nodal-agents/db';
+import { approvalRequests, toolCalls, and, eq, gte, desc, sql } from '@nodal-agents/db';
 import { canonicalJson } from '@nodal-agents/shared';
 import { PURPOSE_KEY } from './purpose';
 import type { ToolContext } from './types';
@@ -127,6 +127,9 @@ export async function priorRejectionOfSameCall(
   // Une décision sans heure ne peut pas dire ce qui est venu après : la carte
   // est reposée plutôt que de supposer que rien n'a bougé.
   if (!same.resolvedAt) return null;
+  // `>=` : un appel enregistré à la même milliseconde que la décision compte
+  // comme venu après. L'égalité ne peut que reposer la question au
+  // propriétaire, jamais la lui cacher.
   const since = await ctx.db
     .select({
       toolName: toolCalls.toolName,
@@ -134,7 +137,7 @@ export async function priorRejectionOfSameCall(
       toolOutput: toolCalls.toolOutput,
     })
     .from(toolCalls)
-    .where(and(eq(toolCalls.jobId, ctx.jobId), gt(toolCalls.createdAt, same.resolvedAt)));
+    .where(and(eq(toolCalls.jobId, ctx.jobId), gte(toolCalls.createdAt, same.resolvedAt)));
   const didSomethingElse = since.some((c) => !didNothing(c.toolOutput));
   return didSomethingElse ? null : { approvalRequestId: same.id, notes: same.notes };
 }
