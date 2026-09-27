@@ -37,13 +37,16 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
-const exiger = createRequire(resolve('package.json'));
+/** La racine du paquet web, depuis CE fichier (apps/web/tests/e2e/), jamais depuis le dossier de lancement. */
+const WEB = resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+
+const exiger = createRequire(resolve(WEB, 'package.json'));
 
 /** Le dossier de travail du parcours. Effacé à la fin. */
-const ATELIER = resolve('tests/e2e/.tmp-edrow');
+const ATELIER = resolve(WEB, 'tests/e2e/.tmp-edrow');
 
 /**
  * Le VRAI `EdRow`, compilé ici plutôt qu'importé.
@@ -61,7 +64,7 @@ const ATELIER = resolve('tests/e2e/.tmp-edrow');
  */
 async function chargerEdRow(): Promise<unknown> {
   const ts = exiger('typescript');
-  const source = readFileSync(resolve('src/components/ui/EdRow.tsx'), 'utf8');
+  const source = readFileSync(resolve(WEB, 'src/components/ui/EdRow.tsx'), 'utf8');
   const js = ts.transpileModule(source, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
@@ -89,11 +92,10 @@ async function feuilleDeStyle(): Promise<string> {
   const depuisTailwind = createRequire(exiger.resolve('@tailwindcss/postcss'));
   const postcss = depuisTailwind('postcss');
   const tailwind = exiger('@tailwindcss/postcss');
-  const entree = resolve('src/app/globals.css');
-  const resultat = await postcss([tailwind({ base: resolve('.') })]).process(
-    readFileSync(entree, 'utf8'),
-    { from: entree },
-  );
+  const entree = resolve(WEB, 'src/app/globals.css');
+  const resultat = await postcss([tailwind({ base: WEB })]).process(readFileSync(entree, 'utf8'), {
+    from: entree,
+  });
   cssCompilee = String(resultat.css);
   return cssCompilee;
 }
