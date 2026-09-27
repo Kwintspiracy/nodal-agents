@@ -234,6 +234,36 @@ describe('an identical call the owner already rejected in this run (#492) @cap:a
     expect(ran).toEqual([]);
   });
 
+  // Revue Codex de #492, passe 3 : le MÊME appel, exécuté plus tard parce
+  // qu'une règle l'a permis, a changé ce que le refus supposait.
+  it('the identical call executed later (a rule allowed it) makes the old refusal stale', async () => {
+    const jobId = await newJob();
+    const { tool, ran } = gatedTool('delete_492_g');
+    await executeTool(tool, { ...CALL, purpose: 'Supprimer.' }, makeCtx(jobId), opts());
+    const [asked] = await rowsFor(jobId, 'delete_492_g');
+    await reject(asked!.id);
+
+    const allowed = await executeTool(tool, { ...CALL, purpose: 'Permis.' }, makeCtx(jobId), {
+      ...opts(),
+      approvalRules: [
+        {
+          id: 'rule-492-g',
+          toolName: 'delete_492_g',
+          action: 'auto_approve',
+          agentId: seed.agentId,
+          entityId: seed.entityId,
+        },
+      ],
+    });
+    expect(allowed.outcome).toBe('success');
+    expect(ran).toHaveLength(1);
+
+    // La règle retirée : la carte revient, le vieux refus ne répond plus.
+    const again = await executeTool(tool, { ...CALL, purpose: 'Encore.' }, makeCtx(jobId), opts());
+    expect(again.outcome).toBe('awaiting_approval');
+    expect(await rowsFor(jobId, 'delete_492_g')).toHaveLength(2);
+  });
+
   it('an EXPIRED request is not a refusal: asking again is allowed', async () => {
     const jobId = await newJob();
     const { tool } = gatedTool('speech_492_d');

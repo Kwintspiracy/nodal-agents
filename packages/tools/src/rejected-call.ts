@@ -35,6 +35,9 @@ import { canonicalJson } from '@nodal-agents/shared';
 import { PURPOSE_KEY } from './purpose';
 import type { ToolContext } from './types';
 
+/** Le code qui ouvre la réponse rendue à la place d'une seconde carte. */
+const ALREADY_REJECTED_CODE = 'approval_already_rejected';
+
 /** La décision déjà prise sur cet appel, quand il y en a une. */
 export interface PriorRejection {
   approvalRequestId: string;
@@ -58,16 +61,30 @@ function actionOf(input: unknown, purposeIsArgument: boolean): string {
 }
 
 /**
- * Une ligne d'audit qui n'a rien FAIT : l'appel attend une décision. La porte
- * écrit alors son propre résultat (`executeTool`, étape « awaiting_approval »),
- * et c'est lui qu'on lit. Un appel exécuté, même en échec, est un geste : il
- * peut avoir changé ce que la décision supposait.
+ * Une ligne d'audit qui n'a rien FAIT. Deux cas, tous deux écrits par la porte
+ * elle-même (`executeTool`), et c'est ce résultat qu'on lit :
+ *   - l'appel attend une décision (`awaiting_approval`) ;
+ *   - l'appel a reçu CETTE réponse-ci, le refus déjà prononcé.
+ * Tout le reste est un geste, le même appel compris : exécuté plus tard (une
+ * règle changée entre-temps), il a changé ce que la décision supposait (revue
+ * Codex de #492, passe 3). Un appel exécuté en échec aussi.
  */
-function isAwaitingApproval(toolOutput: string | null): boolean {
+function didNothing(toolOutput: string | null): boolean {
   if (!toolOutput) return false;
   try {
-    const parsed = JSON.parse(toolOutput) as { outcome?: unknown; approvalRequestId?: unknown };
-    return parsed.outcome === 'awaiting_approval' && typeof parsed.approvalRequestId === 'string';
+    const parsed = JSON.parse(toolOutput) as {
+      outcome?: unknown;
+      approvalRequestId?: unknown;
+      error?: unknown;
+    };
+    if (parsed.outcome === 'awaiting_approval' && typeof parsed.approvalRequestId === 'string') {
+      return true;
+    }
+    return (
+      parsed.outcome === 'error' &&
+      typeof parsed.error === 'string' &&
+      parsed.error.startsWith(ALREADY_REJECTED_CODE)
+    );
   } catch {
     return false;
   }
@@ -112,11 +129,7 @@ export async function priorRejectionOfSameCall(
     })
     .from(toolCalls)
     .where(and(eq(toolCalls.jobId, ctx.jobId), gt(toolCalls.createdAt, same.resolvedAt)));
-  const didSomethingElse = since.some(
-    (c) =>
-      !isAwaitingApproval(c.toolOutput) &&
-      (c.toolName !== toolName || actionOf(c.toolInput, purposeIsArgument) !== action),
-  );
+  const didSomethingElse = since.some((c) => !didNothing(c.toolOutput));
   return didSomethingElse ? null : { approvalRequestId: same.id, notes: same.notes };
 }
 
@@ -127,7 +140,7 @@ export async function priorRejectionOfSameCall(
 export function alreadyRejectedInstruction(toolName: string, prior: PriorRejection): string {
   const reason = prior.notes && prior.notes.trim() !== '' ? prior.notes.trim() : 'none given';
   return (
-    `approval_already_rejected: the owner already rejected this exact "${toolName}" call in ` +
+    `${ALREADY_REJECTED_CODE}: the owner already rejected this exact "${toolName}" call in ` +
     `this run (approval ${prior.approvalRequestId}, reason: ${reason}). Rewording \`purpose\` ` +
     `does not change the call, so it was NOT submitted again. Do not repeat it as is. If the ` +
     `owner's reason asks for something first, do that: once you have done something else in ` +
