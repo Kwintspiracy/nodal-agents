@@ -16,7 +16,7 @@
 
 import { useState } from 'react';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import Table, { THead, Th, Tr, Td, CellAgent, CellMono } from '@/components/ui/Table';
 import TextButton from '@/components/ui/TextButton';
 import RowActionButton from '@/components/ui/RowActionButton';
 import type { SpaceCostView } from '@/lib/space-cost.ts';
@@ -270,8 +270,8 @@ export function CostPanel({ cost, onClose }: { cost: SpaceCostView; onClose: () 
           {s}
         </p>
       ))}
-      <div className="mt-4 overflow-hidden rounded-xl border border-rule-2 bg-paper">
-        <Table frame={false}>
+      <div className="mt-4">
+        <Table>
           <THead>
             <Th>Agent</Th>
             <Th>Model</Th>
@@ -283,25 +283,31 @@ export function CostPanel({ cost, onClose }: { cost: SpaceCostView; onClose: () 
           <tbody>
             {cost.byAgent.map((a) => (
               <Tr key={a.agentId ?? a.agentName}>
-                <Td className="text-body-13 text-ink">{a.agentName}</Td>
-                <Td className="text-mono-11 text-ink-3">{a.models.join(', ')}</Td>
-                <Td align="right" className="text-mono-12 text-ink-2">
-                  {a.calls}
+                <Td>
+                  <CellAgent name={a.agentName} />
                 </Td>
-                <Td align="right" className="text-mono-12 text-ink-2">
-                  {formatTokens(a.inputTokens + a.outputTokens)}
+                <Td>
+                  <CellMono>{a.models.join(', ')}</CellMono>
                 </Td>
-                <Td align="right" className="text-mono-12 text-ink-2">
-                  {pct(a.cachedTokens, a.inputTokens)}
+                <Td align="right">
+                  <CellMono>{a.calls}</CellMono>
                 </Td>
-                <Td align="right" className="text-mono-12 text-ink-2">
-                  {formatCost(a.costUsd)}
-                  {a.unpricedCalls > 0 && (
-                    <>
-                      {' '}
-                      <MonoMicroTag tone="warn">partial</MonoMicroTag>
-                    </>
-                  )}
+                <Td align="right">
+                  <CellMono>{formatTokens(a.inputTokens + a.outputTokens)}</CellMono>
+                </Td>
+                <Td align="right">
+                  <CellMono>{pct(a.cachedTokens, a.inputTokens)}</CellMono>
+                </Td>
+                <Td align="right">
+                  <CellMono>
+                    {formatCost(a.costUsd)}
+                    {a.unpricedCalls > 0 && (
+                      <>
+                        {' '}
+                        <MonoMicroTag tone="warn">partial</MonoMicroTag>
+                      </>
+                    )}
+                  </CellMono>
                 </Td>
               </Tr>
             ))}

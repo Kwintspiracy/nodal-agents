@@ -1,6 +1,7 @@
 import { listSkillsAction, listAgentsAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import SkillsClient from './SkillsClient.tsx';
+import Banner from '@/components/ui/Banner';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,9 +18,7 @@ export default async function SkillsPage() {
   if (!skillsResult.ok) {
     return (
       <PageShell title="Skills">
-        <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
-          {skillsResult.message}
-        </div>
+        <Banner variant="warn">{skillsResult.message}</Banner>
       </PageShell>
     );
   }

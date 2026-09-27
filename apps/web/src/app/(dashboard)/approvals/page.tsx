@@ -4,6 +4,7 @@ import PageShell from '@/components/ui/PageShell';
 import EmptyState from '@/components/ui/EmptyState';
 import ApprovalRequestCard from './ApprovalRequestCard.tsx';
 import ApprovalsLive from './ApprovalsLive.tsx';
+import Banner from '@/components/ui/Banner';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,9 +46,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
   if (!result.ok) {
     return (
       <PageShell title="Approvals">
-        <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
-          {result.message}
-        </div>
+        <Banner variant="warn">{result.message}</Banner>
       </PageShell>
     );
   }

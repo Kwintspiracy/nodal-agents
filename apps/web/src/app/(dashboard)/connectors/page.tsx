@@ -7,6 +7,7 @@ import OAuthNotify from './OAuthNotify.tsx';
 import OAuthErrorBanner from './OAuthErrorBanner.tsx';
 import ConnectorsClient from './ConnectorsClient.tsx';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
+import Banner from '@/components/ui/Banner';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,9 +76,7 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
   if (!result.ok) {
     return (
       <PageShell title="Connectors">
-        <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
-          {result.message}
-        </div>
+        <Banner variant="warn">{result.message}</Banner>
       </PageShell>
     );
   }

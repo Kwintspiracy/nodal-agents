@@ -6,13 +6,12 @@
 // per keystroke.
 
 import { useState, useMemo } from 'react';
-import Link from 'next/link';
 import type { JobRow, AgentRow } from '@/lib/actions.ts';
 import PillTabs from '@/components/ui/PillTabs';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
-import AgentAvatar from '@/components/ui/AgentAvatar';
+import EmptyState from '@/components/ui/EmptyState';
 import TextInput from '@/components/ui/TextInput';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import Table, { THead, Th, Tr, Td, CellAgent, CellText, CellMono } from '@/components/ui/Table';
 import { MagnifyingGlass } from '@phosphor-icons/react';
 import { formatDate, truncate } from '@/lib/format-time';
 
@@ -114,11 +113,13 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
 
       {/* Table card */}
       {filtered.length === 0 ? (
-        <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-          {jobs.length === 0
-            ? 'No runs yet. Use the form above to send your first task to an agent.'
-            : 'No runs match the current filter.'}
-        </div>
+        <EmptyState
+          title={
+            jobs.length === 0
+              ? 'No runs yet. Use the form above to send your first task to an agent.'
+              : 'No runs match the current filter.'
+          }
+        />
       ) : (
         <Table>
           <THead>
@@ -126,60 +127,36 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
             <Th>Task</Th>
             <Th className="hidden md:table-cell">Channel</Th>
             <Th className="hidden lg:table-cell">Started</Th>
-            <Th align="right">Status</Th>
+            <Th>Status</Th>
           </THead>
           <tbody>
             {filtered.map((job) => {
               const agent = job.agentId ? agentMap.get(job.agentId) : null;
-              const variant = statusToVariant(job.status);
               return (
                 <Tr key={job.id}>
-                  {/* Agent */}
                   <Td>
-                    {agent ? (
-                      <div className="flex items-center gap-2.5">
-                        <AgentAvatar
-                          name={agent.name}
-                          imageUrl={agent.avatarUrl}
-                          size="md"
-                          shape="round"
-                        />
-                        <div className="min-w-0">
-                          <div className="truncate text-medium-14 leading-[1.2]! text-ink">
-                            {agent.name}
-                          </div>
-                          <div className="truncate text-mono-11 leading-none! text-ink-4">
-                            {agent.slug}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-mono-12 text-ink-4">—</span>
-                    )}
+                    <CellAgent
+                      name={agent?.name ?? null}
+                      imageUrl={agent?.avatarUrl}
+                      meta={agent?.slug}
+                    />
                   </Td>
-
-                  {/* Task */}
                   <Td className="max-w-[320px]">
-                    <Link
-                      href={`/jobs/${job.id}`}
-                      className="line-clamp-1 text-body-14 text-ink-2 hover:text-ink transition-colors"
-                      title={job.task}
-                    >
+                    <CellText href={`/jobs/${job.id}`} title={job.task} clamp>
                       {truncate(job.task, 72)}
-                    </Link>
+                    </CellText>
                   </Td>
-
-                  {/* Channel */}
-                  <Td className="hidden text-mono-12 text-ink-4 md:table-cell">{job.channel}</Td>
-
-                  {/* Started */}
-                  <Td className="hidden text-mono-12 text-ink-4 lg:table-cell">
-                    {formatDate(job.createdAt)}
+                  <Td className="hidden md:table-cell">
+                    <CellMono>{job.channel}</CellMono>
                   </Td>
-
-                  {/* Status */}
-                  <Td align="right">
-                    <StatusPill variant={variant} label={statusLabel(job.status)} />
+                  <Td className="hidden lg:table-cell">
+                    <CellMono>{formatDate(job.createdAt)}</CellMono>
+                  </Td>
+                  <Td>
+                    <StatusPill
+                      variant={statusToVariant(job.status)}
+                      label={statusLabel(job.status)}
+                    />
                   </Td>
                 </Tr>
               );

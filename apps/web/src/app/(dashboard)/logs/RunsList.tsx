@@ -29,8 +29,12 @@ export default function RunsList({
         <Th className="hidden md:table-cell">From</Th>
         <Th>Task</Th>
         <Th>Status</Th>
-        <Th className="hidden lg:table-cell">Duration</Th>
-        <Th className="hidden lg:table-cell">Cost</Th>
+        <Th align="right" className="hidden lg:table-cell">
+          Duration
+        </Th>
+        <Th align="right" className="hidden lg:table-cell">
+          Cost
+        </Th>
         <Th align="right">Calls</Th>
       </THead>
       <tbody>

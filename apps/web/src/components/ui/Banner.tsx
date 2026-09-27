@@ -33,6 +33,13 @@ type Props = {
   title?: ReactNode;
   /** Body text or richer JSX. */
   children: ReactNode;
+  /**
+   * Un contrôle collé à droite : réessayer, fermer (#522). Il vivait dans des
+   * boîtes rouges faites main, faute de place pour lui ici.
+   */
+  action?: ReactNode;
+  /** `alert` pour une erreur qui vient d'arriver et doit être annoncée. */
+  role?: 'alert' | 'status';
   className?: string;
 };
 
@@ -45,12 +52,18 @@ type Props = {
  * Geometry stays identical across variants — only colours change. That
  * keeps the visual rhythm consistent across pages even when the
  * sentiment differs.
+ *
+ * Une ERREUR (une lecture qui a échoué, un flux OAuth interrompu) est un
+ * `warn` : la grammaire de StatusPill, où un run en échec est `warn` lui aussi.
+ * Avant #522, dix pages dessinaient à la main leur propre boîte rouge
+ * (`rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err`).
  */
-export default function Banner({ variant, title, children, className = '' }: Props) {
+export default function Banner({ variant, title, children, action, role, className = '' }: Props) {
   const s = STYLE[variant];
   const Icon = ICON[variant];
   return (
     <div
+      role={role}
       className={`flex items-start gap-2.5 rounded-[9px] px-3.5 py-2.5 text-body-13 leading-[1.5]! text-ink-2 ${s.bg} ${className}`}
     >
       <Icon size={16} weight="regular" className={`mt-0.5 shrink-0 ${s.iconColor}`} />
@@ -58,6 +71,7 @@ export default function Banner({ variant, title, children, className = '' }: Pro
         {title && <b className="block font-medium text-ink">{title}</b>}
         {children}
       </div>
+      {action !== undefined && <div className="-my-1 shrink-0">{action}</div>}
     </div>
   );
 }

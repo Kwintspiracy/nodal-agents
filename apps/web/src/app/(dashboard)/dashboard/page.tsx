@@ -9,9 +9,9 @@ import {
 } from '@/lib/actions.ts';
 import VividStatCard from '@/components/ui/VividStatCard';
 import MetricCard from '@/components/ui/MetricCard';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import Table, { THead, Th, Tr, Td, CellAgent, CellMono } from '@/components/ui/Table';
+import Banner from '@/components/ui/Banner';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
-import AgentAvatar from '@/components/ui/AgentAvatar';
 import PageShell from '@/components/ui/PageShell';
 import ActiveAgentsPanel from './ActiveAgentsPanel.tsx';
 import WeeklyActivityChart from './WeeklyActivityChart.tsx';
@@ -63,9 +63,7 @@ export default async function DashboardPage() {
   if (!statsRes.ok) {
     return (
       <PageShell title="Home">
-        <div className="rounded-xl border border-warn/40 bg-warn-bg p-5 text-sm text-warn">
-          {statsRes.message}
-        </div>
+        <Banner variant="warn">{statsRes.message}</Banner>
       </PageShell>
     );
   }
@@ -196,15 +194,15 @@ export default async function DashboardPage() {
               {Object.entries(s.statusCounts)
                 .sort((a, b) => b[1] - a[1])
                 .map(([status, count]) => (
-                  <Tr key={status} hover={false}>
+                  <Tr key={status}>
                     <Td>
                       <StatusPill
                         variant={statusToVariant(status)}
                         label={STATUS_LABEL[status] ?? status}
                       />
                     </Td>
-                    <Td align="right" className="font-mono tabular-nums text-ink-2">
-                      {count}
+                    <Td align="right">
+                      <CellMono>{count}</CellMono>
                     </Td>
                   </Tr>
                 ))}
@@ -230,30 +228,18 @@ export default async function DashboardPage() {
             </THead>
             <tbody>
               {s.perAgent.map((a) => (
-                <Tr key={a.agentId} hover={false}>
+                <Tr key={a.agentId}>
                   <Td>
-                    <div className="flex items-center gap-2.5">
-                      <AgentAvatar name={a.agentName} size="md" shape="round" />
-                      <div className="min-w-0">
-                        <span className="text-ink">{a.agentName}</span>
-                        <span className="ml-2 font-mono text-xs text-ink-4">{a.agentSlug}</span>
-                      </div>
-                    </div>
+                    <CellAgent name={a.agentName} meta={a.agentSlug} />
                   </Td>
-                  <Td align="right" className="font-mono tabular-nums text-ink-2">
-                    {a.jobCount}
+                  <Td align="right">
+                    <CellMono>{a.jobCount}</CellMono>
                   </Td>
-                  <Td
-                    align="right"
-                    className="hidden font-mono tabular-nums text-ink-3 md:table-cell"
-                  >
-                    {formatNumber(a.inputTokens)}
+                  <Td align="right" className="hidden md:table-cell">
+                    <CellMono>{formatNumber(a.inputTokens)}</CellMono>
                   </Td>
-                  <Td
-                    align="right"
-                    className="hidden font-mono tabular-nums text-ink-3 md:table-cell"
-                  >
-                    {formatNumber(a.outputTokens)}
+                  <Td align="right" className="hidden md:table-cell">
+                    <CellMono>{formatNumber(a.outputTokens)}</CellMono>
                   </Td>
                 </Tr>
               ))}

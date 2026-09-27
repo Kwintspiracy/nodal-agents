@@ -10,6 +10,7 @@ import { notFound } from 'next/navigation';
 import { getAutomationAction, listAgentsAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import AutomationScreen from './AutomationScreen.tsx';
+import Banner from '@/components/ui/Banner';
 
 // Force dynamic — les réglages et les runs se lisent à chaque requête.
 export const dynamic = 'force-dynamic';
@@ -22,9 +23,7 @@ export default async function AutomationPage({ params }: { params: Promise<{ id:
     if (result.code === 'not_found') notFound();
     return (
       <PageShell title="Automation">
-        <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
-          {result.message}
-        </div>
+        <Banner variant="warn">{result.message}</Banner>
       </PageShell>
     );
   }
