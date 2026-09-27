@@ -13,7 +13,7 @@
  * them: the pack copies it to the pack root as a sibling of the bundle, and the
  * reader probes sibling-first, dev-layout-second (see `docs-index-store.ts`).
  */
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDocsIndex, serializeDocsIndex } from './docs-index';
@@ -22,7 +22,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const contentDir = join(here, '..', 'content', 'docs');
 const outFile = join(here, '..', '..', '..', 'packages', 'tools', 'docs-index.json');
 
-const index = buildDocsIndex(contentDir);
+// The release notes come from the root file, like the docs page (#452).
+const changelog = readFileSync(join(here, '..', '..', '..', 'CHANGELOG.md'), 'utf8');
+
+const index = buildDocsIndex(contentDir, changelog);
 writeFileSync(outFile, serializeDocsIndex(index), 'utf8');
 
 console.log(

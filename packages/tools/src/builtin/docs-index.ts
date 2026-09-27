@@ -23,6 +23,8 @@ export interface DocsSection {
   heading: string;
   url: string;
   text: string;
+  /** A section of the release notes (#452); see `asksAboutReleases`. */
+  release?: boolean;
 }
 
 export interface DocsIndex {
@@ -208,6 +210,43 @@ const BODY_REPEAT_CAP = 1;
  */
 const COVERAGE_FLOOR = 0.2;
 
+// ─── Release notes (#452) ─────────────────────────────────────────────────────
+
+/** Words that make a question one about releases, accents already removed. */
+const RELEASE_WORDS = new Set([
+  'changelog',
+  'release',
+  'releases',
+  'released',
+  'version',
+  'versions',
+  'nouveaute',
+  'nouveautes',
+]);
+
+/** `0.9.2`, `v0.9.2`, `0.9`: the version a question names, normalised to `0.9.2` / `0.9`. */
+function versionIn(text: string): string | null {
+  const m = /(?:^|[^\d.])v?(\d+\.\d+(?:\.\d+)?)(?![\d.]*\d)/i.exec(text);
+  return m?.[1] ?? null;
+}
+
+/** True when the question is about releases: a version number, or a release word. */
+export function asksAboutReleases(question: string): boolean {
+  if (versionIn(question) !== null) return true;
+  if (/what'?s new/i.test(question)) return true;
+  return normalizeWords(question).some((w) => RELEASE_WORDS.has(w));
+}
+
+function headingVersion(entry: Indexed): string | null {
+  return versionIn(entry.section.heading);
+}
+
+/**
+ * A release section whose heading carries the very version asked about is the
+ * answer, whatever else the question says: it outranks any word match.
+ */
+const WEIGHT_NAMED_VERSION = 100;
+
 export interface DocsHit extends DocsSection {
   score: number;
 }
@@ -308,9 +347,20 @@ export function searchDocs(index: DocsIndex, question: string, limit: number): D
   const terms = queryTerms(question);
   if (terms.length === 0) return [];
 
+  // Release notes answer "what changed", never "how do I" (#452): a long
+  // release section repeats every product noun and would outrank the guide.
+  // So they are eligible only for a question about releases, and a question
+  // naming a version puts that version's section first.
+  const releases = asksAboutReleases(question);
+  const version = versionIn(question);
+
   const scored: DocsHit[] = [];
   for (const entry of indexedSections(index)) {
-    const score = scoreSection(entry, terms);
+    if (entry.section.release === true && !releases) continue;
+    let score = scoreSection(entry, terms);
+    if (entry.section.release === true && version !== null && headingVersion(entry) === version) {
+      score += WEIGHT_NAMED_VERSION;
+    }
     if (score > 0) scored.push({ ...entry.section, score });
   }
 

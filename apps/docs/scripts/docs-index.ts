@@ -46,13 +46,18 @@ export const GENERATED_SUBDIRS = [
 ] as const;
 
 /**
- * Pages kept out of the index although they are committed.
+ * Pages kept out of the index AS PAGES.
  *
- * `changelog` is release history, not an answer: it says what shipped in
- * v0.7.8, never where to click today. Left in, it won queries it had no
- * business winning ("schedule a task every morning" ranked a release note
- * above the automations guide), because a long page repeating product nouns
- * beats a short page that answers the question.
+ * `changelog` is release history, not a how-to: left in as an ordinary page it
+ * won queries it had no business winning ("schedule a task every morning"
+ * ranked a release note above the automations guide), because a long page
+ * repeating product nouns beats a short page that answers the question.
+ *
+ * Its CONTENT is in the index all the same (#452), read from the root
+ * CHANGELOG.md, one section per release and flagged `release` — see
+ * `releaseSectionsOf`. The search serves those sections only to a question
+ * about releases. Excluding them entirely had cost run fb60655b seven turns and
+ * 290,154 input tokens to answer "the changelog of 0.9.2" from GitHub.
  */
 export const EXCLUDED_PAGES = ['changelog'] as const;
 
@@ -68,6 +73,13 @@ export interface DocsSection {
   url: string;
   /** The section's prose, markup removed. */
   text: string;
+  /**
+   * Set on the sections of the release notes, and only there (#452): the
+   * search serves them to a question about releases and to nothing else.
+   * Absent, rather than false, on every other section, so the index a page
+   * produces is byte-identical to what it was before.
+   */
+  release?: true;
 }
 
 export interface DocsIndex {
@@ -336,16 +348,40 @@ export function sectionsOfPage(relPath: string, source: string): DocsSection[] {
 }
 
 /**
- * Walk `contentDir` and produce the index. Deterministic: pages are sorted, and
+ * The release notes as sections: one per `## v…` heading of the root
+ * CHANGELOG.md, everything above the first one (the file's title and intro)
+ * left out. The docs page `/docs/changelog` is generated from the same file by
+ * `gen-changelog.ts`, with the same headings, so the anchors land.
+ */
+export function releaseSectionsOf(changelog: string): DocsSection[] {
+  const normalized = changelog.replace(/\r\n/g, '\n');
+  const first = normalized.search(/^## v/m);
+  if (first === -1) return [];
+  const pageUrl = `${DOCS_URL_BASE}/changelog`;
+  return sectionsOfPage('changelog.mdx', `---\ntitle: Changelog\n---\n${normalized.slice(first)}`)
+    .filter((s) => s.heading !== 'Changelog')
+    .map((s) => ({
+      ...s,
+      url: `${pageUrl}#${anchorOf(s.heading)}`,
+      // A `---` rule between releases survives stripping as dashes.
+      text: s.text.replace(/(^|\s)-{3,}(?=\s|$)/g, ' ').trim(),
+      release: true as const,
+    }));
+}
+
+/**
+ * Walk `contentDir` and produce the index, plus the release notes read from
+ * `changelog` (the root CHANGELOG.md). Deterministic: pages are sorted, and
  * sections keep their order within a page, so two runs over the same tree give
  * the same bytes.
  */
-export function buildDocsIndex(contentDir: string): DocsIndex {
+export function buildDocsIndex(contentDir: string, changelog: string): DocsIndex {
   const sections: DocsSection[] = [];
   for (const relPath of listDocPages(contentDir)) {
     const source = readFileSync(join(contentDir, relPath), 'utf8');
     sections.push(...sectionsOfPage(relPath, source));
   }
+  sections.push(...releaseSectionsOf(changelog));
   return { generator: GENERATOR, sections };
 }
 

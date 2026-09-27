@@ -240,6 +240,39 @@ describe('nodal_docs @cap:consulter-l-aide/moteur', () => {
   });
 });
 
+// #452 — run fb60655b : « le changelog de la 0.9.2 », 7 tours, 290 154 jetons,
+// 5 min 17 s, parce que le changelog était exclu de l'index et que l'agent a
+// dû aller le chercher sur GitHub. Il revient, une section par version,
+// éligible SEULEMENT quand la question parle de versions.
+describe('nodal_docs answers "what changed in version X" @cap:consulter-l-aide/moteur', () => {
+  it('answers "what changed in 0.9.2" with the v0.9.2 release section first', async () => {
+    const hits = await ask('what changed in 0.9.2');
+    expect(hits[0]?.title).toMatch(/^v0\.9\.2\b/);
+    expect(hits[0]?.url).toMatch(/^\/nodal-agents\/docs\/changelog#v092/);
+  });
+
+  it('answers "changelog" and "nouveautés de la 0.9.1" from the release notes', async () => {
+    expect((await ask('changelog'))[0]?.url).toMatch(/^\/nodal-agents\/docs\/changelog#/);
+    expect((await ask('nouveautés de la 0.9.1'))[0]?.title).toMatch(/^v0\.9\.1\b/);
+  });
+
+  it('keeps release notes out of a how-to question: its ranking is the one without them', () => {
+    // The ticket's own example; the property proven is the general one — for a
+    // question that does not ask about releases, the release sections change
+    // nothing, so the how-to ranking stays whatever the pages make it.
+    const index = loadDocsIndex();
+    expect(index.sections.some((s) => s.release === true)).toBe(true);
+    const withoutReleases = { ...index, sections: index.sections.filter((s) => !s.release) };
+    for (const question of ['schedule a task every morning', 'configure Telegram', 'cron']) {
+      const hits = searchDocs(index, question, NODAL_DOCS_MAX_SECTIONS);
+      expect(hits.some((h) => h.url.startsWith('/nodal-agents/docs/changelog'))).toBe(false);
+      expect(hits.map((h) => h.url)).toEqual(
+        searchDocs(withoutReleases, question, NODAL_DOCS_MAX_SECTIONS).map((h) => h.url),
+      );
+    }
+  });
+});
+
 describe('the words a person actually types @cap:consulter-l-aide/moteur', () => {
   // Issue #332, remainder of #316. `nodal_docs` scores on the words of the
   // pages, so a page only answers a question asked in its own vocabulary:
