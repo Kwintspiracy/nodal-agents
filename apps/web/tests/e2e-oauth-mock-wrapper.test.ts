@@ -11,12 +11,17 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-// apps/web is the vitest root (this file lives at apps/web/tests/), so the
-// wrapper script resolves relative to the package root regardless of how
-// vitest/vite rewrites `import.meta.url` for transformed test modules.
-const WRAPPER_SCRIPT = join(process.cwd(), 'tests', 'e2e', 'up-with-oauth-mock.mjs');
+// Resolved from THIS file (apps/web/tests/), never from the launch directory:
+// `vitest --root apps/web` launched from the repo root has the repo root as
+// its cwd, and the wrapper path then pointed nowhere.
+const WRAPPER_SCRIPT = join(
+  dirname(fileURLToPath(import.meta.url)),
+  'e2e',
+  'up-with-oauth-mock.mjs',
+);
 
 let shimDir: string;
 

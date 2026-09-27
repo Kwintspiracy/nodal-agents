@@ -11,8 +11,9 @@
 // sort côté DOM, la page étant rendue ailleurs.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -29,14 +30,9 @@ import ApprovalsLive, { signatureDesAttentes } from '../ApprovalsLive.tsx';
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-/** La SOURCE de la page, depuis la racine du paquet ou celle du dépôt. */
+/** La SOURCE de la page, lue depuis CE fichier, quel que soit le dossier de lancement. */
 function lirePage(): string {
-  const relatif = join('src', 'app', '(dashboard)', 'approvals', 'page.tsx');
-  for (const racine of [process.cwd(), join(process.cwd(), 'apps', 'web')]) {
-    const chemin = join(racine, relatif);
-    if (existsSync(chemin)) return readFileSync(chemin, 'utf8');
-  }
-  throw new Error('page.tsx introuvable depuis ' + process.cwd());
+  return readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'page.tsx'), 'utf8');
 }
 
 /** Une attente, réduite à ce que le provider en garde. */
