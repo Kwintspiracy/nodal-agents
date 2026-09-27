@@ -25,7 +25,8 @@
 // le dernier — jamais une règle inventée pour un type qu'on ne connaît pas
 // (invariant #4).
 
-import { readFile, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, extname } from 'node:path';
 import { DOMParser } from '@xmldom/xmldom';
@@ -57,7 +58,7 @@ const documentDeliverableType = 'document' as const;
  */
 // v2 (#487) : les règles binaires (WAV) ont rejoint les règles texte.
 // v3 (#509) : texte ou binaire se décide pour tout fichier, par des tables.
-export const DOCUMENT_MANIFEST_HASH = 'document-rules/v3';
+export const DOCUMENT_MANIFEST_HASH = 'document-rules/v4';
 
 /**
  * L'empreinte du CONTENU du fichier au moment où la configuration est lue —
@@ -88,12 +89,55 @@ async function fileStamp(path: string): Promise<string> {
   try {
     const s = await stat(path);
     if (!s.isFile()) return 'not-a-file';
-    return createHash('sha256')
-      .update(await readFile(path))
-      .digest('hex');
+    return (await lireUneFois(path, 0)).hash;
   } catch {
     return 'absent';
   }
+}
+
+/**
+ * Ce qu'une preuve garde d'un fichier : au-delà, un texte n'est pas décodé.
+ * Un livrable DÉCLARÉ peut être une vidéo de plusieurs gigaoctets rendue par
+ * une commande (#509) : le lire en entier, deux fois (empreinte, preuve),
+ * épuisait la mémoire du runner au lieu de rendre un verdict (revue Codex).
+ */
+const TEXT_DECODE_LIMIT = 32 * 1024 * 1024;
+
+/** Les octets que la preuve examine pour les signatures et le sniff binaire. */
+const HEAD_BYTES = 8192;
+
+/**
+ * UNE lecture en flux : la taille, l'empreinte de TOUS les octets, les
+ * premiers `HEAD_BYTES`, et le contenu entier seulement s'il ne dépasse pas
+ * `garderJusqua` (sinon `null`). Tous les constats portent ainsi sur les
+ * octets que couvre l'empreinte, sans jamais tenir un gros fichier en mémoire.
+ */
+async function lireUneFois(
+  path: string,
+  garderJusqua: number,
+): Promise<{ size: number; hash: string; head: Buffer; full: Buffer | null }> {
+  const hash = createHash('sha256');
+  const morceaux: Buffer[] = [];
+  let head = Buffer.alloc(0);
+  let size = 0;
+  let garde = true;
+  for await (const chunk of createReadStream(path)) {
+    const b = chunk as Buffer;
+    hash.update(b);
+    if (head.length < HEAD_BYTES) {
+      head = Buffer.concat([head, b.subarray(0, HEAD_BYTES - head.length)]);
+    }
+    size += b.length;
+    if (garde) {
+      if (size > garderJusqua) {
+        garde = false;
+        morceaux.length = 0;
+      } else {
+        morceaux.push(b);
+      }
+    }
+  }
+  return { size, hash: hash.digest('hex'), head, full: garde ? Buffer.concat(morceaux) : null };
 }
 
 /** Un constat : sa ligne dans `verification_runs`. */
@@ -540,6 +584,13 @@ const FORM_RULES: Readonly<Record<string, { readonly name: string; readonly chec
 interface SignatureBytes {
   readonly offset: number;
   readonly bytes: readonly number[];
+  /**
+   * Les bits qui comptent, octet par octet (tous par défaut). Une signature
+   * n'est pas toujours faite d'octets entiers : une trame MP3 se reconnaît à
+   * ses 11 bits de synchro, les suivants disent la version et la couche, et
+   * `FF FA` est aussi valide que `FF FB` (revue Codex de #509).
+   */
+  readonly mask?: readonly number[];
 }
 
 /** Un format binaire connu : ses extensions, ce qu'on attend de lui, et ses variantes. */
@@ -559,6 +610,18 @@ const ascii = (offset: number, text: string): SignatureBytes => ({
   bytes: [...Buffer.from(text, 'latin1')],
 });
 const raw = (offset: number, ...bytes: number[]): SignatureBytes => ({ offset, bytes });
+const masked = (offset: number, bytes: number[], mask: number[]): SignatureBytes => ({
+  offset,
+  bytes,
+  mask,
+});
+
+/**
+ * Les boîtes par lesquelles un fichier ISO BMFF / QuickTime peut commencer.
+ * `ftyp` est la règle d'un MP4 récent, pas une obligation de toute la famille :
+ * un `.mov` valide peut ouvrir sur `wide`, `mdat` ou `moov` (revue Codex).
+ */
+const ISO_BMFF_FIRST_BOXES = ['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip', 'pnot', 'uuid'];
 
 /**
  * La table des signatures. DE LA DONNÉE : ajouter un format, c'est ajouter une
@@ -587,12 +650,12 @@ const BINARY_FORMATS: readonly BinaryFormat[] = [
     variants: [[ascii(0, 'RIFF'), ascii(8, 'AVI ')]],
   },
   {
-    // La boîte `ftyp` de l'ISO BMFF, à l'offset 4 : MP4, QuickTime, M4A, 3GP.
+    // La première boîte ISO BMFF, à l'offset 4 : MP4, QuickTime, M4A, 3GP.
     name: 'mp4',
-    header: 'ftyp',
-    label: 'MP4',
+    header: 'ISO media box',
+    label: 'MP4/QuickTime',
     extensions: ['.mp4', '.m4v', '.m4a', '.mov', '.3gp', '.heic', '.avif'],
-    variants: [[ascii(4, 'ftyp')]],
+    variants: ISO_BMFF_FIRST_BOXES.map((box) => [ascii(4, box)]),
   },
   {
     name: 'webm',
@@ -607,7 +670,7 @@ const BINARY_FORMATS: readonly BinaryFormat[] = [
     header: 'ID3 or MPEG frame sync',
     label: 'MP3',
     extensions: ['.mp3'],
-    variants: [[ascii(0, 'ID3')], [raw(0, 0xff, 0xfb)], [raw(0, 0xff, 0xf3)], [raw(0, 0xff, 0xf2)]],
+    variants: [[ascii(0, 'ID3')], [masked(0, [0xff, 0xe0], [0xff, 0xe0])]],
   },
   {
     name: 'ogg',
@@ -812,7 +875,9 @@ function matchesSignature(format: BinaryFormat, bytes: Buffer): boolean {
     variant.every(
       (piece) =>
         bytes.length >= piece.offset + piece.bytes.length &&
-        piece.bytes.every((b, i) => bytes[piece.offset + i] === b),
+        piece.bytes.every(
+          (b, i) => ((bytes[piece.offset + i] ?? 0) & (piece.mask?.[i] ?? 0xff)) === b,
+        ),
     ),
   );
 }
@@ -903,20 +968,20 @@ export const documentVerifier: DeliverableVerifier = {
     // contenu et deux un autre (passe 4, constat R1). L'empreinte prouvée ne
     // vaut que si TOUS les constats portent sur les octets qu'elle couvre.
     const t0 = Date.now();
-    let bytes: Buffer;
+    let lu: Awaited<ReturnType<typeof lireUneFois>>;
     try {
       const s = await stat(path);
       if (!s.isFile()) {
         await emit(ko('exists', `${path} is not a file${repli}`, Date.now() - t0));
         return done();
       }
-      bytes = await readFile(path);
-      provedManifestHash = `${DOCUMENT_MANIFEST_HASH}:${createHash('sha256').update(bytes).digest('hex')}`;
+      lu = await lireUneFois(path, TEXT_DECODE_LIMIT);
+      provedManifestHash = `${DOCUMENT_MANIFEST_HASH}:${lu.hash}`;
     } catch {
       await emit(ko('exists', `${path} not found${repli}`, Date.now() - t0));
       return done();
     }
-    const size = bytes.byteLength;
+    const size = lu.size;
     await emit(ok('exists', `${size} bytes`, Date.now() - t0));
 
     // 2 · il n'est pas vide — la taille de CE qui a été lu
@@ -933,7 +998,7 @@ export const documentVerifier: DeliverableVerifier = {
       // 3a · un format binaire connu est prouvé par son en-tête, puis s'arrête là
       const tb = Date.now();
       await emit(
-        matchesSignature(binary, bytes)
+        matchesSignature(binary, lu.head)
           ? ok(`well-formed:${binary.name}`, '', Date.now() - tb)
           : ko(
               `well-formed:${binary.name}`,
@@ -944,7 +1009,7 @@ export const documentVerifier: DeliverableVerifier = {
       return done();
     }
     const knownText = TEXT_EXTENSIONS.has(ext) || FORM_RULES[ext] !== undefined;
-    if (!knownText && looksBinary(bytes)) {
+    if (!knownText && looksBinary(lu.head)) {
       // 3b · un binaire qu'aucune table ne connaît : exister et ne pas être vide
       // est tout ce qui se constate — et c'est DIT, jamais une règle inventée.
       await emit(
@@ -958,10 +1023,21 @@ export const documentVerifier: DeliverableVerifier = {
 
     // 3c · un texte se décode en UTF-8, sans octet NUL — un texte écrit en
     // UTF-16 sans BOM se décode sans erreur, et ses NUL le trahissent.
+    // Un texte au-delà de la limite n'est pas décodé : exister et ne pas être
+    // vide est ce qui a été constaté, et c'est dit (jamais un « decoded »).
+    if (lu.full === null) {
+      await emit(
+        ok(
+          'text',
+          `${size} bytes, above the ${TEXT_DECODE_LIMIT} bytes a proof decodes: not decoded`,
+        ),
+      );
+      return done();
+    }
     const t1 = Date.now();
     let text: string;
     try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      text = new TextDecoder('utf-8', { fatal: true }).decode(lu.full);
     } catch {
       await emit(ko('utf8', 'the file is not valid UTF-8', Date.now() - t1));
       return done();

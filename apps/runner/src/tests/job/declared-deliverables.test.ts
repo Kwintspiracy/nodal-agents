@@ -385,7 +385,7 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
     const row = await jobRow(id);
     expect(row.status).toBe('failed');
     expect(row.error).toBe('deliverable_not_verified');
-    expect(row.result).toContain('faux-film.mp4: well-formed:mp4 (no ftyp header');
+    expect(row.result).toContain('faux-film.mp4: well-formed:mp4 (no ISO media box header');
   });
 
   it('zéro réparation accordée par l’espace : échec DIRECT, sans tour de plus', async () => {
@@ -431,6 +431,46 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
       ]),
     );
     expect(await statesOf(id)).toHaveLength(0);
+  });
+
+  it('renvoyé, l’agent répond en TEXTE SEUL : la déclaration reste due, le run échoue (revue Codex)', async () => {
+    // Sans la dette relue dans la transcription, la sortie « texte seul »
+    // finalisait en succès : aucune ligne déclarée, rien à opposer.
+    const dehors = normalizePath(join(tmpdir(), `hors-dossier-texte-${Date.now()}`, 'film.mp4'));
+    const id = await createJob('rends un film ailleurs, puis réponds en texte');
+    const { client, prompts } = makeMockLlmClient([
+      rendu('rr-1', 'Film livré.', [dehors]),
+      { text: 'Film livré.' },
+    ]);
+
+    await executeJob(id as JobId, makeDeps(client), testEnv);
+
+    expect(prompts).toHaveLength(2);
+    const row = await jobRow(id);
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('deliverable_not_verified');
+    expect(row.result).toContain(
+      deliverableNotVerifiedLine([
+        { path: dehors, check: 'unresolved', detail: 'path_traversal_blocked' },
+      ]),
+    );
+  });
+
+  it('renvoyé, l’agent rappelle return_result SANS le fichier (il le retire) : la dette est soldée, completed', async () => {
+    // Le renvoi dit « corrige-les, ou retire ceux que tu ne livres pas » :
+    // retirer est une réponse légitime, et le nouveau return_result solde la dette.
+    const dehors = normalizePath(join(tmpdir(), `hors-dossier-retire-${Date.now()}`, 'film.mp4'));
+    const id = await createJob('rends un film ailleurs, puis retire la promesse');
+    const { client } = makeMockLlmClient([
+      rendu('rr-1', 'Film livré.', [dehors]),
+      rendu('rr-2', 'Je ne livre finalement que le script.', []),
+    ]);
+
+    await executeJob(id as JobId, makeDeps(client), testEnv);
+
+    const row = await jobRow(id);
+    expect(row.status).toBe('completed');
+    expect(row.error).toBeNull();
   });
 });
 

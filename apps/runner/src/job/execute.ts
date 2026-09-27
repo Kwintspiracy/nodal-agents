@@ -343,6 +343,51 @@ const EMPTY_DELIVERABLE_NUDGE_MARK = '[système:livrable-vide:]';
  */
 const UNRESOLVED_DELIVERABLES_MARK = 'deferred: deliverables_unresolved';
 
+/** Un fichier déclaré que Nodal n'a pas pu vérifier : ce que la ligne d'arrêt en dit. */
+export interface DeclarationItem {
+  path: string;
+  check: string;
+  detail: string;
+}
+
+/**
+ * La déclaration encore DUE, relue dans la transcription (#509, revue Codex) :
+ * un `return_result` renvoyé parce que ses `deliverables` ne désignaient aucun
+ * fichier n'a rien promis de vérifiable, et tant qu'aucun nouveau
+ * `return_result` n'est venu, AUCUNE sortie en succès ne doit passer — ni la
+ * suivante par `return_result` (elle redéclare, ou retire, et passe par la
+ * porte), ni la sortie « texte seul », qui finalisait sans rien voir. Rend les
+ * chemins encore dus, ou `null`. Relue dans la transcription, pas en mémoire :
+ * une reprise après approbation garde la dette.
+ */
+export function declarationDue(messages: readonly unknown[]): DeclarationItem[] | null {
+  let due: DeclarationItem[] | null = null;
+  for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+    if (!m || !Array.isArray(m.content)) continue;
+    for (const part of m.content as Array<Record<string, unknown>>) {
+      if (part?.['toolName'] !== 'return_result') continue;
+      if (m.role === 'assistant' && part['type'] === 'tool-call') {
+        due = null;
+        continue;
+      }
+      if (m.role !== 'tool' || part['type'] !== 'tool-result') continue;
+      const out = part['output'] as { value?: unknown } | undefined;
+      const v = out?.value as { error?: unknown; unresolved?: unknown } | undefined;
+      if (typeof v?.error !== 'string' || !v.error.startsWith(UNRESOLVED_DELIVERABLES_MARK))
+        continue;
+      const liste = Array.isArray(v.unresolved)
+        ? (v.unresolved as Array<Record<string, unknown>>)
+        : [];
+      due = liste.map((u) => ({
+        path: String(u['path'] ?? ''),
+        check: 'unresolved',
+        detail: String(u['code'] ?? 'unresolved'),
+      }));
+    }
+  }
+  return due;
+}
+
 const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'return_result',
   'dashboard_publish',
@@ -2995,6 +3040,49 @@ async function runJobTracked(
     };
   };
 
+  /**
+   * Le run promettait des fichiers que Nodal ne peut pas vérifier : il n'est
+   * pas un succès (invariant #4). Même ligne, même code que la porte de
+   * finalisation. UNE seule sortie pour la branche `return_result` et la
+   * branche texte (revue Codex de #509 : la seconde finalisait en succès).
+   */
+  const echouerSurDeclaration = async (items: DeclarationItem[]): Promise<ExecuteJobResult> => {
+    const line = deliverableNotVerifiedLine(items);
+    // Le texte que le run aurait livré — ce qu'un outil de livraison a déjà
+    // écrit, sinon le dernier texte de l'agent —, puis la ligne. `failJob` ne
+    // remplit qu'un `result` vide : un texte déjà publié y resterait SANS la
+    // ligne, d'où la réécriture juste après.
+    const [dejaEcrit] = await db
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId as string))
+      .limit(1);
+    const texte = (dejaEcrit?.result ?? '').trim() || lastAssistantTextSeen.trim();
+    const livrable = [texte, line].filter((t) => t !== '').join('\n\n');
+    trace(DELIVERABLE_NOT_VERIFIED, { paths: items.map((i) => i.path) });
+    await failJobWithHarnessNotice(
+      DELIVERABLE_NOT_VERIFIED,
+      line,
+      DELIVERABLE_NOT_VERIFIED,
+      livrable,
+    );
+    if (texte !== '' && texte === (dejaEcrit?.result ?? '').trim()) {
+      await db
+        .update(agentJobs)
+        .set({ result: livrable, updatedAt: new Date() })
+        .where(
+          and(eq(agentJobs.id, jobId as string), eq(agentJobs.error, DELIVERABLE_NOT_VERIFIED)),
+        );
+    }
+    return {
+      status: 'failed',
+      error: DELIVERABLE_NOT_VERIFIED,
+      result: livrable,
+      toolsUsed,
+      exitReason: DELIVERABLE_NOT_VERIFIED,
+    };
+  };
+
   const stampFailedDelegations = async (): Promise<void> => {
     if (failedDelegationNames(delegationOutcomes).length === 0) return;
     const [row] = await db
@@ -4387,6 +4475,12 @@ async function runJobTracked(
               'not-delivered',
             );
             return { status: 'failed', error: 'telegram_not_delivered' };
+          }
+          // Une déclaration renvoyée et jamais refaite (#509) : répondre en
+          // texte n'efface pas des fichiers promis que Nodal n'a pas pu trouver.
+          const dueTexte = declarationDue(messages);
+          if (dueTexte !== null && dueTexte.length > 0) {
+            return await echouerSurDeclaration(dueTexte);
           }
           // SANS `delivery` : sur ce chemin le canal a déjà été servi par
           // l'outil telegram_send_message pendant le run — préparer une
@@ -5836,6 +5930,7 @@ async function runJobTracked(
                     'ne livres pas) et rappelle return_result.',
                   unresolved: declaration.unresolved.map((u) => ({
                     path: u.requested,
+                    code: u.code,
                     reason: u.reason,
                   })),
                 }),
@@ -5843,22 +5938,6 @@ async function runJobTracked(
               messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
               continue;
             }
-            // Le run promettait des fichiers que Nodal ne peut pas vérifier : il
-            // n'est pas un succès (invariant #4). Même ligne, même code que la
-            // porte de finalisation.
-            const line = deliverableNotVerifiedLine(items);
-            // Le texte que le run aurait livré — ce qu'un outil de livraison a
-            // déjà écrit, sinon le dernier texte de l'agent —, puis la ligne.
-            // `failJob` ne remplit qu'un `result` vide : un texte déjà publié y
-            // resterait SANS la ligne, d'où la réécriture juste après.
-            const [dejaEcrit] = await db
-              .select({ result: agentJobs.result })
-              .from(agentJobs)
-              .where(eq(agentJobs.id, jobId as string))
-              .limit(1);
-            const texte = (dejaEcrit?.result ?? '').trim() || lastAssistantTextSeen.trim();
-            const livrable = [texte, line].filter((t) => t !== '').join('\n\n');
-            trace(DELIVERABLE_NOT_VERIFIED, { turn, paths: items.map((i) => i.path) });
             toolResultBlocks.push({
               type: 'tool-result',
               toolCallId: returnResultCall.toolCallId,
@@ -5867,30 +5946,7 @@ async function runJobTracked(
             });
             messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
-            await failJobWithHarnessNotice(
-              DELIVERABLE_NOT_VERIFIED,
-              line,
-              DELIVERABLE_NOT_VERIFIED,
-              livrable,
-            );
-            if (texte !== '' && texte === (dejaEcrit?.result ?? '').trim()) {
-              await db
-                .update(agentJobs)
-                .set({ result: livrable, updatedAt: new Date() })
-                .where(
-                  and(
-                    eq(agentJobs.id, jobId as string),
-                    eq(agentJobs.error, DELIVERABLE_NOT_VERIFIED),
-                  ),
-                );
-            }
-            return {
-              status: 'failed',
-              error: DELIVERABLE_NOT_VERIFIED,
-              result: livrable,
-              toolsUsed,
-              exitReason: DELIVERABLE_NOT_VERIFIED,
-            };
+            return await echouerSurDeclaration(items);
           }
           trace('deliverables_declared', {
             turn,

@@ -242,8 +242,43 @@ describe('document — texte ou binaire, une règle pour tous les fichiers', () 
     const { verdict, records } = await prove(p);
     expect(verdict).toBe('red');
     expect(records.at(-1)).toMatchObject({ command: 'well-formed:mp4', verdict: 'red' });
-    expect(records.at(-1)?.stderrTail).toMatch(/ftyp/);
-    expect(records.at(-1)?.stderrTail).toMatch(/this file is not MP4/);
+    expect(records.at(-1)?.stderrTail).toBe(
+      'no ISO media box header: this file is not MP4/QuickTime',
+    );
+  });
+
+  it('les variantes VALIDES d’un format passent : trame MP3 FF FA, QuickTime qui ouvre sur wide/moov/mdat (revue Codex de #509)', async () => {
+    const boite = (type: string) =>
+      Buffer.concat([Buffer.from([0, 0, 0, 8]), Buffer.from(type, 'latin1'), Buffer.alloc(16)]);
+    const cas: Array<[string, Buffer]> = [
+      // MPEG-1 couche III AVEC CRC : l'octet 2 est FA, pas FB.
+      ['avec-crc.mp3', Buffer.from([0xff, 0xfa, 0x90, 0x64, 0x00])],
+      // MPEG-2.5 : les bits de version à 00.
+      ['mpeg25.mp3', Buffer.from([0xff, 0xe3, 0x18, 0xc4, 0x00])],
+      ['wide.mov', boite('wide')],
+      ['moov-first.mov', boite('moov')],
+      ['mdat-first.mp4', boite('mdat')],
+    ];
+    for (const [name, bytes] of cas) {
+      const { verdict } = await prove(write(name, bytes));
+      expect(verdict, name).toBe('green');
+    }
+    // Ce qui n'est PAS une trame reste rouge : 11 bits de synchro, pas moins.
+    const { verdict } = await prove(write('pas-une-trame.mp3', Buffer.from([0xff, 0x1f, 0, 0])));
+    expect(verdict).toBe('red');
+  });
+
+  it('un gros fichier n’est jamais tenu en mémoire : un texte au-delà de la limite est dit « not decoded », un binaire garde sa preuve d’en-tête', async () => {
+    // 33 Mo : au-delà des 32 Mo qu'une preuve décode (revue Codex de #509 : une
+    // vidéo de plusieurs Go lue en entier, deux fois, épuisait le runner).
+    const gros = Buffer.alloc(33 * 1024 * 1024, 0x61);
+    const texte = await prove(write('journal.log', gros));
+    expect(texte.verdict).toBe('green');
+    expect(texte.records.at(-1)).toMatchObject({ command: 'text', verdict: 'green' });
+    expect(texte.records.at(-1)?.stdoutTail).toMatch(/not decoded/);
+    const film = await prove(write('gros-film.mp4', Buffer.concat([mp4Bytes(), gros])));
+    expect(film.verdict).toBe('green');
+    expect(film.records.at(-1)?.command).toBe('well-formed:mp4');
   });
 
   it('un corps d’erreur texte écrit sous un nom de vidéo est rouge sur son en-tête', async () => {
