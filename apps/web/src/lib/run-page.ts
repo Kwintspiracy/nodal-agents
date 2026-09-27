@@ -69,6 +69,15 @@ export function runHrefIn(section: RunSection, runId: string): string {
   return section === 'work' ? runPageHref(runId) : `/jobs/${runId}`;
 }
 
+/**
+ * OÙ SE RÉPOND UNE QUESTION (#465) : le fil de sa conversation, ou la page du
+ * run qui l'a posée quand il n'y a pas de conversation (une automatisation).
+ * La carte Approvals et la cloche renvoient toutes deux ici.
+ */
+export function questionHref(q: { conversationId: string | null; jobId: string }): string {
+  return q.conversationId !== null ? `/chat/${q.conversationId}` : openRunHref(q.jobId);
+}
+
 export const OPEN_RUN_PREFIX = '/runs/';
 
 /**

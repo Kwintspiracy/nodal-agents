@@ -387,6 +387,8 @@ describe('la case Approvals du rail @cap:approuver-une-action/ecran', () => {
       requestedAt: null,
       jobChannel: 'dashboard',
       conversationChannel: 'dashboard',
+      kind: 'approval',
+      conversationId: null,
     }));
   }
 
@@ -965,6 +967,8 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
           requestedAt: null,
           jobChannel: 'dashboard',
           conversationChannel: 'dashboard',
+          kind: 'approval',
+          conversationId: null,
         },
       ],
     );
@@ -1013,6 +1017,8 @@ describe('le point d’une ligne du panneau @cap:reprendre-conversation/ecran', 
         requestedAt: null,
         jobChannel: 'dashboard',
         conversationChannel: 'dashboard',
+        kind: 'approval',
+        conversationId: null,
       },
     ];
     await renderSidebar([], uneAttente);
@@ -1524,6 +1530,8 @@ describe('le rail dit ce qui tourne @cap:suivre-execution/ecran', () => {
         requestedAt: null,
         jobChannel: 'dashboard',
         conversationChannel: 'dashboard',
+        kind: 'approval',
+        conversationId: null,
       },
     ];
     await renderSidebar([], uneAttente, { workConversationsInProgress: 1 });
