@@ -45,6 +45,15 @@ export {
 } from './chain-counters';
 export type { SameToolStreakState, ErrorStreakState, NonProgressSignal } from './chain-counters';
 
+// ─── After a failed delegation (#510) — one rule for the payload and the gate ─
+export {
+  SAME_AGENT_FAILURE_CAP,
+  isSameAgentRetryBlocked,
+  nextFailedDelegationState,
+  failedDelegationGuidance,
+} from './router/failed-delegation';
+export type { FailedDelegationState } from './router/failed-delegation';
+
 // ─── Guard 1g — verify-before-assert nudge (cancel/undo intent) ─────────────
 export {
   CANCEL_UNDO_INTENT_RE,

@@ -125,6 +125,7 @@ import {
   CANCEL_UNDO_INTENT_SCAN_CHARS,
   VERIFY_BEFORE_ASSERT_NUDGE,
   readFinalReviewVerdict,
+  isSameAgentRetryBlocked,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -4989,24 +4990,33 @@ async function runJobTracked(
           }
 
           // Per-slug naive-retry block. `resumeDelegated` set
-          // `last_failed_delegation_slug` to the slug of the last failed child;
-          // it's cleared on any successful delegation. We refuse only when the
-          // parent's LLM is re-emitting `assign_<sameSlug>` right after that
-          // slug failed. Falling back to a DIFFERENT specialist (per the new
-          // Conciergus personality) is allowed — that's the legitimate
-          // alternative strategy after an upstream failure.
+          // `last_failed_delegation_slug` to the slug of the last failed child
+          // and `last_failed_delegation_streak` to its consecutive failures;
+          // both clear on any successful delegation. Since #510 the first
+          // failure leaves room for ONE targeted retry of the same agent (the
+          // one that had the folder and the shell, in run 8dfe4684); the
+          // second in a row is refused here. The rule lives in
+          // orchestration's failed-delegation.ts, shared with the payload.
           //
           // Live regression that motivated the per-slug refactor: job
           // `7767a3c1` (2026-05-19) — global counter blocked Conciergus's
           // fallback to Obsidius after Summarizus timeout, killing the
           // whole workflow when one specialist would have succeeded.
-          if (job.lastFailedDelegationSlug === childSlug) {
+          if (
+            isSameAgentRetryBlocked(
+              {
+                slug: job.lastFailedDelegationSlug ?? null,
+                streak: job.lastFailedDelegationStreak,
+              },
+              childSlug,
+            )
+          ) {
             toolResultBlocks.push({
               type: 'tool-result',
               toolCallId: call.id,
               toolName: call.name,
               output: toResultOutput({
-                error: `delegation_retry_blocked: assign_${call.name.slice('assign_'.length)} already failed once on this job — do NOT retry the same specialist. Either fall back to a different specialist (assign_<otherSlug>) or notify the user via telegram_send_message and call return_result with status='blocked'.`,
+                error: `delegation_retry_blocked: assign_${call.name.slice('assign_'.length)} already failed ${job.lastFailedDelegationStreak} times in a row on this job — do NOT retry the same specialist. Either fall back to a different specialist (assign_<otherSlug>) or notify the user via telegram_send_message and call return_result with status='blocked'.`,
               }),
             });
 

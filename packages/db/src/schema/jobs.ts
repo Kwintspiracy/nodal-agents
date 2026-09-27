@@ -254,6 +254,18 @@ export const agentJobs = pgTable(
      * different specialist (live regression: job `7767a3c1`, 2026-05-19).
      */
     lastFailedDelegationSlug: text('last_failed_delegation_slug'),
+    /**
+     * How many delegations to `last_failed_delegation_slug` failed IN A ROW on
+     * this parent (migration 0131, issue #510). 0 when no failure is recorded.
+     *
+     * The block used to fire on the FIRST failure, which pushed every
+     * orchestrator toward another agent — run 8dfe4684 spread a render to a
+     * code team that had neither the folder nor a shell, while the agent that
+     * had both was never asked again about the precise point that stopped it.
+     * One targeted retry is now allowed; the second consecutive failure of the
+     * same agent blocks it (`isSameAgentRetryBlocked`, chain-counters.ts).
+     */
+    lastFailedDelegationStreak: integer('last_failed_delegation_streak').default(0).notNull(),
     pendingDelegation: jsonb('pending_delegation'),
     /**
      * Marks a root job as being finalized RIGHT NOW by the delivery cron

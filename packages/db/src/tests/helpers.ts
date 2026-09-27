@@ -220,6 +220,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       served_provider text,
       delegation_depth integer DEFAULT 0,
       last_failed_delegation_slug text,
+      last_failed_delegation_streak integer NOT NULL DEFAULT 0,
       pending_delegation jsonb,
       finalizing_at timestamptz,
       -- mirrors migration 0091

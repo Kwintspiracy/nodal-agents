@@ -358,8 +358,11 @@ export async function buildTeamBlock(
         'finish with `return_result` or assign the next step. Do NOT delegate again unless ' +
         'the request needs another step. What comes back is a typed record — `status`, ' +
         '`summary`, `error` — where `summary` is the agent’s own final reply. A `status` ' +
-        'other than `completed` means that delegation delivered NOTHING: do the work ' +
-        'yourself, hand it to a different agent, or tell the user what failed — never ' +
+        'other than `completed` means that delegation delivered NOTHING: retry that agent ' +
+        'once on the precise point that stopped it when its entry below shows it has the ' +
+        'means, hand the work to another agent only when its entry shows what the task ' +
+        'needs, do it yourself only when your own tools cover it, or tell the user what ' +
+        'failed and what is missing — never ' +
         'announce that the work is under way, because it is not.',
     );
     lines.push(
