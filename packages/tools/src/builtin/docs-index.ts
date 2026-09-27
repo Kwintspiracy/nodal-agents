@@ -262,6 +262,12 @@ const LINK_WORDS = new Set([
   'et',
   'ma',
   'cette',
+  // Between two versions of a list: "0.8 vs 0.9.1", "0.8 or 0.9".
+  'vs',
+  'versus',
+  'compared',
+  'than',
+  'ou',
 ]);
 
 /**
@@ -288,7 +294,10 @@ function versionMentions(
     const words = normalizeWords(before);
     while (words.length > 0 && /^versions?$/.test(words[words.length - 1]!)) words.pop();
     const last = words[words.length - 1];
-    out.push({ version, foreign: last !== undefined && !LINK_WORDS.has(last), prefixedV });
+    // The previous number of a list ("0.8.11, 0.9.0") links too: its digits
+    // are not a product's name.
+    const linked = last === undefined || LINK_WORDS.has(last) || /^\d+$/.test(last);
+    out.push({ version, foreign: !linked, prefixedV });
   }
   return out;
 }
