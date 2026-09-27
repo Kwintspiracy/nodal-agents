@@ -24,7 +24,7 @@ import {
   FIRST_TOKEN_HIGH_EFFORT_MS,
   ABSOLUTE_CALL_MS,
 } from '../turn-clocks';
-import type { TurnClocks } from '../turn-clocks';
+import type { TurnClocks, CallProgress } from '../turn-clocks';
 import { LLMTimeoutError, LLMCallCancelledError, LLMStreamPartError } from '../errors';
 
 // ─── A stream the fake clock drives ───────────────────────────────────────────
@@ -544,5 +544,54 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
       ],
     });
     expect(est).toBe(2_000);
+  });
+});
+
+// #484 — job 82ecec67 : vingt et une minutes de production, 12 030 jetons, et
+// rien ne disait ce qui s'écrivait — ni texte, ni appel d'outil terminé. Le
+// flux dit désormais, pendant qu'il tourne, ce que le modèle produit : son
+// raisonnement, les arguments de l'outil qu'il remplit (et lequel), son texte.
+describe('what a streamed call is producing, while it produces it (#484)', () => {
+  it('reports reasoning, the tool being filled and its argument size before the call ends', async () => {
+    const seen: CallProgress[] = [];
+    const model = timedModel([
+      { atMs: 0, part: { type: 'reasoning-start', id: 'r' } },
+      reasoning(1_000, 'r'.repeat(300)),
+      { atMs: 1_000, part: { type: 'reasoning-end', id: 'r' } },
+      { atMs: 2_000, part: { type: 'tool-input-start', id: 'c1', toolName: 'file_write' } },
+      { atMs: 2_000, part: { type: 'tool-input-delta', id: 'c1', delta: 'x'.repeat(40) } },
+      { atMs: 3_000, part: { type: 'tool-input-delta', id: 'c1', delta: 'y'.repeat(60) } },
+    ]);
+    void consumeUnderClocks(
+      (signal) =>
+        streamText({
+          model,
+          prompt: 'write',
+          abortSignal: signal,
+          maxRetries: 0,
+          onError: () => {},
+        }),
+      CLOUD,
+      PM,
+      undefined,
+      undefined,
+      (p) => seen.push(p),
+    ).catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    // Toujours en cours : aucune horloge n'a coupé, et on sait déjà ce qu'il écrit.
+    expect(seen.at(-1)).toEqual({
+      textChars: 0,
+      reasoningChars: 300,
+      toolInputChars: 100,
+      toolName: 'file_write',
+    });
+    expect(seen[0]).toEqual({
+      textChars: 0,
+      reasoningChars: 300,
+      toolInputChars: 0,
+      toolName: null,
+    });
   });
 });

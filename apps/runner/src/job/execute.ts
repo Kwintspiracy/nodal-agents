@@ -61,7 +61,7 @@ import {
   estimateContextTokens,
   estimateToolTokens,
 } from '@nodal-agents/llm';
-import type { NodalLlmClient } from '@nodal-agents/llm';
+import type { NodalLlmClient, CallProgress } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
 import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
@@ -3936,8 +3936,23 @@ async function runJobTracked(
       // reasoning models that think for 2–5 min). 60s is well inside the 5-min
       // orphan-reset window. The interval is cleared in a finally block so it
       // never leaks past this turn regardless of success/error.
+      //
+      // #484 : chaque battement dit aussi CE QUE l'appel produit — texte,
+      // raisonnement, arguments d'outil et l'outil rempli. Un appel qui écrit
+      // vingt minutes sans un mot de texte n'était visible qu'à sa fin.
+      let productionDeLAppel: CallProgress | null = null;
       const hbInterval = setInterval(() => {
         void touchJob(db, jobId as string).catch(() => {});
+        trace('llm_call_progress', {
+          turn,
+          elapsedMs: Date.now() - appelCommenceA,
+          ...(productionDeLAppel ?? {
+            textChars: 0,
+            reasoningChars: 0,
+            toolInputChars: 0,
+            toolName: null,
+          }),
+        });
       }, 60_000);
       // Stop arrête l'appel EN COURS. Le bouton n'écrit que `cancelled` en
       // base ; sans cette lecture pendant l'appel, un tour streamé qui écrit
@@ -4016,6 +4031,9 @@ async function runJobTracked(
           {
             streamed: true,
             abortSignal: arret.signal,
+            onProgress: (p) => {
+              productionDeLAppel = p;
+            },
             // #442 : l'attente du premier jeton posée pour l'agent, et ce
             // qu'il reste du budget de temps du run.
             ...(agentFirstTokenMs !== undefined ? { firstTokenTimeoutMs: agentFirstTokenMs } : {}),
@@ -4049,7 +4067,12 @@ async function runJobTracked(
           if (ecrit !== '') {
             messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
           }
-          trace('cancellation_observed', { turn, during: 'llm_call', partialChars: ecrit.length });
+          trace('cancellation_observed', {
+            turn,
+            during: 'llm_call',
+            partialChars: ecrit.length,
+            produced: productionDeLAppel,
+          });
           await cancelJob(db, jobId as string, runStats(), messages);
           return { status: 'cancelled' };
         }
@@ -4153,7 +4176,11 @@ async function runJobTracked(
           ]
             .filter((t) => t !== '')
             .join('\n\n');
-          trace('llm_timeout_exhausted', { turn, elapsedMs: msExpiresCeTour });
+          trace('llm_timeout_exhausted', {
+            turn,
+            elapsedMs: msExpiresCeTour,
+            produced: productionDeLAppel,
+          });
           await failJob(db, jobId as string, code, runStats(), messages, livrable);
           return {
             status: 'failed',
