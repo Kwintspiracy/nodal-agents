@@ -563,8 +563,12 @@ async function stateRow(
   });
 }
 
-/** Le constat d'une écriture de l'enfant, avec l'empreinte de ce qu'il a écrit. */
-async function constat(jobId: string, path: string, written: string) {
+/**
+ * Le constat d'une écriture de l'enfant, avec l'empreinte de ce qu'il a écrit —
+ * ou SANS empreinte (`null`) : une écriture de shell, de harnais CLI ou de
+ * bureautique, que l'outil n'a pas décrite octet par octet.
+ */
+async function constat(jobId: string, path: string, written: string | null) {
   const { constatedWrites } = await import('@nodal-agents/db');
   await db.insert(constatedWrites).values({
     jobId,
@@ -572,7 +576,7 @@ async function constat(jobId: string, path: string, written: string) {
     path: slash(await realpath(path).catch(() => path)),
     changeKind: 'modified',
     constatedBy: 'disk',
-    contentSha256: sha(written),
+    contentSha256: written === null ? null : sha(written),
   });
 }
 
@@ -669,6 +673,34 @@ describe('resumeDelegated — what a stopped child wrote, as it is now (#491) @c
       { kind: 'file', path, declared: true, state: 'not_written_by_child' },
     ]);
     expect(out.value).not.toContain('DO NOT redo');
+  });
+
+  // Revue Codex de #491, passe 4 : une écriture SANS empreinte (shell, harnais
+  // CLI, bureautique) donnait « not_written_by_child » puis « NOTHING
+  // usable », et le parent refaisait le travail — le bug d'origine par une
+  // autre porte. NULL veut dire « contenu non vérifiable », pas « pas écrit ».
+  it('a file the child wrote WITHOUT a fingerprint is its work, to re-read, never NOTHING usable', async () => {
+    const s = await scenario('tu_491_h');
+    const path = slash(join(dir, 'render.mp4'));
+    await writeFile(path, 'rendu par une commande');
+    await stateRow(s.child, path, { produced: true });
+    await constat(s.child, path, null);
+
+    const out = await s.resume();
+
+    expect(recordOf(out.value)['files_written']).toEqual([
+      {
+        kind: 'file',
+        path,
+        declared: false,
+        state: 'written_by_child_unverified',
+        bytes: 'rendu par une commande'.length,
+        proof: 'dirty',
+      },
+    ]);
+    expect(out.value).not.toContain('delivered NOTHING usable');
+    expect(out.value).toContain('DO NOT redo');
+    expect(out.value).toContain('read them before relying on them');
   });
 
   it('a file written then removed is said absent', async () => {

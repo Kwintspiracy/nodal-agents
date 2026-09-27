@@ -8,7 +8,7 @@ import { OrchestrationError } from '../errors';
 import { reviewBlocksDelivery, REVIEW_CHANGES_REQUESTED } from '@nodal-agents/shared';
 import { readDeliveredReviewVerdict } from './review-verdict';
 import type { ReviewVerdictRecord } from './review-verdict';
-import { filesUnchangedSinceChildWrote, readFilesWrittenBy } from './delegated-files';
+import { filesTheChildWrote, readFilesWrittenBy } from './delegated-files';
 import type { DelegatedFile } from './delegated-files';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
 
@@ -505,14 +505,16 @@ export async function resumeDelegated(
   // #491 — a child stopped AFTER writing files did deliver something: those
   // files. Telling the parent "NOTHING usable" made it redo the work and
   // overwrite them, so the payload then says what exists and forbids the redo.
-  // ONLY a file present AND unchanged since the child wrote it counts (Codex
-  // review, passes 1 and 2): one absent, changed since, never written by the
-  // child, or in an unknown state is not work to build on, and saying it is
-  // would make the parent deliver nothing, or someone else's file.
-  const fichiersIntacts = filesUnchangedSinceChildWrote(outcome.files_written);
+  // ONLY a present file the child wrote counts (Codex review, passes 1, 2 and
+  // 4): unchanged since (proven by its fingerprint), or written by it without
+  // a fingerprint (shell, CLI harness, office tools), which the parent must
+  // re-read. One absent, changed since, never written by the child, or in an
+  // unknown state is not work to build on, and saying it is would make the
+  // parent deliver nothing, or someone else's file.
+  const fichiersDeLEnfant = filesTheChildWrote(outcome.files_written);
   const failureGuidance =
-    fichiersIntacts.length > 0
-      ? 'This delegation stopped before it finished, but the files in files_written with "state": "written_by_child_unchanged" are exactly what the specialist wrote before it stopped. DO NOT redo that work and DO NOT delegate it again: read or check those files and build on them. Any other state means that file is NOT the specialist\'s finished output (absent, changed since, never written by it, or unknown): that part is not done. For anything the unchanged files do not cover, DO NOT retry'
+    fichiersDeLEnfant.length > 0
+      ? 'This delegation stopped before it finished, but it left files. Those in files_written with "state": "written_by_child_unchanged" are exactly what the specialist wrote. Those with "state": "written_by_child_unverified" were written by the specialist, but their content has no fingerprint, so it cannot be proven they did not change since: read them before relying on them. DO NOT redo that work and DO NOT delegate it again: check those files and build on them. Any other state means that file is NOT the specialist\'s finished output (absent, changed since, never written by it, or unknown): that part is not done. For anything these files do not cover, DO NOT retry'
       : 'This delegation delivered NOTHING usable. DO NOT retry';
   const errorValue = isFailure
     ? `${DELEGATION_FAILED_MARKER}

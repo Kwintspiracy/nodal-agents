@@ -31,7 +31,11 @@
 //
 //   written_by_child_unchanged  présent, et identique à ce que l'enfant a écrit
 //   changed_since_child_wrote   présent, mais différent de ce qu'il a écrit
-//   not_written_by_child        présent, sans écriture de l'enfant prouvée
+//   written_by_child_unverified présent, écrit par l'enfant (son constat est
+//                               là) mais SANS empreinte — shell, harnais CLI,
+//                               bureautique : on ne peut pas prouver qu'il n'a
+//                               pas changé depuis, le parent le relit
+//   not_written_by_child        présent, aucune écriture de l'enfant constatée
 //   absent                      ENOENT, et seulement ENOENT
 //   unknown: <code>             toute autre erreur : on ne sait pas, on le dit
 //                               (invariant #4) — jamais « n'est pas là »
@@ -60,6 +64,7 @@ import type { AnyDrizzleDb, JobId } from '../types';
 export type DelegatedFileState =
   | 'written_by_child_unchanged'
   | 'changed_since_child_wrote'
+  | 'written_by_child_unverified'
   | 'not_written_by_child'
   | 'absent'
   | `unknown: ${string}`;
@@ -101,10 +106,13 @@ function codeDe(err: unknown): string {
   return typeof code === 'string' && code !== '' ? code : 'unreadable';
 }
 
-/** L'état d'UN chemin, comparé à l'empreinte que l'enfant y a laissée. */
+/**
+ * L'état d'UN chemin, comparé au dernier constat d'écriture de l'enfant :
+ * `undefined` = aucun constat, `{ sha: null }` = écrit, mais sans empreinte.
+ */
 async function etatDe(
   path: string,
-  empreinteDeLEnfant: string | null,
+  constatDeLEnfant: { sha: string | null } | undefined,
   disque: DiskReader,
 ): Promise<{ state: DelegatedFileState; bytes: number | null }> {
   let taille: number;
@@ -124,10 +132,16 @@ async function etatDe(
   } catch (err) {
     return { state: `unknown: ${codeDe(err)}`, bytes: null };
   }
-  if (empreinteDeLEnfant === null) return { state: 'not_written_by_child', bytes: taille };
+  if (constatDeLEnfant === undefined) return { state: 'not_written_by_child', bytes: taille };
+  // NULL = provenance du contenu INCONNUE, pas « pas écrit par l'enfant »
+  // (revue Codex, passe 4) : sinon le parent refaisait un rendu que l'enfant
+  // avait produit par une commande — le bug d'origine par une autre porte.
+  if (constatDeLEnfant.sha === null) return { state: 'written_by_child_unverified', bytes: taille };
   return {
     state:
-      actuelle === empreinteDeLEnfant ? 'written_by_child_unchanged' : 'changed_since_child_wrote',
+      actuelle === constatDeLEnfant.sha
+        ? 'written_by_child_unchanged'
+        : 'changed_since_child_wrote',
     bytes: taille,
   };
 }
@@ -167,8 +181,8 @@ export async function readFilesWrittenBy(
     .from(constatedWrites)
     .where(eq(constatedWrites.jobId, jobId as string))
     .orderBy(desc(constatedWrites.createdAt));
-  const empreintes = new Map<string, string | null>();
-  for (const c of constats) if (!empreintes.has(c.path)) empreintes.set(c.path, c.sha);
+  const empreintes = new Map<string, { sha: string | null }>();
+  for (const c of constats) if (!empreintes.has(c.path)) empreintes.set(c.path, { sha: c.sha });
 
   const out: DelegatedFile[] = [];
   for (const r of rows) {
@@ -189,22 +203,25 @@ export async function readFilesWrittenBy(
       out.push({ kind: 'project', path, declared: r.declared, proof: r.proof, files });
       continue;
     }
-    const sha = empreintes.get(await cheminConstate(path)) ?? null;
+    const constat = empreintes.get(await cheminConstate(path));
     out.push({
       kind: 'file',
       path,
       declared: r.declared,
-      ...(await etatDe(path, sha, disque)),
+      ...(await etatDe(path, constat, disque)),
       proof: r.proof,
     });
   }
   return out;
 }
 
-/** Les fichiers, projets compris, qui sont EXACTEMENT ce que l'enfant a écrit. */
-export function filesUnchangedSinceChildWrote(
-  files: readonly DelegatedFile[],
-): DelegatedFileEntry[] {
+/**
+ * Les fichiers, projets compris, qui sont le travail de l'enfant : exactement
+ * ce qu'il a écrit, ou écrits par lui sans empreinte pour le vérifier.
+ */
+export function filesTheChildWrote(files: readonly DelegatedFile[]): DelegatedFileEntry[] {
   const plats = files.flatMap((f) => (f.kind === 'project' ? f.files : [f]));
-  return plats.filter((f) => f.state === 'written_by_child_unchanged');
+  return plats.filter(
+    (f) => f.state === 'written_by_child_unchanged' || f.state === 'written_by_child_unverified',
+  );
 }
