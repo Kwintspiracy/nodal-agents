@@ -49,7 +49,7 @@ jobs:
     # Codex de la PR #516). Un dépassement de JOB tue tout ; un dépassement
     # d'ÉTAPE avec `continue-on-error` la marque en échec et laisse la nuit
     # enregistrer ce qu'elle a mesuré.
-    timeout-minutes: 110
+    timeout-minutes: 115
     steps:
       - uses: actions/checkout@v5
         with:
@@ -258,6 +258,7 @@ jobs:
       # faisait sauter la collecte et l'enregistrement de toute la nuit (revue
       # Codex de la PR #516, passe 3).
       - name: Normaliser le rapport
+        timeout-minutes: 2
         run: |
           node -e "
             const fs=require('fs');
@@ -352,11 +353,13 @@ jobs:
       # `|| true` : ne jamais faire échouer la mesure parce que l'alerte n'a pas
       # pu écrire. Ce serait perdre la mesure ET l'alerte.
       - name: Alerter si quelque chose est rouge
+        timeout-minutes: 2
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node apps/qa/alerte.mjs --appliquer || true
 
       - name: Rendre le portail
+        timeout-minutes: 2
         run: node apps/qa/build.mjs
 
       - name: Publier le portail comme artefact du run

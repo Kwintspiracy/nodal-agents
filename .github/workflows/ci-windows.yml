@@ -43,7 +43,7 @@ jobs:
     # tout le reste du job tient en ~80 s. Un plafond à 25 min coupait donc les
     # runs à cache froid — c'est ce qui a annulé le job de #87 à 24 min sans
     # qu'aucun test ne soit rouge (issue #89). 24,8 + 30 % = 32,2, arrondi à 35.
-    timeout-minutes: 35
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v5
 
@@ -72,15 +72,18 @@ jobs:
             turbo-${{ runner.os }}-
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       # Typecheck et tests seulement : lint et format ne dépendent pas de l'OS,
       # les refaire ici doublerait le coût sans rien apprendre.
       - name: Typecheck
+        timeout-minutes: 10
         run: pnpm typecheck
 
       # Le plafond de concurrence turbo (3) vit dans `turbo.json` depuis #292 :
       # `--concurrency` est un drapeau TURBO, et le passer par `pnpm test -- …`
       # le transmettait à vitest, qui le refusait. Plus de drapeau à copier.
       - name: Unit tests
+        timeout-minutes: 45
         run: pnpm test

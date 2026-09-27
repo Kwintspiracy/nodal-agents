@@ -120,7 +120,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
@@ -137,9 +137,11 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Build docs
+        timeout-minutes: 5
         run: pnpm --filter @nodal-agents/docs build
 
       # La part GitHub, relue à l'instant et reposée sur la mesure committée.
@@ -148,6 +150,7 @@ jobs:
       # l'historique du portail deviendrait celui de ses déploiements.
       # GitHub muet laisse le tableau committé en place, daté comme tel.
       - name: Rafraîchir le tableau depuis GitHub
+        timeout-minutes: 3
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node apps/qa/collect.mjs --github-only
@@ -155,6 +158,7 @@ jobs:
       # `build.mjs` ne lit que `apps/qa/data/*.json` : il REND, il ne mesure
       # pas. La page porte les deux dates, « measured » et « board as of ».
       - name: Rendre le portail qualité
+        timeout-minutes: 3
         run: node apps/qa/build.mjs
 
       - name: Poser le portail sous /qa/
@@ -174,6 +178,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

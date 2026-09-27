@@ -54,7 +54,7 @@ jobs:
   # cache turbo froid pour cette lignée) → budget 14.
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 14
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v5
 
@@ -104,18 +104,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
+        timeout-minutes: 8
         run: pnpm typecheck
 
       - name: Lint
+        timeout-minutes: 4
         run: pnpm lint
 
       - name: Format check
+        timeout-minutes: 3
         run: pnpm format:check
 
       # SEC-1: block a hardcoded secret from reaching the public repo. Runs on
       # the tracked tree at HEAD (works on the shallow checkout); annotate a
       # vetted fixture with `secrets:allow` to suppress a false positive.
       - name: Secret scan
+        timeout-minutes: 2
         run: pnpm secrets:check
 
       # The pre-commit hook already runs this on staged files, but a hook lives
@@ -124,9 +128,11 @@ jobs:
       # that drifted into the tree — see scripts/check-commit-hygiene.mjs for
       # the two 2026-08-21 incidents that motivated each check.
       - name: Commit hygiene
+        timeout-minutes: 2
         run: pnpm hygiene:check
 
       - name: Architecture check
+        timeout-minutes: 2
         run: pnpm deps:check
 
       # Le lien entre le produit et ses preuves. Ne juge AUCUN résultat : elle
@@ -136,11 +142,20 @@ jobs:
       # sans build ni base, ce qui est la raison pour laquelle elle peut tourner
       # sur chaque PR.
       - name: Capacités du produit
+        timeout-minutes: 2
         run: pnpm capacites:check
+
+      # Les bornes de temps de la CI (#517) : chaque étape run bornée, et chaque job
+      # au moins la somme de ses étapes + 5 min. Une borne de JOB trop courte
+      # coupe tout ce qui suit ; une borne d'ÉTAPE laisse tourner if: failure().
+      - name: CI budgets
+        timeout-minutes: 2
+        run: pnpm ci:budgets
 
       # scripts/ lives outside the workspace, so `turbo run test` never sees it.
       # Its suites were effectively dead code until 0.8.0 shipped a broken pack.
       - name: Script tests
+        timeout-minutes: 3
         run: pnpm test:scripts
 
       # Le banc répond à une AUTRE question que la suite : pas « est-ce
@@ -159,6 +174,7 @@ jobs:
       # course — elle interroge l'API du fournisseur, et un incident chez lui
       # n'est pas une régression chez nous.
       - name: Banc d'essai
+        timeout-minutes: 3
         run: pnpm bench
 
       # SUPPLY-002 (audit 2026-08-07): nothing in CI ever looked at whether a
@@ -167,6 +183,7 @@ jobs:
       # will end up disabling, and a disabled gate is worse than none because it
       # reads as coverage. `high` and above only, so the signal stays readable.
       - name: Dependency audit (advisory)
+        timeout-minutes: 3
         run: pnpm audit --audit-level=high || true
 
   # ── La suite unitaire, en cinq tranches ─────────────────────────────────────
@@ -184,7 +201,7 @@ jobs:
   # install et builds des dépendances compris → budget 10.
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -225,6 +242,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Unit tests (${{ matrix.shard }})
+        timeout-minutes: 10
         run: ${{ matrix.run }}
 
   # ── Le build seul ───────────────────────────────────────────────────────────
@@ -239,7 +257,7 @@ jobs:
   # #291 (run 35517309819, cache froid) → budget 7.
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
 
@@ -266,6 +284,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
+        timeout-minutes: 8
         run: pnpm build
 
   # ── Pack smoke test ─────────────────────────────────────────────────────────
@@ -302,6 +321,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Pack, install clean, boot
+        timeout-minutes: 12
         run: node scripts/smoke-pack.mjs
 
   # PERF-001 (audit 2026-08-07). 31 spec files, 85 tests, never run by CI —
