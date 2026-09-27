@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { getInstallNotes, entities, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { resolveTimezone, formatLocalTime } from '@nodal-agents/shared';
+import { resolveTimezone, formatLocalTime, runningNodalVersion } from '@nodal-agents/shared';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { listCodeProjectsForContext } from './code-projects.ts';
 
@@ -67,6 +67,10 @@ export async function getDeploymentContext(
 
   const authMode = process.env['AUTH_MODE'] ?? 'local-trust';
 
+  // Passed by the launcher from the installed package (#454). Absent on a
+  // runner started by hand: the Runtime block then says it is unknown.
+  const version = runningNodalVersion();
+
   const lanAddresses = networkMode === 'lan' ? getLanAddresses() : undefined;
 
   // Containerized: check for /.dockerenv (Docker standard) or explicit env flag.
@@ -102,6 +106,7 @@ export async function getDeploymentContext(
 
   return {
     os: detectOs(),
+    ...(version !== undefined ? { version } : {}),
     networkMode,
     authMode,
     ...(lanAddresses !== undefined ? { lanAddresses } : {}),

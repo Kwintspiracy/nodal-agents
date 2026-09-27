@@ -38,6 +38,8 @@ import {
 } from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
+import type { DeploymentContext } from '@nodal-agents/orchestration';
+import { getDeploymentContext } from '../job/deployment.ts';
 import { buildCliAuditRow } from './audit.ts';
 import { failJob, touchJob } from '../job/state.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
@@ -150,6 +152,14 @@ export interface CliRuntimeJobRow {
  */
 export function buildCliRuntimeJobContext(args: {
   origin: string;
+  /**
+   * Le contexte de déploiement, le MÊME que les chemins nodal
+   * (`getDeploymentContext`). Obligatoire : sans lui, le bloc `## Runtime`
+   * entier disparaissait du prompt d'un agent en runtime CLI — version,
+   * machine, réseau, fuseau (revue Codex de #454, P2). Un champ facultatif
+   * se serait oublié au prochain point d'entrée.
+   */
+  deployment: DeploymentContext;
   task?: string | null;
   chatId?: string | null;
   workspaceGit?: Awaited<ReturnType<typeof probeWorkspaceGit>>;
@@ -174,6 +184,7 @@ export function buildCliRuntimeJobContext(args: {
   return {
     origin: args.origin,
     surface: 'cli-runtime',
+    deployment: args.deployment,
     ...(args.task ? { task: args.task } : {}),
     ...(args.chatId ? { telegramChatId: args.chatId } : {}),
     ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
@@ -590,6 +601,7 @@ export async function runCliRuntimeJob(args: {
       db,
       buildCliRuntimeJobContext({
         origin: job.channel ?? 'unknown',
+        deployment: await getDeploymentContext(db, job.entityId ?? undefined),
         task: job.task,
         chatId: job.chatId,
         workspaceGit,

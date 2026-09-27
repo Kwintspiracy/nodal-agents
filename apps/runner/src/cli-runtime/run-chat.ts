@@ -33,6 +33,7 @@ import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
 import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 import { buildCliRuntimeJobContext } from './run-job.ts';
+import { getDeploymentContext } from '../job/deployment.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
 
@@ -208,6 +209,7 @@ export async function runCliRuntimeChatTurn(args: {
       db,
       buildCliRuntimeJobContext({
         origin: 'dashboard',
+        deployment: await getDeploymentContext(db, entityId),
         task: message,
         workspaceGit,
         workspaces: wsRows,

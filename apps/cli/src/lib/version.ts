@@ -41,15 +41,24 @@ function resolveCliPackageJsonPath(): string {
  * in practice, but fail-safe prevents the version notice from crashing `up`).
  */
 export function getInstalledVersion(): string {
+  return readInstalledVersion() ?? '0.0.0';
+}
+
+/**
+ * The same read, without the fallback: `null` when the version cannot be
+ * read. For a caller that STATES the version to someone (the runner's Runtime
+ * block, #454) — `0.0.0` would be a false version said with confidence.
+ */
+export function readInstalledVersion(): string | null {
   try {
     const pkgPath = resolveCliPackageJsonPath();
     // createRequire lets us JSON-import a file by absolute path in ESM context
     // without dynamic import() (which would be async).
     const _require = createRequire(import.meta.url);
     const pkg = _require(pkgPath) as { version?: string };
-    return typeof pkg.version === 'string' && pkg.version ? pkg.version : '0.0.0';
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : null;
   } catch {
-    return '0.0.0';
+    return null;
   }
 }
 

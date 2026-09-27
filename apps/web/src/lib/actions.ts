@@ -229,6 +229,7 @@ import {
   redactSecretsInText,
   CLI_WRITE_TOOLS,
   type JobResultKind,
+  runningNodalVersion,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { lastSequencePerDeliverable } from './verification-repairs.ts';
@@ -12928,6 +12929,9 @@ export async function getRootSystemPromptAction(): Promise<ActionResult<string>>
       networkMode: (process.env['BIND'] === '0.0.0.0' ? 'lan' : 'loopback') as 'loopback' | 'lan',
       authMode: process.env['AUTH_MODE'] ?? 'local-trust',
       installNotes: await getInstallNotes(db, session.entityId),
+      // The SAME source as the runner's Runtime block (#454, Codex review
+      // pass 2): the launcher's NODAL_VERSION, read by runningNodalVersion.
+      version: runningNodalVersion(),
     };
 
     const prompt = await buildSystemPrompt(agent, db, { origin: 'dashboard', deployment });

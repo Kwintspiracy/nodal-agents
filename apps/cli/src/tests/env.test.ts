@@ -1,6 +1,9 @@
 // env.test.ts — unit tests for buildEnvForRunner and buildEnvForWeb
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildEnvForRunner, buildEnvForWeb } from '../lib/env.ts';
 import type { Config } from '../lib/config.ts';
 
@@ -21,6 +24,22 @@ const DB_URL = 'postgresql://nodalai:nodalai@localhost:25432/nodalai';
 // ── buildEnvForRunner ─────────────────────────────────────────────────────────
 
 describe('buildEnvForRunner', () => {
+  // #454 — le runner reçoit la version que `nodal-agents --version` lit : la
+  // `version` du package.json de la CLI, relue ici, jamais un littéral.
+  it('passes the installed CLI version to the runner as NODAL_VERSION', () => {
+    const pkg = JSON.parse(
+      readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'),
+        'utf8',
+      ),
+    ) as { version: string };
+    const env = buildEnvForRunner(BASE_CONFIG, DB_URL);
+    expect(env['NODAL_VERSION']).toBe(pkg.version);
+    // The web gets the SAME value: its ROOT prompt screen states it too
+    // (#454, Codex review pass 2).
+    expect(buildEnvForWeb(BASE_CONFIG, DB_URL)['NODAL_VERSION']).toBe(pkg.version);
+  });
+
   it('sets AUTH_MODE=local-trust for loopback', () => {
     const env = buildEnvForRunner(BASE_CONFIG, DB_URL);
     expect(env['AUTH_MODE']).toBe('local-trust');

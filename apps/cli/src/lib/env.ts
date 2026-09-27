@@ -2,17 +2,38 @@
 
 import { randomBytes } from 'crypto';
 import type { Config } from './config.ts';
-import { getInstalledVersion } from './version.ts';
+import { readInstalledVersion } from './version.ts';
 import { LEGACY_PG_PASSWORD, buildPgUrl } from './postgres.ts';
 
 /**
  * Build env vars for the runner process.
  * Runner expects DATABASE_URL, LLM_*, AUTH_MODE, WORKER_SECRET, PORT, BIND.
  */
-export function buildEnvForRunner(config: Config, databaseUrl: string): Record<string, string> {
+/**
+ * The environment a spawned service gets ON TOP of the launcher's own. A key
+ * set to `undefined` is REMOVED from the child, not left to inherit: without
+ * it, a variable the launcher's shell happens to carry (a NODAL_VERSION from an
+ * older session) would survive underneath and say something false (Codex
+ * review of #454, pass 3). See `childProcessEnv`.
+ */
+export type ChildEnv = Record<string, string | undefined>;
+
+/** The exact environment a child receives: the launcher's, overlaid, removals applied. */
+export function childProcessEnv(
+  base: Readonly<Record<string, string | undefined>>,
+  env: ChildEnv,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries({ ...base, ...env })) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+export function buildEnvForRunner(config: Config, databaseUrl: string): ChildEnv {
   const bind = config.bind === 'loopback' ? '127.0.0.1' : '0.0.0.0';
 
-  const env: Record<string, string> = {
+  const env: ChildEnv = {
     DATABASE_URL: databaseUrl,
     AUTH_MODE: resolveAuthMode(config),
     WORKER_SECRET: config.workerSecret,
@@ -21,6 +42,13 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
     APP_URL: `http://localhost:${config.ports.runner}`,
     NODE_ENV: 'production',
   };
+
+  // The version this install runs, the one `nodal-agents --version` prints
+  // (#454): the runner states it in every agent's Runtime block, so "the
+  // 0.9.2" or "my version" can be tied to the product. REMOVED when it cannot
+  // be read (resolution, read or JSON failed) — explicitly, so an inherited
+  // value cannot survive: the block then says the runner does not know it.
+  env['NODAL_VERSION'] = readInstalledVersion() ?? undefined;
 
   // llm section is optional (Brique 25): runner reads LLM config from DB at
   // runtime. Set env vars when present so the seeder can populate entity_llm_keys
@@ -106,11 +134,12 @@ export function resolveAuthMode(config: Config): 'local-trust' | 'local-auth' {
  * Build env vars for the web (Next.js) process.
  * Web expects DATABASE_URL, RUNNER_URL, AUTH_MODE, AUTH_SECRET, NEXT_PUBLIC_APP_URL.
  */
-export function buildEnvForWeb(config: Config, databaseUrl: string): Record<string, string> {
+export function buildEnvForWeb(config: Config, databaseUrl: string): ChildEnv {
+  const installedVersion = readInstalledVersion();
   const authMode = resolveAuthMode(config);
   const bind = config.bind === 'loopback' ? '127.0.0.1' : '0.0.0.0';
 
-  const env: Record<string, string> = {
+  const env: ChildEnv = {
     DATABASE_URL: databaseUrl,
     // 127.0.0.1, not localhost: on Windows localhost prefers IPv6 (::1), letting a
     // foreign IPv6 server on the runner port silently steal the web→runner traffic.
@@ -120,8 +149,10 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     NEXT_PUBLIC_AUTH_MODE: authMode,
     NEXT_PUBLIC_APP_URL: `http://localhost:${config.ports.web}`,
     // The running CLI version — the web's update badge (sidebar) compares this
-    // against the npm `latest` to tell the user when to run `nodal-agents update`.
-    NODAL_VERSION: getInstalledVersion(),
+    // against the npm `latest` to tell the user when to run `nodal-agents update`,
+    // and the ROOT prompt screen states it (#454). Removed exactly as for the
+    // runner when it cannot be read: both processes get the same value.
+    NODAL_VERSION: installedVersion ?? undefined,
     PORT: String(config.ports.web),
     // BIND mirrors the runner's binding so /settings → Network can render the
     // "restart required" banner when the configured value drifts from runtime.

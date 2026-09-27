@@ -59,6 +59,17 @@ afterEach(() => {
 });
 
 describe('getDeploymentContext', () => {
+  // #454 — the version the launcher passes (NODAL_VERSION, read from the
+  // installed package) reaches the Runtime block; absent, it stays absent.
+  it('carries the NODAL_VERSION the launcher passes, and nothing when there is none', async () => {
+    for (const v of ['0.9.3', '2.0.0-beta.1']) {
+      process.env['NODAL_VERSION'] = v;
+      expect((await getDeploymentContext(makeFakeDb())).version).toBe(v);
+    }
+    delete process.env['NODAL_VERSION'];
+    expect((await getDeploymentContext(makeFakeDb())).version).toBeUndefined();
+  });
+
   it('returns loopback when BIND is absent', async () => {
     delete process.env['BIND'];
     const ctx = await getDeploymentContext(makeFakeDb());
