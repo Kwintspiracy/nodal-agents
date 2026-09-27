@@ -55,3 +55,15 @@ describe('La carte du serveur MCP', () => {
     expect(await render(true)).not.toContain('—');
   });
 });
+
+describe('La carte du serveur MCP, ce que la page Runs montre', () => {
+  it('promet le canal et l’étiquette de l’appelant, que la page Runs affiche (originOfRun, run-origin-mcp.test.ts)', async () => {
+    const texte = await render(true);
+    expect(texte).toContain(
+      'Jobs arrive on the Runs page with channel mcp and the label the caller gives.',
+    );
+    expect(texte).toContain(
+      'MCP jobs never get the configuration tools (create agents, skills, connectors, automations); the runner enforces that, not this switch.',
+    );
+  });
+});
