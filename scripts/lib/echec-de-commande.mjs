@@ -10,24 +10,46 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Ce qui nomme un échec dans les sorties que `release:check` lance : vitest
- * (`FAIL`, `×`, l'assertion), tsc (`error TS…`), eslint (`  12:5  error  …`),
- * et toute erreur Node (`…Error:`). Une ligne préfixée par turbo
- * (`@nodal-agents/web:test: `) est reconnue de la même façon.
+ * Ce qui nomme un échec dans les sorties que `release:check` lance, par RANG :
+ * d'abord ce qui nomme un TEST (vitest `FAIL`, `×`), puis ce qui nomme une
+ * erreur de compilation ou de lint (tsc `error TS…`, eslint `12:5  error`),
+ * puis toute erreur (`…Error:`). Le rang compte quand la limite coupe : des
+ * `AssertionError` qu'un test VERT écrit dans la console ne doivent pas
+ * pousser hors du message la ligne du test qui a échoué (revue Codex de la
+ * PR #519). Aucun motif n'est ancré en début de ligne : turbo préfixe chaque
+ * ligne par sa tâche (`@nodal-agents/web:lint: `).
  */
-const NOMME_UN_ECHEC = [
-  /(^|\s)FAIL\s/,
-  /\s×\s/,
-  /\b[A-Z][A-Za-z]*Error:/,
-  /\berror TS\d+:/,
-  /^\s*\d+:\d+\s+error\s/,
+const RANGS = [
+  [/(^|\s)FAIL\s/, /\s×\s/],
+  [/\berror TS\d+:/, /(^|\s)\d+:\d+\s+error\s/],
+  [/\b[A-Z][A-Za-z]*Error:/],
 ];
 
-/** Les lignes qui nomment l'échec, au plus `max`, puis une ligne qui dit combien il en reste. */
+/** Les codes de couleur ANSI, qu'une sortie forcée en couleur mêle au texte. */
+const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
+
+/**
+ * Les lignes qui nomment l'échec, au plus `max`, les plus précises d'abord
+ * (voir `RANGS`), chacune à sa place dans la sortie au sein de son rang ; puis
+ * une ligne qui dit combien il en reste.
+ */
 export function lignesDeLEchec(sortie, max = 40) {
-  const lignes = sortie.split(/\r?\n/).filter((l) => NOMME_UN_ECHEC.some((re) => re.test(l)));
-  if (lignes.length <= max) return lignes;
-  return [...lignes.slice(0, max), `… ${lignes.length - max} more failure lines in the full log`];
+  const lignes = sortie.replace(ANSI, '').split(/\r?\n/);
+  const retenues = [];
+  const vues = new Set();
+  for (const motifs of RANGS) {
+    lignes.forEach((l, i) => {
+      if (!vues.has(i) && motifs.some((re) => re.test(l))) {
+        vues.add(i);
+        retenues.push(l);
+      }
+    });
+  }
+  if (retenues.length <= max) return retenues;
+  return [
+    ...retenues.slice(0, max),
+    `… ${retenues.length - max} more failure lines in the full log`,
+  ];
 }
 
 /** Un nom de fichier stable pour une commande : `pnpm test` → `pnpm-test.log`. */
@@ -41,18 +63,27 @@ function nomDeFichier(commande) {
  * l'outil), et le chemin du fichier.
  */
 export function rapportDEchec({ commande, sortie, dossier, fin = 8 }) {
-  mkdirSync(dossier, { recursive: true });
   const fichier = join(dossier, nomDeFichier(commande));
-  writeFileSync(fichier, sortie);
+  // L'écriture du journal ne doit jamais REMPLACER l'échec qu'elle documente :
+  // un disque plein ou un dossier interdit est dit à la place du chemin, et le
+  // message garde les lignes et la fin (revue Codex de la PR #519).
+  let ecrit;
+  try {
+    mkdirSync(dossier, { recursive: true });
+    writeFileSync(fichier, sortie);
+    ecrit = `full output: ${fichier}`;
+  } catch (err) {
+    ecrit = `full output could not be written to ${fichier}: ${err.code ?? err.message}`;
+  }
   const nommees = lignesDeLEchec(sortie);
-  const derniere = sortie.trim().split(/\r?\n/).slice(-fin);
+  const derniere = sortie.replace(ANSI, '').trim().split(/\r?\n/).slice(-fin);
   const corps =
     nommees.length > 0
       ? [...nommees, '', 'last lines:', ...derniere]
       : ['no line names the failure; last lines:', ...derniere];
   return {
     fichier,
-    message: `\`${commande}\` failed:\n    ${corps.join('\n    ')}\n    full output: ${fichier}`,
+    message: `\`${commande}\` failed:\n    ${corps.join('\n    ')}\n    ${ecrit}`,
   };
 }
 

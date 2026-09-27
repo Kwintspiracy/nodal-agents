@@ -148,3 +148,48 @@ describe('lancerOuRapporter — ce que release:check appelle pour chaque étape'
     ).toThrow(/ENOBUFS/);
   });
 });
+
+describe('review of PR #519', () => {
+  let dossier;
+  afterEach(() => {
+    if (dossier) rmSync(dossier, { recursive: true, force: true });
+  });
+
+  it('une erreur eslint préfixée par turbo est nommée', () => {
+    const ligne =
+      "@nodal-agents/web:lint:   12:5  error  'y' is assigned a value but never used  no-unused-vars";
+    expect(lignesDeLEchec(`@nodal-agents/web:lint: /repo/apps/web/src/a.ts\n${ligne}\n`)).toEqual([
+      ligne,
+    ]);
+  });
+
+  it('des erreurs écrites par des tests VERTS ne poussent pas hors du message la ligne du test rouge', () => {
+    const bruit = Array.from(
+      { length: 50 },
+      (_, i) => `@nodal-agents/web:test: AssertionError: logged by a passing test ${i}`,
+    );
+    const rouge = '@nodal-agents/web:test:  FAIL  src/flaky.test.ts > the one that flakes';
+    const lignes = lignesDeLEchec([...bruit, rouge].join('\n'), 40);
+    expect(lignes[0]).toBe(rouge);
+    expect(lignes).toHaveLength(41);
+  });
+
+  it('les codes couleur ne cachent pas une ligne FAIL et ne salissent pas le message', () => {
+    const colore = '\x1b[41m\x1b[1m FAIL \x1b[22m\x1b[49m src/a.test.ts > case';
+    expect(lignesDeLEchec(colore)).toEqual([' FAIL  src/a.test.ts > case']);
+  });
+
+  it('un journal impossible à écrire ne remplace pas l’échec : le message le dit et garde le reste', () => {
+    dossier = mkdtempSync(join(tmpdir(), 'release-check-'));
+    // Un FICHIER là où le dossier des journaux devrait être : mkdir échoue.
+    const pasUnDossier = join(dossier, 'occupe');
+    writeFileSync(pasUnDossier, 'x');
+    const { message } = rapportDEchec({
+      commande: 'pnpm test',
+      sortie: ' FAIL  src/a.test.ts > case\nFailed:    @nodal-agents/web#test',
+      dossier: pasUnDossier,
+    });
+    expect(message).toContain('FAIL  src/a.test.ts > case');
+    expect(message).toMatch(/full output could not be written to .*pnpm-test\.log: E[A-Z]+/);
+  });
+});
