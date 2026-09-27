@@ -6,7 +6,7 @@
 // clé, le chemin, les drapeaux et la génération que la finalisation lira.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -32,7 +32,10 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'nodal-declared-'));
+  // Le chemin RÉEL, comme #503 : sous Windows `tmpdir()` peut rendre un nom
+  // court DOS (`RUNNER~1`) là où le résolveur des outils rend le nom long, et
+  // une clé attendue calculée d'un côté ne retrouvait pas celle rangée de l'autre.
+  root = await realpath(await mkdtemp(join(tmpdir(), 'nodal-declared-')));
   ws = join(root, 'ws');
   await mkdir(ws, { recursive: true });
   const [job] = await db
