@@ -389,6 +389,18 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    */
   asksUser?: boolean;
   /**
+   * `purpose` in this tool's input is one of the tool's OWN arguments, not the
+   * sentence Nodal asks for on the approval card (#492, review).
+   *
+   * Nodal adds `purpose` to a tool's schema as the reason shown to the person
+   * who approves (`withStatedPurpose`, and the MCP adapter's `attachPurpose`),
+   * EXCEPT when the tool already declares one: an MCP server may take a
+   * `purpose` that changes what the call does. Whoever compares two calls, or
+   * reads the reason, must know which of the two it is holding. Set by the
+   * layer that knows (the MCP adapter); absent means the sentence.
+   */
+  purposeIsArgument?: boolean;
+  /**
    * Optional check that runs BEFORE the approval gate — the only hook that can
    * refuse a call without a human ever being asked about it.
    *

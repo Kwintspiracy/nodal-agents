@@ -604,9 +604,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // de refuser n'a pas besoin d'une phrase de plus, il a déjà sa réponse.
     // Voir `rejected-call.ts` pour ce qui compte comme « le même appel ».
     const dejaRefuse =
-      tool.asksUser === true
-        ? null
-        : await priorRejectionOfSameCall(ctx, tool.name, validatedInput);
+      tool.asksUser === true ? null : await priorRejectionOfSameCall(ctx, tool, validatedInput);
     if (dejaRefuse) {
       const result: ToolExecutionResult = {
         outcome: 'error',

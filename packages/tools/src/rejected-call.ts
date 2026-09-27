@@ -9,7 +9,9 @@
 // LA RÈGLE, pour tout outil : avant de poser une demande, la porte cherche,
 // dans CE job, une demande `approval` REFUSÉE pour le même outil et la même
 // entrée, `purpose` mis à part — c'est la phrase adressée à la personne, pas
-// l'action. Trouvée, l'appel reçoit la décision déjà prise, et aucune ligne
+// l'action. SAUF quand l'outil déclare `purpose` comme l'un de SES arguments
+// (`purposeIsArgument`, un serveur MCP qui le prend) : là, un autre purpose
+// est un autre appel, que le propriétaire n'a jamais vu (revue Codex de #492). Trouvée, l'appel reçoit la décision déjà prise, et aucune ligne
 // n'est créée. Ce qui n'en relève pas :
 //
 //   - une demande EXPIRÉE : personne n'a répondu, redemander est permis
@@ -36,9 +38,9 @@ export interface PriorRejection {
  * (jsonb) à ce que la validation vient de rendre, sans que l'ordre des clés ni
  * un champ `undefined` ne fassent deux actions de la même.
  */
-function actionOf(input: unknown): string {
+function actionOf(input: unknown, purposeIsArgument: boolean): string {
   const plain = JSON.parse(JSON.stringify(input ?? null)) as unknown;
-  if (plain && typeof plain === 'object' && !Array.isArray(plain)) {
+  if (!purposeIsArgument && plain && typeof plain === 'object' && !Array.isArray(plain)) {
     const rest = { ...(plain as Record<string, unknown>) };
     delete rest[PURPOSE_KEY];
     return canonicalJson(rest);
@@ -49,9 +51,11 @@ function actionOf(input: unknown): string {
 /** Le refus déjà prononcé dans ce job sur ce même appel, ou `null`. */
 export async function priorRejectionOfSameCall(
   ctx: ToolContext,
-  toolName: string,
+  tool: { readonly name: string; readonly purposeIsArgument?: boolean },
   input: unknown,
 ): Promise<PriorRejection | null> {
+  const toolName = tool.name;
+  const purposeIsArgument = tool.purposeIsArgument === true;
   if (!ctx.jobId) return null;
   const rows = await ctx.db
     .select({
@@ -68,8 +72,8 @@ export async function priorRejectionOfSameCall(
         eq(approvalRequests.status, 'rejected'),
       ),
     );
-  const action = actionOf(input);
-  const same = rows.find((r) => actionOf(r.toolInput) === action);
+  const action = actionOf(input, purposeIsArgument);
+  const same = rows.find((r) => actionOf(r.toolInput, purposeIsArgument) === action);
   return same ? { approvalRequestId: same.id, notes: same.notes } : null;
 }
 

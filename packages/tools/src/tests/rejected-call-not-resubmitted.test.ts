@@ -168,6 +168,37 @@ describe('an identical call the owner already rejected in this run (#492) @cap:a
     expect(await rowsFor(runB, 'speech_492_c')).toHaveLength(1);
   });
 
+  // Revue Codex de #492 : un serveur MCP peut prendre `purpose` comme un VRAI
+  // argument. Deux purposes différents y sont deux appels différents, et le
+  // second n'a jamais été vu par le propriétaire.
+  it('a tool whose own argument is `purpose`: another purpose is another call, the same one is answered', async () => {
+    const jobId = await newJob();
+    const { tool, ran } = gatedTool('note_492_e');
+    const owning = { ...tool, purposeIsArgument: true } as typeof tool;
+    await executeTool(owning, { ...CALL, purpose: 'invoice' }, makeCtx(jobId), opts());
+    const [asked] = await rowsFor(jobId, 'note_492_e');
+    await reject(asked!.id);
+
+    const contract = await executeTool(
+      owning,
+      { ...CALL, purpose: 'contract' },
+      makeCtx(jobId),
+      opts(),
+    );
+    expect(contract.outcome).toBe('awaiting_approval');
+    expect(await rowsFor(jobId, 'note_492_e')).toHaveLength(2);
+
+    const invoiceAgain = await executeTool(
+      owning,
+      { ...CALL, purpose: 'invoice' },
+      makeCtx(jobId),
+      opts(),
+    );
+    expect(invoiceAgain.outcome).toBe('error');
+    expect(await rowsFor(jobId, 'note_492_e')).toHaveLength(2);
+    expect(ran).toEqual([]);
+  });
+
   it('an EXPIRED request is not a refusal: asking again is allowed', async () => {
     const jobId = await newJob();
     const { tool } = gatedTool('speech_492_d');

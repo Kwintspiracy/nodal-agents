@@ -299,6 +299,18 @@ describe('purpose injection', () => {
     await def.execute({ purpose: 'quarterly report' }, {} as never);
 
     expect(sent).toEqual({ name: 'file_note', arguments: { purpose: 'quarterly report' } });
+    // Et il le DIT : la porte d'approbation doit savoir que deux purposes
+    // différents font deux appels différents (revue Codex de #492).
+    expect(def.purposeIsArgument).toBe(true);
+  });
+
+  it('a purpose WE added is the approval sentence: the definition does not claim it as an argument', () => {
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      descriptor,
+      'c',
+    );
+    expect(def.purposeIsArgument).toBeUndefined();
   });
 
   it('leaves a non-object input schema alone rather than forcing one', () => {
