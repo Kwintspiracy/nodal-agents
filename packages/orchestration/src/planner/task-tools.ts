@@ -135,7 +135,7 @@ export function generateTaskTools(
           const out = reach.outside.find((a) => a.id === targetId);
           throw new Error(
             `task_board_error: ${out?.name ?? input.assigned_to} exists in this workspace but ` +
-              `is not on your team (${out ? describeOutsideAgent(out) : 'no team'}). ` +
+              `is not on your team (${out ? describeOutsideAgent(out, 'delegate') : 'no team'}). ` +
               'A task can only be assigned to an agent of your team.',
           );
         }

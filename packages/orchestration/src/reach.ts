@@ -110,19 +110,28 @@ export async function loadWorkspaceReach(
 }
 
 /**
+ * How the reader of the clause can hand work on (Codex review of #473, P1-b):
+ * - `delegate`: it holds `assign_*` / `create_task` (a job);
+ * - `escalate`: it holds only `run_task`, and the job it starts delegates (chat);
+ * - `none`: no delegation path at all (a coding-CLI session). The facts stay,
+ *   the route goes: telling it to go through a teammate would be an order it
+ *   cannot follow.
+ */
+export type ReachMeans = 'delegate' | 'escalate' | 'none';
+
+/**
  * Where an agent outside the team stands, in one clause. The team block lists
  * it this way and create_task refuses with it — one wording for one rule.
  * LLM-channel text; it never reaches the user as is (invariant #2).
  */
-export function describeOutsideAgent(a: OutsideAgent): string {
+export function describeOutsideAgent(a: OutsideAgent, means: ReachMeans): string {
   if (!a.active) return 'inactive: nobody can hand it work until it is reactivated';
   if (a.holders.length === 0) return 'on no team: nobody can hand it work until it is attached';
   const team = `on the team of ${a.holders.join(', ')}`;
-  if (a.through) {
-    return (
-      `${team}; reach it through **${a.through.name}** (\`${a.through.slug}\`), one of your ` +
-      'agents, by asking it to have this agent do the work'
-    );
-  }
-  return `${team}, which no chain of your team reaches`;
+  if (means === 'none') return team;
+  if (!a.through) return `${team}, which no chain of your team reaches`;
+  const via = `**${a.through.name}** (\`${a.through.slug}\`), one of your agents`;
+  return means === 'escalate'
+    ? `${team}; the job you start with \`run_task\` can reach it through ${via}`
+    : `${team}; reach it through ${via}, by asking it to have this agent do the work`;
 }

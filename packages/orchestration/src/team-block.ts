@@ -21,6 +21,7 @@ import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
 import { loadWorkspaceReach, describeOutsideAgent } from './reach';
+import type { ReachMeans } from './reach';
 
 // ─── buildTeamBlock ───────────────────────────────────────────────────────────
 
@@ -75,6 +76,11 @@ export async function buildTeamBlock(
   options: TeamBlockOptions = {},
 ): Promise<string> {
   const canDelegate = options.delegation !== false;
+  const reachMeans: ReachMeans = canDelegate
+    ? 'delegate'
+    : options.escalation === true
+      ? 'escalate'
+      : 'none';
   // Load children from DB
   const childRows = await db
     .select({
@@ -95,7 +101,14 @@ export async function buildTeamBlock(
       and(eq(agentAssignments.orchestratorId, parentAgentId as string), eq(agents.active, true)),
     );
 
-  if (childRows.length === 0) return '';
+  // No team of its own: no roster and no delegation manual — but the rest of
+  // the workspace is still said (Codex review of #473, P1-a). A root or a
+  // lone agent that shares the workspace with Lead's team would otherwise
+  // answer that Reviewer A "does not exist".
+  if (childRows.length === 0) {
+    // With no team there is no teammate to go through, whatever the surface.
+    return renderOutsideAgents(parentAgentId, db, 'none', false);
+  }
 
   // Detect mode: router (has sub-orchestrators) or planner (workers only)
   const parentRow = await db
@@ -460,18 +473,11 @@ export async function buildTeamBlock(
 
   // The rest of the workspace (#473): agents that exist but are not on this
   // team. Neither `assign_*` nor `create_task` reaches them; the line says who
-  // holds each one and through which teammate it is reached, so the model
-  // neither denies that an agent exists nor looks for a side door.
-  const { outside } = await loadWorkspaceReach(parentAgentId, db);
-  if (outside.length > 0) {
-    lines.push(
-      '\nAgents of this workspace outside your team. They exist; you cannot hand them work ' +
-        'yourself, by either route:',
-    );
-    for (const a of outside) {
-      lines.push(`- **${a.name}** (\`${a.slug}\`): ${describeOutsideAgent(a)}`);
-    }
-  }
+  // holds each one and, where this agent has a way to use it, through which
+  // teammate it is reached — so the model neither denies that an agent exists
+  // nor looks for a side door.
+  const outsideSection = await renderOutsideAgents(parentAgentId, db, reachMeans, true);
+  if (outsideSection !== '') lines.push(outsideSection);
 
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
@@ -490,4 +496,31 @@ export async function buildTeamBlock(
   );
 
   return lines.join('\n');
+}
+
+/**
+ * The agents of the workspace outside `agentId`'s team, one line each, or ''
+ * when there are none. `hasTeam` only changes the heading: an agent with no
+ * team is told it has none, rather than "outside your team".
+ */
+async function renderOutsideAgents(
+  agentId: AgentId,
+  db: AnyDrizzleDb,
+  means: ReachMeans,
+  hasTeam: boolean,
+): Promise<string> {
+  const { outside } = await loadWorkspaceReach(agentId, db);
+  if (outside.length === 0) return '';
+  const heading = hasTeam
+    ? '\nAgents of this workspace outside your team. They exist; you cannot hand them work ' +
+      'yourself, by either route:'
+    : '## Other agents of this workspace\n\nThey exist. You have no team of your own, so you ' +
+      'cannot hand them work yourself:';
+  return [
+    heading,
+    ...outside.map((a) => `- **${a.name}** (\`${a.slug}\`): ${describeOutsideAgent(a, means)}`),
+    ...(hasTeam
+      ? []
+      : ['\nNever say that one of these agents does not exist: say whose team it is on.']),
+  ].join('\n');
 }

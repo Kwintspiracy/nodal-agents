@@ -612,3 +612,50 @@ describe('buildTeamBlock — les agents de l’espace hors de l’équipe (#473)
     expect(outside).not.toContain(`**${root.name}**`);
   });
 });
+
+// Revue Codex de #473, P1-a : le bloc sortait à vide pour un agent sans
+// enfant, AVANT de nommer le reste de l'espace. Un root ou un agent isolé
+// pouvait donc encore dire « Reviewer A n'existe pas ». P1-b : la clause
+// « passe par Lead » était servie aussi aux surfaces sans outil de délégation.
+describe('buildTeamBlock — le reste de l’espace, dit à tout agent selon ses moyens (#473, revue Codex)', () => {
+  async function seedOrg() {
+    const { entityId } = await seedContext(db);
+    const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const alone = await seedAgent(db, entityId, `test-alone-${t}`, 'orchestrator');
+    const root = await seedAgent(db, entityId, `test-root-${t}`, 'orchestrator');
+    const lead = await seedAgent(db, entityId, `test-lead-${t}`, 'orchestrator');
+    const revA = await seedAgent(db, entityId, `test-reva-${t}`, 'agent');
+    await assignChild(db, root.id, lead.id, entityId);
+    await assignChild(db, lead.id, revA.id, entityId);
+    return { alone, root, lead, revA };
+  }
+  const lineOf = (block: string, name: string): string =>
+    block.split('\n').find((l) => l.includes(`**${name}**`)) ?? '';
+
+  it('names the workspace to an agent with NO team, and never says it can delegate', async () => {
+    const { alone, lead, revA } = await seedOrg();
+    const block = await buildTeamBlock(alone.id as AgentId, db);
+    expect(lineOf(block, revA.name)).toContain(`on the team of ${lead.name}`);
+    expect(block).not.toContain('reach it through');
+    expect(block).not.toContain('## Your team');
+  });
+
+  it('offers the route through a teammate only where the agent has a way to use it', async () => {
+    const { root, lead, revA } = await seedOrg();
+    // Job surface: assign_* exists, so the route is an instruction.
+    const job = await buildTeamBlock(root.id as AgentId, db);
+    expect(lineOf(job, revA.name)).toContain(`reach it through **${lead.name}**`);
+    // CLI session: no delegation tool at all — the fact, never the route.
+    const cli = await buildTeamBlock(root.id as AgentId, db, { delegation: false });
+    expect(lineOf(cli, revA.name)).toContain(`on the team of ${lead.name}`);
+    expect(lineOf(cli, revA.name)).not.toContain('reach it through');
+    // Chat: the job started with run_task delegates, so the route is the job's.
+    const chat = await buildTeamBlock(root.id as AgentId, db, {
+      delegation: false,
+      escalation: true,
+    });
+    expect(lineOf(chat, revA.name)).toContain(
+      `the job you start with \`run_task\` can reach it through **${lead.name}**`,
+    );
+  });
+});
