@@ -264,6 +264,34 @@ describe('an identical call the owner already rejected in this run (#492) @cap:a
     expect(await rowsFor(jobId, 'delete_492_g')).toHaveLength(2);
   });
 
+  // Revue Codex de #492, passe 4 : refusé, devenu caduc, refusé de nouveau.
+  // C'est le SECOND refus qui répond, pas le premier que la base rend.
+  it('the latest refusal answers, not an older one made stale since', async () => {
+    const jobId = await newJob();
+    const { tool } = gatedTool('delete_492_h');
+    await executeTool(tool, { ...CALL, purpose: 'Un.' }, makeCtx(jobId), opts());
+    const [first] = await rowsFor(jobId, 'delete_492_h');
+    await reject(first!.id, 'premier refus');
+
+    const { tool: other } = gatedTool('other_492_h');
+    const ungated = { ...other, defaultApproval: undefined } as typeof other;
+    expect((await executeTool(ungated, { ...CALL }, makeCtx(jobId), opts())).outcome).toBe(
+      'success',
+    );
+
+    await executeTool(tool, { ...CALL, purpose: 'Deux.' }, makeCtx(jobId), opts());
+    const second = (await rowsFor(jobId, 'delete_492_h')).find((r) => r.id !== first!.id);
+    await reject(second!.id, 'second refus');
+
+    const again = await executeTool(tool, { ...CALL, purpose: 'Trois.' }, makeCtx(jobId), opts());
+    expect(again.outcome).toBe('error');
+    if (again.outcome === 'error') {
+      expect(again.error).toContain(second!.id);
+      expect(again.error).toContain('second refus');
+    }
+    expect(await rowsFor(jobId, 'delete_492_h')).toHaveLength(2);
+  });
+
   it('an EXPIRED request is not a refusal: asking again is allowed', async () => {
     const jobId = await newJob();
     const { tool } = gatedTool('speech_492_d');
