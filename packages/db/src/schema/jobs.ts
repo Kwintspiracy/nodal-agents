@@ -5,6 +5,7 @@ import {
   text,
   uuid,
   integer,
+  bigint,
   real,
   jsonb,
   timestamp,
@@ -311,6 +312,12 @@ export const agentJobs = pgTable(
      * referait, donc le job n'a pas été repris. NULL ailleurs.
      */
     restartBlockedBy: jsonb('restart_blocked_by').$type<string[]>(),
+    /**
+     * Le dernier `tool_calls.seq` du job au moment de son point de reprise
+     * (`saveCheckpoint`, #443). Le faucheur compte ce qui a été écrit après,
+     * par ORDRE d'écriture — jamais par numéro de tour.
+     */
+    checkpointToolSeq: bigint('checkpoint_tool_seq', { mode: 'number' }),
     /**
      * Le projet ENREGISTRÉ auquel ce travail s'est rattaché (0093, P5).
      *

@@ -35,7 +35,7 @@
 // ÉCHOUE : l'échec typé remonte au parent par le porteur de la PR #170, avec
 // ce que le job avait écrit (#491), et c'est le PARENT qui décide.
 
-import { and, asc, eq, gt, inArray, isNull, lt, or } from '@nodal-agents/db';
+import { and, asc, eq, gt, inArray, lt } from '@nodal-agents/db';
 import { agentJobs, agentTasks, agents, approvalRequests, toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resumeDelegated } from '@nodal-agents/orchestration';
@@ -147,14 +147,16 @@ export function orphanDecision(
 async function effectsAfterCheckpoint(
   db: AnyDrizzleDb,
   jobId: string,
-  savedTurn: number,
+  checkpointToolSeq: number | null,
 ): Promise<string[]> {
+  // Par ORDRE d'écriture, jamais par numéro de tour (revue Codex, passe 3) :
+  // le rejeu d'un appel APPROUVÉ écrit sa marque au tour déjà sauvegardé, et
+  // la compter par `turn > sauvegardé` la laissait passer. Sans ordre connu
+  // (sauvegardé avant cette colonne), tout ce que le job a fait compte.
   const rows = await db
     .select({ toolName: toolCalls.toolName, riskLevel: toolCalls.riskLevel })
     .from(toolCalls)
-    .where(
-      and(eq(toolCalls.jobId, jobId), or(gt(toolCalls.turn, savedTurn), isNull(toolCalls.turn))),
-    )
+    .where(and(eq(toolCalls.jobId, jobId), gt(toolCalls.seq, checkpointToolSeq ?? 0)))
     .orderBy(asc(toolCalls.seq));
   const noms: string[] = [];
   for (const r of rows) {
@@ -256,6 +258,7 @@ export async function reclaimJobsOfDeadRunners(
       messages: agentJobs.messages,
       turn: agentJobs.turn,
       restartResumes: agentJobs.restartResumes,
+      checkpointToolSeq: agentJobs.checkpointToolSeq,
       runtime: agents.runtime,
     })
     .from(agentJobs)
@@ -290,7 +293,7 @@ export async function reclaimJobsOfDeadRunners(
       // ou un job sans tour sauvegardé, n'a pas de tour à rejouer.
       effectsAfterCheckpoint:
         resume === 'from_checkpoint' && (job.turn ?? 0) >= 1
-          ? await effectsAfterCheckpoint(db, job.id, job.turn ?? 0)
+          ? await effectsAfterCheckpoint(db, job.id, job.checkpointToolSeq)
           : [],
     });
 

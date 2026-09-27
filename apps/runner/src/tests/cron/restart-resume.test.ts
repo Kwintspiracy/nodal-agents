@@ -32,6 +32,7 @@ import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import { executeJob } from '../../job/execute.ts';
+import { saveCheckpoint as saveCheckpointReel } from '../../job/state.ts';
 import {
   reclaimJobsOfDeadRunners,
   MAX_RESTART_RESUMES,
@@ -365,6 +366,7 @@ describe('la reprise ne refait jamais un effet (#443) @cap:organiser-equipe/mote
   /** Le job fait quatre tours de lecture, puis un cinquième qui meurt avant sa sauvegarde. */
   async function mortApresLeTour5(
     tour5: Tour,
+    tour1: Tour = { outil: 'a1' },
   ): Promise<{ jobId: string; relacher: () => void; abandonne: Promise<unknown> }> {
     const [job] = await db
       .insert(agentJobs)
@@ -379,13 +381,7 @@ describe('la reprise ne refait jamais un effet (#443) @cap:organiser-equipe/mote
       .returning({ id: agentJobs.id });
     const jobId = job!.id;
     mortALaSauvegarde.tour = 5;
-    const avant = modele([
-      { outil: 'a1' },
-      { outil: 'a2' },
-      { outil: 'a3' },
-      { outil: 'a4' },
-      tour5,
-    ]);
+    const avant = modele([tour1, { outil: 'a2' }, { outil: 'a3' }, { outil: 'a4' }, tour5]);
     const abandonne = executeJob(jobId as JobId, deps(avant.llm)).catch(() => undefined);
     // Le tour 5 a exécuté ses outils : sa ligne `tool_calls` est écrite.
     const limite = Date.now() + 15_000;
@@ -460,6 +456,35 @@ describe('la reprise ne refait jamais un effet (#443) @cap:organiser-equipe/mote
         .from(toolCalls)
         .where(and(eq(toolCalls.jobId, mort.jobId), eq(toolCalls.toolName, 'file_write')));
       expect(ecritures).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      err.mockRestore();
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, ws!.id));
+    }
+  }, 60_000);
+
+  // Ce qui a été écrit AVANT le point de reprise ne compte pas : un tour 1
+  // qui a écrit un fichier, sauvegardé depuis, ne bloque pas la reprise d'un
+  // tour 5 qui n'a fait que lire. C'est l'ORDRE qui tranche (passe 3).
+  it('une écriture d’un tour déjà sauvegardé ne bloque pas la reprise', async () => {
+    const dossier = mkdtempSync(join(tmpdir(), 'restart-before-'));
+    const [ws] = await db
+      .insert(agentWorkspaces)
+      .values({ agentId: seed.agentId, label: 'Travail', path: dossier, position: 0 })
+      .returning({ id: agentWorkspaces.id });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const mort = await mortApresLeTour5(
+        { outil: 'r5b' },
+        { outil: 'w1', nom: 'file_write', entree: { path: 'avant.txt', content: 'tour 1' } },
+      );
+
+      const reprise = await reclaimJobsOfDeadRunners(db);
+
+      expect(reprise.resumedJobIds).toContain(mort.jobId);
+      expect(await row(mort.jobId)).toMatchObject({ status: 'pending', resumedFromTurn: 4 });
+      mortALaSauvegarde.tour = null;
     } finally {
       warn.mockRestore();
       err.mockRestore();
@@ -653,6 +678,81 @@ describe('une demande d’approbation en attente empêche la reprise (#443) @cap
       })
       .from(agentJobs)
       .where(eq(agentJobs.id, job!.id));
+    expect(r).toEqual({
+      status: 'failed',
+      error: RESTART_AFTER_SIDE_EFFECT_CODE,
+      blocked: ['run_command'],
+    });
+  });
+});
+
+// Revue Codex de #443, passe 3 : le REJEU d'un appel approuvé écrit sa marque
+// au tour déjà sauvegardé. Le faucheur, qui comptait par numéro de tour
+// (turn > sauvegardé), ne la voyait pas : il reprenait le job, et la requête
+// toujours « approuvée, non exécutée » était exécutée une seconde fois. Il
+// compte désormais par ORDRE d'écriture, depuis le point de reprise.
+describe('une marque posée après le point de reprise, quel que soit son tour (#443) @cap:organiser-equipe/moteur', () => {
+  it('tour 5 suspendu sur run_command, approuvé, rejoué, mort avant executed_at : pas de reprise', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: TACHE,
+        status: 'pending',
+        turn: 5,
+        messages: [{ role: 'user', content: TACHE }],
+      })
+      .returning({ id: agentJobs.id });
+    const jobId = job!.id;
+    // Le tour 5, suspendu sur son approbation, est SAUVEGARDÉ : c'est le point
+    // de reprise (la vraie sauvegarde, qui pose l'ordre qu'elle couvre).
+    await saveCheckpointReel(db as never, jobId, {
+      messages: [{ role: 'user', content: TACHE }],
+      turn: 5,
+      chainCount: 0,
+      toolsUsed: [],
+    });
+    await db.insert(approvalRequests).values({
+      entityId: seed.entityId,
+      jobId,
+      agentId: seed.agentId,
+      toolName: 'run_command',
+      toolInput: { command: 'npm publish' },
+      status: 'approved',
+    });
+    // Le rejeu : le job repart, écrit la marque de run_command AU TOUR 5, fait
+    // l'effet, et le runner meurt avant de poser executed_at.
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId,
+      toolName: 'run_command',
+      riskLevel: 'destructive',
+      toolInput: { command: 'npm publish' },
+      toolOutput: null,
+      turn: 5,
+    });
+    await db
+      .update(agentJobs)
+      .set({
+        status: 'processing',
+        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+      })
+      .where(eq(agentJobs.id, jobId));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const reprise = await reclaimJobsOfDeadRunners(db).finally(() => warn.mockRestore());
+
+    expect(reprise.resumedJobIds).not.toContain(jobId);
+    const [r] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        blocked: agentJobs.restartBlockedBy,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
     expect(r).toEqual({
       status: 'failed',
       error: RESTART_AFTER_SIDE_EFFECT_CODE,

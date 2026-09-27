@@ -15,7 +15,14 @@
 --                      et qui ne font pas que lire (tableau de noms). Rejouer
 --                      ce tour les referait : le job n'est pas repris, il
 --                      échoue (`restart_after_side_effect`). NULL ailleurs.
+--   checkpoint_tool_seq  le dernier `tool_calls.seq` du job au moment de son
+--                      point de reprise. Le faucheur compte ce qui a été écrit
+--                      APRÈS, par ORDRE d'écriture et non par numéro de tour :
+--                      le rejeu d'un appel approuvé écrit au tour déjà
+--                      sauvegardé. NULL (sauvegardé avant cette colonne) vaut
+--                      0 : tout ce que le job a jamais fait compte.
 ALTER TABLE agent_jobs
   ADD COLUMN IF NOT EXISTS resumed_from_turn integer,
+  ADD COLUMN IF NOT EXISTS checkpoint_tool_seq bigint,
   ADD COLUMN IF NOT EXISTS restart_resumes integer NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS restart_blocked_by jsonb;

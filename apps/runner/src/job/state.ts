@@ -1,8 +1,8 @@
 // job/state.ts — JobState machine: transitions and typed state values
 // All transitions are explicit. Invalid transitions throw JobStateError.
 
-import { and, eq, notInArray, or, isNull } from '@nodal-agents/db';
-import { agentJobs, agents } from '@nodal-agents/db';
+import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
+import { agentJobs, agents, toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
 import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
@@ -667,6 +667,9 @@ export async function saveCheckpoint(
       // the whole UPDATE). See toDbSafeString.
       messages: deepDbSafe(checkpoint.messages),
       turn: checkpoint.turn,
+      // L'ordre que ce point de reprise couvre (#443) : tout appel d'outil
+      // écrit APRÈS appartient au tour qui suit, quel que soit son numéro.
+      checkpointToolSeq: sql`(SELECT COALESCE(MAX(${toolCalls.seq}), 0) FROM ${toolCalls} WHERE ${toolCalls.jobId} = ${jobId})`,
       chainCount: checkpoint.chainCount,
       toolsUsed: checkpoint.toolsUsed,
       updatedAt: new Date(),
