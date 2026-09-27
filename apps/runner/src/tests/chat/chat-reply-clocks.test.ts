@@ -224,3 +224,61 @@ describe('la réponse du chat sous les horloges des jobs (#458) @cap:parler-a-un
     expect(texts('user')).toContain(cutReplyNote());
   });
 });
+
+// #484, revue Codex (invariant #11) — le chat en flux dit lui aussi, par le
+// MÊME battement que la boucle des jobs, ce que son appel produit.
+describe('le battement de l’appel du chat (#484) @cap:parler-a-un-agent/moteur', () => {
+  it('au-delà de 60 s, une ligne llm_call_progress porte la production de la réponse', async () => {
+    const model = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.2',
+      doStream: async () => ({
+        stream: new ReadableStream({
+          async start(controller) {
+            controller.enqueue({ type: 'stream-start', warnings: [] });
+            controller.enqueue({ type: 'reasoning-start', id: 'r' });
+            controller.enqueue({ type: 'reasoning-delta', id: 'r', delta: 'hmmm' });
+            // Le modèle réfléchit une minute : le battement tombe pendant l'appel.
+            await new Promise((r) => setTimeout(r, 50));
+            vi.advanceTimersByTime(61_000);
+            controller.enqueue({ type: 'reasoning-end', id: 'r' });
+            for (const p of text('t', 'La vapeur.')) controller.enqueue(p);
+            controller.enqueue({ type: 'text-end', id: 't' });
+            controller.enqueue({
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: 'stop' },
+              usage: USAGE(5, 5),
+            });
+            controller.close();
+          },
+        }) as never,
+      }),
+      doGenerate: async () => ({
+        content: [{ type: 'text' as const, text: '' }],
+        finishReason: { unified: 'stop' as const, raw: 'stop' },
+        usage: USAGE(3, 1),
+        warnings: [],
+      }),
+    });
+    mockModel.current = model;
+    const conv = await newConversation();
+    const lignes: string[] = [];
+    const espion = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      lignes.push(a.map(String).join(' '));
+    });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      const result = await playTurn(conv);
+      expect(result).toMatchObject({ ok: true, reply: 'La vapeur.' });
+    } finally {
+      vi.useRealTimers();
+      espion.mockRestore();
+    }
+
+    const battement = lignes.find((l) => l.includes('llm_call_progress'));
+    expect(battement).toBeDefined();
+    const faits = JSON.parse(battement!.slice(battement!.indexOf('{'))) as Record<string, unknown>;
+    expect(faits).toMatchObject({ reasoningChars: 4, textChars: 0, toolName: null });
+    expect(faits['elapsedMs']).toBeGreaterThanOrEqual(60_000);
+  });
+});

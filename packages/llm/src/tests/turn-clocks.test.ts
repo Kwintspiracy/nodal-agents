@@ -22,6 +22,7 @@ import {
   FIRST_TOKEN_OVER_50K_MS,
   FIRST_TOKEN_OVER_100K_MS,
   ABSOLUTE_CALL_MS,
+  INVISIBLE_PRODUCTION_MS,
 } from '../turn-clocks';
 import type { TurnClocks, CallProgress } from '../turn-clocks';
 import { LLMTimeoutError, LLMCallCancelledError, LLMStreamPartError } from '../errors';
@@ -635,5 +636,169 @@ describe('what a streamed call is producing, while it produces it (#484)', () =>
       toolInputChars: 0,
       toolName: null,
     });
+  });
+});
+
+// #484, revue Codex — le plafond d'une production INVISIBLE. Chaque delta remet
+// l'horloge de silence à zéro : un fournisseur qui envoie un caractère toutes
+// les 59 s, ou un modèle qui ne fait que raisonner, tournait jusqu'au filet
+// absolu d'une heure. Un texte ou un appel d'outil TERMINÉ relance le compte ;
+// un rédacteur lent de TEXTE n'est jamais coupé par lui (test du haut).
+describe('the ceiling on production that delivers nothing (#484) @cap:organiser-equipe/moteur', () => {
+  it('reasoning only, one delta every 30 s, is cut at the ceiling, not at the hour', async () => {
+    const deltas = Array.from({ length: 80 }, (_, i) => reasoning(30_000 * (i + 1), 'hmm '));
+    const state = run(
+      timedModel([{ atMs: 0, part: { type: 'reasoning-start', id: 'r' } }, ...deltas]),
+    );
+
+    await vi.advanceTimersByTimeAsync(INVISIBLE_PRODUCTION_MS - 1);
+    expect(state.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect(err.reason).toBe('invisible_production');
+    expect(err.timeoutMs).toBe(INVISIBLE_PRODUCTION_MS);
+    expect(err.served).toBe(true);
+    expect(err.resumable).toBe(false);
+  });
+
+  it('tool arguments trickling one character every 59 s are cut at the ceiling', async () => {
+    const deltas = Array.from({ length: 70 }, (_, i) => ({
+      atMs: 59_000 * (i + 1),
+      part: { type: 'tool-input-delta' as const, id: 'c1', delta: 'x' },
+    }));
+    const state = run(
+      timedModel([
+        { atMs: 0, part: { type: 'tool-input-start', id: 'c1', toolName: 'file_write' } },
+        ...deltas,
+      ]),
+    );
+
+    await vi.advanceTimersByTimeAsync(INVISIBLE_PRODUCTION_MS + 1);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err.reason).toBe('invisible_production');
+    expect(err.generatedChars).toBe(Math.floor(INVISIBLE_PRODUCTION_MS / 59_000));
+  });
+
+  it('text resets it: 15 minutes of reasoning, text, 15 more of reasoning, then the answer completes', async () => {
+    const avant = Array.from({ length: 30 }, (_, i) => reasoning(30_000 * (i + 1), 'a '));
+    const apres = Array.from({ length: 30 }, (_, i) => reasoning(900_000 + 30_000 * (i + 1), 'b '));
+    const state = run(
+      timedModel([
+        { atMs: 0, part: { type: 'reasoning-start', id: 'r' } },
+        ...avant,
+        textStart(900_000),
+        text(900_000, 'Plan: '),
+        ...apres,
+        text(1_800_000, 'done.'),
+        textEnd(1_800_000),
+        ...end(1_800_000),
+      ]),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_800_001);
+
+    expect(state.error).toBeUndefined();
+    expect(state.value?.text).toBe('Plan: done.');
+  });
+
+  it('a local endpoint has no such ceiling: 25 minutes of reasoning, then the answer', async () => {
+    const clocks = computeTurnClocks({ provider: 'ollama' }, 10);
+    expect(clocks.invisibleProductionMs).toBe(Infinity);
+    const deltas = Array.from({ length: 50 }, (_, i) => reasoning(30_000 * (i + 1), 'r '));
+    const state = run(
+      timedModel([
+        { atMs: 0, part: { type: 'reasoning-start', id: 'r' } },
+        ...deltas,
+        textStart(1_500_000),
+        text(1_500_000, 'ok'),
+        textEnd(1_500_000),
+        ...end(1_500_000),
+      ]),
+      clocks,
+    );
+
+    await vi.advanceTimersByTimeAsync(1_500_001);
+
+    expect(state.error).toBeUndefined();
+    expect(state.value?.text).toBe('ok');
+  });
+
+  it('the tool being filled is forgotten once its arguments end (progress)', async () => {
+    const seen: CallProgress[] = [];
+    const model = timedModel([
+      { atMs: 1_000, part: { type: 'tool-input-start', id: 'c1', toolName: 'file_write' } },
+      { atMs: 1_000, part: { type: 'tool-input-delta', id: 'c1', delta: '{}' } },
+      { atMs: 2_000, part: { type: 'tool-input-end', id: 'c1' } },
+      { atMs: 3_000, part: { type: 'reasoning-delta', id: 'r', delta: 'next' } },
+    ]);
+    void consumeUnderClocks(
+      (signal) =>
+        streamText({ model, prompt: 'w', abortSignal: signal, maxRetries: 0, onError: () => {} }),
+      CLOUD,
+      PM,
+      undefined,
+      undefined,
+      (p) => seen.push(p),
+    ).catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(seen.some((p) => p.toolName === 'file_write')).toBe(true);
+    expect(seen.at(-1)?.toolName).toBeNull();
+    expect(seen.at(-1)?.reasoningChars).toBe(4);
+  });
+});
+
+describe('a FINISHED tool call resets the invisible-production ceiling (#484) @cap:organiser-equipe/moteur', () => {
+  it('15 minutes of arguments, the call completes, 15 more of reasoning: not cut', async () => {
+    const { z } = await import('zod');
+    const { tool } = await import('ai');
+    const args = Array.from({ length: 30 }, (_, i) => ({
+      atMs: 30_000 * (i + 1),
+      part: { type: 'tool-input-delta' as const, id: 'c1', delta: ' ' },
+    }));
+    const suite = Array.from({ length: 30 }, (_, i) => reasoning(900_000 + 30_000 * (i + 1), 'r'));
+    const model = timedModel([
+      { atMs: 0, part: { type: 'tool-input-start', id: 'c1', toolName: 'note' } },
+      ...args,
+      { atMs: 900_000, part: { type: 'tool-input-end', id: 'c1' } },
+      {
+        atMs: 900_000,
+        part: { type: 'tool-call', toolCallId: 'c1', toolName: 'note', input: '{}' },
+      },
+      { atMs: 900_000, part: { type: 'reasoning-start', id: 'r' } },
+      ...suite,
+      ...end(1_800_000),
+    ]);
+    const state: { error?: unknown; done: boolean } = { done: false };
+    consumeUnderClocks(
+      (signal) =>
+        streamText({
+          model,
+          prompt: 'w',
+          tools: { note: tool({ inputSchema: z.object({}) }) },
+          abortSignal: signal,
+          maxRetries: 0,
+          onError: () => {},
+          // Le client appelle `streamText` avec ses propres outils ; le type
+          // d'un jeu d'outils précis n'est pas celui de `ToolSet`.
+        }) as unknown as ReturnType<typeof streamText>,
+      CLOUD,
+      PM,
+    ).then(
+      () => (state.done = true),
+      (e: unknown) => {
+        state.error = e;
+        state.done = true;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(1_800_001);
+
+    expect(state.error).toBeUndefined();
+    expect(state.done).toBe(true);
   });
 });

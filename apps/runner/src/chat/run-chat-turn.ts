@@ -43,6 +43,7 @@ import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
 import { TERMINAL_STATUSES } from '../job/state.ts';
+import { watchCallProgress } from '../job/call-progress.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
 // size — 20 large turns (verbose replies, or several escalation blocks with
@@ -656,17 +657,28 @@ export async function runChatTurn(opts: {
       // passe à la page pendant que le modèle l'écrit. Un modèle qui ne sait
       // pas diffuser (appels d'outils lus dans son texte) répond d'un bloc :
       // aucun fragment, et `streamed` reste faux.
-      const response = await llmClient.generateText(
-        { system: systemPrompt, messages, tools: CHAT_TOOLS },
-        {
-          streamed: true,
-          onTextDelta: (delta) => {
-            partial += delta;
-            onTextDelta(delta);
-          },
-          ...(abortSignal ? { abortSignal } : {}),
-        },
+      // #484 : le chat dit lui aussi ce que son appel produit, par le même
+      // battement que la boucle des jobs.
+      const production = watchCallProgress((faits) =>
+        console.warn(`[run-chat-turn] llm_call_progress ${agentRow.slug} ${JSON.stringify(faits)}`),
       );
+      let response: Awaited<ReturnType<typeof llmClient.generateText>>;
+      try {
+        response = await llmClient.generateText(
+          { system: systemPrompt, messages, tools: CHAT_TOOLS },
+          {
+            streamed: true,
+            onTextDelta: (delta) => {
+              partial += delta;
+              onTextDelta(delta);
+            },
+            onProgress: production.onProgress,
+            ...(abortSignal ? { abortSignal } : {}),
+          },
+        );
+      } finally {
+        production.stop();
+      }
       if (abortSignal?.aborted) return await keepStoppedReply();
       text = (response.text ?? '').trim();
       runTask = runTaskOf(response);
