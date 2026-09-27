@@ -26,12 +26,40 @@ export type CommunitySkillCatalogEntry = {
  * The curated catalog. Order matters — rendered top-to-bottom on the page.
  */
 export const COMMUNITY_SKILL_CATALOG: CommunitySkillCatalogEntry[] = [
+  // Comfy's OFFICIAL agent skills, from the comfy-cli repository (the same
+  // files `comfy skills install` writes). They replace the Hermes port, which
+  // drove ComfyUI through its own scripts: the official ones drive the comfy
+  // CLI Comfy maintains, and an install from this source is tracked for
+  // updates like any community skill. Three of the family: the others are for
+  // Comfy's paid build/deploy platform, custom node development, or Claude
+  // Code's chat presentation.
   {
-    slug: 'comfyui',
-    name: 'ComfyUI',
+    slug: 'comfy',
+    name: 'Comfy (official)',
     description:
-      'Generate images, video and audio with your own ComfyUI (local, Desktop or Cloud) — run any workflow with parameter injection. Requires a running ComfyUI + python3.',
-    source: 'NousResearch/hermes-agent/skills/creative/comfyui',
+      "Comfy's official skill. Generate images, video, audio or 3D with your ComfyUI: find models and nodes, build or edit a workflow, check it before sending, run it and collect the outputs. " +
+      'Needs comfy-cli on the PATH (keep it up to date: pip install -U comfy-cli) and Command execution.',
+    source: 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy',
+    sourceHost: 'github',
+    category: 'Creative',
+  },
+  {
+    slug: 'comfy-debug',
+    name: 'Comfy Debug (official)',
+    description:
+      "Comfy's official skill. A ComfyUI job failed, hangs or returned an error: go from the error code to the fix. " +
+      'Needs comfy-cli on the PATH (keep it up to date: pip install -U comfy-cli) and Command execution.',
+    source: 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy-debug',
+    sourceHost: 'github',
+    category: 'Creative',
+  },
+  {
+    slug: 'comfy-director',
+    name: 'Comfy Director (official)',
+    description:
+      "Comfy's official skill. A narrative video in several shots (ad, trailer, short, music video): story, shot continuity, characters that stay the same. " +
+      'Needs comfy-cli on the PATH (keep it up to date: pip install -U comfy-cli) and Command execution.',
+    source: 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy-director',
     sourceHost: 'github',
     category: 'Creative',
   },

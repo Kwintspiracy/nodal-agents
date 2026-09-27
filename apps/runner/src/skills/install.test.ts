@@ -269,6 +269,16 @@ describe('detectScripts', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  it('an empty file is not a script, whatever its extension (a package __init__.py)', async () => {
+    await writeFile(join(dir, '__init__.py'), '', 'utf8');
+    await writeFile(join(dir, 'scripts', '__init__.py'), '', 'utf8');
+    const paths = (await detectScripts(dir)).map((s) => s.path);
+    expect(paths).not.toContain('__init__.py');
+    expect(paths).not.toContain('scripts/__init__.py');
+    // A non-empty file with the same extension still is.
+    expect(paths).toContain('scripts/extract.py');
+  });
+
   it('detects script files by extension and shebang, ignoring docs/assets', async () => {
     const scripts = await detectScripts(dir);
     const paths = scripts.map((s) => s.path);
@@ -1202,6 +1212,108 @@ describe('installCommunitySkill — system-skill squat closure (P2b, F-6 follow-
         .from(agentSkills)
         .where(and(eq(agentSkills.entityId, seed.entityId), eq(agentSkills.slug, reservedSlug)));
       expect(rows).toHaveLength(0);
+    } finally {
+      await rm(store, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── installCommunitySkill — a curated catalog card keeps its name ────────────
+//
+// Real pglite DB + mocked GitHub Contents API: the source of the catalog's
+// "Comfy (official)" card, whose folder also ships an EMPTY __init__.py.
+
+describe('installCommunitySkill — a skill installed from a catalog card', () => {
+  const origFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = origFetch;
+  });
+
+  function mockComfyFolder() {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/repos/Comfy-Org/comfy-cli/contents/comfy_cli/skills/comfy?ref=')) {
+        const ref = new URL(url).searchParams.get('ref');
+        return new Response(
+          JSON.stringify([
+            {
+              name: 'SKILL.md',
+              path: 'comfy_cli/skills/comfy/SKILL.md',
+              type: 'file',
+              size: 60,
+              download_url: `https://raw.githubusercontent.com/Comfy-Org/comfy-cli/${ref}/comfy_cli/skills/comfy/SKILL.md`,
+            },
+            {
+              name: '__init__.py',
+              path: 'comfy_cli/skills/comfy/__init__.py',
+              type: 'file',
+              size: 0,
+              download_url: `https://raw.githubusercontent.com/Comfy-Org/comfy-cli/${ref}/comfy_cli/skills/comfy/__init__.py`,
+            },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.includes('raw.githubusercontent.com') && url.endsWith('/SKILL.md')) {
+        return new Response(
+          '---\nname: comfy\ndescription: Generate images via ComfyUI.\n---\nYou have access to `comfy`.',
+          { status: 200 },
+        );
+      }
+      if (url.includes('raw.githubusercontent.com') && url.endsWith('/__init__.py')) {
+        return new Response('', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as typeof fetch;
+  }
+
+  it('keeps the card name ("Comfy (official)"), and the empty __init__.py is no script to consent to', async () => {
+    const { db } = await spinUpTestDb();
+    const seed = await seedMinimal(db);
+    mockComfyFolder();
+    const store = await mkdtemp(join(tmpdir(), 'nodal-catalog-name-'));
+    try {
+      await installCommunitySkill({
+        db: db as never,
+        source: 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy',
+        skillStoreDir: store,
+        entityId: seed.entityId,
+      });
+      const [row] = await db
+        .select({
+          name: agentSkills.name,
+          slug: agentSkills.slug,
+          source: agentSkills.source,
+          installedScripts: agentSkills.installedScripts,
+        })
+        .from(agentSkills)
+        .where(and(eq(agentSkills.entityId, seed.entityId), eq(agentSkills.slug, 'comfy')));
+      expect(row?.name).toBe('Comfy (official)');
+      expect(row?.source).toBe('Comfy-Org/comfy-cli/comfy_cli/skills/comfy');
+      expect(row?.installedScripts).toBeNull();
+    } finally {
+      await rm(store, { recursive: true, force: true });
+    }
+  });
+
+  it('a source that is not a catalog card keeps the name its SKILL.md declares', async () => {
+    const { db } = await spinUpTestDb();
+    const seed = await seedMinimal(db);
+    mockComfyFolder();
+    const store = await mkdtemp(join(tmpdir(), 'nodal-catalog-name-2-'));
+    try {
+      // Same folder, spelled as a full URL: not the catalog's source string.
+      await installCommunitySkill({
+        db: db as never,
+        source: 'https://github.com/Comfy-Org/comfy-cli/tree/main/comfy_cli/skills/comfy',
+        skillStoreDir: store,
+        entityId: seed.entityId,
+      });
+      const [row] = await db
+        .select({ name: agentSkills.name })
+        .from(agentSkills)
+        .where(and(eq(agentSkills.entityId, seed.entityId), eq(agentSkills.slug, 'comfy')));
+      expect(row?.name).toBe('comfy');
     } finally {
       await rm(store, { recursive: true, force: true });
     }

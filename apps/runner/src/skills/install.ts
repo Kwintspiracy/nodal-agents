@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join, basename, sep, resolve } from 'node:path';
 import { eq, and, agentSkills, agentSkillAssignments, type AnyDrizzleDb } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
+import { COMMUNITY_SKILL_CATALOG } from '@nodal-agents/shared';
 import { parseSkillSource } from './source';
 import { downloadAndExtract, findSkillManifests, isFile } from './fetch';
 import { parseSkillMarkdown, validateFrontmatter } from './frontmatter';
@@ -158,7 +159,12 @@ export async function installCommunitySkill(
 
     const text = await readFile(manifestAbs, 'utf8');
     const { frontmatter, body } = parseSkillMarkdown(text);
-    const { slug, name, description } = validateFrontmatter(frontmatter);
+    const { slug, name: manifestName, description } = validateFrontmatter(frontmatter);
+    // A skill installed from a card of the curated catalog keeps the card's
+    // name ("Comfy (official)"), whoever asks for the install: the screen or
+    // an agent. Any other source keeps the name its SKILL.md declares.
+    const name =
+      COMMUNITY_SKILL_CATALOG.find((e) => e.source === opts.source.trim())?.name ?? manifestName;
 
     // P2b (F-6 follow-up): refuse a slug reserved by the system catalog
     // outright, in ANY entity — before any insert/update. Not reachable as a
