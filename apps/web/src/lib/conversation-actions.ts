@@ -87,7 +87,7 @@ import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
 import { folderOfWork, MCP_JOB_CHANNELS, RUNNING_JOB_STATUSES } from './chat-folders.ts';
 import type { WorkOrigin } from './chat-folders.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
-import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
+import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import {
   deliverableStatuses,
   FILE_DELIVERABLE_TYPES,
@@ -1914,6 +1914,19 @@ export async function getConversationThreadAction(
       declaredByRoot.set(root, [...(declaredByRoot.get(root) ?? []), ...items]);
     }
 
+    // #508 — les appels LLM rangés sous leur job de tête, comme la preuve : le
+    // prix d'un run est celui de TOUT son arbre, lu sur les mêmes lignes que la
+    // barre d'état. Un appel de la conversation elle-même (sans job) n'est le
+    // prix d'aucun run : il reste dans la barre seule.
+    const callsByRoot = new Map<string, (typeof costRows)[number][]>();
+    for (const row of costRows) {
+      const root = row.jobId !== null ? rootOf.get(row.jobId) : undefined;
+      if (root === undefined) continue;
+      const bucket = callsByRoot.get(root) ?? [];
+      bucket.push(row);
+      callsByRoot.set(root, bucket);
+    }
+
     const jobs: ThreadJob[] = headRows.map((r, i) => ({
       jobId: r.job.id,
       feed: assembled[i]!.feed,
@@ -1944,6 +1957,7 @@ export async function getConversationThreadAction(
         presented: row.presented,
         rawFilePaths: row.rawFilePaths,
       })),
+      cost: costOfCalls(callsByRoot.get(r.job.id) ?? []),
       workspaceRoots,
     }));
 

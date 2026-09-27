@@ -135,6 +135,7 @@ function summaryOf(over: Partial<ThreadJob> & { feed: ConversationFeed }): Deliv
     declaredUnverified: [],
     reviewVerdict: null,
     audit: [],
+    cost: { costUsd: null, unpricedCalls: 0 },
     workspaceRoots: [],
     ...over,
   };
@@ -337,12 +338,15 @@ describe('deliverySummary — ce que le modèle compte', () => {
 
   it('la durée court de l’ouverture du travail à sa fin ; inconnue tant qu’il court', () => {
     const fini = summaryOf({
+      // Le fil de la tête dit 0.52 $ ; l'arbre entier, délégués compris, 0.97 $.
+      // L'encart dit le prix de l'arbre, celui de la barre d'état (#508).
       feed: { items: [], totals: totals(0.52) },
+      cost: { costUsd: 0.97, unpricedCalls: 0 },
       createdAt: new Date('2026-09-07T10:00:00Z'),
       completedAt: new Date('2026-09-07T10:04:12Z'),
     });
     expect(fini.durationMs).toBe(252_000);
-    expect(fini.costUsd).toBe(0.52);
+    expect(fini.costUsd).toBe(0.97);
 
     const encours = summaryOf({
       feed: { items: [], totals: totals() },
