@@ -49,7 +49,7 @@ export const constatedWrites = pgTable(
     renamedFrom: text('renamed_from'),
     /**
      * L'empreinte (sha-256) du contenu que l'écriture a laissé sur le disque
-     * (migration 0131, revue Codex de #505). C'est elle, et non l'ordre des
+     * (migration 0130, revue Codex de #505). C'est elle, et non l'ordre des
      * lignes, qui dit si un fichier est encore celui que ce run a écrit.
      * NULL pour une suppression ou un fichier illisible.
      */
@@ -59,7 +59,7 @@ export const constatedWrites = pgTable(
   (table) => [
     unique('constated_writes_job_turn_path_unique').on(table.jobId, table.turn, table.path),
     index('idx_constated_writes_job').on(table.jobId),
-    // La porte d'écrasement cherche par chemin, tous jobs confondus (0131).
+    // La porte d'écrasement cherche par chemin, tous jobs confondus (0130).
     index('idx_constated_writes_path_created').on(table.path, table.createdAt.desc()),
     check(
       'constated_writes_change_kind_check',

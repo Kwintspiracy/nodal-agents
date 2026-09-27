@@ -1035,7 +1035,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
         CHECK (constated_by IN ('git', 'disk'))
     );
     CREATE INDEX IF NOT EXISTS idx_constated_writes_job ON constated_writes (job_id);
-    -- 0131 : l'empreinte du contenu écrit, et la recherche par chemin.
+    -- 0130 : l'empreinte du contenu écrit, et la recherche par chemin.
     CREATE INDEX IF NOT EXISTS idx_constated_writes_path_created
       ON constated_writes (path, created_at DESC);
   `);
