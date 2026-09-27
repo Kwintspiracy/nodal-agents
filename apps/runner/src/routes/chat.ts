@@ -61,7 +61,10 @@ export async function chatRoute(
   if (!result.ok) {
     const notFound =
       result.error === 'agent_not_found' || result.error === 'conversation_not_found';
-    return c.json({ error: result.error }, notFound ? 404 : 400);
+    return c.json(
+      { error: result.error, ...(result.cutReason ? { cutReason: result.cutReason } : {}) },
+      notFound ? 404 : 400,
+    );
   }
 
   // If the turn escalated to an action, run that job in the background (the chat

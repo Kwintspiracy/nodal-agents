@@ -137,7 +137,15 @@ export type ChatTurnResult =
       /** Une horloge a coupé ce tour (#458) : `reply` est ce qui avait été écrit. */
       cutReason?: LlmTimeoutReason;
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Une horloge a coupé l'appel AVANT tout texte visible (#484) :
+       * `error` vaut `llm_cut` et ce champ dit laquelle.
+       */
+      cutReason?: LlmTimeoutReason;
+    };
 
 /** A head job of this conversation that has not reached a terminal status (#453). */
 type RunningHead = { id: string; task: string; status: string | null };
@@ -707,6 +715,16 @@ export async function runChatTurn(opts: {
     }
     const capped = failedOnRefusedTurn(err, 'reply', agentRow.slug);
     if (capped) return capped;
+    // Coupé AVANT tout texte (#484, revue Codex passe 3) : ce n'est pas un
+    // outil fantôme, et la relance sans outils ci-dessous n'a pas à le
+    // rattraper. Un `run_task` fini dans le flux a été jeté avec lui ; une
+    // relance privée de `run_task` ne pourrait que dire « c'est lancé » sans
+    // qu'aucun job n'existe. Le tour échoue, en disant la coupure — comme un
+    // job coupé (invariant #4).
+    if (err instanceof LLMTimeoutError) {
+      console.warn(`[run-chat-turn] reply cut by ${err.reason} before any text (${agentRow.slug})`);
+      return { ok: false, error: 'llm_cut', cutReason: err.reason };
+    }
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
     // invariant 4) and fall through to the tool-free retry so conversation works.

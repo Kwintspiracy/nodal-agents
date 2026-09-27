@@ -19,7 +19,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, chatMessages, conversations, llmCalls } from '@nodal-agents/db';
+import { eq, agentJobs, chatMessages, conversations, llmCalls } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import { runChatTurn } from '../../chat/run-chat-turn.ts';
 import { cutReplyNote } from '../../chat/turn-stop.ts';
@@ -280,5 +280,64 @@ describe('le battement de l’appel du chat (#484) @cap:parler-a-un-agent/moteur
     const faits = JSON.parse(battement!.slice(battement!.indexOf('{'))) as Record<string, unknown>;
     expect(faits).toMatchObject({ reasoningChars: 4, textChars: 0, toolName: null });
     expect(faits['elapsedMs']).toBeGreaterThanOrEqual(60_000);
+  });
+});
+
+// Revue Codex de #484, passe 3 : une coupure SANS texte visible tombait dans le
+// chemin « un outil a échoué », qui relance SANS outils. Le modèle avait fini
+// un `run_task` dans le flux, puis la coupure : l'appel est jeté (voulu), et la
+// relance sans outils ne pouvait pas le recréer — elle pouvait seulement dire
+// « c'est lancé » alors qu'aucun job n'existait. Une coupure n'est pas un échec
+// d'outil : le tour échoue par son chemin d'échec, en disant la coupure.
+describe('une coupure sans texte n’est pas un échec d’outil (#484) @cap:parler-a-un-agent/moteur', () => {
+  it('run_task terminé puis coupure : aucune réponse « lancé », aucun job, et le tour dit la coupure', async () => {
+    const model = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.2',
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'tool-input-start', id: 'rt', toolName: 'run_task' },
+            { type: 'tool-input-delta', id: 'rt', delta: '{"instruction":"monte la vidéo"}' },
+            { type: 'tool-input-end', id: 'rt' },
+            {
+              type: 'tool-call',
+              toolCallId: 'rt',
+              toolName: 'run_task',
+              input: '{"instruction":"monte la vidéo"}',
+            },
+            { type: 'reasoning-start', id: 'r' },
+            { type: 'reasoning-delta', id: 'r', delta: 'je réfléchis encore' },
+            { type: 'error', error: new Error('connection reset by peer') },
+          ] as StreamPart[],
+        }) as never,
+      }),
+      // La relance sans outils, si elle avait lieu, promettrait ce qui n'existe pas.
+      doGenerate: async () => ({
+        content: [{ type: 'text' as const, text: 'C’est lancé, je reviens vers toi.' }],
+        finishReason: { unified: 'stop' as const, raw: 'stop' },
+        usage: USAGE(3, 5),
+        warnings: [],
+      }),
+    });
+    mockModel.current = model;
+    const conv = await newConversation();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await playTurn(conv).finally(() => warn.mockRestore());
+
+    expect(result).toEqual({ ok: false, error: 'llm_cut', cutReason: 'stream_error' });
+    expect(model.doGenerateCalls).toHaveLength(0);
+    const jobs = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conv));
+    expect(jobs).toEqual([]);
+    const repliques = await db
+      .select({ content: chatMessages.content })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv));
+    expect(repliques.some((r) => r.content.includes('lancé'))).toBe(false);
   });
 });
