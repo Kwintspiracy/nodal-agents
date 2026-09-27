@@ -24,7 +24,7 @@ import AgentAvatar from '@/components/ui/AgentAvatar';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import { useApprovals } from '@/components/ApprovalsProvider';
 import { SHELL_CATEGORY_COPY } from '@/lib/shell-checklist-copy.ts';
-import { openRunHref } from '@/lib/run-page.ts';
+import { openRunHref, questionHref } from '@/lib/run-page.ts';
 
 type RuleAction = 'auto_approve' | 'require_approval' | 'block';
 
@@ -595,13 +595,7 @@ export default function ApprovalRequestCard({
               // #465 — une question ne se répond PAS ici. Elle se répond là où
               // elle a été posée : le fil de sa conversation, ou la page du run
               // quand elle n'en a pas (une automatisation). La carte renvoie.
-              <PrimaryButton
-                variant="ink"
-                size="md"
-                href={
-                  a.conversationId !== null ? `/chat/${a.conversationId}` : openRunHref(a.jobId)
-                }
-              >
+              <PrimaryButton variant="ink" size="md" href={questionHref(a)}>
                 {a.conversationId !== null ? 'Answer in the conversation' : 'Answer on the run'}
               </PrimaryButton>
             ) : (

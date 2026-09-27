@@ -116,6 +116,8 @@ const ATTENTE: PendingApproval = {
   requestedAt: null,
   jobChannel: 'dashboard',
   conversationChannel: 'dashboard',
+  kind: 'approval',
+  conversationId: null,
 };
 
 /** La barre ET la surface de décision qu'on veut éprouver, dans UN provider. */
@@ -515,6 +517,29 @@ describe('la pastille du rail tombe dès la réponse @cap:approuver-une-action/e
       relacher2();
     });
     expect(caseApprovals()).toBe('Approvals');
+  });
+
+  it('#465 — une QUESTION dans la cloche ne s’approuve pas : elle renvoie là où elle se répond', async () => {
+    // Le bouton Approve envoyait `approve` sans réponse, que le runner refuse
+    // (`answer_not_an_option`) : la personne cliquait et rien ne se passait.
+    // Comme la carte Approvals, la cloche renvoie vers le fil, ou le run.
+    await monter(<div />, [
+      {
+        ...ATTENTE,
+        id: 'q1',
+        toolName: 'ask_user',
+        kind: 'question',
+        conversationId: 'c42',
+        toolInput: { question: 'Which branch?', options: ['main', 'develop'] },
+      },
+    ]);
+    await cliquer('Notifications (1 pending)', 'aria-label');
+    const panneau = document.body.querySelector('[role="dialog"][aria-label="Pending approvals"]')!;
+    const boutons = [...panneau.querySelectorAll('button')].map((b) => b.textContent?.trim());
+    expect(boutons).not.toContain('Approve');
+    const lien = panneau.querySelector('a[href="/chat/c42"]');
+    expect(lien?.textContent).toContain('Answer');
+    expect(vi.mocked(resolveApprovalAction)).not.toHaveBeenCalled();
   });
 
   it('APPROUVER DEPUIS LA CLOCHE la fait tomber — la quatrième surface', async () => {
