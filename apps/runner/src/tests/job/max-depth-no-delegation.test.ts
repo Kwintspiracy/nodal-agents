@@ -222,7 +222,9 @@ describe('a job at the maximum delegation depth cannot delegate, and is told so 
     // merely mention delegated work (the identity line, verify-before-done,
     // the code_task skill that drives a coding CLI) are not orders.
     const ORDERS: RegExp[] = [
-      /\bdelegate (?:it|to it|them|to them)\b/i,
+      // A prohibition ("never delegate it", the platform-questions rule) is
+      // not an order: the lookbehind lets it through.
+      /(?<!never |not |cannot )\bdelegate (?:it|to it|them|to them)\b/i,
       /\bwhen you delegate\b/i,
       /ways to delegate/i,
       /\bdelegate to (?:a|an|the|that|this|another) (?:agent|teammate|specialist)\b/i,
