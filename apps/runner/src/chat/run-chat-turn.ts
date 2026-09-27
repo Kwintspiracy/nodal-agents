@@ -104,12 +104,9 @@ export const CHAT_TOOLS: Record<
       'Never decline an action the user asks for — escalate it here. For plain conversation or ' +
       'recalling facts, reply in text instead (do not call this).\n' +
       'While a job you launched from this conversation is still running, a new call is refused ' +
-      'and you are shown that job: the person is often just clarifying the same request. Set ' +
-      '`alongside: true` only to launch DIFFERENT work in parallel.',
-    inputSchema: z.object({
-      instruction: z.string().min(1).max(16000),
-      alongside: z.boolean().optional(),
-    }),
+      'and you are shown that job: the person is often just clarifying the same request. ' +
+      'Different work starts once it has finished, or from a new conversation.',
+    inputSchema: z.object({ instruction: z.string().min(1).max(16000) }),
   },
 };
 
@@ -154,30 +151,6 @@ export type ChatTurnResult =
 /** A head job of this conversation that has not reached a terminal status (#453). */
 type RunningHead = { id: string; task: string; status: string | null };
 
-/** `run_task` asked for parallel work explicitly (`alongside: true`). */
-function wantsAlongside(call: { input?: unknown }): boolean {
-  return (call.input as { alongside?: unknown } | undefined)?.alongside === true;
-}
-
-/** Une tâche comparée à une autre : espaces et casse mis à part. */
-function sameTask(a: string, b: string): boolean {
-  const norm = (t: string): string => t.trim().replace(/\s+/g, ' ').toLowerCase();
-  return norm(a) === norm(b);
-}
-
-/**
- * Les têtes en cours qui RETIENNENT cet appel (#453). Sans `alongside`, toutes :
- * la personne précise souvent la même demande. Avec, seules celles dont la
- * tâche est la même : `alongside` lance un travail différent, jamais un double.
- */
-function blockingHeads(call: { input?: unknown }, running: readonly RunningHead[]): RunningHead[] {
-  if (!wantsAlongside(call)) return [...running];
-  const instruction = String(
-    (call.input as { instruction?: unknown } | undefined)?.instruction ?? '',
-  );
-  return running.filter((h) => sameTask(h.task, instruction));
-}
-
 /**
  * The tool-result of a `run_task` refused because work launched from this
  * conversation is still running (#453). LLM-facing: a bracketed platform line
@@ -189,9 +162,8 @@ export function runTaskRefusal(running: readonly RunningHead[]): string {
     .join('; ');
   return (
     `[run_task refused: work launched from this conversation is still running: ${jobs}. ` +
-    'Nothing was launched. If the person is clarifying or repeating that request, tell them you ' +
-    'are already on it; its result will arrive in this conversation. To launch DIFFERENT work in ' +
-    'parallel, call run_task again with alongside: true; the same task is refused even then.]'
+    'Nothing was launched. Tell the person you are already on it; its result will arrive in ' +
+    'this conversation. Different work starts once it has finished, or from a new conversation.]'
   );
 }
 
@@ -740,13 +712,14 @@ export async function runChatTurn(opts: {
   //     identique : l'historique montrait bien le premier en cours, le modèle
   //     re-déclenchait par-dessus. Le contrat, pour tout agent : l'appel est
   //     REFUSÉ au modèle, qui reçoit le travail en cours dans le résultat de son
-  //     appel d'outil et répond une seconde fois — dire qu'il est déjà dessus,
-  //     ou rappeler avec `alongside: true` pour un travail DIFFÉRENT.
+  //     appel d'outil et répond une seconde fois : il est déjà dessus. Un
+  //     travail différent se lance quand celui-ci est fini, ou depuis une
+  //     nouvelle conversation.
   //
-  //     Une seule règle pour tous les appels du tour (`blockingHeads`) :
-  //     sans `alongside`, toute tête en cours retient l'appel ; avec, seule une
-  //     tête dont la tâche est LA MÊME (espaces et casse mis à part) le retient,
-  //     sinon `alongside` suffirait à recréer le doublon (revue Codex, passe 2).
+  //     AUCUNE échappatoire « en parallèle » (revue Codex, passe 3). Un champ
+  //     `alongside` a existé : une reformulation passait sous la comparaison
+  //     de textes, et il ne reposait que sur la parole du modèle. Il est
+  //     retiré plutôt que rafistolé (invariant #11).
   //
   //     Un second appel encore retenu ne garde PAS sa phrase : « je lance
   //     l'autre tâche » posée au-dessus d'un appel jeté annoncerait un travail
@@ -766,8 +739,7 @@ export async function runChatTurn(opts: {
           notInArray(agentJobs.status, TERMINAL_STATUSES),
         ),
       );
-    const blocking = blockingHeads(runTask, runningHeads);
-    if (blocking.length === 0) break;
+    if (runningHeads.length === 0) break;
 
     const toolCallId =
       (runTask as { toolCallId?: unknown }).toolCallId !== undefined
@@ -795,7 +767,7 @@ export async function runChatTurn(opts: {
             type: 'tool-result' as const,
             toolCallId,
             toolName: 'run_task',
-            output: { type: 'text' as const, value: runTaskRefusal(blocking) },
+            output: { type: 'text' as const, value: runTaskRefusal(runningHeads) },
           },
         ],
       },

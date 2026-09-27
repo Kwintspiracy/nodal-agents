@@ -10,8 +10,14 @@
 // LE CONTRAT, générique, sur `run_task` dans le chat : tant qu'un travail lancé
 // depuis CETTE conversation court, un nouveau `run_task` est REFUSÉ au modèle,
 // qui reçoit le travail en cours (id, tâche, état) et la règle : dire qu'il est
-// déjà dessus, ou rappeler avec `alongside: true` pour un travail DIFFÉRENT en
-// parallèle. Jamais un appel jeté en silence.
+// déjà dessus ; un travail différent se lance quand celui-ci est fini, ou depuis
+// une nouvelle conversation. Jamais un appel jeté en silence.
+//
+// Il n'y a PAS d'échappatoire « en parallèle » (revue Codex, passe 3). Le champ
+// `alongside` a existé : une reformulation (« the changelog of 0.9.2 » puis
+// « the 0.9.2 release notes ») passait sous la comparaison de textes, et ce
+// champ ne reposait que sur la parole du modèle. Il est retiré (invariant #11 :
+// retirer un mécanisme plutôt qu'ajouter une branche).
 //
 // Les assertions portent sur les LIGNES `agent_jobs` et sur le CORPS du second
 // appel au modèle (le tool_result du refus), jamais sur un compte d'appels.
@@ -25,11 +31,10 @@
 //     « deux tours SIMULTANÉS » rougit (2 têtes) ;
 //   - `runInLane` retiré de `routes/chat.ts` → le scan des appelants rougit en
 //     nommant le fichier.
-// Revue Codex, passe 2 :
-//   - `blockingHeads` rendant [] dès `alongside` → « alongside sur la MÊME
-//     tâche » rougit (un doublon est créé) ;
-//   - la phrase du second appel refusé gardée → « ne laisse pas sa phrase
-//     je lance » rougit.
+// Revue Codex, passe 2 : la phrase du second appel refusé gardée → « ne
+// laisse pas sa phrase je lance » rougit.
+// Revue Codex, passe 3 : un `alongside: true` honoré de nouveau → « une
+// reformulation, même avec alongside » rougit (un second job est créé).
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -40,7 +45,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { and, eq, isNull } from '@nodal-agents/db';
 import { agentJobs, chatMessages, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
-import { runChatTurn } from '../../chat/run-chat-turn.ts';
+import { CHAT_TOOLS, runChatTurn } from '../../chat/run-chat-turn.ts';
 import { runInLane } from '../../chat/turn-lane.ts';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -68,6 +73,8 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
   };
 });
 
+// `alongside` reste possible dans ce que le MODÈLE écrit : un modèle peut
+// toujours l'inventer, et le test prouve qu'il n'ouvre plus rien.
 type Etape = { text?: string; runTask?: { instruction: string; alongside?: boolean } };
 
 /**
@@ -258,12 +265,13 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
 
     // Le second appel a reçu le refus, dans le résultat de SON appel d'outil :
-    // l'id, la tâche et l'état du travail qui court, et la règle `alongside`.
+    // l'id, la tâche et l'état du travail qui court, et la règle.
     const refus = toolResults(captured[1] ?? []);
     expect(refus).toContain(premierJob);
     expect(refus).toContain('Find the changelog of nodal-agents 0.9.2');
     expect(refus).toContain('processing');
-    expect(refus).toContain('alongside: true');
+    expect(refus).toContain('once it has finished, or from a new conversation');
+    expect(refus).not.toContain('alongside');
 
     // La réponse du tour est écrite, sans job rattaché.
     const [dernier] = await db
@@ -278,83 +286,15 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     });
   });
 
-  it('`alongside: true` d’emblée lance un travail DIFFÉRENT en parallèle : deux jobs', async () => {
+  it('une REFORMULATION, même avec un `alongside: true` inventé par le modèle, est refusée : un seul job (revue Codex, passe 3)', async () => {
     await conversationAvecTravail('processing');
     const captured: ModelMessage[][] = [];
     setActiveLlmClient(
       modele(
         [
           {
-            text: 'Launching it too.',
-            runTask: { instruction: 'Draft the release post', alongside: true },
-          },
-        ],
-        captured,
-      ),
-    );
-
-    const r = await runChatTurn({
-      deps,
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      conversationId,
-      message: 'and draft the release post meanwhile',
-    });
-
-    expect(r.ok).toBe(true);
-    const jobs = await travauxDuFil();
-    expect(jobs.map((j) => j.task).sort()).toEqual([
-      'Draft the release post',
-      'Find the changelog of nodal-agents 0.9.2',
-    ]);
-    // Aucun refus : un seul appel de réponse.
-    expect(captured).toHaveLength(1);
-  });
-
-  it('après le refus, le modèle peut rappeler avec `alongside: true` : deux jobs, explicitement', async () => {
-    await conversationAvecTravail('awaiting_delegation');
-    const captured: ModelMessage[][] = [];
-    setActiveLlmClient(
-      modele(
-        [
-          { runTask: { instruction: 'Draft the release post' } },
-          {
-            text: 'Different work, launching it alongside.',
-            runTask: { instruction: 'Draft the release post', alongside: true },
-          },
-        ],
-        captured,
-      ),
-    );
-
-    const r = await runChatTurn({
-      deps,
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      conversationId,
-      message: 'also draft the release post',
-    });
-
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.spawnedJobId).toBeTruthy();
-    expect((await travauxDuFil()).map((j) => j.task).sort()).toEqual([
-      'Draft the release post',
-      'Find the changelog of nodal-agents 0.9.2',
-    ]);
-  });
-
-  it('`alongside: true` sur la MÊME tâche (espaces, casse) est refusé comme sans alongside (revue Codex, passe 2)', async () => {
-    await conversationAvecTravail('processing');
-    const captured: ModelMessage[][] = [];
-    setActiveLlmClient(
-      modele(
-        [
-          {
-            runTask: {
-              instruction: '  find the CHANGELOG   of nodal-agents 0.9.2 ',
-              alongside: true,
-            },
+            text: 'Launching it alongside.',
+            runTask: { instruction: 'Find the nodal-agents 0.9.2 release notes', alongside: true },
           },
           { text: 'Already on it.' },
         ],
@@ -367,7 +307,7 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
       entityId: seed.entityId,
       agentId: seed.agentId,
       conversationId,
-      message: 'i mean nodal-agents',
+      message: 'the release notes, I mean',
     });
 
     expect(r.ok).toBe(true);
@@ -376,6 +316,13 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     expect(r.reply).toBe('Already on it.');
     expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
     expect(toolResults(captured[1] ?? [])).toContain(premierJob);
+  });
+
+  it('`run_task` n’offre plus de champ `alongside`, ni dans son schéma ni dans sa description', () => {
+    const schema = CHAT_TOOLS.run_task.inputSchema as unknown as { shape: Record<string, unknown> };
+    expect(Object.keys(schema.shape)).toEqual(['instruction']);
+    expect(CHAT_TOOLS.run_task.description).not.toContain('alongside');
+    expect(CHAT_TOOLS.run_task.description).toContain('once it has finished');
   });
 
   it('après le refus, un second run_task refusé ne laisse pas sa phrase « je lance » : le modèle répond sans outil, refus en mains (revue Codex, passe 2)', async () => {
