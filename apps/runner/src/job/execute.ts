@@ -1189,7 +1189,12 @@ export async function executeJob(
   runnerEnv?: RunnerEnv,
   opts?: ExecuteJobOpts,
 ): Promise<ExecuteJobResult> {
-  const result = await runJob(jobId, deps, runnerEnv, opts);
+  let result: ExecuteJobResult;
+  try {
+    result = await runJob(jobId, deps, runnerEnv, opts);
+  } catch (err) {
+    result = await failOnUncaughtError(deps, jobId, err);
+  }
   if (
     !opts?.inlineDelegation &&
     (result.status === 'completed' || result.status === 'failed' || result.status === 'cancelled')
@@ -1197,6 +1202,31 @@ export async function executeJob(
     await maybeResumeParent(jobId, result, deps, runnerEnv);
   }
   return result;
+}
+
+/**
+ * Une erreur LEVÉE par le run — le plus souvent pendant sa préparation (#507,
+ * revue Codex passe 2 : `job_folder_missing`, `job_folder_label_taken`) —
+ * finit le job par le chemin d'échec NORMAL. Avant, elle sortait
+ * d'`executeJob`, le worker l'avalait (`routes/worker.ts`), et le job restait
+ * `processing` pour toujours, son parent et son tableau de tâches avec lui.
+ *
+ * Le code est celui que l'erreur porte en tête (`code: …`, la convention des
+ * erreurs du runner), sinon `job_crashed`. La ligne lue par la personne est
+ * une ligne de plateforme faite de ce code (invariant #2) ; l'erreur entière
+ * va au journal. `failJob` est conditionnelle : un job déjà terminé n'est pas
+ * réécrit.
+ */
+async function failOnUncaughtError(
+  deps: Pick<RunnerDeps, 'db'>,
+  jobId: JobId,
+  err: unknown,
+): Promise<ExecuteJobResult> {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = /^([a-z][a-z0-9_]*):/.exec(message)?.[1] ?? 'job_crashed';
+  console.error(`[exec ${jobId}] uncaught_error`, JSON.stringify({ code, message }));
+  await failJob(deps.db, jobId as string, code, undefined, undefined, `[stopped: ${code}]`);
+  return { status: 'failed', error: code, result: `[stopped: ${code}]` };
 }
 
 /**

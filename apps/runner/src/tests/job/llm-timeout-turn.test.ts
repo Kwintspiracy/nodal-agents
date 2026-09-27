@@ -21,7 +21,7 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, agents, agentWorkspaces } from '@nodal-agents/db';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -1077,4 +1077,54 @@ describe('la sonde git regarde le dossier du job (#507) @cap:organiser-equipe/mo
       await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, ws!.id));
     }
   }, 30_000);
+});
+
+// Revue Codex de #507, passe 2 : une erreur LEVÉE pendant la préparation d'un
+// job (dossier du job disparu, étiquette `job` déjà prise…) sortait
+// d'`executeJob`, et le worker l'avalait : le job restait `processing` pour
+// toujours et son parent n'était jamais repris. Toute erreur non rattrapée
+// passe désormais par le chemin d'échec normal : `failJob` avec son code, puis
+// la reprise du parent comme pour tout échec.
+describe('une erreur de préparation échoue le job et reprend le parent (#507) @cap:organiser-equipe/moteur', () => {
+  it('dossier du job supprimé après la création : ligne failed avec le code, parent repris', async () => {
+    const dossier = mkdtempSync(join(tmpdir(), 'job-folder-gone-'));
+    const toolUseId = 'assign-gone';
+    const parentId = await insertJob({
+      status: 'awaiting_delegation',
+      jobFolder: dossier,
+      messages: [
+        { role: 'user', content: 'parent' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: toolUseId, toolName: 'assign_x', input: {} }],
+        },
+      ],
+    });
+    const childId = await insertJob({ parentJobId: parentId, jobFolder: dossier });
+    await db
+      .update(agentJobs)
+      .set({
+        pendingDelegation: { type: 'single', toolUseId, toolName: 'assign_x', subJobId: childId },
+      })
+      .where(eq(agentJobs.id, parentId));
+    rmSync(dossier, { recursive: true, force: true });
+
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outcome = await executeJob(
+      childId as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'jamais appelé' }])),
+      undefined,
+    ).finally(() => err.mockRestore());
+
+    expect(outcome).toMatchObject({ status: 'failed', error: 'job_folder_missing' });
+    const enfant = await jobRow(childId);
+    expect(enfant.status).toBe('failed');
+    expect(enfant.error).toBe('job_folder_missing');
+    const [parent] = await db
+      .select({ status: agentJobs.status, messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    expect(parent!.status).toBe('pending');
+    expect(JSON.stringify(parent!.messages)).toContain('job_folder_missing');
+  });
 });
