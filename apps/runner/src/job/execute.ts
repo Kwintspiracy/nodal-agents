@@ -126,6 +126,7 @@ import {
   VERIFY_BEFORE_ASSERT_NUDGE,
   readFinalReviewVerdict,
   isSameAgentRetryBlocked,
+  failedDelegationGuidance,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -5016,7 +5017,12 @@ async function runJobTracked(
               toolCallId: call.id,
               toolName: call.name,
               output: toResultOutput({
-                error: `delegation_retry_blocked: assign_${call.name.slice('assign_'.length)} already failed ${job.lastFailedDelegationStreak} times in a row on this job — do NOT retry the same specialist. Either fall back to a different specialist (assign_<otherSlug>) or notify the user via telegram_send_message and call return_result with status='blocked'.`,
+                // The SAME guidance as the failure payload (Codex review of
+                // #510, P1): one source, channel-neutral.
+                error: `delegation_retry_blocked: ${failedDelegationGuidance({
+                  slug: job.lastFailedDelegationSlug ?? null,
+                  streak: job.lastFailedDelegationStreak,
+                })}`,
               }),
             });
 

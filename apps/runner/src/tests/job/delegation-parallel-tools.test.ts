@@ -451,6 +451,26 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
       : [];
     expect(toolResultIds).toContain('tc-assign-kept');
     expect(toolResultIds).toContain('tc-assign-deferred');
+
+    // Revue Codex de #510, P1 : le refus lit la MÊME consigne que le payload
+    // d'échec (failedDelegationGuidance) — un autre agent seulement si sa
+    // fiche montre les moyens, soi-même seulement si ses outils couvrent —
+    // et reste neutre de canal : ce job vient de l'API, pas de Telegram.
+    const refusal = (
+      toolMsg!.content as Array<{
+        type?: string;
+        toolCallId?: string;
+        output?: { value?: unknown };
+      }>
+    ).find((b) => b.toolCallId === 'tc-assign-kept');
+    const refusalText = JSON.stringify(refusal?.output?.value ?? '');
+    expect(refusalText).toContain('delegation_retry_blocked');
+    expect(refusalText).toContain('DO NOT retry the same specialist');
+    expect(refusalText).toContain('ONLY if its entry in your team roster shows');
+    expect(refusalText).toContain(
+      'do the work yourself ONLY if your own tools and folders cover it',
+    );
+    expect(refusalText).not.toContain('telegram');
   });
 
   // #510 — run 8dfe4684 : le gate refusait le même agent dès son PREMIER
