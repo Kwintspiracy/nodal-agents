@@ -1757,8 +1757,10 @@ async function runJobTracked(
   //
   // Le dossier ATTACHÉ quand il y en a un, le partagé sinon — la règle et son
   // pourquoi vivent dans `gitProbeTarget` (lib/workspace-git.ts).
+  // La liste FINALE, dossier du job en tête (#507) — celle que le prompt
+  // présente, pour que les deux blocs parlent du même endroit.
   const gitProbePath = gitProbeTarget(
-    resolved.attached.map((w) => w.path),
+    agentWorkspacesList.map((w) => w.path),
     sharedWorkspacePath,
   );
   const workspaceGit = gitProbePath ? await probeWorkspaceGit(gitProbePath) : null;

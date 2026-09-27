@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { isExistingDirectory } from '@nodal-agents/tools';
 import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
@@ -53,11 +53,13 @@ export async function agentRoute(
   // Refused, never guessed: a relative path would resolve against whatever the
   // runner's cwd happens to be, and a missing one would fail deep in a
   // delegate, long after the owner sent the request (invariant #4).
+  // Un code et des champs typés, jamais une phrase du runner (invariant #2).
   if (jobFolder && (!isAbsolute(jobFolder) || !isExistingDirectory(jobFolder))) {
     return c.json(
       {
         error: 'job_folder_invalid',
-        message: `The job folder must be an absolute path to an existing directory: ${jobFolder}`,
+        jobFolder,
+        reason: isAbsolute(jobFolder) ? 'not_a_directory' : 'not_absolute',
       },
       400,
     );
@@ -149,9 +151,19 @@ export async function agentRoute(
   // inherits that parent's conversation_id (same thread); otherwise this is
   // a standalone API/cron dispatch and stays null.
   let conversationId: string | null = null;
+  // Le dossier du job : celui de la demande pour un job racine, celui du
+  // PARENT pour un enfant — toujours, comme la délégation (router/delegate.ts)
+  // et le tableau de tâches (cron/execute-ready.ts). Un enfant ne peut ni en
+  // changer ni en recevoir un que son parent n'a pas : ce serait élargir le
+  // dossier que la personne a accordé (revue Codex de #507, P1).
+  let dossierDuJob: string | null = jobFolder ?? null;
   if (parentJobId) {
     const [parentJob] = await deps.db
-      .select({ entityId: agentJobs.entityId, conversationId: agentJobs.conversationId })
+      .select({
+        entityId: agentJobs.entityId,
+        conversationId: agentJobs.conversationId,
+        jobFolder: agentJobs.jobFolder,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.id, parentJobId))
       .limit(1);
@@ -166,6 +178,21 @@ export async function agentRoute(
       return c.json({ error: 'parent_job_entity_mismatch' }, 403);
     }
     conversationId = parentJob.conversationId;
+    const dossierDuParent = parentJob.jobFolder ?? null;
+    if (
+      jobFolder &&
+      (dossierDuParent === null || resolve(jobFolder) !== resolve(dossierDuParent))
+    ) {
+      return c.json(
+        {
+          error: 'job_folder_differs_from_parent',
+          jobFolder,
+          parentJobFolder: dossierDuParent,
+        },
+        400,
+      );
+    }
+    dossierDuJob = dossierDuParent;
   }
 
   // Create the job row
@@ -179,7 +206,7 @@ export async function agentRoute(
       chatId: chatId ?? undefined,
       parentJobId: parentJobId ?? undefined,
       conversationId: conversationId ?? undefined,
-      jobFolder: jobFolder ?? undefined,
+      jobFolder: dossierDuJob ?? undefined,
       status: 'pending',
       messages: [{ role: 'user', content: task }],
     })

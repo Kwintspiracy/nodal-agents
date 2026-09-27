@@ -167,9 +167,74 @@ describe('POST /api/agent', () => {
         }),
       );
       expect(res.status).toBe(400);
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toBe('job_folder_invalid');
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body['error']).toBe('job_folder_invalid');
+      // Invariant #2 : un code et des champs typés, jamais une phrase du runner.
+      expect(body['message']).toBeUndefined();
+      expect(body['jobFolder']).toBe(jobFolder);
+      expect(['not_absolute', 'not_a_directory']).toContain(body['reason']);
     }
+  });
+
+  // Revue Codex de #507, P1 : un enfant créé par la route recevait NULL, ou
+  // le dossier fourni à la place de celui du parent — il pouvait ainsi
+  // ÉLARGIR le dossier accordé par la personne. Un enfant hérite toujours du
+  // dossier de son parent, comme par délégation et par le tableau de tâches.
+  async function parentWithFolder(folder: string | null): Promise<string> {
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: LOCAL_ENTITY_ID,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'parent',
+        status: 'awaiting_delegation',
+        jobFolder: folder ?? undefined,
+      })
+      .returning({ id: agentJobs.id });
+    return parent!.id;
+  }
+
+  async function post(body: Record<string, unknown>) {
+    return app.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  it('a child created with a parentJobId inherits the parent’s job folder (#507)', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'job-folder-parent-'));
+    const parentJobId = await parentWithFolder(folder);
+
+    const res = await post({ task: 'enfant', parentJobId });
+
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: string };
+    const [row] = await db
+      .select({ jobFolder: agentJobs.jobFolder })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.jobFolder).toBe(folder);
+  });
+
+  it('a child may not bring a folder different from its parent’s, nor one its parent has not (#507)', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'job-folder-parent-'));
+    const autre = mkdtempSync(join(tmpdir(), 'job-folder-other-'));
+    for (const parentFolder of [folder, null]) {
+      const parentJobId = await parentWithFolder(parentFolder);
+      const res = await post({ task: 'enfant', parentJobId, jobFolder: autre });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body['error']).toBe('job_folder_differs_from_parent');
+      expect(body['jobFolder']).toBe(autre);
+      expect(body['parentJobFolder']).toBe(parentFolder);
+    }
+    // Le même dossier que le parent, lui, passe.
+    const parentJobId = await parentWithFolder(folder);
+    expect((await post({ task: 'enfant', parentJobId, jobFolder: folder })).status).toBe(202);
   });
 
   it('returns 400 on missing task', async () => {

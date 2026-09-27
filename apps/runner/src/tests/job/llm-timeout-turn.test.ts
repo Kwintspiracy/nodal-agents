@@ -20,7 +20,11 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agents } from '@nodal-agents/db';
+import { eq, agentJobs, agents, agentWorkspaces } from '@nodal-agents/db';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import {
   createEmbeddingClient,
@@ -1021,4 +1025,56 @@ describe('Stop arrête le travail PENDANT l’appel au modèle @cap:organiser-eq
     expect(JSON.stringify(row.messages ?? [])).toContain('Je termine.');
     expect(JSON.stringify(row.messages ?? [])).not.toContain('rr-9');
   });
+});
+
+// Revue Codex de #507, P2 : la sonde git regardait les lignes de l'agent en
+// base (`wsRows`), pas la liste finale où le dossier du job passe en tête. Elle
+// ne voyait le bon dossier que parce que les deux tableaux étaient le MÊME
+// objet, muté sur place — un alias que personne ne lisait. La liste finale lui
+// est désormais passée ; le prompt décrit le dépôt du dossier du JOB.
+describe('la sonde git regarde le dossier du job (#507) @cap:organiser-equipe/moteur', () => {
+  it('le bloc git du prompt décrit le dépôt du dossier attaché, pas celui de l’agent', async () => {
+    const depot = (branche: string): string => {
+      const d = mkdtempSync(join(tmpdir(), `git-${branche}-`));
+      const g = (...a: string[]) => execFileSync('git', a, { cwd: d, stdio: 'ignore' });
+      g('init', '-b', branche);
+      g('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'x');
+      return d;
+    };
+    const dossierAgent = depot('branche-de-l-agent');
+    const dossierJob = depot('branche-du-job');
+    const [ws] = await db
+      .insert(agentWorkspaces)
+      .values({ agentId: seed.agentId, label: 'Agent', path: dossierAgent, position: 0 })
+      .returning({ id: agentWorkspaces.id });
+    try {
+      const jobId = await insertJob({ jobFolder: dossierJob });
+      const argsBruts: Array<Parameters<RunnerDeps['llmClient']['generateText']>[0]> = [];
+      await executeJob(
+        jobId as JobId,
+        makeDeps(
+          makeMockLlmClient(
+            [
+              {
+                text: 'Fait.',
+                toolCalls: [
+                  { toolCallId: 'rr-git', toolName: 'return_result', args: { status: 'success' } },
+                ],
+              },
+            ],
+            undefined,
+            undefined,
+            argsBruts,
+          ),
+        ),
+        testEnv,
+      );
+
+      const systeme = String((argsBruts[0] as { system?: unknown }).system ?? '');
+      expect(systeme).toContain('branch: branche-du-job');
+      expect(systeme).not.toContain('branch: branche-de-l-agent');
+    } finally {
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, ws!.id));
+    }
+  }, 30_000);
 });
