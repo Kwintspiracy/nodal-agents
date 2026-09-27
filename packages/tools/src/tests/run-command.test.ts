@@ -4,7 +4,8 @@
 // `node -e` for cross-platform portability (node is always present in the test env).
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, rm, realpath, stat } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, readFile } from 'node:fs/promises';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommandTool } from '../builtin/run-command';
@@ -114,22 +115,24 @@ describe('run_command builtin @cap:executer-une-commande/moteur', () => {
     // d'origine n'assertait que `timedOut` et passait avec le tree-kill cassé
     // (sonde du 03/09 : le petit-enfant survivait 3 fois sur 3).
     //
-    // POURQUOI IL N'EST PLUS LU PAR SON PID (rouge sous la charge de la suite
-    // complète, 27/09). Deux choses dépendaient de la charge : un délai d'UNE
-    // seconde, que le démarrage de `node` peut dépasser avant d'avoir rien
-    // écrit, et `process.kill(pid, 0)` 1,5 s après, qui répond « vivant » dès
-    // que Windows a RÉUTILISÉ ce pid pour un autre processus (la suite en lance
-    // des centaines) — le test tuait alors un inconnu. Le petit-enfant bat donc
-    // dans un fichier toutes les 50 ms : vivant, le fichier grandit ; mort, il
-    // ne bouge plus. C'est SON battement, aucun autre processus n'y écrit.
-    const beat = join(workspaceDir, 'kill-beat.txt');
+    // LA PREUVE DE MORT EST DONNÉE PAR L'OS, jamais par un pid ni par une
+    // absence d'activité (rouge sous la charge de la suite complète, 27/09).
+    //   - `process.kill(pid, 0)` répond « vivant » dès que Windows a RÉUTILISÉ
+    //     le pid pour un autre processus : la suite en lance des centaines ;
+    //   - « le fichier ne grandit plus » passe aussi pour un processus SUSPENDU
+    //     ou affamé de processeur sous charge, alors vivant (revue Codex, P1).
+    // Le petit-enfant ouvre donc un serveur TCP sur un port éphémère et écrit
+    // ce port. Tant que le processus vit, même suspendu, le noyau accepte la
+    // connexion ; le port n'est libéré qu'à sa mort, et la connexion est alors
+    // REFUSÉE. C'est ce refus qu'on attend.
+    const portFile = join(workspaceDir, 'kill-port.txt');
     const out = await runCommandTool.execute(
       {
         purpose: 'run test command',
         // Il s'arrête seul au bout de 90 s, au-delà de la limite du test : un
         // tree-kill cassé fait rougir le test sans laisser de processus orphelin.
-        command: `node -e "const fs=require('fs');setInterval(()=>fs.appendFileSync('kill-beat.txt','.'),50);setTimeout(()=>process.exit(0),90000)"`,
-        // Assez pour que `node` démarre sous charge.
+        command: `node -e "const s=require('net').createServer().listen(0,'127.0.0.1',()=>require('fs').writeFileSync('kill-port.txt',String(s.address().port)));setTimeout(()=>process.exit(0),90000)"`,
+        // Assez pour que `node` démarre et écoute sous charge.
         timeout_seconds: 5,
       },
       ctx(),
@@ -137,22 +140,34 @@ describe('run_command builtin @cap:executer-une-commande/moteur', () => {
     expect(out.timedOut).toBe(true);
     expect(out.exitCode).not.toBe(0); // killed → no clean exit
 
-    // Il a bien tourné avant le délai : sans cela, « ne grandit plus » ne
-    // prouverait rien.
-    const taille = async (): Promise<number> => (await stat(beat)).size;
-    expect(await taille()).toBeGreaterThan(0);
+    // Il a bien écouté avant le délai : sans ce port, « refusé » ne prouverait
+    // rien.
+    const port = Number(await readFile(portFile, 'utf8'));
+    expect(Number.isInteger(port) && port > 0).toBe(true);
 
-    // Mort = le battement s'arrête. On attend qu'il reste immobile une
-    // seconde entière (vingt battements manqués), dans une limite de 20 s :
-    // un tree-kill cassé laisse le fichier grandir jusqu'à la limite.
+    /** `true` : la connexion est refusée, donc plus personne n'écoute. */
+    const refusee = (): Promise<boolean> =>
+      new Promise((resolve) => {
+        const socket = connect({ host: '127.0.0.1', port });
+        socket.once('connect', () => {
+          socket.destroy();
+          resolve(false);
+        });
+        socket.once('error', (err: NodeJS.ErrnoException) => {
+          socket.destroy();
+          resolve(err.code === 'ECONNREFUSED');
+        });
+      });
+
+    // Jusqu'à 20 s : le temps que taskkill / SIGKILL aboutisse sous charge. Un
+    // tree-kill cassé laisse le petit-enfant écouter jusqu'à la limite.
     const limite = Date.now() + 20_000;
-    let immobile = false;
-    while (!immobile && Date.now() < limite) {
-      const avant = await taille();
-      await new Promise((r) => setTimeout(r, 1_000));
-      immobile = (await taille()) === avant;
+    let mort = await refusee();
+    while (!mort && Date.now() < limite) {
+      await new Promise((r) => setTimeout(r, 200));
+      mort = await refusee();
     }
-    expect(immobile).toBe(true);
+    expect(mort).toBe(true);
   }, 60_000);
 
   it('caps very large output (truncated=true, ≤ cap)', async () => {
