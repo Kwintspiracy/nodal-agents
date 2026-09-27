@@ -255,7 +255,7 @@ export const agentJobs = pgTable(
     /**
      * #444 — ce que l'appel au modèle EN COURS a produit (le flux de #484),
      * posé par le runner pendant l'appel et remis à NULL à sa fin. La page
-     * d'un run le montre tant que le job est `processing`. Migration 0133.
+     * d'un run le montre tant que le job est `processing`. Migration 0134.
      */
     liveProgress: jsonb('live_progress').$type<JobLiveProgress>(),
     delegationDepth: integer('delegation_depth').default(0),
