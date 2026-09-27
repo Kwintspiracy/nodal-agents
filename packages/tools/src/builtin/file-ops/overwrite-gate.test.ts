@@ -14,13 +14,14 @@
 // in isolation.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { approvalRequests } from '@nodal-agents/db';
+import { approvalRequests, agentJobs, constatedWrites } from '@nodal-agents/db';
+import { cheminConstate } from '../../verification/record-constat';
 import { executeTool } from '../../execute';
 import { SHARED_WORKSPACE_LABEL } from './workspace';
 import { fileWriteTool } from './file-write';
@@ -225,5 +226,98 @@ describe('D1 overwrite gate — file_edit', () => {
       opts('fully_autonomous'),
     );
     expect(result.outcome).toBe('success');
+  });
+});
+
+// #505 — job 8c763150 (25/09/2026) : un agent régénère six voix off qu'il
+// venait d'écrire, aux mêmes chemins du dossier partagé. Chaque réécriture
+// demandait l'approbation du propriétaire, alors que la porte protège le
+// travail d'un AUTRE run. Un fichier dont la dernière écriture constatée est
+// celle de CE run lui appartient : il le réécrit sans demander.
+describe('D1 overwrite gate — a file this run wrote belongs to this run (#505) @cap:travailler-sur-des-fichiers/moteur', () => {
+  async function otherJob(): Promise<string> {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'another run',
+        status: 'processing',
+      })
+      .returning({ id: agentJobs.id });
+    return row!.id;
+  }
+
+  it('re-writing a shared file THIS run created runs without asking anyone', async () => {
+    const path = `${SHARED_WORKSPACE_LABEL}/vo/line-06.wav.txt`;
+    const first = await executeTool(
+      fileWriteTool,
+      { path, content: 'take 1', create_dirs: true },
+      ctx(),
+      opts(undefined),
+    );
+    expect(first.outcome).toBe('success');
+
+    const second = await executeTool(
+      fileWriteTool,
+      { path, content: 'take 2' },
+      ctx(),
+      opts(undefined),
+    );
+    expect(second.outcome).toBe('success');
+    expect(await readFile(join(SHARED_ROOT, 'vo', 'line-06.wav.txt'), 'utf8')).toBe('take 2');
+    const asked = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, seed.jobId));
+    expect(asked.filter((r) => JSON.stringify(r.toolInput).includes('line-06'))).toHaveLength(0);
+  });
+
+  it('file_edit on a file this run wrote runs without asking, too', async () => {
+    const path = `${SHARED_WORKSPACE_LABEL}/notes.md`;
+    await executeTool(fileWriteTool, { path, content: 'hello world' }, ctx(), opts(undefined));
+    const edit = await executeTool(
+      fileEditTool,
+      { path, old_string: 'hello', new_string: 'bye' },
+      ctx(),
+      opts(undefined),
+    );
+    expect(edit.outcome).toBe('success');
+    expect(await readFile(join(SHARED_ROOT, 'notes.md'), 'utf8')).toBe('bye world');
+  });
+
+  it('a file whose LAST recorded write is another run’s still asks the owner', async () => {
+    const path = `${SHARED_WORKSPACE_LABEL}/shared-report.md`;
+    await executeTool(fileWriteTool, { path, content: 'mine' }, ctx(), opts(undefined));
+    // Un autre run l'a réécrit après nous : ce n'est plus notre fichier.
+    const other = await otherJob();
+    await db.insert(constatedWrites).values({
+      jobId: other,
+      turn: 99,
+      path: await cheminConstate(join(SHARED_ROOT, 'shared-report.md')),
+      changeKind: 'modified',
+      constatedBy: 'disk',
+      createdAt: new Date(Date.now() + 1_000),
+    });
+
+    const again = await executeTool(
+      fileWriteTool,
+      { path, content: 'overwrite', purpose: 'Remplacer le rapport.' },
+      ctx(),
+      opts(undefined),
+    );
+    expect(again.outcome).toBe('awaiting_approval');
+  });
+
+  it('a shared file no run of ours wrote still asks the owner', async () => {
+    await writeFile(join(SHARED_ROOT, 'theirs.md'), 'old', 'utf8');
+    const result = await executeTool(
+      fileWriteTool,
+      { path: `${SHARED_WORKSPACE_LABEL}/theirs.md`, content: 'new', purpose: 'Mettre à jour.' },
+      ctx(),
+      opts(undefined),
+    );
+    expect(result.outcome).toBe('awaiting_approval');
   });
 });

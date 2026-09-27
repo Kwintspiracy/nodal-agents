@@ -110,6 +110,24 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
     }
   });
 
+  // #505 — job 8c763150 : l'agent a lu « suspends this job » comme un arrêt,
+  // a rendu `blocked` en disant que le runtime avait stoppé ses appels, et n'a
+  // jamais rappelé l'outil. Rien n'était arrêté. Le refus le dit, et dit le
+  // geste : le même appel, avec le champ qui manque.
+  it('le refus dit que RIEN n’est arrêté et que le même appel, avec `purpose`, suffit (#505)', async () => {
+    const { tool } = aTool('gated_not_halted', { defaultApproval: 'require_approval' });
+
+    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts());
+
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') {
+      expect(result.error).toContain('missing field `purpose`');
+      expect(result.error).toContain('This job is NOT stopped');
+      expect(result.error).toContain('same input');
+      expect(result.error).not.toContain('suspends this job');
+    }
+  });
+
   it('une raison faite d’espaces ne compte pas — la carte la lirait comme absente', async () => {
     const { tool } = aTool('gated_blank_reason', { defaultApproval: 'require_approval' });
 

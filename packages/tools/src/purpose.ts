@@ -54,11 +54,15 @@ const PURPOSE_MAX = 400;
  * texte d'écran) : il nomme l'outil, le fait, et le geste exact qui répare.
  */
 export function missingPurposeInstruction(toolName: string): string {
+  // « Rien n'est arrêté » est dit en toutes lettres (#505) : l'ancienne phrase
+  // commençait par « suspends this job », et un agent l'a lue comme un arrêt,
+  // a rendu `blocked` et n'a jamais rappelé l'outil.
   return (
-    `approval_purpose_required: "${toolName}" suspends this job until a person approves it, ` +
-    `and no reason was given, so nothing was submitted to anyone. Call "${toolName}" again ` +
-    `with a \`purpose\` field: one sentence, for the person who approves, saying what you ` +
-    `need this for and why.`
+    `approval_purpose_required: missing field \`purpose\`. "${toolName}" needs a person's ` +
+    `approval, and a request without a reason is not sent, so nothing was submitted to anyone. ` +
+    `This job is NOT stopped and nothing was refused: call "${toolName}" again with the same ` +
+    `input plus a \`purpose\` field: one sentence, for the person who approves, saying what ` +
+    `you need this for and why.`
   );
 }
 

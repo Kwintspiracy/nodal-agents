@@ -18,7 +18,7 @@
 // rendrait un échec d'outil pour une écriture qui a eu lieu. Une panne se dit
 // par un code et n'empêche rien.
 
-import { constatedWrites } from '@nodal-agents/db';
+import { constatedWrites, desc, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { ConstatedBy, ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { normalizePath } from '@nodal-agents/shared';
@@ -157,4 +157,39 @@ export async function recordConstatedWrites(input: {
     console.warn(`[verification] CONSTAT_WRITE_FAILED job=${jobId} turn=${turn}`, err);
     return 0;
   }
+}
+
+/**
+ * La DERNIÈRE écriture constatée de ce fichier est-elle celle de CE job ?
+ * (issue #505)
+ *
+ * C'est la question que pose la porte d'écrasement du dossier partagé : elle
+ * protège le travail d'un AUTRE run, et un run qui réécrit le fichier qu'il
+ * vient de produire n'écrase le travail de personne. Job 8c763150 : six voix
+ * off régénérées aux mêmes chemins, six demandes d'approbation pour un
+ * travail qui était le sien.
+ *
+ * La réponse se lit sur `constated_writes`, que le seam d'exécution remplit
+ * pour TOUT outil qui écrit (fichier, voix, bureautique, shell constaté par
+ * git), et sur rien d'autre : le dernier constat de ce chemin, tous jobs
+ * confondus, doit être de ce job, et ne pas être une suppression. Un autre run
+ * passé derrière nous reprend donc la main — et la porte redemande.
+ *
+ * Ce qu'elle ne voit pas, assumé : une écriture faite HORS de Nodal (la
+ * personne dans son éditeur) ne laisse aucun constat. Dans ce cas précis, le
+ * fichier reste celui de ce run.
+ */
+export async function lastConstatedWriteIsJob(
+  db: AnyDrizzleDb,
+  jobId: string | null | undefined,
+  absPath: string,
+): Promise<boolean> {
+  if (!jobId) return false;
+  const [last] = await db
+    .select({ jobId: constatedWrites.jobId, changeKind: constatedWrites.changeKind })
+    .from(constatedWrites)
+    .where(eq(constatedWrites.path, await cheminConstate(absPath)))
+    .orderBy(desc(constatedWrites.createdAt))
+    .limit(1);
+  return last !== undefined && last.jobId === jobId && last.changeKind !== 'deleted';
 }
