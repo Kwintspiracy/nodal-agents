@@ -233,6 +233,7 @@ import {
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { lastSequencePerDeliverable } from './verification-repairs.ts';
 import { readRepairAttempts } from './verification-repairs-read.ts';
+import { readDeclaredUnverified } from './declared-deliverables-read.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
@@ -262,6 +263,7 @@ import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts
 // P2bis — le récapitulatif de livraison d'un run est posé par la fonction du
 // fil d'une conversation, jamais par une seconde lecture des mêmes lignes.
 import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
+import type { ThreadDeclaredDeliverable } from './declared-proof.ts';
 import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
 import { probeContextWindow } from '@nodal-agents/llm';
 import {
@@ -2761,6 +2763,8 @@ export async function getSpaceConversationAction(
     // laissait un jeton voyager dans `toolOutput` jusqu'au premier écran qui
     // l'afficherait (Reviewer C, passe 2).
     const readRepairsOfRun = await readRepairAttempts(db, relevantIds);
+    // Les fichiers PROMIS par ce run et ses délégués, non verts (#509).
+    const declaredOfRun = await readDeclaredUnverified(db, relevantIds);
     const auditRows = classifiableRows.map(redactAuditRow);
     const projectRow = projectRows[0];
     const runJob: ThreadJob = {
@@ -2797,6 +2801,7 @@ export async function getSpaceConversationAction(
       // Ce que ce verdict a coûté : le plus grand `repair_attempts` du run et
       // de ses délégués.
       repairs: Math.max(0, ...readRepairsOfRun.values()),
+      declaredUnverified: [...declaredOfRun.values()].flat(),
       // #59 — le dernier verdict de relecture de ce run et de ses délégués,
       // pris sur la MÊME lecture que la section Review (`reviewVerdicts`,
       // ordonnée par `seq`). Le bloc de conclusion le pose à côté de
@@ -14349,6 +14354,11 @@ export type CodingProcessDetail = {
   verificationSkippedSurfaces: string[];
   /** Les livrables sans commandes de preuve (ou en attente d'approbation) au moment de la preuve. */
   verificationUnconfigured: VerificationUnconfiguredView[];
+  /**
+   * Les fichiers que le pipeline a PROMIS et dont la preuve n'a pas conclu
+   * vert (#509). Vide pour une session de chat : sans job, rien n'est promis.
+   */
+  declaredUnverified: ThreadDeclaredDeliverable[];
 };
 
 const CodingProcessDetailSchema = z.union([
@@ -14937,6 +14947,7 @@ export async function getCodingProcessDetailAction(
         verificationRuns: verificationSequences,
         verificationSkippedSurfaces,
         verificationUnconfigured,
+        declaredUnverified: [...(await readDeclaredUnverified(db, allRelevantIds)).values()].flat(),
       });
     }
 
@@ -15022,6 +15033,7 @@ export async function getCodingProcessDetailAction(
       verificationRuns: [],
       verificationSkippedSurfaces: [],
       verificationUnconfigured: [],
+      declaredUnverified: [],
     });
   } catch (err) {
     console.error('[getCodingProcessDetailAction]', err);

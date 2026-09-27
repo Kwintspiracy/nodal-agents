@@ -64,6 +64,7 @@ import {
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { lastSequencePerDeliverable } from './verification-repairs.ts';
 import { readRepairAttempts } from './verification-repairs-read.ts';
+import { readDeclaredUnverified } from './declared-deliverables-read.ts';
 import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
 // La borne de `collectDescendants`, nommée ici pour que le message d'erreur la
 // dise plutôt que de la recopier en dur.
@@ -76,7 +77,12 @@ import { buildConversationThread } from './conversation-thread.ts';
 // propre module : l'importer de `chat-list.ts` formait un cycle, puisque ce
 // dernier importe le type des lignes d'ici.
 import { chatKey, LIST_MAX } from './chat-key.ts';
-import type { ThreadJob, ThreadProject, ThreadProofRun } from './conversation-thread.ts';
+import type {
+  ThreadDeclaredDeliverable,
+  ThreadJob,
+  ThreadProject,
+  ThreadProofRun,
+} from './conversation-thread.ts';
 import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
 import { folderOfWork, MCP_JOB_CHANNELS, RUNNING_JOB_STATUSES } from './chat-folders.ts';
 import type { WorkOrigin } from './chat-folders.ts';
@@ -1898,6 +1904,16 @@ export async function getConversationThreadAction(
       repairsByRoot.set(root, Math.max(repairsByRoot.get(root) ?? 0, n));
     }
 
+    // Les fichiers PROMIS non verts (#509), rangés sous la tête comme la
+    // preuve : un délégué promet POUR le travail qui l'a mandaté.
+    const declaredByJob = await readDeclaredUnverified(db, relevantIds);
+    const declaredByRoot = new Map<string, ThreadDeclaredDeliverable[]>();
+    for (const [jobId, items] of declaredByJob) {
+      const root = rootOf.get(jobId);
+      if (root === undefined) continue;
+      declaredByRoot.set(root, [...(declaredByRoot.get(root) ?? []), ...items]);
+    }
+
     const jobs: ThreadJob[] = headRows.map((r, i) => ({
       jobId: r.job.id,
       feed: assembled[i]!.feed,
@@ -1916,6 +1932,7 @@ export async function getConversationThreadAction(
       project: r.job.projectId !== null ? (projectById.get(r.job.projectId) ?? null) : null,
       proof: proofByRoot.get(r.job.id) ?? [],
       repairs: repairsByRoot.get(r.job.id) ?? 0,
+      declaredUnverified: declaredByRoot.get(r.job.id) ?? [],
       reviewVerdict: reviewByRoot.get(r.job.id) ?? null,
       // Les lignes d'audit de la tête ET de toute sa descendance, déjà
       // rangées sous la tête pour la frontière chat/travail : le récapitulatif

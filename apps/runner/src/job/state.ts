@@ -301,6 +301,17 @@ function lastAssistantText(messages: unknown): string {
 }
 
 /**
+ * Le dernier texte que l'agent a écrit dans CE tour — la même lecture que le
+ * remplissage de `completeJob`, exportée pour la porte qui échoue un run sur un
+ * livrable déclaré non vérifié (#509) : elle rend ce texte, suivi de sa ligne.
+ */
+export function lastTextOfRun(messages: unknown, task: string): string {
+  return lastAssistantText(
+    Array.isArray(messages) ? currentTurnMessages(messages, task) : messages,
+  );
+}
+
+/**
  * Le livrable d'un agent : son dernier texte écrit, relu dans la transcription.
  *
  * Appelé AVANT la compilation des enfants, et non après comme ces lignes le

@@ -391,4 +391,52 @@ describe('getCodingProcessDetailAction — verification (T24)', () => {
     });
     expect(byKey.get('d:/apps/en-attente')).toMatchObject({ reason: 'pending_approval' });
   });
+  // #509 — un fichier PROMIS par le pipeline (racine OU délégué) et non vert
+  // remonte au détail, lu sur la ligne d'état ; un promis vert, un non-promis,
+  // et le promis d'un AUTRE espace n'y sont pas.
+  it('les fichiers PROMIS non verts du pipeline remontent, et eux seuls @cap:verifier-un-livrable/ecran', async () => {
+    const { getCodingProcessDetailAction } = await actions();
+    await testDb.insert(jobDeliverableVerificationState).values([
+      {
+        jobId: delegateJobId,
+        deliverableType: 'document',
+        canonicalKey: 'd:/nodal/film.mp4',
+        displayPathSnapshot: 'D:/Nodal/film.mp4',
+        dirtyGeneration: 2,
+        decisionStatus: 'dirty',
+        declared: true,
+      },
+      {
+        jobId: rootJobId,
+        deliverableType: 'document',
+        canonicalKey: 'd:/nodal/affiche.png',
+        displayPathSnapshot: 'D:/Nodal/affiche.png',
+        dirtyGeneration: 1,
+        verifiedGeneration: 1,
+        decisionStatus: 'green',
+        declared: true,
+      },
+      {
+        jobId: rootJobId,
+        deliverableType: 'document',
+        canonicalKey: 'd:/nodal/brouillon.md',
+        displayPathSnapshot: 'D:/Nodal/brouillon.md',
+        dirtyGeneration: 1,
+        decisionStatus: 'red',
+      },
+      {
+        jobId: neighbourJobId,
+        deliverableType: 'document',
+        canonicalKey: 'd:/voisin/film.mp4',
+        displayPathSnapshot: 'D:/Voisin/film.mp4',
+        dirtyGeneration: 1,
+        decisionStatus: 'red',
+        declared: true,
+      },
+    ]);
+    const r = await getCodingProcessDetailAction({ jobId: rootJobId });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.declaredUnverified).toEqual([{ path: 'D:/Nodal/film.mp4', status: 'dirty' }]);
+  });
 });

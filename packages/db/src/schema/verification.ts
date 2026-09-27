@@ -98,6 +98,17 @@ export const jobDeliverableVerificationState = pgTable(
      * une autorisation ne se présume pas.
      */
     produced: boolean('produced').notNull().default(false),
+    /**
+     * L'AGENT a-t-il nommé ce fichier comme livrable de son run, dans
+     * `return_result.deliverables` ? (issue #509, migration 0129)
+     *
+     * Même ligne, même preuve que tout livrable ; ce drapeau dit seulement que
+     * le run l'a PROMIS. Une preuve rouge sur un livrable déclaré, qui survit
+     * au tour de réparation, fait échouer le run (`deliverable_not_verified`) ;
+     * un livrable non déclaré reste observé, comme avant. Défaut `false` — une
+     * promesse ne se présume pas.
+     */
+    declared: boolean('declared').notNull().default(false),
     /** DecisionStatus — l'état lisible affiché à l'owner. */
     decisionStatus: text('decision_status').notNull(),
     /** Empreinte de la dernière commande de preuve exécutée (diagnostic, pas le hash d'approbation). */

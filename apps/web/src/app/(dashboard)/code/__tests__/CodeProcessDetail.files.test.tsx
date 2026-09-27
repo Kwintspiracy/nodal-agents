@@ -107,6 +107,7 @@ const detail = (): CodingProcessDetail => ({
   verificationSkippedSurfaces: [],
   constatedBy: [],
   verificationUnconfigured: [],
+  declaredUnverified: [],
 });
 
 let container: HTMLDivElement;

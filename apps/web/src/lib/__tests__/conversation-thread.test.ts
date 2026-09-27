@@ -104,6 +104,7 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   project: null,
   proof: [],
   repairs: 0,
+  declaredUnverified: [],
   reviewVerdict: null,
   audit: [],
   workspaceRoots: [],

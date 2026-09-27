@@ -34,6 +34,15 @@ export { bumpEpochsAfterWrite } from './verification/write-epoch';
 // l'autre porte du même trou (#101). Il vit dans `intent.ts` pour emprunter SA
 // résolution de projets, jamais une seconde.
 export { bumpEpochsAfterJoblessWrite } from './verification/intent';
+// Les livrables que l'AGENT déclare dans `return_result` (issue #509) : le
+// runner traite `return_result` lui-même, sans passer par executeTool, et
+// pose ces lignes avant de finaliser.
+export { declareDeliverables } from './verification/declared-deliverables';
+export type {
+  DeclareDeliverablesOutcome,
+  DeclaredDeliverable,
+  UnresolvedDeclaration,
+} from './verification/declared-deliverables';
 // La carte d'un outil (P1) : ce que l'écran de conversation lit pour choisir
 // comment montrer un résultat. Résolue ici, jamais devinée depuis un nom.
 export {

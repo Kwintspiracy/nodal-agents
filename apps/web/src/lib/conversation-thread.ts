@@ -41,6 +41,7 @@ import {
 } from './conversation-feed.ts';
 import type { JobResultKind } from '@nodal-agents/shared';
 import { lineCountsOfCall, sumLineCounts } from './coding-changes.ts';
+import { concludeProof, type ThreadDeclaredDeliverable } from './declared-proof.ts';
 import { fileChangesOfAuditRows } from './file-change-groups.ts';
 import { callHappened, outcomeOfToolOutput } from './tool-card-payload.ts';
 import type { ProducedItem, ProductionVerdict } from './chat-or-work.ts';
@@ -95,6 +96,9 @@ export const CUT_ANSWER_NOTE = 'This answer was cut off: the model stopped respo
 /** Une commande de preuve d'un job (ou d'un de ses délégués) et son verdict. */
 export type ThreadProofRun = { command: string; verdict: string };
 
+// Un fichier PROMIS non vert (#509) — défini avec la règle qui le lit.
+export type { ThreadDeclaredDeliverable } from './declared-proof.ts';
+
 /** Un job de TÊTE de la conversation, avec son fil P2 déjà assemblé. */
 export type ThreadJob = {
   jobId: string;
@@ -145,6 +149,14 @@ export type ThreadJob = {
    * aujourd'hui (décision D2 : une réparation automatique au maximum).
    */
   repairs: number;
+  /**
+   * Les fichiers PROMIS par ce travail et ses délégués dont la preuve n'a pas
+   * conclu vert (#509). `[]` dans le cas ordinaire. Le récapitulatif ne dit
+   * jamais « Verified » tant qu'il en reste un : les lignes de preuve seules
+   * peuvent être vertes sur les sources alors que le fichier promis n'a jamais
+   * été constaté.
+   */
+  declaredUnverified: readonly ThreadDeclaredDeliverable[];
   /**
    * Le DERNIER verdict de relecture enregistré sous ce travail (#59) — le sien
    * ou celui d'un délégué relecteur, lu par `seq`, l'ordre d'écriture.
@@ -538,10 +550,11 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
         : null,
     costUsd: job.feed.totals.costUsd,
     reviews,
-    checks: job.proof.map((r) => ({ command: r.command, ok: r.verdict === 'green' })),
     // Un `infra_error` n'est pas un succès : tout ce qui n'est pas vert fait
-    // « Checks failed ». La section « Checks » montre laquelle a lâché.
-    verdict: job.proof.length === 0 ? null : passed === job.proof.length ? 'green' : 'red',
+    // « Checks failed ». La section « Checks » montre laquelle a lâché. Et un
+    // fichier PROMIS non vert interdit « Verified » et se nomme (#509) — la
+    // règle vit dans `declared-proof.ts`, partagée par les trois écrans.
+    ...concludeProof(job.proof, job.declaredUnverified, job.workspaceRoots),
     // Ce que ce verdict a coûté (#375). Transporté, jamais recalculé : la
     // borne vit en base, sur la ligne d'état du livrable.
     repairs: job.repairs,

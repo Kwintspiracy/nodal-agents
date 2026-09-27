@@ -87,6 +87,7 @@ import {
   SHARED_WORKSPACE_LABEL,
   toolsNamedButAbsent,
   exposeStatedPurpose,
+  declareDeliverables,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -156,7 +157,13 @@ import {
 // deux chemins de succès de cette boucle passent par elle, jamais par
 // completeJob directement — c'est elle qui calcule et journalise la décision
 // de vérification, et qui commet l'intention de livrer avec le statut.
-import { finalizeJobFailure, finalizeJobSuccess } from './finalize.ts';
+import {
+  DELIVERABLE_NOT_VERIFIED,
+  deliverableNotVerifiedLine,
+  finalizeJobFailure,
+  finalizeJobSuccess,
+} from './finalize.ts';
+import type { DeclaredDeliverableFailure } from './finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import { loadConversationContext } from './conversation-id.ts';
@@ -328,6 +335,65 @@ const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set(DELIVERY_TOOL_NAME_LIST
  * d'une exécution, pas du job (revue Codex de la PR #108, constat 7).
  */
 const EMPTY_DELIVERABLE_NUDGE_MARK = '[système:livrable-vide:]';
+
+/**
+ * La marque du renvoi d'un `return_result` dont un livrable déclaré ne se
+ * résout pas (#509). Écrite dans le résultat d'outil que lit le modèle, et
+ * recomptée dans la transcription à chaque reprise.
+ */
+const UNRESOLVED_DELIVERABLES_MARK = 'deferred: deliverables_unresolved';
+
+/** Un fichier déclaré que Nodal n'a pas pu vérifier : ce que la ligne d'arrêt en dit. */
+export interface DeclarationItem {
+  path: string;
+  check: string;
+  detail: string;
+}
+
+/**
+ * La déclaration encore DUE, relue dans la transcription (#509, revue Codex) :
+ * un `return_result` renvoyé parce que ses `deliverables` ne désignaient aucun
+ * fichier n'a rien promis de vérifiable, et tant qu'aucun nouveau
+ * `return_result` n'est venu, AUCUNE sortie en succès ne doit passer — ni la
+ * suivante par `return_result` (elle redéclare, ou retire, et passe par la
+ * porte), ni la sortie « texte seul », qui finalisait sans rien voir. Rend les
+ * chemins encore dus, ou `null`. Relue dans la transcription, pas en mémoire :
+ * une reprise après approbation garde la dette.
+ *
+ * Seul un `return_result` ACCEPTÉ (sa réponse `acknowledged`) solde la dette :
+ * un appel DIFFÉRÉ (un outil voisin a échoué) n'a ni déclaré ni retiré quoi que
+ * ce soit, et le compter comme une réponse laissait une réponse en texte seul
+ * finir en succès après la reprise du voisin (revue Codex de #509, passe 2).
+ */
+export function declarationDue(messages: readonly unknown[]): DeclarationItem[] | null {
+  let due: DeclarationItem[] | null = null;
+  for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+    if (!m || !Array.isArray(m.content)) continue;
+    for (const part of m.content as Array<Record<string, unknown>>) {
+      if (part?.['toolName'] !== 'return_result') continue;
+      if (m.role !== 'tool' || part['type'] !== 'tool-result') continue;
+      const out = part['output'] as { value?: unknown } | undefined;
+      const v = out?.value as
+        | { error?: unknown; unresolved?: unknown; acknowledged?: unknown }
+        | undefined;
+      if (v?.acknowledged === true) {
+        due = null;
+        continue;
+      }
+      if (typeof v?.error !== 'string' || !v.error.startsWith(UNRESOLVED_DELIVERABLES_MARK))
+        continue;
+      const liste = Array.isArray(v.unresolved)
+        ? (v.unresolved as Array<Record<string, unknown>>)
+        : [];
+      due = liste.map((u) => ({
+        path: String(u['path'] ?? ''),
+        check: 'unresolved',
+        detail: String(u['code'] ?? 'unresolved'),
+      }));
+    }
+  }
+  return due;
+}
 
 const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'return_result',
@@ -2894,15 +2960,21 @@ async function runJobTracked(
    * Le descripteur de livraison à poser DANS la transaction terminale, ou
    * `null` quand il n'y a rien à dire ou aucun canal à outil pour le dire.
    */
-  const harnessNoticeDelivery = (
-    payload: string,
-  ): { channel: string; chatId: string; payload: string } | null => {
+  // Où part une notice du harnais : le canal à outil du job, ou celui que la
+  // routine a choisi pour sa confirmation. `null` : aucun canal à outil.
+  const harnessNoticeTarget = (): { channel: string; chatId: string } | null => {
     const canal = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')
       ? (job.channel ?? '')
       : (notifyChannelOverride ?? '');
-    if (!TOOL_ONLY_DELIVERY_CHANNELS.has(canal) || !job.chatId || payload.trim() === '')
-      return null;
-    return { channel: canal, chatId: job.chatId, payload };
+    if (!TOOL_ONLY_DELIVERY_CHANNELS.has(canal) || !job.chatId) return null;
+    return { channel: canal, chatId: job.chatId };
+  };
+  const harnessNoticeDelivery = (
+    payload: string,
+  ): { channel: string; chatId: string; payload: string } | null => {
+    const cible = harnessNoticeTarget();
+    if (cible === null || payload.trim() === '') return null;
+    return { ...cible, payload };
   };
 
   /**
@@ -2925,6 +2997,7 @@ async function runJobTracked(
     payload: string,
     suffixeCle: string,
     userMessage?: string,
+    replaceResult = false,
   ): Promise<void> => {
     const notice = harnessNoticeDelivery(payload);
     await finalizeJobFailure(
@@ -2934,7 +3007,7 @@ async function runJobTracked(
         errorCode,
         stats: runStats(),
         messages,
-        ...(userMessage !== undefined ? { userMessage } : {}),
+        ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
         ...(notice
           ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
           : {}),
@@ -2951,6 +3024,65 @@ async function runJobTracked(
     await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
       console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
     );
+  };
+
+  /**
+   * La sortie d'un run qu'un livrable DÉCLARÉ non vérifié a fait échouer
+   * (#509). La primitive a déjà écrit `failed`, le résultat et la notice ; il
+   * reste à envoyer la notice et à rendre au parent le MÊME texte que la ligne
+   * en base — c'est lui qui voyage dans le record de délégation.
+   */
+  const sortieLivrableNonVerifie = async (
+    failure: DeclaredDeliverableFailure,
+  ): Promise<ExecuteJobResult> => {
+    trace(DELIVERABLE_NOT_VERIFIED, { paths: failure.unverified.map((u) => u.path) });
+    await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
+      console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
+    );
+    return {
+      status: 'failed',
+      error: failure.errorCode,
+      result: failure.result,
+      toolsUsed,
+      exitReason: DELIVERABLE_NOT_VERIFIED,
+    };
+  };
+
+  /**
+   * Le run promettait des fichiers que Nodal ne peut pas vérifier : il n'est
+   * pas un succès (invariant #4). Même ligne, même code que la porte de
+   * finalisation. UNE seule sortie pour la branche `return_result` et la
+   * branche texte (revue Codex de #509 : la seconde finalisait en succès).
+   */
+  const echouerSurDeclaration = async (items: DeclarationItem[]): Promise<ExecuteJobResult> => {
+    const line = deliverableNotVerifiedLine(items);
+    // Le texte que le run aurait livré — ce qu'un outil de livraison a déjà
+    // écrit, sinon le dernier texte de l'agent —, puis la ligne. Il REMPLACE le
+    // résultat dans la transaction qui pose l'échec : une seconde écriture après
+    // coup laissait, sur une panne entre les deux, un échec dont le résultat ne
+    // disait que « livré » (revue Codex de #509, passe 3).
+    const [dejaEcrit] = await db
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId as string))
+      .limit(1);
+    const texte = (dejaEcrit?.result ?? '').trim() || lastAssistantTextSeen.trim();
+    const livrable = [texte, line].filter((t) => t !== '').join('\n\n');
+    trace(DELIVERABLE_NOT_VERIFIED, { paths: items.map((i) => i.path) });
+    await failJobWithHarnessNotice(
+      DELIVERABLE_NOT_VERIFIED,
+      line,
+      DELIVERABLE_NOT_VERIFIED,
+      livrable,
+      true,
+    );
+    return {
+      status: 'failed',
+      error: DELIVERABLE_NOT_VERIFIED,
+      result: livrable,
+      toolsUsed,
+      exitReason: DELIVERABLE_NOT_VERIFIED,
+    };
   };
 
   const stampFailedDelegations = async (): Promise<void> => {
@@ -3518,6 +3650,19 @@ async function runJobTracked(
       // première marque était du texte ordinaire, et un utilisateur qui l'aurait
       // recopiée privait son agent de son unique rappel).
       if (typeof c === 'string' && c.includes(EMPTY_DELIVERABLE_NUDGE_MARK)) seen += 1;
+    }
+    return seen;
+  })();
+  // #509 — un livrable déclaré dont le chemin ne se résout pas : UN renvoi à
+  // l'agent pour qu'il le corrige, puis l'échec. Compté dans la transcription,
+  // pour la même raison que le rappel du dessus : un compteur en mémoire
+  // repartirait à zéro à chaque reprise.
+  const MAX_UNRESOLVED_DELIVERABLE_NUDGES = 1;
+  let unresolvedDeliverableNudges = (() => {
+    let seen = 0;
+    for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+      if (!m || m.role !== 'tool') continue;
+      if (JSON.stringify(m.content ?? '').includes(UNRESOLVED_DELIVERABLES_MARK)) seen += 1;
     }
     return seen;
   })();
@@ -4333,6 +4478,12 @@ async function runJobTracked(
             );
             return { status: 'failed', error: 'telegram_not_delivered' };
           }
+          // Une déclaration renvoyée et jamais refaite (#509) : répondre en
+          // texte n'efface pas des fichiers promis que Nodal n'a pas pu trouver.
+          const dueTexte = declarationDue(messages);
+          if (dueTexte !== null && dueTexte.length > 0) {
+            return await echouerSurDeclaration(dueTexte);
+          }
           // SANS `delivery` : sur ce chemin le canal a déjà été servi par
           // l'outil telegram_send_message pendant le run — préparer une
           // livraison ici DOUBLERAIT le message.
@@ -4342,6 +4493,7 @@ async function runJobTracked(
           // (passe ciblée sur la livraison, constat 2). Le point d'extension
           // existait et n'était branché nulle part.
           const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
+          const cibleNotice = harnessNoticeTarget();
           const finalized = await finalizeJobSuccess(
             db,
             {
@@ -4357,6 +4509,9 @@ async function runJobTracked(
               stats: runStats(),
               messages,
               ...(noticeALivrer ? { delivery: noticeALivrer } : {}),
+              // Un livrable déclaré non vérifié (#509) : sa ligne part vers le
+              // canal à outil, là où l'agent a pu dire « livré ».
+              ...(cibleNotice ? { noticeTarget: cibleNotice } : {}),
             },
             {
               prepareDelivery: async (tx, d) =>
@@ -4372,6 +4527,12 @@ async function runJobTracked(
             // que le chemin return_result rendait déjà already_handled.
             trace('terminal_write_lost_race', { turn, writer: 'finalize_text', jobId });
             return { status: 'already_handled' };
+          }
+          // UN LIVRABLE PROMIS N'EST PAS LÀ (#509) : la primitive a écrit
+          // `failed` — les réparations sont épuisées, il n'y a pas de tour de plus.
+          if (finalized.kind === 'failed') {
+            if (!finalized.failure) throw new Error(`FINALIZE_FAILED_WITHOUT_FAILURE: ${jobId}`);
+            return await sortieLivrableNonVerifie(finalized.failure);
           }
           // PREUVE ROUGE, ET JAMAIS RÉPARÉE : le job NE FINIT PAS. Il repart
           // pour UN tour, avec la sortie rouge verbatim comme entrée (issue
@@ -5722,6 +5883,102 @@ async function runJobTracked(
           }
         }
 
+        // j-livrables (#509). Les FICHIERS que l'agent déclare livrer deviennent
+        // des lignes d'état sales, `declared`, que la finalisation prouvera ci-
+        // dessous comme tout livrable — et qu'elle opposera au run s'ils ne sont
+        // pas verts une fois les réparations épuisées. Posées ICI, après toutes
+        // les gardes qui peuvent encore renvoyer ce `return_result` : un appel
+        // renvoyé n'a rien promis. Sur un run qui a créé des tâches, elles
+        // attendent la finalisation du cron, qui lit les mêmes lignes.
+        // PRÉSENT (même vide), le champ est la liste complète et remplace la
+        // précédente ; ABSENT, il ne change rien — un agent qui oublie de la
+        // répéter au tour de réparation ne retire pas sa promesse sans le dire.
+        const champ = (returnResultCall.input as { deliverables?: unknown } | undefined)
+          ?.deliverables;
+        const declares = Array.isArray(champ) ? (champ as string[]) : [];
+        // ABSENT alors qu'une déclaration renvoyée est encore DUE : la promesse
+        // précédente tient (c'est le contrat du champ), et elle ne désigne
+        // aucun fichier vérifiable. Accepter cet appel solderait la dette sans
+        // rien prouver — un succès sur un fichier que Nodal n'a pas trouvé
+        // (revue Codex de la PR #523). Le renvoi a déjà eu lieu : échec.
+        if (rrStatus === 'success' && !Array.isArray(champ)) {
+          const dueRetour = declarationDue(messages);
+          if (dueRetour !== null && dueRetour.length > 0) {
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: returnResultCall.toolCallId,
+              toolName: 'return_result',
+              output: toResultOutput({ acknowledged: true }),
+            });
+            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
+            return await echouerSurDeclaration(dueRetour);
+          }
+        }
+        if (rrStatus === 'success' && Array.isArray(champ)) {
+          const declaration = await declareDeliverables(sharedToolCtx, declares);
+          if (declaration.kind === 'already_terminal') {
+            trace('terminal_write_lost_race', { turn, writer: 'declare_deliverables', jobId });
+            return { status: 'already_handled' };
+          }
+          if (declaration.kind === 'unresolved' || declaration.kind === 'failed') {
+            const items =
+              declaration.kind === 'unresolved'
+                ? declaration.unresolved.map((u) => ({
+                    path: u.requested,
+                    check: 'unresolved',
+                    detail: u.code,
+                  }))
+                : declares.map((p) => ({
+                    path: p,
+                    check: 'not recorded',
+                    detail: declaration.code,
+                  }));
+            // Un chemin irrésolu se corrige : UN renvoi, avec la raison du
+            // résolveur des outils de fichiers — la phrase qu'un `file_write`
+            // refusé aurait rendue. Une panne d'écriture, elle, ne se corrige pas
+            // en changeant de chemin : pas de renvoi.
+            if (
+              declaration.kind === 'unresolved' &&
+              unresolvedDeliverableNudges < MAX_UNRESOLVED_DELIVERABLE_NUDGES
+            ) {
+              unresolvedDeliverableNudges += 1;
+              trace('deliverables_unresolved_nudge', { turn, paths: items.map((i) => i.path) });
+              toolResultBlocks.push({
+                type: 'tool-result',
+                toolCallId: returnResultCall.toolCallId,
+                toolName: 'return_result',
+                output: toResultOutput({
+                  error:
+                    `${UNRESOLVED_DELIVERABLES_MARK}: ces chemins de \`deliverables\` ne ` +
+                    'désignent aucun fichier de tes dossiers. Corrige-les (ou retire ceux que tu ' +
+                    'ne livres pas) et rappelle return_result.',
+                  unresolved: declaration.unresolved.map((u) => ({
+                    path: u.requested,
+                    code: u.code,
+                    reason: u.reason,
+                  })),
+                }),
+              });
+              messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+              continue;
+            }
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: returnResultCall.toolCallId,
+              toolName: 'return_result',
+              output: toResultOutput({ acknowledged: true }),
+            });
+            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
+            return await echouerSurDeclaration(items);
+          }
+          trace('deliverables_declared', {
+            turn,
+            keys: declaration.deliverables.map((d) => d.key),
+          });
+        }
+
         // Brique 33: return_result is status-only. Content delivery happens via
         // dashboard_publish, telegram_send_message, etc. — those tools already
         // wrote to agent_jobs.result (or a delivery channel) via their side-effects.
@@ -5767,6 +6024,7 @@ async function runJobTracked(
         // SANS `delivery` — même raison que le chemin texte : le canal a été
         // servi par l'outil de livraison pendant le run.
         const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
+        const cibleNotice = harnessNoticeTarget();
         const finalized = await finalizeJobSuccess(
           db,
           {
@@ -5785,6 +6043,9 @@ async function runJobTracked(
             stats: runStats(),
             messages,
             ...(noticeALivrer ? { delivery: noticeALivrer } : {}),
+            // Même canal que la notice du harnais : là où l'agent a pu dire
+            // « livré » (#509).
+            ...(cibleNotice ? { noticeTarget: cibleNotice } : {}),
           },
           {
             prepareDelivery: async (tx, d) =>
@@ -5800,6 +6061,11 @@ async function runJobTracked(
           // report that the row was already handled so the caller never overrides it.
           trace('terminal_write_lost_race', { turn, writer: 'finalize', jobId });
           return { status: 'already_handled' };
+        }
+        // Un livrable PROMIS n'est pas vérifié, réparations épuisées (#509).
+        if (finalized.kind === 'failed') {
+          if (!finalized.failure) throw new Error(`FINALIZE_FAILED_WITHOUT_FAILURE: ${jobId}`);
+          return await sortieLivrableNonVerifie(finalized.failure);
         }
         // PREUVE ROUGE, ET JAMAIS RÉPARÉE : le job NE FINIT PAS. Il repart
         // pour UN tour, avec la sortie rouge verbatim comme entrée (issue

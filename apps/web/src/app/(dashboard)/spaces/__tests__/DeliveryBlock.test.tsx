@@ -132,6 +132,7 @@ function summaryOf(over: Partial<ThreadJob> & { feed: ConversationFeed }): Deliv
     project: null,
     proof: [],
     repairs: 0,
+    declaredUnverified: [],
     reviewVerdict: null,
     audit: [],
     workspaceRoots: [],
@@ -260,6 +261,47 @@ describe('deliverySummary — ce que le modèle compte', () => {
     expect(summary.tests).toBeNull();
     expect(summary.checks).toEqual([]);
     expect(summary.verdict).toBeNull();
+  });
+
+  // Issue #509 : la preuve verte portait sur les SOURCES d'un rendu, et le
+  // récapitulatif disait « Verified » sur un film qui n'existait pas.
+  it('un fichier PROMIS jamais constaté interdit « green » et se NOMME dans la preuve @cap:verifier-un-livrable/ecran', () => {
+    const sources = [
+      { command: 'exists', verdict: 'green' },
+      { command: 'not-empty', verdict: 'green' },
+      { command: 'utf8', verdict: 'green' },
+    ];
+    const promis = summaryOf({
+      feed: { items: [], totals: totals() },
+      workspaceRoots: ['C:/Nodal/Montage'],
+      proof: sources,
+      declaredUnverified: [{ path: 'C:/Nodal/Montage/Nodal-Video/film.mp4', status: 'dirty' }],
+    });
+    expect(promis.verdict).toBeNull();
+    expect(promis.checks).toEqual([
+      { command: 'exists', ok: true },
+      { command: 'not-empty', ok: true },
+      { command: 'utf8', ok: true },
+      { command: 'Nodal-Video/film.mp4: not verified (dirty)', ok: false },
+    ]);
+
+    // Le même run sans promesse en suspens : « green », comme avant.
+    const tenu = summaryOf({
+      feed: { items: [], totals: totals() },
+      proof: sources,
+      declaredUnverified: [],
+    });
+    expect(tenu.verdict).toBe('green');
+
+    // Promis et ROUGE : sa ligne de preuve rouge dit déjà ce qui a lâché, elle
+    // n'est pas nommée deux fois.
+    const rouge = summaryOf({
+      feed: { items: [], totals: totals() },
+      proof: [...sources, { command: 'exists', verdict: 'red' }],
+      declaredUnverified: [{ path: 'C:/Nodal/Montage/film.mp4', status: 'red' }],
+    });
+    expect(rouge.verdict).toBe('red');
+    expect(rouge.checks.filter((c) => !c.ok)).toEqual([{ command: 'exists', ok: false }]);
   });
 
   it('une preuve entièrement verte vaut « green » ; une seule qui lâche vaut « red »', () => {

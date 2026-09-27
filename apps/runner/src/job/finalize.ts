@@ -65,6 +65,22 @@
 // son job, plutôt qu'un défaut qui laisserait un jour un job pendu sans statut
 // parce que personne n'a lu ce retour.
 //
+// ─── #509 — la garde BRANCHÉE, sur les livrables DÉCLARÉS seulement ─────────
+//
+// Un livrable que l'agent a NOMMÉ dans `return_result.deliverables` (colonne
+// `declared`) n'est plus observé : c'est une promesse faite par le run. Sa
+// preuve rouge passe par le MÊME tour de réparation que les autres (même
+// réglage d'espace, même borne en base) ; si elle n'est toujours pas verte
+// après — ou si l'espace n'accorde aucune réparation —, le run ne finit PAS
+// `completed` : il finit `failed` (`deliverable_not_verified`), son résultat
+// porte le dernier texte du run SUIVI d'une ligne de plateforme qui nomme
+// chaque fichier promis et le constat qui a lâché. Tout livrable NON déclaré
+// garde exactement la phase d'observation décrite au-dessus.
+//
+// « Pas vert » et pas seulement « rouge » : un livrable promis dont la preuve
+// n'a pas pu conclure (génération périmée, panne d'infra, non configuré) n'est
+// pas vérifié, et c'est ce que le code d'erreur dit (invariant #4).
+//
 // ─── Aucun type de livrable ici ────────────────────────────────────────────
 //
 // La primitive n'appelle que le registre (`../verification/registry.ts`).
@@ -95,7 +111,8 @@ import type {
   ProofResult,
   ReadyConfig,
 } from '../verification/registry.ts';
-import { TERMINAL_STATUSES, completeJob, failJob } from './state.ts';
+import { TERMINAL_STATUSES, completeJob, failJob, lastTextOfRun } from './state.ts';
+import { toDbSafeString } from './transcript-text.ts';
 
 // ─── Codes journalisés ──────────────────────────────────────────────────────
 
@@ -117,6 +134,8 @@ export const FINALIZE_JOB_NOT_FOUND = 'FINALIZE_JOB_NOT_FOUND';
 export const FINALIZE_CLAIMED_ELSEWHERE = 'FINALIZE_CLAIMED_ELSEWHERE';
 /** La configuration ou l'epoch du projet ont bougé PENDANT la preuve : ce qui a été prouvé n'est plus l'arbre courant. */
 export const VERIFY_STALE_EPOCH = 'VERIFY_STALE_EPOCH';
+/** Un livrable DÉCLARÉ n'est pas vert après réparation : le run échoue (#509). */
+export const VERIFY_DECLARED_NOT_VERIFIED = 'VERIFY_DECLARED_NOT_VERIFIED';
 /** Un tour de réparation vient de s'ouvrir sur ce job (PR②, décision D2). */
 export const VERIFY_REPAIR_TURN_OPENED = 'VERIFY_REPAIR_TURN_OPENED';
 /**
@@ -145,6 +164,49 @@ export const FINALIZE_JOB_WITHOUT_ENTITY = 'FINALIZE_JOB_WITHOUT_ENTITY';
  * jamais opposé au job : la finalisation n'est pas l'affaire de la pastille.
  */
 export const DELIVERABLE_CHECK_NO_ROOT = 'DELIVERABLE_CHECK_NO_ROOT';
+/**
+ * Le code écrit dans `agent_jobs.error` quand un livrable DÉCLARÉ par l'agent
+ * n'est pas vérifié à la fin du run (#509). Un code de job, en minuscules comme
+ * `empty_deliverable` ou `agent_blocked`, pas un code de journal.
+ */
+export const DELIVERABLE_NOT_VERIFIED = 'deliverable_not_verified';
+
+/** Un livrable promis dont la preuve n'a pas conclu vert — les faits de sa ligne. */
+export interface UnverifiedDeclaredDeliverable {
+  /** L'adresse du fichier, celle que l'agent a nommée une fois résolue. */
+  readonly path: string;
+  /** Le constat qui a lâché (`exists`, `well-formed:mp4`…), ou l'état quand aucun n'a lâché. */
+  readonly check: string;
+  /** Ce que ce constat a rapporté, ou un code ; vide quand il n'y a rien à ajouter. */
+  readonly detail: string;
+}
+
+/**
+ * La ligne que l'utilisateur lit sous le dernier texte d'un run dont un
+ * livrable promis n'est pas vérifié (#509).
+ *
+ * Même famille que `budgetStopLine` et `timeoutStopLine` (job/execute.ts) : une
+ * ligne de PLATEFORME, entre crochets, faite de CHAMPS TYPÉS — le chemin, le
+ * constat, ce que le constat a rapporté. Le harnais ne raconte rien ; il pose
+ * les faits que la preuve a établis. Pure — testée à part.
+ */
+export function deliverableNotVerifiedLine(
+  items: readonly UnverifiedDeclaredDeliverable[],
+): string {
+  const faits = items
+    .map((i) => `${i.path}: ${i.check}${i.detail !== '' ? ` (${i.detail})` : ''}`)
+    .join('; ');
+  return `[stopped: declared deliverable not verified — ${faits}]`;
+}
+
+/** Ce qu'un run échoué à la porte des livrables déclarés laisse derrière lui. */
+export interface DeclaredDeliverableFailure {
+  readonly errorCode: typeof DELIVERABLE_NOT_VERIFIED;
+  /** Le `result` écrit : le dernier texte du run, puis la ligne. */
+  readonly result: string;
+  readonly line: string;
+  readonly unverified: readonly UnverifiedDeclaredDeliverable[];
+}
 
 // ─── Types de retour ────────────────────────────────────────────────────────
 
@@ -159,7 +221,8 @@ export type ObservedOutcome =
   | 'already_terminal'
   | 'verification_due'
   | 'repair_due'
-  | 'verification_persistence_failed';
+  | 'verification_persistence_failed'
+  | 'deliverable_not_verified';
 
 /**
  * Ce que la primitive rend EFFECTIVEMENT : le job finit, il était déjà fini,
@@ -169,8 +232,17 @@ export type ObservedOutcome =
  * `verification_due` et `verification_persistence_failed` restent observés,
  * journalisés, et rendus comme `completed_unverified` : la garde de ① n'est
  * toujours pas branchée sur eux, seul le rouge réparable change l'issue.
+ *
+ * `failed` (#509) : un livrable DÉCLARÉ par l'agent n'est pas vert une fois
+ * les réparations épuisées. Le statut terminal écrit est `failed`, et
+ * `failure` dit pourquoi.
  */
-export type FinalizeKind = 'completed' | 'completed_unverified' | 'already_terminal' | 'repair_due';
+export type FinalizeKind =
+  | 'completed'
+  | 'completed_unverified'
+  | 'already_terminal'
+  | 'repair_due'
+  | 'failed';
 
 /** L'état d'un livrable après la finalisation, tel que la décision l'a laissé. */
 export interface DeliverableDecision {
@@ -210,6 +282,8 @@ export interface FinalizeOutcome {
   readonly decisions: readonly DeliverableDecision[];
   /** Présent SI ET SEULEMENT SI `kind === 'repair_due'`. */
   readonly repair?: RepairTurn;
+  /** Présent SI ET SEULEMENT SI `kind === 'failed'` (#509). */
+  readonly failure?: DeclaredDeliverableFailure;
 }
 
 /** Compteurs de tokens/durée du run — même forme que celle de `completeJob`. */
@@ -314,6 +388,14 @@ export interface FinalizeInput {
   readonly messages?: unknown[];
   /** Livraison à préparer dans la même transaction (T08). */
   readonly delivery?: TerminalDelivery;
+  /**
+   * Où part la ligne de plateforme quand un livrable déclaré n'est pas vérifié
+   * (#509) et qu'aucune `delivery` n'est demandée — le canal à outil du job,
+   * quand il en a un. Sur Telegram, l'agent a DÉJÀ dit « livré » : la seule
+   * façon que la personne apprenne le contraire est que cette ligne parte là
+   * où la promesse est partie. Absent : la ligne n'est que dans `result`.
+   */
+  readonly noticeTarget?: { readonly channel: string; readonly chatId: string };
 }
 
 /**
@@ -336,6 +418,15 @@ export interface FinalizeFailureInput {
   readonly messages?: unknown[];
   /** L'explication rendue à l'utilisateur, quand l'appelant en a une. */
   readonly userMessage?: string;
+  /**
+   * `userMessage` REMPLACE le résultat déjà écrit, dans la transaction qui pose
+   * l'échec. Par défaut `failJob` ne remplit qu'un résultat vide ; quand un
+   * texte a été publié (« Film livré. ») et que l'échec dit pourquoi il est
+   * faux, les deux doivent atterrir ensemble — une seconde écriture après coup
+   * laissait, sur une panne entre les deux, un échec dont le résultat ne disait
+   * que « livré » (revue Codex de #509, passe 3).
+   */
+  readonly replaceResult?: boolean;
   /** Livraison à préparer dans la même transaction que l'écriture terminale. */
   readonly delivery?: TerminalDelivery;
 }
@@ -353,6 +444,8 @@ interface DeliverablePlan {
   readonly generation: number;
   /** Réparations déjà ouvertes sur ce livrable. `>= 1` ⇒ plus aucune (D2). */
   readonly repairAttempts: number;
+  /** L'agent l'a-t-il PROMIS (`return_result.deliverables`, #509) ? */
+  readonly declared: boolean;
   readonly verifier: DeliverableVerifier;
   readonly config: LoadedConfig;
 }
@@ -673,6 +766,9 @@ export async function finalizeJobSuccess(
   if (input.delivery && !deps.prepareDelivery) {
     throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.delivery.channel}`);
   }
+  if (input.noticeTarget && !deps.prepareDelivery) {
+    throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.noticeTarget.channel}`);
+  }
 
   const alreadyTerminal: FinalizeOutcome = {
     kind: 'already_terminal',
@@ -735,6 +831,7 @@ export async function finalizeJobSuccess(
         dirtyGeneration: jobDeliverableVerificationState.dirtyGeneration,
         displayPathSnapshot: jobDeliverableVerificationState.displayPathSnapshot,
         repairAttempts: jobDeliverableVerificationState.repairAttempts,
+        declared: jobDeliverableVerificationState.declared,
       })
       .from(jobDeliverableVerificationState)
       .where(eq(jobDeliverableVerificationState.jobId, jobId));
@@ -775,6 +872,7 @@ export async function finalizeJobSuccess(
         displayPath: state.displayPathSnapshot,
         generation: state.dirtyGeneration,
         repairAttempts: state.repairAttempts,
+        declared: state.declared,
         verifier,
         config,
       });
@@ -868,7 +966,13 @@ export async function finalizeJobSuccess(
 
   // ─── Transaction 2 : décision, statut terminal ────────────────────────────
   const committed = await db.transaction(
-    async (tx): Promise<{ decisions: DeliverableDecision[]; repair?: RepairTurn } | null> => {
+    async (
+      tx,
+    ): Promise<{
+      decisions: DeliverableDecision[];
+      repair?: RepairTurn;
+      failure?: DeclaredDeliverableFailure;
+    } | null> => {
       // La MÊME garde qu'en transaction 1, reprise sous le verrou : c'est elle
       // qui sérialise deux finalisations concurrentes du même job. Celle qui
       // arrive après le commit de l'autre lit un job terminal et n'écrit rien.
@@ -889,6 +993,15 @@ export async function finalizeJobSuccess(
        * un : on ne fait pas réparer ce qu'on n'a pas su prouver.
        */
       const rouges: { plan: DeliverablePlan; proof: ProofResult }[] = [];
+      /**
+       * Les livrables PROMIS dont l'état effectif n'est pas vert (#509) : ce
+       * que la porte opposera au run si aucune réparation ne s'ouvre.
+       */
+      const promisNonTenus: {
+        plan: DeliverablePlan;
+        effective: DecisionStatus;
+        proof: ProofResult | null;
+      }[] = [];
 
       for (const plan of opened.plans) {
         const proof = proofs.get(plan.stateId) ?? null;
@@ -979,6 +1092,9 @@ export async function finalizeJobSuccess(
           // la garde est là pour le compilateur, pas pour un cas atteignable.
           if (prouve) rouges.push({ plan, proof: prouve });
         }
+        if (plan.declared && effective !== 'green') {
+          promisNonTenus.push({ plan, effective, proof });
+        }
 
         decisions.push({
           deliverableType: plan.deliverableType,
@@ -1022,6 +1138,76 @@ export async function finalizeJobSuccess(
           );
       }
 
+      // ─── #509 : une promesse non tenue fait échouer le run ────────────────
+      //
+      // Aucune réparation ne s'est ouverte (épuisées, ou zéro accordée) et un
+      // livrable DÉCLARÉ n'est pas vert : le run ne finit pas `completed`. Le
+      // résultat est le dernier texte du run — celui que la porte aurait
+      // écrit en succès —, suivi de la ligne qui nomme chaque fichier promis
+      // et ce que sa preuve a dit. Rien n'est posé pour la pastille « à
+      // regarder » : le run n'a pas livré ce qu'il annonçait.
+      if (promisNonTenus.length > 0) {
+        const unverified = promisNonTenus.map(({ plan, effective, proof }) => {
+          const lache = proof?.records.find((r) => r.verdict === 'red');
+          return {
+            path: plan.displayPath ?? plan.canonicalKey,
+            check: lache ? lache.command : effective,
+            detail: lache ? lache.stderrTail.trim() || `exit ${lache.exitCode ?? '?'}` : '',
+          };
+        });
+        const line = deliverableNotVerifiedLine(unverified);
+        const [row] = await tx
+          .select({ result: agentJobs.result, task: agentJobs.task })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, jobId));
+        // Le texte que la porte de succès aurait laissé, dans le même ordre de
+        // préférence : le texte passé par l'appelant, sinon ce qu'un outil de
+        // livraison a déjà écrit, sinon le dernier texte de l'agent.
+        const texte =
+          finalText.trim() ||
+          (row?.result ?? '').trim() ||
+          lastTextOfRun(input.messages, row?.task ?? '');
+        const result = toDbSafeString([texte, line].filter((t) => t !== '').join('\n\n'));
+        const failed = await failJob(
+          tx,
+          jobId,
+          DELIVERABLE_NOT_VERIFIED,
+          input.stats,
+          input.messages,
+          result,
+        );
+        if (!failed) {
+          log(VERIFY_TERMINAL_WRITE_LOST, { jobId });
+          throw new Error(`${VERIFY_TERMINAL_WRITE_LOST}: ${jobId}`);
+        }
+        // `failJob` ne remplit `result` que s'il est vide ; un texte déjà
+        // publié y serait resté SANS la ligne. `result` contient ce texte-là,
+        // donc il le remplace sans rien perdre.
+        await tx
+          .update(agentJobs)
+          .set({ result, toolsUsed, updatedAt: new Date() })
+          .where(eq(agentJobs.id, jobId));
+
+        // La ligne part là où la promesse est partie : avec la livraison
+        // demandée s'il y en a une, sinon vers le canal à outil du job.
+        const cible = input.delivery ?? input.noticeTarget;
+        if (cible && deps.prepareDelivery) {
+          await deps.prepareDelivery(tx, {
+            jobId,
+            channel: cible.channel,
+            chatId: cible.chatId,
+            payload: [input.delivery?.payload ?? '', line]
+              .filter((t) => t.trim() !== '')
+              .join('\n\n'),
+            idempotencyKey: `${jobId}:harness:${DELIVERABLE_NOT_VERIFIED}`,
+          });
+        }
+        return {
+          decisions,
+          failure: { errorCode: DELIVERABLE_NOT_VERIFIED, result, line, unverified },
+        };
+      }
+
       // L'écriture terminale elle-même : `completeJob` porte déjà la
       // sémantique exacte attendue (préservation d'un `result` non vide écrit
       // plus tôt, remplissage depuis les enfants puis depuis le transcript,
@@ -1062,7 +1248,20 @@ export async function finalizeJobSuccess(
 
   if (!committed) return alreadyTerminal;
 
-  const { decisions, repair } = committed;
+  const { decisions, repair, failure } = committed;
+  if (failure) {
+    log(VERIFY_DECLARED_NOT_VERIFIED, {
+      jobId,
+      paths: failure.unverified.map((u) => u.path),
+    });
+    return {
+      kind: 'failed',
+      observedOutcome: 'deliverable_not_verified',
+      observedDue: true,
+      decisions,
+      failure,
+    };
+  }
   if (repair) {
     // Le job N'EST PAS terminal : il repart pour un tour, avec `repair.brief`
     // en entrée. Journalisé par un CODE et des données, jamais une phrase.
@@ -1138,6 +1337,12 @@ export async function finalizeJobFailure(
       input.messages,
       input.userMessage,
     );
+    if (landed && input.replaceResult && input.userMessage !== undefined) {
+      await tx
+        .update(agentJobs)
+        .set({ result: toDbSafeString(input.userMessage), updatedAt: new Date() })
+        .where(eq(agentJobs.id, input.jobId));
+    }
     if (landed && input.delivery && deps.prepareDelivery) {
       await deps.prepareDelivery(tx, { jobId: input.jobId, ...input.delivery });
     }

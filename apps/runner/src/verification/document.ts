@@ -25,7 +25,8 @@
 // le dernier — jamais une règle inventée pour un type qu'on ne connaît pas
 // (invariant #4).
 
-import { readFile, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, extname } from 'node:path';
 import { DOMParser } from '@xmldom/xmldom';
@@ -56,7 +57,8 @@ const documentDeliverableType = 'document' as const;
  * n'en disait qu'une (passe 8, constat R3).
  */
 // v2 (#487) : les règles binaires (WAV) ont rejoint les règles texte.
-export const DOCUMENT_MANIFEST_HASH = 'document-rules/v2';
+// v3 (#509) : texte ou binaire se décide pour tout fichier, par des tables.
+export const DOCUMENT_MANIFEST_HASH = 'document-rules/v5';
 
 /**
  * L'empreinte du CONTENU du fichier au moment où la configuration est lue —
@@ -87,12 +89,93 @@ async function fileStamp(path: string): Promise<string> {
   try {
     const s = await stat(path);
     if (!s.isFile()) return 'not-a-file';
-    return createHash('sha256')
-      .update(await readFile(path))
-      .digest('hex');
+    return (await lireUneFois(path, 0)).hash;
   } catch {
     return 'absent';
   }
+}
+
+/**
+ * Ce qu'une preuve garde d'un fichier : au-delà, un texte n'est pas décodé.
+ * Un livrable DÉCLARÉ peut être une vidéo de plusieurs gigaoctets rendue par
+ * une commande (#509) : le lire en entier, deux fois (empreinte, preuve),
+ * épuisait la mémoire du runner au lieu de rendre un verdict (revue Codex).
+ */
+const TEXT_DECODE_LIMIT = 32 * 1024 * 1024;
+
+/** Les octets que la preuve examine pour les signatures et le sniff binaire. */
+const HEAD_BYTES = 8192;
+
+/**
+ * UNE lecture en flux : la taille, l'empreinte de TOUS les octets, les
+ * premiers `HEAD_BYTES`, et le contenu entier seulement s'il ne dépasse pas
+ * `garderJusqua` (sinon `null`). Tous les constats portent ainsi sur les
+ * octets que couvre l'empreinte, sans jamais tenir un gros fichier en mémoire.
+ */
+async function lireUneFois(
+  path: string,
+  garderJusqua: number,
+): Promise<{
+  size: number;
+  hash: string;
+  head: Buffer;
+  full: Buffer | null;
+  /** Tous les octets se décodent en UTF-8 (vérifié en flux, sans rien garder). */
+  utf8: boolean;
+  /** Un octet NUL a été vu, n'importe où dans le fichier. */
+  nul: boolean;
+}> {
+  const hash = createHash('sha256');
+  // UTF-8 et NUL se constatent au fil de la lecture, sur TOUS les octets : un
+  // gros texte ne doit pas échapper aux contrôles qu'un petit subit (revue
+  // Codex de #509, passe 2). Le décodeur en flux garde les séquences coupées
+  // entre deux morceaux, et on arrête de décoder au premier octet invalide.
+  const decodeur = new TextDecoder('utf-8', { fatal: true });
+  let utf8 = true;
+  let nul = false;
+  const morceaux: Buffer[] = [];
+  let head = Buffer.alloc(0);
+  let size = 0;
+  let garde = true;
+  for await (const chunk of createReadStream(path)) {
+    const b = chunk as Buffer;
+    hash.update(b);
+    if (!nul && b.includes(0x00)) nul = true;
+    if (utf8) {
+      try {
+        decodeur.decode(b, { stream: true });
+      } catch {
+        utf8 = false;
+      }
+    }
+    if (head.length < HEAD_BYTES) {
+      head = Buffer.concat([head, b.subarray(0, HEAD_BYTES - head.length)]);
+    }
+    size += b.length;
+    if (garde) {
+      if (size > garderJusqua) {
+        garde = false;
+        morceaux.length = 0;
+      } else {
+        morceaux.push(b);
+      }
+    }
+  }
+  if (utf8) {
+    try {
+      decodeur.decode();
+    } catch {
+      utf8 = false;
+    }
+  }
+  return {
+    size,
+    hash: hash.digest('hex'),
+    head,
+    full: garde ? Buffer.concat(morceaux) : null,
+    utf8,
+    nul,
+  };
 }
 
 /** Un constat : sa ligne dans `verification_runs`. */
@@ -513,30 +596,336 @@ const FORM_RULES: Readonly<Record<string, { readonly name: string; readonly chec
   '.xml': { name: 'xml', check: xmlParses },
 };
 
+// ─── Texte ou binaire : UNE règle pour tous les fichiers (#509) ─────────────
+//
+// Le WAV était le seul binaire connu (#487, run 4078068d : un WAV valide dit
+// rouge sur « not valid UTF-8 »), par une table à une entrée. Issue #509 : une
+// commande qui rend une vidéo, une image, un PDF, et l'agent qui DÉCLARE ce
+// fichier — il serait parti rouge sur le même décodage, ou vert sur n'importe
+// quel octet. La question « texte ou binaire ? » se tranche donc pour TOUT
+// fichier de la même façon, par des tables et non par des branches :
+//
+//   1. son extension a une SIGNATURE connue ⇒ binaire, prouvé par son en-tête
+//      — quels que soient ses octets : un corps d'erreur JSON écrit sous
+//      `film.mp4` n'est pas une vidéo, et c'est l'en-tête qui le dit ;
+//   2. son extension est un TEXTE connu ⇒ il se décode en UTF-8, sans octet
+//      NUL (un texte écrit en UTF-16 reste rouge, BOM ou pas) ;
+//   3. sinon, ses OCTETS décident, par l'heuristique de git : un NUL dans les
+//      8 premiers Ko ⇒ binaire, et « pas de règle d'en-tête pour ce format »
+//      est DIT ; aucun NUL ⇒ texte, décodé comme au 2.
+//
+// Même profondeur que les règles texte : l'en-tête dit la forme, pas le
+// contenu. Un fichier à l'en-tête juste mais au corps tronqué passe cette
+// preuve (revue de la PR #489).
+
+/** Des octets attendus à un offset. Tous les octets d'une variante doivent y être. */
+interface SignatureBytes {
+  readonly offset: number;
+  readonly bytes: readonly number[];
+  /**
+   * Les bits qui comptent, octet par octet (tous par défaut). Une signature
+   * n'est pas toujours faite d'octets entiers : une trame MP3 se reconnaît à
+   * ses 11 bits de synchro, les suivants disent la version et la couche, et
+   * `FF FA` est aussi valide que `FF FB` (revue Codex de #509).
+   */
+  readonly mask?: readonly number[];
+}
+
+/** Un format binaire connu : ses extensions, ce qu'on attend de lui, et ses variantes. */
+interface BinaryFormat {
+  /** Le nom du constat : `well-formed:<name>`. */
+  readonly name: string;
+  /** Ce que le rouge nomme : « no <header> header: this is not a <label> file ». */
+  readonly header: string;
+  readonly label: string;
+  readonly extensions: readonly string[];
+  /** Une seule variante suffit ; dans une variante, tous les morceaux comptent. */
+  readonly variants: readonly (readonly SignatureBytes[])[];
+}
+
+const ascii = (offset: number, text: string): SignatureBytes => ({
+  offset,
+  bytes: [...Buffer.from(text, 'latin1')],
+});
+const raw = (offset: number, ...bytes: number[]): SignatureBytes => ({ offset, bytes });
+const masked = (offset: number, bytes: number[], mask: number[]): SignatureBytes => ({
+  offset,
+  bytes,
+  mask,
+});
+
 /**
- * Les fichiers BINAIRES : leur preuve lit leur en-tête, jamais un décodage
- * texte. Run 4078068d (25/09) : `generate_speech` avait écrit un WAV valide,
- * et la preuve le disait rouge sur « the file is not valid UTF-8 » — aucun
- * fichier audio ne peut l'être (#487). `null` = bien formé, sinon ce qui manque.
- *
- * Même profondeur que les règles texte : l'en-tête dit la forme, pas le
- * contenu. Un WAV à l'en-tête juste mais au corps tronqué passe cette preuve
- * (revue de la PR #489) ; `generate_speech` refuse déjà un flux coupé avant
- * d'écrire.
+ * Les boîtes par lesquelles un fichier ISO BMFF / QuickTime peut commencer.
+ * `ftyp` est la règle d'un MP4 récent, pas une obligation de toute la famille :
+ * un `.mov` valide peut ouvrir sur `wide`, `mdat` ou `moov` (revue Codex).
  */
-const BINARY_FORM_RULES: Readonly<
-  Record<string, { readonly name: string; readonly check: (bytes: Buffer) => string | null }>
-> = {
-  '.wav': {
+const ISO_BMFF_FIRST_BOXES = ['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip', 'pnot', 'uuid'];
+
+/**
+ * La table des signatures. DE LA DONNÉE : ajouter un format, c'est ajouter une
+ * ligne ici, jamais une branche dans `runProof`.
+ */
+const BINARY_FORMATS: readonly BinaryFormat[] = [
+  {
     name: 'wav',
-    check: (bytes) =>
-      bytes.length >= 12 &&
-      bytes.toString('ascii', 0, 4) === 'RIFF' &&
-      bytes.toString('ascii', 8, 12) === 'WAVE'
-        ? null
-        : 'no RIFF/WAVE header: this is not a WAV file',
+    header: 'RIFF/WAVE',
+    label: 'WAV',
+    extensions: ['.wav'],
+    variants: [[ascii(0, 'RIFF'), ascii(8, 'WAVE')]],
   },
-};
+  {
+    name: 'webp',
+    header: 'RIFF/WEBP',
+    label: 'WebP',
+    extensions: ['.webp'],
+    variants: [[ascii(0, 'RIFF'), ascii(8, 'WEBP')]],
+  },
+  {
+    name: 'avi',
+    header: 'RIFF/AVI',
+    label: 'AVI',
+    extensions: ['.avi'],
+    variants: [[ascii(0, 'RIFF'), ascii(8, 'AVI ')]],
+  },
+  {
+    // La première boîte ISO BMFF, à l'offset 4 : MP4, QuickTime, M4A, 3GP.
+    name: 'mp4',
+    header: 'ISO media box',
+    label: 'MP4/QuickTime',
+    extensions: ['.mp4', '.m4v', '.m4a', '.mov', '.3gp', '.heic', '.avif'],
+    variants: ISO_BMFF_FIRST_BOXES.map((box) => [ascii(4, box)]),
+  },
+  {
+    name: 'webm',
+    header: 'EBML',
+    label: 'WebM/Matroska',
+    extensions: ['.webm', '.mkv'],
+    variants: [[raw(0, 0x1a, 0x45, 0xdf, 0xa3)]],
+  },
+  {
+    // `ID3` (étiquette en tête), ou directement une trame : 11 bits de synchro.
+    name: 'mp3',
+    header: 'ID3 or MPEG frame sync',
+    label: 'MP3',
+    extensions: ['.mp3'],
+    variants: [[ascii(0, 'ID3')], [masked(0, [0xff, 0xe0], [0xff, 0xe0])]],
+  },
+  {
+    name: 'ogg',
+    header: 'OggS',
+    label: 'Ogg',
+    extensions: ['.ogg', '.oga', '.ogv', '.opus'],
+    variants: [[ascii(0, 'OggS')]],
+  },
+  {
+    name: 'flac',
+    header: 'fLaC',
+    label: 'FLAC',
+    extensions: ['.flac'],
+    variants: [[ascii(0, 'fLaC')]],
+  },
+  {
+    name: 'png',
+    header: 'PNG',
+    label: 'PNG',
+    extensions: ['.png'],
+    variants: [[raw(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)]],
+  },
+  {
+    name: 'jpeg',
+    header: 'JPEG SOI',
+    label: 'JPEG',
+    extensions: ['.jpg', '.jpeg'],
+    variants: [[raw(0, 0xff, 0xd8, 0xff)]],
+  },
+  {
+    name: 'gif',
+    header: 'GIF87a/GIF89a',
+    label: 'GIF',
+    extensions: ['.gif'],
+    variants: [[ascii(0, 'GIF87a')], [ascii(0, 'GIF89a')]],
+  },
+  {
+    name: 'bmp',
+    header: 'BM',
+    label: 'BMP',
+    extensions: ['.bmp'],
+    variants: [[ascii(0, 'BM')]],
+  },
+  {
+    // TIFF classique (42) et BigTIFF (43), dans les deux ordres d'octets : un
+    // SIG ou un outil d'imagerie scientifique écrit du BigTIFF (revue Codex).
+    name: 'tiff',
+    header: 'TIFF/BigTIFF',
+    label: 'TIFF',
+    extensions: ['.tif', '.tiff'],
+    variants: [
+      [raw(0, 0x49, 0x49, 0x2a, 0x00)],
+      [raw(0, 0x4d, 0x4d, 0x00, 0x2a)],
+      [raw(0, 0x49, 0x49, 0x2b, 0x00)],
+      [raw(0, 0x4d, 0x4d, 0x00, 0x2b)],
+    ],
+  },
+  {
+    name: 'ico',
+    header: 'ICO',
+    label: 'ICO',
+    extensions: ['.ico'],
+    variants: [[raw(0, 0x00, 0x00, 0x01, 0x00)]],
+  },
+  {
+    name: 'pdf',
+    header: '%PDF-',
+    label: 'PDF',
+    extensions: ['.pdf'],
+    variants: [[ascii(0, '%PDF-')]],
+  },
+  {
+    // Les formats bâtis sur ZIP : Office Open XML, OpenDocument, EPUB, JAR.
+    // `PK\5\6` est l'archive vide, valide.
+    name: 'zip',
+    header: 'PK zip',
+    label: 'zip-based',
+    extensions: [
+      '.zip',
+      '.docx',
+      '.xlsx',
+      '.pptx',
+      '.odt',
+      '.ods',
+      '.odp',
+      '.epub',
+      '.jar',
+      '.apk',
+    ],
+    variants: [[raw(0, 0x50, 0x4b, 0x03, 0x04)], [raw(0, 0x50, 0x4b, 0x05, 0x06)]],
+  },
+  {
+    name: 'gzip',
+    header: 'gzip',
+    label: 'gzip',
+    extensions: ['.gz', '.tgz'],
+    variants: [[raw(0, 0x1f, 0x8b)]],
+  },
+  {
+    name: '7z',
+    header: '7z',
+    label: '7z',
+    extensions: ['.7z'],
+    variants: [[raw(0, 0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c)]],
+  },
+  {
+    name: 'wasm',
+    header: '\\0asm',
+    label: 'WebAssembly',
+    extensions: ['.wasm'],
+    variants: [[raw(0, 0x00, 0x61, 0x73, 0x6d)]],
+  },
+  {
+    name: 'woff',
+    header: 'wOFF',
+    label: 'WOFF',
+    extensions: ['.woff'],
+    variants: [[ascii(0, 'wOFF')]],
+  },
+  {
+    name: 'woff2',
+    header: 'wOF2',
+    label: 'WOFF2',
+    extensions: ['.woff2'],
+    variants: [[ascii(0, 'wOF2')]],
+  },
+  {
+    name: 'font',
+    header: 'sfnt',
+    label: 'TrueType/OpenType',
+    extensions: ['.ttf', '.otf'],
+    variants: [[raw(0, 0x00, 0x01, 0x00, 0x00)], [ascii(0, 'OTTO')], [ascii(0, 'true')]],
+  },
+];
+
+/** Index par extension, construit DEPUIS la table — une seule liste. */
+const BINARY_BY_EXTENSION: ReadonlyMap<string, BinaryFormat> = new Map(
+  BINARY_FORMATS.flatMap((format) => format.extensions.map((ext) => [ext, format] as const)),
+);
+
+/**
+ * Les extensions de TEXTE connues, en plus de celles qui ont une règle de
+ * forme (`FORM_RULES`) : elles doivent se décoder en UTF-8 quels que soient
+ * leurs octets. Sans cette liste, un `.csv` écrit en UTF-16 porterait des NUL
+ * et passerait pour un binaire inconnu — vert, alors qu'il est illisible.
+ */
+const TEXT_EXTENSIONS: ReadonlySet<string> = new Set([
+  '.txt',
+  '.text',
+  '.csv',
+  '.tsv',
+  '.log',
+  '.rst',
+  '.tex',
+  '.srt',
+  '.vtt',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.cfg',
+  '.conf',
+  '.env',
+  '.js',
+  '.mjs',
+  '.cjs',
+  '.jsx',
+  '.ts',
+  '.mts',
+  '.cts',
+  '.tsx',
+  '.vue',
+  '.svelte',
+  '.scss',
+  '.sass',
+  '.less',
+  '.py',
+  '.rb',
+  '.php',
+  '.java',
+  '.kt',
+  '.go',
+  '.rs',
+  '.c',
+  '.h',
+  '.cpp',
+  '.hpp',
+  '.cs',
+  '.swift',
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.ps1',
+  '.bat',
+  '.cmd',
+  '.sql',
+  '.graphql',
+  '.jsonl',
+  '.ndjson',
+]);
+
+/** L'heuristique de git : un octet NUL dans les 8 premiers Ko fait un binaire. */
+const BINARY_SNIFF_BYTES = 8192;
+const looksBinary = (bytes: Buffer): boolean =>
+  bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0x00);
+
+function matchesSignature(format: BinaryFormat, bytes: Buffer): boolean {
+  return format.variants.some((variant) =>
+    variant.every(
+      (piece) =>
+        bytes.length >= piece.offset + piece.bytes.length &&
+        piece.bytes.every(
+          (b, i) => ((bytes[piece.offset + i] ?? 0) & (piece.mask?.[i] ?? 0xff)) === b,
+        ),
+    ),
+  );
+}
 
 // ─── Le vérificateur ────────────────────────────────────────────────────────
 
@@ -624,20 +1013,20 @@ export const documentVerifier: DeliverableVerifier = {
     // contenu et deux un autre (passe 4, constat R1). L'empreinte prouvée ne
     // vaut que si TOUS les constats portent sur les octets qu'elle couvre.
     const t0 = Date.now();
-    let bytes: Buffer;
+    let lu: Awaited<ReturnType<typeof lireUneFois>>;
     try {
       const s = await stat(path);
       if (!s.isFile()) {
         await emit(ko('exists', `${path} is not a file${repli}`, Date.now() - t0));
         return done();
       }
-      bytes = await readFile(path);
-      provedManifestHash = `${DOCUMENT_MANIFEST_HASH}:${createHash('sha256').update(bytes).digest('hex')}`;
+      lu = await lireUneFois(path, TEXT_DECODE_LIMIT);
+      provedManifestHash = `${DOCUMENT_MANIFEST_HASH}:${lu.hash}`;
     } catch {
       await emit(ko('exists', `${path} not found${repli}`, Date.now() - t0));
       return done();
     }
-    const size = bytes.byteLength;
+    const size = lu.size;
     await emit(ok('exists', `${size} bytes`, Date.now() - t0));
 
     // 2 · il n'est pas vide — la taille de CE qui a été lu
@@ -647,30 +1036,90 @@ export const documentVerifier: DeliverableVerifier = {
     }
     await emit(ok('not-empty'));
 
-    // 3 bis · un fichier binaire est prouvé par son en-tête, puis s'arrête là
-    const binary = BINARY_FORM_RULES[extname(path).toLowerCase()];
+    // 3 · texte ou binaire — la règle unique décrite au-dessus de `BINARY_FORMATS`
+    const ext = extname(path).toLowerCase();
+    const binary = BINARY_BY_EXTENSION.get(ext);
     if (binary !== undefined) {
+      // 3a · un format binaire connu est prouvé par son en-tête, puis s'arrête là
       const tb = Date.now();
-      const fault = binary.check(bytes);
       await emit(
-        fault === null
+        matchesSignature(binary, lu.head)
           ? ok(`well-formed:${binary.name}`, '', Date.now() - tb)
-          : ko(`well-formed:${binary.name}`, fault, Date.now() - tb),
+          : ko(
+              `well-formed:${binary.name}`,
+              `no ${binary.header} header: this file is not ${binary.label}`,
+              Date.now() - tb,
+            ),
+      );
+      return done();
+    }
+    const knownText = TEXT_EXTENSIONS.has(ext) || FORM_RULES[ext] !== undefined;
+    if (!knownText && looksBinary(lu.head)) {
+      // 3b · un binaire qu'aucune table ne connaît : exister et ne pas être vide
+      // est tout ce qui se constate — et c'est DIT, jamais une règle inventée.
+      await emit(
+        ok(
+          'binary',
+          `NUL byte in the first ${BINARY_SNIFF_BYTES} bytes; no header rule for ${ext || 'a file without extension'}`,
+        ),
       );
       return done();
     }
 
-    // 3 · il se décode en UTF-8
+    // 3c · un texte. UTF-8 et NUL ont été constatés en flux sur TOUS ses octets
+    // (`lireUneFois`), quelle que soit sa taille.
+    //
+    // Un octet NUL est toujours un défaut : un texte écrit en UTF-16, ou un
+    // binaire sous un nom de texte. L'UTF-8, lui, dépend du FORMAT (décision de
+    // Quentin, 27/09, revue Codex de #509) : JSON, XML, HTML, SVG, Markdown et
+    // CSS l'exigent — ce sont les formats dont la preuve vérifie la forme
+    // (`FORM_RULES`) —, alors qu'un CSV, un SRT, un .ini ou un .bat produits par
+    // une commande sont légitimes dans un encodage 8 bits (Windows-1252, OEM),
+    // que l'application qui les lit comprend. Les faire rougir ferait échouer un
+    // run qui livre un fichier bon.
     const t1 = Date.now();
-    let text: string;
-    try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    } catch {
-      await emit(ko('utf8', 'the file is not valid UTF-8', Date.now() - t1));
+    if (lu.nul) {
+      await emit(
+        ko(
+          'utf8',
+          'the file contains NUL bytes: text written as UTF-16, or binary',
+          Date.now() - t1,
+        ),
+      );
       return done();
     }
-    const ext = extname(path).toLowerCase();
     const rule = FORM_RULES[ext];
+    if (!lu.utf8) {
+      if (rule !== undefined) {
+        await emit(
+          ko('utf8', `the file is not valid UTF-8, which ${rule.name} requires`, Date.now() - t1),
+        );
+        return done();
+      }
+      await emit(
+        ok(
+          'text',
+          `not UTF-8: an 8-bit encoding (Windows-1252, OEM…), allowed for ${ext || 'a file without extension'}; not decoded`,
+          Date.now() - t1,
+        ),
+      );
+      return done();
+    }
+    // Un texte au-delà de la limite n'est pas gardé en mémoire : seule la FORME
+    // demande le texte entier, et à cette taille elle n'est pas vérifiée — c'est
+    // dit, comme « no well-formedness rule » l'est pour un type qui n'en a pas.
+    if (lu.full === null) {
+      await emit(
+        ok(
+          'utf8',
+          rule === undefined
+            ? `decoded in stream (${size} bytes); no well-formedness rule for ${ext || 'a file without extension'}`
+            : `decoded in stream (${size} bytes); ${rule.name} form not checked: above the ${TEXT_DECODE_LIMIT} bytes a proof parses`,
+          Date.now() - t1,
+        ),
+      );
+      return done();
+    }
     if (rule === undefined) {
       // Dit, pas tu : l'écran verra que la vérification s'est arrêtée ici et pourquoi.
       await emit(
@@ -682,6 +1131,7 @@ export const documentVerifier: DeliverableVerifier = {
       );
       return done();
     }
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(lu.full);
     await emit(ok('utf8', 'decoded', Date.now() - t1));
 
     // 4 · il est bien formé pour ce qu'il est
