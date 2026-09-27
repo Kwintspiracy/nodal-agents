@@ -11,7 +11,7 @@ import {
   agentSkills,
   agentWorkspaces,
 } from '@nodal-agents/db';
-import { buildTeamBlock, MAX_FOLDERS, MAX_PROGRAMS } from '../team-block';
+import { buildTeamBlock } from '../team-block';
 import { resolveRunWorkspaces } from '@nodal-agents/tools';
 import type { AgentId } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -462,13 +462,17 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     expect(block).toMatch(/folder/i);
   });
 
-  it('borne ce qu’une entrée ajoute au prompt, et dit ce qui manque (revue Codex, P3)', async () => {
+  // Revue Codex de #506, passe 2 (P1) : une borne avec « +N more » faisait
+  // mentir la liste que la phrase de vérité dit COMPLÈTE — un agent à sept
+  // dossiers était dit incapable pour le septième, et avec six dossiers
+  // attachés son partagé disparaissait. Tout est montré.
+  it('montre TOUS les dossiers et TOUS les programmes, partagé compris', async () => {
     const { entityId } = await seedContext(db);
     const t = Date.now();
-    const orch = await seedAgent(db, entityId, `test-orch-bound-${t}`, 'orchestrator');
+    const orch = await seedAgent(db, entityId, `test-orch-all-${t}`, 'orchestrator');
     const w = await seedAgent(db, entityId, `test-many-${t}`, 'agent');
     await assignChild(db, orch.id, w.id, entityId);
-    const folderCount = MAX_FOLDERS + 2;
+    const folderCount = 7;
     await db.insert(agentWorkspaces).values(
       Array.from({ length: folderCount }, (_, i) => ({
         agentId: w.id,
@@ -478,20 +482,19 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
         position: i,
       })),
     );
-    const programs = Array.from({ length: MAX_PROGRAMS + 3 }, (_, i) => `prog${i}`);
+    const programs = Array.from({ length: 13 }, (_, i) => `prog${i}`);
     await db.update(agents).set({ commandAllowlist: programs }).where(eq(agents.id, w.id));
     await db
       .insert(agentSkillAssignments)
       .values({ agentId: w.id, skillId: await seedCommandSkill(), entityId });
 
     const entry = entryOf(await buildTeamBlock(orch.id as AgentId, db), w.name);
+    const shared = (await resolveRunWorkspaces(db, w.id, entityId)).sharedPath;
 
-    // Attached folders + the shared one; only MAX_FOLDERS are named.
-    expect(entry).toContain(`+${folderCount + 1 - MAX_FOLDERS} more`);
-    expect(entry).toContain('f00 = /data/f0');
-    expect(entry).not.toContain(`f${String(folderCount - 1).padStart(2, '0')} =`);
-    expect(entry).toContain(`prog${MAX_PROGRAMS - 1}, +3 more`);
-    expect(entry).not.toContain(`prog${MAX_PROGRAMS},`);
+    expect(entry).toContain('f06 = /data/f6');
+    expect(entry).toContain(`shared = ${shared}`);
+    expect(entry).toContain(`only these programs: ${programs.join(', ')}`);
+    expect(entry).not.toMatch(/\+\d+ more/);
   });
 
   it('dit si chaque agent peut lancer des commandes, selon son runtime et ses outils', async () => {

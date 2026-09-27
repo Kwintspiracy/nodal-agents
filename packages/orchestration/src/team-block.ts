@@ -23,19 +23,10 @@ import { summarizePurpose } from './router/assign-tools';
 
 // ─── buildTeamBlock ───────────────────────────────────────────────────────────
 
-/**
- * Bounds on what one roster entry may add to the prompt (Codex review of #506,
- * P3): an agent with forty folders or a long command allowlist would otherwise
- * weigh on every turn of its orchestrator. What is left out is COUNTED in the
- * text, never dropped in silence.
- */
-export const MAX_FOLDERS = 6;
-export const MAX_PROGRAMS = 12;
-
-function bounded(items: readonly string[], max: number, sep: string): string {
-  if (items.length <= max) return items.join(sep);
-  return `${items.slice(0, max).join(sep)}${sep}+${items.length - max} more`;
-}
+// No bound on the folders or programs an entry lists (Codex review of #506,
+// pass 2): the roster is declared COMPLETE, and a "+N more" made the
+// orchestrator treat the Nth folder as nobody's. The prompt cost of a long
+// list was a P3; a false "cannot" is worse.
 
 /**
  * Build the `## Your team` section for an orchestrator's system prompt.
@@ -311,7 +302,7 @@ export async function buildTeamBlock(
     }
     if (!canRun) return '\n  Shell commands: no';
     if (runtime === 'nodal' && allowlist && allowlist.length > 0) {
-      return `\n  Shell commands: yes, only these programs: ${bounded(allowlist, MAX_PROGRAMS, ', ')}`;
+      return `\n  Shell commands: yes, only these programs: ${allowlist.join(', ')}`;
     }
     return '\n  Shell commands: yes';
   }
@@ -446,7 +437,7 @@ export async function buildTeamBlock(
         : '';
     const connectorsTag = formatConnectorsTag(subAgentId);
     const folders = folderMap.get(subAgentId);
-    const foldersTag = `\n  Folders: ${folders && folders.length > 0 ? bounded(folders, MAX_FOLDERS, '; ') : 'none'}`;
+    const foldersTag = `\n  Folders: ${folders && folders.length > 0 ? folders.join('; ') : 'none'}`;
     const runtimeTag = `\n  Runtime: ${agentRuntime}`;
     const shellTag = formatShellTag(subAgentId, agentRuntime, agentCommandAllowlist);
     const capabilityTags = `${connectorsTag}${foldersTag}${runtimeTag}${shellTag}`;
