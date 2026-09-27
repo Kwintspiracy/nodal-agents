@@ -44,6 +44,12 @@ export interface JobContext {
   /** Origin channel of the job: 'api', 'telegram', 'cron', etc. */
   origin: string;
   /**
+   * The job's `delegation_depth`. The team block announces no agent the job
+   * could not reach within the depth it has left (invariant #8). Absent = 0,
+   * a top-level job: the dashboard preview of the ROOT's prompt is one.
+   */
+  delegationDepth?: number;
+  /**
    * The current task / user-message text. Used to relevance-rank the injected
    * persistent-memory block so the limited budget surfaces facts about THIS
    * request, not just the globally most-important ones. Omit to fall back to
@@ -902,6 +908,7 @@ export async function buildSystemPrompt(
     buildTeamBlock(agent.id, db, {
       delegation: jobContext?.surface !== 'cli-runtime' && jobContext?.surface !== 'chat',
       escalation: jobContext?.surface === 'chat',
+      delegationDepth: jobContext?.delegationDepth ?? 0,
     }),
     // Build skills block — full content of each assigned skill, injected into
     // the system prompt so the agent ACTS on the skill's instructions, not just

@@ -29,7 +29,12 @@ export {
 export type { OrchestrationErrorCode } from './errors';
 
 // ─── ChainCounters ────────────────────────────────────────────────────────────
-export { ChainCounters, DEFAULT_LIMITS } from './chain-counters';
+export {
+  ChainCounters,
+  DEFAULT_LIMITS,
+  remainingDelegationHops,
+  delegationDepthExceededMessage,
+} from './chain-counters';
 
 // ─── Guard 1f — non-progress detector (pure reducers) ────────────────────────
 export {

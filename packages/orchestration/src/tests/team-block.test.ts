@@ -659,3 +659,43 @@ describe('buildTeamBlock — le reste de l’espace, dit à tout agent selon ses
     );
   });
 });
+
+// Revue Codex de #473, passe 2 (P1) : la portée annoncée ignorait la
+// profondeur de délégation (invariant #8). Root → Lead → Manager → Reviewer →
+// Worker : le prompt disait d'atteindre Worker par Lead, et le 4e assign_*
+// était refusé. La portée tient compte de la profondeur RESTANTE du job.
+describe('buildTeamBlock — la portée annoncée tient dans la profondeur restante (#473, revue Codex passe 2)', () => {
+  async function seedChain() {
+    const { entityId } = await seedContext(db);
+    const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const root = await seedAgent(db, entityId, `test-root-d-${t}`, 'orchestrator');
+    const lead = await seedAgent(db, entityId, `test-lead-d-${t}`, 'orchestrator');
+    const manager = await seedAgent(db, entityId, `test-mgr-d-${t}`, 'orchestrator');
+    const reviewer = await seedAgent(db, entityId, `test-rev-d-${t}`, 'orchestrator');
+    const worker = await seedAgent(db, entityId, `test-wkr-d-${t}`, 'agent');
+    await assignChild(db, root.id, lead.id, entityId);
+    await assignChild(db, lead.id, manager.id, entityId);
+    await assignChild(db, manager.id, reviewer.id, entityId);
+    await assignChild(db, reviewer.id, worker.id, entityId);
+    return { root, lead, manager, reviewer, worker };
+  }
+  const lineOf = (block: string, name: string): string =>
+    block.split('\n').find((l) => l.includes(`**${name}**`)) ?? '';
+
+  it('at depth 0, reaches up to the depth limit and says the rest is beyond it', async () => {
+    const { root, lead, manager, reviewer, worker } = await seedChain();
+    const block = await buildTeamBlock(root.id as AgentId, db, { delegationDepth: 0 });
+    expect(lineOf(block, manager.name)).toContain(`reach it through **${lead.name}**`);
+    expect(lineOf(block, reviewer.name)).toContain(`reach it through **${lead.name}**`);
+    // 4 hops: beyond maxDelegationDepth (3).
+    expect(lineOf(block, worker.name)).not.toContain('reach it through');
+    expect(lineOf(block, worker.name)).toContain('beyond the delegation depth this job has left');
+  });
+
+  it('a job at depth 2 does not announce an agent two hops away', async () => {
+    const { root, manager } = await seedChain();
+    const block = await buildTeamBlock(root.id as AgentId, db, { delegationDepth: 2 });
+    expect(lineOf(block, manager.name)).not.toContain('reach it through');
+    expect(lineOf(block, manager.name)).toContain('beyond the delegation depth this job has left');
+  });
+});

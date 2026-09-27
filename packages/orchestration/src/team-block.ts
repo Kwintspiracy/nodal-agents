@@ -68,6 +68,12 @@ export interface TeamBlockOptions {
    * qui la croit répond « je ne peux pas » à une demande qu'il devait escalader.
    */
   escalation?: boolean;
+  /**
+   * The depth of the job this prompt is for. Reach through the teams is
+   * announced only within the hops it has left (invariant #8, Codex review of
+   * #473 pass 2). Absent = 0, a top-level job.
+   */
+  delegationDepth?: number;
 }
 
 export async function buildTeamBlock(
@@ -107,7 +113,7 @@ export async function buildTeamBlock(
   // answer that Reviewer A "does not exist".
   if (childRows.length === 0) {
     // With no team there is no teammate to go through, whatever the surface.
-    return renderOutsideAgents(parentAgentId, db, 'none', false);
+    return renderOutsideAgents(parentAgentId, db, 'none', false, options.delegationDepth ?? 0);
   }
 
   // Detect mode: router (has sub-orchestrators) or planner (workers only)
@@ -476,7 +482,13 @@ export async function buildTeamBlock(
   // holds each one and, where this agent has a way to use it, through which
   // teammate it is reached — so the model neither denies that an agent exists
   // nor looks for a side door.
-  const outsideSection = await renderOutsideAgents(parentAgentId, db, reachMeans, true);
+  const outsideSection = await renderOutsideAgents(
+    parentAgentId,
+    db,
+    reachMeans,
+    true,
+    options.delegationDepth ?? 0,
+  );
   if (outsideSection !== '') lines.push(outsideSection);
 
   lines.push(
@@ -508,8 +520,9 @@ async function renderOutsideAgents(
   db: AnyDrizzleDb,
   means: ReachMeans,
   hasTeam: boolean,
+  delegationDepth: number,
 ): Promise<string> {
-  const { outside } = await loadWorkspaceReach(agentId, db);
+  const { outside } = await loadWorkspaceReach(agentId, db, { delegationDepth });
   if (outside.length === 0) return '';
   const heading = hasTeam
     ? '\nAgents of this workspace outside your team. They exist; you cannot hand them work ' +

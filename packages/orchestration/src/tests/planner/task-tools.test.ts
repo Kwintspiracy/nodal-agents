@@ -14,6 +14,7 @@ import {
 } from '@nodal-agents/db';
 import { generateTaskTools } from '../../planner/task-tools';
 import { DELEGATION_SCOPE_RULE } from '../../router/delegation-scope';
+import { DEFAULT_LIMITS } from '../../chain-counters';
 import type { AgentId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import type { ToolContext } from '@nodal-agents/tools';
@@ -129,6 +130,31 @@ describe('generateTaskTools', () => {
 
       expect(row?.title).toBe('Fetch inventory data');
       expect(row?.priority).toBe('high');
+    });
+
+    // Revue Codex de #473, passe 2 (P1) : à la profondeur maximale, create_task
+    // n'était pas refusé ; l'enfant du tableau naissait au-delà de la limite de
+    // l'invariant #8. Même garde qu'assign_*, avant toute ligne.
+    it('refuses at the maximum delegation depth, and creates no task and no job', async () => {
+      const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
+      await db
+        .update(agentJobs)
+        .set({ delegationDepth: DEFAULT_LIMITS.maxDelegationDepth })
+        .where(eq(agentJobs.id, jobId));
+      const jobsBefore = await db.select({ id: agentJobs.id }).from(agentJobs);
+      const [createTask] = generateTaskTools(plannerId as AgentId, db);
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
+
+      await expect(
+        createTask!.execute({ title: 'too deep', assigned_to: workerSlug }, ctx),
+      ).rejects.toThrow(/delegation_depth_exceeded/);
+      const tasks = await db
+        .select({ id: agentTasks.id })
+        .from(agentTasks)
+        .where(eq(agentTasks.rootJobId, jobId));
+      expect(tasks).toHaveLength(0);
+      const jobsAfter = await db.select({ id: agentJobs.id }).from(agentJobs);
+      expect(jobsAfter).toHaveLength(jobsBefore.length);
     });
 
     it('assigns to agent by slug (resolves to agent_id)', async () => {

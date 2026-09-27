@@ -127,6 +127,8 @@ import {
   readFinalReviewVerdict,
   isSameAgentRetryBlocked,
   retryBlockedMessage,
+  remainingDelegationHops,
+  delegationDepthExceededMessage,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -1774,6 +1776,9 @@ async function runJobTracked(
 
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
+    // The reach the team block announces stays within the depth this job has
+    // left (invariant #8, Codex review of #473 pass 2).
+    delegationDepth: job.delegationDepth ?? 0,
     // LA liste, celle que les outils ont — partagé compris. Le prompt la
     // construisait par sa propre requête sur `agent_workspaces`, qui ne le
     // contient pas : il annonçait un dossier là où l'agent en avait deux.
@@ -4893,13 +4898,13 @@ async function runJobTracked(
           // job before it ran a single tool; the in-memory ChainCounters cap
           // only bounds per-run delegations and resets to 0 each runJob, so it
           // never saw this persisted chain depth. THIS is the real enforcement.
-          if ((job.delegationDepth ?? 0) >= DEFAULT_LIMITS.maxDelegationDepth) {
+          if (remainingDelegationHops(job.delegationDepth ?? 0) === 0) {
             toolResultBlocks.push({
               type: 'tool-result',
               toolCallId: call.id,
               toolName: call.name,
               output: toResultOutput({
-                error: `delegation_depth_exceeded: this job is already at the maximum delegation depth (${DEFAULT_LIMITS.maxDelegationDepth}) and cannot delegate further. Do the work yourself with your own tools, or call return_result with status='blocked' explaining what you could not complete.`,
+                error: delegationDepthExceededMessage(),
               }),
             });
             for (const sr of sideToolResults) {

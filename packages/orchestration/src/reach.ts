@@ -15,6 +15,7 @@
 import { eq } from '@nodal-agents/db';
 import { agents, agentAssignments } from '@nodal-agents/db';
 import type { AgentId, AnyDrizzleDb } from './types';
+import { remainingDelegationHops } from './chain-counters';
 
 export interface OutsideAgent {
   id: string;
@@ -25,9 +26,12 @@ export interface OutsideAgent {
   holders: string[];
   /**
    * The agent of YOUR team through which this one is reached, following the
-   * teams downward; null when no chain of teams leads to it from you.
+   * teams downward, within the delegation depth the job has left; null when
+   * no such chain exists.
    */
   through: { name: string; slug: string } | null;
+  /** A chain of teams leads to it, but longer than the depth the job has left. */
+  beyondDepth: boolean;
 }
 
 export interface WorkspaceReach {
@@ -41,7 +45,9 @@ export interface WorkspaceReach {
 export async function loadWorkspaceReach(
   orchestratorId: AgentId,
   db: AnyDrizzleDb,
+  opts: { delegationDepth: number },
 ): Promise<WorkspaceReach> {
+  const hopsLeft = remainingDelegationHops(opts.delegationDepth);
   const [self] = await db
     .select({ entityId: agents.entityId })
     .from(agents)
@@ -74,11 +80,14 @@ export async function loadWorkspaceReach(
   const team = new Set(children.get(orchestratorId as string) ?? []);
 
   // Breadth-first down the teams: each agent remembers the member of MY team
-  // its chain starts with.
+  // its chain starts with, and how many delegation hops it takes (a member of
+  // my team is 1). Breadth-first gives the SHORTEST chain.
   const through = new Map<string, string>();
+  const hops = new Map<string, number>();
   const queue: string[] = [];
   for (const c of team) {
     through.set(c, c);
+    hops.set(c, 1);
     queue.push(c);
   }
   while (queue.length > 0) {
@@ -86,6 +95,7 @@ export async function loadWorkspaceReach(
     for (const m of children.get(n) ?? []) {
       if (through.has(m) || m === orchestratorId) continue;
       through.set(m, through.get(n)!);
+      hops.set(m, hops.get(n)! + 1);
       queue.push(m);
     }
   }
@@ -93,7 +103,12 @@ export async function loadWorkspaceReach(
   const outside: OutsideAgent[] = all
     .filter((a) => a.id !== orchestratorId && !team.has(a.id))
     .map((a) => {
-      const hop = through.get(a.id);
+      // Reachable only within the hops the job has left: a longer chain would
+      // end in a delegation the depth guard refuses (Codex review of #473,
+      // pass 2).
+      const distance = hops.get(a.id);
+      const withinDepth = distance !== undefined && distance <= hopsLeft;
+      const hop = withinDepth ? through.get(a.id) : undefined;
       const hopRow = hop ? byId.get(hop) : undefined;
       return {
         id: a.id,
@@ -102,6 +117,7 @@ export async function loadWorkspaceReach(
         active: a.active === true,
         holders: (holders.get(a.id) ?? []).map((h) => byId.get(h)?.name ?? h),
         through: hopRow ? { name: hopRow.name, slug: hopRow.slug } : null,
+        beyondDepth: distance !== undefined && !withinDepth,
       };
     })
     .sort((x, y) => x.name.localeCompare(y.name));
@@ -129,6 +145,7 @@ export function describeOutsideAgent(a: OutsideAgent, means: ReachMeans): string
   if (a.holders.length === 0) return 'on no team: nobody can hand it work until it is attached';
   const team = `on the team of ${a.holders.join(', ')}`;
   if (means === 'none') return team;
+  if (a.beyondDepth) return `${team}, beyond the delegation depth this job has left`;
   if (!a.through) return `${team}, which no chain of your team reaches`;
   const via = `**${a.through.name}** (\`${a.through.slug}\`), one of your agents`;
   return means === 'escalate'

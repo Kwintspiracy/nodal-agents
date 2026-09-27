@@ -106,6 +106,30 @@ export const DEFAULT_LIMITS: ChainLimits = {
   maxCostPerJobUsd: 2.0,
 };
 
+/**
+ * How many more delegation hops a job at `depth` may take (invariant #8). A
+ * job at the maximum depth delegates to nobody, by either route: `assign_*`
+ * (execute.ts), `create_task` (planner/task-tools.ts) and the task board that
+ * spawns its children (cron/execute-ready.ts) all read this, and the team
+ * block announces no reach beyond it (reach.ts, Codex review of #473 pass 2).
+ */
+export function remainingDelegationHops(
+  depth: number,
+  limits: ChainLimits = DEFAULT_LIMITS,
+): number {
+  return Math.max(0, limits.maxDelegationDepth - depth);
+}
+
+/** The refusal every delegation route gives at the maximum depth. LLM-channel text. */
+export function delegationDepthExceededMessage(limits: ChainLimits = DEFAULT_LIMITS): string {
+  return (
+    `delegation_depth_exceeded: this job is already at the maximum delegation depth ` +
+    `(${limits.maxDelegationDepth}) and cannot delegate further. Do the work yourself with ` +
+    `your own tools, or call return_result with status='blocked' explaining what you could ` +
+    `not complete.`
+  );
+}
+
 // ─── Guard 1f — non-progress detector (per-tool-call streaks) ────────────────
 //
 // Two live incidents on 2026-07-11 that Guard 1b (identical turn signature)

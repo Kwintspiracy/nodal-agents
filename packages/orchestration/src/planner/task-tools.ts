@@ -5,7 +5,8 @@ import { DELEGATION_SCOPE_RULE } from '../router/delegation-scope';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { eq, and, inArray } from '@nodal-agents/db';
-import { agentTasks, agents } from '@nodal-agents/db';
+import { agentTasks, agents, agentJobs } from '@nodal-agents/db';
+import { remainingDelegationHops, delegationDepthExceededMessage } from '../chain-counters';
 import { validateDependencies } from './dependencies';
 import { computeAgentToolNames, findUnavailableToolMentions } from '../router/tool-availability';
 import { loadWorkspaceReach, describeOutsideAgent } from '../reach';
@@ -102,6 +103,20 @@ export function generateTaskTools(
     riskLevel: 'write',
     card: 'text',
     execute: async (input: CreateTaskInput, ctx: ToolContext) => {
+      // The SAME depth guard as assign_* (invariant #8), before any row: a
+      // task created here spawns a child one level deeper, and at the maximum
+      // depth that child would be born beyond the limit (Codex review of #473,
+      // pass 2).
+      const [jobRow] = await db
+        .select({ delegationDepth: agentJobs.delegationDepth })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, ctx.jobId as string))
+        .limit(1);
+      const depth = jobRow?.delegationDepth ?? 0;
+      if (remainingDelegationHops(depth) === 0) {
+        throw new Error(delegationDepthExceededMessage());
+      }
+
       // Resolve assigned_to slug → agent_id, scoped to this job's entity —
       // agents.slug is unique per (entity_id, slug), NOT globally (F-6,
       // audit #2), so an unscoped lookup could match a DIFFERENT entity's
@@ -130,7 +145,7 @@ export function generateTaskTools(
               'this workspace. Use a handle from your team roster.',
           );
         }
-        const reach = await loadWorkspaceReach(orchestratorAgentId, db);
+        const reach = await loadWorkspaceReach(orchestratorAgentId, db, { delegationDepth: depth });
         if (!reach.team.has(targetId)) {
           const out = reach.outside.find((a) => a.id === targetId);
           throw new Error(
