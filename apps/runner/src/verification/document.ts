@@ -115,8 +115,24 @@ const HEAD_BYTES = 8192;
 async function lireUneFois(
   path: string,
   garderJusqua: number,
-): Promise<{ size: number; hash: string; head: Buffer; full: Buffer | null }> {
+): Promise<{
+  size: number;
+  hash: string;
+  head: Buffer;
+  full: Buffer | null;
+  /** Tous les octets se décodent en UTF-8 (vérifié en flux, sans rien garder). */
+  utf8: boolean;
+  /** Un octet NUL a été vu, n'importe où dans le fichier. */
+  nul: boolean;
+}> {
   const hash = createHash('sha256');
+  // UTF-8 et NUL se constatent au fil de la lecture, sur TOUS les octets : un
+  // gros texte ne doit pas échapper aux contrôles qu'un petit subit (revue
+  // Codex de #509, passe 2). Le décodeur en flux garde les séquences coupées
+  // entre deux morceaux, et on arrête de décoder au premier octet invalide.
+  const decodeur = new TextDecoder('utf-8', { fatal: true });
+  let utf8 = true;
+  let nul = false;
   const morceaux: Buffer[] = [];
   let head = Buffer.alloc(0);
   let size = 0;
@@ -124,6 +140,14 @@ async function lireUneFois(
   for await (const chunk of createReadStream(path)) {
     const b = chunk as Buffer;
     hash.update(b);
+    if (!nul && b.includes(0x00)) nul = true;
+    if (utf8) {
+      try {
+        decodeur.decode(b, { stream: true });
+      } catch {
+        utf8 = false;
+      }
+    }
     if (head.length < HEAD_BYTES) {
       head = Buffer.concat([head, b.subarray(0, HEAD_BYTES - head.length)]);
     }
@@ -137,7 +161,21 @@ async function lireUneFois(
       }
     }
   }
-  return { size, hash: hash.digest('hex'), head, full: garde ? Buffer.concat(morceaux) : null };
+  if (utf8) {
+    try {
+      decodeur.decode();
+    } catch {
+      utf8 = false;
+    }
+  }
+  return {
+    size,
+    hash: hash.digest('hex'),
+    head,
+    full: garde ? Buffer.concat(morceaux) : null,
+    utf8,
+    nul,
+  };
 }
 
 /** Un constat : sa ligne dans `verification_runs`. */
@@ -1023,13 +1061,35 @@ export const documentVerifier: DeliverableVerifier = {
 
     // 3c · un texte se décode en UTF-8, sans octet NUL — un texte écrit en
     // UTF-16 sans BOM se décode sans erreur, et ses NUL le trahissent.
-    // Un texte au-delà de la limite n'est pas décodé : exister et ne pas être
-    // vide est ce qui a été constaté, et c'est dit (jamais un « decoded »).
+    // Un texte au-delà de la limite n'est pas gardé en mémoire : UTF-8 et NUL
+    // ont été constatés en flux sur tous ses octets, comme pour un petit. Seule
+    // la FORME (JSON, XML…) demande le texte entier : elle n'est pas vérifiée à
+    // cette taille, et c'est dit — comme « no well-formedness rule » l'est pour
+    // un type qui n'en a pas, jamais tu.
     if (lu.full === null) {
+      const t = Date.now();
+      if (!lu.utf8) {
+        await emit(ko('utf8', 'the file is not valid UTF-8', Date.now() - t));
+        return done();
+      }
+      if (lu.nul) {
+        await emit(
+          ko(
+            'utf8',
+            'the file contains NUL bytes: text written as UTF-16, or binary',
+            Date.now() - t,
+          ),
+        );
+        return done();
+      }
+      const forme = FORM_RULES[ext];
       await emit(
         ok(
-          'text',
-          `${size} bytes, above the ${TEXT_DECODE_LIMIT} bytes a proof decodes: not decoded`,
+          'utf8',
+          forme === undefined
+            ? `decoded in stream (${size} bytes); no well-formedness rule for ${ext || 'a file without extension'}`
+            : `decoded in stream (${size} bytes); ${forme.name} form not checked: above the ${TEXT_DECODE_LIMIT} bytes a proof parses`,
+          Date.now() - t,
         ),
       );
       return done();

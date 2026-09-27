@@ -359,6 +359,11 @@ export interface DeclarationItem {
  * porte), ni la sortie « texte seul », qui finalisait sans rien voir. Rend les
  * chemins encore dus, ou `null`. Relue dans la transcription, pas en mémoire :
  * une reprise après approbation garde la dette.
+ *
+ * Seul un `return_result` ACCEPTÉ (sa réponse `acknowledged`) solde la dette :
+ * un appel DIFFÉRÉ (un outil voisin a échoué) n'a ni déclaré ni retiré quoi que
+ * ce soit, et le compter comme une réponse laissait une réponse en texte seul
+ * finir en succès après la reprise du voisin (revue Codex de #509, passe 2).
  */
 export function declarationDue(messages: readonly unknown[]): DeclarationItem[] | null {
   let due: DeclarationItem[] | null = null;
@@ -366,13 +371,15 @@ export function declarationDue(messages: readonly unknown[]): DeclarationItem[] 
     if (!m || !Array.isArray(m.content)) continue;
     for (const part of m.content as Array<Record<string, unknown>>) {
       if (part?.['toolName'] !== 'return_result') continue;
-      if (m.role === 'assistant' && part['type'] === 'tool-call') {
+      if (m.role !== 'tool' || part['type'] !== 'tool-result') continue;
+      const out = part['output'] as { value?: unknown } | undefined;
+      const v = out?.value as
+        | { error?: unknown; unresolved?: unknown; acknowledged?: unknown }
+        | undefined;
+      if (v?.acknowledged === true) {
         due = null;
         continue;
       }
-      if (m.role !== 'tool' || part['type'] !== 'tool-result') continue;
-      const out = part['output'] as { value?: unknown } | undefined;
-      const v = out?.value as { error?: unknown; unresolved?: unknown } | undefined;
       if (typeof v?.error !== 'string' || !v.error.startsWith(UNRESOLVED_DELIVERABLES_MARK))
         continue;
       const liste = Array.isArray(v.unresolved)

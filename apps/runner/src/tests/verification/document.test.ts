@@ -268,14 +268,28 @@ describe('document — texte ou binaire, une règle pour tous les fichiers', () 
     expect(verdict).toBe('red');
   });
 
-  it('un gros fichier n’est jamais tenu en mémoire : un texte au-delà de la limite est dit « not decoded », un binaire garde sa preuve d’en-tête', async () => {
-    // 33 Mo : au-delà des 32 Mo qu'une preuve décode (revue Codex de #509 : une
-    // vidéo de plusieurs Go lue en entier, deux fois, épuisait le runner).
+  it('un gros fichier n’est jamais tenu en mémoire, et un gros texte subit QUAND MÊME UTF-8 et NUL, sur tous ses octets', async () => {
+    // 33 Mo : au-delà des 32 Mo qu'une preuve garde (revue Codex de #509 : une
+    // vidéo de plusieurs Go lue en entier, deux fois, épuisait le runner ; puis,
+    // passe 2 : au-delà de la limite, un texte échappait à tout contrôle).
     const gros = Buffer.alloc(33 * 1024 * 1024, 0x61);
     const texte = await prove(write('journal.log', gros));
     expect(texte.verdict).toBe('green');
-    expect(texte.records.at(-1)).toMatchObject({ command: 'text', verdict: 'green' });
-    expect(texte.records.at(-1)?.stdoutTail).toMatch(/not decoded/);
+    expect(texte.records.at(-1)).toMatchObject({ command: 'utf8', verdict: 'green' });
+    expect(texte.records.at(-1)?.stdoutTail).toMatch(/decoded in stream/);
+
+    // Un octet invalide TOUT AU BOUT : le flux le voit.
+    const casse = await prove(write('casse.log', Buffer.concat([gros, Buffer.from([0xc3])])));
+    expect(casse.records.at(-1)).toMatchObject({ command: 'utf8', verdict: 'red' });
+    // Un NUL au milieu : aussi.
+    const avecNul = Buffer.from(gros);
+    avecNul[20 * 1024 * 1024] = 0x00;
+    const nul = await prove(write('nul.csv', avecNul));
+    expect(nul.records.at(-1)).toMatchObject({ command: 'utf8', verdict: 'red' });
+    // Un gros JSON : UTF-8 constaté, la forme n'est pas vérifiée à cette taille, et c'est DIT.
+    const json = await prove(write('gros.json', gros));
+    expect(json.records.at(-1)?.stdoutTail).toMatch(/json form not checked/);
+
     const film = await prove(write('gros-film.mp4', Buffer.concat([mp4Bytes(), gros])));
     expect(film.verdict).toBe('green');
     expect(film.records.at(-1)?.command).toBe('well-formed:mp4');
