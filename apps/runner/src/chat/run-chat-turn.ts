@@ -159,6 +159,25 @@ function wantsAlongside(call: { input?: unknown }): boolean {
   return (call.input as { alongside?: unknown } | undefined)?.alongside === true;
 }
 
+/** Une tâche comparée à une autre : espaces et casse mis à part. */
+function sameTask(a: string, b: string): boolean {
+  const norm = (t: string): string => t.trim().replace(/\s+/g, ' ').toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * Les têtes en cours qui RETIENNENT cet appel (#453). Sans `alongside`, toutes :
+ * la personne précise souvent la même demande. Avec, seules celles dont la
+ * tâche est la même : `alongside` lance un travail différent, jamais un double.
+ */
+function blockingHeads(call: { input?: unknown }, running: readonly RunningHead[]): RunningHead[] {
+  if (!wantsAlongside(call)) return [...running];
+  const instruction = String(
+    (call.input as { instruction?: unknown } | undefined)?.instruction ?? '',
+  );
+  return running.filter((h) => sameTask(h.task, instruction));
+}
+
 /**
  * The tool-result of a `run_task` refused because work launched from this
  * conversation is still running (#453). LLM-facing: a bracketed platform line
@@ -172,7 +191,7 @@ export function runTaskRefusal(running: readonly RunningHead[]): string {
     `[run_task refused: work launched from this conversation is still running: ${jobs}. ` +
     'Nothing was launched. If the person is clarifying or repeating that request, tell them you ' +
     'are already on it; its result will arrive in this conversation. To launch DIFFERENT work in ' +
-    'parallel, call run_task again with alongside: true.]'
+    'parallel, call run_task again with alongside: true; the same task is refused even then.]'
   );
 }
 
@@ -722,9 +741,20 @@ export async function runChatTurn(opts: {
   //     re-déclenchait par-dessus. Le contrat, pour tout agent : l'appel est
   //     REFUSÉ au modèle, qui reçoit le travail en cours dans le résultat de son
   //     appel d'outil et répond une seconde fois — dire qu'il est déjà dessus,
-  //     ou rappeler avec `alongside: true` pour un travail différent. Rien ne
-  //     se jette en silence : le refus est ce que le modèle lit.
-  if (runTask && !wantsAlongside(runTask)) {
+  //     ou rappeler avec `alongside: true` pour un travail DIFFÉRENT.
+  //
+  //     Une seule règle pour tous les appels du tour (`blockingHeads`) :
+  //     sans `alongside`, toute tête en cours retient l'appel ; avec, seule une
+  //     tête dont la tâche est LA MÊME (espaces et casse mis à part) le retient,
+  //     sinon `alongside` suffirait à recréer le doublon (revue Codex, passe 2).
+  //
+  //     Un second appel encore retenu ne garde PAS sa phrase : « je lance
+  //     l'autre tâche » posée au-dessus d'un appel jeté annoncerait un travail
+  //     qui n'existe pas. Le texte est vidé, et la relance SANS outils (6b)
+  //     répond avec les deux refus sous les yeux. Rien ne se jette en silence :
+  //     chaque refus est ce que le modèle lit.
+  let refusals = 0;
+  while (runTask) {
     const runningHeads: RunningHead[] = await db
       .select({ id: agentJobs.id, task: agentJobs.task, status: agentJobs.status })
       .from(agentJobs)
@@ -736,62 +766,67 @@ export async function runChatTurn(opts: {
           notInArray(agentJobs.status, TERMINAL_STATUSES),
         ),
       );
-    if (runningHeads.length > 0) {
-      const toolCallId =
-        (runTask as { toolCallId?: unknown }).toolCallId !== undefined
-          ? String((runTask as { toolCallId?: unknown }).toolCallId)
-          : 'run-task-refused';
-      // L'historique porte déjà le message de ce tour (écrit en 1b).
-      messages = [
-        ...messages,
-        {
-          role: 'assistant',
-          content: [
-            ...(text ? [{ type: 'text' as const, text }] : []),
-            {
-              type: 'tool-call' as const,
-              toolCallId,
-              toolName: 'run_task',
-              input: runTask.input ?? {},
-            },
-          ],
-        },
-        {
-          role: 'tool',
-          content: [
-            {
-              type: 'tool-result' as const,
-              toolCallId,
-              toolName: 'run_task',
-              output: { type: 'text' as const, value: runTaskRefusal(runningHeads) },
-            },
-          ],
-        },
-      ];
-      // Ce qui a pu passer par le flux n'est plus la réponse : c'est la
-      // seconde qui l'est.
-      streamed = false;
-      try {
-        const second = await llmClient.generateText(
-          { system: systemPrompt, messages, tools: CHAT_TOOLS },
-          abortSignal ? { abortSignal } : undefined,
-        );
-        text = (second.text ?? '').trim();
-        // Seul un rappel EXPLICITE en parallèle lance quelque chose : un second
-        // appel sans `alongside` a déjà reçu le refus et ne relance rien.
-        const again = (second.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
-        runTask = again !== undefined && wantsAlongside(again) ? again : undefined;
-      } catch (err) {
-        if (abortSignal?.aborted) return await keepStoppedReply();
-        console.warn(
-          `[run-chat-turn] reply after a refused run_task failed (${agentRow.slug}):`,
-          (err as Error).message,
-        );
-        text = '';
-        runTask = undefined;
-      }
-      if (abortSignal?.aborted) return await keepStoppedReply();
+    const blocking = blockingHeads(runTask, runningHeads);
+    if (blocking.length === 0) break;
+
+    const toolCallId =
+      (runTask as { toolCallId?: unknown }).toolCallId !== undefined
+        ? String((runTask as { toolCallId?: unknown }).toolCallId)
+        : `run-task-refused-${String(refusals)}`;
+    // L'historique porte déjà le message de ce tour (écrit en 1b).
+    messages = [
+      ...messages,
+      {
+        role: 'assistant',
+        content: [
+          ...(text ? [{ type: 'text' as const, text }] : []),
+          {
+            type: 'tool-call' as const,
+            toolCallId,
+            toolName: 'run_task',
+            input: runTask.input ?? {},
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result' as const,
+            toolCallId,
+            toolName: 'run_task',
+            output: { type: 'text' as const, value: runTaskRefusal(blocking) },
+          },
+        ],
+      },
+    ];
+    // Ce qui a pu passer par le flux n'est plus la réponse.
+    streamed = false;
+    if (refusals >= 1) {
+      // Second refus : ni son appel ni sa phrase ne restent. La relance sans
+      // outils (6b) écrit la réponse, refus compris.
+      text = '';
+      runTask = undefined;
+      break;
     }
+    refusals += 1;
+    try {
+      const again = await llmClient.generateText(
+        { system: systemPrompt, messages, tools: CHAT_TOOLS },
+        abortSignal ? { abortSignal } : undefined,
+      );
+      text = (again.text ?? '').trim();
+      runTask = (again.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+    } catch (err) {
+      if (abortSignal?.aborted) return await keepStoppedReply();
+      console.warn(
+        `[run-chat-turn] reply after a refused run_task failed (${agentRow.slug}):`,
+        (err as Error).message,
+      );
+      text = '';
+      runTask = undefined;
+    }
+    if (abortSignal?.aborted) return await keepStoppedReply();
   }
 
   // 6a. ESCALATION: the agent wants to act → spawn a real job (the unit of work).

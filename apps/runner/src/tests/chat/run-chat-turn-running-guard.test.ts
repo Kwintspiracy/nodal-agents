@@ -25,6 +25,11 @@
 //     « deux tours SIMULTANÉS » rougit (2 têtes) ;
 //   - `runInLane` retiré de `routes/chat.ts` → le scan des appelants rougit en
 //     nommant le fichier.
+// Revue Codex, passe 2 :
+//   - `blockingHeads` rendant [] dès `alongside` → « alongside sur la MÊME
+//     tâche » rougit (un doublon est créé) ;
+//   - la phrase du second appel refusé gardée → « ne laisse pas sa phrase
+//     je lance » rougit.
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -337,6 +342,80 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
       'Draft the release post',
       'Find the changelog of nodal-agents 0.9.2',
     ]);
+  });
+
+  it('`alongside: true` sur la MÊME tâche (espaces, casse) est refusé comme sans alongside (revue Codex, passe 2)', async () => {
+    await conversationAvecTravail('processing');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          {
+            runTask: {
+              instruction: '  find the CHANGELOG   of nodal-agents 0.9.2 ',
+              alongside: true,
+            },
+          },
+          { text: 'Already on it.' },
+        ],
+        captured,
+      ),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'i mean nodal-agents',
+    });
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.spawnedJobId).toBeUndefined();
+    expect(r.reply).toBe('Already on it.');
+    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
+    expect(toolResults(captured[1] ?? [])).toContain(premierJob);
+  });
+
+  it('après le refus, un second run_task refusé ne laisse pas sa phrase « je lance » : le modèle répond sans outil, refus en mains (revue Codex, passe 2)', async () => {
+    await conversationAvecTravail('processing');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
+          { text: 'Je lance l’autre tâche.', runTask: { instruction: 'Summarise it' } },
+          { text: 'The research is still running; I will summarise once it is done.' },
+        ],
+        captured,
+      ),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'and summarise it',
+    });
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.spawnedJobId).toBeUndefined();
+    // La phrase qui annonçait un lancement n'est PAS la réponse.
+    expect(r.reply).toBe('The research is still running; I will summarise once it is done.');
+    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
+    // Le dernier appel a vu les DEUX refus, et c'était un appel sans outils.
+    const dernier = captured[2] ?? [];
+    expect(toolResults(dernier).split('run_task refused').length - 1).toBe(2);
+    const [ecrit] = await db
+      .select({ content: chatMessages.content })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversationId))
+      .orderBy(chatMessages.createdAt)
+      .then((rows) => rows.slice(-1));
+    expect(ecrit?.content).not.toContain('Je lance');
   });
 
   it('un travail TERMINÉ ne retient rien : run_task lance comme avant', async () => {
