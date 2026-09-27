@@ -752,15 +752,20 @@ describe('the ceiling on production that delivers nothing (#484) @cap:organiser-
   });
 });
 
-describe('a FINISHED tool call resets the invisible-production ceiling (#484) @cap:organiser-equipe/moteur', () => {
-  it('15 minutes of arguments, the call completes, 15 more of reasoning: not cut', async () => {
+// Revue Codex de #484, passe 2 : un appel d'outil terminé EN FLUX n'est pas
+// livré. Il n'est rendu qu'à la fin du flux, exécuté ensuite, et jeté si le
+// flux est coupé. Il ne réarme donc pas le plafond : sinon un modèle qui émet
+// un appel toutes les 19 min et raisonne entre les deux tournait une heure
+// sans qu'aucun outil ne soit exécuté ni gardé.
+describe('a tool call finished IN the stream does not reset the ceiling (#484) @cap:organiser-equipe/moteur', () => {
+  it('a finished tool call, then more reasoning: the stream is cut at the ceiling from the start', async () => {
     const { z } = await import('zod');
     const { tool } = await import('ai');
     const args = Array.from({ length: 30 }, (_, i) => ({
       atMs: 30_000 * (i + 1),
       part: { type: 'tool-input-delta' as const, id: 'c1', delta: ' ' },
     }));
-    const suite = Array.from({ length: 30 }, (_, i) => reasoning(900_000 + 30_000 * (i + 1), 'r'));
+    const suite = Array.from({ length: 60 }, (_, i) => reasoning(900_000 + 30_000 * (i + 1), 'r'));
     const model = timedModel([
       { atMs: 0, part: { type: 'tool-input-start', id: 'c1', toolName: 'note' } },
       ...args,
@@ -771,7 +776,7 @@ describe('a FINISHED tool call resets the invisible-production ceiling (#484) @c
       },
       { atMs: 900_000, part: { type: 'reasoning-start', id: 'r' } },
       ...suite,
-      ...end(1_800_000),
+      ...end(2_700_000),
     ]);
     const state: { error?: unknown; done: boolean } = { done: false };
     consumeUnderClocks(
@@ -796,9 +801,13 @@ describe('a FINISHED tool call resets the invisible-production ceiling (#484) @c
       },
     );
 
-    await vi.advanceTimersByTimeAsync(1_800_001);
+    await vi.advanceTimersByTimeAsync(INVISIBLE_PRODUCTION_MS - 1);
+    expect(state.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
 
-    expect(state.error).toBeUndefined();
-    expect(state.done).toBe(true);
+    const err = state.error as LLMTimeoutError;
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect(err.reason).toBe('invisible_production');
+    expect(err.timeoutMs).toBe(INVISIBLE_PRODUCTION_MS);
   });
 });

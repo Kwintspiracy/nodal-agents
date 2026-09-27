@@ -62,13 +62,19 @@ export const BETWEEN_TOKENS_MS = 60_000;
 export const ABSOLUTE_CALL_MS = 3_600_000;
 /**
  * The longest a call may produce WITHOUT delivering anything (#484): only
- * reasoning or tool arguments, no text and no finished tool call. Every
+ * reasoning, tool arguments or tool calls, no visible text. Every
  * delta resets the silence clock, so without this ceiling a provider sending
  * one character every 59 s ran for the full hour (Codex review of #484), and
  * three mimo-v2.6-pro turns ran 20 to 46 minutes with nothing to show. Twenty
  * minutes is 12,000 tokens of arguments at 10 tokens/s (job 82ecec67): past
- * that, a single call is no longer writing a file, it is stuck. Text and a
- * finished tool call reset it; a slow writer of TEXT is never cut by it.
+ * that, a single call is no longer writing a file, it is stuck.
+ *
+ * Only what is DELIVERED resets it: visible text, which a cut keeps
+ * (`partialText`). A tool call finished inside the stream does not: it is
+ * handed back only when the stream ends, run after it, and thrown away if the
+ * stream is cut, so resetting on it let a model emitting one call every 19
+ * minutes run the hour with nothing run nor kept (Codex review of #484, pass
+ * 2). A slow writer of TEXT is never cut by it.
  */
 export const INVISIBLE_PRODUCTION_MS = 1_200_000;
 
@@ -79,7 +85,7 @@ export interface TurnClocks {
   betweenTokensMs: number;
   /** Total duration of one call, whatever it produces. */
   absoluteMs: number;
-  /** Production without text nor finished tool call; `Infinity` = no limit. */
+  /** Production without visible text; `Infinity` = no limit. */
   invisibleProductionMs: number;
 }
 
@@ -346,8 +352,9 @@ export async function consumeUnderClocks(
   };
   const absolute = setTimeout(() => expire('absolute', clocks.absoluteMs), clocks.absoluteMs);
   // #484 : production sans rien de livré — raisonnement ou arguments d'outil
-  // seulement. Armée au départ de l'appel, réarmée par un texte ou un appel
-  // d'outil TERMINÉ, jamais par un simple delta.
+  // seulement. Armée au départ de l'appel, réarmée par le seul texte visible,
+  // le seul produit qu'une coupure garde — jamais par un appel d'outil encore
+  // dans le flux, qui serait jeté avec lui.
   let invisible: ReturnType<typeof setTimeout> | undefined;
   const armInvisible = (): void => {
     if (invisible !== undefined) clearTimeout(invisible);
@@ -408,7 +415,7 @@ export async function consumeUnderClocks(
         ) {
           progress.toolName = null;
         }
-        if (part.type === 'text-delta' || part.type === 'tool-call') armInvisible();
+        if (part.type === 'text-delta') armInvisible();
         if (part.type === 'tool-input-delta') progress.toolInputChars += part.delta.length;
         onProgress?.({ ...progress });
         if (STRUCTURED_PARTS.has(part.type)) sawStructured = true;
