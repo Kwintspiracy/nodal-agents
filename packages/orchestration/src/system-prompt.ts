@@ -9,6 +9,7 @@
 // reaches the agent. Pre-Brique 32 only the skill name was injected, so the
 // skill content was silently dropped. End-to-end skill behavior never worked.
 
+import { remainingDelegationHops } from './chain-counters';
 import { eq } from '@nodal-agents/db';
 import {
   agentSkillAssignments,
@@ -1183,8 +1184,13 @@ export async function buildSystemPrompt(
   const availableTools: readonly string[] =
     jobContext?.availableToolNames ?? (hasNodalTools ? ALWAYS_ON_TOOLS : []);
 
+  // At the maximum delegation depth the job cannot hand work on (the same
+  // rule as its whitelist and team block, remainingDelegationHops): it gets
+  // the worker's discipline, never the orchestrator's "when you delegate"
+  // (Codex review of #473, pass 4).
+  const canHandOn = remainingDelegationHops(jobContext?.delegationDepth ?? 0) > 0;
   const baselineBlock = buildBaselineBlock(agent.model, {
-    role: agent.role,
+    role: agent.role === 'orchestrator' && !canHandOn ? 'agent' : agent.role,
     nodalTools: jobContext?.surface !== 'cli-runtime',
     surface: jobContext?.surface ?? 'job',
     availableTools,

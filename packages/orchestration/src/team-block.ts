@@ -505,6 +505,22 @@ export async function buildTeamBlock(
   );
   if (outsideSection !== '') lines.push(outsideSection);
 
+  // What to DO with a match follows the same rule as the tools this job has
+  // (Codex review of #473, pass 4): delegate only where a delegation tool
+  // exists; through the run_task job on chat; otherwise do what your own tools
+  // cover, and name the agent that would have the means in a blocked result.
+  const footerRoute =
+    reachMeans === 'delegate'
+      ? 'A request that needs a shell command goes only to an agent whose Shell commands is ' +
+        'yes. Before saying you cannot do something, scan the list: if any agent’s ' +
+        'skills/connectors match the request, delegate to it.'
+      : reachMeans === 'escalate'
+        ? 'Before saying you cannot do something, scan the list: if any agent’s ' +
+          'skills/connectors match the request, start the work with `run_task` and name that ' +
+          'agent in the instruction; the job it starts is the one that hands it on.'
+        : 'You cannot hand work to these agents from here. Do yourself what your own tools ' +
+          'cover; for the rest, call return_result with a blocked status that names the agent ' +
+          'whose skills, connectors, folders or Shell commands would have the means.';
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
       'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +
@@ -514,10 +530,9 @@ export async function buildTeamBlock(
       'folder or a path, look for it UNDER the listed folders — a bare name such as a project ' +
       'folder may sit inside any of them, so ask the agent whose folder it would be in rather ' +
       'than guess; a folder belongs to nobody only when its path is under none of them, and ' +
-      'then say so. A request that ' +
-      'needs a shell command goes only to an agent whose Shell commands is yes. Before saying you cannot do ' +
-      'something, scan the list: if any agent’s skills/connectors match the request, delegate ' +
-      'to it. If genuinely none match, say so plainly (and how the user could enable it, if ' +
+      'then say so. ' +
+      footerRoute +
+      ' If genuinely none match, say so plainly (and how the user could enable it, if ' +
       'you know) — do NOT fabricate an agent name or claim a tool you were not given.',
   );
 

@@ -649,6 +649,9 @@ describe('buildTeamBlock — le reste de l’espace, dit à tout agent selon ses
     const cli = await buildTeamBlock(root.id as AgentId, db, { delegation: false });
     expect(lineOf(cli, revA.name)).toContain(`on the team of ${lead.name}`);
     expect(lineOf(cli, revA.name)).not.toContain('reach it through');
+    // Nor the footer: a CLI session is never told to delegate (#473, pass 4).
+    expect(cli).not.toContain('delegate to it');
+    expect(cli).toContain('names the agent');
     // Chat: the job started with run_task delegates, so the route is the job's.
     const chat = await buildTeamBlock(root.id as AgentId, db, {
       delegation: false,

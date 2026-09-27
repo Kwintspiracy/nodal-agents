@@ -216,6 +216,23 @@ describe('a job at the maximum delegation depth cannot delegate, and is told so 
     expect(names.some((n) => n.startsWith('assign_'))).toBe(false);
     expect(names).not.toContain('create_task');
     expect(call.system).not.toContain('ways to delegate');
+    // Codex review of #473, pass 4: no delegation ORDER anywhere in the prompt
+    // at this depth — the team block's footer said "delegate to it".
+    // Every ORDER to hand work to an agent is forbidden; descriptions that
+    // merely mention delegated work (the identity line, verify-before-done,
+    // the code_task skill that drives a coding CLI) are not orders.
+    const ORDERS: RegExp[] = [
+      /\bdelegate (?:it|to it|them|to them)\b/i,
+      /\bwhen you delegate\b/i,
+      /ways to delegate/i,
+      /\bdelegate to (?:a|an|the|that|this|another) (?:agent|teammate|specialist)\b/i,
+      /reach it through/i,
+      /goes only to an agent/i,
+      /hand (?:it|the work) to (?:a|an|another) (?:agent|teammate|specialist)/i,
+    ];
+    const orders = ORDERS.filter((re) => re.test(call.system)).map(String);
+    expect(orders, orders.join(' | ')).toEqual([]);
+    expect(call.system).toContain('return_result');
     expect(call.system).toContain('maximum delegation depth');
     expect(call.system).toContain('**Worker**');
   });
@@ -226,5 +243,8 @@ describe('a job at the maximum delegation depth cannot delegate, and is told so 
     expect(names).toContain(`assign_${childSlug.replace(/-/g, '_')}`);
     expect(names).toContain('create_task');
     expect(call.system).toContain('ways to delegate');
+    // The patterns above do match a prompt that orders delegation: not vacuous.
+    expect(call.system).toMatch(/delegate to it/);
+    expect(call.system).toMatch(/when you delegate/i);
   });
 });
