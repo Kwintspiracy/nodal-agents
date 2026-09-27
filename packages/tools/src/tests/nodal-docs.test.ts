@@ -256,6 +256,19 @@ describe('nodal_docs answers "what changed in version X" @cap:consulter-l-aide/m
     expect((await ask('nouveautés de la 0.9.1'))[0]?.title).toMatch(/^v0\.9\.1\b/);
   });
 
+  // Word matching alone puts the wrong release first for these (measured with
+  // the version rule disabled: v0.9.0, v0.8.0, v0.9.1): digits split into
+  // single-character terms every release heading shares.
+  for (const [question, version] of [
+    ['changelog 0.8.9', '0.8.9'],
+    ['release notes 0.8.11', '0.8.11'],
+    ['version 0.9.0', '0.9.0'],
+  ] as const) {
+    it(`answers "${question}" with the v${version} section, whatever the words`, async () => {
+      expect((await ask(question))[0]?.title.startsWith(`v${version} `)).toBe(true);
+    });
+  }
+
   it('keeps release notes out of a how-to question: its ranking is the one without them', () => {
     // The ticket's own example; the property proven is the general one — for a
     // question that does not ask about releases, the release sections change
