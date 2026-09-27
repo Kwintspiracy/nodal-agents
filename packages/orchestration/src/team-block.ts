@@ -16,6 +16,7 @@ import {
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { CLI_RUNTIME_RUNS_SHELL_COMMANDS, resolveRunWorkspaces } from '@nodal-agents/tools';
 import { resolveBuiltinToolNames } from './builtin-tool-names';
+import { DEFAULT_LIMITS, remainingDelegationHops } from './chain-counters';
 import { modelCanSeeImages } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
@@ -81,7 +82,12 @@ export async function buildTeamBlock(
   db: AnyDrizzleDb,
   options: TeamBlockOptions = {},
 ): Promise<string> {
-  const canDelegate = options.delegation !== false;
+  // At the maximum delegation depth the job has NO delegation tool (execute.ts
+  // leaves assign_* and create_task out, by the same rule): the team is listed
+  // as facts, and the block says the job cannot delegate (Codex review of
+  // #473, pass 3 — it still announced "TWO ways to delegate").
+  const atMaxDepth = remainingDelegationHops(options.delegationDepth ?? 0) === 0;
+  const canDelegate = options.delegation !== false && !atMaxDepth;
   const reachMeans: ReachMeans = canDelegate
     ? 'delegate'
     : options.escalation === true
@@ -348,7 +354,15 @@ export async function buildTeamBlock(
   // Build lines array (all data from DB — no hardcoded names)
   const lines: string[] = [];
   lines.push('## Your team\n');
-  if (!canDelegate && options.escalation === true) {
+  if (atMaxDepth && options.delegation !== false) {
+    lines.push(
+      'These agents are your team. This job is at the maximum delegation depth ' +
+        `(${DEFAULT_LIMITS.maxDelegationDepth}): it has no delegation tool and cannot hand ` +
+        'work to any of them, by either route. Treat the list as knowledge; do the work ' +
+        'yourself with your own tools, or call return_result saying what you could not ' +
+        'complete.\n',
+    );
+  } else if (!canDelegate && options.escalation === true) {
     // Roster as a FACT, plus the one path that gets work done from here.
     lines.push(
       'These agents exist in this workspace and are attached to you. In this chat you have ' +

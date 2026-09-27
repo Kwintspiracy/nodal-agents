@@ -699,3 +699,23 @@ describe('buildTeamBlock — la portée annoncée tient dans la profondeur resta
     expect(lineOf(block, manager.name)).toContain('beyond the delegation depth this job has left');
   });
 });
+
+// Revue Codex de #473, passe 3 : à la profondeur maximale, le bloc annonçait
+// encore « TWO ways to delegate » et un outil assign_* par enfant.
+describe('buildTeamBlock — à la profondeur maximale, aucune délégation annoncée (#473)', () => {
+  it('liste l’équipe comme des faits, sans outil ni mode d’emploi, et dit pourquoi', async () => {
+    const { entityId } = await seedContext(db);
+    const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const reviewer = await seedAgent(db, entityId, `test-rev-max-${t}`, 'orchestrator');
+    const worker = await seedAgent(db, entityId, `test-wkr-max-${t}`, 'agent');
+    await assignChild(db, reviewer.id, worker.id, entityId);
+
+    const block = await buildTeamBlock(reviewer.id as AgentId, db, { delegationDepth: 3 });
+
+    expect(block).toContain(`**${worker.name}**`);
+    expect(block).toContain('maximum delegation depth');
+    expect(block).not.toContain('ways to delegate');
+    expect(block).not.toMatch(/assign_[a-z0-9_]+/);
+    expect(block).not.toContain('`create_task`');
+  });
+});

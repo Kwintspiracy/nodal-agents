@@ -2255,13 +2255,20 @@ async function runJobTracked(
       // — once it has created tasks, the assign_ block below defers, so the two
       // completion models never run on the same job. `orchestratorMode` is now a
       // soft preference surfaced in the prompt, not a hard XOR on the toolset.
-      const assignTools = (await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[];
-      const [createTaskTool, listTasksTool] = generateTaskTools(agent.id, db);
+      // At the maximum delegation depth, no delegation tool at all: the same
+      // rule (remainingDelegationHops) decides the whitelist, the refusal
+      // below and the team block, so the model is never offered a route that
+      // is refused (Codex review of #473, pass 3).
+      const delegationTools: AnyToolDef[] =
+        remainingDelegationHops(job.delegationDepth ?? 0) > 0
+          ? [
+              ...((await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[]),
+              ...(generateTaskTools(agent.id, db) as unknown as AnyToolDef[]),
+            ]
+          : [];
       const returnResult = registry.get('return_result');
       toolDefs = [
-        ...assignTools,
-        createTaskTool as unknown as AnyToolDef,
-        listTasksTool as unknown as AnyToolDef,
+        ...delegationTools,
         ...memoryBuiltins,
         ...(returnResult ? [returnResult] : []),
         ...metaToolDefs,

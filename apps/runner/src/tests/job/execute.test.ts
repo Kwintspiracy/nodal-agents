@@ -561,11 +561,16 @@ describe('executeJob', () => {
     expect(children).toHaveLength(0);
 
     // The refusal reached the transcript as a tool_result the LLM could react to.
+    // Since #473 (Codex review, pass 3) the delegation tools are not even OFFERED
+    // at the maximum depth — the call is answered as a tool this job does not
+    // have, never performed. (max-depth-no-delegation.test.ts asserts the offer.)
     const [row] = await db
       .select({ messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-    expect(JSON.stringify(row?.messages ?? [])).toContain('delegation_depth_exceeded');
+    const transcript = JSON.stringify(row?.messages ?? []);
+    expect(transcript).toContain(`The tool \\"${assignTool}\\" is not available to you`);
+    expect(transcript).not.toMatch(/Your available tools are:[^"]*create_task/);
   });
 
   // ─── #173 : pas de seconde revue de la même chose ──────────────────────────
