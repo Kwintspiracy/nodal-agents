@@ -121,10 +121,17 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
 
     expect(result.outcome).toBe('error');
     if (result.outcome === 'error') {
-      expect(result.error).toContain('missing field `purpose`');
-      expect(result.error).toContain('This job is NOT stopped');
-      expect(result.error).toContain('same input');
-      expect(result.error).not.toContain('suspends this job');
+      // Les DEUX faits, et le texte exact (revue Codex de #505, passe 4) :
+      // le job continue, mais CET appel n'a pas tourné. « nothing was
+      // refused » était faux — l'appel rend une erreur et n'a rien exécuté.
+      expect(result.error).toBe(
+        'approval_purpose_required: missing field `purpose`. "gated_not_halted" needs a ' +
+          "person's approval, and a request without a reason is not sent, so nothing was " +
+          'submitted to anyone. This call did NOT run. This job is NOT stopped: call ' +
+          '"gated_not_halted" again with the same input plus a `purpose` field: one sentence, ' +
+          'for the person who approves, saying what you need this for and why.',
+      );
+      expect(result.error).not.toContain('nothing was refused');
     }
   });
 
