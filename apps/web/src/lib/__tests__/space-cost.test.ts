@@ -3,7 +3,7 @@
 // preuve, durée du travail.
 
 import { describe, it, expect } from 'vitest';
-import { aggregateSpaceCost } from '../space-cost.ts';
+import { aggregateSpaceCost, costOfCalls } from '../space-cost.ts';
 
 const t0 = new Date('2026-09-06T10:00:00Z');
 const at = (min: number) => new Date(t0.getTime() + min * 60_000);
@@ -140,5 +140,16 @@ describe('aggregateSpaceCost', () => {
     });
     expect(cost.byAgent[0]?.agentName).toBe('Unknown agent');
     expect(cost.totals.durationMs).toBe(0);
+  });
+});
+
+describe('costOfCalls — la règle du prix, partagée par la barre et la carte (#508)', () => {
+  it('somme les appels tarifés, compte les autres, et ne dit jamais 0 pour « inconnu »', () => {
+    expect(costOfCalls([{ costUsd: 0.0679 }, { costUsd: 0.83 }, { costUsd: null }])).toEqual({
+      costUsd: 0.0679 + 0.83,
+      unpricedCalls: 1,
+    });
+    expect(costOfCalls([{ costUsd: null }])).toEqual({ costUsd: null, unpricedCalls: 1 });
+    expect(costOfCalls([])).toEqual({ costUsd: null, unpricedCalls: 0 });
   });
 });
