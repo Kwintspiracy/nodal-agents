@@ -72,7 +72,6 @@ describe('ChainCounters', () => {
         sameToolStreakNudgeAt: 8,
         maxNoDeliveryNudges: 2,
         nudgeSpacing: 3,
-        noDeliveryFailAt: 20,
         maxCostPerJobUsd: 2.0,
       });
       c.bumpChain(); // 1
@@ -116,7 +115,6 @@ describe('ChainCounters', () => {
         sameToolStreakNudgeAt: 8,
         maxNoDeliveryNudges: 2,
         nudgeSpacing: 3,
-        noDeliveryFailAt: 20,
         maxCostPerJobUsd: 2.0,
       });
       // Even with very tight limit, approval-resume never throws
@@ -138,7 +136,6 @@ describe('ChainCounters', () => {
         sameToolStreakNudgeAt: 8,
         maxNoDeliveryNudges: 2,
         nudgeSpacing: 3,
-        noDeliveryFailAt: 20,
         maxCostPerJobUsd: 2.0,
       });
 
@@ -173,7 +170,6 @@ describe('ChainCounters', () => {
         sameToolStreakNudgeAt: 8,
         maxNoDeliveryNudges: 2,
         nudgeSpacing: 3,
-        noDeliveryFailAt: 20,
         maxCostPerJobUsd: 2.0,
       });
       c.bumpToolCall(); // 1
@@ -196,7 +192,6 @@ describe('ChainCounters', () => {
         sameToolStreakNudgeAt: 8,
         maxNoDeliveryNudges: 2,
         nudgeSpacing: 3,
-        noDeliveryFailAt: 20,
         maxCostPerJobUsd: 2.0,
       });
       c.bumpToolCall();
@@ -226,7 +221,6 @@ describe('ChainCounters', () => {
         sameToolStreakNudgeAt: 8,
         maxNoDeliveryNudges: 2,
         nudgeSpacing: 3,
-        noDeliveryFailAt: 20,
         maxCostPerJobUsd: 2.0,
       });
       c.bumpToolCall();
@@ -266,7 +260,6 @@ describe('ChainCounters', () => {
         sameToolStreakNudgeAt: 8,
         maxNoDeliveryNudges: 2,
         nudgeSpacing: 3,
-        noDeliveryFailAt: 20,
         maxCostPerJobUsd: 2.0,
       });
       c.bumpDelegationDepth(); // 1
@@ -289,7 +282,6 @@ describe('ChainCounters', () => {
         sameToolStreakNudgeAt: 8,
         maxNoDeliveryNudges: 2,
         nudgeSpacing: 3,
-        noDeliveryFailAt: 20,
         maxCostPerJobUsd: 2.0,
       });
       c.bumpDelegationDepth();

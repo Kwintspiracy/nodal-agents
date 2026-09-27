@@ -722,10 +722,12 @@ export function timeoutStopLine(faits: TimeoutFacts): string {
 /**
  * Ce qu'un budget arrêté rapporte : quoi, combien, contre quel plafond, où.
  * `cost`, `time`, `tokens` : le budget du RUN (#442). `agent_day`,
- * `agent_month` : le budget de l'AGENT, tous fournisseurs (#447).
+ * `agent_month` : le budget de l'AGENT, tous fournisseurs (#447). `turns` : le
+ * plafond de tours de l'invariant 8, qui livre lui aussi ce qui a été écrit
+ * (#504) au lieu de le jeter.
  */
 export interface BudgetStopFacts {
-  kind: 'cost' | 'time' | 'tokens' | 'agent_day' | 'agent_month';
+  kind: 'cost' | 'time' | 'tokens' | 'turns' | 'agent_day' | 'agent_month';
   spent: number;
   limit: number;
   turn: number;
@@ -734,6 +736,7 @@ export interface BudgetStopFacts {
 /** Le code d'erreur d'un run arrêté par son budget. Les deux premiers existaient déjà. */
 export function budgetErrorCode(kind: BudgetStopFacts['kind']): string {
   if (kind === 'agent_day' || kind === 'agent_month') return 'agent_budget_exceeded';
+  if (kind === 'turns') return 'turn_limit_exceeded';
   return kind === 'cost'
     ? 'cost_budget_exceeded'
     : kind === 'tokens'
@@ -753,6 +756,9 @@ export function budgetErrorCode(kind: BudgetStopFacts['kind']): string {
 export function budgetStopLine(f: BudgetStopFacts): string {
   if (f.kind === 'cost') {
     return `[stopped: run budget — $${f.spent.toFixed(2)} spent, ceiling $${f.limit.toFixed(2)}, turn ${f.turn}]`;
+  }
+  if (f.kind === 'turns') {
+    return `[stopped: turn limit — ${f.spent} turns, ceiling ${f.limit}]`;
   }
   if (f.kind === 'agent_day' || f.kind === 'agent_month') {
     const when = f.kind === 'agent_day' ? 'today' : 'this month';
@@ -781,6 +787,137 @@ export function budgetStopLine(f: BudgetStopFacts): string {
  * (`lastAssistantTextSeen`). Empiler chaque texte intermédiaire livrerait des
  * brouillons que l'agent a lui-même dépassés (revue de la PR #495).
  */
+/**
+ * La marque du rappel de progression, pour le RECONNAÎTRE dans une
+ * transcription relue. Elle porte un caractère de contrôle, comme
+ * `EMPTY_DELIVERABLE_NUDGE_MARK` : un message d'utilisateur ne la produit pas
+ * par accident.
+ */
+export const PROGRESS_REMINDER_MARK = '[système:progression:\u0001]';
+
+/** L'état du rappel de progression, reconstruit depuis une transcription. */
+export interface ProgressState {
+  turnsSinceDelivery: number;
+  sameToolStreak: number;
+  lastSingleToolName: string | null;
+  remindersSent: number;
+  /** Le tour du dernier rappel, ou `-Infinity` s'il n'y en a pas eu. */
+  turnOfLastReminder: number;
+}
+
+/**
+ * Relit dans la transcription ce que les compteurs du rappel auraient compté,
+ * avec les mêmes règles que la boucle : un tour de l'assistant qui appelle des
+ * outils est un tour de travail, sauf s'il appelle un outil de livraison (le
+ * compteur repart à zéro) ; un message qui porte la marque est un rappel
+ * envoyé. `currentTurn` est le compteur cumulé du job au moment de la reprise.
+ */
+export function progressStateFromTranscript(
+  messages: readonly unknown[],
+  deliveryToolNames: ReadonlySet<string>,
+  currentTurn: number,
+): ProgressState {
+  let turnsSinceDelivery = 0;
+  let sameToolStreak = 0;
+  let lastSingleToolName: string | null = null;
+  let remindersSent = 0;
+  let toursDepuisLeRappel: number | null = null;
+  for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+    if (!m) continue;
+    if (m.role === 'user') {
+      if (typeof m.content === 'string' && m.content.includes(PROGRESS_REMINDER_MARK)) {
+        remindersSent += 1;
+        toursDepuisLeRappel = 0;
+      }
+      continue;
+    }
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    const noms = (m.content as Array<{ type?: unknown; toolName?: unknown }>)
+      .filter((p) => p?.type === 'tool-call' && typeof p.toolName === 'string')
+      .map((p) => p.toolName as string);
+    if (noms.length === 0) continue;
+    if (toursDepuisLeRappel !== null) toursDepuisLeRappel += 1;
+    if (noms.some((n) => deliveryToolNames.has(n))) {
+      turnsSinceDelivery = 0;
+      sameToolStreak = 0;
+      lastSingleToolName = null;
+      continue;
+    }
+    turnsSinceDelivery += 1;
+    const uniques = [...new Set(noms)];
+    if (uniques.length === 1 && uniques[0] === lastSingleToolName) {
+      sameToolStreak += 1;
+    } else if (uniques.length === 1) {
+      sameToolStreak = 1;
+      lastSingleToolName = uniques[0] ?? null;
+    } else {
+      sameToolStreak = 0;
+      lastSingleToolName = null;
+    }
+  }
+  return {
+    turnsSinceDelivery,
+    sameToolStreak,
+    lastSingleToolName,
+    remindersSent,
+    turnOfLastReminder:
+      toursDepuisLeRappel === null ? -Infinity : currentTurn - toursDepuisLeRappel,
+  };
+}
+
+/** Ce que le rappel de progression sait du run au moment où il part (#504). */
+export interface ProgressFacts {
+  /** Tours d'affilée sans résultat envoyé (`return_result`, publication, message). */
+  turnsSinceDelivery: number;
+  turn: number;
+  maxTurns: number;
+  costSpentUsd: number;
+  /** `Infinity` quand l'espace n'a pas de plafond de coût. */
+  costCeilingUsd: number;
+  workedMs: number;
+  /** `Infinity` quand l'espace n'a pas de durée maximale. */
+  timeCeilingMs: number;
+  tokensSpent: number;
+  tokenCeiling: number;
+}
+
+/**
+ * Le rappel envoyé au modèle après une longue série de tours sans résultat.
+ *
+ * Il INFORME, il ne décide pas (#504). L'ancien texte ordonnait « STOP
+ * gathering now… Do NOT call another gathering tool » et comptait comme
+ * « collecte » tout ce qui n'était pas un message, écriture de fichiers,
+ * compilation et rendu compris : un agent en pleine production l'a pris pour
+ * un arrêt et a rendu « blocked » (Motage, job 4781aacc). Le même texte pour
+ * tous les agents, sans deviner quel travail est en cours : il donne les faits
+ * (depuis combien de tours, et les VRAIES limites du run, celles qui
+ * l'arrêteront) et laisse l'agent juger. Aucun nom d'outil de publication :
+ * un agent n'a que les outils de sa liste (invariant 9), `return_result` est
+ * le seul que tous ont.
+ */
+export function progressReminder(f: ProgressFacts): string {
+  const limites = [`turn ${f.maxTurns} (this is turn ${f.turn})`];
+  if (Number.isFinite(f.costCeilingUsd)) {
+    limites.push(
+      `run budget $${f.costCeilingUsd.toFixed(2)} ($${f.costSpentUsd.toFixed(2)} spent)`,
+    );
+  }
+  if (Number.isFinite(f.timeCeilingMs)) {
+    const min = (ms: number) => Math.floor(ms / 60_000);
+    limites.push(`${min(f.timeCeilingMs)} min of work (${min(f.workedMs)} min so far)`);
+  }
+  if (Number.isFinite(f.tokenCeiling)) {
+    const n = (x: number) => Math.round(x).toLocaleString('en-US');
+    limites.push(`${n(f.tokenCeiling)} tokens (${n(f.tokensSpent)} used)`);
+  }
+  return (
+    `[system] ${PROGRESS_REMINDER_MARK} Progress note: ${f.turnsSinceDelivery} turns since you last sent a result. ` +
+    `This is information, not a stop. If you already have what was asked, deliver it now ` +
+    `and call return_result. If the work still needs more steps, continue. ` +
+    `Limits of this run: ${limites.join('; ')}.`
+  );
+}
+
 export function budgetDeliverable(prior: string, current: string, line: string): string {
   const parts = [prior.trim()];
   if (current.trim() !== '' && current.trim() !== prior.trim()) parts.push(current.trim());
@@ -3099,9 +3236,11 @@ async function runJobTracked(
     return Number.isFinite(n) && n >= 2 ? Math.floor(n) : DEFAULT_LIMITS.maxNoProgressRepeats;
   })();
 
-  // Guard 1d — no-delivery runaway detector. Keys on turns without any delivery
-  // or return_result call; also tracks same-tool streaks. In-memory/intra-run.
+  // Guard 1d — progress reminder. Keys on turns without any delivery or
+  // return_result call; also tracks same-tool streaks. In-memory/intra-run.
   // Thresholds env-overridable per-deployment; fall back to calibrated defaults.
+  // It REMINDS and never stops the run (#504): the stops belong to the run's
+  // limits, the same for every agent (turn cap, run budget, token budget).
   const noDeliveryNudgeAt = (() => {
     const n = Number(process.env['NO_DELIVERY_NUDGE_AT']);
     return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_LIMITS.noDeliveryNudgeAt;
@@ -3118,16 +3257,26 @@ async function runJobTracked(
     const n = Number(process.env['NO_DELIVERY_NUDGE_SPACING']);
     return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_LIMITS.nudgeSpacing;
   })();
-  const noDeliveryFailAt = (() => {
-    const n = Number(process.env['NO_DELIVERY_FAIL_AT']);
-    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_LIMITS.noDeliveryFailAt;
-  })();
-  // Per-run state for Guard 1d.
-  let turnsSinceDelivery = 0;
-  let sameToolStreak = 0;
-  let lastSingleToolName: string | null = null;
-  let noDeliveryNudgesIssued = 0;
-  let turnOfLastNudge = -Infinity;
+  // L'arrêt `no_delivery_runaway` n'existe plus (#504) : un runner qui trouve
+  // encore sa variable le dit, au lieu de laisser croire qu'elle compte (même
+  // traitement que MAX_COST_PER_JOB_USD depuis #442).
+  if (process.env['NO_DELIVERY_FAIL_AT']) {
+    trace('no_delivery_fail_env_ignored', {
+      env: process.env['NO_DELIVERY_FAIL_AT'],
+      stopsBelongTo: 'turn cap, Settings → Run budget, token budget',
+    });
+  }
+  // State for Guard 1d, READ FROM THE TRANSCRIPT: a resume (after an approval
+  // or a delegation) starts a new execution, and in-memory counters would
+  // restart at zero — the reminder would then say "12 turns" after 20, and a
+  // job would get two reminders per execution instead of two in its life
+  // (review of #504). Same answer as the empty-deliverable mark above.
+  const etatDuRappel = progressStateFromTranscript(messages, DELIVERY_OR_TERMINAL_TOOL_NAMES, turn);
+  let turnsSinceDelivery = etatDuRappel.turnsSinceDelivery;
+  let sameToolStreak = etatDuRappel.sameToolStreak;
+  let lastSingleToolName: string | null = etatDuRappel.lastSingleToolName;
+  let noDeliveryNudgesIssued = etatDuRappel.remindersSent;
+  let turnOfLastNudge = etatDuRappel.turnOfLastReminder;
 
   // Guard 1f — non-progress detector. Tracks two signals over the raw
   // SEQUENCE OF TOOL CALLS (not turns, unlike 1b/1d above): S1 = same tool
@@ -3458,10 +3607,15 @@ async function runJobTracked(
       // seeded from job.turn), so a job that loops — or resumes — without ever
       // calling return_result fails loud here instead of burning tokens until
       // the LLM provider's credit balance runs out. Matches Hermes Agent's
-      // per-run iteration budget.
+      // per-run iteration budget. Like every other run limit since #442, the
+      // stop DELIVERS what the run has written (#504): a long production that
+      // reaches the cap hands over its last text and the reason, instead of a
+      // bare error that throws the work away.
       if (turn > DEFAULT_LIMITS.maxTurns) {
-        await failJob(db, jobId as string, 'turn_limit_exceeded', runStats(), messages);
-        return { status: 'failed', error: 'turn_limit_exceeded' };
+        return await arreterSurBudget(
+          { kind: 'turns', spent: turn - 1, limit: DEFAULT_LIMITS.maxTurns, turn },
+          partielCeTour,
+        );
       }
 
       // #442 : la durée maximale du run, entre deux tours — jamais au milieu
@@ -5826,38 +5980,33 @@ async function runJobTracked(
             turnsSinceDelivery >= noDeliveryNudgeAt || sameToolStreak >= sameToolStreakNudgeAt;
           const nudgeCooldownPassed = turn - turnOfLastNudge >= nudgeSpacing;
 
-          if (nudgeTrigger) {
-            if (noDeliveryNudgesIssued < maxNoDeliveryNudges && nudgeCooldownPassed) {
-              noDeliveryNudgesIssued += 1;
-              turnOfLastNudge = turn;
-              const forcingMsg =
-                `[system] You have made ${turnsSinceDelivery} tool calls without delivering a result. ` +
-                `You very likely already have enough to answer. STOP gathering now: call your delivery tool ` +
-                `(e.g. dashboard_publish) AND return_result(status="success") in the same turn with your ` +
-                `best answer from what you have. If you genuinely cannot proceed, call ` +
-                `return_result(status="blocked") explaining what is missing. Do NOT call another gathering tool.`;
-              messages = [...messages, { role: 'user', content: forcingMsg } as ModelMessage];
-              trace('no_delivery_runaway_nudge', {
-                turn,
-                nudge: noDeliveryNudgesIssued,
-                turnsSinceDelivery,
-                sameToolStreak,
-              });
-            } else if (
-              noDeliveryNudgesIssued >= maxNoDeliveryNudges &&
-              turnsSinceDelivery > noDeliveryFailAt
-            ) {
-              // Nudge budget exhausted AND still gathering past the fail threshold.
-              // Fail BEFORE the next LLM call so the (N+1)th gathering turn never runs.
-              trace('no_delivery_runaway_fail', {
-                turn,
-                turnsSinceDelivery,
-                sameToolStreak,
-                nudgesIssued: noDeliveryNudgesIssued,
-              });
-              await failJob(db, jobId as string, 'no_delivery_runaway', runStats(), messages);
-              return { status: 'failed', error: 'no_delivery_runaway' };
-            }
+          // Un rappel, jamais un arrêt (#504) : l'ancien arrêt `no_delivery_runaway`
+          // à 40 tours mesurait le progrès au nombre de MESSAGES envoyés, ce qui
+          // est faux pour tout travail de production (fichiers, compilation,
+          // rendu). Il n'était qu'un filet un peu plus tôt que le plafond de
+          // tours (voir chain-counters.ts) ; depuis #442 le run a ses vrais
+          // plafonds, et ce sont eux qui arrêtent.
+          if (nudgeTrigger && noDeliveryNudgesIssued < maxNoDeliveryNudges && nudgeCooldownPassed) {
+            noDeliveryNudgesIssued += 1;
+            turnOfLastNudge = turn;
+            const rappel = progressReminder({
+              turnsSinceDelivery,
+              turn,
+              maxTurns: DEFAULT_LIMITS.maxTurns,
+              costSpentUsd: totalCostUsd,
+              costCeilingUsd: maxCostPerJobUsd,
+              workedMs: dureeCumuleeMs(),
+              timeCeilingMs: maxRunMs,
+              tokensSpent: effectiveInputTokens + outputTokens,
+              tokenCeiling: maxTotalTokensPerJob,
+            });
+            messages = [...messages, { role: 'user', content: rappel } as ModelMessage];
+            trace('progress_reminder', {
+              turn,
+              nudge: noDeliveryNudgesIssued,
+              turnsSinceDelivery,
+              sameToolStreak,
+            });
           }
         }
       }

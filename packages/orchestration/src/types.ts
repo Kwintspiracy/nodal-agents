@@ -148,23 +148,21 @@ export interface ChainLimits {
    */
   maxNoProgressRepeats: number;
   /**
-   * Guard 1d — no-delivery runaway detector. After this many consecutive
-   * gathering turns with no delivery tool call or return_result, inject a
-   * forcing control message. Calibrated above the ≈10-turn legit ceiling.
-   * Override via env NO_DELIVERY_NUDGE_AT.
+   * Guard 1d — progress reminder. After this many consecutive turns with no
+   * delivery tool call or return_result, the runner sends the model a
+   * reminder of where the run stands (`progressReminder` in execute.ts). It
+   * informs and never stops the run (#504). Override via env NO_DELIVERY_NUDGE_AT.
    */
   noDeliveryNudgeAt: number;
   /**
    * Guard 1d — same-tool streak. After this many consecutive turns whose
-   * tool calls are ALL the same single tool name (with no delivery), inject
-   * the forcing control message. Catches scope-creep / empty-resource loops.
-   * Override via env SAME_TOOL_STREAK_NUDGE_AT.
+   * tool calls are ALL the same single tool name (with no delivery), send the
+   * same reminder. Override via env SAME_TOOL_STREAK_NUDGE_AT.
    */
   sameToolStreakNudgeAt: number;
   /**
-   * Guard 1d — max nudges before failing. Once exhausted AND turnsSinceDelivery
-   * passes noDeliveryFailAt, the job fails loud with `no_delivery_runaway`.
-   * Override via env MAX_NO_DELIVERY_NUDGES.
+   * Guard 1d — how many reminders one run receives at most. Override via env
+   * MAX_NO_DELIVERY_NUDGES.
    */
   maxNoDeliveryNudges: number;
   /**
@@ -172,12 +170,6 @@ export interface ChainLimits {
    * on a fast model that ignores them). Override via env NO_DELIVERY_NUDGE_SPACING.
    */
   nudgeSpacing: number;
-  /**
-   * Guard 1d — hard fail threshold. When all nudge budget is spent AND
-   * turnsSinceDelivery climbs past this, fail the job loud BEFORE the next
-   * LLM call. Override via env NO_DELIVERY_FAIL_AT.
-   */
-  noDeliveryFailAt: number;
   /**
    * Guard 1e — real dollar cost cap. If the cumulative billed cost for this job
    * (as reported by the provider) exceeds this value, the runner fails the job
