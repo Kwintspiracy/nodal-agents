@@ -269,21 +269,28 @@ const LINK_WORDS = new Set([
  * product: a word attached by a hyphen ("GPT-5.2"), or a product word right
  * before it, skipping a `v` and the word "version".
  */
-function versionMention(
+function versionMentions(
   question: string,
-): { version: string; foreign: boolean; prefixedV: boolean } | null {
-  const m = /(?:^|[^\d.])v?(\d+\.\d+(?:\.\d+)?)(?![\d.]*\d)/i.exec(question);
-  if (!m?.[1]) return null;
-  const numberAt = m.index + m[0].indexOf(m[1]);
-  const rawBefore = question.slice(0, numberAt);
-  // A `v` glued to the number, as a word of its own: "v1.0.0", not "dev1.0".
-  const prefixedV = /(?:^|[^a-z0-9])v$/i.test(rawBefore);
-  const before = prefixedV ? rawBefore.slice(0, -1) : rawBefore;
-  if (/[a-z0-9]-$/i.test(before)) return { version: m[1], foreign: true, prefixedV };
-  const words = normalizeWords(before);
-  while (words.length > 0 && /^versions?$/.test(words[words.length - 1]!)) words.pop();
-  const last = words[words.length - 1];
-  return { version: m[1], foreign: last !== undefined && !LINK_WORDS.has(last), prefixedV };
+): Array<{ version: string; foreign: boolean; prefixedV: boolean }> {
+  const out: Array<{ version: string; foreign: boolean; prefixedV: boolean }> = [];
+  const re = /(?:^|[^\d.])v?(\d+\.\d+(?:\.\d+)?)(?![\d.]*\d)/gi;
+  for (let m = re.exec(question); m !== null; m = re.exec(question)) {
+    const version = m[1]!;
+    const numberAt = m.index + m[0].indexOf(version);
+    const rawBefore = question.slice(0, numberAt);
+    // A `v` glued to the number, as a word of its own: "v1.0.0", not "dev1.0".
+    const prefixedV = /(?:^|[^a-z0-9])v$/i.test(rawBefore);
+    const before = prefixedV ? rawBefore.slice(0, -1) : rawBefore;
+    if (/[a-z0-9]-$/i.test(before)) {
+      out.push({ version, foreign: true, prefixedV });
+      continue;
+    }
+    const words = normalizeWords(before);
+    while (words.length > 0 && /^versions?$/.test(words[words.length - 1]!)) words.pop();
+    const last = words[words.length - 1];
+    out.push({ version, foreign: last !== undefined && !LINK_WORDS.has(last), prefixedV });
+  }
+  return out;
 }
 
 /**
@@ -312,26 +319,33 @@ export function versionCovers(asked: string, heading: string | null): boolean {
 export function nodalReleaseIntent(
   question: string,
   latestMajor: string | null,
-): { asks: boolean; version: string | null } {
+): { asks: boolean; versions: string[] } {
   const namesNodal = NAMES_NODAL.test(question);
   const worded =
     /what'?s new|what (?:has )?changed/i.test(question) ||
     normalizeWords(question).some((w) => RELEASE_WORDS.has(w));
-  const mention = versionMention(question);
-  if (mention) {
-    // A number another product owns is never ours ("Node v22.0", "OAuth
-    // version 2.0", "GPT-5.2"), whatever words surround it.
-    if (mention.foreign) return { asks: namesNodal, version: null };
-    // A version word, a glued `v` or the product's name is enough, whatever
-    // the number's form (pass 3: "version 1.0.0", "v1.0.0", "version 0.9").
-    // The form decides only for a bare number: Nodal's published shape, two or
-    // three parts on the latest release's major.
-    const shaped =
-      /^\d+\.\d+(?:\.\d+)?$/.test(mention.version) && mention.version.split('.')[0] === latestMajor;
-    const ours = namesNodal || worded || mention.prefixedV || shaped;
-    return { asks: ours, version: ours ? mention.version : null };
-  }
-  return { asks: namesNodal || worded, version: null };
+  const mentions = versionMentions(question);
+  // EVERY version the question cites (Codex review of #452, pass 4): "between
+  // versions 0.8 and 0.9" asks about two series, not the first one.
+  const versions = mentions
+    .filter((m) => {
+      // A number another product owns is never ours ("Node v22.0", "OAuth
+      // version 2.0", "GPT-5.2"), whatever words surround it.
+      if (m.foreign) return false;
+      // A version word, a glued `v` or the product's name is enough, whatever
+      // the number's form. The form decides only for a bare number: Nodal's
+      // published shape, two or three parts on the latest release's major.
+      const shaped =
+        /^\d+\.\d+(?:\.\d+)?$/.test(m.version) && m.version.split('.')[0] === latestMajor;
+      return namesNodal || worded || m.prefixedV || shaped;
+    })
+    .map((m) => m.version)
+    .filter((v, k, all) => all.indexOf(v) === k);
+  const foreignOnly = mentions.length > 0 && mentions.every((m) => m.foreign);
+  return {
+    asks: namesNodal || versions.length > 0 || (worded && !foreignOnly),
+    versions,
+  };
 }
 
 function headingVersion(entry: Indexed): string | null {
@@ -459,43 +473,57 @@ export function searchDocs(index: DocsIndex, question: string, limit: number): D
   const latestMajor = releaseEntries[0]
     ? (headingVersion(releaseEntries[0])?.split('.')[0] ?? null)
     : null;
-  const { asks: releases, version } = nodalReleaseIntent(question, latestMajor);
-  const unknownVersion =
-    releases &&
-    version !== null &&
-    releaseEntries.length > 0 &&
-    !releaseEntries.some((e) => versionCovers(version, headingVersion(e)));
+  const { asks: releases, versions } = nodalReleaseIntent(question, latestMajor);
+  const covered = (v: string): boolean =>
+    releaseEntries.some((e) => versionCovers(v, headingVersion(e)));
+  const known = releases ? versions.filter(covered) : [];
+  const missing = releases ? versions.filter((v) => !covered(v)) : [];
+  // Release sections are served for a question about releases, unless every
+  // version it names is missing: then only the notice(s) speak, never the
+  // neighbours of an absent version.
+  const releaseEligible = releases && (versions.length === 0 || known.length > 0);
 
   const scored: DocsHit[] = [];
   for (const entry of indexed) {
-    if (entry.section.release === true && (!releases || unknownVersion)) continue;
+    if (entry.section.release === true && !releaseEligible) continue;
     let score = scoreSection(entry, terms);
     if (
       entry.section.release === true &&
-      version !== null &&
-      versionCovers(version, headingVersion(entry))
+      known.some((v) => versionCovers(v, headingVersion(entry)))
     ) {
       score += WEIGHT_NAMED_VERSION;
     }
     if (score > 0) scored.push({ ...entry.section, score });
   }
-
   scored.sort((a, b) => (b.score !== a.score ? b.score - a.score : a.url.localeCompare(b.url)));
-  if (unknownVersion) {
-    // Newest first: the release notes keep CHANGELOG.md's order.
-    const latest = releaseEntries[0]!.section;
-    const notice: DocsHit = {
-      page: latest.page,
-      pageTitle: latest.pageTitle,
-      heading: `No release notes for ${version}`,
-      url: latest.url,
-      text:
-        `The release notes have no entry for version ${version}. ` +
-        `The latest documented release is ${latest.heading}.`,
-      release: true,
-      score: Number.POSITIVE_INFINITY,
-    };
-    return [notice, ...scored].slice(0, limit);
+
+  // Newest first: the release notes keep CHANGELOG.md's order.
+  const latest = releaseEntries[0]?.section;
+  const notices: DocsHit[] = latest
+    ? missing.map((v) => ({
+        page: latest.page,
+        pageTitle: latest.pageTitle,
+        heading: `No release notes for ${v}`,
+        url: latest.url,
+        text:
+          `The release notes have no entry for version ${v}. ` +
+          `The latest documented release is ${latest.heading}.`,
+        release: true,
+        score: Number.POSITIVE_INFINITY,
+      }))
+    : [];
+
+  // The limit is SHARED between the series the question names: the best
+  // section of each named series first, so "0.8 and 0.9" never loses 0.9 to
+  // three 0.8.x sections (Codex review of #452, pass 4). Then the rest, by
+  // score.
+  const picked: DocsHit[] = [...notices];
+  for (const v of known) {
+    const best = scored.find(
+      (h) => h.release === true && versionCovers(v, versionIn(h.heading)) && !picked.includes(h),
+    );
+    if (best) picked.push(best);
   }
-  return scored.slice(0, limit);
+  for (const h of scored) if (!picked.includes(h)) picked.push(h);
+  return picked.slice(0, limit);
 }

@@ -297,6 +297,19 @@ describe('nodal_docs answers "what changed in version X" @cap:consulter-l-aide/m
     expect((await ask('v1.0.0'))[0]?.title).toBe('No release notes for 1.0.0');
   });
 
+  // Revue Codex de #452, passe 4 (P2) : seule la PREMIÈRE version était lue,
+  // et la limite de trois résultats pouvait faire disparaître la seconde série.
+  it('reads EVERY version a question names, and shares the limit between the series', async () => {
+    const hits = await ask('what changed between versions 0.8 and 0.9?');
+    expect(hits.length).toBeLessThanOrEqual(NODAL_DOCS_MAX_SECTIONS);
+    expect(hits.some((h) => /^v0\.8\.\d+ /.test(h.title))).toBe(true);
+    expect(hits.some((h) => /^v0\.9\.\d+ /.test(h.title))).toBe(true);
+    // One series present, one absent: the section AND the notice.
+    const mixed = await ask('what changed between version 0.9.2 and 0.9.99?');
+    expect(mixed.some((h) => h.title.startsWith('v0.9.2 '))).toBe(true);
+    expect(mixed.some((h) => h.title === 'No release notes for 0.9.99')).toBe(true);
+  });
+
   it('a two-part version covers its releases: "version 0.9?" serves a v0.9.x section', async () => {
     const hits = await ask('version 0.9?');
     expect(hits[0]?.title).toMatch(/^v0\.9\.\d+ /);
