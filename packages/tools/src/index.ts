@@ -207,6 +207,7 @@ export {
   extractClaudeUsage,
   extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
+  CLI_RUNTIME_RUNS_SHELL_COMMANDS,
   assertAgentBudget,
   recordCliRun,
   acquireWorkspaceLock,
@@ -262,5 +263,12 @@ export type { RoutineLintResult } from './builtin/meta-ops/routine-lint';
 // its workspace list with this label and the D1 overwrite gate keys off it —
 // exported so the two sides can never drift apart.
 export { SHARED_WORKSPACE_LABEL } from './builtin/file-ops/workspace';
+export {
+  resolveWorkspaceList,
+  resolveRunWorkspaces,
+  ensureSharedWorkspace,
+} from './builtin/file-ops/workspace-list';
+export type { WorkspaceEntry } from './builtin/file-ops/workspace-list';
+export { workspacesRoot } from './builtin/file-ops/workspaces-root';
 export { toolsNamedButAbsent } from './personality-tools';
 export { cheminConstate } from './verification/record-constat';

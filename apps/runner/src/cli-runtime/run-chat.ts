@@ -6,7 +6,6 @@
 // tool_calls (jobId null — surfaced by the Logs page).
 
 import {
-  agentWorkspaces,
   chatMessages,
   conversations,
   cliSessions,
@@ -21,12 +20,11 @@ import {
   assertAgentBudget,
   recordCliRun,
   assertRuntimeSessionKey,
-  SHARED_WORKSPACE_LABEL,
   writeMutationIntent,
   bumpEpochsAfterJoblessWrite,
   attachProductionToProject,
+  resolveRunWorkspaces,
 } from '@nodal-agents/tools';
-import { resolveWorkspaceList, ensureSharedWorkspace } from '../lib/workspace-list.ts';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
@@ -59,28 +57,10 @@ export async function runCliRuntimeChatTurn(args: {
     return { ok: false, error: `runtime_not_supported:${agentRow.runtime}` };
   }
 
-  const attached = await db
-    // Le LABEL compte : c'est sous ce nom que le prompt annonce chaque dossier,
-    // et c'est par lui qu'un chemin relatif se résout. Le sélectionner ici
-    // évite de fabriquer une étiquette vide au moment de bâtir le contexte.
-    .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
-    .from(agentWorkspaces)
-    .where(eq(agentWorkspaces.agentId, agentRow.id))
-    .orderBy(agentWorkspaces.position, agentWorkspaces.label);
-
-  // La MÊME liste que le chemin job — le partagé compris (revue Codex, 27/08).
-  //
-  // Ce dossier n'a aucune ligne en base : il est fabriqué à l'exécution, et
-  // `execute.ts` l'ajoutait de son côté seulement. Depuis ce chat, un agent en
-  // runtime CLI ne pouvait donc ni lire ni écrire les fichiers de transmission
-  // de l'équipe — et un agent SANS dossier attaché échouait en
-  // `workspace_not_configured` alors que ses jobs tournaient très bien. Deux
-  // points d'entrée pour le même agent, deux réalités.
-  const { workspaces: wsRows } = resolveWorkspaceList(
-    attached,
-    SHARED_WORKSPACE_LABEL,
-    ensureSharedWorkspace(entityId),
-  );
+  // La MÊME liste que le chemin job — le partagé compris (revue Codex, 27/08) :
+  // une seule fonction pour les deux points d'entrée, et pour le bloc d'équipe
+  // qui la décrit à l'orchestrateur (#506). Voir resolveRunWorkspaces (tools).
+  const { workspaces: wsRows } = await resolveRunWorkspaces(db, agentRow.id, entityId);
   const cwd = wsRows[0]?.path;
   if (!cwd) return { ok: false, error: 'workspace_not_configured' };
 

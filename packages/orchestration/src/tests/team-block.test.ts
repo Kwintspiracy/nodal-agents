@@ -4,8 +4,16 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
+import {
+  agents,
+  agentAssignments,
+  agentSkillAssignments,
+  agentSkills,
+  agentWorkspaces,
+} from '@nodal-agents/db';
 import { buildTeamBlock } from '../team-block';
+import { holdersOfPath } from '../path-holders';
+import { resolveRunWorkspaces } from '@nodal-agents/tools';
 import type { AgentId } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 
@@ -388,5 +396,185 @@ describe('buildTeamBlock — ce qui n’a rien à y faire', () => {
     // Ce que le bloc doit toujours faire, lui, reste là.
     expect(block).toContain('create_task');
     expect(block).toContain('Your agents:');
+  });
+});
+
+// #506 — l'orchestrateur ne savait ni OÙ ses agents travaillent ni s'ils
+// peuvent lancer une commande. Run 0b505b0d : il a inventé `shared/Nodal-Video`
+// pour un dossier qui était dans celui de Montage. Run 8dfe4684 : il a confié
+// un rendu shell à un agent au runtime Claude Code, qui refuse toute commande.
+// Le roster dit donc, pour CHAQUE agent et depuis la base : ses dossiers, son
+// runtime, et s'il peut lancer des commandes.
+describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @cap:organiser-equipe/moteur', () => {
+  async function seedCommandSkill(): Promise<string> {
+    const [skill] = await db
+      .insert(agentSkills)
+      .values({
+        slug: `command-execution-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: `Command execution ${Math.random().toString(36).slice(2, 9)}`,
+        description: 'runs shell commands',
+        content: 'Command execution skill content',
+        requiredBuiltins: ['run_command'],
+      })
+      .returning();
+    return skill!.id;
+  }
+
+  function entryOf(block: string, name: string): string {
+    const start = block.indexOf(`**${name}**`);
+    expect(start, `${name} absent du roster`).toBeGreaterThan(-1);
+    const next = block.indexOf('\n- **', start + 1);
+    const end = next === -1 ? block.indexOf('\n\n', start) : next;
+    return block.slice(start, end === -1 ? undefined : end);
+  }
+
+  it('liste les dossiers de chaque agent (label et chemin) depuis agent_workspaces', async () => {
+    const { entityId } = await seedContext(db);
+    const orch = await seedAgent(db, entityId, `test-orch-ws-${Date.now()}`, 'orchestrator');
+    const w = await seedAgent(db, entityId, `test-montage-${Date.now()}`, 'agent');
+    const bare = await seedAgent(db, entityId, `test-bare-${Date.now()}`, 'agent');
+    await assignChild(db, orch.id, w.id, entityId);
+    await assignChild(db, orch.id, bare.id, entityId);
+    await db.insert(agentWorkspaces).values([
+      {
+        agentId: w.id,
+        entityId,
+        label: 'Montage',
+        path: 'C:\\Users\\u\\Nodal\\Montage',
+        position: 0,
+      },
+      { agentId: w.id, entityId, label: 'rushes', path: '/data/rushes', position: 1 },
+    ]);
+
+    const block = await buildTeamBlock(orch.id as AgentId, db);
+
+    // EXACTEMENT la liste que le run de chaque agent reçoit — la même fonction
+    // la construit — partagé de l'espace compris (revue Codex de #506, P1).
+    const shared = (await resolveRunWorkspaces(db, bare.id, entityId)).sharedPath;
+    expect(shared).toContain(entityId);
+    const montage = entryOf(block, w.name);
+    expect(montage).toContain(
+      `Folders: Montage = C:\\Users\\u\\Nodal\\Montage; rushes = /data/rushes; shared = ${shared}`,
+    );
+    // Un agent sans dossier attaché lit et écrit quand même le partagé.
+    expect(entryOf(block, bare.name)).toContain(`Folders: shared = ${shared}`);
+    // La règle de vérité couvre aussi les dossiers : un dossier absent du
+    // roster n'est à personne, l'orchestrateur le dit au lieu d'inventer.
+    expect(block).toMatch(/folder/i);
+    // Revue Codex de #506, passe 3 : la liste ne donne que des RACINES. La
+    // phrase de vérité doit dire qu'un agent a aussi tout ce qu'elles
+    // contiennent, qu'un dossier nommé se cherche SOUS une racine listée, et
+    // qu'il n'est à personne seulement s'il n'est sous aucune.
+    expect(block).toContain('and everything inside them');
+    expect(block).toContain('look for it UNDER the listed folders');
+    expect(block).toContain('belongs to nobody only when its path is under none of them');
+    expect(block).not.toContain('if no agent has it, say so');
+    // Et « Nodal-Video » sous la racine de Montage se rattache par ce que le
+    // bloc donne : le chemin de la racine, lu par la même règle que le bloc dit.
+    expect(montage).toContain('Montage = C:\\Users\\u\\Nodal\\Montage');
+    expect(
+      holdersOfPath('C:\\Users\\u\\Nodal\\Montage\\Nodal-Video', [
+        { agent: w.name, folders: [{ label: 'Montage', path: 'C:\\Users\\u\\Nodal\\Montage' }] },
+      ]),
+    ).toEqual({ kind: 'held', agents: [w.name] });
+  });
+
+  // Revue Codex de #506, passe 2 (P1) : une borne avec « +N more » faisait
+  // mentir la liste que la phrase de vérité dit COMPLÈTE — un agent à sept
+  // dossiers était dit incapable pour le septième, et avec six dossiers
+  // attachés son partagé disparaissait. Tout est montré.
+  it('montre TOUS les dossiers et TOUS les programmes, partagé compris', async () => {
+    const { entityId } = await seedContext(db);
+    const t = Date.now();
+    const orch = await seedAgent(db, entityId, `test-orch-all-${t}`, 'orchestrator');
+    const w = await seedAgent(db, entityId, `test-many-${t}`, 'agent');
+    await assignChild(db, orch.id, w.id, entityId);
+    const folderCount = 7;
+    await db.insert(agentWorkspaces).values(
+      Array.from({ length: folderCount }, (_, i) => ({
+        agentId: w.id,
+        entityId,
+        label: `f${String(i).padStart(2, '0')}`,
+        path: `/data/f${i}`,
+        position: i,
+      })),
+    );
+    const programs = Array.from({ length: 13 }, (_, i) => `prog${i}`);
+    await db.update(agents).set({ commandAllowlist: programs }).where(eq(agents.id, w.id));
+    await db
+      .insert(agentSkillAssignments)
+      .values({ agentId: w.id, skillId: await seedCommandSkill(), entityId });
+
+    const entry = entryOf(await buildTeamBlock(orch.id as AgentId, db), w.name);
+    const shared = (await resolveRunWorkspaces(db, w.id, entityId)).sharedPath;
+
+    expect(entry).toContain('f06 = /data/f6');
+    expect(entry).toContain(`shared = ${shared}`);
+    expect(entry).toContain(`only these programs: ${programs.join(', ')}`);
+    expect(entry).not.toMatch(/\+\d+ more/);
+  });
+
+  it('dit si chaque agent peut lancer des commandes, selon son runtime et ses outils', async () => {
+    const { entityId } = await seedContext(db);
+    const orch = await seedAgent(db, entityId, `test-orch-sh-${Date.now()}`, 'orchestrator');
+    const shellSkill = await seedCommandSkill();
+
+    const nodalShell = await seedAgent(db, entityId, `test-nodal-shell-${Date.now()}`, 'agent');
+    const nodalLimited = await seedAgent(db, entityId, `test-nodal-lim-${Date.now()}`, 'agent');
+    const nodalNone = await seedAgent(db, entityId, `test-nodal-none-${Date.now()}`, 'agent');
+    const nodalEmptyList = await seedAgent(db, entityId, `test-nodal-empty-${Date.now()}`, 'agent');
+    const claudeCode = await seedAgent(db, entityId, `test-cc-${Date.now()}`, 'agent');
+    const codex = await seedAgent(db, entityId, `test-codex-${Date.now()}`, 'agent');
+    // Un sous-orchestrateur qui porte la skill : la branche orchestrateur de la
+    // whitelist n'ajoute jamais les builtins requis par les skills, il n'a donc
+    // PAS `run_command` (revue Codex de #506, P1).
+    const subOrch = await seedAgent(db, entityId, `test-suborch-${Date.now()}`, 'orchestrator');
+
+    for (const a of [
+      nodalShell,
+      nodalLimited,
+      nodalNone,
+      nodalEmptyList,
+      claudeCode,
+      codex,
+      subOrch,
+    ]) {
+      await assignChild(db, orch.id, a.id, entityId);
+    }
+    // Le shell Nodal vient de la skill qui porte `run_command` ; un agent
+    // au runtime Claude Code la porte AUSSI ici, et ça ne lui donne rien.
+    for (const a of [nodalShell, nodalLimited, nodalEmptyList, claudeCode, subOrch]) {
+      await db
+        .insert(agentSkillAssignments)
+        .values({ agentId: a.id, skillId: shellSkill, entityId });
+    }
+    await db
+      .update(agents)
+      .set({ commandAllowlist: ['node', 'npx vitest'] })
+      .where(eq(agents.id, nodalLimited.id));
+    await db.update(agents).set({ commandAllowlist: [] }).where(eq(agents.id, nodalEmptyList.id));
+    await db
+      .update(agents)
+      .set({ runtime: 'claude-code', cliPermissions: { mode: 'write' } })
+      .where(eq(agents.id, claudeCode.id));
+    await db
+      .update(agents)
+      .set({ runtime: 'codex', cliPermissions: { mode: 'write' } })
+      .where(eq(agents.id, codex.id));
+
+    const block = await buildTeamBlock(orch.id as AgentId, db);
+
+    expect(entryOf(block, nodalShell.name)).toContain('Runtime: nodal');
+    expect(entryOf(block, nodalShell.name)).toContain('Shell commands: yes');
+    expect(entryOf(block, nodalLimited.name)).toContain(
+      'Shell commands: yes, only these programs: node, npx vitest',
+    );
+    expect(entryOf(block, nodalNone.name)).toContain('Shell commands: no');
+    expect(entryOf(block, nodalEmptyList.name)).toContain('Shell commands: no');
+    expect(entryOf(block, claudeCode.name)).toContain('Runtime: claude-code');
+    expect(entryOf(block, claudeCode.name)).toContain('Shell commands: no');
+    expect(entryOf(block, codex.name)).toContain('Runtime: codex');
+    expect(entryOf(block, codex.name)).toContain('Shell commands: yes');
+    expect(entryOf(block, subOrch.name)).toContain('Shell commands: no');
   });
 });

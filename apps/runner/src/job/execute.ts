@@ -18,7 +18,6 @@ import {
   connectors as connectorsTable,
   mcpServers as mcpServersTable,
   agentMcpServers as agentMcpServersTable,
-  agentWorkspaces as agentWorkspacesTable,
   entities as entitiesTable,
   getDecryptedCredentialById,
   getChannelBinding,
@@ -84,10 +83,10 @@ import {
   isCatastrophicCommand,
   matchApprovalRule,
   DELIVERY_TOOL_NAMES as DELIVERY_TOOL_NAME_LIST,
-  SHARED_WORKSPACE_LABEL,
   toolsNamedButAbsent,
   exposeStatedPurpose,
   declareDeliverables,
+  resolveRunWorkspaces,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -170,7 +169,6 @@ import { loadConversationContext } from './conversation-id.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
 import { probeWorkspaceGit, gitProbeTarget } from '../lib/workspace-git.ts';
-import { resolveWorkspaceList, ensureSharedWorkspace } from '../lib/workspace-list.ts';
 import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import { readFile } from 'node:fs/promises';
@@ -1537,12 +1535,6 @@ async function runJobTracked(
 
   // ── 3.5 Load agent workspaces ─────────────────────────────────────────────────
   // Ordered by position so the LLM sees workspaces in the user-configured order.
-  const wsRows = await db
-    .select({ label: agentWorkspacesTable.label, path: agentWorkspacesTable.path })
-    .from(agentWorkspacesTable)
-    .where(eq(agentWorkspacesTable.agentId, agentRow.id))
-    .orderBy(agentWorkspacesTable.position, agentWorkspacesTable.label);
-  const agentWorkspacesList: Array<{ label: string; path: string }> = wsRows;
 
   // Entity-wide SHARED workspace : le SEUL terrain commun entre agents.
   //
@@ -1553,16 +1545,13 @@ async function runJobTracked(
   // de ce correctif qui faisait exactement ça).
   //
   // La liste finale part ensuite AUSSI au prompt, via `jobContext.workspaces` —
-  // et c'est là qu'était le vrai défaut. Voir lib/workspace-list.ts.
-  // Création partagée avec le chemin CHAT — voir lib/workspace-list.ts.
-  const sharedCandidate = ensureSharedWorkspace(job.entityId);
-  const resolved = resolveWorkspaceList(
-    agentWorkspacesList,
-    SHARED_WORKSPACE_LABEL,
-    sharedCandidate,
-  );
-  agentWorkspacesList.length = 0;
-  agentWorkspacesList.push(...resolved.workspaces);
+  // et c'est là qu'était le vrai défaut. Voir resolveRunWorkspaces (tools, file-ops/workspace-list.ts).
+  // Création partagée avec le chemin CHAT — voir resolveRunWorkspaces (tools).
+  // La requête ET la règle vivent dans `resolveRunWorkspaces` (tools), que le
+  // bloc d'équipe lit aussi (#506) : ce que l'orchestrateur lit d'un agent est
+  // ce que son run reçoit.
+  const resolved = await resolveRunWorkspaces(db, agentRow.id, job.entityId);
+  const agentWorkspacesList: Array<{ label: string; path: string }> = resolved.workspaces;
   const sharedWorkspacePath: string | null = resolved.sharedPath;
 
   // ── 3.55 Runtime divert (étape E) ─────────────────────────────────────────
@@ -1750,7 +1739,7 @@ async function runJobTracked(
   // Le dossier ATTACHÉ quand il y en a un, le partagé sinon — la règle et son
   // pourquoi vivent dans `gitProbeTarget` (lib/workspace-git.ts).
   const gitProbePath = gitProbeTarget(
-    wsRows.map((w) => w.path),
+    resolved.attached.map((w) => w.path),
     sharedWorkspacePath,
   );
   const workspaceGit = gitProbePath ? await probeWorkspaceGit(gitProbePath) : null;

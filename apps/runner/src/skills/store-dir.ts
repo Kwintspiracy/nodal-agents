@@ -6,7 +6,7 @@
 
 import { join } from 'node:path';
 
-import { workspacesRoot } from '../lib/workspaces-root.ts';
+import { workspacesRoot } from '@nodal-agents/tools';
 
 /**
  * Absolute path to the community-skill store for an entity. Lives UNDER that

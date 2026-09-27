@@ -9,6 +9,7 @@
 // Même discipline que le jumeau Claude : on teste sur ce que la CLI a imprimé,
 // jamais sur ce qu'une page d'aide promet.
 
+import { CLI_RUNTIME_RUNS_SHELL_COMMANDS } from '@nodal-agents/tools';
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -360,6 +361,24 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
     expect(turn.isError, 'un tour tué passe pour un tour réussi').toBe(true);
     expect(turn.errorDetail).toContain('cli_timeout');
   });
+
+  // #506 (revue Codex, P2) : le bloc d'équipe annonce « Shell commands: yes »
+  // pour le runtime codex. C'est vrai tant que le tour est un `codex exec`
+  // confiné par un bac à sable (lecture seule ou écriture dans le dossier),
+  // sans politique d'approbation qui demanderait un humain absent : c'est
+  // alors le bac à sable, pas une question, qui borne la commande.
+  it.each(['read', 'write'] as const)(
+    'mode %s : la posture shell annoncée au bloc d’équipe est celle de l’argv',
+    (mode) => {
+      const args = buildCodexTurnArgs({ ...BASE, mode });
+      const sandbox = args.includes('--sandbox') ? args[args.indexOf('--sandbox') + 1] : null;
+      const runsWithoutHuman =
+        args[0] === 'exec' &&
+        (sandbox === 'read-only' || sandbox === 'workspace-write') &&
+        !args.includes('--ask-for-approval');
+      expect(runsWithoutHuman).toBe(CLI_RUNTIME_RUNS_SHELL_COMMANDS['codex']);
+    },
+  );
 
   it('les dossiers SECONDAIRES sont ouverts en écriture, et `-` reste en dernier', () => {
     // Constat P1 de la revue Codex (27/08). `cwd` n'est que le premier dossier :

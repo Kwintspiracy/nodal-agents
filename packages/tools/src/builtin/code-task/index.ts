@@ -59,7 +59,7 @@ export {
   assertRuntimeSessionKey,
   CODE_TASK_KEY_PREFIX,
 } from './db';
-export { CLAUDE_READONLY_DISALLOWED } from './providers';
+export { CLAUDE_READONLY_DISALLOWED, CLI_RUNTIME_RUNS_SHELL_COMMANDS } from './providers';
 export {
   buildProviderArgs,
   parseClaudeOutput,

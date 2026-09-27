@@ -119,7 +119,7 @@ export interface JobContext {
   workspaceInventory?: string;
   /**
    * Les dossiers que les OUTILS ont réellement — dossiers attachés PLUS le
-   * workspace partagé de l'espace (apps/runner/src/lib/workspace-list.ts).
+   * workspace partagé de l'espace (packages/tools/src/builtin/file-ops/workspace-list.ts).
    *
    * Sans ce champ, le bloc `## Workspace` se construisait par sa propre requête
    * sur `agent_workspaces`, qui ne contient pas le partagé. Deux sources pour

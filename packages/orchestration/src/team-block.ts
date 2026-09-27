@@ -14,12 +14,19 @@ import {
   mcpServers,
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { CLI_RUNTIME_RUNS_SHELL_COMMANDS, resolveRunWorkspaces } from '@nodal-agents/tools';
+import { resolveBuiltinToolNames } from './builtin-tool-names';
 import { modelCanSeeImages } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
 
 // ─── buildTeamBlock ───────────────────────────────────────────────────────────
+
+// No bound on the folders or programs an entry lists (Codex review of #506,
+// pass 2): the roster is declared COMPLETE, and a "+N more" made the
+// orchestrator treat the Nth folder as nobody's. The prompt cost of a long
+// list was a P3; a false "cannot" is worse.
 
 /**
  * Build the `## Your team` section for an orchestrator's system prompt.
@@ -78,6 +85,8 @@ export async function buildTeamBlock(
       agentActive: agents.active,
       agentPersonality: agents.personality,
       agentModel: agents.model,
+      agentRuntime: agents.runtime,
+      agentCommandAllowlist: agents.commandAllowlist,
     })
     .from(agentAssignments)
     .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
@@ -89,7 +98,11 @@ export async function buildTeamBlock(
 
   // Detect mode: router (has sub-orchestrators) or planner (workers only)
   const parentRow = await db
-    .select({ role: agents.role, orchestratorMode: agents.orchestratorMode })
+    .select({
+      role: agents.role,
+      orchestratorMode: agents.orchestratorMode,
+      entityId: agents.entityId,
+    })
     .from(agents)
     .where(eq(agents.id, parentAgentId as string))
     .limit(1);
@@ -138,6 +151,30 @@ export async function buildTeamBlock(
       skillMap.set(r.agentId, existing);
     }
   }
+
+  // Where each agent works (#506). Run 0b505b0d: the owner named a folder that
+  // was inside Montage's own, and the orchestrator — seeing no folder for anyone
+  // — invented `shared/Nodal-Video`. The list is EXACTLY the one that agent's
+  // run receives, the workspace's shared folder included: the same function
+  // builds both (`resolveRunWorkspaces`, tools). A first version read
+  // `agent_workspaces` alone and said "Folders: none" of an agent that reads
+  // and writes the shared folder (Codex review of #506, P1).
+  const folderMap = new Map<string, string[]>();
+  // Whether each agent's job whitelist carries `run_command` — the very
+  // computation the runner makes (`resolveBuiltinToolNames`), orchestrators
+  // included: their branch never adds skill-required builtins (Codex, P1).
+  const runCommandMap = new Map<string, boolean>();
+  await Promise.all(
+    childRows.map(async (r) => {
+      const { workspaces } = await resolveRunWorkspaces(db, r.subAgentId, parent.entityId);
+      folderMap.set(
+        r.subAgentId,
+        workspaces.map((w) => `${w.label} = ${w.path}`),
+      );
+      const { names } = await resolveBuiltinToolNames(db, r.subAgentId);
+      runCommandMap.set(r.subAgentId, names.includes('run_command'));
+    }),
+  );
 
   // Load connector tool inventories for all children — the orchestrator needs
   // to know what each sub-agent CAN do (not just its skills) so it routes the
@@ -237,6 +274,37 @@ export async function buildTeamBlock(
     if (mcp) names.push(...mcp.map((c) => c.slug));
     if (names.length === 0) return '';
     return `\n  Connectors: ${[...new Set(names)].join(', ')}`;
+  }
+
+  // Whether the agent can run a shell command (#506), from the database and
+  // the same way for every agent. On the Nodal runtime it is the `run_command`
+  // tool, unlocked by a skill and narrowed by `command_allowlist` (an EMPTY
+  // list refuses everything). On a CLI runtime that tool does not exist: the
+  // CLI's own posture decides, which `CLI_RUNTIME_RUNS_SHELL_COMMANDS` states
+  // next to the argv that produces it. Run 8dfe4684 sent a render to an agent
+  // on the claude-code runtime, which refuses every command.
+  function formatShellTag(
+    subAgentId: string,
+    runtime: string,
+    allowlist: readonly string[] | null,
+  ): string {
+    let canRun: boolean;
+    if (runtime === 'nodal') {
+      canRun = (runCommandMap.get(subAgentId) ?? false) && allowlist?.length !== 0;
+    } else {
+      const cli = CLI_RUNTIME_RUNS_SHELL_COMMANDS[runtime];
+      // The DB check constraint admits no other value; a newer base that
+      // does must be taught here, never guessed (invariant #4).
+      if (cli === undefined) {
+        throw new Error(`buildTeamBlock: unknown agent runtime "${runtime}" for ${subAgentId}`);
+      }
+      canRun = cli;
+    }
+    if (!canRun) return '\n  Shell commands: no';
+    if (runtime === 'nodal' && allowlist && allowlist.length > 0) {
+      return `\n  Shell commands: yes, only these programs: ${allowlist.join(', ')}`;
+    }
+    return '\n  Shell commands: yes';
   }
 
   // Unified orchestrator: every orchestrator receives BOTH delegation toolsets at
@@ -343,6 +411,8 @@ export async function buildTeamBlock(
       instructions,
       agentPersonality,
       agentModel,
+      agentRuntime,
+      agentCommandAllowlist,
     } = row;
     const toolSlug = agentSlug.replace(/-/g, '_');
     // What the agent is FOR (summary of its personality) — drives correct routing.
@@ -366,23 +436,34 @@ export async function buildTeamBlock(
             .join('; ')}`
         : '';
     const connectorsTag = formatConnectorsTag(subAgentId);
+    const folders = folderMap.get(subAgentId);
+    const foldersTag = `\n  Folders: ${folders && folders.length > 0 ? folders.join('; ') : 'none'}`;
+    const runtimeTag = `\n  Runtime: ${agentRuntime}`;
+    const shellTag = formatShellTag(subAgentId, agentRuntime, agentCommandAllowlist);
+    const capabilityTags = `${connectorsTag}${foldersTag}${runtimeTag}${shellTag}`;
     const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
     const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
     lines.push(
       canDelegate
         ? `- **${agentName}**${roleTag} — assign tool \`assign_${toolSlug}\`, task handle ` +
-            `\`${agentSlug}\`${purposeTag}${visionTag}${skillsTag}${connectorsTag}${instrTag}`
+            `\`${agentSlug}\`${purposeTag}${visionTag}${skillsTag}${capabilityTags}${instrTag}`
         : // No tool name: naming `assign_x` to an agent that cannot call it is
           // precisely what turned this roster into an invitation to hallucinate.
           `- **${agentName}**${roleTag} (\`${agentSlug}\`)` +
-            `${purposeTag}${visionTag}${skillsTag}${connectorsTag}${instrTag}`,
+            `${purposeTag}${visionTag}${skillsTag}${capabilityTags}${instrTag}`,
     );
   }
 
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
-      'capabilities. ONLY ever reference agents, skills, connectors, or tools that appear ' +
-      'above — NEVER invent a teammate or a capability. Before saying you cannot do ' +
+      'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +
+      'appear above — NEVER invent a teammate, a capability, or a path. Each Folders entry is ' +
+      'a root: the agent has that folder and everything inside them. When the user names a ' +
+      'folder or a path, look for it UNDER the listed folders — a bare name such as a project ' +
+      'folder may sit inside any of them, so ask the agent whose folder it would be in rather ' +
+      'than guess; a folder belongs to nobody only when its path is under none of them, and ' +
+      'then say so. A request that ' +
+      'needs a shell command goes only to an agent whose Shell commands is yes. Before saying you cannot do ' +
       'something, scan the list: if any agent’s skills/connectors match the request, delegate ' +
       'to it. If genuinely none match, say so plainly (and how the user could enable it, if ' +
       'you know) — do NOT fabricate an agent name or claim a tool you were not given.',

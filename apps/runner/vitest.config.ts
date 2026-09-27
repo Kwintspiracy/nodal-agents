@@ -33,7 +33,7 @@ const PG_TESTS = '**/*.pg.test.ts';
 
 export default defineConfig({
   test: {
-    setupFiles: ['./src/tests/setup-workspaces-root.ts'],
+    setupFiles: ['../../packages/test-kit/src/setup-workspaces-root.ts'],
     // Les `.pg` partagent UN Postgres par run (#471) : voir la config racine et
     // packages/test-kit/src/shared-postgres.ts. Pas de projet `pg` du tout sur
     // Windows CI, où ils ne tournent pas.

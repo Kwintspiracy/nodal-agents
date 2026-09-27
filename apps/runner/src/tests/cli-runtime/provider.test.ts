@@ -13,7 +13,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveRuntime, isCliSetupError } from '../../cli-runtime/provider.ts';
+import {
+  resolveRuntime,
+  isCliSetupError,
+  SERVED_CLI_RUNTIMES,
+} from '../../cli-runtime/provider.ts';
+import { CLI_RUNTIME_RUNS_SHELL_COMMANDS } from '@nodal-agents/tools';
 import { ClaudeCliNotFoundError } from '../../cli-runtime/claude-turn.ts';
 import {
   CodexCliNotFoundError,
@@ -21,6 +26,18 @@ import {
 } from '../../cli-runtime/codex-turn.ts';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
+
+// #506 (revue Codex, P2) : le bloc d'équipe dit si un agent en runtime CLI
+// peut lancer une commande. Un runtime servi sans entrée ferait échouer le
+// bloc ; une entrée sans runtime servi serait une promesse sur rien.
+describe('the shell posture announced for each served CLI runtime', () => {
+  it('has exactly one entry per runtime this runner serves', () => {
+    expect(SERVED_CLI_RUNTIMES.length).toBeGreaterThan(0);
+    expect([...Object.keys(CLI_RUNTIME_RUNS_SHELL_COMMANDS)].sort()).toEqual(
+      [...SERVED_CLI_RUNTIMES].sort(),
+    );
+  });
+});
 
 describe('resolveRuntime', () => {
   it('sert Claude Code ET Codex, chacun avec SON fournisseur', () => {
@@ -194,14 +211,21 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     // ni écrire les fichiers de transmission de l'équipe — et un agent SANS
     // dossier attaché y échouait en `workspace_not_configured` alors que ses
     // jobs tournaient très bien. Deux points d'entrée, deux réalités.
+    //
+    // Depuis #506 (revue Codex, P1), les deux passent par UNE fonction,
+    // `resolveRunWorkspaces` (tools), que le bloc d'équipe lit aussi : ce que
+    // l'orchestrateur lit des dossiers d'un agent est ce que son run reçoit.
     for (const rel of [
       'apps/runner/src/job/execute.ts',
       'apps/runner/src/cli-runtime/run-chat.ts',
+      'packages/orchestration/src/team-block.ts',
     ]) {
       const src = read(rel);
-      expect(src, `${rel} : le partagé n'est pas ajouté`).toContain('ensureSharedWorkspace(');
-      expect(src, `${rel} : la liste n'est pas résolue`).toContain('resolveWorkspaceList(');
+      expect(src, `${rel} : la liste n'est pas celle du run`).toContain('resolveRunWorkspaces(');
     }
+    // Et nulle part ailleurs ne recompose la règle à la main.
+    const rule = read('packages/tools/src/builtin/file-ops/workspace-list.ts');
+    expect(rule).toContain('ensureSharedWorkspace(entityId)');
   });
 
   it('la liste des dossiers passe au prompt — le partagé n’a pas de ligne en base', () => {

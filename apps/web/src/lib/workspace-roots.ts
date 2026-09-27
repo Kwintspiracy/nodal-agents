@@ -30,7 +30,7 @@ import type { getDb } from './server.ts';
 
 /**
  * Le dossier partagé de l'entité — le MÊME calcul que le runner
- * (`apps/runner/src/lib/workspaces-root.ts`) :
+ * (`packages/tools/src/builtin/file-ops/workspaces-root.ts`) :
  * `<NODALAI_WORKSPACES_ROOT | ~/.nodalai/workspaces>/<entityId>/shared`.
  */
 export function sharedWorkspacePath(entityId: string): string {

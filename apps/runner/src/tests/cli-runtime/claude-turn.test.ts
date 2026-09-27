@@ -15,6 +15,7 @@ import {
   countToolUses,
   type ClaudeTurnEvent,
 } from '../../cli-runtime/claude-turn.ts';
+import { CLI_RUNTIME_RUNS_SHELL_COMMANDS } from '@nodal-agents/tools';
 
 const FIXTURE = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'stream-fixture.jsonl'),
@@ -186,6 +187,27 @@ describe('buildClaudeTurnArgs', () => {
     expect(disallowed).toContain('Bash');
     expect(args).not.toContain('--permission-mode');
   });
+
+  // #506 — ce que le bloc d'équipe annonce aux orchestrateurs (« Shell
+  // commands: no » pour ce runtime) doit être ce que l'argv produit. Une
+  // commande ne passe que si Bash reste dans la palette ET qu'une permission
+  // l'accorde sans humain : bypass, skip-permissions, ou Bash autorisé.
+  it.each(['read', 'write'] as const)(
+    'mode %s : la posture shell annoncée au bloc d’équipe est celle de l’argv',
+    (mode) => {
+      const args = buildClaudeTurnArgs({ ...base, mode }, PERSONA_FILE);
+      const valueOf = (flag: string): string =>
+        args.includes(flag) ? (args[args.indexOf(flag) + 1] ?? '') : '';
+      const bashInPalette = !valueOf('--disallowedTools').split(',').includes('Bash');
+      const grantedWithoutHuman =
+        valueOf('--permission-mode') === 'bypassPermissions' ||
+        args.includes('--dangerously-skip-permissions') ||
+        valueOf('--allowedTools').split(',').includes('Bash');
+      expect(bashInPalette && grantedWithoutHuman).toBe(
+        CLI_RUNTIME_RUNS_SHELL_COMMANDS['claude-code'],
+      );
+    },
+  );
 
   it('write mode uses acceptEdits; extras still land in disallowed', () => {
     const args = buildClaudeTurnArgs(

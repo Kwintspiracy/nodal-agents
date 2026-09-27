@@ -13,7 +13,7 @@
 
 import { writeFile, mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { workspacesRoot } from '../lib/workspaces-root.ts';
+import { workspacesRoot } from '@nodal-agents/tools';
 import { eq, and, inArray } from '@nodal-agents/db';
 import {
   agentJobs,
