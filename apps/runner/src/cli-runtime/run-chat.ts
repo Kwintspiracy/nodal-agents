@@ -28,6 +28,7 @@ import {
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
+import { claudeShellTools, shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
@@ -56,6 +57,21 @@ export async function runCliRuntimeChatTurn(args: {
   const binding = resolveRuntime(agentRow.runtime);
   if (!binding) {
     return { ok: false, error: `runtime_not_supported:${agentRow.runtime}` };
+  }
+
+  // Le frein d'urgence du workspace, par la MÊME règle que le chemin job
+  // (`shell-turn.ts`, #494). Ce chemin l'ignorait : le bouton rouge qui
+  // arrêtait les jobs d'un agent laissait son chat lancer des commandes. Une
+  // CLI qui sait perdre son shell (Claude) répond sans ; Codex, qui ne le sait
+  // pas, ne répond pas.
+  let shellPosture = await shellPostureForTurn(
+    db,
+    entityId,
+    binding.provider,
+    agentRow.cliPermissions,
+  );
+  if (shellPosture.kind === 'refused') {
+    return { ok: false, error: shellPosture.reason };
   }
 
   // La MÊME liste que le chemin job — le partagé compris (revue Codex, 27/08) :
@@ -221,6 +237,17 @@ export async function runCliRuntimeChatTurn(args: {
     throw err;
   }
 
+  // Le frein relu AU LANCEMENT (voir shell-turn.ts) : serré pendant la
+  // préparation, il décide encore de ce tour.
+  shellPosture = await shellPostureForTurn(db, entityId, binding.provider, agentRow.cliPermissions);
+  if (shellPosture.kind === 'refused') {
+    await locks.release();
+    return { ok: false, error: shellPosture.reason };
+  }
+
+  const brake = watchBrakeDuringTurn(db, entityId, shellPosture, {
+    ...(args.abortSignal ? { personStop: args.abortSignal } : {}),
+  });
   let turn: CliTurnResult;
   try {
     turn = await binding.run({
@@ -230,12 +257,13 @@ export async function runCliRuntimeChatTurn(args: {
       // Comme le chemin job — voir ClaudeTurnOptions.extraWriteDirs.
       extraWriteDirs: wsRows.slice(1).map((w) => w.path),
       mode,
+      shellTools: claudeShellTools(shellPosture),
       extraDisallowed: perms.extraDisallowed,
       model: defaults.model,
       effort: defaults.effort,
       resumeSessionId: existing?.sessionId,
       timeoutMs: RUNTIME_CHAT_TIMEOUT_MS,
-      ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+      ...(brake.signal ? { abortSignal: brake.signal } : {}),
       // Same anti-loop cap as the job path (invariant #8).
       maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
       onEvent,
@@ -246,6 +274,7 @@ export async function runCliRuntimeChatTurn(args: {
     }
     throw err;
   } finally {
+    brake.stop();
     // ── L'ÉCRITURE FAIT VIEILLIR LE PROJET, ICI AUSSI (issue #101) ──────────
     //
     // Le chemin job monte l'époque deux fois : à l'intention, puis à la sortie
@@ -318,6 +347,12 @@ export async function runCliRuntimeChatTurn(args: {
       .catch((err: unknown) => {
         console.warn('[cli-runtime] chat cli_sessions upsert failed:', err);
       });
+  }
+
+  // Le frein serré pendant le tour a tué la CLI (#494) : pas une réponse, un
+  // arrêt, dit comme au départ du tour.
+  if (brake.engaged()) {
+    return { ok: false, error: 'auto_run_paused' };
   }
 
   // Stop (#456) : le processus a été tué à la demande de la personne. Ce n'est

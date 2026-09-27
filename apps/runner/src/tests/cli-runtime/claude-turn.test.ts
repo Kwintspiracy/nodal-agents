@@ -168,6 +168,7 @@ describe('buildClaudeTurnArgs', () => {
     personality: 'Tu es Jarvis.',
     cwd: 'D:\\ws',
     mode: 'read' as const,
+    shellTools: [] as readonly string[],
     timeoutMs: 1000,
   };
   const PERSONA_FILE = 'D:\\tmp\\persona.txt';
@@ -184,7 +185,7 @@ describe('buildClaudeTurnArgs', () => {
     expect(args[args.indexOf('--append-system-prompt-file') + 1]).toBe(PERSONA_FILE);
     const disallowed = args[args.indexOf('--disallowedTools') + 1]!;
     expect(disallowed).toContain('Write');
-    expect(disallowed).toContain('Bash');
+    expect(disallowed.split(',')).toEqual(expect.arrayContaining(['Bash', 'PowerShell']));
     expect(args).not.toContain('--permission-mode');
   });
 
@@ -215,7 +216,35 @@ describe('buildClaudeTurnArgs', () => {
       PERSONA_FILE,
     );
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('acceptEdits');
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Bash,PowerShell,WebSearch');
+  });
+
+  // #494 : en `-p`, personne ne répond à une demande de permission. Le tour
+  // doit donc arriver avec une décision : shell autorisé d'avance, ou retiré.
+  it('write mode WITHOUT shell: Bash and PowerShell leave the palette, nothing is pre-allowed @cap:executer-une-commande/moteur', () => {
+    const args = buildClaudeTurnArgs({ ...base, mode: 'write' }, PERSONA_FILE);
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Bash,PowerShell');
+    expect(args).not.toContain('--allowedTools');
+  });
+
+  it('write mode WITH shell: Bash and PowerShell are pre-allowed, never also removed @cap:executer-une-commande/moteur', () => {
+    const args = buildClaudeTurnArgs(
+      {
+        ...base,
+        mode: 'write',
+        shellTools: ['Bash', 'PowerShell'],
+        extraDisallowed: ['WebSearch'],
+      },
+      PERSONA_FILE,
+    );
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe('Bash,PowerShell');
     expect(args[args.indexOf('--disallowedTools') + 1]).toBe('WebSearch');
+    // Sans restriction en plus, aucun --disallowedTools du tout.
+    const bare = buildClaudeTurnArgs(
+      { ...base, mode: 'write', shellTools: ['Bash', 'PowerShell'] },
+      PERSONA_FILE,
+    );
+    expect(bare).not.toContain('--disallowedTools');
   });
 
   it('les dossiers SECONDAIRES sont ouverts — dans les DEUX modes', () => {

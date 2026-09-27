@@ -41,6 +41,8 @@ import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { buildCliAuditRow } from './audit.ts';
+import { claudeShellTools, shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
+import type { CliShellSetting } from '@nodal-agents/shared';
 import { failJob, touchJob } from '../job/state.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
@@ -49,7 +51,6 @@ import { EDIT_TOOLS, resolveScannedPath, scannedEditPath } from '../job/code-pro
 import { finalizeJobSuccess } from '../job/finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
-import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import {
   snapshot,
@@ -119,7 +120,11 @@ async function settleAuditWrites(
 // compile error here instead of a silent omission.
 export interface CliRuntimeAgentRow extends Agent {
   runtime: string;
-  cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
+  cliPermissions: {
+    mode?: 'read' | 'write';
+    shell?: CliShellSetting;
+    extraDisallowed?: string[];
+  } | null;
   cliDefaults: {
     claude?: { model?: string; effort?: string };
     codex?: { model?: string; effort?: string };
@@ -386,8 +391,19 @@ export async function runCliRuntimeJob(args: {
   // rouge du workspace arrêtait donc les agents ordinaires pendant qu'une
   // session CLI — un shell complet dans le workspace — continuait de tourner.
   // Un frein qui ne freine qu'une partie des agents n'est pas un frein.
-  if (job.entityId && (await isAutoRunPaused(db, job.entityId))) {
-    return fail('auto_run_paused');
+  //
+  // Depuis #494, le frein s'applique AU SHELL, par la règle commune
+  // (`shell-turn.ts`) : une CLI qui sait perdre son shell (Claude) part sans,
+  // une CLI qui ne le sait pas (Codex) ne part pas. Et un tour qui a un shell
+  // est coupé si le frein se serre pendant qu'il tourne.
+  let shellPosture = await shellPostureForTurn(
+    db,
+    job.entityId,
+    binding.provider,
+    agentRow.cliPermissions,
+  );
+  if (shellPosture.kind === 'refused') {
+    return fail(shellPosture.reason);
   }
 
   // The workspace IS the perimeter of a runtime agent — no workspace, no run.
@@ -614,6 +630,19 @@ export async function runCliRuntimeJob(args: {
     throw err;
   }
 
+  // Le frein relu AU LANCEMENT (voir shell-turn.ts) : serré pendant la
+  // préparation, il décide encore de ce tour.
+  shellPosture = await shellPostureForTurn(
+    db,
+    job.entityId,
+    binding.provider,
+    agentRow.cliPermissions,
+  );
+  if (shellPosture.kind === 'refused') {
+    await releaseHeld();
+    return fail(shellPosture.reason);
+  }
+
   // Keep the job alive under the 5-minute reaper for the whole CLI run.
   const heartbeat = setInterval(() => {
     void touchJob(db, jobId).catch(() => {});
@@ -623,6 +652,7 @@ export async function runCliRuntimeJob(args: {
   // que CE tour a produites (voir `harnessEdits` plus haut).
   const turnStartedAt = new Date();
 
+  const brake = watchBrakeDuringTurn(db, job.entityId, shellPosture);
   let turn: CliTurnResult;
   try {
     turn = await binding.run({
@@ -632,10 +662,12 @@ export async function runCliRuntimeJob(args: {
       // Les autres dossiers attachés — voir ClaudeTurnOptions.extraWriteDirs.
       extraWriteDirs: args.workspaces.slice(1).map((w) => w.path),
       mode,
+      shellTools: claudeShellTools(shellPosture),
       extraDisallowed: perms.extraDisallowed,
       model: defaults.model,
       effort: defaults.effort,
       resumeSessionId,
+      ...(brake.signal ? { abortSignal: brake.signal } : {}),
       timeoutMs: RUNTIME_TURN_TIMEOUT_MS,
       // The CLI runs its own internal loop the Nodal counters never see —
       // apply the SAME per-turn cap at this seam (invariant #8).
@@ -644,6 +676,7 @@ export async function runCliRuntimeJob(args: {
     });
   } catch (err) {
     clearInterval(heartbeat);
+    brake.stop();
     // La CLI a pu écrire avant de tomber — même contrat conservatif que
     // l'intention, et même raison qu'au seam des outils (#101).
     await bumpEpochsAfterWrite(db, job.entityId ?? '', dirtied);
@@ -652,6 +685,7 @@ export async function runCliRuntimeJob(args: {
     throw err;
   }
   clearInterval(heartbeat);
+  brake.stop();
   // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
   //
   // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce
@@ -686,6 +720,12 @@ export async function runCliRuntimeJob(args: {
     });
   } catch (err) {
     console.warn(`[cli-runtime] cli_runs audit insert failed (job=${jobId}):`, err);
+  }
+
+  // Le frein serré pendant le tour a tué la CLI : le tour n'est pas une
+  // réponse, c'est un arrêt, et il se dit comme au départ.
+  if (brake.engaged()) {
+    return fail('auto_run_paused');
   }
 
   // Persist the session mapping so the NEXT message on this conversation

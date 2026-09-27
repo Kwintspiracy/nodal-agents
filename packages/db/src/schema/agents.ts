@@ -135,6 +135,12 @@ export const agents = pgTable(
     // (acceptEdits). extraDisallowed adds CLI tool names on top of either.
     cliPermissions: jsonb('cli_permissions').$type<{
       mode?: 'read' | 'write';
+      /**
+       * Les commandes shell d'un agent à runtime CLI (#494) : 'auto' = elles
+       * tournent sans demander (le Yolo de ce runtime), absent ou 'none' =
+       * aucune. Lu par `cliShellPosture` (@nodal-agents/shared).
+       */
+      shell?: 'none' | 'auto';
       extraDisallowed?: string[];
     } | null>(),
     /**

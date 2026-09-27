@@ -125,7 +125,8 @@ const codeTaskSchema = z.object({
     .describe(
       '"read" (default): analysis only — the CLI cannot modify files or run shell commands. ' +
         '"write": the CLI may edit files inside the workspace (one write run per workspace at ' +
-        'a time). Use "read" unless the task requires changes. Both guarantees rest on the ' +
+        'a time). Claude Code runs no shell command here; Codex runs them inside its sandbox. ' +
+        'Use "read" unless the task requires changes. Both guarantees rest on the ' +
         "provider's own confinement, so a provider that cannot deliver them on this machine " +
         'is refused with a precise error rather than run on weaker terms.',
     ),

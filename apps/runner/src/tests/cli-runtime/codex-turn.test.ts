@@ -36,6 +36,7 @@ const BASE: CodexTurnOptions = {
   personality: 'You are Reviewer C.',
   cwd: 'C:/work',
   mode: 'read',
+  shellTools: [],
   timeoutMs: 60_000,
 };
 
