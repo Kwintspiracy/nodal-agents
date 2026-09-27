@@ -11,6 +11,7 @@ import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import StatusPill from '@/components/ui/StatusPill';
 import EmptyState from '@/components/ui/EmptyState';
 import SkillUpdateAction from './SkillUpdateAction.tsx';
+import SkillSourceProblemPill from './SkillSourceProblemPill.tsx';
 
 /** Per-installed-skill update state, keyed by slug — just enough to drive the
  *  "Update available" badge/CTA without pulling in the full SkillRow. */
@@ -25,7 +26,7 @@ export type InstalledSkillInfo = {
 
 type Props = {
   /** Community skills already installed in this workspace — drives the
-   *  "Installed" / "Update available" states. */
+   *  "Installed" / "Update available" / source-problem states. */
   installedSkills: InstalledSkillInfo[];
   /** Optional search query — filters by name/description/category. */
   query?: string;
@@ -152,7 +153,15 @@ function CommunitySkillCard({
             </SkillUpdateAction>
           ) : (
             <>
-              <span className="min-w-0 flex-1 truncate">{badge}</span>
+              {/* A source that no longer holds this skill is not a healthy
+                  install: the warning takes the host badge's place. */}
+              <span className="min-w-0 flex-1 truncate">
+                {installed?.updateDetail?.sourceProblem ? (
+                  <SkillSourceProblemPill detail={installed.updateDetail} />
+                ) : (
+                  badge
+                )}
+              </span>
               <span className="inline-flex h-[30px] shrink-0 items-center rounded-[7px] border border-rule bg-paper px-3 text-medium-13 text-ink-4">
                 Installed
               </span>

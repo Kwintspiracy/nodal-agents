@@ -15,12 +15,17 @@
 // separate, explicit action: applySkillUpdate in install.ts.
 
 import { join } from 'node:path';
-import { eq, agentSkills, type AnyDrizzleDb } from '@nodal-agents/db';
+import { eq, agentSkills, type AnyDrizzleDb, type SkillSourceProblem } from '@nodal-agents/db';
 import { parseSkillSource, SkillSourceError } from './source';
 import { downloadAndExtract, SkillFetchError } from './fetch';
 import { FrontmatterError } from './frontmatter';
 import { detectScripts } from './detect-scripts';
-import { readInstalledSkillSource, buildContent, SkillInstallError } from './install';
+import {
+  readInstalledSkillSource,
+  buildContent,
+  SkillInstallError,
+  SkillIdentityChangedError,
+} from './install';
 import { buildNestedSkillExclusion, computeScriptsState } from './fs-util';
 
 export interface SkillUpdateCheckSkill {
@@ -53,16 +58,19 @@ export type SkillUpdateCheckOutcome =
       scriptsState: 'clean' | 'update' | 'conflict' | 'local-only';
     }
   /**
-   * The skill this row tracks is no longer at its source: repo/ref/subdir/
-   * SKILL.md gone (HTTP 404), a SKILL.md that is no longer a valid skill, or
-   * one that declares ANOTHER skill (a different slug — never reported as an
-   * update, see readInstalledSkillSource). `reason` is the error that said so.
-   * The tracking columns WERE written (update_available=false) so a vanished
-   * source doesn't get misreported as "changed" — but last_update_check_at is
-   * still stamped, so it's picked up again after the normal throttle interval
-   * in case the outage is transient.
+   * The source could not be read as the skill this row tracks: repo/ref/
+   * subdir/SKILL.md gone (HTTP 404) or no longer a valid skill
+   * ('source_not_found'), or a SKILL.md that declares ANOTHER skill
+   * ('identity_changed' — never reported as an update, see
+   * readInstalledSkillSource). `reason` is the error that said so.
+   * update_detail records the problem code and NO diff (a check that could
+   * not compare claims neither "changed" nor "unchanged"); update_available
+   * goes false because nothing can be applied (preview and apply refuse the
+   * same source), and the owner sees the problem instead of the badge.
+   * last_update_check_at is stamped, so the next check after the throttle
+   * interval clears the problem if the source comes back.
    */
-  | { kind: 'not_found'; reason: string }
+  | { kind: 'source_problem'; problem: SkillSourceProblem; reason: string }
   /**
    * GitHub API rate limit hit (HTTP 403/429, or GitHub's explicit rate-limit
    * body). NOTHING was written — the caller (cron phase) should stop
@@ -95,13 +103,22 @@ function isNotFoundError(err: Error): boolean {
   return /not found/i.test(err.message) || /\bHTTP 404\b/.test(err.message);
 }
 
-async function markNotFound(db: AnyDrizzleDb, skillId: string): Promise<void> {
+async function markSourceProblem(
+  db: AnyDrizzleDb,
+  skillId: string,
+  problem: SkillSourceProblem,
+  upstreamSlug?: string,
+): Promise<void> {
   const now = new Date();
   await db
     .update(agentSkills)
     .set({
       updateAvailable: false,
-      updateDetail: { contentChanged: false, scriptsChanged: false, checkedAt: now.toISOString() },
+      updateDetail: {
+        sourceProblem: problem,
+        ...(upstreamSlug ? { upstreamSlug } : {}),
+        checkedAt: now.toISOString(),
+      },
       lastUpdateCheckAt: now,
     })
     .where(eq(agentSkills.id, skillId));
@@ -110,7 +127,8 @@ async function markNotFound(db: AnyDrizzleDb, skillId: string): Promise<void> {
 /** m3 (Opus review): stamp the throttle timestamp ONLY — used when the check
  * couldn't produce a real answer (unparseable source) but still must not
  * re-consume a batch slot every tick. Leaves update_available/update_detail
- * untouched, unlike markNotFound (which DOES have an answer: "not changed"). */
+ * untouched, unlike markSourceProblem (which DOES have an answer: the source
+ * does not hold this skill). */
 async function stampCheckedAt(db: AnyDrizzleDb, skillId: string): Promise<void> {
   await db
     .update(agentSkills)
@@ -145,8 +163,8 @@ export async function checkSkillUpdate(
     if (err instanceof SkillFetchError) {
       if (isRateLimitError(err)) return { kind: 'rate_limited' };
       if (isNotFoundError(err)) {
-        await markNotFound(db, skill.id);
-        return { kind: 'not_found', reason: err.message };
+        await markSourceProblem(db, skill.id, 'source_not_found');
+        return { kind: 'source_problem', problem: 'source_not_found', reason: err.message };
       }
     }
     throw err;
@@ -158,13 +176,17 @@ export async function checkSkillUpdate(
       upstream = await readInstalledSkillSource(extracted.extractRoot, source, skill.slug);
     } catch (err) {
       // The repo resolved but the skill this row tracks is not there any more:
-      // no (unambiguous) SKILL.md at the path this install came from, one that
-      // is no longer a valid skill, or one that is ANOTHER skill (a different
-      // slug). Each is "source vanished" for THIS skill — never an update of
-      // it — rather than a crash of the cron phase over a repo restructure.
+      // one that is ANOTHER skill (a different slug), or no (unambiguous)
+      // SKILL.md at the path this install came from, or one that is no longer
+      // a valid skill. Never an update of THIS skill, and never a crash of the
+      // cron phase over a repo restructure.
+      if (err instanceof SkillIdentityChangedError) {
+        await markSourceProblem(db, skill.id, 'identity_changed', err.upstreamSlug);
+        return { kind: 'source_problem', problem: 'identity_changed', reason: err.message };
+      }
       if (err instanceof SkillInstallError || err instanceof FrontmatterError) {
-        await markNotFound(db, skill.id);
-        return { kind: 'not_found', reason: err.message };
+        await markSourceProblem(db, skill.id, 'source_not_found');
+        return { kind: 'source_problem', problem: 'source_not_found', reason: err.message };
       }
       throw err;
     }

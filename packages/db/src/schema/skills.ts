@@ -16,6 +16,43 @@ import { entities } from './entities.ts';
 import { agents } from './agents.ts';
 import { connectors } from './connectors.ts';
 
+/**
+ * Why the last update check could not read an installed community skill's
+ * source as THIS skill. The runner persists the code; the dashboard words it.
+ *  - 'source_not_found': the source is gone (HTTP 404), or no longer holds a
+ *    readable, valid SKILL.md at the path this install came from.
+ *  - 'identity_changed': the source now serves ANOTHER skill (its SKILL.md
+ *    declares a different slug, carried in `upstreamSlug`).
+ */
+export type SkillSourceProblem = 'source_not_found' | 'identity_changed';
+
+/** What the last update check of a community skill found (agent_skills.update_detail). */
+export type SkillUpdateDetail =
+  | {
+      sourceProblem?: undefined;
+      contentChanged: boolean;
+      scriptsChanged: boolean;
+      /**
+       * Three-way script state from computeScriptsState — 'conflict' means
+       * upstream moved AND the local files were patched (applying overwrites
+       * the patches); 'local-only' means only the local files were patched
+       * (no badge — nothing new upstream). Absent on rows checked before the
+       * three-way checker shipped.
+       */
+      scriptsState?: 'clean' | 'update' | 'conflict' | 'local-only';
+      checkedAt: string;
+    }
+  | {
+      /** The source could not be compared: no diff is claimed, in either direction. */
+      sourceProblem: SkillSourceProblem;
+      /** The slug the source declares now — only for 'identity_changed'. */
+      upstreamSlug?: string;
+      contentChanged?: undefined;
+      scriptsChanged?: undefined;
+      scriptsState?: undefined;
+      checkedAt: string;
+    };
+
 // ─── agent_skills ─────────────────────────────────────────────────────────────
 
 export const agentSkills = pgTable(
@@ -57,22 +94,13 @@ export const agentSkills = pgTable(
     //   the upstream source diverges from what's installed (content and/or
     //   scripts). Surfaced in the dashboard so the owner can review + apply.
     // updateDetail: what the last check found — null before the first check.
+    //   Either a diff (contentChanged/scriptsChanged) or, when the source could
+    //   not be read as THIS skill, a `sourceProblem` code: never both, so a
+    //   check that could not compare never claims "unchanged".
     // lastUpdateCheckAt: throttle timestamp for the cron phase
     //   (run-skill-update-check.ts) — NULL means never checked.
     updateAvailable: boolean('update_available').notNull().default(false),
-    updateDetail: jsonb('update_detail').$type<{
-      contentChanged: boolean;
-      scriptsChanged: boolean;
-      /**
-       * Three-way script state from computeScriptsState — 'conflict' means
-       * upstream moved AND the local files were patched (applying overwrites
-       * the patches); 'local-only' means only the local files were patched
-       * (no badge — nothing new upstream). Absent on rows checked before the
-       * three-way checker shipped.
-       */
-      scriptsState?: 'clean' | 'update' | 'conflict' | 'local-only';
-      checkedAt: string;
-    }>(),
+    updateDetail: jsonb('update_detail').$type<SkillUpdateDetail>(),
     lastUpdateCheckAt: timestamp('last_update_check_at', { withTimezone: true }),
     // ─── Learning-loop columns (Phase A) ─────────────────────────────────────
     // createdBy: provenance — 'user' (default) | 'system' | 'agent'

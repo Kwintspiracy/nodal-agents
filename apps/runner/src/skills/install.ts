@@ -30,6 +30,24 @@ export class SkillInstallError extends Error {
   }
 }
 
+/**
+ * The source of an installed skill now serves ANOTHER skill (its SKILL.md
+ * declares `upstreamSlug`, not the installed slug). A SkillInstallError like
+ * any other refusal; its own class so the background check can record which
+ * problem it met (update_detail.sourceProblem = 'identity_changed').
+ */
+export class SkillIdentityChangedError extends SkillInstallError {
+  readonly upstreamSlug: string;
+  constructor(installedSlug: string, upstreamSlug: string) {
+    super(
+      `The installed skill "${installedSlug}" is not at its source any more: the source now ` +
+        `serves a skill named "${upstreamSlug}". Nothing was changed.`,
+    );
+    this.name = 'SkillIdentityChangedError';
+    this.upstreamSlug = upstreamSlug;
+  }
+}
+
 export interface InstallSkillOptions {
   db: AnyDrizzleDb;
   /** Raw user-supplied source string (GitHub URL / owner-repo / skills.sh path). */
@@ -179,10 +197,7 @@ export async function readInstalledSkillSource(
 ): Promise<{ skillDirAbs: string; body: string }> {
   const manifest = await readSourceManifest(extractRoot, source);
   if (manifest.slug !== installedSlug) {
-    throw new SkillInstallError(
-      `The installed skill "${installedSlug}" is not at its source any more: the source now ` +
-        `serves a skill named "${manifest.slug}". Nothing was changed.`,
-    );
+    throw new SkillIdentityChangedError(installedSlug, manifest.slug);
   }
   return { skillDirAbs: manifest.skillDirAbs, body: manifest.body };
 }

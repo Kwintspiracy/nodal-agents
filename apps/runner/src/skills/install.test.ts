@@ -1353,8 +1353,8 @@ describe('installCommunitySkill — a skill installed from a catalog card', () =
 
   // The update paths re-read the SAME moving source. Whether it came from a
   // catalog card or not, a SKILL.md that now declares another slug is another
-  // skill, never an update of the installed one: the check must not raise the
-  // badge, and preview, apply and « keep my version » must refuse it without
+  // skill, never an update of the installed one: the check records it as a
+  // source problem (never as a badge, never as "unchanged"), and preview, apply and « keep my version » must refuse it without
   // touching the row or the stored files.
   describe.each([
     ['the catalog card source', 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy'],
@@ -1404,14 +1404,19 @@ describe('installCommunitySkill — a skill installed from a catalog card', () =
           skillStoreDir: store,
         });
         expect(outcome).toEqual({
-          kind: 'not_found',
+          kind: 'source_problem',
+          problem: 'identity_changed',
           reason: expect.stringMatching(identityRefusal),
         });
+        // The row says what happened: another skill at the source. It claims
+        // no diff at all (the old shape, false "unchanged" flags, read as a
+        // healthy install).
         const afterCheck = await readRow();
         expect(afterCheck.updateAvailable).toBe(false);
-        expect(afterCheck.updateDetail).toMatchObject({
-          contentChanged: false,
-          scriptsChanged: false,
+        expect(afterCheck.updateDetail).toEqual({
+          sourceProblem: 'identity_changed',
+          upstreamSlug: 'other-skill',
+          checkedAt: expect.any(String),
         });
 
         const updateOpts = {
