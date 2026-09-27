@@ -167,6 +167,7 @@ import {
 import { selectVerificationRuns } from './verification-runs-query.ts';
 import { lastReviewVerdict } from './review-state.ts';
 import { readJobRoots } from './job-lineage.ts';
+import { chatFailureText } from './chat-failure.ts';
 import type { JobTriggerContext, AnyDrizzleDb } from '@nodal-agents/db';
 import {
   DeliveryError,
@@ -13433,13 +13434,15 @@ export async function sendChatMessageAction(
     const data = (await res.json().catch(() => null)) as {
       reply?: string;
       error?: string;
+      cutReason?: string;
     } | null;
     // An empty reply is NOT a failure: when the agent escalates via run_task it
     // may write no acknowledgment text (the dispatch card + job result carry the
     // info, and the UI refetches messages to render them). Only an HTTP error
     // (e.g. the runner's `empty_reply` glitch → 400) is a real failure.
     if (!res.ok) {
-      return fail('chat_failed', data?.error ?? 'The agent did not reply');
+      // Le même vocabulaire que le flux : une coupure se dit coupée (#484).
+      return fail('chat_failed', chatFailureText(data?.error ?? '', data?.cutReason ?? null));
     }
     revalidatePath('/chat');
     return ok({ reply: data?.reply ?? '' });
