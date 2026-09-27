@@ -199,6 +199,41 @@ describe('an identical call the owner already rejected in this run (#492) @cap:a
     expect(ran).toEqual([]);
   });
 
+  // Revue Codex de #492, passe 2 : une décision couvre l'état où elle a été
+  // prise. « Sauvegarde d'abord, puis supprime » : la sauvegarde faite, la même
+  // suppression est une autre question, et le propriétaire doit la revoir.
+  it('once the agent has done something else in the run, the identical call is put to the owner again', async () => {
+    const jobId = await newJob();
+    const { tool: del, ran } = gatedTool('delete_492_f');
+    await executeTool(del, { ...CALL, purpose: 'Supprimer.' }, makeCtx(jobId), opts());
+    const [asked] = await rowsFor(jobId, 'delete_492_f');
+    await reject(asked!.id, "Sauvegarde d'abord, puis supprime.");
+
+    // Tout de suite après : même appel, même réponse, aucune carte.
+    const tooSoon = await executeTool(del, { ...CALL, purpose: 'Encore.' }, makeCtx(jobId), opts());
+    expect(tooSoon.outcome).toBe('error');
+    if (tooSoon.outcome === 'error') expect(tooSoon.error).toContain('something else');
+
+    // La sauvegarde : un autre outil, qui s'exécute (pas de porte).
+    const { tool: backup } = gatedTool('backup_492_f');
+    const ungated = { ...backup, defaultApproval: undefined } as typeof backup;
+    const saved = await executeTool(ungated, { ...CALL, purpose: 'Sauvegarde.' }, makeCtx(jobId), {
+      ...opts(),
+      approvalRules: [],
+    });
+    expect(saved.outcome).toBe('success');
+
+    const afterBackup = await executeTool(
+      del,
+      { ...CALL, purpose: 'Sauvegardé.' },
+      makeCtx(jobId),
+      opts(),
+    );
+    expect(afterBackup.outcome).toBe('awaiting_approval');
+    expect(await rowsFor(jobId, 'delete_492_f')).toHaveLength(2);
+    expect(ran).toEqual([]);
+  });
+
   it('an EXPIRED request is not a refusal: asking again is allowed', async () => {
     const jobId = await newJob();
     const { tool } = gatedTool('speech_492_d');

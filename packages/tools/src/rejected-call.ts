@@ -11,8 +11,17 @@
 // entrée, `purpose` mis à part — c'est la phrase adressée à la personne, pas
 // l'action. SAUF quand l'outil déclare `purpose` comme l'un de SES arguments
 // (`purposeIsArgument`, un serveur MCP qui le prend) : là, un autre purpose
-// est un autre appel, que le propriétaire n'a jamais vu (revue Codex de #492). Trouvée, l'appel reçoit la décision déjà prise, et aucune ligne
-// n'est créée. Ce qui n'en relève pas :
+// est un autre appel, que le propriétaire n'a jamais vu (revue Codex de #492).
+//
+// Et une décision couvre l'état où elle a été prise, pas davantage (revue
+// Codex de #492, passe 2). « Refusé : sauvegarde d'abord, puis supprime » : la
+// sauvegarde faite, la même suppression est une autre question. Donc le refus
+// ne répond à l'appel que si l'agent n'a RIEN fait d'autre dans ce job depuis :
+// aucun appel d'outil enregistré après la décision, hormis les reprises de ce
+// même appel. Le moindre autre geste, et la carte est reposée.
+//
+// Trouvée et toujours valable, l'appel reçoit la décision déjà prise, et
+// aucune ligne n'est créée. Ce qui n'en relève pas :
 //
 //   - une demande EXPIRÉE : personne n'a répondu, redemander est permis
 //     (`APPROVAL_EXPIRED_TOOL_RESULT` le dit déjà au modèle) ;
@@ -21,7 +30,7 @@
 //   - un AUTRE run : la décision appartient au run où elle a été prise. Si le
 //     propriétaire veut qu'on réessaie, il le dit, et c'est un nouveau run.
 
-import { approvalRequests, and, eq } from '@nodal-agents/db';
+import { approvalRequests, toolCalls, and, eq, gt } from '@nodal-agents/db';
 import { canonicalJson } from '@nodal-agents/shared';
 import { PURPOSE_KEY } from './purpose';
 import type { ToolContext } from './types';
@@ -48,6 +57,22 @@ function actionOf(input: unknown, purposeIsArgument: boolean): string {
   return canonicalJson(plain);
 }
 
+/**
+ * Une ligne d'audit qui n'a rien FAIT : l'appel attend une décision. La porte
+ * écrit alors son propre résultat (`executeTool`, étape « awaiting_approval »),
+ * et c'est lui qu'on lit. Un appel exécuté, même en échec, est un geste : il
+ * peut avoir changé ce que la décision supposait.
+ */
+function isAwaitingApproval(toolOutput: string | null): boolean {
+  if (!toolOutput) return false;
+  try {
+    const parsed = JSON.parse(toolOutput) as { outcome?: unknown; approvalRequestId?: unknown };
+    return parsed.outcome === 'awaiting_approval' && typeof parsed.approvalRequestId === 'string';
+  } catch {
+    return false;
+  }
+}
+
 /** Le refus déjà prononcé dans ce job sur ce même appel, ou `null`. */
 export async function priorRejectionOfSameCall(
   ctx: ToolContext,
@@ -62,6 +87,7 @@ export async function priorRejectionOfSameCall(
       id: approvalRequests.id,
       toolInput: approvalRequests.toolInput,
       notes: approvalRequests.notes,
+      resolvedAt: approvalRequests.resolvedAt,
     })
     .from(approvalRequests)
     .where(
@@ -74,7 +100,24 @@ export async function priorRejectionOfSameCall(
     );
   const action = actionOf(input, purposeIsArgument);
   const same = rows.find((r) => actionOf(r.toolInput, purposeIsArgument) === action);
-  return same ? { approvalRequestId: same.id, notes: same.notes } : null;
+  if (!same) return null;
+  // Une décision sans heure ne peut pas dire ce qui est venu après : la carte
+  // est reposée plutôt que de supposer que rien n'a bougé.
+  if (!same.resolvedAt) return null;
+  const since = await ctx.db
+    .select({
+      toolName: toolCalls.toolName,
+      toolInput: toolCalls.toolInput,
+      toolOutput: toolCalls.toolOutput,
+    })
+    .from(toolCalls)
+    .where(and(eq(toolCalls.jobId, ctx.jobId), gt(toolCalls.createdAt, same.resolvedAt)));
+  const didSomethingElse = since.some(
+    (c) =>
+      !isAwaitingApproval(c.toolOutput) &&
+      (c.toolName !== toolName || actionOf(c.toolInput, purposeIsArgument) !== action),
+  );
+  return didSomethingElse ? null : { approvalRequestId: same.id, notes: same.notes };
 }
 
 /**
@@ -86,7 +129,9 @@ export function alreadyRejectedInstruction(toolName: string, prior: PriorRejecti
   return (
     `approval_already_rejected: the owner already rejected this exact "${toolName}" call in ` +
     `this run (approval ${prior.approvalRequestId}, reason: ${reason}). Rewording \`purpose\` ` +
-    `does not change the call, so it was NOT submitted again. Do not repeat it. Report the ` +
-    `refusal in your result, or do something different.`
+    `does not change the call, so it was NOT submitted again. Do not repeat it as is. If the ` +
+    `owner's reason asks for something first, do that: once you have done something else in ` +
+    `this run, the same call is put to the owner again. Otherwise report the refusal in your ` +
+    `result, or do something different.`
   );
 }
