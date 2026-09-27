@@ -230,10 +230,16 @@ function versionIn(text: string): string | null {
   return m?.[1] ?? null;
 }
 
-/** True when the question is about releases: a version number, or a release word. */
+/**
+ * True when the question is about releases. The intent comes from WORDS
+ * (version, release, changelog, what's new, what changed, nouveautés) or a
+ * `v` written before the number — never from a bare decimal: "GPT-5.2",
+ * "OAuth 2.0" and "temperature 0.7" served release notes first before this
+ * rule (Codex review of #452, P1).
+ */
 export function asksAboutReleases(question: string): boolean {
-  if (versionIn(question) !== null) return true;
-  if (/what'?s new/i.test(question)) return true;
+  if (/(?:^|[^a-z0-9])v\d+\.\d+/i.test(question)) return true;
+  if (/what'?s new|what (?:has )?changed/i.test(question)) return true;
   return normalizeWords(question).some((w) => RELEASE_WORDS.has(w));
 }
 
@@ -354,9 +360,21 @@ export function searchDocs(index: DocsIndex, question: string, limit: number): D
   const releases = asksAboutReleases(question);
   const version = versionIn(question);
 
+  // A version the question names but the release notes do not carry is SAID,
+  // with the latest one documented (Codex review of #452, P1): serving its
+  // neighbours — "0.9.99" answered by v0.9.0, v0.9.1, v0.9.2 — reads as the
+  // answer and is not one.
+  const indexed = indexedSections(index);
+  const releaseEntries = indexed.filter((e) => e.section.release === true);
+  const unknownVersion =
+    releases &&
+    version !== null &&
+    releaseEntries.length > 0 &&
+    !releaseEntries.some((e) => headingVersion(e) === version);
+
   const scored: DocsHit[] = [];
-  for (const entry of indexedSections(index)) {
-    if (entry.section.release === true && !releases) continue;
+  for (const entry of indexed) {
+    if (entry.section.release === true && (!releases || unknownVersion)) continue;
     let score = scoreSection(entry, terms);
     if (entry.section.release === true && version !== null && headingVersion(entry) === version) {
       score += WEIGHT_NAMED_VERSION;
@@ -365,5 +383,21 @@ export function searchDocs(index: DocsIndex, question: string, limit: number): D
   }
 
   scored.sort((a, b) => (b.score !== a.score ? b.score - a.score : a.url.localeCompare(b.url)));
+  if (unknownVersion) {
+    // Newest first: the release notes keep CHANGELOG.md's order.
+    const latest = releaseEntries[0]!.section;
+    const notice: DocsHit = {
+      page: latest.page,
+      pageTitle: latest.pageTitle,
+      heading: `No release notes for ${version}`,
+      url: latest.url,
+      text:
+        `The release notes have no entry for version ${version}. ` +
+        `The latest documented release is ${latest.heading}.`,
+      release: true,
+      score: Number.POSITIVE_INFINITY,
+    };
+    return [notice, ...scored].slice(0, limit);
+  }
   return scored.slice(0, limit);
 }

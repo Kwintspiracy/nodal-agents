@@ -269,6 +269,28 @@ describe('nodal_docs answers "what changed in version X" @cap:consulter-l-aide/m
     });
   }
 
+  // Revue Codex de #452, P1 : une version nommée et absente de l'index était
+  // servie par ses voisines (« 0.9.99 » → v0.9.0, v0.9.1, v0.9.2). Elle le DIT.
+  it('says a named version has no release notes, and names the latest, instead of serving its neighbours', async () => {
+    const hits = await ask('what changed in 0.9.99');
+    expect(hits[0]?.title).toBe('No release notes for 0.9.99');
+    expect(hits[0]?.text).toMatch(/latest documented release is v\d+\.\d+\.\d+/);
+    expect(hits.slice(1).some((h) => h.url.startsWith('/nodal-agents/docs/changelog'))).toBe(false);
+  });
+
+  // Revue Codex de #452, P1 : un nombre décimal nu n'est pas une question de
+  // version. L'intention vient des MOTS, ou d'un « v » devant le numéro.
+  for (const question of ['GPT-5.2', 'OAuth 2.0', 'temperature 0.7']) {
+    it(`does not read "${question}" as a question about releases`, async () => {
+      const hits = await ask(question);
+      expect(hits.some((h) => h.url.startsWith('/nodal-agents/docs/changelog'))).toBe(false);
+    });
+  }
+
+  it('reads a "v" before the number as a question about that release', async () => {
+    expect((await ask('v0.9.1'))[0]?.title.startsWith('v0.9.1 ')).toBe(true);
+  });
+
   it('keeps release notes out of a how-to question: its ranking is the one without them', () => {
     // The ticket's own example; the property proven is the general one — for a
     // question that does not ask about releases, the release sections change
