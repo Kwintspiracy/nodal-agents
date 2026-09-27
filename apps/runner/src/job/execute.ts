@@ -52,6 +52,7 @@ import {
   QuotaExhaustedError,
   LLMTimeoutError,
   LLMCallCancelledError,
+  LLMOutputLimitError,
   MessageStructureError,
   AllProvidersFailedError,
   isContextOverflowError,
@@ -801,6 +802,21 @@ export interface BudgetStopFacts {
   spent: number;
   limit: number;
   turn: number;
+}
+
+/**
+ * Le code machine d'un tour dont la réponse s'est arrêtée sur le plafond de
+ * jetons de SORTIE du modèle (#554), pour `agent_jobs.error`. Même famille que
+ * `llm_timeout:` et `context_window_exceeded:` : le code, puis les faits qui le
+ * rendent lisible (qui, quel tour, combien écrit, combien d'appels d'outils
+ * laissés sans exécution).
+ */
+export function outputLimitErrorCode(err: LLMOutputLimitError, turn: number): string {
+  return (
+    `${err.code}:${err.provider}/${err.model} ` +
+    `(turn ${turn}, ${err.usage.outputTokens} output tokens, ` +
+    `${err.toolCallCount} tool calls not executed)`
+  );
 }
 
 /** Le code d'erreur d'un run arrêté par son budget. Les deux premiers existaient déjà. */
@@ -6447,6 +6463,32 @@ async function runJobTracked(
         messages,
       );
       return { status: 'failed', error: `message_structure_invalid:${err.code}` };
+    }
+
+    // #554 : la réponse du tour s'est arrêtée sur le plafond de jetons de
+    // SORTIE du modèle. Le client l'a refusée (packages/llm/src/client.ts) :
+    // aucun de ses appels d'outils n'a été exécuté, et son texte n'est pas une
+    // réponse finie. Le run échoue avec un code (invariant #2), comme les
+    // autres échecs typés. L'appel a été servi et facturé en entier : il est
+    // compté avant d'écrire la ligne, sinon les jetons du run mentiraient.
+    if (err instanceof LLMOutputLimitError) {
+      inputTokens += err.usage.inputTokens;
+      effectiveInputTokens += err.usage.inputTokens;
+      outputTokens += err.usage.outputTokens;
+      totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
+        inputTokens: err.usage.inputTokens,
+        outputTokens: err.usage.outputTokens,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+      });
+      const code = outputLimitErrorCode(err, turn);
+      trace('output_limit_reached', {
+        turn,
+        outputTokens: err.usage.outputTokens,
+        toolCallsNotExecuted: err.toolCallCount,
+      });
+      await failJob(db, jobId as string, code, runStats(), messages);
+      return { status: 'failed', error: code };
     }
 
     // É-3 garde: the prompt overflowed the model's REAL context window. With the

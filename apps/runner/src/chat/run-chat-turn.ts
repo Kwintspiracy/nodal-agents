@@ -36,7 +36,7 @@ import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
-import { LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
+import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
 import { TERMINAL_STATUSES } from '../job/state.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
@@ -655,6 +655,17 @@ export async function runChatTurn(opts: {
         `[run-chat-turn] reply cut by ${err.reason} after ${String(partial.length)} chars (${agentRow.slug})`,
       );
       return await keepPartialReply({ cutReason: err.reason });
+    }
+    // #554 : la réponse s'est arrêtée sur le plafond de jetons de sortie. Le
+    // client l'a refusée : son `run_task` éventuel n'est pas lancé, et la
+    // relance sans outils ci-dessous serait un nouvel essai, que rien ici ne
+    // décide. Le tour échoue avec son code, comme un job.
+    if (err instanceof LLMOutputLimitError) {
+      console.warn(
+        `[run-chat-turn] reply stopped on the output-token cap (${agentRow.slug}):`,
+        err.message,
+      );
+      return { ok: false, error: err.code };
     }
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,

@@ -12,6 +12,7 @@ export {
   ProviderConfigError,
   LLMTimeoutError,
   LLMCallCancelledError,
+  LLMOutputLimitError,
   AllProvidersFailedError,
   isContextOverflowError,
   LLMStreamPartError,
