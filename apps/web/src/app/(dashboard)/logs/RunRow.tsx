@@ -101,11 +101,14 @@ export function durationText(run: ActivityRunRow): string {
 export default function RunRow({
   run,
   columns,
+  costDecimals,
   defaultExpanded = false,
 }: {
   run: ActivityRunRow;
   /** Le nombre de colonnes de la table, pour la ligne dépliée. */
   columns: number;
+  /** La précision de la colonne des coûts, la même pour toutes ses lignes. */
+  costDecimals?: 2 | 4;
   /** Lien profond : la ligne s'ouvre déjà dépliée. */
   defaultExpanded?: boolean;
 }) {
@@ -212,7 +215,7 @@ export default function RunRow({
           <CellMono>{durationText(run)}</CellMono>
         </Td>
         <Td align="right" className="hidden lg:table-cell" data-testid="run-cost">
-          <CellMono>{formatCost(run.costUsd)}</CellMono>
+          <CellMono>{formatCost(run.costUsd, costDecimals)}</CellMono>
         </Td>
         <Td align="right" data-testid="run-calls">
           <CellMono>

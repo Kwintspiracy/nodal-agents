@@ -129,7 +129,8 @@ describe('Table — la recette de chaque cellule', () => {
     );
     const meta = [...host.querySelectorAll('div')].find((d) => d.textContent === 'oauth2');
     expect(classes(meta)).toEqual(
-      expect.arrayContaining(['text-mono-11', 'text-ink-4', 'break-words']),
+      // Sur une ligne, sans coupe : des lignes de même hauteur, aucun fait caché.
+      expect.arrayContaining(['text-mono-11', 'text-ink-4', 'whitespace-nowrap']),
     );
   });
 

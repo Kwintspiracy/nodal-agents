@@ -261,9 +261,11 @@ function CellStack({
     <div className="min-w-0" data-cell={hasLead ? undefined : kind}>
       {children}
       {meta !== undefined && meta !== null && (
-        // Repliée à la ligne, jamais coupée : une date, un nombre d'accès, un
-        // slug y sont des faits, et un « … » les cacherait.
-        <div data-cell-part="meta" className="break-words text-mono-11 text-ink-4">
+        // Ni coupée ni repliée : une date, un nombre d'accès, un slug y sont des
+        // faits, et un « … » les cacherait ; repliée, elle faisait des lignes de
+        // hauteurs différentes dans une même table (« Morning digest » sous
+        // « Automation » dans Logs). La colonne s'élargit, la table défile.
+        <div data-cell-part="meta" className="whitespace-nowrap text-mono-11 text-ink-4">
           {meta}
         </div>
       )}
