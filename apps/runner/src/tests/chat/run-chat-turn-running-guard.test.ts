@@ -177,7 +177,7 @@ beforeAll(async () => {
 });
 
 /** La conversation du ticket : un premier tour a lancé un travail. */
-async function conversationAvecTravail(status: string): Promise<void> {
+async function conversationAvecTravail(status: string | null): Promise<void> {
   await db.delete(chatMessages);
   await db.delete(agentJobs).where(eq(agentJobs.agentId, seed.agentId));
   await db.delete(conversations);
@@ -363,6 +363,42 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
       .orderBy(chatMessages.createdAt)
       .then((rows) => rows.slice(-1));
     expect(ecrit?.content).not.toContain('Je lance');
+  });
+
+  it('une tête au statut NULL retient aussi : `NULL NOT IN (…)` n’est pas « terminé » (revue Codex, passe 4)', async () => {
+    // L'historique affiche une tête sans statut comme « still running »
+    // (`buildDispatchOutput`) ; la garde la laissait passer, parce qu'en SQL
+    // `NULL NOT IN ('completed', …)` vaut « inconnu » et exclut la ligne.
+    await conversationAvecTravail(null);
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
+          { text: 'Already on it.' },
+        ],
+        captured,
+      ),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'i mean nodal-agents',
+    });
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.spawnedJobId).toBeUndefined();
+    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
+    const [tete] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, premierJob));
+    expect(tete!.status).toBeNull();
+    expect(toolResults(captured[1] ?? [])).toContain(premierJob);
   });
 
   it('un travail TERMINÉ ne retient rien : run_task lance comme avant', async () => {

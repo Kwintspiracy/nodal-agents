@@ -11,7 +11,7 @@
 // after the escalation shipped, and a comment that states a rule gets read as
 // one (revue Codex de la dette de la PR #73, passe 3).
 
-import { eq, and, asc, desc, isNull, notInArray, sql } from '@nodal-agents/db';
+import { eq, and, asc, desc, isNull, notInArray, or, sql } from '@nodal-agents/db';
 import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
@@ -736,7 +736,10 @@ export async function runChatTurn(opts: {
           eq(agentJobs.entityId, entityId),
           eq(agentJobs.conversationId, conversationId),
           isNull(agentJobs.parentJobId),
-          notInArray(agentJobs.status, TERMINAL_STATUSES),
+          // Non terminal = pas encore fini. `NULL NOT IN (…)` vaut « inconnu » en
+          // SQL et EXCLUT la ligne : une tête sans statut, que l'historique dit
+          // « still running », laissait passer un doublon (revue Codex, passe 4).
+          or(isNull(agentJobs.status), notInArray(agentJobs.status, TERMINAL_STATUSES)),
         ),
       );
     if (runningHeads.length === 0) break;
