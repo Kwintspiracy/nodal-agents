@@ -27,6 +27,7 @@ import { verifyBeforeDoneSkill } from './skills/verify-before-done';
 import { citationDisciplineSkill } from './skills/citation-discipline';
 import { safeToolUseSkill } from './skills/safe-tool-use';
 import { platformSupportSkill } from './skills/platform-support';
+import { platformQuestionsSkill } from './skills/platform-questions';
 import { workspaceHygieneSkill } from './skills/workspace-hygiene';
 import { officeEditingSkill } from './skills/office-editing';
 import { spreadsheetEditingSkill } from './skills/spreadsheet-editing';
@@ -69,6 +70,7 @@ export const systemSkills: SystemSkill[] = [
   citationDisciplineSkill,
   safeToolUseSkill,
   platformSupportSkill,
+  platformQuestionsSkill,
   workspaceHygieneSkill,
   officeEditingSkill,
   spreadsheetEditingSkill,

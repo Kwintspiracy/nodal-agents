@@ -783,12 +783,24 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
     // (Codex review of #455, P2). One home.
     expect(withIt).not.toContain('### A delegation never widens where a teammate works');
 
-    // Sans l'outil, ni la règle ni une promesse qu'il ne pourrait tenir.
+    // Revue Codex de #455, passe 3 : la RÈGLE est portable, la CONSIGNE
+    // d'outil ne l'est pas. Sans nodal_docs, la règle reste ; la promesse
+    // d'un outil absent part.
     const without = await buildSystemPrompt(agent, db, {
       origin: 'api',
       availableToolNames: ['query_memory'],
     });
-    expect(without).not.toContain('### A question about Nodal is yours');
+    expect(without).toContain('### A question about Nodal is yours');
+    expect(without).not.toContain('Look before you say no');
+
+    // Et sur les surfaces sans aucun outil de Nodal : le chat, et une session
+    // de CLI (Claude Code, Codex), sous-agents natifs compris.
+    const chat = await buildSystemPrompt(agent, db, { origin: 'dashboard', surface: 'chat' });
+    expect(chat).toContain('### A question about Nodal is yours');
+    const cli = await buildSystemPrompt(agent, db, { origin: 'api', surface: 'cli-runtime' });
+    expect(cli).toContain('### A question about Nodal is yours');
+    expect(cli).toContain('sub-agent');
+    expect(cli).not.toContain('nodal_docs');
   });
 
   // Codex review of #455, P1: the skill promises that `nodal_docs` answers
@@ -796,7 +808,7 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
   // index (it depends on #452, which puts the release notes in it).
   it('keeps its promise: nodal_docs answers a version question from the shipped index (#455)', async () => {
     const skill = systemSkills.find((s) => s.slug === 'platform-support');
-    expect(skill?.content).toContain('what changed in a version');
+    expect(skill?.content).toContain('what changed in each version');
     const hits = await nodalDocsTool.execute(
       { question: 'what changed in 0.9.2' },
       {} as Parameters<typeof nodalDocsTool.execute>[1],

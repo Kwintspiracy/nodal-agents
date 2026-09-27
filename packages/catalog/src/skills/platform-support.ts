@@ -20,11 +20,13 @@
 // than no block at all, which is the whole lesson of the surfaces field on the
 // other baseline skills.
 //
-// A rule joined it on 2026-09-27 (#455). Run 6f08b1b8: asked for the
-// changelog of 0.9.2, the root handed the question to a Researcher, which spent
-// 192,074 input tokens to conclude no release notes existed. The question is
-// the agent's own. Its promise that `nodal_docs` answers "what changed in a
-// version" holds only once the release notes are in the index (#452).
+// Its promise that `nodal_docs` answers "what changed in each version" holds
+// only once the release notes are in the index (#452).
+//
+// The RULE that a question about Nodal is the agent's own does not live here:
+// it depends on no tool, so it goes to every surface and runtime from its own
+// skill, `platform-questions` (#455, Codex review pass 3). This skill keeps the
+// tool guidance: how to look, with `nodal_docs`.
 //
 // The companion rule of run 06a949cb ("a delegation never widens a teammate's
 // folders") does NOT live here: it is a rule of delegation, carried by the
@@ -36,7 +38,7 @@ export const platformSupportSkill: SystemSkill = {
   slug: 'platform-support',
   name: 'Know the platform you run in',
   description:
-    'Look the platform up before saying something is unsupported, answer questions about it yourself instead of delegating them, and answer "how do I" with the exact place in the dashboard.',
+    'Look the platform up with nodal_docs before saying something is unsupported, and answer "how do I" with the exact place in the dashboard.',
   requiredBuiltins: ['nodal_docs'],
   kind: 'baseline',
   // `job` only, deliberately. On the chat surface the agent holds one tool,
@@ -47,17 +49,13 @@ export const platformSupportSkill: SystemSkill = {
   surfaces: ['job'],
   content: `## The platform you are running in
 
-You run inside **Nodal-Agents**: the dashboard your owner is looking at, the runner executing this job, the database holding your memory. Its features are documented, and \`nodal_docs\` searches that documentation offline, in one call, with no model and no network.
+You run inside **Nodal-Agents**: the dashboard your owner is looking at, the runner executing this job, the database holding your memory. Its features are documented, and so is what changed in each version: \`nodal_docs\` searches that documentation offline, in one call, with no model and no network.
 
 ### Look before you say no
 
 Before you tell anyone that something is unsupported, impossible, not a feature, or would need to be built, call \`nodal_docs\` with what they asked for, in their own words. You are the support desk for this product: a flat refusal from you is the user's answer, and they have no way to know you never checked.
 
 This is not a suggestion for hard questions only. The failure it exists for looked easy: asked whether a Telegram bot could be set up, an agent answered that Telegram was not supported and offered to build an MCP server instead. Telegram is one of four messaging channels the product ships, with its own tab in the agent's own settings.
-
-### A question about Nodal is yours
-
-A question about Nodal-Agents itself (a feature, a setting, where something is, which version runs, what changed in a version) is answered by you, the agent it was asked of, with \`nodal_docs\`: never delegate it to a teammate. A teammate knows no more about the platform than you do, and handing it the question costs a whole run that can only come back with "I did not find it", which the user then reads as "it does not exist". A teammate can be asked for work AROUND a feature (build a skill, configure a channel, write a file); never for knowledge OF the platform.
 
 ### Answer "how do I" with a place
 

@@ -196,7 +196,7 @@ describe('les blocs composés par Nodal ne donnent aucun ordre inexécutable', (
     expect(trouves, `ordres inexécutables encore composés : ${trouves.join(' | ')}`).toEqual([]);
   });
 
-  it("n'injecte AUCUN contenu catalogue — ni skill, ni baseline", async () => {
+  it("n'injecte que le contenu catalogue déclaré pour cette surface", async () => {
     // Conclusion des trois passes : le texte du catalogue est ecrit pour
     // l'outillage Nodal. L'inliner donnait a l'agent des instructions dont
     // chaque etape manque sa cible ; le lister sans le donner reproduisait le
@@ -207,7 +207,12 @@ describe('les blocs composés par Nodal ne donnent aucun ordre inexécutable', (
       surface: 'cli-runtime',
     } as never);
     expect(prompt, 'contenu de skill injecte').not.toContain('MARQUEUR_CONTENU_SKILL');
-    expect(prompt, 'bloc baseline du catalogue injecte').not.toContain('## How you work (always)');
+    // Depuis la revue Codex de #455 (passe 3) : le catalogue peut DÉCLARER une
+    // règle portable pour `cli-runtime` — elle seule y va, et son texte ne
+    // nomme aucun outil Nodal (la liste ORDRES_NODAL ci-dessus le garde).
+    const block = prompt.slice(prompt.indexOf('## How you work (always)'));
+    expect(block).toContain('### A question about Nodal is yours');
+    expect(prompt).not.toContain('## The platform you are running in');
   });
 
   it('la surface ordinaire garde bien ce contenu', async () => {

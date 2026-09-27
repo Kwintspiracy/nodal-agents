@@ -204,7 +204,15 @@ export function buildBaselineBlock(
   } = {},
 ): string {
   const nodalTools = opts.nodalTools !== false;
-  if (!nodalTools) return '';
+  // A coding-CLI session gets only what the catalog declares for it
+  // (`surfaces: [..., 'cli-runtime']`): rules whose text names no Nodal tool.
+  // Everything else stays off, for the reason above. The catalog decides, not
+  // this function (invariant #3) — the first such rule is "a question about
+  // Nodal is yours" (Codex review of #455, pass 3).
+  if (!nodalTools) {
+    const portable = contentOfKind('baseline', 'cli-runtime', opts.availableTools);
+    return portable.length > 0 ? `## How you work (always)\n\n${portable.join('\n\n')}` : '';
+  }
   const surface = opts.surface ?? 'job';
   const parts = contentOfKind('baseline', surface, opts.availableTools);
   // Le renforcement nomme `skill_view` et `run_skill_script` : deux outils de
