@@ -20,7 +20,7 @@
 //
 // Chaque contrôle dit ce qu'il vérifie, ce qu'il a trouvé, et quoi faire.
 
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,7 @@ import { dirname, join, resolve } from 'node:path';
 import { configHoteDepuis, portsDeLaStack, verdictStackVivante } from './lib/live-stack.mjs';
 import { sonderUnPort } from './lib/sonde.mjs';
 import { poserLeDrapeau, brancherLeRetrait } from './lib/release-check-flag.mjs';
+import { lancerOuRapporter } from './lib/echec-de-commande.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const skipSlow = process.argv.includes('--fast');
@@ -105,21 +106,9 @@ function sh(cmd, opts = {}) {
   return execSync(cmd, { cwd: repoRoot, encoding: 'utf8', stdio: 'pipe', ...opts });
 }
 
-/** Une commande longue, sortie affichée telle quelle ; jette si elle échoue. */
-function shLive(cmd) {
-  const r = spawnSync(cmd, {
-    cwd: repoRoot,
-    shell: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  if (r.status !== 0) {
-    const tail = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n').slice(-12).join('\n    ');
-    throw new Error(`\`${cmd}\` a échoué :\n    ${tail}`);
-  }
-  return r.stdout ?? '';
-}
+/** Une commande longue ; jette si elle échoue, en nommant l'échec (#512). */
+const shLive = (cmd) =>
+  lancerOuRapporter(cmd, { cwd: repoRoot, dossier: join(repoRoot, 'release-check-logs') });
 
 // ─── 1. La version ───────────────────────────────────────────────────────────
 
