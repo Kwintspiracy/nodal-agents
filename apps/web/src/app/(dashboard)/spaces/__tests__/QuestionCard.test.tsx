@@ -1,5 +1,10 @@
-// QuestionCard.test.tsx — la carte de question du fil, et la surface de
-// décision de la page Approvals (P10a).
+// QuestionCard.test.tsx — la carte de question du fil (P10a, #465).
+//
+// #465 — la question se répond ICI, dans le fil ou sur la page du run, et
+// nulle part ailleurs : une ligne par réponse de l'agent, puis la ligne de la
+// plateforme, « Something else, I'll explain », qui ouvre un champ dont le
+// texte EST la réponse. La page Approvals ne répond plus (QuestionActions a
+// disparu) : elle renvoie là où la question vit.
 //
 // Rendu dans jsdom et CLIQUÉ, pas seulement rendu : ce qui compte n'est pas
 // qu'un bouton porte le bon libellé, c'est que le clic passe ce libellé à
@@ -12,7 +17,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import QuestionCard from '../QuestionCard.tsx';
 import ConversationFeedView from '../ConversationFeedView.tsx';
 import type { ConversationFeed } from '@/lib/conversation-feed.ts';
-import QuestionActions from '../../approvals/QuestionActions.tsx';
 
 const resolveApprovalAction = vi.hoisted(() =>
   vi.fn(async () => ({
@@ -30,6 +34,8 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 
 const OPTIONS = ['The repo README', 'A new file in notes'];
+/** La ligne de la PLATEFORME (#465), jamais écrite par l'agent. */
+const SOMETHING_ELSE = "Something else, I'll explain";
 const PROMPT = 'Where should I write the summary?';
 
 let container: HTMLDivElement;
@@ -46,6 +52,15 @@ async function render(node: React.ReactElement): Promise<void> {
 
 function buttonLabels(): string[] {
   return [...container.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '');
+}
+
+/** Écrire dans un champ contrôlé par React : le setter natif, puis l'événement. */
+async function type(field: HTMLTextAreaElement, text: string): Promise<void> {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+  await act(async () => {
+    setter.call(field, text);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 }
 
 async function click(label: string): Promise<void> {
@@ -72,10 +87,12 @@ describe('QuestionCard — dans le fil', () => {
     notes: null,
   };
 
-  it('en attente : un bouton par option, et la carte dit qu’elle attend', async () => {
+  it('en attente : une ligne par option, puis la ligne de la plateforme, et la carte dit qu’elle attend', async () => {
     await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
     expect(container.textContent).toContain(PROMPT);
-    expect(buttonLabels()).toEqual(OPTIONS);
+    expect(buttonLabels()).toEqual([...OPTIONS, SOMETHING_ELSE]);
+    // Une LIGNE par réponse, pas une rangée de boutons : chacune tient la largeur.
+    expect(container.querySelectorAll('[data-testid="question-answer-row"]')).toHaveLength(3);
     // P2bis — forme de la maquette : un cadre encré, une pastille d'attente,
     // et AUCUN bandeau « Question » au-dessus.
     expect(container.textContent).toContain('Waiting');
@@ -97,6 +114,54 @@ describe('QuestionCard — dans le fil', () => {
       answer: OPTIONS[1],
     });
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it('« Something else » ouvre un champ EN PLACE, et c’est son texte qui part, dit comme libre', async () => {
+    await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
+    expect(container.querySelector('textarea')).toBeNull();
+
+    await click(SOMETHING_ELSE);
+    // Cliquer la ligne ne répond RIEN : elle ouvre le champ.
+    expect(resolveApprovalAction).not.toHaveBeenCalled();
+    const field = container.querySelector('textarea');
+    expect(field).not.toBeNull();
+
+    await type(field!, 'Le fichier est dans D:/ventes');
+    await click('Send');
+    expect(resolveApprovalAction).toHaveBeenCalledWith({
+      approvalRequestId: 'apr-1',
+      decision: 'approve',
+      answer: 'Le fichier est dans D:/ventes',
+      free: true,
+    });
+  });
+
+  it('un champ vide n’envoie rien : le bouton est inerte', async () => {
+    await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
+    await click(SOMETHING_ELSE);
+    await type(container.querySelector('textarea')!, '   ');
+    const send = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Send',
+    );
+    expect(send?.disabled).toBe(true);
+  });
+
+  it('répondue dans ses mots : la carte montre le texte donné', async () => {
+    await render(
+      <QuestionCard
+        prompt={PROMPT}
+        options={OPTIONS}
+        question={{
+          approvalRequestId: 'apr-1',
+          status: 'approved',
+          answer: 'Le fichier est dans D:/ventes',
+          notes: null,
+        }}
+      />,
+    );
+    expect(buttonLabels()).toEqual([]);
+    expect(container.textContent).toContain('✓ Le fichier est dans D:/ventes');
+    expect(container.textContent).toContain('Answered');
   });
 
   it('répondue : plus aucun bouton, et l’option retenue est marquée', async () => {
@@ -140,40 +205,10 @@ describe('QuestionCard — dans le fil', () => {
   it("sans ligne chargée : aucun bouton, et l'écran dit où répondre", async () => {
     await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={null} />);
     expect(buttonLabels()).toEqual([]);
-    expect(container.textContent).toContain('Approvals page');
-  });
-});
-
-describe('QuestionActions — sur la page Approvals', () => {
-  it('offre une option par bouton et « Decline », JAMAIS un « toujours »', async () => {
-    await render(<QuestionActions approvalId="apr-2" options={OPTIONS} />);
-    expect(buttonLabels()).toEqual([...OPTIONS, 'Decline']);
-    expect(container.textContent).not.toContain('Always');
-    expect(container.textContent).not.toContain('Toujours');
-  });
-
-  it("le clic sur une option passe son LIBELLÉ à l'action", async () => {
-    await render(<QuestionActions approvalId="apr-2" options={OPTIONS} />);
-    await click(OPTIONS[0]!);
-
-    expect(resolveApprovalAction).toHaveBeenCalledWith({
-      approvalRequestId: 'apr-2',
-      decision: 'approve',
-      answer: OPTIONS[0],
-    });
-  });
-
-  it('« Decline » demande une confirmation avant de refuser, et n’envoie AUCUNE réponse', async () => {
-    await render(<QuestionActions approvalId="apr-2" options={OPTIONS} />);
-
-    await click('Decline');
-    expect(resolveApprovalAction).not.toHaveBeenCalled();
-
-    await click('Confirm decline');
-    expect(resolveApprovalAction).toHaveBeenCalledWith({
-      approvalRequestId: 'apr-2',
-      decision: 'reject',
-    });
+    // La page Approvals ne répond plus (#465) : la page du run qui a posé la
+    // question la porte, toujours.
+    expect(container.textContent).not.toContain('Approvals');
+    expect(container.textContent).toContain('Open the run that asked it to answer.');
   });
 });
 
@@ -234,7 +269,7 @@ describe('ConversationFeedView — le dispatch sur la carte `question`', () => {
 
     await render(<ConversationFeedView feed={feed} />);
     expect(container.textContent).toContain(PROMPT);
-    expect(buttonLabels()).toEqual(OPTIONS);
+    expect(buttonLabels()).toEqual([...OPTIONS, SOMETHING_ELSE]);
     // Pas de repli brut : le nom de l'outil n'apparaît pas comme un titre.
     expect(container.textContent).not.toContain('no card recorded');
 

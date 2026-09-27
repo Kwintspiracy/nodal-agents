@@ -22,7 +22,6 @@ import type { StatusVariant } from '@/components/ui/StatusPill';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import DisclosureButton from '@/components/ui/DisclosureButton';
-import QuestionActions from './QuestionActions.tsx';
 import { useApprovals } from '@/components/ApprovalsProvider';
 import { SHELL_CATEGORY_COPY } from '@/lib/shell-checklist-copy.ts';
 import { openRunHref } from '@/lib/run-page.ts';
@@ -593,7 +592,18 @@ export default function ApprovalRequestCard({
 
           {pending &&
             (question ? (
-              <QuestionActions approvalId={a.id} options={question.options} />
+              // #465 — une question ne se répond PAS ici. Elle se répond là où
+              // elle a été posée : le fil de sa conversation, ou la page du run
+              // quand elle n'en a pas (une automatisation). La carte renvoie.
+              <PrimaryButton
+                variant="ink"
+                size="md"
+                href={
+                  a.conversationId !== null ? `/chat/${a.conversationId}` : openRunHref(a.jobId)
+                }
+              >
+                {a.conversationId !== null ? 'Answer in the conversation' : 'Answer on the run'}
+              </PrimaryButton>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
                 {/* Rejeter est plein, pas contour : c'est la seule action qui

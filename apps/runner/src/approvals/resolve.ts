@@ -23,6 +23,12 @@ export type ApprovalDecision = 'approve' | 'reject';
  */
 const QuestionOptionsSchema = z.array(z.string());
 
+/**
+ * La borne d'une réponse LIBRE (#465) : ce que la personne écrit quand aucune
+ * option ne lui va. Une explication, pas un document.
+ */
+export const FREE_ANSWER_MAX = 2000;
+
 export interface ResolveApprovalInput {
   approvalRequestId: string;
   decision: ApprovalDecision;
@@ -39,6 +45,14 @@ export interface ResolveApprovalInput {
    * qu'à l'usage).
    */
   answer?: string | null;
+  /**
+   * #465 — `answer` est une réponse LIBRE : la personne a choisi « Something
+   * else » sur la carte et l'a écrite elle-même. Elle n'est donc comparée à
+   * aucune option ; elle doit seulement ne pas être vide. Sans ce drapeau, la
+   * réponse doit être l'une des options de la ligne, comme avant : un libellé
+   * de bouton forgé ou périmé reste refusé.
+   */
+  free?: boolean;
   /**
    * Set by an UNTRUSTED caller (session bearer-token via /api/approve —
    * finding #4/#5): the approval must belong to this entity, closing the
@@ -77,7 +91,10 @@ export type ResolveApprovalResult =
         // P10a — les trois refus propres aux questions.
         | 'answer_not_an_option'
         | 'answer_not_expected'
-        | 'question_options_unreadable';
+        | 'question_options_unreadable'
+        // #465 — une réponse libre vide ou trop longue.
+        | 'answer_empty'
+        | 'answer_too_long';
       status?: string | null;
     };
 
@@ -127,7 +144,13 @@ export async function resolveApprovalDecision(
   const rawAnswer = typeof input.answer === 'string' ? input.answer.trim() : null;
   let answerToStore: string | null = null;
 
-  if (kind === 'question' && input.decision === 'approve') {
+  if (kind === 'question' && input.decision === 'approve' && input.free === true) {
+    // #465 — la réponse de la personne, dans ses mots. L'agent la relira comme
+    // le résultat de son outil, avec `option_index: null` (ask-user.ts).
+    if (rawAnswer === null || rawAnswer === '') return { ok: false, code: 'answer_empty' };
+    if (rawAnswer.length > FREE_ANSWER_MAX) return { ok: false, code: 'answer_too_long' };
+    answerToStore = rawAnswer;
+  } else if (kind === 'question' && input.decision === 'approve') {
     const options = QuestionOptionsSchema.safeParse(
       (approval.toolInput as { options?: unknown } | null)?.options,
     );
@@ -141,7 +164,7 @@ export async function resolveApprovalDecision(
       return { ok: false, code: 'answer_not_an_option' };
     }
     answerToStore = rawAnswer;
-  } else if (rawAnswer !== null) {
+  } else if (rawAnswer !== null || input.free === true) {
     // Une réponse sur une approbation ordinaire, ou sur un refus de question :
     // l'appelant s'est trompé de geste. Refusé, jamais silencieusement jeté.
     return { ok: false, code: 'answer_not_expected' };
