@@ -16,10 +16,13 @@ import {
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { CLI_RUNTIME_RUNS_SHELL_COMMANDS, resolveRunWorkspaces } from '@nodal-agents/tools';
 import { resolveBuiltinToolNames } from './builtin-tool-names';
+import { DEFAULT_LIMITS, remainingDelegationHops } from './chain-counters';
 import { modelCanSeeImages } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
+import { loadWorkspaceReach, describeOutsideAgent } from './reach';
+import type { ReachMeans } from './reach';
 
 // ─── buildTeamBlock ───────────────────────────────────────────────────────────
 
@@ -66,6 +69,12 @@ export interface TeamBlockOptions {
    * qui la croit répond « je ne peux pas » à une demande qu'il devait escalader.
    */
   escalation?: boolean;
+  /**
+   * The depth of the job this prompt is for. Reach through the teams is
+   * announced only within the hops it has left (invariant #8, Codex review of
+   * #473 pass 2). Absent = 0, a top-level job.
+   */
+  delegationDepth?: number;
 }
 
 export async function buildTeamBlock(
@@ -73,7 +82,17 @@ export async function buildTeamBlock(
   db: AnyDrizzleDb,
   options: TeamBlockOptions = {},
 ): Promise<string> {
-  const canDelegate = options.delegation !== false;
+  // At the maximum delegation depth the job has NO delegation tool (execute.ts
+  // leaves assign_* and create_task out, by the same rule): the team is listed
+  // as facts, and the block says the job cannot delegate (Codex review of
+  // #473, pass 3 — it still announced "TWO ways to delegate").
+  const atMaxDepth = remainingDelegationHops(options.delegationDepth ?? 0) === 0;
+  const canDelegate = options.delegation !== false && !atMaxDepth;
+  const reachMeans: ReachMeans = canDelegate
+    ? 'delegate'
+    : options.escalation === true
+      ? 'escalate'
+      : 'none';
   // Load children from DB
   const childRows = await db
     .select({
@@ -94,7 +113,14 @@ export async function buildTeamBlock(
       and(eq(agentAssignments.orchestratorId, parentAgentId as string), eq(agents.active, true)),
     );
 
-  if (childRows.length === 0) return '';
+  // No team of its own: no roster and no delegation manual — but the rest of
+  // the workspace is still said (Codex review of #473, P1-a). A root or a
+  // lone agent that shares the workspace with Lead's team would otherwise
+  // answer that Reviewer A "does not exist".
+  if (childRows.length === 0) {
+    // With no team there is no teammate to go through, whatever the surface.
+    return renderOutsideAgents(parentAgentId, db, 'none', false, options.delegationDepth ?? 0);
+  }
 
   // Detect mode: router (has sub-orchestrators) or planner (workers only)
   const parentRow = await db
@@ -328,7 +354,15 @@ export async function buildTeamBlock(
   // Build lines array (all data from DB — no hardcoded names)
   const lines: string[] = [];
   lines.push('## Your team\n');
-  if (!canDelegate && options.escalation === true) {
+  if (atMaxDepth && options.delegation !== false) {
+    lines.push(
+      'These agents are your team. This job is at the maximum delegation depth ' +
+        `(${DEFAULT_LIMITS.maxDelegationDepth}): it has no delegation tool and cannot hand ` +
+        'work to any of them, by either route. Treat the list as knowledge; do the work ' +
+        'yourself with your own tools, or call return_result saying what you could not ' +
+        'complete.\n',
+    );
+  } else if (!canDelegate && options.escalation === true) {
     // Roster as a FACT, plus the one path that gets work done from here.
     lines.push(
       'These agents exist in this workspace and are attached to you. In this chat you have ' +
@@ -457,20 +491,78 @@ export async function buildTeamBlock(
     );
   }
 
+  // The rest of the workspace (#473): agents that exist but are not on this
+  // team. Neither `assign_*` nor `create_task` reaches them; the line says who
+  // holds each one and, where this agent has a way to use it, through which
+  // teammate it is reached — so the model neither denies that an agent exists
+  // nor looks for a side door.
+  const outsideSection = await renderOutsideAgents(
+    parentAgentId,
+    db,
+    reachMeans,
+    true,
+    options.delegationDepth ?? 0,
+  );
+  if (outsideSection !== '') lines.push(outsideSection);
+
+  // What to DO with a match follows the same rule as the tools this job has
+  // (Codex review of #473, pass 4): delegate only where a delegation tool
+  // exists; through the run_task job on chat; otherwise do what your own tools
+  // cover, and name the agent that would have the means in a blocked result.
+  const footerRoute =
+    reachMeans === 'delegate'
+      ? 'A request that needs a shell command goes only to an agent whose Shell commands is ' +
+        'yes. Before saying you cannot do something, scan the list: if any agent’s ' +
+        'skills/connectors match the request, delegate to it.'
+      : reachMeans === 'escalate'
+        ? 'Before saying you cannot do something, scan the list: if any agent’s ' +
+          'skills/connectors match the request, start the work with `run_task` and name that ' +
+          'agent in the instruction; the job it starts is the one that hands it on.'
+        : 'You cannot hand work to these agents from here. Do yourself what your own tools ' +
+          'cover; for the rest, call return_result with a blocked status that names the agent ' +
+          'whose skills, connectors, folders or Shell commands would have the means.';
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
       'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +
-      'appear above — NEVER invent a teammate, a capability, or a path. Each Folders entry is ' +
+      'appear above — NEVER invent a teammate, a capability, or a path, and never say that an ' +
+      'agent listed outside your team does not exist. Each Folders entry is ' +
       'a root: the agent has that folder and everything inside them. When the user names a ' +
       'folder or a path, look for it UNDER the listed folders — a bare name such as a project ' +
       'folder may sit inside any of them, so ask the agent whose folder it would be in rather ' +
       'than guess; a folder belongs to nobody only when its path is under none of them, and ' +
-      'then say so. A request that ' +
-      'needs a shell command goes only to an agent whose Shell commands is yes. Before saying you cannot do ' +
-      'something, scan the list: if any agent’s skills/connectors match the request, delegate ' +
-      'to it. If genuinely none match, say so plainly (and how the user could enable it, if ' +
+      'then say so. ' +
+      footerRoute +
+      ' If genuinely none match, say so plainly (and how the user could enable it, if ' +
       'you know) — do NOT fabricate an agent name or claim a tool you were not given.',
   );
 
   return lines.join('\n');
+}
+
+/**
+ * The agents of the workspace outside `agentId`'s team, one line each, or ''
+ * when there are none. `hasTeam` only changes the heading: an agent with no
+ * team is told it has none, rather than "outside your team".
+ */
+async function renderOutsideAgents(
+  agentId: AgentId,
+  db: AnyDrizzleDb,
+  means: ReachMeans,
+  hasTeam: boolean,
+  delegationDepth: number,
+): Promise<string> {
+  const { outside } = await loadWorkspaceReach(agentId, db, { delegationDepth });
+  if (outside.length === 0) return '';
+  const heading = hasTeam
+    ? '\nAgents of this workspace outside your team. They exist; you cannot hand them work ' +
+      'yourself, by either route:'
+    : '## Other agents of this workspace\n\nThey exist. You have no team of your own, so you ' +
+      'cannot hand them work yourself:';
+  return [
+    heading,
+    ...outside.map((a) => `- **${a.name}** (\`${a.slug}\`): ${describeOutsideAgent(a, means)}`),
+    ...(hasTeam
+      ? []
+      : ['\nNever say that one of these agents does not exist: say whose team it is on.']),
+  ].join('\n');
 }

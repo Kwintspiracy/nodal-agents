@@ -3,6 +3,10 @@
 // Idempotency is enforced by a conditional UPDATE (status='todo') so two
 // concurrent ticks can never claim the same task twice.
 
+import {
+  remainingDelegationHops,
+  delegationDepthExceededMessage,
+} from '@nodal-agents/orchestration';
 import { and, asc, desc, eq, inArray, notInArray, isNotNull } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
@@ -192,6 +196,20 @@ export async function executeReadyTasks(
         continue;
       }
 
+      // Never a child beyond the depth limit (invariant #8), even for a task
+      // already on the board: the creator at the maximum depth delegates to
+      // nobody. The task is blocked and says why (Codex review of #473, pass 2).
+      if (remainingDelegationHops(creatorRow?.delegationDepth ?? 0) === 0) {
+        await db
+          .update(agentTasks)
+          .set({
+            status: 'blocked',
+            result: delegationDepthExceededMessage(),
+            updatedAt: new Date(),
+          })
+          .where(eq(agentTasks.id, task.id));
+        continue;
+      }
       childDepth = (creatorRow?.delegationDepth ?? 0) + 1;
       childConversationId = creatorRow?.conversationId ?? null;
     }

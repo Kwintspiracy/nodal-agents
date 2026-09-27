@@ -578,3 +578,147 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     expect(entryOf(block, subOrch.name)).toContain('Shell commands: no');
   });
 });
+
+// #473 — « Reviewer A n'existe pas dans ce workspace » : faux, il était dans
+// l'équipe de Lead. Le bloc nomme donc les agents de l'espace HORS de
+// l'équipe, qui les tient, et par qui on les atteint.
+describe('buildTeamBlock — les agents de l’espace hors de l’équipe (#473) @cap:organiser-equipe/moteur', () => {
+  it('nomme chaque agent hors équipe, son orchestrateur, et le chemin qui l’atteint', async () => {
+    const { entityId } = await seedContext(db);
+    const t = Date.now();
+    const root = await seedAgent(db, entityId, `test-root-473-${t}`, 'orchestrator');
+    const lead = await seedAgent(db, entityId, `test-lead-473-${t}`, 'orchestrator');
+    const revA = await seedAgent(db, entityId, `test-rev-a-473-${t}`, 'agent');
+    const revC = await seedAgent(db, entityId, `test-rev-c-473-${t}`, 'agent');
+    const loner = await seedAgent(db, entityId, `test-loner-473-${t}`, 'agent');
+    await assignChild(db, root.id, lead.id, entityId);
+    await assignChild(db, root.id, revC.id, entityId);
+    await assignChild(db, lead.id, revA.id, entityId);
+    await assignChild(db, lead.id, revC.id, entityId);
+
+    const block = await buildTeamBlock(root.id as AgentId, db);
+
+    expect(block).toContain('outside your team');
+    const outside = block.slice(block.indexOf('outside your team'));
+    const lineOf = (name: string): string =>
+      outside.split('\n').find((l) => l.includes(`**${name}**`)) ?? '';
+    // Reviewer A existe, chez Lead, et Lead est dans l'équipe : on passe par lui.
+    expect(lineOf(revA.name)).toContain(`on the team of ${lead.name}`);
+    expect(lineOf(revA.name)).toContain(`through **${lead.name}**`);
+    // Un agent d'aucune équipe existe aussi, et personne ne peut lui confier de travail.
+    expect(lineOf(loner.name)).toContain('on no team');
+    // Les membres de l'équipe et l'agent lui-même n'y sont pas.
+    expect(outside).not.toContain(`**${revC.name}**`);
+    expect(outside).not.toContain(`**${root.name}**`);
+  });
+});
+
+// Revue Codex de #473, P1-a : le bloc sortait à vide pour un agent sans
+// enfant, AVANT de nommer le reste de l'espace. Un root ou un agent isolé
+// pouvait donc encore dire « Reviewer A n'existe pas ». P1-b : la clause
+// « passe par Lead » était servie aussi aux surfaces sans outil de délégation.
+describe('buildTeamBlock — le reste de l’espace, dit à tout agent selon ses moyens (#473, revue Codex)', () => {
+  async function seedOrg() {
+    const { entityId } = await seedContext(db);
+    const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const alone = await seedAgent(db, entityId, `test-alone-${t}`, 'orchestrator');
+    const root = await seedAgent(db, entityId, `test-root-${t}`, 'orchestrator');
+    const lead = await seedAgent(db, entityId, `test-lead-${t}`, 'orchestrator');
+    const revA = await seedAgent(db, entityId, `test-reva-${t}`, 'agent');
+    await assignChild(db, root.id, lead.id, entityId);
+    await assignChild(db, lead.id, revA.id, entityId);
+    return { alone, root, lead, revA };
+  }
+  const lineOf = (block: string, name: string): string =>
+    block.split('\n').find((l) => l.includes(`**${name}**`)) ?? '';
+
+  it('names the workspace to an agent with NO team, and never says it can delegate', async () => {
+    const { alone, lead, revA } = await seedOrg();
+    const block = await buildTeamBlock(alone.id as AgentId, db);
+    expect(lineOf(block, revA.name)).toContain(`on the team of ${lead.name}`);
+    expect(block).not.toContain('reach it through');
+    expect(block).not.toContain('## Your team');
+  });
+
+  it('offers the route through a teammate only where the agent has a way to use it', async () => {
+    const { root, lead, revA } = await seedOrg();
+    // Job surface: assign_* exists, so the route is an instruction.
+    const job = await buildTeamBlock(root.id as AgentId, db);
+    expect(lineOf(job, revA.name)).toContain(`reach it through **${lead.name}**`);
+    // CLI session: no delegation tool at all — the fact, never the route.
+    const cli = await buildTeamBlock(root.id as AgentId, db, { delegation: false });
+    expect(lineOf(cli, revA.name)).toContain(`on the team of ${lead.name}`);
+    expect(lineOf(cli, revA.name)).not.toContain('reach it through');
+    // Nor the footer: a CLI session is never told to delegate (#473, pass 4).
+    expect(cli).not.toContain('delegate to it');
+    expect(cli).toContain('names the agent');
+    // Chat: the job started with run_task delegates, so the route is the job's.
+    const chat = await buildTeamBlock(root.id as AgentId, db, {
+      delegation: false,
+      escalation: true,
+    });
+    expect(lineOf(chat, revA.name)).toContain(
+      `the job you start with \`run_task\` can reach it through **${lead.name}**`,
+    );
+  });
+});
+
+// Revue Codex de #473, passe 2 (P1) : la portée annoncée ignorait la
+// profondeur de délégation (invariant #8). Root → Lead → Manager → Reviewer →
+// Worker : le prompt disait d'atteindre Worker par Lead, et le 4e assign_*
+// était refusé. La portée tient compte de la profondeur RESTANTE du job.
+describe('buildTeamBlock — la portée annoncée tient dans la profondeur restante (#473, revue Codex passe 2)', () => {
+  async function seedChain() {
+    const { entityId } = await seedContext(db);
+    const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const root = await seedAgent(db, entityId, `test-root-d-${t}`, 'orchestrator');
+    const lead = await seedAgent(db, entityId, `test-lead-d-${t}`, 'orchestrator');
+    const manager = await seedAgent(db, entityId, `test-mgr-d-${t}`, 'orchestrator');
+    const reviewer = await seedAgent(db, entityId, `test-rev-d-${t}`, 'orchestrator');
+    const worker = await seedAgent(db, entityId, `test-wkr-d-${t}`, 'agent');
+    await assignChild(db, root.id, lead.id, entityId);
+    await assignChild(db, lead.id, manager.id, entityId);
+    await assignChild(db, manager.id, reviewer.id, entityId);
+    await assignChild(db, reviewer.id, worker.id, entityId);
+    return { root, lead, manager, reviewer, worker };
+  }
+  const lineOf = (block: string, name: string): string =>
+    block.split('\n').find((l) => l.includes(`**${name}**`)) ?? '';
+
+  it('at depth 0, reaches up to the depth limit and says the rest is beyond it', async () => {
+    const { root, lead, manager, reviewer, worker } = await seedChain();
+    const block = await buildTeamBlock(root.id as AgentId, db, { delegationDepth: 0 });
+    expect(lineOf(block, manager.name)).toContain(`reach it through **${lead.name}**`);
+    expect(lineOf(block, reviewer.name)).toContain(`reach it through **${lead.name}**`);
+    // 4 hops: beyond maxDelegationDepth (3).
+    expect(lineOf(block, worker.name)).not.toContain('reach it through');
+    expect(lineOf(block, worker.name)).toContain('beyond the delegation depth this job has left');
+  });
+
+  it('a job at depth 2 does not announce an agent two hops away', async () => {
+    const { root, manager } = await seedChain();
+    const block = await buildTeamBlock(root.id as AgentId, db, { delegationDepth: 2 });
+    expect(lineOf(block, manager.name)).not.toContain('reach it through');
+    expect(lineOf(block, manager.name)).toContain('beyond the delegation depth this job has left');
+  });
+});
+
+// Revue Codex de #473, passe 3 : à la profondeur maximale, le bloc annonçait
+// encore « TWO ways to delegate » et un outil assign_* par enfant.
+describe('buildTeamBlock — à la profondeur maximale, aucune délégation annoncée (#473)', () => {
+  it('liste l’équipe comme des faits, sans outil ni mode d’emploi, et dit pourquoi', async () => {
+    const { entityId } = await seedContext(db);
+    const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const reviewer = await seedAgent(db, entityId, `test-rev-max-${t}`, 'orchestrator');
+    const worker = await seedAgent(db, entityId, `test-wkr-max-${t}`, 'agent');
+    await assignChild(db, reviewer.id, worker.id, entityId);
+
+    const block = await buildTeamBlock(reviewer.id as AgentId, db, { delegationDepth: 3 });
+
+    expect(block).toContain(`**${worker.name}**`);
+    expect(block).toContain('maximum delegation depth');
+    expect(block).not.toContain('ways to delegate');
+    expect(block).not.toMatch(/assign_[a-z0-9_]+/);
+    expect(block).not.toContain('`create_task`');
+  });
+});

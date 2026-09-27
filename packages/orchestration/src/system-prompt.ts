@@ -9,6 +9,7 @@
 // reaches the agent. Pre-Brique 32 only the skill name was injected, so the
 // skill content was silently dropped. End-to-end skill behavior never worked.
 
+import { remainingDelegationHops } from './chain-counters';
 import { eq } from '@nodal-agents/db';
 import {
   agentSkillAssignments,
@@ -43,6 +44,12 @@ import type { Agent, AnyDrizzleDb } from './types';
 export interface JobContext {
   /** Origin channel of the job: 'api', 'telegram', 'cron', etc. */
   origin: string;
+  /**
+   * The job's `delegation_depth`. The team block announces no agent the job
+   * could not reach within the depth it has left (invariant #8). Absent = 0,
+   * a top-level job: the dashboard preview of the ROOT's prompt is one.
+   */
+  delegationDepth?: number;
   /**
    * The current task / user-message text. Used to relevance-rank the injected
    * persistent-memory block so the limited budget surfaces facts about THIS
@@ -902,6 +909,7 @@ export async function buildSystemPrompt(
     buildTeamBlock(agent.id, db, {
       delegation: jobContext?.surface !== 'cli-runtime' && jobContext?.surface !== 'chat',
       escalation: jobContext?.surface === 'chat',
+      delegationDepth: jobContext?.delegationDepth ?? 0,
     }),
     // Build skills block — full content of each assigned skill, injected into
     // the system prompt so the agent ACTS on the skill's instructions, not just
@@ -1176,8 +1184,13 @@ export async function buildSystemPrompt(
   const availableTools: readonly string[] =
     jobContext?.availableToolNames ?? (hasNodalTools ? ALWAYS_ON_TOOLS : []);
 
+  // At the maximum delegation depth the job cannot hand work on (the same
+  // rule as its whitelist and team block, remainingDelegationHops): it gets
+  // the worker's discipline, never the orchestrator's "when you delegate"
+  // (Codex review of #473, pass 4).
+  const canHandOn = remainingDelegationHops(jobContext?.delegationDepth ?? 0) > 0;
   const baselineBlock = buildBaselineBlock(agent.model, {
-    role: agent.role,
+    role: agent.role === 'orchestrator' && !canHandOn ? 'agent' : agent.role,
     nodalTools: jobContext?.surface !== 'cli-runtime',
     surface: jobContext?.surface ?? 'job',
     availableTools,

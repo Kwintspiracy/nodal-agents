@@ -13,6 +13,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agentJobs, agentTasks, eq } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
+import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 
 // The child's run itself is not what is proven here: only the row it is born with.
 vi.mock('../../job/execute.ts', () => ({
@@ -67,5 +68,48 @@ describe('task-board children and the conversation @cap:approuver-une-action/mot
       .from(agentJobs)
       .where(eq(agentJobs.parentJobId, first!.id));
     expect(second?.conversationId).toBe(conversationId);
+  });
+});
+
+// Revue Codex de #473, passe 2 (P1) : le tableau des tâches ne crée jamais un
+// enfant au-delà de la profondeur maximale, même pour une tâche déjà posée.
+describe('task-board children and the delegation depth (#473)', () => {
+  it('a task whose creator is at the maximum depth spawns no child and is blocked, saying why', async () => {
+    const [creator] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: 'deep creator',
+        status: 'processing',
+        delegationDepth: DEFAULT_LIMITS.maxDelegationDepth,
+      })
+      .returning({ id: agentJobs.id });
+    const [task] = await db
+      .insert(agentTasks)
+      .values({
+        entityId: seed.entityId,
+        title: 'too deep',
+        orchestratorId: seed.agentId,
+        assignedAgentId: seed.agentId,
+        rootJobId: creator!.id,
+        status: 'todo',
+      })
+      .returning({ id: agentTasks.id });
+    const deps = { db } as unknown as RunnerDeps;
+    await executeReadyTasks(db as unknown as Parameters<typeof executeReadyTasks>[0], deps);
+
+    const children = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, creator!.id));
+    expect(children).toHaveLength(0);
+    const [row] = await db
+      .select({ status: agentTasks.status, result: agentTasks.result })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, task!.id));
+    expect(row?.status).toBe('blocked');
+    expect(row?.result).toContain('delegation_depth_exceeded');
   });
 });

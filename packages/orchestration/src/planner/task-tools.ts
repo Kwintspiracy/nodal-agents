@@ -5,9 +5,11 @@ import { DELEGATION_SCOPE_RULE } from '../router/delegation-scope';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { eq, and, inArray } from '@nodal-agents/db';
-import { agentTasks, agents } from '@nodal-agents/db';
+import { agentTasks, agents, agentJobs } from '@nodal-agents/db';
+import { remainingDelegationHops, delegationDepthExceededMessage } from '../chain-counters';
 import { validateDependencies } from './dependencies';
 import { computeAgentToolNames, findUnavailableToolMentions } from '../router/tool-availability';
+import { loadWorkspaceReach, describeOutsideAgent } from '../reach';
 import type { AgentId, AnyDrizzleDb, ToolDefinition, TaskId, EntityId } from '../types';
 import type { ToolContext } from '@nodal-agents/tools';
 
@@ -16,7 +18,9 @@ import type { ToolContext } from '@nodal-agents/tools';
 const createTaskSchema = z.object({
   title: z.string().max(200).describe('Short title for this task (max 200 chars).'),
   description: z.string().max(2000).optional().describe('Detailed description of what to do.'),
-  assigned_to: z.string().describe('Slug of the agent to assign this task to.'),
+  assigned_to: z
+    .string()
+    .describe('Handle (slug) of an agent of YOUR team, as the roster lists it.'),
   priority: z
     .enum(['low', 'medium', 'high'])
     .optional()
@@ -99,12 +103,34 @@ export function generateTaskTools(
     riskLevel: 'write',
     card: 'text',
     execute: async (input: CreateTaskInput, ctx: ToolContext) => {
+      // The SAME depth guard as assign_* (invariant #8), before any row: a
+      // task created here spawns a child one level deeper, and at the maximum
+      // depth that child would be born beyond the limit (Codex review of #473,
+      // pass 2).
+      const [jobRow] = await db
+        .select({ delegationDepth: agentJobs.delegationDepth })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, ctx.jobId as string))
+        .limit(1);
+      const depth = jobRow?.delegationDepth ?? 0;
+      if (remainingDelegationHops(depth) === 0) {
+        throw new Error(delegationDepthExceededMessage());
+      }
+
       // Resolve assigned_to slug → agent_id, scoped to this job's entity —
       // agents.slug is unique per (entity_id, slug), NOT globally (F-6,
       // audit #2), so an unscoped lookup could match a DIFFERENT entity's
       // agent sharing the same slug, letting an orchestrator hand a task
       // to another entity's agent by guessing/reusing its slug. Not found
       // (wrong entity or typo) → no assignment, same as an unknown slug.
+      //
+      // Then the reach rule (#473, reach.ts): a task goes to an active agent
+      // of THIS orchestrator's team, the same agents `assign_*` reaches. It
+      // used to accept any agent of the workspace, so the two routes reached
+      // different agents. And a slug that resolved to nothing created the
+      // task UNASSIGNED, which the cron tick never picks up (execute-ready.ts
+      // filters on a non-null assignee): the run froze in silence. Both are
+      // now a tool error the model can act on (invariant #4).
       let assignedAgentId: string | null = null;
       if (input.assigned_to) {
         const agentRows = await db
@@ -112,7 +138,23 @@ export function generateTaskTools(
           .from(agents)
           .where(and(eq(agents.slug, input.assigned_to), eq(agents.entityId, ctx.entityId)))
           .limit(1);
-        assignedAgentId = agentRows[0]?.id ?? null;
+        const targetId = agentRows[0]?.id;
+        if (!targetId) {
+          throw new Error(
+            `task_board_error: there is no agent with the handle '${input.assigned_to}' in ` +
+              'this workspace. Use a handle from your team roster.',
+          );
+        }
+        const reach = await loadWorkspaceReach(orchestratorAgentId, db, { delegationDepth: depth });
+        if (!reach.team.has(targetId)) {
+          const out = reach.outside.find((a) => a.id === targetId);
+          throw new Error(
+            `task_board_error: ${out?.name ?? input.assigned_to} exists in this workspace but ` +
+              `is not on your team (${out ? describeOutsideAgent(out, 'delegate') : 'no team'}). ` +
+              'A task can only be assigned to an agent of your team.',
+          );
+        }
+        assignedAgentId = targetId;
       }
 
       // B2 (audit#2 followup) — the brief (title/description) may name a
