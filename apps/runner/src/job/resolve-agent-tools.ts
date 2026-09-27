@@ -51,9 +51,6 @@
 import { eq } from '@nodal-agents/db';
 import {
   agents,
-  entities,
-  agentSkillAssignments,
-  agentSkills,
   agentConnectorAssignments,
   connectors as connectorsTable,
   mcpServers as mcpServersTable,
@@ -62,10 +59,6 @@ import {
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import {
-  createToolRegistry,
-  registerBuiltins,
-  computeToolWhitelist,
-  ALWAYS_ON_TOOLS,
   createTelegramSendMessageTool,
   createSendImageTool,
   createSendFileTool,
@@ -74,14 +67,17 @@ import {
   createSendVoiceTool,
   createListConversationsTool,
 } from '@nodal-agents/tools';
-import { metaToolsForAgent, parseRootGrants } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
   createLazyMcpTools,
   slugToPrefix,
   type McpToolDescriptor,
 } from '@nodal-agents/adapter-mcp';
-import { generateAssignTools, generateTaskTools } from '@nodal-agents/orchestration';
+import {
+  generateAssignTools,
+  generateTaskTools,
+  resolveBuiltinToolNames,
+} from '@nodal-agents/orchestration';
 import type { AgentId } from '@nodal-agents/orchestration';
 import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 
@@ -97,32 +93,15 @@ export async function resolveAgentToolNames(
   db: AnyDrizzleDb,
   agentId: string,
 ): Promise<Set<string>> {
-  const registry = createToolRegistry();
-  registerBuiltins(registry);
-
   const [agentRow] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
   if (!agentRow) throw new Error(`resolveAgentToolNames: agent ${agentId} not found`);
 
-  const isOrchestrator = agentRow.role === 'orchestrator';
-
-  // ── Skill assignments (mirrors execute.ts §3.6) ──────────────────────────
-  const assignedSkillRows = await db
-    .select({
-      skillId: agentSkillAssignments.skillId,
-      requiredBuiltins: agentSkills.requiredBuiltins,
-      scriptsAuthorized: agentSkillAssignments.scriptsAuthorized,
-      filesWritable: agentSkillAssignments.filesWritable,
-    })
-    .from(agentSkillAssignments)
-    .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
-    .where(eq(agentSkillAssignments.agentId, agentRow.id));
-
-  const scriptToolNames: string[] = assignedSkillRows.some((r) => r.scriptsAuthorized === true)
-    ? ['run_skill_script']
-    : [];
-  const fileWriteToolNames: string[] = assignedSkillRows.some((r) => r.filesWritable === true)
-    ? ['skill_file_write']
-    : [];
+  // ── Built-in tools: ONE rule, shared with the team block (#506) ─────────
+  // Skill-required builtins, scripts, skill files, root meta-tools, and the
+  // orchestrator/worker split all live in orchestration's
+  // resolveBuiltinToolNames. What follows adds what only the runner knows
+  // how to name: delivery, connectors, MCP servers, delegation tools.
+  const builtins = await resolveBuiltinToolNames(db, agentRow.id);
 
   // ── Delivery tools (mirrors execute.ts:1112-1153) ───────────────────────
   const deliveryBotToken = agentRow.telegramBotToken;
@@ -142,22 +121,6 @@ export async function resolveAgentToolNames(
       createListConversationsTool().name,
     );
   }
-
-  // ── Root meta-tool gating (mirrors execute.ts:1160-1183) ────────────────
-  const [entityRow] = await db
-    .select({ rootAgentId: entities.rootAgentId, rootGrants: entities.rootGrants })
-    .from(entities)
-    .where(eq(entities.id, agentRow.entityId ?? ''))
-    .limit(1);
-  const isRootAgent = entityRow?.rootAgentId != null && entityRow.rootAgentId === agentRow.id;
-  // `may_change_team` retire les trois outils d'équipe tant qu'il est à false
-  // (issue #137) — le même retrait qu'execute.ts, au même endroit de
-  // l'assemblage, pour que ce miroir reste fidèle.
-  const metaToolNames: string[] = isRootAgent
-    ? metaToolsForAgent(parseRootGrants(entityRow?.rootGrants), {
-        mayChangeTeam: agentRow.mayChangeTeam,
-      }).filter((name) => registry.get(name) !== undefined)
-    : [];
 
   // ── Connector adapter tool names (mirrors execute.ts:1193-1277) ─────────
   // No credential decryption — a placeholder token drives the SAME static
@@ -212,49 +175,13 @@ export async function resolveAgentToolNames(
   const capabilityToolNames = [...connectorToolNames, ...mcpToolNames, ...deliveryToolNames];
 
   // ── Orchestrator vs worker assembly (mirrors execute.ts:1453-1542) ──────
-  if (isOrchestrator) {
+  const names = new Set<string>([...builtins.names, ...capabilityToolNames]);
+  if (builtins.isOrchestrator) {
     const assignTools = await generateAssignTools(agentRow.id as AgentId, db);
     const [createTaskTool, listTasksTool] = generateTaskTools(agentRow.id as AgentId, db);
-    const memoryBuiltins = ALWAYS_ON_TOOLS.filter((n) => n !== 'return_result');
-    return new Set<string>([
-      ...assignTools.map((t) => t.name),
-      createTaskTool.name,
-      listTasksTool.name,
-      ...memoryBuiltins,
-      'return_result',
-      ...metaToolNames,
-      ...scriptToolNames,
-      ...fileWriteToolNames,
-      ...capabilityToolNames,
-    ]);
+    for (const t of assignTools) names.add(t.name);
+    names.add(createTaskTool.name);
+    names.add(listTasksTool.name);
   }
-
-  const skillRequiredBuiltins = Array.from(
-    new Set(assignedSkillRows.flatMap((r) => r.requiredBuiltins ?? [])),
-  ).filter((name) => registry.get(name) !== undefined);
-  // See module doc: mirrors execute.ts's own (pre-existing) use of skillId
-  // (a UUID FK) as a candidate tool name — filtered to registry membership,
-  // in practice never matching, exactly as it does in execute.ts.
-  const configuredToolNames = assignedSkillRows
-    .map((r) => r.skillId)
-    .filter((name): name is string => name !== null && registry.get(name) !== undefined);
-
-  const defs = computeToolWhitelist(
-    {
-      agentId: agentRow.id,
-      configuredTools: configuredToolNames,
-      alwaysOn: [
-        ...ALWAYS_ON_TOOLS,
-        ...skillRequiredBuiltins,
-        ...metaToolNames,
-        ...scriptToolNames,
-        ...fileWriteToolNames,
-      ],
-    },
-    registry,
-  );
-
-  const names = new Set<string>(defs.map((d) => d.name));
-  for (const n of capabilityToolNames) names.add(n);
   return names;
 }

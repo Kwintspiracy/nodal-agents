@@ -1,4 +1,11 @@
-// lib/workspace-list.ts — les dossiers qu'un agent voit RÉELLEMENT.
+// file-ops/workspace-list.ts — les dossiers qu'un agent voit RÉELLEMENT.
+//
+// Vivait dans apps/runner/src/lib jusqu'au 27/09 (#506, revue Codex P1) : le
+// bloc d'équipe de l'orchestrateur listait les dossiers de chaque agent par
+// sa propre requête, sans le partagé, et annonçait « Folders: none » pour un
+// agent qui lisait et écrivait le partagé. La règle est ici, dans un paquet
+// que le runner ET l'orchestration importent, et `resolveRunWorkspaces` est
+// le seul point qui la lit en base.
 //
 // UNE SEULE LISTE, celle que les outils ont (décision Quentin, 26/08).
 //
@@ -29,7 +36,11 @@
 
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { workspacesRoot } from './workspaces-root.ts';
+import { eq } from '@nodal-agents/db';
+import { agentWorkspaces } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { workspacesRoot } from './workspaces-root';
+import { SHARED_WORKSPACE_LABEL } from './workspace';
 
 /** Un dossier tel que les outils le voient. */
 export interface WorkspaceEntry {
@@ -81,4 +92,30 @@ export function resolveWorkspaceList(
     return { workspaces: [...attached], sharedPath };
   }
   return { workspaces: [...attached, { label: sharedLabel, path: sharedPath }], sharedPath };
+}
+
+/**
+ * Les dossiers d'un run de `agentId` : ceux qui lui sont attachés, dans
+ * l'ordre choisi par le propriétaire, PUIS le partagé de l'espace. La liste
+ * que reçoivent les outils, le prompt, une session de CLI — et le bloc
+ * d'équipe qui la décrit à l'orchestrateur. Une seule source.
+ */
+export async function resolveRunWorkspaces(
+  db: AnyDrizzleDb,
+  agentId: string,
+  entityId: string | null,
+): Promise<{
+  workspaces: WorkspaceEntry[];
+  sharedPath: string | null;
+  attached: WorkspaceEntry[];
+}> {
+  const attached = await db
+    .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
+    .from(agentWorkspaces)
+    .where(eq(agentWorkspaces.agentId, agentId))
+    .orderBy(agentWorkspaces.position, agentWorkspaces.label);
+  return {
+    ...resolveWorkspaceList(attached, SHARED_WORKSPACE_LABEL, ensureSharedWorkspace(entityId)),
+    attached,
+  };
 }

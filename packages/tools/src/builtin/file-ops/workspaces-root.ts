@@ -1,4 +1,4 @@
-// lib/workspaces-root.ts — single resolver for the on-disk workspaces root.
+// file-ops/workspaces-root.ts — single resolver for the on-disk workspaces root.
 //
 // Every path under ~/.nodalai/workspaces/ (shared workspace, inbound channel
 // media, community-skill store) MUST go through this helper. The env override

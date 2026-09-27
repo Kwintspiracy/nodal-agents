@@ -13,7 +13,7 @@
 // crédible.
 
 import { describe, it, expect } from 'vitest';
-import { resolveWorkspaceList } from '../../lib/workspace-list.ts';
+import { resolveWorkspaceList } from '../builtin/file-ops/workspace-list';
 
 const DEV = { label: 'Dev', path: 'C:/Users/kwint/Documents/Dev' };
 const VAULT = { label: 'Obsidian Vault', path: 'D:/Obsidian Vaults/Kwint Vault' };

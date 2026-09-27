@@ -18,7 +18,7 @@
 
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { workspacesRoot } from '../../lib/workspaces-root.ts';
+import { workspacesRoot } from '@nodal-agents/tools';
 import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';

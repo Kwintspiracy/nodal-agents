@@ -37,6 +37,9 @@ const RUNTIMES: Readonly<Record<string, RuntimeBinding>> = {
   codex: { provider: 'codex', run: runCodexTurn, toolLabel: 'cli:codex' },
 };
 
+/** Les valeurs de `agents.runtime` que ce runner sert par une CLI. */
+export const SERVED_CLI_RUNTIMES: readonly string[] = Object.keys(RUNTIMES);
+
 /**
  * La CLI d'un runtime, ou `null` quand ce runtime n'est pas servi ici.
  *

@@ -127,6 +127,8 @@ export { checkRootJobComplete, getPendingTasksForRoot } from './planner/completi
 
 // ─── Team block (auto-generated from DB) ─────────────────────────────────────
 export { buildTeamBlock } from './team-block';
+export { resolveBuiltinToolNames } from './builtin-tool-names';
+export type { BuiltinToolNames } from './builtin-tool-names';
 
 // ─── System prompt assembly ───────────────────────────────────────────────────
 export {

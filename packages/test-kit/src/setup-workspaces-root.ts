@@ -1,6 +1,6 @@
-// setup-workspaces-root.ts — vitest setupFile (see ../../vitest.config.ts).
+// setup-workspaces-root.ts — vitest setupFile, for the root config and apps/runner's.
 //
-// Points the workspaces root (lib/workspaces-root.ts) at a per-run temp dir so
+// Points the workspaces root (packages/tools file-ops/workspaces-root.ts) at a per-run temp dir so
 // suites that drive executeJob / channel handlers with synthetic entity ids
 // never mkdir under the developer's real ~/.nodalai/workspaces. Before this
 // guard, every gauntlet run leaked empty `<uuid>/shared` dirs into the real

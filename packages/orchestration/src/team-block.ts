@@ -12,17 +12,30 @@ import {
   connectors as connectorsTable,
   agentMcpServers,
   mcpServers,
-  agentWorkspaces,
 } from '@nodal-agents/db';
-import { asc, inArray } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
-import { CLI_RUNTIME_RUNS_SHELL_COMMANDS } from '@nodal-agents/tools';
+import { CLI_RUNTIME_RUNS_SHELL_COMMANDS, resolveRunWorkspaces } from '@nodal-agents/tools';
+import { resolveBuiltinToolNames } from './builtin-tool-names';
 import { modelCanSeeImages } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
 
 // ─── buildTeamBlock ───────────────────────────────────────────────────────────
+
+/**
+ * Bounds on what one roster entry may add to the prompt (Codex review of #506,
+ * P3): an agent with forty folders or a long command allowlist would otherwise
+ * weigh on every turn of its orchestrator. What is left out is COUNTED in the
+ * text, never dropped in silence.
+ */
+export const MAX_FOLDERS = 6;
+export const MAX_PROGRAMS = 12;
+
+function bounded(items: readonly string[], max: number, sep: string): string {
+  if (items.length <= max) return items.join(sep);
+  return `${items.slice(0, max).join(sep)}${sep}+${items.length - max} more`;
+}
 
 /**
  * Build the `## Your team` section for an orchestrator's system prompt.
@@ -94,7 +107,11 @@ export async function buildTeamBlock(
 
   // Detect mode: router (has sub-orchestrators) or planner (workers only)
   const parentRow = await db
-    .select({ role: agents.role, orchestratorMode: agents.orchestratorMode })
+    .select({
+      role: agents.role,
+      orchestratorMode: agents.orchestratorMode,
+      entityId: agents.entityId,
+    })
     .from(agents)
     .where(eq(agents.id, parentAgentId as string))
     .limit(1);
@@ -124,7 +141,6 @@ export async function buildTeamBlock(
           skillName: agentSkills.name,
           skillSlug: agentSkills.slug,
           skillDescription: agentSkills.description,
-          requiredBuiltins: agentSkills.requiredBuiltins,
         })
         .from(agentSkillAssignments)
         .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
@@ -137,39 +153,37 @@ export async function buildTeamBlock(
   // Names-only here is exactly why a router confabulated a fake image agent
   // instead of delegating to the teammate holding the ComfyUI skill.
   const skillMap = new Map<string, { name: string; desc: string | null }[]>();
-  // The builtins those skills unlock — `run_command` among them. The same
-  // union the runner makes for the job's whitelist (resolve-agent-tools.ts).
-  const builtinMap = new Map<string, Set<string>>();
   for (const batch of skillRows) {
     for (const r of batch) {
       const existing = skillMap.get(r.agentId) ?? [];
       existing.push({ name: r.skillName, desc: r.skillDescription });
       skillMap.set(r.agentId, existing);
-      const builtins = builtinMap.get(r.agentId) ?? new Set<string>();
-      for (const n of r.requiredBuiltins ?? []) builtins.add(n);
-      builtinMap.set(r.agentId, builtins);
     }
   }
 
   // Where each agent works (#506). Run 0b505b0d: the owner named a folder that
   // was inside Montage's own, and the orchestrator — seeing no folder for anyone
-  // — invented `shared/Nodal-Video`. The folders are facts from
-  // `agent_workspaces`; an agent with none is said to have none.
-  const workspaceRows = await db
-    .select({
-      agentId: agentWorkspaces.agentId,
-      label: agentWorkspaces.label,
-      path: agentWorkspaces.path,
-    })
-    .from(agentWorkspaces)
-    .where(inArray(agentWorkspaces.agentId, childIds as string[]))
-    .orderBy(asc(agentWorkspaces.position), asc(agentWorkspaces.label));
+  // — invented `shared/Nodal-Video`. The list is EXACTLY the one that agent's
+  // run receives, the workspace's shared folder included: the same function
+  // builds both (`resolveRunWorkspaces`, tools). A first version read
+  // `agent_workspaces` alone and said "Folders: none" of an agent that reads
+  // and writes the shared folder (Codex review of #506, P1).
   const folderMap = new Map<string, string[]>();
-  for (const r of workspaceRows) {
-    const existing = folderMap.get(r.agentId) ?? [];
-    existing.push(`${r.label} = ${r.path}`);
-    folderMap.set(r.agentId, existing);
-  }
+  // Whether each agent's job whitelist carries `run_command` — the very
+  // computation the runner makes (`resolveBuiltinToolNames`), orchestrators
+  // included: their branch never adds skill-required builtins (Codex, P1).
+  const runCommandMap = new Map<string, boolean>();
+  await Promise.all(
+    childRows.map(async (r) => {
+      const { workspaces } = await resolveRunWorkspaces(db, r.subAgentId, parent.entityId);
+      folderMap.set(
+        r.subAgentId,
+        workspaces.map((w) => `${w.label} = ${w.path}`),
+      );
+      const { names } = await resolveBuiltinToolNames(db, r.subAgentId);
+      runCommandMap.set(r.subAgentId, names.includes('run_command'));
+    }),
+  );
 
   // Load connector tool inventories for all children — the orchestrator needs
   // to know what each sub-agent CAN do (not just its skills) so it routes the
@@ -285,7 +299,7 @@ export async function buildTeamBlock(
   ): string {
     let canRun: boolean;
     if (runtime === 'nodal') {
-      canRun = (builtinMap.get(subAgentId)?.has('run_command') ?? false) && allowlist?.length !== 0;
+      canRun = (runCommandMap.get(subAgentId) ?? false) && allowlist?.length !== 0;
     } else {
       const cli = CLI_RUNTIME_RUNS_SHELL_COMMANDS[runtime];
       // The DB check constraint admits no other value; a newer base that
@@ -297,7 +311,7 @@ export async function buildTeamBlock(
     }
     if (!canRun) return '\n  Shell commands: no';
     if (runtime === 'nodal' && allowlist && allowlist.length > 0) {
-      return `\n  Shell commands: yes, only these programs: ${allowlist.join(', ')}`;
+      return `\n  Shell commands: yes, only these programs: ${bounded(allowlist, MAX_PROGRAMS, ', ')}`;
     }
     return '\n  Shell commands: yes';
   }
@@ -432,7 +446,7 @@ export async function buildTeamBlock(
         : '';
     const connectorsTag = formatConnectorsTag(subAgentId);
     const folders = folderMap.get(subAgentId);
-    const foldersTag = `\n  Folders: ${folders ? folders.join('; ') : 'none'}`;
+    const foldersTag = `\n  Folders: ${folders && folders.length > 0 ? bounded(folders, MAX_FOLDERS, '; ') : 'none'}`;
     const runtimeTag = `\n  Runtime: ${agentRuntime}`;
     const shellTag = formatShellTag(subAgentId, agentRuntime, agentCommandAllowlist);
     const capabilityTags = `${connectorsTag}${foldersTag}${runtimeTag}${shellTag}`;

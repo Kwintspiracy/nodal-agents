@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 // Never discover tests inside build output or leftover git worktrees
@@ -22,6 +23,12 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     exclude: EXCLUDE,
+    // Every package, not only apps/runner: since #506 the team block builds
+    // each agent's run folders, shared one included, and creating that folder
+    // under a synthetic entity id must never touch the real home directory.
+    setupFiles: [
+      fileURLToPath(new URL('./packages/test-kit/src/setup-workspaces-root.ts', import.meta.url)),
+    ],
     // Deux projets (#471). Les fichiers `.pg.test.ts` partagent UN Postgres
     // par run, démarré par le `globalSetup` de leur projet — vitest ne
     // l'appelle que si le run contient au moins un de ces fichiers. Voir

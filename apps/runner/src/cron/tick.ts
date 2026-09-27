@@ -36,7 +36,7 @@ import { runCuratorTick } from './run-curator.ts';
 import { runSkillUpdateCheckTick, type SkillUpdateCheckTickEnv } from './run-skill-update-check.ts';
 import { pruneJobMediaFiles } from './prune-media.ts';
 import { pruneOldJobs } from '@nodal-agents/db';
-import { workspacesRoot } from '../lib/workspaces-root.ts';
+import { workspacesRoot } from '@nodal-agents/tools';
 import { env } from '../env.ts';
 import type { RunnerEnv } from '../env.ts';
 import { executeJob } from '../job/execute.ts';
