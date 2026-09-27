@@ -1,5 +1,7 @@
 // system-prompt.test.ts — buildSystemPrompt tests
 
+import { nodalDocsTool } from '@nodal-agents/tools';
+import { systemSkills } from '@nodal-agents/catalog';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import {
@@ -766,7 +768,7 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
   // 192 074 jetons pour conclure qu'il n'existait pas. Une question SUR Nodal
   // est celle de l'agent qui la reçoit. Et run 06a949cb : une délégation qui
   // disait « et sur disque » a envoyé l'agent Excel hors de ses dossiers.
-  it('says a question about Nodal is never delegated, and a delegation never widens a folder scope (#455)', async () => {
+  it('says a question about Nodal is never delegated (#455)', async () => {
     const { entityId, agentRow } = await seedPlatformAgent('SP Platform Root');
     const agent = makeAgent(agentRow.id, entityId, agentRow.personality);
 
@@ -776,7 +778,10 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
     });
     expect(withIt).toContain('### A question about Nodal is yours');
     expect(withIt).toContain('never delegate it');
-    expect(withIt).toContain('### A delegation never widens where a teammate works');
+    // The scope rule is a rule of DELEGATION: it lives in the delegation tools'
+    // descriptions, which every delegating agent sees, not in a job-only skill
+    // (Codex review of #455, P2). One home.
+    expect(withIt).not.toContain('### A delegation never widens where a teammate works');
 
     // Sans l'outil, ni la règle ni une promesse qu'il ne pourrait tenir.
     const without = await buildSystemPrompt(agent, db, {
@@ -784,6 +789,19 @@ describe('buildSystemPrompt — the platform the agent runs in @cap:consulter-l-
       availableToolNames: ['query_memory'],
     });
     expect(without).not.toContain('### A question about Nodal is yours');
+  });
+
+  // Codex review of #455, P1: the skill promises that `nodal_docs` answers
+  // "what changed in a version". The promise is held against the SHIPPED
+  // index (it depends on #452, which puts the release notes in it).
+  it('keeps its promise: nodal_docs answers a version question from the shipped index (#455)', async () => {
+    const skill = systemSkills.find((s) => s.slug === 'platform-support');
+    expect(skill?.content).toContain('what changed in a version');
+    const hits = await nodalDocsTool.execute(
+      { question: 'what changed in 0.9.2' },
+      {} as Parameters<typeof nodalDocsTool.execute>[1],
+    );
+    expect(hits[0]?.title.startsWith('v0.9.2 ')).toBe(true);
   });
 
   it('follows the whitelist it is given, not a constant', async () => {

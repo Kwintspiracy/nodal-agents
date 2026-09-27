@@ -12,6 +12,7 @@ import {
   agentSkillAssignments,
 } from '@nodal-agents/db';
 import { generateTaskTools } from '../../planner/task-tools';
+import { DELEGATION_SCOPE_RULE } from '../../router/delegation-scope';
 import type { AgentId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import type { ToolContext } from '@nodal-agents/tools';
@@ -91,6 +92,8 @@ describe('generateTaskTools', () => {
     // registre de `tools`, donc hors de `cards.test.ts`. Leur carte se garde ici.
     expect(tools[0]?.card).toBe('text');
     expect(tools[1]?.card).toBe('text');
+    // Codex review of #455, P2: the same scope rule as assign_*.
+    expect(tools[0]?.description).toContain(DELEGATION_SCOPE_RULE);
   });
 
   describe('create_task', () => {

@@ -20,11 +20,15 @@
 // than no block at all, which is the whole lesson of the surfaces field on the
 // other baseline skills.
 //
-// Two rules joined it on 2026-09-27 (#455). Run 6f08b1b8: asked for the
+// A rule joined it on 2026-09-27 (#455). Run 6f08b1b8: asked for the
 // changelog of 0.9.2, the root handed the question to a Researcher, which spent
-// 192,074 input tokens to conclude no release notes existed. Run 06a949cb: a
-// delegation that said "and on the disk" sent a teammate outside its folders.
-// Both are agent behaviour, so they live here (invariant #3), not in the runner.
+// 192,074 input tokens to conclude no release notes existed. The question is
+// the agent's own. Its promise that `nodal_docs` answers "what changed in a
+// version" holds only once the release notes are in the index (#452).
+//
+// The companion rule of run 06a949cb ("a delegation never widens a teammate's
+// folders") does NOT live here: it is a rule of delegation, carried by the
+// delegation tools themselves (orchestration/router/delegation-scope.ts).
 
 import type { SystemSkill } from '../types';
 
@@ -61,9 +65,5 @@ When someone asks how to do something on this platform, the answer is a PLACE an
 
 ### What the documentation does not cover
 
-If \`nodal_docs\` comes back with nothing, say so plainly: you looked and the documentation does not answer it. That is a real answer, and it is different from "this does not exist". Never fill the gap with what seems likely about a product whose manual you just read and did not find it in.
-
-### A delegation never widens where a teammate works
-
-When you hand work to a teammate, never tell it to look or act beyond the folders it has for this run ("and on the disk", "search the whole machine"). If what it needs is not in them, it says so and asks the user; it does not search the disk. Name the folder when you know it, and only if that teammate has it.`,
+If \`nodal_docs\` comes back with nothing, say so plainly: you looked and the documentation does not answer it. That is a real answer, and it is different from "this does not exist". Never fill the gap with what seems likely about a product whose manual you just read and did not find it in.`,
 };
