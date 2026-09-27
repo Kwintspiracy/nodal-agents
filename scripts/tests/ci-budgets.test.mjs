@@ -145,3 +145,41 @@ describe('les workflows du dépôt', () => {
     expect(constats).toEqual([]);
   });
 });
+
+describe('ce que le lecteur ne lit pas est un constat, jamais un vert (revue Codex de la PR #526)', () => {
+  it('un id de job entre guillemets est lu et contrôlé comme les autres', () => {
+    const c = verifierWorkflow(
+      'x.yml',
+      `${tete}  "build":
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: pnpm test
+`,
+    );
+    expect(c).toEqual([
+      'x.yml › build (line 5): the job has no numeric timeout-minutes',
+      'x.yml › build › "Test" (line 8): a run step without timeout-minutes',
+    ]);
+  });
+
+  it('une ligne de niveau job illisible est un constat', () => {
+    const c = verifierWorkflow('x.yml', `${tete}  build: { runs-on: ubuntu-latest }\n`);
+    expect(c).toEqual([
+      'x.yml (line 5): unreadable line at job level: build: { runs-on: ubuntu-latest }',
+      'x.yml: a jobs: section with no job the checker could read',
+    ]);
+  });
+
+  it('une étape qui passe par un opérateur de shell n’est jamais triviale', () => {
+    for (const run of [
+      'true || pnpm test',
+      'echo "$(pnpm test)"',
+      'echo ok | curl -d @- https://x',
+      'echo `pnpm test`',
+      'echo x > f',
+    ]) {
+      expect(estTriviale(run), run).toBe(false);
+    }
+  });
+});

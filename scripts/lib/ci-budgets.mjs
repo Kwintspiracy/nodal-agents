@@ -48,6 +48,9 @@ function minutes(v) {
 export function lireWorkflow(texte) {
   const ls = lignes(texte);
   const jobs = [];
+  /** Ce que le lecteur n'a pas su lire : un constat, jamais un vert. */
+  const illisibles = [];
+  let vuJobs = false;
   let dansJobs = false;
   let job = null;
   let dansSteps = false;
@@ -64,12 +67,21 @@ export function lireWorkflow(texte) {
     }
     if (l.indent === 0) {
       dansJobs = /^jobs:\s*$/.test(l.brut);
+      if (dansJobs) vuJobs = true;
       job = null;
       continue;
     }
     if (!dansJobs) continue;
-    if (l.indent === 2 && /^  [A-Za-z0-9_-]+:\s*$/.test(l.brut)) {
-      job = { nom: l.brut.trim().slice(0, -1), ligne: l.n, timeout: undefined, etapes: [] };
+    if (l.indent === 2) {
+      // Un id de job, avec ou sans guillemets (revue Codex de la PR #526 : un
+      // job `"build":` n'était pas lu, et ses étapes passaient sans contrôle).
+      const m = l.brut.match(/^  (["']?)([^"'\s:]+)\1:\s*$/);
+      if (m === null) {
+        illisibles.push({ ligne: l.n, texte: l.brut.trim() });
+        job = null;
+        continue;
+      }
+      job = { nom: m[2], ligne: l.n, timeout: undefined, etapes: [] };
       jobs.push(job);
       dansSteps = false;
       etape = null;
@@ -93,7 +105,7 @@ export function lireWorkflow(texte) {
     if (etape !== null && l.indent === 8) lireCle(l, etape, (b) => (blocRun = b));
   }
   for (const j of jobs) for (const e of j.etapes) e.nom ??= e.run?.split('\n')[0] ?? e.genre ?? '?';
-  return jobs;
+  return Object.assign(jobs, { illisibles, vuJobs });
 }
 
 function lireCle(l, etape, ouvrirBloc) {
@@ -117,6 +129,11 @@ function lireCle(l, etape, ouvrirBloc) {
 
 /** Une étape `run:` qui ne fait que des gestes triviaux, sans borne à poser. */
 export function estTriviale(run) {
+  // Un opérateur qui lance autre chose (`||`, un tube, `$(…)`, un accent grave,
+  // une redirection) rend l'étape non triviale, quel que soit son premier mot :
+  // `true || pnpm test`, `echo "$(pnpm test)"`, `echo x | curl …` passaient
+  // pour triviales (revue Codex de la PR #526).
+  if (/\|\||\||\$\(|`|[<>]/.test(run)) return false;
   const cmds = run
     .split(/\n|&&|;/)
     .map((c) => c.trim())
@@ -127,7 +144,14 @@ export function estTriviale(run) {
 /** Les constats d'un workflow ; un tableau vide veut dire : tenu. */
 export function verifierWorkflow(fichier, texte, marge = MARGE_USES_MIN) {
   const constats = [];
-  for (const job of lireWorkflow(texte)) {
+  const jobs = lireWorkflow(texte);
+  for (const i of jobs.illisibles) {
+    constats.push(`${fichier} (line ${i.ligne}): unreadable line at job level: ${i.texte}`);
+  }
+  if (jobs.vuJobs && jobs.length === 0) {
+    constats.push(`${fichier}: a jobs: section with no job the checker could read`);
+  }
+  for (const job of jobs) {
     const ou = `${fichier} › ${job.nom}`;
     if (job.timeout === undefined || Number.isNaN(job.timeout)) {
       constats.push(`${ou} (line ${job.ligne}): the job has no numeric timeout-minutes`);
