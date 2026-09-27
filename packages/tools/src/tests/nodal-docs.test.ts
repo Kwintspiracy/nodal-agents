@@ -304,16 +304,19 @@ describe('nodal_docs answers "what changed in version X" @cap:consulter-l-aide/m
     expect(hits.length).toBeLessThanOrEqual(NODAL_DOCS_MAX_SECTIONS);
     expect(hits.some((h) => /^v0\.8\.\d+ /.test(h.title))).toBe(true);
     expect(hits.some((h) => /^v0\.9\.\d+ /.test(h.title))).toBe(true);
-    // Where scores alone push a named series out of the three results — the
-    // sharing is what keeps it (measured with the sharing disabled: "0.8 vs
-    // 0.9.1" gave three 0.8.x; the three-series question lost 0.9.0).
-    const shared = await ask('changelog 0.8 vs 0.9.1');
-    expect(shared.some((h) => h.title.startsWith('v0.9.1 '))).toBe(true);
-    expect(shared.some((h) => /^v0\.8\.\d+ /.test(h.title))).toBe(true);
+    // Lists of versions link their numbers ("0.8 vs 0.9.1", "0.8.11, 0.9.0").
+    const list = await ask('changelog 0.8 vs 0.9.1');
+    expect(list.some((h) => h.title.startsWith('v0.9.1 '))).toBe(true);
+    expect(list.some((h) => /^v0\.8\.\d+ /.test(h.title))).toBe(true);
     const three = await ask('release notes of 0.8.11, 0.9.0 and 0.6');
     for (const v of [/^v0\.8\.11 /, /^v0\.9\.0 /, /^v0\.6\.\d+ /]) {
       expect(three.some((h) => v.test(h.title))).toBe(true);
     }
+    // Where scores alone fill the three results with ONE series, the shared
+    // limit keeps the other (measured with the sharing disabled: three 0.9.x).
+    const shared = await ask('changelog 0.8 vs 0.9');
+    expect(shared.some((h) => /^v0\.8\.\d+ /.test(h.title))).toBe(true);
+    expect(shared.some((h) => /^v0\.9\.\d+ /.test(h.title))).toBe(true);
     // One series present, one absent: the section AND the notice.
     const mixed = await ask('what changed between version 0.9.2 and 0.9.99?');
     expect(mixed.some((h) => h.title.startsWith('v0.9.2 '))).toBe(true);
