@@ -11,7 +11,7 @@
 // et le texte que le parent recevrait.
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
-import { mkdtemp, rm, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -431,6 +431,66 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
       ]),
     );
     expect(await statesOf(id)).toHaveLength(0);
+  });
+});
+
+// Le cas qui a décidé du typage : la sortie par défaut de Remotion est `out/`
+// DANS le projet (un `package.json` à sa racine). Typé comme un fichier ÉCRIT,
+// le livrable serait rangé sous la ligne DU PROJET, dont la preuve n'ouvre
+// jamais le fichier — le trou de #509, un dossier plus bas. Un livrable
+// déclaré est un FICHIER, prouvé comme tel, où qu'il tombe.
+describe('un livrable déclaré DANS un projet de code reste un fichier @cap:verifier-un-livrable/moteur', () => {
+  const projet = (): string => join(ws, 'remotion');
+  beforeAll(async () => {
+    await mkdir(join(projet(), 'out'), { recursive: true });
+    await writeFile(join(projet(), 'package.json'), '{"name":"film","private":true}');
+  });
+
+  it('absent : le run ÉCHOUE et la ligne nomme le fichier du projet et « not found »', async () => {
+    const id = await createJob('rends le film dans le projet');
+    const { client } = makeMockLlmClient([
+      rendu('rr-1', 'Film rendu dans out/.', ['remotion/out/film-absent.mp4']),
+      rendu('rr-2', 'Film rendu, relancé.', ['remotion/out/film-absent.mp4']),
+    ]);
+
+    await executeJob(id as JobId, makeDeps(client), testEnv);
+
+    const abs = normalizePath(join(projet(), 'out', 'film-absent.mp4'));
+    const row = await jobRow(id);
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('deliverable_not_verified');
+    expect(row.result).toContain('Film rendu, relancé.');
+    expect(row.result).toContain(`${abs}: exists (${abs} not found)`);
+    const states = await statesOf(id);
+    expect(states.map((s) => [s.deliverableType, s.canonicalKey, s.declared])).toEqual([
+      ['document', keyOf(abs), true],
+    ]);
+  });
+
+  it('présent, en-tête MP4 valide : completed, et la preuve a lu LE FICHIER', async () => {
+    await writeFile(join(projet(), 'out', 'film.mp4'), mp4Bytes());
+    const id = await createJob('rends le film valide dans le projet');
+    const { client } = makeMockLlmClient([
+      rendu('rr-1', 'Film rendu dans out/.', ['remotion/out/film.mp4']),
+    ]);
+
+    const out = await executeJob(id as JobId, makeDeps(client), testEnv);
+
+    expect(out.status).toBe('completed');
+    const abs = normalizePath(join(projet(), 'out', 'film.mp4'));
+    const row = await jobRow(id);
+    expect(row.status).toBe('completed');
+    expect(row.error).toBeNull();
+    const states = await statesOf(id);
+    expect(states.map((s) => [s.deliverableType, s.canonicalKey, s.decisionStatus])).toEqual([
+      ['document', keyOf(abs), 'green'],
+    ]);
+    const runs = await runsOf(id);
+    expect(runs.map((r) => [r.canonicalKey, r.command, r.verdict])).toEqual([
+      [keyOf(abs), 'exists', 'green'],
+      [keyOf(abs), 'not-empty', 'green'],
+      [keyOf(abs), 'well-formed:mp4', 'green'],
+    ]);
   });
 });
 
