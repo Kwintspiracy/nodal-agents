@@ -2,7 +2,7 @@
 
 import { randomBytes } from 'crypto';
 import type { Config } from './config.ts';
-import { getInstalledVersion, readInstalledVersion } from './version.ts';
+import { readInstalledVersion } from './version.ts';
 import { LEGACY_PG_PASSWORD, buildPgUrl } from './postgres.ts';
 
 /**
@@ -115,6 +115,7 @@ export function resolveAuthMode(config: Config): 'local-trust' | 'local-auth' {
  * Web expects DATABASE_URL, RUNNER_URL, AUTH_MODE, AUTH_SECRET, NEXT_PUBLIC_APP_URL.
  */
 export function buildEnvForWeb(config: Config, databaseUrl: string): Record<string, string> {
+  const installedVersion = readInstalledVersion();
   const authMode = resolveAuthMode(config);
   const bind = config.bind === 'loopback' ? '127.0.0.1' : '0.0.0.0';
 
@@ -128,8 +129,10 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     NEXT_PUBLIC_AUTH_MODE: authMode,
     NEXT_PUBLIC_APP_URL: `http://localhost:${config.ports.web}`,
     // The running CLI version — the web's update badge (sidebar) compares this
-    // against the npm `latest` to tell the user when to run `nodal-agents update`.
-    NODAL_VERSION: getInstalledVersion(),
+    // against the npm `latest` to tell the user when to run `nodal-agents update`,
+    // and the ROOT prompt screen states it (#454). Omitted exactly as for the
+    // runner when it cannot be read: both processes get the same value.
+    ...(installedVersion ? { NODAL_VERSION: installedVersion } : {}),
     PORT: String(config.ports.web),
     // BIND mirrors the runner's binding so /settings → Network can render the
     // "restart required" banner when the configured value drifts from runtime.

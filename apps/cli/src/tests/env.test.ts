@@ -35,6 +35,9 @@ describe('buildEnvForRunner', () => {
     ) as { version: string };
     const env = buildEnvForRunner(BASE_CONFIG, DB_URL);
     expect(env['NODAL_VERSION']).toBe(pkg.version);
+    // The web gets the SAME value: its ROOT prompt screen states it too
+    // (#454, Codex review pass 2).
+    expect(buildEnvForWeb(BASE_CONFIG, DB_URL)['NODAL_VERSION']).toBe(pkg.version);
   });
 
   it('sets AUTH_MODE=local-trust for loopback', () => {

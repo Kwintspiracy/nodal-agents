@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { getInstallNotes, entities, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { resolveTimezone, formatLocalTime } from '@nodal-agents/shared';
+import { resolveTimezone, formatLocalTime, runningNodalVersion } from '@nodal-agents/shared';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { listCodeProjectsForContext } from './code-projects.ts';
 
@@ -69,7 +69,7 @@ export async function getDeploymentContext(
 
   // Passed by the launcher from the installed package (#454). Absent on a
   // runner started by hand: the Runtime block then says it is unknown.
-  const version = process.env['NODAL_VERSION']?.trim() || undefined;
+  const version = runningNodalVersion();
 
   const lanAddresses = networkMode === 'lan' ? getLanAddresses() : undefined;
 
