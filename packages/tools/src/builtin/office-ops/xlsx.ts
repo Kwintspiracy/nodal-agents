@@ -191,16 +191,14 @@ function toArgb(hex: string): string {
  * "[object Object]". A shared formula's value carries no `formula` field and
  * cannot be translated without its cell — it reads as its result, or empty.
  */
-function stringifyCellValue(val: ExcelJS.CellValue): string {
-  if (typeof val === 'object' && val !== null && !(val instanceof Date) && 'formula' in val) {
-    const f = val as ExcelJS.CellFormulaValue;
-    const result: unknown = f.result;
-    if (result === undefined || result === null) return `=${f.formula}`;
-    const s = previewScalar(result);
-    return s === null ? '' : String(s);
-  }
-  const s = previewScalar(val);
-  return s === null ? '' : String(s);
+function cellText(c: ExcelJS.Cell): string {
+  // La MÊME lecture que xlsx_read (`previewCellValue`) : par la cellule, pas par
+  // `cell.value`. Une formule PARTAGÉE n'a pas de champ `formula` dans sa valeur,
+  // et xlsx_find_cells rendait alors le texte de la formule au lieu de son
+  // résultat en cache (#463) ; deux lecteurs d'une même cellule finissaient
+  // par dire deux choses.
+  const v = previewCellValue(c);
+  return v === null ? '' : String(v);
 }
 
 // ─── P12: the preview a written workbook carries on its card ──────────────────
@@ -1488,7 +1486,7 @@ export const xlsxSetColumnWidthsTool: ToolDefinition<
       for (const colNum of targetCols) {
         let maxLen = 0;
         ws.eachRow({ includeEmpty: false }, (row) => {
-          const text = stringifyCellValue(row.getCell(colNum).value);
+          const text = cellText(row.getCell(colNum));
           if (text.length > maxLen) maxLen = text.length;
         });
         const width = Math.min(
@@ -1611,7 +1609,11 @@ const XlsxFindCellsInput = z.object({
 });
 
 type XlsxFindCellsOutput =
-  | { ok: true; matches: Array<{ sheet: string; cell: string; value: string }>; truncated: boolean }
+  | {
+      ok: true;
+      matches: Array<{ sheet: string; cell: string; value: string; formula?: string }>;
+      truncated: boolean;
+    }
   | { ok: false; reason: string };
 
 export const xlsxFindCellsTool: ToolDefinition<typeof XlsxFindCellsInput, XlsxFindCellsOutput> = {
@@ -1620,7 +1622,9 @@ export const xlsxFindCellsTool: ToolDefinition<typeof XlsxFindCellsInput, XlsxFi
   summary: 'Find the cells whose shown value matches a text or a pattern, and get their addresses.',
   description:
     'Search a workbook for cells whose displayed value matches a string or regular expression. ' +
-    'Formula cells are matched against their cached result. Returns cell addresses and values — ' +
+    'Cells are matched against what xlsx_read shows: a formula by its cached result, or by its ' +
+    'formula text only when the workbook holds no computed result for it (a formula just written ' +
+    'by a tool). A formula cell also returns its `formula`. Returns cell addresses and values — ' +
     'use this to locate the cells to change before calling xlsx_set_cell/xlsx_format_range, ' +
     'instead of guessing coordinates from xlsx_read.',
   inputSchema: XlsxFindCellsInput,
@@ -1652,17 +1656,24 @@ export const xlsxFindCellsTool: ToolDefinition<typeof XlsxFindCellsInput, XlsxFi
     }
     const needle = input.case_sensitive ? input.query : input.query.toLowerCase();
 
-    const allMatches: Array<{ sheet: string; cell: string; value: string }> = [];
+    const allMatches: Array<{ sheet: string; cell: string; value: string; formula?: string }> = [];
     const searchSheet = (ws: ExcelJS.Worksheet): void => {
       ws.eachRow({ includeEmpty: false }, (row) => {
         row.eachCell({ includeEmpty: false }, (cell) => {
-          const text = stringifyCellValue(cell.value);
+          const text = cellText(cell);
           if (text === '') return;
           const isMatch = re
             ? re.test(text)
             : (input.case_sensitive ? text : text.toLowerCase()).includes(needle);
           if (isMatch) {
-            allMatches.push({ sheet: ws.name, cell: cell.address, value: text });
+            // La formule À CÔTÉ de la valeur : l'agent voit le nombre et sa
+            // fabrication, sans chercher dans le texte de la formule.
+            allMatches.push({
+              sheet: ws.name,
+              cell: cell.address,
+              value: text,
+              ...(cell.type === ExcelJS.ValueType.Formula ? { formula: `=${cell.formula}` } : {}),
+            });
           }
         });
       });
