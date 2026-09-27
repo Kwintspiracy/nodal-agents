@@ -297,10 +297,17 @@ describe('document — texte ou binaire, une règle pour tous les fichiers', () 
     );
 
     it(
-      'un octet invalide au bout : un JSON est rouge, un journal en 8 bits est dit, pas rouge',
+      'un octet invalide au bout : un JSON est rouge',
       async () => {
         const casse = await prove(write('casse.json', finInvalide));
         expect(casse.records.at(-1)).toMatchObject({ command: 'utf8', verdict: 'red' });
+      },
+      GROS_DELAI,
+    );
+
+    it(
+      'un octet invalide au bout : un journal en 8 bits est dit, pas rouge',
+      async () => {
         const huitBits = await prove(write('huit-bits.log', finInvalide));
         expect(huitBits.records.at(-1)).toMatchObject({ command: 'text', verdict: 'green' });
       },
