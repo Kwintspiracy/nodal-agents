@@ -263,3 +263,4 @@ export type { RoutineLintResult } from './builtin/meta-ops/routine-lint';
 // exported so the two sides can never drift apart.
 export { SHARED_WORKSPACE_LABEL } from './builtin/file-ops/workspace';
 export { toolsNamedButAbsent } from './personality-tools';
+export { cheminConstate } from './verification/record-constat';

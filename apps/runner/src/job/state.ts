@@ -304,11 +304,17 @@ function lastAssistantText(messages: unknown): string {
  * Le dernier texte que l'agent a écrit dans CE tour — la même lecture que le
  * remplissage de `completeJob`, exportée pour la porte qui échoue un run sur un
  * livrable déclaré non vérifié (#509) : elle rend ce texte, suivi de sa ligne.
+ *
+ * SANS REPLI (revue Codex de #491, passe 3). Quand la frontière du tour est
+ * introuvable, la transcription entière n'est PAS relue : ce serait rendre un
+ * message d'historique rejoué comme le livrable de CE run. Pas de frontière,
+ * ou un tour fait d'appels d'outil seulement : `''`, et l'appelant le dit.
  */
 export function lastTextOfRun(messages: unknown, task: string): string {
-  return lastAssistantText(
-    Array.isArray(messages) ? currentTurnMessages(messages, task) : messages,
-  );
+  if (!Array.isArray(messages)) return '';
+  const debut = findTaskBoundary(messages, task);
+  if (debut === -1) return '';
+  return lastAssistantText(messages.slice(debut));
 }
 
 /**

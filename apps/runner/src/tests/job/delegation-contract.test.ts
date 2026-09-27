@@ -523,10 +523,13 @@ describe('parent receives a typed delegation record @cap:organiser-equipe/moteur
   // dans un CHAMP, pas entre les lignes d'un résumé.
   // `sub_delegations` y est entrée avec #116 : l'issue du sous-arbre, que le
   // grand-parent ne recevait qu'en prose.
+  // `files_written` y entre avec #491 : les fichiers qu'un enfant ARRÊTÉ a
+  // déjà écrits, sans quoi le parent refaisait le travail.
   const CLES_DU_CONTRAT = [
     'delivery_blocked',
     'error',
     'exit_reason',
+    'files_written',
     'hint',
     'review_verdict',
     'status',

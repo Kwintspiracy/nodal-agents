@@ -9,9 +9,19 @@
 // pas touché.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agentTasks } from '@nodal-agents/db';
+import {
+  eq,
+  agentJobs,
+  agentTasks,
+  constatedWrites,
+  jobDeliverableVerificationState,
+} from '@nodal-agents/db';
 import {
   reclaimJobsOfDeadRunners,
   runnerRestartedStopLine,
@@ -265,6 +275,135 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
 
     expect(result.reclaimed).toBeGreaterThanOrEqual(1);
     expect((await jobRow(jobId)).status).toBe('failed');
+  });
+
+  // #491 — run e2e794db : Motage a écrit sa voix off, le runner a redémarré
+  // pendant sa réponse, et Alfred n'a reçu qu'un échec nu. Il a refait le
+  // travail. L'enfant repris rend désormais ce qu'il a produit : son dernier
+  // texte ET le fichier écrit.
+  it('le parent reçoit le dernier texte de l’enfant ET le fichier qu’il a écrit (#491)', async () => {
+    const { parentId, childId } = await seedDelegationCoupee('assign-r491');
+    await db
+      .update(agentJobs)
+      .set({
+        task: 'fais la voix off',
+        messages: [
+          { role: 'user', content: 'fais la voix off' },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'La voix off est générée, je vérifie le fichier.' }],
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, childId));
+    // Un VRAI fichier : le parent reçoit l'état du disque, pas l'historique.
+    const dossier = await mkdtemp(join(tmpdir(), 'nodal-reclaim-491-'));
+    const wav = join(dossier, 'voiceover-agentic-harness.wav')
+      .split(String.fromCharCode(92))
+      .join('/');
+    await writeFile(wav, Buffer.alloc(979));
+    // Le constat de l'écriture de l'enfant, avec l'empreinte de ses octets (#505).
+    await db.insert(constatedWrites).values({
+      jobId: childId,
+      turn: 1,
+      path: (await realpath(wav)).split(String.fromCharCode(92)).join('/'),
+      changeKind: 'added',
+      constatedBy: 'disk',
+      contentSha256: createHash('sha256').update(Buffer.alloc(979)).digest('hex'),
+    });
+    await db.insert(jobDeliverableVerificationState).values({
+      jobId: childId,
+      deliverableType: 'document',
+      canonicalKey: wav,
+      displayPathSnapshot: wav,
+      dirtyGeneration: 1,
+      addressed: true,
+      produced: true,
+      decisionStatus: 'dirty',
+    });
+
+    await reclaimJobsOfDeadRunners(db);
+
+    const child = await jobRow(childId);
+    expect(child.result ?? '').toContain('La voix off est générée, je vérifie le fichier.');
+    expect(child.result ?? '').toContain('[stopped: runner restarted');
+
+    const parent = await jobRow(parentId);
+    const last = (parent.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
+    const value = (last.content[0] as { output: { value: string } }).output.value;
+    const record = JSON.parse(value.slice(value.indexOf('{'), value.lastIndexOf('}') + 1)) as {
+      summary: string;
+      files_written: unknown;
+    };
+    expect(record.summary).toContain('La voix off est générée, je vérifie le fichier.');
+    expect(record.summary).toContain('[stopped: runner restarted');
+    expect(record.files_written).toEqual([
+      {
+        kind: 'file',
+        path: wav,
+        declared: false,
+        state: 'written_by_child_unchanged',
+        bytes: 979,
+        proof: 'dirty',
+      },
+    ]);
+    expect(value).not.toContain('delivered NOTHING');
+  });
+
+  // Revue Codex de #491, passe 3 : sans frontière de tour, le dernier texte
+  // était cherché dans TOUTE la transcription — un message d'historique rejoué
+  // devenait le « livrable partiel » de l'enfant. Pas de repli : aucun texte,
+  // et la ligne d'arrêt le dit.
+  it('sans la tâche dans la transcription, aucun texte d’historique n’est rendu comme livrable (#491)', async () => {
+    const { parentId, childId } = await seedDelegationCoupee('assign-r491-b');
+    await db
+      .update(agentJobs)
+      .set({
+        task: 'fais la voix off',
+        messages: [
+          { role: 'user', content: 'une demande d’un tour précédent' },
+          { role: 'assistant', content: [{ type: 'text', text: 'Réponse d’un AUTRE tour.' }] },
+        ],
+      })
+      .where(eq(agentJobs.id, childId));
+
+    await reclaimJobsOfDeadRunners(db);
+
+    const child = await jobRow(childId);
+    expect(child.result ?? '').not.toContain('Réponse d’un AUTRE tour.');
+    expect(child.result ?? '').toContain('no text of this run could be recovered');
+    const parent = await jobRow(parentId);
+    const last = (parent.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
+    const value = (last.content[0] as { output: { value: string } }).output.value;
+    expect(value).not.toContain('Réponse d’un AUTRE tour.');
+    expect(value).toContain('no text of this run could be recovered');
+  });
+
+  it('un tour courant fait d’appels d’outil seulement ne rend aucun texte, et le dit (#491)', async () => {
+    const { childId } = await seedDelegationCoupee('assign-r491-c');
+    await db
+      .update(agentJobs)
+      .set({
+        task: 'fais la voix off',
+        messages: [
+          { role: 'user', content: 'une demande d’un tour précédent' },
+          { role: 'assistant', content: [{ type: 'text', text: 'Réponse d’un AUTRE tour.' }] },
+          { role: 'user', content: 'fais la voix off' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool-call', toolCallId: 'g1', toolName: 'generate_speech', input: {} },
+            ],
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, childId));
+
+    await reclaimJobsOfDeadRunners(db);
+
+    const child = await jobRow(childId);
+    expect(child.result ?? '').not.toContain('Réponse d’un AUTRE tour.');
+    expect(child.result ?? '').toContain('no text of this run could be recovered');
   });
 });
 
