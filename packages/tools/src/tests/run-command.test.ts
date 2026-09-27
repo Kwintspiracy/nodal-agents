@@ -132,8 +132,12 @@ describe('run_command builtin @cap:executer-une-commande/moteur', () => {
         // Il s'arrête seul au bout de 90 s, au-delà de la limite du test : un
         // tree-kill cassé fait rougir le test sans laisser de processus orphelin.
         command: `node -e "const s=require('net').createServer().listen(0,'127.0.0.1',()=>require('fs').writeFileSync('kill-port.txt',String(s.address().port)));setTimeout(()=>process.exit(0),90000)"`,
-        // Assez pour que `node` démarre et écoute sous charge.
-        timeout_seconds: 5,
+        // Un délai LARGE, pour que l'écoute ait lieu avant lui même sous forte
+        // charge (revue Codex, passe 2) : un `node` pas encore prêt au moment
+        // du kill faisait rougir le test alors que le tree-kill marchait. Le
+        // petit-enfant sort seul à 90 s, au-delà de ce délai et de l'attente
+        // du refus ci-dessous (20 + 20 s).
+        timeout_seconds: 20,
       },
       ctx(),
     );
@@ -141,8 +145,13 @@ describe('run_command builtin @cap:executer-une-commande/moteur', () => {
     expect(out.exitCode).not.toBe(0); // killed → no clean exit
 
     // Il a bien écouté avant le délai : sans ce port, « refusé » ne prouverait
-    // rien.
-    const port = Number(await readFile(portFile, 'utf8'));
+    // rien. Son absence se DIT, plutôt qu'un ENOENT brut qui ferait croire à
+    // une panne du tree-kill.
+    const portText = await readFile(portFile, 'utf8').catch(() => null);
+    if (portText === null) {
+      throw new Error('the grandchild never started listening within 20 s (no kill-port.txt)');
+    }
+    const port = Number(portText);
     expect(Number.isInteger(port) && port > 0).toBe(true);
 
     /** `true` : la connexion est refusée, donc plus personne n'écoute. */
@@ -168,7 +177,7 @@ describe('run_command builtin @cap:executer-une-commande/moteur', () => {
       mort = await refusee();
     }
     expect(mort).toBe(true);
-  }, 60_000);
+  }, 90_000);
 
   it('caps very large output (truncated=true, ≤ cap)', async () => {
     const out = await runCommandTool.execute(
