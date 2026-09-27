@@ -753,11 +753,18 @@ const BINARY_FORMATS: readonly BinaryFormat[] = [
     variants: [[ascii(0, 'BM')]],
   },
   {
+    // TIFF classique (42) et BigTIFF (43), dans les deux ordres d'octets : un
+    // SIG ou un outil d'imagerie scientifique écrit du BigTIFF (revue Codex).
     name: 'tiff',
-    header: 'II*/MM*',
+    header: 'TIFF/BigTIFF',
     label: 'TIFF',
     extensions: ['.tif', '.tiff'],
-    variants: [[raw(0, 0x49, 0x49, 0x2a, 0x00)], [raw(0, 0x4d, 0x4d, 0x00, 0x2a)]],
+    variants: [
+      [raw(0, 0x49, 0x49, 0x2a, 0x00)],
+      [raw(0, 0x4d, 0x4d, 0x00, 0x2a)],
+      [raw(0, 0x49, 0x49, 0x2b, 0x00)],
+      [raw(0, 0x4d, 0x4d, 0x00, 0x2b)],
+    ],
   },
   {
     name: 'ico',

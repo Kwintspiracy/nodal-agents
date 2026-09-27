@@ -258,6 +258,9 @@ describe('document — texte ou binaire, une règle pour tous les fichiers', () 
       ['wide.mov', boite('wide')],
       ['moov-first.mov', boite('moov')],
       ['mdat-first.mp4', boite('mdat')],
+      // BigTIFF (magie 43), dans les deux ordres d'octets.
+      ['carte.tif', Buffer.from([0x49, 0x49, 0x2b, 0x00, 0x08, 0x00, 0x00, 0x00])],
+      ['scan.tiff', Buffer.from([0x4d, 0x4d, 0x00, 0x2b, 0x00, 0x08, 0x00, 0x00])],
     ];
     for (const [name, bytes] of cas) {
       const { verdict } = await prove(write(name, bytes));
