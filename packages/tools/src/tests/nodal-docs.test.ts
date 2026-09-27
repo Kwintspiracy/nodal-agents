@@ -274,6 +274,11 @@ describe('nodal_docs answers "what changed in version X" @cap:consulter-l-aide/m
   for (const question of [
     'Does Node v22.0 support this connector?',
     'Which OAuth version 2.0 does the Gmail connector use?',
+    // Shaped like a Nodal version, but another product's number: the word
+    // before it decides, not the shape (without this case the shape alone
+    // would make the product check look proven).
+    'Does the shell step work with ffmpeg 0.9.2?',
+    'Is Node v0.9.1 enough to run a script?',
   ]) {
     it(`does not read "${question}" as a question about Nodal releases`, async () => {
       const hits = await ask(question);
