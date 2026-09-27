@@ -393,7 +393,11 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
     /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
     /\b(npm|pnpm|yarn|bun)\s+(i|add|ci)\b|\bInstall-(Module|Package)\b/i, // npm i, pnpm add, PowerShell modules
     /\buv\s+(pip\s+install|add|tool\s+install)\b/i, // uv (review of PR #476)
-    /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download\b|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
+    // `comfy model download` is the download; its siblings `download-status`,
+    // `downloads` and `download-cancel` only read or stop one, and `\b` alone
+    // let `download-status` match (run ca5753a8 asked the owner before every
+    // progress check).
+    /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download(?![\w-])|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
   ],
   download: [
     // `curl -sLo x`: the output flag may close a group of short options, and

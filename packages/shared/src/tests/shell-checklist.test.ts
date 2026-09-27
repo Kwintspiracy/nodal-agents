@@ -57,6 +57,29 @@ describe('staticShellCategories @cap:executer-une-commande/moteur', () => {
     expect(staticShellCategories('python _analyze.py "C:/Users/x/Downloads/a.csv"')).toEqual([]);
     expect(staticShellCategories('cat ~/.ssh/id_rsa')).toEqual([]);
   });
+
+  // Run ca5753a8 : chaque lecture de progression d'un téléchargement comfy
+  // demandait l'accord du propriétaire, comme une installation.
+  it('comfy: the download subcommand installs, its status, list and cancel siblings do not', () => {
+    expect(
+      staticShellCategories(
+        'comfy --json model download --url "https://huggingface.co/x/y.safetensors" --relative-path models/checkpoints --background',
+      ),
+    ).toEqual(['install_software']);
+    expect(staticShellCategories('comfy model download --url x')).toEqual(['install_software']);
+    expect(staticShellCategories('comfy node install comfyui-impact-pack')).toEqual([
+      'install_software',
+    ]);
+    for (const cmd of [
+      'comfy --json model download-status 224009dc90ba',
+      'comfy --json model downloads',
+      'comfy --json model download-cancel 224009dc90ba',
+      'comfy --json model list-folder checkpoints',
+    ]) {
+      expect(staticShellCategories(cmd), cmd).toEqual([]);
+      expect(isDestructiveOrHeavyCommand(cmd), cmd).toBe(false);
+    }
+  });
 });
 
 describe('resolveShellPolicy @cap:executer-une-commande/moteur', () => {
