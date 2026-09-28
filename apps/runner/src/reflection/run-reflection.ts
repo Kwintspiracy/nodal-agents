@@ -27,6 +27,7 @@ import {
   type AgentJobRow,
 } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
+import { assertTurnToolCallBudget } from '@nodal-agents/orchestration';
 import { z } from 'zod';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 // SKILL-002: the SAME linter the create_skill / update_skill tools run. This
@@ -301,6 +302,9 @@ export async function runReflection(
 
     const toolCalls = response.toolCalls ?? [];
     if (toolCalls.length === 0) break; // model chose to do nothing → stop.
+    // Invariant #8 (#564): a turn over the per-turn tool-call budget is refused
+    // whole, before any of its calls runs. The pass throws; its caller logs it.
+    assertTurnToolCallBudget(toolCalls.length);
 
     // Record the assistant turn so a follow-up turn sees its own calls.
     const assistantParts: Array<

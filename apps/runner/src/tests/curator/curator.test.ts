@@ -35,6 +35,7 @@ import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { RunnerDeps } from '../../deps.ts';
 import { _resetEnvCache } from '../../env.ts';
 import { runCuratorTick } from '../../cron/run-curator.ts';
+import { runCuratorConsolidation } from '../../reflection/run-curator.ts';
 
 // â”€â”€ createLlmClient interception (same as reflection.test) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const {
@@ -1010,5 +1011,42 @@ describe('curator — a failed pass is counted as failed, never as run @cap:suiv
       .from(entities)
       .where(eq(entities.id, seed.entityId));
     expect(entity!.lastCuratorRunAt!.getTime()).toBeGreaterThan(eightDaysAgo.getTime());
+  });
+});
+
+// ── Per-turn tool-call budget (#564) ──────────────────────────────────────────
+describe('curator — a turn over the per-turn tool-call budget runs none of its calls (#564) @cap:suivre-execution/moteur', () => {
+  it('51 archive_skill calls in one turn: the pass is refused, the skill stays active', async () => {
+    const ts = Date.now();
+    const [skill] = await db
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        slug: `over-budget-${ts}`,
+        name: `Over Budget ${ts}`,
+        content: 'narrow agent skill',
+        createdBy: 'agent',
+        state: 'active',
+      })
+      .returning();
+    if (!skill) throw new Error('failed to seed skill');
+    makeDeps(
+      makeScriptedClient([
+        {
+          toolCalls: Array.from({ length: 51 }, (_, i) => ({
+            toolCallId: `ob${i}`,
+            toolName: 'archive_skill',
+            args: { skillId: skill.id },
+          })),
+        },
+        {},
+      ]),
+    );
+
+    await expect(runCuratorConsolidation(db as RunnerDeps['db'], seed.entityId, 4)).rejects.toThrow(
+      'tool_call_limit_exceeded: 51 > 50',
+    );
+    const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, skill.id));
+    expect(after!.state).toBe('active');
   });
 });

@@ -42,7 +42,7 @@ export class ToolCallLimitExceededError extends Error {
     public readonly current: number,
     public readonly limit: number,
   ) {
-    super(`tool_call_limit_exceeded: ${current} >= ${limit}`);
+    super(`tool_call_limit_exceeded: ${current} > ${limit}`);
     this.name = 'ToolCallLimitExceededError';
   }
 }
