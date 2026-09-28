@@ -60,10 +60,13 @@ function makeDb(telegramBotToken: string | null | undefined) {
   return {
     select: () => ({
       from: () => ({
-        where: () => ({
-          limit: () =>
-            Promise.resolve(telegramBotToken !== undefined ? [{ telegramBotToken }] : []),
-        }),
+        // Awaited without `.limit()`: the descendant-files read of the delivery
+        // guard (#588). This fake db has no delegation tree: no descendant.
+        where: () =>
+          Object.assign(Promise.resolve([]), {
+            limit: () =>
+              Promise.resolve(telegramBotToken !== undefined ? [{ telegramBotToken }] : []),
+          }),
       }),
     }),
   };
@@ -89,6 +92,15 @@ vi.mock('@nodal-agents/db', () => {
   return {
     agents,
     eq,
+    // What the descendant-files read of the delivery guard names (#588). The
+    // fake db answers it with no delegation tree: no descendant.
+    agentJobs: {},
+    constatedWrites: {},
+    jobDeliverableVerificationState: {},
+    and: (...a: unknown[]) => a,
+    inArray: (...a: unknown[]) => a,
+    notInArray: (...a: unknown[]) => a,
+    desc: (a: unknown) => a,
     getBindingCredentials,
     isConversationAllowed: isChatAllowedMock,
     resolveOwnerConversation: resolveOwnerChatIdMock,

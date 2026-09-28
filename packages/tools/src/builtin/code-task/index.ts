@@ -17,7 +17,12 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { delegationCard } from '../../presenters';
-import { assertWorkspacesConfigured, resolveAndCheckPath } from '../file-ops/workspace';
+import {
+  assertWorkspacesConfigured,
+  resolveAndCheckPath,
+  processAddressing,
+  PROCESS_PATHS_RULE,
+} from '../file-ops/workspace';
 import { buildChildEnv } from '../child-env';
 import { resolveCliPath, runCli } from './process';
 import { makeLiveToolRecorder, makeEssentialCapture } from './live-events';
@@ -207,6 +212,8 @@ export interface CodeTaskOutput {
   timedOut: boolean;
   durationMs: number;
   cwd: string;
+  /** How the CLI's paths are addressed (#592) — for the model. */
+  paths: string;
 }
 
 // ─── Tool ───────────────────────────────────────────────────────────────────
@@ -217,7 +224,8 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
   summary:
     'Hand one self-contained dev task to the coding CLI installed on your machine, under your own subscription. It works in the agent workspace, reading only unless the task asks for write mode.',
   description:
-    "Delegate a complete dev task (analyse code, find bugs, review, or — in write mode — implement changes) to the coding CLI installed on the owner's machine (Claude Code or Codex), running under the OWNER's subscription in the agent workspace. The CLI is a full autonomous coding agent: give it ONE self-contained task and read its final answer. It sees only your task text and the workspace files, never this conversation. Default mode is read-only. Runs take minutes — do NOT call code_task again for the same goal while unsure; one task, one call, then deliver the result.",
+    "Delegate a complete dev task (analyse code, find bugs, review, or — in write mode — implement changes) to the coding CLI installed on the owner's machine (Claude Code or Codex), running under the OWNER's subscription in the agent workspace. The CLI is a full autonomous coding agent: give it ONE self-contained task and read its final answer. It sees only your task text and the workspace files, never this conversation. Default mode is read-only. Runs take minutes — do NOT call code_task again for the same goal while unsure; one task, one call, then deliver the result. " +
+    `The CLI is a process too: in the task text, name files relative to its working directory or by absolute path. ${PROCESS_PATHS_RULE}`,
   inputSchema: codeTaskSchema,
   riskLevel: 'destructive',
   // Une DÉLÉGATION, pas des fichiers : la sortie est la réponse finale d'un
@@ -534,6 +542,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         timedOut: false,
         durationMs: run.durationMs,
         cwd,
+        paths: processAddressing(ctx.workspaces ?? [], cwd),
       };
     } finally {
       if (lockPath) {
