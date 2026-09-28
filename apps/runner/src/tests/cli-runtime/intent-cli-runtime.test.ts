@@ -541,6 +541,78 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
     expect(await projetDuJob(jobId)).toBe(projetId);
   });
 
+  // #566 : le projet COURANT de la conversation est un état que le message
+  // suivant lit. Un run périmé — sa ligne reprise par un autre run pendant le
+  // tour — garde le rattachement de SON job (un fait), mais ne déplace pas le
+  // projet courant de la conversation.
+  it('un run PÉRIMÉ rattache son job, mais ne déplace pas le projet courant de la conversation', async () => {
+    const projetId = await alphaEnregistre();
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId })
+      .returning({ id: conversations.id });
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        conversationId: conv!.id,
+        task: 'écris',
+        status: 'processing',
+      })
+      .returning({ id: agentJobs.id });
+    const jobId = job!.id;
+    fakeRun.mockImplementationOnce(async () => {
+      await db.insert(toolCalls).values({
+        entityId: seed.entityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: `${alpha}/index.ts` },
+        toolOutput: '{"ok":true}',
+      });
+      // Pendant le tour, le job est remis en file et repris par un autre run.
+      await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, jobId));
+      await db
+        .update(agentJobs)
+        .set({ status: 'processing', claimGeneration: 1 })
+        .where(eq(agentJobs.id, jobId));
+      return greenTurn();
+    });
+
+    const outcome = await runCliRuntimeJob({
+      db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+      jobId,
+      job: {
+        entityId: seed.entityId,
+        chatId: null,
+        channel: 'api',
+        conversationId: conv!.id,
+        task: 'écris',
+        triggerContext: null,
+      },
+      agentRow: { ...baseAgent, cliPermissions: { mode: 'write' } },
+      workspaces: [{ label: 'ws0', path: alpha }],
+      claimGeneration: 0,
+    });
+
+    expect(outcome).toEqual({ status: 'already_handled' });
+    // Le FAIT : ce job a produit dans alpha.
+    expect(await projetDuJob(jobId)).toBe(projetId);
+    // L'ÉTAT : la conversation n'a pas été déplacée par le run périmé.
+    const [c] = await db
+      .select({ currentProjectId: conversations.currentProjectId })
+      .from(conversations)
+      .where(eq(conversations.id, conv!.id));
+    expect(c?.currentProjectId ?? null).toBeNull();
+    // Et la ligne de l'autre run n'est pas finalisée par celui-ci.
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.status).toBe('processing');
+  });
+
   it('une ligne tool_calls d’un outil NON éditeur ne vaut pas écriture', async () => {
     await alphaEnregistre();
     const jobId = await newJob();

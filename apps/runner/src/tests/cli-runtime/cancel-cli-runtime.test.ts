@@ -27,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentJobs, workspaceLocks, eq } from '@nodal-agents/db';
+import { agents, agentJobs, cliSessions, workspaceLocks, and, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { stopConversationRunTool } from '@nodal-agents/tools';
 import type { ToolContext } from '@nodal-agents/tools';
@@ -528,6 +528,80 @@ describe('a job served by a CLI runtime acts only while its row says processing 
         .from(agentJobs)
         .where(eq(agentJobs.id, job!.id));
       expect(row).toEqual({ status: 'processing', messages: lAutre, result: null });
+    },
+    30_000,
+  );
+
+  // Revue de #575 (passe sur l'ensemble) : le tour enregistrait sa session CLI
+  // sans la prise du run. Un run PÉRIMÉ — ligne reprise par un autre run, son
+  // processus tué — qui sortait après que le nouveau run avait enregistré une
+  // session plus récente l'écrasait, et le message suivant reprenait la
+  // mauvaise session. La session n'est enregistrée que sous la prise.
+  it.each(['claude-code', 'codex'] as const)(
+    '%s: a stale run that exits after the job was re-claimed does not overwrite the newer run’s session',
+    async (runtime) => {
+      const conversationId = randomUUID();
+      await db.update(agents).set({ runtime }).where(eq(agents.id, seed.agentId));
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          conversationId,
+          task: 'go',
+          status: 'processing',
+          messages: [],
+        })
+        .returning({ id: agentJobs.id });
+      let dansLeTour!: () => void;
+      const tourCommence = new Promise<void>((r) => (dansLeTour = r));
+      fakeRun.mockImplementationOnce((opts) => {
+        dansLeTour();
+        return turnUntilAborted(JOB_ROW_POLL_MS * 6)(opts);
+      });
+      const running = runCliRuntimeJob({
+        db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+        jobId: job!.id,
+        job: {
+          entityId: seed.entityId,
+          chatId: null,
+          channel: 'telegram',
+          conversationId,
+          task: 'go',
+          triggerContext: null,
+        },
+        agentRow: { ...baseAgent, runtime },
+        workspaces: [{ label: 'ws0', path: workspace }],
+        claimGeneration: 0,
+      });
+
+      await tourCommence;
+      // Le job est remis en file et repris par le run B (prise 1), qui
+      // enregistre SA session pour cette conversation.
+      await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, job!.id));
+      expect(await claimJob(db as unknown as AnyDrizzleDb, job!.id)).toBe(1);
+      await db.insert(cliSessions).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationKey: conversationId,
+        provider: runtime === 'codex' ? 'codex' : 'claude',
+        sessionId: 'sess-of-run-B',
+      });
+
+      // A est tué par sa veille, et sort avec la session de SON tour.
+      expect(await running).toEqual({ status: 'already_handled' });
+
+      const sessions = await db
+        .select({ sessionId: cliSessions.sessionId })
+        .from(cliSessions)
+        .where(
+          and(
+            eq(cliSessions.agentId, seed.agentId),
+            eq(cliSessions.conversationKey, conversationId),
+          ),
+        );
+      expect(sessions).toEqual([{ sessionId: 'sess-of-run-B' }]);
     },
     30_000,
   );
