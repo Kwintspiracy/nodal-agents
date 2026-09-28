@@ -42,6 +42,9 @@ import type { ToolContext } from '../types';
 import { WorkspaceError, resolveAndCheckPath } from '../builtin/file-ops/workspace';
 import { markStateDirty } from './intent';
 import { officeFileDeliverables } from './office-file-key';
+import { isFileWrittenByDescendant } from '../descendant-files';
+import { realpath } from 'node:fs/promises';
+import { dirname, isAbsolute } from 'node:path';
 
 /** Le type sous lequel un livrable déclaré est rangé — voir l'en-tête. */
 const DECLARED_DELIVERABLE_TYPE = 'document' as const;
@@ -110,7 +113,7 @@ export async function declareDeliverables(
   // voir deux fichiers différents derrière le même chemin.
   const uniques = [...new Set(requested.map((p) => p.trim()).filter((p) => p !== ''))];
   const unresolved: UnresolvedDeclaration[] = [];
-  const resolved: Array<{ requested: string; target: MutationTarget }> = [];
+  const resolved: Array<{ requested: string; target: MutationTarget; root?: string }> = [];
   for (const path of uniques) {
     try {
       const abs = await resolveAndCheckPath(ctx as ToolContext, path);
@@ -119,6 +122,21 @@ export async function declareDeliverables(
         target: { kind: 'file', path: abs, deliverableType: DECLARED_DELIVERABLE_TYPE },
       });
     } catch (err) {
+      // Un fichier qu'un de MES délégués a écrit dans ce run est à moi de le
+      // déclarer (#588) : la racine livre l'image de ComfyArtist sans la
+      // recopier. Par chemin absolu, et seulement celui-là : la même règle que
+      // la garde d'envoi (descendant-files.ts), rien de plus large.
+      const reel = isAbsolute(path) ? await realpath(path).catch(() => null) : null;
+      if (reel !== null && (await isFileWrittenByDescendant(ctx, reel))) {
+        resolved.push({
+          requested: path,
+          target: { kind: 'file', path: reel, deliverableType: DECLARED_DELIVERABLE_TYPE },
+          // Sa clé se calcule comme celle de tout document ; il n'est sous aucun
+          // de MES dossiers, son propre dossier sert de racine.
+          root: dirname(reel),
+        });
+        continue;
+      }
       unresolved.push({
         requested: path,
         code: err instanceof WorkspaceError ? err.code : 'path_unresolvable',
@@ -132,7 +150,10 @@ export async function declareDeliverables(
   const workspaceRoots = (ctx.workspaces ?? []).map((w) => w.path);
   const keyed: Array<{ requested: string; key: string; path: string }> = [];
   for (const r of resolved) {
-    const [file] = officeFileDeliverables([r.target], workspaceRoots);
+    const [file] = officeFileDeliverables(
+      [r.target],
+      r.root === undefined ? workspaceRoots : [...workspaceRoots, r.root],
+    );
     if (file === undefined) {
       // Résolu mais sous aucune racine : impossible après le résolveur, et dit
       // plutôt que rangé sous une clé inventée.

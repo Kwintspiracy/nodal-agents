@@ -28,6 +28,7 @@ import {
   entities,
   jobDeliverableVerificationState,
   verificationRuns,
+  constatedWrites,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -267,6 +268,10 @@ const runsOf = (id: string) =>
 
 const keyOf = (p: string): string => projectKey(normalizePath(p));
 
+/** Une vraie image PNG de 1 × 1. */
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
 /** Un MP4 minimal : une boîte `ftyp`, puis des octets binaires. */
 function mp4Bytes(): Buffer {
   const b = Buffer.alloc(64);
@@ -495,6 +500,57 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
       ]),
     );
     expect(await statesOf(id)).toHaveLength(0);
+  });
+
+  // #588 : essai 4 du banc, job racine 162e0642. Alfred déclarait l'image que
+  // son délégué ComfyArtist avait produite dans SON dossier ; le résolveur des
+  // outils de fichiers ne connaît que les dossiers de la racine, et le run
+  // échouait (`deliverable_not_verified`) alors que l'image existait. Un
+  // fichier qu'un de MES délégués a écrit dans ce run se déclare.
+  it('la racine déclare l’image que son délégué a écrite hors de ses dossiers : completed, preuve verte (#588)', async () => {
+    const dossierDuDelegue = await realpath(await mkdtemp(join(tmpdir(), 'nodal-delegue-588-')));
+    try {
+      const image = join(dossierDuDelegue, '9b964263_000.png');
+      await writeFile(image, Buffer.from(PNG_1X1, 'base64'));
+      const id = await createJob('fais une image');
+      // Le délégué, fini, et l'écriture que la plateforme a constatée chez lui.
+      const [enfant] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'api',
+          task: 'génère l’image',
+          status: 'completed',
+          parentJobId: id,
+        })
+        .returning({ id: agentJobs.id });
+      await db.insert(constatedWrites).values({
+        jobId: enfant!.id,
+        turn: 1,
+        path: normalizePath(image),
+        changeKind: 'added',
+        constatedBy: 'disk',
+      });
+      const { client, prompts } = makeMockLlmClient([
+        rendu('rr-1', 'Voici ton image.', [normalizePath(image)]),
+      ]);
+
+      const out = await executeJob(id as JobId, makeDeps(client), testEnv);
+
+      expect(out.status).toBe('completed');
+      expect(prompts).toHaveLength(1);
+      const row = await jobRow(id);
+      expect(row).toMatchObject({ status: 'completed', error: null, result: 'Voici ton image.' });
+      const states = await statesOf(id);
+      expect(states.map((st) => [st.canonicalKey, st.declared, st.decisionStatus])).toEqual([
+        [keyOf(image), true, 'green'],
+      ]);
+      const runs = await runsOf(id);
+      expect(runs.map((r) => [r.command, r.verdict])).toContainEqual(['exists', 'green']);
+    } finally {
+      await rm(dossierDuDelegue, { recursive: true, force: true }).catch(() => undefined);
+    }
   });
 
   it('renvoyé, l’agent répond en TEXTE SEUL : la déclaration reste due, le run échoue (revue Codex)', async () => {

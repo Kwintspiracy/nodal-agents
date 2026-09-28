@@ -26,6 +26,7 @@ import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveAndCheckPath, WorkspaceError } from '../builtin/file-ops/workspace';
+import { isFileWrittenByDescendant } from '../descendant-files';
 import type { ToolContext } from '../types';
 
 // ─── Transport channel ──────────────────────────────────────────────────────
@@ -366,6 +367,11 @@ export async function assertLocalSourceAllowed(source: string, ctx: ToolContext)
   const isInside = resolvedRoots.some(
     (normRoot) => normReal === normRoot || normReal.startsWith(normRoot + path.sep),
   );
+
+  // A file one of this job's DELEGATES wrote in this run is this job's to
+  // deliver (#588): the root sends what its delegate produced, without a
+  // second delegation to copy it. Nothing else widens — see descendant-files.ts.
+  if (!isInside && (await isFileWrittenByDescendant(ctx, real))) return real;
 
   if (!isInside) {
     const err = new Error(
