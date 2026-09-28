@@ -168,8 +168,14 @@ describe('a shell write is constated without a git root at the workspace (#590) 
 
     const lignes = await genererDans(ws, join(racine, 'store-deja'), 'c.png', job);
 
-    // `gen.js` existait avant l'appel (écrit avant l'instantané) : il n'est
-    // pas une écriture de la commande.
+    // L'image est constatée…
+    expect(lignes).toContainEqual({
+      path: normalizePath(await realpath(join(ws, 'outputs', 'c.png'))),
+      kind: 'added',
+      by: 'disk',
+    });
+    // …et `gen.js`, qui existait avant l'appel (écrit avant l'instantané),
+    // n'est pas une écriture de la commande.
     expect(lignes.map((l) => l.path)).not.toContain(
       normalizePath(await realpath(join(ws, 'gen.js'))),
     );
@@ -309,21 +315,120 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
     }
   });
 
-  it('what the snapshot does not cover is said, once per workspace', async () => {
+  it('what the snapshot does not cover is said once per workspace AND per job', async () => {
     const warn = vi.spyOn(console, 'warn');
     try {
       const { ws, store } = await photographie('couverture', { 'a.txt': 'a' });
-      await constatedGitWrites(await snapshotGitAvant([ws], { store, workspaces: [ws] }));
-      await constatedGitWrites(await snapshotGitAvant([ws], { store, workspaces: [ws] }));
+      const appel = async (jobId: string) =>
+        constatedGitWrites(await snapshotGitAvant([ws], { store, workspaces: [ws], jobId }));
+      await appel('job-1');
+      await appel('job-1');
+      await appel('job-2');
       const dit = warn.mock.calls
         .map((c) => c.map(String).join(' '))
         .filter((l) => l.includes('GIT_CONSTAT_FALLBACK_COVERAGE'));
-      expect(dit).toHaveLength(1);
+      // Une fois pour job-1 malgré ses deux appels, et de nouveau pour job-2 :
+      // un runner qui tourne des semaines ne devient pas muet.
+      expect(dit).toHaveLength(2);
+      expect(dit[0]).toContain('job=job-1');
+      expect(dit[1]).toContain('job=job-2');
       expect(dit[0]).toContain('node_modules/');
       expect(dit[0]).toContain('.gitignore');
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('a deleted file is constated deleted', async () => {
+    const { ws, store, reel } = await photographie('supprime', { 'a.txt': 'a', 'b.txt': 'b' });
+    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+    await rm(join(ws, 'a.txt'));
+
+    expect(ecrits(await constatedGitWrites(avant))).toEqual([
+      { path: `${reel}/a.txt`, kind: 'deleted' },
+    ]);
+  });
+
+  it('a write in a path the snapshot excludes is not constated', async () => {
+    const { ws, store, reel } = await photographie('exclu', { 'a.txt': 'a' });
+    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+    await mkdir(join(ws, 'dist'), { recursive: true });
+    await writeFile(join(ws, 'dist', 'x.js'), 'x');
+    await writeFile(join(ws, 'c.txt'), 'c');
+
+    // Seul `c.txt` : `dist/` est une exclusion du magasin, et c'est la limite
+    // que GIT_CONSTAT_FALLBACK_COVERAGE annonce.
+    expect(ecrits(await constatedGitWrites(avant))).toEqual([
+      { path: `${reel}/c.txt`, kind: 'added' },
+    ]);
+  });
+
+  it('more than MAX_STATUS_ENTRIES changes since the snapshot: nothing is constated, and it is said', async () => {
+    const warn = vi.spyOn(console, 'warn');
+    try {
+      const { ws, store } = await photographie('trop-change', { 'a.txt': 'a' });
+      // Des changements APRÈS l'instantané du tour (des appels précédents du
+      // même tour, par exemple) : la borne compte ce qui a changé, pas ce qui
+      // est là.
+      for (let i = 0; i < 1001; i++) await writeFile(join(ws, `n-${i}.png`), `n ${i}`);
+      const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
+
+      expect(avant).toEqual([]);
+      const dit = warn.mock.calls.map((c) => c.map(String).join(' '));
+      expect(dit.some((l) => l.includes('GIT_CONSTAT_TREE_TOO_DIRTY'))).toBe(true);
+      expect(
+        (await readdir(join(store, 'indexes'))).filter((f) => f.includes('.constat-')),
+      ).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  }, 60_000);
+
+  it('an index that cannot be copied is freeze_failed', async () => {
+    const warn = vi.spyOn(console, 'warn');
+    try {
+      const { ws, store } = await photographie('gel-impossible', { 'a.txt': 'a' });
+      const indexes = join(store, 'indexes');
+      const [cle] = await readdir(indexes);
+      // Un dossier à la place de l'index : il existe, mais ne se lit pas.
+      await rm(join(indexes, cle!));
+      await mkdir(join(indexes, cle!));
+      expect(await snapshotGitAvant([ws], { store, workspaces: [ws] })).toEqual([]);
+      const dit = warn.mock.calls.map((c) => c.map(String).join(' '));
+      expect(dit.some((l) => l.includes('reason=freeze_failed'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('an index git refuses is snapshot_status_failed, and its copy is released', async () => {
+    const warn = vi.spyOn(console, 'warn');
+    try {
+      const { ws, store } = await photographie('index-casse', { 'a.txt': 'a' });
+      const indexes = join(store, 'indexes');
+      const [cle] = await readdir(indexes);
+      await writeFile(join(indexes, cle!), 'pas un index git');
+      expect(await snapshotGitAvant([ws], { store, workspaces: [ws] })).toEqual([]);
+      const dit = warn.mock.calls.map((c) => c.map(String).join(' '));
+      expect(dit.some((l) => l.includes('reason=snapshot_status_failed'))).toBe(true);
+      expect(await readdir(indexes)).toEqual([cle]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('the same workspace listed twice is frozen once, and no copy is left behind', async () => {
+    const { ws, store, reel } = await photographie('deux-fois', { 'a.txt': 'a' });
+    const avant = await snapshotGitAvant([ws], { store, workspaces: [ws, `${ws}/`] });
+    expect(avant).toHaveLength(1);
+    await writeFile(join(ws, 'c.txt'), 'c');
+
+    expect(ecrits(await constatedGitWrites(avant))).toEqual([
+      { path: `${reel}/c.txt`, kind: 'added' },
+    ]);
+    expect((await readdir(join(store, 'indexes'))).filter((f) => f.includes('.constat-'))).toEqual(
+      [],
+    );
   });
 });
 

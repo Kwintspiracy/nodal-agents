@@ -31,7 +31,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { copyFile, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, open, rm, utimes, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -609,6 +609,19 @@ export const SNAPSHOT_EXCLUDES: readonly string[] = EXCLUDES;
  * Rangée à côté de l'index, comme l'index jetable de `diffFile`, et retirée par
  * `releaseFrozenIndex`. Chaque absence a sa raison : pas de magasin, jamais
  * photographié, copie impossible.
+ *
+ * LA COPIE EST UNE SEULE LECTURE (revue A de #591, passe 2). `stat` puis
+ * `copyFile` lisaient la date et le contenu à deux moments, et un instantané
+ * concurrent pouvait remplacer l'index entre les deux. Et sous Windows
+ * `copyFile` (CopyFileW) tient la source ouverte sans partage de suppression :
+ * le renommage `index.lock` → `index` de l'autre job pouvait échouer, donc son
+ * instantané, donc son écriture. Ici l'index est ouvert UNE fois, par libuv,
+ * qui partage lecture, écriture ET suppression. Git écrit l'index par
+ * `index.lock` puis renommage : la poignée lit donc l'ancien fichier en entier,
+ * jamais un index à moitié écrit, et le renommage de l'autre job passe. La date
+ * vient de la même poignée (`fstat`), puis la poignée est fermée. Une lecture
+ * qui échoue quand même est retentée deux fois, 50 ms plus tard, et au bout de
+ * ces trois essais c'est `freeze_failed`.
  */
 export type FrozenSnapshotIndex =
   | { readonly kind: 'frozen'; readonly indexFile: string }
@@ -616,6 +629,9 @@ export type FrozenSnapshotIndex =
       readonly kind: 'none';
       readonly reason: 'no_store' | 'never_snapshotted' | 'freeze_failed';
     };
+
+const FREEZE_ATTEMPTS = 3;
+const FREEZE_RETRY_MS = 50;
 
 export async function freezeSnapshotIndex(
   store: string,
@@ -625,18 +641,51 @@ export async function freezeSnapshotIndex(
   const source = join(store, 'indexes', workspaceKey(workspace));
   if (!existsSync(source)) return { kind: 'none', reason: 'never_snapshotted' };
   const indexFile = `${source}.constat-${randomBytes(6).toString('hex')}`;
-  try {
-    const st = await stat(source);
-    // git écrit l'index par `index.lock` puis renommage : la copie lit l'un ou
-    // l'autre en entier, jamais un index à moitié écrit.
-    await copyFile(source, indexFile);
-    await utimes(indexFile, st.atime, st.mtime);
-    return { kind: 'frozen', indexFile };
-  } catch {
-    await rm(indexFile, { force: true }).catch(() => undefined);
-    return { kind: 'none', reason: 'freeze_failed' };
+  for (let essai = 1; essai <= FREEZE_ATTEMPTS; essai++) {
+    try {
+      const lu = await open(source, 'r');
+      let contenu: Buffer;
+      let date: number;
+      try {
+        date = (await lu.stat()).mtimeMs;
+        contenu = await lu.readFile();
+      } finally {
+        await lu.close();
+      }
+      await writeFile(indexFile, contenu);
+      // Arrondie VERS LE BAS à la milliseconde (`utimes` ne garde pas mieux) :
+      // une copie datée un rien plus tôt fait juger « modifié dans la même
+      // seconde » un fichier de plus, donc relu — jamais un de moins, donc manqué.
+      const secondes = Math.floor(date) / 1000;
+      await utimes(indexFile, secondes, secondes);
+      return { kind: 'frozen', indexFile };
+    } catch {
+      await rm(indexFile, { force: true }).catch(() => undefined);
+      if (essai < FREEZE_ATTEMPTS) await new Promise((r) => setTimeout(r, FREEZE_RETRY_MS));
+    }
   }
+  return { kind: 'none', reason: 'freeze_failed' };
 }
+
+/**
+ * Le statut contre une copie figée, ou la cause pour laquelle il n'y en a pas.
+ * Chaque cause a son nom, comme dans `gitAllowingMiss` (revue #262) : un git
+ * absent, une borne de temps dépassée, une sortie trop longue et un refus de
+ * git (index illisible) ne se réparent pas du même geste.
+ */
+export type FrozenIndexStatus =
+  | { readonly kind: 'status'; readonly stdout: string }
+  | {
+      readonly kind: 'failed';
+      readonly reason:
+        | 'git_missing'
+        | 'snapshot_status_timeout'
+        | 'snapshot_status_too_large'
+        | 'snapshot_status_failed';
+    };
+
+/** La sortie de `git status` au-delà de laquelle la lecture est abandonnée. */
+const FROZEN_STATUS_MAX_BUFFER = 16 * 1024 * 1024;
 
 /**
  * `git status --porcelain -z --untracked-files=all` du workspace contre une
@@ -646,14 +695,13 @@ export async function freezeSnapshotIndex(
  * quelque chose : le magasin n'a jamais de HEAD, donc la colonne de gauche
  * marque `A` chaque fichier photographié. C'est à l'appelant de la lire ainsi.
  *
- * `GIT_OPTIONAL_LOCKS=0` : une lecture ne réécrit pas la copie. `null` quand git
- * n'a pas répondu dans la borne : l'appelant le dit, il ne devine pas.
+ * `GIT_OPTIONAL_LOCKS=0` : une lecture ne réécrit pas la copie.
  */
 export async function statusAgainstFrozenIndex(
   store: string,
   workspace: string,
   indexFile: string,
-): Promise<string | null> {
+): Promise<FrozenIndexStatus> {
   try {
     const { stdout } = await run(
       await gitBinary(),
@@ -661,13 +709,23 @@ export async function statusAgainstFrozenIndex(
       {
         timeout: storeTimeoutMs(),
         windowsHide: true,
-        maxBuffer: 16 * 1024 * 1024,
+        maxBuffer: FROZEN_STATUS_MAX_BUFFER,
         env: { ...gitEnv(store, workspace, indexFile), GIT_OPTIONAL_LOCKS: '0' },
       },
     );
-    return stdout;
-  } catch {
-    return null;
+    return { kind: 'status', stdout };
+  } catch (err) {
+    // La sortie trop longue AVANT la borne de temps : Node tue aussi l'enfant
+    // dans ce cas (`killed`), et le lire comme un délai dirait le mauvais geste.
+    const code = (err as { code?: unknown } | null)?.code;
+    const reason = isGitMissingError(err)
+      ? 'git_missing'
+      : code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+        ? 'snapshot_status_too_large'
+        : isTimeoutError(err)
+          ? 'snapshot_status_timeout'
+          : 'snapshot_status_failed';
+    return { kind: 'failed', reason };
   }
 }
 

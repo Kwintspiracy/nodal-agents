@@ -784,6 +784,45 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   const harnaisAvant = auditTool.reportsHarnessWrites
     ? await lignesDeHarnaisDejaLa(ctx.db, ctx.jobId)
     : new Set<string>();
+  // Ce que le hook a DÉCLARÉ voyage jusqu'à l'outil, sur un contexte dérivé —
+  // celui de l'appelant n'est pas modifié. Un outil qui doit connaître le type
+  // de ce qu'il écrit (donc la clé que portera sa carte) relit la décision de
+  // l'intention au lieu de la refaire après coup : reclasser rouvrait une
+  // fenêtre de course, la table `code_projects` pouvant changer entre les deux
+  // lectures, au bout de laquelle la carte et l'état posé ne parlaient plus du
+  // même livrable (revue C, dette #88). Voir `declaredMutationTargets`.
+  // Les empreintes des octets que l'outil ÉCRIT (#505) : rangées avec le
+  // constat, jamais relues sur le disque après coup.
+  const contenusEcrits = new Map<string, string>();
+  const execCtx: ToolContext = {
+    ...ctx,
+    ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
+    ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
+    reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
+  };
+  // ── 2.95 La MARQUE d'intention, AVANT tout outil qui ne fait pas que lire ──
+  //
+  // (#443, revue Codex passe 2.) La ligne d'audit s'écrit APRÈS l'outil, et
+  // son échec n'est pas fatal : un runner mort entre l'effet et elle ne
+  // laissait aucune trace, et la reprise après redémarrage rejouait l'effet.
+  // La ligne `tool_calls` naît donc ICI, sans sortie (« commencé »), et elle
+  // est COMPLÉTÉE après. Une marque sans sortie veut dire « peut-être fait » :
+  // le faucheur ne reprend pas un tour qui en porte une. Si elle ne peut pas
+  // être écrite, l'outil ne tourne pas — pas d'effet sans marque. Une lecture
+  // n'en a pas besoin : la rejouer ne refait rien. Le coût : une écriture de
+  // plus par appel d'outil qui n'est pas une lecture.
+  const marque =
+    auditTool.riskLevel !== 'read' && ctx.jobId
+      ? await markToolStarted(ctx, auditTool, validatedInput)
+      : undefined;
+  if (marque === null) {
+    return {
+      outcome: 'error',
+      error:
+        `tool_intent_unrecorded: "${tool.name}" did NOT run. Its start could not be recorded, ` +
+        `and a tool that changes something never runs without that record. Call it again.`,
+    };
+  }
   // Et, quand les dossiers visés sont des DÉPÔTS GIT, l'état de leur `git
   // status` AVANT l'appel (issue #199). C'est le seul constat qui voit ce
   // qu'un shell écrit sans le nommer : le delta avant/après est la liste des
@@ -818,48 +857,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           {
             store: ctx.checkpointsRoot,
             workspaces: (ctx.workspaces ?? []).map((w) => w.path),
+            jobId: ctx.jobId,
           },
         );
-  // Ce que le hook a DÉCLARÉ voyage jusqu'à l'outil, sur un contexte dérivé —
-  // celui de l'appelant n'est pas modifié. Un outil qui doit connaître le type
-  // de ce qu'il écrit (donc la clé que portera sa carte) relit la décision de
-  // l'intention au lieu de la refaire après coup : reclasser rouvrait une
-  // fenêtre de course, la table `code_projects` pouvant changer entre les deux
-  // lectures, au bout de laquelle la carte et l'état posé ne parlaient plus du
-  // même livrable (revue C, dette #88). Voir `declaredMutationTargets`.
-  // Les empreintes des octets que l'outil ÉCRIT (#505) : rangées avec le
-  // constat, jamais relues sur le disque après coup.
-  const contenusEcrits = new Map<string, string>();
-  const execCtx: ToolContext = {
-    ...ctx,
-    ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
-    ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
-    reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
-  };
-  // ── 2.95 La MARQUE d'intention, AVANT tout outil qui ne fait pas que lire ──
-  //
-  // (#443, revue Codex passe 2.) La ligne d'audit s'écrit APRÈS l'outil, et
-  // son échec n'est pas fatal : un runner mort entre l'effet et elle ne
-  // laissait aucune trace, et la reprise après redémarrage rejouait l'effet.
-  // La ligne `tool_calls` naît donc ICI, sans sortie (« commencé »), et elle
-  // est COMPLÉTÉE après. Une marque sans sortie veut dire « peut-être fait » :
-  // le faucheur ne reprend pas un tour qui en porte une. Si elle ne peut pas
-  // être écrite, l'outil ne tourne pas — pas d'effet sans marque. Une lecture
-  // n'en a pas besoin : la rejouer ne refait rien. Le coût : une écriture de
-  // plus par appel d'outil qui n'est pas une lecture.
-  const marque =
-    auditTool.riskLevel !== 'read' && ctx.jobId
-      ? await markToolStarted(ctx, auditTool, validatedInput)
-      : undefined;
-  if (marque === null) {
-    await releaseGitAvant(gitAvant);
-    return {
-      outcome: 'error',
-      error:
-        `tool_intent_unrecorded: "${tool.name}" did NOT run. Its start could not be recorded, ` +
-        `and a tool that changes something never runs without that record. Call it again.`,
-    };
-  }
+  // PRIS JUSTE AVANT LE `try` dont le `finally` libère ses copies figées
+  // d'index (#590) : rien ne peut lever entre les deux, donc aucune copie
+  // n'est laissée derrière un marqueur qui lève ou un départ refusé.
   try {
     // ── L'ÉCRITURE MONTE L'ÉPOQUE, elle aussi (issue #101) ──────────────────
     //

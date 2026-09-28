@@ -25,6 +25,7 @@ export {
   releaseFrozenIndex,
   SNAPSHOT_EXCLUDES,
   type FrozenSnapshotIndex,
+  type FrozenIndexStatus,
   diffFile,
   CHECKPOINT_COVERAGE_NOTE,
   DIFF_MAX_BYTES,

@@ -232,18 +232,18 @@ export async function snapshotRepo(
   root: string,
   frozen?: FrozenIndex,
 ): Promise<RepoSnapshot | null> {
-  const stdout =
-    frozen === undefined
-      ? await git(root, ['status', '--porcelain', '-z', '--untracked-files=all'])
-      : await statusAgainstFrozenIndex(frozen.store, root, frozen.indexFile);
-  if (stdout === null) {
-    console.warn(
-      frozen === undefined
-        ? `[verification] GIT_CONSTAT_STATUS_FAILED root=${root}`
-        : `[verification] GIT_CONSTAT_NO_FALLBACK ws=${root} reason=snapshot_status_failed`,
-    );
-    return null;
+  let stdout: string | null;
+  if (frozen === undefined) {
+    stdout = await git(root, ['status', '--porcelain', '-z', '--untracked-files=all']);
+    if (stdout === null) console.warn(`[verification] GIT_CONSTAT_STATUS_FAILED root=${root}`);
+  } else {
+    const lu = await statusAgainstFrozenIndex(frozen.store, root, frozen.indexFile);
+    stdout = lu.kind === 'status' ? lu.stdout : null;
+    if (lu.kind === 'failed') {
+      console.warn(`[verification] GIT_CONSTAT_NO_FALLBACK ws=${root} reason=${lu.reason}`);
+    }
   }
+  if (stdout === null) return null;
   const lignes =
     frozen === undefined ? parsePorcelainZ(stdout) : contreIndexFige(parsePorcelainZ(stdout));
   if (lignes.length > MAX_STATUS_ENTRIES) {
@@ -297,8 +297,9 @@ export function contreIndexFige(
 }
 
 /**
- * Ce que le repli ne voit pas, dit UNE fois par workspace et par processus
- * (revue A de #591). Un instantané ne photographie ni ce que le `.gitignore` du
+ * Ce que le repli ne voit pas, dit UNE fois par workspace et par JOB (revue A
+ * de #591 ; une fois par processus rendait muet un runner qui tourne des
+ * semaines). Un instantané ne photographie ni ce que le `.gitignore` du
  * workspace exclut, ni les exclusions du magasin (`node_modules/`, `dist/`,
  * `*.log`…) : une écriture là n'est pas constatée. La nommer demanderait de
  * lister ces arbres-là, dont la taille n'a pas de borne (`node_modules`,
@@ -306,6 +307,22 @@ export function contreIndexFige(
  * constat dans un vrai dépôt a la même limite pour le `.gitignore`.
  */
 const couvertureDite = new Set<string>();
+/** Au-delà, les plus anciennes paires job × workspace sont oubliées. */
+const COUVERTURE_MEMOIRE = 1000;
+
+function direCouverture(jobId: string | undefined, root: string): void {
+  const cle = `${jobId ?? 'sans-job'}:${root}`;
+  if (couvertureDite.has(cle)) return;
+  if (couvertureDite.size >= COUVERTURE_MEMOIRE) {
+    const plusAncienne = couvertureDite.values().next().value;
+    if (plusAncienne !== undefined) couvertureDite.delete(plusAncienne);
+  }
+  couvertureDite.add(cle);
+  console.warn(
+    `[verification] GIT_CONSTAT_FALLBACK_COVERAGE job=${jobId ?? '-'} ws=${root} ` +
+      `not_covered=".gitignore of the workspace, ${SNAPSHOT_EXCLUDES.join(', ')}"`,
+  );
+}
 
 /** Deux empreintes du même fichier disent-elles la même chose ? */
 function memeEmpreinte(a: FileFingerprint, b: FileFingerprint): boolean | 'indecis' {
@@ -500,7 +517,12 @@ export async function snapshotGitAvant(
    * checkpoint, pris avant tout outil qui écrit. Sans magasin ni instantané,
    * rien ne le couvre, et c'est dit (`GIT_CONSTAT_NO_FALLBACK`).
    */
-  shadow?: { readonly store: string | undefined; readonly workspaces: readonly string[] },
+  shadow?: {
+    readonly store: string | undefined;
+    readonly workspaces: readonly string[];
+    /** Le job de l'appel : la couverture du repli est dite une fois par job. */
+    readonly jobId?: string;
+  },
 ): Promise<GitConstatBefore> {
   const racines = new Map<string, RepoSnapshot>();
   const vus = new Set<string>();
@@ -545,35 +567,53 @@ export async function snapshotGitAvant(
   // l'index de l'instantané de CE workspace, bornée au workspace par
   // construction. L'après relira la même copie : un instantané d'un autre job
   // pris entre les deux ne change rien à ce que cet appel a écrit.
-  for (const ws of shadow?.workspaces ?? []) {
-    if ((await racineRetenue(await cheminReel(ws))) !== null) continue;
+  // Deux entrées pour le même dossier (`/ws` et `/ws/`, deux étiquettes) :
+  // une seule copie figée, sinon la seconde écrasait la première dans
+  // `racines` et la laissait orpheline, jamais libérée.
+  const replis = new Set<string>();
+  try {
+    for (const ws of shadow?.workspaces ?? []) {
+      const reel = await cheminReel(ws);
+      if (replis.has(reel)) continue;
+      replis.add(reel);
+      await replier(ws, reel);
+    }
+  } catch (err) {
+    // Ne lève pas en principe ; si quelque chose lève quand même, les copies
+    // déjà prises ne restent pas derrière.
+    await releaseGitAvant([...racines.values()]);
+    throw err;
+  }
+  return [...racines.values()];
+
+  async function replier(ws: string, reel: string): Promise<void> {
+    if ((await racineRetenue(reel)) !== null) return;
     if (!shadow?.store) {
       console.warn(`[verification] GIT_CONSTAT_NO_FALLBACK ws=${ws} reason=no_checkpoint_store`);
-      continue;
+      return;
     }
     const fige = await freezeSnapshotIndex(shadow.store, ws);
     if (fige.kind === 'none') {
       console.warn(`[verification] GIT_CONSTAT_NO_FALLBACK ws=${ws} reason=${fige.reason}`);
-      continue;
+      return;
     }
     const frozen: FrozenIndex = { store: shadow.store, indexFile: fige.indexFile };
-    const snap = await snapshotRepo(normalizePath(ws), frozen);
+    let snap: RepoSnapshot | null;
+    try {
+      snap = await snapshotRepo(normalizePath(ws), frozen);
+    } catch (err) {
+      await releaseFrozenIndex(frozen.indexFile);
+      throw err;
+    }
     if (snap === null) {
       // La raison est déjà dite par `snapshotRepo` (statut en panne, ou trop
       // de changements depuis l'instantané).
       await releaseFrozenIndex(frozen.indexFile);
-      continue;
+      return;
     }
-    if (!couvertureDite.has(snap.root)) {
-      couvertureDite.add(snap.root);
-      console.warn(
-        `[verification] GIT_CONSTAT_FALLBACK_COVERAGE ws=${snap.root} ` +
-          `not_covered=".gitignore of the workspace, ${SNAPSHOT_EXCLUDES.join(', ')}"`,
-      );
-    }
-    racines.set(`shadow:${snap.root}`, snap);
+    direCouverture(shadow.jobId, snap.root);
+    racines.set(`shadow:${reel}`, snap);
   }
-  return [...racines.values()];
 }
 
 /**
