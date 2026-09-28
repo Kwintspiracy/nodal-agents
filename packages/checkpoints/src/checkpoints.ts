@@ -583,6 +583,50 @@ async function takeSnapshot(
  * courant EST ce commit-là, et sans lui la ligne `job_checkpoints` de ce tour
  * n'aurait aucun sha à porter. Une lecture, jamais une écriture.
  */
+/**
+ * Ce qui a changé dans `workspace` depuis son dernier instantané : la sortie
+ * brute de `git status --porcelain -z --untracked-files=all`, lue contre
+ * l'index de CE workspace dans le magasin (#590).
+ *
+ * Le constat des écritures (`packages/tools`, git-constat.ts) ne voyait que
+ * les dossiers qui sont eux-mêmes la racine d'un dépôt git. Un workspace hors
+ * de tout dépôt, ou dans un dépôt enraciné AU-DESSUS de lui (une maison
+ * versionnée), ne constatait rien de ce qu'un shell y écrivait. L'instantané
+ * de checkpoint, pris avant tout outil qui écrit, est justement l'état d'avant
+ * de ce workspace : son index EST cet état. Le relire avant et après un appel
+ * donne ce que l'appel a écrit, sans seconde mécanique — les mêmes exclusions
+ * que l'instantané (`.gitignore` du workspace, exclusions du magasin).
+ *
+ * `null` quand il n'y a pas d'instantané de ce workspace à comparer (aucun
+ * magasin, ou jamais photographié), ou quand git n'a pas répondu dans la
+ * borne : l'appelant le dit, il ne devine pas.
+ *
+ * `GIT_OPTIONAL_LOCKS=0` : une lecture ne rafraîchit pas l'index, donc ne
+ * prend pas son verrou et ne gêne pas un instantané concurrent.
+ */
+export async function statusSinceSnapshot(
+  store: string,
+  workspace: string,
+): Promise<string | null> {
+  if (!existsSync(join(store, 'store', 'HEAD'))) return null;
+  if (!existsSync(join(store, 'indexes', workspaceKey(workspace)))) return null;
+  try {
+    const { stdout } = await run(
+      await gitBinary(),
+      ['status', '--porcelain', '-z', '--untracked-files=all'],
+      {
+        timeout: storeTimeoutMs(),
+        windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...gitEnv(store, workspace), GIT_OPTIONAL_LOCKS: '0' },
+      },
+    );
+    return stdout;
+  } catch {
+    return null;
+  }
+}
+
 export async function headCheckpoint(store: string, workspace: string): Promise<string | null> {
   if (!existsSync(join(store, 'store', 'HEAD'))) return null;
   const ref = `refs/nodal/${workspaceKey(workspace)}`;

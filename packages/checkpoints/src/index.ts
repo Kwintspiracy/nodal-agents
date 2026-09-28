@@ -20,6 +20,7 @@ export {
   restoreCheckpoint,
   ensureStore,
   headCheckpoint,
+  statusSinceSnapshot,
   diffFile,
   CHECKPOINT_COVERAGE_NOTE,
   DIFF_MAX_BYTES,

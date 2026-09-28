@@ -75,6 +75,7 @@ import { normalizePath } from '@nodal-agents/shared';
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
 import type { ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { fingerprint, type FileFingerprint } from './observed';
+import { statusSinceSnapshot } from '@nodal-agents/checkpoints';
 
 const run = promisify(execFile);
 
@@ -111,6 +112,12 @@ export interface RepoSnapshot {
   /** Racine du dépôt, absolue et slash-normalisée. */
   readonly root: string;
   readonly entries: ReadonlyMap<string, GitStatusEntry>;
+  /**
+   * Présent quand ce n'est PAS le dépôt du dossier qui répond, mais l'index de
+   * son instantané de checkpoint (#590) : un workspace hors de tout dépôt, ou
+   * dans un dépôt enraciné au-dessus de lui. `root` est alors le workspace.
+   */
+  readonly shadowStore?: string;
 }
 
 /** Ce que le seam garde entre l'avant et l'après d'un appel. */
@@ -209,8 +216,14 @@ export function parsePorcelainZ(
  * que le constat vaille son prix (borne nº 4) — dans les deux cas le run
  * retombe sur le disque, et la raison est dite par un code.
  */
-export async function snapshotRepo(root: string): Promise<RepoSnapshot | null> {
-  const stdout = await git(root, ['status', '--porcelain', '-z', '--untracked-files=all']);
+export async function snapshotRepo(
+  root: string,
+  shadowStore?: string,
+): Promise<RepoSnapshot | null> {
+  const stdout =
+    shadowStore === undefined
+      ? await git(root, ['status', '--porcelain', '-z', '--untracked-files=all'])
+      : await statusSinceSnapshot(shadowStore, root);
   if (stdout === null) {
     console.warn(`[verification] GIT_CONSTAT_STATUS_FAILED root=${root}`);
     return null;
@@ -234,7 +247,7 @@ export async function snapshotRepo(root: string): Promise<RepoSnapshot | null> {
         : {}),
     });
   }
-  return { root, entries };
+  return shadowStore === undefined ? { root, entries } : { root, entries, shadowStore };
 }
 
 /** Deux empreintes du même fichier disent-elles la même chose ? */
@@ -421,24 +434,57 @@ export function perimetreGit(
  *
  * Ne lève jamais. Une panne de git n'est pas une panne d'écriture.
  */
-export async function snapshotGitAvant(dirs: readonly string[]): Promise<GitConstatBefore> {
+export async function snapshotGitAvant(
+  dirs: readonly string[],
+  /**
+   * Les workspaces de l'agent et le magasin de ses instantanés (#590). Un
+   * workspace qu'aucun dépôt ne couvre — hors dépôt, ou dépôt enraciné
+   * au-dessus de lui — est constaté contre l'index de son instantané de
+   * checkpoint, pris avant tout outil qui écrit. Sans magasin ni instantané,
+   * rien ne le couvre, et c'est dit (`GIT_CONSTAT_NO_FALLBACK`).
+   */
+  shadow?: { readonly store: string | undefined; readonly workspaces: readonly string[] },
+): Promise<GitConstatBefore> {
   const racines = new Map<string, RepoSnapshot>();
   const vus = new Set<string>();
   // Le périmètre est comparé sur les chemins RÉELS : git rend la forme longue
   // et suivie, le dossier visé peut arriver en 8.3 ou à travers une jonction.
   const perimetre = await Promise.all(dirs.map((d) => cheminReel(d)));
-  for (const dir of perimetre) {
-    if (vus.has(dir)) continue;
-    vus.add(dir);
+  /** La racine que git retient pour ce dossier, ou null s'il n'y en a pas d'utilisable. */
+  const racineRetenue = async (dir: string): Promise<string | null> => {
     const root = await repoRootOf(dir);
-    if (root === null || racines.has(root)) continue;
+    if (root === null) return null;
     const rootReel = await cheminReel(root);
     if (!perimetre.some((d) => sousOuEgal(rootReel, d))) {
       console.warn(`[verification] GIT_CONSTAT_ROOT_ABOVE_SCOPE root=${root} dir=${dir}`);
-      continue;
+      return null;
     }
+    return root;
+  };
+  for (const dir of perimetre) {
+    if (vus.has(dir)) continue;
+    vus.add(dir);
+    const root = await racineRetenue(dir);
+    if (root === null || racines.has(root)) continue;
     const snap = await snapshotRepo(root);
     if (snap !== null) racines.set(root, snap);
+  }
+  // LE REPLI, par workspace (#590). La garde au-dessus (pas de dépôt enraciné
+  // au-dessus du périmètre, pour ne pas constater tout un profil) reste
+  // entière : le repli ne lit jamais ce dépôt-là, il lit l'index de
+  // l'instantané de CE workspace, borné au workspace par construction.
+  for (const ws of shadow?.workspaces ?? []) {
+    if ((await racineRetenue(await cheminReel(ws))) !== null) continue;
+    if (!shadow?.store) {
+      console.warn(`[verification] GIT_CONSTAT_NO_FALLBACK ws=${ws} reason=no_checkpoint_store`);
+      continue;
+    }
+    const snap = await snapshotRepo(normalizePath(ws), shadow.store);
+    if (snap === null) {
+      console.warn(`[verification] GIT_CONSTAT_NO_FALLBACK ws=${ws} reason=no_snapshot_status`);
+      continue;
+    }
+    racines.set(`shadow:${snap.root}`, snap);
   }
   return [...racines.values()];
 }
@@ -447,6 +493,12 @@ export async function snapshotGitAvant(dirs: readonly string[]): Promise<GitCons
 export interface GitConstat {
   /** Les fichiers écrits, tous dépôts confondus. */
   readonly writes: readonly ConstatedWrite[];
+  /**
+   * Les fichiers écrits dans un workspace qu'aucun dépôt ne couvre, lus contre
+   * son instantané de checkpoint (#590). Rangés à part : ce n'est pas git du
+   * projet qui les a vus, et l'écran le dit (`constatedBy: 'disk'`).
+   */
+  readonly fallbackWrites: readonly ConstatedWrite[];
   /** Les racines réellement constatées — vide = aucun dépôt, donc constat disque. */
   readonly roots: readonly string[];
   /** Les chemins sur lesquels une empreinte n'a pas pu se lire. */
@@ -472,10 +524,11 @@ export interface GitConstat {
  */
 export async function constatedGitWrites(before: GitConstatBefore): Promise<GitConstat> {
   const writes: ConstatedWrite[] = [];
+  const fallbackWrites: ConstatedWrite[] = [];
   const roots: string[] = [];
   const indecis: string[] = [];
   for (const avant of before) {
-    const apres = await snapshotRepo(avant.root);
+    const apres = await snapshotRepo(avant.root, avant.shadowStore);
     if (apres === null) continue;
     const entries = new Map<string, GitStatusEntry>(apres.entries);
     // Les noms d'avant des renommages : déjà portés par la ligne du nom
@@ -489,12 +542,16 @@ export async function constatedGitWrites(before: GitConstatBefore): Promise<GitC
       entries.set(path, { status: null, fingerprint: await fingerprint(path) });
     }
     const delta = deltaConstat(avant, { root: apres.root, entries });
-    roots.push(avant.root);
-    writes.push(...delta.writes);
+    if (avant.shadowStore === undefined) {
+      roots.push(avant.root);
+      writes.push(...delta.writes);
+    } else {
+      fallbackWrites.push(...delta.writes);
+    }
     indecis.push(...delta.indecis);
   }
   if (indecis.length > 0) {
     console.warn(`[verification] GIT_CONSTAT_UNREADABLE paths=${indecis.join(',')}`);
   }
-  return { writes, roots, indecis };
+  return { writes, fallbackWrites, roots, indecis };
 }

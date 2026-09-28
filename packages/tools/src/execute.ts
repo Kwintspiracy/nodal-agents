@@ -808,6 +808,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             dossiersVises.map((t) => t.path),
             (ctx.workspaces ?? []).map((w) => w.path),
           ),
+          // Un workspace qu'aucun dépôt ne couvre est constaté contre son
+          // instantané de checkpoint, pris juste au-dessus (#590).
+          {
+            store: ctx.checkpointsRoot,
+            workspaces: (ctx.workspaces ?? []).map((w) => w.path),
+          },
         );
   // Ce que le hook a DÉCLARÉ voyage jusqu'à l'outil, sur un contexte dérivé —
   // celui de l'appelant n'est pas modifié. Un outil qui doit connaître le type
@@ -954,7 +960,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           // Une écriture vue par git vaut une cible constatée : c'est tout le
           // point de #199 — un `run_command` qui écrit pour de bon crédite son
           // projet, au lieu de se faire refuser sa déclaration de preuve.
-          ...git.writes.map((w) => ({
+          ...[...git.writes, ...git.fallbackWrites].map((w) => ({
             kind: 'file' as const,
             path: w.path,
             deliverableType: 'code_project' as const,
@@ -985,7 +991,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       for (const f of fichiersDisque) {
         disque.push({ path: f.path, kind: await kindSurDisque(f.path, filesBefore ?? new Map()) });
       }
-      const lignesDeConstat = fusionnerConstats({ git: git.writes, disque });
+      // Ce que l'instantané de checkpoint a vu dans un workspace hors dépôt
+      // (#590) est un constat DISQUE : ce n'est pas git du projet qui l'a vu.
+      const lignesDeConstat = fusionnerConstats({
+        git: git.writes,
+        disque: [...disque, ...git.fallbackWrites],
+      });
       await recordConstatedWrites({
         db: ctx.db,
         jobId: ctx.jobId,
