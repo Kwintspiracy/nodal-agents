@@ -305,6 +305,10 @@ export interface CreateLlmClientOptions {
 
 type GenerateTextResult = Awaited<ReturnType<NodalLlmClient['generateText']>>;
 
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function finiteOrZero(value: unknown): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
@@ -420,16 +424,33 @@ export function createLlmClient(
     // of it, so a cut response is a fact for it to judge, not a turn to refuse
     // (Codex review of #555, P1: a well-formed call followed by the cap read
     // as a model that cannot call tools).
-    const outputTokens = finiteOrZero(result.usage?.outputTokens);
-    const cut = result.finishReason === 'length' || outputTokens >= statedCap;
+    //
+    // Output tokens NOT reported (usage absent or not finite, revue Codex de
+    // #571) are not 0: read as 0, the turn looked under the cap, a false green.
+    // No other measure in this client bounds the tokens written (characters do
+    // not: a token is one byte or dozens), so the cap is then judged on
+    // `finishReason` alone, and that gap is said: the llm_calls row keeps a
+    // null, and the log names the turn. The barrier that needs no usage is the
+    // refusal of a turn with too many tool calls (#564).
+    const reportedOutput = finiteOrNull(result.usage?.outputTokens);
+    const cut =
+      result.finishReason === 'length' || (reportedOutput !== null && reportedOutput >= statedCap);
+    const isTurn = offersTools && !inspectOnly;
+    if (isTurn && reportedOutput === null && !cut) {
+      console.warn(
+        `[llm] turn with output tokens not reported by ${config.provider}/${config.model}: ` +
+          `the stated output cap (${statedCap}) is judged on finishReason ` +
+          `('${String(result.finishReason)}') alone`,
+      );
+    }
     const refusal =
-      offersTools && !inspectOnly && cut
+      isTurn && cut
         ? new LLMOutputLimitError(
             config.provider,
             config.model,
             {
               inputTokens: finiteOrZero(result.usage?.inputTokens),
-              outputTokens,
+              outputTokens: reportedOutput ?? 0,
             },
             (result.toolCalls ?? []).length,
           )
@@ -442,9 +463,12 @@ export function createLlmClient(
   const clientGenerateText: NodalLlmClient['generateText'] = async (args, callOpts) => {
     validateIfMessages(args as { messages?: unknown });
     const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
-    // The cap the request states (#563): the caller's own, else this client's.
+    // The cap the request states (#563): this client's, or the caller's when
+    // LOWER. A caller never raises it (revue Codex de #571): asking 131 072
+    // stated a cap the provider cut under, without `length`, as in #563.
     const callerCap = (args as { maxOutputTokens?: unknown }).maxOutputTokens;
-    const statedCap = typeof callerCap === 'number' && callerCap > 0 ? callerCap : outputCap;
+    const statedCap =
+      typeof callerCap === 'number' && callerCap > 0 ? Math.min(callerCap, outputCap) : outputCap;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
     const prepared = {

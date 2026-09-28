@@ -353,3 +353,126 @@ describe('a turn that reaches the stated output cap is refused, whatever finishR
     expect(backup.doGenerateCalls[0]?.maxOutputTokens).toBe(16_384);
   });
 });
+
+// Revue Codex de #571, P1 (a) : un plafond d'appelant AU-DESSUS du plafond
+// plateforme était énoncé tel quel. Un appelant qui demandait 131 072
+// reproduisait #563 : le fournisseur coupait à 65 536 sans `length`, et le tour
+// passait. Le plafond énoncé est le plus bas des deux, jamais celui de
+// l'appelant seul.
+describe("a caller's cap never raises the platform's @cap:suivre-execution/moteur", () => {
+  const CAP = TURN_OUTPUT_TOKEN_CAP;
+
+  it('a caller asking 131 072 states the platform cap, and a reply reaching it is refused', async () => {
+    useModel('tool-calls', true, CAP);
+
+    const oneShot = await client()
+      .generateText({ ...ARGS, maxOutputTokens: 131_072 })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(oneShot).toBeInstanceOf(LLMOutputLimitError);
+    expect(currentModel.doGenerateCalls[0]?.maxOutputTokens).toBe(CAP);
+
+    await expect(
+      client().generateText({ ...ARGS, maxOutputTokens: 131_072 }, { streamed: true }),
+    ).rejects.toBeInstanceOf(LLMOutputLimitError);
+    expect(currentModel.doStreamCalls[0]?.maxOutputTokens).toBe(CAP);
+  });
+
+  it("a caller above a model's lower ceiling states that ceiling, and is judged on it", async () => {
+    currentModel = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'google/gemma-4-31b-it',
+      doGenerate: async () => generated('stop', true, 16_384),
+    });
+    const gemma = createLlmClient({
+      provider: 'openrouter',
+      model: 'google/gemma-4-31b-it',
+      apiKey: 'k',
+    });
+
+    await expect(gemma.generateText({ ...ARGS, maxOutputTokens: 20_000 })).rejects.toBeInstanceOf(
+      LLMOutputLimitError,
+    );
+    expect(currentModel.doGenerateCalls[0]?.maxOutputTokens).toBe(16_384);
+  });
+});
+
+// Revue Codex de #571, P1 (b) : une réponse SANS nombre de jetons de sortie
+// (usage absent ou non fini) valait 0, donc « sous le plafond » : un faux vert.
+// Aucune autre mesure fiable n'existe dans le client : les caractères reçus ne
+// bornent pas les jetons (un jeton peut faire un octet ou des dizaines). Quand
+// l'usage manque, le plafond ne se juge donc que sur `finishReason`, et ce fait
+// est dit, pas masqué : la ligne llm_calls garde `outputTokens` à null et le
+// client l'écrit dans le journal. La barrière indépendante de l'usage est le
+// refus d'un tour trop gros en appels (#564).
+describe('a turn whose output tokens are not reported @cap:suivre-execution/moteur', () => {
+  function useModelWithoutOutputUsage(reason: Unified, output: unknown = undefined): void {
+    const usage = {
+      inputTokens: { total: 900, noCache: 900, cacheRead: undefined, cacheWrite: undefined },
+      outputTokens: { total: output as number | undefined, text: undefined, reasoning: undefined },
+    };
+    currentModel = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.3',
+      doGenerate: async () => ({ ...generated(reason), usage }),
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: streamedParts(reason).map((p) => (p.type === 'finish' ? { ...p, usage } : p)),
+        }),
+      }),
+    });
+  }
+
+  for (const output of [undefined, Number.NaN] as const) {
+    it(`output tokens ${String(output)}: the turn is not read as under the cap, the gap is said and kept null`, async () => {
+      useModelWithoutOutputUsage('tool-calls', output);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const seen: LlmCallObservation[] = [];
+      try {
+        const oneShot = await client(seen).generateText(ARGS);
+        const streamed = await client().generateText(ARGS, { streamed: true });
+
+        // Nothing else to judge on: the turn comes back, as the provider sent it.
+        expect(oneShot.toolCalls.map((c) => c.toolName)).toEqual(['save_memory', 'file_write']);
+        expect(streamed.toolCalls.map((c) => c.toolName)).toEqual(['save_memory']);
+        // The llm_calls row says "not reported", never a guessed 0.
+        expect(seen[0]?.usage?.outputTokens).toBeNull();
+        // And the log says what could not be judged, for whom, against which cap.
+        const said = warn.mock.calls.map((c) => c.map(String).join(' '));
+        const gap = said.filter((l) => l.includes('output tokens not reported'));
+        expect(gap).toHaveLength(2);
+        expect(gap[0]).toContain('openrouter/z-ai/glm-5.3');
+        expect(gap[0]).toContain(String(TURN_OUTPUT_TOKEN_CAP));
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  }
+
+  it("without output tokens, a 'length' finish is still refused", async () => {
+    useModelWithoutOutputUsage('length');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(client().generateText(ARGS)).rejects.toBeInstanceOf(LLMOutputLimitError);
+      await expect(client().generateText(ARGS, { streamed: true })).rejects.toBeInstanceOf(
+        LLMOutputLimitError,
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a call offering no tools is not a turn: no gap to report', async () => {
+    useModelWithoutOutputUsage('stop');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await client().generateText({ system: 's', messages: ARGS.messages });
+      const said = warn.mock.calls.map((c) => c.map(String).join(' '));
+      expect(said.filter((l) => l.includes('output tokens not reported'))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
