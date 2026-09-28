@@ -1955,6 +1955,20 @@ async function runJobTracked(
     .map((n) => registry.get(n))
     .filter((t): t is AnyToolDef => t !== undefined);
 
+  // list_conversation_runs / stop_conversation_run (#567) — offerts au job de
+  // TÊTE d'une conversation, quel que soit son canal et son agent : c'est lui
+  // qui parle à la personne, et chaque message d'un canal en crée un nouveau.
+  // Sans eux, un « arrête » arrivait sur un job neuf qui ne voyait ni
+  // n'atteignait le run lancé par un message précédent. Un délégué ne les a
+  // pas : arrêter les autres runs de la personne n'est pas son travail.
+  const conversationRunToolNames: string[] =
+    job.conversationId && !job.parentJobId
+      ? ['list_conversation_runs', 'stop_conversation_run']
+      : [];
+  const conversationRunToolDefs: AnyToolDef[] = conversationRunToolNames
+    .map((n) => registry.get(n))
+    .filter((t): t is AnyToolDef => t !== undefined);
+
   // Capability tools: computed from agent's configured integrations.
   // These are instantiated per-job and merged directly into toolDefs/toolMap.
   // CRITICAL: do NOT register into the shared registry — the registry is
@@ -2377,6 +2391,7 @@ async function runJobTracked(
         ...scriptToolDefs,
         ...fileWriteToolDefs,
         ...routineStateToolDefs,
+        ...conversationRunToolDefs,
         ...capabilityTools,
       ];
     } else {
@@ -2441,6 +2456,7 @@ async function runJobTracked(
             ...scriptToolNames,
             ...fileWriteToolNames,
             ...routineStateToolNames,
+            ...conversationRunToolNames,
           ],
         },
         registry,
