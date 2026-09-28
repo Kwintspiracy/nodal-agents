@@ -112,7 +112,7 @@ import type {
   ReadyConfig,
 } from '../verification/registry.ts';
 import { TERMINAL_STATUSES, completeJob, failJob, lastTextOfRun } from './state.ts';
-import { toDbSafeString } from './transcript-text.ts';
+import { runnerNotesValue, toDbSafeString } from './transcript-text.ts';
 
 // ─── Codes journalisés ──────────────────────────────────────────────────────
 
@@ -1193,7 +1193,7 @@ export async function finalizeJobSuccess(
         // du runner, jamais dans les mots de l'agent (#562).
         await tx
           .update(agentJobs)
-          .set({ result, runnerNotes: [line], toolsUsed, updatedAt: new Date() })
+          .set({ result, runnerNotes: runnerNotesValue([line]), toolsUsed, updatedAt: new Date() })
           .where(eq(agentJobs.id, jobId));
 
         // La ligne part là où la promesse est partie : avec la livraison
@@ -1350,7 +1350,7 @@ export async function finalizeJobFailure(
         .update(agentJobs)
         .set({
           result: toDbSafeString(input.userMessage),
-          ...(input.runnerNotes ? { runnerNotes: [...input.runnerNotes] } : {}),
+          ...(input.runnerNotes ? { runnerNotes: runnerNotesValue(input.runnerNotes) } : {}),
           updatedAt: new Date(),
         })
         .where(eq(agentJobs.id, input.jobId));

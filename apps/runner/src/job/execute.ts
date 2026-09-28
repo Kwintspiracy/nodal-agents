@@ -170,6 +170,7 @@ import {
   finalizeJobSuccess,
 } from './finalize.ts';
 import type { DeclaredDeliverableFailure } from './finalize.ts';
+import { runnerNotesValue } from './transcript-text.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import { loadConversationContext } from './conversation-id.ts';
@@ -3210,7 +3211,10 @@ async function runJobTracked(
     // l'agent au tour suivant.
     await db
       .update(agentJobs)
-      .set({ result: avec, runnerNotes: [...(row?.runnerNotes ?? []), failedDelegationNotice()] })
+      .set({
+        result: avec,
+        runnerNotes: runnerNotesValue([...(row?.runnerNotes ?? []), failedDelegationNotice()]),
+      })
       .where(eq(agentJobs.id, jobId as string));
 
     // La LIVRAISON de cette ligne, elle, est posée dans la transaction

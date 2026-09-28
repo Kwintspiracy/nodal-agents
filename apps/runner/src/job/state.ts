@@ -5,7 +5,12 @@ import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
 import { agentJobs, agents, toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
-import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
+import {
+  flattenTranscript,
+  deepDbSafe,
+  runnerNotesValue,
+  toDbSafeString,
+} from './transcript-text.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -572,8 +577,10 @@ export async function failJob(
       if (explanation) kind = 'relay';
     }
     if (!explanation) {
-      explanation = genericFailExplanation(errorCode);
-      runnerNotes = [explanation];
+      // Le code peut porter un détail brut (NUL, demi-surrogate) : même
+      // normalisation que le message de l'appelant (revue Codex de #576, passe 4).
+      explanation = toDbSafeString(genericFailExplanation(errorCode));
+      runnerNotes = runnerNotesValue([explanation]);
     }
     await db
       .update(agentJobs)
