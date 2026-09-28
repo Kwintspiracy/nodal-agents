@@ -421,6 +421,14 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     // tenait dans sa carte). Ce qui déborde, c'est une boîte de champ qui
     // passe le bord de son parent — et ça reste rouge, prouvé juste après sur
     // un champ planté exprès (décision du 29/09).
+    //
+    // Même chose pour un élément TRONQUÉ exprès (overflow hidden ou clip, avec
+    // text-overflow ellipsis ou white-space nowrap) : son texte dépasse PAR
+    // CONSTRUCTION, et l'ellipse est ce que l'écran veut montrer. La mesure du
+    // 28/09 sur main (40e06fbb), une fois le vrai débordement parti, ne nommait
+    // plus que « span 296>243 (span.block.truncate.rounded-md.bg-hover) », le
+    // chemin du dossier en `truncate`. Sa BOÎTE, elle, doit tenir dans son
+    // parent, et une boîte tronquée qui dépasse reste rouge (cas planté plus bas).
     const mesurer = (racine: Element): string[] => {
       const trop: string[] = [];
       // Le message NOMME le coupable : l'élément, et celui de ses descendants
@@ -431,8 +439,14 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
         const cls = (e.getAttribute('class') ?? '').split(/\s+/).slice(0, 4).join('.');
         return `${e.tagName.toLowerCase()}${id ? `[${id}]` : ''}${cls ? `.${cls}` : ''}`;
       };
+      const tronque = (e: Element): boolean => {
+        const st = getComputedStyle(e);
+        const masque = st.overflowX === 'hidden' || st.overflowX === 'clip';
+        return masque && (st.textOverflow === 'ellipsis' || st.whiteSpace === 'nowrap');
+      };
       const voir = (el: Element): void => {
-        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        const champ = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+        if (champ || tronque(el)) {
           const parent = el.parentElement!;
           const cadre = parent.getBoundingClientRect();
           const style = getComputedStyle(parent);
@@ -464,22 +478,30 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     const debordements = await page.getByTestId('project-files-panel').evaluate(mesurer);
     expect(debordements, debordements.join(' | ')).toEqual([]);
 
-    // La mesure des champs n'est pas plus lâche : une boîte de champ plus large
-    // que son parent, plantée dans le panneau, est vue par la MÊME fonction.
+    // La mesure par la boîte n'est pas plus lâche : une boîte de champ et une
+    // boîte tronquée plus larges que leur parent, plantées dans le panneau,
+    // sont vues par la MÊME fonction, chacune sous son nom.
     await page.getByTestId('project-files-panel').evaluate((racine) => {
       const hote = document.createElement('div');
       hote.setAttribute('data-testid', 'e2e-planted-host');
       hote.style.width = '120px';
       const champ = document.createElement('input');
+      champ.setAttribute('data-testid', 'e2e-planted-field');
       champ.style.width = '300px';
       champ.style.boxSizing = 'border-box';
-      hote.appendChild(champ);
+      const tronque = document.createElement('span');
+      tronque.setAttribute('data-testid', 'e2e-planted-truncated');
+      tronque.className = 'block truncate';
+      tronque.style.width = '300px';
+      tronque.textContent = 'x'.repeat(200);
+      hote.append(champ, tronque);
       racine.appendChild(hote);
     });
     const plante = page.getByTestId('e2e-planted-host');
-    const vu = await plante.evaluate(mesurer);
+    const vu = (await plante.evaluate(mesurer)).join(' | ');
     await plante.evaluate((hote) => hote.remove());
-    expect(vu.join(' | ')).toMatch(/box ends \d+px past/);
+    expect(vu).toMatch(/\[e2e-planted-field\][^|]* box ends \d+px past/);
+    expect(vu).toMatch(/\[e2e-planted-truncated\][^|]* box ends \d+px past/);
 
     // Et le panneau ne pousse pas la page hors de l'écran.
     const pageDeborde = await page.evaluate(
