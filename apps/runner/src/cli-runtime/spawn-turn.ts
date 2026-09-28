@@ -34,6 +34,27 @@ export interface SpawnTurnOptions<TResult> {
    * Garde anti-boucle (invariant #8) : au-delà de ce nombre d'appels d'outils
    * dans un tour, la CLI est tuée. Le compteur du loop Nodal ne voit pas la
    * boucle INTERNE d'une CLI ; c'est son équivalent à cette couture.
+   *
+   * Ce qu'il garantit, et ce qu'il ne garantit pas (revue Codex de #568). La
+   * boucle Nodal refuse un tour trop gros ENTIER, avant d'en exécuter un seul
+   * appel (#564), parce qu'elle connaît sa taille dès la réponse. Ici, non :
+   * la CLI exécute ses outils dans son propre processus, le runner ne voit
+   * chaque appel qu'au moment où le flux l'annonce, et le total n'existe
+   * jamais d'avance. Donc :
+   *   - les appels sous le budget ont TOUS pu s'exécuter, mutations comprises ;
+   *   - l'arbre est tué sur la ligne qui OUVRE l'appel au-delà du budget
+   *     (`tool_use` chez Claude, `item.started` chez Codex), avant que le
+   *     runner lise quoi que ce soit après elle — son résultat compris
+   *     (prouvé par `spawn-turn-tool-cap.test.ts`) ;
+   *   - cet appel-là a pu COMMENCER : la CLI l'exécute dès qu'elle l'annonce,
+   *     et le kill arrive après la ligne. Un `file_change` Codex n'a même pas
+   *     de ligne d'ouverture : il n'est compté qu'une fois appliqué.
+   * Empêcher vraiment le 51e appel demanderait un point d'arrêt DANS chaque
+   * CLI, avant chaque outil : les deux binaires installés ont des hooks
+   * (`--settings` chez Claude 2.1.283, `--dangerously-bypass-hook-trust` chez
+   * codex-cli 0.153.4), mais qu'un hook Codex puisse refuser un outil avant
+   * son exécution n'est pas vérifié. Tant que ça ne l'est pas pour les deux,
+   * ce garde reste la règle commune.
    */
   maxToolCalls?: number;
   /**

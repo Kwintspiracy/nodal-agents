@@ -303,10 +303,19 @@ export const VERIFY_BEFORE_ASSERT_NUDGE =
 /**
  * The per-turn tool-call budget of invariant #8, applied to a turn as a whole
  * (#564). Throws {@link ToolCallLimitExceededError} when the model emitted more
- * calls in one turn than `limits.maxToolCallsPerTurn`. Every loop that runs the
- * tool calls of a model turn calls it before running any: the job loop (through
- * `ChainCounters.admitTurn`) and the reflection / curator passes. Incident
- * 2026-09-28: a 307-call turn was executed call by call up to the 50th.
+ * calls in one turn than `limits.maxToolCallsPerTurn`. Every loop in which
+ * NODAL runs the tool calls of a model turn calls it before running any: the
+ * job loop (through `ChainCounters.admitTurn`) and the reflection / curator
+ * passes. Incident 2026-09-28: a 307-call turn was executed call by call up to
+ * the 50th.
+ *
+ * Not the CLI runtimes (Claude Code, Codex): the CLI runs its own tools inside
+ * its own process, the runner sees each call only as the stream announces it,
+ * and a turn's size is never known in advance. There the same budget is
+ * applied by `apps/runner/src/cli-runtime/spawn-turn.ts`, which kills the
+ * process tree on the line that opens the call over the budget: the calls
+ * under the budget have run, and the one over it may have started (see that
+ * file for what is and is not guaranteed).
  */
 export function assertTurnToolCallBudget(
   toolCallCount: number,

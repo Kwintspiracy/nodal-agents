@@ -106,7 +106,9 @@ export interface ClaudeTurnOptions {
   /**
    * Anti-loop guard (invariant #8): kill the CLI past this many tool_use
    * events in one turn. The Nodal loop's maxToolCallsPerTurn does not see a
-   * CLI-internal loop — this is its equivalent at the runtime seam.
+   * CLI-internal loop — this is its equivalent at the runtime seam. The calls
+   * under the cap have run; the kill lands on the line that opens the one over
+   * it, which may already have started (see SpawnTurnOptions.maxToolCalls).
    */
   maxToolCalls?: number;
   onEvent?: (evt: ClaudeTurnEvent) => void;
