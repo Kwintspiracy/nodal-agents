@@ -11,11 +11,12 @@
 //
 // CE QUI PROUVE QU'UN JOB N'A PLUS DE PROPRIÉTAIRE. Il n'y a pas de colonne de
 // possession sur `agent_jobs`, et il n'en faut pas : un runner vivant BAT le
-// cœur de chaque job qu'il tient, toutes les 60 secondes, pendant l'appel modèle
-// comme pendant un outil lent (`touchJob`, apps/runner/src/job/execute.ts, et le
-// battement du runtime CLI). Un job `processing` dont `updated_at` n'a pas bougé
-// depuis plus de deux battements n'est donc tenu par personne. C'est la même
-// preuve que le faucheur, lue plus tôt.
+// cœur de chaque job qu'il tient, toutes les 60 secondes, de la prise du job
+// jusqu'à ce qu'il le lâche, quoi que le job fasse entre les deux (#565,
+// `holdJobHeartbeat`, apps/runner/src/job/heartbeat.ts — runtime CLI compris).
+// Un job `processing` dont `updated_at` n'a pas bougé depuis plus de deux
+// battements n'est donc tenu par personne. C'est la même preuve que le
+// faucheur, lue plus tôt.
 //
 // CE QUE LA RÈGLE SUPPOSE, ET QUI EST VRAI AUJOURD'HUI : un runner par base. Le
 // produit en démarre un, et le mode LAN expose CE runner-là, il n'en ajoute pas.
@@ -45,9 +46,7 @@ import { budgetDeliverable } from '../job/execute.ts';
 import { notifyJobFailure } from './reset-orphans.ts';
 import { restartResumeOf } from '../lib/runtime-restart.ts';
 import type { RestartResume } from '../lib/runtime-restart.ts';
-
-/** Le battement qu'un runner vivant pose sur chaque job qu'il tient. */
-export const RUNNER_HEARTBEAT_MS = 60_000;
+import { RUNNER_HEARTBEAT_MS } from '../job/heartbeat.ts';
 
 /**
  * Au-delà de cette fenêtre sans battement, aucun runner vivant ne tient ce job.

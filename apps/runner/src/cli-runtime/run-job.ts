@@ -41,7 +41,7 @@ import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { buildCliAuditRow } from './audit.ts';
-import { failJob, touchJob } from '../job/state.ts';
+import { failJob } from '../job/state.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
@@ -614,10 +614,9 @@ export async function runCliRuntimeJob(args: {
     throw err;
   }
 
-  // Keep the job alive under the 5-minute reaper for the whole CLI run.
-  const heartbeat = setInterval(() => {
-    void touchJob(db, jobId).catch(() => {});
-  }, 60_000);
+  // The job stays fresh to the reapers for the whole CLI run — and for the
+  // preparation above and the bookkeeping below — through the job's own
+  // heartbeat, held by `runJob` from the claim (#565).
 
   // L'instant où le tour commence — borne basse pour reconnaître les écritures
   // que CE tour a produites (voir `harnessEdits` plus haut).
@@ -643,7 +642,6 @@ export async function runCliRuntimeJob(args: {
       onEvent,
     });
   } catch (err) {
-    clearInterval(heartbeat);
     // La CLI a pu écrire avant de tomber — même contrat conservatif que
     // l'intention, et même raison qu'au seam des outils (#101).
     await bumpEpochsAfterWrite(db, job.entityId ?? '', dirtied);
@@ -651,7 +649,6 @@ export async function runCliRuntimeJob(args: {
     if (isCliSetupError(err)) return fail(err.message.slice(0, 300));
     throw err;
   }
-  clearInterval(heartbeat);
   // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
   //
   // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce

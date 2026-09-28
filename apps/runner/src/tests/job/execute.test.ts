@@ -6862,8 +6862,10 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
 // updated_at is more than 5 minutes stale — legitimate for a genuinely dead
 // job, fatal for one that's actively blocked on a single SLOW tool call (image
 // gen, MCP call, external API) with no other write touching updated_at in the
-// meantime. The LLM call already had a heartbeat (Leg 5); the serial tool-
-// execution loop did not. This test swaps `web_search`'s execute for one held
+// meantime. Since #565 the job's own heartbeat (job/heartbeat.ts), held from
+// the claim to the end of the run, covers it; job-heartbeat.test.ts proves the
+// general case (chains of short calls, preparation, delegation, CLI). This
+// test swaps `web_search`'s execute for one held
 // open by the test (via a manually-resolved promise) — same name, riskLevel,
 // and inputSchema as the real builtin (already always-on + auto-approve), so
 // no whitelist wiring is needed, only the timing is test-controlled. Fake
