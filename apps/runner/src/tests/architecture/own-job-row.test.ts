@@ -49,7 +49,7 @@ const LISTE_BLANCHE: Record<string, string> = {
   'project-record':
     'attach.ts : `project_id`, posé UNE fois (WHERE project_id IS NULL) — un fait sur ce que le job a produit, vrai quel que soit le run qui le tient.',
   'chain-root':
-    "finalize.ts : l'échéance de vérification de la RACINE de la chaîne (souvent un autre job), dans la transaction de finalisation qui la tient FOR UPDATE.",
+    "finalize.ts : l'échéance de vérification de la RACINE de la chaîne, remontée par parent_job_id — la ligne d'un AUTRE job (ou du job lui-même quand il est la racine), écrite SANS verrou avec son seul id : un fait idempotent (deliverable_check_due_at = maintenant), dernier gagnant.",
 };
 
 function fichiers(dir: string): string[] {

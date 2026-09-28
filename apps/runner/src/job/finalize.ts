@@ -608,7 +608,8 @@ async function poseDeliverableCheck(
 
     if (maillon.parentJobId === null) {
       const now = new Date();
-      // agent_jobs-write: chain-root — la racine de la chaîne, tenue FOR UPDATE.
+      // agent_jobs-write: chain-root — la ligne d'un AUTRE job (la racine), écrite
+      // sans verrou : un fait idempotent (l'échéance de vérification), dernier gagnant.
       const poses = await tx
         .update(agentJobs)
         .set({ deliverableCheckDueAt: now, updatedAt: now })
