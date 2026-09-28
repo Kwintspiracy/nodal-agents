@@ -46,7 +46,12 @@ import {
   dossiersNonConstates,
   snapshotFileTargets,
 } from './verification/observed';
-import { constatedGitWrites, perimetreGit, snapshotGitAvant } from './verification/git-constat';
+import {
+  constatedGitWrites,
+  perimetreGit,
+  releaseGitAvant,
+  snapshotGitAvant,
+} from './verification/git-constat';
 import {
   fusionnerConstats,
   kindSurDisque,
@@ -847,6 +852,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       ? await markToolStarted(ctx, auditTool, validatedInput)
       : undefined;
   if (marque === null) {
+    await releaseGitAvant(gitAvant);
     return {
       outcome: 'error',
       error:
@@ -1133,6 +1139,10 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       true,
     );
     return result;
+  } finally {
+    // Les copies figées d'index (#590) que l'après n'a pas relues : l'outil a
+    // levé, ou son échec ne se constate pas. Sans effet sur celles déjà relues.
+    await releaseGitAvant(gitAvant);
   }
 }
 

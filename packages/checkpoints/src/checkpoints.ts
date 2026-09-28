@@ -31,7 +31,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -576,40 +576,84 @@ async function takeSnapshot(
 }
 
 /**
- * Le sha du DERNIER instantané de ce dossier, ou null s'il n'y en a jamais eu.
- *
- * Existe pour le cas que `snapshot` rend `null` : l'arbre n'a pas bougé depuis
- * la dernière photo, donc rien n'est réenregistré — mais l'état d'avant du tour
- * courant EST ce commit-là, et sans lui la ligne `job_checkpoints` de ce tour
- * n'aurait aucun sha à porter. Une lecture, jamais une écriture.
+ * Ce qu'un instantané ne photographie jamais, en plus du `.gitignore` du
+ * workspace : les exclusions du magasin. Exporté pour que le constat des
+ * écritures qui lit un instantané (#590) puisse DIRE ce qu'il ne voit pas.
  */
+export const SNAPSHOT_EXCLUDES: readonly string[] = EXCLUDES;
+
 /**
- * Ce qui a changé dans `workspace` depuis son dernier instantané : la sortie
- * brute de `git status --porcelain -z --untracked-files=all`, lue contre
- * l'index de CE workspace dans le magasin (#590).
+ * Une copie FIGÉE de l'index de l'instantané d'un workspace (#590).
  *
- * Le constat des écritures (`packages/tools`, git-constat.ts) ne voyait que
- * les dossiers qui sont eux-mêmes la racine d'un dépôt git. Un workspace hors
- * de tout dépôt, ou dans un dépôt enraciné AU-DESSUS de lui (une maison
- * versionnée), ne constatait rien de ce qu'un shell y écrivait. L'instantané
- * de checkpoint, pris avant tout outil qui écrit, est justement l'état d'avant
- * de ce workspace : son index EST cet état. Le relire avant et après un appel
- * donne ce que l'appel a écrit, sans seconde mécanique — les mêmes exclusions
- * que l'instantané (`.gitignore` du workspace, exclusions du magasin).
+ * Le constat des écritures (`packages/tools`, git-constat.ts) ne voyait que les
+ * dossiers qui sont eux-mêmes la racine d'un dépôt git. Un workspace hors de
+ * tout dépôt, ou dans un dépôt enraciné AU-DESSUS de lui (une maison
+ * versionnée), ne constatait rien de ce qu'un shell y écrivait. L'instantané,
+ * pris avant tout outil qui écrit, est justement un état d'avant de ce
+ * workspace : son index EST cet état, avec les stats de chaque fichier.
  *
- * `null` quand il n'y a pas d'instantané de ce workspace à comparer (aucun
- * magasin, ou jamais photographié), ou quand git n'a pas répondu dans la
- * borne : l'appelant le dit, il ne devine pas.
+ * POURQUOI UNE COPIE, et pas l'index lui-même (revue A de #591) : l'index est
+ * PARTAGÉ par tous les jobs de ce workspace, et chaque instantané le restage
+ * (`add -A`). Un instantané d'un autre job pris entre l'avant et l'après d'un
+ * appel y faisait entrer les fichiers que cet appel venait d'écrire : ils
+ * sortaient des deux lectures, et l'écriture était perdue. La copie ne bouge
+ * plus ; les deux lectures d'un appel se font contre elle.
  *
- * `GIT_OPTIONAL_LOCKS=0` : une lecture ne rafraîchit pas l'index, donc ne
- * prend pas son verrou et ne gêne pas un instantané concurrent.
+ * POURQUOI L'INDEX, et pas l'arbre du commit : un index porte les stats de
+ * chaque fichier, donc git ne relit que ceux qui ont bougé. Un index refait
+ * depuis l'arbre (`read-tree`) n'en a pas, et chaque lecture rehacherait tout
+ * le dossier — un dossier d'images de plusieurs gigaoctets, deux fois par
+ * appel. La date de la copie est celle de l'original, pour que git juge les
+ * fichiers « modifiés dans la même seconde » exactement comme sur l'original.
+ *
+ * Rangée à côté de l'index, comme l'index jetable de `diffFile`, et retirée par
+ * `releaseFrozenIndex`. Chaque absence a sa raison : pas de magasin, jamais
+ * photographié, copie impossible.
  */
-export async function statusSinceSnapshot(
+export type FrozenSnapshotIndex =
+  | { readonly kind: 'frozen'; readonly indexFile: string }
+  | {
+      readonly kind: 'none';
+      readonly reason: 'no_store' | 'never_snapshotted' | 'freeze_failed';
+    };
+
+export async function freezeSnapshotIndex(
   store: string,
   workspace: string,
+): Promise<FrozenSnapshotIndex> {
+  if (!existsSync(join(store, 'store', 'HEAD'))) return { kind: 'none', reason: 'no_store' };
+  const source = join(store, 'indexes', workspaceKey(workspace));
+  if (!existsSync(source)) return { kind: 'none', reason: 'never_snapshotted' };
+  const indexFile = `${source}.constat-${randomBytes(6).toString('hex')}`;
+  try {
+    const st = await stat(source);
+    // git écrit l'index par `index.lock` puis renommage : la copie lit l'un ou
+    // l'autre en entier, jamais un index à moitié écrit.
+    await copyFile(source, indexFile);
+    await utimes(indexFile, st.atime, st.mtime);
+    return { kind: 'frozen', indexFile };
+  } catch {
+    await rm(indexFile, { force: true }).catch(() => undefined);
+    return { kind: 'none', reason: 'freeze_failed' };
+  }
+}
+
+/**
+ * `git status --porcelain -z --untracked-files=all` du workspace contre une
+ * copie figée (`freezeSnapshotIndex`). Mêmes exclusions que l'instantané.
+ *
+ * Seule la colonne de DROITE (index ↔ arbre de travail) et les `??` disent
+ * quelque chose : le magasin n'a jamais de HEAD, donc la colonne de gauche
+ * marque `A` chaque fichier photographié. C'est à l'appelant de la lire ainsi.
+ *
+ * `GIT_OPTIONAL_LOCKS=0` : une lecture ne réécrit pas la copie. `null` quand git
+ * n'a pas répondu dans la borne : l'appelant le dit, il ne devine pas.
+ */
+export async function statusAgainstFrozenIndex(
+  store: string,
+  workspace: string,
+  indexFile: string,
 ): Promise<string | null> {
-  if (!existsSync(join(store, 'store', 'HEAD'))) return null;
-  if (!existsSync(join(store, 'indexes', workspaceKey(workspace)))) return null;
   try {
     const { stdout } = await run(
       await gitBinary(),
@@ -618,7 +662,7 @@ export async function statusSinceSnapshot(
         timeout: storeTimeoutMs(),
         windowsHide: true,
         maxBuffer: 16 * 1024 * 1024,
-        env: { ...gitEnv(store, workspace), GIT_OPTIONAL_LOCKS: '0' },
+        env: { ...gitEnv(store, workspace, indexFile), GIT_OPTIONAL_LOCKS: '0' },
       },
     );
     return stdout;
@@ -627,6 +671,19 @@ export async function statusSinceSnapshot(
   }
 }
 
+/** Retire une copie figée. Sans effet si elle n'est déjà plus là. */
+export async function releaseFrozenIndex(indexFile: string): Promise<void> {
+  await rm(indexFile, { force: true }).catch(() => undefined);
+}
+
+/**
+ * Le sha du DERNIER instantané de ce dossier, ou null s'il n'y en a jamais eu.
+ *
+ * Existe pour le cas que `snapshot` rend `null` : l'arbre n'a pas bougé depuis
+ * la dernière photo, donc rien n'est réenregistré — mais l'état d'avant du tour
+ * courant EST ce commit-là, et sans lui la ligne `job_checkpoints` de ce tour
+ * n'aurait aucun sha à porter. Une lecture, jamais une écriture.
+ */
 export async function headCheckpoint(store: string, workspace: string): Promise<string | null> {
   if (!existsSync(join(store, 'store', 'HEAD'))) return null;
   const ref = `refs/nodal/${workspaceKey(workspace)}`;
