@@ -155,11 +155,14 @@ import {
   setJobStatus,
   saveCheckpoint,
   claimJob,
+  readJobAuthority,
   currentTurnMessages,
   findTaskBoundary,
 } from './state.ts';
 import { holdJobHeartbeat } from './heartbeat.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
+import type { JobAuthority } from './state.ts';
+import { withinRunScope, recordClaim, heldClaim } from './claim-scope.ts';
 // LA porte terminale de succès (plan « Vérifier & Corriger », T09/T10) : les
 // deux chemins de succès de cette boucle passent par elle, jamais par
 // completeJob directement — c'est elle qui calcule et journalise la décision
@@ -1071,6 +1074,14 @@ export function runTimeCeilingMs(settingHours: number | null | undefined): numbe
 export const STOP_POLL_MS = 2_000;
 
 /**
+ * Lectures ratées d'affilée de sa ligne au-delà desquelles un run arrête son
+ * appel au modèle et échoue (#566) — le seuil et le code du runtime CLI
+ * (#572). Quand #572 sera sur main, une seule constante pour les deux.
+ */
+export const JOB_ROW_UNREADABLE_MAX = 5;
+export const JOB_ROW_UNREADABLE = 'job_row_unreadable';
+
+/**
  * La consigne qui suit le texte partiel d'un tour coupé en pleine écriture
  * (#441). Une consigne de HARNAIS adressée au modèle, jamais montrée à
  * l'utilisateur — même famille que les autres messages `[système]` de ce
@@ -1243,12 +1254,9 @@ export async function executeJob(
   runnerEnv?: RunnerEnv,
   opts?: ExecuteJobOpts,
 ): Promise<ExecuteJobResult> {
-  let result: ExecuteJobResult;
-  try {
-    result = await runJob(jobId, deps, runnerEnv, opts);
-  } catch (err) {
-    result = await failOnUncaughtError(deps, jobId, err);
-  }
+  // Une erreur levée par le run est rattrapée DANS le run (`runJob`), sous sa
+  // prise (#566) : son échec ne peut pas écraser un job repris ailleurs.
+  const result = await runJob(jobId, deps, runnerEnv, opts);
   if (
     !opts?.inlineDelegation &&
     (result.status === 'completed' || result.status === 'failed' || result.status === 'cancelled')
@@ -1474,20 +1482,64 @@ async function runJob(
   runnerEnv?: RunnerEnv,
   opts?: ExecuteJobOpts,
 ): Promise<ExecuteJobResult> {
-  const delegationOutcomes: DelegationOutcomeMap = new Map();
-  // Le battement du job (#565) : posé par `runJobTracked` dès que la prise
-  // réussit, rendu ici quand le run rend la main — fini, suspendu, perdu ou
-  // levé. Aucune autre partie du run ne bat.
-  const tenue: JobHold = { lacher: () => {} };
-  let result: ExecuteJobResult;
-  try {
-    result = await runJobTracked(jobId, deps, runnerEnv, opts, delegationOutcomes, tenue);
-  } finally {
-    tenue.lacher();
-  }
+  // Chaque run a SA prise (#566) : ses écritures sur ce job la portent
+  // (job/claim-scope.ts). Une reprise imbriquée du même job, un enfant délégué
+  // en ligne, ouvrent la leur.
+  return withinRunScope(jobId as string, async () => {
+    const delegationOutcomes: DelegationOutcomeMap = new Map();
+    // Le battement du job (#565) : posé par `runJobTracked` dès que la prise
+    // réussit, rendu ici quand le run rend la main — fini, suspendu, perdu ou
+    // levé. Aucune autre partie du run ne bat.
+    const tenue: JobHold = { lacher: () => {} };
+    let result: ExecuteJobResult;
+    try {
+      result = await runJobTracked(jobId, deps, runnerEnv, opts, delegationOutcomes, tenue);
+    } catch (err) {
+      // Lit déjà la ligne quand son écriture est refusée.
+      return failOnUncaughtError(deps, jobId, err);
+    } finally {
+      tenue.lacher();
+    }
+    if (result.status !== 'completed' && result.status !== 'failed') return result;
+    // Un résultat qui porte déjà sa carte vient d'une reprise imbriquée
+    // (`return runJob(...)`), sous SA prise : elle l'a déjà rapprochée de la ligne.
+    if (result.subDelegations !== undefined) return result;
+    result = await issueTelleQueLaLigneLaDit(deps, jobId, result);
+    if (result.status !== 'completed' && result.status !== 'failed') return result;
+    return { ...result, subDelegations: subDelegationList(delegationOutcomes) };
+  });
+}
+
+/**
+ * L'issue qu'un run propage est celle que SA ligne porte (#566). Les écritures
+ * terminales du run sont conditionnelles à sa prise : quand l'une a été
+ * refusée — le job a été terminé, remis en attente ou repris ailleurs entre la
+ * dernière vérification et l'écriture —, le run ne propage pas au parent un
+ * `failed` / `completed` que la ligne ne dit pas.
+ */
+async function issueTelleQueLaLigneLaDit(
+  deps: Pick<RunnerDeps, 'db'>,
+  jobId: JobId,
+  result: ExecuteJobResult,
+): Promise<ExecuteJobResult> {
   if (result.status !== 'completed' && result.status !== 'failed') return result;
-  if (result.subDelegations !== undefined) return result;
-  return { ...result, subDelegations: subDelegationList(delegationOutcomes) };
+  const prise = heldClaim(jobId as string);
+  if (prise === null) return result;
+  const [ligne] = await deps.db
+    .select({
+      status: agentJobs.status,
+      error: agentJobs.error,
+      claimGeneration: agentJobs.claimGeneration,
+    })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId as string))
+    .limit(1);
+  const conforme =
+    ligne !== undefined &&
+    ligne.claimGeneration === prise &&
+    ligne.status === result.status &&
+    (result.status !== 'failed' || ligne.error === result.error);
+  return conforme ? result : outcomeFromRow(deps, jobId);
 }
 
 /** Ce que le run rend quand il lâche le job : son battement (#565). */
@@ -1594,13 +1646,19 @@ async function runJobTracked(
   // executeJob, so this predicate never blocks a real resume. A second
   // concurrent caller or a post-reap duplicate gets false → already_handled.
   const claimed = await claimJob(db, jobId as string);
-  if (!claimed) {
+  if (claimed === null) {
     trace('claim_lost', { status: job.status ?? 'unknown' });
     return { status: 'already_handled' };
   }
-  // Le job est à nous : il bat jusqu'à ce que `runJob` le lâche, quoi qu'il
-  // fasse entre les deux — préparation, appel modèle, outils, attente (#565).
-  tenue.lacher = holdJobHeartbeat(db, jobId as string);
+  // Le numéro de CETTE prise (#566) : relu avec le statut avant chaque effet,
+  // et porté par chaque écriture du run sur sa ligne (job/claim-scope.ts) —
+  // battement compris.
+  const prise: number = claimed;
+  recordClaim(jobId as string, prise);
+  // Le job est à nous : il bat, sous cette prise, jusqu'à ce que `runJob` le
+  // lâche, quoi qu'il fasse entre les deux — préparation, appel modèle,
+  // outils, attente (#565).
+  tenue.lacher = holdJobHeartbeat(db, jobId as string, prise);
 
   // Invariant 8: chain_count is bumped on every resume from awaiting_delegation
   // (and would also be bumped on awaiting_approval resume once that path ships).
@@ -1691,6 +1749,38 @@ async function runJobTracked(
     turn,
     totalDurationMs: dureeCumuleeMs(),
   });
+
+  // ── Le droit d'agir (#566) ──────────────────────────────────────────────────
+  // La ligne du job fait autorité : ce run n'agit que tant qu'elle dit
+  // `processing` sous SA prise. Relue avant chaque effet — chaque appel
+  // d'outil (pré-passe comprise), chaque délégation, chaque outil approuvé
+  // rejoué, la finalisation —, en tête de tour et pendant l'appel au modèle.
+  // Tout autre état arrête le run : annulé, échoué par le faucheur, fini par un
+  // autre écrivain, remis en `pending`, ou repris par un autre run. Le statut
+  // posé par l'autre écrivain reste celui de la ligne : ce run n'écrit que la
+  // transcription d'un job annulé qu'il tient encore (sa prise), rien sinon.
+  const droitPerdu = async (): Promise<Extract<JobAuthority, { kind: 'lost' }> | null> => {
+    const autorite = await readJobAuthority(db, jobId as string, prise);
+    return autorite.kind === 'lost' ? autorite : null;
+  };
+  const lacherLeJob = async (
+    perte: Extract<JobAuthority, { kind: 'lost' }>,
+    moment: string,
+  ): Promise<ExecuteJobResult> => {
+    trace('authority_lost', { turn, moment, status: perte.status, ownClaim: perte.ownClaim });
+    if (perte.ownClaim && perte.status === 'cancelled') {
+      await cancelJob(db, jobId as string, runStats(), messages);
+      return { status: 'cancelled' };
+    }
+    return { status: 'already_handled' };
+  };
+  // Une écriture du run sur sa ligne a été REFUSÉE (#566) : la ligne n'est
+  // plus à lui. Il s'arrête comme sur toute perte du droit d'agir.
+  const ecritureRefusee = async (moment: string): Promise<ExecuteJobResult> =>
+    lacherLeJob(
+      (await droitPerdu()) ?? { kind: 'lost', status: null, ownClaim: false },
+      `write_refused:${moment}`,
+    );
 
   // ── 3. Load agent ─────────────────────────────────────────────────────────────
   // (Leg 1: status was atomically set to 'processing' by claimJob above.)
@@ -2752,11 +2842,21 @@ async function runJobTracked(
   const executeResolvedApprovals = async (
     resolvedRows: ApprovalRequestRow[],
     msgsIn: ModelMessage[],
-  ): Promise<{ messages: ModelMessage[]; catastrophicRefusalMessage: string | null }> => {
+  ): Promise<{
+    messages: ModelMessage[];
+    catastrophicRefusalMessage: string | null;
+    /** Le droit d'agir perdu avant une exécution (#566) : l'appelant s'arrête. */
+    perdu: Extract<JobAuthority, { kind: 'lost' }> | null;
+  }> => {
     let msgs = msgsIn;
     let catastrophicRefusalMessage: string | null = null;
 
     for (const req of resolvedRows) {
+      // Rejouer un outil approuvé est un effet (#566) : la ligne est relue
+      // avant chacun, et ce qui reste n'est pas exécuté.
+      const perdu = await droitPerdu();
+      if (perdu) return { messages: msgs, catastrophicRefusalMessage, perdu };
+
       let replacementOutput: ToolResultOutput;
 
       if (req.status === 'approved') {
@@ -2953,7 +3053,7 @@ async function runJobTracked(
         .where(eq(approvalRequests.id, req.id));
     }
 
-    return { messages: msgs, catastrophicRefusalMessage };
+    return { messages: msgs, catastrophicRefusalMessage, perdu: null };
   };
 
   // ── 11.7 Execute-on-resume (Bugs B+C fix) ────────────────────────────────────
@@ -2981,6 +3081,7 @@ async function runJobTracked(
     if (resolvedRows.length > 0) {
       const executed = await executeResolvedApprovals(resolvedRows, messages);
       messages = executed.messages;
+      if (executed.perdu) return await lacherLeJob(executed.perdu, 'approved_tool');
 
       // Fix #29: a catastrophic run_command was approved but the hardline floor
       // refuses it regardless — fail the job loud NOW, with the clear message,
@@ -3005,7 +3106,7 @@ async function runJobTracked(
       }
 
       // Persist the updated messages before entering the LLM loop.
-      await saveCheckpoint(db, jobId as string, {
+      const sauve = await saveCheckpoint(db, jobId as string, {
         messages,
         turn,
         chainCount: job.chainCount ?? 0,
@@ -3017,6 +3118,7 @@ async function runJobTracked(
         servedProvider,
         totalDurationMs: dureeCumuleeMs(),
       });
+      if (!sauve) return await ecritureRefusee('approval_replay_checkpoint');
 
       // Issue #370: a decision can WRITE a rule ("Approve for this project" /
       // "Change" on the approval card). Re-read before the job goes on, so the
@@ -3031,7 +3133,9 @@ async function runJobTracked(
     const stillPending = pendingExecRows.filter((r) => r.status === 'pending');
     if (stillPending.length > 0) {
       trace('resume_still_pending', { count: stillPending.length });
-      await setJobStatus(db, jobId as string, 'awaiting_approval');
+      if (!(await setJobStatus(db, jobId as string, 'awaiting_approval'))) {
+        return await ecritureRefusee('resuspend_for_approval');
+      }
       return { status: 'awaiting_approval' };
     }
   }
@@ -3362,17 +3466,10 @@ async function runJobTracked(
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 
-        // Cancel wins even mid-window: execute nothing, touch no status —
-        // mirrors the top-of-turn cancellation check (Leg 2).
-        const [statusRow] = await db
-          .select({ status: agentJobs.status })
-          .from(agentJobs)
-          .where(eq(agentJobs.id, jobId as string));
-        if (statusRow?.status === 'cancelled') {
-          trace('grace_window_cancelled');
-          await cancelJob(db, jobId as string, runStats(), messages);
-          return { status: 'cancelled' };
-        }
+        // A lost right to act wins even mid-window (#566): execute
+        // nothing, touch no status — the top-of-turn check (Leg 2).
+        const perteEnAttente = await droitPerdu();
+        if (perteEnAttente) return await lacherLeJob(perteEnAttente, 'grace_window');
 
         const openRows = await db
           .select()
@@ -3391,6 +3488,7 @@ async function runJobTracked(
         trace('grace_window_resolved_inline', { count: openRows.length });
         const executed = await executeResolvedApprovals(openRows, messages);
         messages = executed.messages;
+        if (executed.perdu) return await lacherLeJob(executed.perdu, 'approved_tool');
 
         // Issue #370: same re-read as the worker-driven resume above. This is
         // the path the incident took — the decision landed inside the grace
@@ -3419,8 +3517,10 @@ async function runJobTracked(
     }
 
     // Grace disabled, or the window expired with ≥1 request still pending —
-    // suspend as before.
-    await saveCheckpoint(db, jobId as string, {
+    // suspend as before. Both writes carry this run's claim (#566): a job
+    // ended or taken elsewhere while its gated tool ran is never turned back
+    // into `awaiting_approval`, and so never revived by the approval.
+    const pointSauve = await saveCheckpoint(db, jobId as string, {
       messages,
       turn,
       chainCount: job.chainCount ?? 0,
@@ -3432,7 +3532,9 @@ async function runJobTracked(
       servedProvider,
       totalDurationMs: dureeCumuleeMs(),
     });
-    await setJobStatus(db, jobId as string, 'awaiting_approval');
+    if (!pointSauve || !(await setJobStatus(db, jobId as string, 'awaiting_approval'))) {
+      return await ecritureRefusee('suspend_for_approval');
+    }
 
     // Race T-ε: a resolution can land between the last poll above (or, with
     // grace disabled, between the gate firing and this very write) and this
@@ -3907,40 +4009,20 @@ async function runJobTracked(
       // Un nouveau tour n'a pas encore de message d'outils en construction (#561).
       tourOuvert = null;
 
-      // Leg 2 — Top-of-turn terminal check (primary zombie-stopper).
+      // Leg 2 — Top-of-turn authority check (primary zombie-stopper).
       //
-      // Checks DB status BEFORE every LLM call. If the row has been set to ANY
-      // terminal status by an external writer (orphan reaper, cancellation,
-      // another concurrent runner), we stop immediately without calling
-      // completeJob/failJob — the row is already terminal and we must not race
-      // to overwrite it. `cancelJob` is still called for 'cancelled' so it
-      // persists the partial transcript + stats.
-      //
-      // Previously this only checked for 'cancelled'. The extension to 'failed'
-      // and 'completed' is the fix for the zombie-execution bug (F1): the orphan
-      // reaper can flip a slow job to 'failed' while the original loop is still
-      // running; without this check the loop would continue and completeJob would
-      // later overwrite 'failed' → 'completed'. The conditional writers (Leg 3)
-      // are a second line of defence; this check is the primary stopper.
-      const [statusRow] = await db
-        .select({ status: agentJobs.status })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, jobId as string));
-      const currentTurnStatus = statusRow?.status;
-      if (currentTurnStatus === 'cancelled') {
-        trace('cancellation_observed', { turn });
-        // Un tour en cours de reprise (#441) a déjà écrit du texte : il fait
-        // partie du travail que l'annulation garde (revue Codex de #449).
+      // The row is read BEFORE every LLM call (#566, `droitPerdu`): any status
+      // but `processing` under this run's claim stops the run without calling
+      // completeJob/failJob — the other writer's status stands. A job
+      // cancelled while this run still holds it keeps its transcript (and a
+      // turn being resumed after a cut, #441, keeps what it had written).
+      const perteEnTete = await droitPerdu();
+      if (perteEnTete) {
         if (partielCeTour !== '') {
           messages = [...messages, { role: 'assistant', content: partielCeTour } as ModelMessage];
           partielCeTour = '';
         }
-        await cancelJob(db, jobId as string, runStats(), messages);
-        return { status: 'cancelled' };
-      }
-      if (currentTurnStatus === 'failed' || currentTurnStatus === 'completed') {
-        trace('terminal_observed_mid_loop', { turn, status: currentTurnStatus });
-        return { status: 'already_handled' };
+        return await lacherLeJob(perteEnTete, 'turn_start');
       }
 
       // Invariant 8: hard turn cap. `turn` is cumulative across resumes (it's
@@ -4026,17 +4108,36 @@ async function runJobTracked(
       // d'approbation plus haut.
       const arret = new AbortController();
       let lectureArretEnCours = false;
+      // Ce qui a arrêté l'appel en cours (#566) : Stop, ou toute autre perte
+      // du droit d'agir.
+      let perteEnAppel: Extract<JobAuthority, { kind: 'lost' }> | null = null;
+      // Une ligne qu'on ne peut plus lire ne vaut PAS autorisation (invariant
+      // #4) : chaque lecture ratée est dite, et à la JOB_ROW_UNREADABLE_MAX-ième
+      // d'affilée l'appel est coupé et le run échoue — la règle du runtime CLI
+      // (#572), même seuil et même code.
+      let lecturesRatees = 0;
+      let ligneIllisible = false;
       const surveilleArret = setInterval(() => {
         if (lectureArretEnCours || arret.signal.aborted) return;
         lectureArretEnCours = true;
-        void db
-          .select({ status: agentJobs.status })
-          .from(agentJobs)
-          .where(eq(agentJobs.id, jobId as string))
-          .then(([row]) => {
-            if (row?.status === 'cancelled') arret.abort();
+        void droitPerdu()
+          .then((perte) => {
+            lecturesRatees = 0;
+            if (!perte) return;
+            perteEnAppel = perte;
+            arret.abort();
           })
-          .catch(() => {})
+          .catch((err: unknown) => {
+            lecturesRatees += 1;
+            console.warn(
+              `[exec ${jobId}] JOB_ROW_UNREADABLE consecutive=${String(lecturesRatees)}/${String(JOB_ROW_UNREADABLE_MAX)}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+            if (lecturesRatees < JOB_ROW_UNREADABLE_MAX) return;
+            ligneIllisible = true;
+            arret.abort();
+          })
           .finally(() => {
             lectureArretEnCours = false;
           });
@@ -4129,7 +4230,23 @@ async function runJobTracked(
           if (ecrit !== '') {
             messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
           }
+          if (ligneIllisible) {
+            trace('job_row_unreadable', { turn, during: 'llm_call' });
+            try {
+              await failJob(db, jobId as string, JOB_ROW_UNREADABLE, runStats(), messages);
+            } catch (err) {
+              // La base ne répond plus : l'échec est DIT, et le run s'arrête
+              // quand même — le faucheur finira la ligne.
+              console.error(
+                `[exec ${jobId}] JOB_ROW_UNREADABLE — failJob failed too: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              );
+            }
+            return { status: 'failed', error: JOB_ROW_UNREADABLE };
+          }
           trace('cancellation_observed', { turn, during: 'llm_call', partialChars: ecrit.length });
+          if (perteEnAppel) return await lacherLeJob(perteEnAppel, 'llm_call');
           await cancelJob(db, jobId as string, runStats(), messages);
           return { status: 'cancelled' };
         }
@@ -4140,20 +4257,17 @@ async function runJobTracked(
           // l'emporte. Sans cette lecture, un plafond ou un budget d'expiration
           // épuisé écrivait `failed` par-dessus l'annulation de la personne
           // (revue Codex de #449, passe 9). L'appel coupé est compté, et ce
-          // qu'il avait écrit est gardé, comme au Stop pendant l'appel.
-          const [statutALExpiration] = await db
-            .select({ status: agentJobs.status })
-            .from(agentJobs)
-            .where(eq(agentJobs.id, jobId as string));
-          if (statutALExpiration?.status === 'cancelled') {
+          // qu'il avait écrit est gardé, comme au Stop pendant l'appel. Toute
+          // autre perte du droit d'agir l'emporte de même (#566) : le statut
+          // posé par l'autre écrivain n'est jamais réécrit.
+          const perteALExpiration = await droitPerdu();
+          if (perteALExpiration) {
             if (expiration.served) await compterAppelInterrompu(expiration);
             const ecrit = (partielCeTour + expiration.partialText).trim();
             if (ecrit !== '') {
               messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
             }
-            trace('cancellation_observed', { turn, during: 'llm_timeout' });
-            await cancelJob(db, jobId as string, runStats(), messages);
-            return { status: 'cancelled' };
+            return await lacherLeJob(perteALExpiration, 'llm_timeout');
           }
           // Un appel coupé EN ÉCRIVANT a été servi : le fournisseur a lu tout le
           // prompt et produit ce texte, et il le facture. Aucun décompte ne
@@ -4392,20 +4506,16 @@ async function runJobTracked(
       // qu'elle demande. Le texte du tour est gardé. Lue AVANT les plafonds
       // (revue Codex de #449, passe 7) : un Stop suivi d'un débordement rend
       // `cancelled`, pas `failed` — le parent et la tâche lisent ce statut.
-      const [statutApresAppel] = await db
-        .select({ status: agentJobs.status })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, jobId as string));
-      if (statutApresAppel?.status === 'cancelled') {
+      // Toute perte du droit d'agir compte ici, pas seulement Stop (#566).
+      const perteApresAppel = await droitPerdu();
+      if (perteApresAppel) {
         if (texteDuTour.trim() !== '') {
           messages = [
             ...messages,
             { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
           ];
         }
-        trace('cancellation_observed', { turn, during: 'before_tools' });
-        await cancelJob(db, jobId as string, runStats(), messages);
-        return { status: 'cancelled' };
+        return await lacherLeJob(perteApresAppel, 'before_tools');
       }
 
       // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
@@ -4676,6 +4786,9 @@ async function runJobTracked(
           // job fini sans ligne d'outbox, donc une notice perdue pour toujours
           // (passe ciblée sur la livraison, constat 2). Le point d'extension
           // existait et n'était branché nulle part.
+          // La finalisation est un effet : elle livre et pose `completed` (#566).
+          const perteAvantFin = await droitPerdu();
+          if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');
           const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
           const cibleNotice = harnessNoticeTarget();
           const finalized = await finalizeJobSuccess(
@@ -5025,6 +5138,10 @@ async function runJobTracked(
         // A slow wave (an Apify run up to 30 min, a slow MCP or scrape) stays
         // fresh to the reapers through the job's own heartbeat (#565).
         for (let i = 0; i < batch.length; i += toolConcurrency) {
+          // Chaque vague est un effet (#566) : une vague perdue n'est pas
+          // lancée, et la boucle série ci-dessous arrête le tour au premier
+          // appel qui n'a pas tourné.
+          if (i > 0 && (await droitPerdu())) break;
           const wave = batch.slice(i, i + toolConcurrency);
           const results = await Promise.all(
             wave.map(async (c) => {
@@ -5061,6 +5178,17 @@ async function runJobTracked(
             ),
           });
           continue;
+        }
+
+        // Le droit d'agir, relu avant CHAQUE appel qui n'a pas déjà tourné
+        // dans la pré-passe — délégation comprise (#566). Perdu : aucun appel
+        // de ce tour ne tourne plus. La transcription qu'un job annulé garde
+        // est fermée par la règle du tour (#561, `transcriptionFermee`) : les
+        // appels qui ont tourné gardent leur résultat, les autres disent
+        // qu'ils n'ont pas tourné.
+        if (!preExecuted.has(call.id)) {
+          const perteAvantAppel = await droitPerdu();
+          if (perteAvantAppel) return await lacherLeJob(perteAvantAppel, 'before_tool_call');
         }
 
         counters.bumpToolCall();
@@ -5303,7 +5431,7 @@ async function runJobTracked(
               // Persist run-state (turn, tokens, toolsUsed) before transitioning
               // to awaiting_delegation. handleDelegation persists messages +
               // status atomically; this complements it for observability.
-              await saveCheckpoint(db, jobId as string, {
+              const avantDelegation = await saveCheckpoint(db, jobId as string, {
                 messages,
                 turn,
                 chainCount: job.chainCount ?? 0,
@@ -5315,6 +5443,7 @@ async function runJobTracked(
                 servedProvider,
                 totalDurationMs: dureeCumuleeMs(),
               });
+              if (!avantDelegation) return await ecritureRefusee('delegation_checkpoint');
 
               const jobShape = {
                 id: jobId,
@@ -5366,6 +5495,7 @@ async function runJobTracked(
                 },
                 preAssignSideResults,
                 db,
+                prise,
               );
 
               // Drive the child synchronously, then resume the parent. In
@@ -5404,10 +5534,10 @@ async function runJobTracked(
                 // still be 'processing' since cancellation was scoped to the
                 // child); orphan-cleanup would catch it eventually but
                 // surfacing it now matches user intent.
-                await db
-                  .update(agentJobs)
-                  .set({ status: 'cancelled', updatedAt: new Date() })
-                  .where(eq(agentJobs.id, jobId as string));
+                // Under this run's claim (#566), like every write of the run.
+                if (!(await setJobStatus(db, jobId as string, 'cancelled'))) {
+                  return await ecritureRefusee('cascade_cancel');
+                }
                 await cancelJob(db, jobId as string, runStats(), messages);
                 return { status: 'cancelled' };
               }
@@ -6205,7 +6335,7 @@ async function runJobTracked(
         // it to 'completed'.
         if (taskRows.length > 0) {
           trace('return_result_with_tasks', { taskCount: taskRows.length });
-          await saveCheckpoint(db, jobId as string, {
+          const confie = await saveCheckpoint(db, jobId as string, {
             messages,
             turn,
             chainCount: job.chainCount ?? 0,
@@ -6217,12 +6347,16 @@ async function runJobTracked(
             servedProvider,
             totalDurationMs: dureeCumuleeMs(),
           });
+          if (!confie) return await ecritureRefusee('awaiting_tasks_checkpoint');
           return { status: 'awaiting_tasks' };
         }
 
         trace('finalize_call', { turn, toolsUsed, stats: runStats() });
         // SANS `delivery` — même raison que le chemin texte : le canal a été
         // servi par l'outil de livraison pendant le run.
+        // La finalisation est un effet : elle livre et pose `completed` (#566).
+        const perteAvantFin = await droitPerdu();
+        if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');
         const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
         const cibleNotice = harnessNoticeTarget();
         const finalized = await finalizeJobSuccess(
@@ -6484,7 +6618,7 @@ async function runJobTracked(
       // `messages`, so the dashboard shows only the user task and tools_used
       // stays empty. Live regression: job 8b66b21d (2026-05-17) lost 9 turns
       // of CMB research when turn-10 hit Retry exhausted.
-      await saveCheckpoint(db, jobId as string, {
+      const tourSauve = await saveCheckpoint(db, jobId as string, {
         messages,
         turn,
         chainCount: job.chainCount ?? 0,
@@ -6496,6 +6630,7 @@ async function runJobTracked(
         servedProvider,
         totalDurationMs: dureeCumuleeMs(),
       });
+      if (!tourSauve) return await ecritureRefusee('turn_checkpoint');
     }
   } catch (err) {
     trace('catch', {

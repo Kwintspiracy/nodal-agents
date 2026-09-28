@@ -6,6 +6,7 @@ import { agentJobs, agents, toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
 import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
+import { claimCondition } from './claim-scope.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -81,35 +82,79 @@ export async function setJobStatus(
   jobId: string,
   status: JobStatus,
   extra: Record<string, unknown> = {},
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
+  const rows = await db
     .update(agentJobs)
     .set({ status, updatedAt: new Date(), ...extra })
-    .where(eq(agentJobs.id, jobId));
+    .where(and(eq(agentJobs.id, jobId), claimCondition(jobId)))
+    .returning({ id: agentJobs.id });
+  return rows.length > 0;
 }
 
 /**
  * Atomic claim: flip status pending → processing in a single UPDATE WHERE id=$1
- * AND status='pending'. Returns true iff exactly one row was updated — i.e. this
- * caller won the race. Returns false when the row is missing, already processing,
- * or in any other non-pending state (concurrent claim, orphan reaper already
- * acted, etc.).
+ * AND status='pending'. Returns the claim's generation iff exactly one row was
+ * updated — i.e. this caller won the race. Returns null when the row is missing,
+ * already processing, or in any other non-pending state (concurrent claim,
+ * orphan reaper already acted, etc.).
+ *
+ * Every claim bumps `claim_generation` (#566): the run that won keeps its
+ * number and checks it before each side effect (`readJobAuthority`). A job put
+ * back to `pending` behind its back (the reaper's resume) and claimed by
+ * another run carries another number, so the first run knows it lost the job
+ * even though the row reads `processing` again.
  *
  * Only 'pending' is a valid entry point. All legitimate resume paths
  * (approval, delegation, self-chain) reset the row to 'pending' before calling
  * executeJob, so the WHERE status='pending' predicate never blocks a real resume.
  */
-export async function claimJob(db: AnyDrizzleDb, jobId: string): Promise<boolean> {
+export async function claimJob(db: AnyDrizzleDb, jobId: string): Promise<number | null> {
   const rows = await db
     .update(agentJobs)
     .set({
       status: 'processing',
+      claimGeneration: sql`${agentJobs.claimGeneration} + 1`,
       updatedAt: new Date(),
     })
     .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
-    .returning({ id: agentJobs.id });
+    .returning({ id: agentJobs.id, claimGeneration: agentJobs.claimGeneration });
 
-  return rows.length > 0 && rows[0]?.id === jobId;
+  const row = rows[0];
+  return rows.length === 1 && row?.id === jobId ? row.claimGeneration : null;
+}
+
+/** What the job's row says about a run's right to act (#566). */
+export type JobAuthority =
+  | { kind: 'owned' }
+  /**
+   * The row no longer lets this run act. `status` is what the row says (null:
+   * no row). `ownClaim` is false when another claim took the job: then the
+   * run must write nothing at all, not even its transcript.
+   */
+  | { kind: 'lost'; status: string | null; ownClaim: boolean };
+
+/**
+ * The job's row is the authority on whether a run may act (#566): it may only
+ * while the row is `processing` under the claim this run made. Any other
+ * status — terminal (cancelled, failed by the reaper, completed by another
+ * writer), put back to `pending`, suspended — or another claim means stop.
+ * Read, never written: the other writer's status stands.
+ */
+export async function readJobAuthority(
+  db: AnyDrizzleDb,
+  jobId: string,
+  claimGeneration: number,
+): Promise<JobAuthority> {
+  const [row] = await db
+    .select({ status: agentJobs.status, claimGeneration: agentJobs.claimGeneration })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  if (!row) return { kind: 'lost', status: null, ownClaim: false };
+  const ownClaim = row.claimGeneration === claimGeneration;
+  if (ownClaim && row.status === 'processing') return { kind: 'owned' };
+  return { kind: 'lost', status: row.status, ownClaim };
 }
 
 interface RunStats {
@@ -447,7 +492,14 @@ export async function completeJob(
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
-    .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
+    .where(
+      and(
+        eq(agentJobs.id, jobId),
+        notInArray(agentJobs.status, TERMINAL_STATUSES),
+        // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
+        claimCondition(jobId),
+      ),
+    )
     .returning({ id: agentJobs.id });
 
   const landed = rows.length > 0 && rows[0]?.id === jobId;
@@ -543,7 +595,14 @@ export async function failJob(
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
-    .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
+    .where(
+      and(
+        eq(agentJobs.id, jobId),
+        notInArray(agentJobs.status, TERMINAL_STATUSES),
+        // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
+        claimCondition(jobId),
+      ),
+    )
     .returning({ id: agentJobs.id });
 
   const landed = rows.length > 0 && rows[0]?.id === jobId;
@@ -636,12 +695,16 @@ export async function cancelJob(
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
-    .where(eq(agentJobs.id, jobId));
+    // Le run qui tenait ce job garde sa transcription d'annulation — sous SA
+    // prise seulement : un autre run qui l'a repris depuis écrit la sienne (#566).
+    .where(and(eq(agentJobs.id, jobId), claimCondition(jobId, null)));
 }
 
 /**
  * Save job checkpoint (messages + turn + chain_count) for self-chaining.
- * Does NOT change status — caller does that separately.
+ * Does NOT change status — caller does that separately. Written by the run
+ * that holds the job, so only under its claim (#566): rend false quand la
+ * ligne n'est plus à ce run (terminée, remise en attente, reprise ailleurs).
  */
 export async function saveCheckpoint(
   db: AnyDrizzleDb,
@@ -658,8 +721,8 @@ export async function saveCheckpoint(
     servedProvider?: string | null;
     totalDurationMs?: number;
   },
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(agentJobs)
     .set({
       // Byte-level DB safety — this mid-run save was one of the two live
@@ -684,20 +747,33 @@ export async function saveCheckpoint(
         totalDurationMs: checkpoint.totalDurationMs,
       }),
     })
-    .where(eq(agentJobs.id, jobId));
+    .where(and(eq(agentJobs.id, jobId), claimCondition(jobId)))
+    .returning({ id: agentJobs.id });
+  return rows.length > 0;
 }
 
 /**
  * One heartbeat: bump `updated_at` so the reapers (`reclaimJobsOfDeadRunners`,
  * `resetOrphanedJobs`) see a live runner holding this job. Written ONLY while
- * the row is `processing` (#565): a beat means "a runner is working this job",
- * so it never refreshes a job that was suspended, put back to `pending`, or
- * ended by another writer. Driven by `holdJobHeartbeat` (job/heartbeat.ts) for
- * the whole time the runner holds the job — never per activity.
+ * the row is `processing` (#565) UNDER the claim the beating run holds (#566):
+ * a beat means "the run that owns this job is alive", so it never refreshes a
+ * job that was suspended, put back to `pending`, ended by another writer, or
+ * taken by another run since. Driven by `holdJobHeartbeat` (job/heartbeat.ts)
+ * for the whole time the runner holds the job — never per activity.
  */
-export async function touchJob(db: AnyDrizzleDb, jobId: string): Promise<void> {
+export async function touchJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  claimGeneration: number,
+): Promise<void> {
   await db
     .update(agentJobs)
     .set({ updatedAt: new Date() })
-    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'processing')));
+    .where(
+      and(
+        eq(agentJobs.id, jobId),
+        eq(agentJobs.status, 'processing'),
+        eq(agentJobs.claimGeneration, claimGeneration),
+      ),
+    );
 }

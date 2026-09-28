@@ -50,6 +50,7 @@ import type { ExecuteJobResult } from '../../job/execute.ts';
 import { holdJobHeartbeat, heldJobIds, RUNNER_HEARTBEAT_MS } from '../../job/heartbeat.ts';
 import { reclaimJobsOfDeadRunners, RUNNER_LIVENESS_WINDOW_MS } from '../../cron/reclaim-jobs.ts';
 import { resetOrphanedJobs } from '../../cron/reset-orphans.ts';
+import { claimJob } from '../../job/state.ts';
 
 const { client, preparation, tourCli } = vi.hoisted(() => ({
   client: { current: null as RunnerDeps['llmClient'] | null },
@@ -604,7 +605,7 @@ describe('le battement d’un job, de la prise au lâcher (#565) @cap:organiser-
 
   it('tenu et immobile dix minutes : frais ; lâché : il vieillit', async () => {
     const jobId = await jobEn('processing');
-    const lache = holdJobHeartbeat(db, jobId);
+    const lache = holdJobHeartbeat(db, jobId, 0);
     for (let t = 0; t < 10 * 60_000; t += PAS_MS) {
       await vi.advanceTimersByTimeAsync(PAS_MS);
       expect(await age(jobId)).toBeLessThan(RUNNER_LIVENESS_WINDOW_MS);
@@ -621,8 +622,8 @@ describe('le battement d’un job, de la prise au lâcher (#565) @cap:organiser-
 
   it('une reprise imbriquée qui rend la main ne lâche pas le battement de l’appelant', async () => {
     const jobId = await jobEn('processing');
-    const exterieur = holdJobHeartbeat(db, jobId);
-    const interieur = holdJobHeartbeat(db, jobId);
+    const exterieur = holdJobHeartbeat(db, jobId, 0);
+    const interieur = holdJobHeartbeat(db, jobId, 0);
     interieur();
     interieur(); // deux fois : sans effet
     await vi.advanceTimersByTimeAsync(5 * 60_000);
@@ -632,11 +633,79 @@ describe('le battement d’un job, de la prise au lâcher (#565) @cap:organiser-
     expect(heldJobIds()).not.toContain(jobId);
   });
 
+  // Revue Codex de #575, passe 2 : un battement qui ignorait la prise faisait
+  // passer un run PÉRIMÉ pour le propriétaire actuel. Le run A tient le job
+  // (prise gA) dans un outil long ; le faucheur le remet en file, le run B le
+  // reprend (prise gB) et meurt. L'intervalle de A, toujours vivant,
+  // rafraîchissait la ligne de B : le faucheur ne voyait jamais B mort.
+  it('un run PÉRIMÉ (prise ancienne) ne cache pas au faucheur le run mort qui l’a remplacé', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'x',
+        status: 'pending',
+        messages: [],
+      })
+      .returning({ id: agentJobs.id });
+    const jobId = job!.id;
+    const priseA = await claimJob(db, jobId);
+    const lacheA = holdJobHeartbeat(db, jobId, priseA!);
+    // Le faucheur remet le job en file, B le prend… et meurt sans jamais battre.
+    await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, jobId));
+    const priseB = await claimJob(db, jobId);
+    expect(priseB).toBe(priseA! + 1);
+    try {
+      for (let t = 0; t <= RUNNER_LIVENESS_WINDOW_MS; t += PAS_MS) {
+        await vi.advanceTimersByTimeAsync(PAS_MS);
+      }
+      expect(await age(jobId)).toBeGreaterThan(RUNNER_LIVENESS_WINDOW_MS);
+      const avertir = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const r = await reclaimJobsOfDeadRunners(db).finally(() => avertir.mockRestore());
+      expect(r.reclaimed).toBe(1);
+      expect(await statut(jobId)).toEqual({ status: 'failed', error: 'runner_restarted' });
+    } finally {
+      lacheA();
+    }
+  });
+
+  it('une reprise imbriquée (prise suivante) bat sous SA prise, et l’appelant rendu ne bat plus pour elle', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'x',
+        status: 'pending',
+        messages: [],
+      })
+      .returning({ id: agentJobs.id });
+    const jobId = job!.id;
+    const exterieure = await claimJob(db, jobId);
+    const lacheExterieur = holdJobHeartbeat(db, jobId, exterieure!);
+    // La reprise imbriquée : remise en attente par le run lui-même, reprise aussitôt.
+    await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, jobId));
+    const interieure = await claimJob(db, jobId);
+    const lacheInterieur = holdJobHeartbeat(db, jobId, interieure!);
+    for (let t = 0; t < 5 * 60_000; t += PAS_MS) {
+      await vi.advanceTimersByTimeAsync(PAS_MS);
+      expect(await age(jobId)).toBeLessThan(RUNNER_LIVENESS_WINDOW_MS);
+    }
+    lacheInterieur();
+    await vi.advanceTimersByTimeAsync(RUNNER_LIVENESS_WINDOW_MS + PAS_MS);
+    expect(await age(jobId)).toBeGreaterThan(RUNNER_LIVENESS_WINDOW_MS);
+    lacheExterieur();
+    expect(heldJobIds()).not.toContain(jobId);
+  });
+
   it('un job qui n’est plus `processing` n’est pas rajeuni par le battement', async () => {
     const suspendu = await jobEn('awaiting_delegation');
     const annule = await jobEn('cancelled');
-    const lacheS = holdJobHeartbeat(db, suspendu);
-    const lacheA = holdJobHeartbeat(db, annule);
+    const lacheS = holdJobHeartbeat(db, suspendu, 0);
+    const lacheA = holdJobHeartbeat(db, annule, 0);
     await vi.advanceTimersByTimeAsync(3 * RUNNER_HEARTBEAT_MS + PAS_MS);
     expect(await age(suspendu)).toBeGreaterThanOrEqual(3 * RUNNER_HEARTBEAT_MS);
     expect(await age(annule)).toBeGreaterThanOrEqual(3 * RUNNER_HEARTBEAT_MS);
