@@ -474,6 +474,110 @@ describe('un job tenu par un runner vivant n’est jamais fauché (#565) @cap:or
   });
 });
 
+// Revue Codex de #569 : le lâcher après une EXCEPTION et après une SUSPENSION
+// n'était prouvé par rien. Ce qui se prouve ici, sur la vraie ligne : une fois
+// le run rendu, son battement est rendu aussi. La sonde : la ligne est remise
+// `processing` sans que personne ne la tienne (ce qu'un run mort laisserait) ;
+// un battement resté armé la rajeunirait toutes les 60 s et la cacherait au
+// faucheur. Rendu, la ligne vieillit et le faucheur la reprend.
+describe('le battement est rendu quand le run rend la main (#565) @cap:organiser-equipe/moteur', () => {
+  async function sondeSansTenant(jobId: string) {
+    await db
+      .update(agentJobs)
+      .set({ status: 'processing', updatedAt: new Date() })
+      .where(eq(agentJobs.id, jobId));
+    const [avant] = await db
+      .select({ updatedAt: agentJobs.updatedAt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    for (let t = 0; t <= RUNNER_LIVENESS_WINDOW_MS; t += PAS_MS) {
+      await vi.advanceTimersByTimeAsync(PAS_MS);
+    }
+    const [apres] = await db
+      .select({ updatedAt: agentJobs.updatedAt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const avertir = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await reclaimJobsOfDeadRunners(db).finally(() => avertir.mockRestore());
+    return {
+      touche: apres!.updatedAt!.getTime() !== avant!.updatedAt!.getTime(),
+      fauche: r.reclaimed + r.resumedJobIds.filter((id) => id === jobId).length,
+      status: (await statut(jobId)).status,
+    };
+  }
+
+  it('après une EXCEPTION du run (dossier de la demande introuvable) : rendu, la ligne vieillit', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'x',
+        status: 'pending',
+        messages: [],
+        jobFolder: join(tmpdir(), `hb-introuvable-${String(Date.now())}`),
+      })
+      .returning({ id: agentJobs.id });
+    const jobId = job!.id;
+
+    const p = await tourneSousLesFaucheurs(
+      executeJob(jobId as JobId, deps(modele(['fin']))),
+      async () => [jobId],
+    );
+
+    expect(p.issue).toMatchObject({ status: 'failed', error: 'job_folder_missing' });
+    expect(await statut(jobId)).toEqual({ status: 'failed', error: 'job_folder_missing' });
+    expect(heldJobIds()).not.toContain(jobId);
+    expect(await sondeSansTenant(jobId)).toEqual({ touche: false, fauche: 1, status: 'failed' });
+  });
+
+  it('après une SUSPENSION pour approbation : rendu, la ligne vieillit', async () => {
+    const graceAvant = process.env['NODALAI_APPROVAL_GRACE_MS'];
+    process.env['NODALAI_APPROVAL_GRACE_MS'] = '0';
+    try {
+      const jobId = await nouveauJob(seed.agentId);
+      const d = deps(
+        modele([
+          {
+            outils: [
+              {
+                id: 'ap-0',
+                nom: 'save_memory',
+                entree: {
+                  fact: 'à approuver',
+                  category: 'context',
+                  importance: 2,
+                  purpose: 'garder ce fait',
+                },
+              },
+            ],
+          },
+          'fin',
+        ]),
+      );
+      // `save_memory` demande ici une approbation : le run se suspend.
+      d.registry.register({
+        ...d.registry.get('save_memory')!,
+        defaultApproval: 'require_approval',
+      });
+
+      const p = await tourneSousLesFaucheurs(executeJob(jobId as JobId, d), async () => [jobId]);
+
+      expect(p.issue.status).toBe('awaiting_approval');
+      expect(await statut(jobId)).toEqual({ status: 'awaiting_approval', error: null });
+      expect(heldJobIds()).not.toContain(jobId);
+      const sonde = await sondeSansTenant(jobId);
+      expect(sonde.touche).toBe(false);
+      expect(sonde.fauche).toBe(1);
+      expect(sonde.status).not.toBe('processing');
+    } finally {
+      if (graceAvant === undefined) delete process.env['NODALAI_APPROVAL_GRACE_MS'];
+      else process.env['NODALAI_APPROVAL_GRACE_MS'] = graceAvant;
+    }
+  });
+});
+
 describe('le battement d’un job, de la prise au lâcher (#565) @cap:organiser-equipe/moteur', () => {
   async function jobEn(status: 'processing' | 'awaiting_delegation' | 'cancelled') {
     const [job] = await db
