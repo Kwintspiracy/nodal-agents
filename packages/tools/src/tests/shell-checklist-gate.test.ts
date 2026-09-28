@@ -83,6 +83,32 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
     ]);
   });
 
+  // #581 : l'owner qui laisse un agent récupérer ses modèles sans demander ne
+  // le laisse pas pour autant installer des logiciels.
+  it('download allowed, install asked: a model or package download runs, an install is held (#581)', async () => {
+    const policy: ShellPolicy = {
+      ...DEFAULT_SHELL_POLICY,
+      download: 'allow',
+      install_software: 'ask',
+    };
+    for (const command of [
+      'pip download torch -d wheels',
+      'comfy --json model download --url "https://huggingface.co/x/y.safetensors" --relative-path models/checkpoints',
+      'hf download black-forest-labs/FLUX.1-dev flux1-dev.safetensors --local-dir models/unet',
+    ]) {
+      const res = await run(command, gate(policy, [yolo()]));
+      expect(res, command).toMatchObject({ outcome: 'success' });
+      if (res.outcome === 'success') expect(res.output).toBe(`ran:${command}`);
+    }
+
+    const held = await run('pip install pandas', gate(policy, [yolo()]));
+    expect(held.outcome).toBe('awaiting_approval');
+    if (held.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(held.approvalRequestId)).toEqual([
+      { category: 'install_software', state: 'ask', details: ['pip install pandas'] },
+    ]);
+  });
+
   it('"never" blocks, tells the agent what, and asks no one', async () => {
     const before = await db.select({ id: approvalRequests.id }).from(approvalRequests);
 

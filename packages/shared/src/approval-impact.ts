@@ -19,7 +19,39 @@ import {
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   isInlineInterpreterEvalCommand,
+  staticShellCategories,
+  type StaticShellCategory,
 } from './catastrophic-command';
+
+/**
+ * What each kind of action the checklist reads DOES, for the card (Reviewer A,
+ * #582). The card named every heavy command "deletes/moves files, installs
+ * software, or changes system state": a model download read as an install.
+ * It now says the kinds the checklist read in this command, and only those.
+ */
+const KIND_IMPACT: Record<StaticShellCategory, string> = {
+  delete_files: 'deletes files or discards changes',
+  install_software: 'installs software or packages',
+  download: 'downloads files from the internet',
+  stop_programs: 'stops other programs or services',
+  system_settings: 'changes system settings, permissions or disks',
+  inline_code: 'runs code written into the command',
+};
+
+/**
+ * The kinds of action the given commands perform, as one clause. A command
+ * flagged heavy by a pattern that no kind reads at the start of a program
+ * (`git commit -m "rm old refs"`) is said as such, not given a kind it may not
+ * have.
+ */
+function heavyKindsClause(cmds: readonly string[]): string {
+  const kinds = [...new Set(cmds.flatMap((c) => staticShellCategories(c)))];
+  if (kinds.length === 0) return 'matches a heavy-action pattern in its text';
+  const said = kinds.map((k) => KIND_IMPACT[k]);
+  return said.length === 1
+    ? (said[0] ?? '')
+    : `${said.slice(0, -1).join(', ')} and ${said[said.length - 1] ?? ''}`;
+}
 
 /**
  * Extract the executable names a shell command actually runs — the basename of
@@ -67,7 +99,7 @@ function describeCommandImpact(cmd: string): string {
     return `${ran} — executes arbitrary inline code through an interpreter.`;
   }
   if (isDestructiveOrHeavyCommand(cmd)) {
-    return `${ran} — destructive or heavy: deletes/moves files, installs software, or changes system state.`;
+    return `${ran} — destructive or heavy: ${heavyKindsClause([cmd])}.`;
   }
   return `${ran} — no destructive pattern detected (likely read/inspect).`;
 }
@@ -111,13 +143,11 @@ export function computeApprovalImpactLine(toolName: string, toolInput: unknown):
         return `Records how "${str(input['project_path'])}" is verified — no command declared, so nothing will run.`;
       }
       const liste = commands.map((c) => `\`${c}\``).join(', ');
-      const heavy = commands.some(isDestructiveOrHeavyCommand);
+      const heavy = commands.filter(isDestructiveOrHeavyCommand);
       return (
         `Records ${liste} as the proof for "${str(input['project_path'])}". ` +
         `${commands.length === 1 ? 'It runs' : 'They run'} when the job finishes, without asking again` +
-        (heavy
-          ? ' — and at least one deletes/moves files, installs software, or changes system state.'
-          : '.')
+        (heavy.length > 0 ? ` — and at least one ${heavyKindsClause(heavy)}.` : '.')
       );
     }
     case 'file_search': {
