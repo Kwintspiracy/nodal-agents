@@ -20,7 +20,9 @@ import { buildSystemPrompt } from '../system-prompt';
 import type { JobContext, ConversationContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
+import { ALWAYS_ON_TOOLS, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
+import { generateAssignTools } from '../router/assign-tools';
+import { KNOWN_TOOL_NAME_UNIVERSE } from '../router/tool-availability';
 import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
 
 let db: TestDb;
@@ -1375,5 +1377,160 @@ describe('buildSystemPrompt — le bloc ## Conversation (P6)', () => {
     const prompt = await buildSystemPrompt(agent, db, { origin: 'cron' });
 
     expect(prompt).not.toContain('## Conversation');
+  });
+});
+
+// ─── #559 — the assembled prompt names only tools the job holds ──────────────
+//
+// Run 806a2218 (28/09): a delegated Researcher, channel `internal`, inherited
+// its parent's Telegram chat_id. Its prompt carried the Telegram etiquette
+// ("same turn as return_result: telegram_send_message(...)") and the
+// delegated-sub-task block naming `gmail_send_email` / `telegram_send_message`;
+// its whitelist had none of them. It obeyed the prompt and was killed for
+// whitelist_violation. The sweep below reads the WHOLE assembled prompt, on
+// every job shape the runner builds, against the tool list that job has.
+
+describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:assigner-outils/moteur', () => {
+  async function seedTeam() {
+    const { entityId } = await seedContext(db);
+    const tag = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const [root] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'Sweep Root',
+        slug: `sweep-root-${tag}`,
+        personality: 'You coordinate.',
+        role: 'orchestrator',
+      })
+      .returning();
+    const [worker] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'Sweep Worker',
+        slug: `sweep-worker-${tag}`,
+        personality: 'You research.',
+        role: 'agent',
+      })
+      .returning();
+    await db
+      .insert(agentAssignments)
+      .values({ orchestratorId: root!.id, subAgentId: worker!.id, entityId });
+    const assignNames = (await generateAssignTools(root!.id as AgentId, db)).map((t) => t.name);
+    return { entityId, root: root!, worker: worker!, assignNames };
+  }
+
+  const universeWith = (extra: readonly string[]): Set<string> =>
+    new Set([...KNOWN_TOOL_NAME_UNIVERSE, ...extra]);
+  /** Tool names cited in `prompt` that are real tools and absent from `tools`. */
+  const outside = (prompt: string, tools: readonly string[], universe: Set<string>): string[] =>
+    [...new Set(prompt.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter(
+      (w) => universe.has(w) && !tools.includes(w),
+    );
+
+  it('on every job shape: delegated worker, root with and without send tools, cron, max depth', async () => {
+    const { entityId, root, worker, assignNames } = await seedTeam();
+    const universe = universeWith(assignNames);
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    // What execute.ts hands each shape (§6): workers lose dashboard_publish
+    // when delegated; send tools only with the agent's own credential;
+    // delegation tools only while hops remain.
+    const delegatedWorkerTools = ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish');
+    const rootTools = [...ALWAYS_ON_TOOLS, ...assignNames, 'create_task', 'list_tasks'];
+    const rootWithSend = [...rootTools, ...DELIVERY_TOOL_NAMES, 'list_conversations'];
+
+    const shapes: Array<{ name: string; agent: Agent; ctx: JobContext; tools: readonly string[] }> =
+      [
+        {
+          name: 'delegated worker on a Telegram-origin run (#559)',
+          agent: workerAgent,
+          ctx: {
+            origin: 'internal',
+            telegramChatId: '199791464',
+            isDelegated: true,
+            delegationDepth: 1,
+          },
+          tools: delegatedWorkerTools,
+        },
+        {
+          name: 'root on Telegram, holding its send tools',
+          agent: rootAgent,
+          ctx: { origin: 'telegram', telegramChatId: '199791464' },
+          tools: rootWithSend,
+        },
+        {
+          name: 'root with a chat_id but no credential of its own',
+          agent: rootAgent,
+          ctx: { origin: 'telegram', telegramChatId: '199791464' },
+          tools: rootTools,
+        },
+        {
+          name: 'cron job of the root, notify_on_success',
+          agent: rootAgent,
+          ctx: { origin: 'cron', telegramChatId: '1', notifyOnSuccess: true },
+          tools: rootTools,
+        },
+        {
+          name: 'orchestrator at the maximum delegation depth',
+          agent: rootAgent,
+          ctx: { origin: 'internal', isDelegated: true, delegationDepth: 3, telegramChatId: '1' },
+          tools: ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+        },
+      ];
+
+    for (const s of shapes) {
+      const prompt = await buildSystemPrompt(s.agent, db, {
+        ...s.ctx,
+        availableToolNames: s.tools,
+      });
+      expect({ shape: s.name, outside: outside(prompt, s.tools, universe) }).toEqual({
+        shape: s.name,
+        outside: [],
+      });
+    }
+  });
+
+  it('keeps the Telegram etiquette for the job that can follow it, and only for it', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+
+    const rootPrompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'telegram',
+      telegramChatId: '199791464',
+      availableToolNames: [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES],
+    });
+    expect(rootPrompt).toContain('## Channel etiquette');
+    expect(rootPrompt).toContain('telegram_send_message({ chatId, text })');
+
+    const workerPrompt = await buildSystemPrompt(workerAgent, db, {
+      origin: 'internal',
+      telegramChatId: '199791464',
+      isDelegated: true,
+      delegationDepth: 1,
+      availableToolNames: ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+    });
+    expect(workerPrompt).not.toContain('telegram_send_message');
+    expect(workerPrompt).not.toContain('SAME-TURN MULTI-CALL REQUIRED');
+    // The sub-task contract itself stays: reply, then return_result, no direct send.
+    expect(workerPrompt).toContain('## Delegated sub-task');
+    expect(workerPrompt).toContain('Do NOT contact the user yourself');
+  });
+
+  it('lists as built-in only the built-ins the job holds', async () => {
+    const { entityId, worker } = await seedTeam();
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish');
+    const prompt = await buildSystemPrompt(workerAgent, db, {
+      origin: 'internal',
+      isDelegated: true,
+      delegationDepth: 1,
+      availableToolNames: tools,
+    });
+    const builtins = prompt.split('## Built-in capabilities')[1]?.split('\n## ')[0] ?? '';
+    expect(builtins).toContain('`file_read`');
+    expect(builtins).not.toContain('dashboard_publish');
   });
 });

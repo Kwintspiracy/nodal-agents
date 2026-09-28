@@ -1304,6 +1304,98 @@ describe('executeJob', () => {
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
+  // #559 — run 806a2218: a delegated Researcher (channel `internal`) inherited
+  // its parent's chat_id, never its send tools, and its prompt ordered
+  // `telegram_send_message` all the same. The prompt is now built from the
+  // tool list the job runs with: the stored system_prompt is the proof.
+  it('the stored prompt names telegram_send_message only for the job that holds it (#559) @cap:assigner-outils/moteur', async () => {
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '199791464',
+        task: 'Parent run',
+        status: 'completed',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    const [child] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        parentJobId: parent!.id,
+        delegationDepth: 1,
+        channel: 'internal',
+        chatId: '199791464',
+        task: 'Research something and report back',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+
+    await executeJob(
+      child!.id as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'Findings: none.' }])),
+      testEnv,
+    );
+    const [childRow] = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, child!.id));
+    expect(childRow?.systemPrompt).toContain('## Delegated sub-task');
+    expect(childRow?.systemPrompt).not.toContain('telegram_send_message');
+    expect(childRow?.systemPrompt).not.toContain('SAME-TURN MULTI-CALL REQUIRED');
+
+    // The same agent, holding its own token on a Telegram job: the etiquette
+    // is there, because the tool is.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const [tgJob] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '199791464',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      await executeJob(
+        tgJob!.id as JobId,
+        makeDeps(
+          makeMockLlmClient([
+            {
+              toolCalls: [
+                { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
+                { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+              ],
+            },
+          ]),
+        ),
+        testEnv,
+      );
+      const [tgRow] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, tgJob!.id));
+      expect(tgRow?.systemPrompt).toContain('## Channel etiquette');
+      expect(tgRow?.systemPrompt).toContain('telegram_send_message({ chatId, text })');
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
+  });
+
   // ─── Anti-spam guard: consecutive delivery-only turns ─────────────────────
 
   it('anti-spam: caps consecutive delivery-only turns at maxConsecutiveDeliveryTurns and fails loud', async () => {

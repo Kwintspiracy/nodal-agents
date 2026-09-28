@@ -17,6 +17,7 @@ import { systemSkills, skillKind, skillContentOn } from '@nodal-agents/catalog';
 import type { PromptSurface } from '@nodal-agents/catalog';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
+import { toolsNamedIn } from './router/tool-availability';
 
 /**
  * Open/mid models that need firmer execution discipline — weaker instruction-
@@ -48,7 +49,26 @@ const contentOfKind = (
     .filter((s) => skillKind(s) === kind)
     .filter((s) => hasRequiredBuiltins(s, availableTools))
     .map((s) => skillContentOn(s, surface))
-    .filter((text): text is string => text !== null);
+    .filter((text): text is string => text !== null)
+    .filter((text) => namesOnlyHeldTools(text, availableTools));
+
+/**
+ * Le prompt ne nomme jamais un outil que le job n'a pas (#559).
+ *
+ * `requiredBuiltins` ne couvre que ce qu'une skill DÉCLARE ; le texte, lui,
+ * nomme ce qu'il veut, et rien ne vérifiait l'accord des deux. La skill
+ * Telegram ne déclarait rien et ordonnait `telegram_send_message` : un
+ * Researcher délégué, qui héritait du `chat_id` de son parent sans en avoir
+ * l'outil, a obéi au prompt et a été tué pour `whitelist_violation`. Lire les
+ * noms dans le texte même rend l'oubli impossible, pour toute skill de socle
+ * ou de canal, sur toute surface.
+ *
+ * Liste inconnue : rien n'est retiré par ce filtre, `hasRequiredBuiltins`
+ * reste fermé comme avant. Le prompt d'un job passe toujours sa liste
+ * (`buildSystemPrompt`), et `buildChannelBlock` l'exige.
+ */
+const namesOnlyHeldTools = (text: string, availableTools?: readonly string[]): boolean =>
+  availableTools === undefined || toolsNamedIn(text).every((t) => availableTools.includes(t));
 
 /**
  * Une skill de socle peut DÉPENDRE d'un outil — `platform-support` ne dit que
@@ -91,7 +111,10 @@ If a fact from your Persistent memory block turns out to be false in practice �
 
 A fact you save via \`save_memory\` must describe something VERIFIED — an exact path you confirmed, a real ID, a preference the user stated, a procedure that actually worked. Never save a micromanagement rule for another agent, and never save a discovery ban (e.g. "don't search for X", "don't explore Y") — every agent stays free to check things for itself when what it was given turns out to be wrong.
 
-Memory is what you KNOW, never a log of what you DID. Do not save "I created file X", "I posted the announcement", "run completed" — the file, the message and the run are their own record, and an account of one job is worthless to the next. If you are a scheduled routine and you need to recognise this run against the last one, that is \`save_routine_state\`, not memory.`;
+Memory is what you KNOW, never a log of what you DID. Do not save "I created file X", "I posted the announcement", "run completed" — the file, the message and the run are their own record, and an account of one job is worthless to the next. If you are a scheduled routine and you need to recognise this run against the last one, that is your routine state, not memory.`;
+// « routine state » sans le nom de l'outil (#559) : `save_routine_state` n'est
+// armé que pour un job de routine, et c'est le bloc `## Runtime` de ce job-là
+// qui le nomme (buildRuntimeBlock, état de routine).
 
 /**
  * La règle de `purpose`, dite UNE fois, pour tout le monde.
@@ -215,9 +238,11 @@ export function buildBaselineBlock(
   }
   const surface = opts.surface ?? 'job';
   const parts = contentOfKind('baseline', surface, opts.availableTools);
-  // Le renforcement nomme `skill_view` et `run_skill_script` : deux outils de
-  // plus que le chat n'a pas, et deux ordres de plus qu'il ne peut pas suivre
-  // (revue Codex de la dette de la PR #73, constat 2). Sa moitié portable —
+  // Le renforcement nomme `skill_view`, que le chat n'a pas : un ordre de plus
+  // qu'il ne peut pas suivre (revue Codex de la dette de la PR #73, constat 2).
+  // Il nommait aussi `run_skill_script`, que seul un agent ayant une skill à
+  // scripts autorisés reçoit : sur un job ordinaire, c'était le même défaut
+  // (#559), d'où « may ship ready-made scripts ». Sa moitié portable —
   // vérifier avant de dire que c'est fait, ne jamais inventer une sortie
   // d'outil, être décisif — vaut sur les deux surfaces et reste sur les deux.
   const reinforcement =
@@ -234,7 +259,7 @@ export function buildBaselineBlock(
           'you did not really get back. Be decisive: once a check passes (e.g. dependencies report ' +
           'ready), DO the action — do not keep re-verifying, re-listing, or running diagnostic ' +
           'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded ' +
-          'with skill_view ships run_skill_script and ready-made workflows/templates) ' +
+          'with skill_view may ship ready-made scripts, workflows and templates) ' +
           'instead of writing ' +
           'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
           'steps that finish the task, then deliver the result with its output path.';
@@ -257,11 +282,23 @@ export function buildBaselineBlock(
   return [catalogBlock, memoryBlock, approvalBlock, roleBlock].filter(Boolean).join('\n\n');
 }
 
-/** Layer 2 — per-channel etiquette, only when the agent is bound to a channel. */
-export function buildChannelBlock(opts: { channel?: string; telegram?: boolean }): string {
+/**
+ * Layer 2 — per-channel etiquette, only when the agent is bound to a channel.
+ *
+ * `availableTools` is required: a `chat_id` travels down a delegation chain
+ * while the send tools do not (execute.ts arms them only for an agent with its
+ * own credential), so "is this job on Telegram" never answered "can it send
+ * there". The etiquette goes through the same filter as the baseline (#559).
+ */
+export function buildChannelBlock(opts: {
+  channel?: string;
+  telegram?: boolean;
+  surface?: PromptSurface;
+  availableTools: readonly string[];
+}): string {
   const onTelegram = opts.channel === 'telegram' || opts.telegram === true;
   if (!onTelegram) return '';
-  const parts = contentOfKind('channel');
+  const parts = contentOfKind('channel', opts.surface ?? 'job', opts.availableTools);
   if (parts.length === 0) return '';
   return `## Channel etiquette\n\n${parts.join('\n\n')}`;
 }

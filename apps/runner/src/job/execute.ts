@@ -1903,15 +1903,7 @@ async function runJobTracked(
     ...(routineState !== null ? { routineState } : {}),
     deployment,
   };
-
-  let systemPrompt = job.systemPrompt;
-  if (!systemPrompt) {
-    systemPrompt = await buildSystemPrompt(agent, db, jobContext);
-    await db
-      .update(agentJobs)
-      .set({ systemPrompt, updatedAt: new Date() })
-      .where(eq(agentJobs.id, jobId as string));
-  }
+  // The prompt itself is built at §7, once the tool list exists (#559).
 
   // ── 6. Build tool set ─────────────────────────────────────────────────────────
   let toolDefs: AnyToolDef[];
@@ -2476,6 +2468,24 @@ async function runJobTracked(
     console.warn(
       `[execute] PERSONALITY_NAMES_ABSENT_TOOLS agent=${agentRow.slug} job=${jobId} tools=${namedButAbsent.join(',')}`,
     );
+  }
+
+  // ── 7. Build system prompt (from the job context of §5) ─────────────────────
+  // AFTER the tool set, from its names (#559). Built before it, the prompt
+  // guessed the list: a delegated worker inherits its parent's chat_id but not
+  // its send tools, and its prompt ordered `telegram_send_message` all the
+  // same — the job obeyed and was killed for whitelist_violation. Every block
+  // that names a tool now reads the list this job actually runs with.
+  let systemPrompt = job.systemPrompt;
+  if (!systemPrompt) {
+    systemPrompt = await buildSystemPrompt(agent, db, {
+      ...jobContext,
+      availableToolNames: toolDefs.map((t) => t.name),
+    });
+    await db
+      .update(agentJobs)
+      .set({ systemPrompt, updatedAt: new Date() })
+      .where(eq(agentJobs.id, jobId as string));
   }
 
   // ── 8. Load approval rules ────────────────────────────────────────────────────
