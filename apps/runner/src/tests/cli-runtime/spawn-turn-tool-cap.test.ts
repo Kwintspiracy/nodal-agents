@@ -23,7 +23,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnCliTurn } from '../../cli-runtime/spawn-turn.ts';
+import { spawnCliTurn, type ToolCallGate } from '../../cli-runtime/spawn-turn.ts';
 import { countToolUses, newStreamParseState } from '../../cli-runtime/claude-turn.ts';
 import { handleCodexLine, newCodexParseState } from '../../cli-runtime/codex-turn.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
@@ -83,7 +83,7 @@ afterEach(async () => {
 async function runFakeCli(
   openLines: string[],
   resultLine: string,
-  onLine: (line: string) => number,
+  onLine: (line: string, gate: ToolCallGate) => void,
 ): Promise<{ toolCapExceeded?: number; linesSeen: string[]; effectHappened: boolean }> {
   const marker = join(dir, 'effect-of-last-call');
   const script = join(dir, 'fake-cli.cjs');
@@ -108,9 +108,9 @@ async function runFakeCli(
     stdin: '',
     timeoutMs: 60_000,
     maxToolCalls: BUDGET,
-    onLine: (line) => {
+    onLine: (line, gate) => {
       linesSeen.push(line);
-      return onLine(line);
+      onLine(line, gate);
     },
     finish: (o) => o,
   });
@@ -132,9 +132,9 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
       claudeOpenLine(ids.slice(45)),
     ];
     const state = newStreamParseState();
-    const run = await runFakeCli(opens, claudeResultLine(ids[BUDGET]!), (l) =>
-      countToolUses(state, l),
-    );
+    const run = await runFakeCli(opens, claudeResultLine(ids[BUDGET]!), (l, g) => {
+      countToolUses(state, l, undefined, g);
+    });
 
     expect(run.toolCapExceeded).toBe(BUDGET);
     expect(run.effectHappened, 'l appel au-delà du budget a produit son effet').toBe(false);
@@ -144,9 +144,9 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
   it('Codex : le processus est tué à l item.started du 51e appel, son effet et son résultat n arrivent jamais', async () => {
     const ids = Array.from({ length: BUDGET + 1 }, (_, i) => `item_${i}`);
     const state = newCodexParseState();
-    const run = await runFakeCli(ids.map(codexOpenLine), codexResultLine(ids[BUDGET]!), (l) =>
-      handleCodexLine(state, l) ? 1 : 0,
-    );
+    const run = await runFakeCli(ids.map(codexOpenLine), codexResultLine(ids[BUDGET]!), (l, g) => {
+      handleCodexLine(state, l, undefined, g);
+    });
 
     expect(run.toolCapExceeded).toBe(BUDGET);
     expect(run.effectHappened, 'l appel au-delà du budget a produit son effet').toBe(false);
@@ -159,7 +159,9 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
     const run = await runFakeCli(
       ids.map((id) => claudeOpenLine([id])),
       claudeResultLine(ids[BUDGET - 1]!),
-      (l) => countToolUses(state, l),
+      (l, g) => {
+        countToolUses(state, l, undefined, g);
+      },
     );
 
     expect(run.toolCapExceeded).toBeUndefined();
@@ -167,16 +169,18 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
     expect(run.linesSeen.some((l) => l.includes('"tool_result"'))).toBe(true);
   }, 30_000);
 
-  // Revue Codex de #568, passe 2 (P1) : le kill est asynchrone, et la boucle
-  // de lecture continuait sur les lignes déjà reçues. Un même paquet stdout
-  // (l'ouverture du 51e appel, son résultat, la fin du tour), ou des données
-  // arrivées pendant le taskkill Windows, étaient encore lus et remis à
-  // l'appelant, résultat d'outil compris. Dès le cap, plus AUCUNE ligne n'est
-  // consommée.
+  // Revue Codex de #568, passes 2 et 3 (P1). Le kill est asynchrone : les
+  // lignes déjà reçues (le même paquet stdout, ou ce qui arrive pendant le
+  // taskkill Windows) sont encore là. Passe 2 : rien de NOUVEAU ne doit en
+  // sortir (aucune ouverture, aucune fin de tour, rien du 51e appel). Passe 3 :
+  // mais le résultat d'un appel SOUS le budget, ouvert avant le cap et fini
+  // après, doit arriver, sinon l'audit (une ligne tool_calls par résultat)
+  // perd un appel qui a pu écrire dans le dossier. Après le cap, seuls passent
+  // les résultats des appels admis.
   async function runOnePacket(
     packet: string[],
-    onLine: (line: string) => number,
-  ): Promise<{ toolCapExceeded?: number; linesSeen: string[] }> {
+    onLine: (line: string, gate: ToolCallGate) => void,
+  ): Promise<{ toolCapExceeded?: number }> {
     const script = join(dir, 'fake-cli-packet.cjs');
     await writeFile(
       script,
@@ -186,7 +190,6 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
         'setInterval(() => {}, 1000);',
       ].join('\n'),
     );
-    const linesSeen: string[] = [];
     const outcome = await spawnCliTurn({
       argv: [process.execPath, script],
       env: process.env,
@@ -194,55 +197,65 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
       stdin: '',
       timeoutMs: 60_000,
       maxToolCalls: BUDGET,
-      onLine: (line) => {
-        linesSeen.push(line);
-        return onLine(line);
-      },
+      onLine,
       finish: (o) => o,
     });
-    return {
-      ...(outcome.toolCapExceeded !== undefined
-        ? { toolCapExceeded: outcome.toolCapExceeded }
-        : {}),
-      linesSeen,
-    };
+    return outcome.toolCapExceeded !== undefined
+      ? { toolCapExceeded: outcome.toolCapExceeded }
+      : {};
   }
 
-  it('Codex, un seul paquet : rien n est lu après l ouverture du 51e appel, ni son résultat ni la fin du tour', async () => {
+  it('Codex, un seul paquet : le résultat du 50e appel (ouvert avant le cap) arrive, rien du 51e ni de la fin du tour', async () => {
     const ids = Array.from({ length: BUDGET + 1 }, (_, i) => `item_${i}`);
+    const call50 = ids[BUDGET - 1]!;
+    const call51 = ids[BUDGET]!;
     const packet = [
       ...ids.map(codexOpenLine),
-      codexResultLine(ids[BUDGET]!),
+      codexResultLine(call50),
+      codexResultLine(call51),
       JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } }),
     ];
     const state = newCodexParseState();
     const events: Array<{ kind: string; toolUseId?: string }> = [];
-    const run = await runOnePacket(packet, (l) =>
-      handleCodexLine(state, l, (e) => events.push(e)) ? 1 : 0,
-    );
+    const run = await runOnePacket(packet, (l, g) => {
+      handleCodexLine(state, l, (e) => events.push(e), g);
+    });
 
     expect(run.toolCapExceeded).toBe(BUDGET);
-    // La dernière chose remise à l'appelant est l'ouverture du 51e appel.
-    expect(events.at(-1)).toMatchObject({ kind: 'tool_use', toolUseId: ids[BUDGET] });
-    expect(events.filter((e) => e.kind === 'tool_result')).toEqual([]);
-    expect(run.linesSeen.at(-1)).toBe(codexOpenLine(ids[BUDGET]!));
+    // Le 50e appel a son résultat : l'audit a sa ligne.
+    expect(events.filter((e) => e.kind === 'tool_result').map((e) => e.toolUseId)).toEqual([
+      call50,
+    ]);
+    // Rien du 51e : ni son ouverture, ni son résultat.
+    expect(events.filter((e) => e.toolUseId === call51)).toEqual([]);
+    expect(events.filter((e) => e.kind === 'tool_use')).toHaveLength(BUDGET);
+    // La fin du tour n'est pas lue.
     expect(state.sawTurnCompleted).toBe(false);
   }, 30_000);
 
-  it('Claude, un seul paquet : rien n est lu après la ligne qui ouvre le 51e appel', async () => {
+  it('Claude, un seul paquet et des appels parallèles : les appels admis du lot ont leur résultat, pas le 51e', async () => {
+    // 45 appels un à un, puis 6 parallèles dans UN événement : les 5 premiers
+    // du lot sont sous le budget, le 6e (le 51e) au-delà.
     const ids = Array.from({ length: BUDGET + 1 }, (_, i) => `toolu_${i}`);
     const packet = [
-      ...ids.map((id) => claudeOpenLine([id])),
+      ...ids.slice(0, 45).map((id) => claudeOpenLine([id])),
+      claudeOpenLine(ids.slice(45)),
+      claudeResultLine(ids[47]!),
       claudeResultLine(ids[BUDGET]!),
       JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done' }),
     ];
     const state = newStreamParseState();
     const events: Array<{ kind: string; toolUseId?: string }> = [];
-    const run = await runOnePacket(packet, (l) => countToolUses(state, l, (e) => events.push(e)));
+    const run = await runOnePacket(packet, (l, g) => {
+      countToolUses(state, l, (e) => events.push(e), g);
+    });
 
     expect(run.toolCapExceeded).toBe(BUDGET);
-    expect(events.at(-1)).toMatchObject({ kind: 'tool_use', toolUseId: ids[BUDGET] });
-    expect(events.filter((e) => e.kind === 'tool_result')).toEqual([]);
+    expect(events.filter((e) => e.kind === 'tool_result').map((e) => e.toolUseId)).toEqual([
+      ids[47],
+    ]);
+    expect(events.filter((e) => e.toolUseId === ids[BUDGET])).toEqual([]);
+    expect(events.filter((e) => e.kind === 'tool_use')).toHaveLength(BUDGET);
     expect(state.finalResult).toBeNull();
   }, 30_000);
 });

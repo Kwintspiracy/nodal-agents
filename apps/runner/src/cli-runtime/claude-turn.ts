@@ -26,7 +26,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnCliTurn } from './spawn-turn.ts';
+import { spawnCliTurn, OPEN_GATE, type ToolCallGate } from './spawn-turn.ts';
 import {
   resolveCliPath,
   buildSpawnArgv,
@@ -168,10 +168,18 @@ export interface StreamParseState {
   finalResult: Record<string, unknown> | null;
   rateLimit: ClaudeTurnResult['rateLimit'];
   unknownEventTypes: Set<string>;
+  /** Les appels admis par le budget : seuls leurs résultats passent après le cap. */
+  admittedToolIds: Set<string>;
 }
 
 export function newStreamParseState(): StreamParseState {
-  return { sessionId: null, finalResult: null, rateLimit: null, unknownEventTypes: new Set() };
+  return {
+    sessionId: null,
+    finalResult: null,
+    rateLimit: null,
+    unknownEventTypes: new Set(),
+    admittedToolIds: new Set(),
+  };
 }
 
 const OUTPUT_CAP = 20_000;
@@ -247,7 +255,10 @@ export function handleStreamLine(
 }
 
 /**
- * Traite une ligne et rend le NOMBRE d'appels d'outils qu'elle ouvre.
+ * Traite une ligne et rend le NOMBRE d'appels d'outils qu'elle ouvre. Chacun
+ * passe par `gate.admit()` ; un appel refusé n'est jamais remis à `onEvent`.
+ * Après le cap, seuls les résultats des appels admis le sont (revue Codex de
+ * #568, passe 3), lus sur un état jetable : rien d'autre ne change le tour.
  *
  * Exporté pour être prouvable : le compte est ce qui nourrit le garde
  * anti-boucle, et la version précédente le réduisait à un booléen dans une
@@ -262,10 +273,23 @@ export function countToolUses(
   state: StreamParseState,
   line: string,
   onEvent?: (evt: ClaudeTurnEvent) => void,
+  gate: ToolCallGate = OPEN_GATE,
 ): number {
+  if (gate.capped) {
+    handleStreamLine(newStreamParseState(), line, (evt) => {
+      if (evt.kind === 'tool_result' && evt.toolUseId && state.admittedToolIds.has(evt.toolUseId)) {
+        onEvent?.(evt);
+      }
+    });
+    return 0;
+  }
   let toolUses = 0;
   handleStreamLine(state, line, (evt) => {
-    if (evt.kind === 'tool_use') toolUses += 1;
+    if (evt.kind === 'tool_use') {
+      toolUses += 1;
+      if (!gate.admit()) return;
+      if (evt.toolUseId) state.admittedToolIds.add(evt.toolUseId);
+    }
     onEvent?.(evt);
   });
   return toolUses;
@@ -383,15 +407,13 @@ function spawnClaudeTurn(
     timeoutMs: opts.timeoutMs,
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
     ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
-    // Rend le NOMBRE d'appels d'outils de la ligne : c'est ce qui nourrit le
-    // garde anti-boucle, que la mécanique de processus applique sans rien
-    // savoir du format des événements.
-    //
-    // Un COMPTE, pas un booléen (revue Codex, 27/08) : Claude groupe ses appels
-    // parallèles dans un seul événement, et six appels simultanés n'en
-    // comptaient qu'un. Plus le modèle parallélisait, moins il consommait de
-    // budget — l'inverse exact de ce qu'un plafond doit faire.
-    onLine: (line) => countToolUses(state, line, opts.onEvent),
+    // Chaque appel ouvert passe par la porte du garde anti-boucle, que la
+    // mécanique de processus applique sans rien savoir du format des
+    // événements. Un appel par appel, pas un par ligne (revue Codex, 27/08) :
+    // Claude groupe ses appels parallèles dans un seul événement.
+    onLine: (line, gate) => {
+      countToolUses(state, line, opts.onEvent, gate);
+    },
     finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded }) => {
       if (state.unknownEventTypes.size > 0) {
         console.warn(
