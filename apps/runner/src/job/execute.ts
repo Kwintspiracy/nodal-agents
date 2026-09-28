@@ -4835,6 +4835,39 @@ async function runJobTracked(
         }
       }
 
+      // #561 — ONE rule for every way this turn ends: each of its tool_use
+      // blocks leaves with a tool_result, whatever the exit (next turn,
+      // approval, question, delegation, return_result deferred). A call the
+      // turn did not handle — the return_result stripped from the loop, an
+      // assign_ dropped by the one-delegation-per-turn filter, anything a
+      // refusal skipped — gets one here: the dropped assign keeps its deferral
+      // text, anything else says why it did not run. Before this rule each
+      // exit patched its own leftovers, and one exit that did not (a
+      // delegation next to a return_result) left the parent dead on
+      // `unmatched_tool_use` at resume (job b7ecc59a).
+      // `pendingId`: the call whose result arrives later (the delegation).
+      const closeTurn = (reason: string, pendingId?: string): void => {
+        const answered = new Set(toolResultBlocks.map((b) => b.toolCallId));
+        for (const tc of rawToolCalls) {
+          if (answered.has(tc.toolCallId) || tc.toolCallId === pendingId) continue;
+          const deferred = sideToolResults.find((sr) => sr.tool_use_id === tc.toolCallId);
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            output: toResultOutput({ error: deferred?.content ?? `not executed: ${reason}` }),
+          });
+          answered.add(tc.toolCallId);
+        }
+      };
+      /** This turn's tool message, closed by `closeTurn` first. */
+      const turnToolMessage = (
+        reason = 'this turn ended before this call was handled; call it again if it is still needed',
+      ): ModelMessage => {
+        closeTurn(reason);
+        return { role: 'tool', content: toolResultBlocks } as ModelMessage;
+      };
+
       let awaitingApproval = false;
 
       // Guard 1f — non-progress nudges queued while processing this turn's
@@ -5045,14 +5078,8 @@ async function runJobTracked(
                 error: delegationDepthExceededMessage(),
               }),
             });
-            for (const sr of sideToolResults) {
-              toolResultBlocks.push({
-                type: 'tool-result',
-                toolCallId: sr.tool_use_id,
-                toolName: sr.toolName,
-                output: toResultOutput({ error: sr.content }),
-              });
-            }
+            // The assign_ calls dropped by the one-per-turn filter get their
+            // deferral from `closeTurn` when this turn's tool message is built.
             continue;
           }
 
@@ -5080,14 +5107,8 @@ async function runJobTracked(
                   'deferred: this job already delegates via the task board (create_task). Do NOT also assign_ — let the tasks run and compile, or add more parallel work with create_task. Mixing both delegation styles on one job is not allowed.',
               }),
             });
-            for (const sr of sideToolResults) {
-              toolResultBlocks.push({
-                type: 'tool-result',
-                toolCallId: sr.tool_use_id,
-                toolName: sr.toolName,
-                output: toResultOutput({ error: sr.content }),
-              });
-            }
+            // The assign_ calls dropped by the one-per-turn filter get their
+            // deferral from `closeTurn` when this turn's tool message is built.
             continue;
           }
 
@@ -5117,18 +5138,8 @@ async function runJobTracked(
                 toolName: call.name,
                 output: toResultOutput({ error: describeDuplicateReview(duplicate) }),
               });
-              // Même raison que pour les autres refus de délégation : les
-              // assign_* frères écartés par `filterToolCallsForDelegation`
-              // n'ont pas de tool_result si on ne les vide pas ici, et le tour
-              // suivant meurt sur `unmatched_tool_use`.
-              for (const sr of sideToolResults) {
-                toolResultBlocks.push({
-                  type: 'tool-result',
-                  toolCallId: sr.tool_use_id,
-                  toolName: sr.toolName,
-                  output: toResultOutput({ error: sr.content }),
-                });
-              }
+              // Les assign_* frères écartés par `filterToolCallsForDelegation`
+              // reçoivent leur report de `closeTurn` (#561).
               continue;
             }
           }
@@ -5175,26 +5186,12 @@ async function runJobTracked(
               }),
             });
 
-            // Flush the deferred siblings (other assign_* calls that the LLM
-            // emitted in the same turn but `filterToolCallsForDelegation`
-            // dropped to keep one-per-turn). In the normal delegation path
-            // `handleDelegation` persists these in `pending_delegation` and
-            // `resumeDelegated` re-injects them. The cap-refusal path skips
-            // `handleDelegation` entirely, so without this loop the dropped
-            // tool_use blocks land in messages with no matching tool_result —
-            // next LLM call trips `message_structure_invalid:unmatched_tool_use`
-            // and the whole job dies. Live regression: job `a5ac5d6e`
-            // (2026-05-18) — Conciergus issued 2 parallel `assign_summarizer`
-            // while cap was already at 1, only the first received a refusal
-            // tool_result, the second stayed orphan, job failed at turn 7.
-            for (const sr of sideToolResults) {
-              toolResultBlocks.push({
-                type: 'tool-result',
-                toolCallId: sr.tool_use_id,
-                toolName: sr.toolName,
-                output: toResultOutput({ error: sr.content }),
-              });
-            }
+            // The other assign_* calls of this turn, dropped to keep one
+            // delegation per turn, get their deferral from `closeTurn` when
+            // this turn's tool message is built (#561). Live regression it
+            // covers: job `a5ac5d6e` (2026-05-18), two parallel
+            // `assign_summarizer` with the cap at 1, the second left without a
+            // tool_result, the job dead on `unmatched_tool_use` at turn 7.
             continue;
           }
 
@@ -5280,10 +5277,16 @@ async function runJobTracked(
                 conversationId: job.conversationId ?? null,
               };
 
-              // Forward any non-assign tool results we already executed in this
-              // turn (e.g. save_memory ran before the assign) as additional
-              // sideToolResults. Without this, the LLM's earlier tool_use
-              // blocks have no matching tool_result on resume → unmatched_tool_use.
+              // Every other tool_use of this turn travels with the delegation
+              // as a side result, re-injected next to the child's result on
+              // resume: the calls that ran before the assign (e.g. save_memory),
+              // and, closed by `closeTurn` (#561), the ones that did not — the
+              // return_result emitted next to the assign (job b7ecc59a), the
+              // assign_ dropped by the one-per-turn filter.
+              closeTurn(
+                'this turn was suspended on a delegation; call it again once the delegation has returned',
+                call.id,
+              );
               const preAssignSideResults = toolResultBlocks.map((b) => ({
                 type: 'tool_result' as const,
                 tool_use_id: b.toolCallId,
@@ -5303,7 +5306,7 @@ async function runJobTracked(
                   data: call.input['data'] as string | undefined,
                   chatId: job.chatId,
                 },
-                [...sideToolResults, ...preAssignSideResults],
+                preAssignSideResults,
                 db,
               );
 
@@ -5563,20 +5566,15 @@ async function runJobTracked(
         approvalPending = true;
       }
       if (approvalPending) {
-        // Keep the saved conversation valid for resume: every tool_use needs a
-        // matching tool_result. Gated/deferred markers are already in
-        // toolResultBlocks; synthesize one for return_result if the agent emitted
-        // it this turn — we are NOT finalizing while an approval is pending.
-        if (returnResultCall && !toolResultBlocks.some((b) => b.toolName === 'return_result')) {
-          toolResultBlocks.push({
-            type: 'tool-result',
-            toolCallId: returnResultCall.toolCallId,
-            toolName: 'return_result',
-            output: toResultOutput({ error: 'deferred: an action is awaiting user approval' }),
-          });
-        }
-        if (toolResultBlocks.length > 0) {
-          messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+        // Keep the saved conversation valid for resume: gated/deferred markers
+        // are already in toolResultBlocks, and `closeTurn` answers the rest (a
+        // return_result emitted this turn: we are NOT finalizing while an
+        // approval is pending).
+        if (rawToolCalls.length > 0) {
+          messages = [
+            ...messages,
+            turnToolMessage('an action of this turn is awaiting user approval'),
+          ];
         }
         if (requiresToolDelivery && !toolDelivered && redeliveryNudges < MAX_REDELIVERY_NUDGES) {
           redeliveryNudges += 1;
@@ -5631,7 +5629,7 @@ async function runJobTracked(
                 'deferred: verify platform state with a read tool before finalizing — see the runtime notice below.',
             }),
           });
-          messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+          messages = [...messages, turnToolMessage()];
           messages = [
             ...messages,
             { role: 'user', content: VERIFY_BEFORE_ASSERT_NUDGE } as ModelMessage,
@@ -5692,7 +5690,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ error: 'deferred: sibling tool error must be addressed first' }),
         });
-        messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+        messages = [...messages, turnToolMessage()];
         continue;
       }
 
@@ -5739,7 +5737,7 @@ async function runJobTracked(
                   "l'utilisateur peut faire — il la verra telle quelle.",
               }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             messages = [
               ...messages,
               {
@@ -5774,7 +5772,7 @@ async function runJobTracked(
                   "return_result avec status='blocked'.",
               }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -5789,7 +5787,7 @@ async function runJobTracked(
             toolName: 'return_result',
             output: toResultOutput({ acknowledged: true }),
           });
-          messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+          messages = [...messages, turnToolMessage()];
           toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
           // The error column carries a SHORT human reason (first sentence) so the
@@ -5868,7 +5866,7 @@ async function runJobTracked(
                     "appelle return_result avec status='blocked'.",
                 }),
               });
-              messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+              messages = [...messages, turnToolMessage()];
               messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
               continue;
             }
@@ -5913,7 +5911,7 @@ async function runJobTracked(
                   "deferred: tu n'as pas encore livré ta réponse via telegram_send_message — fais-le avant de terminer",
               }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -6007,7 +6005,7 @@ async function runJobTracked(
                     'réponse, puis signale à nouveau.',
                 }),
               });
-              messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+              messages = [...messages, turnToolMessage()];
               messages = [
                 ...messages,
                 { role: 'user', content: emptyDeliverableNudge } as ModelMessage,
@@ -6052,7 +6050,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(dueRetour);
           }
@@ -6102,7 +6100,7 @@ async function runJobTracked(
                   })),
                 }),
               });
-              messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+              messages = [...messages, turnToolMessage()];
               continue;
             }
             toolResultBlocks.push({
@@ -6111,7 +6109,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(items);
           }
@@ -6134,7 +6132,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ acknowledged: true }),
         });
-        messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+        messages = [...messages, turnToolMessage()];
 
         // If this run created tasks on the board, the workflow continues
         // asynchronously: the cron's executeReadyTasks runs each task and
@@ -6282,8 +6280,8 @@ async function runJobTracked(
       }
 
       // k. Append tool results and continue
-      if (toolResultBlocks.length > 0) {
-        messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+      if (rawToolCalls.length > 0) {
+        messages = [...messages, turnToolMessage()];
       }
 
       // k-pré-bis. Guard 1f — flush any non-progress nudges queued while
