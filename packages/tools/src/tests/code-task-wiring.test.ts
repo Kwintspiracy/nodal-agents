@@ -137,10 +137,17 @@ describe('code_task de bout en bout, vraie CLI', () => {
         fresh: true,
       } as never,
       ctx(),
-    )) as { resultText: string; sessionId: string | null; isError: boolean };
+    )) as { resultText: string; sessionId: string | null; isError: boolean; paths: string };
 
     expect(out.resultText, 'le résultat a été perdu avec la fin du flux').toBe('REPONSE_FINALE');
     expect(out.sessionId).toBe('sess_fake');
     expect(out.isError).toBe(false);
+    // #592 : la CLI est un processus — son tool_result dit comment ses chemins
+    // s'adressent (dossier de travail absolu, espace, étiquettes ≠ dossiers).
+    expect(out.paths).toBe(
+      `This process ran in ${ws}, the root of workspace "shared". ` +
+        'Paths in a process are relative to that folder, or absolute. ' +
+        'Workspace labels are NOT folders for a process: write outputs/x, not shared/outputs/x.',
+    );
   }, 60_000);
 });
