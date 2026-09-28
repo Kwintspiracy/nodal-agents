@@ -360,7 +360,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       notes text,
       executed_at timestamptz,
       -- mirrors migration 0125 (#464)
-      gate_reasons jsonb
+      gate_reasons jsonb,
+      -- mirrors migration 0135 (#566) : l'exécution réservée d'un appel approuvé
+      execution_claim integer,
+      execution_output jsonb
     );
 
     CREATE TABLE IF NOT EXISTS approval_rules (

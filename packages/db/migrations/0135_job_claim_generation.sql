@@ -11,3 +11,15 @@
 --                     sien et le relit, avec le statut, avant chaque effet.
 ALTER TABLE agent_jobs
   ADD COLUMN IF NOT EXISTS claim_generation integer NOT NULL DEFAULT 0;
+
+-- La même règle pour un appel APPROUVÉ (revue Codex de #575, passe 3) : son
+-- exécution est réservée par le run qui tient la prise, et sa fin consignée
+-- avec son résultat. Sans quoi un job repris pendant l'appel l'exécutait deux
+-- fois, ou le perdait.
+--
+--   execution_claim   la prise du run qui a réservé l'exécution (NULL : libre)
+--   execution_output  le tool_result consigné avec executed_at : le run
+--                     suivant le reprend au lieu de le perdre
+ALTER TABLE approval_requests
+  ADD COLUMN IF NOT EXISTS execution_claim integer,
+  ADD COLUMN IF NOT EXISTS execution_output jsonb;

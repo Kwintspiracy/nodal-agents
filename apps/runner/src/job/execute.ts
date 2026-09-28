@@ -6,7 +6,7 @@
 //   8: anti-loop guards (ChainCounters from @nodal-agents/orchestration)
 //   9: tool whitelist explicit per agent (computeToolWhitelist)
 
-import { eq, and, isNull } from '@nodal-agents/db';
+import { eq, and, isNull, isNotNull } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
@@ -161,6 +161,14 @@ import {
 } from './state.ts';
 import { holdJobHeartbeat } from './heartbeat.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
+import {
+  APPROVED_CALL_OUTCOME_UNKNOWN,
+  reserveApprovedExecution,
+  recordApprovedExecution,
+  closeUnknownApprovedExecution,
+  recordApprovalWithoutEffect,
+} from './approval-execution.ts';
+import type { ApprovedExecution } from './approval-execution.ts';
 import type { JobAuthority } from './state.ts';
 import { withinRunScope, recordClaim, heldClaim } from './claim-scope.ts';
 // LA porte terminale de succès (plan « Vérifier & Corriger », T09/T10) : les
@@ -2858,8 +2866,20 @@ async function runJobTracked(
       if (perdu) return { messages: msgs, catastrophicRefusalMessage, perdu };
 
       let replacementOutput: ToolResultOutput;
+      // La demande est close — son résultat consigné sur SA ligne (#566) —
+      // par l'exécution réservée ci-dessous, ou par un run précédent.
+      let close = false;
 
-      if (req.status === 'approved') {
+      if (req.executedAt !== null) {
+        // Close par un run PRÉCÉDENT de ce job, qui a été remplacé avant que
+        // sa transcription ne l'enregistre (#566) : son résultat consigné est
+        // repris tel quel, rien n'est rejoué.
+        replacementOutput =
+          (req.executionOutput as ToolResultOutput | null) ??
+          toResultOutput({ error: APPROVED_CALL_OUTCOME_UNKNOWN });
+        close = true;
+        trace('resume_recorded_approval_reused', { toolName: req.toolName });
+      } else if (req.status === 'approved') {
         // Hardline floor, UX surfacing (Fix #29). A machine-wide-destructive
         // shell command can NEVER auto-run — not even after an explicit human
         // approval (packages/tools/src/execute.ts re-trips this floor
@@ -2910,6 +2930,45 @@ async function runJobTracked(
               error: `approved_tool_not_found:${req.toolName}`,
             });
           } else {
+            // L'exécution est RÉSERVÉE par ce run, sous sa prise, avant de
+            // tourner (#566, job/approval-execution.ts) : un appel approuvé
+            // ne tourne qu'une fois, même quand le job change de run.
+            let reservation: ApprovedExecution = await reserveApprovedExecution(
+              db,
+              req.id,
+              jobId as string,
+              prise,
+            );
+            if (reservation.kind === 'started_elsewhere') {
+              // Un run remplacé l'a commencée sans en consigner la fin : elle a
+              // peut-être eu lieu. La rejouer la doublerait — la demande est
+              // close avec un résultat qui le DIT au modèle.
+              const inconnu = toResultOutput({ error: APPROVED_CALL_OUTCOME_UNKNOWN });
+              if (
+                await closeUnknownApprovedExecution(
+                  db,
+                  req.id,
+                  jobId as string,
+                  reservation.claim,
+                  prise,
+                  inconnu,
+                )
+              ) {
+                reservation = { kind: 'recorded', output: inconnu };
+                trace('resume_approved_outcome_unknown', { toolName: req.toolName });
+              } else {
+                // Sa fin vient d'être consignée, ou le job n'est plus à nous.
+                reservation = await reserveApprovedExecution(db, req.id, jobId as string, prise);
+                if (reservation.kind !== 'recorded') reservation = { kind: 'job_lost' };
+              }
+            }
+            if (reservation.kind === 'job_lost') {
+              return {
+                messages: msgs,
+                catastrophicRefusalMessage,
+                perdu: (await droitPerdu()) ?? { kind: 'lost', status: null, ownClaim: false },
+              };
+            }
             // Synthesize an explicit auto_approve rule for this tool so that
             // tools with defaultApproval:'require_approval' (e.g. run_command)
             // bypass their own gate during the resume-execution step. The human
@@ -2927,64 +2986,82 @@ async function runJobTracked(
             // An approved long tool (a 10-minute code_task, a slow
             // run_command) keeps the job alive through the job's own heartbeat
             // (#565), held from the claim above — no per-call interval here.
-            const execResult = await executeTool(
-              toolDef,
-              req.toolInput,
-              {
-                jobId: jobId as string,
-                agentId: agentRow.id,
-                entityId: job.entityId ?? '',
-                db,
-                // étape D: the replayed call keeps its ORIGINAL tool_use id
-                // (stamped on the approval_requests row at gate time) so the
-                // audit row joins back to the transcript block it answers.
-                turn,
-                toolCallId: req.toolCallId ?? undefined,
-                jobChatId: job.chatId ?? null,
-                // P6 : la conversation du fil, pour que le registre des projets y pose
-                // le projet courant.
-                conversationId: job.conversationId ?? null,
-                jobChannel: job.channel,
-                activeChannels,
-                notifyChannelOverride,
-                embeddingClient: deps.embeddingClient,
-                workspaces: agentWorkspacesList,
-                commandAllowlist: agentRow.commandAllowlist ?? null,
-                skillStoreDir: skillStore,
-                checkpointsRoot: checkpointsRoot(),
-                assignedSkillSlugs,
-                scriptAuthorizedSkillSlugs,
-                fileWritableSkillSlugs,
-                provisioning: TOOL_PROVISIONING,
-                searchBackend,
-                ...(speechGenerator ? { speechGenerator } : {}),
-                resolveAgentToolNames: (targetAgentId: string) =>
-                  resolveAgentToolNames(db, targetAgentId),
-              },
-              {
-                approvalRules: resumeApprovalRules,
-                autonomy: workspaceAutonomy,
-                onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
-              },
-            );
-            if (execResult.outcome === 'success') {
-              // INJECT-001: the resume path executes the SAME tool the gate
-              // suspended, so it needs the same framing. A boundary that is
-              // framed on first call and bare after a human approval would be
-              // framed exactly when nobody is looking at it.
-              replacementOutput = toResultOutput(execResult.output, req.toolName);
-            } else if (execResult.outcome === 'error') {
-              replacementOutput = toResultOutput({ error: execResult.error });
+            if (reservation.kind === 'reserved') {
+              const execResult = await executeTool(
+                toolDef,
+                req.toolInput,
+                {
+                  jobId: jobId as string,
+                  agentId: agentRow.id,
+                  entityId: job.entityId ?? '',
+                  db,
+                  // étape D: the replayed call keeps its ORIGINAL tool_use id
+                  // (stamped on the approval_requests row at gate time) so the
+                  // audit row joins back to the transcript block it answers.
+                  turn,
+                  toolCallId: req.toolCallId ?? undefined,
+                  jobChatId: job.chatId ?? null,
+                  // P6 : la conversation du fil, pour que le registre des projets y pose
+                  // le projet courant.
+                  conversationId: job.conversationId ?? null,
+                  jobChannel: job.channel,
+                  activeChannels,
+                  notifyChannelOverride,
+                  embeddingClient: deps.embeddingClient,
+                  workspaces: agentWorkspacesList,
+                  commandAllowlist: agentRow.commandAllowlist ?? null,
+                  skillStoreDir: skillStore,
+                  checkpointsRoot: checkpointsRoot(),
+                  assignedSkillSlugs,
+                  scriptAuthorizedSkillSlugs,
+                  fileWritableSkillSlugs,
+                  provisioning: TOOL_PROVISIONING,
+                  searchBackend,
+                  ...(speechGenerator ? { speechGenerator } : {}),
+                  resolveAgentToolNames: (targetAgentId: string) =>
+                    resolveAgentToolNames(db, targetAgentId),
+                },
+                {
+                  approvalRules: resumeApprovalRules,
+                  autonomy: workspaceAutonomy,
+                  onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
+                },
+              );
+              if (execResult.outcome === 'success') {
+                // INJECT-001: the resume path executes the SAME tool the gate
+                // suspended, so it needs the same framing. A boundary that is
+                // framed on first call and bare after a human approval would be
+                // framed exactly when nobody is looking at it.
+                replacementOutput = toResultOutput(execResult.output, req.toolName);
+              } else if (execResult.outcome === 'error') {
+                replacementOutput = toResultOutput({ error: execResult.error });
+              } else {
+                // outcome === 'awaiting_approval' should never occur here — we
+                // passed a synthetic auto_approve rule that overrides any
+                // defaultApproval, and the one case that DOES still re-gate
+                // (the catastrophic floor) was already handled above.
+                replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
+              }
+              // La fin est consignée sous la RÉSERVATION, avec son résultat :
+              // repris par un autre run entre-temps, le job le retrouve au lieu
+              // de le perdre (#566).
+              if (!(await recordApprovedExecution(db, req.id, prise, replacementOutput))) {
+                console.warn(
+                  `[exec ${jobId}] APPROVED_RESULT_NOT_RECORDED request=${req.id} tool=${req.toolName} — ` +
+                    'closed by a later run of this job, which told the model the outcome is unknown',
+                );
+              }
+              close = true;
+              trace('resume_approved_tool_executed', { toolName: req.toolName });
             } else {
-              // outcome === 'awaiting_approval' should never occur here — we
-              // passed a synthetic auto_approve rule that overrides any
-              // defaultApproval, and the one case that DOES still re-gate
-              // (the catastrophic floor) was already handled above.
-              replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
+              // Close ailleurs (ou issue inconnue, dite) : son résultat consigné.
+              replacementOutput =
+                (reservation.output as ToolResultOutput | null) ??
+                toResultOutput({ error: APPROVED_CALL_OUTCOME_UNKNOWN });
+              close = true;
             }
           }
         }
-        trace('resume_approved_tool_executed', { toolName: req.toolName });
       } else if (req.status === 'expired') {
         // Nobody answered before the deadline and the TTL sweep closed the
         // request (cron/reset-orphans.ts, issue #349). The job resumes the same
@@ -3035,7 +3112,10 @@ async function runJobTracked(
             output: ToolResultOutput;
           };
           // Match: same toolName and output contains the [AWAITING_APPROVAL] marker.
+          // A request closed by an earlier run of this job answers only ITS
+          // call (#566): a later request of the same tool must keep its marker.
           if (tb.toolName !== req.toolName) return block;
+          if (req.executedAt !== null && tb.toolCallId !== req.toolCallId) return block;
           const outputText =
             tb.output.type === 'text' ? tb.output.value : JSON.stringify(tb.output.value);
           if (!outputText.includes('[AWAITING_APPROVAL]')) return block;
@@ -3046,11 +3126,11 @@ async function runJobTracked(
         return { ...toolMsg, content: updatedContent };
       }) as typeof msgs;
 
-      // Stamp executed_at so this request is never re-processed.
-      await db
-        .update(approvalRequests)
-        .set({ executedAt: new Date() })
-        .where(eq(approvalRequests.id, req.id));
+      // Close the request so it is never re-processed. The approved paths
+      // above closed theirs under their reservation; what is left runs
+      // nothing (rejected, expired, refused by the floor, tool gone), and its
+      // result is recorded the same way for the run that may read it next.
+      if (!close) await recordApprovalWithoutEffect(db, req.id, replacementOutput);
     }
 
     return { messages: msgs, catastrophicRefusalMessage, perdu: null };
@@ -3072,9 +3152,37 @@ async function runJobTracked(
       .where(and(eq(approvalRequests.jobId, jobId as string), isNull(approvalRequests.executedAt)))
       .orderBy(approvalRequests.requestedAt);
 
+    // A request an EARLIER run of this job closed — it ran the call and
+    // recorded the result, then lost the job before its transcript was saved
+    // (#566) — still has its marker in the transcript this run loaded: its
+    // recorded result is taken back, never replayed and never lost.
+    const marqueursEnAttente = new Set(
+      (messages as Array<{ role?: string; content?: unknown }>)
+        .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+        .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>)
+        .filter((p) => JSON.stringify(p.output ?? null).includes('[AWAITING_APPROVAL]'))
+        .map((p) => p.toolCallId),
+    );
+    const closedElsewhere =
+      marqueursEnAttente.size === 0
+        ? []
+        : (
+            await db
+              .select()
+              .from(approvalRequests)
+              .where(
+                and(
+                  eq(approvalRequests.jobId, jobId as string),
+                  isNotNull(approvalRequests.executedAt),
+                  isNotNull(approvalRequests.executionOutput),
+                ),
+              )
+              .orderBy(approvalRequests.requestedAt)
+          ).filter((r) => r.toolCallId !== null && marqueursEnAttente.has(r.toolCallId));
+
     // Filter to resolved (approved or rejected) rows; anything still 'pending'
     // means the human hasn't acted yet — we'll handle those at suspend time.
-    const resolvedRows = pendingExecRows.filter(
+    const resolvedRows = [...closedElsewhere, ...pendingExecRows].filter(
       (r) => r.status === 'approved' || r.status === 'rejected' || r.status === 'expired',
     );
 

@@ -53,6 +53,27 @@ describe('migration 0135_job_claim_generation @cap:suivre-execution/moteur', () 
     }
   });
 
+  it('adds approval_requests.execution_claim (integer) and execution_output (jsonb), both nullable', async () => {
+    const { db, close } = createClient(harness().url, { max: 1 });
+    try {
+      const rows = (await db.execute(
+        sql`SELECT column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'approval_requests'
+              AND column_name IN ('execution_claim', 'execution_output')
+            ORDER BY column_name`,
+      )) as unknown as Array<{ column_name: string; data_type: string; is_nullable: string }>;
+
+      expect(rows).toEqual([
+        { column_name: 'execution_claim', data_type: 'integer', is_nullable: 'YES' },
+        { column_name: 'execution_output', data_type: 'jsonb', is_nullable: 'YES' },
+      ]);
+    } finally {
+      await close();
+    }
+  });
+
   it('records the migration in the journal drizzle-kit actually reads', async () => {
     const journal = (await import('../../migrations/meta/_journal.json', {
       with: { type: 'json' },

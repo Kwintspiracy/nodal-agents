@@ -651,6 +651,148 @@ describe('une ligne illisible pendant l’appel au modèle arrête le run (#566)
   }, 40_000);
 });
 
+// Revue Codex de #575, passe 3 : l'exécution d'un appel APPROUVÉ se posait
+// sans la prise du run. Repris pendant l'outil, le job l'exécutait deux fois,
+// ou en perdait le résultat. Elle est désormais RÉSERVÉE par le run qui tient
+// la prise, et sa fin consignée avec son résultat.
+describe('un appel approuvé ne tourne qu’une fois quand le job change de run (#566) @cap:approuver-une-action/moteur', () => {
+  const FAIT = 'LONG';
+
+  async function jobAvecAppelApprouve(): Promise<{ jobId: string; demandeId: string }> {
+    const entree = { fact: FAIT, category: 'context', importance: 2, purpose: 'garder ce fait' };
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'garde ce fait',
+        status: 'pending',
+        turn: 1,
+        messages: [
+          { role: 'user', content: 'garde ce fait' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool-call', toolCallId: 'ap-1', toolName: 'save_memory', input: entree },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'ap-1',
+                toolName: 'save_memory',
+                output: { type: 'text', value: '[AWAITING_APPROVAL] tool_call_id=ap-1' },
+              },
+            ],
+          },
+        ],
+      })
+      .returning({ id: agentJobs.id });
+    const [demande] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: job!.id,
+        agentId: seed.agentId,
+        toolName: 'save_memory',
+        toolInput: entree,
+        toolCallId: 'ap-1',
+        status: 'approved',
+      })
+      .returning({ id: approvalRequests.id });
+    return { jobId: job!.id, demandeId: demande!.id };
+  }
+
+  /** L'outil approuvé : sa PREMIÈRE exécution reste dedans jusqu'à `relacher`. */
+  function outilLong() {
+    let relacher!: () => void;
+    const bloque = new Promise<void>((r) => (relacher = r));
+    let entre!: () => void;
+    const dedans = new Promise<void>((r) => (entre = r));
+    let premiere = true;
+    const pendant = async (cle: string) => {
+      if (cle !== FAIT || !premiere) return;
+      premiere = false;
+      entre();
+      await bloque;
+    };
+    return { relacher, dedans, pendant };
+  }
+
+  const resultatDe = (messages: unknown, id: string): string =>
+    JSON.stringify(
+      ((messages ?? []) as Array<{ role: string; content: unknown }>)
+        .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+        .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>)
+        .find((p) => p.toolCallId === id)?.output ?? null,
+    );
+
+  async function demande(id: string) {
+    const [r] = await db
+      .select({
+        executedAt: approvalRequests.executedAt,
+        executionClaim: approvalRequests.executionClaim,
+        executionOutput: approvalRequests.executionOutput,
+      })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, id));
+    return r!;
+  }
+
+  it('repris PENDANT l’outil : il ne tourne qu’une fois, et le run suivant dit au modèle que l’issue est inconnue', async () => {
+    const { jobId, demandeId } = await jobAvecAppelApprouve();
+    const ceQuiATourne: string[] = [];
+    const outil = outilLong();
+    const d = deps(modele(['fin']), ceQuiATourne, outil.pendant);
+
+    const runA = executeJob(jobId as JobId, d);
+    await outil.dedans;
+    // Le faucheur remet le job en file ; le run B le prend pendant que A est dans l'outil.
+    await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, jobId));
+    const issueB = await executeJob(jobId as JobId, d);
+    outil.relacher();
+    const issueA = await runA;
+
+    expect(ceQuiATourne).toEqual([FAIT]);
+    expect(issueB.status).toBe('completed');
+    expect(issueA.status).toBe('already_handled');
+    const r = await ligne(jobId);
+    expect(r.status).toBe('completed');
+    expect(resultatDe(r.messages, 'ap-1')).toContain('approved_call_outcome_unknown');
+    const q = await demande(demandeId);
+    expect(q.executedAt).not.toBeNull();
+    expect(JSON.stringify(q.executionOutput)).toContain('approved_call_outcome_unknown');
+  });
+
+  it('repris APRÈS l’outil : le résultat consigné par le premier run est repris, sans seconde exécution', async () => {
+    const { jobId, demandeId } = await jobAvecAppelApprouve();
+    const ceQuiATourne: string[] = [];
+    const outil = outilLong();
+    const d = deps(modele(['fin']), ceQuiATourne, outil.pendant);
+
+    const runA = executeJob(jobId as JobId, d);
+    await outil.dedans;
+    // Le faucheur remet le job en file pendant l'outil ; A finit ensuite.
+    await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, jobId));
+    outil.relacher();
+    const issueA = await runA;
+    const issueB = await executeJob(jobId as JobId, d);
+
+    expect(ceQuiATourne).toEqual([FAIT]);
+    expect(issueA.status).toBe('already_handled');
+    expect(issueB.status).toBe('completed');
+    const r = await ligne(jobId);
+    expect(r.status).toBe('completed');
+    // Le VRAI résultat de l'appel, pas le marqueur ni « inconnu ».
+    expect(resultatDe(r.messages, 'ap-1')).toContain('saved');
+    const q = await demande(demandeId);
+    expect(JSON.stringify(q.executionOutput)).toContain('saved');
+  });
+});
+
 describe('readJobAuthority (#566) @cap:suivre-execution/moteur', () => {
   it('à soi tant que `processing` sous sa prise ; perdu sur tout autre statut ou une autre prise', async () => {
     const jobId = await nouveauJob();
