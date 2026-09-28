@@ -195,6 +195,15 @@ describe('computeApprovalImpactLine — declare_verification (revue Codex PR #49
     expect(line).toContain('installs software');
   });
 
+  it('names the kind of a heavy proof command: a download, not an install (#581)', () => {
+    const line = computeApprovalImpactLine('declare_verification', {
+      project_path: 'C:/p',
+      commands: [{ command: 'node --check app.js' }, { command: 'comfy model download --url x' }],
+    });
+    expect(line).toContain('at least one downloads files from the internet');
+    expect(line).not.toContain('installs');
+  });
+
   it('une déclaration VIDE le dit : rien ne tournera', () => {
     const line = computeApprovalImpactLine('declare_verification', {
       project_path: 'C:/p',

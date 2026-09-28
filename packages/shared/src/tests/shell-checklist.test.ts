@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   splitShellWords,
   staticShellCategories,
@@ -115,6 +116,13 @@ describe('a command is filed by what it does: fetching is download, installing i
     'git -c lfs.concurrenttransfers=8 lfs fetch --all',
     'git --no-pager lfs pull',
     'git -C repos clone https://github.com/x/y',
+    // Reviewer A, #582 pass 2: the hyphenated compose binaries, and global
+    // options or variables before the subcommand of hf / ollama.
+    'docker-compose pull',
+    'docker-compose -f stack.yml pull',
+    'podman-compose pull',
+    'huggingface-cli --token hf_x download org/model',
+    'OLLAMA_HOST=127.0.0.1:11435 ollama pull llama3',
   ];
   const INSTALLS = [
     'pip install pandas',
@@ -163,10 +171,38 @@ describe('a command is filed by what it does: fetching is download, installing i
       'hf --help',
       'pip --version',
       'rm --help',
+      // The help of a SUBCOMMAND, and a version check with its output
+      // redirected (Reviewer A, #582 pass 2).
+      'pip download --help',
+      'comfy model download --help',
+      'docker pull --help',
+      'git clone --help',
+      'hf download --help',
+      'ollama pull --help',
+      'pip install --help',
+      'wget --version 2>&1',
+      'wget --version 2>/dev/null',
+      'aria2c --version > /dev/null',
     ]) {
       expect(staticShellCategories(cmd), cmd).toEqual([]);
       expect(isDestructiveOrHeavyCommand(cmd), cmd).toBe(false);
     }
+  });
+
+  it('a --help after the arguments does not excuse a delete, a stop or a system change', () => {
+    // cmd's `del` and `rd` read `--help` as one more file name, bash's `kill`
+    // still sends its signal: the help of a subcommand is a read only for the
+    // fetchers and installers, which all print it and exit.
+    expect(staticShellCategories('del build --help')).toEqual(['delete_files']);
+    expect(staticShellCategories('rm -rf build --help')).toEqual(['delete_files']);
+    expect(staticShellCategories('kill 1234 --help')).toEqual(['stop_programs']);
+    expect(isDestructiveOrHeavyCommand('del build --help')).toBe(true);
+  });
+
+  it('the catastrophic floor lets a bare version or help check through, nothing more', () => {
+    expect(isCatastrophicCommand('shutdown --help')).toBe(false);
+    expect(isCatastrophicCommand('shutdown -h now')).toBe(true);
+    expect(isCatastrophicCommand('rm -rf / --help')).toBe(true);
   });
 
   it('git global options do not hide the destructive VCS commands either', () => {

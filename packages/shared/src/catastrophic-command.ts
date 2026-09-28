@@ -247,6 +247,15 @@ function isWindowsRootOrWildcardTarget(token: string): boolean {
  */
 export function isCatastrophicCommand(cmd: string): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
+  // `shutdown --help` prints and exits (Reviewer A, #582 pass 2). Only the
+  // long forms and `/?` here: `shutdown -h` HALTS the machine.
+  const units = commandUnits(withoutRedirections(cmd));
+  if (
+    units.length > 0 &&
+    units.every((u) => u.length >= 2 && u.slice(1).every((t) => FLOOR_READ_FLAGS.has(t)))
+  ) {
+    return false;
+  }
   const c = normalizeSlashes(cmd.trim());
 
   if (
@@ -430,9 +439,10 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
     subcommand('hf|huggingface-cli', String.raw`download(?![\w-])`), // Hugging Face files
     subcommand('ollama', String.raw`pull(?![\w-])`), // models
     subcommand('git', String.raw`lfs\s+(?:pull|fetch)(?![\w-])`), // LFS objects
-    // images: `docker pull`, `docker image pull`, `docker compose -f x pull`
+    // images: `docker pull`, `docker image pull`, `docker compose -f x pull`,
+    // and the standalone compose binaries (`docker-compose pull`)
     subcommand(
-      'docker|podman',
+      'docker-compose|podman-compose|docker|podman',
       String.raw`(?:(?:image|compose)${GLOBAL_OPTIONS}\s+)?pull(?![\w-])`,
     ),
   ],
@@ -470,18 +480,20 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
   // same way. Quotes and carets are removed by the tokenizer, so `r""m` and
   // `r^m` still read as `rm`.
   const found = new Set<StaticShellCategory>();
-  for (const unit of commandUnits(cmd)) {
-    if (isVersionOrHelpOnly(unit)) continue;
-    const text = normalizeSlashes(unit.join(' '));
-    for (const [category, patterns] of Object.entries(STATIC_SHELL_CATEGORY_PATTERNS) as Array<
-      [keyof typeof STATIC_SHELL_CATEGORY_PATTERNS, readonly RegExp[]]
-    >) {
-      if (patterns.some((re) => startsWithMatch(re, text))) found.add(category);
-    }
+  for (const unit of commandUnits(withoutRedirections(cmd))) {
+    for (const category of unitCategories(unit)) found.add(category);
   }
   // `curl URL > file` downloads without `-o`: the redirection is dropped by
-  // the tokenizer, so it is read on the text of that segment.
-  if (/(^|[;&|(]\s*)(curl|irm|Invoke-RestMethod)\b[^;&|\n]*>/i.test(cmd)) found.add('download');
+  // the tokenizer, so it is read on the text of that segment. `curl --version
+  // > log` is still a read.
+  if (
+    /(^|[;&|(]\s*)(curl|irm|Invoke-RestMethod)\b[^;&|\n]*>/i.test(cmd) &&
+    !commandUnits(withoutRedirections(cmd))
+      .filter((u) => /^(curl|irm|invoke-restmethod)$/i.test(u[0] ?? ''))
+      .every(isVersionOrHelpOnly)
+  ) {
+    found.add('download');
+  }
   if (isInlineInterpreterEvalCommand(cmd)) found.add('inline_code');
   return [...found];
 }
@@ -627,11 +639,14 @@ export function isDestructiveOrHeavyCommand(cmd: string): boolean {
   // human before running an un-inspectable one-liner.
   if (isCatastrophicCommand(cmd) || isInlineInterpreterEvalCommand(cmd)) return true;
   // Every program only asked for its version or help: nothing happens.
-  const units = commandUnits(cmd);
-  if (units.length > 0 && units.every(isVersionOrHelpOnly)) return false;
+  const units = commandUnits(withoutRedirections(cmd));
+  if (units.length > 0 && units.every(isReadUnit)) return false;
   const c = normalizeSlashes(cmd.trim());
   return DESTRUCTIVE_PATTERNS.some((re) => re.test(c));
 }
+
+/** The read flags the catastrophic floor lets through: never `-h` (`shutdown -h` halts). */
+const FLOOR_READ_FLAGS = new Set(['--help', '--version', '/?']);
 
 /** The flags that make a program print its version or its help, and exit. */
 const VERSION_OR_HELP = new Set(['--version', '-V', '--help', '-h', '-?', '/?']);
@@ -645,4 +660,66 @@ const VERSION_OR_HELP = new Set(['--version', '-V', '--help', '-h', '-?', '/?'])
  */
 function isVersionOrHelpOnly(unit: readonly string[]): boolean {
   return unit.length >= 2 && unit.slice(1).every((t) => VERSION_OR_HELP.has(t));
+}
+
+/**
+ * The help of a SUBCOMMAND: words, then only version or help flags (`pip
+ * download --help`, `comfy model download --help`, `ollama pull llama3 -h`).
+ */
+function isSubcommandHelp(unit: readonly string[]): boolean {
+  const args = unit.slice(1);
+  const firstFlag = args.findIndex((t) => t.startsWith('-') || t.startsWith('/'));
+  if (firstFlag <= 0) return false;
+  return args.slice(firstFlag).every((t) => VERSION_OR_HELP.has(t));
+}
+
+/**
+ * The kinds whose programs all print the help of a subcommand and exit: the
+ * fetchers and installers (pip, npm, comfy, docker, git, hf, ollama, wget…).
+ * Not the others: cmd's `del` and `rd` read `--help` as one more file name,
+ * bash's `kill` still sends its signal (Reviewer A, #582 pass 2).
+ */
+const SUBCOMMAND_HELP_EXCUSES: ReadonlySet<StaticShellCategory> = new Set([
+  'download',
+  'install_software',
+]);
+
+/** The kinds of one command unit, read from its patterns, before any excuse. */
+function patternKinds(unit: readonly string[]): Array<keyof typeof STATIC_SHELL_CATEGORY_PATTERNS> {
+  const text = normalizeSlashes(unit.join(' '));
+  return (
+    Object.entries(STATIC_SHELL_CATEGORY_PATTERNS) as Array<
+      [keyof typeof STATIC_SHELL_CATEGORY_PATTERNS, readonly RegExp[]]
+    >
+  )
+    .filter(([, patterns]) => patterns.some((re) => startsWithMatch(re, text)))
+    .map(([category]) => category);
+}
+
+/** The kinds one command unit performs: none for a version or help check. */
+function unitCategories(unit: readonly string[]): StaticShellCategory[] {
+  if (isVersionOrHelpOnly(unit)) return [];
+  const kinds = patternKinds(unit);
+  return isSubcommandHelp(unit) ? kinds.filter((k) => !SUBCOMMAND_HELP_EXCUSES.has(k)) : kinds;
+}
+
+/** A unit that only prints: a version or help check, or the help of a fetch or install subcommand. */
+function isReadUnit(unit: readonly string[]): boolean {
+  if (isVersionOrHelpOnly(unit)) return true;
+  if (!isSubcommandHelp(unit)) return false;
+  const kinds = patternKinds(unit);
+  return kinds.length > 0 && kinds.every((k) => SUBCOMMAND_HELP_EXCUSES.has(k));
+}
+
+/**
+ * The command with its redirections removed (`2>&1`, `> /dev/null`, `>> log`,
+ * `< in`): they are the shell's, not the program's arguments, and the
+ * tokenizer kept their fd and target as words (`wget --version 2>&1` read
+ * as `wget --version 2` then `1`).
+ */
+function withoutRedirections(cmd: string): string {
+  return cmd.replace(
+    /(^|\s)(?:\d|&|\*)?(?:>>?|<)(?:&\d+|\s*(?:"[^"]*"|'[^']*'|[^\s;&|()<>]+))/g,
+    '$1',
+  );
 }
