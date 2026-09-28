@@ -83,7 +83,11 @@ test.describe('Dossiers d’un agent @cap:travailler-sur-des-fichiers/ecran', ()
     await expect(picker.getByText('Choose a folder')).toBeVisible();
     await picker.getByRole('button', { name: 'Home', exact: true }).click();
     const shownPath = picker.locator('code').first();
-    await expect(shownPath).not.toHaveText('Drives');
+    // Wait for Home's listing, not merely for the roots to go: the roots read
+    // « Drives » on Windows but « / » on Linux and macOS, where the old
+    // `not 'Drives'` passed at once and the path was read before Home loaded
+    // (red on the Linux measure: the test kept « / », the row got the home).
+    await expect(shownPath).not.toHaveText(/^(Drives|\/)$/);
     const home = (await shownPath.textContent())!.trim();
     const homeName = home.split(/[/\\]/).filter(Boolean).pop()!;
     await picker.getByRole('button', { name: 'Select this folder' }).click();
