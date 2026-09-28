@@ -1717,4 +1717,48 @@ describe('buildSystemPrompt — the whole prompt names only held tools, on real 
     );
     expect(withIt).toContain('`run_skill_script`');
   });
+
+  // Revue Codex de #570, passe 2 : un nom détenu ne suffit pas, l'outil nommé
+  // doit agir sur la ressource devant laquelle il est nommé.
+  it.each([[['attach_connector']], [['attach_mcp']]])(
+    'root holding only %j: each configured resource names only the tool of its own kind',
+    async (held) => {
+      const { entityId, root } = await seedConfigured({ scriptsAuthorized: false });
+      const tools = [...ALWAYS_ON_TOOLS, ...held];
+      const prompt = await buildSystemPrompt(
+        makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+        db,
+        { origin: 'cron', availableToolNames: tools },
+      );
+      const OWN: Record<string, string> = {
+        connector: 'attach_connector',
+        'MCP server': 'attach_mcp',
+      };
+      const lines = prompt
+        .split('\n')
+        .map((line) => ({ line, kind: / — (connector|MCP server) `/.exec(line)?.[1] }))
+        .filter((l): l is { line: string; kind: string } => l.kind !== undefined);
+      // gmail + tavily (configured, not attached to the root) and the MCP server.
+      expect(new Set(lines.map((l) => l.kind))).toEqual(new Set(['connector', 'MCP server']));
+      for (const { line, kind } of lines) {
+        const named = ['attach_connector', 'attach_mcp'].filter((t) => line.includes(t));
+        expect({ line, named }).toEqual({
+          line,
+          named: tools.includes(OWN[kind]!) ? [OWN[kind]] : [],
+        });
+      }
+      // And nowhere else in the prompt is an attach tool named as a gesture
+      // over resources of mixed kinds: every line that names one is a line
+      // for a resource of that tool's own kind.
+      for (const line of prompt.split('\n')) {
+        for (const [kind, tool] of Object.entries(OWN)) {
+          if (!line.includes(tool)) continue;
+          expect({ line, kind: / — (connector|MCP server) `/.exec(line)?.[1] }).toEqual({
+            line,
+            kind,
+          });
+        }
+      }
+    },
+  );
 });

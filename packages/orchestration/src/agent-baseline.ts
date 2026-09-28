@@ -384,11 +384,19 @@ export interface DiscoverabilityInput {
   availableTools?: readonly string[];
 }
 
-/** Comment un connecteur déjà configuré arrive jusqu'à cet agent, dit avec ses outils. */
-function attachGesture(availableTools?: readonly string[]): string {
-  const held = ['attach_connector', 'attach_mcp'].filter((t) => availableTools?.includes(t));
-  return held.length > 0
-    ? `attach it yourself with ${held.map((t) => `\`${t}\``).join(' / ')}, or ask the user to`
+/**
+ * L'outil qui attache CHAQUE type de ressource. Un geste par type (revue Codex
+ * de #570, passe 2) : un seul geste construit sur les outils détenus disait
+ * « attach it yourself with attach_connector » devant un serveur MCP, un outil
+ * détenu qui n'y peut rien.
+ */
+const ATTACH_TOOL = { connector: 'attach_connector', mcp: 'attach_mcp' } as const;
+
+/** Comment une ressource déjà configurée arrive jusqu'à cet agent, dit avec SON outil. */
+function attachGesture(kind: keyof typeof ATTACH_TOOL, availableTools?: readonly string[]): string {
+  const tool = ATTACH_TOOL[kind];
+  return availableTools?.includes(tool)
+    ? `attach it with \`${tool}\`, or ask the user to`
     : 'ask the user to assign it to you';
 }
 
@@ -480,11 +488,17 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
             '(NO new API key needed; say so, and the job you hand the task to can do the ' +
             'attaching):'
         : 'ALREADY configured in this workspace — just needs to be assigned to you ' +
-            `(NO new API key needed; ${attachGesture(input.availableTools)}):`,
+            '(NO new API key needed):',
     );
+    // Sur une surface sans les builtins, le geste est dit une fois, plus haut.
+    const gesture = (kind: keyof typeof ATTACH_TOOL): string =>
+      input.nodalTools === false ? '' : `; ${attachGesture(kind, input.availableTools)}`;
     for (const c of readyConnectors)
-      lines.push(`- ${labelForConnector(c.slug, c.name)} — connector \`${c.slug}\` (configured)`);
-    for (const m of readyMcps) lines.push(`- ${m.name} — MCP server \`${m.slug}\` (configured)`);
+      lines.push(
+        `- ${labelForConnector(c.slug, c.name)} — connector \`${c.slug}\` (configured${gesture('connector')})`,
+      );
+    for (const m of readyMcps)
+      lines.push(`- ${m.name} — MCP server \`${m.slug}\` (configured${gesture('mcp')})`);
   }
 
   if (notSetUp.length > 0) {
