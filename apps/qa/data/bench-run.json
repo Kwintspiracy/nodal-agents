@@ -1,7 +1,7 @@
 {
   "run": {
-    "startedAt": "2026-09-28T10:05:03.142Z",
-    "gitSha": "7ab00c0b",
+    "startedAt": "2026-09-28T22:50:46.058Z",
+    "gitSha": "d3c94c2e",
     "sections": [
       {
         "sectionId": "architecture",
@@ -78,7 +78,7 @@
             "detail": []
           }
         ],
-        "durationMs": 837
+        "durationMs": 1064
       },
       {
         "sectionId": "gate",
@@ -136,7 +136,7 @@
             "direction": "exact"
           }
         ],
-        "durationMs": 14
+        "durationMs": 21
       },
       {
         "sectionId": "trust-boundary",
@@ -179,7 +179,7 @@
             "direction": "lower-is-better"
           }
         ],
-        "durationMs": 1
+        "durationMs": 0
       },
       {
         "sectionId": "catalog",
