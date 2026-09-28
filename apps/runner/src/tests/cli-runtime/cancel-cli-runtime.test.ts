@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs, workspaceLocks, eq } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { stopConversationRunTool } from '@nodal-agents/tools';
 import type { ToolContext } from '@nodal-agents/tools';
 import type { CliTurnOptions, CliTurnResult } from '../../cli-runtime/provider.ts';
@@ -71,7 +72,11 @@ vi.mock('@nodal-agents/orchestration', async (importOriginal) => {
   };
 });
 
-import { runCliRuntimeJob, JOB_ROW_POLL_MS } from '../../cli-runtime/run-job.ts';
+import {
+  runCliRuntimeJob,
+  JOB_ROW_POLL_MS,
+  JOB_ROW_UNREADABLE_MAX,
+} from '../../cli-runtime/run-job.ts';
 import type { CliRuntimeAgentRow } from '../../cli-runtime/run-job.ts';
 
 let db: TestDb;
@@ -150,6 +155,8 @@ describe('a job served by a CLI runtime acts only while its row says processing 
     '%s: stop_conversation_run, called by a later head of the conversation, cuts the earlier CLI run',
     async (runtime) => {
       const conversationId = randomUUID();
+      // L'agent est servi par ce runtime, en base comme dans le binding.
+      await db.update(agents).set({ runtime }).where(eq(agents.id, seed.agentId));
       // Message 1 : servi par la CLI, il tourne.
       const [earlier] = await db
         .insert(agentJobs)
@@ -207,6 +214,17 @@ describe('a job served by a CLI runtime acts only while its row says processing 
         jobChatId: null,
       } as ToolContext);
       expect(stopped.stopped.map((s) => s.run_id)).toEqual([earlier!.id]);
+      // Ce que le modèle lit de cet arrêt est vrai pour CE runtime : son
+      // processus est tué, pas « un appel en cours finit d'abord ».
+      expect(stopped.how_each_job_stops).toEqual([
+        {
+          job_id: earlier!.id,
+          runtime,
+          how:
+            `Its ${runtime === 'codex' ? 'Codex' : 'Claude Code'} process is killed within ` +
+            'seconds, wherever it is in its work; a turn not yet started never starts.',
+        },
+      ]);
 
       const outcome = await running;
 
@@ -331,6 +349,74 @@ describe('a job served by a CLI runtime acts only while its row says processing 
       expect(row).toEqual({ status, result: null, error: null });
       // Les verrous du dossier sont rendus.
       expect(await db.select().from(workspaceLocks)).toEqual([]);
+    },
+    30_000,
+  );
+
+  it.each(['claude-code', 'codex'] as const)(
+    '%s: a row that cannot be read any more cuts the turn and fails the run, saying so',
+    async (runtime) => {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'api',
+          task: 'go',
+          status: 'processing',
+        })
+        .returning({ id: agentJobs.id });
+      // La base du run, dont les LECTURES échouent pendant le tour (connexion
+      // perdue) ; les écritures passent, pour que l'échec puisse être écrit.
+      let readsBroken = false;
+      const flaky = new Proxy(db as unknown as AnyDrizzleDb, {
+        get(target, prop) {
+          if (prop === 'select' && readsBroken) {
+            return () => {
+              throw new Error('connection terminated unexpectedly');
+            };
+          }
+          const value = Reflect.get(target, prop) as unknown;
+          return typeof value === 'function' ? (value as () => unknown).bind(target) : value;
+        },
+      });
+      const fallbackMs = JOB_ROW_POLL_MS * (JOB_ROW_UNREADABLE_MAX + 6);
+      fakeRun.mockImplementationOnce((opts) => {
+        readsBroken = true;
+        opts.abortSignal?.addEventListener('abort', () => (readsBroken = false), { once: true });
+        return turnUntilAborted(fallbackMs)(opts);
+      });
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const outcome = await runCliRuntimeJob({
+        db: flaky as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+        jobId: job!.id,
+        job: {
+          entityId: seed.entityId,
+          chatId: null,
+          channel: 'api',
+          conversationId: null,
+          task: 'go',
+          triggerContext: null,
+        },
+        agentRow: { ...baseAgent, runtime },
+        workspaces: [{ label: 'ws0', path: workspace }],
+      });
+      const logged = errors.mock.calls.map((c) => String(c[0]));
+      errors.mockRestore();
+
+      expect(outcome).toEqual({ status: 'failed', error: 'job_row_unreadable' });
+      // Coupé, pas arrivé au bout : une ligne illisible n'autorise rien.
+      expect(fakeRun.mock.calls[0]?.[0].abortSignal?.aborted).toBe(true);
+      const [row] = await db
+        .select({ status: agentJobs.status, error: agentJobs.error })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(row).toEqual({ status: 'failed', error: 'job_row_unreadable' });
+      // Chaque lecture ratée est dite, jusqu'au seuil.
+      expect(logged.filter((l) => l.includes('JOB_ROW_UNREADABLE'))).toHaveLength(
+        JOB_ROW_UNREADABLE_MAX,
+      );
     },
     30_000,
   );

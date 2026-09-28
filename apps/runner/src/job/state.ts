@@ -722,29 +722,55 @@ export async function readJobRowStatus(db: AnyDrizzleDb, jobId: string): Promise
  * `stop_conversation_run`), `failed` par un faucheur, remise en `pending`,
  * disparue — `signal` tombe et l'appelant coupe son travail avec.
  *
+ * UNE LIGNE ILLISIBLE N'EST PAS UNE AUTORISATION (revue Codex de #572, passe 3).
+ * Avaler les échecs de lecture laissait un arrêt répondre « annulé » pendant
+ * que le processus continuait. Une lecture ratée est tolérée — le réseau a des
+ * hoquets —, mais après `maxUnreadable` échecs CONSÉCUTIFS le travail est coupé
+ * et `observed()` rend `'unreadable'`, que l'appelant doit dire comme un échec
+ * (invariant #4). Chaque échec est journalisé.
+ *
  * `observed()` rend ce que la ligne disait à ce moment-là (`null` : rien vu
- * encore ; `'missing'` : plus de ligne). `stop()` est à appeler quoi qu'il
- * arrive, sans quoi la relecture survit au travail.
+ * encore ; `'missing'` : plus de ligne ; `'unreadable'` : voir plus haut).
+ * `stop()` est à appeler quoi qu'il arrive, sans quoi la relecture survit au
+ * travail.
  */
 export function watchJobRow(
   db: AnyDrizzleDb,
   jobId: string,
   pollMs: number,
+  maxUnreadable: number,
 ): { signal: AbortSignal; observed: () => string | null; stop: () => void } {
   const controller = new AbortController();
   let observed: string | null = null;
+  let unreadable = 0;
+  let reading = false;
+  const cut = (why: string): void => {
+    if (observed !== null) return;
+    observed = why;
+    clearInterval(timer);
+    controller.abort();
+  };
   const timer = setInterval(() => {
+    // Une lecture lente ne se double pas : la suivante attend son tour.
+    if (reading || observed !== null) return;
+    reading = true;
     void readJobRowStatus(db, jobId)
       .then((status) => {
-        if (status !== 'processing' && observed === null) {
-          observed = status;
-          clearInterval(timer);
-          controller.abort();
-        }
+        unreadable = 0;
+        if (status !== 'processing') cut(status);
       })
-      // Une relecture ratée n'arrête rien : la suivante réessaie, et le travail
-      // garde sa propre horloge.
-      .catch(() => {});
+      .catch((err: unknown) => {
+        unreadable += 1;
+        console.error(
+          `[job-row] JOB_ROW_UNREADABLE job=${jobId} consecutive=${unreadable}/${maxUnreadable}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        if (unreadable >= maxUnreadable) cut('unreadable');
+      })
+      .finally(() => {
+        reading = false;
+      });
   }, pollMs);
   return {
     signal: controller.signal,

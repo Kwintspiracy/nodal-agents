@@ -75,6 +75,13 @@ const RUNTIME_TURN_TIMEOUT_MS = 900_000;
 export const JOB_ROW_POLL_MS = 1_000;
 
 /**
+ * Combien de relectures ratées D'AFFILÉE le tour tolère avant de se couper
+ * (revue Codex de #572, passe 3) : une ligne qu'on ne sait plus lire ne vaut
+ * pas autorisation d'agir. Cinq secondes au rythme de `JOB_ROW_POLL_MS`.
+ */
+export const JOB_ROW_UNREADABLE_MAX = 5;
+
+/**
  * Combien de temps un tour attend ses écritures d'audit encore en vol avant de
  * lire les chemins écrits (revue Codex, passe 34). Une insertion `tool_calls`
  * n'a ni `statement_timeout` (client.ts l'exclut) ni délai applicatif : une
@@ -655,14 +662,24 @@ export async function runCliRuntimeJob(args: {
   // par le chemin d'annulation unique, déclarée morte par un faucheur, remise
   // en file — le signal tombe à la relecture suivante et la CLI est tuée par le
   // même geste que le Stop du chat (spawnCliTurn).
-  const rowWatch = watchJobRow(db, jobId, JOB_ROW_POLL_MS);
+  const rowWatch = watchJobRow(db, jobId, JOB_ROW_POLL_MS, JOB_ROW_UNREADABLE_MAX);
 
   // ET la ligne est relue JUSTE avant le lancement (revue Codex de #572,
   // passe 2). La préparation — prompt, intention de mutation, checkpoint — prend
   // du temps, et une annulation tombée pendant ce temps aurait laissé partir un
   // processus capable d'écrire jusqu'à la première relecture du watcher. Une
   // ligne qui ne dit plus `processing` : la CLI n'est jamais lancée.
-  const beforeSpawn = await readJobRowStatus(db, jobId);
+  // Une ligne illisible ici ne lance rien non plus : l'erreur remonte, après
+  // avoir rendu ce que le tour tenait.
+  let beforeSpawn: string;
+  try {
+    beforeSpawn = await readJobRowStatus(db, jobId);
+  } catch (err) {
+    clearInterval(heartbeat);
+    rowWatch.stop();
+    await releaseHeld();
+    throw err;
+  }
   if (beforeSpawn !== 'processing') {
     clearInterval(heartbeat);
     rowWatch.stop();
@@ -825,6 +842,22 @@ export async function runCliRuntimeJob(args: {
   // appartient à celui qui l'a posé. L'audit, l'époque et le registre ci-dessus
   // ont tourné, parce que la CLI a pu écrire et coûter avant d'être tuée.
   const cutBy = rowWatch.observed();
+  // Coupé parce que la ligne n'était plus lisible : un échec DIT, jamais un
+  // succès ni un silence. L'écriture est tentée (gardée : elle ne passe que sur
+  // une ligne encore vivante) ; si la base reste injoignable, le code remonte
+  // quand même à l'appelant.
+  if (cutBy === 'unreadable') {
+    try {
+      await failJob(db, jobId, 'job_row_unreadable');
+    } catch (err) {
+      console.error(
+        `[cli-runtime] JOB_ROW_UNREADABLE job=${jobId} — failJob failed too: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return { status: 'failed', error: 'job_row_unreadable' };
+  }
   if (cutBy !== null) return lostRowOutcome(cutBy);
 
   if (turn.isError || turn.finalText === '') {

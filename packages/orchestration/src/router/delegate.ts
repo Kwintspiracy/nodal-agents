@@ -1,7 +1,7 @@
 // router/delegate.ts — suspend parent job, create child job
 // Called by the runner when it catches DelegationPendingError from an assign_* tool.
 
-import { eq, and, notInArray } from '@nodal-agents/db';
+import { eq, and, notInArray, insertChildJob } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 
@@ -101,29 +101,34 @@ export async function handleDelegation(
     .where(eq(agentJobs.id, parentJob.id as string))
     .limit(1);
 
-  // 2. Create the child job
-  const [childJob] = await db
-    .insert(agentJobs)
-    .values({
-      entityId: parentJob.entityId as string,
-      agentId: childAgent.id,
-      channel: 'internal',
-      task: childTask,
-      chatId: taskInput.chatId ?? parentJob.chatId,
-      status: 'pending',
-      parentJobId: parentJob.id as string,
-      delegationDepth: childDepth,
-      // Jobs page grouping (migration 0059): a delegated child is the SAME
-      // conversation as its parent, not a new one.
-      conversationId: parentJob.conversationId ?? undefined,
-      jobFolder: parentFolderRow?.jobFolder ?? undefined,
-      messages: [{ role: 'user', content: childContent }],
-    })
-    .returning();
-
-  if (!childJob) {
-    throw new OrchestrationError('task_board_error', 'Failed to create child job row');
+  // 2. Create the child job — through THE child-birth path (#567, Codex review
+  // of #572, pass 3): the child is born only while its parent is alive, under a
+  // lock the cancel path shares, so a cancel landing now can never leave a
+  // child it did not see.
+  const born = await insertChildJob(db, {
+    entityId: parentJob.entityId as string,
+    agentId: childAgent.id,
+    channel: 'internal',
+    task: childTask,
+    chatId: taskInput.chatId ?? parentJob.chatId,
+    status: 'pending',
+    parentJobId: parentJob.id as string,
+    delegationDepth: childDepth,
+    // Jobs page grouping (migration 0059): a delegated child is the SAME
+    // conversation as its parent, not a new one.
+    conversationId: parentJob.conversationId ?? undefined,
+    jobFolder: parentFolderRow?.jobFolder ?? undefined,
+    messages: [{ role: 'user', content: childContent }],
+  });
+  if (!('job' in born)) {
+    throw new OrchestrationError(
+      'parent_not_delegatable',
+      `Parent job ${parentJob.id} is no longer live (${
+        born.refused === 'parent_not_live' ? (born.parentStatus ?? 'missing') : born.taskStatus
+      }) — delegation aborted, no child job created`,
+    );
   }
+  const childJob = born.job;
 
   // 3. Build pending_delegation payload.
   // toolName mirrors the assign_<slug> tool name the LLM called; resumeDelegated

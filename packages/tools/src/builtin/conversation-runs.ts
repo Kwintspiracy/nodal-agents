@@ -21,7 +21,15 @@
 // « rien » pour un périmètre que l'outil ne lit pas.
 
 import { z } from 'zod';
-import { agentJobs, and, eq, cancelJobTree, listConversationRuns } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agents,
+  and,
+  eq,
+  inArray,
+  cancelJobTree,
+  listConversationRuns,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb, ConversationRun } from '@nodal-agents/db';
 import type { ToolDefinition } from '../types';
 
@@ -106,6 +114,63 @@ function runView(r: ConversationRun) {
   };
 }
 
+// ─── Comment un job annulé s'arrête, par runtime (revue Codex de #572, passe 3)
+//
+// Le texte rendu au modèle doit être VRAI pour le run qu'il vient d'arrêter, et
+// un arrêt ne se passe pas pareil partout. Un seul texte pour tous disait « un
+// appel en cours finit d'abord » : faux pour Claude Code et Codex, dont le
+// processus est tué. Chaque job annulé reçoit donc la phrase de SON runtime, lu
+// en base (`agents.runtime`).
+
+/** Ce qui vaut pour tout job annulé, quel que soit son runtime. */
+const FOR_EVERY_JOB =
+  'A cancelled job never resumes: if it was waiting (pending, awaiting an approval, an answer ' +
+  'or a delegate), it will not run again, and its closed approvals and questions can no ' +
+  'longer be answered. What it already did (files written, messages sent) stays done.';
+
+/** La phrase de chaque runtime — ce que son code fait réellement à l'arrêt. */
+const HOW_A_RUNTIME_STOPS: Readonly<Record<string, string>> = {
+  // apps/runner/src/job/execute.ts : le statut est relu avant chaque appel au
+  // modèle et pendant l'appel ; les appels d'outils d'une étape déjà lancée ne
+  // sont pas interrompus.
+  nodal:
+    'Stops before its next model call; a model call in progress is interrupted within ' +
+    'seconds. Tool calls of the step already under way may still complete.',
+  // apps/runner/src/cli-runtime/run-job.ts : la ligne est relue chaque seconde
+  // et le processus est tué dès qu'elle ne dit plus `processing`.
+  'claude-code':
+    'Its Claude Code process is killed within seconds, wherever it is in its work; a turn ' +
+    'not yet started never starts.',
+  codex:
+    'Its Codex process is killed within seconds, wherever it is in its work; a turn not yet ' +
+    'started never starts.',
+};
+
+async function howEachJobStops(
+  db: AnyDrizzleDb,
+  jobIds: readonly string[],
+): Promise<StopConversationRunOutput['how_each_job_stops']> {
+  if (jobIds.length === 0) return [];
+  const rows = await db
+    .select({ id: agentJobs.id, runtime: agents.runtime })
+    .from(agentJobs)
+    .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+    .where(inArray(agentJobs.id, [...jobIds]));
+  const runtimeOf = new Map(rows.map((r) => [r.id, r.runtime ?? 'nodal']));
+  return jobIds.map((id) => {
+    const runtime = runtimeOf.get(id) ?? 'unknown';
+    return {
+      job_id: id,
+      runtime,
+      // Un runtime que cet outil ne décrit pas est DIT tel quel, jamais
+      // habillé de la phrase d'un autre (invariant #4).
+      how:
+        HOW_A_RUNTIME_STOPS[runtime] ??
+        `Marked cancelled; how the runtime '${runtime}' reacts to a cancel is not known to this tool.`,
+    };
+  });
+}
+
 // ─── list_conversation_runs ──────────────────────────────────────────────────
 
 export const ListConversationRunsInputSchema = z.object({});
@@ -169,7 +234,10 @@ export type StopConversationRunOutput = {
   }>;
   /** Les runs visés où rien ne vivait plus : rien n'y a été changé. */
   already_finished: string[];
-  how_it_stops: string;
+  /** Comment CHAQUE job annulé s'arrête : cela dépend du runtime qui le sert. */
+  how_each_job_stops: Array<{ job_id: string; runtime: string; how: string }>;
+  /** Ce qui vaut pour tous, quel que soit le runtime. */
+  for_every_job: string;
 };
 
 export const stopConversationRunTool: ToolDefinition<
@@ -249,10 +317,11 @@ export const stopConversationRunTool: ToolDefinition<
       scope: SCOPE,
       stopped,
       already_finished: alreadyFinished,
-      how_it_stops:
-        'Cancelled jobs stop at their next step: a model or tool call already in flight ' +
-        'finishes first, then nothing more runs. Closed approvals and questions can no longer ' +
-        'be answered.',
+      how_each_job_stops: await howEachJobStops(
+        ctx.db,
+        stopped.flatMap((r) => r.cancelled_job_ids),
+      ),
+      for_every_job: FOR_EVERY_JOB,
     };
   },
 };

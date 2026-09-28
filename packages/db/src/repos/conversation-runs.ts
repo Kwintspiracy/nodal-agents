@@ -45,35 +45,28 @@ function notTerminal() {
   return or(isNull(agentJobs.status), notInArray(agentJobs.status, [...TERMINAL_STATUSES]));
 }
 
-/** `rootIds` et tous leurs descendants par `parent_job_id`, dans cet espace. */
-async function withDescendants(
-  db: AnyDrizzleDb,
-  entityId: string,
-  rootIds: readonly string[],
-): Promise<string[]> {
-  const seen = new Set(rootIds);
-  let frontier = [...rootIds];
-  // Borné par la profondeur de délégation (invariant #8) ; `seen` garde la
-  // boucle finie même sur un graphe corrompu.
-  while (frontier.length > 0) {
-    const rows = await db
-      .select({ id: agentJobs.id })
-      .from(agentJobs)
-      .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.parentJobId, frontier)));
-    frontier = rows.map((r) => r.id).filter((id) => !seen.has(id));
-    for (const id of frontier) seen.add(id);
-  }
-  return [...seen];
-}
-
 /**
  * Annule un job et tout ce qui en descend : les jobs non terminés passent à
  * `cancelled`, les tâches ouvertes du tableau à `cancelled`, les approbations
  * et questions en attente à `expired` (une réponse tardive ne peut plus
  * ressusciter le job ni lancer son outil).
  *
- * Coopératif, pas un `kill` : un job `processing` relit son statut au début de
- * chaque tour (apps/runner/src/job/execute.ts) et s'arrête au contrôle suivant.
+ * Coopératif, pas un `kill` : chaque runtime relit la ligne de son job et
+ * s'arrête dessus (la boucle Nodal à chaque étape, un tour de CLI chaque
+ * seconde, apps/runner/src/cli-runtime/run-job.ts).
+ *
+ * AUCUN ENFANT NE NAÎT APRÈS L'ANNULATION (revue Codex de #572, passe 3). Une
+ * photo des descendants prise avant d'annuler laissait passer l'enfant qu'un
+ * worker insérait juste après : il était absent de la photo, et il tournait. Le
+ * protocole tient à deux gestes, dans le même ordre des deux côtés (job, puis
+ * tâche : aucun interblocage) :
+ *   - ici, l'arbre est VERROUILLÉ niveau par niveau (`FOR UPDATE`) avant la
+ *     lecture du niveau suivant : une insertion en cours sous un job de l'arbre
+ *     doit finir avant qu'on lise ses enfants, et chaque lecture est une
+ *     nouvelle image (READ COMMITTED), qui la voit ;
+ *   - `insertChildJob` prend le parent en `FOR SHARE` et refuse de faire
+ *     naître un enfant sous un parent terminal : une insertion qui arrive après
+ *     l'annulation attend la fin de cette transaction, puis la voit.
  *
  * Ne touche rien de terminé, et ne refuse rien : c'est à l'appelant de dire ce
  * qu'un résultat vide veut dire. Tout est écrit dans UNE transaction, borné à
@@ -90,22 +83,36 @@ export async function cancelJobTree(
       .select({ id: agentJobs.id })
       .from(agentJobs)
       .where(and(eq(agentJobs.id, jobId), eq(agentJobs.entityId, entityId)))
-      .limit(1);
+      .for('update');
     if (!target) return { jobIds: [], taskIds: [], requestIds: [] };
 
-    const ids = await withDescendants(t, entityId, [jobId]);
+    const ids = new Set([jobId]);
+    let frontier = [jobId];
+    // Borné par la profondeur de délégation (invariant #8) ; `ids` garde la
+    // boucle finie même sur un graphe corrompu.
+    while (frontier.length > 0) {
+      const rows = await t
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.parentJobId, frontier)))
+        .for('update');
+      frontier = rows.map((r) => r.id).filter((id) => !ids.has(id));
+      for (const id of frontier) ids.add(id);
+    }
+    const tree = [...ids];
+
     const now = new Date();
     const jobs = await t
       .update(agentJobs)
       .set({ status: 'cancelled', updatedAt: now })
-      .where(and(inArray(agentJobs.id, ids), eq(agentJobs.entityId, entityId), notTerminal()))
+      .where(and(inArray(agentJobs.id, tree), eq(agentJobs.entityId, entityId), notTerminal()))
       .returning({ id: agentJobs.id });
     const tasks = await t
       .update(agentTasks)
       .set({ status: 'cancelled', updatedAt: now })
       .where(
         and(
-          inArray(agentTasks.rootJobId, ids),
+          inArray(agentTasks.rootJobId, tree),
           eq(agentTasks.entityId, entityId),
           inArray(agentTasks.status, OPEN_TASK_STATUSES),
         ),
@@ -116,7 +123,7 @@ export async function cancelJobTree(
       .set({ status: 'expired', resolvedAt: now, resolvedBy: 'system:job_cancelled' })
       .where(
         and(
-          inArray(approvalRequests.jobId, ids),
+          inArray(approvalRequests.jobId, tree),
           eq(approvalRequests.entityId, entityId),
           eq(approvalRequests.status, 'pending'),
         ),
@@ -127,6 +134,60 @@ export async function cancelJobTree(
       taskIds: tasks.map((r) => r.id),
       requestIds: requests.map((r) => r.id),
     };
+  });
+}
+
+/** Pourquoi un enfant n'est pas né : la ligne qui l'a refusé, et ce qu'elle disait. */
+export type ChildJobRefusal =
+  | { readonly refused: 'parent_not_live'; readonly parentStatus: string | null }
+  | { readonly refused: 'task_not_in_progress'; readonly taskStatus: string | null };
+
+/**
+ * LE seul chemin par lequel un job ENFANT naît (délégation `assign_*`, tâche du
+ * tableau). L'enfant n'est inséré que si son parent vit encore — ni annulé, ni
+ * fini, ni échoué — et, pour une tâche du tableau, que si la tâche est encore
+ * `in_progress` (réclamée, pas annulée).
+ *
+ * Le parent est pris en `FOR SHARE`, puis la tâche en `FOR UPDATE`, dans la
+ * transaction de l'insertion : `cancelJobTree` verrouille les jobs de l'arbre
+ * avant les tâches, dans le même ordre. Une annulation et une naissance ne
+ * peuvent donc que se sérialiser : l'annulation voit l'enfant né avant elle,
+ * et la naissance qui arrive après elle voit le parent annulé.
+ *
+ * Rend la ligne insérée, ou le refus : jamais une insertion en silence sous un
+ * parent mort (invariant #4). À l'appelant de dire ce qu'il fait d'un refus.
+ */
+export async function insertChildJob(
+  db: AnyDrizzleDb,
+  values: typeof agentJobs.$inferInsert,
+  opts: { taskId?: string } = {},
+): Promise<{ job: typeof agentJobs.$inferSelect } | ChildJobRefusal> {
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as AnyDrizzleDb;
+    if (values.parentJobId) {
+      const [parent] = await t
+        .select({ status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, values.parentJobId))
+        .for('share');
+      const status = parent ? (parent.status ?? 'pending') : null;
+      if (status === null || (TERMINAL_STATUSES as readonly string[]).includes(status)) {
+        return { refused: 'parent_not_live', parentStatus: status } as const;
+      }
+    }
+    if (opts.taskId) {
+      const [task] = await t
+        .select({ status: agentTasks.status })
+        .from(agentTasks)
+        .where(eq(agentTasks.id, opts.taskId))
+        .for('update');
+      if (task?.status !== 'in_progress') {
+        return { refused: 'task_not_in_progress', taskStatus: task?.status ?? null } as const;
+      }
+    }
+    const [job] = await t.insert(agentJobs).values(values).returning();
+    if (!job) throw new Error('insertChildJob: the child job row was not returned');
+    return { job };
   });
 }
 

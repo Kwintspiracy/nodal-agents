@@ -313,6 +313,69 @@ describe('a later message sees and stops the runs of its conversation @cap:parle
     expect((await listConversationRunsTool.execute({}, ctxFor(third))).runs).toEqual([]);
   });
 
+  it.each(['claude-code', 'codex'] as const)(
+    'the stop result says how EACH cancelled job stops, by its runtime: nodal head, %s delegate',
+    async (cliRuntime) => {
+      const [cliAgent] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: `Coder ${cliRuntime}`,
+          slug: `coder-${cliRuntime}-${Date.now()}`,
+          personality: 'Codes.',
+          runtime: cliRuntime,
+        })
+        .returning({ id: agents.id });
+      const conversationId = randomUUID();
+      const head = await insertJob({
+        channel: 'telegram',
+        conversationId,
+        status: 'awaiting_delegation',
+        task: 'Répare le build',
+      });
+      const delegate = await insertJob({
+        channel: 'telegram',
+        conversationId,
+        status: 'processing',
+        task: 'Fix the failing test',
+        parentJobId: head,
+        agentId: cliAgent!.id,
+      });
+      const caller = await insertJob({
+        channel: 'telegram',
+        conversationId,
+        status: 'processing',
+        task: 'Arrête',
+      });
+
+      const out = await stopConversationRunTool.execute({ run_id: head }, ctxFor(caller));
+
+      const cliName = cliRuntime === 'codex' ? 'Codex' : 'Claude Code';
+      const byJob = [...out.how_each_job_stops].sort((a, b) =>
+        a.job_id === head ? -1 : b.job_id === head ? 1 : 0,
+      );
+      expect(byJob).toEqual([
+        {
+          job_id: head,
+          runtime: 'nodal',
+          how:
+            'Stops before its next model call; a model call in progress is interrupted within ' +
+            'seconds. Tool calls of the step already under way may still complete.',
+        },
+        {
+          job_id: delegate,
+          runtime: cliRuntime,
+          how:
+            `Its ${cliName} process is killed within seconds, wherever it is in its work; a ` +
+            'turn not yet started never starts.',
+        },
+      ]);
+      // Rien dans la réponse ne promet qu'un appel en cours « finit d'abord » à
+      // un job dont le processus est tué.
+      expect(JSON.stringify(out)).not.toMatch(/finishes first/);
+    },
+  );
+
   it('a run of ANOTHER conversation is refused, and left running', async () => {
     const conv = await seedConversation('telegram');
     const other = await seedConversation('discord');
