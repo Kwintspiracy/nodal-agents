@@ -32,18 +32,24 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
 
-type Finish = 'length' | 'tool-calls';
+type Finish = 'length' | 'tool-calls' | 'stop';
 
 const { setFinish, currentModel } = vi.hoisted(() => {
-  let finish: 'length' | 'tool-calls' = 'tool-calls';
+  let finish: 'length' | 'tool-calls' | 'stop' = 'tool-calls';
+  let output = 1_200;
   let model: unknown = null;
   return {
-    setFinish: (f: 'length' | 'tool-calls') => {
+    /** The reply's finish reason and how many output tokens it billed. */
+    setFinish: (f: 'length' | 'tool-calls' | 'stop', out: number) => {
       finish = f;
+      output = out;
     },
     currentModel: {
       get finish() {
         return finish;
+      },
+      get output() {
+        return output;
       },
       get model() {
         return model;
@@ -83,7 +89,7 @@ const QUESTION = 'placeholder';
 type StreamPart = Record<string, unknown>;
 
 /** The incident's shape: a memory write, then a placeholder question. */
-function turnParts(finish: Finish): StreamPart[] {
+function turnParts(finish: Finish, output: number): StreamPart[] {
   return [
     { type: 'stream-start', warnings: [] },
     { type: 'text-start', id: 't' },
@@ -106,7 +112,7 @@ function turnParts(finish: Finish): StreamPart[] {
       finishReason: { unified: finish, raw: finish },
       usage: {
         inputTokens: { total: 900, noCache: 900, cacheRead: undefined, cacheWrite: undefined },
-        outputTokens: { total: 131_072, text: 131_072, reasoning: undefined },
+        outputTokens: { total: output, text: output, reasoning: undefined },
       },
     },
   ];
@@ -117,7 +123,9 @@ function mockModel(): MockLanguageModelV3 {
     provider: 'openrouter',
     modelId: PROVIDER_CONFIG.model,
     doStream: async () => ({
-      stream: simulateReadableStream({ chunks: turnParts(currentModel.finish) }) as never,
+      stream: simulateReadableStream({
+        chunks: turnParts(currentModel.finish, currentModel.output),
+      }) as never,
     }),
   });
 }
@@ -239,7 +247,7 @@ async function effects(jobId: string) {
 
 describe('a job turn cut on the output-token cap does not act @cap:suivre-execution/moteur', () => {
   it('executes none of its tool calls and fails with output_limit_reached', async () => {
-    setFinish('length');
+    setFinish('length', 131_072);
     const jobId = await insertJob();
 
     const outcome = await executeJob(jobId as JobId, makeDeps(), testEnv);
@@ -263,7 +271,7 @@ describe('a job turn cut on the output-token cap does not act @cap:suivre-execut
   });
 
   it('the same calls with a normal finish are executed as before', async () => {
-    setFinish('tool-calls');
+    setFinish('tool-calls', 1_200);
     const jobId = await insertJob();
 
     const outcome = await executeJob(jobId as JobId, makeDeps(), testEnv);
@@ -275,4 +283,34 @@ describe('a job turn cut on the output-token cap does not act @cap:suivre-execut
     expect(after.questions).toEqual([{ status: 'pending' }]);
     expect(after.job.error).toBeNull();
   });
+});
+
+// #563 — job da91bdbb (xiaomi/mimo-v2.6-pro, DeepInfra through OpenRouter):
+// 65 536 output tokens, 307 tool calls, and no 'length' from the provider. The
+// client states its output cap on the request; a reply that reaches it is cut
+// whatever finish reason the provider reports.
+describe('a job turn that reaches the stated output cap does not act, whatever its finish @cap:suivre-execution/moteur', () => {
+  for (const finish of ['tool-calls', 'stop'] as const) {
+    it(`finish '${finish}' at 65 536 output tokens: nothing executed, output_limit_reached`, async () => {
+      setFinish(finish, 65_536);
+      // The control above wrote the fact for real: start from none.
+      await db.delete(agentMemory).where(eq(agentMemory.agentId, seed.agentId));
+      const jobId = await insertJob();
+
+      const outcome = await executeJob(jobId as JobId, makeDeps(), testEnv);
+
+      expect(outcome.status).toBe('failed');
+      const after = await effects(jobId);
+      expect(after.memoryFacts).toEqual([]);
+      expect(after.toolNames).toEqual([]);
+      expect(after.questions).toEqual([]);
+      expect(after.job.error).toBe(
+        'output_limit_reached:openrouter/z-ai/glm-5.3 ' +
+          '(turn 1, 65536 output tokens, 2 tool calls not executed)',
+      );
+      // The request stated the cap it was judged on.
+      const model = currentModel.model as MockLanguageModelV3;
+      expect(model.doStreamCalls[0]?.maxOutputTokens).toBe(65_536);
+    });
+  }
 });

@@ -15,7 +15,8 @@ import { z } from 'zod';
 
 import { mockUsage } from './_mock-helpers';
 import type { LlmCallObservation } from '../observe';
-import { LLMOutputLimitError } from '../errors';
+import { LLMOutputLimitError, QuotaExhaustedError } from '../errors';
+import { TURN_OUTPUT_TOKEN_CAP } from '@nodal-agents/shared';
 
 let currentModel: MockLanguageModelV3;
 
@@ -46,7 +47,14 @@ const ARGS = {
   tools: TOOLS,
 };
 
-function generated(reason: Unified, withCalls = true): LanguageModelV3GenerateResult {
+/** Output tokens of a reply: at the cut of run 04229144 when cut, a normal turn otherwise. */
+const outputFor = (reason: Unified): number => (reason === 'length' ? 131_072 : 1_200);
+
+function generated(
+  reason: Unified,
+  withCalls = true,
+  output = outputFor(reason),
+): LanguageModelV3GenerateResult {
   return {
     content: [
       { type: 'text', text: 'working' },
@@ -68,12 +76,12 @@ function generated(reason: Unified, withCalls = true): LanguageModelV3GenerateRe
         : []),
     ],
     finishReason: { unified: reason, raw: reason },
-    usage: mockUsage(900, 131_072),
+    usage: mockUsage(900, output),
     warnings: [],
   };
 }
 
-function streamedParts(reason: Unified): LanguageModelV3StreamPart[] {
+function streamedParts(reason: Unified, output = outputFor(reason)): LanguageModelV3StreamPart[] {
   return [
     { type: 'stream-start', warnings: [] },
     { type: 'text-start', id: 't' },
@@ -83,17 +91,19 @@ function streamedParts(reason: Unified): LanguageModelV3StreamPart[] {
     {
       type: 'finish',
       finishReason: { unified: reason, raw: reason },
-      usage: mockUsage(900, 131_072),
+      usage: mockUsage(900, output),
     },
   ];
 }
 
-function useModel(reason: Unified, withCalls = true): void {
+function useModel(reason: Unified, withCalls = true, output = outputFor(reason)): void {
   currentModel = new MockLanguageModelV3({
     provider: 'openrouter',
     modelId: 'z-ai/glm-5.3',
-    doGenerate: async () => generated(reason, withCalls),
-    doStream: async () => ({ stream: simulateReadableStream({ chunks: streamedParts(reason) }) }),
+    doGenerate: async () => generated(reason, withCalls, output),
+    doStream: async () => ({
+      stream: simulateReadableStream({ chunks: streamedParts(reason, output) }),
+    }),
   });
 }
 
@@ -239,5 +249,107 @@ describe('a caller that only inspects gets the cut response as is @cap:suivre-ex
     const verdict = await toolCallSingle.run({ client: client() } as never);
 
     expect(verdict.status).toBe('pass');
+  });
+});
+
+// #563 — the client states an output cap on every request, and a turn whose
+// output reaches it is cut whatever finishReason says. Job da91bdbb
+// (xiaomi/mimo-v2.6-pro, DeepInfra through OpenRouter): 65 536 output tokens,
+// 307 tool calls, no 'length' reported, every call executed.
+describe('a turn that reaches the stated output cap is refused, whatever finishReason says @cap:suivre-execution/moteur', () => {
+  const CAP = TURN_OUTPUT_TOKEN_CAP;
+
+  it('the request states the cap, one-shot and streamed', async () => {
+    await client().generateText(ARGS);
+    await client().generateText(ARGS, { streamed: true });
+
+    expect(currentModel.doGenerateCalls[0]?.maxOutputTokens).toBe(CAP);
+    expect(currentModel.doStreamCalls[0]?.maxOutputTokens).toBe(CAP);
+  });
+
+  it("a caller's own cap is the one stated, and the one judged", async () => {
+    useModel('tool-calls', true, 512);
+
+    await expect(client().generateText({ ...ARGS, maxOutputTokens: 512 })).rejects.toBeInstanceOf(
+      LLMOutputLimitError,
+    );
+    expect(currentModel.doGenerateCalls[0]?.maxOutputTokens).toBe(512);
+  });
+
+  for (const reason of ['tool-calls', 'stop', 'length'] as const) {
+    it(`reaching the cap under finishReason '${reason}' is refused, one-shot and streamed`, async () => {
+      useModel(reason, true, CAP);
+      const seen: LlmCallObservation[] = [];
+
+      const oneShot = await client(seen)
+        .generateText(ARGS)
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(oneShot).toBeInstanceOf(LLMOutputLimitError);
+      expect((oneShot as LLMOutputLimitError).usage.outputTokens).toBe(CAP);
+      expect(seen[0]?.error).toMatch(/^LLMOutputLimitError: /);
+
+      await expect(client().generateText(ARGS, { streamed: true })).rejects.toBeInstanceOf(
+        LLMOutputLimitError,
+      );
+    });
+  }
+
+  it('one token under the cap with a normal finish is a turn like any other', async () => {
+    useModel('tool-calls', true, CAP - 1);
+
+    const res = await client().generateText(ARGS);
+
+    expect(res.toolCalls.map((c) => c.toolName)).toEqual(['save_memory', 'file_write']);
+  });
+
+  it('a model with a lower ceiling is asked for that, and judged on it', async () => {
+    currentModel = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'google/gemma-4-31b-it',
+      doGenerate: async () => generated('stop', true, 16_384),
+    });
+    const gemma = createLlmClient({
+      provider: 'openrouter',
+      model: 'google/gemma-4-31b-it',
+      apiKey: 'k',
+    });
+
+    await expect(gemma.generateText(ARGS)).rejects.toBeInstanceOf(LLMOutputLimitError);
+    expect(currentModel.doGenerateCalls[0]?.maxOutputTokens).toBe(16_384);
+  });
+
+  it('under failover each link states its own cap and is judged on it', async () => {
+    const failing = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.3',
+      // Billing refused: failover-worthy and never retried, so the chain moves on at once.
+      doGenerate: async () => {
+        throw new QuotaExhaustedError('openrouter', 'z-ai/glm-5.3', 'credits exhausted');
+      },
+    });
+    const backup = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'google/gemma-4-31b-it',
+      doGenerate: async () => generated('tool-calls', true, 16_384),
+    });
+    currentModel = failing;
+    const primary = createLlmClient(
+      { provider: 'openrouter', model: 'z-ai/glm-5.3', apiKey: 'k' },
+      { hasFallback: true },
+    );
+    currentModel = backup;
+    const secondary = createLlmClient({
+      provider: 'openrouter',
+      model: 'google/gemma-4-31b-it',
+      apiKey: 'k',
+    });
+    const chain = createFailoverFromClients([primary, secondary]);
+
+    await expect(chain.generateText(ARGS)).rejects.toBeInstanceOf(LLMOutputLimitError);
+    expect(failing.doGenerateCalls[0]?.maxOutputTokens).toBe(CAP);
+    expect(backup.doGenerateCalls[0]?.maxOutputTokens).toBe(16_384);
   });
 });

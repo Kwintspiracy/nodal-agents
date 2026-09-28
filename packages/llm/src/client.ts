@@ -12,6 +12,7 @@ import {
 } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
+import { modelOutputCap } from '@nodal-agents/shared';
 import { withRetry } from './retry';
 import { generateWithToolChoiceFloor } from './tool-choice-floor';
 import { buildLlmCallObservation, emitLlmCall } from './observe';
@@ -330,6 +331,13 @@ export function createLlmClient(
   };
   const providerModel = { provider: config.provider, model: config.model };
 
+  // #563 — the output cap this client states on every generateText request
+  // whose caller did not state one. Without it the cap that ends a runaway
+  // turn is the serving provider's default, unknown here, and the only sign
+  // of the cut is a finishReason the provider may not report. Each client of
+  // a failover chain states its own model's cap.
+  const outputCap = modelOutputCap(config.provider, config.model);
+
   // Anthropic does NOT auto-cache — opt it in by annotating cache_control
   // breakpoints (system + sliding last message). Other providers either cache
   // transparently (DeepSeek/OpenRouter) or don't support it; they pass through
@@ -392,12 +400,18 @@ export function createLlmClient(
    *
    * The call itself succeeded and was billed: it is observed WITH its usage,
    * and with the refusal as its error, so the trace says both.
+   *
+   * #563 — two signals, the one this client controls being authoritative: the
+   * provider's `finishReason === 'length'`, OR output tokens that reach the cap
+   * the request stated (`statedCap`). On 2026-09-28 a 65 536-token, 307-call
+   * turn came back through OpenRouter without `length` and was executed.
    */
   const refuseCutTurn = (
     args: Parameters<NodalLlmClient['generateText']>[0],
     result: GenerateTextResult,
     startedAt: number,
     inspectOnly: boolean,
+    statedCap: number,
   ): GenerateTextResult => {
     const tools = (args as { tools?: unknown }).tools;
     const offersTools =
@@ -406,14 +420,16 @@ export function createLlmClient(
     // of it, so a cut response is a fact for it to judge, not a turn to refuse
     // (Codex review of #555, P1: a well-formed call followed by the cap read
     // as a model that cannot call tools).
+    const outputTokens = finiteOrZero(result.usage?.outputTokens);
+    const cut = result.finishReason === 'length' || outputTokens >= statedCap;
     const refusal =
-      offersTools && !inspectOnly && result.finishReason === 'length'
+      offersTools && !inspectOnly && cut
         ? new LLMOutputLimitError(
             config.provider,
             config.model,
             {
               inputTokens: finiteOrZero(result.usage?.inputTokens),
-              outputTokens: finiteOrZero(result.usage?.outputTokens),
+              outputTokens,
             },
             (result.toolCalls ?? []).length,
           )
@@ -426,9 +442,15 @@ export function createLlmClient(
   const clientGenerateText: NodalLlmClient['generateText'] = async (args, callOpts) => {
     validateIfMessages(args as { messages?: unknown });
     const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
+    // The cap the request states (#563): the caller's own, else this client's.
+    const callerCap = (args as { maxOutputTokens?: unknown }).maxOutputTokens;
+    const statedCap = typeof callerCap === 'number' && callerCap > 0 ? callerCap : outputCap;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
-    const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
+    const prepared = {
+      ...(cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args)),
+      maxOutputTokens: statedCap,
+    };
     const startedAt = Date.now();
     if (callOpts?.streamed === true && canStreamTurns) {
       // #440: the turn streams under two silence clocks, no working wall clock.
@@ -479,7 +501,13 @@ export function createLlmClient(
         observe('generateText', args, null, err, startedAt);
         throw err;
       }
-      return refuseCutTurn(args, streamedResult, startedAt, callOpts.inspectOnly === true);
+      return refuseCutTurn(
+        args,
+        streamedResult,
+        startedAt,
+        callOpts.inspectOnly === true,
+        statedCap,
+      );
     }
     let result: GenerateTextResult;
     try {
@@ -531,7 +559,7 @@ export function createLlmClient(
       }
       throw err;
     }
-    return refuseCutTurn(args, result, startedAt, callOpts?.inspectOnly === true);
+    return refuseCutTurn(args, result, startedAt, callOpts?.inspectOnly === true, statedCap);
   };
 
   const clientStreamText: NodalLlmClient['streamText'] = (args) => {
