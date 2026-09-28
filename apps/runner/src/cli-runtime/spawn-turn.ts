@@ -34,19 +34,43 @@ export interface SpawnTurnOptions<TResult> {
    * Garde anti-boucle (invariant #8) : au-delà de ce nombre d'appels d'outils
    * dans un tour, la CLI est tuée. Le compteur du loop Nodal ne voit pas la
    * boucle INTERNE d'une CLI ; c'est son équivalent à cette couture.
+   *
+   * Ce qu'il garantit, et ce qu'il ne garantit pas (revue Codex de #568). La
+   * boucle Nodal refuse un tour trop gros ENTIER, avant d'en exécuter un seul
+   * appel (#564), parce qu'elle connaît sa taille dès la réponse. Ici, non :
+   * la CLI exécute ses outils dans son propre processus, le runner ne voit
+   * chaque appel qu'au moment où le flux l'annonce, et le total n'existe
+   * jamais d'avance. Donc :
+   *   - les appels sous le budget ont TOUS pu s'exécuter, mutations comprises ;
+   *   - l'arbre est tué sur la ligne qui OUVRE l'appel au-delà du budget
+   *     (`tool_use` chez Claude, `item.started` chez Codex). Cet appel n'est
+   *     jamais remis à l'appelant, ni son ouverture ni son résultat, et après
+   *     cette ligne rien de NOUVEAU ne l'est (aucune ouverture, aucune fin de
+   *     tour) ; seuls passent encore les résultats des appels ADMIS, ouverts
+   *     avant et finis après, pour que l'audit garde leur ligne (revue Codex de
+   *     #568, passes 2 et 3 ; voir `ToolCallGate`) ;
+   *   - cet appel-là a pu COMMENCER : la CLI l'exécute dès qu'elle l'annonce,
+   *     et le kill arrive après la ligne. Un `file_change` Codex n'a même pas
+   *     de ligne d'ouverture : il n'est compté qu'une fois appliqué.
+   * Empêcher vraiment le 51e appel demanderait un point d'arrêt DANS chaque
+   * CLI, avant chaque outil : les deux binaires installés ont des hooks
+   * (`--settings` chez Claude 2.1.283, `--dangerously-bypass-hook-trust` chez
+   * codex-cli 0.153.4), mais qu'un hook Codex puisse refuser un outil avant
+   * son exécution n'est pas vérifié. Tant que ça ne l'est pas pour les deux,
+   * ce garde reste la règle commune.
    */
   maxToolCalls?: number;
   /**
-   * Une ligne complète de stdout. Rend le NOMBRE d'appels d'outils qu'elle
-   * ouvre — c'est ce qui alimente le compteur ci-dessus.
+   * Une ligne complète de stdout. Le parseur appelle `gate.admit()` pour
+   * CHAQUE appel d'outil que la ligne ouvre, dans l'ordre du flux : c'est ce
+   * qui alimente le compteur ci-dessus, et la réponse dit si l'appel est
+   * admis. Voir `ToolCallGate` pour ce que le parseur remet ensuite.
    *
-   * Un nombre, pas un booléen (revue Codex, 27/08). Claude groupe ses appels
-   * PARALLÈLES dans un seul événement de flux : la première version rendait
-   * `true` pour la ligne entière, donc six appels simultanés n'en comptaient
-   * qu'un. Un tour pouvait dépasser largement le plafond de l'invariant #8
-   * sans jamais être tué — et plus il paralléllise, moins il compte.
+   * Un appel par appel, pas un par ligne (revue Codex, 27/08). Claude groupe
+   * ses appels PARALLÈLES dans un seul événement de flux : compter la ligne
+   * écrasait six appels simultanés en un seul.
    */
-  onLine: (line: string) => number;
+  onLine: (line: string, gate: ToolCallGate) => void;
   /** Réduit l'issue du processus en résultat de tour. */
   finish: (outcome: {
     exitCode: number | null;
@@ -57,6 +81,26 @@ export interface SpawnTurnOptions<TResult> {
     toolCapExceeded?: number;
   }) => TResult;
 }
+
+/**
+ * Le budget d'appels vu par un parseur de flux (invariant #8).
+ *
+ * Un appel est ADMIS quand il tient dans le budget ; au-delà, le parseur ne
+ * le remet jamais à l'appelant. Une fois le budget dépassé (`capped`, à partir
+ * de la ligne qui suit), le parseur ne remet plus que les résultats des appels
+ * admis : ouverts avant le cap, ils ont pu agir, et l'audit n'écrit sa ligne
+ * qu'au résultat (revue Codex de #568, passe 3). Tout le reste (ouvertures,
+ * texte, fin de tour) n'est plus lu.
+ */
+export interface ToolCallGate {
+  /** Un appel que la ligne ouvre : vrai s'il tient dans le budget. */
+  admit(): boolean;
+  /** Le budget a tiré sur une ligne précédente. */
+  readonly capped: boolean;
+}
+
+/** La porte d'un parseur appelé hors d'un tour borné : tout est admis. */
+export const OPEN_GATE: ToolCallGate = { admit: () => true, capped: false };
 
 /** Délai laissé au processus tué pour mourir avant qu'on conclue sans lui. */
 const KILL_GRACE_MS = 3000;
@@ -98,17 +142,30 @@ export function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<
     const outDecoder = new StringDecoder('utf8');
     const errDecoder = new StringDecoder('utf8');
 
+    // Le kill est asynchrone : après le cap, les lignes déjà reçues (le même
+    // paquet, ce qui arrive pendant le taskkill) passent encore par le
+    // parseur, qui n'en remet que les résultats des appels admis.
+    const gate: ToolCallGate = {
+      admit: () => {
+        toolCalls += 1;
+        return opts.maxToolCalls === undefined || toolCalls <= opts.maxToolCalls;
+      },
+      get capped() {
+        return toolCapExceeded !== undefined;
+      },
+    };
+
     const consume = (line: string): void => {
-      let opened = 0;
       try {
-        opened = opts.onLine(line);
+        opts.onLine(line, gate);
       } catch (err) {
         console.warn('[cli-runtime] stream line handling failed:', err);
-        return;
       }
-      if (opened <= 0 || opts.maxToolCalls === undefined || toolCapExceeded !== undefined) return;
-      toolCalls += opened;
-      if (toolCalls > opts.maxToolCalls) {
+      if (
+        toolCapExceeded === undefined &&
+        opts.maxToolCalls !== undefined &&
+        toolCalls > opts.maxToolCalls
+      ) {
         toolCapExceeded = opts.maxToolCalls;
         killTree();
         graceTimer = setTimeout(() => finish(null), KILL_GRACE_MS);

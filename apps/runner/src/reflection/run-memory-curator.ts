@@ -20,6 +20,7 @@ import {
   updateAgentMemoryImportance,
 } from '@nodal-agents/memory';
 import type { ModelMessage } from 'ai';
+import { assertTurnToolCallBudget } from '@nodal-agents/orchestration';
 import { z } from 'zod';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
@@ -207,6 +208,9 @@ export async function runMemoryCuration(
 
     const toolCalls = response.toolCalls ?? [];
     if (toolCalls.length === 0) break;
+    // Invariant #8 (#564): a turn over the per-turn tool-call budget is refused
+    // whole, before any of its calls runs. The pass throws; its caller logs it.
+    assertTurnToolCallBudget(toolCalls.length);
 
     const assistantParts: Array<
       | { type: 'text'; text: string }

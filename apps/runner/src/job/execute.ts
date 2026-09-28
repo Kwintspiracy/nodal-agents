@@ -860,6 +860,25 @@ export function outputLimitErrorCode(err: LLMOutputLimitError, turn: number): st
   );
 }
 
+/**
+ * Le code machine d'un tour refusé parce qu'il portait plus d'appels d'outils
+ * que le budget par tour (#564, invariant #8), pour `agent_jobs.error`. Même
+ * famille que `outputLimitErrorCode` : le code, puis qui, quel tour, combien
+ * d'appels pour quelle limite, et qu'aucun n'a été exécuté.
+ */
+export function toolCallLimitErrorCode(
+  err: ToolCallLimitExceededError,
+  provider: string,
+  model: string,
+  turn: number,
+): string {
+  return (
+    `${err.code}:${provider}/${model} ` +
+    `(turn ${turn}, ${err.current} tool calls over the limit of ${err.limit} per turn, ` +
+    `none executed)`
+  );
+}
+
 /** Le code d'erreur d'un run arrêté par son budget. Les deux premiers existaient déjà. */
 export function budgetErrorCode(kind: BudgetStopFacts['kind']): string {
   if (kind === 'agent_day' || kind === 'agent_month') return 'agent_budget_exceeded';
@@ -3907,7 +3926,6 @@ async function runJobTracked(
   try {
     while (true) {
       turn += 1;
-      counters.resetTurnToolCalls();
       // Un nouveau tour n'a pas encore de message d'outils en construction (#561).
       tourOuvert = null;
 
@@ -4498,6 +4516,18 @@ async function runJobTracked(
         ...(servedProvider ? { servedProvider } : {}),
       });
 
+      // #564 — invariant #8, per-turn tool-call budget. The size of the turn is
+      // known now, before any of its calls runs: a turn over the budget is
+      // refused WHOLE, not executed up to its 50th call. Incident 2026-09-28:
+      // a 307-call turn (154 telegram_send_message, 150 assign_) ran call by
+      // call until Telegram's own send limit stopped it. Checked before the
+      // assistant message is appended, like the cut turn of #554 which never
+      // reaches it: the persisted transcript stays valid (no tool_use without
+      // its result) and ends on the last turn that acted. Both execution paths
+      // below (the parallel read pre-pass and the serial loop) run only calls
+      // of an admitted turn. Throws into the outer catch, which fails the job.
+      counters.admitTurn(rawToolCalls.length);
+
       // e-pré. Anti-spam guard (invariant 8). A "delivery-only" turn is one
       // whose tool calls are ALL user-facing sends (no return_result, no other
       // work). A well-behaved agent batches its reply into ONE such turn then
@@ -5036,9 +5066,9 @@ async function runJobTracked(
             !wouldRequireApproval(c.name),
         );
       if (parallelizable) {
-        // Cap at the per-turn tool budget so we never execute past the limit the
-        // serial loop would enforce.
-        const batch = callsToProcess.slice(0, DEFAULT_LIMITS.maxToolCallsPerTurn);
+        // The turn was admitted whole by `counters.admitTurn` (#564): it is
+        // within the per-turn budget, nothing to cut here.
+        const batch = callsToProcess;
         trace('parallel_tool_prepass', { turn, count: batch.length, concurrency: toolConcurrency });
         // A slow wave (an Apify run up to 30 min, a slow MCP or scrape) stays
         // fresh to the reapers through the job's own heartbeat (#565).
@@ -5081,7 +5111,6 @@ async function runJobTracked(
           continue;
         }
 
-        counters.bumpToolCall();
         toolsUsed = [...new Set([...toolsUsed, call.name])];
 
         // Guard 1f (S1) — same-tool streak, across the whole job (any
@@ -6506,9 +6535,19 @@ async function runJobTracked(
       errMsg: describeLlmError(err),
     });
     // Typed errors — error codes only (invariant 2)
+    // #564 : le tour portait plus d'appels d'outils que le budget par tour
+    // (invariant #8). Aucun n'a été exécuté. Le run échoue avec un code et ses
+    // faits, comme le tour coupé de #554 (`outputLimitErrorCode`).
     if (err instanceof ToolCallLimitExceededError) {
-      await failJob(db, jobId as string, err.code, runStats(), messages);
-      return { status: 'failed', error: err.code };
+      const code = toolCallLimitErrorCode(
+        err,
+        llmClient.config.provider,
+        llmClient.config.model,
+        turn,
+      );
+      trace('tool_call_limit_exceeded', { turn, toolCalls: err.current, limit: err.limit });
+      await failJob(db, jobId as string, code, runStats(), messages);
+      return { status: 'failed', error: code };
     }
 
     if (err instanceof ChainLimitExceededError) {

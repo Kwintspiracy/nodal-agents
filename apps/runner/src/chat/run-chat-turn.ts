@@ -13,7 +13,11 @@
 
 import { eq, and, asc, desc, isNull, notInArray, or, sql } from '@nodal-agents/db';
 import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
-import { buildSystemPrompt } from '@nodal-agents/orchestration';
+import {
+  buildSystemPrompt,
+  assertTurnToolCallBudget,
+  ToolCallLimitExceededError,
+} from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
@@ -317,25 +321,41 @@ function buildHistoryBlock(
 }
 
 /**
- * #554 : un appel du tour qui PROPOSAIT des outils s'est arrêté sur le plafond
- * de jetons de sortie, et le client l'a refusé. Le tour en a trois (la réponse,
- * la relance d'escalade, la réponse après un `run_task` refusé) et la règle est
- * la même pour chacun : le tour échoue avec ce code. Aucune relance ne le
- * rattrape, ni ne garde la réponse d'avant : ce serait un nouvel essai, que rien
- * ici ne décide, et un tour présenté comme réussi (revue Codex de #555, P1 ×2).
- * `null` pour toute autre erreur, que l'appelant traite comme avant.
+ * Un appel du tour qui PROPOSAIT des outils a été refusé : il s'est arrêté sur
+ * le plafond de jetons de sortie (#554, refusé par le client), ou il porte plus
+ * d'appels que le budget d'un tour (#564, `runTaskOf`). Le tour en a trois (la
+ * réponse, la relance d'escalade, la réponse après un `run_task` refusé) et la
+ * règle est la même pour chacun : le tour échoue avec le code du refus. Aucune
+ * relance ne le rattrape, ni ne garde la réponse d'avant : ce serait un nouvel
+ * essai, que rien ici ne décide, et un tour présenté comme réussi (revue Codex
+ * de #555, P1 ×2). `null` pour toute autre erreur, que l'appelant traite comme
+ * avant.
  */
-function failedOnOutputCap(
+function failedOnRefusedTurn(
   err: unknown,
   which: string,
   agentSlug: string,
 ): { ok: false; error: string } | null {
-  if (!(err instanceof LLMOutputLimitError)) return null;
-  console.warn(
-    `[run-chat-turn] ${which} refused by the client, ${err.code} (${agentSlug}):`,
-    err.message,
-  );
+  if (!(err instanceof LLMOutputLimitError) && !(err instanceof ToolCallLimitExceededError)) {
+    return null;
+  }
+  console.warn(`[run-chat-turn] ${which} refused, ${err.code} (${agentSlug}):`, err.message);
   return { ok: false, error: err.code };
+}
+
+/**
+ * Le `run_task` d'une réponse, après la règle du tour (#564, revue Codex de
+ * #568, passe 4) : la même que la boucle des jobs, `assertTurnToolCallBudget`,
+ * avant d'agir sur quoi que ce soit. Le chat n'exécute que le premier appel,
+ * mais un tour de 51 appels est dégénéré, et le premier ne vaut pas mieux que
+ * les autres. Lève `ToolCallLimitExceededError`, que `failedOnRefusedTurn` lit.
+ */
+function runTaskOf<T extends { toolName: string }>(response: {
+  toolCalls?: readonly T[] | undefined;
+}): T | undefined {
+  const calls = response.toolCalls ?? [];
+  assertTurnToolCallBudget(calls.length);
+  return calls.find((tc) => tc.toolName === 'run_task');
 }
 
 export async function runChatTurn(opts: {
@@ -654,7 +674,7 @@ export async function runChatTurn(opts: {
       );
       if (abortSignal?.aborted) return await keepStoppedReply();
       text = (response.text ?? '').trim();
-      runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+      runTask = runTaskOf(response);
       streamed = partial !== '';
     } else {
       const response = await llmClient.generateText(
@@ -663,7 +683,7 @@ export async function runChatTurn(opts: {
         abortSignal ? { abortSignal } : undefined,
       );
       text = (response.text ?? '').trim();
-      runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+      runTask = runTaskOf(response);
     }
   } catch (err) {
     // Stop pendant l'appel : ce n'est pas une panne, rien ne se rejoue.
@@ -678,7 +698,7 @@ export async function runChatTurn(opts: {
       );
       return await keepPartialReply({ cutReason: err.reason });
     }
-    const capped = failedOnOutputCap(err, 'reply', agentRow.slug);
+    const capped = failedOnRefusedTurn(err, 'reply', agentRow.slug);
     if (capped) return capped;
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
@@ -721,10 +741,10 @@ export async function runChatTurn(opts: {
         },
         abortSignal ? { abortSignal } : undefined,
       );
-      runTask = (recheck.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+      runTask = runTaskOf(recheck);
     } catch (err) {
       if (abortSignal?.aborted) return await keepStoppedReply();
-      const capped = failedOnOutputCap(err, 'escalation recheck', agentRow.slug);
+      const capped = failedOnRefusedTurn(err, 'escalation recheck', agentRow.slug);
       if (capped) return capped;
       // Any other failure: keep the original text reply, recovery is best-effort.
     }
@@ -818,10 +838,10 @@ export async function runChatTurn(opts: {
         abortSignal ? { abortSignal } : undefined,
       );
       text = (again.text ?? '').trim();
-      runTask = (again.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+      runTask = runTaskOf(again);
     } catch (err) {
       if (abortSignal?.aborted) return await keepStoppedReply();
-      const capped = failedOnOutputCap(err, 'reply after a refused run_task', agentRow.slug);
+      const capped = failedOnRefusedTurn(err, 'reply after a refused run_task', agentRow.slug);
       if (capped) return capped;
       console.warn(
         `[run-chat-turn] reply after a refused run_task failed (${agentRow.slug}):`,
