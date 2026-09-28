@@ -697,3 +697,46 @@ export async function saveCheckpoint(
 export async function touchJob(db: AnyDrizzleDb, jobId: string): Promise<void> {
   await db.update(agentJobs).set({ updatedAt: new Date() }).where(eq(agentJobs.id, jobId));
 }
+
+/**
+ * Relit le statut d'un job toutes les `pollMs` pendant qu'un travail long le
+ * sert hors de la boucle Nodal (un tour de CLI, #567). Dès que la ligne est
+ * terminale — `cancelled` par le chemin d'annulation unique (`cancelJobTree` :
+ * le bouton Stop, `stop_conversation_run`), ou `failed` par un faucheur —
+ * `signal` tombe, et l'appelant coupe son travail avec.
+ *
+ * C'est le jumeau du contrôle de début de tour de la boucle Nodal (« Leg 2 »,
+ * execute.ts) pour un travail qui n'a pas de tours à lui : sans lui, la ligne
+ * disait `cancelled` pendant que le processus continuait. `stop()` est à
+ * appeler quoi qu'il arrive, sans quoi la relecture survit au travail.
+ */
+export function watchJobTerminal(
+  db: AnyDrizzleDb,
+  jobId: string,
+  pollMs: number,
+): { signal: AbortSignal; observed: () => string | null; stop: () => void } {
+  const controller = new AbortController();
+  let observed: string | null = null;
+  const timer = setInterval(() => {
+    void db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId))
+      .then(([row]) => {
+        const status = row?.status ?? null;
+        if (status !== null && (TERMINAL_STATUSES as string[]).includes(status)) {
+          observed ??= status;
+          clearInterval(timer);
+          controller.abort();
+        }
+      })
+      // Une relecture ratée n'arrête rien : la suivante réessaie, et le travail
+      // garde sa propre horloge.
+      .catch(() => {});
+  }, pollMs);
+  return {
+    signal: controller.signal,
+    observed: () => observed,
+    stop: () => clearInterval(timer),
+  };
+}

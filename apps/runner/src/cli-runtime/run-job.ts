@@ -41,7 +41,7 @@ import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { buildCliAuditRow } from './audit.ts';
-import { failJob, touchJob } from '../job/state.ts';
+import { failJob, touchJob, watchJobTerminal } from '../job/state.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
@@ -64,6 +64,14 @@ import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.
 
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
+
+/**
+ * Tous les combien le tour relit le statut de son job (#567). Un tour de CLI
+ * dure jusqu'à quinze minutes sans rendre la main : c'est ce délai qui borne le
+ * temps entre l'arrêt demandé (bouton Stop, `stop_conversation_run`) et le
+ * processus tué. Une lecture d'une colonne par seconde et par tour en cours.
+ */
+export const CANCEL_POLL_MS = 1_000;
 
 /**
  * Combien de temps un tour attend ses écritures d'audit encore en vol avant de
@@ -366,7 +374,11 @@ export async function runCliRuntimeJob(args: {
   job: CliRuntimeJobRow;
   agentRow: CliRuntimeAgentRow;
   workspaces: Array<{ label: string; path: string }>;
-}): Promise<{ status: 'completed'; result: string } | { status: 'failed'; error: string }> {
+}): Promise<
+  | { status: 'completed'; result: string }
+  | { status: 'failed'; error: string }
+  | { status: 'cancelled' }
+> {
   const { db, jobId, job, agentRow } = args;
 
   const fail = async (code: string): Promise<{ status: 'failed'; error: string }> => {
@@ -623,6 +635,12 @@ export async function runCliRuntimeJob(args: {
   // que CE tour a produites (voir `harnessEdits` plus haut).
   const turnStartedAt = new Date();
 
+  // L'arrêt du job coupe le tour (#567). La ligne peut passer à `cancelled`
+  // par le chemin d'annulation unique pendant que la CLI travaille : le signal
+  // tombe à la relecture suivante, et la CLI est tuée par le même geste que le
+  // Stop du chat (spawnCliTurn).
+  const terminal = watchJobTerminal(db, jobId, CANCEL_POLL_MS);
+
   let turn: CliTurnResult;
   try {
     turn = await binding.run({
@@ -641,9 +659,11 @@ export async function runCliRuntimeJob(args: {
       // apply the SAME per-turn cap at this seam (invariant #8).
       maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
       onEvent,
+      abortSignal: terminal.signal,
     });
   } catch (err) {
     clearInterval(heartbeat);
+    terminal.stop();
     // La CLI a pu écrire avant de tomber — même contrat conservatif que
     // l'intention, et même raison qu'au seam des outils (#101).
     await bumpEpochsAfterWrite(db, job.entityId ?? '', dirtied);
@@ -652,6 +672,7 @@ export async function runCliRuntimeJob(args: {
     throw err;
   }
   clearInterval(heartbeat);
+  terminal.stop();
   // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
   //
   // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce
@@ -769,6 +790,13 @@ export async function runCliRuntimeJob(args: {
       );
     }
   }
+
+  // Le tour a été coupé parce que la ligne est devenue terminale : rien ne se
+  // finalise ni ne se livre. L'audit, l'époque et le registre ci-dessus ont
+  // tourné, parce que la CLI a pu écrire et coûter avant d'être tuée.
+  const cutBy = terminal.observed();
+  if (cutBy === 'cancelled') return { status: 'cancelled' };
+  if (cutBy !== null) return { status: 'failed', error: 'already_handled' };
 
   if (turn.isError || turn.finalText === '') {
     // An exhausted subscription window must read as exactly that (D0/risques)
