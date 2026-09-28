@@ -710,10 +710,21 @@ type AnyToolDef = ToolDefinition<z.ZodTypeAny, unknown>;
 // ─── describeUnavailableTool ──────────────────────────────────────────────────
 
 /**
+ * La marque que porte chaque renvoi « outil indisponible », pour le RECONNAÎTRE
+ * dans une transcription relue (revue Codex de #573). Le budget de ces renvois
+ * vivait en mémoire et repartait à zéro à chaque reprise : une suspension
+ * (approbation, délégation) rendait au modèle toutes ses chances. Elle porte un
+ * caractère de contrôle, comme `PROGRESS_REMINDER_MARK` : ni un message
+ * d'utilisateur ni le résultat d'un autre outil ne la produit par accident.
+ */
+export const UNAVAILABLE_TOOL_MARK = '[système:outil-indisponible:\u0001]';
+
+/**
  * Build the corrective message fed back to a model that called a tool not in
  * its whitelist. Lists the available tools and, when the bad name looks like a
  * truncated/abbreviated form of a real one (the classic "dropped the MCP
  * prefix" slip), surfaces a "did you mean" hint so the model can self-correct.
+ * Carries `UNAVAILABLE_TOOL_MARK`, which the budget counts on resume.
  * Pure — unit-tested in isolation.
  */
 export function describeUnavailableTool(badName: string, available: readonly string[]): string {
@@ -724,10 +735,34 @@ export function describeUnavailableTool(badName: string, available: readonly str
   });
   const hint = suggestions.length ? ` Did you mean: ${suggestions.slice(0, 3).join(' or ')}?` : '';
   return (
-    `The tool "${badName}" is not available to you.${hint} ` +
+    `${UNAVAILABLE_TOOL_MARK} The tool "${badName}" is not available to you.${hint} ` +
     `Your available tools are: ${available.join(', ')}. ` +
     `Use one of those EXACT names — do not invent, abbreviate, or drop prefixes from tool names.`
   );
+}
+
+/**
+ * Les tours du job qui ont déjà dépensé une chance « outil indisponible »,
+ * relus dans sa transcription (revue Codex de #573). Les deux chemins laissent
+ * la marque, une fois par tour : le refus du SDK, par le message système qu'il
+ * ajoute ; les appels indisponibles d'un tour, par les résultats d'outils de CE
+ * tour (un seul message `tool`, quel que soit leur nombre). Même lecture que le
+ * rappel de progression et le livrable vide : un compteur en mémoire vaudrait
+ * pour une exécution, pas pour le job.
+ */
+export function unavailableToolTurnsFromTranscript(messages: readonly unknown[]): number {
+  // Dans un contenu sérialisé, le caractère de contrôle est échappé.
+  const serializedMark = JSON.stringify(UNAVAILABLE_TOOL_MARK).slice(1, -1);
+  let turns = 0;
+  for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+    if (!m) continue;
+    if (m.role === 'user' && typeof m.content === 'string') {
+      if (m.content.includes(UNAVAILABLE_TOOL_MARK)) turns += 1;
+    } else if (m.role === 'tool') {
+      if (JSON.stringify(m.content ?? '').includes(serializedMark)) turns += 1;
+    }
+  }
+  return turns;
 }
 
 // ─── shortBlockReason ─────────────────────────────────────────────────────────
@@ -3792,8 +3827,17 @@ async function runJobTracked(
   // the job being hard-killed on one hallucinated/abbreviated tool name. Generic
   // — benefits every model, most of all the ones that drop MCP prefixes
   // (minimax/deepseek). After the budget, fail loud (invariant #4 / #8).
+  // The budget counts TURNS, not calls (#560): the model only sees the error
+  // between turns, so four bad calls in one batch are one mistake, not four.
+  // Both paths spend it once per turn: the SDK rejection (the whole turn) and
+  // the check below the delegation filter (every unavailable call of a turn).
+  // The budget is the JOB's, not one execution's (Codex review of #573): read
+  // back from this job's transcript, so a resume after an approval or a
+  // delegation does not hand the model its chances back.
   const MAX_UNAVAILABLE_TOOL_NUDGES = 3;
-  let unavailableToolNudges = 0;
+  let unavailableToolNudges = unavailableToolTurnsFromTranscript(
+    currentTurnMessages(messages, job.task),
+  );
 
   // Expiration d'un tour : UN rejeu, puis l'échec (#121). Le compteur et le
   // temps perdu valent pour le tour en cours, et sont remis à zéro dès qu'un
@@ -4730,6 +4774,36 @@ async function runJobTracked(
         ? [...othersWithoutReturn, keptAssign]
         : othersWithoutReturn;
 
+      // #560 — a turn that calls tools the agent does not have spends ONE
+      // chance to self-correct, however many such calls it holds; each of them
+      // gets its error as its tool-result in the loop below. A turn that does
+      // it again once the budget is spent (the model saw the errors and
+      // repeated the mistake) fails the job, before any call of it runs.
+      const unavailableThisTurn = callsToProcess.filter((c) => !toolMap.has(c.name));
+      if (unavailableThisTurn.length > 0) {
+        const badTools = [...new Set(unavailableThisTurn.map((c) => c.name))];
+        if (unavailableToolNudges >= MAX_UNAVAILABLE_TOOL_NUDGES) {
+          const code = `whitelist_violation:${badTools[0]}`;
+          await failJob(
+            db,
+            jobId as string,
+            code,
+            runStats(),
+            messages,
+            `L'agent a appelé à répétition un outil indisponible (${badTools.join(', ')}).`,
+          );
+          return { status: 'failed', error: code };
+        }
+        unavailableToolNudges += 1;
+        trace('unavailable_tool_nudge', {
+          turn,
+          badTools,
+          calls: unavailableThisTurn.length,
+          attempt: unavailableToolNudges,
+          via: 'toolMap',
+        });
+      }
+
       // i. Process tool calls. AI SDK v6 ToolResultPart shape:
       //   { type: 'tool-result', toolCallId, toolName, output: ToolResultOutput }
       // where ToolResultOutput is the discriminated union defined at step 11.6.
@@ -4937,35 +5011,18 @@ async function runJobTracked(
           // Recoverable (mirrors the deferred-approval pattern above): feed the
           // unavailable-tool mistake back as THIS call's tool-result so the
           // message-structure invariant holds (every tool_use gets a
-          // tool_result) and the model can retry with a valid name. Bounded;
-          // after the budget, fail loud (invariant #4 / #8).
-          if (unavailableToolNudges < MAX_UNAVAILABLE_TOOL_NUDGES) {
-            unavailableToolNudges += 1;
-            trace('unavailable_tool_nudge', {
-              turn,
-              badTool: call.name,
-              attempt: unavailableToolNudges,
-              via: 'toolMap',
-            });
-            toolResultBlocks.push({
-              type: 'tool-result',
-              toolCallId: call.id,
-              toolName: call.name,
-              output: toResultOutput({
-                error: describeUnavailableTool(call.name, [...toolMap.keys()]),
-              }),
-            });
-            continue;
-          }
-          await failJob(
-            db,
-            jobId as string,
-            `whitelist_violation:${call.name}`,
-            runStats(),
-            messages,
-            `L'agent a appelé à répétition un outil indisponible (${call.name}).`,
-          );
-          return { status: 'failed', error: `whitelist_violation:${call.name}` };
+          // tool_result) and the model can retry with a valid name. The turn
+          // already spent its chance above (#560); every such call of it gets
+          // its result.
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: call.id,
+            toolName: call.name,
+            output: toResultOutput({
+              error: describeUnavailableTool(call.name, [...toolMap.keys()]),
+            }),
+          });
+          continue;
         }
 
         if (call.name.startsWith('assign_')) {
