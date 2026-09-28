@@ -18,6 +18,8 @@
  * Conventions : requireLiveStack() en beforeAll, storageState via la config.
  */
 
+import { homedir } from 'node:os';
+import { normalize } from 'node:path';
 import { test, expect } from '@playwright/test';
 import { eq, agents, agentWorkspaces } from '@nodal-agents/db';
 import { makeDbClient, requireLiveStack, resolveActingUser, testSlugSuffix } from './helpers.ts';
@@ -83,12 +85,14 @@ test.describe('Dossiers d’un agent @cap:travailler-sur-des-fichiers/ecran', ()
     await expect(picker.getByText('Choose a folder')).toBeVisible();
     await picker.getByRole('button', { name: 'Home', exact: true }).click();
     const shownPath = picker.locator('code').first();
-    // Wait for Home's listing, not merely for the roots to go: the roots read
-    // « Drives » on Windows but « / » on Linux and macOS, where the old
-    // `not 'Drives'` passed at once and the path was read before Home loaded
-    // (red on the Linux measure: the test kept « / », the row got the home).
-    await expect(shownPath).not.toHaveText(/^(Drives|\/)$/);
-    const home = (await shownPath.textContent())!.trim();
+    // Wait for HOME itself, by its value. The old wait was negative (`not
+    // 'Drives'`): on Linux and macOS the roots read « / », it passed at once,
+    // and the path was read before Home loaded (red on the Linux measure: the
+    // test kept « / », the row got the home). The stack lists the home as
+    // `path.normalize(os.homedir())` (browseServerFoldersAction), and it runs
+    // on this machine, as this user, like every e2e that seeds a folder.
+    const home = normalize(homedir());
+    await expect(shownPath).toHaveText(home);
     const homeName = home.split(/[/\\]/).filter(Boolean).pop()!;
     await picker.getByRole('button', { name: 'Select this folder' }).click();
 

@@ -75,6 +75,12 @@ test.describe('Approvals tab @cap:regler-autonomie/ecran', () => {
       test.skip(true, 'No agent edit URL found');
       return;
     }
+    // "Without errors" is asserted, not assumed: an uncaught exception in the
+    // page while the tab renders fails the case (review of #594). Console
+    // messages are not counted: dev builds print warnings that are not faults.
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err.message));
+
     await page.goto(firstAgentEditUrl);
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
@@ -98,7 +104,7 @@ test.describe('Approvals tab @cap:regler-autonomie/ecran', () => {
           .or(page.locator('[data-testid="autonomy-tool-list"]')),
       ).toBeVisible({ timeout: 8_000 });
     }
-    // If we got here without throwing, the tab rendered correctly.
+    expect(pageErrors).toEqual([]);
   });
 
   test('3-way control is present and interactive when write tools exist', async ({ page }) => {
