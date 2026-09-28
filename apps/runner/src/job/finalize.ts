@@ -427,6 +427,12 @@ export interface FinalizeFailureInput {
    * que « livré » (revue Codex de #509, passe 3).
    */
   readonly replaceResult?: boolean;
+  /**
+   * Les lignes de `userMessage` que le RUNNER a écrites (#562) — posées dans
+   * `runner_notes` avec le résultat qu'elles terminent, pour que la relecture
+   * du fil ne les mette pas dans la bouche de l'agent.
+   */
+  readonly runnerNotes?: readonly string[];
   /** Livraison à préparer dans la même transaction que l'écriture terminale. */
   readonly delivery?: TerminalDelivery;
 }
@@ -1182,10 +1188,12 @@ export async function finalizeJobSuccess(
         }
         // `failJob` ne remplit `result` que s'il est vide ; un texte déjà
         // publié y serait resté SANS la ligne. `result` contient ce texte-là,
-        // donc il le remplace sans rien perdre.
+        // donc il le remplace sans rien perdre. La ligne est du runner, et
+        // `runner_notes` le dit : la relecture du fil la range dans le relevé
+        // du runner, jamais dans les mots de l'agent (#562).
         await tx
           .update(agentJobs)
-          .set({ result, toolsUsed, updatedAt: new Date() })
+          .set({ result, runnerNotes: [line], toolsUsed, updatedAt: new Date() })
           .where(eq(agentJobs.id, jobId));
 
         // La ligne part là où la promesse est partie : avec la livraison
@@ -1340,7 +1348,11 @@ export async function finalizeJobFailure(
     if (landed && input.replaceResult && input.userMessage !== undefined) {
       await tx
         .update(agentJobs)
-        .set({ result: toDbSafeString(input.userMessage), updatedAt: new Date() })
+        .set({
+          result: toDbSafeString(input.userMessage),
+          ...(input.runnerNotes ? { runnerNotes: [...input.runnerNotes] } : {}),
+          updatedAt: new Date(),
+        })
         .where(eq(agentJobs.id, input.jobId));
     }
     if (landed && input.delivery && deps.prepareDelivery) {

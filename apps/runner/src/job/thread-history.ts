@@ -252,19 +252,24 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   let nextSynthId = 0;
   const blocks: ModelMessage[][] = [];
   for (const row of chronological) {
-    // `result` n'est la réponse de l'agent que si le runner l'a marqué `prose`
-    // — ses mots (state.ts, finalize.ts). Tout autre résultat est un texte du
-    // runner : `relay`, le texte d'AUTRES jobs recompilé (les enfants, dans
-    // fillResultFromChildrenIfEmpty comme dans failJob) ; NULL sur un job
-    // échoué, l'explication que failJob a écrite. Le rejouer comme ce que
-    // l'agent a envoyé lui apprenait à écrire lui-même « ## Researcher\n… » —
-    // 12 887 caractères inventés par l'agent racine du run b7ecc59a avant que
-    // son enfant ne démarre (#562). La réponse de l'agent est alors ce qu'il a
-    // dit dans son propre tour ; le résultat part dans le relevé du runner.
-    const agentsOwnResult = row.resultKind === 'prose';
-    // Les lignes que le runner a ajoutées au résultat (`runner_notes`,
-    // l'avis d'échec de délégation) sont retirées des mots de l'agent et
-    // rangées dans le relevé : même mécanisme que le reste de #562.
+    // Ce que le runner a écrit ne passe JAMAIS pour les mots de l'agent (#562),
+    // et cela se lit à ses marques EXPLICITES, jamais à une absence :
+    //  - `relay` : le texte d'AUTRES jobs recompilé par le runner (les enfants,
+    //    dans fillResultFromChildrenIfEmpty comme dans failJob). Le rejouer comme
+    //    ce que l'agent avait envoyé lui apprenait à écrire lui-même
+    //    « ## Researcher\n… » — 12 887 caractères inventés par l'agent racine du
+    //    run b7ecc59a avant que son enfant ne démarre. Il part tout entier dans
+    //    le relevé ; la réponse de l'agent est ce qu'il a dit dans son tour.
+    //  - `runner_notes` : les lignes que le runner a ajoutées à un résultat
+    //    (avis d'échec de délégation, explication générique d'un échec, ligne
+    //    d'un livrable non vérifié ; 0137 rattrape les lignes plus anciennes).
+    //    Elles sont retirées des mots de l'agent et rangées dans le relevé.
+    // `result_kind` NULL dit « provenance inconnue » : 0117 a laissé toutes les
+    // lignes plus anciennes sans marque, et une vraie réponse d'avant n'existe
+    // parfois que dans `result`. Elle reste lue comme avant cette PR — la
+    // réponse de l'agent, moins ce que `runner_notes` reconnaît (revue Codex de
+    // #576, passe 2).
+    const agentsOwnResult = row.resultKind !== 'relay';
     const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
     const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
     const assistant = extractAssistantReply({

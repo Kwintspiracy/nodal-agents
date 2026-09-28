@@ -557,20 +557,27 @@ export async function failJob(
   // (a failed parent that delegated) → a generic error-code notice.
   if (landed) {
     let explanation = toDbSafeString(userMessage?.trim() ?? '');
-    // La compilation des enfants est le texte d'AUTRES jobs : elle se dit
-    // `relay`, comme dans fillResultFromChildrenIfEmpty (#562, revue Codex de
-    // #576). Sans la marque, le tour suivant du fil la rejouait comme la
-    // réponse de l'agent. Les deux autres sources restent sans marque : NULL
-    // sur un job échoué dit « explication de l'échec » (schema/jobs.ts).
+    // Chaque source dit sa provenance, parce que NULL ne la dit pas (revue
+    // Codex de #576, passes 1 et 2) :
+    //  - la compilation des enfants est le texte d'AUTRES jobs : `relay`,
+    //    comme dans fillResultFromChildrenIfEmpty ;
+    //  - l'explication générique est du runner : elle va dans `runner_notes`,
+    //    et la relecture du fil la range dans le relevé du runner (#562) ;
+    //  - le message de l'appelant reste sans marque : sa provenance dépend de
+    //    l'appelant (le texte d'un agent, souvent).
     let kind: JobResultKind | null = null;
+    let runnerNotes: string[] | null = null;
     if (!explanation) {
       explanation = await compileChildResults(db, jobId);
       if (explanation) kind = 'relay';
     }
-    if (!explanation) explanation = genericFailExplanation(errorCode);
+    if (!explanation) {
+      explanation = genericFailExplanation(errorCode);
+      runnerNotes = [explanation];
+    }
     await db
       .update(agentJobs)
-      .set({ result: explanation, resultKind: kind, updatedAt: new Date() })
+      .set({ result: explanation, resultKind: kind, runnerNotes, updatedAt: new Date() })
       .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
   }
 

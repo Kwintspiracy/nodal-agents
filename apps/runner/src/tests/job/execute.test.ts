@@ -1914,6 +1914,34 @@ describe('executeJob', () => {
     expect(said('user')).toContain('CHILD-FINDINGS');
   });
 
+  // Revue Codex de #576, passe 2 : NULL ne dit pas « écrit par le runner ».
+  // L'explication générique de failJob est du runner : il le dit lui-même.
+  it('failJob with nothing to say records its generic explanation as the runner’s (#562)', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'processing',
+        channel: 'api',
+        task: 'nothing to compile',
+      })
+      .returning({ id: agentJobs.id });
+    const { failJob } = await import('../../job/state.ts');
+    await failJob(db as Parameters<typeof failJob>[0], job!.id, 'turn_limit');
+    const [row] = await db
+      .select({
+        result: agentJobs.result,
+        resultKind: agentJobs.resultKind,
+        runnerNotes: agentJobs.runnerNotes,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(row?.result).toContain('could not be completed (turn_limit)');
+    expect(row?.resultKind).toBeNull();
+    expect(row?.runnerNotes).toEqual([row?.result]);
+  });
+
   it('runChatTurn: a completed escalation surfaces the delegated child output (completeJob fills the parent, chat reflects it)', async () => {
     // Live forensic case end-to-end: a Conciergus delegation job finishes
     // without re-publishing a summary (own result empty) while the child holds

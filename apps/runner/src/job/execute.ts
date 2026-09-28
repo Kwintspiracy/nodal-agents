@@ -3103,6 +3103,8 @@ async function runJobTracked(
     suffixeCle: string,
     userMessage?: string,
     replaceResult = false,
+    /** Les lignes de `userMessage` écrites par le runner (#562). */
+    runnerNotes?: readonly string[],
   ): Promise<void> => {
     const notice = harnessNoticeDelivery(payload);
     await finalizeJobFailure(
@@ -3113,6 +3115,7 @@ async function runJobTracked(
         stats: runStats(),
         messages,
         ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
+        ...(runnerNotes ? { runnerNotes } : {}),
         ...(notice
           ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
           : {}),
@@ -3180,6 +3183,7 @@ async function runJobTracked(
       DELIVERABLE_NOT_VERIFIED,
       livrable,
       true,
+      [line],
     );
     return {
       status: 'failed',

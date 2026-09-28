@@ -98,6 +98,8 @@ async function insertCompletedJob(opts: {
   status?: 'completed' | 'failed';
   /** Provenance of `result`; defaults to what the runner writes (see below). */
   resultKind?: 'prose' | 'relay' | null;
+  /** Lines of `result` the runner wrote (`runner_notes`, migration 0137). */
+  runnerNotes?: string[];
   /** Optional `messages` JSONB — defaults to `[]`. Used to exercise the
    * fallback chain in `extractAssistantReply` (tool-call extraction). */
   messages?: unknown;
@@ -125,8 +127,12 @@ async function insertCompletedJob(opts: {
       // vient de l'agent est marqué `prose` (completeJob) ; un job ÉCHOUÉ garde
       // l'explication de failJob sans marque.
       resultKind:
-        opts.resultKind ??
-        ((opts.status ?? 'completed') === 'completed' && opts.result ? 'prose' : null),
+        'resultKind' in opts
+          ? (opts.resultKind ?? null)
+          : (opts.status ?? 'completed') === 'completed' && opts.result
+            ? 'prose'
+            : null,
+      ...(opts.runnerNotes !== undefined ? { runnerNotes: opts.runnerNotes } : {}),
       messages: (opts.messages ?? []) as never,
       createdAt,
       conversationId:
@@ -1211,15 +1217,17 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
     expect(records[0]!.content).toBe(['[système]', ...records[0]!.entries].join('\n'));
   });
 
-  it('a result the runner wrote without marking it prose (a failure explanation) is the runner’s, not the agent reply', async () => {
-    // Schema doc (jobs.ts, result_kind): NULL on a failed job is an
-    // EXPLANATION written by failJob, never an answer. The agent's words are
-    // what it sent in its own turn.
+  it('a failure explanation the runner recorded as its own (runner_notes) is the runner’s, not the agent reply', async () => {
+    // failJob's generic explanation is runner text: failJob records it in
+    // `runner_notes` (Codex review of #576, pass 2: NULL alone says nothing).
+    const explanation =
+      '⚠️ The task could not be completed (turn_limit) and no explanation was provided.';
     await insertCompletedJob({
+      runnerNotes: [explanation],
       chatId: 'failed-null-kind',
       task: 'génère l’image',
       status: 'failed',
-      result: '⚠️ The task could not be completed (turn_limit) and no explanation was provided.',
+      result: explanation,
       messages: tgReply('génère l’image', 'ComfyUI ne tourne pas, lance-le et dis-moi.'),
       minutesAgo: 3,
     });
@@ -1231,5 +1239,26 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
     });
     expect(assistantTexts(history)).toEqual(['ComfyUI ne tourne pas, lance-le et dis-moi.']);
     expect(runnerRecords(history).join('\n')).toContain('could not be completed (turn_limit)');
+  });
+
+  it('result_kind NULL is UNKNOWN provenance: a completed job from before 0117 keeps its result as the agent reply (#576, pass 2)', async () => {
+    // Migration 0117 left every older row unmarked. Its reply may live only in
+    // `result`: reading NULL as "the runner wrote it" would put the agent
+    // reply in the runner record and leave the agent silent.
+    await insertCompletedJob({
+      chatId: 'pre-0117',
+      task: 'quelle heure ?',
+      result: 'Il est 14 h.',
+      resultKind: null,
+      minutesAgo: 3,
+    });
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('pre-0117', 'telegram'),
+      channel: 'telegram',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+    expect(assistantTexts(history)).toEqual(['Il est 14 h.']);
+    expect(runnerRecords(history)).toEqual([]);
   });
 });

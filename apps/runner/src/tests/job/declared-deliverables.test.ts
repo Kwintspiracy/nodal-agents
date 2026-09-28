@@ -249,6 +249,7 @@ async function jobRow(id: string) {
       status: agentJobs.status,
       error: agentJobs.error,
       result: agentJobs.result,
+      runnerNotes: agentJobs.runnerNotes,
     })
     .from(agentJobs)
     .where(eq(agentJobs.id, id));
@@ -316,6 +317,9 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
     expect(row.result).toContain(`${abs}: exists (`);
     expect(row.result).toMatch(/film\.mp4 not found\)\]$/);
     expect(row.result!.indexOf('Rendu relancé')).toBeLessThan(row.result!.indexOf('[stopped:'));
+    // The line is the runner's, and says so apart from the agent's text (#562):
+    // the replay of the thread files it in the runner record.
+    expect(row.runnerNotes).toEqual([row.result!.slice(row.result!.indexOf('[stopped:'))]);
 
     // La ligne d'état : déclarée, rouge, réparation consommée, rouge compté.
     const states = await statesOf(id);
@@ -513,11 +517,12 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
     const row = await jobRow(id);
     expect(row.status).toBe('failed');
     expect(row.error).toBe('deliverable_not_verified');
-    expect(row.result).toContain(
-      deliverableNotVerifiedLine([
-        { path: dehors, check: 'unresolved', detail: 'path_traversal_blocked' },
-      ]),
-    );
+    const line = deliverableNotVerifiedLine([
+      { path: dehors, check: 'unresolved', detail: 'path_traversal_blocked' },
+    ]);
+    expect(row.result).toContain(line);
+    // Same line, recorded as the runner's (#562).
+    expect(row.runnerNotes).toEqual([line]);
   });
 
   it('renvoyé, l’agent rappelle return_result en OMETTANT le champ : la promesse tient, le run échoue (revue Codex de la PR #523)', async () => {
