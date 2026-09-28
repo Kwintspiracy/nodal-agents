@@ -30,7 +30,7 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { and, eq, agentJobs, agents, agentAssignments, toolCalls } from '@nodal-agents/db';
+import { and, eq, sql, agentJobs, agents, agentAssignments, toolCalls } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient, LLMCallCancelledError } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -791,6 +791,130 @@ describe('un appel approuvé ne tourne qu’une fois quand le job change de run 
     const q = await demande(demandeId);
     expect(JSON.stringify(q.executionOutput)).toContain('saved');
   });
+
+  // Revue Nodal de #575 (P3) : une demande d'approbation DISPARUE pendant que
+  // le run tient son job était lue comme une perte d'autorité — fabriquée : le
+  // run rendait `already_handled` et abandonnait un job vivant. Une demande
+  // absente est un fait à part : l'appel ne tourne pas, le modèle le lit, et
+  // le job continue.
+  it('la demande disparaît au moment de la réserver : l’appel ne tourne pas, le modèle le lit, le job continue', async () => {
+    const { jobId, demandeId } = await jobAvecAppelApprouve();
+    // La demande est supprimée au moment même où le run la réserve.
+    await db.execute(sql`
+      CREATE OR REPLACE FUNCTION test_approval_vanishes() RETURNS trigger AS $$
+      BEGIN
+        DELETE FROM approval_requests WHERE id = OLD.id;
+        RETURN NULL;
+      END $$ LANGUAGE plpgsql`);
+    await db.execute(sql`
+      CREATE TRIGGER test_approval_vanishes BEFORE UPDATE ON approval_requests
+      FOR EACH ROW WHEN (OLD.execution_claim IS NULL AND NEW.execution_claim IS NOT NULL)
+      EXECUTE FUNCTION test_approval_vanishes()`);
+    try {
+      const ceQuiATourne: string[] = [];
+      const issue = await executeJob(
+        jobId as JobId,
+        deps(modele(['fin']), ceQuiATourne, async () => {}),
+      );
+
+      expect(ceQuiATourne).toEqual([]);
+      expect(issue.status).toBe('completed');
+      const r = await ligne(jobId);
+      expect(r.status).toBe('completed');
+      expect(resultatDe(r.messages, 'ap-1')).toContain('approval_request_missing');
+      expect(
+        await db.select().from(approvalRequests).where(eq(approvalRequests.id, demandeId)),
+      ).toEqual([]);
+    } finally {
+      await db.execute(sql`DROP TRIGGER IF EXISTS test_approval_vanishes ON approval_requests`);
+    }
+  });
+});
+
+// Revue Nodal de #575 (Reviewer A, P2) : la lecture de rapprochement de fin de
+// run (`issueTelleQueLaLigneLaDit`) était HORS du filet des erreurs du run. Un
+// hoquet de la base à cet instant sortait d'executeJob, et le parent d'un
+// enfant repris hors pile (approbation → triggerWorker) n'était jamais repris.
+describe('une erreur après la prise ne coupe pas la remontée au parent (#566) @cap:organiser-equipe/moteur', () => {
+  it('la lecture de rapprochement lève : executeJob rend une issue, et le parent est repris', async () => {
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'délègue',
+        status: 'awaiting_delegation',
+        messages: [
+          { role: 'user', content: 'délègue' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'tu-deleg',
+                toolName: 'assign_x',
+                input: { task: 't' },
+              },
+            ],
+          },
+        ],
+      })
+      .returning({ id: agentJobs.id });
+    const [enfant] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: 't',
+        status: 'pending',
+        parentJobId: parent!.id,
+        messages: [{ role: 'user', content: 't' }],
+      })
+      .returning({ id: agentJobs.id });
+    await db
+      .update(agentJobs)
+      .set({
+        pendingDelegation: {
+          type: 'single',
+          toolUseId: 'tu-deleg',
+          toolName: 'assign_x',
+          subJobId: enfant!.id,
+        },
+      })
+      .where(eq(agentJobs.id, parent!.id));
+
+    const d = deps(modele(['fin']), [], async () => {});
+    // La base casse la SEULE lecture de rapprochement (statut + erreur + prise).
+    const vraieDb = d.db;
+    d.db = new Proxy(vraieDb, {
+      get(cible, cle, recepteur) {
+        if (cle === 'select') {
+          return (champs?: Record<string, unknown>) => {
+            if (champs && 'claimGeneration' in champs && 'error' in champs) {
+              throw new Error('connection terminated unexpectedly');
+            }
+            return (Reflect.get(cible, cle, recepteur) as (c?: unknown) => unknown).call(
+              cible,
+              champs,
+            );
+          };
+        }
+        return Reflect.get(cible, cle, recepteur) as unknown;
+      },
+    });
+
+    const issue = await executeJob(enfant!.id as JobId, d);
+
+    expect(issue.status).toBe('completed');
+    const [p] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent!.id));
+    // Repris : `resumeDelegated` l'a remis en file avec le résultat de l'enfant.
+    expect(p?.status).toBe('pending');
+  });
 });
 
 describe('readJobAuthority (#566) @cap:suivre-execution/moteur', () => {
@@ -806,6 +930,9 @@ describe('readJobAuthority (#566) @cap:suivre-execution/moteur', () => {
       'completed',
       'pending',
       'awaiting_approval',
+      // Le run ÉCRIT encore sa ligne pendant qu'il attend son enfant en ligne,
+      // il n'y AGIT pas : une seule définition de « tenu » (revue Nodal, P3).
+      'awaiting_delegation',
     ] as const) {
       await db.update(agentJobs).set({ status }).where(eq(agentJobs.id, jobId));
       expect(await readJobAuthority(db, jobId, prise!)).toEqual({

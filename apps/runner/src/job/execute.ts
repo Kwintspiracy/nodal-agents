@@ -165,6 +165,7 @@ import { holdJobHeartbeat } from './heartbeat.ts';
 import { unansweredToolCalls } from './close-transcript.ts';
 import {
   APPROVED_CALL_OUTCOME_UNKNOWN,
+  APPROVAL_REQUEST_MISSING,
   reserveApprovedExecution,
   recordApprovedExecution,
   closeUnknownApprovedExecution,
@@ -1276,8 +1277,21 @@ export async function executeJob(
   opts?: ExecuteJobOpts,
 ): Promise<ExecuteJobResult> {
   // Une erreur levée par le run est rattrapée DANS le run (`runJob`), sous sa
-  // prise (#566) : son échec ne peut pas écraser un job repris ailleurs.
-  const result = await runJob(jobId, deps, runnerEnv, opts);
+  // prise (#566) : son échec ne peut pas écraser un job repris ailleurs. Si ce
+  // filet lève lui-même (la base ne répondait plus pendant qu'il écrivait),
+  // l'issue est ce que la ligne dit maintenant — et la remontée au parent a
+  // lieu quelle que soit l'issue (revue Nodal de #575, P2).
+  let result: ExecuteJobResult;
+  try {
+    result = await runJob(jobId, deps, runnerEnv, opts);
+  } catch (err) {
+    console.error(
+      `[exec ${jobId}] RUN_NET_FAILED — reading the row for the outcome: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    result = await outcomeFromRow(deps, jobId);
+  }
   if (
     !opts?.inlineDelegation &&
     (result.status === 'completed' || result.status === 'failed' || result.status === 'cancelled')
@@ -1512,22 +1526,25 @@ async function runJob(
     // réussit, rendu ici quand le run rend la main — fini, suspendu, perdu ou
     // levé. Aucune autre partie du run ne bat.
     const tenue: JobHold = { lacher: () => {} };
-    let result: ExecuteJobResult;
+    // TOUT ce que le run fait après la prise est sous le même filet — le
+    // rapprochement avec la ligne compris (revue Nodal de #575, P2) : une
+    // erreur levée n'importe où finit le job par le chemin d'échec normal, et
+    // `executeJob` remonte alors au parent comme pour toute autre issue.
     try {
-      result = await runJobTracked(jobId, deps, runnerEnv, opts, delegationOutcomes, tenue);
+      const result = await runJobTracked(jobId, deps, runnerEnv, opts, delegationOutcomes, tenue);
+      if (result.status !== 'completed' && result.status !== 'failed') return result;
+      // Un résultat qui porte déjà sa carte vient d'une reprise imbriquée
+      // (`return runJob(...)`), sous SA prise : elle l'a déjà rapprochée de la ligne.
+      if (result.subDelegations !== undefined) return result;
+      const rapproche = await issueTelleQueLaLigneLaDit(deps, jobId, result);
+      if (rapproche.status !== 'completed' && rapproche.status !== 'failed') return rapproche;
+      return { ...rapproche, subDelegations: subDelegationList(delegationOutcomes) };
     } catch (err) {
       // Lit déjà la ligne quand son écriture est refusée.
-      return failOnUncaughtError(deps, jobId, err);
+      return await failOnUncaughtError(deps, jobId, err);
     } finally {
       tenue.lacher();
     }
-    if (result.status !== 'completed' && result.status !== 'failed') return result;
-    // Un résultat qui porte déjà sa carte vient d'une reprise imbriquée
-    // (`return runJob(...)`), sous SA prise : elle l'a déjà rapprochée de la ligne.
-    if (result.subDelegations !== undefined) return result;
-    result = await issueTelleQueLaLigneLaDit(deps, jobId, result);
-    if (result.status !== 'completed' && result.status !== 'failed') return result;
-    return { ...result, subDelegations: subDelegationList(delegationOutcomes) };
   });
 }
 
@@ -1796,12 +1813,17 @@ async function runJobTracked(
     return { status: 'already_handled' };
   };
   // Une écriture du run sur sa ligne a été REFUSÉE (#566) : la ligne n'est
-  // plus à lui. Il s'arrête comme sur toute perte du droit d'agir.
-  const ecritureRefusee = async (moment: string): Promise<ExecuteJobResult> =>
-    lacherLeJob(
-      (await droitPerdu()) ?? { kind: 'lost', status: null, ownClaim: false },
-      `write_refused:${moment}`,
-    );
+  // plus à lui. Il s'arrête comme sur toute perte du droit d'agir — celle que
+  // la ligne CONFIRME, jamais une perte fabriquée (revue Nodal de #575, P3).
+  const ecritureRefusee = async (moment: string): Promise<ExecuteJobResult> => {
+    const perte = await droitPerdu();
+    if (!perte) {
+      throw new Error(
+        `write_refused_while_held: ${moment} was refused while this run holds the job`,
+      );
+    }
+    return lacherLeJob(perte, `write_refused:${moment}`);
+  };
 
   // ── 3. Load agent ─────────────────────────────────────────────────────────────
   // (Leg 1: status was atomically set to 'processing' by claimJob above.)
@@ -2987,17 +3009,24 @@ async function runJobTracked(
                 reservation = { kind: 'recorded', output: inconnu };
                 trace('resume_approved_outcome_unknown', { toolName: req.toolName });
               } else {
-                // Sa fin vient d'être consignée, ou le job n'est plus à nous.
+                // Sa fin vient d'être consignée, la demande a disparu, ou le
+                // job n'est plus à nous : la relecture le dit.
                 reservation = await reserveApprovedExecution(db, req.id, jobId as string, prise);
-                if (reservation.kind !== 'recorded') reservation = { kind: 'job_lost' };
+                if (reservation.kind === 'started_elsewhere') reservation = { kind: 'job_lost' };
               }
             }
             if (reservation.kind === 'job_lost') {
-              return {
-                messages: msgs,
-                catastrophicRefusalMessage,
-                perdu: (await droitPerdu()) ?? { kind: 'lost', status: null, ownClaim: false },
-              };
+              // La réservation a été refusée parce que le job n'est plus à ce
+              // run : la ligne le confirme, jamais une perte fabriquée (revue
+              // Nodal de #575, P3). Si elle dit le contraire, c'est une
+              // incohérence, dite fort.
+              const perdu = await droitPerdu();
+              if (!perdu) {
+                throw new Error(
+                  `approval_reservation_refused: request ${req.id} could not be reserved while this run holds the job`,
+                );
+              }
+              return { messages: msgs, catastrophicRefusalMessage, perdu };
             }
             // Synthesize an explicit auto_approve rule for this tool so that
             // tools with defaultApproval:'require_approval' (e.g. run_command)
@@ -3083,6 +3112,12 @@ async function runJobTracked(
               }
               close = true;
               trace('resume_approved_tool_executed', { toolName: req.toolName });
+            } else if (reservation.kind === 'missing') {
+              // La demande n'existe plus : un fait à part (revue Nodal de #575,
+              // P3). L'appel ne tourne pas, le modèle le lit, le job continue.
+              replacementOutput = toResultOutput({ error: APPROVAL_REQUEST_MISSING });
+              close = true;
+              trace('resume_approval_request_missing', { toolName: req.toolName });
             } else {
               // Close ailleurs (ou issue inconnue, dite) : son résultat consigné.
               replacementOutput =

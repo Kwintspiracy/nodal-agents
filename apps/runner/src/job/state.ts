@@ -6,7 +6,7 @@ import { agentJobs, agents, toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
 import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
-import { claimCondition } from './claim-scope.ts';
+import { claimCondition, heldBy, RUN_ACTS_WHILE } from './claim-scope.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -153,7 +153,9 @@ export async function readJobAuthority(
     .limit(1);
   if (!row) return { kind: 'lost', status: null, ownClaim: false };
   const ownClaim = row.claimGeneration === claimGeneration;
-  if (ownClaim && row.status === 'processing') return { kind: 'owned' };
+  if (ownClaim && (RUN_ACTS_WHILE as readonly (string | null)[]).includes(row.status)) {
+    return { kind: 'owned' };
+  }
   return { kind: 'lost', status: row.status, ownClaim };
 }
 
@@ -766,16 +768,7 @@ export async function touchJob(
   jobId: string,
   claimGeneration: number,
 ): Promise<void> {
-  await db
-    .update(agentJobs)
-    .set({ updatedAt: new Date() })
-    .where(
-      and(
-        eq(agentJobs.id, jobId),
-        eq(agentJobs.status, 'processing'),
-        eq(agentJobs.claimGeneration, claimGeneration),
-      ),
-    );
+  await db.update(agentJobs).set({ updatedAt: new Date() }).where(heldBy(jobId, claimGeneration));
 }
 
 /**

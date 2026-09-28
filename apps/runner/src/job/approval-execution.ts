@@ -25,6 +25,7 @@
 //      Aucune perte silencieuse, aucun doublon.
 
 import { and, eq, isNull, sql, agentJobs, approvalRequests } from '@nodal-agents/db';
+import { heldBy } from './claim-scope.ts';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
 /**
@@ -37,6 +38,14 @@ export const APPROVED_CALL_OUTCOME_UNKNOWN =
   'was replaced before it recorded the result. It may or may not have taken effect: check ' +
   'its effect before calling it again (a new call may ask for approval again).';
 
+/**
+ * Le tool_result d'un appel approuvé dont la demande n'existe plus au moment
+ * de l'exécuter (#566) : l'appel n'a pas tourné. Texte de HARNAIS pour le modèle.
+ */
+export const APPROVAL_REQUEST_MISSING =
+  'approval_request_missing: the approval request for this call no longer exists, so the ' +
+  'call did not run. Call it again if it is still needed (it may ask for approval again).';
+
 /** Ce qu'un run trouve en voulant exécuter une demande approuvée. */
 export type ApprovedExecution =
   /** À ce run d'exécuter : la demande est réservée sous sa prise. */
@@ -46,11 +55,16 @@ export type ApprovedExecution =
   /** Commencée par un run remplacé depuis, fin jamais consignée. */
   | { kind: 'started_elsewhere'; claim: number }
   /** Le job n'est plus à ce run : il ne réserve rien. */
-  | { kind: 'job_lost' };
+  | { kind: 'job_lost' }
+  /**
+   * La demande n'existe plus. Un fait à part, jamais une perte d'autorité :
+   * l'appel ne tourne pas, et le modèle le lit (revue Nodal de #575, P3).
+   */
+  | { kind: 'missing' };
 
-/** Le job est `processing` sous CETTE prise — la condition de toute réservation. */
+/** Le job est tenu sous CETTE prise (`heldBy`, la seule définition) — la condition de toute réservation. */
 function jobTenuSous(jobId: string, prise: number) {
-  return sql`exists (select 1 from ${agentJobs} where ${agentJobs.id} = ${jobId} and ${agentJobs.status} = 'processing' and ${agentJobs.claimGeneration} = ${prise})`;
+  return sql`exists (select 1 from ${agentJobs} where ${heldBy(jobId, prise)})`;
 }
 
 /** Réserve l'exécution de la demande `requestId` pour le run qui tient `prise`. */
@@ -83,7 +97,7 @@ export async function reserveApprovedExecution(
     .from(approvalRequests)
     .where(eq(approvalRequests.id, requestId))
     .limit(1);
-  if (!ligne) return { kind: 'job_lost' };
+  if (!ligne) return { kind: 'missing' };
   // Close ailleurs : son résultat est consigné (NULL seulement pour une
   // demande close avant cette colonne — l'issue n'en est alors pas connue).
   if (ligne.executedAt !== null) return { kind: 'recorded', output: ligne.executionOutput };

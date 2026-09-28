@@ -38,8 +38,36 @@ interface Prise {
 
 const contexte = new AsyncLocalStorage<Prise>();
 
-/** Les statuts où un run qui tient son job peut encore l'écrire. */
-export const HELD_STATUSES = ['processing', 'awaiting_delegation'] as const;
+/**
+ * LA définition de « ce run tient son job » (#566), lue partout — autorité,
+ * veille, battement, écritures, réservation d'un appel approuvé, état laissé
+ * par un tour de CLI : la ligne porte la prise de CE run, et un statut où il
+ * a le droit d'agir.
+ */
+export const RUN_ACTS_WHILE = ['processing'] as const;
+
+/**
+ * Le seul élargissement, explicite : un run ÉCRIT encore sa ligne pendant
+ * qu'il attend en ligne l'enfant qu'il a lancé (`awaiting_delegation` —
+ * cascade d'annulation, échec). Il n'y AGIT pas.
+ */
+export const RUN_WRITES_WHILE = ['processing', 'awaiting_delegation'] as const;
+
+/**
+ * La condition SQL « ce job est tenu sous cette prise » — la seule. `statuts`
+ * vaut `RUN_ACTS_WHILE` sauf pour les écritures du run (`RUN_WRITES_WHILE`).
+ */
+export function heldBy(
+  jobId: string,
+  claimGeneration: number,
+  statuts: readonly string[] = RUN_ACTS_WHILE,
+): Condition {
+  return and(
+    eq(agentJobs.id, jobId),
+    eq(agentJobs.claimGeneration, claimGeneration),
+    inArray(agentJobs.status, [...statuts]),
+  ) as Condition;
+}
 
 /** Fait tourner `fn` comme LE run de ce job : ses écritures porteront sa prise. */
 export function withinRunScope<T>(jobId: string, fn: () => Promise<T>): Promise<T> {
@@ -63,17 +91,18 @@ export function heldClaim(jobId: string): number | null {
 
 /**
  * La condition qu'une écriture du run courant sur ce job doit porter.
- * `statuts` : ceux où l'écriture a un sens (par défaut `HELD_STATUSES`) ;
+ * `statuts` : ceux où l'écriture a un sens (par défaut `RUN_WRITES_WHILE`) ;
  * `null` pour ne tenir que la prise (la transcription d'un job annulé par la
  * personne pendant que ce run le tenait). Rend `undefined` hors d'un run qui
  * tient ce job : l'écriture garde alors ses seules conditions.
  */
 export function claimCondition(
   jobId: string,
-  statuts: readonly string[] | null = HELD_STATUSES,
+  statuts: readonly string[] | null = RUN_WRITES_WHILE,
 ): Condition | undefined {
   const generation = heldClaim(jobId);
   if (generation === null) return undefined;
-  const sousMaPrise = eq(agentJobs.claimGeneration, generation);
-  return statuts === null ? sousMaPrise : and(sousMaPrise, inArray(agentJobs.status, [...statuts]));
+  return statuts === null
+    ? and(eq(agentJobs.id, jobId), eq(agentJobs.claimGeneration, generation))
+    : heldBy(jobId, generation, statuts);
 }

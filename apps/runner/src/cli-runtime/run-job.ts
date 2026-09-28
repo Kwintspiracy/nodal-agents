@@ -38,6 +38,7 @@ import {
   type DirtiedDeliverable,
 } from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
+import { heldBy } from '../job/claim-scope.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
@@ -245,13 +246,8 @@ async function rowStillHeld(
   const [tenu] = await tx
     .select({ id: agentJobs.id })
     .from(agentJobs)
-    .where(
-      and(
-        eq(agentJobs.id, jobId),
-        eq(agentJobs.status, 'processing'),
-        eq(agentJobs.claimGeneration, claimGeneration),
-      ),
-    )
+    // `heldBy` : la seule définition de « ce run tient son job » (#566).
+    .where(heldBy(jobId, claimGeneration))
     .for('share');
   return tenu !== undefined;
 }

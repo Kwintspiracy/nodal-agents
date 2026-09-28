@@ -47,11 +47,12 @@ export async function handleDelegation(
   sideToolResults: SideToolResult[],
   db: AnyDrizzleDb,
   /**
-   * The claim the parent's run holds on its row (#566, `claimJob`). When
-   * given, the parent is suspended only under that claim: a parent taken by
-   * another run since is not written, exactly like a cancelled one.
+   * The claim the parent's run holds on its row (#566, `claimJob`). REQUIRED:
+   * the parent is suspended only under that claim — a parent taken by another
+   * run since is not written, exactly like a cancelled one — and a caller
+   * cannot forget it (Nodal review of #575, P3).
    */
-  parentClaimGeneration?: number,
+  parentClaimGeneration: number,
 ): Promise<DelegationResult> {
   // 1. Find the child agent by slug (always DB lookup, never hardcoded).
   // F-6 (audit #2): slug is now unique per (entity_id, slug), not globally —
@@ -175,9 +176,7 @@ export async function handleDelegation(
       and(
         eq(agentJobs.id, parentJob.id as string),
         eq(agentJobs.status, 'processing'),
-        parentClaimGeneration === undefined
-          ? undefined
-          : eq(agentJobs.claimGeneration, parentClaimGeneration),
+        eq(agentJobs.claimGeneration, parentClaimGeneration),
       ),
     )
     .returning();
