@@ -14,7 +14,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { resolve as resolvePath, relative as relativePath, sep, isAbsolute } from 'node:path';
 import type { ToolContext } from '../../types';
-import { currentContentWrittenByJob } from '../../verification/record-constat';
+import { cheminConstate, currentContentWrittenByJob } from '../../verification/record-constat';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -224,15 +224,25 @@ export async function resolveAndCheckPath(
  */
 export const PROCESS_PATHS_RULE =
   'Workspace labels are NOT folders for a process: the file tools address a file as ' +
-  '"<label>/<path>", but a process resolves its paths against its own working directory ' +
-  '(given back in `paths`), so inside a workspace write outputs/x, not <label>/outputs/x, ' +
-  'and reach another workspace by its absolute path (also in `paths`).';
+  '"<label>/<path>", but a process resolves its paths against its own working directory, ' +
+  "or takes absolute paths. The result's `paths` says where the process ran and what a " +
+  'file-tool path is called there; reach another workspace by its absolute path (also in `paths`).';
 
 /** `child` is `root` itself or a folder under it (case-insensitive on Windows). */
 function isWithin(root: string, child: string): boolean {
+  const rel = relativeWithin(root, child);
+  return rel !== null;
+}
+
+/**
+ * `child` relative to `root` with forward slashes (`''` when they are the same
+ * folder), or null when `child` is not under `root`. Case-insensitive on Windows.
+ */
+function relativeWithin(root: string, child: string): string | null {
   const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
   const rel = relativePath(norm(root), norm(child));
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  if (rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel.replace(/\\/g, '/');
 }
 
 /**
@@ -243,37 +253,61 @@ function isWithin(root: string, child: string): boolean {
  * `comfy … --out-dir ComfyArtist/outputs` from the root of its "ComfyArtist"
  * workspace, and the file landed in ComfyArtist/ComfyArtist/outputs.
  *
- * Says the absolute cwd, which workspace it is (or `outside` when it is none,
- * e.g. a skill folder), that labels are not folders there, and every other
- * workspace by absolute path. Model-facing text, never shown to the user.
+ * Says the absolute cwd, which workspace it is — the DEEPEST one that contains
+ * it when workspaces are nested — or `outside` when it is none (a skill
+ * folder), what a file-tool path is called THERE (right for a sub-folder too,
+ * never a literal that only holds at a workspace root), and every other
+ * workspace by absolute path.
+ *
+ * The cwd a tool hands in is canonical (`resolveAndCheckPath` realpaths it);
+ * a configured workspace path need not be (junction, symlink, subst, 8.3 name,
+ * case). Both are compared in ONE path space, the real one (`cheminConstate`,
+ * as #589 does for delivered files) — Nodal review of #593.
+ *
+ * Text written for the model. It travels in the tool_result, which the thread
+ * and the Runs page also show; it says nothing the model's own call did not.
  */
-export function processAddressing(
+export async function processAddressing(
   workspaces: readonly { label: string; path: string }[],
   cwd: string,
   outside = 'outside every workspace',
-): string {
-  const home = workspaces.find((w) => isWithin(w.path, cwd));
+): Promise<string> {
+  const reelCwd = await cheminConstate(cwd);
+  const reels = await Promise.all(
+    workspaces.map(async (w) => ({ w, root: await cheminConstate(w.path) })),
+  );
+  // Le conteneur le plus PROFOND : des espaces imbriqués nomment celui où l'on est.
+  const home = reels
+    .filter((r) => isWithin(r.root, reelCwd))
+    .sort((x, y) => y.root.length - x.root.length)[0];
+  const rel = home ? relativeWithin(home.root, reelCwd) : null;
   const where = home
-    ? isWithin(cwd, home.path)
-      ? `the root of workspace "${home.label}"`
-      : `inside workspace "${home.label}"`
+    ? rel === ''
+      ? `the root of workspace "${home.w.label}"`
+      : `inside workspace "${home.w.label}"`
     : outside;
   const parts = [
     `This process ran in ${cwd}, ${where}.`,
     'Paths in a process are relative to that folder, or absolute.',
   ];
-  const exemple =
-    home?.label ??
-    workspaces.find((w) => w.label !== SHARED_WORKSPACE_LABEL)?.label ??
-    workspaces[0]?.label;
-  if (exemple !== undefined) {
+  if (home) {
+    // Juste pour CE dossier : à la racine, `<label>/outputs/x` s'écrit
+    // `outputs/x` ; depuis `<label>/a/b`, `<label>/a/b/x` s'écrit `x`.
+    const ici = rel === '' ? 'outputs/x' : 'x';
+    const outil = `${home.w.label}/${rel ? `${rel}/` : ''}${ici}`;
     parts.push(
-      home
-        ? `Workspace labels are NOT folders for a process: write outputs/x, not ${exemple}/outputs/x.`
-        : `Workspace labels are NOT folders for a process: use a workspace's absolute path, never ${exemple}/x.`,
+      `Workspace labels are NOT folders for a process: what the file tools call ${outil} is ${ici} here.`,
     );
+  } else {
+    const exemple =
+      workspaces.find((w) => w.label !== SHARED_WORKSPACE_LABEL)?.label ?? workspaces[0]?.label;
+    if (exemple !== undefined) {
+      parts.push(
+        `Workspace labels are NOT folders for a process: use a workspace's absolute path, never ${exemple}/x.`,
+      );
+    }
   }
-  const autres = workspaces.filter((w) => w !== home);
+  const autres = workspaces.filter((w) => w !== home?.w);
   if (autres.length > 0) {
     parts.push(
       `${home ? 'Other workspaces' : 'Workspaces'}, by absolute path: ` +

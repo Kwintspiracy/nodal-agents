@@ -291,7 +291,7 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
         sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : undefined,
       );
 
-      result.paths = processAddressing(
+      result.paths = await processAddressing(
         ctx.workspaces ?? [],
         realRoot,
         `the folder of skill "${input.skill}" (no workspace)`,
