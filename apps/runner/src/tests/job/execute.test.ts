@@ -33,7 +33,7 @@ import {
   toolCalls,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
-import { createEmbeddingClient } from '@nodal-agents/llm';
+import { createEmbeddingClient, validateMessageStructure } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DeliveryError } from '@nodal-agents/delivery';
 import {
@@ -4556,6 +4556,8 @@ describe('the unavailable-tool budget counts turns, not calls (#560) @cap:assign
     expect(result).toMatchObject({ status: 'failed', error: 'whitelist_violation:gmail_send' });
     const row = await rowOf(job.id);
     expect(row.turn).toBe(4);
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
     // Three turns of mistakes, each call of them answered with its error.
     expect(unavailableResults(row.messages)).toEqual([
       't1-a',
@@ -4709,6 +4711,195 @@ describe('the unavailable-tool budget counts turns, not calls (#560) @cap:assign
   });
 });
 
+// ─── #561 : chaque tool_use d'un tour a son tool_result, quelle que soit la sortie ─
+//
+// Job b7ecc59a (Alfred, root) : le tour 1 portait assign_researcher + 4 envois
+// + return_result. La délégation a suspendu le tour ; le return_result, retiré
+// de la boucle pour être traité « après », n'a jamais eu de résultat, et le
+// parent est mort à la reprise sur `unmatched_tool_use`.
+
+describe('every tool_use of a turn leaves with its tool_result, whatever the exit (#561) @cap:organiser-equipe/moteur', () => {
+  type Part = { type?: string; toolCallId?: string; output?: unknown };
+
+  async function transcriptOf(jobId: string) {
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row!;
+  }
+
+  function resultFor(messages: unknown, toolCallId: string): string | undefined {
+    const part = ((messages ?? []) as Array<{ role: string; content: unknown }>)
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Part[])
+      .find((p) => p.type === 'tool-result' && p.toolCallId === toolCallId);
+    return part ? JSON.stringify(part.output) : undefined;
+  }
+
+  async function orchestratorWithChild(tag: string) {
+    const ts = `${tag}-${Date.now()}`;
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: `Orch ${ts}`,
+        slug: `orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    const childSlug = `child-${ts}`;
+    const [child] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: `Child ${ts}`,
+        slug: childSlug,
+        personality: 'child',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    await db.insert(agentAssignments).values({
+      orchestratorId: orch!.id,
+      subAgentId: child!.id,
+      entityId: seed.entityId,
+    });
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch!.id,
+        channel: 'api',
+        task: 'research, then report',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    return {
+      jobId: job!.id,
+      agentId: orch!.id,
+      assignTool: `assign_${childSlug.replace(/-/g, '_')}`,
+    };
+  }
+
+  const rr = (id: string) => ({
+    toolCallId: id,
+    toolName: 'return_result',
+    args: { status: 'success' },
+  });
+  const done = { text: 'Report delivered.', toolCalls: [rr('rr-final')] };
+
+  it('delegation next to return_result, the child completes: the parent resumes and completes', async () => {
+    const { jobId, assignTool } = await orchestratorWithChild('del-ok');
+    const llmClient = makeMockLlmClient([
+      // parent, turn 1: the incident shape
+      {
+        toolCalls: [
+          { toolCallId: 'as-1', toolName: assignTool, args: { task: 'research it' } },
+          rr('rr-early'),
+        ],
+      },
+      // child
+      { text: 'Findings: three sources.', toolCalls: [rr('rr-child')] },
+      // parent, turn 2 after resume
+      done,
+    ]);
+
+    const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const row = await transcriptOf(jobId);
+    expect(row.error).toBeNull();
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+    expect(resultFor(row.messages, 'rr-early')).toContain(
+      'not executed: this turn was suspended on a delegation',
+    );
+  });
+
+  it('delegation next to return_result, the child fails: the parent resumes on the failure and completes', async () => {
+    const { jobId, assignTool } = await orchestratorWithChild('del-ko');
+    const bad = (i: number) => ({
+      toolCalls: [{ toolCallId: `cb-${i}`, toolName: 'gmail_send', args: { to: 'x@y.z' } }],
+    });
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'as-2', toolName: assignTool, args: { task: 'research it' } },
+          rr('rr-early-2'),
+        ],
+      },
+      // child: an unavailable tool on every turn, until whitelist_violation
+      bad(1),
+      bad(2),
+      bad(3),
+      bad(4),
+      done,
+    ]);
+
+    const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const row = await transcriptOf(jobId);
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+    expect(resultFor(row.messages, 'rr-early-2')).toContain('not executed');
+    expect(resultFor(row.messages, 'as-2')).toContain('whitelist_violation');
+  });
+
+  it('two assign_ of an agent the job does not have: the dropped one is answered too, the job goes on', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'na-1', toolName: 'assign_nobody', args: { task: 'a' } },
+          { toolCallId: 'na-2', toolName: 'assign_nobody', args: { task: 'b' } },
+        ],
+      },
+      done,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const row = await transcriptOf(job.id);
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+    expect(resultFor(row.messages, 'na-1')).toContain('is not available to you');
+    expect(resultFor(row.messages, 'na-2')).toContain('Deferred');
+  });
+
+  it('a question next to return_result: the suspended transcript is valid, return_result answered', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'q-1',
+            toolName: 'ask_user',
+            args: { question: 'Which folder?', options: ['a', 'b'] },
+          },
+          rr('rr-q'),
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('awaiting_approval');
+    const row = await transcriptOf(job.id);
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+    expect(resultFor(row.messages, 'q-1')).toContain('[AWAITING_APPROVAL]');
+    expect(resultFor(row.messages, 'rr-q')).toContain(
+      'not executed: an action of this turn is awaiting user approval',
+    );
+  });
+});
+
 describe('executeJob — approval gate (Bugs A, B, C)', () => {
   // Fresh DB per suite so approval rules and memory rows don't bleed across tests.
   let approvalDb: TestDb;
@@ -4757,6 +4948,59 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
     if (!job) throw new Error('Failed to create approval test job');
     return job;
   }
+
+  // #561 : la sortie « approbation » d'un tour passe par la même règle que les
+  // autres : le return_result émis à côté de l'action en attente a son résultat.
+  it('an approval-gated call next to return_result: the suspended transcript is valid (#561) @cap:approuver-une-action/moteur', async () => {
+    const [rule] = await approvalDb
+      .insert(approvalRules)
+      .values({
+        entityId: approvalSeed.entityId,
+        agentId: approvalSeed.agentId,
+        toolName: 'save_memory',
+        action: 'require_approval',
+      })
+      .returning();
+    try {
+      const job = await createApprovalJob();
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'g-561',
+              toolName: 'save_memory',
+              args: {
+                fact: 'gated fact 561',
+                category: 'context',
+                purpose: 'Garder ce fait pour la suite du travail.',
+              },
+            },
+            { toolCallId: 'rr-561', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+
+      const result = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
+
+      expect(result.status).toBe('awaiting_approval');
+      const [row] = await approvalDb
+        .select({ messages: agentJobs.messages })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+      const messages = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+      expect(() => validateMessageStructure(messages as never)).not.toThrow();
+      const results = messages
+        .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+        .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>);
+      const out = (id: string) => JSON.stringify(results.find((r) => r.toolCallId === id)?.output);
+      expect(out('g-561')).toContain('[AWAITING_APPROVAL]');
+      expect(out('rr-561')).toContain(
+        'not executed: an action of this turn is awaiting user approval',
+      );
+    } finally {
+      await approvalDb.delete(approvalRules).where(eq(approvalRules.id, rule!.id));
+    }
+  });
 
   // Le cumul de `total_duration_ms` ne vaut que si le segment est PERSISTÉ au
   // moment où le job se suspend. Sinon la colonne reste à zéro pendant toute
@@ -5746,6 +5990,12 @@ describe('reliability guards', () => {
     const result = await executeJob(job.id as JobId, customDeps, testEnv);
     expect(result.status).toBe('failed');
     if (result.status === 'failed') expect(result.error).toBe('unresolved_tool_failure');
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    const [persisted] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(() => validateMessageStructure(persisted!.messages as never)).not.toThrow();
   });
 
   it('Guard 3b: an honest return_result(status="blocked") after a failure finalizes as agent_blocked', async () => {
@@ -6978,12 +7228,14 @@ describe('Guard 1f: non-progress detector', () => {
     }
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
     expect(row?.error).toContain('non_progress_detected');
     expect(row?.error).toContain('file_list');
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    expect(() => validateMessageStructure(row!.messages as never)).not.toThrow();
   });
 
   it('S1 regression: alternating tools for 30 calls never nudges or fails', async () => {
@@ -7055,11 +7307,21 @@ describe('Guard 1f: non-progress detector', () => {
     }
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
     expect(row?.error).toContain('non_progress_detected');
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    expect(() => validateMessageStructure(row!.messages as never)).not.toThrow();
+    // Et le 10e appel, qui a TOURNÉ (et échoué), garde sa vraie erreur — pas
+    // « not executed ».
+    const dixieme = (row!.messages as Array<{ role: string; content: unknown }>)
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>)
+      .find((p) => p.toolCallId === 'sm-err2-9');
+    expect(JSON.stringify(dixieme?.output)).not.toContain('not executed');
+    expect(JSON.stringify(dixieme?.output)).toContain('error');
   });
 
   it('S2: a successful call after 4 errors resets the streak — no nudge at the 5th call overall', async () => {
