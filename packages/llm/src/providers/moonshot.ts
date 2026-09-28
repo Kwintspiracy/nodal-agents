@@ -147,6 +147,8 @@ export function buildMoonshotModel(config: ProviderConfig): LanguageModel {
     baseURL,
     apiKey: config.apiKey,
     fetch: createMoonshotFetch({ injectThinking: isReasoning, reasoningEffort: k3Effort }),
+    // Same as openai-compatible.ts: ask for the usage of a streamed turn.
+    includeUsage: true,
   });
 
   return provider(config.model);

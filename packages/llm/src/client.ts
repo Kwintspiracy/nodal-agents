@@ -425,34 +425,27 @@ export function createLlmClient(
     // (Codex review of #555, P1: a well-formed call followed by the cap read
     // as a model that cannot call tools).
     //
-    // Output tokens NOT reported (usage absent or not finite, revue Codex de
+    // Output tokens NOT reported (usage absent or not finite, Codex review of
     // #571) are not 0: read as 0, the turn looked under the cap, a false green.
     // No other measure in this client bounds the tokens written (characters do
-    // not: a token is one byte or dozens), so the cap is then judged on
-    // `finishReason` alone, and that gap is said: the llm_calls row keeps a
-    // null, and the log names the turn. The barrier that needs no usage is the
-    // refusal of a turn with too many tool calls (#564).
+    // not: a token is one byte or dozens), so a TURN whose completeness cannot
+    // be established is refused too, with its own code
+    // (`output_usage_not_reported`), and the unknown count stays null up to the
+    // caller and the llm_calls row (invariant #4).
     const reportedOutput = finiteOrNull(result.usage?.outputTokens);
     const cut =
       result.finishReason === 'length' || (reportedOutput !== null && reportedOutput >= statedCap);
-    const isTurn = offersTools && !inspectOnly;
-    if (isTurn && reportedOutput === null && !cut) {
-      console.warn(
-        `[llm] turn with output tokens not reported by ${config.provider}/${config.model}: ` +
-          `the stated output cap (${statedCap}) is judged on finishReason ` +
-          `('${String(result.finishReason)}') alone`,
-      );
-    }
     const refusal =
-      isTurn && cut
+      offersTools && !inspectOnly && (cut || reportedOutput === null)
         ? new LLMOutputLimitError(
             config.provider,
             config.model,
             {
               inputTokens: finiteOrZero(result.usage?.inputTokens),
-              outputTokens: reportedOutput ?? 0,
+              outputTokens: reportedOutput,
             },
             (result.toolCalls ?? []).length,
+            cut ? 'cap' : 'unreported',
           )
         : null;
     observe('generateText', args, result, refusal, startedAt);

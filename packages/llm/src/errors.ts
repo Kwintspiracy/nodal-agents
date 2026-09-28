@@ -173,22 +173,37 @@ export class LLMCallCancelledError extends Error {
  * returning it, so NO caller can act on it. Never retried, never failed over:
  * the same prompt on the same cap would be cut again, and a retry is a separate
  * decision. Carries the billed usage, so the caller can still count the call.
+ *
+ * Same family, distinct code (Codex review of #571): a turn whose provider did
+ * not report its output tokens (`output_usage_not_reported`). Its completeness
+ * cannot be established against the stated cap, so it is refused the same way.
+ * In both cases an output count the provider did not report is `null`, never
+ * 0: the error, the trace and the job row say "not reported".
  */
 export class LLMOutputLimitError extends Error {
-  readonly code = 'output_limit_reached' as const;
+  readonly code: 'output_limit_reached' | 'output_usage_not_reported';
 
   constructor(
     public readonly provider: string,
     public readonly model: string,
-    /** What the cut call billed. The provider served it in full. */
-    public readonly usage: { inputTokens: number; outputTokens: number },
-    /** The tool calls parsed out of the cut response, none of them executed. */
+    /** What the refused call billed; `outputTokens` null when not reported. */
+    public readonly usage: { inputTokens: number; outputTokens: number | null },
+    /** The tool calls parsed out of the refused response, none of them executed. */
     public readonly toolCallCount: number,
+    /** `cap`: the response reached the output cap. `unreported`: no output count to judge it on. */
+    public readonly reason: 'cap' | 'unreported' = 'cap',
   ) {
+    const output =
+      usage.outputTokens === null
+        ? 'output tokens not reported'
+        : `${usage.outputTokens} output tokens`;
     super(
-      `LLM response stopped on the output-token cap (${usage.outputTokens} output tokens, ` +
-        `${toolCallCount} tool call(s) not executed): ${provider}/${model}`,
+      (reason === 'cap'
+        ? 'LLM response stopped on the output-token cap'
+        : 'LLM response did not report its output tokens, the turn cannot be judged complete') +
+        ` (${output}, ${toolCallCount} tool call(s) not executed): ${provider}/${model}`,
     );
+    this.code = reason === 'cap' ? 'output_limit_reached' : 'output_usage_not_reported';
     this.name = 'LLMOutputLimitError';
   }
 }

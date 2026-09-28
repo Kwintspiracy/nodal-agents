@@ -36,11 +36,11 @@ type Finish = 'length' | 'tool-calls' | 'stop';
 
 const { setFinish, currentModel } = vi.hoisted(() => {
   let finish: 'length' | 'tool-calls' | 'stop' = 'tool-calls';
-  let output = 1_200;
+  let output: number | undefined = 1_200;
   let model: unknown = null;
   return {
     /** The reply's finish reason and how many output tokens it billed. */
-    setFinish: (f: 'length' | 'tool-calls' | 'stop', out: number) => {
+    setFinish: (f: 'length' | 'tool-calls' | 'stop', out: number | undefined) => {
       finish = f;
       output = out;
     },
@@ -89,7 +89,7 @@ const QUESTION = 'placeholder';
 type StreamPart = Record<string, unknown>;
 
 /** The incident's shape: a memory write, then a placeholder question. */
-function turnParts(finish: Finish, output: number): StreamPart[] {
+function turnParts(finish: Finish, output: number | undefined): StreamPart[] {
   return [
     { type: 'stream-start', warnings: [] },
     { type: 'text-start', id: 't' },
@@ -313,4 +313,56 @@ describe('a job turn that reaches the stated output cap does not act, whatever i
       expect(model.doStreamCalls[0]?.maxOutputTokens).toBe(65_536);
     });
   }
+});
+
+// Revue Codex de #571, passe 2 : un tour sans nombre de jetons de sortie ne
+// peut pas être jugé complet. Rendu avec un simple avertissement, c'était un
+// faux vert (invariant #4) ; lu comme 0, la ligne du job disait « 0 jeton ».
+// Un TOUR dont la sortie n'est pas rapportée est refusé, et l'inconnu reste
+// inconnu (null) jusqu'à la base.
+describe('a job turn whose output tokens are not reported does not act @cap:suivre-execution/moteur', () => {
+  async function jobTotals(jobId: string) {
+    const [row] = await db
+      .select({ outputTokens: agentJobs.outputTokens, totalCostUsd: agentJobs.totalCostUsd })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row!;
+  }
+
+  it('finish tool-calls, no output tokens: nothing executed, output_usage_not_reported, unknown kept null', async () => {
+    setFinish('tool-calls', undefined);
+    await db.delete(agentMemory).where(eq(agentMemory.agentId, seed.agentId));
+    const jobId = await insertJob();
+
+    const outcome = await executeJob(jobId as JobId, makeDeps(), testEnv);
+
+    expect(outcome.status).toBe('failed');
+    const after = await effects(jobId);
+    expect(after.memoryFacts).toEqual([]);
+    expect(after.toolNames).toEqual([]);
+    expect(after.questions).toEqual([]);
+    expect(after.job.error).toBe(
+      'output_usage_not_reported:openrouter/z-ai/glm-5.3 ' +
+        '(turn 1, output tokens not reported, 2 tool calls not executed)',
+    );
+    // Unknown, not 0: on the job row and on the llm_calls row.
+    expect(await jobTotals(jobId)).toEqual({ outputTokens: null, totalCostUsd: null });
+    expect(after.llmRows[0]?.outputTokens).toBeNull();
+    expect(after.llmRows[0]?.error ?? '').toMatch(/^LLMOutputLimitError: .*not report/);
+  });
+
+  it("finish 'length', no output tokens: output_limit_reached, the count said unknown", async () => {
+    setFinish('length', undefined);
+    const jobId = await insertJob();
+
+    await executeJob(jobId as JobId, makeDeps(), testEnv);
+
+    const after = await effects(jobId);
+    expect(after.toolNames).toEqual([]);
+    expect(after.job.error).toBe(
+      'output_limit_reached:openrouter/z-ai/glm-5.3 ' +
+        '(turn 1, output tokens not reported, 2 tool calls not executed)',
+    );
+    expect(await jobTotals(jobId)).toEqual({ outputTokens: null, totalCostUsd: null });
+  });
 });

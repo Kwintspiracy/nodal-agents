@@ -399,15 +399,14 @@ describe("a caller's cap never raises the platform's @cap:suivre-execution/moteu
   });
 });
 
-// Revue Codex de #571, P1 (b) : une réponse SANS nombre de jetons de sortie
-// (usage absent ou non fini) valait 0, donc « sous le plafond » : un faux vert.
-// Aucune autre mesure fiable n'existe dans le client : les caractères reçus ne
-// bornent pas les jetons (un jeton peut faire un octet ou des dizaines). Quand
-// l'usage manque, le plafond ne se juge donc que sur `finishReason`, et ce fait
-// est dit, pas masqué : la ligne llm_calls garde `outputTokens` à null et le
-// client l'écrit dans le journal. La barrière indépendante de l'usage est le
-// refus d'un tour trop gros en appels (#564).
-describe('a turn whose output tokens are not reported @cap:suivre-execution/moteur', () => {
+// Revue Codex de #571 : une réponse SANS nombre de jetons de sortie (usage
+// absent ou non fini). Lue comme 0, elle passait « sous le plafond » (passe 1) ;
+// rendue avec un avertissement, elle restait un faux vert (passe 2, invariant
+// #4). Aucune mesure fiable ne remplace l'usage dans le client (les caractères
+// ne bornent pas les jetons). Un TOUR dont la complétude ne peut pas être
+// établie est donc refusé, avec un code qui le dit ; l'inconnu reste null,
+// jamais 0. Un appel sans outils n'est pas un tour : il est rendu comme avant.
+describe('a turn whose output tokens are not reported is refused @cap:suivre-execution/moteur', () => {
   function useModelWithoutOutputUsage(reason: Unified, output: unknown = undefined): void {
     const usage = {
       inputTokens: { total: 900, noCache: 900, cacheRead: undefined, cacheWrite: undefined },
@@ -426,53 +425,67 @@ describe('a turn whose output tokens are not reported @cap:suivre-execution/mote
   }
 
   for (const output of [undefined, Number.NaN] as const) {
-    it(`output tokens ${String(output)}: the turn is not read as under the cap, the gap is said and kept null`, async () => {
+    it(`output tokens ${String(output)}: refused as output_usage_not_reported, one-shot and streamed, the count kept null`, async () => {
       useModelWithoutOutputUsage('tool-calls', output);
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const seen: LlmCallObservation[] = [];
-      try {
-        const oneShot = await client(seen).generateText(ARGS);
-        const streamed = await client().generateText(ARGS, { streamed: true });
 
-        // Nothing else to judge on: the turn comes back, as the provider sent it.
-        expect(oneShot.toolCalls.map((c) => c.toolName)).toEqual(['save_memory', 'file_write']);
-        expect(streamed.toolCalls.map((c) => c.toolName)).toEqual(['save_memory']);
-        // The llm_calls row says "not reported", never a guessed 0.
-        expect(seen[0]?.usage?.outputTokens).toBeNull();
-        // And the log says what could not be judged, for whom, against which cap.
-        const said = warn.mock.calls.map((c) => c.map(String).join(' '));
-        const gap = said.filter((l) => l.includes('output tokens not reported'));
-        expect(gap).toHaveLength(2);
-        expect(gap[0]).toContain('openrouter/z-ai/glm-5.3');
-        expect(gap[0]).toContain(String(TURN_OUTPUT_TOKEN_CAP));
-      } finally {
-        warn.mockRestore();
+      const oneShot = await client(seen)
+        .generateText(ARGS)
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      const streamed = await client()
+        .generateText(ARGS, { streamed: true })
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+
+      for (const err of [oneShot, streamed]) {
+        expect(err).toBeInstanceOf(LLMOutputLimitError);
+        const refusal = err as LLMOutputLimitError;
+        expect(refusal.code).toBe('output_usage_not_reported');
+        expect(refusal.usage.outputTokens).toBeNull();
+        expect(refusal.message).toContain('openrouter/z-ai/glm-5.3');
+        expect(refusal.message).not.toContain(' 0 output tokens');
       }
+      expect((oneShot as LLMOutputLimitError).toolCallCount).toBe(2);
+      // The llm_calls row says "not reported", never a guessed 0, and why nothing came back.
+      expect(seen[0]?.usage?.outputTokens).toBeNull();
+      expect(seen[0]?.error).toMatch(/^LLMOutputLimitError: /);
     });
   }
 
-  it("without output tokens, a 'length' finish is still refused", async () => {
+  it("without output tokens, a 'length' finish is refused as cut, its count unknown", async () => {
     useModelWithoutOutputUsage('length');
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      await expect(client().generateText(ARGS)).rejects.toBeInstanceOf(LLMOutputLimitError);
-      await expect(client().generateText(ARGS, { streamed: true })).rejects.toBeInstanceOf(
-        LLMOutputLimitError,
-      );
-    } finally {
-      warn.mockRestore();
+    for (const opts of [undefined, { streamed: true }] as const) {
+      const err = await client()
+        .generateText(ARGS, opts)
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(err).toBeInstanceOf(LLMOutputLimitError);
+      expect((err as LLMOutputLimitError).code).toBe('output_limit_reached');
+      expect((err as LLMOutputLimitError).usage.outputTokens).toBeNull();
+      expect((err as LLMOutputLimitError).message).toContain('output tokens not reported');
     }
   });
 
-  it('a call offering no tools is not a turn: no gap to report', async () => {
+  it('a call offering no tools is not a turn: returned as the provider sent it', async () => {
     useModelWithoutOutputUsage('stop');
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      await client().generateText({ system: 's', messages: ARGS.messages });
-      const said = warn.mock.calls.map((c) => c.map(String).join(' '));
-      expect(said.filter((l) => l.includes('output tokens not reported'))).toEqual([]);
-    } finally {
-      warn.mockRestore();
-    }
+
+    const res = await client().generateText({ system: 's', messages: ARGS.messages });
+
+    expect(res.text).toBe('working');
+  });
+
+  it('a caller that only inspects gets the response as is', async () => {
+    useModelWithoutOutputUsage('tool-calls');
+
+    const res = await client().generateText(ARGS, { inspectOnly: true });
+
+    expect(res.toolCalls.map((c) => c.toolName)).toEqual(['save_memory', 'file_write']);
   });
 });

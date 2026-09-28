@@ -174,3 +174,50 @@ describe('the output cap reaches the wire, and a reply that reaches it is refuse
     });
   });
 });
+
+// Revue Codex de #571, passe 2 : un tour dont les jetons de sortie ne sont pas
+// rapportés est désormais REFUSÉ. `@ai-sdk/openai-compatible` (2.0.47) ne
+// demande l'usage en flux (`stream_options.include_usage`) que si on le lui
+// dit : sans ça, un serveur fidèle à la spec OpenAI ne l'envoie pas, et chaque
+// tour streamé d'un endpoint compatible (LM Studio, vLLM, Moonshot…) serait
+// refusé. Les deux builders qui passent par ce SDK le demandent.
+describe('streamed turns ask for their usage on OpenAI-compatible endpoints @cap:suivre-execution/moteur', () => {
+  function stubSse(): void {
+    bodies = [];
+    const sse =
+      [
+        {
+          choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: null }],
+        },
+        {
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+        },
+      ]
+        .map((c) => `data: ${JSON.stringify({ id: 'x', created: 0, model: 'm', ...c })}\n\n`)
+        .join('') + 'data: [DONE]\n\n';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(JSON.parse(init?.body as string) as Record<string, unknown>);
+        return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }),
+    );
+  }
+
+  for (const config of [
+    { provider: 'openai-compatible', model: 'local-model', baseURL: 'http://127.0.0.1:1234/v1' },
+    { provider: 'moonshot', model: 'kimi-k3', apiKey: 'k' },
+  ] as const) {
+    it(`${config.provider}: the request asks for usage, and the turn comes back judged`, async () => {
+      stubSse();
+      const client = createLlmClient(config);
+
+      const res = await client.generateText(ARGS, { streamed: true });
+
+      expect(bodies[0]?.['stream']).toBe(true);
+      expect(bodies[0]?.['stream_options']).toEqual({ include_usage: true });
+      expect(res.usage.outputTokens).toBe(2);
+    });
+  }
+});

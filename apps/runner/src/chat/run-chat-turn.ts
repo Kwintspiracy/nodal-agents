@@ -332,7 +332,7 @@ function failedOnOutputCap(
 ): { ok: false; error: string } | null {
   if (!(err instanceof LLMOutputLimitError)) return null;
   console.warn(
-    `[run-chat-turn] ${which} stopped on the output-token cap (${agentSlug}):`,
+    `[run-chat-turn] ${which} refused by the client, ${err.code} (${agentSlug}):`,
     err.message,
   );
   return { ok: false, error: err.code };

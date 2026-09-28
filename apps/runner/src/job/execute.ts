@@ -809,13 +809,17 @@ export interface BudgetStopFacts {
  * jetons de SORTIE du modèle (#554), pour `agent_jobs.error`. Même famille que
  * `llm_timeout:` et `context_window_exceeded:` : le code, puis les faits qui le
  * rendent lisible (qui, quel tour, combien écrit, combien d'appels d'outils
- * laissés sans exécution).
+ * laissés sans exécution). Un nombre de jetons que le fournisseur n'a pas
+ * rapporté s'écrit « not reported », jamais 0 (revue Codex de #571).
  */
 export function outputLimitErrorCode(err: LLMOutputLimitError, turn: number): string {
+  const sortie =
+    err.usage.outputTokens === null
+      ? 'output tokens not reported'
+      : `${err.usage.outputTokens} output tokens`;
   return (
     `${err.code}:${err.provider}/${err.model} ` +
-    `(turn ${turn}, ${err.usage.outputTokens} output tokens, ` +
-    `${err.toolCallCount} tool calls not executed)`
+    `(turn ${turn}, ${sortie}, ${err.toolCallCount} tool calls not executed)`
   );
 }
 
@@ -6471,23 +6475,38 @@ async function runJobTracked(
     // réponse finie. Le run échoue avec un code (invariant #2), comme les
     // autres échecs typés. L'appel a été servi et facturé en entier : il est
     // compté avant d'écrire la ligne, sinon les jetons du run mentiraient.
+    //
+    // Même famille (revue Codex de #571) : un tour dont le fournisseur n'a pas
+    // rapporté les jetons de sortie (`output_usage_not_reported`). Ce nombre
+    // inconnu n'est pas 0 : la sortie et le coût du run deviennent inconnus
+    // (null sur la ligne du job), au lieu d'un total qui mentirait par défaut.
     if (err instanceof LLMOutputLimitError) {
+      const sortie = err.usage.outputTokens;
       inputTokens += err.usage.inputTokens;
       effectiveInputTokens += err.usage.inputTokens;
-      outputTokens += err.usage.outputTokens;
-      totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
-        inputTokens: err.usage.inputTokens,
-        outputTokens: err.usage.outputTokens,
-        cachedTokens: 0,
-        cacheCreationTokens: 0,
-      });
+      if (sortie !== null) {
+        outputTokens += sortie;
+        totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
+          inputTokens: err.usage.inputTokens,
+          outputTokens: sortie,
+          cachedTokens: 0,
+          cacheCreationTokens: 0,
+        });
+      }
       const code = outputLimitErrorCode(err, turn);
-      trace('output_limit_reached', {
+      trace(err.code, {
         turn,
-        outputTokens: err.usage.outputTokens,
+        outputTokens: sortie,
         toolCallsNotExecuted: err.toolCallCount,
       });
-      await failJob(db, jobId as string, code, runStats(), messages);
+      const stats = runStats();
+      await failJob(
+        db,
+        jobId as string,
+        code,
+        sortie === null ? { ...stats, outputTokens: null, totalCostUsd: null } : stats,
+        messages,
+      );
       return { status: 'failed', error: code };
     }
 
