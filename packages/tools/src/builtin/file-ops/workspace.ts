@@ -12,7 +12,7 @@
 //      known workspace root; anything else is path_traversal_blocked.
 
 import { realpath, stat } from 'node:fs/promises';
-import { resolve as resolvePath, sep, isAbsolute } from 'node:path';
+import { resolve as resolvePath, relative as relativePath, sep, isAbsolute } from 'node:path';
 import type { ToolContext } from '../../types';
 import { currentContentWrittenByJob } from '../../verification/record-constat';
 
@@ -214,6 +214,73 @@ export async function resolveAndCheckPath(
     `This agent has multiple workspaces. Prefix the path with a workspace label. ` +
       `Valid labels: ${validLabels}. Example: "${ownWorkspaces[0]!.label}/${requestedPath}".`,
   );
+}
+
+// ─── processAddressing ────────────────────────────────────────────────────────
+
+/**
+ * The sentence every tool that starts a process adds to its description (#592).
+ * One wording, so the model reads the same rule wherever it can start one.
+ */
+export const PROCESS_PATHS_RULE =
+  'Workspace labels are NOT folders for a process: the file tools address a file as ' +
+  '"<label>/<path>", but a process resolves its paths against its own working directory ' +
+  '(given back in `paths`), so inside a workspace write outputs/x, not <label>/outputs/x, ' +
+  'and reach another workspace by its absolute path (also in `paths`).';
+
+/** `child` is `root` itself or a folder under it (case-insensitive on Windows). */
+function isWithin(root: string, child: string): boolean {
+  const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const rel = relativePath(norm(root), norm(child));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/**
+ * How a process started by a tool addresses files (#592), for the model to read
+ * in the tool_result. A file has two addresses for an agent with workspaces:
+ * `<label>/<path>` in the file tools, and a path relative to the process's cwd
+ * (or absolute) in a process. On 2026-09-29 ComfyArtist ran
+ * `comfy … --out-dir ComfyArtist/outputs` from the root of its "ComfyArtist"
+ * workspace, and the file landed in ComfyArtist/ComfyArtist/outputs.
+ *
+ * Says the absolute cwd, which workspace it is (or `outside` when it is none,
+ * e.g. a skill folder), that labels are not folders there, and every other
+ * workspace by absolute path. Model-facing text, never shown to the user.
+ */
+export function processAddressing(
+  workspaces: readonly { label: string; path: string }[],
+  cwd: string,
+  outside = 'outside every workspace',
+): string {
+  const home = workspaces.find((w) => isWithin(w.path, cwd));
+  const where = home
+    ? isWithin(cwd, home.path)
+      ? `the root of workspace "${home.label}"`
+      : `inside workspace "${home.label}"`
+    : outside;
+  const parts = [
+    `This process ran in ${cwd}, ${where}.`,
+    'Paths in a process are relative to that folder, or absolute.',
+  ];
+  const exemple =
+    home?.label ??
+    workspaces.find((w) => w.label !== SHARED_WORKSPACE_LABEL)?.label ??
+    workspaces[0]?.label;
+  if (exemple !== undefined) {
+    parts.push(
+      home
+        ? `Workspace labels are NOT folders for a process: write outputs/x, not ${exemple}/outputs/x.`
+        : `Workspace labels are NOT folders for a process: use a workspace's absolute path, never ${exemple}/x.`,
+    );
+  }
+  const autres = workspaces.filter((w) => w !== home);
+  if (autres.length > 0) {
+    parts.push(
+      `${home ? 'Other workspaces' : 'Workspaces'}, by absolute path: ` +
+        `${autres.map((w) => `${w.label} = ${w.path}`).join(', ')}.`,
+    );
+  }
+  return parts.join(' ');
 }
 
 // ─── windowsPathViolation ─────────────────────────────────────────────────────
