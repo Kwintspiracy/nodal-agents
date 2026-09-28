@@ -39,10 +39,9 @@
 // chain-counters.ts Guard 1g for the incident write-up): a prior job's OWN
 // prose is not a reliable record of what it actually did. When a prior job in
 // this thread used a STATE-CHANGING tool (create_schedule, attach_mcp, ...),
-// its rendered assistant turn gets a trailing `[Actions performed in this
-// exchange: ...]` line naming the REAL tool calls from `agent_jobs.tools_used`
-// — a structural fact the LLM can't override with confabulated prose on a
-// later turn.
+// its exchange gets an `[Actions performed in this exchange: ...]` line naming
+// the REAL tool calls from `agent_jobs.tools_used` — a structural fact the LLM
+// can't override with confabulated prose on a later turn.
 //
 // Delegated-task ledger (2026-07-12 incident — see task-ledger.ts): the line
 // above only covers the prior job's OWN tools_used. A prior job that instead
@@ -51,6 +50,14 @@
 // visibility into. Each prior job's delegated tasks (if any) get their own
 // `[Task "..." completed: actions — ...; result: ...]` line(s), sourced from
 // the CHILD job's tools_used, not the parent's prose summary.
+//
+// WHERE those lines go (#562): in a runner record AFTER the exchange — a user
+// message marked `[système]` (runnerRecord) — never in an assistant part. They
+// used to ride as text parts of the replayed assistant turn, and a model that
+// reads its own turns ending in `[Delegated to X (completed) …]` writes one:
+// run b7ecc59a forged a delegation outcome that way. Same for a `relay`
+// result (children recompiled by the runner): it is the runner's, not the
+// agent's reply.
 
 import { eq, and, ne, desc, inArray, isNull } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
@@ -185,6 +192,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       createdAt: agentJobs.createdAt,
       completedAt: agentJobs.completedAt,
       toolsUsed: agentJobs.toolsUsed,
+      resultKind: agentJobs.resultKind,
     })
     .from(agentJobs)
     .where(
@@ -242,13 +250,20 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   let nextSynthId = 0;
   const blocks: ModelMessage[][] = [];
   for (const row of chronological) {
+    // Un résultat `relay` est le texte d'AUTRES jobs recompilé par le runner
+    // (state.ts, fillResultFromChildrenIfEmpty) : jamais la réponse de l'agent.
+    // Le rejouer comme ce que l'agent a envoyé lui apprenait à écrire lui-même
+    // « ## Researcher\n… » — ce que l'agent racine du run b7ecc59a a fait le 28/09, 12 887 caractères
+    // inventés avant que son enfant ne démarre (#562). Sa réponse est ce qu'il
+    // a réellement dit ; le relais part dans le relevé du runner.
+    const relay = row.resultKind === 'relay' ? (row.result ?? '').trim() : '';
     const assistant = extractAssistantReply({
       task: row.task,
-      result: row.result,
+      result: relay !== '' ? null : row.result,
       messages: row.messages,
       channel: row.channel,
     });
-    if (assistant === null) continue;
+    if (assistant === null && relay === '') continue;
 
     // Action ledger (see file header) — only when this job actually used a
     // STATE-CHANGING tool. Lists the job's FULL tools_used (not just the
@@ -270,23 +285,35 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       ...(ledgerLine ? [ledgerLine] : []),
       ...delegatedLedgerLines,
       ...inlineLedgerLines,
+      ...(relay !== '' ? [`${RELAY_HEADING}\n${truncate(relay)}`] : []),
     ];
+    // Ce que le runner a écrit de ce tour vient APRÈS lui, dans un message à
+    // part, attribué au runner — jamais dans une part assistant (#562).
+    const record: ModelMessage[] =
+      allLedgerLines.length > 0 ? [{ role: 'user', content: runnerRecord(allLedgerLines) }] : [];
+
+    if (assistant === null) {
+      // Un tour où l'agent n'a rien dit lui-même : seul le relevé en reste.
+      blocks.push([{ role: 'user', content: truncate(row.task) }, ...record]);
+      continue;
+    }
 
     const sendTool = CHANNEL_SEND_TOOL[row.channel];
     if (sendTool) {
       const callId = `history-tool-${nextSynthId++}`;
-      const assistantContent: Array<Record<string, unknown>> = [
-        {
-          type: 'tool-call',
-          toolCallId: callId,
-          toolName: sendTool,
-          input: { text: truncate(assistant) },
-        },
-      ];
-      for (const line of allLedgerLines) assistantContent.push({ type: 'text', text: line });
       blocks.push([
         { role: 'user', content: truncate(row.task) },
-        { role: 'assistant', content: assistantContent } as ModelMessage,
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: callId,
+              toolName: sendTool,
+              input: { text: truncate(assistant) },
+            },
+          ],
+        } as ModelMessage,
         {
           role: 'tool',
           content: [
@@ -307,17 +334,13 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
             },
           ],
         } as ModelMessage,
+        ...record,
       ]);
     } else {
       blocks.push([
         { role: 'user', content: truncate(row.task) },
-        {
-          role: 'assistant',
-          content:
-            allLedgerLines.length > 0
-              ? `${truncate(assistant)}\n\n${allLedgerLines.join('\n')}`
-              : truncate(assistant),
-        },
+        { role: 'assistant', content: truncate(assistant) },
+        ...record,
       ]);
     }
   }
@@ -331,6 +354,31 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
 
   return blocks.flatMap((b) => b);
 }
+
+/**
+ * Le relevé que le RUNNER a tenu d'un tour rejoué : ses actions réelles, ses
+ * délégations et leur issue, le relais des résultats de ses enfants.
+ *
+ * Pourquoi un message à part, de rôle utilisateur et marqué `[système]` (#562).
+ * Ces lignes vivaient dans des parts de texte ASSISTANT, à côté de l'envoi
+ * rejoué : le modèle lisait qu'à chaque tour il avait lui-même écrit
+ * `[Delegated to X (completed) — actions: …]`, et il a fini par l'écrire — une
+ * issue de délégation inventée, envoyée au propriétaire avant que l'enfant ne
+ * démarre. Un modèle continue ce qu'il a écrit ; il n'imite pas ce qu'on lui
+ * a dit. Le rôle `system` au milieu d'un échange n'est pas une option (le
+ * fournisseur Anthropic le refuse) ; `[système]` en rôle utilisateur est la
+ * marque que le runner pose déjà sur toutes ses relances (execute.ts).
+ */
+export function runnerRecord(lines: readonly string[]): string {
+  return `${RUNNER_RECORD_HEADING}\n${lines.join('\n')}`;
+}
+
+/** Exporté pour que les tests et les autres lecteurs reconnaissent le relevé. */
+export const RUNNER_RECORD_HEADING =
+  '[système] Relevé tenu par le runner pour l’échange ci-dessus. Ce n’est pas toi qui l’as écrit : ' +
+  'tes tours ne le contiennent jamais, et tu ne l’écris jamais toi-même.';
+
+const RELAY_HEADING = 'Résultats des agents délégués, recompilés par le runner :';
 
 /**
  * Map of channel → the tool the agent uses to emit a user-visible reply.

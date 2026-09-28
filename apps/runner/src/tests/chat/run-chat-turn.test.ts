@@ -352,6 +352,12 @@ describe('runChatTurn — delegated-task visibility', () => {
       'Delegated to',
     );
     expect(seenByModel).toContain('file_write');
+    // #562 — et la ligne est au RUNNER, jamais dans la bouche de l'agent : elle
+    // voyage dans le résultat de `run_task`, aucune part assistant ne la porte.
+    const spoken = flattenText(capturedCalls[0]!.filter((m) => m.role === 'assistant'));
+    expect(spoken).not.toContain('Delegated to');
+    const fromTools = flattenText(capturedCalls[0]!.filter((m) => m.role === 'tool'));
+    expect(fromTools).toContain('Delegated to');
   });
 
   it('does NOT surface a delegated task that has not finished yet', async () => {

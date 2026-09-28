@@ -281,7 +281,7 @@ export type FeedItem =
    * Slack…) que le runner préfixe au transcript (thread-history.ts) pour que
    * l'agent se souvienne. Ce n'est PAS ce job — le fil le montre replié, à part.
    */
-  | { kind: 'history'; exchanges: Array<{ role: 'user' | 'agent'; text: string }> }
+  | { kind: 'history'; exchanges: Array<{ role: HistoryExchangeRole; text: string }> }
   /**
    * Une délégation, TOUJOURS à plat (#135). `from` dit QUI a délégué : l'agent
    * du job pour un enfant direct, l'agent de l'enfant pour un petit-enfant
@@ -631,16 +631,27 @@ function lastIndexOfTask(messages: readonly unknown[], task: string): number {
   return 0;
 }
 
-/** L'historique en échanges lisibles : qui a dit quoi, sans les résultats d'outils. */
+/** Qui parle dans un échange rejoué : la personne, l'agent, ou le runner (#562). */
+export type HistoryExchangeRole = 'user' | 'agent' | 'runner';
+
+/**
+ * L'historique en échanges lisibles : qui a dit quoi, sans les résultats d'outils.
+ * Un message `user` marqué `[système]` est le relevé du runner (thread-history.ts,
+ * #562) : ni la personne ni l'agent ne l'ont écrit, l'écran le dit.
+ */
 function exchangesOf(
   messages: readonly unknown[],
-): Array<{ role: 'user' | 'agent'; text: string }> {
-  const out: Array<{ role: 'user' | 'agent'; text: string }> = [];
+): Array<{ role: HistoryExchangeRole; text: string }> {
+  const out: Array<{ role: HistoryExchangeRole; text: string }> = [];
   for (const raw of messages) {
     const m = raw as { role?: unknown; content?: unknown };
     if (m.role !== 'user' && m.role !== 'assistant') continue;
     const text = textOf(m.content).trim();
     if (text === '') continue;
+    if (m.role === 'user' && text.startsWith(RUNNER_NOTE_PREFIX)) {
+      out.push({ role: 'runner', text: text.slice(RUNNER_NOTE_PREFIX.length).trim() });
+      continue;
+    }
     out.push({ role: m.role === 'user' ? 'user' : 'agent', text });
   }
   return out;

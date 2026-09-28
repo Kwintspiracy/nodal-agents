@@ -238,9 +238,11 @@ function messageText(content: unknown): string {
  *
  * Une transcription commence par l'historique rejoué du fil (thread-history.ts) :
  * pour chaque tour passé, un message utilisateur, puis un message assistant
- * SYNTHÉTIQUE qui porte la réponse d'alors et, en parts de texte, ses lignes de
- * grand livre (`[Delegated to X (…) — actions: …]`). Ce sont des textes
- * assistant, et rien ne les distingue d'un texte écrit par l'agent à ce tour.
+ * SYNTHÉTIQUE qui porte la réponse d'alors — un texte assistant que rien ne
+ * distingue d'un texte écrit par l'agent à ce tour. Les lignes de grand livre
+ * (`[Delegated to X (…) — actions: …]`) ne sont plus dans ce message depuis
+ * #562 : elles suivent, dans un relevé `[système]` de rôle utilisateur. La
+ * frontière reste nécessaire pour la réponse rejouée elle-même.
  *
  * Issue #419 : un tour Telegram qui a répondu par `telegram_send_message` puis
  * `return_result {status}` n'écrit aucun texte ; le « dernier texte assistant »

@@ -672,14 +672,15 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
 
     const s = summarize(history);
     // UN seul tour utilisateur : celui du parent. La sous-tâche n'en est pas un.
-    expect(s.filter((m) => m.role === 'user')).toEqual([
+    expect(s.filter((m) => m.role === 'user' && !m.text.startsWith('[système]'))).toEqual([
       { role: 'user', text: 'fais faire le travail' },
     ]);
     expect(s.some((m) => m.text.includes('sous-tâche interne'))).toBe(false);
     expect(s.some((m) => m.text === 'travail délégué et rendu')).toBe(true);
     // L'enfant reste VISIBLE là où il doit l'être : le registre des délégations
-    // en ligne, qui dit ce qui a réellement été fait — pas un faux message.
-    expect(s.some((m) => m.text.startsWith('[Delegated to'))).toBe(true);
+    // en ligne, qui dit ce qui a réellement été fait — pas un faux message, et
+    // dans le relevé du runner, pas dans la bouche de l'agent (#562).
+    expect(recordLines(history).some((l) => l.startsWith('[Delegated to'))).toBe(true);
   });
 
   it('neuf tours dans la conversation : les HUIT plus récents sont relus (MAX_TURNS)', async () => {
@@ -854,11 +855,10 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
-    const s = summarize(history);
-    expect(s).toContainEqual({
-      role: 'assistant',
-      text: '[Actions performed in this exchange: create_schedule, telegram_send_message]',
-    });
+    expect(recordLines(history)).toContain(
+      '[Actions performed in this exchange: create_schedule, telegram_send_message]',
+    );
+    expect(assistantTexts(history)).toEqual(['Fait, une automation est en place.']);
   });
 
   it('does NOT append a ledger line when the prior job only used send tools', async () => {
@@ -930,16 +930,11 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
-    const s = summarize(history);
-    expect(
-      s.some(
-        (m) =>
-          m.role === 'assistant' &&
-          m.text ===
-            '[Task "Research Law & Order and send to Mathilde" completed: actions — web_search, ' +
-              'telegram_send_message; result: Sent a summary to Mathilde via Telegram.]',
-      ),
-    ).toBe(true);
+    expect(recordLines(history)).toContain(
+      '[Task "Research Law & Order and send to Mathilde" completed: actions — web_search, ' +
+        'telegram_send_message; result: Sent a summary to Mathilde via Telegram.]',
+    );
+    expect(assistantTexts(history).some((t) => t.includes('[Task'))).toBe(false);
   });
 
   it('does NOT surface a delegated task that has not finished yet', async () => {
@@ -991,8 +986,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
-    const s = summarize(history);
-    const taskLines = s.filter((m) => m.text.includes('[Task'));
+    const taskLines = recordLines(history).filter((l) => l.startsWith('[Task'));
     expect(taskLines).toHaveLength(3);
   });
 
@@ -1023,15 +1017,162 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
-    const s = summarize(history);
+    const lines = recordLines(history);
+    expect(lines).toContain(
+      '[Actions performed in this exchange: create_schedule, telegram_send_message]',
+    );
     expect(
-      s.some(
-        (m) =>
-          m.text === '[Actions performed in this exchange: create_schedule, telegram_send_message]',
-      ),
+      lines.some((l) => l.startsWith('[Task "write and send the first newsletter" completed:')),
     ).toBe(true);
-    expect(
-      s.some((m) => m.text.startsWith('[Task "write and send the first newsletter" completed:')),
-    ).toBe(true);
+  });
+});
+
+// ─── #562 — rien de ce qu'écrit le runner n'est rejoué dans la bouche de l'agent ─
+//
+// Run b7ecc59a (28/09) : dans le MÊME tour que `assign_researcher`, avant que
+// l'enfant ne démarre, l'agent racine a envoyé au propriétaire une ligne
+// `[Delegated to Researcher (completed) — actions: …]` inventée, puis un
+// « ## Researcher » de 12 887 caractères. Son historique rejoué lui montrait
+// ces deux formes comme SES propres envois : les lignes de grand livre en
+// parts de texte assistant, et le résultat `relay` recompilé par le runner
+// (« ## Researcher\n… ») comme texte d'un `telegram_send_message`.
+
+/** Tout ce que l'historique met dans la bouche de l'agent : texte et envois. */
+function assistantTexts(messages: ModelMessage[]): string[] {
+  return summarize(messages)
+    .filter((m) => m.role === 'assistant')
+    .map((m) => m.text);
+}
+/** Les messages attribués au runner : rôle utilisateur, marqués `[système]`. */
+function runnerRecords(messages: ModelMessage[]): string[] {
+  return summarize(messages)
+    .filter((m) => m.role === 'user' && m.text.startsWith('[système]'))
+    .map((m) => m.text);
+}
+/** Les lignes de ces relevés, une par entrée. */
+function recordLines(messages: ModelMessage[]): string[] {
+  return runnerRecords(messages).flatMap((r) => r.split('\n'));
+}
+
+describe('loadThreadHistory — runner-written lines are attributed to the runner (#562) @cap:reprendre-conversation/moteur', () => {
+  async function seedDelegatingTurn(channel: string, chatId: string) {
+    const rootJobId = await insertCompletedJob({
+      chatId,
+      channel,
+      task: 'recherche la longueur de Planck',
+      result: null,
+      minutesAgo: 10,
+      messages:
+        channel === 'telegram'
+          ? tgReply('recherche la longueur de Planck', 'Je lance la recherche.')
+          : [
+              { role: 'user', content: 'recherche la longueur de Planck' },
+              { role: 'assistant', content: 'Je lance la recherche.' },
+            ],
+      toolsUsed: ['assign_researcher', 'save_memory', 'telegram_send_message'],
+    });
+    // Délégation EN LIGNE : un enfant `agent_jobs` qui a vraiment tourné.
+    await insertCompletedJob({
+      chatId,
+      channel,
+      parentJobId: rootJobId,
+      task: 'Recherche web : longueur de Planck',
+      result: 'ℓP ≈ 1.616e-35 m',
+      minutesAgo: 9,
+      toolsUsed: ['web_search', 'return_result'],
+    });
+    // Délégation par le tableau : une tâche et son job.
+    await insertDelegatedTask({
+      rootJobId,
+      title: 'vérifier la source',
+      status: 'done',
+      result: 'CODATA 2018',
+      toolsUsed: ['web_search'],
+    });
+    return rootJobId;
+  }
+
+  it.each([
+    ['telegram', 'tool-call shape'],
+    ['whatsapp', 'text shape'],
+  ])(
+    'on %s (%s): no assistant part carries a ledger line, the runner record does',
+    async (channel) => {
+      const chatId = `ledger-${channel}`;
+      await seedDelegatingTurn(channel, chatId);
+
+      const history = await loadThreadHistory({
+        db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+        conversationId: await convFor(chatId, channel),
+        channel,
+        excludeJobId: '00000000-0000-0000-0000-000000000000',
+      });
+
+      const spoken = assistantTexts(history).join('\n');
+      expect(spoken).not.toContain('[Delegated to');
+      expect(spoken).not.toContain('[Actions performed');
+      expect(spoken).not.toContain('[Task "');
+      // The agent's own words are still its own.
+      expect(assistantTexts(history)).toEqual(['Je lance la recherche.']);
+
+      const records = runnerRecords(history).join('\n');
+      expect(records).toContain('[Delegated to');
+      expect(records).toContain('web_search');
+      expect(records).toContain('[Actions performed in this exchange: assign_researcher');
+      expect(records).toContain('[Task "vérifier la source" completed:');
+    },
+  );
+
+  it('a relay result (children recompiled by the runner) is never replayed as what the agent sent', async () => {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'relay-chat',
+        task: 'fais la recherche',
+        status: 'completed',
+        result: '## Researcher\nResearch complete. Structured findings with sources below.',
+        resultKind: 'relay',
+        messages: tgReply('fais la recherche', 'Je lance la recherche.') as never,
+        conversationId: await convFor('relay-chat', 'telegram'),
+      })
+      .returning({ id: agentJobs.id });
+    expect(row).toBeDefined();
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('relay-chat', 'telegram'),
+      channel: 'telegram',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const spoken = assistantTexts(history);
+    expect(spoken).toEqual(['Je lance la recherche.']);
+    expect(runnerRecords(history).join('\n')).toContain('## Researcher\nResearch complete.');
+  });
+
+  it('keeps a prose result as the agent reply (its own words)', async () => {
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: 'prose-chat',
+      task: 'dis bonjour',
+      status: 'completed',
+      result: 'Bonjour !',
+      resultKind: 'prose',
+      messages: [] as never,
+      conversationId: await convFor('prose-chat', 'telegram'),
+    });
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('prose-chat', 'telegram'),
+      channel: 'telegram',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+    expect(assistantTexts(history)).toEqual(['Bonjour !']);
+    expect(runnerRecords(history)).toEqual([]);
   });
 });
