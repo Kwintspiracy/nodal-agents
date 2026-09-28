@@ -32,14 +32,27 @@ import type { LlmTimeoutReason } from './errors';
 
 // ─── Defaults ──────────────────────────────────────────────────────────────────
 
-/** Wait for the first token, base. Calibrated on the 38-47 tokens/s of run 531c2692. */
-export const FIRST_TOKEN_BASE_MS = 120_000;
-/** Above 50K tokens of context (Hermes run_agent.py:593 grows it the same way). */
-export const FIRST_TOKEN_OVER_50K_MS = 150_000;
-/** Above 100K tokens of context. */
-export const FIRST_TOKEN_OVER_100K_MS = 240_000;
-/** Floor on a `high` reasoning effort: the hidden thinking comes before the first token. */
-export const FIRST_TOKEN_HIGH_EFFORT_MS = 300_000;
+/**
+ * Wait for the first token of a hosted model, base: the hidden-thinking floor,
+ * at ANY effort (#583). It was 120 s, and a `high` effort alone was floored at
+ * 300 s; but a hosted reasoning model thinks in silence whatever effort it is
+ * given. On 2026-09-28, 19 calls in 3 hours (xiaomi/mimo-v2.6-pro,
+ * z-ai/glm-5.3 through OpenRouter) were cut at 120 s with 0 characters
+ * received, while the same model's successful calls took 80 s on average and
+ * up to 408 s; two cuts in a row failed the job. Before #449 a turn waited
+ * 300 s (then a 150 s stale retry) and was not cut. Hermes floors the stale
+ * detector of reasoning models at 180-600 s over its 180 s stream default
+ * (`agent/reasoning_timeouts.py`), by a per-model list; this floor holds for
+ * every hosted model instead, since no list knows which ones think silently.
+ */
+export const FIRST_TOKEN_BASE_MS = 300_000;
+/**
+ * Above 50K tokens of context: the base plus the prefill margin this tier has
+ * always added (+30 s; Hermes run_agent.py:593 grows it the same way).
+ */
+export const FIRST_TOKEN_OVER_50K_MS = FIRST_TOKEN_BASE_MS + 30_000;
+/** Above 100K tokens of context: the base plus its prefill margin (+120 s). */
+export const FIRST_TOKEN_OVER_100K_MS = FIRST_TOKEN_BASE_MS + 120_000;
 /** Floor on a `max` reasoning effort. */
 export const FIRST_TOKEN_MAX_EFFORT_MS = 600_000;
 /** Silence between two tokens. Never raised by context, effort or an explicit value. */
@@ -199,8 +212,8 @@ export function computeTurnClocks(
         : contextTokens > 50_000
           ? FIRST_TOKEN_OVER_50K_MS
           : FIRST_TOKEN_BASE_MS;
-    if (config.reasoningEffort === 'high')
-      firstTokenMs = Math.max(firstTokenMs, FIRST_TOKEN_HIGH_EFFORT_MS);
+    // A `high` effort had its own 300 s floor; the base is that floor now,
+    // for every effort (#583), so only `max` still raises it.
     if (config.reasoningEffort === 'max')
       firstTokenMs = Math.max(firstTokenMs, FIRST_TOKEN_MAX_EFFORT_MS);
   }

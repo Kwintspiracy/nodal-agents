@@ -64,7 +64,7 @@ describe('Wait for the first word @cap:suivre-execution/ecran', () => {
   it('vide : la plateforme décide, et rien à enregistrer', async () => {
     await render(null);
     expect(container.textContent).toContain(
-      'Empty: 2 minutes, raised for a long context or a high reasoning effort.',
+      'Empty: 5 minutes, raised for a long context or the max reasoning effort.',
     );
     expect(save().disabled).toBe(true);
   });
