@@ -511,9 +511,9 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
     const dossierDuDelegue = await realpath(await mkdtemp(join(tmpdir(), 'nodal-delegue-588-')));
     try {
       const image = join(dossierDuDelegue, '9b964263_000.png');
-      await writeFile(image, Buffer.from(PNG_1X1, 'base64'));
       const id = await createJob('fais une image');
-      // Le délégué, fini, et l'écriture que la plateforme a constatée chez lui.
+      // Le délégué, créé par la racine, écrit l'image PENDANT son run (une
+      // commande, donc une écriture constatée sans empreinte), puis finit.
       const [enfant] = await db
         .insert(agentJobs)
         .values({
@@ -521,10 +521,16 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
           agentId: seed.agentId,
           channel: 'api',
           task: 'génère l’image',
-          status: 'completed',
+          status: 'processing',
           parentJobId: id,
+          createdAt: new Date(Date.now() - 60_000),
         })
         .returning({ id: agentJobs.id });
+      await writeFile(image, Buffer.from(PNG_1X1, 'base64'));
+      await db
+        .update(agentJobs)
+        .set({ status: 'completed', completedAt: new Date(Date.now() + 1_000) })
+        .where(eq(agentJobs.id, enfant!.id));
       await db.insert(constatedWrites).values({
         jobId: enfant!.id,
         turn: 1,

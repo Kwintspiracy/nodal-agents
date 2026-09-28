@@ -42,7 +42,7 @@ import type { ToolContext } from '../types';
 import { WorkspaceError, resolveAndCheckPath } from '../builtin/file-ops/workspace';
 import { markStateDirty } from './intent';
 import { officeFileDeliverables } from './office-file-key';
-import { isFileWrittenByDescendant } from '../descendant-files';
+import { descendantFilesUnreadableMessage, fileProducedByDescendant } from '../descendant-files';
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 
@@ -122,12 +122,22 @@ export async function declareDeliverables(
         target: { kind: 'file', path: abs, deliverableType: DECLARED_DELIVERABLE_TYPE },
       });
     } catch (err) {
-      // Un fichier qu'un de MES délégués a écrit dans ce run est à moi de le
-      // déclarer (#588) : la racine livre l'image de ComfyArtist sans la
+      // Un fichier dont le contenu actuel est ce qu'un de MES délégués a produit
+      // dans ce run est à moi de le déclarer (#588) : la racine livre l'image de ComfyArtist sans la
       // recopier. Par chemin absolu, et seulement celui-là : la même règle que
       // la garde d'envoi (descendant-files.ts), rien de plus large.
       const reel = isAbsolute(path) ? await realpath(path).catch(() => null) : null;
-      if (reel !== null && (await isFileWrittenByDescendant(ctx, reel))) {
+      const verdict = reel === null ? null : await fileProducedByDescendant(ctx, reel);
+      if (verdict?.kind === 'unreadable') {
+        // Dit comme tel, jamais comme « pas écrit par ton délégué » (revue de #589, P3).
+        unresolved.push({
+          requested: path,
+          code: 'descendant_files_unreadable',
+          reason: descendantFilesUnreadableMessage(verdict.error),
+        });
+        continue;
+      }
+      if (reel !== null && verdict?.kind === 'produced') {
         resolved.push({
           requested: path,
           target: { kind: 'file', path: reel, deliverableType: DECLARED_DELIVERABLE_TYPE },
