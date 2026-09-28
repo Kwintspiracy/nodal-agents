@@ -35,7 +35,9 @@ const TOOL = 'web_search';
 async function openAutonomyTab(page: Page, editUrl: string): Promise<void> {
   await page.goto(editUrl);
   await page.waitForLoadState('networkidle', { timeout: 15_000 });
-  await page.getByRole('tab', { name: /^approvals$/i }).click();
+  // The tab reads « Autonomy » since d3ecc410 (#438, 25/09): it was labelled
+  // « Approvals », a name the guides never used. Its id is still `autonomy`.
+  await page.getByRole('tab', { name: /^autonomy$/i }).click();
   // The section is rendered after the rules load, not on first paint.
   await expect(page.locator('[data-testid="autonomy-internal-list"]')).toBeVisible({
     timeout: 15_000,

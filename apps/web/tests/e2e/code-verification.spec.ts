@@ -15,7 +15,7 @@
  *       (non jouable en local-trust, voir le skip) ;
  *   E — un échec serveur ne ment pas : approbation d'un manifeste modifié
  *       derrière le dos de la page ⇒ toast d'erreur et la pilule ne bouge pas ;
- *   F — `/code` mène à Workspaces ; le panneau « Files & proof » d'un projet
+ *   F — `/code` mène à Projects ; le panneau « Files & proof » d'un projet
  *       se ferme, se rouvre au rechargement (#297), et `/spaces/<id>/files` le
  *       montre aussi (#143) ;
  *   G — RIEN ne déborde du panneau, chemin long et commande longue comprises.
@@ -414,18 +414,72 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
 
     // Aucun élément du panneau ne dépasse sa propre boîte. Un pixel de marge
     // pour les arrondis du navigateur, pas plus.
-    const debordements = await page.getByTestId('project-files-panel').evaluate((racine) => {
+    //
+    // Un CHAMP (input, textarea) se mesure à sa BOÎTE, pas à son défilement :
+    // une valeur plus longue que lui défile DEDANS, c'est ce qu'un champ fait
+    // (« input 561>296 » : la commande longue, dans une boîte de 296 px qui
+    // tenait dans sa carte). Ce qui déborde, c'est une boîte de champ qui
+    // passe le bord de son parent — et ça reste rouge, prouvé juste après sur
+    // un champ planté exprès (décision du 29/09).
+    const mesurer = (racine: Element): string[] => {
       const trop: string[] = [];
+      // Le message NOMME le coupable : l'élément, et celui de ses descendants
+      // qui va le plus loin à droite. « div 451>398 » seul a laissé ce cas
+      // rouge dix mesures de suite sans que personne puisse dire quoi débordait.
+      const nom = (e: Element): string => {
+        const id = e.getAttribute('data-testid');
+        const cls = (e.getAttribute('class') ?? '').split(/\s+/).slice(0, 4).join('.');
+        return `${e.tagName.toLowerCase()}${id ? `[${id}]` : ''}${cls ? `.${cls}` : ''}`;
+      };
       const voir = (el: Element): void => {
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+          const parent = el.parentElement!;
+          const cadre = parent.getBoundingClientRect();
+          const style = getComputedStyle(parent);
+          const bordDroit =
+            cadre.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+          const droite = el.getBoundingClientRect().right;
+          if (droite - bordDroit > 1) {
+            trop.push(
+              `${nom(el)} box ends ${Math.round(droite - bordDroit)}px past ${nom(parent)}`,
+            );
+          }
+          return;
+        }
         if (el.scrollWidth - el.clientWidth > 1) {
-          trop.push(`${el.tagName.toLowerCase()} ${el.scrollWidth}>${el.clientWidth}`);
+          const gauche = el.getBoundingClientRect().left;
+          const loin = [...el.querySelectorAll('*')].sort(
+            (a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right,
+          )[0];
+          trop.push(
+            `${el.tagName.toLowerCase()} ${el.scrollWidth}>${el.clientWidth}` +
+              ` (${nom(el)}${loin ? ` ← ${nom(loin)} ends at ${Math.round(loin.getBoundingClientRect().right - gauche)}px` : ''})`,
+          );
         }
         for (const enfant of el.children) voir(enfant);
       };
       voir(racine);
       return trop;
-    });
+    };
+    const debordements = await page.getByTestId('project-files-panel').evaluate(mesurer);
     expect(debordements, debordements.join(' | ')).toEqual([]);
+
+    // La mesure des champs n'est pas plus lâche : une boîte de champ plus large
+    // que son parent, plantée dans le panneau, est vue par la MÊME fonction.
+    await page.getByTestId('project-files-panel').evaluate((racine) => {
+      const hote = document.createElement('div');
+      hote.setAttribute('data-testid', 'e2e-planted-host');
+      hote.style.width = '120px';
+      const champ = document.createElement('input');
+      champ.style.width = '300px';
+      champ.style.boxSizing = 'border-box';
+      hote.appendChild(champ);
+      racine.appendChild(hote);
+    });
+    const plante = page.getByTestId('e2e-planted-host');
+    const vu = await plante.evaluate(mesurer);
+    await plante.evaluate((hote) => hote.remove());
+    expect(vu.join(' | ')).toMatch(/box ends \d+px past/);
 
     // Et le panneau ne pousse pas la page hors de l'écran.
     const pageDeborde = await page.evaluate(
@@ -434,7 +488,7 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     expect(pageDeborde).toBe(false);
   });
 
-  test('F — /code mène à Workspaces : la liste a disparu, le panneau est sur le projet', async ({
+  test('F — /code mène à Projects : la liste a disparu, le panneau est sur le projet', async ({
     page,
   }) => {
     // #143. Le scénario d'avant ouvrait le tiroir « Other sessions » de la
@@ -444,7 +498,9 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     // mène nulle part de mort, et que le panneau est là où il doit être.
     await page.goto('/code');
     await expect(page).toHaveURL(/\/spaces$/);
-    await expect(page.getByRole('heading', { name: 'Workspaces' })).toBeVisible();
+    // La page s'appelle « Projects » depuis 1d4c8871 (#367, 21/09) : elle
+    // s'appelait « Workspaces », et ce test l'attendait sous ce nom.
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
     // Et le panneau du projet se REFERME : la preuve est à côté des
     // conversations, pas devant elles, et la personne décide.
     await page.goto(`/spaces/${projectId}`);
