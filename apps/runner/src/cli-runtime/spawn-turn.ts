@@ -43,9 +43,10 @@ export interface SpawnTurnOptions<TResult> {
    * jamais d'avance. Donc :
    *   - les appels sous le budget ont TOUS pu s'exécuter, mutations comprises ;
    *   - l'arbre est tué sur la ligne qui OUVRE l'appel au-delà du budget
-   *     (`tool_use` chez Claude, `item.started` chez Codex), avant que le
-   *     runner lise quoi que ce soit après elle — son résultat compris
-   *     (prouvé par `spawn-turn-tool-cap.test.ts`) ;
+   *     (`tool_use` chez Claude, `item.started` chez Codex), et dès cette
+   *     ligne plus RIEN n'est lu : ni le reste du même paquet stdout, ni ce qui
+   *     arrive pendant que l'arbre meurt — son résultat compris (prouvé par
+   *     `spawn-turn-tool-cap.test.ts`) ;
    *   - cet appel-là a pu COMMENCER : la CLI l'exécute dès qu'elle l'annonce,
    *     et le kill arrive après la ligne. Un `file_change` Codex n'a même pas
    *     de ligne d'ouverture : il n'est compté qu'une fois appliqué.
@@ -120,6 +121,11 @@ export function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<
     const errDecoder = new StringDecoder('utf8');
 
     const consume = (line: string): void => {
+      // Dès le cap, plus AUCUNE ligne n'est lue (revue Codex de #568, passe 2).
+      // Le kill est asynchrone : les lignes du même paquet que l'ouverture de
+      // l'appel de trop (son résultat, la fin du tour), ou arrivées pendant le
+      // taskkill, n'atteignent jamais l'appelant.
+      if (toolCapExceeded !== undefined) return;
       let opened = 0;
       try {
         opened = opts.onLine(line);
@@ -127,7 +133,7 @@ export function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<
         console.warn('[cli-runtime] stream line handling failed:', err);
         return;
       }
-      if (opened <= 0 || opts.maxToolCalls === undefined || toolCapExceeded !== undefined) return;
+      if (opened <= 0 || opts.maxToolCalls === undefined) return;
       toolCalls += opened;
       if (toolCalls > opts.maxToolCalls) {
         toolCapExceeded = opts.maxToolCalls;

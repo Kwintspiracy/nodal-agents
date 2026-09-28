@@ -166,4 +166,83 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
     expect(run.effectHappened).toBe(true);
     expect(run.linesSeen.some((l) => l.includes('"tool_result"'))).toBe(true);
   }, 30_000);
+
+  // Revue Codex de #568, passe 2 (P1) : le kill est asynchrone, et la boucle
+  // de lecture continuait sur les lignes déjà reçues. Un même paquet stdout
+  // (l'ouverture du 51e appel, son résultat, la fin du tour), ou des données
+  // arrivées pendant le taskkill Windows, étaient encore lus et remis à
+  // l'appelant, résultat d'outil compris. Dès le cap, plus AUCUNE ligne n'est
+  // consommée.
+  async function runOnePacket(
+    packet: string[],
+    onLine: (line: string) => number,
+  ): Promise<{ toolCapExceeded?: number; linesSeen: string[] }> {
+    const script = join(dir, 'fake-cli-packet.cjs');
+    await writeFile(
+      script,
+      [
+        // UNE seule écriture : le runner reçoit tout le paquet d'un coup.
+        `process.stdout.write(${JSON.stringify(packet.join('\n') + '\n')});`,
+        'setInterval(() => {}, 1000);',
+      ].join('\n'),
+    );
+    const linesSeen: string[] = [];
+    const outcome = await spawnCliTurn({
+      argv: [process.execPath, script],
+      env: process.env,
+      cwd: dir,
+      stdin: '',
+      timeoutMs: 60_000,
+      maxToolCalls: BUDGET,
+      onLine: (line) => {
+        linesSeen.push(line);
+        return onLine(line);
+      },
+      finish: (o) => o,
+    });
+    return {
+      ...(outcome.toolCapExceeded !== undefined
+        ? { toolCapExceeded: outcome.toolCapExceeded }
+        : {}),
+      linesSeen,
+    };
+  }
+
+  it('Codex, un seul paquet : rien n est lu après l ouverture du 51e appel, ni son résultat ni la fin du tour', async () => {
+    const ids = Array.from({ length: BUDGET + 1 }, (_, i) => `item_${i}`);
+    const packet = [
+      ...ids.map(codexOpenLine),
+      codexResultLine(ids[BUDGET]!),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } }),
+    ];
+    const state = newCodexParseState();
+    const events: Array<{ kind: string; toolUseId?: string }> = [];
+    const run = await runOnePacket(packet, (l) =>
+      handleCodexLine(state, l, (e) => events.push(e)) ? 1 : 0,
+    );
+
+    expect(run.toolCapExceeded).toBe(BUDGET);
+    // La dernière chose remise à l'appelant est l'ouverture du 51e appel.
+    expect(events.at(-1)).toMatchObject({ kind: 'tool_use', toolUseId: ids[BUDGET] });
+    expect(events.filter((e) => e.kind === 'tool_result')).toEqual([]);
+    expect(run.linesSeen.at(-1)).toBe(codexOpenLine(ids[BUDGET]!));
+    expect(state.sawTurnCompleted).toBe(false);
+  }, 30_000);
+
+  it('Claude, un seul paquet : rien n est lu après la ligne qui ouvre le 51e appel', async () => {
+    const ids = Array.from({ length: BUDGET + 1 }, (_, i) => `toolu_${i}`);
+    const packet = [
+      ...ids.map((id) => claudeOpenLine([id])),
+      claudeResultLine(ids[BUDGET]!),
+      JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done' }),
+    ];
+    const state = newStreamParseState();
+    const events: Array<{ kind: string; toolUseId?: string }> = [];
+    const run = await runOnePacket(packet, (l) => countToolUses(state, l, (e) => events.push(e)));
+
+    expect(run.toolCapExceeded).toBe(BUDGET);
+    expect(events.at(-1)).toMatchObject({ kind: 'tool_use', toolUseId: ids[BUDGET] });
+    expect(events.filter((e) => e.kind === 'tool_result')).toEqual([]);
+    expect(state.finalResult).toBeNull();
+  }, 30_000);
 });
