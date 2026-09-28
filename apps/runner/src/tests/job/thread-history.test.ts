@@ -96,6 +96,8 @@ async function insertCompletedJob(opts: {
    *  whose reply reached the user long after the message arrived. */
   completedMinutesAgo?: number;
   status?: 'completed' | 'failed';
+  /** Provenance of `result`; defaults to what the runner writes (see below). */
+  resultKind?: 'prose' | 'relay' | null;
   /** Optional `messages` JSONB — defaults to `[]`. Used to exercise the
    * fallback chain in `extractAssistantReply` (tool-call extraction). */
   messages?: unknown;
@@ -119,6 +121,12 @@ async function insertCompletedJob(opts: {
       chatId: opts.chatId,
       status: opts.status ?? 'completed',
       result: opts.result,
+      // Ce que le runner écrit en vrai (#562) : un job TERMINÉ dont le résultat
+      // vient de l'agent est marqué `prose` (completeJob) ; un job ÉCHOUÉ garde
+      // l'explication de failJob sans marque.
+      resultKind:
+        opts.resultKind ??
+        ((opts.status ?? 'completed') === 'completed' && opts.result ? 'prose' : null),
       messages: (opts.messages ?? []) as never,
       createdAt,
       conversationId:
@@ -222,12 +230,16 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
     // `failed` (the generation couldn't finish) but DELIVERED the reply the user
     // saw and replied to ("Il est lancé"). It MUST be in the next turn's history,
     // or the agent has amnesia about what it just asked.
+    // What the user saw is what the agent SENT in its own turn (#562): a failed
+    // job's `result` is failJob's explanation, unmarked, never read as a reply.
+    const asked = 'Workflow ready. ComfyUI is not running — launch it and tell me when it is.';
     await insertCompletedJob({
       chatId: '777',
       task: 'mix the photo with my redhead and generate',
-      result: 'Workflow ready. ComfyUI is not running — launch it and tell me when it is.',
+      result: asked,
       status: 'failed',
       minutesAgo: 3,
+      messages: tgReply('mix the photo with my redhead and generate', asked),
     });
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
@@ -1043,15 +1055,25 @@ function assistantTexts(messages: ModelMessage[]): string[] {
     .filter((m) => m.role === 'assistant')
     .map((m) => m.text);
 }
-/** Les messages attribués au runner : rôle utilisateur, marqués `[système]`. */
-function runnerRecords(messages: ModelMessage[]): string[] {
-  return summarize(messages)
-    .filter((m) => m.role === 'user' && m.text.startsWith('[système]'))
-    .map((m) => m.text);
+/**
+ * Les relevés du runner, lus par leur STRUCTURE (`providerOptions.nodal.
+ * runnerRecord`), jamais par un préfixe de texte (revue Codex de #576, P1 b).
+ */
+function recordMessages(messages: ModelMessage[]): Array<{ content: unknown; entries: string[] }> {
+  const out: Array<{ content: unknown; entries: string[] }> = [];
+  for (const m of messages) {
+    const entries = (m as { providerOptions?: { nodal?: { runnerRecord?: string[] } } })
+      .providerOptions?.nodal?.runnerRecord;
+    if (m.role === 'user' && Array.isArray(entries)) out.push({ content: m.content, entries });
+  }
+  return out;
 }
-/** Les lignes de ces relevés, une par entrée. */
+function runnerRecords(messages: ModelMessage[]): string[] {
+  return recordMessages(messages).map((r) => r.entries.join('\n'));
+}
+/** Les entrées de ces relevés. */
 function recordLines(messages: ModelMessage[]): string[] {
-  return runnerRecords(messages).flatMap((r) => r.split('\n'));
+  return recordMessages(messages).flatMap((r) => r.entries);
 }
 
 describe('loadThreadHistory — runner-written lines are attributed to the runner (#562) @cap:reprendre-conversation/moteur', () => {
@@ -1174,5 +1196,40 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
     });
     expect(assistantTexts(history)).toEqual(['Bonjour !']);
     expect(runnerRecords(history)).toEqual([]);
+  });
+
+  it('what the model reads of a record is the runner mark and the entries, no runner prose (#576, P2 c)', async () => {
+    await seedDelegatingTurn('telegram', 'minimal-chat');
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('minimal-chat', 'telegram'),
+      channel: 'telegram',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+    const records = recordMessages(history);
+    expect(records).toHaveLength(1);
+    expect(records[0]!.content).toBe(['[système]', ...records[0]!.entries].join('\n'));
+  });
+
+  it('a result the runner wrote without marking it prose (a failure explanation) is the runner’s, not the agent reply', async () => {
+    // Schema doc (jobs.ts, result_kind): NULL on a failed job is an
+    // EXPLANATION written by failJob, never an answer. The agent's words are
+    // what it sent in its own turn.
+    await insertCompletedJob({
+      chatId: 'failed-null-kind',
+      task: 'génère l’image',
+      status: 'failed',
+      result: '⚠️ The task could not be completed (turn_limit) and no explanation was provided.',
+      messages: tgReply('génère l’image', 'ComfyUI ne tourne pas, lance-le et dis-moi.'),
+      minutesAgo: 3,
+    });
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('failed-null-kind', 'telegram'),
+      channel: 'telegram',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+    expect(assistantTexts(history)).toEqual(['ComfyUI ne tourne pas, lance-le et dis-moi.']);
+    expect(runnerRecords(history).join('\n')).toContain('could not be completed (turn_limit)');
   });
 });

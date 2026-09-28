@@ -25,7 +25,7 @@
 // Les parties `reasoning` (persistées par le runner, execute.ts) sont lues ici,
 // en amont.
 
-import { SENT_TEXT_KINDS } from '@nodal-agents/shared';
+import { SENT_TEXT_KINDS, runnerRecordEntries } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 // UNIQUEMENT le type, et c'est load-bearing : ce module est lu par des
 // composants `'use client'`, et une importation de VALEUR depuis
@@ -636,8 +636,12 @@ export type HistoryExchangeRole = 'user' | 'agent' | 'runner';
 
 /**
  * L'historique en échanges lisibles : qui a dit quoi, sans les résultats d'outils.
- * Un message `user` marqué `[système]` est le relevé du runner (thread-history.ts,
- * #562) : ni la personne ni l'agent ne l'ont écrit, l'écran le dit.
+ *
+ * Le relevé du runner (thread-history.ts, #562) se reconnaît à sa STRUCTURE
+ * (`runnerRecordEntries`), jamais à son texte : un message de la personne qui
+ * commence par « [système] » reste le sien (revue Codex de #576). Il est rendu
+ * depuis ses entrées, sans la marque destinée au modèle ; le libellé qui le
+ * signe vit dans l'écran (HistoryGroup), pas dans le runner (invariant #2).
  */
 function exchangesOf(
   messages: readonly unknown[],
@@ -646,12 +650,13 @@ function exchangesOf(
   for (const raw of messages) {
     const m = raw as { role?: unknown; content?: unknown };
     if (m.role !== 'user' && m.role !== 'assistant') continue;
-    const text = textOf(m.content).trim();
-    if (text === '') continue;
-    if (m.role === 'user' && text.startsWith(RUNNER_NOTE_PREFIX)) {
-      out.push({ role: 'runner', text: text.slice(RUNNER_NOTE_PREFIX.length).trim() });
+    const entries = runnerRecordEntries(raw);
+    if (entries !== null) {
+      if (entries.length > 0) out.push({ role: 'runner', text: entries.join('\n') });
       continue;
     }
+    const text = textOf(m.content).trim();
+    if (text === '') continue;
     out.push({ role: m.role === 'user' ? 'user' : 'agent', text });
   }
   return out;

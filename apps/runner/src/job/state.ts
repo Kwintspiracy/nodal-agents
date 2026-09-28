@@ -557,11 +557,20 @@ export async function failJob(
   // (a failed parent that delegated) → a generic error-code notice.
   if (landed) {
     let explanation = toDbSafeString(userMessage?.trim() ?? '');
-    if (!explanation) explanation = await compileChildResults(db, jobId);
+    // La compilation des enfants est le texte d'AUTRES jobs : elle se dit
+    // `relay`, comme dans fillResultFromChildrenIfEmpty (#562, revue Codex de
+    // #576). Sans la marque, le tour suivant du fil la rejouait comme la
+    // réponse de l'agent. Les deux autres sources restent sans marque : NULL
+    // sur un job échoué dit « explication de l'échec » (schema/jobs.ts).
+    let kind: JobResultKind | null = null;
+    if (!explanation) {
+      explanation = await compileChildResults(db, jobId);
+      if (explanation) kind = 'relay';
+    }
     if (!explanation) explanation = genericFailExplanation(errorCode);
     await db
       .update(agentJobs)
-      .set({ result: explanation, updatedAt: new Date() })
+      .set({ result: explanation, resultKind: kind, updatedAt: new Date() })
       .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
   }
 
