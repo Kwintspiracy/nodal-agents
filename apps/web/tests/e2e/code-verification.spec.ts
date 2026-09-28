@@ -422,9 +422,11 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     // passe le bord de son parent — et ça reste rouge, prouvé juste après sur
     // un champ planté exprès (décision du 29/09).
     //
-    // Même chose pour un élément TRONQUÉ exprès (overflow hidden ou clip, avec
-    // text-overflow ellipsis ou white-space nowrap) : son texte dépasse PAR
-    // CONSTRUCTION, et l'ellipse est ce que l'écran veut montrer. La mesure du
+    // Même chose pour un élément TRONQUÉ exprès (overflow hidden ou clip, AVEC
+    // text-overflow ellipsis) : son texte dépasse PAR CONSTRUCTION, et
+    // l'ellipse est ce que l'écran veut montrer. Sans ellipse, une coupe nette
+    // hache le texte sans le dire : ce n'est pas une troncature voulue, elle
+    // reste mesurée par son défilement (relecture de #596). La mesure du
     // 28/09 sur main (40e06fbb), une fois le vrai débordement parti, ne nommait
     // plus que « span 296>243 (span.block.truncate.rounded-md.bg-hover) », le
     // chemin du dossier en `truncate`. Sa BOÎTE, elle, doit tenir dans son
@@ -442,7 +444,7 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
       const tronque = (e: Element): boolean => {
         const st = getComputedStyle(e);
         const masque = st.overflowX === 'hidden' || st.overflowX === 'clip';
-        return masque && (st.textOverflow === 'ellipsis' || st.whiteSpace === 'nowrap');
+        return masque && st.textOverflow === 'ellipsis';
       };
       const voir = (el: Element): void => {
         const champ = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
@@ -458,6 +460,10 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
               `${nom(el)} box ends ${Math.round(droite - bordDroit)}px past ${nom(parent)}`,
             );
           }
+          // Seul le défilement de CET élément est pardonné, pas ce qu'il
+          // contient : un champ qui déborderait dans un conteneur tronqué est
+          // encore mesuré (relecture de #596).
+          for (const enfant of el.children) voir(enfant);
           return;
         }
         if (el.scrollWidth - el.clientWidth > 1) {
