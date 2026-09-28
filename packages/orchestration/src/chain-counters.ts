@@ -300,6 +300,23 @@ export const CANCEL_UNDO_INTENT_SCAN_CHARS = 200;
 export const VERIFY_BEFORE_ASSERT_NUDGE =
   'Runtime notice: the user asked to cancel/undo something. Verify actual platform state with your READ tools (list_schedules, list_conversations, ...) BEFORE asserting what exists or what was done — your own memory of past actions is not a source of truth. Then act on what you find and report precisely what remains.';
 
+/**
+ * The per-turn tool-call budget of invariant #8, applied to a turn as a whole
+ * (#564). Throws {@link ToolCallLimitExceededError} when the model emitted more
+ * calls in one turn than `limits.maxToolCallsPerTurn`. Every loop that runs the
+ * tool calls of a model turn calls it before running any: the job loop (through
+ * `ChainCounters.admitTurn`) and the reflection / curator passes. Incident
+ * 2026-09-28: a 307-call turn was executed call by call up to the 50th.
+ */
+export function assertTurnToolCallBudget(
+  toolCallCount: number,
+  limits: Pick<ChainLimits, 'maxToolCallsPerTurn'> = DEFAULT_LIMITS,
+): void {
+  if (toolCallCount > limits.maxToolCallsPerTurn) {
+    throw new ToolCallLimitExceededError(toolCallCount, limits.maxToolCallsPerTurn);
+  }
+}
+
 // ─── ChainCounters ────────────────────────────────────────────────────────────
 
 /**
@@ -308,7 +325,7 @@ export const VERIFY_BEFORE_ASSERT_NUDGE =
  * Usage:
  *   const counters = new ChainCounters();
  *   counters.bumpChain();          // call when a new self-chain starts
- *   counters.bumpToolCall();       // call per tool_use in a turn
+ *   counters.admitTurn(n);         // call per turn, before any of its n tool calls runs
  *   counters.bumpDelegationDepth() // call when descending into a child job
  *
  * Approval semantics:
@@ -363,24 +380,15 @@ export class ChainCounters {
   }
 
   /**
-   * Called once per tool_use in a turn.
-   * Throws ToolCallLimitExceededError if max tool calls/turn reached.
+   * Called once per turn, with the number of tool calls the model emitted,
+   * BEFORE any of them runs (#564). A turn over the per-turn budget is refused
+   * whole: its size is known the moment the response arrives, so running its
+   * first N calls would be running a degenerate turn. See
+   * {@link assertTurnToolCallBudget}.
    */
-  bumpToolCall(): void {
-    this._toolCallsThisTurn += 1;
-    if (this._toolCallsThisTurn > this.limits.maxToolCallsPerTurn) {
-      throw new ToolCallLimitExceededError(
-        this._toolCallsThisTurn,
-        this.limits.maxToolCallsPerTurn,
-      );
-    }
-  }
-
-  /**
-   * Reset per-turn tool call counter (call at the start of each new turn).
-   */
-  resetTurnToolCalls(): void {
-    this._toolCallsThisTurn = 0;
+  admitTurn(toolCallCount: number): void {
+    this._toolCallsThisTurn = toolCallCount;
+    assertTurnToolCallBudget(toolCallCount, this.limits);
   }
 
   /**

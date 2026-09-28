@@ -1,7 +1,7 @@
 // execute.test.ts — full E2E job loop with mocked LLM, asserts each transition
 // Tests:
 //   - pending → processing → completed on return_result
-//   - anti-loop: 51 tool_use blocks → tool_call_limit_exceeded
+//   - anti-loop: see 'a turn over the per-turn tool-call budget' (#564)
 //   - tool whitelist violation → whitelist_violation:tool_name
 //   - awaiting_approval does NOT bump chain_count
 
@@ -3131,38 +3131,6 @@ describe('executeJob', () => {
     expect(JSON.stringify(capturedPrompts[2])).toContain('TURN2-REASON');
   });
 
-  it('anti-loop: 51 tool_use blocks → tool_call_limit_exceeded', async () => {
-    const job = await createTestJob(db, seed);
-
-    // Build 51 tool calls, ALTERNATING between two always-on whitelisted
-    // tools so no single tool ever runs 24+ in a row — otherwise Guard 1f
-    // (S1 same-tool streak, see chain-counters.ts) would fail the job first
-    // and mask the per-turn tool_call_limit_exceeded cap this test targets.
-    const manyToolCalls = Array.from({ length: 51 }, (_, i) => ({
-      toolCallId: `tc-${i}`,
-      toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
-      args: i % 2 === 0 ? { fact: `fact ${i}`, category: 'context' } : { query: `fact ${i}` },
-    }));
-
-    // LLM returns 51 tool calls, then text (never reached due to limit)
-    const llmClient = makeMockLlmClient([{ toolCalls: manyToolCalls }, { text: 'done' }]);
-
-    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error).toBe('tool_call_limit_exceeded');
-    }
-
-    // Verify DB row
-    const rows = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, job.id));
-
-    expect(rows[0]?.status).toBe('failed');
-    expect(rows[0]?.error).toBe('tool_call_limit_exceeded');
-  });
-
   it('tool whitelist: calling unregistered tool fails with whitelist_violation', async () => {
     const job = await createTestJob(db, seed);
 
@@ -4076,6 +4044,172 @@ describe('executeJob', () => {
 // whitelist regardless of skill assignments. Real side-effect: an agent_memory
 // row in DB. We assert that row exists (approve path) or is absent (reject path)
 // to prove real execution, not just a marker swap.
+
+// ─── #564 : un tour au-delà du budget d'appels est refusé ENTIER ─────────────
+//
+// Incident 2026-09-28 : un tour de 307 appels (154 telegram_send_message, 150
+// assign_researcher) a été exécuté appel par appel jusqu'au 50e. Le budget par
+// tour (invariant #8) se juge sur la taille du tour, connue dès la réponse :
+// au-delà, AUCUN appel ne tourne, sur les deux chemins d'exécution (pré-passe
+// parallèle des lectures, boucle sérielle) et avec une délégation dans le lot.
+
+describe('a turn over the per-turn tool-call budget runs none of its calls (#564) @cap:suivre-execution/moteur', () => {
+  const CODE_PREFIX = 'tool_call_limit_exceeded:anthropic/mock (turn 1, ';
+
+  async function effectsOf(jobId: string, factPrefix: string) {
+    const calls = await db
+      .select({ toolName: toolCalls.toolName })
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, jobId));
+    const memories = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(eq(agentMemory.agentId, seed.agentId));
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const children = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, jobId));
+    return {
+      toolNames: calls.map((c) => c.toolName),
+      facts: memories.map((m) => m.fact).filter((f) => f.startsWith(factPrefix)),
+      job: row!,
+      children,
+    };
+  }
+
+  /** `n` calls alternating a write (save_memory) and a read (query_memory). */
+  function mixedCalls(n: number, factPrefix: string) {
+    return Array.from({ length: n }, (_, i) => ({
+      toolCallId: `${factPrefix}-${i}`,
+      toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
+      args:
+        i % 2 === 0
+          ? { fact: `${factPrefix} fact ${i}`, category: 'context' }
+          : { query: `${factPrefix} fact ${i}` },
+    }));
+  }
+
+  it('51 side-effect and read calls (serial path): nothing written, job failed with the code', async () => {
+    const job = await createTestJob(db, seed);
+    const prefix = `over-serial-${Date.now()}`;
+    const llmClient = makeMockLlmClient([{ toolCalls: mixedCalls(51, prefix) }, { text: 'done' }]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    const code = `${CODE_PREFIX}51 tool calls over the limit of 50 per turn, none executed)`;
+    expect(result).toMatchObject({ status: 'failed', error: code });
+    const after = await effectsOf(job.id, prefix);
+    expect(after.toolNames).toEqual([]);
+    expect(after.facts).toEqual([]);
+    expect(after.job.status).toBe('failed');
+    expect(after.job.error).toBe(code);
+    // The refused reply is not in the transcript: no tool_use left without its
+    // result, the transcript ends on what acted (the task).
+    expect(JSON.stringify(after.job.messages)).not.toContain(`${prefix}-0`);
+  });
+
+  it('51 reads (parallel pre-pass path): none of them runs', async () => {
+    const job = await createTestJob(db, seed);
+    const prefix = `over-reads-${Date.now()}`;
+    const reads = Array.from({ length: 51 }, (_, i) => ({
+      toolCallId: `${prefix}-${i}`,
+      toolName: 'query_memory',
+      args: { query: `${prefix} ${i}` },
+    }));
+    const llmClient = makeMockLlmClient([{ toolCalls: reads }, { text: 'done' }]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('failed');
+    const after = await effectsOf(job.id, prefix);
+    expect(after.toolNames).toEqual([]);
+    expect(after.job.error).toBe(
+      `${CODE_PREFIX}51 tool calls over the limit of 50 per turn, none executed)`,
+    );
+  });
+
+  it('the incident shape, 307 calls with a delegation among them: no child job, nothing written', async () => {
+    const ts = Date.now();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Oversized Orchestrator',
+        slug: `over-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    const childSlug = `over-child-${ts}`;
+    const [child] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Oversized Child',
+        slug: childSlug,
+        personality: 'child',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    await db.insert(agentAssignments).values({
+      orchestratorId: orch!.id,
+      subAgentId: child!.id,
+      entityId: seed.entityId,
+    });
+    const assignTool = `assign_${childSlug.replace(/-/g, '_')}`;
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch!.id,
+        channel: 'api',
+        task: 'research, then report',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    const prefix = `over-assign-${ts}`;
+    const calls = [
+      { toolCallId: `${prefix}-assign`, toolName: assignTool, args: { task: 'research it' } },
+      ...mixedCalls(305, prefix),
+      { toolCallId: `${prefix}-rr`, toolName: 'return_result', args: { status: 'success' } },
+    ];
+    const llmClient = makeMockLlmClient([{ toolCalls: calls }, { text: 'done' }]);
+
+    const result = await executeJob(job!.id as JobId, makeDeps(llmClient), testEnv);
+
+    const code = `${CODE_PREFIX}307 tool calls over the limit of 50 per turn, none executed)`;
+    expect(result).toMatchObject({ status: 'failed', error: code });
+    const after = await effectsOf(job!.id, prefix);
+    expect(after.children).toEqual([]);
+    expect(after.toolNames).toEqual([]);
+    expect(after.facts).toEqual([]);
+    expect(after.job.error).toBe(code);
+  });
+
+  it('a turn of exactly 50 calls is admitted and runs', async () => {
+    const job = await createTestJob(db, seed);
+    const prefix = `at-budget-${Date.now()}`;
+    const llmClient = makeMockLlmClient([{ toolCalls: mixedCalls(50, prefix) }, { text: 'done' }]);
+
+    await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    const after = await effectsOf(job.id, prefix);
+    expect(after.toolNames).toHaveLength(50);
+    expect(after.facts).toHaveLength(25);
+    expect(after.job.error ?? '').not.toContain('tool_call_limit_exceeded');
+  });
+});
 
 describe('executeJob — approval gate (Bugs A, B, C)', () => {
   // Fresh DB per suite so approval rules and memory rows don't bleed across tests.
