@@ -3193,16 +3193,20 @@ async function runJobTracked(
   const stampFailedDelegations = async (): Promise<void> => {
     if (failedDelegationNames(delegationOutcomes).length === 0) return;
     const [row] = await db
-      .select({ result: agentJobs.result })
+      .select({ result: agentJobs.result, runnerNotes: agentJobs.runnerNotes })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId as string))
       .limit(1);
     const actuel = row?.result ?? '';
     const avec = withFailedDelegationNotice(actuel);
     if (avec === actuel) return;
+    // La ligne est du HARNAIS : elle est dite comme telle, à part du texte de
+    // l'agent (#562). Les écrans la lisent dans `result` (#108) ; la relecture
+    // du fil lit `runner_notes` pour ne pas la mettre dans la bouche de
+    // l'agent au tour suivant.
     await db
       .update(agentJobs)
-      .set({ result: avec })
+      .set({ result: avec, runnerNotes: [...(row?.runnerNotes ?? []), failedDelegationNotice()] })
       .where(eq(agentJobs.id, jobId as string));
 
     // La LIVRAISON de cette ligne, elle, est posée dans la transaction

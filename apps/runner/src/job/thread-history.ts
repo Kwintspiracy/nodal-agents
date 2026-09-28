@@ -194,6 +194,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       completedAt: agentJobs.completedAt,
       toolsUsed: agentJobs.toolsUsed,
       resultKind: agentJobs.resultKind,
+      runnerNotes: agentJobs.runnerNotes,
     })
     .from(agentJobs)
     .where(
@@ -261,16 +262,21 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     // son enfant ne démarre (#562). La réponse de l'agent est alors ce qu'il a
     // dit dans son propre tour ; le résultat part dans le relevé du runner.
     const agentsOwnResult = row.resultKind === 'prose';
+    // Les lignes que le runner a ajoutées au résultat (`runner_notes`,
+    // l'avis d'échec de délégation) sont retirées des mots de l'agent et
+    // rangées dans le relevé : même mécanisme que le reste de #562.
+    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
+    const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
     const assistant = extractAssistantReply({
       task: row.task,
-      result: agentsOwnResult ? row.result : null,
+      result: agentsOwnResult ? agentsWords : null,
       messages: row.messages,
       channel: row.channel,
     });
     // Un texte que l'agent a lui-même envoyé n'est pas redit par le relevé.
-    const unmarked = agentsOwnResult ? '' : (row.result ?? '').trim();
+    const unmarked = agentsOwnResult ? '' : (agentsWords ?? '').trim();
     const runnerResult = unmarked === (assistant ?? '').trim() ? '' : unmarked;
-    if (assistant === null && runnerResult === '') continue;
+    if (assistant === null && runnerResult === '' && runnerNotes.length === 0) continue;
 
     // Action ledger (see file header) — only when this job actually used a
     // STATE-CHANGING tool. Lists the job's FULL tools_used (not just the
@@ -293,6 +299,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       ...delegatedLedgerLines,
       ...inlineLedgerLines,
       ...(runnerResult !== '' ? [truncate(runnerResult)] : []),
+      ...runnerNotes,
     ];
     // Ce que le runner a écrit de ce tour vient APRÈS lui, dans un message à
     // part dont la provenance est structurelle — jamais dans une part
@@ -361,6 +368,21 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   }
 
   return blocks.flatMap((b) => b);
+}
+
+/**
+ * Le résultat sans les lignes que le runner y a ajoutées. Elles y sont posées
+ * par `stampFailedDelegations` à la fin, séparées par une ligne vide, et
+ * `runner_notes` dit exactement lesquelles : aucune supposition sur le texte.
+ */
+function withoutRunnerNotes(result: string | null, notes: readonly string[]): string | null {
+  if (result === null) return null;
+  let text = result;
+  for (const note of [...notes].reverse()) {
+    if (text === note) text = '';
+    else if (text.endsWith(`\n\n${note}`)) text = text.slice(0, -(note.length + 2));
+  }
+  return text;
 }
 
 /**
