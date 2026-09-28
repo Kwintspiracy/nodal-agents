@@ -4251,6 +4251,141 @@ describe('the unavailable-tool budget counts turns, not calls (#560) @cap:assign
       .where(eq(agentMemory.fact, fact));
     expect(saved).toEqual([]);
   });
+
+  // Revue Codex de #573 : le budget vivait en mémoire du processus, remis à
+  // zéro à chaque exécution. Une suspension (approbation, délégation) rendait
+  // au modèle ses trois chances : il pouvait répéter l'erreur sans fin. Le
+  // budget est celui du JOB, relu dans sa transcription à la reprise.
+
+  /** Une réponse que le SDK refuse en entier : l'outil appelé n'est pas dans la liste. */
+  const sdkRejects = (name = 'gmail_send') => ({
+    beforeRespond: async () => {
+      throw new Error(
+        `Model tried to call unavailable tool '${name}'. Available tools: save_memory.`,
+      );
+    },
+  });
+
+  it('the budget survives a suspension: after resume, the next unavailable turn fails and its valid call never runs', async () => {
+    await db.insert(approvalRules).values({
+      entityId: seed.entityId,
+      agentId: null,
+      toolName: 'save_memory',
+      action: 'require_approval',
+    });
+    try {
+      const job = await createTestJob(db, seed);
+      const gated = `gated-560-${Date.now()}`;
+      const after = `after-resume-560-${Date.now()}`;
+      const llmClient = makeMockLlmClient([
+        // Chance 1: the SDK refuses the whole turn.
+        sdkRejects(),
+        // Chances 2 and 3: unavailable calls answered by their errors.
+        { toolCalls: [bad('r2-a'), bad('r2-b')] },
+        { toolCalls: [bad('r3-a')] },
+        // A gated call: the job suspends for approval.
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r4-gated',
+              toolName: 'save_memory',
+              args: { fact: gated, category: 'context', purpose: 'Garder ce fait.' },
+            },
+          ],
+        },
+        // After resume: the mistake again, next to a valid call.
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r5-ok',
+              toolName: 'save_memory',
+              args: { fact: after, category: 'context' },
+            },
+            bad('r5-a'),
+          ],
+        },
+        finish,
+      ]);
+
+      const first = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(first.status).toBe('awaiting_approval');
+
+      // The person approves; the rule goes, so a save_memory that ran after
+      // the resume would write its row un-gated.
+      const [pending] = await db
+        .select()
+        .from(approvalRequests)
+        .where(and(eq(approvalRequests.jobId, job.id), eq(approvalRequests.status, 'pending')));
+      await db
+        .update(approvalRequests)
+        .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
+        .where(eq(approvalRequests.id, pending!.id));
+      await db.delete(approvalRules).where(eq(approvalRules.entityId, seed.entityId));
+      await db
+        .update(agentJobs)
+        .set({ status: 'pending', updatedAt: new Date() })
+        .where(eq(agentJobs.id, job.id));
+
+      const resumed = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+      expect(resumed).toMatchObject({ status: 'failed', error: 'whitelist_violation:gmail_send' });
+      const facts = async (fact: string) =>
+        db.select({ fact: agentMemory.fact }).from(agentMemory).where(eq(agentMemory.fact, fact));
+      // The approved call ran on resume: the resume itself worked.
+      expect(await facts(gated)).toHaveLength(1);
+      // The turn after the budget was refused whole: its valid call never ran.
+      expect(await facts(after)).toEqual([]);
+      const row = await rowOf(job.id);
+      expect(row.status).toBe('failed');
+      expect(unavailableResults(row.messages)).toEqual(['r2-a', 'r2-b', 'r3-a']);
+    } finally {
+      await db.delete(approvalRules).where(eq(approvalRules.entityId, seed.entityId));
+    }
+  });
+
+  it('SDK rejections and unavailable calls spend the same budget: two then one, the fourth fails', async () => {
+    const job = await createTestJob(db, seed);
+    const fact = `cross-560-${Date.now()}`;
+    const llmClient = makeMockLlmClient([
+      sdkRejects(),
+      sdkRejects('definitely_not_a_tool'),
+      { toolCalls: [bad('x3-a'), bad('x3-b')] },
+      {
+        toolCalls: [
+          { toolCallId: 'x4-ok', toolName: 'save_memory', args: { fact, category: 'context' } },
+          bad('x4-a'),
+        ],
+      },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result).toMatchObject({ status: 'failed', error: 'whitelist_violation:gmail_send' });
+    const saved = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, fact));
+    expect(saved).toEqual([]);
+  });
+
+  it('unavailable calls then an SDK rejection: the rejection past the budget fails the job', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [bad('y1-a')] },
+      { toolCalls: [bad('y2-a'), bad('y2-b', 'telegram_send_message')] },
+      sdkRejects(),
+      sdkRejects('definitely_not_a_tool'),
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: 'whitelist_violation:definitely_not_a_tool',
+    });
+  });
 });
 
 describe('executeJob — approval gate (Bugs A, B, C)', () => {
