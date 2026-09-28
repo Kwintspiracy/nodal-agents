@@ -53,6 +53,7 @@ import {
   LLMTimeoutError,
   LLMCallCancelledError,
   LLMOutputLimitError,
+  reportedUsage,
   MessageStructureError,
   AllProvidersFailedError,
   isContextOverflowError,
@@ -1656,6 +1657,15 @@ async function runJobTracked(
   // the persisted column so resumes add to the running total. Undefined stays
   // undefined (providers that don't report cost never accumulate here).
   let totalCostUsd = job.totalCostUsd ?? 0;
+  // Un usage inconnu ne devient jamais un nombre (revue Codex de #571, passe
+  // 3). Dès qu'un appel du job n'a pas rapporté un compte, le TOTAL de ce
+  // compte est inconnu : la ligne du job porte null, jamais une somme partielle
+  // présentée comme complète. Les gardes de budget, elles, continuent sur la
+  // part connue (une borne basse). Amorcé depuis la ligne : ces colonnes valent
+  // 0 par défaut, et seul ce chemin y écrit null.
+  let inputTokensUnknown = job.inputTokens === null || job.effectiveInputTokens === null;
+  let outputTokensUnknown = job.outputTokens === null;
+  let costUnknown = job.totalCostUsd === null;
   // Last non-empty upstream provider name reported by OpenRouter
   // (providerMetadata.openrouter.provider). Updated on every call that carries
   // the field; null when the provider has never reported it this run.
@@ -1679,18 +1689,18 @@ async function runJobTracked(
   const dureeCumuleeMs = (): number => dejaCompteMs + (Date.now() - startedAt);
 
   const runStats = (): {
-    inputTokens: number;
-    outputTokens: number;
-    effectiveInputTokens: number;
-    totalCostUsd: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    effectiveInputTokens: number | null;
+    totalCostUsd: number | null;
     servedProvider: string | null;
     turn: number;
     totalDurationMs: number;
   } => ({
-    inputTokens,
-    outputTokens,
-    effectiveInputTokens,
-    totalCostUsd,
+    inputTokens: inputTokensUnknown ? null : inputTokens,
+    outputTokens: outputTokensUnknown ? null : outputTokens,
+    effectiveInputTokens: inputTokensUnknown ? null : effectiveInputTokens,
+    totalCostUsd: costUnknown ? null : totalCostUsd,
     servedProvider,
     turn,
     totalDurationMs: dureeCumuleeMs(),
@@ -3011,15 +3021,10 @@ async function runJobTracked(
       // Persist the updated messages before entering the LLM loop.
       await saveCheckpoint(db, jobId as string, {
         messages,
-        turn,
         chainCount: job.chainCount ?? 0,
         toolsUsed,
-        inputTokens,
-        outputTokens,
-        effectiveInputTokens,
-        totalCostUsd,
-        servedProvider,
-        totalDurationMs: dureeCumuleeMs(),
+        // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+        ...runStats(),
       });
 
       // Issue #370: a decision can WRITE a rule ("Approve for this project" /
@@ -3426,15 +3431,10 @@ async function runJobTracked(
     // suspend as before.
     await saveCheckpoint(db, jobId as string, {
       messages,
-      turn,
       chainCount: job.chainCount ?? 0,
       toolsUsed,
-      inputTokens,
-      outputTokens,
-      effectiveInputTokens,
-      totalCostUsd,
-      servedProvider,
-      totalDurationMs: dureeCumuleeMs(),
+      // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+      ...runStats(),
     });
     await setJobStatus(db, jobId as string, 'awaiting_approval');
 
@@ -4320,8 +4320,14 @@ async function runJobTracked(
       // Ollama sometimes omit it) — Number(undefined) is NaN, hence the
       // isFinite guard below.
       const usage = response.usage;
-      const promptT = Number(usage?.inputTokens ?? 0);
-      const completionT = Number(usage?.outputTokens ?? 0);
+      // Ce que l'appel a RAPPORTÉ, lu par la même règle que le client : un
+      // compte absent, ou un 0 qui ne peut pas être vrai, vaut null. Il compte
+      // pour 0 dans les gardes (borne basse), et rend le total du job inconnu.
+      const rapporte = reportedUsage(response);
+      if (rapporte.inputTokens === null) inputTokensUnknown = true;
+      if (rapporte.outputTokens === null) outputTokensUnknown = true;
+      const promptT = rapporte.inputTokens ?? 0;
+      const completionT = rapporte.outputTokens ?? 0;
       // Prompt-cached reads: the portion of this turn's input served from the
       // provider's cache (Anthropic cache_read, OpenRouter/DeepSeek cached_tokens).
       // The AI SDK reports `inputTokens` as the TOTAL (incl. cached) and
@@ -4372,6 +4378,14 @@ async function runJobTracked(
       // totalCostUsd stays 0 forever for those and Guard 1e never fires.
       // Derive from tokens × catalog list price instead; 0 (documented debt)
       // for a model with no catalogued price yet.
+      // Sans coût rapporté, l'estimation part des jetons : inconnus, elle
+      // l'est aussi.
+      if (
+        reportedCostUsd === undefined &&
+        (rapporte.inputTokens === null || rapporte.outputTokens === null)
+      ) {
+        costUnknown = true;
+      }
       const callCostUsd =
         reportedCostUsd ??
         estimateCallCostUsd(llmClient.config.provider, llmClient.config.model, {
@@ -5309,15 +5323,10 @@ async function runJobTracked(
               // status atomically; this complements it for observability.
               await saveCheckpoint(db, jobId as string, {
                 messages,
-                turn,
                 chainCount: job.chainCount ?? 0,
                 toolsUsed,
-                inputTokens,
-                outputTokens,
-                effectiveInputTokens,
-                totalCostUsd,
-                servedProvider,
-                totalDurationMs: dureeCumuleeMs(),
+                // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+                ...runStats(),
               });
 
               const jobShape = {
@@ -6211,15 +6220,10 @@ async function runJobTracked(
           trace('return_result_with_tasks', { taskCount: taskRows.length });
           await saveCheckpoint(db, jobId as string, {
             messages,
-            turn,
             chainCount: job.chainCount ?? 0,
             toolsUsed,
-            inputTokens,
-            outputTokens,
-            effectiveInputTokens,
-            totalCostUsd,
-            servedProvider,
-            totalDurationMs: dureeCumuleeMs(),
+            // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+            ...runStats(),
           });
           return { status: 'awaiting_tasks' };
         }
@@ -6490,15 +6494,10 @@ async function runJobTracked(
       // of CMB research when turn-10 hit Retry exhausted.
       await saveCheckpoint(db, jobId as string, {
         messages,
-        turn,
         chainCount: job.chainCount ?? 0,
         toolsUsed,
-        inputTokens,
-        outputTokens,
-        effectiveInputTokens,
-        totalCostUsd,
-        servedProvider,
-        totalDurationMs: dureeCumuleeMs(),
+        // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+        ...runStats(),
       });
     }
   } catch (err) {
@@ -6552,17 +6551,23 @@ async function runJobTracked(
     // compté avant d'écrire la ligne, sinon les jetons du run mentiraient.
     //
     // Même famille (revue Codex de #571) : un tour dont le fournisseur n'a pas
-    // rapporté les jetons de sortie (`output_usage_not_reported`). Ce nombre
-    // inconnu n'est pas 0 : la sortie et le coût du run deviennent inconnus
-    // (null sur la ligne du job), au lieu d'un total qui mentirait par défaut.
+    // rapporté les jetons de sortie (`output_usage_not_reported`). Un compte
+    // inconnu, d'entrée ou de sortie, n'est pas 0 : le total correspondant du
+    // job, et son coût estimé, deviennent inconnus (null sur la ligne).
     if (err instanceof LLMOutputLimitError) {
+      const entree = err.usage.inputTokens;
       const sortie = err.usage.outputTokens;
-      inputTokens += err.usage.inputTokens;
-      effectiveInputTokens += err.usage.inputTokens;
-      if (sortie !== null) {
-        outputTokens += sortie;
+      if (entree === null) inputTokensUnknown = true;
+      else {
+        inputTokens += entree;
+        effectiveInputTokens += entree;
+      }
+      if (sortie === null) outputTokensUnknown = true;
+      else outputTokens += sortie;
+      if (entree === null || sortie === null) costUnknown = true;
+      else {
         totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
-          inputTokens: err.usage.inputTokens,
+          inputTokens: entree,
           outputTokens: sortie,
           cachedTokens: 0,
           cacheCreationTokens: 0,
@@ -6574,14 +6579,7 @@ async function runJobTracked(
         outputTokens: sortie,
         toolCallsNotExecuted: err.toolCallCount,
       });
-      const stats = runStats();
-      await failJob(
-        db,
-        jobId as string,
-        code,
-        sortie === null ? { ...stats, outputTokens: null, totalCostUsd: null } : stats,
-        messages,
-      );
+      await failJob(db, jobId as string, code, runStats(), messages);
       return { status: 'failed', error: code };
     }
 

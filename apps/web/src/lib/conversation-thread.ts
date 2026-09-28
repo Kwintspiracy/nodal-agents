@@ -652,6 +652,8 @@ function sumTotals(jobs: readonly ThreadJob[]): FeedTotals {
     cachedTokens: 0,
     cacheCreationTokens: 0,
     costUsd: null,
+    unpricedCalls: 0,
+    unreportedTokenCalls: 0,
     llmDurationMs: 0,
     models: [],
   };
@@ -666,6 +668,8 @@ function sumTotals(jobs: readonly ThreadJob[]): FeedTotals {
     // null reste null tant qu'AUCUN job ne connaît son coût — jamais un 0 qui
     // voudrait dire « gratuit » (même règle que P2).
     if (t.costUsd !== null) totals.costUsd = (totals.costUsd ?? 0) + t.costUsd;
+    totals.unpricedCalls += t.unpricedCalls;
+    totals.unreportedTokenCalls += t.unreportedTokenCalls;
     totals.llmDurationMs += t.llmDurationMs;
     for (const m of t.models) models.add(m);
   }

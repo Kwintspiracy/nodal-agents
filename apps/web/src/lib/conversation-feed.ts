@@ -560,6 +560,10 @@ export type FeedTotals = {
   cacheCreationTokens: number;
   /** null quand AUCUN appel n'a de coût connu — jamais un 0 qui voudrait dire « gratuit ». */
   costUsd: number | null;
+  /** Appels sans coût connu : `costUsd` est alors partiel (revue Codex de #571). */
+  unpricedCalls: number;
+  /** Appels sans compte de jetons d'entrée ou de sortie : les jetons sont alors partiels. */
+  unreportedTokenCalls: number;
   llmDurationMs: number;
   models: string[];
 };
@@ -1080,10 +1084,14 @@ export function buildConversationFeed(
     cachedTokens: 0,
     cacheCreationTokens: 0,
     costUsd: null,
+    unpricedCalls: 0,
+    unreportedTokenCalls: 0,
     llmDurationMs: 0,
     models: [],
   };
   for (const call of llmCalls) {
+    if (call.inputTokens === null || call.outputTokens === null) totals.unreportedTokenCalls += 1;
+    if (call.costUsd === null) totals.unpricedCalls += 1;
     totals.inputTokens += call.inputTokens ?? 0;
     totals.outputTokens += call.outputTokens ?? 0;
     totals.cachedTokens += call.cachedTokens ?? 0;

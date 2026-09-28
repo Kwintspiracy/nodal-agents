@@ -1020,8 +1020,13 @@ function DelegationGroup({
   const tokens = totals === undefined ? 0 : totals.inputTokens + totals.outputTokens;
   const metrics = [
     durationMs !== null && durationMs > 0 ? formatMs(durationMs) : null,
-    tokens > 0 ? `${formatTokens(tokens)} tokens` : null,
-    totals && totals.costUsd !== null ? formatCost(totals.costUsd) : null,
+    // Partiel quand un appel n'a pas rapporté son compte (revue Codex de #571).
+    tokens > 0
+      ? `${formatTokens(tokens)} tokens${(totals?.unreportedTokenCalls ?? 0) > 0 ? ' · partial' : ''}`
+      : null,
+    totals && totals.costUsd !== null
+      ? `${formatCost(totals.costUsd)}${totals.unpricedCalls > 0 ? ' · partial' : ''}`
+      : null,
   ]
     .filter((x): x is string => x !== null)
     .join(' · ');

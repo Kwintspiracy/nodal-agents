@@ -13,6 +13,7 @@ import {
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
 import { modelOutputCap } from '@nodal-agents/shared';
+import { reportedUsage } from './reported-usage';
 import { withRetry } from './retry';
 import { generateWithToolChoiceFloor } from './tool-choice-floor';
 import { buildLlmCallObservation, emitLlmCall } from './observe';
@@ -305,15 +306,6 @@ export interface CreateLlmClientOptions {
 
 type GenerateTextResult = Awaited<ReturnType<NodalLlmClient['generateText']>>;
 
-function finiteOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function finiteOrZero(value: unknown): number {
-  const n = Number(value ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
 export function createLlmClient(
   config: ProviderConfig,
   opts: CreateLlmClientOptions = {},
@@ -432,7 +424,11 @@ export function createLlmClient(
     // be established is refused too, with its own code
     // (`output_usage_not_reported`), and the unknown count stays null up to the
     // caller and the llm_calls row (invariant #4).
-    const reportedOutput = finiteOrNull(result.usage?.outputTokens);
+    //
+    // What "not reported" means, including a 0 that cannot be true, is one
+    // rule shared with the runner: `reportedUsage` (pass 3).
+    const reported = reportedUsage(result);
+    const reportedOutput = reported.outputTokens;
     const cut =
       result.finishReason === 'length' || (reportedOutput !== null && reportedOutput >= statedCap);
     const refusal =
@@ -440,15 +436,27 @@ export function createLlmClient(
         ? new LLMOutputLimitError(
             config.provider,
             config.model,
-            {
-              inputTokens: finiteOrZero(result.usage?.inputTokens),
-              outputTokens: reportedOutput,
-            },
+            reported,
             (result.toolCalls ?? []).length,
             cut ? 'cap' : 'unreported',
           )
         : null;
-    observe('generateText', args, result, refusal, startedAt);
+    // The llm_calls row carries the same reading: an unknown count is null there too.
+    observe(
+      'generateText',
+      args,
+      {
+        usage: {
+          ...result.usage,
+          inputTokens: reported.inputTokens ?? undefined,
+          outputTokens: reported.outputTokens ?? undefined,
+        },
+        providerMetadata: result.providerMetadata,
+        response: result.response,
+      },
+      refusal,
+      startedAt,
+    );
     if (refusal !== null) throw refusal;
     return result;
   };

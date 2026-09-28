@@ -117,7 +117,8 @@ export default function StatusBar({
           ) : (
             <>
               <Seg onClick={() => setOpen((v) => !v)} active={open}>
-                {formatTokens(tokens)} tokens{cacheShare !== null ? ` · ${cacheShare} cached` : ''}
+                {formatTokens(tokens)} tokens{t.unreportedTokenCalls > 0 ? ' · partial' : ''}
+                {cacheShare !== null ? ` · ${cacheShare} cached` : ''}
               </Seg>
               <Seg onClick={() => setOpen((v) => !v)} active={open} strong>
                 {formatCost(t.costUsd)}

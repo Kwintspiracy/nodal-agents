@@ -37,12 +37,19 @@ type Finish = 'length' | 'tool-calls' | 'stop';
 const { setFinish, currentModel } = vi.hoisted(() => {
   let finish: 'length' | 'tool-calls' | 'stop' = 'tool-calls';
   let output: number | undefined = 1_200;
+  let input: number | undefined = 900;
   let model: unknown = null;
   return {
     /** The reply's finish reason and how many output tokens it billed. */
-    setFinish: (f: 'length' | 'tool-calls' | 'stop', out: number | undefined) => {
+    setFinish: (
+      f: 'length' | 'tool-calls' | 'stop',
+      out: number | undefined,
+      /** null: the provider reports no input count. */
+      inp: number | null = 900,
+    ) => {
       finish = f;
       output = out;
+      input = inp ?? undefined;
     },
     currentModel: {
       get finish() {
@@ -50,6 +57,9 @@ const { setFinish, currentModel } = vi.hoisted(() => {
       },
       get output() {
         return output;
+      },
+      get input() {
+        return input;
       },
       get model() {
         return model;
@@ -89,7 +99,11 @@ const QUESTION = 'placeholder';
 type StreamPart = Record<string, unknown>;
 
 /** The incident's shape: a memory write, then a placeholder question. */
-function turnParts(finish: Finish, output: number | undefined): StreamPart[] {
+function turnParts(
+  finish: Finish,
+  output: number | undefined,
+  input: number | undefined,
+): StreamPart[] {
   return [
     { type: 'stream-start', warnings: [] },
     { type: 'text-start', id: 't' },
@@ -111,7 +125,7 @@ function turnParts(finish: Finish, output: number | undefined): StreamPart[] {
       type: 'finish',
       finishReason: { unified: finish, raw: finish },
       usage: {
-        inputTokens: { total: 900, noCache: 900, cacheRead: undefined, cacheWrite: undefined },
+        inputTokens: { total: input, noCache: input, cacheRead: undefined, cacheWrite: undefined },
         outputTokens: { total: output, text: output, reasoning: undefined },
       },
     },
@@ -124,7 +138,7 @@ function mockModel(): MockLanguageModelV3 {
     modelId: PROVIDER_CONFIG.model,
     doStream: async () => ({
       stream: simulateReadableStream({
-        chunks: turnParts(currentModel.finish, currentModel.output),
+        chunks: turnParts(currentModel.finish, currentModel.output, currentModel.input),
       }) as never,
     }),
   });
@@ -364,5 +378,63 @@ describe('a job turn whose output tokens are not reported does not act @cap:suiv
         '(turn 1, output tokens not reported, 2 tool calls not executed)',
     );
     expect(await jobTotals(jobId)).toEqual({ outputTokens: null, totalCostUsd: null });
+  });
+});
+
+// Revue Codex de #571, passe 3 : un usage entièrement absent faisait encore
+// ajouter 0 jeton d'ENTRÉE aux totaux du job. Et un tour accepté dont l'entrée
+// n'est pas rapportée rendait le total d'entrée « complet » alors qu'il ne
+// l'est plus. Un usage inconnu ne devient jamais un nombre, sur la ligne du job.
+describe('the job row never turns an unknown usage into a number @cap:suivre-execution/moteur', () => {
+  async function jobUsage(jobId: string) {
+    const [row] = await db
+      .select({
+        inputTokens: agentJobs.inputTokens,
+        effectiveInputTokens: agentJobs.effectiveInputTokens,
+        outputTokens: agentJobs.outputTokens,
+        totalCostUsd: agentJobs.totalCostUsd,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row!;
+  }
+
+  it('no usage at all: refused, and every count and the cost are null on the row', async () => {
+    setFinish('tool-calls', undefined, null);
+    await db.delete(agentMemory).where(eq(agentMemory.agentId, seed.agentId));
+    const jobId = await insertJob();
+
+    await executeJob(jobId as JobId, makeDeps(), testEnv);
+
+    const after = await effects(jobId);
+    expect(after.toolNames).toEqual([]);
+    expect(after.memoryFacts).toEqual([]);
+    expect(after.job.error).toBe(
+      'output_usage_not_reported:openrouter/z-ai/glm-5.3 ' +
+        '(turn 1, output tokens not reported, 2 tool calls not executed)',
+    );
+    expect(await jobUsage(jobId)).toEqual({
+      inputTokens: null,
+      effectiveInputTokens: null,
+      outputTokens: null,
+      totalCostUsd: null,
+    });
+  });
+
+  it('an accepted turn whose input is not reported: the output counts, the input total is unknown', async () => {
+    setFinish('tool-calls', 1_200, null);
+    await db.delete(agentMemory).where(eq(agentMemory.agentId, seed.agentId));
+    const jobId = await insertJob();
+
+    const outcome = await executeJob(jobId as JobId, makeDeps(), testEnv);
+
+    // The turn acted (its output was reported): it parks on its question.
+    expect(outcome.status).toBe('awaiting_approval');
+    expect((await effects(jobId)).memoryFacts).toEqual([FACT]);
+    expect(await jobUsage(jobId)).toMatchObject({
+      inputTokens: null,
+      effectiveInputTokens: null,
+      outputTokens: 1_200,
+    });
   });
 });

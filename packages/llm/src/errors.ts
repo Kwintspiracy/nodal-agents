@@ -186,8 +186,8 @@ export class LLMOutputLimitError extends Error {
   constructor(
     public readonly provider: string,
     public readonly model: string,
-    /** What the refused call billed; `outputTokens` null when not reported. */
-    public readonly usage: { inputTokens: number; outputTokens: number | null },
+    /** What the refused call reported; a count the provider did not give is null. */
+    public readonly usage: { inputTokens: number | null; outputTokens: number | null },
     /** The tool calls parsed out of the refused response, none of them executed. */
     public readonly toolCallCount: number,
     /** `cap`: the response reached the output cap. `unreported`: no output count to judge it on. */

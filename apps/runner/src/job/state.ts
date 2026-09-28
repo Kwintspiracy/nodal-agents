@@ -113,12 +113,15 @@ export async function claimJob(db: AnyDrizzleDb, jobId: string): Promise<boolean
 }
 
 interface RunStats {
-  inputTokens: number;
-  /** Null when a billed call did not report its output tokens: the total is unknown, not short. */
+  /**
+   * Null when a call of the job did not report the count: the total is
+   * unknown, not short (Codex review of #571). Same for the three below.
+   */
+  inputTokens: number | null;
   outputTokens: number | null;
   /** Cumulative effective (non-cached) input — what Guard 1a's budget measures. */
-  effectiveInputTokens?: number;
-  /** Cumulative real dollar cost billed by the provider (Guard 1e). Undefined when the provider doesn't report cost; null when a call's output is unknown. */
+  effectiveInputTokens?: number | null;
+  /** Cumulative real dollar cost billed by the provider (Guard 1e). Undefined when the provider doesn't report cost; null when a call's cost cannot be established. */
   totalCostUsd?: number | null;
   /** The upstream provider that last served an LLM call for this job (from providerMetadata.openrouter.provider). Null when not reported. */
   servedProvider?: string | null;
@@ -652,10 +655,11 @@ export async function saveCheckpoint(
     turn: number;
     chainCount: number;
     toolsUsed: string[];
-    inputTokens?: number;
-    outputTokens?: number;
-    effectiveInputTokens?: number;
-    totalCostUsd?: number;
+    /** Null: unknown, a call of the job did not report it (Codex review of #571). */
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    effectiveInputTokens?: number | null;
+    totalCostUsd?: number | null;
     servedProvider?: string | null;
     totalDurationMs?: number;
   },

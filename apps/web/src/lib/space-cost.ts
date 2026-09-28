@@ -31,6 +31,12 @@ export type SpaceCostView = {
     costUsd: number | null;
     /** Appels dont le coût est inconnu (modèle sans prix) — le total est alors partiel. */
     unpricedCalls: number;
+    /**
+     * Appels qui n'ont pas rapporté leurs jetons d'entrée ou de sortie (NULL) :
+     * les totaux de jetons sont alors partiels, jamais complétés par des 0
+     * (revue Codex de #571).
+     */
+    unreportedTokenCalls: number;
   }>;
   totals: {
     calls: number;
@@ -40,6 +46,8 @@ export type SpaceCostView = {
     cacheCreationTokens: number;
     costUsd: number | null;
     unpricedCalls: number;
+    /** Voir `byAgent[].unreportedTokenCalls`. */
+    unreportedTokenCalls: number;
     /** Temps des appels LLM, cumulé. */
     llmDurationMs: number;
     /** Du début du job à sa fin (ou maintenant s'il court). */
@@ -78,6 +86,7 @@ export const EMPTY_SPACE_COST: SpaceCostView = {
     cacheCreationTokens: 0,
     costUsd: null,
     unpricedCalls: 0,
+    unreportedTokenCalls: 0,
     llmDurationMs: 0,
     durationMs: 0,
     humanWaitMs: 0,
@@ -123,6 +132,7 @@ export function aggregateSpaceCost(input: {
     cacheCreationTokens: 0,
     costUsd: null,
     unpricedCalls: 0,
+    unreportedTokenCalls: 0,
     llmDurationMs: 0,
     durationMs: 0,
     humanWaitMs: 0,
@@ -145,6 +155,7 @@ export function aggregateSpaceCost(input: {
         cacheCreationTokens: 0,
         costUsd: null,
         unpricedCalls: 0,
+        unreportedTokenCalls: 0,
       };
       byKey.set(key, a);
     }
@@ -154,6 +165,8 @@ export function aggregateSpaceCost(input: {
     a.outputTokens += c.outputTokens ?? 0;
     a.cachedTokens += c.cachedTokens ?? 0;
     a.cacheCreationTokens += c.cacheCreationTokens ?? 0;
+    const tokensUnreported = c.inputTokens === null || c.outputTokens === null;
+    if (tokensUnreported) a.unreportedTokenCalls += 1;
     if (c.costUsd === null) a.unpricedCalls += 1;
     else a.costUsd = (a.costUsd ?? 0) + c.costUsd;
 
@@ -162,6 +175,7 @@ export function aggregateSpaceCost(input: {
     totals.outputTokens += c.outputTokens ?? 0;
     totals.cachedTokens += c.cachedTokens ?? 0;
     totals.cacheCreationTokens += c.cacheCreationTokens ?? 0;
+    if (tokensUnreported) totals.unreportedTokenCalls += 1;
     if (c.costUsd === null) totals.unpricedCalls += 1;
     else totals.costUsd = (totals.costUsd ?? 0) + c.costUsd;
     totals.llmDurationMs += c.durationMs ?? 0;

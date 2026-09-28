@@ -32,6 +32,8 @@ const totals: ConversationFeed['totals'] = {
   cachedTokens: 0,
   cacheCreationTokens: 0,
   costUsd: null,
+  unpricedCalls: 0,
+  unreportedTokenCalls: 0,
   llmDurationMs: 0,
   models: [],
 };
@@ -132,6 +134,7 @@ function data(live: boolean): SpaceConversationView {
         cacheCreationTokens: 0,
         costUsd: 0.0423,
         unpricedCalls: 0,
+        unreportedTokenCalls: 0,
         llmDurationMs: 0,
         durationMs: 41_200,
         humanWaitMs: 0,

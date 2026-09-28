@@ -489,3 +489,87 @@ describe('a turn whose output tokens are not reported is refused @cap:suivre-exe
     expect(res.toolCalls.map((c) => c.toolName)).toEqual(['save_memory', 'file_write']);
   });
 });
+
+// Revue Codex de #571, passe 3 : « un usage inconnu ne devient jamais un
+// nombre ». Deux formes de l'inconnu restaient des nombres : le 0 qu'un
+// fournisseur met à la place d'un compte manquant (Ollama : `eval_count`
+// absent → 0), et un usage entièrement absent, dont l'entrée devenait 0.
+describe('an unknown usage never becomes a number @cap:suivre-execution/moteur', () => {
+  function useModelWithUsage(input: number | undefined, output: number | undefined): void {
+    const usage = {
+      inputTokens: { total: input, noCache: input, cacheRead: undefined, cacheWrite: undefined },
+      outputTokens: { total: output, text: undefined, reasoning: undefined },
+    };
+    currentModel = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.3',
+      doGenerate: async () => ({ ...generated('tool-calls'), usage }),
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: streamedParts('tool-calls').map((p) =>
+            p.type === 'finish' ? { ...p, usage } : p,
+          ),
+        }),
+      }),
+    });
+  }
+
+  it('0 output tokens on a reply that wrote tool calls is not a count: refused as not reported', async () => {
+    useModelWithUsage(900, 0);
+    const seen: LlmCallObservation[] = [];
+
+    for (const opts of [undefined, { streamed: true }] as const) {
+      const err = await client(seen)
+        .generateText(ARGS, opts)
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(err).toBeInstanceOf(LLMOutputLimitError);
+      expect((err as LLMOutputLimitError).code).toBe('output_usage_not_reported');
+      expect((err as LLMOutputLimitError).usage).toEqual({ inputTokens: 900, outputTokens: null });
+    }
+    // The llm_calls row says "not reported" too, not 0.
+    expect(seen[0]?.usage?.outputTokens).toBeNull();
+    expect(seen[0]?.usage?.inputTokens).toBe(900);
+  });
+
+  it('no usage at all: refused, and neither count becomes 0, in the error or the row', async () => {
+    useModelWithUsage(undefined, undefined);
+    const seen: LlmCallObservation[] = [];
+
+    const err = await client(seen)
+      .generateText(ARGS)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect((err as LLMOutputLimitError).code).toBe('output_usage_not_reported');
+    expect((err as LLMOutputLimitError).usage).toEqual({ inputTokens: null, outputTokens: null });
+    expect(seen[0]?.usage?.inputTokens).toBeNull();
+    expect(seen[0]?.usage?.outputTokens).toBeNull();
+  });
+
+  it('0 input tokens is not a count either: every request sends a prompt', async () => {
+    useModelWithUsage(0, 1_200);
+    const seen: LlmCallObservation[] = [];
+
+    const res = await client(seen).generateText(ARGS);
+
+    // The turn is judged on its reported output and comes back.
+    expect(res.toolCalls.map((c) => c.toolName)).toEqual(['save_memory', 'file_write']);
+    expect(seen[0]?.usage?.inputTokens).toBeNull();
+    expect(seen[0]?.usage?.outputTokens).toBe(1_200);
+  });
+
+  it('a real count is kept as is: 1 200 out, 900 in', async () => {
+    useModelWithUsage(900, 1_200);
+    const seen: LlmCallObservation[] = [];
+
+    await client(seen).generateText(ARGS);
+
+    expect(seen[0]?.usage?.inputTokens).toBe(900);
+    expect(seen[0]?.usage?.outputTokens).toBe(1_200);
+  });
+});
