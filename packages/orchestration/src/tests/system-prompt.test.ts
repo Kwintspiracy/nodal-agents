@@ -14,8 +14,12 @@ import {
   channelAllowedConversations,
   telegramAllowedChats,
   agentMemory,
+  connectors,
+  agentConnectorAssignments,
+  mcpServers,
   eq,
 } from '@nodal-agents/db';
+import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { buildSystemPrompt } from '../system-prompt';
 import type { JobContext, ConversationContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
@@ -1532,5 +1536,185 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     const builtins = prompt.split('## Built-in capabilities')[1]?.split('\n## ')[0] ?? '';
     expect(builtins).toContain('`file_read`');
     expect(builtins).not.toContain('dashboard_publish');
+  });
+});
+
+// ─── #559, revue Codex passe 1 — la preuve générale, sur la configuration ────
+//
+// Le balayage ci-dessus ne semait AUCUNE skill assignée : le bloc « Skills
+// (load before acting) » ordonnait `run_skill_script` à tout agent qui en a
+// une, alors que l'outil n'est armé que pour une skill à scripts autorisés
+// (execute.ts §6). Ici la preuve porte sur la configuration réelle de l'agent :
+// skills avec et sans scripts, connecteurs attachés et seulement configurés,
+// serveur MCP, canal lié, délégué ou racine. Tout nom d'outil connu cité par le
+// prompt assemblé est un outil du job.
+//
+// Hors périmètre : la PERSONNALITÉ, écrite en base par le propriétaire
+// (invariant #1) — le runner ne la réécrit pas. Les personnalités semées ici
+// ne nomment aucun outil, pour que le balayage ne lise que le texte du runner.
+
+describe('buildSystemPrompt — the whole prompt names only held tools, on real configurations (#559) @cap:assigner-outils/moteur', () => {
+  const outsideOf = (prompt: string, tools: readonly string[], extra: readonly string[]) => {
+    const universe = new Set([...KNOWN_TOOL_NAME_UNIVERSE, ...extra]);
+    return [...new Set(prompt.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter(
+      (w) => universe.has(w) && !tools.includes(w),
+    );
+  };
+
+  async function seedConfigured(opts: { scriptsAuthorized: boolean }) {
+    const { entityId } = await seedContext(db);
+    const tag = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const [root] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'Cfg Root',
+        slug: `cfg-root-${tag}`,
+        personality: 'You coordinate.',
+        role: 'orchestrator',
+      })
+      .returning();
+    const [worker] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'Cfg Worker',
+        slug: `cfg-worker-${tag}`,
+        personality: 'You research.',
+        role: 'agent',
+      })
+      .returning();
+    await db
+      .insert(agentAssignments)
+      .values({ orchestratorId: root!.id, subAgentId: worker!.id, entityId });
+    // A skill assigned to BOTH, with or without its scripts authorized.
+    const [skill] = await db
+      .insert(agentSkills)
+      .values({
+        entityId,
+        name: 'Deck maker',
+        slug: `deck-maker-${tag}`,
+        description: 'Builds decks.',
+        content: 'Build decks.',
+      })
+      .returning();
+    for (const a of [root!, worker!]) {
+      await db.insert(agentSkillAssignments).values({
+        entityId,
+        agentId: a.id,
+        skillId: skill!.id,
+        scriptsAuthorized: opts.scriptsAuthorized,
+      });
+    }
+    // A connector attached to the worker, another only configured, an MCP server.
+    const [tavily] = await db
+      .insert(connectors)
+      .values({ entityId, name: 'Tavily', slug: 'tavily' })
+      .returning();
+    await db.insert(connectors).values({ entityId, name: 'Gmail', slug: 'gmail' });
+    await db
+      .insert(agentConnectorAssignments)
+      .values({ entityId, agentId: worker!.id, connectorId: tavily!.id });
+    await db
+      .insert(mcpServers)
+      .values({ entityId, name: 'Files MCP', slug: `files-mcp-${tag}`, transport: 'stdio' });
+    // The root is bound to Telegram.
+    await db.insert(channelBindings).values({
+      entityId,
+      agentId: root!.id,
+      channel: 'telegram',
+      credentials: JSON.stringify({ botToken: 'fake-token' }),
+      botIdentity: { username: 'cfg_bot' },
+      enabled: true,
+    });
+    const assignNames = (await generateAssignTools(root!.id as AgentId, db)).map((t) => t.name);
+    return { entityId, root: root!, worker: worker!, assignNames };
+  }
+
+  it.each([
+    { scriptsAuthorized: false, name: 'skill WITHOUT scripts authorized' },
+    { scriptsAuthorized: true, name: 'skill WITH scripts authorized' },
+  ])('$name: delegated worker, root on its channel, cron root', async ({ scriptsAuthorized }) => {
+    const { entityId, root, worker, assignNames } = await seedConfigured({ scriptsAuthorized });
+    const scriptTools = scriptsAuthorized ? ['run_skill_script'] : [];
+    const tavilyTools = ADAPTER_REGISTRY['tavily']!.operations.map((o) => o.slug);
+    const workerTools = [
+      ...ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+      ...scriptTools,
+      ...tavilyTools,
+    ];
+    const rootTools = [
+      ...ALWAYS_ON_TOOLS,
+      ...assignNames,
+      'create_task',
+      'list_tasks',
+      ...scriptTools,
+      ...DELIVERY_TOOL_NAMES,
+      'list_conversations',
+    ];
+
+    const cases: Array<{ label: string; agent: Agent; ctx: JobContext; tools: readonly string[] }> =
+      [
+        {
+          label: 'delegated worker, Telegram-origin run',
+          agent: makeAgent(worker.id, entityId, worker.personality),
+          ctx: { origin: 'internal', telegramChatId: '1', isDelegated: true, delegationDepth: 1 },
+          tools: workerTools,
+        },
+        {
+          label: 'root on Telegram',
+          agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+          ctx: { origin: 'telegram', telegramChatId: '1' },
+          tools: rootTools,
+        },
+        {
+          label: 'root, cron',
+          agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+          ctx: { origin: 'cron' },
+          tools: rootTools,
+        },
+        {
+          // The in-app chat: one tool, `run_task`, which is not a Nodal builtin.
+          label: 'root, chat surface',
+          agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+          ctx: { origin: 'dashboard', surface: 'chat' },
+          tools: [],
+        },
+        {
+          // A coding-CLI session: its own tools, none of Nodal's.
+          label: 'worker, cli-runtime with a chat id',
+          agent: makeAgent(worker.id, entityId, worker.personality),
+          ctx: { origin: 'telegram', surface: 'cli-runtime', telegramChatId: '1' },
+          tools: [],
+        },
+      ];
+    for (const c of cases) {
+      const prompt = await buildSystemPrompt(c.agent, db, {
+        ...c.ctx,
+        availableToolNames: c.tools,
+      });
+      expect({ case: c.label, outside: outsideOf(prompt, c.tools, assignNames) }).toEqual({
+        case: c.label,
+        outside: [],
+      });
+    }
+  });
+
+  it('the skills block names run_skill_script exactly when the job holds it', async () => {
+    const without = await seedConfigured({ scriptsAuthorized: false });
+    const w = await buildSystemPrompt(
+      makeAgent(without.worker.id, without.entityId, without.worker.personality),
+      db,
+      { origin: 'api', availableToolNames: [...ALWAYS_ON_TOOLS] },
+    );
+    expect(w).toContain('## Skills (load before acting)');
+    expect(w).not.toContain('run_skill_script');
+
+    const withIt = await buildSystemPrompt(
+      makeAgent(without.worker.id, without.entityId, without.worker.personality),
+      db,
+      { origin: 'api', availableToolNames: [...ALWAYS_ON_TOOLS, 'run_skill_script'] },
+    );
+    expect(withIt).toContain('`run_skill_script`');
   });
 });

@@ -901,6 +901,15 @@ export async function buildSystemPrompt(
    */
   const hasNodalTools = jobContext?.surface !== 'cli-runtime' && jobContext?.surface !== 'chat';
 
+  // Les outils que ce job a réellement : `availableToolNames`, que le runner
+  // passe depuis la liste blanche calculée (execute.ts construit le prompt
+  // APRÈS les outils, #559). Le repli — la liste toujours-active sur `job`,
+  // rien sur `chat` et `cli-runtime` — ne sert qu'aux appelants sans job :
+  // l'aperçu du dashboard, les tests. Tout bloc qui NOMME un outil se règle
+  // sur cette liste : le baseline, le canal, les builtins annoncés.
+  const availableTools: readonly string[] =
+    jobContext?.availableToolNames ?? (hasNodalTools ? ALWAYS_ON_TOOLS : []);
+
   const [
     teamBlock,
     skillRows,
@@ -1090,8 +1099,14 @@ export async function buildSystemPrompt(
             `\`skill_view('<slug>')\` to load its full instructions and follow them BEFORE you act — ` +
             `even if you think you could do the task with basic tools. A skill defines HOW the task ` +
             `must be done here and ships tested scripts + ready-made files (e.g. prebuilt workflows). ` +
-            `Run a skill's bundled scripts with \`run_skill_script\` (or by the exact paths skill_view ` +
-            `gives you). NEVER reimplement a skill's logic inline, and NEVER rebuild or re-convert ` +
+            // `run_skill_script` n'est armé que pour une skill dont le
+            // propriétaire a autorisé les scripts (execute.ts §6) : nommé à un
+            // job qui ne l'a pas, c'était l'ordre inexécutable de #559.
+            (availableTools.includes('run_skill_script')
+              ? `Run a skill's bundled scripts with \`run_skill_script\` (or by the exact paths ` +
+                `skill_view gives you). `
+              : `Use a skill's bundled files by the exact paths skill_view gives you. `) +
+            `NEVER reimplement a skill's logic inline, and NEVER rebuild or re-convert ` +
             `something the skill already provides.\n\n${skillIndex}`;
 
   // 4. Assemble: honour {{team}} placeholder or append
@@ -1116,15 +1131,6 @@ export async function buildSystemPrompt(
         hasNodalTools,
       )
     : '';
-
-  // Les outils que ce job a réellement : `availableToolNames`, que le runner
-  // passe depuis la liste blanche calculée (execute.ts construit le prompt
-  // APRÈS les outils, #559). Le repli — la liste toujours-active sur `job`,
-  // rien sur `chat` et `cli-runtime` — ne sert qu'aux appelants sans job :
-  // l'aperçu du dashboard, les tests. Tout bloc qui NOMME un outil se règle
-  // sur cette liste : le baseline, le canal, les builtins annoncés.
-  const availableTools: readonly string[] =
-    jobContext?.availableToolNames ?? (hasNodalTools ? ALWAYS_ON_TOOLS : []);
 
   // 5. Built-in capabilities block — injected for every agent so the LLM sees
   //    save_memory / query_memory / return_result as first-class capabilities,
@@ -1224,6 +1230,7 @@ export async function buildSystemPrompt(
     boundChannelSlugs: messagingChannels.boundChannels,
     configuredChannelSlugs: messagingChannels.configuredChannels,
     nodalTools: hasNodalTools,
+    availableTools,
   });
 
   //    Messaging channels block — content assembled from `messagingChannelsBlock`

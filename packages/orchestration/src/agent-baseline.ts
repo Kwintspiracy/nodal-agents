@@ -375,6 +375,21 @@ export interface DiscoverabilityInput {
    * constat 1).
    */
   nodalTools?: boolean;
+  /**
+   * Les outils de ce job (#559). Le geste d'attacher ne nomme que ceux que le
+   * job a : `attach_connector` / `attach_mcp` sont des outils du ROOT, et un
+   * worker à qui on les nommait n'avait aucun moyen de les appeler. Omis =
+   * inconnu : aucun outil nommé.
+   */
+  availableTools?: readonly string[];
+}
+
+/** Comment un connecteur déjà configuré arrive jusqu'à cet agent, dit avec ses outils. */
+function attachGesture(availableTools?: readonly string[]): string {
+  const held = ['attach_connector', 'attach_mcp'].filter((t) => availableTools?.includes(t));
+  return held.length > 0
+    ? `attach it yourself with ${held.map((t) => `\`${t}\``).join(' / ')}, or ask the user to`
+    : 'ask the user to assign it to you';
 }
 
 /**
@@ -465,8 +480,7 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
             '(NO new API key needed; say so, and the job you hand the task to can do the ' +
             'attaching):'
         : 'ALREADY configured in this workspace — just needs to be assigned to you ' +
-            '(NO new API key needed; if you are the workspace ROOT, use ' +
-            '`attach_connector` / `attach_mcp`, otherwise ask the user to assign it):',
+            `(NO new API key needed; ${attachGesture(input.availableTools)}):`,
     );
     for (const c of readyConnectors)
       lines.push(`- ${labelForConnector(c.slug, c.name)} — connector \`${c.slug}\` (configured)`);

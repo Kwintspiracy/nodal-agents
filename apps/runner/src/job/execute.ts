@@ -422,6 +422,19 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
 // agent to call a tool it doesn't have — join it once whatsapp's outbound tooling ships.
 const TOOL_ONLY_DELIVERY_CHANNELS: ReadonlySet<string> = new Set(['telegram', 'discord', 'slack']);
 
+/**
+ * Was the stored prompt written for this exact tool list? Both sides sorted;
+ * `null` (a prompt stored before `system_prompt_tools` existed) never matches.
+ */
+export function sameToolList(
+  stored: readonly string[] | null,
+  current: readonly string[],
+): boolean {
+  if (stored === null) return false;
+  const a = [...stored].sort();
+  return a.length === current.length && a.every((name, i) => name === current[i]);
+}
+
 /** Truncate an oversized tool-result string with an explicit, model-readable marker. */
 export function truncateForContext(value: string): string {
   // Elide long base64/binary runs FIRST. They're useless to the model as text,
@@ -2476,15 +2489,23 @@ async function runJobTracked(
   // its send tools, and its prompt ordered `telegram_send_message` all the
   // same — the job obeyed and was killed for whitelist_violation. Every block
   // that names a tool now reads the list this job actually runs with.
+  //
+  // A resume (approval, delegation, restart) reuses the stored prompt — the
+  // prefix cache depends on it — but only while it was written for the SAME
+  // tool list. A skill or connector withdrawn during the wait changes the list,
+  // and the stored prompt would order a tool the whitelist now refuses: it is
+  // rewritten (Codex review of #570, pass 1). A prompt stored before the list
+  // was recorded (NULL) is rewritten too — its list is unknown.
+  const promptTools = [...new Set(toolDefs.map((t) => t.name))].sort();
   let systemPrompt = job.systemPrompt;
-  if (!systemPrompt) {
+  if (!systemPrompt || !sameToolList(job.systemPromptTools, promptTools)) {
     systemPrompt = await buildSystemPrompt(agent, db, {
       ...jobContext,
-      availableToolNames: toolDefs.map((t) => t.name),
+      availableToolNames: promptTools,
     });
     await db
       .update(agentJobs)
-      .set({ systemPrompt, updatedAt: new Date() })
+      .set({ systemPrompt, systemPromptTools: promptTools, updatedAt: new Date() })
       .where(eq(agentJobs.id, jobId as string));
   }
 

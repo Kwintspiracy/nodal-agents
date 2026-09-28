@@ -1396,6 +1396,86 @@ describe('executeJob', () => {
     }
   });
 
+  // #559, revue Codex passe 1, P1 2 — une reprise (approbation, délégation,
+  // redémarrage) réutilisait `job.systemPrompt` tel quel. Écrit pour la liste
+  // d'outils du premier passage, il pouvait nommer un outil retiré pendant
+  // l'attente. Le prompt stocké porte maintenant sa liste : même liste, il est
+  // gardé mot pour mot (cache de préfixe) ; liste changée, il est réécrit.
+  it('a resumed job keeps its stored prompt when its tools are unchanged, and rewrites it when a tool was withdrawn (#559) @cap:assigner-outils/moteur', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '199791464',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      const sendAndFinish = () =>
+        makeMockLlmClient([
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ]);
+      await executeJob(job!.id as JobId, makeDeps(sendAndFinish()), testEnv);
+      const [first] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(first?.systemPrompt).toContain('telegram_send_message({ chatId, text })');
+      expect(first?.tools).toContain('telegram_send_message');
+
+      // Resume with the SAME tools: the stored prompt is reused verbatim. A
+      // sentinel stands in for it so a rebuild could not pass unnoticed.
+      const SENTINEL = 'STORED PROMPT, SAME TOOLS';
+      await db
+        .update(agentJobs)
+        .set({ systemPrompt: SENTINEL, status: 'pending' })
+        .where(eq(agentJobs.id, job!.id));
+      const samePrompts: unknown[] = [];
+      await executeJob(
+        job!.id as JobId,
+        makeDeps(makeMockLlmClient([{ text: 'Done.' }], samePrompts)),
+        testEnv,
+      );
+      expect(JSON.stringify(samePrompts[0])).toContain(SENTINEL);
+
+      // The owner withdraws the credential while the job waits: the send tools
+      // are gone from the recalculated list, so the prompt is rewritten.
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+      await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, job!.id));
+      const afterPrompts: unknown[] = [];
+      await executeJob(
+        job!.id as JobId,
+        makeDeps(makeMockLlmClient([{ text: 'Done.' }], afterPrompts)),
+        testEnv,
+      );
+      const seen = JSON.stringify(afterPrompts[0]);
+      expect(seen).not.toContain(SENTINEL);
+      expect(seen).not.toContain('telegram_send_message({ chatId, text })');
+      const [after] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(after?.systemPrompt).not.toContain('telegram_send_message');
+      expect(after?.tools).not.toContain('telegram_send_message');
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
+  });
+
   // ─── Anti-spam guard: consecutive delivery-only turns ─────────────────────
 
   it('anti-spam: caps consecutive delivery-only turns at maxConsecutiveDeliveryTurns and fails loud', async () => {
