@@ -171,8 +171,10 @@ const codeTaskSchema = z.object({
     .max(1000)
     .optional()
     .describe(
-      'Optional working directory, relative to the agent workspace (e.g. "repos/myapp"). ' +
-        'Defaults to the workspace root. Must stay inside the workspace.',
+      'Optional working directory, addressed like the file tools. With ONE workspace (the ' +
+        'shared one aside): e.g. "repos/myapp", default its root. With SEVERAL: start with a ' +
+        'label, e.g. "<label>" or "<label>/repos/myapp" — there is no default, and omitting it ' +
+        'is refused (workspace_label_required). Must stay inside the workspace.',
     ),
   timeout_seconds: z
     .number()
@@ -542,7 +544,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         timedOut: false,
         durationMs: run.durationMs,
         cwd,
-        paths: processAddressing(ctx.workspaces ?? [], cwd),
+        paths: await processAddressing(ctx.workspaces ?? [], cwd),
       };
     } finally {
       if (lockPath) {
