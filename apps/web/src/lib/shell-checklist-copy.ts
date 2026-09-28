@@ -22,7 +22,7 @@ export const SHELL_CATEGORY_COPY: Record<ShellCategory, { label: string; summary
   },
   download: {
     label: 'Download files from the internet',
-    summary: 'wget, curl -o, git clone, Invoke-WebRequest…',
+    summary: 'wget, curl -o, git clone, hf download, comfy model download, ollama pull…',
   },
   stop_programs: {
     label: 'Stop other programs or services',

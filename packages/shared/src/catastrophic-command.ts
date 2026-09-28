@@ -393,16 +393,23 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
     /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
     /\b(npm|pnpm|yarn|bun)\s+(i|add|ci)\b|\bInstall-(Module|Package)\b/i, // npm i, pnpm add, PowerShell modules
     /\buv\s+(pip\s+install|add|tool\s+install)\b/i, // uv (review of PR #476)
-    // `comfy model download` is the download; its siblings `download-status`,
-    // `downloads` and `download-cancel` only read or stop one, and `\b` alone
-    // let `download-status` match (run ca5753a8 asked the owner before every
-    // progress check).
-    /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download(?![\w-])|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
+    /\bgo\s+install\b/i, // go install
   ],
+  // A command is filed by what it DOES (#581): fetching files (a model, an
+  // archive, an image) is a download, whatever tool fetches it; installing
+  // software is the kind above. `comfy model download` and `pip download` sat
+  // in install_software, so an owner who let an agent fetch models without
+  // asking had to let it install software.
   download: [
     // `curl -sLo x`: the output flag may close a group of short options, and
     // `iwr` is Invoke-WebRequest's alias (review of PR #476).
     /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*(\s-[A-Za-z]*[oO]\b|\s--output\b|\s--remote-name\b)|\bInvoke-WebRequest\b|\biwr\b|\bStart-BitsTransfer\b/i, // large download / clone
+    // `download` must END the word: `comfy model download-status`,
+    // `downloads` and `download-cancel` only read or stop one, and `\b` alone
+    // let `download-status` match (run ca5753a8 asked the owner before every
+    // progress check, #552).
+    /\bcomfy\b[^\n]*\bmodel\s+download(?![\w-])|\bpip3?\b[^\n]*\bdownload(?![\w-])|\b(hf|huggingface-cli)\s+download(?![\w-])/i, // model / package files
+    /\bollama\s+pull\b|\bgit\s+lfs\s+(pull|fetch)\b|\b(docker|podman)\s+pull\b|\baria2c\b/i, // models, LFS objects, images
   ],
   stop_programs: [
     /\b(kill|pkill|killall|taskkill)\b|\bStop-Process\b|\bStop-Service\b/i, // process kill
