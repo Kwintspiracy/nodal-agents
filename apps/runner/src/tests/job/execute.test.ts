@@ -6,7 +6,7 @@
 //   - awaiting_approval does NOT bump chain_count
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -168,6 +168,8 @@ function makeMockLlmClient(
      * When omitted, the mock returns no cost metadata (provider-silent path).
      */
     costUsd?: number;
+    /** Output tokens the call bills (default 5). The 2026-09-28 turn billed 65 536. */
+    outputTokens?: number;
     /**
      * Simulated upstream provider name as OpenRouter reports in
      * `providerMetadata.openrouter.provider`. Drives served-upstream observability
@@ -262,7 +264,11 @@ function makeMockLlmClient(
             cacheRead: response.cachedTokens,
             cacheWrite: undefined,
           },
-          outputTokens: { total: 5, text: 5, reasoning: undefined },
+          outputTokens: {
+            total: response.outputTokens ?? 5,
+            text: response.outputTokens ?? 5,
+            reasoning: undefined,
+          },
         },
         warnings: [],
         ...(providerMetadata ? { providerMetadata } : {}),
@@ -4208,6 +4214,187 @@ describe('a turn over the per-turn tool-call budget runs none of its calls (#564
     expect(after.toolNames).toHaveLength(50);
     expect(after.facts).toHaveLength(25);
     expect(after.job.error ?? '').not.toContain('tool_call_limit_exceeded');
+  });
+});
+
+// ─── Régression : le tour réel de l'incident du 2026-09-28, rejoué ───────────
+//
+// Pas une forme approchée : les 307 appels du tour 1 du job da91bdbb, dans leur
+// ordre réel, relus dans le journal du runner (ligne llm_call_done), avec son
+// usage réel (65 536 jetons de sortie, finishReason tool-calls). Les entrées des
+// appels ne sont pas dans le journal : elles sont reconstruites, et le fixture le
+// dit. Le fixture est un JSON autonome pour servir aussi au rejeu sur la vraie
+// stack. Job root, canal telegram, faux client LLM, faux transport Telegram.
+
+describe('incident 2026-09-28 replayed: the real 307-call turn runs none of its calls (#564) @cap:suivre-execution/moteur', () => {
+  interface IncidentFixture {
+    job: { channel: string; subAgentSlug: string; task: string };
+    model: { provider: string; model: string; servedProvider: string };
+    response: {
+      text: string;
+      usage: { inputTokens: number; outputTokens: number };
+      costUsd: number;
+      toolCalls: Array<{ toolCallId: string; toolName: string; input: Record<string, unknown> }>;
+    };
+  }
+  let incDb: TestDb;
+  let incSeed: Awaited<ReturnType<typeof seedMinimal>>;
+  let incident: IncidentFixture;
+  let researcherId: string;
+
+  beforeAll(async () => {
+    incident = JSON.parse(
+      await readFile(
+        new URL('./fixtures/incident-2026-09-28-oversized-turn.json', import.meta.url),
+        'utf8',
+      ),
+    ) as IncidentFixture;
+    incDb = (await spinUpTestDb()).db;
+    incSeed = await seedMinimal(incDb);
+    // Alfred's shape: a root orchestrator on Telegram, with a Researcher under it.
+    await incDb
+      .update(agents)
+      .set({
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+        telegramBotToken: 'fake-token',
+      })
+      .where(eq(agents.id, incSeed.agentId));
+    const [researcher] = await incDb
+      .insert(agents)
+      .values({
+        entityId: incSeed.entityId,
+        name: 'Researcher',
+        slug: incident.job.subAgentSlug,
+        personality: 'researcher',
+        llmKeyId: incSeed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    researcherId = researcher!.id;
+    await incDb.insert(agentAssignments).values({
+      orchestratorId: incSeed.agentId,
+      subAgentId: researcherId,
+      entityId: incSeed.entityId,
+    });
+  });
+
+  it('no tool_calls row, nothing sent on Telegram, no child job, the exact code on the job row', async () => {
+    const [job] = await incDb
+      .insert(agentJobs)
+      .values({
+        entityId: incSeed.entityId,
+        agentId: incSeed.agentId,
+        channel: incident.job.channel,
+        chatId: '12345',
+        task: incident.job.task,
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    const { response, model } = incident;
+    expect(response.toolCalls).toHaveLength(307);
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          ...(response.text ? { text: response.text } : {}),
+          toolCalls: response.toolCalls.map((c) => ({
+            toolCallId: c.toolCallId,
+            toolName: c.toolName,
+            args: c.input,
+          })),
+          promptTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          costUsd: response.costUsd,
+          providerName: model.servedProvider,
+        },
+        { text: 'done' },
+      ],
+      undefined,
+      { provider: model.provider, model: model.model },
+    );
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    setActiveLlmClient(llmClient);
+    sendTelegramMessageMock.mockClear();
+
+    const result = await executeJob(
+      job!.id as JobId,
+      {
+        db: incDb as RunnerDeps['db'],
+        llmClient,
+        embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+        registry,
+        authProvider: new LocalTrustProvider(),
+        close: async () => {},
+      },
+      testEnv,
+    );
+
+    const code =
+      'tool_call_limit_exceeded:openrouter/xiaomi/mimo-v2.6-pro ' +
+      '(turn 1, 307 tool calls over the limit of 50 per turn, none executed)';
+    expect(result).toMatchObject({ status: 'failed', error: code });
+
+    // No call ran: not one tool_calls row.
+    const rows = await incDb
+      .select({ toolName: toolCalls.toolName })
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, job!.id));
+    expect(rows).toEqual([]);
+    // Nothing reached the owner: the Telegram transport sent nothing, no delivery row.
+    expect(sendTelegramMessageMock.mock.calls.map((c) => (c[0] as { text: string }).text)).toEqual(
+      [],
+    );
+    expect(
+      await incDb
+        .select({ id: jobDeliveries.id })
+        .from(jobDeliveries)
+        .where(eq(jobDeliveries.jobId, job!.id)),
+    ).toEqual([]);
+    // No delegation: no child job, and the Researcher has no job at all.
+    expect(
+      await incDb
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(eq(agentJobs.parentJobId, job!.id)),
+    ).toEqual([]);
+    expect(
+      await incDb
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(eq(agentJobs.agentId, researcherId)),
+    ).toEqual([]);
+
+    // What the job row carries: the code, the turn, and the billed call.
+    const [row] = await incDb
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        turn: agentJobs.turn,
+        inputTokens: agentJobs.inputTokens,
+        outputTokens: agentJobs.outputTokens,
+        totalCostUsd: agentJobs.totalCostUsd,
+        servedProvider: agentJobs.servedProvider,
+        messages: agentJobs.messages,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(row).toMatchObject({
+      status: 'failed',
+      error: code,
+      turn: 1,
+      inputTokens: 40_109,
+      outputTokens: 65_536,
+      servedProvider: 'DeepInfra',
+    });
+    expect(row!.totalCostUsd).toBeCloseTo(0.0744637, 6);
+    // The refused turn is not in the transcript: no call id of it survives.
+    expect(JSON.stringify(row!.messages)).not.toContain('call_000');
+    expect(JSON.stringify(row!.messages)).not.toContain('Je relance la recherche');
   });
 });
 
