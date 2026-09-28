@@ -416,9 +416,24 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     // pour les arrondis du navigateur, pas plus.
     const debordements = await page.getByTestId('project-files-panel').evaluate((racine) => {
       const trop: string[] = [];
+      // Le message NOMME le coupable : l'élément, et celui de ses descendants
+      // qui va le plus loin à droite. « div 451>398 » seul a laissé ce cas
+      // rouge dix mesures de suite sans que personne puisse dire quoi débordait.
+      const nom = (e: Element): string => {
+        const id = e.getAttribute('data-testid');
+        const cls = (e.getAttribute('class') ?? '').split(/\s+/).slice(0, 4).join('.');
+        return `${e.tagName.toLowerCase()}${id ? `[${id}]` : ''}${cls ? `.${cls}` : ''}`;
+      };
       const voir = (el: Element): void => {
         if (el.scrollWidth - el.clientWidth > 1) {
-          trop.push(`${el.tagName.toLowerCase()} ${el.scrollWidth}>${el.clientWidth}`);
+          const gauche = el.getBoundingClientRect().left;
+          const loin = [...el.querySelectorAll('*')].sort(
+            (a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right,
+          )[0];
+          trop.push(
+            `${el.tagName.toLowerCase()} ${el.scrollWidth}>${el.clientWidth}` +
+              ` (${nom(el)}${loin ? ` ← ${nom(loin)} ends at ${Math.round(loin.getBoundingClientRect().right - gauche)}px` : ''})`,
+          );
         }
         for (const enfant of el.children) voir(enfant);
       };
