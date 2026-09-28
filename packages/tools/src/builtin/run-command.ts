@@ -74,10 +74,11 @@ const runCommandSchema = z.object({
     .max(1000)
     .optional()
     .describe(
-      'Optional working directory, addressed like the file tools (e.g. "scripts/canvas", or ' +
-        '"<label>/scripts/canvas" when the agent has several workspaces). Defaults to the ' +
-        'workspace root. Must stay inside the workspace. The COMMAND itself does not use labels: ' +
-        'its paths are relative to this directory, or absolute.',
+      'Optional working directory, addressed like the file tools. With ONE workspace (the ' +
+        'shared one aside): e.g. "scripts/canvas", default its root. With SEVERAL: start with a ' +
+        'label, e.g. "<label>" or "<label>/scripts/canvas" — there is no default, and omitting ' +
+        'it is refused (workspace_label_required). Must stay inside the workspace. The COMMAND ' +
+        'itself does not use labels: its paths are relative to this directory, or absolute.',
     ),
   timeout_seconds: z
     .number()
@@ -215,7 +216,10 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
       env: childEnv,
       keep: 'head',
     });
-    return { ...toRunCommandOutput(run), paths: processAddressing(ctx.workspaces ?? [], cwd) };
+    return {
+      ...toRunCommandOutput(run),
+      paths: await processAddressing(ctx.workspaces ?? [], cwd),
+    };
   },
 };
 
