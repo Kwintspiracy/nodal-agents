@@ -378,6 +378,19 @@ export function isInlineInterpreterEvalCommand(cmd: string): boolean {
 // human OK. We deliberately err toward asking: a false "ask" is cheap, a silent
 // 13 GB install (`comfy install`) or an `rm` is not.
 /**
+ * A program's global options, between its name and its subcommand: `git -C
+ * dir`, `git -c k=v`, `git --no-pager`, `docker --context x`, `docker compose
+ * -f file`. A pattern that only knew the short form (`git lfs pull`, `docker
+ * pull`) let the real forms through unclassified (Reviewer A, #582).
+ */
+const GLOBAL_OPTIONS = String.raw`(?:\s+(?:--[\w-]+(?:=\S+|\s+[^-\s]\S*)?|-[A-Za-z](?:\s+[^-\s]\S*)?))*`;
+
+/** `program [global options] subcommand…`, the form every such tool accepts. */
+function subcommand(program: string, rest: string): RegExp {
+  return new RegExp(String.raw`\b(?:${program})${GLOBAL_OPTIONS}\s+${rest}`, 'i');
+}
+
+/**
  * The same patterns, sorted by what a person would call them (#464). The
  * autonomy checklist lets an owner allow, ask or forbid each KIND of action;
  * their union below is still exactly what `destructive_gate` has always gated.
@@ -387,7 +400,11 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
     /\b(rm|rmdir|unlink|shred)\b/i, // delete (unix)
     /\bdel\s|\bRemove-Item\b|\brd\s+\/s/i, // delete (windows/ps)
     /\bfind\b[^\n]*-delete\b/i, // find … -delete
-    /\bgit\s+push\b[^\n]*(--force|-f\b)|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-\S*f|\bgit\s+branch\s+-D\b/i, // destructive VCS: work thrown away
+    // destructive VCS: work thrown away
+    subcommand('git', String.raw`push\b[^\n]*(?:--force|-f\b)`),
+    subcommand('git', String.raw`reset\s+--hard\b`),
+    subcommand('git', String.raw`clean\s+-\S*f`),
+    subcommand('git', String.raw`branch\s+-D\b`),
   ],
   install_software: [
     /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
@@ -403,13 +420,21 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
   download: [
     // `curl -sLo x`: the output flag may close a group of short options, and
     // `iwr` is Invoke-WebRequest's alias (review of PR #476).
-    /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*(\s-[A-Za-z]*[oO]\b|\s--output\b|\s--remote-name\b)|\bInvoke-WebRequest\b|\biwr\b|\bStart-BitsTransfer\b/i, // large download / clone
-    // `download` must END the word: `comfy model download-status`,
+    /\bwget\b|\bcurl\b[^\n]*(\s-[A-Za-z]*[oO]\b|\s--output\b|\s--remote-name\b)|\bInvoke-WebRequest\b|\biwr\b|\bStart-BitsTransfer\b|\baria2c\b/i, // large download
+    subcommand('git', String.raw`clone\b`), // clone
+    // `download` / `pull` must END the word: `comfy model download-status`,
     // `downloads` and `download-cancel` only read or stop one, and `\b` alone
     // let `download-status` match (run ca5753a8 asked the owner before every
     // progress check, #552).
-    /\bcomfy\b[^\n]*\bmodel\s+download(?![\w-])|\bpip3?\b[^\n]*\bdownload(?![\w-])|\b(hf|huggingface-cli)\s+download(?![\w-])/i, // model / package files
-    /\bollama\s+pull\b|\bgit\s+lfs\s+(pull|fetch)\b|\b(docker|podman)\s+pull\b|\baria2c\b/i, // models, LFS objects, images
+    /\bcomfy\b[^\n]*\bmodel\s+download(?![\w-])|\bpip3?\b[^\n]*\bdownload(?![\w-])/i, // model / package files
+    subcommand('hf|huggingface-cli', String.raw`download(?![\w-])`), // Hugging Face files
+    subcommand('ollama', String.raw`pull(?![\w-])`), // models
+    subcommand('git', String.raw`lfs\s+(?:pull|fetch)(?![\w-])`), // LFS objects
+    // images: `docker pull`, `docker image pull`, `docker compose -f x pull`
+    subcommand(
+      'docker|podman',
+      String.raw`(?:(?:image|compose)${GLOBAL_OPTIONS}\s+)?pull(?![\w-])`,
+    ),
   ],
   stop_programs: [
     /\b(kill|pkill|killall|taskkill)\b|\bStop-Process\b|\bStop-Service\b/i, // process kill
@@ -446,6 +471,7 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
   // `r^m` still read as `rm`.
   const found = new Set<StaticShellCategory>();
   for (const unit of commandUnits(cmd)) {
+    if (isVersionOrHelpOnly(unit)) continue;
     const text = normalizeSlashes(unit.join(' '));
     for (const [category, patterns] of Object.entries(STATIC_SHELL_CATEGORY_PATTERNS) as Array<
       [keyof typeof STATIC_SHELL_CATEGORY_PATTERNS, readonly RegExp[]]
@@ -600,6 +626,23 @@ export function isDestructiveOrHeavyCommand(cmd: string): boolean {
   // (approvable), but it stays "heavy" here so destructive_gate still asks a
   // human before running an un-inspectable one-liner.
   if (isCatastrophicCommand(cmd) || isInlineInterpreterEvalCommand(cmd)) return true;
+  // Every program only asked for its version or help: nothing happens.
+  const units = commandUnits(cmd);
+  if (units.length > 0 && units.every(isVersionOrHelpOnly)) return false;
   const c = normalizeSlashes(cmd.trim());
   return DESTRUCTIVE_PATTERNS.some((re) => re.test(c));
+}
+
+/** The flags that make a program print its version or its help, and exit. */
+const VERSION_OR_HELP = new Set(['--version', '-V', '--help', '-h', '-?', '/?']);
+
+/**
+ * A program called only for its version or its help (`aria2c --version`,
+ * `wget -h`) prints and exits: it is no kind of action, whatever the program
+ * does otherwise (Reviewer A, #582; the class of #552, a read taken for the
+ * action it is about). One more word, an URL or a subcommand, and it is the
+ * program at work again.
+ */
+function isVersionOrHelpOnly(unit: readonly string[]): boolean {
+  return unit.length >= 2 && unit.slice(1).every((t) => VERSION_OR_HELP.has(t));
 }

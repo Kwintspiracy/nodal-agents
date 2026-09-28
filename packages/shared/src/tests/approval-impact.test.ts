@@ -29,6 +29,27 @@ describe('computeApprovalImpactLine — run_command', () => {
     expect(line).toContain('destructive or heavy');
   });
 
+  // Reviewer A, #582 : la carte décrivait toute commande lourde par « deletes/moves
+  // files, installs software, or changes system state » ; un téléchargement de
+  // modèle se lisait comme une installation. La carte dit la sorte d'action que
+  // la grille a lue.
+  it('names the kind of action the checklist reads: a download reads as a download', () => {
+    const line = computeApprovalImpactLine('run_command', {
+      command: 'comfy --json model download --url https://huggingface.co/x/y.safetensors',
+    });
+    expect(line).toContain('destructive or heavy: downloads files from the internet');
+    expect(line).not.toContain('installs');
+  });
+
+  it('names every kind a chained command performs, and only those', () => {
+    const line = computeApprovalImpactLine('run_command', {
+      command: 'pip install pandas && rm -rf build',
+    });
+    expect(line).toContain('installs software or packages');
+    expect(line).toContain('deletes files or discards changes');
+    expect(line).not.toContain('downloads');
+  });
+
   it('flags inline interpreter eval', () => {
     const line = computeApprovalImpactLine('run_command', {
       command: `python -c "import json; print(json.dumps({'a': 1}))"`,

@@ -104,6 +104,17 @@ describe('a command is filed by what it does: fetching is download, installing i
     'aria2c -x 16 https://example.com/model.safetensors',
     'wget https://example.com/a.zip',
     'git clone https://github.com/comfyanonymous/ComfyUI',
+    // The real forms of each tool, not only the short one (Reviewer A, #582):
+    // subcommand groups and global options before the subcommand.
+    'docker image pull comfyui/comfyui:latest',
+    'podman image pull docker.io/library/alpine',
+    'docker compose pull',
+    'docker compose -f stack.yml pull',
+    'docker --context remote pull alpine',
+    'git -C models/unet lfs pull',
+    'git -c lfs.concurrenttransfers=8 lfs fetch --all',
+    'git --no-pager lfs pull',
+    'git -C repos clone https://github.com/x/y',
   ];
   const INSTALLS = [
     'pip install pandas',
@@ -133,7 +144,7 @@ describe('a command is filed by what it does: fetching is download, installing i
     }
   });
 
-  it('reading or stopping a download is neither (#552)', () => {
+  it('reading or stopping a download is neither (#552), and neither is a version or help check', () => {
     for (const cmd of [
       'comfy --json model download-status 224009dc90ba',
       'comfy --json model downloads',
@@ -142,9 +153,35 @@ describe('a command is filed by what it does: fetching is download, installing i
       'git lfs ls-files',
       'docker images',
       'hf auth whoami',
+      'git commit -m "lfs pull later"',
+      // A program called only for its version or its help prints and exits
+      // (Reviewer A, #582): the class #552 is about, for every kind of action.
+      'aria2c --version',
+      'aria2c --help',
+      'wget --version',
+      'wget -h',
+      'hf --help',
+      'pip --version',
+      'rm --help',
     ]) {
       expect(staticShellCategories(cmd), cmd).toEqual([]);
+      expect(isDestructiveOrHeavyCommand(cmd), cmd).toBe(false);
     }
+  });
+
+  it('git global options do not hide the destructive VCS commands either', () => {
+    for (const cmd of [
+      'git -C repo reset --hard HEAD~3',
+      'git --no-pager push --force origin main',
+      'git -c core.quotepath=off clean -fdx',
+    ]) {
+      expect(staticShellCategories(cmd), cmd).toEqual(['delete_files']);
+    }
+  });
+
+  it('a version check chained to a real action still gates the action', () => {
+    expect(staticShellCategories('wget --version && wget https://x/a.zip')).toEqual(['download']);
+    expect(isDestructiveOrHeavyCommand('aria2c --version; rm -rf build')).toBe(true);
   });
 });
 
