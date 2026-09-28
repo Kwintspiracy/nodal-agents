@@ -41,7 +41,7 @@ import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { buildCliAuditRow } from './audit.ts';
-import { failJob, touchJob, watchJobRow } from '../job/state.ts';
+import { failJob, touchJob, watchJobRow, readJobRowStatus } from '../job/state.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
@@ -369,6 +369,20 @@ export async function takeCliTurnCheckpoints(
   }
 }
 
+/**
+ * Ce que rend un tour dont la ligne a cessé de dire `processing` (#567) : le
+ * statut appartient à celui qui l'a posé, le run n'écrit rien par-dessus. Une
+ * annulation se dit comme telle ; tout autre statut (faucheur, remise en file,
+ * ligne disparue) est un job que quelqu'un d'autre a déjà traité.
+ */
+function lostRowOutcome(
+  status: string,
+): { status: 'cancelled' } | { status: 'failed'; error: 'already_handled' } {
+  return status === 'cancelled'
+    ? { status: 'cancelled' }
+    : { status: 'failed', error: 'already_handled' };
+}
+
 export async function runCliRuntimeJob(args: {
   db: AnyDrizzleDb;
   jobId: string;
@@ -643,6 +657,19 @@ export async function runCliRuntimeJob(args: {
   // même geste que le Stop du chat (spawnCliTurn).
   const rowWatch = watchJobRow(db, jobId, JOB_ROW_POLL_MS);
 
+  // ET la ligne est relue JUSTE avant le lancement (revue Codex de #572,
+  // passe 2). La préparation — prompt, intention de mutation, checkpoint — prend
+  // du temps, et une annulation tombée pendant ce temps aurait laissé partir un
+  // processus capable d'écrire jusqu'à la première relecture du watcher. Une
+  // ligne qui ne dit plus `processing` : la CLI n'est jamais lancée.
+  const beforeSpawn = await readJobRowStatus(db, jobId);
+  if (beforeSpawn !== 'processing') {
+    clearInterval(heartbeat);
+    rowWatch.stop();
+    await releaseHeld();
+    return lostRowOutcome(beforeSpawn);
+  }
+
   let turn: CliTurnResult;
   try {
     turn = await binding.run({
@@ -798,8 +825,7 @@ export async function runCliRuntimeJob(args: {
   // appartient à celui qui l'a posé. L'audit, l'époque et le registre ci-dessus
   // ont tourné, parce que la CLI a pu écrire et coûter avant d'être tuée.
   const cutBy = rowWatch.observed();
-  if (cutBy === 'cancelled') return { status: 'cancelled' };
-  if (cutBy !== null) return { status: 'failed', error: 'already_handled' };
+  if (cutBy !== null) return lostRowOutcome(cutBy);
 
   if (turn.isError || turn.finalText === '') {
     // An exhausted subscription window must read as exactly that (D0/risques)

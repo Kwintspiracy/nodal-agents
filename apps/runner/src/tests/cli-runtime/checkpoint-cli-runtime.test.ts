@@ -213,7 +213,14 @@ describe('run-job : l’instantané AVANT binding.run (P11)', () => {
     // L'arbre n'a pas bougé (la fausse CLI n'écrit rien), donc `snapshot` rend
     // null — et la ligne doit tout de même porter le sha de l'instantané EXISTANT.
     await writeFile(join(alpha, 'code.txt'), 'après le tour 1\n');
+    // Chaque tour suivant est une REPRISE : en production le job repasse
+    // `processing` en étant réclamé (claimJob) avant de rejouer. La ligne fait
+    // autorité (#567) : un job resté `completed` ne relance aucune CLI.
+    const reclaim = () =>
+      db.update(agentJobs).set({ status: 'processing' }).where(eq(agentJobs.id, jobId));
+    await reclaim();
     await runJob(jobId, 'write', [alpha]);
+    await reclaim();
     await runJob(jobId, 'write', [alpha]);
 
     const rows = await rowsOf(jobId);

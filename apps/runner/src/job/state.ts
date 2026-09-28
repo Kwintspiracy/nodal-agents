@@ -699,6 +699,21 @@ export async function touchJob(db: AnyDrizzleDb, jobId: string): Promise<void> {
 }
 
 /**
+ * Ce que la ligne d'un job dit MAINTENANT de son statut : `'missing'` quand elle
+ * n'existe plus, `'pending'` pour un statut NULL (la valeur par défaut de la
+ * colonne). Une lecture, jamais une écriture : c'est l'autorité qu'un travail
+ * consulte avant d'agir (#566, #567).
+ */
+export async function readJobRowStatus(db: AnyDrizzleDb, jobId: string): Promise<string> {
+  const [row] = await db
+    .select({ status: agentJobs.status })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  return row ? (row.status ?? 'pending') : 'missing';
+}
+
+/**
  * Relit la ligne d'un job toutes les `pollMs` pendant qu'un travail long le sert
  * hors de la boucle Nodal (un tour de CLI, #567). La ligne fait autorité (même
  * règle que #566 pour la boucle Nodal) : le travail n'a le droit d'agir que tant
@@ -719,12 +734,8 @@ export function watchJobRow(
   const controller = new AbortController();
   let observed: string | null = null;
   const timer = setInterval(() => {
-    void db
-      .select({ status: agentJobs.status })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, jobId))
-      .then(([row]) => {
-        const status = row ? (row.status ?? 'pending') : 'missing';
+    void readJobRowStatus(db, jobId)
+      .then((status) => {
         if (status !== 'processing' && observed === null) {
           observed = status;
           clearInterval(timer);

@@ -12,6 +12,13 @@
 // run-job observe l'annulation et coupe le tour par le signal que les deux CLI
 // honorent déjà (claude-turn.ts et codex-turn.ts le passent à spawnCliTurn,
 // dont spawn-turn-stop.test.ts prouve qu'il tue l'arbre de processus).
+// La ligne est aussi relue JUSTE avant le lancement : une annulation tombée
+// pendant la préparation du tour ne lance aucun processus (passe 2).
+//
+// Ce qui ne se prouve PAS ici, et n'est pas vrai aujourd'hui : qu'un agent
+// servi par une CLI exécute lui-même un « stop ». Il ne reçoit aucun outil
+// Nodal (#574) ; ses runs s'arrêtent par le bouton Stop ou par un root servi
+// par le runtime Nodal.
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -46,9 +53,22 @@ vi.mock('../../cli-runtime/provider.ts', async (importOriginal) => {
   };
 });
 
+// La préparation du tour passe par l'assemblage du prompt : le retenir ici
+// retient la préparation, le temps d'annuler la ligne (revue Codex de #572,
+// passe 2).
+let preparationGate: Promise<void> | null = null;
+const preparationReached = vi.fn();
+
 vi.mock('@nodal-agents/orchestration', async (importOriginal) => {
   const actual = await importOriginal<typeof OrchestrationModule>();
-  return { ...actual, buildSystemPrompt: async () => 'system prompt (test)' };
+  return {
+    ...actual,
+    buildSystemPrompt: async () => {
+      preparationReached();
+      if (preparationGate) await preparationGate;
+      return 'system prompt (test)';
+    },
+  };
 });
 
 import { runCliRuntimeJob, JOB_ROW_POLL_MS } from '../../cli-runtime/run-job.ts';
@@ -120,12 +140,14 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   fakeRun.mockReset();
+  preparationReached.mockReset();
+  preparationGate = null;
   await db.delete(workspaceLocks);
 });
 
-describe('a job served by a CLI runtime stops when the shared cancel path cancels it @cap:parler-par-canal-externe/moteur', () => {
+describe('a job served by a CLI runtime acts only while its row says processing @cap:parler-par-canal-externe/moteur', () => {
   it.each(['claude-code', 'codex'] as const)(
-    '%s: a later message of the conversation stops the earlier CLI job, whose turn is cut',
+    '%s: stop_conversation_run, called by a later head of the conversation, cuts the earlier CLI run',
     async (runtime) => {
       const conversationId = randomUUID();
       // Message 1 : servi par la CLI, il tourne.
@@ -141,6 +163,9 @@ describe('a job served by a CLI runtime stops when the shared cancel path cancel
         })
         .returning({ id: agentJobs.id });
       // Message 2 : « Arrête !!! », un job de tête neuf de la même conversation.
+      // L'outil est appelé directement, comme son job le ferait : en production,
+      // seul un job de tête servi par le runtime Nodal le possède — un job
+      // servi par une CLI ne reçoit aucun outil Nodal (#574).
       const [later] = await db
         .insert(agentJobs)
         .values({
@@ -246,6 +271,66 @@ describe('a job served by a CLI runtime stops when the shared cancel path cancel
         .from(agentJobs)
         .where(eq(agentJobs.id, job!.id));
       expect(row).toEqual({ status, result: null, error: null });
+    },
+    30_000,
+  );
+
+  it.each([
+    ['claude-code', 'cancelled', { status: 'cancelled' }],
+    ['codex', 'cancelled', { status: 'cancelled' }],
+    ['claude-code', 'failed', { status: 'failed', error: 'already_handled' }],
+    ['codex', 'failed', { status: 'failed', error: 'already_handled' }],
+  ] as const)(
+    '%s: a row set to %s while the turn is being prepared never spawns the CLI',
+    async (runtime, status, expected) => {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'api',
+          task: 'go',
+          status: 'processing',
+        })
+        .returning({ id: agentJobs.id });
+      let release!: () => void;
+      preparationGate = new Promise<void>((r) => (release = r));
+      fakeRun.mockImplementation(turnUntilAborted(JOB_ROW_POLL_MS * 6));
+
+      const running = runCliRuntimeJob({
+        db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+        jobId: job!.id,
+        job: {
+          entityId: seed.entityId,
+          chatId: null,
+          channel: 'api',
+          conversationId: null,
+          task: 'go',
+          triggerContext: null,
+        },
+        // En écriture : c'est le mode qui prend les verrous du dossier et pose
+        // l'intention de mutation, la préparation la plus longue.
+        agentRow: { ...baseAgent, runtime, cliPermissions: { mode: 'write' } },
+        workspaces: [{ label: 'ws0', path: workspace }],
+      });
+
+      // La préparation est en cours ; la ligne change sous elle ; on relâche.
+      await vi.waitFor(() => expect(preparationReached).toHaveBeenCalledTimes(1), {
+        timeout: 10_000,
+      });
+      await db.update(agentJobs).set({ status }).where(eq(agentJobs.id, job!.id));
+      release();
+
+      expect(await running).toEqual(expected);
+      // Aucun processus : le binding n'a jamais été appelé.
+      expect(fakeRun).not.toHaveBeenCalled();
+      const [row] = await db
+        .select({ status: agentJobs.status, result: agentJobs.result, error: agentJobs.error })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(row).toEqual({ status, result: null, error: null });
+      // Les verrous du dossier sont rendus.
+      expect(await db.select().from(workspaceLocks)).toEqual([]);
     },
     30_000,
   );
