@@ -3793,6 +3793,10 @@ async function runJobTracked(
   // the job being hard-killed on one hallucinated/abbreviated tool name. Generic
   // — benefits every model, most of all the ones that drop MCP prefixes
   // (minimax/deepseek). After the budget, fail loud (invariant #4 / #8).
+  // The budget counts TURNS, not calls (#560): the model only sees the error
+  // between turns, so four bad calls in one batch are one mistake, not four.
+  // Both paths spend it once per turn: the SDK rejection (the whole turn) and
+  // the check below the delegation filter (every unavailable call of a turn).
   const MAX_UNAVAILABLE_TOOL_NUDGES = 3;
   let unavailableToolNudges = 0;
 
@@ -4742,6 +4746,36 @@ async function runJobTracked(
         ? [...othersWithoutReturn, keptAssign]
         : othersWithoutReturn;
 
+      // #560 — a turn that calls tools the agent does not have spends ONE
+      // chance to self-correct, however many such calls it holds; each of them
+      // gets its error as its tool-result in the loop below. A turn that does
+      // it again once the budget is spent (the model saw the errors and
+      // repeated the mistake) fails the job, before any call of it runs.
+      const unavailableThisTurn = callsToProcess.filter((c) => !toolMap.has(c.name));
+      if (unavailableThisTurn.length > 0) {
+        const badTools = [...new Set(unavailableThisTurn.map((c) => c.name))];
+        if (unavailableToolNudges >= MAX_UNAVAILABLE_TOOL_NUDGES) {
+          const code = `whitelist_violation:${badTools[0]}`;
+          await failJob(
+            db,
+            jobId as string,
+            code,
+            runStats(),
+            messages,
+            `L'agent a appelé à répétition un outil indisponible (${badTools.join(', ')}).`,
+          );
+          return { status: 'failed', error: code };
+        }
+        unavailableToolNudges += 1;
+        trace('unavailable_tool_nudge', {
+          turn,
+          badTools,
+          calls: unavailableThisTurn.length,
+          attempt: unavailableToolNudges,
+          via: 'toolMap',
+        });
+      }
+
       // i. Process tool calls. AI SDK v6 ToolResultPart shape:
       //   { type: 'tool-result', toolCallId, toolName, output: ToolResultOutput }
       // where ToolResultOutput is the discriminated union defined at step 11.6.
@@ -4965,35 +4999,18 @@ async function runJobTracked(
           // Recoverable (mirrors the deferred-approval pattern above): feed the
           // unavailable-tool mistake back as THIS call's tool-result so the
           // message-structure invariant holds (every tool_use gets a
-          // tool_result) and the model can retry with a valid name. Bounded;
-          // after the budget, fail loud (invariant #4 / #8).
-          if (unavailableToolNudges < MAX_UNAVAILABLE_TOOL_NUDGES) {
-            unavailableToolNudges += 1;
-            trace('unavailable_tool_nudge', {
-              turn,
-              badTool: call.name,
-              attempt: unavailableToolNudges,
-              via: 'toolMap',
-            });
-            toolResultBlocks.push({
-              type: 'tool-result',
-              toolCallId: call.id,
-              toolName: call.name,
-              output: toResultOutput({
-                error: describeUnavailableTool(call.name, [...toolMap.keys()]),
-              }),
-            });
-            continue;
-          }
-          await failJob(
-            db,
-            jobId as string,
-            `whitelist_violation:${call.name}`,
-            runStats(),
-            messages,
-            `L'agent a appelé à répétition un outil indisponible (${call.name}).`,
-          );
-          return { status: 'failed', error: `whitelist_violation:${call.name}` };
+          // tool_result) and the model can retry with a valid name. The turn
+          // already spent its chance above (#560); every such call of it gets
+          // its result.
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: call.id,
+            toolName: call.name,
+            output: toResultOutput({
+              error: describeUnavailableTool(call.name, [...toolMap.keys()]),
+            }),
+          });
+          continue;
         }
 
         if (call.name.startsWith('assign_')) {

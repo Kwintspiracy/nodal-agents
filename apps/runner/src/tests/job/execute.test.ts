@@ -4077,6 +4077,182 @@ describe('executeJob', () => {
 // row in DB. We assert that row exists (approve path) or is absent (reject path)
 // to prove real execution, not just a marker swap.
 
+// ─── #560 : le budget d'outils indisponibles compte des TOURS ────────────────
+//
+// Job 806a2218 (Researcher) : un seul tour portait 4 × telegram_send_message
+// (indisponible) + return_result. Le budget de 3 se décomptait par APPEL : le
+// 4e appel du même tour tuait le job avant que le modèle ait vu une seule
+// erreur, et le return_result du lot était perdu.
+
+describe('the unavailable-tool budget counts turns, not calls (#560) @cap:assigner-outils/moteur', () => {
+  type Msg = { role: string; content: unknown };
+  type Part = { type?: string; toolCallId?: string; output?: unknown };
+
+  async function rowOf(jobId: string) {
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        turn: agentJobs.turn,
+        messages: agentJobs.messages,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row!;
+  }
+
+  /** The tool-call ids whose tool-result says the tool is not available. */
+  function unavailableResults(messages: unknown): string[] {
+    return ((messages ?? []) as Msg[])
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Part[])
+      .filter(
+        (p) =>
+          p.type === 'tool-result' &&
+          JSON.stringify(p.output ?? '').includes('is not available to you'),
+      )
+      .map((p) => p.toolCallId ?? '')
+      .sort();
+  }
+
+  const bad = (id: string, name = 'gmail_send') => ({
+    toolCallId: id,
+    toolName: name,
+    args: { to: 'x@y.z' },
+  });
+  const finish = {
+    text: 'Done.',
+    toolCalls: [{ toolCallId: 'rr', toolName: 'return_result', args: { status: 'success' } }],
+  };
+
+  it('four parallel calls of one unavailable tool: each gets its error, the model recovers', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [bad('b1'), bad('b2'), bad('b3'), bad('b4')] },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const row = await rowOf(job.id);
+    expect(unavailableResults(row.messages)).toEqual(['b1', 'b2', 'b3', 'b4']);
+  });
+
+  it('several unavailable tools in one turn spend one chance, not one per call', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          bad('m1'),
+          bad('m2', 'definitely_not_a_tool'),
+          bad('m3'),
+          bad('m4', 'telegram_send_message'),
+        ],
+      },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect(unavailableResults((await rowOf(job.id)).messages)).toEqual(['m1', 'm2', 'm3', 'm4']);
+  });
+
+  it('a valid call in the same batch runs, and the batch still spends one chance', async () => {
+    const job = await createTestJob(db, seed);
+    const fact = `batch-560-${Date.now()}`;
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'ok', toolName: 'save_memory', args: { fact, category: 'context' } },
+          bad('v1'),
+          bad('v2'),
+          bad('v3'),
+          bad('v4'),
+        ],
+      },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect(unavailableResults((await rowOf(job.id)).messages)).toEqual(['v1', 'v2', 'v3', 'v4']);
+    const saved = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, fact));
+    expect(saved).toHaveLength(1);
+  });
+
+  it('the incident shape: unavailable sends next to return_result, the result is delivered', async () => {
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    const job = await createTestJob(db, seed);
+    const send = (id: string) => ({
+      toolCallId: id,
+      toolName: 'telegram_send_message',
+      args: { text: 'Recherche terminée' },
+    });
+    const llmClient = makeMockLlmClient([
+      {
+        text: 'The research is written.',
+        toolCalls: [
+          send('s1'),
+          send('s2'),
+          send('s3'),
+          send('s4'),
+          { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect((await rowOf(job.id)).error).toBeNull();
+  });
+
+  it('a turn that repeats the mistake after the budget fails the job, and none of its calls runs', async () => {
+    const job = await createTestJob(db, seed);
+    const fact = `after-budget-560-${Date.now()}`;
+    const batch = (t: number) => ({ toolCalls: [bad(`t${t}-a`), bad(`t${t}-b`)] });
+    const llmClient = makeMockLlmClient([
+      batch(1),
+      batch(2),
+      batch(3),
+      {
+        toolCalls: [
+          { toolCallId: 't4-ok', toolName: 'save_memory', args: { fact, category: 'context' } },
+          bad('t4-a'),
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result).toMatchObject({ status: 'failed', error: 'whitelist_violation:gmail_send' });
+    const row = await rowOf(job.id);
+    expect(row.turn).toBe(4);
+    // Three turns of mistakes, each call of them answered with its error.
+    expect(unavailableResults(row.messages)).toEqual([
+      't1-a',
+      't1-b',
+      't2-a',
+      't2-b',
+      't3-a',
+      't3-b',
+    ]);
+    // The fourth turn was refused whole: its valid call never ran.
+    const saved = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, fact));
+    expect(saved).toEqual([]);
+  });
+});
+
 describe('executeJob — approval gate (Bugs A, B, C)', () => {
   // Fresh DB per suite so approval rules and memory rows don't bleed across tests.
   let approvalDb: TestDb;
