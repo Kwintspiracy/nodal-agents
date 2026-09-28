@@ -41,7 +41,7 @@ import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { buildCliAuditRow } from './audit.ts';
-import { failJob, touchJob, watchJobTerminal } from '../job/state.ts';
+import { failJob, touchJob, watchJobRow } from '../job/state.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
@@ -66,12 +66,13 @@ import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
 
 /**
- * Tous les combien le tour relit le statut de son job (#567). Un tour de CLI
+ * Tous les combien le tour relit la ligne de son job (#567). Un tour de CLI
  * dure jusqu'à quinze minutes sans rendre la main : c'est ce délai qui borne le
- * temps entre l'arrêt demandé (bouton Stop, `stop_conversation_run`) et le
- * processus tué. Une lecture d'une colonne par seconde et par tour en cours.
+ * temps entre la ligne qui cesse de dire `processing` (arrêt demandé, faucheur,
+ * remise en file) et le processus tué. Une lecture d'une colonne par seconde et
+ * par tour en cours.
  */
-export const CANCEL_POLL_MS = 1_000;
+export const JOB_ROW_POLL_MS = 1_000;
 
 /**
  * Combien de temps un tour attend ses écritures d'audit encore en vol avant de
@@ -635,11 +636,12 @@ export async function runCliRuntimeJob(args: {
   // que CE tour a produites (voir `harnessEdits` plus haut).
   const turnStartedAt = new Date();
 
-  // L'arrêt du job coupe le tour (#567). La ligne peut passer à `cancelled`
-  // par le chemin d'annulation unique pendant que la CLI travaille : le signal
-  // tombe à la relecture suivante, et la CLI est tuée par le même geste que le
-  // Stop du chat (spawnCliTurn).
-  const terminal = watchJobTerminal(db, jobId, CANCEL_POLL_MS);
+  // La ligne du job fait autorité pendant tout le tour (#567, même règle que
+  // #566 pour la boucle Nodal) : dès qu'elle ne dit plus `processing` — annulée
+  // par le chemin d'annulation unique, déclarée morte par un faucheur, remise
+  // en file — le signal tombe à la relecture suivante et la CLI est tuée par le
+  // même geste que le Stop du chat (spawnCliTurn).
+  const rowWatch = watchJobRow(db, jobId, JOB_ROW_POLL_MS);
 
   let turn: CliTurnResult;
   try {
@@ -659,11 +661,11 @@ export async function runCliRuntimeJob(args: {
       // apply the SAME per-turn cap at this seam (invariant #8).
       maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
       onEvent,
-      abortSignal: terminal.signal,
+      abortSignal: rowWatch.signal,
     });
   } catch (err) {
     clearInterval(heartbeat);
-    terminal.stop();
+    rowWatch.stop();
     // La CLI a pu écrire avant de tomber — même contrat conservatif que
     // l'intention, et même raison qu'au seam des outils (#101).
     await bumpEpochsAfterWrite(db, job.entityId ?? '', dirtied);
@@ -672,7 +674,7 @@ export async function runCliRuntimeJob(args: {
     throw err;
   }
   clearInterval(heartbeat);
-  terminal.stop();
+  rowWatch.stop();
   // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
   //
   // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce
@@ -791,10 +793,11 @@ export async function runCliRuntimeJob(args: {
     }
   }
 
-  // Le tour a été coupé parce que la ligne est devenue terminale : rien ne se
-  // finalise ni ne se livre. L'audit, l'époque et le registre ci-dessus ont
-  // tourné, parce que la CLI a pu écrire et coûter avant d'être tuée.
-  const cutBy = terminal.observed();
+  // Le tour a été coupé parce que la ligne a cessé de dire `processing` : rien
+  // ne se finalise, ne se livre ni ne s'écrit sur la ligne, dont le statut
+  // appartient à celui qui l'a posé. L'audit, l'époque et le registre ci-dessus
+  // ont tourné, parce que la CLI a pu écrire et coûter avant d'être tuée.
+  const cutBy = rowWatch.observed();
   if (cutBy === 'cancelled') return { status: 'cancelled' };
   if (cutBy !== null) return { status: 'failed', error: 'already_handled' };
 

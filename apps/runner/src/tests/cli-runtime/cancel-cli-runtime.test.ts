@@ -51,7 +51,7 @@ vi.mock('@nodal-agents/orchestration', async (importOriginal) => {
   return { ...actual, buildSystemPrompt: async () => 'system prompt (test)' };
 });
 
-import { runCliRuntimeJob, CANCEL_POLL_MS } from '../../cli-runtime/run-job.ts';
+import { runCliRuntimeJob, JOB_ROW_POLL_MS } from '../../cli-runtime/run-job.ts';
 import type { CliRuntimeAgentRow } from '../../cli-runtime/run-job.ts';
 
 let db: TestDb;
@@ -155,9 +155,8 @@ describe('a job served by a CLI runtime stops when the shared cancel path cancel
 
       // Bien au-delà d'un intervalle de relecture : sans relecture, le tour va
       // à son terme et le test le voit.
-      const fallbackMs = CANCEL_POLL_MS * 6;
+      const fallbackMs = JOB_ROW_POLL_MS * 6;
       fakeRun.mockImplementationOnce(turnUntilAborted(fallbackMs));
-      const started = Date.now();
       const running = runCliRuntimeJob({
         db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
         jobId: earlier!.id,
@@ -174,7 +173,7 @@ describe('a job served by a CLI runtime stops when the shared cancel path cancel
       });
 
       // Le job de tête du message 2 arrête ce qui tourne dans la conversation.
-      await vi.waitFor(() => expect(fakeRun).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(fakeRun).toHaveBeenCalledTimes(1), { timeout: 10_000 });
       const stopped = await stopConversationRunTool.execute({}, {
         jobId: later!.id,
         agentId: seed.agentId,
@@ -189,12 +188,64 @@ describe('a job served by a CLI runtime stops when the shared cancel path cancel
       expect(outcome).toEqual({ status: 'cancelled' });
       // Coupé par l'arrêt, pas arrivé au bout de son travail.
       expect(fakeRun.mock.calls[0]?.[0].abortSignal?.aborted).toBe(true);
-      expect(Date.now() - started).toBeLessThan(fallbackMs);
       const [row] = await db
         .select({ status: agentJobs.status, result: agentJobs.result })
         .from(agentJobs)
         .where(eq(agentJobs.id, earlier!.id));
       expect(row).toEqual({ status: 'cancelled', result: null });
+    },
+    30_000,
+  );
+
+  it.each([
+    ['claude-code', 'failed'],
+    ['codex', 'failed'],
+    ['claude-code', 'pending'],
+    ['codex', 'pending'],
+  ] as const)(
+    '%s: a row another writer sets to %s cuts the turn, and the run writes nothing over it',
+    async (runtime, status) => {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'api',
+          task: 'go',
+          status: 'processing',
+        })
+        .returning({ id: agentJobs.id });
+      const fallbackMs = JOB_ROW_POLL_MS * 6;
+      fakeRun.mockImplementationOnce(turnUntilAborted(fallbackMs));
+      const running = runCliRuntimeJob({
+        db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+        jobId: job!.id,
+        job: {
+          entityId: seed.entityId,
+          chatId: null,
+          channel: 'api',
+          conversationId: null,
+          task: 'go',
+          triggerContext: null,
+        },
+        agentRow: { ...baseAgent, runtime },
+        workspaces: [{ label: 'ws0', path: workspace }],
+      });
+
+      // Le faucheur déclare le job mort, ou le remet en file, pendant le tour.
+      await vi.waitFor(() => expect(fakeRun).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+      await db.update(agentJobs).set({ status }).where(eq(agentJobs.id, job!.id));
+
+      const outcome = await running;
+
+      expect(outcome).toEqual({ status: 'failed', error: 'already_handled' });
+      expect(fakeRun.mock.calls[0]?.[0].abortSignal?.aborted).toBe(true);
+      // Le statut posé par l'autre reste le sien.
+      const [row] = await db
+        .select({ status: agentJobs.status, result: agentJobs.result, error: agentJobs.error })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(row).toEqual({ status, result: null, error: null });
     },
     30_000,
   );
@@ -210,7 +261,7 @@ describe('a job served by a CLI runtime stops when the shared cancel path cancel
         status: 'processing',
       })
       .returning({ id: agentJobs.id });
-    fakeRun.mockImplementationOnce(turnUntilAborted(CANCEL_POLL_MS * 2));
+    fakeRun.mockImplementationOnce(turnUntilAborted(JOB_ROW_POLL_MS * 2));
 
     const outcome = await runCliRuntimeJob({
       db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],

@@ -699,18 +699,19 @@ export async function touchJob(db: AnyDrizzleDb, jobId: string): Promise<void> {
 }
 
 /**
- * Relit le statut d'un job toutes les `pollMs` pendant qu'un travail long le
- * sert hors de la boucle Nodal (un tour de CLI, #567). Dès que la ligne est
- * terminale — `cancelled` par le chemin d'annulation unique (`cancelJobTree` :
- * le bouton Stop, `stop_conversation_run`), ou `failed` par un faucheur —
- * `signal` tombe, et l'appelant coupe son travail avec.
+ * Relit la ligne d'un job toutes les `pollMs` pendant qu'un travail long le sert
+ * hors de la boucle Nodal (un tour de CLI, #567). La ligne fait autorité (même
+ * règle que #566 pour la boucle Nodal) : le travail n'a le droit d'agir que tant
+ * qu'elle dit `processing`. Dès qu'elle dit autre chose — `cancelled` par le
+ * chemin d'annulation unique (`cancelJobTree` : le bouton Stop,
+ * `stop_conversation_run`), `failed` par un faucheur, remise en `pending`,
+ * disparue — `signal` tombe et l'appelant coupe son travail avec.
  *
- * C'est le jumeau du contrôle de début de tour de la boucle Nodal (« Leg 2 »,
- * execute.ts) pour un travail qui n'a pas de tours à lui : sans lui, la ligne
- * disait `cancelled` pendant que le processus continuait. `stop()` est à
- * appeler quoi qu'il arrive, sans quoi la relecture survit au travail.
+ * `observed()` rend ce que la ligne disait à ce moment-là (`null` : rien vu
+ * encore ; `'missing'` : plus de ligne). `stop()` est à appeler quoi qu'il
+ * arrive, sans quoi la relecture survit au travail.
  */
-export function watchJobTerminal(
+export function watchJobRow(
   db: AnyDrizzleDb,
   jobId: string,
   pollMs: number,
@@ -723,9 +724,9 @@ export function watchJobTerminal(
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId))
       .then(([row]) => {
-        const status = row?.status ?? null;
-        if (status !== null && (TERMINAL_STATUSES as string[]).includes(status)) {
-          observed ??= status;
+        const status = row ? (row.status ?? 'pending') : 'missing';
+        if (status !== 'processing' && observed === null) {
+          observed = status;
           clearInterval(timer);
           controller.abort();
         }
