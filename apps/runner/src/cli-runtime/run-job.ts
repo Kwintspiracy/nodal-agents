@@ -41,7 +41,13 @@ import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { buildCliAuditRow } from './audit.ts';
-import { failJob } from '../job/state.ts';
+import {
+  failJob,
+  watchJobRow,
+  readJobAuthority,
+  outcomeOfLostAuthority,
+  JOB_ROW_UNREADABLE,
+} from '../job/state.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
@@ -64,6 +70,15 @@ import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.
 
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
+
+/**
+ * Tous les combien le tour relit la ligne de son job (#567). Un tour de CLI
+ * dure jusqu'à quinze minutes sans rendre la main : c'est ce délai qui borne le
+ * temps entre la ligne qui cesse de dire `processing` (arrêt demandé, faucheur,
+ * remise en file) et le processus tué. Une lecture d'une colonne par seconde et
+ * par tour en cours.
+ */
+export const JOB_ROW_POLL_MS = 1_000;
 
 /**
  * Combien de temps un tour attend ses écritures d'audit encore en vol avant de
@@ -366,7 +381,17 @@ export async function runCliRuntimeJob(args: {
   job: CliRuntimeJobRow;
   agentRow: CliRuntimeAgentRow;
   workspaces: Array<{ label: string; path: string }>;
-}): Promise<{ status: 'completed'; result: string } | { status: 'failed'; error: string }> {
+  /**
+   * La prise que le run tient sur ce job (`claimJob`, #566) : le tour n'agit
+   * que tant que la ligne dit `processing` sous CETTE prise.
+   */
+  claimGeneration: number;
+}): Promise<
+  | { status: 'completed'; result: string }
+  | { status: 'failed'; error: string }
+  | { status: 'cancelled' }
+  | { status: 'already_handled' }
+> {
   const { db, jobId, job, agentRow } = args;
 
   const fail = async (code: string): Promise<{ status: 'failed'; error: string }> => {
@@ -622,6 +647,35 @@ export async function runCliRuntimeJob(args: {
   // que CE tour a produites (voir `harnessEdits` plus haut).
   const turnStartedAt = new Date();
 
+  // La ligne du job fait autorité pendant tout le tour — la MÊME règle que la
+  // boucle Nodal (#566, #567 : `watchJobRow`, `readJobAuthority`) : dès qu'elle
+  // ne dit plus `processing` sous la prise de ce run — annulée par le chemin
+  // d'annulation unique, déclarée morte par un faucheur, remise en file,
+  // reprise par un autre run — le signal tombe à la relecture suivante et la
+  // CLI est tuée par le même geste que le Stop du chat (spawnCliTurn).
+  const rowWatch = watchJobRow(db, jobId, args.claimGeneration, JOB_ROW_POLL_MS);
+
+  // ET la ligne est relue JUSTE avant le lancement (revue Codex de #572,
+  // passe 2). La préparation — prompt, intention de mutation, checkpoint — prend
+  // du temps, et une annulation tombée pendant ce temps aurait laissé partir un
+  // processus capable d'écrire jusqu'à la première relecture du watcher. Une
+  // ligne qui ne dit plus `processing` : la CLI n'est jamais lancée.
+  // Une ligne illisible ici ne lance rien non plus : l'erreur remonte, après
+  // avoir rendu ce que le tour tenait.
+  let beforeSpawn: Awaited<ReturnType<typeof readJobAuthority>>;
+  try {
+    beforeSpawn = await readJobAuthority(db, jobId, args.claimGeneration);
+  } catch (err) {
+    rowWatch.stop();
+    await releaseHeld();
+    throw err;
+  }
+  if (beforeSpawn.kind === 'lost') {
+    rowWatch.stop();
+    await releaseHeld();
+    return outcomeOfLostAuthority(beforeSpawn);
+  }
+
   let turn: CliTurnResult;
   try {
     turn = await binding.run({
@@ -640,8 +694,10 @@ export async function runCliRuntimeJob(args: {
       // apply the SAME per-turn cap at this seam (invariant #8).
       maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
       onEvent,
+      abortSignal: rowWatch.signal,
     });
   } catch (err) {
+    rowWatch.stop();
     // La CLI a pu écrire avant de tomber — même contrat conservatif que
     // l'intention, et même raison qu'au seam des outils (#101).
     await bumpEpochsAfterWrite(db, job.entityId ?? '', dirtied);
@@ -649,6 +705,7 @@ export async function runCliRuntimeJob(args: {
     if (isCliSetupError(err)) return fail(err.message.slice(0, 300));
     throw err;
   }
+  rowWatch.stop();
   // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
   //
   // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce
@@ -766,6 +823,29 @@ export async function runCliRuntimeJob(args: {
       );
     }
   }
+
+  // Le tour a été coupé parce que la ligne a cessé de dire `processing` : rien
+  // ne se finalise, ne se livre ni ne s'écrit sur la ligne, dont le statut
+  // appartient à celui qui l'a posé. L'audit, l'époque et le registre ci-dessus
+  // ont tourné, parce que la CLI a pu écrire et coûter avant d'être tuée.
+  const cutBy = rowWatch.observed();
+  // Coupé parce que la ligne n'était plus lisible : un échec DIT, jamais un
+  // succès ni un silence. L'écriture est tentée (gardée : elle ne passe que sur
+  // une ligne encore vivante) ; si la base reste injoignable, le code remonte
+  // quand même à l'appelant.
+  if (cutBy?.kind === 'unreadable') {
+    try {
+      await failJob(db, jobId, JOB_ROW_UNREADABLE);
+    } catch (err) {
+      console.error(
+        `[cli-runtime] JOB_ROW_UNREADABLE job=${jobId} — failJob failed too: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return { status: 'failed', error: JOB_ROW_UNREADABLE };
+  }
+  if (cutBy) return outcomeOfLostAuthority(cutBy);
 
   if (turn.isError || turn.finalText === '') {
     // An exhausted subscription window must read as exactly that (D0/risques)

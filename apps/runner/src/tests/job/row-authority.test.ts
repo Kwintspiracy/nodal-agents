@@ -644,7 +644,7 @@ describe('une ligne illisible pendant l’appel au modèle arrête le run (#566)
       error: 'job_row_unreadable',
     });
     // Chaque lecture ratée est DITE.
-    const dites = warn.mock.calls.filter((c: unknown[]) =>
+    const dites = err.mock.calls.filter((c: unknown[]) =>
       String(c[0]).includes('JOB_ROW_UNREADABLE'),
     );
     expect(dites).toHaveLength(5);

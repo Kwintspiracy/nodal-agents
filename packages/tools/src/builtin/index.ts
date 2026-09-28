@@ -29,6 +29,7 @@ import { codeTaskTool } from './code-task';
 import { reviewVerdictTool } from './review-verdict';
 import { runSkillScriptTool } from './run-skill-script';
 import { saveRoutineStateTool } from './save-routine-state';
+import { listConversationRunsTool, stopConversationRunTool } from './conversation-runs';
 import { declareVerificationTool } from './declare-verification';
 import { skillViewTool } from './skill-view';
 import { listModelsTool } from './list-models';
@@ -127,6 +128,12 @@ export { reviewVerdictTool } from './review-verdict';
 export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';
 export { saveRoutineStateTool } from './save-routine-state';
+export { listConversationRunsTool, stopConversationRunTool } from './conversation-runs';
+export type {
+  ListConversationRunsOutput,
+  StopConversationRunInput,
+  StopConversationRunOutput,
+} from './conversation-runs';
 export { declareVerificationTool } from './declare-verification';
 export type { SaveRoutineStateInput, SaveRoutineStateOutput } from './save-routine-state';
 export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-script';
@@ -223,6 +230,12 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // (`agent_jobs.schedule_id`). Porté ici au registre, ajouté à la whitelist par
   // le runner. Un agent qui n'a pas de routine ne le voit pas dans son prompt.
   registry.register(saveRoutineStateTool);
+  // list_conversation_runs / stop_conversation_run (#567) — offerts UNIQUEMENT
+  // au job de tête d'une conversation (`conversation_id` posé, sans parent),
+  // quel que soit le canal. Portés ici au registre, ajoutés à la whitelist par
+  // le runner, comme `save_routine_state`.
+  registry.register(listConversationRunsTool);
+  registry.register(stopConversationRunTool);
   // declare_verification — offert avec les outils d'écriture de fichiers : un
   // agent qui produit doit pouvoir dire comment on vérifie ce qu'il a produit.
   registry.register(declareVerificationTool);

@@ -69,6 +69,13 @@ export {
   INSTALL_NOTES_KEY,
 } from './repos/app-settings.ts';
 export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
+export { cancelJobTree, insertChildJob, listConversationRuns } from './repos/conversation-runs.ts';
+export type {
+  ChildJobRefusal,
+  CancelledTree,
+  ConversationRun,
+  ConversationRunJob,
+} from './repos/conversation-runs.ts';
 export type {
   CreateSkillInput,
   CreateSkillResult,

@@ -777,3 +777,96 @@ export async function touchJob(
       ),
     );
 }
+
+/**
+ * Combien de relectures ratées D'AFFILÉE un run tolère avant de se couper
+ * (#566, #567 — revue Codex de #572 passe 3) : une ligne qu'on ne sait plus
+ * lire ne vaut pas autorisation d'agir. Une seule règle, pour la boucle Nodal
+ * (pendant l'appel au modèle) comme pour un tour de CLI.
+ */
+export const JOB_ROW_UNREADABLE_MAX = 5;
+
+/** Le code d'un run coupé parce que sa ligne n'était plus lisible. */
+export const JOB_ROW_UNREADABLE = 'job_row_unreadable';
+
+/** Ce qui a coupé un travail surveillé : la perte du droit d'agir, ou une ligne illisible. */
+export type JobRowCut = Extract<JobAuthority, { kind: 'lost' }> | { kind: 'unreadable' };
+
+/**
+ * L'issue d'un run dont la ligne ne l'autorise plus à agir (#566, #567) — la
+ * même pour tous les runtimes. Le statut appartient à celui qui l'a posé : un
+ * job que CE run tenait encore et que la personne a annulé se dit `cancelled` ;
+ * tout autre cas (faucheur, remise en file, repris par un autre run, ligne
+ * disparue) est un job que quelqu'un d'autre a déjà traité.
+ */
+export function outcomeOfLostAuthority(
+  perte: Extract<JobAuthority, { kind: 'lost' }>,
+): { status: 'cancelled' } | { status: 'already_handled' } {
+  return perte.ownClaim && perte.status === 'cancelled'
+    ? { status: 'cancelled' }
+    : { status: 'already_handled' };
+}
+
+/**
+ * Relit l'autorité de la ligne d'un job (`readJobAuthority`, sous la prise du
+ * run) toutes les `pollMs` pendant un travail long qui ne rend pas la main :
+ * l'appel au modèle de la boucle Nodal, un tour de CLI (#566, #567). Dès que
+ * la ligne ne dit plus `processing` sous CETTE prise — annulée par le chemin
+ * d'annulation unique (`cancelJobTree` : le bouton Stop,
+ * `stop_conversation_run`), déclarée morte par un faucheur, remise en file,
+ * reprise par un autre run, disparue — `signal` tombe et l'appelant coupe son
+ * travail avec.
+ *
+ * UNE LIGNE ILLISIBLE N'EST PAS UNE AUTORISATION (invariant #4). Une lecture
+ * ratée est tolérée — le réseau a des hoquets —, chaque échec est journalisé,
+ * et à `JOB_ROW_UNREADABLE_MAX` échecs CONSÉCUTIFS le travail est coupé :
+ * `observed()` rend `{ kind: 'unreadable' }`, que l'appelant dit comme un
+ * échec (`JOB_ROW_UNREADABLE`).
+ *
+ * `observed()` rend ce qui a coupé le travail (`null` : rien encore). `stop()`
+ * est à appeler quoi qu'il arrive, sans quoi la relecture survit au travail.
+ */
+export function watchJobRow(
+  db: AnyDrizzleDb,
+  jobId: string,
+  claimGeneration: number,
+  pollMs: number,
+): { signal: AbortSignal; observed: () => JobRowCut | null; stop: () => void } {
+  const controller = new AbortController();
+  let observed: JobRowCut | null = null;
+  let unreadable = 0;
+  let reading = false;
+  const cut = (why: JobRowCut): void => {
+    if (observed !== null) return;
+    observed = why;
+    clearInterval(timer);
+    controller.abort();
+  };
+  const timer = setInterval(() => {
+    // Une lecture lente ne se double pas : la suivante attend son tour.
+    if (reading || observed !== null) return;
+    reading = true;
+    void readJobAuthority(db, jobId, claimGeneration)
+      .then((autorite) => {
+        unreadable = 0;
+        if (autorite.kind === 'lost') cut(autorite);
+      })
+      .catch((err: unknown) => {
+        unreadable += 1;
+        console.error(
+          `[job-row] JOB_ROW_UNREADABLE job=${jobId} consecutive=${String(unreadable)}/${String(
+            JOB_ROW_UNREADABLE_MAX,
+          )}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        if (unreadable >= JOB_ROW_UNREADABLE_MAX) cut({ kind: 'unreadable' });
+      })
+      .finally(() => {
+        reading = false;
+      });
+  }, pollMs);
+  return {
+    signal: controller.signal,
+    observed: () => observed,
+    stop: () => clearInterval(timer),
+  };
+}

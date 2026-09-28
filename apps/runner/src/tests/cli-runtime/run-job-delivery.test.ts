@@ -207,6 +207,7 @@ function runJob(jobId: string, chatId: string | null, mode: 'read' | 'write' = '
     },
     agentRow: { ...agentRow, cliPermissions: { mode } },
     workspaces: [{ label: 'ws', path: ws }],
+    claimGeneration: 0,
   });
 }
 

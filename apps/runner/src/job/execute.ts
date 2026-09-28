@@ -156,6 +156,8 @@ import {
   saveCheckpoint,
   claimJob,
   readJobAuthority,
+  watchJobRow,
+  JOB_ROW_UNREADABLE,
   currentTurnMessages,
   findTaskBoundary,
 } from './state.ts';
@@ -1082,14 +1084,6 @@ export function runTimeCeilingMs(settingHours: number | null | undefined): numbe
 export const STOP_POLL_MS = 2_000;
 
 /**
- * Lectures ratées d'affilée de sa ligne au-delà desquelles un run arrête son
- * appel au modèle et échoue (#566) — le seuil et le code du runtime CLI
- * (#572). Quand #572 sera sur main, une seule constante pour les deux.
- */
-export const JOB_ROW_UNREADABLE_MAX = 5;
-export const JOB_ROW_UNREADABLE = 'job_row_unreadable';
-
-/**
  * La consigne qui suit le texte partiel d'un tour coupé en pleine écriture
  * (#441). Une consigne de HARNAIS adressée au modèle, jamais montrée à
  * l'utilisateur — même famille que les autres messages `[système]` de ce
@@ -1882,6 +1876,7 @@ async function runJobTracked(
         cliDefaults: agentRow.cliDefaults ?? null,
       },
       workspaces: agentWorkspacesList,
+      claimGeneration: prise,
     });
   }
 
@@ -2148,6 +2143,20 @@ async function runJobTracked(
   // Discord qui a rendu cette table nécessaire).
   const routineStateToolNames: string[] = job.scheduleId ? ['save_routine_state'] : [];
   const routineStateToolDefs: AnyToolDef[] = routineStateToolNames
+    .map((n) => registry.get(n))
+    .filter((t): t is AnyToolDef => t !== undefined);
+
+  // list_conversation_runs / stop_conversation_run (#567) — offerts au job de
+  // TÊTE d'une conversation, quel que soit son canal et son agent : c'est lui
+  // qui parle à la personne, et chaque message d'un canal en crée un nouveau.
+  // Sans eux, un « arrête » arrivait sur un job neuf qui ne voyait ni
+  // n'atteignait le run lancé par un message précédent. Un délégué ne les a
+  // pas : arrêter les autres runs de la personne n'est pas son travail.
+  const conversationRunToolNames: string[] =
+    job.conversationId && !job.parentJobId
+      ? ['list_conversation_runs', 'stop_conversation_run']
+      : [];
+  const conversationRunToolDefs: AnyToolDef[] = conversationRunToolNames
     .map((n) => registry.get(n))
     .filter((t): t is AnyToolDef => t !== undefined);
 
@@ -2573,6 +2582,7 @@ async function runJobTracked(
         ...scriptToolDefs,
         ...fileWriteToolDefs,
         ...routineStateToolDefs,
+        ...conversationRunToolDefs,
         ...capabilityTools,
       ];
     } else {
@@ -2637,6 +2647,7 @@ async function runJobTracked(
             ...scriptToolNames,
             ...fileWriteToolNames,
             ...routineStateToolNames,
+            ...conversationRunToolNames,
           ],
         },
         registry,
@@ -4214,42 +4225,11 @@ async function runJobTracked(
       // sans s'arrêter ignorait le Stop jusqu'à sa fin (une heure au plus) et
       // exécutait ensuite ses outils. Relu toutes les 2 s, comme la fenêtre
       // d'approbation plus haut.
-      const arret = new AbortController();
-      let lectureArretEnCours = false;
-      // Ce qui a arrêté l'appel en cours (#566) : Stop, ou toute autre perte
-      // du droit d'agir.
-      let perteEnAppel: Extract<JobAuthority, { kind: 'lost' }> | null = null;
-      // Une ligne qu'on ne peut plus lire ne vaut PAS autorisation (invariant
-      // #4) : chaque lecture ratée est dite, et à la JOB_ROW_UNREADABLE_MAX-ième
-      // d'affilée l'appel est coupé et le run échoue — la règle du runtime CLI
-      // (#572), même seuil et même code.
-      let lecturesRatees = 0;
-      let ligneIllisible = false;
-      const surveilleArret = setInterval(() => {
-        if (lectureArretEnCours || arret.signal.aborted) return;
-        lectureArretEnCours = true;
-        void droitPerdu()
-          .then((perte) => {
-            lecturesRatees = 0;
-            if (!perte) return;
-            perteEnAppel = perte;
-            arret.abort();
-          })
-          .catch((err: unknown) => {
-            lecturesRatees += 1;
-            console.warn(
-              `[exec ${jobId}] JOB_ROW_UNREADABLE consecutive=${String(lecturesRatees)}/${String(JOB_ROW_UNREADABLE_MAX)}: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-            if (lecturesRatees < JOB_ROW_UNREADABLE_MAX) return;
-            ligneIllisible = true;
-            arret.abort();
-          })
-          .finally(() => {
-            lectureArretEnCours = false;
-          });
-      }, STOP_POLL_MS);
+      // La MÊME veille que le tour d'une CLI (#566, #567, `watchJobRow`) : la
+      // ligne est relue sous la prise de ce run ; toute perte du droit d'agir
+      // coupe l'appel, et une ligne illisible JOB_ROW_UNREADABLE_MAX fois
+      // d'affilée aussi (invariant #4 : illisible ne vaut pas autorisation).
+      const veille = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
       const appelCommenceA = Date.now();
       // Un appel interrompu (coupé, ou arrêté par Stop) après que le
@@ -4304,7 +4284,7 @@ async function runJobTracked(
           // coupé tant qu'il écrit (packages/llm/src/turn-clocks.ts).
           {
             streamed: true,
-            abortSignal: arret.signal,
+            abortSignal: veille.signal,
             // #442 : l'attente du premier jeton posée pour l'agent, et ce
             // qu'il reste du budget de temps du run.
             ...(agentFirstTokenMs !== undefined ? { firstTokenTimeoutMs: agentFirstTokenMs } : {}),
@@ -4338,7 +4318,8 @@ async function runJobTracked(
           if (ecrit !== '') {
             messages = [...messages, { role: 'assistant', content: ecrit } as ModelMessage];
           }
-          if (ligneIllisible) {
+          const coupe = veille.observed();
+          if (coupe?.kind === 'unreadable') {
             trace('job_row_unreadable', { turn, during: 'llm_call' });
             try {
               await failJob(db, jobId as string, JOB_ROW_UNREADABLE, runStats(), messages);
@@ -4354,7 +4335,7 @@ async function runJobTracked(
             return { status: 'failed', error: JOB_ROW_UNREADABLE };
           }
           trace('cancellation_observed', { turn, during: 'llm_call', partialChars: ecrit.length });
-          if (perteEnAppel) return await lacherLeJob(perteEnAppel, 'llm_call');
+          if (coupe) return await lacherLeJob(coupe, 'llm_call');
           await cancelJob(db, jobId as string, runStats(), messages);
           return { status: 'cancelled' };
         }
@@ -4504,7 +4485,7 @@ async function runJobTracked(
         }
         throw genErr; // not this error, or budget spent → outer catch fails loud
       } finally {
-        clearInterval(surveilleArret);
+        veille.stop();
       }
       // Le tour a répondu : son budget d'expiration repart à zéro, et le temps
       // perdu avec. Ce qui est compté plus bas est CE tour-ci, pas la mémoire

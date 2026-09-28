@@ -160,6 +160,7 @@ function runJob(jobId: string, mode: 'read' | 'write', workspaces: string[]) {
     },
     agentRow: { ...baseAgent, cliPermissions: { mode } },
     workspaces: workspaces.map((path, i) => ({ label: `ws${i}`, path })),
+    claimGeneration: 0,
   });
 }
 
@@ -723,6 +724,7 @@ describe('run-job : les écritures d’audit en vol sont attendues avant de lire
       },
       agentRow: { ...baseAgent, cliPermissions: { mode: 'write' } },
       workspaces: [{ label: 'ws0', path: root }],
+      claimGeneration: 0,
     });
 
   /** Le binding factice appelle le VRAI `onEvent` : une écriture du harnais. */

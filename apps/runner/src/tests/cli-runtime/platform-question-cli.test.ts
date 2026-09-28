@@ -137,6 +137,7 @@ describe('a CLI-runtime agent is told a question about Nodal is its own (#455) @
       },
       agentRow,
       workspaces: [{ label: 'ws', path: ws }],
+      claimGeneration: 0,
     });
     const prompt = fakeRun.mock.calls[0]![0].personality;
     expect(prompt).toContain('### A question about Nodal is yours');
