@@ -208,6 +208,33 @@ export class LLMOutputLimitError extends Error {
   }
 }
 
+// ─── LLMContextWindowError ─────────────────────────────────────────────────────
+
+/**
+ * The model's known context window leaves no room for any output once the
+ * estimated input is in (#563, review of #571). The client states its output
+ * cap from that room; when there is none, no request is sent: a `max_tokens`
+ * of 0 or less is invalid, and a larger one is what a server validating it
+ * against the window refuses. The message says "context window" so the job
+ * loop's overflow guard (`isContextOverflowError`) gives its actionable code.
+ */
+export class LLMContextWindowError extends Error {
+  readonly code = 'context_window_exceeded' as const;
+
+  constructor(
+    public readonly provider: string,
+    public readonly model: string,
+    public readonly contextWindow: number,
+    public readonly estimatedInputTokens: number,
+  ) {
+    super(
+      `LLM request does not fit the model's context window: ~${estimatedInputTokens} input tokens ` +
+        `estimated for a window of ${contextWindow}, no room left for output: ${provider}/${model}`,
+    );
+    this.name = 'LLMContextWindowError';
+  }
+}
+
 // ─── RetryExhaustedError ───────────────────────────────────────────────────────
 
 /**
@@ -298,6 +325,7 @@ export class ProviderConfigError extends Error {
  * a false positive only changes the error label, never the fact that it failed.
  */
 export function isContextOverflowError(err: unknown): boolean {
+  if (err instanceof LLMContextWindowError) return true;
   // Read to the end: an overflow phrase can sit far into a provider message.
   const msg = (err === undefined || err === null ? '' : describeThrown(err, 100_000)).toLowerCase();
   if (!msg) return false;

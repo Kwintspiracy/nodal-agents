@@ -13,6 +13,7 @@ export {
   LLMTimeoutError,
   LLMCallCancelledError,
   LLMOutputLimitError,
+  LLMContextWindowError,
   AllProvidersFailedError,
   isContextOverflowError,
   LLMStreamPartError,

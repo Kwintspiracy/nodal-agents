@@ -1777,12 +1777,27 @@ export function modelContextWindow(
   modelId: string,
   storedWindow?: number | null,
 ): number {
+  return knownContextWindow(provider, modelId, storedWindow) ?? DEFAULT_CONTEXT_WINDOW;
+}
+
+/**
+ * The model's context window when it is KNOWN (the catalog, else the stored
+ * per-key value), null otherwise. `modelContextWindow` falls back to a default
+ * for compaction; a bound sent to the provider must not: the LLM client states
+ * its output cap from the room this window leaves (#563, review of #571), and
+ * a guessed window would cap an uncatalogued large-window model for nothing.
+ */
+export function knownContextWindow(
+  provider: string,
+  modelId: string,
+  storedWindow?: number | null,
+): number | null {
   const catalogued = findModelCatalogEntry(provider, modelId)?.contextWindow;
   if (catalogued !== undefined) return catalogued;
   if (typeof storedWindow === 'number' && Number.isFinite(storedWindow) && storedWindow > 0) {
     return storedWindow;
   }
-  return DEFAULT_CONTEXT_WINDOW;
+  return null;
 }
 
 /**

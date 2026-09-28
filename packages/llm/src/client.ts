@@ -9,10 +9,11 @@ import {
   LLMTimeoutError,
   LLMCallCancelledError,
   LLMOutputLimitError,
+  LLMContextWindowError,
 } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
-import { modelOutputCap } from '@nodal-agents/shared';
+import { knownContextWindow, modelOutputCap } from '@nodal-agents/shared';
 import { reportedUsage } from './reported-usage';
 import { withRetry } from './retry';
 import { generateWithToolChoiceFloor } from './tool-choice-floor';
@@ -333,6 +334,8 @@ export function createLlmClient(
   // of the cut is a finishReason the provider may not report. Each client of
   // a failover chain states its own model's cap.
   const outputCap = modelOutputCap(config.provider, config.model);
+  // The window that bounds it too, when known (catalog, else the key's own).
+  const contextWindow = knownContextWindow(config.provider, config.model, config.contextWindow);
 
   // Anthropic does NOT auto-cache — opt it in by annotating cache_control
   // breakpoints (system + sliding last message). Other providers either cache
@@ -467,33 +470,48 @@ export function createLlmClient(
     // The cap the request states (#563): this client's, or the caller's when
     // LOWER. A caller never raises it (revue Codex de #571): asking 131 072
     // stated a cap the provider cut under, without `length`, as in #563.
+    //
+    // And never more than the model's KNOWN context window leaves once the
+    // input is in (review of #571): a custom or local model configured at 8 192
+    // tokens was asked for 65 536, and a server that validates `max_tokens`
+    // against its window refuses the turn. The input is the same estimate the
+    // turn clocks use (characters / 4, tools included). No room left: nothing
+    // is sent, the error says so (`LLMContextWindowError`).
     const callerCap = (args as { maxOutputTokens?: unknown }).maxOutputTokens;
-    const statedCap =
-      typeof callerCap === 'number' && callerCap > 0 ? Math.min(callerCap, outputCap) : outputCap;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
-    const prepared = {
-      ...(cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args)),
-      maxOutputTokens: statedCap,
-    };
+    const unbounded = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
+    const estimatedInput =
+      estimateContextTokens(unbounded as { system?: unknown; messages?: unknown }) +
+      (await estimateToolTokens((unbounded as { tools?: unknown }).tools));
+    const windowRoom = contextWindow === null ? Infinity : contextWindow - estimatedInput;
+    if (windowRoom < 1) {
+      throw new LLMContextWindowError(
+        config.provider,
+        config.model,
+        contextWindow ?? 0,
+        estimatedInput,
+      );
+    }
+    const statedCap = Math.min(
+      outputCap,
+      windowRoom,
+      typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity,
+    );
+    const prepared = { ...unbounded, maxOutputTokens: statedCap };
     const startedAt = Date.now();
     if (callOpts?.streamed === true && canStreamTurns) {
       // #440: the turn streams under two silence clocks, no working wall clock.
       // Same layers as below minus withStaleRetry, whose job (re-asking a call
       // that hung) the clocks now do without discarding what was written.
-      const clocks = computeTurnClocks(
-        config,
-        estimateContextTokens(prepared as { system?: unknown; messages?: unknown }) +
-          (await estimateToolTokens((prepared as { tools?: unknown }).tools)),
-        {
-          ...(callOpts.firstTokenTimeoutMs !== undefined
-            ? { firstTokenTimeoutMs: callOpts.firstTokenTimeoutMs }
-            : {}),
-          ...(callOpts.remainingRunMs !== undefined
-            ? { remainingRunMs: callOpts.remainingRunMs }
-            : {}),
-        },
-      );
+      const clocks = computeTurnClocks(config, estimatedInput, {
+        ...(callOpts.firstTokenTimeoutMs !== undefined
+          ? { firstTokenTimeoutMs: callOpts.firstTokenTimeoutMs }
+          : {}),
+        ...(callOpts.remainingRunMs !== undefined
+          ? { remainingRunMs: callOpts.remainingRunMs }
+          : {}),
+      });
       let streamedResult: GenerateTextResult;
       try {
         streamedResult = await generateWithToolChoiceFloor(

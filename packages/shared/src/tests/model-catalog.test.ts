@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   modelContextWindow,
+  knownContextWindow,
   DEFAULT_CONTEXT_WINDOW,
   MODEL_CATALOG,
   findModelCatalogEntry,
@@ -13,6 +14,16 @@ import {
   modelOutputCap,
   TURN_OUTPUT_TOKEN_CAP,
 } from '../model-catalog';
+
+describe('knownContextWindow — the window the output cap may rely on (review of #571)', () => {
+  it('catalog first, then the key window, else unknown (never the default)', () => {
+    expect(knownContextWindow('openrouter', 'deepseek/deepseek-v3.2')).toBe(131_072);
+    expect(knownContextWindow('openrouter', 'deepseek/deepseek-v3.2', 8192)).toBe(131_072);
+    expect(knownContextWindow('openai-compatible', 'local-gemma', 8192)).toBe(8192);
+    expect(knownContextWindow('openai-compatible', 'local-gemma')).toBeNull();
+    expect(knownContextWindow('openai-compatible', 'local-gemma', 0)).toBeNull();
+  });
+});
 
 describe('modelContextWindow', () => {
   it('returns the catalogued window for known models', () => {

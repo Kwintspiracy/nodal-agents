@@ -15,7 +15,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { z } from 'zod';
 
 import { createLlmClient } from '../client';
-import { LLMOutputLimitError } from '../errors';
+import { LLMOutputLimitError, LLMContextWindowError, isContextOverflowError } from '../errors';
+import { estimateContextTokens, estimateToolTokens } from '../turn-clocks';
+import { TURN_OUTPUT_TOKEN_CAP } from '@nodal-agents/shared';
 
 const TOOLS = {
   save_memory: {
@@ -220,4 +222,76 @@ describe('streamed turns ask for their usage on OpenAI-compatible endpoints @cap
       expect(res.usage.outputTokens).toBe(2);
     });
   }
+});
+
+// Revue de #571 (après redécoupage) : le plafond énoncé ignorait la fenêtre de
+// contexte. Un modèle openai-compatible configuré à 8 192 jetons recevait
+// `max_tokens: 65536`, et un serveur qui valide `max_tokens` contre sa fenêtre
+// refusait le tour : un faux rouge pour tout modèle local ou personnalisé. Le
+// plafond énoncé est le plus bas de : plateforme, plafond du modèle, appelant,
+// et ce que la fenêtre CONNUE laisse une fois l'entrée estimée posée.
+describe('the stated cap fits the known context window @cap:suivre-execution/moteur', () => {
+  const LOCAL = {
+    provider: 'openai-compatible' as const,
+    model: 'local-model',
+    baseURL: 'http://127.0.0.1:1234/v1',
+    contextWindow: 8_192,
+  };
+  const estimate = async (args: { system?: unknown; messages?: unknown; tools?: unknown }) =>
+    estimateContextTokens(args) + (await estimateToolTokens(args.tools));
+
+  it('a local model at 8 192: max_tokens is what the window leaves after the input', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+
+    await createLlmClient(LOCAL).generateText(ARGS);
+
+    const room = 8_192 - (await estimate(ARGS));
+    expect(bodies[0]?.['max_tokens']).toBe(room);
+    expect(room).toBeGreaterThan(7_000);
+  });
+
+  it('a prompt that nearly fills the window leaves a small, valid max_tokens', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+    const big = { ...ARGS, messages: [{ role: 'user' as const, content: 'x'.repeat(8_000 * 4) }] };
+
+    await createLlmClient(LOCAL).generateText(big);
+
+    const room = 8_192 - (await estimate(big));
+    expect(room).toBeGreaterThan(0);
+    expect(room).toBeLessThan(200);
+    expect(bodies[0]?.['max_tokens']).toBe(room);
+  });
+
+  it('a reply that reaches that stated cap is a cut turn, refused', async () => {
+    const room = 8_192 - (await estimate(ARGS));
+    stubFetch(() => chatCompletion('tool_calls', room));
+
+    await expect(createLlmClient(LOCAL).generateText(ARGS)).rejects.toBeInstanceOf(
+      LLMOutputLimitError,
+    );
+  });
+
+  it('a prompt beyond the window: nothing is sent, the error says context window', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+    const over = { ...ARGS, messages: [{ role: 'user' as const, content: 'x'.repeat(9_000 * 4) }] };
+
+    const err = await createLlmClient(LOCAL)
+      .generateText(over)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(err).toBeInstanceOf(LLMContextWindowError);
+    expect(isContextOverflowError(err)).toBe(true);
+    expect(bodies).toEqual([]);
+  });
+
+  it('an uncatalogued model with no known window keeps the platform cap', async () => {
+    stubFetch(() => chatCompletion('stop', 20));
+
+    await createLlmClient({ ...LOCAL, contextWindow: undefined }).generateText(ARGS);
+
+    expect(bodies[0]?.['max_tokens']).toBe(TURN_OUTPUT_TOKEN_CAP);
+  });
 });
