@@ -4235,6 +4235,8 @@ describe('the unavailable-tool budget counts turns, not calls (#560) @cap:assign
     expect(result).toMatchObject({ status: 'failed', error: 'whitelist_violation:gmail_send' });
     const row = await rowOf(job.id);
     expect(row.turn).toBe(4);
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
     // Three turns of mistakes, each call of them answered with its error.
     expect(unavailableResults(row.messages)).toEqual([
       't1-a',
@@ -5667,6 +5669,12 @@ describe('reliability guards', () => {
     const result = await executeJob(job.id as JobId, customDeps, testEnv);
     expect(result.status).toBe('failed');
     if (result.status === 'failed') expect(result.error).toBe('unresolved_tool_failure');
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    const [persisted] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(() => validateMessageStructure(persisted!.messages as never)).not.toThrow();
   });
 
   it('Guard 3b: an honest return_result(status="blocked") after a failure finalizes as agent_blocked', async () => {
@@ -6899,12 +6907,14 @@ describe('Guard 1f: non-progress detector', () => {
     }
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
     expect(row?.error).toContain('non_progress_detected');
     expect(row?.error).toContain('file_list');
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    expect(() => validateMessageStructure(row!.messages as never)).not.toThrow();
   });
 
   it('S1 regression: alternating tools for 30 calls never nudges or fails', async () => {
@@ -6976,11 +6986,21 @@ describe('Guard 1f: non-progress detector', () => {
     }
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
     expect(row?.error).toContain('non_progress_detected');
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    expect(() => validateMessageStructure(row!.messages as never)).not.toThrow();
+    // Et le 10e appel, qui a TOURNÉ (et échoué), garde sa vraie erreur — pas
+    // « not executed ».
+    const dixieme = (row!.messages as Array<{ role: string; content: unknown }>)
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>)
+      .find((p) => p.toolCallId === 'sm-err2-9');
+    expect(JSON.stringify(dixieme?.output)).not.toContain('not executed');
+    expect(JSON.stringify(dixieme?.output)).toContain('error');
   });
 
   it('S2: a successful call after 4 errors resets the streak — no nudge at the 5th call overall', async () => {

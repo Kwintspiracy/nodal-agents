@@ -150,8 +150,8 @@ import type {
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import {
-  failJob,
-  cancelJob,
+  failJob as failJobRow,
+  cancelJob as cancelJobRow,
   setJobStatus,
   saveCheckpoint,
   claimJob,
@@ -159,6 +159,7 @@ import {
   findTaskBoundary,
 } from './state.ts';
 import { holdJobHeartbeat } from './heartbeat.ts';
+import { unansweredToolCalls } from './close-transcript.ts';
 // LA porte terminale de succès (plan « Vérifier & Corriger », T09/T10) : les
 // deux chemins de succès de cette boucle passent par elle, jamais par
 // completeJob directement — c'est elle qui calcule et journalise la décision
@@ -1281,7 +1282,7 @@ async function failOnUncaughtError(
   // Le code dans `error`, et AUCUN texte du runner dans le résultat propagé
   // (invariant #2, revue Codex passe 4) : le parent reçoit l'échec typé par le
   // chemin de délégation, qui sait déjà le dire au modèle.
-  if (await failJob(deps.db, jobId as string, code)) {
+  if (await failJobRow(deps.db, jobId as string, code)) {
     return { status: 'failed', error: code };
   }
   // L'écriture gardée n'a rien fait : le job a été annulé ou fini entre
@@ -1503,6 +1504,50 @@ async function runJobTracked(
   tenue: JobHold,
 ): Promise<ExecuteJobResult> {
   const { db, registry } = deps;
+
+  // #561 — la règle d'un tour vaut aussi pour la transcription qu'un run
+  // PERSISTE en finissant : chaque tool_use y garde son tool_result. Tout
+  // échec et toute annulation de ce run passent par les deux écritures
+  // ci-dessous, qui la ferment d'abord — jamais un appel ajouté à chaque sortie
+  // (il y en a une quarantaine). Le tour en cours, quand il a déjà un message
+  // d'outils en construction, le donne (`tourOuvert`) : ses appels exécutés
+  // gardent leur vrai résultat, les autres disent qu'ils n'ont pas tourné.
+  let tourOuvert: ((raison: string) => ModelMessage) | null = null;
+  const RAISON_FIN_DU_RUN = 'the job ended before this call was handled';
+  const transcriptionFermee = (msgs: ModelMessage[]): ModelMessage[] => {
+    const ouverts = unansweredToolCalls(msgs);
+    if (ouverts.length === 0) return msgs;
+    if (tourOuvert) return [...msgs, tourOuvert(RAISON_FIN_DU_RUN)];
+    return [
+      ...msgs,
+      {
+        role: 'tool',
+        content: ouverts.map((c) => ({
+          type: 'tool-result' as const,
+          toolCallId: c.toolCallId,
+          toolName: c.toolName,
+          output: toResultOutput({ error: `not executed: ${RAISON_FIN_DU_RUN}` }),
+        })),
+      } as ModelMessage,
+    ];
+  };
+  const failJob: typeof failJobRow = (base, id, code, stats, msgs, userMessage, hint) =>
+    failJobRow(
+      base,
+      id,
+      code,
+      stats,
+      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      userMessage,
+      hint,
+    );
+  const cancelJob: typeof cancelJobRow = (base, id, stats, msgs) =>
+    cancelJobRow(
+      base,
+      id,
+      stats,
+      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+    );
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
   // Agents MUST have an llmKeyId — if absent we fail loud (invariant 4).
   // deps.llmClient is kept in RunnerDeps for backward compat with tests but
@@ -3153,7 +3198,7 @@ async function runJobTracked(
         jobId: jobId as string,
         errorCode,
         stats: runStats(),
-        messages,
+        messages: transcriptionFermee(messages),
         ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
         ...(notice
           ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
@@ -3859,6 +3904,8 @@ async function runJobTracked(
     while (true) {
       turn += 1;
       counters.resetTurnToolCalls();
+      // Un nouveau tour n'a pas encore de message d'outils en construction (#561).
+      tourOuvert = null;
 
       // Leg 2 — Top-of-turn terminal check (primary zombie-stopper).
       //
@@ -4846,12 +4893,13 @@ async function runJobTracked(
       // delegation next to a return_result) left the parent dead on
       // `unmatched_tool_use` at resume (job b7ecc59a).
       // `pendingId`: the call whose result arrives later (the delegation).
-      const closeTurn = (reason: string, pendingId?: string): void => {
+      const missingResults = (reason: string, pendingId?: string): typeof toolResultBlocks => {
         const answered = new Set(toolResultBlocks.map((b) => b.toolCallId));
+        const missing: typeof toolResultBlocks = [];
         for (const tc of rawToolCalls) {
           if (answered.has(tc.toolCallId) || tc.toolCallId === pendingId) continue;
           const deferred = sideToolResults.find((sr) => sr.tool_use_id === tc.toolCallId);
-          toolResultBlocks.push({
+          missing.push({
             type: 'tool-result',
             toolCallId: tc.toolCallId,
             toolName: tc.toolName,
@@ -4859,7 +4907,18 @@ async function runJobTracked(
           });
           answered.add(tc.toolCallId);
         }
+        return missing;
       };
+      const closeTurn = (reason: string, pendingId?: string): void => {
+        toolResultBlocks.push(...missingResults(reason, pendingId));
+      };
+      // Le tour en cours, pour une écriture terminale qui tombe au milieu
+      // (#561) : sans rien changer à ce que le tour a construit.
+      tourOuvert = (raison) =>
+        ({
+          role: 'tool',
+          content: [...toolResultBlocks, ...missingResults(raison)],
+        }) as ModelMessage;
       /** This turn's tool message, closed by `closeTurn` first. */
       const turnToolMessage = (
         reason = 'this turn ended before this call was handled; call it again if it is still needed',
@@ -5010,10 +5069,9 @@ async function runJobTracked(
         // Guard 1f (S1) — same-tool streak, across the whole job (any
         // inputs, any turn). Checked BEFORE the toolDef lookup below so it
         // also catches a model hammering the same unavailable/hallucinated
-        // tool name. `fail` returns immediately — no tool-result is pushed
-        // for this call (mirrors the whitelist_violation fail path above),
-        // and the job's persisted transcript reflects everything up to the
-        // PRIOR turn (failJob is passed the current `messages`).
+        // tool name. `fail` returns immediately, before this call runs: the
+        // transcript persisted by failJob answers it, and every other call of
+        // the turn, as not executed (#561, `transcriptionFermee`).
         {
           const { state, signal } = recordSameToolCall(
             sameToolStreakState,
@@ -5487,7 +5545,32 @@ async function runJobTracked(
           }
         }
 
-        // Guard 1f (S2) — error streak, across the whole job. `toolResult`
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.id,
+          toolName: call.name,
+          output: toResultOutput(
+            toolResult.outcome === 'success'
+              ? toolResult.output
+              : toolResult.mayHaveDelivered === true
+                ? // Keep the flag in the block so the sibling-error guard below
+                  // can recognize this as "probably delivered" and let a
+                  // same-turn return_result through instead of deferring it
+                  // (deferral invites the duplicate re-send this flag exists
+                  // to prevent).
+                  { error: toolResult.error, mayHaveDelivered: true }
+                : { error: toolResult.error },
+            // INJECT-001. The name is passed ONLY on the success path: an
+            // error string is the product's own text, and framing it as
+            // untrusted third-party data would be a lie the model has to
+            // reason about.
+            toolResult.outcome === 'success' ? call.name : undefined,
+          ),
+        });
+
+        // Guard 1f (S2) — error streak, across the whole job. Checked once this
+        // call's result is recorded (#561): a failure here persists the call
+        // with its real error, not as a call that never ran. `toolResult`
         // here is always success|error (awaiting_approval already `continue`d
         // above), so `outcome === 'error'` is exactly the runtime's tool-error
         // shape (executeTool catches everything except MessageStructureError /
@@ -5525,29 +5608,6 @@ async function runJobTracked(
             );
           }
         }
-
-        toolResultBlocks.push({
-          type: 'tool-result',
-          toolCallId: call.id,
-          toolName: call.name,
-          output: toResultOutput(
-            toolResult.outcome === 'success'
-              ? toolResult.output
-              : toolResult.mayHaveDelivered === true
-                ? // Keep the flag in the block so the sibling-error guard below
-                  // can recognize this as "probably delivered" and let a
-                  // same-turn return_result through instead of deferring it
-                  // (deferral invites the duplicate re-send this flag exists
-                  // to prevent).
-                  { error: toolResult.error, mayHaveDelivered: true }
-                : { error: toolResult.error },
-            // INJECT-001. The name is passed ONLY on the success path: an
-            // error string is the product's own text, and framing it as
-            // untrusted third-party data would be a lie the model has to
-            // reason about.
-            toolResult.outcome === 'success' ? call.name : undefined,
-          ),
-        });
       }
 
       // j. Suspension states — approval gate.
