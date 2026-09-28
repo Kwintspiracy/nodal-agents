@@ -6,7 +6,16 @@
 //   8: anti-loop guards (ChainCounters from @nodal-agents/orchestration)
 //   9: tool whitelist explicit per agent (computeToolWhitelist)
 
-import { eq, and, isNull, isNotNull } from '@nodal-agents/db';
+import {
+  eq,
+  and,
+  isNull,
+  isNotNull,
+  withinRunScope,
+  recordClaim,
+  heldClaim,
+  ownJobRow,
+} from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
@@ -173,7 +182,6 @@ import {
 } from './approval-execution.ts';
 import type { ApprovedExecution } from './approval-execution.ts';
 import type { JobAuthority } from './state.ts';
-import { withinRunScope, recordClaim, heldClaim } from './claim-scope.ts';
 // LA porte terminale de succès (plan « Vérifier & Corriger », T09/T10) : les
 // deux chemins de succès de cette boucle passent par elle, jamais par
 // completeJob directement — c'est elle qui calcule et journalise la décision
@@ -1404,11 +1412,15 @@ export async function maybeResumeParent(
   if (parent?.status !== 'awaiting_delegation') return;
 
   if (outcome.status === 'cancelled') {
-    // Cascade: the parent's only outstanding work was this child.
+    // Cascade: the parent's only outstanding work was this child. Guarded on
+    // `awaiting_delegation` (Nodal review of #575): read above, it may have
+    // been resumed to `pending` since by resumeDelegated — a live parent is
+    // never cancelled by a stale read.
+    // agent_jobs-write: parent-cascade — la ligne d'un AUTRE job, gardée.
     await db
       .update(agentJobs)
       .set({ status: 'cancelled', updatedAt: new Date() })
-      .where(eq(agentJobs.id, parentJobId));
+      .where(and(eq(agentJobs.id, parentJobId), eq(agentJobs.status, 'awaiting_delegation')));
     return;
   }
 
@@ -1469,7 +1481,7 @@ export async function reviveJobIfApprovalResolvedDuringSuspend(
   const flipped = await db
     .update(agentJobs)
     .set({ status: 'pending', updatedAt: new Date() })
-    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'awaiting_approval')))
+    .where(and(ownJobRow(jobId, ['awaiting_approval']), eq(agentJobs.status, 'awaiting_approval')))
     .returning({ id: agentJobs.id });
   if (flipped.length > 0 && runnerEnv) {
     void triggerWorker(jobId, runnerEnv);
@@ -2142,7 +2154,7 @@ async function runJobTracked(
     await db
       .update(agentJobs)
       .set({ systemPrompt, updatedAt: new Date() })
-      .where(eq(agentJobs.id, jobId as string));
+      .where(ownJobRow(jobId as string));
   }
 
   // ── 6. Build tool set ─────────────────────────────────────────────────────────
@@ -3567,7 +3579,8 @@ async function runJobTracked(
     await db
       .update(agentJobs)
       .set({ result: avec })
-      .where(eq(agentJobs.id, jobId as string));
+      // Juste après la ligne `completed` que CE run vient de poser (#566).
+      .where(ownJobRow(jobId as string, ['completed']));
 
     // La LIVRAISON de cette ligne, elle, est posée dans la transaction
     // terminale (T08, voir `harnessNoticeDelivery`) : ici on ne fait plus que

@@ -164,6 +164,7 @@ export async function handleDelegation(
   // cancel win: 0 rows → the just-created child is an orphan; cancel it and
   // fail loud so executeJob's terminal-guarded failJob leaves the parent
   // `cancelled` (it never overwrites a terminal row).
+  // agent_jobs-write: delegation-parent — sous la prise explicite du parent.
   const [updatedParent] = await db
     .update(agentJobs)
     .set({
@@ -185,6 +186,7 @@ export async function handleDelegation(
     // Don't leave the child we just inserted running with no parent to return
     // to — flip it to cancelled (guarded to non-terminal so we never rewrite a
     // row that already finished).
+    // agent_jobs-write: orphan-child — la ligne d'un AUTRE job, gardée non terminale.
     await db
       .update(agentJobs)
       .set({ status: 'cancelled', updatedAt: new Date() })

@@ -39,7 +39,7 @@ import type { JobId } from '@nodal-agents/orchestration';
 import type * as OrchestrationModule from '@nodal-agents/orchestration';
 import type * as NotifyModule from '../../approvals/notify.ts';
 import type { RunnerDeps } from '../../deps.ts';
-import { executeJob } from '../../job/execute.ts';
+import { executeJob, maybeResumeParent } from '../../job/execute.ts';
 import { claimJob, readJobAuthority } from '../../job/state.ts';
 
 const { client, pendant } = vi.hoisted(() => ({
@@ -913,6 +913,123 @@ describe('une erreur après la prise ne coupe pas la remontée au parent (#566) 
       .from(agentJobs)
       .where(eq(agentJobs.id, parent!.id));
     // Repris : `resumeDelegated` l'a remis en file avec le résultat de l'enfant.
+    expect(p?.status).toBe('pending');
+  });
+});
+
+// Revue Nodal de #575, passe 3 (C1) : le prompt système écrit en préparation
+// passait hors de la règle. Un run repris pendant sa préparation par une autre
+// prise écrasait le prompt que celle-ci avait posé.
+describe('the system prompt written during preparation carries the run’s claim (#566) @cap:suivre-execution/moteur', () => {
+  it('re-claimed during preparation: the other run’s system prompt stands, this run stops', async () => {
+    const jobId = await nouveauJob();
+    pendant.laPreparation = async () => {
+      await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, jobId));
+      expect(await claimJob(db, jobId)).not.toBeNull();
+      await db
+        .update(agentJobs)
+        .set({ systemPrompt: 'le prompt de B' })
+        .where(eq(agentJobs.id, jobId));
+    };
+
+    const issue = await executeJob(
+      jobId as JobId,
+      deps(modele(['fin']), [], async () => {}),
+    );
+
+    expect(issue.status).toBe('already_handled');
+    const [r] = await db
+      .select({ status: agentJobs.status, systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(r).toEqual({ status: 'processing', systemPrompt: 'le prompt de B' });
+  });
+});
+
+// Revue Nodal de #575, passe 3 (C2) : la cascade d'annulation vers le parent
+// écrivait `cancelled` sans garde après avoir LU `awaiting_delegation`. Remis
+// en file entre la lecture et l'écriture, un parent vivant était annulé.
+describe('the cancel cascade never cancels a parent resumed since it was read (#566) @cap:organiser-equipe/moteur', () => {
+  /** Rejoue `apres` juste après la lecture que la chaîne termine. */
+  function apresLecture<T extends object>(q: T, apres: () => Promise<void>): T {
+    return new Proxy(q, {
+      get(cible, cle, recepteur) {
+        if (cle === 'then') {
+          return (ok: unknown, ko: unknown) =>
+            (cible as unknown as Promise<unknown>)
+              .then(async (v) => {
+                await apres();
+                return v;
+              })
+              .then(ok as never, ko as never);
+        }
+        const v = Reflect.get(cible, cle, recepteur) as unknown;
+        return typeof v === 'function'
+          ? (...a: unknown[]) =>
+              apresLecture((v as (...x: unknown[]) => object).apply(cible, a), apres)
+          : v;
+      },
+    });
+  }
+
+  it('the parent read awaiting_delegation is pending by the time of the write: it stays pending', async () => {
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'p',
+        status: 'awaiting_delegation',
+        messages: [],
+      })
+      .returning({ id: agentJobs.id });
+    const [enfant] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: 'e',
+        status: 'cancelled',
+        parentJobId: parent!.id,
+        messages: [],
+      })
+      .returning({ id: agentJobs.id });
+    // La lecture du statut du parent est suivie, avant l'écriture, de sa
+    // remise en file par un autre chemin (resumeDelegated).
+    const course = new Proxy(db, {
+      get(cible, cle, recepteur) {
+        if (cle === 'select') {
+          return (champs?: Record<string, unknown>) => {
+            const q = cible.select(champs as never);
+            if (champs && Object.keys(champs).length === 1 && 'status' in champs) {
+              return apresLecture(q, async () => {
+                await db
+                  .update(agentJobs)
+                  .set({ status: 'pending' })
+                  .where(eq(agentJobs.id, parent!.id));
+              });
+            }
+            return q;
+          };
+        }
+        return Reflect.get(cible, cle, recepteur) as unknown;
+      },
+    });
+
+    await maybeResumeParent(
+      enfant!.id as JobId,
+      { status: 'cancelled' },
+      {
+        db: course as unknown as RunnerDeps['db'],
+      },
+    );
+
+    const [p] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent!.id));
     expect(p?.status).toBe('pending');
   });
 });

@@ -2,11 +2,10 @@
 // All transitions are explicit. Invalid transitions throw JobStateError.
 
 import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
-import { agentJobs, agents, toolCalls } from '@nodal-agents/db';
+import { agentJobs, agents, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
 import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
-import { claimCondition, heldBy, RUN_ACTS_WHILE } from './claim-scope.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -87,7 +86,7 @@ export async function setJobStatus(
   const rows = await db
     .update(agentJobs)
     .set({ status, updatedAt: new Date(), ...extra })
-    .where(and(eq(agentJobs.id, jobId), claimCondition(jobId)))
+    .where(ownJobRow(jobId))
     .returning({ id: agentJobs.id });
   return rows.length > 0;
 }
@@ -110,6 +109,7 @@ export async function setJobStatus(
  * executeJob, so the WHERE status='pending' predicate never blocks a real resume.
  */
 export async function claimJob(db: AnyDrizzleDb, jobId: string): Promise<number | null> {
+  // agent_jobs-write: claim — la prise elle-même, avant qu'une prise existe.
   const rows = await db
     .update(agentJobs)
     .set({
@@ -264,7 +264,10 @@ async function fillResultFromChildrenIfEmpty(db: AnyDrizzleDb, jobId: string): P
     // écritures séparées laisseraient une fenêtre où la ligne porte un résultat
     // sans provenance, et un écran qui la lirait retomberait sur l'heuristique.
     .set({ result: compiled, resultKind: 'relay', updatedAt: new Date() })
-    .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
+    // Juste après la ligne terminale que CE run vient de poser (#566).
+    .where(
+      and(ownJobRow(jobId, ['completed']), or(isNull(agentJobs.result), eq(agentJobs.result, ''))),
+    );
 }
 
 /** The text of a message, whatever its shape: a string, or the joined text parts. */
@@ -403,7 +406,9 @@ async function fillResultFromFinalTextIfEmpty(
     // repris parce qu'il n'a appelé aucun outil de livraison. Sa forme ne
     // change rien — du JSON écrit par l'agent reste sa réponse.
     .set({ result: text, resultKind: 'prose', updatedAt: new Date() })
-    .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
+    .where(
+      and(ownJobRow(jobId, ['completed']), or(isNull(agentJobs.result), eq(agentJobs.result, ''))),
+    );
 }
 
 /**
@@ -496,10 +501,9 @@ export async function completeJob(
     })
     .where(
       and(
-        eq(agentJobs.id, jobId),
-        notInArray(agentJobs.status, TERMINAL_STATUSES),
         // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
-        claimCondition(jobId),
+        ownJobRow(jobId),
+        notInArray(agentJobs.status, TERMINAL_STATUSES),
       ),
     )
     .returning({ id: agentJobs.id });
@@ -599,10 +603,9 @@ export async function failJob(
     })
     .where(
       and(
-        eq(agentJobs.id, jobId),
-        notInArray(agentJobs.status, TERMINAL_STATUSES),
         // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
-        claimCondition(jobId),
+        ownJobRow(jobId),
+        notInArray(agentJobs.status, TERMINAL_STATUSES),
       ),
     )
     .returning({ id: agentJobs.id });
@@ -621,7 +624,9 @@ export async function failJob(
     await db
       .update(agentJobs)
       .set({ result: explanation, updatedAt: new Date() })
-      .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
+      .where(
+        and(ownJobRow(jobId, ['failed']), or(isNull(agentJobs.result), eq(agentJobs.result, ''))),
+      );
   }
 
   return landed;
@@ -653,7 +658,7 @@ export async function cancelRootJob(
       finalizingAt: null,
       updatedAt: now,
     })
-    .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
+    .where(and(ownJobRow(jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
     .returning({ id: agentJobs.id });
   return rows.length > 0 && rows[0]?.id === jobId;
 }
@@ -699,7 +704,7 @@ export async function cancelJob(
     })
     // Le run qui tenait ce job garde sa transcription d'annulation — sous SA
     // prise seulement : un autre run qui l'a repris depuis écrit la sienne (#566).
-    .where(and(eq(agentJobs.id, jobId), claimCondition(jobId, null)));
+    .where(ownJobRow(jobId, null));
 }
 
 /**
@@ -749,7 +754,7 @@ export async function saveCheckpoint(
         totalDurationMs: checkpoint.totalDurationMs,
       }),
     })
-    .where(and(eq(agentJobs.id, jobId), claimCondition(jobId)))
+    .where(ownJobRow(jobId))
     .returning({ id: agentJobs.id });
   return rows.length > 0;
 }
@@ -768,6 +773,7 @@ export async function touchJob(
   jobId: string,
   claimGeneration: number,
 ): Promise<void> {
+  // agent_jobs-write: heartbeat — porte explicitement la prise tenue.
   await db.update(agentJobs).set({ updatedAt: new Date() }).where(heldBy(jobId, claimGeneration));
 }
 

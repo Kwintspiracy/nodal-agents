@@ -1,4 +1,9 @@
-// job/claim-scope.ts — la prise d'un run, et la condition de chacune de ses écritures (#566).
+// repos/run-claim.ts — la prise d'un run, et la condition de chacune de ses écritures (#566).
+//
+// Dans packages/db depuis la revue Nodal de #575 (passe 3) : le runner n'est pas le
+// seul à écrire la ligne d'un job pendant son run — les outils (packages/tools)
+// aussi (dashboard_publish, l'intention de vérification). La condition doit
+// donc être atteignable par TOUT code qui tourne dans le scope d'un run.
 //
 // CE QUI S'EST PASSÉ (revue Codex de la PR #575, passe 1). Le run vérifiait son
 // droit d'agir AVANT chaque effet, mais ses propres écritures de statut ne le
@@ -25,7 +30,8 @@
 // de prise : leurs écritures gardent leurs propres conditions, inchangées.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { and, eq, inArray, agentJobs } from '@nodal-agents/db';
+import { and, eq, inArray } from 'drizzle-orm';
+import { agentJobs } from '../schema/index.ts';
 
 /** Une condition SQL — le type que rendent `eq` / `and`. */
 type Condition = ReturnType<typeof eq>;
@@ -105,4 +111,24 @@ export function claimCondition(
   return statuts === null
     ? and(eq(agentJobs.id, jobId), eq(agentJobs.claimGeneration, generation))
     : heldBy(jobId, generation, statuts);
+}
+
+/**
+ * LE point de passage de toute écriture de la ligne d'un job faite dans le
+ * scope de son run (revue Nodal de #575, passe 3) : `…update(agentJobs)…
+ * .where(and(ownJobRow(jobId), …))`. Dans le run qui tient ce job : son id,
+ * SA prise et un statut où il écrit (`statuts`, par défaut
+ * `RUN_WRITES_WHILE` ; le statut terminal que le run vient lui-même de poser
+ * pour une écriture qui le suit, `null` pour la prise seule). Hors d'un run —
+ * faucheurs, cron, routes — son id seul : leurs écritures ne changent pas.
+ *
+ * Un test d'architecture (`apps/runner/src/tests/architecture/own-job-row.test.ts`)
+ * refuse toute écriture d'`agent_jobs` du code d'un run qui ne passe pas par
+ * ici, hors d'une liste blanche nommée et commentée.
+ */
+export function ownJobRow(
+  jobId: string,
+  statuts: readonly string[] | null = RUN_WRITES_WHILE,
+): Condition {
+  return and(eq(agentJobs.id, jobId), claimCondition(jobId, statuts)) as Condition;
 }

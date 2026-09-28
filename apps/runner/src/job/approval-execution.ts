@@ -24,8 +24,7 @@
 //      (`APPROVED_CALL_OUTCOME_UNKNOWN`), qui vérifie avant de redemander.
 //      Aucune perte silencieuse, aucun doublon.
 
-import { and, eq, isNull, sql, agentJobs, approvalRequests } from '@nodal-agents/db';
-import { heldBy } from './claim-scope.ts';
+import { and, eq, isNull, sql, agentJobs, approvalRequests, heldBy } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
 /**

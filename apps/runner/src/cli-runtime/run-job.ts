@@ -22,6 +22,7 @@ import {
   inArray,
   sql,
   type AnyDrizzleDb,
+  heldBy,
 } from '@nodal-agents/db';
 import {
   buildSystemPrompt,
@@ -38,7 +39,6 @@ import {
   type DirtiedDeliverable,
 } from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
-import { heldBy } from '../job/claim-scope.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';

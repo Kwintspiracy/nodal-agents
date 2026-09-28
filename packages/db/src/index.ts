@@ -70,6 +70,16 @@ export {
 } from './repos/app-settings.ts';
 export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
 export { cancelJobTree, insertChildJob, listConversationRuns } from './repos/conversation-runs.ts';
+export {
+  withinRunScope,
+  recordClaim,
+  heldClaim,
+  claimCondition,
+  heldBy,
+  ownJobRow,
+  RUN_ACTS_WHILE,
+  RUN_WRITES_WHILE,
+} from './repos/run-claim.ts';
 export type {
   ChildJobRefusal,
   CancelledTree,
