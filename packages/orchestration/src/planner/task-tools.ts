@@ -234,10 +234,17 @@ export function generateTaskTools(
   > = {
     name: 'list_tasks',
     label: 'List tasks',
-    summary: "See the tasks on this job's board, with their status and who they are assigned to.",
+    summary:
+      'See the tasks this job put on the board, with their status and who they are assigned to.',
+    // Ce que l'outil NE lit PAS est dit au modèle (#567) : le 28/09, un root à
+    // qui l'on disait « arrête » l'a appelé depuis un job neuf, a lu le tableau
+    // vide de CE job et a répondu « rien ne tourne » pendant qu'un délégué
+    // lancé par un message précédent tournait encore.
     description:
-      'List tasks on the task board for this job. ' +
-      'Returns task IDs (needed for depends_on), titles, statuses, and assignments.',
+      'List the tasks that THIS job created with create_task, and only those. ' +
+      'Returns task IDs (needed for depends_on), titles, statuses, and assignments. ' +
+      'It does not see work started by an earlier message, by another job, or delegated with ' +
+      'assign_*: an empty list says nothing about whether anything else is running.',
     inputSchema: listTasksSchema,
     riskLevel: 'read',
     card: 'text',

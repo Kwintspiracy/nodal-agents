@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -3478,6 +3479,177 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(stored?.systemPrompt).not.toContain('Routine state');
+  });
+
+  // ─── #567 : un « arrête » envoyé sur un canal atteint le run lancé par un
+  // message PRÉCÉDENT de la même conversation.
+  //
+  // Chaque message d'un canal crée un job de tête neuf. Le job de tête d'une
+  // conversation reçoit donc list_conversation_runs / stop_conversation_run, et
+  // eux seuls : un délégué ou un job sans conversation ne les voit pas. Vérifié
+  // sur la liste RÉELLE remise au modèle, puis sur les lignes en base après
+  // l'appel du modèle.
+
+  it('#567: the head job of a conversation stops the delegate an earlier message started @cap:parler-par-canal-externe/moteur', async () => {
+    const conversationId = randomUUID();
+    const insertJob = async (values: Partial<typeof agentJobs.$inferInsert>) => {
+      const [row] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          // WhatsApp : un canal dont la réponse n'exige pas d'outil de livraison,
+          // la relance « livre sur Telegram » n'est pas le sujet ici.
+          channel: 'whatsapp',
+          conversationId,
+          task: 'x',
+          messages: [],
+          chainCount: 0,
+          ...values,
+        })
+        .returning({ id: agentJobs.id });
+      if (!row) throw new Error('failed to insert job');
+      return row.id;
+    };
+    // Message 1 : un run qui a délégué ; le délégué attend une approbation.
+    const earlierHead = await insertJob({
+      status: 'awaiting_delegation',
+      task: 'Fais un portrait',
+    });
+    const delegate = await insertJob({
+      status: 'awaiting_approval',
+      task: 'Generate the portrait',
+      parentJobId: earlierHead,
+    });
+    const [approval] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: delegate,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'python main.py' },
+      })
+      .returning({ id: approvalRequests.id });
+    // Message 2 : « Arrête !!! », un job de tête neuf.
+    const stopJob = await insertJob({ status: 'pending', task: 'Arrête !!!' });
+
+    const toolKeysPerCall: string[][] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [{ toolCallId: 'tc-list', toolName: 'list_conversation_runs', args: {} }],
+        },
+        {
+          toolCalls: [{ toolCallId: 'tc-stop', toolName: 'stop_conversation_run', args: {} }],
+        },
+        {
+          text: 'Arrêté.',
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      undefined,
+      undefined,
+      toolKeysPerCall,
+    );
+
+    const result = await executeJob(stopJob as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+    expect(toolKeysPerCall[0]).toEqual(
+      expect.arrayContaining(['list_conversation_runs', 'stop_conversation_run']),
+    );
+
+    // Ce que le modèle a lu : le run du message précédent, avec son délégué.
+    const [listed] = await db
+      .select({ toolOutput: toolCalls.toolOutput })
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, stopJob), eq(toolCalls.toolName, 'list_conversation_runs')));
+    expect(listed?.toolOutput).toContain(earlierHead);
+    expect(listed?.toolOutput).toContain(delegate);
+    expect(listed?.toolOutput).toContain(approval!.id);
+
+    // Ce qui a changé en base : le run arrêté, son approbation close.
+    const rows = await db
+      .select({ id: agentJobs.id, status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conversationId));
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({
+      [earlierHead]: 'cancelled',
+      [delegate]: 'cancelled',
+      [stopJob]: 'completed',
+    });
+    const [req] = await db
+      .select({ status: approvalRequests.status, resolvedBy: approvalRequests.resolvedBy })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approval!.id));
+    expect(req).toEqual({ status: 'expired', resolvedBy: 'system:job_cancelled' });
+  });
+
+  it('#567: a delegated job and a job outside any conversation do NOT get the conversation-run tools', async () => {
+    const conversationId = randomUUID();
+    const [head] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        conversationId,
+        task: 'head',
+        status: 'completed',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const [delegated] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        conversationId,
+        parentJobId: head!.id,
+        task: 'delegated work',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const [cron] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        task: 'nightly digest',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+
+    for (const jobId of [delegated!.id, cron!.id]) {
+      const toolKeysPerCall: string[][] = [];
+      const llmClient = makeMockLlmClient(
+        [
+          {
+            text: 'Done.',
+            toolCalls: [
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        undefined,
+        undefined,
+        toolKeysPerCall,
+      );
+      const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+      const tools = new Set(toolKeysPerCall[0]);
+      expect(tools.has('list_conversation_runs')).toBe(false);
+      expect(tools.has('stop_conversation_run')).toBe(false);
+    }
   });
 
   // ─── P5 (causality study, 2026-07-22): dashboard_publish is a delivery

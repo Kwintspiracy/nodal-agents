@@ -91,7 +91,7 @@
 // des données.
 
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull, lt, or, sql } from '@nodal-agents/db';
+import { and, eq, isNull, lt, or, sql, ownJobRow } from '@nodal-agents/db';
 import {
   agentJobs,
   entities,
@@ -608,6 +608,8 @@ async function poseDeliverableCheck(
 
     if (maillon.parentJobId === null) {
       const now = new Date();
+      // agent_jobs-write: chain-root — la ligne d'un AUTRE job (la racine), écrite
+      // sans verrou : un fait idempotent (l'échéance de vérification), dernier gagnant.
       const poses = await tx
         .update(agentJobs)
         .set({ deliverableCheckDueAt: now, updatedAt: now })
@@ -733,7 +735,7 @@ async function ouvrirReparation(
       chainCount: sql`coalesce(${agentJobs.chainCount}, 0) + 1`,
       updatedAt: now,
     })
-    .where(eq(agentJobs.id, jobId));
+    .where(ownJobRow(jobId));
 
   return {
     brief: buildRepairBrief(commandes),
@@ -809,7 +811,7 @@ export async function finalizeJobSuccess(
       .set({ finalizingAt: claimNow })
       .where(
         and(
-          eq(agentJobs.id, jobId),
+          ownJobRow(jobId),
           or(
             isNull(agentJobs.finalizingAt),
             lt(agentJobs.finalizingAt, claimCutoff),
@@ -1186,7 +1188,8 @@ export async function finalizeJobSuccess(
         await tx
           .update(agentJobs)
           .set({ result, toolsUsed, updatedAt: new Date() })
-          .where(eq(agentJobs.id, jobId));
+          // Juste après la ligne `failed` que CE run vient de poser (#566).
+          .where(ownJobRow(jobId, ['failed']));
 
         // La ligne part là où la promesse est partie : avec la livraison
         // demandée s'il y en a une, sinon vers le canal à outil du job.
@@ -1341,7 +1344,8 @@ export async function finalizeJobFailure(
       await tx
         .update(agentJobs)
         .set({ result: toDbSafeString(input.userMessage), updatedAt: new Date() })
-        .where(eq(agentJobs.id, input.jobId));
+        // Juste après la ligne `failed` que CE run vient de poser (#566).
+        .where(ownJobRow(input.jobId, ['failed']));
     }
     if (landed && input.delivery && deps.prepareDelivery) {
       await deps.prepareDelivery(tx, { jobId: input.jobId, ...input.delivery });

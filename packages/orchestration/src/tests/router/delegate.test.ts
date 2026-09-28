@@ -110,6 +110,7 @@ describe('handleDelegation', () => {
       { task: 'do work for child' },
       [],
       db,
+      0,
     );
 
     const [updatedParent] = await db
@@ -143,7 +144,7 @@ describe('handleDelegation', () => {
       ],
     };
 
-    await handleDelegation(parentJob, workerSlug, 'tu_msg_persist', { task: 'X' }, [], db);
+    await handleDelegation(parentJob, workerSlug, 'tu_msg_persist', { task: 'X' }, [], db, 0);
 
     const [updatedParent] = await db
       .select({ messages: agentJobs.messages })
@@ -167,6 +168,7 @@ describe('handleDelegation', () => {
       { task: 'child work' },
       [],
       db,
+      0,
     );
 
     const [childRow] = await db
@@ -198,6 +200,7 @@ describe('handleDelegation', () => {
       { task: 'check inventory' },
       [],
       db,
+      0,
     );
 
     const [parentRow] = await db
@@ -228,6 +231,7 @@ describe('handleDelegation', () => {
       { task: 'needs chat id' },
       [],
       db,
+      0,
     );
 
     const [childRow] = await db
@@ -253,6 +257,7 @@ describe('handleDelegation', () => {
       { task: 'inherit my conversation' },
       [],
       db,
+      0,
     );
 
     const [childRow] = await db
@@ -279,6 +284,7 @@ describe('handleDelegation', () => {
       { task: 'monte la vidéo' },
       [],
       db,
+      0,
     );
 
     const [childRow] = await db
@@ -299,6 +305,7 @@ describe('handleDelegation', () => {
       { task: 'no conversation to inherit' },
       [],
       db,
+      0,
     );
 
     const [childRow] = await db
@@ -329,6 +336,7 @@ describe('handleDelegation', () => {
       { task: 'main work' },
       sideResults,
       db,
+      0,
     );
 
     const [parentRow] = await db
@@ -360,6 +368,7 @@ describe('handleDelegation', () => {
         { task: 'should fail loud' },
         [],
         db,
+        0,
       ),
     ).rejects.toThrow(OrchestrationError);
 
@@ -371,6 +380,7 @@ describe('handleDelegation', () => {
         { task: 'should fail loud' },
         [],
         db,
+        0,
       );
       expect.unreachable('handleDelegation should have thrown');
     } catch (err) {
@@ -431,6 +441,7 @@ describe('handleDelegation', () => {
       { task: 'must stay in entity A' },
       [],
       db,
+      0,
     );
 
     const [childRow] = await db
@@ -448,7 +459,7 @@ describe('handleDelegation', () => {
     const parentJob = makeParentJob(parentJobId, orchId, entityId);
 
     await expect(
-      handleDelegation(parentJob, 'no-such-agent-slug', 'tu_missing', { task: 'work' }, [], db),
+      handleDelegation(parentJob, 'no-such-agent-slug', 'tu_missing', { task: 'work' }, [], db, 0),
     ).rejects.toThrow(OrchestrationError);
   });
 
@@ -463,6 +474,7 @@ describe('handleDelegation', () => {
       { task: 'process this', data: 'spreadsheet rows here...' },
       [],
       db,
+      0,
     );
 
     const [childRow] = await db

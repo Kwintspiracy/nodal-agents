@@ -121,20 +121,25 @@ describe('DB state helpers', () => {
     expect(rows[0]?.status).toBe('processing');
   });
 
-  it('claimJob returns true and sets status to processing', async () => {
+  it('claimJob returns the new claim generation and sets status to processing', async () => {
     // Reset to pending
     await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, seed.jobId));
-
-    const claimed = await claimJob(db as Parameters<typeof claimJob>[0], seed.jobId);
-
-    expect(claimed).toBe(true);
-
-    const rows = await db
-      .select({ status: agentJobs.status })
+    const [before] = await db
+      .select({ claimGeneration: agentJobs.claimGeneration })
       .from(agentJobs)
       .where(eq(agentJobs.id, seed.jobId));
 
-    expect(rows[0]?.status).toBe('processing');
+    const claimed = await claimJob(db as Parameters<typeof claimJob>[0], seed.jobId);
+
+    // #566 : chaque prise monte le numéro, et le run qui l'a faite le reçoit.
+    expect(claimed).toBe(before!.claimGeneration + 1);
+
+    const rows = await db
+      .select({ status: agentJobs.status, claimGeneration: agentJobs.claimGeneration })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, seed.jobId));
+
+    expect(rows[0]).toEqual({ status: 'processing', claimGeneration: claimed });
   });
 
   it('completeJob sets status, result, completedAt', async () => {
@@ -404,15 +409,15 @@ describe('DB state helpers', () => {
     expect(rows[0]?.turn).toBe(3);
   });
 
-  // F1 regression — Leg 1: claimJob returns false (and does NOT touch the row)
+  // F1 regression — Leg 1: claimJob returns null (and does NOT touch the row)
   // when the job is not in 'pending' state. Uses a fresh row so it doesn't
   // contaminate seed.jobId for subsequent tests.
-  it('Leg 1: claimJob returns false when job is not pending (already processing)', async () => {
+  it('Leg 1: claimJob returns null when job is not pending (already processing)', async () => {
     const jobId = await insertFreshJob('processing');
 
     const claimed = await claimJob(db as Parameters<typeof claimJob>[0], jobId);
 
-    expect(claimed).toBe(false);
+    expect(claimed).toBeNull();
 
     // Row must still be 'processing' — the call must not have written anything.
     const [row] = await db

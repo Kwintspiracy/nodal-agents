@@ -332,25 +332,21 @@ describe('dashboard_publish', () => {
     expect(rows[0]?.result).toBe('Hello from dashboard_publish');
   });
 
-  it('updates agent_jobs.result when called with a mock db (unit test pattern)', async () => {
-    const updateMock = vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([]),
-      }),
-    });
-    const mockDb = { update: updateMock } as unknown as ToolContext['db'];
+  // Remplace un test à mock qui ne comptait que les appels (invariant #5) : ce
+  // qui compte est que la publication ATTERRISSE, et le dise quand elle ne le
+  // peut pas (#566 : elle passe sous la prise du run).
+  it('a job row that does not exist: refused with job_row_not_held, nothing claims success', async () => {
     const ctx: ToolContext = {
-      jobId: 'job-unit-123',
+      jobId: '00000000-0000-0000-0000-000000000000',
       agentId: seed.agentId,
       entityId: seed.entityId,
-      db: mockDb,
+      db: db as unknown as ToolContext['db'],
       jobChatId: null,
     };
 
-    const result = await dashboardPublishTool.execute({ text: 'unit test content' }, ctx);
-    expect(result.ok).toBe(true);
-    // update was called with agentJobs table
-    expect(updateMock).toHaveBeenCalledOnce();
+    await expect(dashboardPublishTool.execute({ text: 'nulle part' }, ctx)).rejects.toThrow(
+      'job_row_not_held',
+    );
   });
 
   it('schema rejects empty text', () => {
