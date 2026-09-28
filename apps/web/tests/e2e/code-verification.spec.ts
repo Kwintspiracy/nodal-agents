@@ -15,7 +15,7 @@
  *       (non jouable en local-trust, voir le skip) ;
  *   E — un échec serveur ne ment pas : approbation d'un manifeste modifié
  *       derrière le dos de la page ⇒ toast d'erreur et la pilule ne bouge pas ;
- *   F — `/code` mène à Workspaces ; le panneau « Files & proof » d'un projet
+ *   F — `/code` mène à Projects ; le panneau « Files & proof » d'un projet
  *       se ferme, se rouvre au rechargement (#297), et `/spaces/<id>/files` le
  *       montre aussi (#143) ;
  *   G — RIEN ne déborde du panneau, chemin long et commande longue comprises.
@@ -434,7 +434,7 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     expect(pageDeborde).toBe(false);
   });
 
-  test('F — /code mène à Workspaces : la liste a disparu, le panneau est sur le projet', async ({
+  test('F — /code mène à Projects : la liste a disparu, le panneau est sur le projet', async ({
     page,
   }) => {
     // #143. Le scénario d'avant ouvrait le tiroir « Other sessions » de la
@@ -444,7 +444,9 @@ test.describe('Proof commands — la page du projet @cap:verifier-un-livrable/ec
     // mène nulle part de mort, et que le panneau est là où il doit être.
     await page.goto('/code');
     await expect(page).toHaveURL(/\/spaces$/);
-    await expect(page.getByRole('heading', { name: 'Workspaces' })).toBeVisible();
+    // La page s'appelle « Projects » depuis 1d4c8871 (#367, 21/09) : elle
+    // s'appelait « Workspaces », et ce test l'attendait sous ce nom.
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
     // Et le panneau du projet se REFERME : la preuve est à côté des
     // conversations, pas devant elles, et la personne décide.
     await page.goto(`/spaces/${projectId}`);

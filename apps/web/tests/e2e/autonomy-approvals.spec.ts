@@ -63,8 +63,10 @@ test.describe('Approvals tab @cap:regler-autonomie/ecran', () => {
     await page.goto(firstAgentEditUrl);
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
-    // The tab bar should contain an "Autonomy" tab.
-    const autonomyTab = page.getByRole('tab', { name: /^approvals$/i });
+    // The tab bar should contain an "Autonomy" tab. It is labelled so since
+    // d3ecc410 (#438, 25/09); before, it read « Approvals » and this suite
+    // looked for that word.
+    const autonomyTab = page.getByRole('tab', { name: /^autonomy$/i });
     await expect(autonomyTab).toBeVisible({ timeout: 10_000 });
   });
 
@@ -77,7 +79,7 @@ test.describe('Approvals tab @cap:regler-autonomie/ecran', () => {
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
     // Click the Autonomy tab.
-    await page.getByRole('tab', { name: /^approvals$/i }).click();
+    await page.getByRole('tab', { name: /^autonomy$/i }).click();
 
     // Should show either the empty state OR the tool list — but never an error.
     const hasEmptyState = page
@@ -107,7 +109,7 @@ test.describe('Approvals tab @cap:regler-autonomie/ecran', () => {
     await page.goto(firstAgentEditUrl);
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
-    await page.getByRole('tab', { name: /^approvals$/i }).click();
+    await page.getByRole('tab', { name: /^autonomy$/i }).click();
 
     // Skip if there are no gateable tools (empty state agent).
     const toolList = page.locator('[data-testid="autonomy-tool-list"]');
@@ -137,7 +139,7 @@ test.describe('Approvals tab @cap:regler-autonomie/ecran', () => {
     // Reload to verify persistence.
     await page.reload();
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
-    await page.getByRole('tab', { name: /^approvals$/i }).click();
+    await page.getByRole('tab', { name: /^autonomy$/i }).click();
 
     // The "Ask for approval" button should still be the active selection.
     // We verify by checking that the button has the active styling (bg-warn class).
