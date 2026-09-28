@@ -143,6 +143,13 @@ export async function fileProducedByDescendant(
     }
 
     const current = await fingerprint(real);
+    // Present but unreadable (EBUSY, EACCES, an exclusive lock): nothing can be
+    // compared, which is not "not produced" (review of #589, pass 2).
+    if (current.kind === 'unreadable') {
+      const error = `the file exists but could not be read (${real})`;
+      console.error(`[delivery] DESCENDANT_FILES_READ_FAILED job=${ctx.jobId} error=${error}`);
+      return { kind: 'unreadable', error };
+    }
     if (current.kind !== 'file') return { kind: 'not_produced' };
     // Another's content, provably: someone outside my descendants fingerprinted it here.
     if (constats.some((c) => !byId.has(c.jobId) && c.sha === current.sha256)) {

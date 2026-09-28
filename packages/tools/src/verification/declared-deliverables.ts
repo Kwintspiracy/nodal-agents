@@ -123,9 +123,18 @@ export async function declareDeliverables(
       });
     } catch (err) {
       // Un fichier dont le contenu actuel est ce qu'un de MES délégués a produit
-      // dans ce run est à moi de le déclarer (#588) : la racine livre l'image de ComfyArtist sans la
-      // recopier. Par chemin absolu, et seulement celui-là : la même règle que
-      // la garde d'envoi (descendant-files.ts), rien de plus large.
+      // dans ce run est à moi de le déclarer (#588) : la racine livre l'image de
+      // ComfyArtist sans la recopier. La même règle que la garde d'envoi
+      // (descendant-files.ts), rien de plus large.
+      //
+      // PAR CHEMIN ABSOLU SEULEMENT, et c'est voulu (revue de #589, passe 2). Un
+      // chemin relatif se résout contre MES dossiers ; le fichier d'un délégué
+      // vit par définition hors d'eux, et la seule forme relative qui pourrait
+      // l'atteindre est une remontée (`../`), que le résolveur refuse exprès
+      // et que cette règle ne rouvre pas. La racine nomme le fichier de son
+      // délégué par le chemin absolu que la délégation lui a rendu
+      // (`files_written`) — c'est aussi la seule forme que la garde d'envoi
+      // étend.
       const reel = isAbsolute(path) ? await realpath(path).catch(() => null) : null;
       const verdict = reel === null ? null : await fileProducedByDescendant(ctx, reel);
       if (verdict?.kind === 'unreadable') {

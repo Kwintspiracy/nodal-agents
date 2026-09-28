@@ -36,6 +36,24 @@ import {
   makeOutsideDir,
 } from '../communication/__tests__/outside-roots';
 
+/** Le chemin dont la lecture est rendue ILLISIBLE (verrou, EACCES), à la demande. */
+const etat = vi.hoisted(() => ({ illisible: null as string | null }));
+
+// `fingerprint` rend `{ kind: 'unreadable' }` sans lever quand le fichier est là
+// mais ne se lit pas (EBUSY, EACCES, verrou exclusif). Un verrou Windows ne se
+// pose pas depuis un test portable : la lecture est simulée illisible pour un
+// chemin, le reste est le vrai module.
+vi.mock('../verification/observed', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../verification/observed')>();
+  return {
+    ...actual,
+    fingerprint: async (p: string) =>
+      etat.illisible !== null && p === etat.illisible
+        ? { kind: 'unreadable' as const, size: null }
+        : actual.fingerprint(p),
+  };
+});
+
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>();
   return { ...actual, tmpdir: () => fakeTmpRootFor('descendants') };
@@ -52,6 +70,8 @@ const NOW = Date.now();
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
 let rootJob: string;
+let childJob: string;
+let delegateWsRoot: string;
 let otherEntity: string;
 let ownWs: string;
 const cleanup: string[] = [];
@@ -144,6 +164,7 @@ beforeAll(async () => {
   otherEntity = autre!.id;
   ownWs = await realpath(makeOutsideDir('own'));
   const delegateWs = await realpath(makeOutsideDir('delegate'));
+  delegateWsRoot = delegateWs;
   const strangerWs = await realpath(makeOutsideDir('stranger'));
   const linkedWs = await realpath(makeOutsideDir('linked-target'));
   cleanup.push(ownWs, delegateWs, strangerWs, linkedWs);
@@ -155,6 +176,7 @@ beforeAll(async () => {
     createdAt: NOW - 60 * MIN,
     completedAt: NOW - 30 * MIN,
   });
+  childJob = child;
   const grandchild = await job({
     parentJobId: child,
     createdAt: NOW - 50 * MIN,
@@ -249,6 +271,17 @@ describe('a file my delegate produced is mine to deliver (#588) @cap:organiser-e
     }
   });
 
+  it('a file that exists but cannot be read (locked) is said unreadable, not “not yours”', async () => {
+    etat.illisible = normalizePath(f.ecritParOutil!);
+    try {
+      await expect(assertLocalSourceAllowed(f.ecritParOutil!, ctx())).rejects.toThrow(
+        /^descendant_files_unreadable: .*could not be read/,
+      );
+    } finally {
+      etat.illisible = null;
+    }
+  });
+
   it('a failed read says it could not check, not that the file is not mine', async () => {
     await expect(
       assertLocalSourceAllowed(f.ecritParOutil!, ctx({ db: panne as never })),
@@ -285,6 +318,17 @@ describe('a file my delegate produced is mine to declare (#588) @cap:verifier-un
     expect(out.kind).toBe('unresolved');
     if (out.kind !== 'unresolved') return;
     expect(out.unresolved.map((u) => u.requested)).toEqual([f.remplace, f.autreRunDeclare]);
+  });
+
+  it('a child cannot make a path outside its own folders declarable: it has no such descendant', async () => {
+    const out = await declareDeliverables(
+      ctx({ jobId: childJob, workspaces: [{ label: 'delegate', path: delegateWsRoot }] }),
+      [f.etranger!],
+    );
+
+    expect(out.kind).toBe('unresolved');
+    if (out.kind !== 'unresolved') return;
+    expect(out.unresolved.map((u) => u.requested)).toEqual([f.etranger]);
   });
 
   it('a failed read is its own code, not a path the resolver refused', async () => {
