@@ -25,6 +25,7 @@ import DisclosureButton from '@/components/ui/DisclosureButton';
 import QuestionActions from './QuestionActions.tsx';
 import { useApprovals } from '@/components/ApprovalsProvider';
 import { SHELL_CATEGORY_COPY } from '@/lib/shell-checklist-copy.ts';
+import { openRunHref } from '@/lib/run-page.ts';
 
 type RuleAction = 'auto_approve' | 'require_approval' | 'block';
 
@@ -586,7 +587,7 @@ export default function ApprovalRequestCard({
           />
         )}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <PrimaryButton variant="neutral" size="md" href={`/jobs/${a.jobId}`}>
+          <PrimaryButton variant="neutral" size="md" href={openRunHref(a.jobId)}>
             Open Run
           </PrimaryButton>
 

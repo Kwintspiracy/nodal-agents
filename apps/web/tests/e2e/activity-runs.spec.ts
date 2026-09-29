@@ -148,10 +148,10 @@ test('a run is one row, unfolded into its calls @cap:suivre-execution/ecran', as
   const text = (await unfolded.innerText()).replace(/\s+/g, ' ');
   expect(text.indexOf(MODEL_NAME)).toBeLessThan(text.indexOf(TOOL_NAME));
 
-  // The run keeps its own address, reached from the row.
+  // The row opens the run through the route that picks its section (#501).
   await expect(unfolded.getByRole('link', { name: /open run/i })).toHaveAttribute(
     'href',
-    `/jobs/${jobId}`,
+    `/runs/${jobId}`,
   );
 });
 

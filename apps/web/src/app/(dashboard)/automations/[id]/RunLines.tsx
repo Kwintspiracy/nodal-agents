@@ -15,6 +15,7 @@ import type { SpaceListRow } from '@/lib/actions.ts';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import { relativeTime } from '@/lib/format-time';
 import { formatCost } from '@/app/(dashboard)/spaces/format.ts';
+import { runHrefIn } from '@/lib/run-page.ts';
 
 function statusVariant(status: string | null): StatusVariant {
   if (status === 'completed') return 'done';
@@ -27,27 +28,18 @@ function statusVariant(status: string | null): StatusVariant {
 /**
  * Les runs, une ligne chacun, menant à leur page de run.
  *
- * `basePath` est OBLIGATOIRE : une routine mène à `/scheduled/<id>`, un webhook
- * à `/jobs/<id>`, et aucun des deux n'est le cas ordinaire dont l'autre serait
- * l'exception. Un défaut aurait fait taire l'oubli, et donné des liens morts
- * pour la moitié des automatisations (revue, passe 2).
- *
- * C'est une CHAÎNE et non une fonction : un composant serveur ne peut passer
- * que des valeurs sérialisables à un composant client.
+ * Ce sont les runs d'UNE automatisation (routine ou webhook) : par la règle de
+ * `lib/run-page.ts`, ils appartiennent à Scheduled, et leur adresse vient de
+ * là (#501). Routine et webhook menaient par deux portes (`/scheduled/<id>`,
+ * `/jobs/<id>`) à la même page ; il n'en reste qu'une.
  */
-export function ScheduleRunList({
-  runs,
-  basePath,
-}: {
-  runs: readonly SpaceListRow[];
-  basePath: string;
-}) {
+export function ScheduleRunList({ runs }: { runs: readonly SpaceListRow[] }) {
   return (
     <ul className="border-t border-rule-2 bg-canvas/40 py-1">
       {runs.map((r) => (
         <li key={r.id}>
           <Link
-            href={`${basePath}/${r.id}`}
+            href={runHrefIn('scheduled', r.id)}
             className="flex items-center gap-3 px-4 py-1.5 text-body-12 text-ink-2 hover:bg-hover"
           >
             <span className="text-mono-11 text-ink-4">

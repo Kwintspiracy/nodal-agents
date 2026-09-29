@@ -7,9 +7,11 @@
 // redessiné avec les codes graphiques du fil (#135) : cartes papier, filets
 // `rule-2`, titres mono en capitales, blocs du fil, couleurs `feed/*`.
 //
-// Deux routes la rendent — `/scheduled/[id]` (un run d'automatisation) et
-// `/jobs/[id]` (un run ouvert depuis Activity) — avec le MÊME chargeur
-// (`getSpaceConversationAction`, qui accepte n'importe quel job). `/code/[id]`
+// Deux routes la rendent — `/jobs/[id]` (un run de Scheduled) et
+// `/chat/runs/[id]` (un run de Work, la même page réexportée) — avec le MÊME
+// chargeur (`getSpaceConversationAction`, qui accepte n'importe quel job).
+// L'adresse d'un run se décide dans `lib/run-page.ts` (#501) ; `/scheduled/[id]`
+// n'est plus qu'une redirection. `/code/[id]`
 // viendra s'y poser à son tour dans une autre PR.
 //
 // Deux blocs sont SORTIS de la chronologie et remontés en haut : la réponse
