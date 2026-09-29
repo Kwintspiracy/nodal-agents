@@ -223,13 +223,18 @@ describe('a shell write is constated without a git root at the workspace (#590) 
 // l'arbre de travail à une copie FIGÉE de l'index de l'instantané, prise à
 // l'avant, et n'en lit que la colonne arbre-de-travail.
 
-/** Un workspace photographié par le vrai `snapshot`, avec ses fichiers. */
-async function photographie(nom: string, fichiers: Record<string, string>) {
+/**
+ * Un workspace photographié par le vrai `snapshot`, avec ses fichiers.
+ * `timeoutMs` : la photographie est la MISE EN PLACE du test, pas son sujet.
+ * Sur le runner Windows, `git add -A` de 1 100 fichiers dépasse la borne par
+ * défaut de 30 s (CI Windows, main 4510428d) : le cas qui en a besoin la donne large.
+ */
+async function photographie(nom: string, fichiers: Record<string, string>, timeoutMs?: number) {
   const ws = join(racine, nom);
   await mkdir(ws, { recursive: true });
   for (const [f, contenu] of Object.entries(fichiers)) await writeFile(join(ws, f), contenu);
   const store = join(racine, `store-${nom}`);
-  await snapshot(store, ws, 'le tour');
+  await snapshot(store, ws, 'le tour', timeoutMs === undefined ? {} : { timeoutMs });
   return { ws, store, reel: normalizePath(await realpath(ws)) };
 }
 
@@ -260,14 +265,14 @@ describe('the fallback reads a frozen copy of the snapshot, not the store as is 
   it('more than MAX_STATUS_ENTRIES files already there do not hide the one written', async () => {
     const fichiers: Record<string, string> = {};
     for (let i = 0; i < 1100; i++) fichiers[`img-${i}.png`] = `image ${i}`;
-    const { ws, store, reel } = await photographie('gros', fichiers);
+    const { ws, store, reel } = await photographie('gros', fichiers, 240_000);
     const avant = await snapshotGitAvant([ws], { store, workspaces: [ws] });
     await writeFile(join(ws, 'neuve.png'), 'neuve');
 
     expect(ecrits(await constatedGitWrites(avant))).toEqual([
       { path: `${reel}/neuve.png`, kind: 'added' },
     ]);
-  }, 60_000);
+  }, 300_000);
 
   it('another job snapshotting between the before and the after does not swallow the write', async () => {
     const { ws, store, reel } = await photographie('concurrent', { 'a.txt': 'a' });
