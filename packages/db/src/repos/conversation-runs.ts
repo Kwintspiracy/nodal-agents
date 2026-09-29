@@ -368,3 +368,52 @@ export async function listConversationRuns(
     startedAt: h.createdAt,
   }));
 }
+
+/** Un run que l'arrêt a trouvé vivant, et ce qu'il y a changé. */
+export interface StoppedRun extends CancelledTree {
+  /** La tête du run : l'identifiant que `listConversationRuns` rend. */
+  readonly runId: string;
+}
+
+/** Ce qu'un arrêt de runs a fait, run par run. */
+export interface StoppedRuns {
+  readonly stopped: StoppedRun[];
+  /** Les runs visés où rien ne vivait plus : rien n'y a été changé. */
+  readonly alreadyFinished: string[];
+}
+
+/**
+ * Arrête ces runs, chacun par `cancelJobTree` — la cascade du bouton Stop.
+ * Un run où rien ne vivait plus est rendu à part, jamais compté comme arrêté.
+ */
+export async function stopRuns(
+  db: AnyDrizzleDb,
+  input: { entityId: string; runIds: readonly string[] },
+): Promise<StoppedRuns> {
+  const stopped: StoppedRun[] = [];
+  const alreadyFinished: string[] = [];
+  for (const runId of input.runIds) {
+    const c = await cancelJobTree(db, { entityId: input.entityId, jobId: runId });
+    if (c.jobIds.length === 0 && c.taskIds.length === 0 && c.requestIds.length === 0) {
+      alreadyFinished.push(runId);
+    } else {
+      stopped.push({ runId, ...c });
+    }
+  }
+  return { stopped, alreadyFinished };
+}
+
+/**
+ * Arrête TOUS les runs vivants d'une conversation (#602) : ceux que
+ * `listConversationRuns` lit, arrêtés par `stopRuns`. Une seule définition de
+ * « les runs de cette conversation » pour les deux gestes qui l'arrêtent :
+ * l'outil `stop_conversation_run` (le modèle choisit de l'appeler) et la
+ * commande `/stop` d'un canal (la plateforme la traite, aucun modèle n'y a part).
+ */
+export async function stopConversationRuns(
+  db: AnyDrizzleDb,
+  input: { entityId: string; conversationId: string; excludeHeadJobId?: string },
+): Promise<StoppedRuns> {
+  const runs = await listConversationRuns(db, input);
+  return stopRuns(db, { entityId: input.entityId, runIds: runs.map((r) => r.headJobId) });
+}

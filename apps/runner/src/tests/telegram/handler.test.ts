@@ -483,6 +483,37 @@ describe('handleTelegramUpdate — group chats', () => {
     expect(result).toEqual({ skipped: 'group_filter' });
   });
 
+  // #602 (PR #605) : la fin du parcours est commune aux quatre canaux
+  // (channels/turn.ts), et le texte neutre d'une photo sans légende est posé
+  // AVANT le préfixe de groupe, comme Discord et WhatsApp le faisaient déjà.
+  // Avant, un groupe Telegram donnait la tâche « [Message from …]: » seule et
+  // une conversation au titre vide.
+  it('a captionless photo replying to the bot in a group: neutral task behind the prefix, titled conversation, same text on the photo', async () => {
+    const update = groupMessage('', { replyToBot: true });
+    update.message!.photo = [
+      { file_id: 'small', width: 90, height: 90 },
+      { file_id: 'large', width: 1280, height: 1280 },
+    ];
+
+    const result = await handleTelegramUpdate({
+      update,
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+
+    const task = '[Message from Alice]: Image envoyée (sans légende).';
+    expect(result.photo).toEqual({ fileId: 'large', chatId: '-100123', text: task });
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
+    expect(job?.task).toBe(task);
+    const [conv] = await db
+      .select({ title: conversations.title })
+      .from(conversations)
+      .where(eq(conversations.id, job!.conversationId!));
+    expect(conv?.title).toBe('Image envoyée (sans légende).');
+  });
+
   it('handles a reply to the bot in a group chat', async () => {
     const result = await handleTelegramUpdate({
       update: groupMessage('thanks for the answer', { replyToBot: true }),

@@ -5,7 +5,13 @@ import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } fr
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agents, agentJobs, channelBindings, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  agents,
+  agentJobs,
+  channelBindings,
+  conversations,
+  telegramAllowedChats,
+} from '@nodal-agents/db';
 import { runTelegramPoller } from '../../telegram/poller.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -529,6 +535,76 @@ describe('runTelegramPoller', () => {
     // silently dropped because 101 (later in the batch) happened to succeed first.
     const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
     expect(jobs.map((j) => j.task).sort()).toEqual(['first', 'second']);
+  });
+
+  it('#602: /stop creates no job and is acknowledged by a reaction on the message, never by text @cap:parler-par-canal-externe/moteur', async () => {
+    // A live run in chat 555's current conversation, to be stopped.
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '555',
+      })
+      .returning({ id: conversations.id });
+    const [run] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '555',
+        conversationId: conv!.id,
+        status: 'processing',
+        task: 'Je relance la recherche',
+      })
+      .returning({ id: agentJobs.id });
+
+    const controller = new AbortController();
+    let getUpdatesCalls = 0;
+    const botApiCalls: Array<{ method: string; body: unknown }> = [];
+    fetchSpy.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.includes('/api/worker')) return Promise.resolve(new Response('ok'));
+      const method = url.slice(url.lastIndexOf('/') + 1);
+      if (method !== 'getUpdates') {
+        botApiCalls.push({ method, body: JSON.parse(String(init?.body ?? '{}')) });
+        return Promise.resolve(fakeResponse(200, { ok: true, result: true }));
+      }
+      getUpdatesCalls += 1;
+      if (getUpdatesCalls === 1) {
+        return Promise.resolve(fakeResponse(200, { ok: true, result: [makeUpdate(300, '/stop')] }));
+      }
+      controller.abort();
+      return Promise.resolve(fakeResponse(200, { ok: true, result: [] }));
+    });
+
+    const exit = await runTelegramPoller({
+      agentId: seed.agentId,
+      agentEntityId: seed.entityId,
+      botToken: FAKE_TOKEN,
+      botUsername: 'test_bot',
+      startOffset: 0,
+      signal: controller.signal,
+      deps: makeDeps(db),
+      env: testEnv,
+      longPollSeconds: 1,
+    });
+
+    expect(exit.finalOffset).toBe(301);
+    const jobs = await db
+      .select({ id: agentJobs.id, status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.channel, 'telegram'));
+    expect(jobs).toEqual([{ id: run!.id, status: 'cancelled' }]);
+    // One Bot API call besides polling: the reaction. No sendMessage.
+    expect(botApiCalls).toEqual([
+      {
+        method: 'setMessageReaction',
+        body: { chat_id: 555, message_id: 300, reaction: [{ type: 'emoji', emoji: '👌' }] },
+      },
+    ]);
   });
 
   it('respects abort signal — exits cleanly when signal aborts before polling', async () => {
