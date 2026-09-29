@@ -9,6 +9,7 @@
 import { eq, and } from '@nodal-agents/db';
 import { approvalRequests, agentJobs } from '@nodal-agents/db';
 import { z } from 'zod';
+import { FREE_ANSWER_MAX } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resumeJobAfterApprovalResolution } from './resume.ts';
@@ -23,11 +24,8 @@ export type ApprovalDecision = 'approve' | 'reject';
  */
 const QuestionOptionsSchema = z.array(z.string());
 
-/**
- * La borne d'une réponse LIBRE (#465) : ce que la personne écrit quand aucune
- * option ne lui va. Une explication, pas un document.
- */
-export const FREE_ANSWER_MAX = 2000;
+// La borne d'une réponse LIBRE (#465), `FREE_ANSWER_MAX`, vit dans
+// `@nodal-agents/shared` : la même que lisent l'action web et la carte.
 
 export interface ResolveApprovalInput {
   approvalRequestId: string;

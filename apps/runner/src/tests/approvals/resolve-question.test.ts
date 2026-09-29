@@ -15,7 +15,8 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
 import { approvalRequests, agentJobs } from '@nodal-agents/db';
-import { FREE_ANSWER_MAX, resolveApprovalDecision } from '../../approvals/resolve.ts';
+import { FREE_ANSWER_MAX } from '@nodal-agents/shared';
+import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 
@@ -241,7 +242,10 @@ describe('resolveApprovalDecision — une question', () => {
     expect((await readBack(approval.id)).answer).toBe(texte);
   });
 
-  it('#465 — une réponse libre sur une approbation ordinaire est refusée', async () => {
+  // Revue Nodal de #622, passe 2 : ce cas portait le nom « sur une
+  // approbation ordinaire », mais il envoie un REFUS sur une question. Il
+  // garde son vrai nom ; le cas de l'approbation ordinaire est plus bas.
+  it('#465 — une réponse libre en DÉCLINANT une question est refusée', async () => {
     const approval = await insertQuestion();
 
     const result = await resolveApprovalDecision(makeDeps(), testEnv, {
@@ -317,6 +321,36 @@ describe('resolveApprovalDecision — une question', () => {
 });
 
 describe('resolveApprovalDecision — une approbation ordinaire', () => {
+  it('#465 — une réponse LIBRE sur une approbation ordinaire est refusée, et rien n’a bougé', async () => {
+    const [approval] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'ls' },
+        status: 'pending',
+      })
+      .returning();
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval!.id,
+      decision: 'approve',
+      answer: 'Autre chose',
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result).toEqual({ ok: false, code: 'answer_not_expected' });
+    const [row] = await db
+      .select({ status: approvalRequests.status, answer: approvalRequests.answer })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approval!.id));
+    expect(row).toEqual({ status: 'pending', answer: null });
+    expect(await jobStatus()).toBe('awaiting_approval');
+  });
+
   it("refuse une réponse : elle n'a aucune liste où pointer", async () => {
     const [approval] = await db
       .insert(approvalRequests)

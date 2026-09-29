@@ -248,7 +248,7 @@ import {
 } from './service-logs.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
-import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
+import { MCP_CATALOG, AgentSlugSchema, FREE_ANSWER_MAX } from '@nodal-agents/shared';
 import { isRefusedEffort } from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
 import {
@@ -6340,7 +6340,7 @@ const ResolveApprovalSchema = z.object({
    * la transporter, et un libellé qui n'est plus une option revient en erreur
    * plutôt que d'être écrit.
    */
-  answer: z.string().max(2000).optional(),
+  answer: z.string().max(FREE_ANSWER_MAX).optional(),
   /**
    * #465 — `answer` est une réponse LIBRE, écrite par la personne sous
    * « Something else ». Le runner ne la compare alors à aucune option.

@@ -24,7 +24,7 @@ import AgentAvatar from '@/components/ui/AgentAvatar';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import { useApprovals } from '@/components/ApprovalsProvider';
 import { SHELL_CATEGORY_COPY } from '@/lib/shell-checklist-copy.ts';
-import { openRunHref, questionHref } from '@/lib/run-page.ts';
+import { conversationOf, openRunHref, questionHref } from '@/lib/run-page.ts';
 
 type RuleAction = 'auto_approve' | 'require_approval' | 'block';
 
@@ -596,7 +596,9 @@ export default function ApprovalRequestCard({
               // elle a été posée : le fil de sa conversation, ou la page du run
               // quand elle n'en a pas (une automatisation). La carte renvoie.
               <PrimaryButton variant="ink" size="md" href={questionHref(a)}>
-                {a.conversationId !== null ? 'Answer in the conversation' : 'Answer on the run'}
+                {conversationOf(a.conversationId) !== null
+                  ? 'Answer in the conversation'
+                  : 'Answer on the run'}
               </PrimaryButton>
             ) : (
               <div className="flex flex-wrap items-center gap-2">

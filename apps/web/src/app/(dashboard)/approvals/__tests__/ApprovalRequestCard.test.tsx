@@ -694,6 +694,21 @@ describe('la carte a deux états, Open et Close @cap:approuver-une-action/ecran'
     );
     expect(liens).toContain('Answer on the run');
   });
+
+  // Revue Nodal de #622, passe 2 : le libellé testait `!== null` pendant que
+  // l'adresse passait par `conversationOf`. Sur un id VIDE, la carte disait
+  // « in the conversation » en menant au run. Une seule règle pour les deux.
+  it('#465 — un id de conversation VIDE : le libellé et l’adresse disent tous deux le run', async () => {
+    const entree = { question: 'Which branch do I target?', options: ['main', 'develop'] };
+    await monter(
+      demande({ kind: 'question', toolInput: entree, conversationId: '' } as Partial<Approval>),
+    );
+    const liens = [...rendu().querySelectorAll('a[href="/runs/j1"]')].map((l) =>
+      l.textContent?.trim(),
+    );
+    expect(liens).toContain('Answer on the run');
+    expect(rendu().textContent).not.toContain('Answer in the conversation');
+  });
 });
 
 // ─── Ce que la revue a trouvé ─────────────────────────────────────────────────

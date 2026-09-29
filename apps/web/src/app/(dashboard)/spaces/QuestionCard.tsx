@@ -10,6 +10,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import ChoiceTile from '@/components/ui/ChoiceTile';
 import TextArea from '@/components/ui/TextArea';
 import { useApprovals } from '@/components/ApprovalsProvider';
+import { FREE_ANSWER_MAX } from '@nodal-agents/shared';
 
 /**
  * La ligne de la PLATEFORME (#465), sous celles de l'agent : répondre dans ses
@@ -18,9 +19,6 @@ import { useApprovals } from '@/components/ApprovalsProvider';
  * sans endroit où expliquer quoi que ce soit (job 30e00821, 23/09).
  */
 export const SOMETHING_ELSE_LABEL = "Something else, I'll explain";
-
-/** La borne du runner (`FREE_ANSWER_MAX`, approvals/resolve.ts). */
-const FREE_ANSWER_MAX = 2000;
 
 /** La raison d'un refus, facultative : une phrase pour l'agent, pas un document. */
 const DECLINE_NOTES_MAX = 500;
