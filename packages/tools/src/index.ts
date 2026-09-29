@@ -218,7 +218,6 @@ export {
   extractClaudeUsage,
   extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
-  CLI_RUNTIME_RUNS_SHELL_COMMANDS,
   assertAgentBudget,
   recordCliRun,
   acquireWorkspaceLock,
