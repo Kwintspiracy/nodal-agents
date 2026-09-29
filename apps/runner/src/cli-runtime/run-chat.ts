@@ -361,6 +361,9 @@ export async function runCliRuntimeChatTurn(args: {
   // ci-dessus, le registre ci-dessous), puis le droit d'agir — le Stop de la
   // personne l'emporte sur le frein —, puis le verdict.
   const answered = !turn.isError && turn.finalText !== '';
+  // Ce qui a arrêté le tour, lu UNE fois, la veille figée par `brake.stop()` :
+  // le verdict et la raison posée sur la réponse disent la même chose.
+  const brakeStop = brake.stoppedBy();
 
   // ── Le REGISTRE des projets (P5) — le JUMEAU du chemin job (run-job.ts). Un
   // tour de chat n'a pas de jobId, et la colonne de rattachement vit sur
@@ -420,7 +423,6 @@ export async function runCliRuntimeChatTurn(args: {
     // Le frein ne décrit qu'un tour déjà en échec (#494) : il a tué la CLI.
     // Ce qu'elle avait dit reste la réponse, avec la raison ; rien de dit, le
     // tour échoue en la disant, comme au départ.
-    const brakeStop = brake.stoppedBy();
     if (brakeStop) {
       return partialText() !== ''
         ? keepPartialReply({ cutReason: brakeStop })

@@ -621,7 +621,18 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     try {
       const braked = await buildTeamBlock(orch.id as AgentId, db);
       for (const [label, { name }] of byLabel) {
-        expect(entryOf(braked, name), `${label} under the brake`).toContain('Shell commands: no');
+        const entry = entryOf(braked, name);
+        expect(entry, `${label} under the brake`).toContain('Shell commands: no');
+        // Ce que la posture dit pour CHAQUE runtime (revue Nodal de #551,
+        // passe 3) : Claude répond sans shell, Codex ne part pas du tout, et
+        // le bloc ne doit pas lui envoyer un travail qu'il refusera.
+        if (label.startsWith('codex')) {
+          expect(entry, label).toContain(
+            'Unavailable: the workspace emergency brake is on, and this runtime cannot start a turn without a shell.',
+          );
+        } else {
+          expect(entry, label).not.toContain('Unavailable');
+        }
       }
     } finally {
       await db.update(entities).set({ autoRunPaused: false }).where(eq(entities.id, entityId));

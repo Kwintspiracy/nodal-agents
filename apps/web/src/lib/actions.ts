@@ -8170,6 +8170,15 @@ async function mergeCliPermissions(
     // files only. Turning the shell on again goes through its own confirmation.
     const cleared = 'mode' in patch && patch.mode === 'read' ? { shell: 'none' as const } : {};
     const nextPermissions = { ...(agent.cliPermissions ?? {}), ...patch, ...cleared };
+    // And the same rule the other way (Nodal review of #551, pass 3): a shell
+    // exists only in write mode (`cliShellPosture`), so `auto` outside it is a
+    // setting the runner would ignore, stored until write mode lit it silently.
+    if (nextPermissions.shell === 'auto' && (nextPermissions.mode ?? 'read') !== 'write') {
+      return fail(
+        'validation_failed',
+        'Shell commands need write mode. Switch the agent to write mode first.',
+      );
+    }
 
     await db
       .update(agents)

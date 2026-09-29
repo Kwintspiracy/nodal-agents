@@ -340,7 +340,17 @@ export async function buildTeamBlock(
       if (cli === undefined) {
         throw new Error(`buildTeamBlock: unknown agent runtime "${runtime}" for ${subAgentId}`);
       }
-      canRun = cliShellPosture(cli, cliPermissions, { autoRunPaused }).kind === 'shell';
+      const posture = cliShellPosture(cli, cliPermissions, { autoRunPaused });
+      // Every posture is said as the runner applies it: a REFUSED turn (a
+      // runtime that cannot drop its shell, under the brake) does not start
+      // at all, so "no shell" alone would send it work it will refuse.
+      if (posture.kind === 'refused') {
+        return (
+          '\n  Shell commands: no' +
+          '\n  Unavailable: the workspace emergency brake is on, and this runtime cannot start a turn without a shell.'
+        );
+      }
+      canRun = posture.kind === 'shell';
     }
     if (!canRun) return '\n  Shell commands: no';
     if (runtime === 'nodal' && allowlist && allowlist.length > 0) {

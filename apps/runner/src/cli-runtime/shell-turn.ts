@@ -87,8 +87,11 @@ export function watchBrakeDuringTurn(
   const brake = new AbortController();
   let stoppedBy: BrakeStop | null = null;
   let unreadable = 0;
+  // Figée par `stop()` : une lecture revenue après la fin du tour ne change
+  // plus ce qui l'a arrêté (revue Nodal de #551, passe 3).
+  let over = false;
   const cut = (why: BrakeStop): void => {
-    if (stoppedBy) return;
+    if (over || stoppedBy) return;
     stoppedBy = why;
     brake.abort();
   };
@@ -116,6 +119,9 @@ export function watchBrakeDuringTurn(
   return {
     signal: opts.personStop ? AbortSignal.any([opts.personStop, brake.signal]) : brake.signal,
     stoppedBy: () => stoppedBy,
-    stop: () => clearInterval(timer),
+    stop: () => {
+      over = true;
+      clearInterval(timer);
+    },
   };
 }

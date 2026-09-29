@@ -509,6 +509,7 @@ describe('a turn cut by the brake ends like any other turn @cap:executer-une-com
   // encore la PRISE, et le « continue » suivant doit reprendre la session que
   // la CLI tuée avait, pas repartir de zéro.
   it('job path: a Stop that lands with the brake is a cancellation, and the session is kept', async () => {
+    const projectId = await rootDeclared();
     const { jobId, conversationId } = await jobInConversation();
     cliCutByTheBrake(join(root, 'a.ts'), {
       thenAlso: async () => {
@@ -522,6 +523,28 @@ describe('a turn cut by the brake ends like any other turn @cap:executer-une-com
     expect(outcome).toEqual({ status: 'cancelled' });
     expect(await jobRow(jobId)).toMatchObject({ status: 'cancelled', error: null });
     expect(await sessionOf(conversationId)).toBe('sess-killed');
+    expect(await currentProjectOf(conversationId)).toBe(projectId);
+  }, 15_000);
+
+  // Passe 3 : l'autre moitié de `claimStillHeld`. Une REPRISE par un autre run
+  // change la prise : le run périmé n'écrit plus l'état que le message suivant
+  // lit (la session, le projet courant du fil), que le nouveau run possède.
+  it('job path: after another run re-claimed the job, the stale run writes no session and no current project', async () => {
+    await rootDeclared();
+    const { jobId, conversationId } = await jobInConversation();
+    cliCutByTheBrake(join(root, 'a.ts'), {
+      thenAlso: async () => {
+        // Remis en file et repris par un autre run : même statut, autre prise.
+        await db.update(agentJobs).set({ claimGeneration: 1 }).where(eq(agentJobs.id, jobId));
+      },
+    });
+
+    const outcome = await runJobIn(jobId, conversationId);
+
+    expect(outcome).toEqual({ status: 'already_handled' });
+    expect(await jobRow(jobId)).toMatchObject({ status: 'processing', error: null });
+    expect(await sessionOf(conversationId)).toBeNull();
+    expect(await currentProjectOf(conversationId)).toBeNull();
   }, 15_000);
 
   it('chat path: a Stop that lands with the brake is a stopped answer, not a brake failure', async () => {

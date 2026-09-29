@@ -85,4 +85,24 @@ describe('CLI runtime permissions, as stored @cap:executer-une-commande/ecran', 
     // pas rallumé, avec sa propre confirmation.
     expect(cliShellPosture('claude', back, { autoRunPaused: false }).kind).toBe('no_shell');
   });
+
+  // Revue Nodal de #551, passe 3 : l'action acceptait `shell: 'auto'` en
+  // lecture seule, un réglage que le runner ignore (`cliShellPosture` : pas de
+  // shell hors écriture). Stocké, il se rallumait en silence au passage en
+  // écriture. La combinaison est refusée, et rien n'est écrit.
+  it.each([
+    ['read mode', { mode: 'read', shell: 'none' }],
+    ['no setting at all (read by default)', null],
+  ] as const)('shell auto is refused in %s, and nothing is stored', async (_label, perms) => {
+    await testDb
+      .update(agents)
+      .set({ cliPermissions: perms as never })
+      .where(eq(agents.id, seed.agentId));
+
+    const res = await setCliRuntimeShellAction({ agentId: seed.agentId, shell: 'auto' });
+
+    expect(res.ok).toBe(false);
+    expect(await stored()).toEqual(perms);
+    expect(cliShellPosture('claude', perms, { autoRunPaused: false }).kind).toBe('no_shell');
+  });
 });
