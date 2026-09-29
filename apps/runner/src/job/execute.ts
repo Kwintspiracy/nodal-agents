@@ -79,7 +79,6 @@ import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import { loadApprovalRules } from './approval-rules.ts';
 import {
   computeToolWhitelist,
-  computeToolChoice,
   executeTool,
   ALWAYS_ON_TOOLS,
   createTelegramSendMessageTool,
@@ -1671,9 +1670,6 @@ async function runJobTracked(
   // Definite assignment: llmClient is set unconditionally in the resolution
   // block below (or the function returns early with a failed status).
   let llmClient!: NodalLlmClient;
-  // Per-model capability of the primary key (T2): drives computeToolChoice so we
-  // don't force tool_choice:'required' on a model that rejects it.
-  let modelSupportsForcedToolChoice = true;
 
   // Chronomètre du SEGMENT en cours. Capturé à l'entrée de la fonction pour
   // couvrir le chargement du job et de l'agent, pas seulement la boucle LLM.
@@ -2034,11 +2030,9 @@ async function runJobTracked(
       return { status: 'failed', error: code };
     }
     llmClient = resolved.client;
-    modelSupportsForcedToolChoice = resolved.primarySupportsForcedToolChoice;
     trace('llm_client_from_key', {
       provider: resolved.primaryProvider,
       chainLength: resolved.chainLength,
-      forcedToolChoice: modelSupportsForcedToolChoice,
     });
   }
 
@@ -2816,7 +2810,6 @@ async function runJobTracked(
 
   // ── 9. Initialize ChainCounters ───────────────────────────────────────────────
   const counters = new ChainCounters(DEFAULT_LIMITS);
-  const hasAdapterTools = !isOrchestrator && toolDefs.length > ALWAYS_ON_TOOLS.length;
 
   // ── 10. Build tool map ────────────────────────────────────────────────────────
   //
@@ -4307,14 +4300,6 @@ async function runJobTracked(
       // a. Validate message structure
       validateMessageStructure(messages);
 
-      // b. Tool choice
-      const toolChoice = computeToolChoice({
-        isOrchestrator,
-        turn,
-        hasAdapterTools,
-        modelSupportsForcedToolChoice,
-      });
-
       // c. Convert tools to AI SDK format. For the skill-authoring meta-tools,
       // append the live workspace tool list so the model has the real tool names
       // in front of it as it decides to author a skill (see step 10).
@@ -4389,7 +4374,14 @@ async function runJobTracked(
               imageCache,
             ),
             tools: aiSdkTools,
-            toolChoice,
+            // The model decides, on every turn, for every model (#600). Forcing
+            // a tool call on turn 1 made a thinking model plan a whole
+            // trajectory in one response (64 to 546 calls, or the output cap),
+            // and left an orchestrator unable to answer a direct question.
+            // A turn that answers in text is judged after it, by the guards
+            // that already read it (delivery on a tool-only channel, stuck
+            // delegations, declared deliverables, the empty turn).
+            toolChoice: 'auto',
           },
           // #440 : le tour est streamé sous deux horloges de silence, jamais
           // coupé tant qu'il écrit (packages/llm/src/turn-clocks.ts).

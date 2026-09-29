@@ -116,8 +116,9 @@ export const CHAT_TOOLS: Record<
 
 // Escalation-recovery nudge. A reasoning model (MiniMax M3) intermittently
 // NARRATES an action in text ("Je lance X…") without emitting the run_task tool
-// call — ~1 turn in 5 in practice. We cannot force tool_choice (MiniMax's
-// OpenRouter endpoints 404 on any forced value). So when the model produced text
+// call — ~1 turn in 5 in practice. Nodal never forces tool_choice (#600): a chat
+// turn may be pure conversation, and a forced call made a thinking model plan a
+// whole trajectory in one response. So when the model produced text
 // but no run_task, we re-prompt ONCE with this reminder. Pure conversation is
 // unaffected: no action was committed, so the model calls nothing and we keep
 // the text reply. This is LLM-internal steering (never shown to the user).
@@ -717,7 +718,7 @@ export async function runChatTurn(opts: {
 
   // 5b. ESCALATION RECOVERY. The model produced a reply but NO run_task call. A
   //     reasoning model (MiniMax M3) intermittently narrates an action without
-  //     calling the tool. Since tool_choice can't be forced (404 on MiniMax),
+  //     calling the tool. Since tool_choice is never forced (#600),
   //     re-prompt ONCE: show it its own reply and have it either escalate or
   //     confirm it was conversation. Recovers the ~1-in-5 narration misses.
   //

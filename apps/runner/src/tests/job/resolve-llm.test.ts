@@ -1,8 +1,7 @@
 // resolve-llm.test.ts — per-agent LLM chain resolution.
 // Asserts the REAL resolution result against real entity_llm_keys rows: the
-// chain built, what's skipped (and why), and that the forced-tool_choice
-// capability is read from the model CATALOG (provider, agent.model), not a
-// stored column. Failover BEHAVIOUR is unit-tested in failover.test.ts.
+// chain built and what's skipped (and why). Failover BEHAVIOUR is unit-tested
+// in failover.test.ts.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
@@ -137,40 +136,6 @@ describe('resolveAgentLlmClient', () => {
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe('agent_no_llm_configured');
-  });
-
-  it('reads forced-tool_choice capability from the catalog by (provider, agent.model)', async () => {
-    const orId = await insertKey({ provider: 'openrouter', isActive: true });
-
-    // A catalogued tool-capable model → true.
-    const sonnet = await resolveAgentLlmClient(db, {
-      llmKeyId: orId,
-      fallbackChain: [],
-      model: 'anthropic/claude-sonnet-4.6',
-    });
-    expect(sonnet.ok).toBe(true);
-    if (sonnet.ok) expect(sonnet.primarySupportsForcedToolChoice).toBe(true);
-
-    // An unknown/custom model → default true (the runtime floor backstops).
-    const custom = await resolveAgentLlmClient(db, {
-      llmKeyId: orId,
-      fallbackChain: [],
-      model: 'some/unknown-model',
-    });
-    expect(custom.ok).toBe(true);
-    if (custom.ok) expect(custom.primarySupportsForcedToolChoice).toBe(true);
-
-    // MiniMax M3 → false: the catalog marks it forcedToolChoice:false (some of
-    // its OpenRouter endpoints reject a forced tool_choice), so the runner sends
-    // 'auto' instead of 'required' and the recurring 404 ("No endpoints found
-    // that support the provided 'tool_choice' value") does not recur.
-    const minimax = await resolveAgentLlmClient(db, {
-      llmKeyId: orId,
-      fallbackChain: [],
-      model: 'minimax/minimax-m3',
-    });
-    expect(minimax.ok).toBe(true);
-    if (minimax.ok) expect(minimax.primarySupportsForcedToolChoice).toBe(false);
   });
 });
 

@@ -2,13 +2,11 @@
 // their tool-calling capability. Small on purpose: it's a convenience layer
 // (nice labels + correct flags pre-filled) on top of the entity_llm_keys row.
 // The "Custom" path + the live capability probe ("Test") are the source of
-// truth for anything NOT listed here. Keep it conservative — a wrong flag is
-// caught at runtime by the tool_choice floor, but accuracy avoids wasted calls.
+// truth for anything NOT listed here. Keep it conservative.
 //
-// `forcedToolChoice`: does the model/endpoint accept tool_choice:'required'
-// (Anthropic {type:'any'}, OpenAI 'required', Gemini ANY)? When false, the
-// runner sends 'auto' instead. The runtime tool_choice floor also relaxes any
-// model that rejects the forced value at call time, as a generic backstop.
+// No entry carries a tool_choice capability: the runner sends 'auto' on every
+// turn, for every model (#600), so whether an endpoint would accept a forced
+// 'required' is not a question it asks.
 
 /**
  * Reasoning-effort levels an agent can request. 'off' disables thinking where
@@ -51,7 +49,6 @@ export interface ReasoningControl {
 
 export interface ModelCapabilities {
   tools: boolean;
-  forcedToolChoice: boolean;
   /**
    * The model accepts IMAGE input (it can "see" pictures). Sourced from the
    * providers themselves — OpenRouter's `/api/v1/models` `architecture.
@@ -174,8 +171,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'deepseek-chat',
       label: 'DeepSeek Chat (V3)',
       // deepseek-chat is the production alias for DeepSeek V3. Standard tool
-      // calling with forced tool_choice supported.
-      capabilities: { tools: true, forcedToolChoice: true },
+      // calling.
+      capabilities: { tools: true },
       contextWindow: 128_000,
       // Standard (cache-miss) rate per DeepSeek's public pricing page —
       // verify against api-docs.deepseek.com/quick_start/pricing if this drifts.
@@ -190,7 +187,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // assistant messages with tool_calls (the deepseek fetch shim handles this).
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         // DeepSeek's native API has no intensity knob — thinking is on or off.
         reasoningControl: { kind: 'onoff' },
@@ -206,10 +202,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // line supersedes M1, which is no longer listed, so it's dropped here. The
   // full lineup also includes M2.1/M2.5 and `-highspeed` variants — use the
   // model picker's "Custom…" field for those; this is the curated short list.
-  // forcedToolChoice:false across the M-series — the MiniMax endpoint rejects a
-  // forced tool_choice with a 400/404 (observed on M3 via OpenRouter); the
-  // runtime completion floor covers it. Context windows are docs-sourced where
-  // available, else a conservative 200K until a live probe confirms.
+  // Context windows are docs-sourced where available, else a conservative 200K
+  // until a live probe confirms.
   // Priced on 2026-08-11 from MiniMax's OpenRouter listing (see the PROVENANCE
   // block on ModelPricing): m3 and m2.7 both 0.30/1.20, m2 0.255/1.02. Before
   // that they carried no rate at all, so Guard 1e could never fire on MiniMax.
@@ -220,7 +214,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // Newest flagship — a reasoning model (adaptive `thinking`), 1M context.
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         // minimax.ts injects thinking.budget_tokens (today fixed at 8000 =
         // this scale's 'medium'); ladder mirrors Hermes' Anthropic budgets.
@@ -240,7 +233,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'MiniMax-M2.7',
       label: 'MiniMax M2.7',
       // Latest M2-series — non-reasoning per MiniMax docs.
-      capabilities: { tools: true, forcedToolChoice: false },
+      capabilities: { tools: true },
       contextWindow: 200_000,
       pricing: {
         inputPerMillionUsd: 0.3,
@@ -252,7 +245,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'MiniMax-M2',
       label: 'MiniMax M2',
       // Stable previous-generation baseline — non-reasoning.
-      capabilities: { tools: true, forcedToolChoice: false },
+      capabilities: { tools: true },
       contextWindow: 200_000,
       pricing: {
         inputPerMillionUsd: 0.255,
@@ -265,10 +258,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // openrouter.ai's model pages and platform.kimi.ai/docs (2026-07). Both run
   // in mandatory thinking mode — moonshot.ts injects `thinking:{type:'enabled'}`
   // and never sends `temperature` (undocumented for this line) or a competing
-  // `reasoning_effort`. No `forcedToolChoice`: Moonshot's chat API docs don't
-  // mention a `tool_choice` parameter at all — the runtime completion floor
-  // covers it, same treatment as the other undocumented-tool_choice reasoning
-  // models (MiniMax M3, GLM 5.2) in this catalog.
+  // `reasoning_effort`.
   // Priced on 2026-08-11 from Moonshot's OpenRouter listing, same convention as
   // the MiniMax entries above (see the PROVENANCE block on ModelPricing).
   // kimi-k2-thinking is deliberately NOT catalogued (discontinued by Moonshot).
@@ -280,7 +270,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // intensity knob, cannot be disabled.
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: { kind: 'onoff', mandatory: true },
       },
@@ -296,7 +285,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Kimi K2.7 Code',
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: { kind: 'onoff', mandatory: true },
       },
@@ -318,7 +306,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // the runtime round-trips reasoning content.
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         // K3 always reasons server-side; its only accepted level today is 'max'.
         reasoningControl: { kind: 'effort', levels: ['max'], mandatory: true },
@@ -345,7 +332,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Opus 5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
@@ -362,7 +348,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Sonnet 5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
@@ -379,7 +364,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Fable 5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
@@ -396,7 +380,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Opus 4.8',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
@@ -413,7 +396,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Sonnet 4.6',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
@@ -430,7 +412,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Haiku 4.5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: {
           kind: 'budget',
@@ -455,7 +436,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
@@ -471,7 +451,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-5 mini',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
@@ -490,10 +469,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // Both entries below confirmed alive via ai.google.dev/gemini-api/docs/models
   // and openrouter.ai/google/… (2026-07-12): 1M-token context window, native
   // reasoning ("thinking") models, multimodal (text/image/video/audio/PDF).
-  // forcedToolChoice:false — matches this file's reasoning-model convention
-  // (MiniMax M3, Moonshot, GLM 5.2): don't force tool_choice on a thinking
-  // model, let the runtime completion floor relax it to 'auto'. google.ts's
-  // fetch shim injects generationConfig.thinkingConfig for these two entries
+  // google.ts's fetch shim injects generationConfig.thinkingConfig for these two entries
   // (reasoning:true gates it) so the API returns the chain-of-thought the
   // execute.ts round-trip needs across tool-call turns.
   // Reasoning control: Gemini 3.x takes `thinkingConfig.thinking_level`
@@ -515,7 +491,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Gemini 3.7 Flash',
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
@@ -532,7 +507,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Gemini 3.5 Flash',
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
@@ -549,7 +523,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Gemini 3.1 Pro (preview)',
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
@@ -575,7 +548,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     {
       modelId: 'llama-3.3-70b-versatile',
       label: 'Llama 3.3 70B',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: { tools: true },
       contextWindow: 131_072,
     },
   ],
@@ -583,15 +556,13 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     {
       modelId: 'mistral-large-latest',
       label: 'Mistral Large',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: { tools: true },
       contextWindow: 131_072,
     },
   ],
   // OpenRouter models are namespaced by sub-vendor (anthropic/, deepseek/, …).
   // The UI groups them by that vendor (see modelGroupLabel). Tested + working
-  // routes. `forcedToolChoice` is per-model: most accept tool_choice:'required';
-  // MiniMax M3 does not (some of its OpenRouter endpoints reject the forced
-  // value), so it runs on 'auto' + the runtime floor.
+  // routes.
   openrouter: [
     // ─── Claude 5 ─────────────────────────────────────────────────────────────
     // Added 2026-08-09 from a live `GET /api/v1/models` — context windows,
@@ -603,7 +574,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Opus 5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -619,7 +589,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Sonnet 5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -635,7 +604,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Fable 5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -659,7 +627,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Fable 5.1',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: {
           kind: 'effort',
           levels: ['low', 'medium', 'high', 'max'],
@@ -683,7 +650,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-5.6 Luna',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_050_000,
@@ -699,7 +665,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-5.6 Luna Pro',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_050_000,
@@ -715,7 +680,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-5.6 Terra Pro',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_050_000,
@@ -744,7 +708,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-5.6 Terra',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_050_000,
@@ -760,7 +723,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-5.6 Sol',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_050_000,
@@ -776,7 +738,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-5.6 Sol Pro',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_050_000,
@@ -792,7 +753,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-6 Astra',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: {
           kind: 'effort',
           levels: ['low', 'medium', 'high', 'max'],
@@ -812,7 +772,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GPT-6 Astra Pro',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: {
           kind: 'effort',
           levels: ['low', 'medium', 'high', 'max'],
@@ -836,7 +795,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Haiku 4.5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 200_000,
@@ -852,7 +810,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Opus 4.7',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -868,7 +825,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Opus 4.8',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -884,7 +840,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Claude Sonnet 4.6',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -899,7 +854,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     {
       modelId: 'deepseek/deepseek-v3.2',
       label: 'DeepSeek V3.2',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: { tools: true },
       contextWindow: 131_072,
       pricing: {
         inputPerMillionUsd: 0.269,
@@ -916,7 +871,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // (gathers then emits no answer). Matches how Hermes drives DeepSeek.
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
         // a requested effort to the nearest level the upstream really supports.
@@ -938,7 +892,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'DeepSeek V4 Flash (0731)',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
@@ -955,7 +908,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'DeepSeek V4 Pro',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
         // a requested effort to the nearest level the upstream really supports.
@@ -980,7 +932,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'DeepSeek V4 Pro (0813)',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'high', 'max'] },
       },
@@ -998,10 +949,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // above: it takes IMAGE input (input_modalities: text, image), so it is
       // in VISION_MODEL_IDS. Same reasoning caveat as its siblings; levels
       // from the list endpoint's `reasoning` object (max/high/low,
-      // mandatory:false, default_enabled:true). forcedToolChoice:false —
-      // DeepSeek's own endpoint (the one providerOrder prefers) reports
-      // supports_tool_choice.required:false; some fallbacks (DeepInfra,
-      // Wafer) report true, and the runtime floor relaxes it anyway.
+      // mandatory:false, default_enabled:true).
       // 'max' → OpenRouter 'xhigh' and Auto → 'medium' are not in this
       // model's supported_efforts; OpenRouter documents that it "will map
       // your requested effort to the nearest supported level".
@@ -1009,7 +957,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'DeepSeek V4.1 Flash',
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'high', 'max'] },
       },
@@ -1024,17 +971,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     // Google — all three are thinking models on OpenRouter (supported_parameters
     // includes "reasoning", verified via openrouter.ai/google/… 2026-07-12).
     // reasoning:true makes the OpenRouter provider enable reasoning + round-trip
-    // reasoning_details across tool-call turns. Unlike the M-series/Kimi/GLM
-    // reasoning entries above, forcedToolChoice stays true here — no evidence
-    // (live or documented) that OpenRouter's Gemini routes reject a forced
-    // tool_choice, matching how deepseek/deepseek-v4-flash (also reasoning:true)
-    // keeps forcedToolChoice:true in this file.
+    // reasoning_details across tool-call turns.
     {
       modelId: 'google/gemini-3.1-flash-lite-preview',
       label: 'Gemini 3.1 Flash Lite (preview)',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
         // a requested effort to the nearest level the upstream really supports.
@@ -1053,7 +995,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Gemini 3.1 Pro (preview)',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
         // a requested effort to the nearest level the upstream really supports.
@@ -1072,7 +1013,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Gemini 3.5 Flash',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
         // a requested effort to the nearest level the upstream really supports.
@@ -1110,7 +1050,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Gemini 3.6 Flash',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
@@ -1123,9 +1062,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       },
     },
     {
-      // The OpenRouter twin of the native entry above. forcedToolChoice stays
-      // true here, unlike the native side — the two routes do not behave
-      // identically and the difference is deliberate.
+      // The OpenRouter twin of the native entry above.
       //
       // The PRICE is NOT the native one. This block's rule (see the pricing
       // note at the top of the file) is the rate OpenRouter actually bills,
@@ -1144,7 +1081,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Gemini 3.7 Flash',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
@@ -1159,7 +1095,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     {
       modelId: 'google/gemma-4-31b-it',
       label: 'Gemma 4 31B-IT',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: { tools: true },
       contextWindow: 262_144,
       pricing: {
         inputPerMillionUsd: 0.09,
@@ -1171,13 +1107,10 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     {
       modelId: 'minimax/minimax-m3',
       label: 'MiniMax M3',
-      // A reasoning model. Some of its OpenRouter endpoints reject a FORCED
-      // tool_choice ('required') → we send 'auto' (forcedToolChoice:false).
-      // reasoning:true makes the provider return reasoning_details so the runner
+      // A reasoning model. reasoning:true makes the provider return reasoning_details so the runner
       // can round-trip them across tool-call turns.
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
@@ -1194,11 +1127,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GLM 5.2',
       // A reasoning model (reasoning effort high/xhigh), strong at coding + tool
       // use. reasoning:true → provider returns reasoning_details for round-trip.
-      // forcedToolChoice:false: send 'auto' (don't risk a rejected 'required' on
-      // a reasoning model; workers are 'auto' after turn 1 anyway).
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         // GLM 5.2 always reasons; upstream accepts high/xhigh — OpenRouter
         // normalizes lower requests up to its floor.
@@ -1219,14 +1149,13 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'z-ai/glm-5.3',
       label: 'GLM 5.3',
       // Same family posture as 5.2: reasoning model, NATIVE OpenAI tool calls
-      // (no parser middleware — detectAgenticFamily only wraps glm-4.5/4.7),
-      // forcedToolChoice:false. Upstream accepts low/high/max efforts with
+      // (no parser middleware — detectAgenticFamily only wraps glm-4.5/4.7).
+      // Upstream accepts low/high/max efforts with
       // max as ITS default; the four catalog levels stay the UI contract and
       // OpenRouter normalizes 'medium' to the nearest supported level.
       // Pricing/context verified on openrouter.ai/z-ai/glm-5.3 (2026-08-20).
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
@@ -1253,12 +1182,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       //     supported_parameters) but NOT mandatory the way 5.2/5.3's is —
       //     nothing upstream says this one always thinks, so 'off' stays on
       //     the UI scale rather than being hidden on a guess.
-      // forcedToolChoice:false follows the family posture: `tool_choice` is
-      // accepted, but nothing states 'required' is honoured, and the runtime
-      // tool_choice floor relaxes it anyway.
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
@@ -1275,8 +1200,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     {
       // "The high-speed variant of GLM-5.3-Flash ... up to 200 tokens/s"
       // (upstream copy, 2026-09-18). Same model family as Flash: multimodal
-      // (text, image, video → VISION_MODEL_IDS), forcedToolChoice:false
-      // (supports_tool_choice.required:false on its endpoint). The control
+      // (text, image, video → VISION_MODEL_IDS). The control
       // follows the list endpoint's `reasoning` object, read 2026-09-22:
       // mandatory:true, supported_efforts max/high/low, default max — the
       // full 5.3's posture, and the same object upstream now reports for
@@ -1286,7 +1210,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'GLM 5.3 FlashX',
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
@@ -1309,8 +1232,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     // endpoint's `reasoning` object says only {mandatory:false}: no
     // supported_efforts, so thinking can be switched on or off and nothing
     // else — kind 'onoff', not a made-up scale. No always-on `reasoning`
-    // flag: Auto keeps the provider's default. forcedToolChoice:true —
-    // every endpoint reports supports_tool_choice.required:true.
+    // flag: Auto keeps the provider's default.
     // Upstream copy: Flash = 309B MoE / 15B active; Pro = the >1T flagship;
     // Pro-UltraSpeed = the same Pro checkpoint "roughly 10x" faster, 10x the
     // price.
@@ -1319,7 +1241,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'MiMo V2.6 Flash',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'onoff' },
       },
       contextWindow: 1_048_576,
@@ -1334,7 +1255,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'MiMo V2.6 Pro',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'onoff' },
       },
       contextWindow: 1_048_576,
@@ -1349,7 +1269,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'MiMo V2.6 Pro UltraSpeed',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'onoff' },
       },
       contextWindow: 1_048_576,
@@ -1373,7 +1292,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // (or a response that arrives without the usage block) still has a cost.
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
@@ -1393,11 +1311,9 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Kimi K2.7 Code',
       // Always operates in thinking mode and preserves reasoning_content across
       // turns (like DeepSeek) → reasoning:true is required so the provider
-      // round-trips reasoning_details. forcedToolChoice:false for the same reason
-      // as the other reasoning models.
+      // round-trips reasoning_details.
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
@@ -1422,7 +1338,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Grok 4.5',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
@@ -1452,7 +1367,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Grok 4.6',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
@@ -1472,7 +1386,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Grok 4.7',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
@@ -1500,7 +1413,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Qwen 3.8 Max',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
@@ -1511,7 +1423,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Qwen 3.7 Max',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
@@ -1527,7 +1438,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Qwen 3.7 Plus',
       capabilities: {
         tools: true,
-        forcedToolChoice: true,
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
@@ -1549,7 +1459,6 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // (the kimi-* tool-schema sanitizer still applies).
       capabilities: {
         tools: true,
-        forcedToolChoice: false,
         reasoning: true,
         reasoningControl: {
           kind: 'effort',
