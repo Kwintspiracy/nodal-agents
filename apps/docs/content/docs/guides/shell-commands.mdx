@@ -141,6 +141,12 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
   place outside the workspaces asks, and the approval card names it. So does a
   place the text does not say (a variable, `~`, a sub-shell, a folder left
   with `popd`).
+- This reading is a net, not a wall. Nodal reads the common forms (`curl -o`,
+  `wget -O`…), and it is not watertight: what programs write on their own is
+  not bounded. That covers a copy (`cp`), a redirection it cannot place, a
+  config file (`curl -K`, `aria2c -i`), a glued `git -C/path`, or a link made
+  in the same line. Bounding that takes an operating-system sandbox
+  ([#628](https://github.com/Kwintspiracy/nodal-agents/issues/628)).
 - A download into a program's own store (`comfy model download`,
   `ollama pull`, `docker pull`, `podman pull`, `hf download` without
   `--local-dir`) names no path and runs when downloads are **Allowed**. That
@@ -161,7 +167,8 @@ a script, can read, delete or download anything your user account can reach
 without the list seeing it. Where a download lands is read; the rest of the
 shell is not kept inside the agent's folders, only the file tools are confined
 to them. Keeping what a program does inside a folder is the job of an
-operating-system sandbox, which Nodal does not have yet.
+operating-system sandbox, which Nodal does not have yet
+([#628](https://github.com/Kwintspiracy/nodal-agents/issues/628)).
 
 Folded under **Advanced**, the same tab keeps the older list of programs an
 agent may start, for people who know exactly what to write there.

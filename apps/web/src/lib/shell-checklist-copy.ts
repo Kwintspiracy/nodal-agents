@@ -24,12 +24,14 @@ export const SHELL_CATEGORY_COPY: Record<ShellCategory, { label: string; summary
   // #618, passe 3) : un téléchargement hors des dossiers de l'agent demande,
   // et ceux vers le magasin d'un programme de modèles ou d'images restent
   // permis (décision du 28/09 : « ComfyArtist doit juste télécharger les
-  // modèles manquants »).
+  // modèles manquants »). Passe 4 : la lecture de la cible est un filet, pas
+  // une frontière, et l'écran le dit (#628, un bac à sable de l'OS).
   download: {
     label: 'Download files from the internet',
     summary:
       'wget, curl -o, git clone, hf download, comfy model download, ollama pull… ' +
-      'Allowed: into its folders and the model and image stores (comfy, ollama, docker, hf). Anywhere else, it asks.',
+      'Allowed: into its folders and the model and image stores (comfy, ollama, docker, hf). ' +
+      'A target it reads elsewhere (curl -o, wget -O…) asks. Not watertight: what programs write on their own (cp, config files) is not bounded, that takes a sandbox.',
   },
   stop_programs: {
     label: 'Stop other programs or services',

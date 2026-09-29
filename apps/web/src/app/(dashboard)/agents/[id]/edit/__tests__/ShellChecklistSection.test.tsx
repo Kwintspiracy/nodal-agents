@@ -85,7 +85,11 @@ describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
     await render(null);
     const row = container.querySelector('[data-testid="shell-row-download"]');
     expect(row?.textContent).toContain(
-      'Allowed: into its folders and the model and image stores (comfy, ollama, docker, hf). Anywhere else, it asks.',
+      'Allowed: into its folders and the model and image stores (comfy, ollama, docker, hf).',
+    );
+    // Passe 4 : la lecture de la cible est un filet, pas une frontière (#628).
+    expect(row?.textContent).toContain(
+      'A target it reads elsewhere (curl -o, wget -O…) asks. Not watertight: what programs write on their own (cp, config files) is not bounded, that takes a sandbox.',
     );
   });
 

@@ -401,9 +401,8 @@ const MAX_LINK_HOPS = 40;
 
 /**
  * The target of `path` when it is a link (symlink, or a Windows junction,
- * which lstat reports as one), as written in the link; null when it is not a
- * link or does not exist. Windows hands a junction's target back with the
- * `\\?\` long-path prefix, which is not a UNC share and is dropped.
+ * which lstat reports as one), as a path; null when it is not a link or does
+ * not exist.
  */
 async function danglingLinkTarget(path: string): Promise<string | null> {
   const isLink = await lstat(path).then(
@@ -411,8 +410,25 @@ async function danglingLinkTarget(path: string): Promise<string | null> {
     () => false,
   );
   if (!isLink) return null;
-  const target = await readlink(path);
-  return target.startsWith('\\\\?\\') ? target.slice(4) : target;
+  return linkTargetAsPath(await readlink(path));
+}
+
+/**
+ * A link target as Windows writes it, turned into the path it names. Windows
+ * returns it with a `\\?\` (or NT `\??\`) prefix: `\\?\C:\x` is the drive
+ * path `C:\x`, but `\\?\UNC\server\share\x` is the SHARE `\\server\share\x`
+ * (revue de la PR #618, passe 4 : retirer le préfixe laissait `UNC\server\…`,
+ * lu comme un chemin relatif sous le dossier du lien). Any other prefixed
+ * form (`\\?\Volume{…}\`, a device) is no drive path either, and is returned
+ * in the `\\` form a UNC check refuses.
+ */
+export function linkTargetAsPath(raw: string): string {
+  const prefixed = /^(?:\\\\\?\\|\\\?\?\\)(.*)$/.exec(raw);
+  if (!prefixed) return raw;
+  const rest = prefixed[1] ?? '';
+  if (/^[A-Za-z]:[\\/]/.test(rest)) return rest;
+  if (/^UNC[\\/]/i.test(rest)) return `\\\\${rest.slice(4)}`;
+  return `\\\\${rest}`;
 }
 
 /**

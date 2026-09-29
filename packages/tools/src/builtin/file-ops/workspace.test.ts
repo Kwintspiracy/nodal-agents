@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm, symlink, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveAndCheckPath, windowsPathViolation } from './workspace';
+import { linkTargetAsPath, resolveAndCheckPath, windowsPathViolation } from './workspace';
 import { fileWriteTool } from './file-write';
 import type { ToolContext } from '../../types';
 
@@ -245,5 +245,18 @@ describe('resolveAndCheckPath — a dangling link is followed, not read as a nam
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe('linkTargetAsPath: a link target as Windows writes it (#614, review of #618)', () => {
+  it.each([
+    ['\\\\?\\C:\\Users\\k\\later', 'C:\\Users\\k\\later'],
+    ['\\??\\D:\\data', 'D:\\data'],
+    ['\\\\?\\UNC\\fileserver\\public\\drop', '\\\\fileserver\\public\\drop'],
+    ['\\\\?\\Volume{0b1c}\\x', '\\\\Volume{0b1c}\\x'],
+    ['/home/k/later', '/home/k/later'],
+    ['relative/dir', 'relative/dir'],
+  ])('%s is %s', (raw, path) => {
+    expect(linkTargetAsPath(raw)).toBe(path);
   });
 });
