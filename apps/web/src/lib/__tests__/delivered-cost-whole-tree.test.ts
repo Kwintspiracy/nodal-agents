@@ -223,3 +223,136 @@ describe('Carte Delivered — le coût du run est celui de tout l’arbre (#508)
     expect(r.data.cost.totals.costUsd).toBeCloseTo(1.2179, 9);
   });
 });
+
+// Revue Nodal de #620, passe 1 : un fil porte PLUSIEURS runs, et chaque carte
+// dit le prix de SON arbre — jamais celui du fil, ni celui d'un voisin. Et un
+// arbre dont un appel n'a pas de prix le dit : « partial », comme la barre.
+//
+// Mutations vérifiées :
+//   - chaque ligne de coût versée à CHAQUE tête (`callsByRoot`) → le cas
+//     « deux runs » rougit (les deux cartes disent 1,5 $) ;
+//   - `unpricedCalls` retiré de `deliverySummary` → le cas « partial » rougit.
+describe('Carte Delivered — chaque run de son fil a le prix de SON arbre (#508) @cap:voir-le-cout/moteur', () => {
+  let filDeDeux = '';
+  let premier = '';
+  let second = '';
+
+  // Un run : une tête, un délégué qui écrit un fichier constaté (ce qui fait
+  // paraître la carte), et leurs appels.
+  async function semerUnRun(
+    fil: string,
+    chatId: string,
+    tache: string,
+    appelsTete: readonly (number | null)[],
+    appelsDelegue: readonly (number | null)[],
+  ): Promise<string> {
+    const [tete] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId,
+        conversationId: fil,
+        task: tache,
+        status: 'completed',
+        completedAt: new Date(),
+      })
+      .returning({ id: agentJobs.id });
+    const [delegue] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: `${tache} (délégué)`,
+        status: 'completed',
+        parentJobId: tete!.id,
+        completedAt: new Date(),
+      })
+      .returning({ id: agentJobs.id });
+    const fichier = `D:/montage/${tete!.id}.txt`;
+    await testDb.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: delegue!.id,
+      toolName: 'run_command',
+      toolInput: { command: `echo ok > ${fichier}` },
+      toolOutput: 'ok',
+      durationMs: 5,
+      turn: 1,
+      toolCallId: `c_${tete!.id}`,
+      card: 'terminal',
+      presented: {
+        card: 'terminal',
+        command: `echo ok > ${fichier}`,
+        exitCode: 0,
+        timedOut: false,
+        stdoutTail: 'ok',
+        stdoutTruncated: false,
+        stderrTail: '',
+        stderrTruncated: false,
+      },
+    });
+    await testDb.insert(constatedWrites).values({
+      jobId: delegue!.id,
+      turn: 1,
+      path: fichier,
+      changeKind: 'added',
+      constatedBy: 'git',
+    });
+    let tour = 1;
+    await testDb
+      .insert(llmCalls)
+      .values([
+        ...appelsTete.map((c) => ({ ...appel(tete!.id, tour++, 0), costUsd: c })),
+        ...appelsDelegue.map((c) => ({ ...appel(delegue!.id, tour++, 0), costUsd: c })),
+      ]);
+    return tete!.id;
+  }
+
+  beforeAll(async () => {
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        title: 'Deux montages',
+        origin: 'user',
+        channel: 'telegram',
+        chatId: 'deux-runs-508',
+      })
+      .returning({ id: conversations.id });
+    filDeDeux = conv!.id;
+    premier = await semerUnRun(filDeDeux, 'deux-runs-508', 'Premier montage', [0.1], [0.2]);
+    // Le second arbre a un appel SANS prix (un modèle hors catalogue).
+    second = await semerUnRun(filDeDeux, 'deux-runs-508', 'Second montage', [0.4], [0.8, null]);
+  });
+
+  function carteDe(items: readonly FeedItem[], jobId: string) {
+    const found = items.find(
+      (i): i is Extract<FeedItem, { kind: 'produced' }> =>
+        i.kind === 'produced' && i.jobId === jobId,
+    );
+    if (found === undefined) throw new Error(`pas de carte Delivered pour ${jobId}`);
+    return found;
+  }
+
+  it('deux runs dans le même fil, chacun avec son délégué : chaque carte dit le coût de SON arbre', async () => {
+    const { getConversationThreadAction } = await import('../conversation-actions.ts');
+    const r = await getConversationThreadAction(filDeDeux);
+    if (!r.ok) throw new Error(`${r.code} ${r.message}`);
+    // La barre : tout le fil.
+    expect(r.data.cost.totals.costUsd).toBeCloseTo(1.5, 9);
+    expect(carteDe(r.data.feed.items, premier).summary.costUsd).toBeCloseTo(0.3, 9);
+    expect(carteDe(r.data.feed.items, second).summary.costUsd).toBeCloseTo(1.2, 9);
+  });
+
+  it('un arbre dont un appel n’a pas de prix : sa carte le dit partiel, comme la barre ; le voisin non', async () => {
+    const { getConversationThreadAction } = await import('../conversation-actions.ts');
+    const r = await getConversationThreadAction(filDeDeux);
+    if (!r.ok) throw new Error(`${r.code} ${r.message}`);
+    expect(r.data.cost.totals.unpricedCalls).toBe(1);
+    expect(carteDe(r.data.feed.items, second).summary.unpricedCalls).toBe(1);
+    expect(carteDe(r.data.feed.items, premier).summary.unpricedCalls).toBe(0);
+  });
+});

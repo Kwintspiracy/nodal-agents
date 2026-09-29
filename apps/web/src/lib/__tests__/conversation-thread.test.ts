@@ -198,6 +198,7 @@ describe('buildConversationThread — une conversation de canal', () => {
         tests: null,
         durationMs: null,
         costUsd: 0.01,
+        unpricedCalls: 0,
         reviews: [],
         checks: [],
         verdict: null,
@@ -1146,6 +1147,7 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
       modelCalls: 2,
       durationMs: 12_000,
       costUsd: 0.04,
+      unpricedCalls: 0,
     });
   });
 

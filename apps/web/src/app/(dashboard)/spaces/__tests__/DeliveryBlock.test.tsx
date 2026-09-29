@@ -40,6 +40,7 @@ const EMPTY: DeliverySummary = {
   tests: null,
   durationMs: null,
   costUsd: null,
+  unpricedCalls: 0,
   reviews: [],
   checks: [],
   verdict: null,
@@ -462,6 +463,26 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     // La durée est une mesure : elle prend la couleur des mesures.
     expect(html).toMatch(/class="[^"]*text-medium-14 text-feed-metric[^"]*"[^>]*>4 min 12</);
     expect(html).not.toMatch(/text-\[\d/);
+  });
+
+  // Revue Nodal de #620 : un arbre dont un appel n'a pas de prix a un coût
+  // PARTIEL. La barre d'état le dit ; la carte, qui dit le même chiffre (#508),
+  // le dit avec le même mot — jamais un prix partiel présenté comme complet.
+  it('un coût dont des appels n’ont pas de prix se dit « partial », comme la barre (#508)', () => {
+    const partiel = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-7" summary={{ ...EMPTY, costUsd: 1.2, unpricedCalls: 1 }} />,
+    );
+    expect(partiel).toContain('$1.20 · partial');
+    // Aucun appel tarifé du tout : le coût est inconnu, et il le dit.
+    const inconnu = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-7" summary={{ ...EMPTY, costUsd: null, unpricedCalls: 2 }} />,
+    );
+    expect(inconnu).toContain('n/a · partial');
+    const complet = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-7" summary={{ ...EMPTY, costUsd: 1.2, unpricedCalls: 0 }} />,
+    );
+    expect(complet).toContain('$1.20');
+    expect(complet).not.toContain('partial');
   });
 
   it('les fichiers livrés sont NOMMÉS, un par ligne, en couleur de chemin (#135)', () => {

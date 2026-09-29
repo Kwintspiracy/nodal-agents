@@ -280,6 +280,7 @@ function runSummary(job: ThreadJob, work: readonly FeedItem[]): RunSummary {
         ? job.completedAt.getTime() - job.createdAt.getTime()
         : null,
     costUsd: job.cost.costUsd,
+    unpricedCalls: job.cost.unpricedCalls,
   };
 }
 
@@ -559,6 +560,7 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     // L'arbre entier, par la règle de la barre d'état (#508) : la carte liste
     // le travail des délégués, son prix le compte.
     costUsd: job.cost.costUsd,
+    unpricedCalls: job.cost.unpricedCalls,
     reviews,
     // Un `infra_error` n'est pas un succès : tout ce qui n'est pas vert fait
     // « Checks failed ». La section « Checks » montre laquelle a lâché. Et un
