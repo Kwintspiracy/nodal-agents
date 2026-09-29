@@ -12,6 +12,8 @@ export {
   getTelegramFile,
   answerTelegramCallback,
   editTelegramMessageText,
+  addTelegramBotCommands,
+  setTelegramMessageReaction,
 } from './channels/telegram.ts';
 export type {
   TelegramSendOpts,
@@ -20,6 +22,7 @@ export type {
   TelegramFileDownload,
   TelegramInlineButton,
   TelegramInlineKeyboard,
+  TelegramBotCommand,
 } from './channels/telegram.ts';
 
 export { sendEmail } from './channels/email.ts';

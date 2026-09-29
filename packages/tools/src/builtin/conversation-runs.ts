@@ -27,10 +27,11 @@ import {
   and,
   eq,
   inArray,
-  cancelJobTree,
   listConversationRuns,
+  stopConversationRuns,
+  stopRuns,
 } from '@nodal-agents/db';
-import type { AnyDrizzleDb, ConversationRun } from '@nodal-agents/db';
+import type { AnyDrizzleDb, ConversationRun, StoppedRuns } from '@nodal-agents/db';
 import type { ToolDefinition } from '../types';
 
 /** Au-delà, la consigne d'un job est coupée : le modèle en a besoin pour reconnaître le run. */
@@ -261,7 +262,7 @@ export const stopConversationRunTool: ToolDefinition<
   execute: async (input, ctx) => {
     const { conversationId, ownHeadJobId } = await callerScope(ctx.db, ctx.entityId, ctx.jobId);
 
-    let targets: string[];
+    let result: StoppedRuns;
     if (input.run_id !== undefined) {
       if (input.run_id === ownHeadJobId) {
         throw new Error(
@@ -288,35 +289,26 @@ export const stopConversationRunTool: ToolDefinition<
             '`run_id` returned by list_conversation_runs.',
         );
       }
-      targets = [head.id];
+      result = await stopRuns(ctx.db, { entityId: ctx.entityId, runIds: [head.id] });
     } else {
-      const runs = await listConversationRuns(ctx.db, {
+      // La même définition que la commande `/stop` d'un canal (#602).
+      result = await stopConversationRuns(ctx.db, {
         entityId: ctx.entityId,
         conversationId,
         excludeHeadJobId: ownHeadJobId,
       });
-      targets = runs.map((r) => r.headJobId);
     }
 
-    const stopped: StopConversationRunOutput['stopped'] = [];
-    const alreadyFinished: string[] = [];
-    for (const runId of targets) {
-      const c = await cancelJobTree(ctx.db, { entityId: ctx.entityId, jobId: runId });
-      if (c.jobIds.length === 0 && c.taskIds.length === 0 && c.requestIds.length === 0) {
-        alreadyFinished.push(runId);
-        continue;
-      }
-      stopped.push({
-        run_id: runId,
-        cancelled_job_ids: c.jobIds,
-        cancelled_task_ids: c.taskIds,
-        closed_request_ids: c.requestIds,
-      });
-    }
+    const stopped: StopConversationRunOutput['stopped'] = result.stopped.map((r) => ({
+      run_id: r.runId,
+      cancelled_job_ids: r.jobIds,
+      cancelled_task_ids: r.taskIds,
+      closed_request_ids: r.requestIds,
+    }));
     return {
       scope: SCOPE,
       stopped,
-      already_finished: alreadyFinished,
+      already_finished: result.alreadyFinished,
       how_each_job_stops: await howEachJobStops(
         ctx.db,
         stopped.flatMap((r) => r.cancelled_job_ids),
