@@ -37,6 +37,7 @@ import type { ProviderConfig } from '../types';
 import { ProviderConfigError } from '../errors';
 import { PROVIDER_PRESETS } from './registry';
 import { createTolerantFetch } from './tolerant-fetch';
+import { providerFetch } from '../transport';
 
 // ─── reasoning_content round-trip shim ────────────────────────────────────────
 
@@ -99,7 +100,7 @@ export function injectDeepSeekThinking(body: unknown): unknown {
  */
 function createDeepSeekFetch(
   opts: { injectThinking: boolean } = { injectThinking: false },
-  baseFetch: typeof globalThis.fetch = globalThis.fetch,
+  baseFetch: typeof globalThis.fetch = providerFetch,
 ): typeof globalThis.fetch {
   const tolerant = createTolerantFetch(baseFetch);
 

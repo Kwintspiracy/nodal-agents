@@ -37,6 +37,7 @@ export * from './approval-impact';
 export * from './approval-explain';
 export * from './approval-rules-chain';
 export * from './approval-tool-default';
+export * from './question-answer';
 export * from './untrusted';
 export * from './redact-transcript';
 export * from './agent-slug';

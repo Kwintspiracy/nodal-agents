@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import UserMenu from '@/components/UserMenu.tsx';
 import ThemedToaster from '@/components/ui/ThemedToaster';
 import { ApprovalsProvider, type PendingApproval } from '@/components/ApprovalsProvider';
+import { toPendingApproval } from '@/lib/pending-approval.ts';
 import { SkillUpdatesProvider, type SkillUpdateNotice } from '@/components/SkillUpdatesProvider';
 import { ChatFoldersProvider } from '@/components/ChatFoldersProvider';
 import { getChatFoldersAction, type ChatFoldersSnapshot } from '@/lib/conversation-actions.ts';
@@ -60,16 +61,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   let initialPending: PendingApproval[] = [];
   const approvalsResult = await listApprovalsAction({ status: 'pending' });
   if (approvalsResult.ok) {
-    initialPending = approvalsResult.data.map((r) => ({
-      id: r.id,
-      jobId: r.jobId,
-      toolName: r.toolName,
-      agentName: r.agentName,
-      toolInput: r.toolInput,
-      requestedAt: r.requestedAt,
-      jobChannel: r.jobChannel,
-      conversationChannel: r.conversationChannel,
-    }));
+    initialPending = approvalsResult.data.map(toPendingApproval);
   }
 
   // Les dossiers du menu Chat (#135) — quels canaux parlent, où un run tourne.

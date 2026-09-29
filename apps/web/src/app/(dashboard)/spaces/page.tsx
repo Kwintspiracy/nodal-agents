@@ -9,7 +9,7 @@
 //
 // Un job n'est toujours pas un espace : il commence, il finit, il disparaît de
 // l'écran. Son fil vit là où il a un sens — dans sa conversation (/chat/<id>)
-// ou, pour un run d'automatisation, sur /scheduled/<id>.
+// ou, pour un run d'automatisation, sur sa page de run (`lib/run-page.ts`).
 
 import { listCodingProcessesAction, listCodeProjectPrefsAction } from '@/lib/actions.ts';
 import {

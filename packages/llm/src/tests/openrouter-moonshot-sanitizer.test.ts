@@ -8,6 +8,12 @@ import { jsonSchema, tool } from 'ai';
 import { patchOpenRouterRequestBody, buildOpenRouterModel } from '../providers/openrouter';
 import { createLlmClient } from '../client';
 
+// Every provider call goes through `providerFetch` (#608). Routed to the global
+// fetch here, so these tests stub `fetch` as they always did.
+vi.mock('../transport', () => ({
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 const rawWeatherTool = tool({
   description: 'weather',
   inputSchema: jsonSchema({

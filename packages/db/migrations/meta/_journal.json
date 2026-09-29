@@ -934,6 +934,13 @@
       "breakpoints": true
     },
     {
+      "idx": 134,
+      "version": "7",
+      "when": 1786002600000,
+      "tag": "0134_job_live_progress",
+      "breakpoints": true
+    },
+    {
       "idx": 135,
       "version": "7",
       "when": 1786002700000,
