@@ -96,26 +96,6 @@ describe('installCommunitySkillAction', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       source: 'anthropics/skills',
       entityId: seed.entityId,
-      replace: false,
-    });
-  });
-
-  it('transmet le consentement à remplacer une skill du même slug venue d’ailleurs', async () => {
-    const { installCommunitySkillAction } = await import('../actions.ts');
-
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(Response.json({ ok: true, skill: SKILL_INSTALLEE }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const result = await installCommunitySkillAction('anthropics/skills', { replace: true });
-
-    expect(result.ok, result.ok ? '' : result.message).toBe(true);
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string)).toEqual({
-      source: 'anthropics/skills',
-      entityId: seed.entityId,
-      replace: true,
     });
   });
 

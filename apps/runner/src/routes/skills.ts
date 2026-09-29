@@ -25,8 +25,6 @@ import {
 const InstallRequestSchema = z.object({
   source: z.string().min(1).max(2048),
   entityId: z.string().guid(),
-  /** The owner confirmed replacing a same-slug skill that came from elsewhere. */
-  replace: z.boolean().optional(),
 });
 
 const UninstallRequestSchema = z.object({
@@ -96,7 +94,6 @@ export async function installSkillRoute(
       source: parsed.data.source,
       skillStoreDir: skillStoreDir(parsed.data.entityId),
       entityId: parsed.data.entityId,
-      replace: parsed.data.replace === true,
     });
     return c.json({ ok: true, skill: result }, 200);
   } catch (err) {
