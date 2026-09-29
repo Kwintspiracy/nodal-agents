@@ -427,9 +427,11 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
   // in install_software, so an owner who let an agent fetch models without
   // asking had to let it install software.
   download: [
-    // `curl -sLo x`: the output flag may close a group of short options, and
-    // `iwr` is Invoke-WebRequest's alias (review of PR #476).
-    /\bwget\b|\bcurl\b[^\n]*(\s-[A-Za-z]*[oO]\b|\s--output\b|\s--remote-name\b)|\bInvoke-WebRequest\b|\biwr\b|\bStart-BitsTransfer\b|\baria2c\b/i, // large download
+    // `iwr` is Invoke-WebRequest's alias (review of PR #476). `curl` is not
+    // here: it downloads only when it writes a file (`-o`, `-O`, `--output`,
+    // `-sLoC:\x`), read by `curlWritesAFile` with the same reader as its
+    // targets, which a pattern cannot do (`-XPOST` swallows its group).
+    /\bwget\b|\bInvoke-WebRequest\b|\biwr\b|\bStart-BitsTransfer\b|\baria2c\b/i, // large download
     subcommand('git', String.raw`clone\b`), // clone
     // `download` / `pull` must END the word: `comfy model download-status`,
     // `downloads` and `download-cancel` only read or stop one, and `\b` alone
@@ -496,6 +498,317 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
   }
   if (isInlineInterpreterEvalCommand(cmd)) found.add('inline_code');
   return [...found];
+}
+
+/**
+ * Where a download line writes, read from its text (#614, revue Nodal de la PR
+ * #618, P1b). A download runs without asking because it lands in the agent's
+ * workspace; `curl -o ~/.ssh/authorized_keys` or `git clone URL D:\elsewhere`
+ * does not. The runner resolves these against the command's working folder
+ * and the job's workspaces (packages/tools, shell-checklist.ts).
+ *
+ * - `dirs`: the folders the line moves into (`cd`, `pushd`, `Push-Location`,
+ *   `Set-Location`), in order, `null` when unreadable (`cd` alone, `cd -`,
+ *   `popd`, a variable).
+ * - `targets`: each place a fetcher writes, as written (`'.'` for the working
+ *   folder: `curl -O`, `wget URL`, `git clone URL`), or `null` when the text
+ *   does not say where (a variable, `~`, a sub-shell): that asks, invariant #4.
+ *   `after` is how many of `dirs` come before it in the line: the target is
+ *   judged from the folder the line is in at that point (revue passe 2). A
+ *   shell redirection (`> file`) is cut from the words before they are read,
+ *   so its place in the line is not known: `after` is null, and it is judged
+ *   from every folder of the line.
+ *   A program that writes into its own store (`docker pull`, `ollama pull`,
+ *   `comfy model download`, `hf download` without `--local-dir`) names no path
+ *   and adds none.
+ */
+export interface DownloadTarget {
+  path: string | null;
+  after: number | null;
+}
+
+export interface DownloadWrites {
+  dirs: Array<string | null>;
+  targets: DownloadTarget[];
+}
+
+export function downloadWrites(cmd: string): DownloadWrites {
+  const out: DownloadWrites = { dirs: [], targets: [] };
+  if (typeof cmd !== 'string' || cmd.trim() === '') return out;
+  const units = commandUnits(withoutRedirections(cmd));
+  // `iwr URL | Set-Content file`: where the fetched bytes land, kept only if
+  // the line downloads.
+  const piped: DownloadTarget[] = [];
+  let downloads = false;
+  for (const unit of units) {
+    const program = unit[0] ?? '';
+    const args = unit.slice(1);
+    if (CHANGE_DIR.has(program)) {
+      const dir = changeDirArg(program, args);
+      out.dirs.push(dir === null ? null : readablePath(dir));
+      continue;
+    }
+    for (const t of pipeWriterTargets(program, args))
+      piped.push({ path: readablePath(t), after: out.dirs.length });
+    if (!unitCategories(unit).includes('download')) continue;
+    downloads = true;
+    for (const t of fetcherTargets(program, args))
+      out.targets.push({ path: t === null ? null : readablePath(t), after: out.dirs.length });
+  }
+  // `curl URL > file`: the bytes land where the shell sends them. Read on a
+  // line that downloads (or reads a URL into a redirection, which
+  // `staticShellCategories` files as a download).
+  if (downloads || staticShellCategories(cmd).includes('download')) {
+    out.targets.push(...piped);
+    for (const t of redirectionTargets(cmd))
+      out.targets.push({ path: readablePath(t), after: null });
+  }
+  return out;
+}
+
+const CHANGE_DIR = new Set([
+  'cd',
+  'chdir',
+  'pushd',
+  'popd',
+  'set-location',
+  'sl',
+  'push-location',
+  'pop-location',
+]);
+
+/**
+ * The folder a `cd`-like unit moves into; null for home or back (`cd`, `cd ~`,
+ * `cd -`, `popd`, `Pop-Location`): where that leads is not in this unit.
+ */
+function changeDirArg(program: string, args: readonly string[]): string | null {
+  if (program === 'popd' || program === 'pop-location') return null;
+  if (program === 'set-location' || program === 'sl' || program === 'push-location') {
+    const i = args.findIndex((a) => /^-(literal)?path$/i.test(a));
+    const value = i >= 0 ? args[i + 1] : args.find((a) => !a.startsWith('-'));
+    return value ?? null;
+  }
+  // `cd /d D:\x` (cmd) takes a drive switch before the folder.
+  const value = args.find((a) => !/^(-[LP]|\/d)$/i.test(a));
+  if (value === undefined || value === '-') return null;
+  return value;
+}
+
+/** A path as written, or null when the shell decides it at run time. */
+function readablePath(p: string): string | null {
+  if (p === '' || /[$%`]/.test(p) || p.startsWith('~')) return null;
+  return p;
+}
+
+/** The value of a flag written `-f v`, `-fv` (short only), `--flag=v` or `-Flag:v`. */
+function flagValues(
+  args: readonly string[],
+  matches: (flag: string) => boolean,
+  attachedShort?: string,
+): string[] {
+  const values: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? '';
+    const eq = a.match(/^(--?[\w-]+)[=:](.*)$/);
+    if (eq && matches(eq[1] ?? '')) values.push(eq[2] ?? '');
+    else if (matches(a)) values.push(args[i + 1] ?? '');
+    else if (attachedShort && a.startsWith(attachedShort) && a.length > attachedShort.length)
+      values.push(a.slice(attachedShort.length));
+  }
+  return values;
+}
+
+/**
+ * The short options of a fetcher that take a value (from each program's
+ * manual). In a group (`-sLo x`, `-sLox`, `-qO-`), options without a value
+ * stack, and the first one that takes a value takes the rest of the group, or
+ * the next word when the group ends with it: `-XPOST` is `-X POST`, not an
+ * `-O` (#614, revue Nodal de la PR #618, passe 3).
+ */
+const SHORT_VALUE_OPTIONS: Record<'curl' | 'wget' | 'aria2c', string> = {
+  curl: 'AbcCdDeEFHKmoPQrtTuUwxXyYz',
+  wget: 'aABDeIilOoPQRtTUwX',
+  aria2c: 'dijklmostUx',
+};
+
+/** Every short option of `args` as the program reads it, with its value ('' for a switch). */
+function shortOptions(
+  args: readonly string[],
+  program: keyof typeof SHORT_VALUE_OPTIONS,
+): Array<{ option: string; value: string }> {
+  const takesValue = SHORT_VALUE_OPTIONS[program];
+  const read: Array<{ option: string; value: string }> = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? '';
+    if (!/^-[A-Za-z]/.test(a)) continue;
+    for (let j = 1; j < a.length; j++) {
+      const option = a[j] ?? '';
+      if (!takesValue.includes(option)) {
+        read.push({ option, value: '' });
+        continue;
+      }
+      const rest = a.slice(j + 1);
+      read.push({ option, value: rest !== '' ? rest : (args[++i] ?? '') });
+      break;
+    }
+  }
+  return read;
+}
+
+/** The values a program's short option `option` was given. */
+function shortValues(
+  args: readonly string[],
+  program: keyof typeof SHORT_VALUE_OPTIONS,
+  option: string,
+): string[] {
+  return shortOptions(args, program)
+    .filter((o) => o.option === option)
+    .map((o) => o.value);
+}
+
+function joinPath(dir: string, name: string): string {
+  if (/^([A-Za-z]:)?[\\/]/.test(name)) return name;
+  return dir === '.' ? name : `${dir.replace(/[\\/]$/, '')}/${name}`;
+}
+
+/** Where one download unit writes, by program; null where the text does not say. */
+function fetcherTargets(program: string, args: readonly string[]): Array<string | null> {
+  const lower = args.map((a) => a.toLowerCase());
+  switch (program) {
+    case 'curl': {
+      const outDir = flagValues(args, (f) => f === '--output-dir')[0];
+      const files = [
+        ...flagValues(args, (f) => f === '--output'),
+        ...shortValues(args, 'curl', 'o'),
+      ];
+      const remote =
+        args.some((a) => /^--remote-name(-all)?$/.test(a)) ||
+        shortOptions(args, 'curl').some((o) => o.option === 'O');
+      const targets = files.filter((f) => f !== '-').map((f) => joinPath(outDir ?? '.', f));
+      if (remote) targets.push(outDir ?? '.');
+      return targets;
+    }
+    case 'wget': {
+      const docs = [
+        ...flagValues(args, (f) => f === '--output-document'),
+        ...shortValues(args, 'wget', 'O'),
+      ];
+      const logs = [
+        ...flagValues(args, (f) => f === '--output-file' || f === '--append-output'),
+        ...shortValues(args, 'wget', 'o'),
+        ...shortValues(args, 'wget', 'a'),
+      ];
+      const prefix = [
+        ...flagValues(args, (f) => f === '--directory-prefix'),
+        ...shortValues(args, 'wget', 'P'),
+      ][0];
+      const targets = [...docs.filter((d) => d !== '-'), ...logs].map((f) =>
+        joinPath(prefix ?? '.', f),
+      );
+      if (docs.length === 0) targets.push(prefix ?? '.');
+      return targets;
+    }
+    case 'invoke-webrequest':
+    case 'iwr':
+    case 'invoke-restmethod':
+    case 'irm':
+      // Without -OutFile the content is returned, not written.
+      return flagValues(args, (f) => /^-outf/i.test(f));
+    case 'start-bitstransfer': {
+      const dest = flagValues(args, (f) => /^-dest/i.test(f));
+      // Positional destination: which word is a value and which a switch is
+      // not readable without the cmdlet's signature, so it asks.
+      return dest.length > 0 ? dest : [null];
+    }
+    case 'aria2c': {
+      const dir =
+        [...flagValues(args, (f) => f === '--dir'), ...shortValues(args, 'aria2c', 'd')][0] ?? '.';
+      const outs = [...flagValues(args, (f) => f === '--out'), ...shortValues(args, 'aria2c', 'o')];
+      return outs.length > 0 ? outs.map((o) => joinPath(dir, o)) : [dir];
+    }
+    case 'git': {
+      // `git [global options] clone [options] URL [DIR]`, and `git -C dir lfs pull`.
+      const base = flagValues(args, (f) => f === '-C')[0] ?? '.';
+      const sub = lower.indexOf('clone');
+      if (sub < 0) return [base];
+      const rest = args.slice(sub + 1);
+      const positional: string[] = [];
+      for (let i = 0; i < rest.length; i++) {
+        const a = rest[i] ?? '';
+        if (a.startsWith('-')) {
+          if (!a.includes('=') && GIT_CLONE_VALUE_FLAGS.has(a)) i++;
+          continue;
+        }
+        positional.push(a);
+      }
+      const separate = flagValues(rest, (f) => f === '--separate-git-dir');
+      return [joinPath(base, positional[1] ?? '.'), ...separate];
+    }
+    case 'pip':
+    case 'pip3':
+      return [flagValues(args, (f) => f === '-d' || f === '--dest', '-d')[0] ?? '.'];
+    case 'hf':
+    case 'huggingface-cli':
+      // Without --local-dir, the Hugging Face cache: the program's own store.
+      return flagValues(args, (f) => f === '--local-dir');
+    case 'comfy':
+    case 'ollama':
+    case 'docker':
+    case 'podman':
+    case 'docker-compose':
+    case 'podman-compose':
+      // Their own store (the ComfyUI install, the model or image store): the
+      // command names no path.
+      return [];
+    default:
+      // A fetcher this reading does not know the flags of: it asks.
+      return [null];
+  }
+}
+
+/** `git clone` options that take a value as the next word. */
+const GIT_CLONE_VALUE_FLAGS = new Set([
+  '-b',
+  '--branch',
+  '-o',
+  '--origin',
+  '-c',
+  '--config',
+  '-u',
+  '--upload-pack',
+  '-j',
+  '--jobs',
+  '--depth',
+  '--reference',
+  '--reference-if-able',
+  '--separate-git-dir',
+  '--template',
+  '--filter',
+  '--shallow-since',
+  '--shallow-exclude',
+  '--server-option',
+  '--bundle-uri',
+]);
+
+/** Where the shell writes a line's output: `> file`, `>> file`. */
+function redirectionTargets(cmd: string): string[] {
+  const targets: string[] = [];
+  for (const m of cmd.matchAll(/(^|[^\d&>])1?>>?\s*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g)) {
+    const t = stripQuotes(m[2] ?? '');
+    if (t.startsWith('&') || /^(\/dev\/null|nul|\$null)$/i.test(t)) continue;
+    targets.push(t);
+  }
+  return targets;
+}
+
+/** Where a program at the end of a pipe writes what it reads: `Out-File x`, `tee x`. */
+function pipeWriterTargets(program: string, args: readonly string[]): string[] {
+  if (['out-file', 'set-content', 'add-content', 'tee-object'].includes(program)) {
+    const named = flagValues(args, (f) => /^-(file)?path$|^-literalpath$/i.test(f));
+    return named.length > 0 ? named : args.filter((a) => !a.startsWith('-')).slice(0, 1);
+  }
+  if (program === 'tee') return args.filter((a) => !a.startsWith('-'));
+  return [];
 }
 
 /** True when `re` matches at the very start of `text`. */
@@ -642,7 +955,7 @@ export function isDestructiveOrHeavyCommand(cmd: string): boolean {
   const units = commandUnits(withoutRedirections(cmd));
   if (units.length > 0 && units.every(isReadUnit)) return false;
   const c = normalizeSlashes(cmd.trim());
-  return DESTRUCTIVE_PATTERNS.some((re) => re.test(c));
+  return DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) || units.some(curlWritesAFile);
 }
 
 /** The read flags the catastrophic floor lets through: never `-h` (`shutdown -h` halts). */
@@ -692,8 +1005,21 @@ function patternKinds(unit: readonly string[]): Array<keyof typeof STATIC_SHELL_
       [keyof typeof STATIC_SHELL_CATEGORY_PATTERNS, readonly RegExp[]]
     >
   )
-    .filter(([, patterns]) => patterns.some((re) => startsWithMatch(re, text)))
+    .filter(
+      ([category, patterns]) =>
+        patterns.some((re) => startsWithMatch(re, text)) ||
+        (category === 'download' && curlWritesAFile(unit)),
+    )
     .map(([category]) => category);
+}
+
+/**
+ * A `curl` that writes a file: the same reading as where it writes
+ * (`fetcherTargets`), so the kind and the target never disagree (#614, revue
+ * Nodal de la PR #618, passe 3 : `-sLoC:\x` échappait aux deux).
+ */
+function curlWritesAFile(unit: readonly string[]): boolean {
+  return unit[0] === 'curl' && fetcherTargets('curl', unit.slice(1)).length > 0;
 }
 
 /** The kinds one command unit performs: none for a version or help check. */

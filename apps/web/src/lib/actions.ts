@@ -6125,7 +6125,18 @@ function readGateReasons(approvalId: string, raw: unknown): ShellGateReason[] {
     console.warn(`[listApprovalsAction] unreadable gate_reasons on ${approvalId}`);
     return [];
   }
-  return parsed.data.map((r) => ({ ...r, details: r.details.map(redactSecretsInText) }));
+  return parsed.data.map((r) => ({
+    ...r,
+    details: r.details.map(redactSecretsInText),
+    ...(r.outside
+      ? {
+          outside: r.outside.map((o) => ({
+            command: redactSecretsInText(o.command),
+            places: o.places.map(redactSecretsInText),
+          })),
+        }
+      : {}),
+  }));
 }
 
 export async function listApprovalsAction(
