@@ -60,7 +60,7 @@ A saved workflow file is a reusable GRAPH (models, samplers, node wiring) — no
 
 ### Scripts must be reusable
 
-A script you write takes its variable values (ids, paths, prompts) as ARGUMENTS — never hardcoded in the file. If you find yourself editing a script only to change a value, parametrize it instead. Before writing a helper, check whether an installed skill already ships one (\`skill_view\`, then \`run_skill_script\`).
+A script you write takes its variable values (ids, paths, prompts) as ARGUMENTS — never hardcoded in the file. If you find yourself editing a script only to change a value, parametrize it instead. Before writing a helper, check whether an installed skill already ships one (\`skill_view\` lists its scripts).
 
 ### Skill bundles are code, not storage
 

@@ -8,6 +8,7 @@ import { eq, and, inArray } from '@nodal-agents/db';
 import { agentTasks, agents, agentJobs } from '@nodal-agents/db';
 import { remainingDelegationHops, delegationDepthExceededMessage } from '../chain-counters';
 import { validateDependencies } from './dependencies';
+import { CREATE_TASK_TOOL_NAME, LIST_TASKS_TOOL_NAME } from './task-tool-names';
 import { computeAgentToolNames, findUnavailableToolMentions } from '../router/tool-availability';
 import { loadWorkspaceReach, describeOutsideAgent } from '../reach';
 import type { AgentId, AnyDrizzleDb, ToolDefinition, TaskId, EntityId } from '../types';
@@ -85,7 +86,7 @@ export function generateTaskTools(
     typeof createTaskSchema,
     { taskId: string; title: string; warning?: string }
   > = {
-    name: 'create_task',
+    name: CREATE_TASK_TOOL_NAME,
     label: 'Create a task',
     summary:
       'Put a work task on the board and assign it to an agent. Tasks run after this job, in the order their dependencies allow.',
@@ -232,7 +233,7 @@ export function generateTaskTools(
       dependsOn: string[];
     }>
   > = {
-    name: 'list_tasks',
+    name: LIST_TASKS_TOOL_NAME,
     label: 'List tasks',
     summary:
       'See the tasks this job put on the board, with their status and who they are assigned to.',

@@ -132,6 +132,14 @@ export const agentJobs = pgTable(
      */
     triggerContext: jsonb('trigger_context').$type<JobTriggerContext>(),
     systemPrompt: text('system_prompt'),
+    /**
+     * Les noms (triés) des outils pour lesquels `systemPrompt` a été écrit
+     * (#559, migration 0136). Une reprise réutilise le prompt stocké — cache de
+     * préfixe — seulement si la liste recalculée est la même ; sinon le prompt
+     * est réécrit, pour ne jamais nommer un outil retiré pendant l'attente.
+     * NULL : prompt écrit avant cette colonne, réécrit à la reprise.
+     */
+    systemPromptTools: text('system_prompt_tools').array(),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
     /**
      * Flattened plain-text transcript (task + assistant text + tool outputs +
