@@ -520,12 +520,13 @@ export async function buildTeamBlock(
   //
   // What decides is whether the user asks for the WORK, not the politeness of
   // the form: "can you do a … on X?" asks for the work, "what is …?" only for
-  // an answer (Reviewer A on #603, P2). And knowledge of Nodal itself is never
-  // a teammate's specialty, even asked for as work — the same reason the "A
-  // question about Nodal is yours" baseline rule gives (#455, catalog
-  // platform-questions.ts), which sits in the same prompt. The prompt itself
-  // says that the subject wins over the form here, not only this comment
-  // (#603, passes 1 and 2).
+  // an answer (Reviewer A on #603, P2). On Nodal itself the line is the one the
+  // "A question about Nodal is yours" baseline rule draws (#455, catalog
+  // platform-questions.ts, in the same prompt), in its own words: work AROUND
+  // it (a code review, a fix, a skill) is work like any other; knowledge OF it
+  // stays with the orchestrator even asked for as work — run 6f08b1b8 spent
+  // 192,074 tokens researching a changelog through a teammate (#603, passes
+  // 1 to 3).
   const routeToMatch =
     reachMeans === 'delegate'
       ? 'A request that needs a shell command goes only to an agent whose Shell commands is ' +
@@ -545,9 +546,9 @@ export async function buildTeamBlock(
         'of your own tools could do a thin version of it and even when you believe you already ' +
         'know the answer. The words decide, not the politeness: “do a … on X” or “can you do a ' +
         '… on X?” asks for the work; a question that only wants an answer (“what is …?”) stays ' +
-        'yours. Knowledge of Nodal itself is no teammate’s specialty, even when it is asked ' +
-        'for as work (“do a … on Nodal …”): it stays yours, since no teammate knows the ' +
-        'platform better than you.';
+        'yours. A teammate can be asked for work AROUND Nodal like any other work (reviewing ' +
+        'its code, for one), never for knowledge OF the platform, even asked for as work (a ' +
+        'research on its changelog, for one): that stays yours.';
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
       'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +

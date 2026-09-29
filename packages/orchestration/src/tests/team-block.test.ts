@@ -731,7 +731,9 @@ describe('buildTeamBlock — à la profondeur maximale, aucune délégation anno
 // question qui attend une réponse immédiate, l'orchestrateur peut y répondre.
 // La règle est UNE phrase du pied de bloc, la même pour toute équipe : elle ne
 // nomme aucun agent ni aucun domaine, la spécialité vient de l'entrée du roster.
-const SPECIALTY_RULE = /When the user asks you to DO a kind of work[^]*?better than you\./;
+// The rule runs up to the footer's last sentence.
+const SPECIALTY_RULE =
+  /When the user asks you to DO a kind of work[^]*?(?= If genuinely none match)/;
 
 // What the rule itself must settle, on every surface that carries it (revue
 // Reviewer A de #603). Passe 1, P2 : la FORME départage — une demande polie du
@@ -746,15 +748,19 @@ function expectRuleSettlesBothAxes(rule: string): void {
   expect(form, 'the form tie-break is missing').toBeGreaterThan(-1);
   expect(rule).toContain('“can you do a … on X?” asks for the work');
   expect(rule).toContain('a question that only wants an answer (“what is …?”) stays yours');
-  // Subject: Nodal knowledge stays, even asked for as work; said AFTER the
-  // form tie-break, as the case it overrides, and closing the rule.
-  const subject = rule.indexOf(
-    'Knowledge of Nodal itself is no teammate’s specialty, even when it is asked for as work',
+  // Subject (passe 3) : la distinction de #455, CONNAISSANCE / PRODUCTION,
+  // dans ses propres mots. Les deux côtés, chacun après le départage de forme
+  // qu'il précise : un travail qui produit quelque chose autour de Nodal (une
+  // revue de code, un correctif) suit la règle ; la connaissance de Nodal reste
+  // à l'orchestrateur même demandée comme un travail (le changelog de 6f08b1b8).
+  const around = rule.search(/work AROUND Nodal like any other work[^.]*reviewing its code/);
+  expect(around, 'the AROUND side (production goes to the specialist) is missing').toBeGreaterThan(
+    form,
   );
-  expect(subject, 'the Nodal tie-break is missing').toBeGreaterThan(form);
-  expect(rule.slice(subject)).toMatch(
-    /^Knowledge of Nodal itself is no teammate’s specialty, even when it is asked for as work \(“do a … on Nodal …”\): it stays yours, since no teammate knows the platform better than you\.$/,
+  const of = rule.search(
+    /never for knowledge OF the platform, even asked for as work[^.]*a research on its changelog[^.]*that stays yours/,
   );
+  expect(of, 'the OF side (Nodal knowledge stays) is missing').toBeGreaterThan(form);
 }
 
 describe('buildTeamBlock — une demande explicite de la spécialité d’un coéquipier va à ce coéquipier (#601) @cap:organiser-equipe/moteur', () => {
@@ -881,6 +887,18 @@ describe('buildSystemPrompt — la règle de spécialité et « A question about
       // The specialty rule itself settles the case #455 keeps: a request for
       // knowledge of the platform is not handed on, even worded as work.
       expectRuleSettlesBothAxes(rule);
+      // And it says it in #455's own words: both rules draw the same line,
+      // work AROUND a feature for a teammate, knowledge OF the platform never.
+      const start = prompt.indexOf('### A question about Nodal is yours');
+      // The heading, a blank line, then the rule's one paragraph.
+      const platformRule = prompt.slice(
+        start,
+        prompt.indexOf('\n\n', prompt.indexOf('\n\n', start) + 2),
+      );
+      for (const words of ['work AROUND', 'never for knowledge OF the platform']) {
+        expect(platformRule, `platform-questions no longer says "${words}"`).toContain(words);
+        expect(rule, `the specialty rule no longer says "${words}"`).toContain(words);
+      }
     });
   }
 });
