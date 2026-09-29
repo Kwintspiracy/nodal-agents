@@ -4,7 +4,7 @@
 // parallel to how telegram_send_message works for the Telegram surface.
 
 import { z } from 'zod';
-import { agentJobs, eq } from '@nodal-agents/db';
+import { agentJobs, ownJobRow } from '@nodal-agents/db';
 import type { ToolDefinition } from '../types';
 import { sentCard } from '../presenters';
 
@@ -41,16 +41,26 @@ export const dashboardPublishTool: ToolDefinition<
     'Correct: response.content = [{tool-call: dashboard_publish, ...}, {tool-call: return_result, ...}].',
   inputSchema: DashboardPublishInputSchema,
   riskLevel: 'write',
+  loading: 'eager',
   card: 'sent',
   present: () => sentCard({ channel: 'dashboard', kind: 'dashboard' }),
   execute: async (input, ctx) => {
-    await ctx.db
+    const posee = await ctx.db
       .update(agentJobs)
       // `prose` (#154) : ce texte est celui que l'AGENT a écrit pour la
       // personne. La marque part avec lui, dans la même écriture, pour que le
       // fil n'ait plus à deviner sa nature à son premier caractère.
       .set({ result: input.text, resultKind: 'prose', updatedAt: new Date() })
-      .where(eq(agentJobs.id, ctx.jobId));
+      // Sous la prise du run (#566) : un run qui a perdu son job n'écrase pas
+      // le résultat de la prise qui l'a repris.
+      .where(ownJobRow(ctx.jobId))
+      .returning({ id: agentJobs.id });
+    if (posee.length === 0) {
+      throw new Error(
+        'job_row_not_held: this job is no longer held by this run (stopped, reaped or taken ' +
+          'by another run), so nothing was published',
+      );
+    }
     return { ok: true as const };
   },
 };

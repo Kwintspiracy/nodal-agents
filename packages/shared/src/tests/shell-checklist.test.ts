@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   splitShellWords,
   staticShellCategories,
@@ -59,14 +60,15 @@ describe('staticShellCategories @cap:executer-une-commande/moteur', () => {
   });
 
   // Run ca5753a8 : chaque lecture de progression d'un téléchargement comfy
-  // demandait l'accord du propriétaire, comme une installation.
-  it('comfy: the download subcommand installs, its status, list and cancel siblings do not', () => {
+  // demandait l'accord du propriétaire, comme une installation. Et #581 : le
+  // téléchargement lui-même est un téléchargement, pas une installation.
+  it('comfy: the download subcommand downloads, its status, list and cancel siblings do nothing', () => {
     expect(
       staticShellCategories(
         'comfy --json model download --url "https://huggingface.co/x/y.safetensors" --relative-path models/checkpoints --background',
       ),
-    ).toEqual(['install_software']);
-    expect(staticShellCategories('comfy model download --url x')).toEqual(['install_software']);
+    ).toEqual(['download']);
+    expect(staticShellCategories('comfy model download --url x')).toEqual(['download']);
     expect(staticShellCategories('comfy node install comfyui-impact-pack')).toEqual([
       'install_software',
     ]);
@@ -79,6 +81,143 @@ describe('staticShellCategories @cap:executer-une-commande/moteur', () => {
       expect(staticShellCategories(cmd), cmd).toEqual([]);
       expect(isDestructiveOrHeavyCommand(cmd), cmd).toBe(false);
     }
+  });
+});
+
+// #581 : une commande est rangée selon ce qu'elle FAIT. Récupérer des fichiers
+// (un modèle, une archive, une image) est un téléchargement, quel que soit
+// l'outil ; installer un logiciel ou un paquet en est une autre sorte. Un
+// propriétaire qui laissait un agent récupérer ses modèles sans demander
+// devait jusqu'ici le laisser installer des logiciels.
+describe('a command is filed by what it does: fetching is download, installing is install_software (#581) @cap:executer-une-commande/moteur', () => {
+  const DOWNLOADS = [
+    'comfy --json model download --url "https://huggingface.co/x/y.safetensors" --relative-path models/checkpoints',
+    'pip download torch -d wheels',
+    'pip3 download numpy==2.1',
+    'python -m pip download requests',
+    'hf download black-forest-labs/FLUX.1-dev flux1-dev.safetensors --local-dir models/unet',
+    'huggingface-cli download stabilityai/sdxl-turbo --local-dir models',
+    'ollama pull llama3.3',
+    'git lfs pull',
+    'git lfs fetch --all',
+    'docker pull comfyui/comfyui:latest',
+    'podman pull docker.io/library/alpine',
+    'aria2c -x 16 https://example.com/model.safetensors',
+    'wget https://example.com/a.zip',
+    'git clone https://github.com/comfyanonymous/ComfyUI',
+    // The real forms of each tool, not only the short one (Reviewer A, #582):
+    // subcommand groups and global options before the subcommand.
+    'docker image pull comfyui/comfyui:latest',
+    'podman image pull docker.io/library/alpine',
+    'docker compose pull',
+    'docker compose -f stack.yml pull',
+    'docker --context remote pull alpine',
+    'git -C models/unet lfs pull',
+    'git -c lfs.concurrenttransfers=8 lfs fetch --all',
+    'git --no-pager lfs pull',
+    'git -C repos clone https://github.com/x/y',
+    // Reviewer A, #582 pass 2: the hyphenated compose binaries, and global
+    // options or variables before the subcommand of hf / ollama.
+    'docker-compose pull',
+    'docker-compose -f stack.yml pull',
+    'podman-compose pull',
+    'huggingface-cli --token hf_x download org/model',
+    'OLLAMA_HOST=127.0.0.1:11435 ollama pull llama3',
+  ];
+  const INSTALLS = [
+    'pip install pandas',
+    'python -m pip install torch',
+    'npm i express',
+    'pnpm add lodash',
+    'go install golang.org/x/tools/gopls@latest',
+    'cargo install ripgrep',
+    'uv pip install torch',
+    'comfy node install comfyui-impact-pack',
+    'comfy install',
+    'winget install Git.Git',
+    'brew install ffmpeg',
+  ];
+
+  it.each(DOWNLOADS)('%s is a download, not an install', (cmd) => {
+    expect(staticShellCategories(cmd)).toEqual(['download']);
+  });
+
+  it.each(INSTALLS)('%s is an install, not a download', (cmd) => {
+    expect(staticShellCategories(cmd)).toEqual(['install_software']);
+  });
+
+  it('destructive_gate still gates every one of them: the union did not shrink', () => {
+    for (const cmd of [...DOWNLOADS, ...INSTALLS]) {
+      expect(isDestructiveOrHeavyCommand(cmd), cmd).toBe(true);
+    }
+  });
+
+  it('reading or stopping a download is neither (#552), and neither is a version or help check', () => {
+    for (const cmd of [
+      'comfy --json model download-status 224009dc90ba',
+      'comfy --json model downloads',
+      'comfy --json model download-cancel 224009dc90ba',
+      'ollama list',
+      'git lfs ls-files',
+      'docker images',
+      'hf auth whoami',
+      'git commit -m "lfs pull later"',
+      // A program called only for its version or its help prints and exits
+      // (Reviewer A, #582): the class #552 is about, for every kind of action.
+      'aria2c --version',
+      'aria2c --help',
+      'wget --version',
+      'wget -h',
+      'hf --help',
+      'pip --version',
+      'rm --help',
+      // The help of a SUBCOMMAND, and a version check with its output
+      // redirected (Reviewer A, #582 pass 2).
+      'pip download --help',
+      'comfy model download --help',
+      'docker pull --help',
+      'git clone --help',
+      'hf download --help',
+      'ollama pull --help',
+      'pip install --help',
+      'wget --version 2>&1',
+      'wget --version 2>/dev/null',
+      'aria2c --version > /dev/null',
+    ]) {
+      expect(staticShellCategories(cmd), cmd).toEqual([]);
+      expect(isDestructiveOrHeavyCommand(cmd), cmd).toBe(false);
+    }
+  });
+
+  it('a --help after the arguments does not excuse a delete, a stop or a system change', () => {
+    // cmd's `del` and `rd` read `--help` as one more file name, bash's `kill`
+    // still sends its signal: the help of a subcommand is a read only for the
+    // fetchers and installers, which all print it and exit.
+    expect(staticShellCategories('del build --help')).toEqual(['delete_files']);
+    expect(staticShellCategories('rm -rf build --help')).toEqual(['delete_files']);
+    expect(staticShellCategories('kill 1234 --help')).toEqual(['stop_programs']);
+    expect(isDestructiveOrHeavyCommand('del build --help')).toBe(true);
+  });
+
+  it('the catastrophic floor lets a bare version or help check through, nothing more', () => {
+    expect(isCatastrophicCommand('shutdown --help')).toBe(false);
+    expect(isCatastrophicCommand('shutdown -h now')).toBe(true);
+    expect(isCatastrophicCommand('rm -rf / --help')).toBe(true);
+  });
+
+  it('git global options do not hide the destructive VCS commands either', () => {
+    for (const cmd of [
+      'git -C repo reset --hard HEAD~3',
+      'git --no-pager push --force origin main',
+      'git -c core.quotepath=off clean -fdx',
+    ]) {
+      expect(staticShellCategories(cmd), cmd).toEqual(['delete_files']);
+    }
+  });
+
+  it('a version check chained to a real action still gates the action', () => {
+    expect(staticShellCategories('wget --version && wget https://x/a.zip')).toEqual(['download']);
+    expect(isDestructiveOrHeavyCommand('aria2c --version; rm -rf build')).toBe(true);
   });
 });
 

@@ -765,3 +765,50 @@ describe('reflection-convergence — E: tool-call iteration gate', () => {
     expect(rows).toHaveLength(0);
   });
 });
+
+// ── F. Per-turn tool-call budget (#564) ────────────────────────────────────────
+
+describe('reflection — a turn over the per-turn tool-call budget runs none of its calls (#564) @cap:suivre-execution/moteur', () => {
+  it('51 update_skill calls in one turn: the pass is refused, the skill is untouched', async () => {
+    const [skill] = await db
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        slug: `over-budget-skill-${Date.now()}`,
+        name: `Over Budget Skill ${Date.now()}`,
+        content: 'Original content.',
+        createdBy: 'agent',
+        createdByAgentId: seed.agentId,
+      })
+      .returning();
+    if (!skill) throw new Error('failed to seed skill');
+
+    const client = makeScriptedClient([
+      {
+        toolCalls: Array.from({ length: 51 }, (_, i) => ({
+          toolCallId: `ob${i}`,
+          toolName: 'update_skill',
+          args: { skillSlug: skill.slug, content: `Original content. PATCH ${i}` },
+        })),
+      },
+      {},
+    ]);
+    const job = makeCompletedJobSnapshot({ agentId: seed.agentId });
+    makeDeps(client);
+
+    await expect(
+      runReflection(
+        db as RunnerDeps['db'],
+        { ...job, agentId: seed.agentId, entityId: seed.entityId } as Parameters<
+          typeof runReflection
+        >[1],
+        5,
+        2,
+      ),
+    ).rejects.toThrow('tool_call_limit_exceeded: 51 > 50');
+
+    const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, skill.id));
+    expect(after!.content).toBe('Original content.');
+    expect(after!.patchCount).toBe(0);
+  });
+});

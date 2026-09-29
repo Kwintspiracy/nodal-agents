@@ -419,3 +419,68 @@ describe('slackAdapter.validateCredentials', () => {
     );
   });
 });
+
+// #613 — the prompt's channel line is built from this declaration.
+describe('slackAdapter.text — what a sent text becomes (#613)', () => {
+  it('declares the mrkdwn marks Slack renders, and sends them untouched with rendering on', async () => {
+    expect(slackAdapter.text.renders).toEqual([
+      '*bold*',
+      '_italic_',
+      '~strike~',
+      '`code`',
+      '```code block```',
+      '> quote',
+      '<url|text>',
+    ]);
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce(fakePostMessageResult('1.1'));
+    const text = slackAdapter.text.renders.join('\n');
+    await slackAdapter.sendText(CREDS, CHANNEL_ID, text);
+    const [, options] = vi.mocked(WebClient.prototype.apiCall).mock.calls[0]!;
+    // chat.postMessage renders mrkdwn unless `mrkdwn: false` is sent.
+    expect(options).not.toHaveProperty('mrkdwn');
+    expect((options as { text: string }).text).toBe(text);
+  });
+
+  it('splits exactly at its declared size', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockImplementation(() =>
+      Promise.resolve(fakePostMessageResult('9.9')),
+    );
+    const max = slackAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(2 * max + 808);
+
+    await slackAdapter.sendText(CREDS, CHANNEL_ID, text);
+
+    const sent = vi
+      .mocked(WebClient.prototype.apiCall)
+      .mock.calls.map(([, options]) => (options as { text: string }).text);
+    expect(sent.map((s) => s.length)).toEqual([max, max, 808]);
+    expect(sent.join('')).toBe(text);
+  });
+});
+
+describe('slackAdapter.sendText — a send that fails partway resumes, never repeats (#615)', () => {
+  it('fails on part 3 of 4 with its progress; resumed, only parts 3 and 4 go out', async () => {
+    const max = slackAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(3 * max + 100);
+    let call = 0;
+    vi.mocked(WebClient.prototype.apiCall).mockImplementation(() => {
+      call += 1;
+      return call === 3
+        ? Promise.reject(new Error('503'))
+        : Promise.resolve(fakePostMessageResult(`${call}.0`));
+    });
+
+    const err = await slackAdapter.sendText(CREDS, CHANNEL_ID, text).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryError);
+    expect((err as DeliveryError).partialProgress).toEqual({ sentChunks: 2, totalChunks: 4 });
+
+    await slackAdapter.sendText(CREDS, CHANNEL_ID, text, { fromChunk: 2 });
+
+    const texts = vi
+      .mocked(WebClient.prototype.apiCall)
+      .mock.calls.map(([, options]) => (options as { text: string }).text);
+    const delivered = texts.filter((_, i) => i !== 2);
+    expect(delivered).toHaveLength(4);
+    expect(delivered.join('')).toBe(text);
+  });
+});

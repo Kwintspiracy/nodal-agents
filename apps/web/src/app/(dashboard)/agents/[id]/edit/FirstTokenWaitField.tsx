@@ -4,8 +4,9 @@
  * FirstTokenWaitField — combien de temps un appel au modèle peut rester muet
  * avant son premier mot, pour CET agent (issue #442).
  *
- * Vide : la plateforme décide (2 min, relevées avec la taille du contexte et
- * l'effort de raisonnement, packages/llm/src/turn-clocks.ts). Posée, la valeur
+ * Vide : la plateforme décide (5 min pour un modèle hébergé depuis #583,
+ * relevées avec la taille du contexte et l'effort max,
+ * packages/llm/src/turn-clocks.ts `FIRST_TOKEN_BASE_MS`). Posée, la valeur
  * REMPLACE ce calcul, dans les deux sens : c'est ce qui permet de donner dix
  * minutes à un agent dont le modèle réfléchit longtemps sans toucher aux autres.
  *
@@ -90,7 +91,7 @@ export default function FirstTokenWaitField({
       </div>
       <p className="mt-1 text-body-12 text-ink-4">
         {saved === null
-          ? 'Empty: 2 minutes, raised for a long context or a high reasoning effort. Set it for a model that thinks long before it writes.'
+          ? 'Empty: 5 minutes, raised for a long context or the max reasoning effort. Set it for a model that thinks long before it writes.'
           : `Set for this agent: ${saved} s, whatever the context or the reasoning effort. Empty the field and save to let the platform decide.`}
       </p>
     </div>

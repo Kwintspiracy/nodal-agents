@@ -101,7 +101,7 @@ export function createNativeToolCallMiddleware(
       const wrapped: LanguageModelV3GenerateResult = {
         ...result,
         content: newContent,
-        finishReason: { unified: 'tool-calls', raw: 'tool-calls' },
+        finishReason: recoveredFinishReason(result.finishReason),
       };
       return wrapped;
     },
@@ -153,7 +153,7 @@ function recoverFromResponseBody(
 
   const result: LanguageModelV3GenerateResult = {
     content: newContent,
-    finishReason: { unified: 'tool-calls', raw: 'tool-calls' },
+    finishReason: recoveredFinishReason(extractFinishReason(parsedBody)),
     usage: extractUsage(parsedBody),
     warnings: [
       {
@@ -178,6 +178,37 @@ function extractAssistantContent(body: unknown): string | null {
   if (typeof message !== 'object' || message === null) return null;
   const content = (message as Record<string, unknown>)['content'];
   return typeof content === 'string' ? content : null;
+}
+
+/**
+ * The finish reason of a response whose tool calls were recovered from its text.
+ *
+ * Only a response that says the model FINISHED (`stop`) becomes `tool-calls`:
+ * the text held calls the provider did not see. Every other reason is a fact
+ * about the response that the parse does not change. Above all `length` (#554):
+ * a reply cut on the output-token cap stays cut, whatever the parser found in
+ * it, so the client can refuse to act on it (client.ts). Rewriting it erased
+ * the only signal that the recovered calls may be partial.
+ */
+function recoveredFinishReason(
+  reason: LanguageModelV3GenerateResult['finishReason'],
+): LanguageModelV3GenerateResult['finishReason'] {
+  return reason.unified === 'stop' ? { unified: 'tool-calls', raw: 'tool-calls' } : reason;
+}
+
+/** `choices[0].finish_reason` of a raw OpenAI-shaped body, unified the way the SDK does. */
+function extractFinishReason(body: unknown): LanguageModelV3GenerateResult['finishReason'] {
+  const choices =
+    typeof body === 'object' && body !== null
+      ? (body as Record<string, unknown>)['choices']
+      : undefined;
+  const first: unknown = Array.isArray(choices) ? choices[0] : undefined;
+  const raw =
+    typeof first === 'object' && first !== null
+      ? (first as Record<string, unknown>)['finish_reason']
+      : undefined;
+  if (raw === 'length') return { unified: 'length', raw };
+  return { unified: 'stop', raw: typeof raw === 'string' ? raw : undefined };
 }
 
 function extractUsage(body: unknown): LanguageModelV3GenerateResult['usage'] {

@@ -6,6 +6,7 @@
 // the observation the llm_calls sink records still carries the usage.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { CallProgress } from '../types';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 
@@ -82,6 +83,20 @@ describe('generateText streamed option @cap:organiser-equipe/moteur', () => {
 
     expect(pieces).toEqual(['from ', 'the stream']);
     expect(res.text).toBe(pieces.join(''));
+  });
+
+  it('hands what the call has produced so far to onProgress (#484)', async () => {
+    const client = createLlmClient({ provider: 'openrouter', model: 'z-ai/glm-5.2', apiKey: 'k' });
+    const seen: CallProgress[] = [];
+
+    await client.generateText(ARGS, { streamed: true, onProgress: (p) => seen.push(p) });
+
+    expect(seen.at(-1)).toEqual({
+      textChars: 'from the stream'.length,
+      reasoningChars: 0,
+      toolInputChars: 0,
+      toolName: null,
+    });
   });
 
   it('sizes the first-token clock with the tool schemas it sends', async () => {

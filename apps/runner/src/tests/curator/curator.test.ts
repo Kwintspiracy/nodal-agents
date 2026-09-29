@@ -30,11 +30,12 @@ import {
   archiveAgentSkill,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
-import { createEmbeddingClient } from '@nodal-agents/llm';
+import { createEmbeddingClient, LLMOutputLimitError } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { RunnerDeps } from '../../deps.ts';
 import { _resetEnvCache } from '../../env.ts';
 import { runCuratorTick } from '../../cron/run-curator.ts';
+import { runCuratorConsolidation } from '../../reflection/run-curator.ts';
 
 // â”€â”€ createLlmClient interception (same as reflection.test) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const {
@@ -936,5 +937,116 @@ describe('curator — memory curation decoupled from reflection_enabled', () => 
 
     expect(result.memoryCurationRan).toBe(0);
     expect(llmCallCount).toBe(0);
+  });
+});
+
+// Revue Codex de #555, passe 3 (P2) : une passe qui échoue était comptée
+// « exécutée ». Le tampon reste posé (un fournisseur en panne n'est pas
+// relancé à chaque tick), mais l'échec se compte à part et ne touche à rien.
+describe('curator — a failed pass is counted as failed, never as run @cap:suivre-execution/moteur', () => {
+  it('a memory pass refused on the output cap: failed 1, ran 0, no memory changed, entity stamped', async () => {
+    const ts = Date.now();
+    await db
+      .update(entities)
+      .set({ reflectionEnabled: false })
+      .where(eq(entities.id, seed.entityId));
+    const [fact] = await db
+      .insert(agentMemory)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        fact: `capped curation fact one ${ts}`,
+        source: 'agent',
+        importance: 2,
+        archived: false,
+      })
+      .returning();
+    await db.insert(agentMemory).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      fact: `capped curation fact two ${ts}`,
+      source: 'agent',
+      importance: 3,
+      archived: false,
+    });
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await db
+      .update(entities)
+      .set({ lastCuratorRunAt: eightDaysAgo })
+      .where(eq(entities.id, seed.entityId));
+
+    const cappedClient: RunnerDeps['llmClient'] = {
+      ...makeScriptedClient([{}]),
+      generateText: () =>
+        Promise.reject(
+          new LLMOutputLimitError(
+            'openrouter',
+            'z-ai/glm-5.3',
+            { inputTokens: 900, outputTokens: 131_072 },
+            3,
+          ),
+        ),
+    };
+
+    const result = await runCuratorTick(
+      db,
+      makeDeps(cappedClient),
+      makeCuratorEnv({
+        reflectionEnabled: 'false',
+        memoryCurationEnabled: 'true',
+        curatorMemoryMin: 2,
+        curatorIntervalDays: 7,
+      }),
+    );
+
+    expect(result.memoryCurationRan).toBe(0);
+    expect(result.memoryCurationFailed).toBe(1);
+    const [after] = await db
+      .select({ importance: agentMemory.importance })
+      .from(agentMemory)
+      .where(eq(agentMemory.id, fact!.id));
+    expect(after?.importance).toBe(2);
+    const [entity] = await db
+      .select({ lastCuratorRunAt: entities.lastCuratorRunAt })
+      .from(entities)
+      .where(eq(entities.id, seed.entityId));
+    expect(entity!.lastCuratorRunAt!.getTime()).toBeGreaterThan(eightDaysAgo.getTime());
+  });
+});
+
+// ── Per-turn tool-call budget (#564) ──────────────────────────────────────────
+describe('curator — a turn over the per-turn tool-call budget runs none of its calls (#564) @cap:suivre-execution/moteur', () => {
+  it('51 archive_skill calls in one turn: the pass is refused, the skill stays active', async () => {
+    const ts = Date.now();
+    const [skill] = await db
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        slug: `over-budget-${ts}`,
+        name: `Over Budget ${ts}`,
+        content: 'narrow agent skill',
+        createdBy: 'agent',
+        state: 'active',
+      })
+      .returning();
+    if (!skill) throw new Error('failed to seed skill');
+    makeDeps(
+      makeScriptedClient([
+        {
+          toolCalls: Array.from({ length: 51 }, (_, i) => ({
+            toolCallId: `ob${i}`,
+            toolName: 'archive_skill',
+            args: { skillId: skill.id },
+          })),
+        },
+        {},
+      ]),
+    );
+
+    await expect(runCuratorConsolidation(db as RunnerDeps['db'], seed.entityId, 4)).rejects.toThrow(
+      'tool_call_limit_exceeded: 51 > 50',
+    );
+    const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, skill.id));
+    expect(after!.state).toBe('active');
   });
 });

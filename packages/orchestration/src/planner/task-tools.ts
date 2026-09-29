@@ -8,6 +8,7 @@ import { eq, and, inArray } from '@nodal-agents/db';
 import { agentTasks, agents, agentJobs } from '@nodal-agents/db';
 import { remainingDelegationHops, delegationDepthExceededMessage } from '../chain-counters';
 import { validateDependencies } from './dependencies';
+import { CREATE_TASK_TOOL_NAME, LIST_TASKS_TOOL_NAME } from './task-tool-names';
 import { computeAgentToolNames, findUnavailableToolMentions } from '../router/tool-availability';
 import { loadWorkspaceReach, describeOutsideAgent } from '../reach';
 import type { AgentId, AnyDrizzleDb, ToolDefinition, TaskId, EntityId } from '../types';
@@ -85,7 +86,7 @@ export function generateTaskTools(
     typeof createTaskSchema,
     { taskId: string; title: string; warning?: string }
   > = {
-    name: 'create_task',
+    name: CREATE_TASK_TOOL_NAME,
     label: 'Create a task',
     summary:
       'Put a work task on the board and assign it to an agent. Tasks run after this job, in the order their dependencies allow.',
@@ -101,6 +102,7 @@ export function generateTaskTools(
       DELEGATION_SCOPE_RULE,
     inputSchema: createTaskSchema,
     riskLevel: 'write',
+    loading: 'eager',
     card: 'text',
     execute: async (input: CreateTaskInput, ctx: ToolContext) => {
       // The SAME depth guard as assign_* (invariant #8), before any row: a
@@ -232,14 +234,22 @@ export function generateTaskTools(
       dependsOn: string[];
     }>
   > = {
-    name: 'list_tasks',
+    name: LIST_TASKS_TOOL_NAME,
     label: 'List tasks',
-    summary: "See the tasks on this job's board, with their status and who they are assigned to.",
+    summary:
+      'See the tasks this job put on the board, with their status and who they are assigned to.',
+    // Ce que l'outil NE lit PAS est dit au modèle (#567) : le 28/09, un root à
+    // qui l'on disait « arrête » l'a appelé depuis un job neuf, a lu le tableau
+    // vide de CE job et a répondu « rien ne tourne » pendant qu'un délégué
+    // lancé par un message précédent tournait encore.
     description:
-      'List tasks on the task board for this job. ' +
-      'Returns task IDs (needed for depends_on), titles, statuses, and assignments.',
+      'List the tasks that THIS job created with create_task, and only those. ' +
+      'Returns task IDs (needed for depends_on), titles, statuses, and assignments. ' +
+      'It does not see work started by an earlier message, by another job, or delegated with ' +
+      'assign_*: an empty list says nothing about whether anything else is running.',
     inputSchema: listTasksSchema,
     riskLevel: 'read',
+    loading: 'eager',
     card: 'text',
     execute: async (input: ListTasksInput, ctx: ToolContext) => {
       const conditions = [

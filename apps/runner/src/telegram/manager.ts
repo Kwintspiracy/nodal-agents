@@ -13,6 +13,7 @@
 
 import { isNotNull, eq, and } from '@nodal-agents/db';
 import { agents, decryptChannelSecret } from '@nodal-agents/db';
+import { addTelegramBotCommands } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import {
@@ -22,6 +23,7 @@ import {
   reportRepeatingRecovery,
 } from '../lib/repeat-log.ts';
 import { runTelegramPoller, type PollerExit } from './poller.ts';
+import { PLATFORM_COMMANDS } from '../channels/turn.ts';
 
 export interface TelegramManagerOpts {
   env: RunnerEnv;
@@ -145,6 +147,16 @@ export function startTelegramManager(
     botUsername: string | null,
     startOffset: number,
   ): void {
+    // The platform commands (`/stop`, `/new`) go into the bot's command menu
+    // (#602), next to whatever its owner set in BotFather. Best-effort: the
+    // commands work typed by hand without it, so a failure is logged, never
+    // fatal to the poller.
+    void addTelegramBotCommands(botToken, PLATFORM_COMMANDS).catch((err) => {
+      console.warn(
+        `[telegram-manager agent=${agentId}] command menu registration failed: ${renderError(err)}`,
+      );
+    });
+
     const controller = new AbortController();
     const exit = runTelegramPoller({
       agentId,

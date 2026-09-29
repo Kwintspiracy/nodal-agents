@@ -107,6 +107,29 @@ export type CostCallRow = {
 
 export type ApprovalRow = { requestedAt: Date | null; resolvedAt: Date | null };
 
+/**
+ * Le coût d'un ensemble d'appels : la somme des appels tarifés, `null` quand
+ * aucun ne l'est, et le compte de ceux qui ne le sont pas.
+ */
+export type CallsCost = { costUsd: number | null; unpricedCalls: number };
+
+/**
+ * LA règle du prix, une seule (#508). La barre d'état l'applique aux appels du
+ * fil ou du run, la carte « Delivered » aux appels du job de tête et de TOUTE
+ * sa descendance : sur les mêmes lignes `llm_calls`, les deux disent le même
+ * chiffre, et ni l'une ni l'autre ne lit `agent_jobs.total_cost_usd`, qui
+ * traîne derrière les appels enregistrés.
+ */
+export function costOfCalls(calls: readonly Pick<CostCallRow, 'costUsd'>[]): CallsCost {
+  let costUsd: number | null = null;
+  let unpricedCalls = 0;
+  for (const c of calls) {
+    if (c.costUsd === null) unpricedCalls += 1;
+    else costUsd = (costUsd ?? 0) + c.costUsd;
+  }
+  return { costUsd, unpricedCalls };
+}
+
 export function aggregateSpaceCost(input: {
   calls: readonly CostCallRow[];
   approvals: readonly ApprovalRow[];
@@ -162,10 +185,12 @@ export function aggregateSpaceCost(input: {
     totals.outputTokens += c.outputTokens ?? 0;
     totals.cachedTokens += c.cachedTokens ?? 0;
     totals.cacheCreationTokens += c.cacheCreationTokens ?? 0;
-    if (c.costUsd === null) totals.unpricedCalls += 1;
-    else totals.costUsd = (totals.costUsd ?? 0) + c.costUsd;
     totals.llmDurationMs += c.durationMs ?? 0;
   }
+  // Le prix par la règle partagée avec la carte « Delivered » (#508).
+  const priced = costOfCalls(input.calls);
+  totals.costUsd = priced.costUsd;
+  totals.unpricedCalls = priced.unpricedCalls;
 
   for (const ap of input.approvals) {
     if (ap.requestedAt && ap.resolvedAt) {

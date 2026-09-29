@@ -33,6 +33,7 @@ export const attachConnectorTool: ToolDefinition<
     'Idempotent. This is the step that actually makes a connector usable — creating it is not enough.',
   inputSchema: AttachConnectorInput,
   riskLevel: 'write',
+  loading: 'eager',
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {

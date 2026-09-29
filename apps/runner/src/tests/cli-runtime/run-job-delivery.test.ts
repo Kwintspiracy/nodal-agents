@@ -207,6 +207,7 @@ function runJob(jobId: string, chatId: string | null, mode: 'read' | 'write' = '
     },
     agentRow: { ...agentRow, cliPermissions: { mode } },
     workspaces: [{ label: 'ws', path: ws }],
+    claimGeneration: 0,
   });
 }
 
@@ -301,7 +302,9 @@ describe('run-job : porte terminale + outbox', () => {
 
     const outcome = await runJob(jobId, CHAT);
 
-    expect(outcome).toEqual({ status: 'failed', error: 'already_handled' });
+    // La ligne relue à la sortie de la CLI (#566) : le run s'arrête avant la
+    // porte terminale, avec l'issue commune à tous les runtimes.
+    expect(outcome).toEqual({ status: 'already_handled' });
     expect(sendText).not.toHaveBeenCalled();
     expect(await deliveriesOf(jobId)).toEqual([]);
     expect((await jobRow(jobId)).status).toBe('failed');

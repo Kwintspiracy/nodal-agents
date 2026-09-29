@@ -13,7 +13,11 @@
 
 import { eq, and, asc, desc, isNull, notInArray, or, sql } from '@nodal-agents/db';
 import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
-import { buildSystemPrompt } from '@nodal-agents/orchestration';
+import {
+  buildSystemPrompt,
+  assertTurnToolCallBudget,
+  ToolCallLimitExceededError,
+} from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
@@ -34,10 +38,12 @@ import { TITLE_SYSTEM_PROMPT, cleanTitle, titlePrompt } from './conversation-tit
 import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
+import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
-import { LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
+import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
 import { TERMINAL_STATUSES } from '../job/state.ts';
+import { watchCallProgress } from '../job/call-progress.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
 // size — 20 large turns (verbose replies, or several escalation blocks with
@@ -110,21 +116,6 @@ export const CHAT_TOOLS: Record<
   },
 };
 
-// Escalation-recovery nudge. A reasoning model (MiniMax M3) intermittently
-// NARRATES an action in text ("Je lance X…") without emitting the run_task tool
-// call — ~1 turn in 5 in practice. We cannot force tool_choice (MiniMax's
-// OpenRouter endpoints 404 on any forced value). So when the model produced text
-// but no run_task, we re-prompt ONCE with this reminder. Pure conversation is
-// unaffected: no action was committed, so the model calls nothing and we keep
-// the text reply. This is LLM-internal steering (never shown to the user).
-const ESCALATION_RECHECK =
-  'Re-read your previous reply. If it committed to performing an action — running, launching, ' +
-  'sending, fetching, creating, configuring, delegating, or any task or tool use — then your ' +
-  'text ALONE did nothing: call the run_task tool NOW, conveying the user’s request faithfully ' +
-  '(their words and data, with no invented scope, method, or delivery). ' +
-  'If your reply was pure conversation, a question, or simply recalling a fact, do not call any ' +
-  'tool — the conversation is complete.';
-
 export type ChatTurnResult =
   | {
       ok: true;
@@ -146,7 +137,15 @@ export type ChatTurnResult =
       /** Une horloge a coupé ce tour (#458) : `reply` est ce qui avait été écrit. */
       cutReason?: LlmTimeoutReason;
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Une horloge a coupé l'appel AVANT tout texte visible (#484) :
+       * `error` vaut `llm_cut` et ce champ dit laquelle.
+       */
+      cutReason?: LlmTimeoutReason;
+    };
 
 /** A head job of this conversation that has not reached a terminal status (#453). */
 type RunningHead = { id: string; task: string; status: string | null };
@@ -243,7 +242,10 @@ interface HistoryRow {
 }
 
 /**
- * Build one "block" (1 or 2 ModelMessages) for a single history row.
+ * Build one "block" (1 or 2 ModelMessages) for a single history row. Nothing
+ * the runner wrote lands in an assistant part (#562): ledger lines and the
+ * stop note travel in the `run_task` result, the notes on a plain reply in a
+ * `[système]` message after it.
  * `truncateFn` is a parameter — NOT always `truncateHeadTail` — so the caller
  * controls whether per-message truncation applies (F-12, audit #2 round 2:
  * it's a last resort when the budget is exceeded even after dropping older
@@ -312,8 +314,70 @@ function buildHistoryBlock(
         : r.cutReason
           ? cutReplyNote()
           : null;
-  const content = note ? `${truncateFn(r.content)}\n\n${note}` : truncateFn(r.content);
-  return [{ role: r.role as 'user' | 'assistant', content }];
+  // La note est du runner : elle suit la réponse dans un message à part, marqué
+  // `[système]`, jamais collée dans la bouche de l'agent (#562 — un modèle
+  // continue ce qu'il a écrit, et il avait « écrit » les notes du runner).
+  const reply: ModelMessage = {
+    role: r.role as 'user' | 'assistant',
+    content: truncateFn(r.content),
+  };
+  return note ? [reply, { role: 'user', content: note }] : [reply];
+}
+
+/**
+ * Un appel du tour a été COUPÉ (#484) : une horloge, ou un flux rompu, avant
+ * tout texte gardé. Le tour échoue en disant la coupure et sa raison, `llm_cut`
+ * + `cutReason`, quel que soit l'appel qu'elle frappe : la réponse diffusée ou
+ * la relance sans outils (revue Nodal de #623 : la relance la disait
+ * `llm_error`, et l'écran peignait « pas de réponse » là où l'appel avait été
+ * coupé). `null` pour toute autre erreur.
+ */
+function failedOnCut(
+  err: unknown,
+  which: string,
+  agentSlug: string,
+): { ok: false; error: 'llm_cut'; cutReason: LlmTimeoutReason } | null {
+  if (!(err instanceof LLMTimeoutError)) return null;
+  console.warn(`[run-chat-turn] ${which} cut by ${err.reason} before any text (${agentSlug})`);
+  return { ok: false, error: 'llm_cut', cutReason: err.reason };
+}
+
+/**
+ * Un appel du tour qui PROPOSAIT des outils a été refusé : il s'est arrêté sur
+ * le plafond de jetons de sortie (#554, refusé par le client), ou il porte plus
+ * d'appels que le budget d'un tour (#564, `runTaskOf`). Le tour en a trois (la
+ * réponse, la relance d'escalade, la réponse après un `run_task` refusé) et la
+ * règle est la même pour chacun : le tour échoue avec le code du refus. Aucune
+ * relance ne le rattrape, ni ne garde la réponse d'avant : ce serait un nouvel
+ * essai, que rien ici ne décide, et un tour présenté comme réussi (revue Codex
+ * de #555, P1 ×2). `null` pour toute autre erreur, que l'appelant traite comme
+ * avant.
+ */
+function failedOnRefusedTurn(
+  err: unknown,
+  which: string,
+  agentSlug: string,
+): { ok: false; error: string } | null {
+  if (!(err instanceof LLMOutputLimitError) && !(err instanceof ToolCallLimitExceededError)) {
+    return null;
+  }
+  console.warn(`[run-chat-turn] ${which} refused (${agentSlug}):`, err.message);
+  return { ok: false, error: err.code };
+}
+
+/**
+ * Le `run_task` d'une réponse, après la règle du tour (#564, revue Codex de
+ * #568, passe 4) : la même que la boucle des jobs, `assertTurnToolCallBudget`,
+ * avant d'agir sur quoi que ce soit. Le chat n'exécute que le premier appel,
+ * mais un tour de 51 appels est dégénéré, et le premier ne vaut pas mieux que
+ * les autres. Lève `ToolCallLimitExceededError`, que `failedOnRefusedTurn` lit.
+ */
+function runTaskOf<T extends { toolName: string }>(response: {
+  toolCalls?: readonly T[] | undefined;
+}): T | undefined {
+  const calls = response.toolCalls ?? [];
+  assertTurnToolCallBudget(calls.length);
+  return calls.find((tc) => tc.toolName === 'run_task');
 }
 
 export async function runChatTurn(opts: {
@@ -619,20 +683,31 @@ export async function runChatTurn(opts: {
       // passe à la page pendant que le modèle l'écrit. Un modèle qui ne sait
       // pas diffuser (appels d'outils lus dans son texte) répond d'un bloc :
       // aucun fragment, et `streamed` reste faux.
-      const response = await llmClient.generateText(
-        { system: systemPrompt, messages, tools: CHAT_TOOLS },
-        {
-          streamed: true,
-          onTextDelta: (delta) => {
-            partial += delta;
-            onTextDelta(delta);
-          },
-          ...(abortSignal ? { abortSignal } : {}),
-        },
+      // #484 : le chat dit lui aussi ce que son appel produit, par le même
+      // battement que la boucle des jobs.
+      const production = watchCallProgress((faits) =>
+        console.warn(`[run-chat-turn] llm_call_progress ${agentRow.slug} ${JSON.stringify(faits)}`),
       );
+      let response: Awaited<ReturnType<typeof llmClient.generateText>>;
+      try {
+        response = await llmClient.generateText(
+          { system: systemPrompt, messages, tools: CHAT_TOOLS },
+          {
+            streamed: true,
+            onTextDelta: (delta) => {
+              partial += delta;
+              onTextDelta(delta);
+            },
+            onProgress: production.onProgress,
+            ...(abortSignal ? { abortSignal } : {}),
+          },
+        );
+      } finally {
+        production.stop();
+      }
       if (abortSignal?.aborted) return await keepStoppedReply();
       text = (response.text ?? '').trim();
-      runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+      runTask = runTaskOf(response);
       streamed = partial !== '';
     } else {
       const response = await llmClient.generateText(
@@ -641,7 +716,7 @@ export async function runChatTurn(opts: {
         abortSignal ? { abortSignal } : undefined,
       );
       text = (response.text ?? '').trim();
-      runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+      runTask = runTaskOf(response);
     }
   } catch (err) {
     // Stop pendant l'appel : ce n'est pas une panne, rien ne se rejoue.
@@ -656,6 +731,16 @@ export async function runChatTurn(opts: {
       );
       return await keepPartialReply({ cutReason: err.reason });
     }
+    const capped = failedOnRefusedTurn(err, 'reply', agentRow.slug);
+    if (capped) return capped;
+    // Coupé AVANT tout texte (#484, revue Codex passe 3) : ce n'est pas un
+    // outil fantôme, et la relance sans outils ci-dessous n'a pas à le
+    // rattraper. Un `run_task` fini dans le flux a été jeté avec lui ; une
+    // relance privée de `run_task` ne pourrait que dire « c'est lancé » sans
+    // qu'aucun job n'existe. Le tour échoue, en disant la coupure — comme un
+    // job coupé (invariant #4).
+    const cut = failedOnCut(err, 'reply', agentRow.slug);
+    if (cut) return cut;
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
     // invariant 4) and fall through to the tool-free retry so conversation works.
@@ -664,9 +749,10 @@ export async function runChatTurn(opts: {
 
   // 5b. ESCALATION RECOVERY. The model produced a reply but NO run_task call. A
   //     reasoning model (MiniMax M3) intermittently narrates an action without
-  //     calling the tool. Since tool_choice can't be forced (404 on MiniMax),
-  //     re-prompt ONCE: show it its own reply and have it either escalate or
-  //     confirm it was conversation. Recovers the ~1-in-5 narration misses.
+  //     calling the tool, ~1 turn in 5. Since tool_choice is never forced
+  //     (#600), the reply is re-read ONCE through the mechanism the job loop
+  //     shares (llm/action-recheck.ts): the model either escalates or confirms
+  //     it was conversation.
   //
   //     ET ELLE NE REJOUE PAS LE TOUR ENTIER. Mesuré sur la base de Quentin le
   //     09/09 : cette relance envoyait le prompt système COMPLET et tout
@@ -684,28 +770,64 @@ export async function runChatTurn(opts: {
   //     Le prompt système est retiré, pas allégé : le cadre nécessaire tient dans
   //     la consigne, et l'outil porte sa propre description. Un système partiel
   //     aurait été un troisième prompt à tenir cohérent avec les deux autres.
-  if (!runTask && text) {
+  //
+  //     Elle relit la réponse FINALE en prose du tour, quelle qu'elle soit : la
+  //     première, celle qui suit un run_task refusé, celle de la relance sans
+  //     outils. UNE fois par tour, jamais en boucle (`relu`).
+  let relu = false;
+  const relireUneFois = async (): Promise<ChatTurnResult | null> => {
+    if (relu || runTask || !text) return null;
+    relu = true;
     try {
-      const recheck = await llmClient.generateText(
-        {
-          messages: [
-            { role: 'user', content: message },
-            { role: 'assistant', content: text },
-            { role: 'user', content: ESCALATION_RECHECK },
-          ],
-          tools: CHAT_TOOLS,
-        },
+      const recheck = await recheckNarratedAction(llmClient, {
+        request: message,
+        reply: text,
+        tools: CHAT_TOOLS,
+        ...(abortSignal ? { abortSignal } : {}),
+      });
+      runTask = runTaskOf(recheck);
+    } catch (err) {
+      if (abortSignal?.aborted) return await keepStoppedReply();
+      // Toute panne, plafond de sortie et relance dégénérée (plus d'appels que
+      // la règle du tour n'en admet, levée par `runTaskOf`) compris (PR #604) :
+      // la relance n'est qu'un filet. Elle est abandonnée, aucun de ses appels
+      // n'est exécuté, et la réponse (déjà partie en flux, peut-être) reste la
+      // réponse du tour. La réponse elle-même garde la règle #564.
+      console.warn(
+        `[run-chat-turn] escalation recheck failed (${agentRow.slug}):`,
+        (err as Error).message,
+      );
+    }
+    // Stop pendant la relance d'escalade (#456, revue Codex passe 8) : rien ne
+    // se lance après le Stop, pas même un job que la relance aurait demandé.
+    if (abortSignal?.aborted) return await keepStoppedReply();
+    return null;
+  };
+
+  // 6b (relance sans outils). Le modèle n'a écrit ni texte ni run_task (il a
+  // tenté un outil absent de cette surface), ou son second run_task a été
+  // refusé : il répond SANS outils, pour que la personne ait toujours une
+  // réponse. Le modèle parle toujours, le runner n'invente rien (invariant #2).
+  const repondreSansOutils = async (): Promise<ChatTurnResult | null> => {
+    try {
+      const retry = await llmClient.generateText(
+        { system: systemPrompt, messages },
         abortSignal ? { abortSignal } : undefined,
       );
-      runTask = (recheck.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
-    } catch {
-      // Keep the original text reply — recovery is best-effort.
+      if (abortSignal?.aborted) return await keepStoppedReply();
+      text = (retry.text ?? '').trim();
+      // Cette réponse-là n'est jamais passée par le flux : ce qui a pu être
+      // montré mot à mot, s'il y a eu quoi que ce soit, n'était pas elle.
+      streamed = false;
+    } catch (err) {
+      if (abortSignal?.aborted) return await keepStoppedReply();
+      // Une coupure se dit comme au premier appel, jamais comme une panne.
+      return (
+        failedOnCut(err, 'tool-free retry', agentRow.slug) ?? { ok: false, error: 'llm_error' }
+      );
     }
-  }
-
-  // Stop pendant la relance d'escalade (#456, revue Codex passe 8) : rien ne
-  // se lance après le Stop, pas même un job que la relance aurait demandé.
-  if (abortSignal?.aborted) return await keepStoppedReply();
+    return null;
+  };
 
   // 5c. UN TRAVAIL DU FIL COURT DÉJÀ (#453). La personne qui précise sa demande
   //     pendant que le premier travail tourne faisait lancer un second travail
@@ -726,8 +848,19 @@ export async function runChatTurn(opts: {
   //     qui n'existe pas. Le texte est vidé, et la relance SANS outils (6b)
   //     répond avec les deux refus sous les yeux. Rien ne se jette en silence :
   //     chaque refus est ce que le modèle lit.
+  //
+  //     Chaque passage de la boucle part d'une réponse : sans texte ni appel,
+  //     elle est redemandée sans outils ; en prose, elle est relue (une fois
+  //     par tour) ; un run_task passe ensuite par le refus ci-dessous.
   let refusals = 0;
-  while (runTask) {
+  for (;;) {
+    if (!runTask && !text) {
+      const arret = await repondreSansOutils();
+      if (arret) return arret;
+    }
+    const arretRelecture = await relireUneFois();
+    if (arretRelecture) return arretRelecture;
+    if (!runTask) break;
     const runningHeads: RunningHead[] = await db
       .select({ id: agentJobs.id, task: agentJobs.task, status: agentJobs.status })
       .from(agentJobs)
@@ -782,7 +915,7 @@ export async function runChatTurn(opts: {
       // outils (6b) écrit la réponse, refus compris.
       text = '';
       runTask = undefined;
-      break;
+      continue;
     }
     refusals += 1;
     try {
@@ -791,9 +924,11 @@ export async function runChatTurn(opts: {
         abortSignal ? { abortSignal } : undefined,
       );
       text = (again.text ?? '').trim();
-      runTask = (again.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+      runTask = runTaskOf(again);
     } catch (err) {
       if (abortSignal?.aborted) return await keepStoppedReply();
+      const capped = failedOnRefusedTurn(err, 'reply after a refused run_task', agentRow.slug);
+      if (capped) return capped;
       console.warn(
         `[run-chat-turn] reply after a refused run_task failed (${agentRow.slug}):`,
         (err as Error).message,
@@ -899,28 +1034,10 @@ export async function runChatTurn(opts: {
     return { ok: true, reply, spawnedJobId: job?.id, streamed };
   }
 
-  // 6b. Pure conversation — persist the assistant turn. No job created.
-  //     If the model produced neither text nor a run_task call (e.g. it tried a
-  //     tool that isn't available on this surface), force a plain-text answer
-  //     with a tool-free retry so the user always gets a reply. The LLM still
-  //     speaks — we never fabricate text (invariant #2).
-  let replyText = text;
-  if (!replyText) {
-    try {
-      const retry = await llmClient.generateText(
-        { system: systemPrompt, messages },
-        abortSignal ? { abortSignal } : undefined,
-      );
-      if (abortSignal?.aborted) return await keepStoppedReply();
-      replyText = (retry.text ?? '').trim();
-      // Cette réponse-là n'est jamais passée par le flux : ce qui a pu être
-      // montré mot à mot, s'il y a eu quoi que ce soit, n'était pas elle.
-      streamed = false;
-    } catch {
-      if (abortSignal?.aborted) return await keepStoppedReply();
-      return { ok: false, error: 'llm_error' };
-    }
-  }
+  // 6b. Pure conversation — persist the assistant turn. No job created. A
+  //     reply the tool-free retry could not produce either is an error: the
+  //     runner never fabricates text (invariant #2).
+  const replyText = text;
   if (!replyText) return { ok: false, error: 'empty_reply' };
   const [replyRow] = await db
     .insert(chatMessages)

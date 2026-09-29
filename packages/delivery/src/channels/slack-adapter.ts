@@ -25,6 +25,7 @@ import type {
   SendResult,
   BotIdentity,
   TextFormat,
+  SendTextOpts,
 } from '../channel-adapter.ts';
 
 function requireBotToken(creds: ChannelCredentials): string {
@@ -197,7 +198,7 @@ async function sendText(
   creds: ChannelCredentials,
   conversationId: string,
   text: string,
-  opts?: { format?: TextFormat },
+  opts?: SendTextOpts,
 ): Promise<SendResult> {
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
@@ -205,12 +206,19 @@ async function sendText(
   const client = makeClient(botToken);
 
   let lastTs: string | undefined;
-  for (const chunk of chunkForSlack(rendered)) {
+  const parts = chunkForSlack(rendered);
+  for (let i = opts?.fromChunk ?? 0; i < parts.length; i += 1) {
     try {
-      const result = await client.chat.postMessage({ channel: channelId, text: chunk });
+      const result = await client.chat.postMessage({
+        channel: channelId,
+        text: parts[i] as string,
+      });
       lastTs = result.ts;
     } catch (err) {
-      throw toDeliveryError(err, botToken);
+      const e = toDeliveryError(err, botToken);
+      // Ce qui est déjà parti ne repart pas : l'appelant reprend ici (#615).
+      e.partialProgress = { sentChunks: i, totalChunks: parts.length };
+      throw e;
     }
   }
   if (!lastTs) {
@@ -480,6 +488,21 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 export const slackAdapter: ChannelAdapter = {
   channel: 'slack',
   capabilities: { buttons: true, threads: true, media: true, editMessage: true },
+  // Sans `format`, aucune conversion, et chat.postMessage part sans
+  // `mrkdwn: false` : Slack rend son propre mrkdwn, pas le markdown — titres,
+  // tableaux, `**gras**` et `[lien](url)` s'y affichent tels quels.
+  text: {
+    renders: [
+      '*bold*',
+      '_italic_',
+      '~strike~',
+      '`code`',
+      '```code block```',
+      '> quote',
+      '<url|text>',
+    ],
+    maxMessageChars: SLACK_MAX_CHARS,
+  },
   sendText,
   sendMedia,
   sendApprovalCard,

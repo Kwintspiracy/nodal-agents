@@ -1,12 +1,17 @@
-// /jobs/[id] — LE RUN OUVERT DEPUIS ACTIVITY.
+// /jobs/[id] — LA PAGE D'UN RUN DE SCHEDULED (#501).
+//
+// L'adresse d'un run se décide dans `lib/run-page.ts` : un run né d'une
+// automatisation (cron, webhook) s'ouvre ici, sous Scheduled ; tout autre run
+// sous `/chat/runs/[id]`, qui réexporte CETTE page pour que le rail reste sur
+// Work. `/runs/[id]` et `/scheduled/[id]` ne rendent rien : ils redirigent.
 //
 // 18/09 — cette route dessinait son propre écran : une grille de métadonnées
 // brutes (chain count, delegation depth, duration ms) et le transcript en
 // `<pre>`. Deux pages pour la même chose, et celle-ci montrait le moins. Elle
-// rend maintenant `RunPage`, la MÊME page que /scheduled/[id], depuis le même
-// chargeur (`getSpaceConversationAction` accepte n'importe quel job : sa seule
-// garde est `not_found`). Ce qui n'existait qu'ici et qui compte — le bouton
-// d'arrêt tant que le run court — est devenu celui des DEUX routes (#252). Les
+// rend maintenant `RunPage`, depuis un chargeur qui accepte n'importe quel job
+// (`getSpaceConversationAction` : sa seule garde est `not_found`). Ce qui
+// n'existait qu'ici et qui compte — le bouton d'arrêt tant que le run court —
+// est dessiné par `RunPage` elle-même (#252). Les
 // délégations, elles, ne
 // sont plus une liste de liens : elles se lisent DANS la chronologie du run,
 // dépliables, là où elles ont eu lieu (décision Quentin, 18/09).
@@ -32,7 +37,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   }
 
   // Le bouton d'arrêt n'est plus passé d'ici (#252) : `RunPage` le dessine
-  // elle-même, dans sa rangée d'actions, pour ses DEUX routes. Il n'existait
-  // que sur celle-ci, et `/scheduled/[id]` montrait le même run sans lui.
+  // elle-même, dans sa rangée d'actions, sous ses deux adresses (celle-ci et
+  // `/chat/runs/[id]`).
   return <RunPage data={result.data} />;
 }

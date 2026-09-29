@@ -9,6 +9,7 @@ import AgentAvatar from '@/components/ui/AgentAvatar';
 import StatusPill from '@/components/ui/StatusPill';
 import StopRunButton from '@/components/ui/StopRunButton';
 import { canStopRun } from '@/lib/job-live.ts';
+import { openRunHref } from '@/lib/run-page.ts';
 import ClampedText from './ClampedText.tsx';
 import Table, { THead, Th, Tr, Td, CellMono } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -1132,8 +1133,9 @@ function DelegationGroup({
                 <p className="text-body-13 text-ink-2">{job.reviewVerdict.summary}</p>
               </div>
             )}
-            {/* P8 : le fil d'un JOB vit sur /scheduled/[id] — /spaces/<id> est
-                devenu la page d'un PROJET. */}
+            {/* La page du run, dans SA section : `/runs/<id>` la décide par
+                la tête de sa chaîne (#501, lib/run-page.ts). Un fil Work
+                ouvrait `/scheduled/<id>` et basculait le rail sur Scheduled. */}
             <div className="flex items-center justify-end gap-3">
               {/* ARRÊTER CE RUN D'ICI (Quentin, 22/09 : « il y a un bouton
                   Open run, je devrais pouvoir le stopper »). Le bouton vit à
@@ -1141,7 +1143,7 @@ function DelegationGroup({
                   cache tout seul dès que le job n'est plus vivant. */}
               {canStopRun(job.status) && <StopRunButton jobId={job.id} status={job.status} />}
               <Link
-                href={`/scheduled/${job.id}`}
+                href={openRunHref(job.id)}
                 className="flex shrink-0 items-center gap-1.5 text-medium-13 text-ink-2 hover:text-ink"
               >
                 Open run

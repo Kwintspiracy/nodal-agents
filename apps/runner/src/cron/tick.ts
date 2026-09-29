@@ -406,8 +406,10 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     reactivated: 0,
     consolidationDeferred: 0,
     consolidationRan: 0,
+    consolidationFailed: 0,
     memoryArchived: 0,
     memoryCurationRan: 0,
+    memoryCurationFailed: 0,
   };
   try {
     curatorResult = await runCuratorTick(deps.db, deps);

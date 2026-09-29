@@ -3,6 +3,27 @@
 import type { generateText, streamText, generateObject } from 'ai';
 import type { ReasoningEffort } from '@nodal-agents/shared';
 
+// ─── Call progress ─────────────────────────────────────────────────────────────
+
+/**
+ * What a streamed call has produced so far, by kind (#484).
+ *
+ * Job 82ecec67 produced 12,030 tokens in 21 minutes and nothing said what: no
+ * text, no finished tool call. Reasoning and tool arguments reset the clocks
+ * (a model writing is not dead), so the only way to see a call that produces
+ * without end is to say WHAT it produces, while it produces it.
+ */
+export interface CallProgress {
+  /** Visible text, in characters. */
+  textChars: number;
+  /** Reasoning, in characters. */
+  reasoningChars: number;
+  /** Tool arguments, in characters, every tool of the call counted. */
+  toolInputChars: number;
+  /** The tool whose arguments are being written last, or `null`. */
+  toolName: string | null;
+}
+
 // ─── Provider names ────────────────────────────────────────────────────────────
 
 export type ProviderName =
@@ -114,6 +135,13 @@ export interface GenerateTextCallOptions {
    */
   onTextDelta?: (text: string) => void;
   /**
+   * What the streamed call has produced so far — text, reasoning, tool
+   * arguments and the tool being filled — after every piece of content
+   * (#484). A call that writes for twenty minutes without a word of text is
+   * otherwise invisible until it ends.
+   */
+  onProgress?: (progress: CallProgress) => void;
+  /**
    * The wait for the first token set for the agent (#442,
    * `agents.idle_timeout_seconds`). EXPLICIT: it replaces the implicit clock,
    * context and effort raises included (Hermes: `_stale_timeout_is_explicit`).
@@ -126,6 +154,14 @@ export interface GenerateTextCallOptions {
    * the run. An explicit value is not capped.
    */
   remainingRunMs?: number;
+  /**
+   * The caller READS the response and acts on nothing in it: it runs no tool
+   * call and hands no text on as an answer (a conformance probe inspecting
+   * whether a call is well formed). Only then is a response that stopped on
+   * the output-token cap returned as is, `finishReason` included. Every other
+   * caller gets `LLMOutputLimitError` (#554): its default is to act.
+   */
+  inspectOnly?: true;
 }
 
 /**

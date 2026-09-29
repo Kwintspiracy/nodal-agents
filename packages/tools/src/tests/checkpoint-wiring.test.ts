@@ -10,7 +10,61 @@
 // est-ce que l'instantané tombe une fois par tour, et est-ce qu'un échec REFUSE
 // l'écriture au lieu de la laisser passer sans filet.
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+
+// ── Un git qui PEND, pour que la borne tombe à coup sûr (#586) ──────────────
+//
+// Les deux tests du refus (#245) posaient la borne à 1 ms sur un vrai `git` et
+// PARIAIENT qu'il la dépasserait. Une machine chargée gagnait parfois la
+// course : `execFile` arme son minuteur après le lancement, et un git qui a
+// fini avant que la boucle n'exécute ce minuteur est un succès. Le CI de #582
+// l'a vu (`expected 'success' to be 'error'`). Le paquet checkpoints a connu la
+// même course le 20/09 et l'a réglée ainsi (failure-timeout.test.ts) : on ne
+// rend plus la BORNE minuscule, on rend le TRAVAIL infini.
+//
+// Le dépassement reste RÉEL : c'est la vraie machinerie d'`execFile` qui arme
+// le minuteur avec la borne que le code lui passe, tue l'enfant et rend
+// l'erreur `killed` que `qualifyFailure` classe. Seul change le programme qui
+// pend : à la demande, un appel à git lance un processus Node qui ne rend
+// jamais la main. Aucune vitesse de machine ne le fait finir avant la borne.
+const etat = vi.hoisted(() => ({ gitPend: false }));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const { promisify } = await import('node:util');
+  const PEND = ['-e', 'setInterval(() => {}, 1000);'];
+  type Rappel = (err: unknown, stdout: string, stderr: string) => void;
+  const estGit = (file: string): boolean => /(^|[\\/])git(\.exe)?$/i.test(file);
+  const lancer = (file: string, args: unknown, options: unknown, cb: Rappel): unknown =>
+    etat.gitPend && estGit(file)
+      ? (actual.execFile as never as (...a: unknown[]) => unknown)(
+          process.execPath,
+          PEND,
+          options,
+          cb,
+        )
+      : (actual.execFile as never as (...a: unknown[]) => unknown)(file, args, options, cb);
+  const faux = ((...a: unknown[]) =>
+    lancer(a[0] as string, a[1], a[2], a[3] as Rappel)) as unknown as typeof actual.execFile;
+  // `checkpoints.ts` fait `promisify(execFile)` : sans ce symbole, la version
+  // promise rendrait `stdout` seul au lieu de `{ stdout, stderr }`.
+  Object.defineProperty(faux, promisify.custom, {
+    value: (file: string, args: unknown, options: unknown) =>
+      new Promise((resolve, reject) => {
+        lancer(file, args, options, (err, stdout, stderr) => {
+          if (err) reject(Object.assign(err as object, { stdout, stderr }));
+          else resolve({ stdout, stderr });
+        });
+      }),
+  });
+  return { ...actual, execFile: faux };
+});
+
+/**
+ * Large devant le temps qu'il faut pour tuer un processus, minuscule devant
+ * l'éternité que le git qui pend promet : le verdict ne peut pas basculer.
+ */
+const BORNE_MS = 200;
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +72,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, jobCheckpoints, and, eq } from '@nodal-agents/db';
 import { executeTool } from '../execute';
-import { listCheckpoints } from '@nodal-agents/checkpoints';
+import { listCheckpoints, ensureStore } from '@nodal-agents/checkpoints';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
 import { officeMutationTargets } from '../builtin/office-ops';
@@ -303,8 +357,12 @@ describe('le refus NOMME sa cause @cap:executer-une-commande/moteur', () => {
     const cible = join(root, 'shared');
     await mkdir(cible, { recursive: true });
     await writeFile(join(cible, 'gros.bin'), 'x'.repeat(4096));
+    // Le magasin existe déjà, créé par un vrai git (comme après les tours
+    // précédents) ; c'est le travail de l'instantané qui pend.
+    await ensureStore(store);
 
-    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
+    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = String(BORNE_MS);
+    etat.gitPend = true;
     try {
       const outil = registry.get('run_command');
       expect(outil, "run_command n'est pas dans le registre").toBeDefined();
@@ -323,10 +381,11 @@ describe('le refus NOMME sa cause @cap:executer-une-commande/moteur', () => {
       // un message redevenu générique après les deux premiers mots.
       expect(res.error).toBe(
         `snapshot_timeout: the "shared" workspace (${cible}) holds 4 KB / 1 file, ` +
-          `the safety snapshot cannot finish in 1 ms; move or ignore the heavy folders. ` +
+          `the safety snapshot cannot finish in ${BORNE_MS} ms; move or ignore the heavy folders. ` +
           `"run_command" was refused rather than run without a way back.`,
       );
     } finally {
+      etat.gitPend = false;
       delete process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'];
     }
   });
@@ -343,7 +402,9 @@ describe('le refus NOMME sa cause @cap:executer-une-commande/moteur', () => {
     console.error = (...args: unknown[]) => {
       lignes.push(args.map(String).join(' '));
     };
-    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = '1';
+    await ensureStore(store);
+    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = String(BORNE_MS);
+    etat.gitPend = true;
     try {
       await executeTool(
         registry.get('run_command') as never,
@@ -352,6 +413,7 @@ describe('le refus NOMME sa cause @cap:executer-une-commande/moteur', () => {
         autoApprouve('rule-run-command-245-log') as never,
       );
     } finally {
+      etat.gitPend = false;
       console.error = erreurAvant;
       delete process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'];
     }
@@ -359,7 +421,7 @@ describe('le refus NOMME sa cause @cap:executer-une-commande/moteur', () => {
     const refus = lignes.filter((l) => l.includes('CHECKPOINT_REFUSED'));
     expect(refus, 'aucune ligne de journal pour un refus de checkpoint').toHaveLength(1);
     expect(refus[0]).toContain('code=snapshot_timeout');
-    expect(refus[0]).toContain('limit_ms=1');
+    expect(refus[0]).toContain(`limit_ms=${BORNE_MS}`);
     expect(refus[0]).toContain('bytes=1024');
     expect(refus[0]).toContain('files=1');
     expect(refus[0]).toContain('files_capped=false');

@@ -40,6 +40,7 @@ const EMPTY: DeliverySummary = {
   tests: null,
   durationMs: null,
   costUsd: null,
+  unpricedCalls: 0,
   reviews: [],
   checks: [],
   verdict: null,
@@ -135,6 +136,7 @@ function summaryOf(over: Partial<ThreadJob> & { feed: ConversationFeed }): Deliv
     declaredUnverified: [],
     reviewVerdict: null,
     audit: [],
+    cost: { costUsd: null, unpricedCalls: 0 },
     workspaceRoots: [],
     ...over,
   };
@@ -337,12 +339,15 @@ describe('deliverySummary — ce que le modèle compte', () => {
 
   it('la durée court de l’ouverture du travail à sa fin ; inconnue tant qu’il court', () => {
     const fini = summaryOf({
+      // Le fil de la tête dit 0.52 $ ; l'arbre entier, délégués compris, 0.97 $.
+      // L'encart dit le prix de l'arbre, celui de la barre d'état (#508).
       feed: { items: [], totals: totals(0.52) },
+      cost: { costUsd: 0.97, unpricedCalls: 0 },
       createdAt: new Date('2026-09-07T10:00:00Z'),
       completedAt: new Date('2026-09-07T10:04:12Z'),
     });
     expect(fini.durationMs).toBe(252_000);
-    expect(fini.costUsd).toBe(0.52);
+    expect(fini.costUsd).toBe(0.97);
 
     const encours = summaryOf({
       feed: { items: [], totals: totals() },
@@ -460,6 +465,26 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     expect(html).not.toMatch(/text-\[\d/);
   });
 
+  // Revue Nodal de #620 : un arbre dont un appel n'a pas de prix a un coût
+  // PARTIEL. La barre d'état le dit ; la carte, qui dit le même chiffre (#508),
+  // le dit avec le même mot — jamais un prix partiel présenté comme complet.
+  it('un coût dont des appels n’ont pas de prix se dit « partial », comme la barre (#508)', () => {
+    const partiel = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-7" summary={{ ...EMPTY, costUsd: 1.2, unpricedCalls: 1 }} />,
+    );
+    expect(partiel).toContain('$1.20 · partial');
+    // Aucun appel tarifé du tout : le coût est inconnu, et il le dit.
+    const inconnu = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-7" summary={{ ...EMPTY, costUsd: null, unpricedCalls: 2 }} />,
+    );
+    expect(inconnu).toContain('n/a · partial');
+    const complet = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-7" summary={{ ...EMPTY, costUsd: 1.2, unpricedCalls: 0 }} />,
+    );
+    expect(complet).toContain('$1.20');
+    expect(complet).not.toContain('partial');
+  });
+
   it('les fichiers livrés sont NOMMÉS, un par ligne, en couleur de chemin (#135)', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock
@@ -545,7 +570,7 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     expect(html).toContain('codex_review');
     expect(html).not.toContain('cli:codex_review');
     expect(html).toContain('Open run');
-    expect(html).toContain('href="/scheduled/job-7"');
+    expect(html).toContain('href="/runs/job-7"');
     // Une relecture qui a dit NON ne se lit pas comme les autres : son nom
     // prend la couleur d'alerte et le dit au survol — la planche ne dessine
     // pas de point, c'est le nom qui porte le verdict.
@@ -841,7 +866,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     const at = html.indexOf('Open run');
     const before = html.slice(Math.max(0, at - 400), at);
     expect(before).toContain('ml-auto');
-    expect(before).toContain('href="/scheduled/job-7"');
+    expect(before).toContain('href="/runs/job-7"');
     // Le bouton neutre du design system, pas un lien en texte.
     expect(before).toMatch(/<a[^>]*class="[^"]*inline-flex/);
   });

@@ -394,3 +394,112 @@ describe('createTelegramSendMessageTool', () => {
     });
   });
 });
+
+// #613 — the tool told the model to split at 4 096 characters itself, and its
+// schema refused anything longer, while the adapter's sendText already splits
+// (and at a smaller margin). Hand-splitting is part of what produced 30 sends
+// on 2026-09-28. A whole reply goes in ONE call; the adapter splits it.
+describe('telegram_send_message — one call per reply, the adapter splits (#613)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sendTextMock.mockResolvedValue({ messageId: '42' });
+    installTelegramBindingCredentialsDefault();
+  });
+
+  it('accepts a 9 000-character reply and hands it to sendText whole', async () => {
+    const tool = createTelegramSendMessageTool();
+    const text = Array.from({ length: 90 }, (_, i) => `${i} ${'x'.repeat(96)}`).join('\n');
+    expect(text.length).toBeGreaterThan(8900);
+
+    const parsed = tool.inputSchema.safeParse({ text });
+    expect(parsed.success).toBe(true);
+    await tool.execute(parsed.data as { text: string }, makeCtx({ jobChatId: '99887766' }));
+
+    expect(sendTextMock.mock.calls.map((c) => c[2])).toEqual([text]);
+  });
+
+  it('the description neither asks the model to split nor states a format that is the adapter’s', () => {
+    const { description } = createTelegramSendMessageTool();
+    for (const gone of ['4096', 'MarkdownV2', 'part1', 'no HTML/Markdown parsing']) {
+      expect({ gone, found: description.includes(gone) }).toEqual({ gone, found: false });
+    }
+    expect(description).toContain('split');
+  });
+});
+
+// Review of #615 — without a cap one reply is N messages. A failure on the
+// 3rd of 4 left 1 and 2 delivered; the delivery guard asked again and the
+// model resent everything, so the user got 1 and 2 twice. The tool now says
+// what went out and what is missing, and the same text sent again goes out
+// from where it stopped. Real Telegram adapter; only the network is faked.
+describe('telegram_send_message — a send that failed partway is resumed, never repeated (#615)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isChatAllowedMock.mockResolvedValue(true);
+    resolveOwnerChatIdMock.mockResolvedValue(null);
+    installTelegramBindingCredentialsDefault();
+  });
+
+  it('fails on part 3 of 4, says so; the same text again sends only parts 3 and 4', async () => {
+    const { telegramAdapter } =
+      await vi.importActual<typeof import('@nodal-agents/delivery')>('@nodal-agents/delivery');
+    getAdapterMock.mockImplementation(() => telegramAdapter as never);
+    const max = telegramAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(3 * max + 100);
+    const bodies: string[] = [];
+    let call = 0;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+      call += 1;
+      bodies.push((JSON.parse(init?.body as string) as { text: string }).text);
+      const ok = call !== 3;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify(
+            ok
+              ? { ok: true, result: { message_id: call } }
+              : { ok: false, error_code: 400, description: 'Bad Request' },
+          ),
+          { status: ok ? 200 : 400, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+    });
+    try {
+      const tool = createTelegramSendMessageTool();
+      const ctx = { ...makeCtx({ jobChatId: '99887766' }), jobId: 'job-partial-615' };
+
+      const err = await tool.execute({ text }, ctx).catch((e: unknown) => e as Error);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('parts 1-2 of 4 reached the user');
+      expect((err as Error).message).toContain('only parts 3-4');
+
+      expect(await tool.execute({ text }, ctx)).toEqual({ sent: true });
+
+      // Call 3 failed; every other body reached the user: each part once.
+      const delivered = bodies.filter((_, i) => i !== 2);
+      expect(delivered).toHaveLength(4);
+      expect(delivered.join('')).toBe(text);
+
+      // Done: a third send of the same text is a new reply, whole.
+      bodies.length = 0;
+      await tool.execute({ text }, ctx);
+      expect(bodies).toHaveLength(4);
+    } finally {
+      fetchSpy.mockRestore();
+      getAdapterMock.mockImplementation(() => ({ sendText: sendTextMock }));
+    }
+  });
+
+  it('a different text after a partial failure is sent whole: only the same reply resumes', async () => {
+    const tool = createTelegramSendMessageTool();
+    const ctx = { ...makeCtx({ jobChatId: '99887766' }), jobId: 'job-partial-615-b' };
+    const { DeliveryError: DE } =
+      await vi.importActual<typeof import('@nodal-agents/delivery')>('@nodal-agents/delivery');
+    const partial = new DE('telegram_request_failed', 'boom');
+    partial.partialProgress = { sentChunks: 1, totalChunks: 2 };
+    sendTextMock.mockRejectedValueOnce(partial);
+    await expect(tool.execute({ text: 'first reply' }, ctx)).rejects.toThrow('part 1 of 2');
+
+    await tool.execute({ text: 'another reply' }, ctx);
+    expect(sendTextMock.mock.calls.at(-1)?.slice(2)).toEqual(['another reply']);
+  });
+});

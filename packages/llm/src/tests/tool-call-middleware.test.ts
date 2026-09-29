@@ -417,3 +417,75 @@ describe('parser independence', () => {
     expect(result.toolCalls).toHaveLength(0);
   });
 });
+
+// ─── #554: a cut reply stays cut ──────────────────────────────────────────────
+
+describe('text-parsed tool calls keep a cut reply cut (#554) @cap:suivre-execution/moteur', () => {
+  const tools = {
+    get_weather: tool({
+      description: 'weather',
+      inputSchema: z.object({ city: z.string() }),
+    }),
+  };
+  const markup = '<tool_call>{"name":"get_weather","arguments":{"city":"Nice"}}</tool_call>';
+
+  it('a reply stopped on the output cap keeps finishReason length', async () => {
+    const mockModel = new MockLanguageModelV3({
+      provider: 'mock',
+      modelId: 'mock-nodal',
+      doGenerate: async () => ({
+        ...mockTextResult(markup),
+        finishReason: { unified: 'length', raw: 'length' },
+      }),
+    });
+    const wrapped = wrapLanguageModel({ model: mockModel, middleware: nodalToolCallMiddleware });
+
+    const result = await generateText({ model: wrapped, prompt: 'x', tools });
+
+    expect(result.toolCalls.map((c) => c.toolName)).toEqual(['get_weather']);
+    expect(result.finishReason).toBe('length');
+  });
+
+  it('a reply that finished normally becomes tool-calls, as before', async () => {
+    const mockModel = new MockLanguageModelV3({
+      provider: 'mock',
+      modelId: 'mock-nodal',
+      doGenerate: async () => mockTextResult(markup),
+    });
+    const wrapped = wrapLanguageModel({ model: mockModel, middleware: nodalToolCallMiddleware });
+
+    const result = await generateText({ model: wrapped, prompt: 'x', tools });
+
+    expect(result.finishReason).toBe('tool-calls');
+  });
+
+  it('a reply recovered from its raw body keeps the length the body reported', async () => {
+    const body = (finish: string): string =>
+      JSON.stringify({
+        choices: [{ finish_reason: finish, message: { role: 'assistant', content: markup } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+    const reasonFor = async (finish: string): Promise<string> => {
+      const mockModel = new MockLanguageModelV3({
+        provider: 'mock',
+        modelId: 'mock-nodal',
+        doGenerate: async () => {
+          throw new APICallError({
+            message: 'Invalid JSON response',
+            url: 'https://openrouter.ai/api/v1/chat/completions',
+            requestBodyValues: {},
+            responseBody: body(finish),
+            statusCode: 200,
+          });
+        },
+      });
+      const wrapped = wrapLanguageModel({ model: mockModel, middleware: nodalToolCallMiddleware });
+      const result = await generateText({ model: wrapped, prompt: 'x', tools });
+      expect(result.toolCalls.map((c) => c.toolName)).toEqual(['get_weather']);
+      return result.finishReason;
+    };
+
+    expect(await reasonFor('length')).toBe('length');
+    expect(await reasonFor('stop')).toBe('tool-calls');
+  });
+});

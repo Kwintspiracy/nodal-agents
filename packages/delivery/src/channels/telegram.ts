@@ -86,7 +86,7 @@ interface TelegramGetMeResult {
 }
 
 /** Telegram hard limit per message is 4096 chars; stay under it with a margin. */
-const TELEGRAM_MAX_CHARS = 3900;
+export const TELEGRAM_MAX_CHARS = 3900;
 
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
@@ -714,6 +714,47 @@ export async function getTelegramBotInfo(botToken: string): Promise<TelegramBotI
     canJoinGroups: result.can_join_groups ?? false,
     canReadAllGroupMessages: result.can_read_all_group_messages ?? false,
   };
+}
+
+/** One entry of a bot's command menu (Bot API `BotCommand`). */
+export interface TelegramBotCommand {
+  command: string;
+  description: string;
+}
+
+/**
+ * Add `commands` to the bot's command menu (default scope), keeping every
+ * command already there: the bot's owner may have set their own in BotFather,
+ * and `setMyCommands` REPLACES the whole list. Returns the commands it added
+ * (empty when the menu already had them all). Throws on an API failure.
+ */
+export async function addTelegramBotCommands(
+  botToken: string,
+  commands: readonly TelegramBotCommand[],
+): Promise<string[]> {
+  const current = await callBotApi<TelegramBotCommand[]>(botToken, 'getMyCommands', {});
+  const have = new Set(current.map((c) => c.command));
+  const missing = commands.filter((c) => !have.has(c.command));
+  if (missing.length === 0) return [];
+  await callBotApi<boolean>(botToken, 'setMyCommands', { commands: [...current, ...missing] });
+  return missing.map((c) => c.command);
+}
+
+/**
+ * Put one emoji reaction on a message (Bot API `setMessageReaction`). Telegram
+ * only accepts emojis from its fixed reaction list. Throws on an API failure.
+ */
+export async function setTelegramMessageReaction(opts: {
+  botToken: string;
+  chatId: string | number;
+  messageId: number;
+  emoji: string;
+}): Promise<void> {
+  await callBotApi<boolean>(opts.botToken, 'setMessageReaction', {
+    chat_id: opts.chatId,
+    message_id: opts.messageId,
+    reaction: [{ type: 'emoji', emoji: opts.emoji }],
+  });
 }
 
 // ─── Long-polling helpers ─────────────────────────────────────────────────────

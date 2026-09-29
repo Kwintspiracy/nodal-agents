@@ -16,6 +16,7 @@ import {
   sendTelegramVoice,
   getTelegramBotInfo,
   editTelegramMessageText,
+  TELEGRAM_MAX_CHARS,
   type TelegramInlineKeyboard,
   type TelegramSendOpts,
 } from './telegram.ts';
@@ -28,6 +29,7 @@ import type {
   SendResult,
   BotIdentity,
   TextFormat,
+  SendTextOpts,
 } from '../channel-adapter.ts';
 
 function requireBotToken(creds: ChannelCredentials): string {
@@ -67,7 +69,7 @@ async function sendText(
   creds: ChannelCredentials,
   conversationId: string,
   text: string,
-  opts?: { format?: TextFormat },
+  opts?: SendTextOpts,
 ): Promise<SendResult> {
   const botToken = requireBotToken(creds);
   const chatId = requireChatId(conversationId);
@@ -76,6 +78,7 @@ async function sendText(
     botToken,
     text,
     parseMode: toParseMode(opts?.format),
+    ...(opts?.fromChunk !== undefined ? { startChunkIndex: opts.fromChunk } : {}),
   });
   return { messageId: String(messageId) };
 }
@@ -198,6 +201,9 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 export const telegramAdapter: ChannelAdapter = {
   channel: 'telegram',
   capabilities: { buttons: true, threads: false, media: true, editMessage: true },
+  // Sans `format`, aucun `parse_mode` : Telegram affiche le texte tel quel,
+  // aucune marque n'est rendue.
+  text: { renders: [], maxMessageChars: TELEGRAM_MAX_CHARS },
   sendText,
   sendMedia,
   sendApprovalCard,

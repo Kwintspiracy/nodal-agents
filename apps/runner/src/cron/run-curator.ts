@@ -52,12 +52,20 @@ export interface CuratorTickResult {
   reactivated: number;
   /** Entities where LLM consolidation was deferred (first-run) */
   consolidationDeferred: number;
-  /** Entities where LLM consolidation ran */
+  /** Entities where LLM consolidation ran to the end */
   consolidationRan: number;
+  /**
+   * Entities where LLM consolidation was due and threw (any error: provider
+   * down, output cap refused, …). Counted apart so a failure is never reported
+   * as a run (review of #555, P2). The entity is still stamped, below.
+   */
+  consolidationFailed: number;
   /** Memories archived by the deterministic usage-based Phase 1 (Brick 4) */
   memoryArchived: number;
-  /** Entities where the LLM memory-curation pass ran */
+  /** Entities where the LLM memory-curation pass ran to the end */
   memoryCurationRan: number;
+  /** Entities where the memory-curation pass was due and threw. */
+  memoryCurationFailed: number;
 }
 
 /** Minimal curator defaults used when env can't be resolved (e.g. test environments). */
@@ -200,14 +208,18 @@ export async function runCuratorTick(
       reactivated: lifecycle.reactivated,
       consolidationDeferred: 0,
       consolidationRan: 0,
+      consolidationFailed: 0,
       memoryArchived: memLifecycle.archived,
       memoryCurationRan: 0,
+      memoryCurationFailed: 0,
     };
   }
 
   let consolidationDeferred = 0;
   let consolidationRan = 0;
+  let consolidationFailed = 0;
   let memoryCurationRan = 0;
+  let memoryCurationFailed = 0;
 
   for (const entityId of new Set<string>([...skillSet, ...memorySet])) {
     const [entityRow] = await db
@@ -235,21 +247,25 @@ export async function runCuratorTick(
     if (skillSet.has(entityId)) {
       try {
         await runCuratorConsolidation(db, entityId, e.CURATOR_MAX_TURNS, e.REFLECTION_MODEL);
+        consolidationRan += 1;
       } catch (err) {
+        consolidationFailed += 1;
         console.warn(`${CURATOR_TRACE} skill consolidation failed for entity ${entityId}`, err);
       }
-      consolidationRan += 1;
     }
     if (memorySet.has(entityId)) {
       try {
         await runMemoryCuration(db, entityId, e.CURATOR_MAX_TURNS, e.REFLECTION_MODEL);
+        memoryCurationRan += 1;
       } catch (err) {
+        memoryCurationFailed += 1;
         console.warn(`${CURATOR_TRACE} memory curation failed for entity ${entityId}`, err);
       }
-      memoryCurationRan += 1;
     }
 
-    // Stamp last_curator_run_at once, regardless of success/failure.
+    // Stamp last_curator_run_at once, regardless of success/failure: a
+    // failing provider is not asked again at every tick. The failure is in
+    // the *Failed counters and the log, never in the *Ran ones.
     await db
       .update(entities)
       .set({ lastCuratorRunAt: now, updatedAt: now })
@@ -262,7 +278,9 @@ export async function runCuratorTick(
     reactivated: lifecycle.reactivated,
     consolidationDeferred,
     consolidationRan,
+    consolidationFailed,
     memoryArchived: memLifecycle.archived,
     memoryCurationRan,
+    memoryCurationFailed,
   };
 }
