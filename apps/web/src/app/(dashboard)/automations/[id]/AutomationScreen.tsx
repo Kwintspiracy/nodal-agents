@@ -24,7 +24,6 @@ import {
   automationFacts,
   automationName,
   automationSubtitle,
-  runsBasePath,
   runsHeadline,
   seeAllHref,
   seeAllLabel,
@@ -136,9 +135,7 @@ export default function AutomationScreen({
                   montre, et l'y perdre ferait republier une annonce déjà
                   publiée (08/09/2026). */}
               {view.kind === 'schedule' && <RoutineState entries={view.state} />}
-              {view.runs.length > 0 && (
-                <ScheduleRunList runs={view.runs} basePath={runsBasePath(view)} />
-              )}
+              {view.runs.length > 0 && <ScheduleRunList runs={view.runs} />}
             </div>
           )}
         </section>
