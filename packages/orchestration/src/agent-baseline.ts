@@ -3,13 +3,14 @@
 //   1. BASELINE  — intrinsic discipline injected into EVERY agent's prompt
 //      (verify-before-done, safe-tool-use, language-mirror). Content comes from
 //      the catalog skills flagged `kind: 'baseline'` — universal, not assignable.
-//   2. CHANNEL   — per-channel etiquette injected when the agent is bound to a
-//      channel (telegram formatting). Catalog skills flagged `kind: 'channel'`.
+//   2. CHANNEL   — gone (#613). It injected hand-written Telegram rules that
+//      contradicted the runner; a channel's facts are now one line of the
+//      `## Job context` block, built from the adapter (system-prompt.ts).
 //   2bis. DISCOVERABILITY — the capability skills + connectors the agent does
 //      NOT have yet, so it can offer them ("I can't search the web, but if you
 //      add a Tavily key we can") instead of pretending or refusing flatly.
 //
-// Reading baseline/channel content from the catalog (not the DB) is deliberate:
+// Reading baseline content from the catalog (not the DB) is deliberate:
 // these are universal, never user-edited, and the catalog is the code's source
 // of truth — so the prompt can never drift from a stale seed.
 
@@ -41,7 +42,7 @@ const NEEDS_FIRMER_VERIFY = /deepseek|minimax|qwen|glm|gemma|kimi|mistral|llama/
  * constat 1). Les deux vivent dans le CATALOGUE (invariant #3).
  */
 const contentOfKind = (
-  kind: 'baseline' | 'channel',
+  kind: 'baseline',
   surface: PromptSurface = 'job',
   availableTools?: readonly string[],
 ): string[] =>
@@ -65,7 +66,7 @@ const contentOfKind = (
  *
  * Liste inconnue : rien n'est retiré par ce filtre, `hasRequiredBuiltins`
  * reste fermé comme avant. Le prompt d'un job passe toujours sa liste
- * (`buildSystemPrompt`), et `buildChannelBlock` l'exige.
+ * (`buildSystemPrompt`).
  */
 const namesOnlyHeldTools = (text: string, availableTools?: readonly string[]): boolean =>
   availableTools === undefined || toolsNamedIn(text).every((t) => availableTools.includes(t));
@@ -280,27 +281,6 @@ export function buildBaselineBlock(
   // Voir APPROVAL_PURPOSE_BLOCK : le chat n'a aucun outil que la porte suspend.
   const approvalBlock = surface === 'chat' ? '' : APPROVAL_PURPOSE_BLOCK;
   return [catalogBlock, memoryBlock, approvalBlock, roleBlock].filter(Boolean).join('\n\n');
-}
-
-/**
- * Layer 2 — per-channel etiquette, only when the agent is bound to a channel.
- *
- * `availableTools` is required: a `chat_id` travels down a delegation chain
- * while the send tools do not (execute.ts arms them only for an agent with its
- * own credential), so "is this job on Telegram" never answered "can it send
- * there". The etiquette goes through the same filter as the baseline (#559).
- */
-export function buildChannelBlock(opts: {
-  channel?: string;
-  telegram?: boolean;
-  surface?: PromptSurface;
-  availableTools: readonly string[];
-}): string {
-  const onTelegram = opts.channel === 'telegram' || opts.telegram === true;
-  if (!onTelegram) return '';
-  const parts = contentOfKind('channel', opts.surface ?? 'job', opts.availableTools);
-  if (parts.length === 0) return '';
-  return `## Channel etiquette\n\n${parts.join('\n\n')}`;
 }
 
 /**

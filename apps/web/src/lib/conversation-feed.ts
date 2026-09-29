@@ -370,6 +370,8 @@ export type RunSummary = {
   /** Du début à la fin du travail. null tant qu'il n'est pas terminé. */
   durationMs: number | null;
   costUsd: number | null;
+  /** Appels de l'arbre sans prix connu : `costUsd` est alors partiel (#508). */
+  unpricedCalls: number;
 };
 
 /**
@@ -448,6 +450,13 @@ export type DeliverySummary = {
   /** Du début à la fin du travail. null tant qu'il n'est pas terminé. */
   durationMs: number | null;
   costUsd: number | null;
+  /**
+   * Appels de l'arbre sans prix connu : `costUsd` est alors partiel, et la
+   * carte le dit comme la barre (#508). `null` quand la surface qui a composé
+   * ce récapitulatif ne les a pas comptés (la page Code) : elle ne dit rien,
+   * plutôt qu'affirmer un prix complet que personne n'a vérifié.
+   */
+  unpricedCalls: number | null;
   reviews: DeliveryReview[];
   checks: DeliveryCheck[];
   /** 'green' toutes vertes, 'red' au moins une qui ne l'est pas, null aucune preuve. */

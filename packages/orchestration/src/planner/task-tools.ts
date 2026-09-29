@@ -102,6 +102,7 @@ export function generateTaskTools(
       DELEGATION_SCOPE_RULE,
     inputSchema: createTaskSchema,
     riskLevel: 'write',
+    loading: 'eager',
     card: 'text',
     execute: async (input: CreateTaskInput, ctx: ToolContext) => {
       // The SAME depth guard as assign_* (invariant #8), before any row: a
@@ -248,6 +249,7 @@ export function generateTaskTools(
       'assign_*: an empty list says nothing about whether anything else is running.',
     inputSchema: listTasksSchema,
     riskLevel: 'read',
+    loading: 'eager',
     card: 'text',
     execute: async (input: ListTasksInput, ctx: ToolContext) => {
       const conditions = [

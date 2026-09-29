@@ -26,9 +26,10 @@
 import { asSchema } from 'ai';
 import type { generateText, streamText } from 'ai';
 
-import type { ProviderConfig } from './types';
+import type { CallProgress, ProviderConfig } from './types';
 import { LLMTimeoutError, LLMCallCancelledError, streamPartError } from './errors';
 import type { LlmTimeoutReason } from './errors';
+import { isLocalUrl } from './local-url';
 
 // ─── Defaults ──────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,23 @@ export const FIRST_TOKEN_MAX_EFFORT_MS = 600_000;
 export const BETWEEN_TOKENS_MS = 60_000;
 /** The absolute net of one call: never the working limit, only the end of a call that hangs while "producing". */
 export const ABSOLUTE_CALL_MS = 3_600_000;
+/**
+ * The longest a call may produce WITHOUT delivering anything (#484): only
+ * reasoning, tool arguments or tool calls, no visible text. Every
+ * delta resets the silence clock, so without this ceiling a provider sending
+ * one character every 59 s ran for the full hour (Codex review of #484), and
+ * three mimo-v2.6-pro turns ran 20 to 46 minutes with nothing to show. Twenty
+ * minutes is 12,000 tokens of arguments at 10 tokens/s (job 82ecec67): past
+ * that, a single call is no longer writing a file, it is stuck.
+ *
+ * Only what is DELIVERED resets it: visible text, which a cut keeps
+ * (`partialText`). A tool call finished inside the stream does not: it is
+ * handed back only when the stream ends, run after it, and thrown away if the
+ * stream is cut, so resetting on it let a model emitting one call every 19
+ * minutes run the hour with nothing run nor kept (Codex review of #484, pass
+ * 2). A slow writer of TEXT is never cut by it.
+ */
+export const INVISIBLE_PRODUCTION_MS = 1_200_000;
 
 export interface TurnClocks {
   /** Wait for the first token; `Infinity` = no limit. */
@@ -67,6 +85,8 @@ export interface TurnClocks {
   betweenTokensMs: number;
   /** Total duration of one call, whatever it produces. */
   absoluteMs: number;
+  /** Production without visible text; `Infinity` = no limit. */
+  invisibleProductionMs: number;
 }
 
 // ─── Local endpoint ────────────────────────────────────────────────────────────
@@ -74,32 +94,12 @@ export interface TurnClocks {
 /**
  * True when the model runs on the user's machine or network: Ollama, or a base
  * URL whose host is loopback, a private range or a `.local` name. Only the
- * host decides; a hosted provider's default URL is never local.
+ * host decides (`isLocalUrl`); a hosted provider's default URL is never local.
  */
 export function isLocalEndpoint(config: Pick<ProviderConfig, 'provider' | 'baseURL'>): boolean {
   if (config.provider === 'ollama') return true;
   if (!config.baseURL) return false;
-  let host: string;
-  try {
-    host = new URL(config.baseURL).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  host = host.replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host === '::1' || host === '0.0.0.0') return true;
-  if (host.endsWith('.local') || host.endsWith('.localhost')) return true;
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (v4) {
-    const a = Number(v4[1]);
-    const b = Number(v4[2]);
-    if (a === 127 || a === 10) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 169 && b === 254) return true;
-  }
-  // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
-  if (/^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host)) return true;
-  return false;
+  return isLocalUrl(config.baseURL);
 }
 
 // ─── Context size ──────────────────────────────────────────────────────────────
@@ -195,11 +195,15 @@ export function computeTurnClocks(
 ): TurnClocks {
   const local = isLocalEndpoint(config);
   const betweenTokensMs = local ? Infinity : BETWEEN_TOKENS_MS;
+  // A local model on a small machine is slow, not stuck: same rule as the
+  // silence clocks (Hermes: `is_local_endpoint → inf`).
+  const invisibleProductionMs = local ? Infinity : INVISIBLE_PRODUCTION_MS;
   if (overrides.firstTokenTimeoutMs !== undefined) {
     return {
       firstTokenMs: overrides.firstTokenTimeoutMs,
       betweenTokensMs,
       absoluteMs: ABSOLUTE_CALL_MS,
+      invisibleProductionMs,
     };
   }
   let firstTokenMs: number;
@@ -223,7 +227,7 @@ export function computeTurnClocks(
       Math.max(RUN_BUDGET_CAP_FLOOR_MS, overrides.remainingRunMs * 0.5),
     );
   }
-  return { firstTokenMs, betweenTokensMs, absoluteMs: ABSOLUTE_CALL_MS };
+  return { firstTokenMs, betweenTokensMs, absoluteMs: ABSOLUTE_CALL_MS, invisibleProductionMs };
 }
 
 // ─── Consuming a stream under the clocks ───────────────────────────────────────
@@ -283,6 +287,8 @@ export async function consumeUnderClocks(
   cancelSignal?: AbortSignal,
   /** Each piece of visible text as it arrives (the chat shows it live, #458). */
   onTextDelta?: (text: string) => void,
+  /** What the call has produced so far, after every piece of content (#484). */
+  onProgress?: (progress: CallProgress) => void,
 ): Promise<GenerateResult> {
   const controller = new AbortController();
   let expired: { reason: LlmTimeoutReason | 'cancelled'; limitMs: number } | null = null;
@@ -293,6 +299,12 @@ export async function consumeUnderClocks(
   let sawStructured = false;
   // Every character the model generated, visible or not: what the provider bills.
   let generatedChars = 0;
+  const progress: CallProgress = {
+    textChars: 0,
+    reasoningChars: 0,
+    toolInputChars: 0,
+    toolName: null,
+  };
 
   // Aborting the request is not enough on its own: the SDK only notices the
   // signal when a chunk moves, so a stream that stays mute would keep the loop
@@ -320,6 +332,19 @@ export async function consumeUnderClocks(
     silence = setTimeout(() => expire(reason, limitMs), limitMs);
   };
   const absolute = setTimeout(() => expire('absolute', clocks.absoluteMs), clocks.absoluteMs);
+  // #484 : production sans rien de livré — raisonnement ou arguments d'outil
+  // seulement. Armée au départ de l'appel, réarmée par le seul texte visible,
+  // le seul produit qu'une coupure garde — jamais par un appel d'outil encore
+  // dans le flux, qui serait jeté avec lui.
+  let invisible: ReturnType<typeof setTimeout> | undefined;
+  const armInvisible = (): void => {
+    if (invisible !== undefined) clearTimeout(invisible);
+    invisible = undefined;
+    const limitMs = clocks.invisibleProductionMs;
+    if (!Number.isFinite(limitMs)) return;
+    invisible = setTimeout(() => expire('invisible_production', limitMs), limitMs);
+  };
+  armInvisible();
 
   // Stop wins over every clock, and over a stream still writing: the call is
   // aborted the moment the job is cancelled, never at the end of the answer.
@@ -359,6 +384,21 @@ export async function consumeUnderClocks(
           generatedChars += part.text.length;
         }
         if (part.type === 'tool-input-delta') generatedChars += part.delta.length;
+        if (part.type === 'text-delta') progress.textChars += part.text.length;
+        if (part.type === 'reasoning-delta') progress.reasoningChars += part.text.length;
+        if (part.type === 'tool-input-start') progress.toolName = part.toolName;
+        // L'outil n'est « en cours de remplissage » que jusqu'à la fin de ses
+        // arguments, ou jusqu'au texte qui suit (revue Codex de #484).
+        if (
+          part.type === 'tool-input-end' ||
+          part.type === 'tool-call' ||
+          part.type === 'text-delta'
+        ) {
+          progress.toolName = null;
+        }
+        if (part.type === 'text-delta') armInvisible();
+        if (part.type === 'tool-input-delta') progress.toolInputChars += part.delta.length;
+        onProgress?.({ ...progress });
         if (STRUCTURED_PARTS.has(part.type)) sawStructured = true;
         sawModel = true;
         armSilence();
@@ -409,7 +449,13 @@ export async function consumeUnderClocks(
   } finally {
     cancelSignal?.removeEventListener('abort', onCancel);
     if (silence !== undefined) clearTimeout(silence);
+    if (invisible !== undefined) clearTimeout(invisible);
     clearTimeout(absolute);
+    // #608: the request never outlives the call, whatever ends it. An error
+    // part, a throwing listener or a failed collect used to leave it open, its
+    // body unread; on a shared connection an unread body holds back every
+    // other call to that provider. After a finished stream this is a no-op.
+    controller.abort();
   }
 }
 

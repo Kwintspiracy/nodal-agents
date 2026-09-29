@@ -86,7 +86,7 @@ interface TelegramGetMeResult {
 }
 
 /** Telegram hard limit per message is 4096 chars; stay under it with a margin. */
-const TELEGRAM_MAX_CHARS = 3900;
+export const TELEGRAM_MAX_CHARS = 3900;
 
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;

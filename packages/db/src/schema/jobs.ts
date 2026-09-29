@@ -32,6 +32,19 @@ import { agentSchedules } from './schedules.ts';
  * the human-readable name at fire time; `triggeredAt` is the ISO timestamp the
  * runner received the request.
  */
+/** #444 — l'appel au modèle en cours, tel que son flux le rapporte (#484). */
+export type JobLiveProgress = {
+  turn: number;
+  textChars: number;
+  reasoningChars: number;
+  toolInputChars: number;
+  toolName: string | null;
+  /** ISO : début de l'appel. */
+  callStartedAt: string;
+  /** ISO : dernier morceau reçu ; `null` tant que rien n'est venu. */
+  lastProgressAt: string | null;
+};
+
 export type JobTriggerContext =
   | {
       type: 'cron';
@@ -140,6 +153,13 @@ export const agentJobs = pgTable(
      * NULL : prompt écrit avant cette colonne, réécrit à la reprise.
      */
     systemPromptTools: text('system_prompt_tools').array(),
+    /**
+     * Les outils différés que ce job a chargés, dans l'ordre (#612, migration
+     * 0138) : par `load_tools` ou par un appel direct. Le tour envoie les schémas
+     * `eager` puis ceux-ci. Hors de la transcription parce que la compaction en
+     * élague les entrées ; relue à chaque reprise, elle ne fait que croître.
+     */
+    loadedTools: text('loaded_tools').array(),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
     /**
      * Flattened plain-text transcript (task + assistant text + tool outputs +
@@ -256,6 +276,12 @@ export const agentJobs = pgTable(
      * identity (Anthropic, Ollama, etc.) or when the field was absent.
      */
     servedProvider: text('served_provider'),
+    /**
+     * #444 — ce que l'appel au modèle EN COURS a produit (le flux de #484),
+     * posé par le runner pendant l'appel et remis à NULL à sa fin. La page
+     * d'un run le montre tant que le job est `processing`. Migration 0134.
+     */
+    liveProgress: jsonb('live_progress').$type<JobLiveProgress>(),
     delegationDepth: integer('delegation_depth').default(0),
     /**
      * The slug of the last delegated child that failed on this parent job.

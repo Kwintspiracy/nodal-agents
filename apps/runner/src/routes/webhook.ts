@@ -299,7 +299,7 @@ export async function webhookRoute(
     } else {
       // Auto: whatsapp excluded from the candidate set — no outbound send
       // tool is registered for it yet (TOOL_ONLY_DELIVERY_CHANNELS,
-      // execute.ts), and this job's chatId being non-null forces
+      // channel-delivery.ts), and this job's chatId being non-null forces
       // requiresToolDelivery — auto-landing on whatsapp here (e.g. an agent
       // whose only active channel happens to be whatsapp) would deadlock the
       // run on a tool it doesn't have. An EXPLICIT trigger.notifyChannel is

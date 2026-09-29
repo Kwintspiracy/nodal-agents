@@ -124,6 +124,8 @@ function pending(
     requestedAt: null,
     jobChannel,
     conversationChannel,
+    kind: 'approval',
+    conversationId: null,
   }));
 }
 

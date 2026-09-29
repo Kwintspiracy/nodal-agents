@@ -50,6 +50,7 @@ import type {
   SendResult,
   BotIdentity,
   TextFormat,
+  SendTextOpts,
 } from '../channel-adapter.ts';
 
 /**
@@ -229,7 +230,7 @@ async function sendText(
   creds: ChannelCredentials,
   conversationId: string,
   text: string,
-  opts?: { format?: TextFormat },
+  opts?: SendTextOpts,
 ): Promise<SendResult> {
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
@@ -237,15 +238,19 @@ async function sendText(
   const rest = makeRestClient(botToken);
 
   let last: APIMessage | undefined;
-  for (const chunk of chunkForDiscord(text)) {
+  const parts = chunkForDiscord(text);
+  for (let i = opts?.fromChunk ?? 0; i < parts.length; i += 1) {
     const body: RESTPostAPIChannelMessageJSONBody = {
-      content: chunk,
+      content: parts[i] as string,
       allowed_mentions: SAFE_ALLOWED_MENTIONS,
     };
     try {
       last = (await rest.post(Routes.channelMessages(channelId), { body })) as APIMessage;
     } catch (err) {
-      throw toDeliveryError(err, botToken);
+      const e = toDeliveryError(err, botToken);
+      // Ce qui est déjà parti ne repart pas : l'appelant reprend ici (#615).
+      e.partialProgress = { sentChunks: i, totalChunks: parts.length };
+      throw e;
     }
   }
   if (!last) {
@@ -482,6 +487,21 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 export const discordAdapter: ChannelAdapter = {
   channel: 'discord',
   capabilities: { buttons: true, threads: true, media: true, editMessage: true },
+  // Discord rend le markdown nativement (voir assertFormatSupported), sauf
+  // les tableaux ; sendText n'envoie que `content` et la garde des mentions.
+  text: {
+    renders: [
+      '**bold**',
+      '*italic*',
+      '~~strike~~',
+      '`code`',
+      '```code block```',
+      '# heading',
+      '> quote',
+      '[text](url)',
+    ],
+    maxMessageChars: DISCORD_MAX_CHARS,
+  },
   sendText,
   sendMedia,
   sendApprovalCard,

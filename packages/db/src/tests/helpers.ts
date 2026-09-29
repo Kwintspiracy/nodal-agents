@@ -198,6 +198,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       system_prompt text,
       -- mirrors migration 0136 (#559) : les outils pour lesquels le prompt a été écrit.
       system_prompt_tools text[],
+      -- mirrors migration 0138 (#612) : les outils différés que le job a chargés.
+      loaded_tools text[],
       messages jsonb DEFAULT '[]',
       search_text text,
       search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(search_text, ''))) STORED,
@@ -222,6 +224,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       effective_input_tokens integer DEFAULT 0,
       total_cost_usd real DEFAULT 0,
       served_provider text,
+      live_progress jsonb,
       delegation_depth integer DEFAULT 0,
       last_failed_delegation_slug text,
       last_failed_delegation_streak integer NOT NULL DEFAULT 0,

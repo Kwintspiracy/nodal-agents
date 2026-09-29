@@ -20,7 +20,7 @@ import Table, { THead, Th, Tr, Td, CellAgent, CellMono } from '@/components/ui/T
 import TextButton from '@/components/ui/TextButton';
 import RowActionButton from '@/components/ui/RowActionButton';
 import type { SpaceCostView } from '@/lib/space-cost.ts';
-import { formatCost, formatMs, formatTokens } from './format.ts';
+import { formatCallsCost, formatCost, formatMs, formatTokens } from './format.ts';
 
 export type StatusBarProps = {
   cost: SpaceCostView;
@@ -120,8 +120,7 @@ export default function StatusBar({
                 {formatTokens(tokens)} tokens{cacheShare !== null ? ` · ${cacheShare} cached` : ''}
               </Seg>
               <Seg onClick={() => setOpen((v) => !v)} active={open} strong>
-                {formatCost(t.costUsd)}
-                {t.unpricedCalls > 0 ? ' · partial' : ''}
+                {formatCallsCost(t.costUsd, t.unpricedCalls)}
               </Seg>
               {lostLabel !== null && (
                 <Seg title="Input tokens re-billed at full price because the provider's cache expired while a delegate was working">

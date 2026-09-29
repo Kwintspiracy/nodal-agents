@@ -13,7 +13,8 @@
 //   4. le compteur de fenêtre est une FENÊTRE : un run vieux de soixante jours
 //      se lit dans la liste sans compter dans « over 30 days » ;
 //   5. un webhook ouvre la même page, ses runs se reconnaissent à son slug, et
-//      ses lignes mènent à `/jobs/<id>` et non à `/scheduled/<id>` ;
+//      ses lignes mènent à `/jobs/<id>`, comme celles d'une routine : l'adresse
+//      d'un run d'automatisation vient de `lib/run-page.ts` (#501) ;
 //   6. la page ne dessine ni « Run now » ni « Edit » pour un webhook — aucune
 //      action serveur ne les porte (invariant #4).
 //
@@ -509,7 +510,8 @@ describe('la page d’une routine @cap:planifier-une-tache/ecran', () => {
     const view = await load(digestId);
     await render(<AutomationScreen view={view} agents={[]} />);
 
-    expect(runLinks()).toEqual(digestRunIds.map((id) => `/scheduled/${id}`));
+    // La page d'un run d'automatisation, dans la section Scheduled (#501).
+    expect(runLinks()).toEqual(digestRunIds.map((id) => `/jobs/${id}`));
     for (const etranger of etrangerRunIds) {
       expect(runLinks()).not.toContain(`/scheduled/${etranger}`);
       expect(runLinks()).not.toContain(`/jobs/${etranger}`);

@@ -107,6 +107,8 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   declaredUnverified: [],
   reviewVerdict: null,
   audit: [],
+  // Aucun appel connu par défaut : un cas qui parle de prix le pose lui-même.
+  cost: { costUsd: null, unpricedCalls: 0 },
   workspaceRoots: [],
   ...over,
 });
@@ -174,6 +176,7 @@ describe('buildConversationThread — une conversation de canal', () => {
           jobId: 'j2',
           verdict: travail,
           project: { id: 'p1', name: 'Bilans', path: '/w/bilans' },
+          cost: { costUsd: 0.01, unpricedCalls: 0 },
         }),
       ],
     });
@@ -195,6 +198,7 @@ describe('buildConversationThread — une conversation de canal', () => {
         tests: null,
         durationMs: null,
         costUsd: 0.01,
+        unpricedCalls: 0,
         reviews: [],
         checks: [],
         verdict: null,
@@ -861,6 +865,7 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
         ],
         totals: totals({ toolCalls: 3, costUsd: 0.04 }),
       },
+      cost: { costUsd: 0.04, unpricedCalls: 0 },
     });
 
   it('groupe le travail en UN item, après la réponse', () => {
@@ -1096,7 +1101,7 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
     expect(items.map((i) => i.kind)).toEqual(['request', 'note', 'turn', 'run']);
   });
 
-  it('la ligne compte aussi le travail d’un délégué dont le fil est dans le groupe', () => {
+  it('la ligne compte les outils d’un délégué dont le fil est dans le groupe, et le prix de TOUT l’arbre', () => {
     const delegueAvecFil: FeedItem = {
       ...delegue(),
       job: {
@@ -1115,13 +1120,17 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
             items: fini.feed.items.map((i) => (i.kind === 'child' ? delegueAvecFil : i)),
             totals: fini.feed.totals,
           },
+          // L'arbre entier : la tête (0.04 $), le délégué assemblé (0.01 $), et
+          // un petit-enfant que le fil n'assemble pas (0.92 $) — #508.
+          cost: { costUsd: 0.97, unpricedCalls: 0 },
         }),
       ],
     });
     const groupe = items.find((i) => i.kind === 'run');
-    // 3 outils du job + 2 du délégué ; 0.04 $ + 0.01 $.
+    // 3 outils du job + 2 du délégué.
     expect(groupe?.kind === 'run' && groupe.summary.tools).toBe(5);
-    expect(groupe?.kind === 'run' && groupe.summary.costUsd).toBeCloseTo(0.05, 6);
+    // Le prix est celui de l'arbre, pas la somme des fils assemblés (0.05 $).
+    expect(groupe?.kind === 'run' && groupe.summary.costUsd).toBeCloseTo(0.97, 6);
     expect(groupe?.kind === 'run' && groupe.summary.delegations).toBe(1);
   });
 
@@ -1138,6 +1147,7 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
       modelCalls: 2,
       durationMs: 12_000,
       costUsd: 0.04,
+      unpricedCalls: 0,
     });
   });
 
@@ -1152,6 +1162,7 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
             items: [demande, tourDeTravail([{ kind: 'steps', steps: [outil('file_read')] }])],
             totals: totals({ toolCalls: 1, costUsd: null }),
           },
+          cost: { costUsd: null, unpricedCalls: 1 },
         }),
       ],
     });

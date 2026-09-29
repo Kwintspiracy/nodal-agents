@@ -27,10 +27,16 @@ import type { JobTriggerContext } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
 import { SYSTEM_PROMPT_CACHE_BOUNDARY, wrapUntrusted } from '@nodal-agents/shared';
-import { ALWAYS_ON_TOOL_DOCS, ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
+import {
+  ALWAYS_ON_TOOL_DOCS,
+  ALWAYS_ON_TOOLS,
+  LOAD_TOOLS_NAME,
+  deferredToolIndex,
+} from '@nodal-agents/tools';
+import type { ToolIndexEntry } from '@nodal-agents/tools';
 import { skillKindOfSlug } from '@nodal-agents/catalog';
 import { buildTeamBlock } from './team-block';
-import { buildBaselineBlock, buildChannelBlock, buildDiscoverabilityBlock } from './agent-baseline';
+import { buildBaselineBlock, buildDiscoverabilityBlock } from './agent-baseline';
 import type { Agent, AnyDrizzleDb } from './types';
 
 // ─── JobContext ────────────────────────────────────────────────────────────────
@@ -76,8 +82,35 @@ export interface JobContext {
    * dashboard, tests —, le prompt retombe sur `ALWAYS_ON_TOOLS`.
    */
   availableToolNames?: readonly string[];
+  /**
+   * L'index des outils DIFFÉRÉS de ce job (#612) : leur nom et une ligne, pour
+   * ceux dont le schéma ne part pas à chaque tour. `executeJob` le passe depuis
+   * la même liste blanche que `availableToolNames`, MCP et connecteurs compris.
+   * Omis (aperçu du dashboard, tests), l'index se calcule sur les outils
+   * toujours-actifs que le job a, avec la même fonction.
+   */
+  toolIndex?: readonly ToolIndexEntry[];
   /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
   telegramChatId?: string;
+  /**
+   * Le canal où l'outil d'envoi de ce job écrit, et ce que l'adaptateur de ce
+   * canal fait du texte (#613).
+   *
+   * Posé par le runner (`channelDeliveryFacts`) avec le canal que l'outil
+   * résoudra. `renders` vient de `ChannelAdapter.text` : les marques que la
+   * plateforme rend, telles qu'on les tape. Ce n'est pas une phrase par canal,
+   * c'est ce que l'adaptateur déclare, et ses tests prouvent qu'il le fait. `onlyPath` : la garde de livraison exige un envoi
+   * par cet outil (canal à livraison par outil, ou routine qui a demandé sa
+   * confirmation). Rendu en une ligne de `## Job context`, et seulement si le
+   * job détient `sendTool` (#559) — un délégué qui hérite du `chat_id` sans
+   * l'outil n'en lit rien.
+   */
+  channelDelivery?: {
+    channel: string;
+    sendTool: string;
+    renders: readonly string[];
+    onlyPath: boolean;
+  };
   /**
    * The user asked to be notified when this job succeeds (per-schedule opt-in).
    * Instruction to the LLM — it writes the confirmation in its own voice; the
@@ -441,9 +474,45 @@ export function buildRuntimeBlock(
 
 // ─── buildJobContextBlock ─────────────────────────────────────────────────────
 
-function buildJobContextBlock(ctx: JobContext): string {
+/**
+ * La ligne de faits d'un canal à livraison par outil (#613).
+ *
+ * Elle remplace la couche « Channel etiquette » : 6 300 caractères écrits à la
+ * main pour Telegram, dont trois consignes contredisaient le runner —
+ * MarkdownV2 alors que l'outil envoie sans `parse_mode`, du markdown sur un
+ * canal qui l'affiche tel quel, un découpage à 4 096 que `sendText` fait déjà.
+ * Le découpage à la main a nourri les 30 envois du 28/09. Ne restent que des
+ * FAITS, tirés de l'adaptateur : par où la réponse passe, sous quelle forme
+ * elle arrive, et qu'elle est découpée sans l'agent. Aucune limite chiffrée :
+ * le modèle n'a rien à en faire.
+ */
+function channelDeliveryLine(
+  d: NonNullable<JobContext['channelDelivery']>,
+  availableTools: readonly string[],
+): string | null {
+  if (!availableTools.includes(d.sendTool)) return null;
+  const reach = d.onlyPath ? ', the only way your replies reach them' : '';
+  // Les marques que le canal rend, telles qu'il les attend : Slack et
+  // WhatsApp rendent `*gras*`, pas `**gras**` (revue de #615).
+  const arrives =
+    d.renders.length === 0
+      ? 'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, ' +
+        '**bold**, escapes) shows literally.'
+      : `Text arrives as typed, and these marks render: ${d.renders.join(', ')}. ` +
+        'Any other markup shows literally.';
+  return (
+    `- delivery: \`${d.sendTool}\` reaches the user on ${d.channel}${reach}. ${arrives} ` +
+    'A long text is split into several messages automatically, so send each reply once, whole.'
+  );
+}
+
+function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]): string {
   const lines = [`- origin: ${ctx.origin}`];
   if (ctx.telegramChatId) lines.push(`- telegram_chat_id: ${ctx.telegramChatId}`);
+  const delivery = ctx.channelDelivery
+    ? channelDeliveryLine(ctx.channelDelivery, availableTools)
+    : null;
+  if (delivery) lines.push(delivery);
   if (ctx.surface === 'chat') {
     // In-app chat turn: the user reads your reply directly. You have EXACTLY ONE
     // tool here — `run_task` — and none of your built-in tools, connectors, or
@@ -640,36 +709,25 @@ function buildPersistentMemoryBlock(
   );
 }
 
-// ─── buildBuiltinCapabilitiesBlock ────────────────────────────────────────────
-// Renders the always-on built-in tools so EVERY agent sees them explicitly in
-// its system prompt — not buried in the LLM SDK's tool definitions, which can
-// be ignored when the personality is strongly worded ("just do math").
-// Data-driven from ALWAYS_ON_TOOL_DOCS — invariant #1 (no hardcoded metadata).
+// ─── buildToolIndexBlock ──────────────────────────────────────────────────────
+// L'index des outils que ce job TIENT sans que leur schéma parte à chaque tour
+// (#612). Il REMPLACE le bloc « Built-in capabilities », qui nommait les
+// builtins toujours actifs : le besoin d'origine (b4057891, Brique 16 : un outil
+// ignoré face à une personnalité appuyée) est le même — qu'un outil détenu ne
+// soit jamais oublié —, et un outil dont le schéma est dans la requête n'a plus
+// besoin d'être nommé ici. Restent ceux qu'on ne voit PAS : leur nom, une ligne
+// tirée de leur propre description (invariant #1), et la façon de les charger.
 //
-// Il NOMME les outils, il ne les DÉCRIT pas. La raison d'être du bloc ci-dessus
-// — les rendre visibles — n'exige pas les descriptions : celles-ci partent déjà,
-// en entier, dans les définitions d'outils du MÊME appel. Elles étaient donc
-// payées deux fois, à chaque tour de chaque agent. 9 781 caractères, le plus
-// gros bloc du prompt (ventilation Codex du run 20b73ed1, 09/09/2026) ; il en
-// reste quelques centaines.
-//
-// Si un jour un modèle appelle mal un outil faute de description ICI, la réponse
-// n'est pas de recopier les 9 781 caractères : c'est de corriger la description
-// de CET outil, là où elle vit.
-// Seulement ceux que CE job a (#559) : un worker délégué perd
-// `dashboard_publish` (execute.ts §6), et le bloc le lui annonçait « always
-// available ».
-function buildBuiltinCapabilitiesBlock(availableTools: readonly string[]): string {
-  const names = ALWAYS_ON_TOOL_DOCS.filter((t) => availableTools.includes(t.name))
-    .map((t) => `\`${t.name}\``)
-    .join(', ');
-  if (names === '') return '';
+// La phrase contre « je ne peux pas » est là pour #329 : un modèle qui ne voit
+// pas le schéma ne doit pas en conclure qu'il n'a pas l'outil.
+function buildToolIndexBlock(entries: readonly ToolIndexEntry[]): string {
+  if (entries.length === 0) return '';
   return (
-    `## Built-in capabilities\n\n` +
-    `These tools are always available to you — use them proactively when they ` +
-    `fit. Their full parameters and behaviour are in the tool definitions of ` +
-    `this same request; this list is only here so you never forget they exist:\n\n` +
-    `${names}`
+    `## Tools on demand\n\n` +
+    `You also hold these tools. Their definitions are not in this request: call ` +
+    `\`${LOAD_TOOLS_NAME}\` with the names you need, in one call, and use them from your ` +
+    `next step on. Never answer that you cannot do something one of them does.\n\n` +
+    entries.map((e) => `- \`${e.name}\`: ${e.line}`).join('\n')
   );
 }
 
@@ -1132,14 +1190,14 @@ export async function buildSystemPrompt(
       )
     : '';
 
-  // 5. Built-in capabilities block — injected for every agent so the LLM sees
-  //    save_memory / query_memory / return_result as first-class capabilities,
-  //    not just optional tools buried in the SDK's tool list.
+  // 5. Tool index (#612, replaces the built-in capabilities list) — the tools
+  //    this job holds whose schemas are not sent on every turn, so a model
+  //    never forgets one it cannot see.
   //    EXCEPT on the in-app chat surface: there the agent has only `run_task`,
   //    so advertising built-in tools makes it call phantom tools (e.g.
   //    query_memory) that aren't provided — yielding an empty turn. Omit it.
-  // Two surfaces get no built-in capabilities block, for the same reason: the
-  // tools it documents are not the tools they have.
+  // Two surfaces get no tool index, for the same reason: the tools it names
+  // are not the tools they have.
   //   - 'chat'        — one tool, `run_task`.
   //   - 'cli-runtime' — the agent IS a coding CLI; its palette is the CLI's own
   //     (Read, Write, Bash…), not Nodal's builtins. Advertising `file_write` to
@@ -1148,7 +1206,10 @@ export async function buildSystemPrompt(
   const builtinBlock =
     jobContext?.surface === 'chat' || jobContext?.surface === 'cli-runtime'
       ? ''
-      : buildBuiltinCapabilitiesBlock(availableTools);
+      : buildToolIndexBlock(
+          jobContext?.toolIndex ??
+            deferredToolIndex(ALWAYS_ON_TOOL_DOCS.filter((t) => availableTools.includes(t.name))),
+        );
 
   // 5.5 Workspace block — tells the LLM which workspaces exist and how to address
   //     files (label/relative syntax for multi-workspace agents).
@@ -1180,8 +1241,10 @@ export async function buildSystemPrompt(
 
   // 7. Job context block — runtime data provided by the runner per-job.
   //    Only appended when jobContext is provided. The agent's personality
-  //    decides how to use this data (e.g. send via Telegram if chat_id is set).
-  const jobContextBlock = jobContext ? buildJobContextBlock(jobContext) : '';
+  //    decides how to use this data. On a tool-delivery channel it carries
+  //    the channel's facts, from the adapter (#613) — there is no separate
+  //    channel layer any more.
+  const jobContextBlock = jobContext ? buildJobContextBlock(jobContext, availableTools) : '';
 
   // 7bis. Conversation block — le fil dont ce tour fait partie et son projet
   //       courant (P6). Volatile par nature : le compte de tours et le projet
@@ -1192,7 +1255,7 @@ export async function buildSystemPrompt(
 
   // 8. Behavior layers (see agent-baseline.ts):
   //    L1 baseline — intrinsic discipline for EVERY agent (+ model-aware nudge).
-  //    L2 channel  — per-channel etiquette when bound to a channel.
+  //    (L2 channel is gone: a channel's facts are one Job context line, #613.)
   //    L2bis discoverability — capabilities the agent could request but lacks.
   // The baseline is written entirely around Nodal's builtins — it MANDATES
   // `mark_memory_outdated` then `save_memory` when a memory proves wrong, and
@@ -1208,12 +1271,6 @@ export async function buildSystemPrompt(
   const baselineBlock = buildBaselineBlock(agent.model, {
     role: agent.role === 'orchestrator' && !canHandOn ? 'agent' : agent.role,
     nodalTools: jobContext?.surface !== 'cli-runtime',
-    surface: jobContext?.surface ?? 'job',
-    availableTools,
-  });
-  const channelBlock = buildChannelBlock({
-    channel: jobContext?.origin,
-    telegram: Boolean(jobContext?.telegramChatId),
     surface: jobContext?.surface ?? 'job',
     availableTools,
   });
@@ -1284,7 +1341,6 @@ export async function buildSystemPrompt(
     skillsBlock +
     wrap(discoverabilityBlock) +
     wrap(messagingChannelsBlock) +
-    wrap(channelBlock) +
     wrap(subAgentBlock);
 
   // Live inventory of the shared workspace (JobContext.workspaceInventory —

@@ -30,6 +30,8 @@ export const ApproveRequestSchema = z.object({
    * de la ligne : cette route ne fait que le transporter.
    */
   answer: z.string().optional(),
+  /** #465 — `answer` est une réponse libre, écrite par la personne. */
+  free: z.boolean().optional(),
 });
 
 // ─── approveRoute ─────────────────────────────────────────────────────────────
@@ -45,7 +47,7 @@ export async function approveRoute(
     return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
   }
 
-  const { approvalRequestId, decision, notes, answer } = parsed.data;
+  const { approvalRequestId, decision, notes, answer, free } = parsed.data;
 
   // Authorization (finding #4/#5): an untrusted session bearer-token caller
   // may only resolve an approval belonging to its own entity — trusted
@@ -60,6 +62,7 @@ export async function approveRoute(
     resolvedBy: 'api',
     notes: notes ?? null,
     answer: answer ?? null,
+    ...(free === true ? { free: true } : {}),
     expectedEntityId,
   });
 
@@ -73,7 +76,9 @@ export async function approveRoute(
     if (
       result.code === 'answer_not_an_option' ||
       result.code === 'answer_not_expected' ||
-      result.code === 'question_options_unreadable'
+      result.code === 'question_options_unreadable' ||
+      result.code === 'answer_empty' ||
+      result.code === 'answer_too_long'
     ) {
       return c.json({ error: result.code }, 400);
     }

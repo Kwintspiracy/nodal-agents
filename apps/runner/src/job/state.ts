@@ -707,6 +707,12 @@ export async function cancelJob(
   jobId: string,
   stats?: RunStats,
   messages?: unknown[],
+  /**
+   * #444 — ce que l'agent avait écrit quand la personne a arrêté l'appel en
+   * cours. Il devient le RÉSULTAT du run (la page l'affiche) ; le statut
+   * `cancelled` dit qu'il a été arrêté. Absent : aucun partiel, rien n'est posé.
+   */
+  partialResult?: string,
 ): Promise<void> {
   const now = new Date();
   await db
@@ -715,6 +721,7 @@ export async function cancelJob(
       completedAt: now,
       updatedAt: now,
       ...(messages !== undefined && { messages: deepDbSafe(messages) }),
+      ...(partialResult !== undefined && partialResult !== '' && { result: partialResult }),
       ...(stats && {
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,

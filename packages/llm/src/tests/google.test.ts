@@ -15,6 +15,12 @@ import { buildGoogleModel, injectGoogleThinking } from '../providers/google';
 import { createLlmClient } from '../client';
 import { CAPABILITY_MATRIX } from '../providers/registry';
 
+// Every provider call goes through `providerFetch` (#608). Routed to the global
+// fetch here, so these tests stub `fetch` as they always did.
+vi.mock('../transport', () => ({
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 // ─── injectGoogleThinking — pure function ─────────────────────────────────────
 
 describe('injectGoogleThinking', () => {
