@@ -207,5 +207,20 @@ describe('la réponse du chat sous les horloges des jobs (#458) @cap:parler-a-un
     await playTurn(conv);
     const prompt = JSON.stringify(next.doStreamCalls[0]!.prompt);
     expect(prompt).toContain(JSON.stringify(cutReplyNote()).slice(1, -1));
+    // #562 — la note est au runner : jamais dans la bouche de l'agent. Sa
+    // réponse rejouée est ce qu'il avait écrit, et rien d'autre.
+    const messages = next.doStreamCalls[0]!.prompt as Array<{ role: string; content: unknown }>;
+    const texts = (role: string): string[] =>
+      messages
+        .filter((m) => m.role === role)
+        .flatMap((m) =>
+          typeof m.content === 'string'
+            ? [m.content]
+            : (m.content as Array<{ type: string; text?: string }>)
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text ?? ''),
+        );
+    expect(texts('assistant')).toEqual(['Le cylindre reçoit la vapeur']);
+    expect(texts('user')).toContain(cutReplyNote());
   });
 });

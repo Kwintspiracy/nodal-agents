@@ -247,7 +247,10 @@ interface HistoryRow {
 }
 
 /**
- * Build one "block" (1 or 2 ModelMessages) for a single history row.
+ * Build one "block" (1 or 2 ModelMessages) for a single history row. Nothing
+ * the runner wrote lands in an assistant part (#562): ledger lines and the
+ * stop note travel in the `run_task` result, the notes on a plain reply in a
+ * `[système]` message after it.
  * `truncateFn` is a parameter — NOT always `truncateHeadTail` — so the caller
  * controls whether per-message truncation applies (F-12, audit #2 round 2:
  * it's a last resort when the budget is exceeded even after dropping older
@@ -316,8 +319,14 @@ function buildHistoryBlock(
         : r.cutReason
           ? cutReplyNote()
           : null;
-  const content = note ? `${truncateFn(r.content)}\n\n${note}` : truncateFn(r.content);
-  return [{ role: r.role as 'user' | 'assistant', content }];
+  // La note est du runner : elle suit la réponse dans un message à part, marqué
+  // `[système]`, jamais collée dans la bouche de l'agent (#562 — un modèle
+  // continue ce qu'il a écrit, et il avait « écrit » les notes du runner).
+  const reply: ModelMessage = {
+    role: r.role as 'user' | 'assistant',
+    content: truncateFn(r.content),
+  };
+  return note ? [reply, { role: 'user', content: note }] : [reply];
 }
 
 /**

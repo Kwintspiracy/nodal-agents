@@ -174,6 +174,15 @@ export const agentJobs = pgTable(
      * disent.
      */
     resultKind: text('result_kind').$type<JobResultKind>(),
+    /**
+     * Les lignes que le RUNNER a ajoutées au résultat, à part du texte de
+     * l'agent (#562, migration 0137) — aujourd'hui l'avis d'échec de
+     * délégation. `result` les porte toujours pour les écrans (#108) ; ce
+     * champ dit lesquelles sont du runner, et la relecture du fil les range
+     * dans le relevé du runner au lieu de les laisser dans la bouche de
+     * l'agent. NULL : rien d'ajouté.
+     */
+    runnerNotes: text('runner_notes').array(),
     error: text('error'),
     /**
      * LE GESTE que cet échec appelle, dit par le runner lui-même (#193).

@@ -112,7 +112,7 @@ import type {
   ReadyConfig,
 } from '../verification/registry.ts';
 import { TERMINAL_STATUSES, completeJob, failJob, lastTextOfRun } from './state.ts';
-import { toDbSafeString } from './transcript-text.ts';
+import { runnerNotesValue, toDbSafeString } from './transcript-text.ts';
 
 // ─── Codes journalisés ──────────────────────────────────────────────────────
 
@@ -427,6 +427,12 @@ export interface FinalizeFailureInput {
    * que « livré » (revue Codex de #509, passe 3).
    */
   readonly replaceResult?: boolean;
+  /**
+   * Les lignes de `userMessage` que le RUNNER a écrites (#562) — posées dans
+   * `runner_notes` avec le résultat qu'elles terminent, pour que la relecture
+   * du fil ne les mette pas dans la bouche de l'agent.
+   */
+  readonly runnerNotes?: readonly string[];
   /** Livraison à préparer dans la même transaction que l'écriture terminale. */
   readonly delivery?: TerminalDelivery;
 }
@@ -1184,10 +1190,12 @@ export async function finalizeJobSuccess(
         }
         // `failJob` ne remplit `result` que s'il est vide ; un texte déjà
         // publié y serait resté SANS la ligne. `result` contient ce texte-là,
-        // donc il le remplace sans rien perdre.
+        // donc il le remplace sans rien perdre. La ligne est du runner, et
+        // `runner_notes` le dit : la relecture du fil la range dans le relevé
+        // du runner, jamais dans les mots de l'agent (#562).
         await tx
           .update(agentJobs)
-          .set({ result, toolsUsed, updatedAt: new Date() })
+          .set({ result, runnerNotes: runnerNotesValue([line]), toolsUsed, updatedAt: new Date() })
           // Juste après la ligne `failed` que CE run vient de poser (#566).
           .where(ownJobRow(jobId, ['failed']));
 
@@ -1343,7 +1351,11 @@ export async function finalizeJobFailure(
     if (landed && input.replaceResult && input.userMessage !== undefined) {
       await tx
         .update(agentJobs)
-        .set({ result: toDbSafeString(input.userMessage), updatedAt: new Date() })
+        .set({
+          result: toDbSafeString(input.userMessage),
+          ...(input.runnerNotes ? { runnerNotes: runnerNotesValue(input.runnerNotes) } : {}),
+          updatedAt: new Date(),
+        })
         // Juste après la ligne `failed` que CE run vient de poser (#566).
         .where(ownJobRow(input.jobId, ['failed']));
     }

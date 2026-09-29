@@ -5,7 +5,12 @@ import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
 import { agentJobs, agents, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
-import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
+import {
+  flattenTranscript,
+  deepDbSafe,
+  runnerNotesValue,
+  toDbSafeString,
+} from './transcript-text.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -288,9 +293,11 @@ function messageText(content: unknown): string {
  *
  * Une transcription commence par l'historique rejoué du fil (thread-history.ts) :
  * pour chaque tour passé, un message utilisateur, puis un message assistant
- * SYNTHÉTIQUE qui porte la réponse d'alors et, en parts de texte, ses lignes de
- * grand livre (`[Delegated to X (…) — actions: …]`). Ce sont des textes
- * assistant, et rien ne les distingue d'un texte écrit par l'agent à ce tour.
+ * SYNTHÉTIQUE qui porte la réponse d'alors — un texte assistant que rien ne
+ * distingue d'un texte écrit par l'agent à ce tour. Les lignes de grand livre
+ * (`[Delegated to X (…) — actions: …]`) ne sont plus dans ce message depuis
+ * #562 : elles suivent, dans un relevé `[système]` de rôle utilisateur. La
+ * frontière reste nécessaire pour la réponse rejouée elle-même.
  *
  * Issue #419 : un tour Telegram qui a répondu par `telegram_send_message` puis
  * `return_result {status}` n'écrit aucun texte ; le « dernier texte assistant »
@@ -619,11 +626,29 @@ export async function failJob(
   // (a failed parent that delegated) → a generic error-code notice.
   if (landed) {
     let explanation = toDbSafeString(userMessage?.trim() ?? '');
-    if (!explanation) explanation = await compileChildResults(db, jobId);
-    if (!explanation) explanation = genericFailExplanation(errorCode);
+    // Chaque source dit sa provenance, parce que NULL ne la dit pas (revue
+    // Codex de #576, passes 1 et 2) :
+    //  - la compilation des enfants est le texte d'AUTRES jobs : `relay`,
+    //    comme dans fillResultFromChildrenIfEmpty ;
+    //  - l'explication générique est du runner : elle va dans `runner_notes`,
+    //    et la relecture du fil la range dans le relevé du runner (#562) ;
+    //  - le message de l'appelant reste sans marque : sa provenance dépend de
+    //    l'appelant (le texte d'un agent, souvent).
+    let kind: JobResultKind | null = null;
+    let runnerNotes: string[] | null = null;
+    if (!explanation) {
+      explanation = await compileChildResults(db, jobId);
+      if (explanation) kind = 'relay';
+    }
+    if (!explanation) {
+      // Le code peut porter un détail brut (NUL, demi-surrogate) : même
+      // normalisation que le message de l'appelant (revue Codex de #576, passe 4).
+      explanation = toDbSafeString(genericFailExplanation(errorCode));
+      runnerNotes = runnerNotesValue([explanation]);
+    }
     await db
       .update(agentJobs)
-      .set({ result: explanation, updatedAt: new Date() })
+      .set({ result: explanation, resultKind: kind, runnerNotes, updatedAt: new Date() })
       .where(
         and(ownJobRow(jobId, ['failed']), or(isNull(agentJobs.result), eq(agentJobs.result, ''))),
       );

@@ -16,7 +16,7 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agents, jobDeliveries, toolCalls } from '@nodal-agents/db';
+import { eq, agentJobs, agents, conversations, jobDeliveries, toolCalls } from '@nodal-agents/db';
 import { completeJob } from '../../job/state.ts';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -56,12 +56,17 @@ type MockTurn = {
   toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
 };
 
-function makeMockLlmClient(responses: MockTurn[]): RunnerDeps['llmClient'] {
+function makeMockLlmClient(
+  responses: MockTurn[],
+  /** Each call's prompt, as the model received it. */
+  capturedPrompts?: unknown[],
+): RunnerDeps['llmClient'] {
   let callIndex = 0;
   const mockModel = new MockLanguageModelV3({
     provider: 'mock',
     modelId: 'mock',
-    doGenerate: async () => {
+    doGenerate: async (options) => {
+      capturedPrompts?.push(options.prompt);
       const response = responses[callIndex] ?? responses[responses.length - 1]!;
       callIndex++;
       const content: Array<
@@ -1033,6 +1038,97 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     const row = await jobRow(parentId);
     expect(row.result ?? '').toContain('assign_researcher');
     expect(row.result ?? '').toContain('no deliverable');
+  });
+
+  // #562, décision du 28/09 : la ligne d'échec que le HARNAIS ajoute au
+  // résultat (`stampFailedDelegations`) était relue, au tour suivant du fil,
+  // dans les mots de l'agent — le mécanisme même de #562. Elle est posée à
+  // part du texte de l'agent (`agent_jobs.runner_notes`), et la relecture la
+  // range dans le relevé du runner. Par le vrai producteur, jusqu'au prompt
+  // réellement envoyé au tour suivant.
+  it('la ligne d’échec du harnais n’est jamais relue comme les mots de l’agent au tour suivant (#562)', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        chatId: 'notice-chat',
+        origin: 'user',
+      })
+      .returning({ id: conversations.id });
+    const task = 'Fais une recherche sur la longueur de Planck';
+    const parentId = await insertJob({
+      channel: 'whatsapp',
+      chatId: 'notice-chat',
+      conversationId: conv!.id,
+      task,
+      messages: [
+        { role: 'user', content: task },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-10',
+              toolName: 'assign_researcher',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'assign-10',
+              toolName: 'assign_researcher',
+              output: {
+                type: 'error-text',
+                value: `${DELEGATION_FAILED_MARKER}
+{"status":"failed"} delivered NOTHING`,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const said = 'Le chercheur n’a rien rendu, je réessaie plus tard.';
+    const first = await executeJob(
+      parentId as JobId,
+      makeDeps(makeMockLlmClient([{ text: said }])),
+      testEnv,
+    );
+    expect(first.status).toBe('completed');
+    const [stored] = await db
+      .select({ result: agentJobs.result, notes: agentJobs.runnerNotes })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    // Le résultat que lisent les écrans porte toujours l'avis (#108) ; le champ
+    // typé dit quelle partie en est du runner.
+    expect(stored?.result ?? '').toContain('no deliverable');
+    expect(stored?.notes ?? []).toEqual([
+      expect.stringContaining('[delegation stopped: assign_researcher'),
+    ]);
+
+    const nextId = await insertJob({
+      channel: 'whatsapp',
+      chatId: 'notice-chat',
+      conversationId: conv!.id,
+      task: 'alors ?',
+    });
+    const prompts: unknown[] = [];
+    await executeJob(
+      nextId as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'ok' }], prompts)),
+      testEnv,
+    );
+    const sent = prompts[0] as Array<{ role: string; content: unknown }>;
+    const of = (role: string) =>
+      JSON.stringify(sent.filter((m) => m.role === role).map((m) => m.content));
+    expect(of('assistant')).toContain('Le chercheur n’a rien rendu');
+    expect(of('assistant')).not.toContain('delegation stopped');
+    expect(of('user')).toContain('[delegation stopped: assign_researcher');
   });
 });
 

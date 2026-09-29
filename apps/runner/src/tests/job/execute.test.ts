@@ -2004,6 +2004,123 @@ describe('executeJob', () => {
     expect(flat).not.toContain('Task dispatched');
   });
 
+  // #562, revue Codex de #576 passe 1, P1 (a). `failJob` remplit un résultat
+  // vide avec la compilation des enfants — le texte d'AUTRES jobs, recompilé
+  // par le runner. Le tour suivant du fil le rejouait comme ce que l'agent
+  // avait envoyé. Par le VRAI producteur, jusqu'au prompt réellement envoyé.
+  it('a parent failed by failJob: its children compiled into result never reach the next turn as the agent reply (#562) @cap:reprendre-conversation/moteur', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        origin: 'user',
+      })
+      .returning({ id: conversations.id });
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'processing',
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        conversationId: conv!.id,
+        task: 'recherche la longueur de Planck',
+        messages: [
+          { role: 'user', content: 'recherche la longueur de Planck' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'tc-1',
+                toolName: 'telegram_send_message',
+                input: { text: 'Je lance la recherche.' },
+              },
+            ],
+          },
+        ],
+      })
+      .returning({ id: agentJobs.id });
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      parentJobId: parent!.id,
+      status: 'completed',
+      channel: 'internal',
+      task: 'Recherche web : longueur de Planck',
+      result: 'CHILD-FINDINGS: 1.616e-35 m',
+      completedAt: new Date(),
+    });
+    const { failJob } = await import('../../job/state.ts');
+    await failJob(db as Parameters<typeof failJob>[0], parent!.id, 'turn_limit');
+    const [failed] = await db
+      .select({ result: agentJobs.result, resultKind: agentJobs.resultKind })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent!.id));
+    // The producer states what it wrote: other jobs' text, recompiled.
+    expect(failed?.result).toContain('CHILD-FINDINGS');
+    expect(failed?.resultKind).toBe('relay');
+
+    const [next] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        conversationId: conv!.id,
+        task: 'et alors ?',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const prompts: unknown[] = [];
+    await executeJob(
+      next!.id as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'ok' }], prompts)),
+      testEnv,
+    );
+    const sent = prompts[0] as Array<{ role: string; content: unknown }>;
+    const said = (role: string) =>
+      JSON.stringify(sent.filter((m) => m.role === role).map((m) => m.content));
+    expect(said('assistant')).toContain('Je lance la recherche.');
+    expect(said('assistant')).not.toContain('CHILD-FINDINGS');
+    expect(said('user')).toContain('CHILD-FINDINGS');
+  });
+
+  // Revue Codex de #576, passe 2 : NULL ne dit pas « écrit par le runner ».
+  // L'explication générique de failJob est du runner : il le dit lui-même.
+  it('failJob with nothing to say records its generic explanation as the runner’s (#562)', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'processing',
+        channel: 'api',
+        task: 'nothing to compile',
+      })
+      .returning({ id: agentJobs.id });
+    const { failJob } = await import('../../job/state.ts');
+    await failJob(db as Parameters<typeof failJob>[0], job!.id, 'turn_limit');
+    const [row] = await db
+      .select({
+        result: agentJobs.result,
+        resultKind: agentJobs.resultKind,
+        runnerNotes: agentJobs.runnerNotes,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(row?.result).toContain('could not be completed (turn_limit)');
+    expect(row?.resultKind).toBeNull();
+    expect(row?.runnerNotes).toEqual([row?.result]);
+  });
+
   it('runChatTurn: a completed escalation surfaces the delegated child output (completeJob fills the parent, chat reflects it)', async () => {
     // Live forensic case end-to-end: a Conciergus delegation job finishes
     // without re-publishing a summary (own result empty) while the child holds

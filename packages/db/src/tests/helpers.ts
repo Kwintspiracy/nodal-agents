@@ -207,6 +207,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0117 (#154, #210) : la provenance du résultat, à
       -- côté du résultat. NULL = pas de marque, jamais une valeur inventée.
       result_kind text CHECK (result_kind IS NULL OR result_kind IN ('prose','relay')),
+      -- mirrors migration 0137 (#562) : les lignes du résultat écrites par le runner.
+      runner_notes text[],
       error text,
       -- Le geste que l'échec appelle, écrit par le runner (#193, migration 0116).
       failure_hint text,

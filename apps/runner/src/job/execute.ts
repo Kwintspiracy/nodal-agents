@@ -193,6 +193,7 @@ import {
   finalizeJobSuccess,
 } from './finalize.ts';
 import type { DeclaredDeliverableFailure } from './finalize.ts';
+import { runnerNotesValue } from './transcript-text.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import { loadConversationContext } from './conversation-id.ts';
@@ -3512,6 +3513,8 @@ async function runJobTracked(
     suffixeCle: string,
     userMessage?: string,
     replaceResult = false,
+    /** Les lignes de `userMessage` écrites par le runner (#562). */
+    runnerNotes?: readonly string[],
   ): Promise<void> => {
     const notice = harnessNoticeDelivery(payload);
     await finalizeJobFailure(
@@ -3522,6 +3525,7 @@ async function runJobTracked(
         stats: runStats(),
         messages: transcriptionFermee(messages),
         ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
+        ...(runnerNotes ? { runnerNotes } : {}),
         ...(notice
           ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
           : {}),
@@ -3589,6 +3593,7 @@ async function runJobTracked(
       DELIVERABLE_NOT_VERIFIED,
       livrable,
       true,
+      [line],
     );
     return {
       status: 'failed',
@@ -3602,16 +3607,23 @@ async function runJobTracked(
   const stampFailedDelegations = async (): Promise<void> => {
     if (failedDelegationNames(delegationOutcomes).length === 0) return;
     const [row] = await db
-      .select({ result: agentJobs.result })
+      .select({ result: agentJobs.result, runnerNotes: agentJobs.runnerNotes })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId as string))
       .limit(1);
     const actuel = row?.result ?? '';
     const avec = withFailedDelegationNotice(actuel);
     if (avec === actuel) return;
+    // La ligne est du HARNAIS : elle est dite comme telle, à part du texte de
+    // l'agent (#562). Les écrans la lisent dans `result` (#108) ; la relecture
+    // du fil lit `runner_notes` pour ne pas la mettre dans la bouche de
+    // l'agent au tour suivant.
     await db
       .update(agentJobs)
-      .set({ result: avec })
+      .set({
+        result: avec,
+        runnerNotes: runnerNotesValue([...(row?.runnerNotes ?? []), failedDelegationNotice()]),
+      })
       // Juste après la ligne `completed` que CE run vient de poser (#566).
       .where(ownJobRow(jobId as string, ['completed']));
 

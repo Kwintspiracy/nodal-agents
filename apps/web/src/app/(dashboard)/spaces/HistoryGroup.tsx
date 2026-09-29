@@ -7,11 +7,19 @@
 
 import { useState } from 'react';
 import DisclosureButton from '@/components/ui/DisclosureButton';
+import type { HistoryExchangeRole } from '@/lib/conversation-feed';
+
+// Le relevé du runner (#562) est signé Nodal, comme ses rappels dans le fil.
+const SPEAKER: Record<HistoryExchangeRole, string> = {
+  user: 'you',
+  agent: 'agent',
+  runner: 'Nodal',
+};
 
 export default function HistoryGroup({
   exchanges,
 }: {
-  exchanges: Array<{ role: 'user' | 'agent'; text: string }>;
+  exchanges: Array<{ role: HistoryExchangeRole; text: string }>;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -26,9 +34,7 @@ export default function HistoryGroup({
         <ul className="border-t border-rule-2 py-2">
           {exchanges.map((e, i) => (
             <li key={i} className="flex items-start gap-3 px-4 py-1.5 text-body-12 text-ink-3">
-              <span className="w-[52px] shrink-0 text-mono-11 text-ink-4">
-                {e.role === 'user' ? 'you' : 'agent'}
-              </span>
+              <span className="w-[52px] shrink-0 text-mono-11 text-ink-4">{SPEAKER[e.role]}</span>
               <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{e.text}</span>
             </li>
           ))}
