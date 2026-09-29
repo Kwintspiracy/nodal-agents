@@ -4,7 +4,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildEnvForRunner, buildEnvForWeb, cliLaunchArgv } from '../lib/env.ts';
+import {
+  buildEnvForRunner,
+  buildEnvForWeb,
+  cliLaunchArgv,
+  currentCliLaunchArgv,
+} from '../lib/env.ts';
 import type { Config } from '../lib/config.ts';
 
 const BASE_CONFIG: Config = {
@@ -319,9 +324,20 @@ describe('cliLaunchArgv — comment relancer CE CLI (#485)', () => {
     const saved = process.argv;
     process.argv = script === undefined ? [saved[0]!] : [saved[0]!, script];
     try {
+      expect(currentCliLaunchArgv()).toBeNull();
       const env = buildEnvForWeb(BASE_CONFIG, DB_URL);
       expect('NODAL_CLI_ARGV' in env).toBe(true);
       expect(env['NODAL_CLI_ARGV']).toBeUndefined();
+    } finally {
+      process.argv = saved;
+    }
+  });
+
+  it('le script de CE processus est rendu absolu, pour être relancé de n’importe où', () => {
+    const saved = process.argv;
+    process.argv = [saved[0]!, join('apps', 'cli', 'src', 'index.ts')];
+    try {
+      expect(currentCliLaunchArgv()?.at(-1)).toBe(resolve('apps', 'cli', 'src', 'index.ts'));
     } finally {
       process.argv = saved;
     }

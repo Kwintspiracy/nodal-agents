@@ -34,6 +34,20 @@ export function cliLaunchArgv(proc: {
 }
 
 /**
+ * `cliLaunchArgv` pour CE processus, script rendu absolu. Tout ce qui relance
+ * le CLI plus tard passe par ici. `resolve('')` rendrait le dossier courant :
+ * un script absent reste absent, et l'appelant le dit.
+ */
+export function currentCliLaunchArgv(): string[] | null {
+  const script = process.argv[1];
+  return cliLaunchArgv({
+    execPath: process.execPath,
+    execArgv: process.execArgv,
+    scriptPath: script === undefined || script === '' ? undefined : resolve(script),
+  });
+}
+
+/**
  * Build env vars for the runner process.
  * Runner expects DATABASE_URL, LLM_*, AUTH_MODE, WORKER_SECRET, PORT, BIND.
  */
@@ -166,13 +180,7 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): ChildEnv {
   const installedVersion = readInstalledVersion();
   const authMode = resolveAuthMode(config);
   const bind = config.bind === 'loopback' ? '127.0.0.1' : '0.0.0.0';
-  // `resolve('')` rendrait le dossier courant : un script absent reste absent.
-  const script = process.argv[1];
-  const cliArgv = cliLaunchArgv({
-    execPath: process.execPath,
-    execArgv: process.execArgv,
-    scriptPath: script === undefined || script === '' ? undefined : resolve(script),
-  });
+  const cliArgv = currentCliLaunchArgv();
 
   const env: ChildEnv = {
     DATABASE_URL: databaseUrl,
