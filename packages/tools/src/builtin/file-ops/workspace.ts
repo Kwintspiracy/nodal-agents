@@ -432,6 +432,67 @@ export function linkTargetAsPath(raw: string): string {
 }
 
 /**
+ * Where an absolute path really lands on disk: the deepest existing ancestor,
+ * realpath()'d, plus the part that does not exist yet. Links are followed on
+ * the way, dangling ones included (#614, revue Nodal de la PR #618, passe 3):
+ * stat() follows a link whose target does not exist yet and fails, yet a
+ * write to this path goes through it and creates its target. Walking up to
+ * the parent judged the link's NAME lexically, inside the workspace, while the
+ * write landed wherever it points.
+ *
+ * A link to a network share is never stat()'d (that is the SMB leak the UNC
+ * check exists for): the walk stops there and `share` says why, with
+ * `canonical` the share path. Exported so a caller can NAME where a path
+ * leads, not only whether it is inside (the approval card, #618).
+ */
+export async function followLinks(
+  lexical: string,
+  requestedPath: string = lexical,
+): Promise<{ canonical: string; share: string | null }> {
+  let path = lexical;
+  let probe = lexical;
+  let hops = 0;
+  while (true) {
+    try {
+      await stat(probe);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new WorkspaceError(
+          'workspace_invalid',
+          `Failed to stat path while resolving "${requestedPath}": ${(err as Error).message}`,
+        );
+      }
+    }
+    const target = await danglingLinkTarget(probe);
+    if (target !== null) {
+      if (++hops > MAX_LINK_HOPS) {
+        throw new WorkspaceError(
+          'path_traversal_blocked',
+          `Path "${requestedPath}" goes through more than ${MAX_LINK_HOPS} links.`,
+        );
+      }
+      const through = resolvePath(dirname(probe), target);
+      path = through + path.slice(probe.length);
+      const linkViolation = windowsPathViolation(target, through);
+      if (linkViolation) return { canonical: path, share: linkViolation };
+      probe = path;
+      continue;
+    }
+    const parent = resolvePath(probe, '..');
+    if (parent === probe) {
+      throw new WorkspaceError(
+        'path_traversal_blocked',
+        `Cannot resolve "${requestedPath}" — walked past the filesystem root.`,
+      );
+    }
+    probe = parent;
+  }
+  const realProbe = await realpath(probe);
+  return { canonical: realProbe + path.slice(probe.length), share: null };
+}
+
+/**
  * Core boundary-check against a single workspace root. IDENTICAL security
  * logic to the former single-root resolveAndCheckPath — only extracted into
  * a helper so the multi-root dispatcher above can call it per candidate root.
@@ -492,57 +553,9 @@ async function resolveUnderRoot(workspaceRoot: string, requestedPath: string): P
    * site's actual open/write could close — out of scope for this hardening.
    */
   async function probeCanonical(): Promise<string> {
-    let path = lexical;
-    let probe = lexical;
-    let hops = 0;
-    while (true) {
-      try {
-        await stat(probe);
-        break;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw new WorkspaceError(
-            'workspace_invalid',
-            `Failed to stat path while resolving "${requestedPath}": ${(err as Error).message}`,
-          );
-        }
-      }
-      // A DANGLING link (symlink or junction whose target does not exist yet):
-      // stat() follows it and fails, yet a write to this path goes through it
-      // and creates its target (#614, revue Nodal de la PR #618, passe 3).
-      // Walking up to the parent judged the link's NAME lexically, inside the
-      // workspace, while the write landed wherever it points. So the link is
-      // followed: the path becomes its target plus what remained, and the
-      // walk starts again from there, for every caller of this resolver.
-      const target = await danglingLinkTarget(probe);
-      if (target !== null) {
-        if (++hops > MAX_LINK_HOPS) {
-          throw new WorkspaceError(
-            'path_traversal_blocked',
-            `Path "${requestedPath}" goes through more than ${MAX_LINK_HOPS} links.`,
-          );
-        }
-        const through = resolvePath(dirname(probe), target);
-        const linkViolation = windowsPathViolation(target, through);
-        if (linkViolation) throw new WorkspaceError('path_traversal_blocked', linkViolation);
-        path = through + path.slice(probe.length);
-        probe = path;
-        continue;
-      }
-      const parent = resolvePath(probe, '..');
-      if (parent === probe) {
-        // Reached filesystem root without finding anything — should be impossible
-        // because the workspace root itself exists (verified above via realpath).
-        throw new WorkspaceError(
-          'path_traversal_blocked',
-          `Cannot resolve "${requestedPath}" — walked past the filesystem root.`,
-        );
-      }
-      probe = parent;
-    }
-    const realProbe = await realpath(probe);
-    const remainder = path.slice(probe.length);
-    const canonical = realProbe + remainder;
+    const followed = await followLinks(lexical, requestedPath);
+    if (followed.share !== null) throw new WorkspaceError('path_traversal_blocked', followed.share);
+    const canonical = followed.canonical;
 
     if (canonical !== realRoot && !canonical.startsWith(rootWithSep)) {
       throw new WorkspaceError(

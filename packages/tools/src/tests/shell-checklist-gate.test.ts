@@ -409,7 +409,14 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
         category: 'download',
         state: 'ask',
         details: [outCmd],
-        outside: [{ command: outCmd, places: [`${out}/a.jpg`] }],
+        // The card names what the gate judged: the path as written, then
+        // where the link leads (review of #618, minor).
+        outside: [
+          {
+            command: outCmd,
+            places: [`${out}/a.jpg → ${join(elsewhere, 'not-yet', 'a.jpg')}`],
+          },
+        ],
       },
     ]);
     const inCmd = `curl -o ${inn}/a.jpg https://x/a.jpg`;

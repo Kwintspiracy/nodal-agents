@@ -26,7 +26,11 @@ import { InvalidInputError } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
 import { alreadyRejectedInstruction, priorRejectionOfSameCall } from './rejected-call';
 import { judgeShellChecklist, shellChecklistRefusal, type ShellPlace } from './shell-checklist';
-import { resolveAndCheckPath } from './builtin/file-ops/workspace';
+import {
+  followLinks,
+  resolveAndCheckPath,
+  windowsPathViolation,
+} from './builtin/file-ops/workspace';
 import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
 import {
@@ -1408,6 +1412,14 @@ async function shellPlace(toolName: string, input: unknown, ctx: ToolContext): P
         () => true,
         () => false,
       ),
+    // A UNC path is never stat()'d, even to name it (the leak the UNC check guards).
+    leadsTo: (absolutePath) =>
+      windowsPathViolation(absolutePath, absolutePath) !== null
+        ? Promise.resolve(null)
+        : followLinks(absolutePath).then(
+            (f) => f.canonical,
+            () => null,
+          ),
   };
 }
 

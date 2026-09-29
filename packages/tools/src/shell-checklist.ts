@@ -33,6 +33,13 @@ export interface ShellPlace {
   cwd: string | null;
   /** True when an absolute path lies inside one of the job's workspaces. */
   inWorkspace(absolutePath: string): Promise<boolean>;
+  /** Where an absolute path really lands, links followed; null when it cannot be told. */
+  leadsTo(absolutePath: string): Promise<string | null>;
+}
+
+/** Two absolute paths name the same place (case-insensitive on Windows). */
+function samePlace(a: string, b: string): boolean {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 /** What an unreadable target (a variable, `~`, a sub-shell) is called on the card. */
@@ -66,7 +73,12 @@ async function downloadsOutside(command: string, place: ShellPlace): Promise<str
       : from.map((b) => (b === null ? null : resolve(b, path)));
     for (const candidate of candidates) {
       if (candidate === null || !(await place.inWorkspace(candidate))) {
-        if (!outside.includes(path)) outside.push(path);
+        // The card names what was judged: the path as written, and where it
+        // leads when a link takes it elsewhere (`out/a.jpg → C:\…`), never a
+        // name that only looks inside (revue Nodal de la PR #618).
+        const to = candidate === null ? null : await place.leadsTo(candidate);
+        const named = to !== null && !samePlace(to, candidate ?? '') ? `${path} → ${to}` : path;
+        if (!outside.includes(named)) outside.push(named);
         break;
       }
     }

@@ -13,7 +13,7 @@
 // the real `file_write` and the real gate against a real database.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { basename, join } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
 
 const FAKE_LINK = 'link-to-share';
@@ -41,7 +41,7 @@ const { eq, approvalRequests } = await import('@nodal-agents/db');
 const { spinUpTestDb, seedMinimal } = await import('@nodal-agents/db/test-utils');
 const { DEFAULT_SHELL_POLICY } = await import('@nodal-agents/shared');
 const { executeTool } = await import('../execute');
-const { resolveAndCheckPath } = await import('../builtin/file-ops/workspace');
+const { linkTargetAsPath, resolveAndCheckPath } = await import('../builtin/file-ops/workspace');
 const { fileWriteTool } = await import('../builtin/file-ops/file-write');
 type ToolContext = import('../types').ToolContext;
 type ToolDefinition<I extends z.ZodTypeAny, O> = import('../types').ToolDefinition<I, O>;
@@ -127,7 +127,15 @@ describe('a link to a network share is refused like the share itself (#614, revi
         category: 'download',
         state: 'ask',
         details: [command],
-        outside: [{ command, places: [`${FAKE_LINK}/a.jpg`] }],
+        // Named as the gate judged it: through the link, to the share.
+        outside: [
+          {
+            command,
+            places: [
+              `${FAKE_LINK}/a.jpg → ${resolve(workspace, linkTargetAsPath(SHARE_TARGET))}${sep}a.jpg`,
+            ],
+          },
+        ],
       },
     ]);
   });

@@ -118,24 +118,23 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
   one. A rule that blocks the shell tool, and the hard floor below, still win.
 - A new agent is autonomous: it asks only for what leaves its workspace or
   cannot be undone. Without asking, it **downloads into its workspaces** and
-  **runs code**, written into the command (`node -e`, `python -c`,
-  `curl … | bash`) or in a script. Code in a command has the same power as a
-  script the agent writes with the file tools and then runs, which never
-  asked. It **asks** before it deletes, installs, stops a program, changes
-  system settings, or downloads **outside** its workspaces. When a download
+  **runs code**, inline (`node -e`, `python -c`, `curl … | bash`) or in a
+  script. Inline code has the same power as a script the agent writes with
+  the file tools and then runs, which never asked. It **asks** before it
+  deletes, installs, stops a program, changes system settings, or downloads
+  **outside** its workspaces. When a download
   replaces a file in a workspace, the
   [checkpoint](/docs/concepts/proof#checkpoints--the-snapshot-taken-before-a-write)
-  taken before the command keeps the old version.
-- What you set on an agent is kept as you set it. Set **Run code written into
-  a command** or **Download files from the internet** to **Ask me** to be
-  asked again, or to **Never** to refuse it.
-- **Allowed** for downloads means _into the job's workspaces, and into the
-  model and image stores of the programs that keep one_. Nodal reads where the
-  command writes (`curl -o`/`-O`/`--output-dir`, `wget -O`/`-P`,
+  taken just before keeps the old version.
+- What you set on an agent is kept as you set it. Set either row (inline code,
+  downloads) to **Ask me** to be asked again, or to **Never** to refuse it.
+- A download runs without asking only _into the job's workspaces, and into
+  the model and image stores of the programs that keep one_. Nodal reads
+  where the line writes (`curl -o`/`-O`/`--output-dir`, `wget -O`/`-P`,
   `Invoke-WebRequest -OutFile`, `Start-BitsTransfer -Destination`,
   `aria2c -d`/`-o`, `git clone URL DIR`, `pip download -d`,
   `hf download --local-dir`, `> file`), glued values included (`curl -sLo/x`),
-  from the folder the line is in at that point: the command's folder, then
+  from the folder the line is in at that point: the folder it starts in, then
   each `cd`, `pushd` or `Push-Location` that comes before it. A link in a
   workspace is followed to where it points, even when nothing is there yet. A
   place outside the workspaces asks, and the approval card names it. So does a
@@ -149,10 +148,10 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
   ([#628](https://github.com/Kwintspiracy/nodal-agents/issues/628)).
 - A download into a program's own store (`comfy model download`,
   `ollama pull`, `docker pull`, `podman pull`, `hf download` without
-  `--local-dir`) names no path and runs when downloads are **Allowed**. That
-  is deliberate: an agent that makes images fetches the models it is missing.
-  The store lies outside the workspaces and no checkpoint covers it. Set
-  downloads to **Ask me** to be asked for these too.
+  `--local-dir`) names no path and runs without asking unless downloads are
+  set otherwise. That is deliberate: an agent that makes images fetches the
+  models it is missing. The store lies outside the workspaces and no
+  checkpoint covers it. Set downloads to **Ask me** to be asked for these too.
 - An agent already set to **Run without asking** everywhere when this list
   appeared kept what it could do.
 - The checklist also judges a declared proof (`declare_verification`), because
@@ -162,8 +161,8 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
   mention in an argument (`git commit -m "rm old refs"`) is not the action.
 
 **What this list does not do.** It reads the text the agent asks to run, not
-what a program does once it runs. Code the agent runs, from a command or from
-a script, can read, delete or download anything your user account can reach
+what a program does once it runs. Code the agent runs, inline or from a
+script, can read, delete or download anything your user account can reach
 without the list seeing it. Where a download lands is read; the rest of the
 shell is not kept inside the agent's folders, only the file tools are confined
 to them. Keeping what a program does inside a folder is the job of an
