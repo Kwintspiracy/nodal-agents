@@ -10,7 +10,7 @@
 import { z } from 'zod';
 
 export const AutostartStatusSchema = z.discriminatedUnion('state', [
-  /** `reason` : inscrit, mais coupé ailleurs (Paramètres → Démarrage sous Windows). */
+  /** `reason` : inscrit, mais coupé ailleurs (StartupApproved sous Windows). */
   z.object({ state: z.literal('off'), reason: z.string().optional() }),
   z.object({ state: z.literal('at_login'), lingerCommand: z.string().optional() }),
   z.object({ state: z.literal('at_boot') }),

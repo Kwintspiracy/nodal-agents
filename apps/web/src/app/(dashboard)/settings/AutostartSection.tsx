@@ -10,7 +10,7 @@
 //
 // Ce que la ligne montre est lu dans le SYSTÈME à chaque affichage, jamais un
 // drapeau stocké : une inscription retirée à la main se lit « off », une entrée
-// coupée dans Paramètres → Démarrage de Windows aussi, avec la raison. Sous Linux
+// que Windows marque coupée (StartupApproved) aussi, avec la raison. Sous Linux
 // sans « linger », Nodal ne démarre qu'à la connexion : la ligne le dit, avec la
 // commande exacte qui le fait démarrer au boot.
 

@@ -156,11 +156,20 @@ describe('Windows : l’état, lu dans Run puis StartupApproved @cap:installer-e
     });
   });
 
-  it('StartupApproved 03 (coupée dans Paramètres) → off, avec la raison', () => {
+  it('StartupApproved 03 (coupée côté Windows) → off, avec la raison', () => {
     expect(readWindowsStatus(present, approved('03000000F265997C59FFDB01'))).toEqual({
       state: 'off',
       reason: WINDOWS_DISABLED_REASON,
     });
+  });
+
+  it('la raison dit ce que Windows répond, sans renvoyer vers un écran de Windows', () => {
+    // Validation du 29/09 : l'entrée n'apparaissait pas dans Paramètres →
+    // Applications → Démarrage. La raison ne promet donc aucun écran.
+    expect(WINDOWS_DISABLED_REASON).toBe(
+      'Windows has this startup entry turned off. Turn this on to enable it again.',
+    );
+    expect(WINDOWS_DISABLED_REASON).not.toMatch(/Settings|Apps|Task Manager/);
   });
 
   it('un premier octet inconnu se dit, il ne devient ni on ni off', () => {
@@ -284,10 +293,10 @@ describe('Windows : la valeur Run, sans droits admin @cap:installer-et-demarrer/
     expect(sys.calls.some((c) => c.startsWith('schtasks /Run'))).toBe(false);
   });
 
-  it('coupée dans Paramètres → off avec la raison ; rallumer ici efface l’entrée StartupApproved', async () => {
+  it('coupée côté Windows → off avec la raison ; rallumer ici efface l’entrée StartupApproved', async () => {
     const sys = fauxSysteme('win32');
     await installAutostart(WIN_DEV, sys.fx);
-    // L'utilisateur coupe Nodal dans Paramètres → Applications → Démarrage.
+    // Windows marque l'entrée coupée (premier octet 03 sous StartupApproved).
     sys.registry.set(
       APPROVED,
       new Map([['Nodal Agents', { type: 'REG_BINARY', data: '03000000F265997C59FFDB01' }]]),

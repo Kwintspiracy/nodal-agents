@@ -60,13 +60,13 @@ describe('Start Nodal when this machine starts @cap:installer-et-demarrer/ecran'
     const texte = await render({
       status: {
         state: 'off',
-        reason: 'Turned off in Windows Settings, Apps, Startup. Turn this on to enable it again.',
+        reason: 'Windows has this startup entry turned off. Turn this on to enable it again.',
       },
       error: null,
       isOwner: true,
     });
     expect(texte).toContain(
-      'Off. Turned off in Windows Settings, Apps, Startup. Turn this on to enable it again.',
+      'Off. Windows has this startup entry turned off. Turn this on to enable it again.',
     );
     expect(texte).not.toContain('Nodal stays down until someone starts it');
     expect(interrupteur().getAttribute('aria-checked')).toBe('false');

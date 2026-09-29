@@ -7,7 +7,9 @@
 //
 //   - Windows : la valeur « Nodal Agents » sous HKCU\…\CurrentVersion\Run,
 //     le démarrage PAR UTILISATEUR des applications qui « démarrent avec
-//     Windows » (Paramètres → Applications → Démarrage). Aucun droit admin :
+//     Windows ». Rien ici ne promet que la page Paramètres → Applications →
+//     Démarrage la montre : sur le poste du propriétaire, elle ne l'a pas
+//     montrée (validation du 29/09, ticket séparé). Aucun droit admin :
 //     une tâche planifiée `schtasks /Create /SC ONLOGON` en exige, avec ou sans
 //     `/RU` et `/IT`, et un compte standard recevait « Access is denied ».
 //     La valeur lance un petit script `.cmd` (une ligne Run est bornée à 260
@@ -37,13 +39,14 @@
 import { join } from 'path';
 
 export const AUTOSTART_LABEL = 'ai.nodal.agents';
-/** Le nom de la valeur sous Run, celui que Paramètres → Démarrage affiche. */
+/** Le nom de la valeur sous Run (celui que `reg query` affiche). */
 export const WINDOWS_ENTRY_NAME = 'Nodal Agents';
 export const WINDOWS_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 /**
- * Où Windows garde l'interrupteur de Paramètres → Démarrage : un binaire dont
- * le premier octet vaut 02 (activé) ou 03 (coupé par l'utilisateur). Absent,
- * l'entrée est activée.
+ * Où Windows garde l'état activé / coupé d'une valeur Run : un binaire dont
+ * le premier octet vaut 02 (activé) ou 03 (coupé). Absent, l'entrée est
+ * activée. On le LIT, sans dire quel écran de Windows l'a coupée : aucun
+ * n'est vérifié pour cette entrée.
  */
 export const WINDOWS_APPROVED_KEY =
   'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
@@ -190,7 +193,7 @@ export function readLinuxStatus(
 }
 
 export const WINDOWS_DISABLED_REASON =
-  'Turned off in Windows Settings, Apps, Startup. Turn this on to enable it again.';
+  'Windows has this startup entry turned off. Turn this on to enable it again.';
 
 /**
  * Windows : `reg query` de la valeur Run (0 quand elle existe), puis de son
@@ -327,7 +330,7 @@ export async function installAutostart(
     if (r === null || r.exitCode !== 0) {
       throw new Error(`reg add ${WINDOWS_RUN_KEY} failed: ${r?.stdout.trim() || 'no answer'}`);
     }
-    // Coupée plus tôt dans Paramètres → Démarrage : allumer ici la rallume.
+    // Coupée plus tôt côté Windows (StartupApproved) : allumer ici la rallume.
     await regDeleteIfPresent(fx, WINDOWS_APPROVED_KEY);
   } else if (fx.platform === 'darwin') {
     const dir = join(fx.home, 'Library', 'LaunchAgents');
