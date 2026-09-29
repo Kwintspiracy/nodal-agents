@@ -9,14 +9,27 @@
 // régler, sur le chemin job et sur le chemin chat, et avec le frein d'urgence.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentJobs, agentWorkspaces, conversations, entities, eq } from '@nodal-agents/db';
+import {
+  agents,
+  agentJobs,
+  agentWorkspaces,
+  chatMessages,
+  cliSessions,
+  codeProjects,
+  conversations,
+  entities,
+  and,
+  eq,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { projectKey, normalizePath } from '@nodal-agents/shared';
 import type { CliTurnResult } from '../../cli-runtime/provider.ts';
+import type { ClaudeTurnEvent } from '../../cli-runtime/claude-turn.ts';
 import type * as ProviderModule from '../../cli-runtime/provider.ts';
 import type * as OrchestrationModule from '@nodal-agents/orchestration';
 
@@ -255,4 +268,186 @@ describe('CLI runtime shell posture, from the agent row @cap:executer-une-comman
       expect(JSON.stringify(outcome)).toContain('auto_run_paused');
     }, 15_000);
   }
+});
+
+// ── La fin d'un tour coupé par le frein (revue Nodal de #551) ────────────────
+//
+// UN seul ordre de fin de tour, quelle que soit la sortie : d'abord les
+// enregistrements de ce que le processus a fait (session, registre des
+// projets), tant que la prise est tenue ; puis la relecture du droit d'agir
+// (un Stop, une reprise l'emportent sur le frein) ; enfin le verdict.
+describe('a turn cut by the brake ends like any other turn @cap:executer-une-commande/moteur', () => {
+  const shellAgent = (): CliRuntimeAgentRow => ({
+    ...baseRow,
+    cliPermissions: { mode: 'write', shell: 'auto' },
+  });
+
+  /** Ce qu'une CLI tuée rend : pas de texte final, une erreur. */
+  const killedTurn = (): CliTurnResult =>
+    ({
+      ...greenTurn(),
+      sessionId: 'sess-killed',
+      finalText: '',
+      isError: true,
+      errorDetail: 'killed',
+      exitCode: null,
+    }) as unknown as CliTurnResult;
+
+  /**
+   * Une CLI qui écrit un fichier (par le VRAI `onEvent`), voit le propriétaire
+   * serrer le frein, et tourne jusqu'à être tuée. `thenAlso` : ce qui arrive
+   * encore avant qu'elle sorte (un Stop).
+   */
+  const cliCutByTheBrake = (filePath: string, thenAlso?: () => Promise<void>) =>
+    fakeRun.mockImplementationOnce(
+      (opts) =>
+        new Promise<CliTurnResult>((resolve) => {
+          const onEvent = opts['onEvent'] as (e: ClaudeTurnEvent) => void;
+          onEvent({
+            kind: 'tool_use',
+            toolUseId: 'tu-1',
+            toolName: 'Write',
+            input: { file_path: filePath },
+          });
+          onEvent({ kind: 'tool_result', toolUseId: 'tu-1', output: 'ok' });
+          const signal = opts['abortSignal'] as AbortSignal;
+          signal.addEventListener(
+            'abort',
+            () => {
+              void (thenAlso ? thenAlso() : Promise.resolve()).then(() => resolve(killedTurn()));
+            },
+            { once: true },
+          );
+          setBrake(true).then(
+            () => undefined,
+            () => undefined,
+          );
+        }),
+    );
+
+  async function jobInConversation() {
+    const [conversation] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId })
+      .returning({ id: conversations.id });
+    if (!conversation) throw new Error('conversation insert failed');
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        task: 'go',
+        status: 'processing',
+        conversationId: conversation.id,
+      })
+      .returning({ id: agentJobs.id });
+    if (!job) throw new Error('job insert failed');
+    return { jobId: job.id, conversationId: conversation.id };
+  }
+
+  const runJobIn = (jobId: string, conversationId: string) =>
+    runCliRuntimeJob({
+      db: db as unknown as AnyDrizzleDb,
+      jobId,
+      job: {
+        entityId: seed.entityId,
+        chatId: null,
+        channel: 'dashboard',
+        conversationId,
+        task: 'go',
+        triggerContext: null,
+      },
+      agentRow: shellAgent(),
+      workspaces: [{ label: 'ws', path: root }],
+      claimGeneration: 0,
+    });
+
+  const jobRow = async (jobId: string) => {
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, projectId: agentJobs.projectId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row;
+  };
+
+  const sessionOf = async (conversationKey: string) => {
+    const [row] = await db
+      .select({ sessionId: cliSessions.sessionId })
+      .from(cliSessions)
+      .where(
+        and(
+          eq(cliSessions.agentId, seed.agentId),
+          eq(cliSessions.conversationKey, conversationKey),
+        ),
+      );
+    return row?.sessionId ?? null;
+  };
+
+  it('job path: the session and the project registry are written before the brake verdict', async () => {
+    // Un projet : le dossier attaché porte un manifeste.
+    await writeFile(join(root, 'package.json'), '{}');
+    const { jobId, conversationId } = await jobInConversation();
+    cliCutByTheBrake(join(root, 'src', 'a.ts'));
+
+    const outcome = await runJobIn(jobId, conversationId);
+
+    expect(outcome).toEqual({ status: 'failed', error: 'auto_run_paused' });
+    const row = await jobRow(jobId);
+    expect(row).toMatchObject({ status: 'failed', error: 'auto_run_paused' });
+    // La CLI a travaillé avant d'être tuée : le prochain message reprend SA
+    // session, et le projet où elle a écrit est déclaré, le job rattaché.
+    expect(await sessionOf(conversationId)).toBe('sess-killed');
+    const [project] = await db
+      .select({ id: codeProjects.id, registeredJobId: codeProjects.registeredJobId })
+      .from(codeProjects)
+      .where(eq(codeProjects.projectKey, projectKey(normalizePath(root))));
+    expect(project?.registeredJobId).toBe(jobId);
+    expect(row?.projectId).toBe(project?.id);
+  }, 15_000);
+
+  it('job path: a Stop that lands with the brake is a cancellation, not a brake failure', async () => {
+    const { jobId, conversationId } = await jobInConversation();
+    cliCutByTheBrake(join(root, 'a.ts'), async () => {
+      // Le chemin d'annulation pose `cancelled` sur la ligne.
+      await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, jobId));
+    });
+
+    const outcome = await runJobIn(jobId, conversationId);
+
+    expect(outcome).toEqual({ status: 'cancelled' });
+    expect(await jobRow(jobId)).toMatchObject({ status: 'cancelled', error: null });
+    // La session est un ÉTAT que le message suivant lit : seul un run qui
+    // tient encore le job l'écrit (#566).
+    expect(await sessionOf(conversationId)).toBeNull();
+  }, 15_000);
+
+  it('chat path: a Stop that lands with the brake is a stopped answer, not a brake failure', async () => {
+    const [conversation] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId })
+      .returning({ id: conversations.id });
+    if (!conversation) throw new Error('conversation insert failed');
+    const stop = new AbortController();
+    cliCutByTheBrake(join(root, 'a.ts'), async () => {
+      stop.abort();
+    });
+
+    const outcome = await runCliRuntimeChatTurn({
+      db: db as unknown as AnyDrizzleDb,
+      entityId: seed.entityId,
+      agentRow: shellAgent(),
+      conversationId: conversation.id,
+      message: 'lance le rendu',
+      abortSignal: stop.signal,
+    });
+
+    expect(outcome).toMatchObject({ ok: true, stopped: true });
+    const stored = await db
+      .select({ stopped: chatMessages.stopped, role: chatMessages.role })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversation.id));
+    expect(stored).toEqual([{ stopped: true, role: 'assistant' }]);
+    expect(await sessionOf(conversation.id)).toBe('sess-killed');
+  }, 15_000);
 });

@@ -28,7 +28,8 @@ import {
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
-import { claudeShellTools, shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
+import { shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
+import { claudeShellTools } from '@nodal-agents/shared';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
@@ -349,12 +350,10 @@ export async function runCliRuntimeChatTurn(args: {
       });
   }
 
-  // Le frein serré pendant le tour a tué la CLI (#494) : pas une réponse, un
-  // arrêt, dit comme au départ du tour.
-  if (brake.engaged()) {
-    return { ok: false, error: 'auto_run_paused' };
-  }
-
+  // Le MÊME ordre de fin de tour que le chemin job (voir run-job.ts, « UN SEUL
+  // ORDRE DE FIN DE TOUR ») : les enregistrements ci-dessus, puis le droit
+  // d'agir — le Stop de la personne l'emporte sur le frein —, puis le verdict.
+  //
   // Stop (#456) : le processus a été tué à la demande de la personne. Ce n'est
   // pas une panne du runtime — c'est la réponse arrêtée : le texte final s'il
   // en était sorti un, et le FAIT de l'arrêt (`stopped`), que l'écran dit.
@@ -375,13 +374,18 @@ export async function runCliRuntimeChatTurn(args: {
     return { ok: true, reply, stopped: true };
   }
 
-  if (turn.isError || turn.finalText === '') {
+  // Le verdict. Le frein serré pendant le tour (#494) a tué la CLI : un échec
+  // parmi les autres, dit comme au départ du tour, quoi qu'elle ait rendu.
+  const brakeEngaged = brake.engaged();
+  if (brakeEngaged || turn.isError || turn.finalText === '') {
     const limitHit = turn.rateLimit && turn.rateLimit.status !== 'allowed';
     return {
       ok: false,
-      error: limitHit
-        ? 'subscription_limit_reached'
-        : `cli_runtime_error: ${(turn.errorDetail ?? 'no final text').slice(0, 200)}`,
+      error: brakeEngaged
+        ? 'auto_run_paused'
+        : limitHit
+          ? 'subscription_limit_reached'
+          : `cli_runtime_error: ${(turn.errorDetail ?? 'no final text').slice(0, 200)}`,
     };
   }
 

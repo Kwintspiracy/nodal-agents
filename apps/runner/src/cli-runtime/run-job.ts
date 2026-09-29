@@ -51,8 +51,8 @@ import {
   JOB_ROW_UNREADABLE,
   type JobRowCut,
 } from '../job/state.ts';
-import { claudeShellTools, shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
-import type { CliShellSetting } from '@nodal-agents/shared';
+import { shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
+import { claudeShellTools, type CliShellSetting } from '@nodal-agents/shared';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
@@ -401,6 +401,30 @@ export async function takeCliTurnCheckpoints(
       );
     }
   }
+}
+
+/**
+ * Le verdict d'un tour de CLI : le code d'échec, ou `null` pour un tour qui a
+ * répondu. Toutes les sorties en échec passent par ici, le frein compris —
+ * voir « UN SEUL ORDRE DE FIN DE TOUR » dans `runCliRuntimeJob`.
+ */
+function turnFailure(turn: CliTurnResult, brakeEngaged: boolean): string | null {
+  // Le frein serré pendant le tour a tué la CLI : un arrêt, dit comme au
+  // départ du tour, quoi que la CLI ait rendu en mourant.
+  if (brakeEngaged) return 'auto_run_paused';
+  if (!turn.isError && turn.finalText !== '') return null;
+  // An exhausted subscription window must read as exactly that (D0/risques)
+  // — as a machine CODE + data, never runner-authored prose (invariant #2:
+  // the LLM speaks or the runner stays silent; error fields carry codes).
+  const limitHit = turn.rateLimit && turn.rateLimit.status !== 'allowed';
+  const code = limitHit
+    ? `subscription_limit_reached` +
+      (turn.rateLimit?.resetsAt
+        ? ` resets_at=${new Date(turn.rateLimit.resetsAt * 1000).toISOString()}`
+        : '') +
+      (turn.errorDetail ? ` ${turn.errorDetail}` : '')
+    : `cli_runtime_error: ${turn.errorDetail ?? 'no final text'}`;
+  return code.slice(0, 400);
 }
 
 export async function runCliRuntimeJob(args: {
@@ -769,6 +793,19 @@ export async function runCliRuntimeJob(args: {
   }
   rowWatch.stop();
   brake.stop();
+  // ── UN SEUL ORDRE DE FIN DE TOUR (revue Nodal de #551) ───────────────────
+  //
+  // Quelle que soit la sortie — le frein, une erreur de la CLI, un succès :
+  //   1. les ENREGISTREMENTS de ce que le processus a fait (époque, audit,
+  //      session, registre des projets), tant que la prise est tenue ;
+  //   2. la relecture du DROIT D'AGIR : un Stop, une reprise par un autre run
+  //      l'emportent sur tout verdict ;
+  //   3. le VERDICT, établi ici une fois (le registre le lit) et rendu à la fin.
+  // Le frein serré pendant le tour n'y est pas une sortie à part : il a tué la
+  // CLI, le tour est un échec parmi les autres, dit comme au départ. Il
+  // sortait avant la session et le registre : une CLI qui avait écrit puis
+  // était tuée perdait son contexte et sa déclaration de projet.
+  const failure = turnFailure(turn, brake.engaged());
   // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
   //
   // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce
@@ -803,12 +840,6 @@ export async function runCliRuntimeJob(args: {
     });
   } catch (err) {
     console.warn(`[cli-runtime] cli_runs audit insert failed (job=${jobId}):`, err);
-  }
-
-  // Le frein serré pendant le tour a tué la CLI : le tour n'est pas une
-  // réponse, c'est un arrêt, et il se dit comme au départ.
-  if (brake.engaged()) {
-    return fail('auto_run_paused');
   }
 
   // Persist the session mapping so the NEXT message on this conversation
@@ -878,7 +909,7 @@ export async function runCliRuntimeJob(args: {
   // Registre, pas garde — son issue n'interdit rien, et elle est posée AVANT le
   // retour d'erreur pour que le rattachement survive à ce retour.
   if (mode === 'write') {
-    const turnSucceeded = !turn.isError && turn.finalText !== '';
+    const turnSucceeded = failure === null;
     // Toutes les lignes d'audit du tour sont posées avant de les lire — voir
     // `auditWrites`. Une insertion qui a échoué est déjà journalisée ; elle ne
     // fait pas échouer le tour ; une insertion qui ne se règle pas est
@@ -961,20 +992,7 @@ export async function runCliRuntimeJob(args: {
   }
   if (cutBy) return outcomeOfLostAuthority(cutBy);
 
-  if (turn.isError || turn.finalText === '') {
-    // An exhausted subscription window must read as exactly that (D0/risques)
-    // — as a machine CODE + data, never runner-authored prose (invariant #2:
-    // the LLM speaks or the runner stays silent; error fields carry codes).
-    const limitHit = turn.rateLimit && turn.rateLimit.status !== 'allowed';
-    const code = limitHit
-      ? `subscription_limit_reached` +
-        (turn.rateLimit?.resetsAt
-          ? ` resets_at=${new Date(turn.rateLimit.resetsAt * 1000).toISOString()}`
-          : '') +
-        (turn.errorDetail ? ` ${turn.errorDetail}` : '')
-      : `cli_runtime_error: ${turn.errorDetail ?? 'no final text'}`;
-    return fail(code.slice(0, 400));
-  }
+  if (failure !== null) return fail(failure);
 
   // ── La porte terminale (V&C, T11) ─────────────────────────────────────────
   //
