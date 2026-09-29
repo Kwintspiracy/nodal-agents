@@ -5,7 +5,11 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { DownloadSimple, ArrowClockwise } from '@phosphor-icons/react';
 import { COMMUNITY_SKILL_CATALOG, type CommunitySkillCatalogEntry } from '@nodal-agents/shared';
-import { installCommunitySkillAction, type SkillUpdateDetail } from '@/lib/actions.ts';
+import {
+  installCommunitySkillAction,
+  type SkillRow,
+  type SkillUpdateDetail,
+} from '@/lib/actions.ts';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import StatusPill from '@/components/ui/StatusPill';
@@ -24,9 +28,24 @@ export type InstalledSkillInfo = {
   hasScripts: boolean;
 };
 
+/**
+ * What the catalog cards read from the workspace: EVERY skill, whatever its
+ * origin. A card is installed when its slug is in the workspace, and that is
+ * the whole rule: not the source, not is_community (screen 8, 29/09: two
+ * skills already in the workspace were offered for install).
+ */
+export function toCatalogCardSkills(skills: SkillRow[]): InstalledSkillInfo[] {
+  return skills.map((s) => ({
+    slug: s.slug,
+    updateAvailable: s.updateAvailable,
+    updateDetail: s.updateDetail,
+    hasScripts: Boolean(s.installedScripts && s.installedScripts.length > 0),
+  }));
+}
+
 type Props = {
-  /** Community skills already installed in this workspace — drives the
-   *  "Installed" / "Update available" / source-problem states. */
+  /** Every skill of this workspace (toCatalogCardSkills): a slug present
+   *  means "Installed", plus the "Update available" / source-problem states. */
   installedSkills: InstalledSkillInfo[];
   /** Optional search query — filters by name/description/category. */
   query?: string;
