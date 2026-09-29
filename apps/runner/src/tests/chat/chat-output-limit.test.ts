@@ -220,13 +220,17 @@ function replyThenCutRecheck(): MockLanguageModelV3 {
   });
 }
 
-// Revue Codex de #555, P1 : la relance d'escalade avalait l'erreur et gardait
-// la promesse d'origine comme une réponse réussie, sans aucun job.
-describe('an escalation recheck cut on the output-token cap fails the turn @cap:suivre-execution/moteur', () => {
+// Revue Codex de #555, P1, puis revue Nodal de la PR #604, passe 2. #555
+// faisait échouer le tour quand la relance était coupée : la réponse, déjà
+// partie en flux, disparaissait du fil, et la personne lisait une erreur à la
+// place d'une réponse complète. Désormais une relance coupée est ABANDONNÉE
+// comme toute autre panne de relance : sa sortie tronquée n'est jamais
+// exécutée, et la réponse reste celle du tour, comme quand la relance décline.
+describe('an escalation recheck cut on the output-token cap is abandoned @cap:suivre-execution/moteur', () => {
   for (const streamed of [true, false]) {
     const path = streamed ? 'streamed' : 'one-shot';
 
-    it(`${path}: the promise is not kept as a successful reply, no job, output_limit_reached`, async () => {
+    it(`${path}: the reply stands, stored, and the cut call launches no job`, async () => {
       mockModel.current = replyThenCutRecheck();
       const conversationId = await newConversation();
 
@@ -239,10 +243,11 @@ describe('an escalation recheck cut on the output-token cap fails the turn @cap:
         ...(streamed ? { onTextDelta: () => {} } : {}),
       });
 
-      expect(result).toEqual({ ok: false, error: 'output_limit_reached' });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.reply).toBe('I will draw the series now.');
       const after = await effects(conversationId);
       expect(after.jobs).toEqual([]);
-      expect(after.assistantRows).toEqual([]);
+      expect(after.assistantRows).toHaveLength(1);
     });
   }
 });

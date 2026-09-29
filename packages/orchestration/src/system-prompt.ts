@@ -68,13 +68,12 @@ export interface JobContext {
   /**
    * Les NOMS des outils que ce job a réellement, quand l'appelant les connaît.
    *
-   * Sert à une chose : décider si une skill de socle qui EXIGE un outil est
-   * injectée (`platform-support` ne dit que « appelle `nodal_docs` »). Omis, le
-   * prompt retombe sur `ALWAYS_ON_TOOLS`, ce qui est exact aujourd'hui puisque
-   * les deux branches de liste blanche d'`executeJob` accordent cette liste
-   * entière. Le champ existe parce que le jour où un outil toujours-actif
-   * cessera de l'être, la promesse faite dans le prompt doit suivre la liste
-   * blanche, pas une constante.
+   * Tout bloc du prompt qui NOMME un outil se règle sur cette liste : les
+   * skills de socle et de canal (par ce qu'elles déclarent ET par les noms que
+   * leur texte cite), les builtins annoncés. `executeJob` la passe depuis la
+   * liste blanche qu'il vient de calculer (#559 : la liste d'un délégué n'est
+   * pas celle de son parent, alors que son `chat_id` l'est). Omis — aperçu du
+   * dashboard, tests —, le prompt retombe sur `ALWAYS_ON_TOOLS`.
    */
   availableToolNames?: readonly string[];
   /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
@@ -657,8 +656,14 @@ function buildPersistentMemoryBlock(
 // Si un jour un modèle appelle mal un outil faute de description ICI, la réponse
 // n'est pas de recopier les 9 781 caractères : c'est de corriger la description
 // de CET outil, là où elle vit.
-function buildBuiltinCapabilitiesBlock(): string {
-  const names = ALWAYS_ON_TOOL_DOCS.map((t) => `\`${t.name}\``).join(', ');
+// Seulement ceux que CE job a (#559) : un worker délégué perd
+// `dashboard_publish` (execute.ts §6), et le bloc le lui annonçait « always
+// available ».
+function buildBuiltinCapabilitiesBlock(availableTools: readonly string[]): string {
+  const names = ALWAYS_ON_TOOL_DOCS.filter((t) => availableTools.includes(t.name))
+    .map((t) => `\`${t.name}\``)
+    .join(', ');
+  if (names === '') return '';
   return (
     `## Built-in capabilities\n\n` +
     `These tools are always available to you — use them proactively when they ` +
@@ -896,6 +901,15 @@ export async function buildSystemPrompt(
    */
   const hasNodalTools = jobContext?.surface !== 'cli-runtime' && jobContext?.surface !== 'chat';
 
+  // Les outils que ce job a réellement : `availableToolNames`, que le runner
+  // passe depuis la liste blanche calculée (execute.ts construit le prompt
+  // APRÈS les outils, #559). Le repli — la liste toujours-active sur `job`,
+  // rien sur `chat` et `cli-runtime` — ne sert qu'aux appelants sans job :
+  // l'aperçu du dashboard, les tests. Tout bloc qui NOMME un outil se règle
+  // sur cette liste : le baseline, le canal, les builtins annoncés.
+  const availableTools: readonly string[] =
+    jobContext?.availableToolNames ?? (hasNodalTools ? ALWAYS_ON_TOOLS : []);
+
   const [
     teamBlock,
     skillRows,
@@ -1085,8 +1099,14 @@ export async function buildSystemPrompt(
             `\`skill_view('<slug>')\` to load its full instructions and follow them BEFORE you act — ` +
             `even if you think you could do the task with basic tools. A skill defines HOW the task ` +
             `must be done here and ships tested scripts + ready-made files (e.g. prebuilt workflows). ` +
-            `Run a skill's bundled scripts with \`run_skill_script\` (or by the exact paths skill_view ` +
-            `gives you). NEVER reimplement a skill's logic inline, and NEVER rebuild or re-convert ` +
+            // `run_skill_script` n'est armé que pour une skill dont le
+            // propriétaire a autorisé les scripts (execute.ts §6) : nommé à un
+            // job qui ne l'a pas, c'était l'ordre inexécutable de #559.
+            (availableTools.includes('run_skill_script')
+              ? `Run a skill's bundled scripts with \`run_skill_script\` (or by the exact paths ` +
+                `skill_view gives you). `
+              : `Use a skill's bundled files by the exact paths skill_view gives you. `) +
+            `NEVER reimplement a skill's logic inline, and NEVER rebuild or re-convert ` +
             `something the skill already provides.\n\n${skillIndex}`;
 
   // 4. Assemble: honour {{team}} placeholder or append
@@ -1128,7 +1148,7 @@ export async function buildSystemPrompt(
   const builtinBlock =
     jobContext?.surface === 'chat' || jobContext?.surface === 'cli-runtime'
       ? ''
-      : buildBuiltinCapabilitiesBlock();
+      : buildBuiltinCapabilitiesBlock(availableTools);
 
   // 5.5 Workspace block — tells the LLM which workspaces exist and how to address
   //     files (label/relative syntax for multi-workspace agents).
@@ -1180,17 +1200,6 @@ export async function buildSystemPrompt(
   // coding-CLI session none of those exist, so every one of those "MUST"s is an
   // order the agent cannot obey. Omitted there rather than shipped as noise the
   // model has to decide to ignore.
-  // Les outils que cet agent a réellement. `availableToolNames` quand le runner
-  // le passe ; sinon la liste toujours-active, qui est EXACTE pour la seule
-  // question posée ici : sur `job` un agent a tout `ALWAYS_ON_TOOLS` (branche
-  // orchestrateur comme branche worker d'`executeJob`, §6), sur `chat` et
-  // `cli-runtime` il n'en a aucun. Le repli existe parce que le prompt est
-  // assemblé AVANT la liste blanche (`execute.ts`, §5 puis §6) : y brancher la
-  // vraie liste demanderait de réordonner le runner, ce qui n'est pas le sujet
-  // de cette PR. Le champ est là pour le jour où ce sera le cas.
-  const availableTools: readonly string[] =
-    jobContext?.availableToolNames ?? (hasNodalTools ? ALWAYS_ON_TOOLS : []);
-
   // At the maximum delegation depth the job cannot hand work on (the same
   // rule as its whitelist and team block, remainingDelegationHops): it gets
   // the worker's discipline, never the orchestrator's "when you delegate"
@@ -1205,6 +1214,8 @@ export async function buildSystemPrompt(
   const channelBlock = buildChannelBlock({
     channel: jobContext?.origin,
     telegram: Boolean(jobContext?.telegramChatId),
+    surface: jobContext?.surface ?? 'job',
+    availableTools,
   });
   const discoverabilityBlock = buildDiscoverabilityBlock({
     assignedSkillSlugs: skillRows.map((r) => r.skillSlug),
@@ -1219,6 +1230,7 @@ export async function buildSystemPrompt(
     boundChannelSlugs: messagingChannels.boundChannels,
     configuredChannelSlugs: messagingChannels.configuredChannels,
     nodalTools: hasNodalTools,
+    availableTools,
   });
 
   //    Messaging channels block — content assembled from `messagingChannelsBlock`
@@ -1242,8 +1254,10 @@ export async function buildSystemPrompt(
       'success without writing your reply hands the orchestrator an empty delegation, and the ' +
       'run is failed rather than accepted. The orchestrator collects your reply and sends the ' +
       'ONE final message to the user on their original channel. Do NOT contact the user ' +
-      'yourself — no email (e.g. ' +
-      '`gmail_send_email`), no channel messages (`telegram_send_message` / `send_message`). ' +
+      'yourself — no email, no chat or channel message, whatever tool you hold for it. ' +
+      // Sans nom d'outil (#559) : ceux qu'il citait — `gmail_send_email`,
+      // `telegram_send_message` — sont justement ceux qu'un délégué n'a pas,
+      // et un nom cité est une invitation, même sous « do NOT ».
       'A direct send from you is a duplicate and breaks the single-channel-return contract. ' +
       '(Producing a requested deliverable — a file, a document — is fine; it is messaging the ' +
       'user as a channel that is not.)'

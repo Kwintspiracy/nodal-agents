@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -52,6 +53,7 @@ import {
   shortBlockReason,
   BLOCK_NO_REASON,
 } from '../../job/execute.ts';
+import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import { VERIFY_BEFORE_ASSERT_NUDGE } from '@nodal-agents/orchestration';
 
@@ -195,6 +197,10 @@ function makeMockLlmClient(
   configOverride?: { provider: string; model: string },
   /** The keys of the `tools` object handed to the model each turn — the REAL whitelist. */
   capturedToolKeysPerCall?: string[][],
+  /** What the re-read of a prose turn answers, in order; absent = no action. */
+  recheckResponses?: Array<{
+    toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+  }>,
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
@@ -202,6 +208,33 @@ function makeMockLlmClient(
     provider: 'mock',
     modelId: 'mock',
     doGenerate: async (options) => {
+      // The re-read of a prose turn (#600, llm/action-recheck.ts) is not a turn
+      // of the script: it answers "no action" (no tool call, plain usage) and
+      // leaves the scripted turns aligned. A test that scripts the re-read
+      // itself says so in `recheckResponses`.
+      const last = options.prompt[options.prompt.length - 1];
+      const isRecheck =
+        last?.role === 'user' &&
+        last.content.some((part) => part.type === 'text' && part.text === ACTION_RECHECK);
+      if (isRecheck) {
+        const scripted = recheckResponses?.shift();
+        return {
+          content: (scripted?.toolCalls ?? []).map((tc) => ({
+            type: 'tool-call' as const,
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: JSON.stringify(tc.args),
+          })),
+          finishReason: scripted?.toolCalls?.length
+            ? { unified: 'tool-calls' as const, raw: 'tool-calls' }
+            : { unified: 'stop' as const, raw: 'stop' },
+          usage: {
+            inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
+          },
+          warnings: [],
+        };
+      }
       // Record the prompt each call receives so a test can assert what actually
       // reached the provider (e.g. reasoning round-tripped from a prior turn).
       if (capturedPrompts) capturedPrompts.push(options.prompt);
@@ -289,7 +322,8 @@ function makeMockLlmClient(
       streaming: false,
     },
     generateText: (args) => {
-      if (capturedToolKeysPerCall) {
+      const msgs = (args as { messages?: Array<{ content?: unknown }> }).messages ?? [];
+      if (capturedToolKeysPerCall && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
         const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
         capturedToolKeysPerCall.push(Object.keys(tools));
       }
@@ -1084,9 +1118,11 @@ describe('executeJob', () => {
 
     expect(rows[0]?.status).toBe('completed');
     expect(rows[0]?.result).toBe('Here is my answer to the task.');
-    expect(rows[0]?.inputTokens).toBe(10);
-    expect(rows[0]?.outputTokens).toBe(5);
-    expect(rows[0]?.turn).toBe(1); // single LLM call → turn 1
+    // The prose turn is re-read once (#600, llm/action-recheck.ts), and that
+    // call is billed too: 10/5 for the turn + 10/5 for the re-read.
+    expect(rows[0]?.inputTokens).toBe(20);
+    expect(rows[0]?.outputTokens).toBe(10);
+    expect(rows[0]?.turn).toBe(1); // one turn: the re-read is not a turn of its own
     // Wall-clock timer: should have elapsed time (>= 0, often > 0). On very
     // fast runs Date.now() can resolve to the same ms, so assert non-null.
     expect(rows[0]?.totalDurationMs).not.toBeNull();
@@ -1308,6 +1344,178 @@ describe('executeJob', () => {
 
     // Clean up token so other tests aren't affected
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  // #559 — run 806a2218: a delegated Researcher (channel `internal`) inherited
+  // its parent's chat_id, never its send tools, and its prompt ordered
+  // `telegram_send_message` all the same. The prompt is now built from the
+  // tool list the job runs with: the stored system_prompt is the proof.
+  it('the stored prompt names telegram_send_message only for the job that holds it (#559) @cap:assigner-outils/moteur', async () => {
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '199791464',
+        task: 'Parent run',
+        status: 'completed',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    const [child] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        parentJobId: parent!.id,
+        delegationDepth: 1,
+        channel: 'internal',
+        chatId: '199791464',
+        task: 'Research something and report back',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+
+    await executeJob(
+      child!.id as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'Findings: none.' }])),
+      testEnv,
+    );
+    const [childRow] = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, child!.id));
+    expect(childRow?.systemPrompt).toContain('## Delegated sub-task');
+    expect(childRow?.systemPrompt).not.toContain('telegram_send_message');
+    expect(childRow?.systemPrompt).not.toContain('SAME-TURN MULTI-CALL REQUIRED');
+
+    // The same agent, holding its own token on a Telegram job: the etiquette
+    // is there, because the tool is.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const [tgJob] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '199791464',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      await executeJob(
+        tgJob!.id as JobId,
+        makeDeps(
+          makeMockLlmClient([
+            {
+              toolCalls: [
+                { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
+                { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+              ],
+            },
+          ]),
+        ),
+        testEnv,
+      );
+      const [tgRow] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, tgJob!.id));
+      expect(tgRow?.systemPrompt).toContain('## Channel etiquette');
+      expect(tgRow?.systemPrompt).toContain('telegram_send_message({ chatId, text })');
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
+  });
+
+  // #559, revue Codex passe 1, P1 2 — une reprise (approbation, délégation,
+  // redémarrage) réutilisait `job.systemPrompt` tel quel. Écrit pour la liste
+  // d'outils du premier passage, il pouvait nommer un outil retiré pendant
+  // l'attente. Le prompt stocké porte maintenant sa liste : même liste, il est
+  // gardé mot pour mot (cache de préfixe) ; liste changée, il est réécrit.
+  it('a resumed job keeps its stored prompt when its tools are unchanged, and rewrites it when a tool was withdrawn (#559) @cap:assigner-outils/moteur', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '199791464',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      const sendAndFinish = () =>
+        makeMockLlmClient([
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ]);
+      await executeJob(job!.id as JobId, makeDeps(sendAndFinish()), testEnv);
+      const [first] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(first?.systemPrompt).toContain('telegram_send_message({ chatId, text })');
+      expect(first?.tools).toContain('telegram_send_message');
+
+      // Resume with the SAME tools: the stored prompt is reused verbatim. A
+      // sentinel stands in for it so a rebuild could not pass unnoticed.
+      const SENTINEL = 'STORED PROMPT, SAME TOOLS';
+      await db
+        .update(agentJobs)
+        .set({ systemPrompt: SENTINEL, status: 'pending' })
+        .where(eq(agentJobs.id, job!.id));
+      const samePrompts: unknown[] = [];
+      await executeJob(
+        job!.id as JobId,
+        makeDeps(makeMockLlmClient([{ text: 'Done.' }], samePrompts)),
+        testEnv,
+      );
+      expect(JSON.stringify(samePrompts[0])).toContain(SENTINEL);
+
+      // The owner withdraws the credential while the job waits: the send tools
+      // are gone from the recalculated list, so the prompt is rewritten.
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+      await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, job!.id));
+      const afterPrompts: unknown[] = [];
+      await executeJob(
+        job!.id as JobId,
+        makeDeps(makeMockLlmClient([{ text: 'Done.' }], afterPrompts)),
+        testEnv,
+      );
+      const seen = JSON.stringify(afterPrompts[0]);
+      expect(seen).not.toContain(SENTINEL);
+      expect(seen).not.toContain('telegram_send_message({ chatId, text })');
+      const [after] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(after?.systemPrompt).not.toContain('telegram_send_message');
+      expect(after?.tools).not.toContain('telegram_send_message');
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
   });
 
   // ─── Anti-spam guard: consecutive delivery-only turns ─────────────────────
@@ -1674,18 +1882,23 @@ describe('executeJob', () => {
 
     // Turn 1: the model NARRATES ("Je lance X") with NO tool call — the MiniMax
     // slip (~1 in 5). The escalation-recovery re-prompt then yields run_task.
-    const llmClient = makeMockLlmClient([
-      { text: 'Je lance Displacer dans le Cortex.' },
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-recheck',
-            toolName: 'run_task',
-            args: { instruction: 'Lancer Displacer dans le Cortex' },
-          },
-        ],
-      },
-    ]);
+    const llmClient = makeMockLlmClient(
+      [{ text: 'Je lance Displacer dans le Cortex.' }],
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-recheck',
+              toolName: 'run_task',
+              args: { instruction: 'Lancer Displacer dans le Cortex' },
+            },
+          ],
+        },
+      ],
+    );
     const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
     const result = await runChatTurn({
       deps: makeDeps(llmClient),
@@ -1829,6 +2042,123 @@ describe('executeJob', () => {
     expect(flat).toContain('DISPLACER-REPORT');
     // …and the blind static placeholder is gone.
     expect(flat).not.toContain('Task dispatched');
+  });
+
+  // #562, revue Codex de #576 passe 1, P1 (a). `failJob` remplit un résultat
+  // vide avec la compilation des enfants — le texte d'AUTRES jobs, recompilé
+  // par le runner. Le tour suivant du fil le rejouait comme ce que l'agent
+  // avait envoyé. Par le VRAI producteur, jusqu'au prompt réellement envoyé.
+  it('a parent failed by failJob: its children compiled into result never reach the next turn as the agent reply (#562) @cap:reprendre-conversation/moteur', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        origin: 'user',
+      })
+      .returning({ id: conversations.id });
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'processing',
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        conversationId: conv!.id,
+        task: 'recherche la longueur de Planck',
+        messages: [
+          { role: 'user', content: 'recherche la longueur de Planck' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'tc-1',
+                toolName: 'telegram_send_message',
+                input: { text: 'Je lance la recherche.' },
+              },
+            ],
+          },
+        ],
+      })
+      .returning({ id: agentJobs.id });
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      parentJobId: parent!.id,
+      status: 'completed',
+      channel: 'internal',
+      task: 'Recherche web : longueur de Planck',
+      result: 'CHILD-FINDINGS: 1.616e-35 m',
+      completedAt: new Date(),
+    });
+    const { failJob } = await import('../../job/state.ts');
+    await failJob(db as Parameters<typeof failJob>[0], parent!.id, 'turn_limit');
+    const [failed] = await db
+      .select({ result: agentJobs.result, resultKind: agentJobs.resultKind })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent!.id));
+    // The producer states what it wrote: other jobs' text, recompiled.
+    expect(failed?.result).toContain('CHILD-FINDINGS');
+    expect(failed?.resultKind).toBe('relay');
+
+    const [next] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        conversationId: conv!.id,
+        task: 'et alors ?',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const prompts: unknown[] = [];
+    await executeJob(
+      next!.id as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'ok' }], prompts)),
+      testEnv,
+    );
+    const sent = prompts[0] as Array<{ role: string; content: unknown }>;
+    const said = (role: string) =>
+      JSON.stringify(sent.filter((m) => m.role === role).map((m) => m.content));
+    expect(said('assistant')).toContain('Je lance la recherche.');
+    expect(said('assistant')).not.toContain('CHILD-FINDINGS');
+    expect(said('user')).toContain('CHILD-FINDINGS');
+  });
+
+  // Revue Codex de #576, passe 2 : NULL ne dit pas « écrit par le runner ».
+  // L'explication générique de failJob est du runner : il le dit lui-même.
+  it('failJob with nothing to say records its generic explanation as the runner’s (#562)', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'processing',
+        channel: 'api',
+        task: 'nothing to compile',
+      })
+      .returning({ id: agentJobs.id });
+    const { failJob } = await import('../../job/state.ts');
+    await failJob(db as Parameters<typeof failJob>[0], job!.id, 'turn_limit');
+    const [row] = await db
+      .select({
+        result: agentJobs.result,
+        resultKind: agentJobs.resultKind,
+        runnerNotes: agentJobs.runnerNotes,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(row?.result).toContain('could not be completed (turn_limit)');
+    expect(row?.resultKind).toBeNull();
+    expect(row?.runnerNotes).toEqual([row?.result]);
   });
 
   it('runChatTurn: a completed escalation surfaces the delegated child output (completeJob fills the parent, chat reflects it)', async () => {
@@ -2712,7 +3042,8 @@ describe('executeJob', () => {
     const job = await createTestJob(db, seed);
 
     // Two-turn scenario: first calls save_memory, second returns final text.
-    // Mock returns 10/5 per call → expected 20/10 totals after 2 calls.
+    // Mock returns 10/5 per call → 30/15 after 3 calls: the two turns and the
+    // re-read of the final prose turn (#600).
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
@@ -2738,9 +3069,9 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
 
-    expect(rows[0]?.inputTokens).toBe(20);
-    expect(rows[0]?.outputTokens).toBe(10);
-    expect(rows[0]?.turn).toBe(2); // two LLM calls → turn 2
+    expect(rows[0]?.inputTokens).toBe(30);
+    expect(rows[0]?.outputTokens).toBe(15);
+    expect(rows[0]?.turn).toBe(2); // two turns; the re-read is not a turn
   });
 
   it('completes when LLM calls dashboard_publish + return_result (Brique 33)', async () => {
@@ -3478,6 +3809,177 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(stored?.systemPrompt).not.toContain('Routine state');
+  });
+
+  // ─── #567 : un « arrête » envoyé sur un canal atteint le run lancé par un
+  // message PRÉCÉDENT de la même conversation.
+  //
+  // Chaque message d'un canal crée un job de tête neuf. Le job de tête d'une
+  // conversation reçoit donc list_conversation_runs / stop_conversation_run, et
+  // eux seuls : un délégué ou un job sans conversation ne les voit pas. Vérifié
+  // sur la liste RÉELLE remise au modèle, puis sur les lignes en base après
+  // l'appel du modèle.
+
+  it('#567: the head job of a conversation stops the delegate an earlier message started @cap:parler-par-canal-externe/moteur', async () => {
+    const conversationId = randomUUID();
+    const insertJob = async (values: Partial<typeof agentJobs.$inferInsert>) => {
+      const [row] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          // WhatsApp : un canal dont la réponse n'exige pas d'outil de livraison,
+          // la relance « livre sur Telegram » n'est pas le sujet ici.
+          channel: 'whatsapp',
+          conversationId,
+          task: 'x',
+          messages: [],
+          chainCount: 0,
+          ...values,
+        })
+        .returning({ id: agentJobs.id });
+      if (!row) throw new Error('failed to insert job');
+      return row.id;
+    };
+    // Message 1 : un run qui a délégué ; le délégué attend une approbation.
+    const earlierHead = await insertJob({
+      status: 'awaiting_delegation',
+      task: 'Fais un portrait',
+    });
+    const delegate = await insertJob({
+      status: 'awaiting_approval',
+      task: 'Generate the portrait',
+      parentJobId: earlierHead,
+    });
+    const [approval] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: delegate,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'python main.py' },
+      })
+      .returning({ id: approvalRequests.id });
+    // Message 2 : « Arrête !!! », un job de tête neuf.
+    const stopJob = await insertJob({ status: 'pending', task: 'Arrête !!!' });
+
+    const toolKeysPerCall: string[][] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [{ toolCallId: 'tc-list', toolName: 'list_conversation_runs', args: {} }],
+        },
+        {
+          toolCalls: [{ toolCallId: 'tc-stop', toolName: 'stop_conversation_run', args: {} }],
+        },
+        {
+          text: 'Arrêté.',
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      undefined,
+      undefined,
+      toolKeysPerCall,
+    );
+
+    const result = await executeJob(stopJob as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+    expect(toolKeysPerCall[0]).toEqual(
+      expect.arrayContaining(['list_conversation_runs', 'stop_conversation_run']),
+    );
+
+    // Ce que le modèle a lu : le run du message précédent, avec son délégué.
+    const [listed] = await db
+      .select({ toolOutput: toolCalls.toolOutput })
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, stopJob), eq(toolCalls.toolName, 'list_conversation_runs')));
+    expect(listed?.toolOutput).toContain(earlierHead);
+    expect(listed?.toolOutput).toContain(delegate);
+    expect(listed?.toolOutput).toContain(approval!.id);
+
+    // Ce qui a changé en base : le run arrêté, son approbation close.
+    const rows = await db
+      .select({ id: agentJobs.id, status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conversationId));
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({
+      [earlierHead]: 'cancelled',
+      [delegate]: 'cancelled',
+      [stopJob]: 'completed',
+    });
+    const [req] = await db
+      .select({ status: approvalRequests.status, resolvedBy: approvalRequests.resolvedBy })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approval!.id));
+    expect(req).toEqual({ status: 'expired', resolvedBy: 'system:job_cancelled' });
+  });
+
+  it('#567: a delegated job and a job outside any conversation do NOT get the conversation-run tools', async () => {
+    const conversationId = randomUUID();
+    const [head] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        conversationId,
+        task: 'head',
+        status: 'completed',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const [delegated] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        conversationId,
+        parentJobId: head!.id,
+        task: 'delegated work',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const [cron] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        task: 'nightly digest',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+
+    for (const jobId of [delegated!.id, cron!.id]) {
+      const toolKeysPerCall: string[][] = [];
+      const llmClient = makeMockLlmClient(
+        [
+          {
+            text: 'Done.',
+            toolCalls: [
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        undefined,
+        undefined,
+        toolKeysPerCall,
+      );
+      const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+      const tools = new Set(toolKeysPerCall[0]);
+      expect(tools.has('list_conversation_runs')).toBe(false);
+      expect(tools.has('stop_conversation_run')).toBe(false);
+    }
   });
 
   // ─── P5 (causality study, 2026-07-22): dashboard_publish is a delivery
@@ -5653,7 +6155,8 @@ describe('reliability guards', () => {
     });
 
     // Real DB row: raw input persisted as 1000, but the budgeted EFFECTIVE input
-    // is only the 5 non-cached tokens.
+    // is only the 5 non-cached tokens. The re-read of the prose turn (#600)
+    // adds its own 10 uncached input tokens to both.
     const [row] = await db
       .select({
         status: agentJobs.status,
@@ -5665,8 +6168,8 @@ describe('reliability guards', () => {
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('completed');
     expect(row?.error).toBeNull();
-    expect(row?.inputTokens).toBe(1000);
-    expect(row?.effectiveInputTokens).toBe(5);
+    expect(row?.inputTokens).toBe(1010);
+    expect(row?.effectiveInputTokens).toBe(15);
   });
 
   it('Guard 1a still trips on FRESH tokens: same raw input, zero cache ⇒ token_budget_exceeded', async () => {

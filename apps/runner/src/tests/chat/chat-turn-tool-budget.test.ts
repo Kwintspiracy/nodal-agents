@@ -162,7 +162,10 @@ describe('a chat turn over the per-turn tool-call budget does not act @cap:suivr
       expect(after.assistantRows).toEqual([]);
     });
 
-    it(`${path}: the escalation recheck with 51 calls fails the turn the same way`, async () => {
+    // PR #604 (decision after review pass 2): the re-read is only a safety
+    // net. A degenerate one is ABANDONED, none of its calls runs, and the
+    // reply stands. The reply itself keeps #564 (the test above).
+    it(`${path}: the escalation recheck with 51 calls is abandoned, the reply stands`, async () => {
       mockModel.current = modelAnswering([
         { content: [{ type: 'text', text: 'I will draw the series now.' }], finish: 'stop' },
         { content: runTasks(BUDGET + 1), finish: 'tool-calls' },
@@ -171,10 +174,11 @@ describe('a chat turn over the per-turn tool-call budget does not act @cap:suivr
 
       const result = await turn(conversationId);
 
-      expect(result).toEqual({ ok: false, error: 'tool_call_limit_exceeded' });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.reply).toBe('I will draw the series now.');
       const after = await effects(conversationId);
       expect(after.jobs).toEqual([]);
-      expect(after.assistantRows).toEqual([]);
+      expect(after.assistantRows).toHaveLength(1);
     });
 
     it(`${path}: control, a reply with exactly 50 calls launches its first run_task as before`, async () => {

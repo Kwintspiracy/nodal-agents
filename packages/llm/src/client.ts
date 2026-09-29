@@ -13,7 +13,6 @@ import {
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
 import { withRetry } from './retry';
-import { generateWithToolChoiceFloor } from './tool-choice-floor';
 import { buildLlmCallObservation, emitLlmCall } from './observe';
 import type { LlmCallObserver, LlmClientMeta } from './observe';
 import {
@@ -340,7 +339,7 @@ export function createLlmClient(
     config.cachingEnabled !== false;
 
   // Observation plumbing (étape D): one observation per invocation of this
-  // client, success or terminal failure — the retry/stale/floor stack inside
+  // client, success or terminal failure — the retry/stale stack inside
   // counts as ONE attempt from the trace's point of view (its outcome is what
   // the caller saw). durationMs therefore spans the whole stack.
   const observe = (
@@ -425,7 +424,6 @@ export function createLlmClient(
 
   const clientGenerateText: NodalLlmClient['generateText'] = async (args, callOpts) => {
     validateIfMessages(args as { messages?: unknown });
-    const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
     const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
@@ -449,31 +447,25 @@ export function createLlmClient(
       );
       let streamedResult: GenerateTextResult;
       try {
-        streamedResult = await generateWithToolChoiceFloor(
-          (override) =>
-            withRetry(
-              () =>
-                consumeUnderClocks(
-                  (signal) =>
-                    streamText({
-                      ...prepared,
-                      model,
-                      ...(override ? { toolChoice: override } : {}),
-                      abortSignal: signal,
-                      maxRetries: 0,
-                      // Errors are read from the stream itself and thrown by
-                      // consumeUnderClocks; the SDK's default would only log them.
-                      onError: () => {},
-                    } as Parameters<typeof streamText>[0]),
-                  clocks,
-                  providerModel,
-                  callOpts.abortSignal,
-                  callOpts.onTextDelta,
-                ),
-              retryOpts,
+        streamedResult = await withRetry(
+          () =>
+            consumeUnderClocks(
+              (signal) =>
+                streamText({
+                  ...prepared,
+                  model,
+                  abortSignal: signal,
+                  maxRetries: 0,
+                  // Errors are read from the stream itself and thrown by
+                  // consumeUnderClocks; the SDK's default would only log them.
+                  onError: () => {},
+                } as Parameters<typeof streamText>[0]),
+              clocks,
+              providerModel,
+              callOpts.abortSignal,
+              callOpts.onTextDelta,
             ),
-          toolChoice,
-          `${config.provider}/${config.model}`,
+          retryOpts,
         );
       } catch (err) {
         observe('generateText', args, null, err, startedAt);
@@ -483,44 +475,36 @@ export function createLlmClient(
     }
     let result: GenerateTextResult;
     try {
-      // tool_choice floor: if the provider rejects a forced tool_choice value
-      // (some OpenRouter routes reject it), retry once with 'auto' — logged.
-      result = await generateWithToolChoiceFloor(
-        (override) =>
-          withRetry(
-            () =>
-              withStaleRetry((timeoutMs) => {
-                // Stop is not a timeout: an aborted call leaves AT ONCE as a
-                // cancellation, never through the stale retry that would
-                // re-send it with the same dead signal (Codex review of #449,
-                // pass 10).
-                const stopped = (): LLMCallCancelledError =>
-                  new LLMCallCancelledError(config.provider, config.model, '');
-                if (callOpts?.abortSignal?.aborted) return Promise.reject(stopped());
-                return generateText({
-                  ...prepared,
-                  model,
-                  ...(override ? { toolChoice: override } : {}),
-                  // AI SDK native timeout via AbortSignal.timeout(). Survives
-                  // middleware wrapping unlike a passed-in abortSignal which their
-                  // internal retry can swallow. timeoutMs varies per attempt:
-                  // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
-                  // for subsequent fresh-connection stale retries.
-                  timeout: timeoutMs,
-                  // The job's Stop, when the caller passes it (one-shot
-                  // turns of the models that cannot stream).
-                  ...(callOpts?.abortSignal ? { abortSignal: callOpts.abortSignal } : {}),
-                  // Disable AI SDK internal retry — we own retries via withRetry to
-                  // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
-                  maxRetries: 0,
-                } as Parameters<typeof generateText>[0]).catch((err: unknown) => {
-                  throw callOpts?.abortSignal?.aborted ? stopped() : err;
-                });
-              }, providerModel),
-            retryOpts,
-          ),
-        toolChoice,
-        `${config.provider}/${config.model}`,
+      result = await withRetry(
+        () =>
+          withStaleRetry((timeoutMs) => {
+            // Stop is not a timeout: an aborted call leaves AT ONCE as a
+            // cancellation, never through the stale retry that would
+            // re-send it with the same dead signal (Codex review of #449,
+            // pass 10).
+            const stopped = (): LLMCallCancelledError =>
+              new LLMCallCancelledError(config.provider, config.model, '');
+            if (callOpts?.abortSignal?.aborted) return Promise.reject(stopped());
+            return generateText({
+              ...prepared,
+              model,
+              // AI SDK native timeout via AbortSignal.timeout(). Survives
+              // middleware wrapping unlike a passed-in abortSignal which their
+              // internal retry can swallow. timeoutMs varies per attempt:
+              // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
+              // for subsequent fresh-connection stale retries.
+              timeout: timeoutMs,
+              // The job's Stop, when the caller passes it (one-shot
+              // turns of the models that cannot stream).
+              ...(callOpts?.abortSignal ? { abortSignal: callOpts.abortSignal } : {}),
+              // Disable AI SDK internal retry — we own retries via withRetry to
+              // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
+              maxRetries: 0,
+            } as Parameters<typeof generateText>[0]).catch((err: unknown) => {
+              throw callOpts?.abortSignal?.aborted ? stopped() : err;
+            });
+          }, providerModel),
+        retryOpts,
       );
     } catch (err) {
       observe('generateText', args, null, err, startedAt);

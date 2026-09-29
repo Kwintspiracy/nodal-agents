@@ -132,6 +132,14 @@ export const agentJobs = pgTable(
      */
     triggerContext: jsonb('trigger_context').$type<JobTriggerContext>(),
     systemPrompt: text('system_prompt'),
+    /**
+     * Les noms (triés) des outils pour lesquels `systemPrompt` a été écrit
+     * (#559, migration 0136). Une reprise réutilise le prompt stocké — cache de
+     * préfixe — seulement si la liste recalculée est la même ; sinon le prompt
+     * est réécrit, pour ne jamais nommer un outil retiré pendant l'attente.
+     * NULL : prompt écrit avant cette colonne, réécrit à la reprise.
+     */
+    systemPromptTools: text('system_prompt_tools').array(),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
     /**
      * Flattened plain-text transcript (task + assistant text + tool outputs +
@@ -166,6 +174,15 @@ export const agentJobs = pgTable(
      * disent.
      */
     resultKind: text('result_kind').$type<JobResultKind>(),
+    /**
+     * Les lignes que le RUNNER a ajoutées au résultat, à part du texte de
+     * l'agent (#562, migration 0137) — aujourd'hui l'avis d'échec de
+     * délégation. `result` les porte toujours pour les écrans (#108) ; ce
+     * champ dit lesquelles sont du runner, et la relecture du fil les range
+     * dans le relevé du runner au lieu de les laisser dans la bouche de
+     * l'agent. NULL : rien d'ajouté.
+     */
+    runnerNotes: text('runner_notes').array(),
     error: text('error'),
     /**
      * LE GESTE que cet échec appelle, dit par le runner lui-même (#193).
@@ -306,6 +323,13 @@ export const agentJobs = pgTable(
     resumedFromTurn: integer('resumed_from_turn'),
     /** Combien de fois ce job a été repris après un redémarrage (#443) — la borne anti-boucle. */
     restartResumes: integer('restart_resumes').notNull().default(0),
+    /**
+     * Le numéro de la prise en cours (#566, migration 0135) : `claimJob` le
+     * monte à chaque passage `pending → processing`. Le run qui a pris le job
+     * garde le sien et le relit avant chaque effet ; un autre numéro veut dire
+     * qu'un autre run tient ce job, et celui-ci n'a plus le droit d'agir.
+     */
+    claimGeneration: integer('claim_generation').notNull().default(0),
     /**
      * Les outils que le tour interrompu par la mort du runner avait déjà
      * exécutés et qui ne font pas que lire (#443) : rejouer ce tour les

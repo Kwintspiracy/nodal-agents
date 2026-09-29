@@ -46,6 +46,7 @@ import {
 } from './handler.ts';
 import { routeDiscordInteraction } from './interactions.ts';
 import { DISCORD_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
+import { stopReaction } from '../turn.ts';
 import type { DiscordInboundMessage } from './types.ts';
 
 export interface DiscordGatewayOpts {
@@ -201,6 +202,21 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
     // Fire worker AFTER commit so we never wake a worker for a rolled-back job.
     if (result.jobId) {
       triggerJobWorker(result.jobId, env);
+    }
+
+    // `/stop` (#602): the runs are already stopped, in the transaction that
+    // just committed. Acknowledge it with a reaction on the message — the
+    // runner writes no text (invariant #2). A failed reaction (no Add Reactions
+    // permission in a guild channel) changes nothing that was stopped, and is
+    // logged.
+    if (result.stop) {
+      await message.react(stopReaction(result.stop)).catch((err: unknown) => {
+        console.warn(
+          `[discord-gateway agent=${agentId}] /stop reaction failed (channel=${message.channelId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
     }
 
     // H-1: an unknown conversation asked for access — ask the owner to

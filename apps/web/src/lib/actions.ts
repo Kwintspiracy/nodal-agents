@@ -154,6 +154,7 @@ import {
   constatedWrites,
   dropApprovalRulesForDetachedSkill,
   readAgentBudgetState,
+  cancelJobTree,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -2902,12 +2903,6 @@ export async function getJobStatusAction(
   }
 }
 
-// Terminal job statuses — same set the runner's state machine treats as
-// having no outbound edges (apps/runner/src/job/state.ts). Mirrored here
-// so `cancelJobAction` refuses requests that would be no-ops anyway, and
-// so the UI can hide the Cancel button on jobs that are already done.
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
-
 /**
  * Cancel a job from any non-terminal state.
  *
@@ -2920,15 +2915,17 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
  *     in-flight LLM/tool calls finish naturally; we don't kill them
  *     mid-flight (interrupting an API call mid-stream tends to leave
  *     half-written DB rows and confused providers).
- *   - completed / failed / cancelled — refuse, nothing to do.
+ *   - completed / failed / cancelled — refuse (`already_terminal`) when
+ *     nothing under it is still alive either; otherwise its live
+ *     descendants are stopped (#567).
  *
  * Descendants cascade: every non-terminal job whose `parent_job_id`
  * chain reaches the target is also flipped to 'cancelled' in the same
- * UPDATE. Without this, a parent that's blocked awaiting a delegated
- * child would still see the child happily burning LLM turns to
- * completion — pointless work the user explicitly stopped wanting. The
- * delegation depth cap is 3 (DEFAULT_LIMITS), so the recursive CTE has
- * a bounded fan-out.
+ * transaction (`cancelJobTree`, @nodal-agents/db — the one cancel path,
+ * shared with the agent tool `stop_conversation_run`). Without this, a
+ * parent that's blocked awaiting a delegated child would still see the
+ * child happily burning LLM turns to completion — pointless work the user
+ * explicitly stopped wanting.
  *
  * Auth: scoped to the caller's entity; cross-entity cancels return
  * 'not_found' (same shape as the lookup actions — don't leak existence).
@@ -2947,61 +2944,26 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
       .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
     if (!row) return fail('not_found', 'Job not found');
 
-    const current = row.status ?? 'pending';
-    if (TERMINAL_STATUSES.has(current)) {
-      return fail('already_terminal', `Job is already ${current}`);
-    }
-
-    // Recursive cascade in ONE atomic statement: the target job + every
-    // non-terminal descendant, PLUS the detached task-board work and pending
-    // approvals hanging off that same set (B2, audit followup). Data-modifying
-    // CTEs always run to completion in Postgres even when the primary query
-    // doesn't read them, so all three writes land together off one descendants
-    // walk. entity_id is re-asserted on every UPDATE so a buggy CTE can never
-    // escape the caller's workspace; status filters spare rows that already
-    // finished before the cancel hit.
+    // La cascade vit dans @nodal-agents/db (`cancelJobTree`), partagée avec
+    // l'arrêt demandé à un agent depuis un canal (#567) : un seul chemin
+    // d'annulation. Elle passe à `cancelled` le job et chacun de ses délégués
+    // non terminés, coupe les tâches du tableau qu'ils ont créées (détachées
+    // du graphe des jobs : sans cela le cron continuerait à lancer leurs
+    // enfants après l'arrêt) et expire les approbations et questions en
+    // attente (un « Approuver » tardif ne ressuscite plus le job).
     //
-    // Why the extra two cascades:
-    //  - agent_tasks: a planner's create_task rows are DETACHED from the job
-    //    graph (they carry root_job_id, not parent_job_id), so the recursive
-    //    walk above never reaches them. Without this, the cron tick keeps
-    //    spawning + running their child jobs AFTER the user cancelled — work
-    //    they explicitly stopped wanting.
-    //  - approval_requests: a still-pending approval is expired so a late
-    //    "Approve" tap (stale Telegram card / reopened tab) can't resurrect the
-    //    job and run its gated tool. ('expired' is the terminal state the
-    //    status CHECK allows — no 'cancelled'.) Belt-and-suspenders with the
-    //    status guard now in approvals/resolve.ts.
-    await db.execute(sql`
-      WITH RECURSIVE descendants AS (
-        SELECT id FROM agent_jobs WHERE id = ${id}
-        UNION ALL
-        SELECT j.id
-        FROM agent_jobs j
-        INNER JOIN descendants d ON j.parent_job_id = d.id
-      ),
-      cancelled_jobs AS (
-        UPDATE agent_jobs
-        SET status = 'cancelled', updated_at = now()
-        WHERE id IN (SELECT id FROM descendants)
-          AND entity_id = ${session.entityId}
-          AND status NOT IN ('completed', 'failed', 'cancelled')
-        RETURNING id
-      ),
-      cancelled_tasks AS (
-        UPDATE agent_tasks
-        SET status = 'cancelled', updated_at = now()
-        WHERE root_job_id IN (SELECT id FROM descendants)
-          AND entity_id = ${session.entityId}
-          AND status IN ('todo', 'in_progress')
-        RETURNING id
-      )
-      UPDATE approval_requests
-      SET status = 'expired', resolved_at = now(), resolved_by = 'system:job_cancelled'
-      WHERE job_id IN (SELECT id FROM descendants)
-        AND entity_id = ${session.entityId}
-        AND status = 'pending'
-    `);
+    // « Déjà terminé » se juge sur ce que la cascade a trouvé de VIVANT, pas
+    // sur le statut de la tête seule : une tête déclarée morte par le faucheur
+    // pendant que son délégué tourne encore est un run vivant, et l'arrêter
+    // arrête ce délégué (incident du 28/09).
+    const cancelled = await cancelJobTree(db, { entityId: session.entityId, jobId: id });
+    if (
+      cancelled.jobIds.length === 0 &&
+      cancelled.taskIds.length === 0 &&
+      cancelled.requestIds.length === 0
+    ) {
+      return fail('already_terminal', `Job is already ${row.status ?? 'finished'}`);
+    }
 
     revalidatePath('/logs');
     revalidatePath(`/jobs/${id}`);

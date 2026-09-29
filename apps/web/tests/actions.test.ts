@@ -183,6 +183,18 @@ vi.mock('../src/lib/server.ts', async () => {
   };
 });
 
+// ─── Mock cancelJobTree (@nodal-agents/db) ────────────────────────────────────
+// La cascade d'annulation est UNE fonction partagée par le bouton Stop et
+// l'outil `stop_conversation_run` (#567). Ce qu'elle écrit est prouvé sur une
+// vraie base (packages/db/src/tests/cancel-job-tree.test.ts,
+// packages/tools/src/tests/conversation-runs.test.ts) ; ici on prouve ce que
+// l'ACTION fait de son résultat, que la maquette chaînable ne sait pas jouer.
+const cancelJobTreeMock = vi.fn();
+vi.mock('@nodal-agents/db', async () => {
+  const actual = await vi.importActual<typeof import('@nodal-agents/db')>('@nodal-agents/db');
+  return { ...actual, cancelJobTree: (...args: unknown[]) => cancelJobTreeMock(...args) };
+});
+
 // ─── Mock @nodal-agents/memory ─────────────────────────────────────────────────────
 // The memory package's chained queries don't fit our simple chainable mock
 // (count + items in two distinct selects); we stub the public API directly.
@@ -265,7 +277,7 @@ vi.mock('@nodal-agents/shared', async () => {
         return {
           modelId,
           label: 'Test No-Tools Model',
-          capabilities: { tools: false, forcedToolChoice: false },
+          capabilities: { tools: false },
         };
       }
       return actual.findModelCatalogEntry(provider, modelId);
@@ -390,87 +402,53 @@ describe('cancelJobAction', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('refuses already-terminal jobs (completed)', async () => {
-    currentDb = makeDb([{ status: 'completed' }]) as typeof currentDb;
-    const { cancelJobAction } = await import('../src/lib/actions.ts');
-    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('already_terminal');
-  });
+  const NOTHING = { jobIds: [], taskIds: [], requestIds: [] };
 
-  it('refuses already-terminal jobs (failed)', async () => {
-    currentDb = makeDb([{ status: 'failed' }]) as typeof currentDb;
-    const { cancelJobAction } = await import('../src/lib/actions.ts');
-    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('already_terminal');
-  });
-
-  it('refuses already-terminal jobs (cancelled — re-cancel is a no-op)', async () => {
-    currentDb = makeDb([{ status: 'cancelled' }]) as typeof currentDb;
-    const { cancelJobAction } = await import('../src/lib/actions.ts');
-    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('already_terminal');
-  });
-
-  it('flips status to cancelled for pending / processing / awaiting_*', async () => {
-    for (const status of ['pending', 'processing', 'awaiting_approval', 'awaiting_delegation']) {
+  it.each(['completed', 'failed', 'cancelled'])(
+    'refuses a %s job when nothing under it is still alive',
+    async (status) => {
       currentDb = makeDb([{ status }]) as typeof currentDb;
+      cancelJobTreeMock.mockResolvedValueOnce(NOTHING);
       const { cancelJobAction } = await import('../src/lib/actions.ts');
       const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-      expect(r.ok, `should cancel from ${status}`).toBe(true);
-      if (r.ok) expect(r.data.status).toBe('cancelled');
+      expect(r).toMatchObject({ ok: false, code: 'already_terminal' });
+    },
+  );
 
-      // The action must have issued the cascade UPDATE via the raw-SQL
-      // escape hatch (WITH RECURSIVE). Drift catch: if the action ever
-      // forgets to actually run it, this assertion fails.
-      const executeSpy = (currentDb as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
-      expect(executeSpy).toHaveBeenCalled();
+  it('runs the shared cascade on the job, scoped to the caller’s workspace', async () => {
+    for (const status of ['pending', 'processing', 'awaiting_approval', 'awaiting_delegation']) {
+      currentDb = makeDb([{ status }]) as typeof currentDb;
+      cancelJobTreeMock.mockReset();
+      cancelJobTreeMock.mockResolvedValueOnce({
+        jobIds: ['aaaaaaaa-0000-0000-0000-000000000001'],
+        taskIds: [],
+        requestIds: [],
+      });
+      const { cancelJobAction } = await import('../src/lib/actions.ts');
+      const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
+      expect(r, `should cancel from ${status}`).toEqual({
+        ok: true,
+        data: { status: 'cancelled' },
+      });
+      expect(cancelJobTreeMock.mock.calls[0]?.[1]).toEqual({
+        entityId: expect.any(String) as string,
+        jobId: 'aaaaaaaa-0000-0000-0000-000000000001',
+      });
     }
   });
 
-  it('cascade UPDATE includes a recursive CTE over descendants', async () => {
-    // Smoke check on the raw SQL — the cascade is correctness-critical
-    // and we want to catch a regression that silently strips the
-    // WITH RECURSIVE part (would leave child jobs running).
-    currentDb = makeDb([{ status: 'processing' }]) as typeof currentDb;
+  it('a failed head whose delegate still runs is stopped, not refused (#567)', async () => {
+    // Le faucheur a déclaré la tête morte ; son délégué tourne encore. La
+    // cascade l'a trouvé vivant et l'a annulé : ce n'est pas « déjà terminé ».
+    currentDb = makeDb([{ status: 'failed' }]) as typeof currentDb;
+    cancelJobTreeMock.mockResolvedValueOnce({
+      jobIds: ['bbbbbbbb-0000-0000-0000-000000000002'],
+      taskIds: [],
+      requestIds: ['cccccccc-0000-0000-0000-000000000003'],
+    });
     const { cancelJobAction } = await import('../src/lib/actions.ts');
     const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(true);
-
-    const executeSpy = (currentDb as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
-    expect(executeSpy).toHaveBeenCalledTimes(1);
-    // The sql template is opaque from the mock side, but it stringifies
-    // to its query text + params layout; we just sanity-check that the
-    // recursive CTE keyword reached the executor.
-    const callArg = executeSpy.mock.calls[0]?.[0];
-    const text = JSON.stringify(callArg);
-    expect(text).toContain('RECURSIVE');
-    expect(text).toContain('descendants');
-    expect(text).toContain('parent_job_id');
-  });
-
-  it('cascade also stops detached tasks and expires pending approvals (B2)', async () => {
-    // The same statement must cascade off the descendants set into agent_tasks
-    // (a planner's create_task children are detached — root_job_id, not
-    // parent_job_id — so the recursive walk alone never reaches them) and into
-    // approval_requests (a pending approval is expired so a late tap can't
-    // resurrect the job). A regression stripping either leaves the cancel
-    // half-honored: work keeps spawning or an approval can still resume.
-    currentDb = makeDb([{ status: 'processing' }]) as typeof currentDb;
-    const { cancelJobAction } = await import('../src/lib/actions.ts');
-    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
-    expect(r.ok).toBe(true);
-
-    const executeSpy = (currentDb as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
-    const text = JSON.stringify(executeSpy.mock.calls[0]?.[0]);
-    // Tasks cascade: detached children off the same descendants set.
-    expect(text).toContain('agent_tasks');
-    expect(text).toContain('root_job_id');
-    // Approvals cascade: pending approvals expired so a late tap can't resurrect.
-    expect(text).toContain('approval_requests');
-    expect(text).toContain('expired');
+    expect(r).toEqual({ ok: true, data: { status: 'cancelled' } });
   });
 });
 

@@ -31,6 +31,7 @@ import {
   and,
   eq,
   sql,
+  ownJobRow,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import {
@@ -399,7 +400,8 @@ async function traceSkippedSurface(
         THEN ${agentJobs.verificationSkippedSurfaces}
         ELSE ${agentJobs.verificationSkippedSurfaces} || ${payload}::jsonb END`,
     })
-    .where(eq(agentJobs.id, jobId));
+    // Sous la prise du run qui l'écrit (#566) : un run périmé n'écrit rien.
+    .where(ownJobRow(jobId));
 }
 
 /**

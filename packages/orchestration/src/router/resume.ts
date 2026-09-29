@@ -590,6 +590,7 @@ ${failedDelegationGuidance(nextFailedState, { childLeftFiles: fichiersDeLEnfant.
   // 'pending' and re-trigger it. Guarding the write closes that TOCTOU — cancel
   // wins, 0 rows land, and we return the terminal no-op snapshot exactly like
   // the read-time terminal branch does.
+  // agent_jobs-write: delegation-resume — gardée sur `awaiting_delegation`.
   const [updated] = await db
     .update(agentJobs)
     .set({

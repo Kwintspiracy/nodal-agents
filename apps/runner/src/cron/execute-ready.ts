@@ -8,7 +8,7 @@ import {
   delegationDepthExceededMessage,
 } from '@nodal-agents/orchestration';
 import { and, asc, desc, eq, inArray, notInArray, isNotNull } from '@nodal-agents/db';
-import { agentJobs, agentTasks } from '@nodal-agents/db';
+import { agentJobs, agentTasks, insertChildJob } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { executeJob } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
@@ -18,10 +18,6 @@ import type { JobId } from '@nodal-agents/orchestration';
 // ─── Priority ordering ────────────────────────────────────────────────────────
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
-
-// Root-job statuses that mean "don't spawn any more task-board children" — a
-// cancelled/completed/failed root has no live work to fan out (B2 cancel-race).
-const CANCELLED_OR_TERMINAL = new Set(['cancelled', 'completed', 'failed']);
 
 // ─── executeReadyTasks ────────────────────────────────────────────────────────
 
@@ -177,7 +173,6 @@ export async function executeReadyTasks(
       const [creatorRow] = await db
         .select({
           delegationDepth: agentJobs.delegationDepth,
-          status: agentJobs.status,
           conversationId: agentJobs.conversationId,
           jobFolder: agentJobs.jobFolder,
         })
@@ -185,19 +180,11 @@ export async function executeReadyTasks(
         .where(eq(agentJobs.id, task.rootJobId))
         .limit(1);
 
-      // Cancel-race guard (B2, audit followup): the candidate query filters
-      // `todo`, and cancelJobAction now cascades `todo`→`cancelled` — but a task
-      // this tick CLAIMED (`in_progress`) in the tiny window before the cancel
-      // landed would still spawn a child here. If the root job is now terminal
-      // (typically cancelled), don't spawn: mark the task cancelled and skip, so
-      // "tick after cancel = 0 child spawned" holds even under that race.
-      if (creatorRow && CANCELLED_OR_TERMINAL.has(creatorRow.status ?? '')) {
-        await db
-          .update(agentTasks)
-          .set({ status: 'cancelled', result: 'root job cancelled', updatedAt: new Date() })
-          .where(eq(agentTasks.id, task.id));
-        continue;
-      }
+      // The cancel race (B2, then Codex review of #572, pass 3) is no longer
+      // guarded by reading the root's status HERE: a cancel landing between that
+      // read and the insert below let a child the cancel never saw be born and
+      // run. The child is born through `insertChildJob`, which refuses it
+      // atomically under a lock the cancel path shares.
 
       // Never a child beyond the depth limit (invariant #8), even for a task
       // already on the board: the creator at the maximum depth delegates to
@@ -210,7 +197,8 @@ export async function executeReadyTasks(
             result: delegationDepthExceededMessage(),
             updatedAt: new Date(),
           })
-          .where(eq(agentTasks.id, task.id));
+          // Only the claim this tick made: a task cancelled meanwhile stays so.
+          .where(and(eq(agentTasks.id, task.id), eq(agentTasks.status, 'in_progress')));
         continue;
       }
       childDepth = (creatorRow?.delegationDepth ?? 0) + 1;
@@ -218,10 +206,12 @@ export async function executeReadyTasks(
       childJobFolder = creatorRow?.jobFolder ?? null;
     }
 
-    // Create child job
-    const jobRows = await db
-      .insert(agentJobs)
-      .values({
+    // Create child job — through THE child-birth path (#567): born only while
+    // its creator (the parent) is alive and this task is still the claim this
+    // tick made. A cancel that lands after the claim is seen here, atomically.
+    const born = await insertChildJob(
+      db,
+      {
         entityId: task.entityId,
         agentId: task.assignedAgentId!,
         channel: 'task-board',
@@ -232,18 +222,21 @@ export async function executeReadyTasks(
         jobFolder: childJobFolder ?? undefined,
         status: 'pending',
         messages: [{ role: 'user', content: taskText }],
-      })
-      .returning({ id: agentJobs.id });
-
-    const job = jobRows[0];
-    if (!job) {
-      // Job creation failed — reset task to todo
-      await db
-        .update(agentTasks)
-        .set({ status: 'todo', lockedBy: null, lockedAt: null, updatedAt: new Date() })
-        .where(eq(agentTasks.id, task.id));
+      },
+      { taskId: task.id },
+    );
+    if (!('job' in born)) {
+      // The parent is gone (cancelled, or finished): this task will never run.
+      // A task the cancel already closed keeps its status.
+      if (born.refused === 'parent_not_live') {
+        await db
+          .update(agentTasks)
+          .set({ status: 'cancelled', result: 'root job cancelled', updatedAt: new Date() })
+          .where(and(eq(agentTasks.id, task.id), eq(agentTasks.status, 'in_progress')));
+      }
       continue;
     }
+    const job = born.job;
 
     // Link task → job
     await db

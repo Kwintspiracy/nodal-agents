@@ -14,6 +14,7 @@ import { agents, telegramAllowedChats, channelBindings } from '@nodal-agents/db'
 import {
   getTelegramUpdates,
   sendTelegramMessage,
+  setTelegramMessageReaction,
   DeliveryError,
   type TelegramUpdate,
 } from '@nodal-agents/delivery';
@@ -31,6 +32,7 @@ import {
   parseAuthCallbackData,
   buildAuthConfirmKeyboard,
 } from './auth-callback.ts';
+import { stopReaction } from '../channels/turn.ts';
 
 export interface PollerOpts {
   agentId: string;
@@ -368,6 +370,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       let createdJobId: string | undefined;
       let createdPhoto: HandleResult['photo'];
       let createdPendingAuth: HandleResult['pendingAuth'];
+      let stopResult: HandleResult['stop'];
 
       try {
         // Atomic: create job + advance offset. If anything throws, the txn
@@ -389,6 +392,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
           createdJobId = result.jobId;
           createdPhoto = result.photo;
           createdPendingAuth = result.pendingAuth;
+          stopResult = result.stop;
         });
         // The transaction just committed — the DB is healthy again.
         dbBackoffMs = BACKOFF_INITIAL_MS;
@@ -494,6 +498,27 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       // Fire worker AFTER commit so we never wake a worker for a rolled-back job.
       if (createdJobId) {
         triggerJobWorker(createdJobId, env);
+      }
+
+      // `/stop` (#602): the runs are already stopped, in the transaction that
+      // just committed. Acknowledge it with a reaction on the message — the
+      // runner writes no text (invariant #2). Network I/O, so out of the txn;
+      // a failed reaction changes nothing that was stopped, and is logged.
+      const stopMessageId = update.message?.message_id;
+      const stopChatId = update.message?.chat?.id;
+      if (stopResult && stopMessageId !== undefined && stopChatId !== undefined) {
+        await setTelegramMessageReaction({
+          botToken,
+          chatId: stopChatId,
+          messageId: stopMessageId,
+          emoji: stopReaction(stopResult),
+        }).catch((err) => {
+          console.warn(
+            `[telegram-poller agent=${agentId}] /stop reaction failed for chat ${stopChatId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
       }
 
       // H-1: an unknown chat asked for access — ask the owner to confirm (out of

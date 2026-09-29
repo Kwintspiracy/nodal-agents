@@ -91,7 +91,7 @@
 // des données.
 
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull, lt, or, sql } from '@nodal-agents/db';
+import { and, eq, isNull, lt, or, sql, ownJobRow } from '@nodal-agents/db';
 import {
   agentJobs,
   entities,
@@ -112,7 +112,7 @@ import type {
   ReadyConfig,
 } from '../verification/registry.ts';
 import { TERMINAL_STATUSES, completeJob, failJob, lastTextOfRun } from './state.ts';
-import { toDbSafeString } from './transcript-text.ts';
+import { runnerNotesValue, toDbSafeString } from './transcript-text.ts';
 
 // ─── Codes journalisés ──────────────────────────────────────────────────────
 
@@ -427,6 +427,12 @@ export interface FinalizeFailureInput {
    * que « livré » (revue Codex de #509, passe 3).
    */
   readonly replaceResult?: boolean;
+  /**
+   * Les lignes de `userMessage` que le RUNNER a écrites (#562) — posées dans
+   * `runner_notes` avec le résultat qu'elles terminent, pour que la relecture
+   * du fil ne les mette pas dans la bouche de l'agent.
+   */
+  readonly runnerNotes?: readonly string[];
   /** Livraison à préparer dans la même transaction que l'écriture terminale. */
   readonly delivery?: TerminalDelivery;
 }
@@ -608,6 +614,8 @@ async function poseDeliverableCheck(
 
     if (maillon.parentJobId === null) {
       const now = new Date();
+      // agent_jobs-write: chain-root — la ligne d'un AUTRE job (la racine), écrite
+      // sans verrou : un fait idempotent (l'échéance de vérification), dernier gagnant.
       const poses = await tx
         .update(agentJobs)
         .set({ deliverableCheckDueAt: now, updatedAt: now })
@@ -733,7 +741,7 @@ async function ouvrirReparation(
       chainCount: sql`coalesce(${agentJobs.chainCount}, 0) + 1`,
       updatedAt: now,
     })
-    .where(eq(agentJobs.id, jobId));
+    .where(ownJobRow(jobId));
 
   return {
     brief: buildRepairBrief(commandes),
@@ -809,7 +817,7 @@ export async function finalizeJobSuccess(
       .set({ finalizingAt: claimNow })
       .where(
         and(
-          eq(agentJobs.id, jobId),
+          ownJobRow(jobId),
           or(
             isNull(agentJobs.finalizingAt),
             lt(agentJobs.finalizingAt, claimCutoff),
@@ -1182,11 +1190,14 @@ export async function finalizeJobSuccess(
         }
         // `failJob` ne remplit `result` que s'il est vide ; un texte déjà
         // publié y serait resté SANS la ligne. `result` contient ce texte-là,
-        // donc il le remplace sans rien perdre.
+        // donc il le remplace sans rien perdre. La ligne est du runner, et
+        // `runner_notes` le dit : la relecture du fil la range dans le relevé
+        // du runner, jamais dans les mots de l'agent (#562).
         await tx
           .update(agentJobs)
-          .set({ result, toolsUsed, updatedAt: new Date() })
-          .where(eq(agentJobs.id, jobId));
+          .set({ result, runnerNotes: runnerNotesValue([line]), toolsUsed, updatedAt: new Date() })
+          // Juste après la ligne `failed` que CE run vient de poser (#566).
+          .where(ownJobRow(jobId, ['failed']));
 
         // La ligne part là où la promesse est partie : avec la livraison
         // demandée s'il y en a une, sinon vers le canal à outil du job.
@@ -1340,8 +1351,13 @@ export async function finalizeJobFailure(
     if (landed && input.replaceResult && input.userMessage !== undefined) {
       await tx
         .update(agentJobs)
-        .set({ result: toDbSafeString(input.userMessage), updatedAt: new Date() })
-        .where(eq(agentJobs.id, input.jobId));
+        .set({
+          result: toDbSafeString(input.userMessage),
+          ...(input.runnerNotes ? { runnerNotes: runnerNotesValue(input.runnerNotes) } : {}),
+          updatedAt: new Date(),
+        })
+        // Juste après la ligne `failed` que CE run vient de poser (#566).
+        .where(ownJobRow(input.jobId, ['failed']));
     }
     if (landed && input.delivery && deps.prepareDelivery) {
       await deps.prepareDelivery(tx, { jobId: input.jobId, ...input.delivery });
