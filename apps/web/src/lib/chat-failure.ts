@@ -30,5 +30,10 @@ export function chatFailureText(code: string, cutReason?: string | null): string
   if (code === 'agent_no_llm_configured') return 'This agent has no model configured';
   if (code === 'agent_inactive') return 'This conversation’s agent is disabled.';
   if (code === 'conversation_not_found') return 'Conversation not found';
+  // Le frein d'urgence du workspace a arrêté un tour de CLI avant tout texte (#494).
+  if (code === 'auto_run_paused') return 'The workspace emergency brake stopped this turn.';
+  if (code === 'auto_run_state_unreadable') {
+    return 'The emergency brake state could not be read, so this turn stopped.';
+  }
   return 'The agent did not reply';
 }

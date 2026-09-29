@@ -18,7 +18,13 @@
 //     claim, and the gap between them is exactly what a user relies on. The
 //     combination is now refused up front; see sandbox.ts.
 
-import type { CliModelUsage } from '@nodal-agents/shared';
+import {
+  CLAUDE_SHELL_TOOLS,
+  claudeShellFlags,
+  claudeShellTools,
+  cliShellPosture,
+  type CliModelUsage,
+} from '@nodal-agents/shared';
 
 export type CodeTaskProvider = 'claude' | 'codex';
 export type CodeTaskMode = 'read' | 'write';
@@ -81,32 +87,16 @@ export interface NormalizedCliResult {
  * them from the model's palette entirely (A-bis finding 3) — the model cannot
  * even attempt them, and permission_denials stays empty. Task (sub-agents) is
  * deliberately NOT disallowed: restrictions were proven to inherit into
- * sub-agents (A-bis finding 4).
+ * sub-agents (A-bis finding 4). The shell tools are the platform's list
+ * (`CLAUDE_SHELL_TOOLS`), never a copy of it.
  */
-export const CLAUDE_READONLY_DISALLOWED = 'Write,Edit,MultiEdit,NotebookEdit,Bash';
-
-// ─── Shell commands, per CLI runtime (#506) ─────────────────────────────────
-
-/**
- * Whether an agent whose `agents.runtime` is a coding CLI can run a shell
- * command inside a Nodal job, keyed by that runtime value.
- *
- * For such an agent the answer does NOT come from `run_command` (a Nodal tool
- * the CLI never sees) but from the argv the runtime is started with:
- *   - `claude-code`: read mode removes `Bash` (`CLAUDE_READONLY_DISALLOWED`);
- *     write mode is `--permission-mode acceptEdits`, where every shell call
- *     needs a permission nobody can grant in `-p` (#494). No command runs.
- *   - `codex`: confined by its OS sandbox (`read-only` / `workspace-write`),
- *     inside which commands do run without approval.
- *
- * The team block reads this to tell an orchestrator which teammate can run a
- * command (run 8dfe4684 sent a render to a claude-code agent). The argv tests
- * hold it to the flags: change one without the other and they go red.
- */
-export const CLI_RUNTIME_RUNS_SHELL_COMMANDS: Readonly<Record<string, boolean>> = {
-  'claude-code': false,
-  codex: true,
-};
+export const CLAUDE_READONLY_DISALLOWED = [
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+  ...CLAUDE_SHELL_TOOLS,
+].join(',');
 
 // ─── argv builders ───────────────────────────────────────────────────────────
 
@@ -181,10 +171,16 @@ export function buildProviderArgs(
     if (mode === 'read') {
       args.push('--disallowedTools', CLAUDE_READONLY_DISALLOWED);
     } else {
-      // acceptEdits: file edits inside the workspace are auto-accepted; Bash
-      // still requires an approval the headless run cannot grant, so shell
-      // stays effectively off. Full-permission runs are étape-E territory.
+      // acceptEdits: file edits inside the workspace are auto-accepted. The
+      // shell follows the platform rule (`cliShellPosture`, #494): a code_task
+      // has no shell setting, so Claude gets none, and its shell tools leave
+      // the palette. Before, they stayed in it and every command waited for an
+      // approval a headless run cannot grant: the model found out by failing.
+      // The rule is ASKED, not copied: with no setting, the brake changes
+      // nothing for Claude (no shell either way), hence `autoRunPaused: false`.
       args.push('--permission-mode', 'acceptEdits');
+      const posture = cliShellPosture('claude', null, { autoRunPaused: false });
+      args.push(...claudeShellFlags(claudeShellTools(posture)));
     }
     return args;
   }

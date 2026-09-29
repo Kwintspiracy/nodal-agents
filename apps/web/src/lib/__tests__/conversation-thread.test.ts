@@ -635,6 +635,35 @@ describe('buildConversationThread — une conversation du dashboard', () => {
     expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'note', 'request', 'turn']);
     expect(items[2]).toEqual({ kind: 'note', text: CUT_ANSWER_NOTE, origin: 'thread' });
   });
+
+  // #494, revue Nodal de #551 (passe 2) : un tour de CLI coupé par le frein
+  // d'urgence garde ce qu'il avait écrit. La note dit ce qui l'a coupé, pas
+  // « le modèle s'est tu ».
+  it.each([
+    ['auto_run_paused', 'This answer was cut off: the workspace emergency brake was engaged.'],
+    [
+      'auto_run_state_unreadable',
+      'This answer was cut off: the emergency brake state could not be read.',
+    ],
+    ['idle_before_first_token', CUT_ANSWER_NOTE],
+  ])('une réponse coupée par %s : la note dit la raison', (cutReason, note) => {
+    const { items } = buildConversationThread({
+      conversation: dashboard,
+      messages: [
+        { id: 'm1', role: 'user', content: 'lance le rendu', jobId: null, createdAt: null },
+        {
+          id: 'm2',
+          role: 'assistant',
+          content: 'Je lance',
+          jobId: null,
+          createdAt: null,
+          cutReason,
+        },
+      ],
+      jobs: [],
+    });
+    expect(items[2]).toEqual({ kind: 'note', text: note, origin: 'thread' });
+  });
 });
 
 describe('buildConversationThread — ce que le fil ne peut pas dire', () => {

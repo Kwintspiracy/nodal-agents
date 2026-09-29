@@ -42,6 +42,7 @@ import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
+import type { BrakeStop } from '@nodal-agents/shared';
 import { TERMINAL_STATUSES } from '../job/state.ts';
 import { watchCallProgress } from '../job/call-progress.ts';
 
@@ -134,8 +135,11 @@ export type ChatTurnResult =
       streamed?: boolean;
       /** La personne a arrêté ce tour (#456) : `reply` est ce qui avait été écrit. */
       stopped?: boolean;
-      /** Une horloge a coupé ce tour (#458) : `reply` est ce qui avait été écrit. */
-      cutReason?: LlmTimeoutReason;
+      /**
+       * Une horloge (#458), ou le frein d'urgence sur un tour de CLI (#494), a
+       * coupé ce tour : `reply` est ce qui avait été écrit.
+       */
+      cutReason?: LlmTimeoutReason | BrakeStop;
     }
   | {
       ok: false;

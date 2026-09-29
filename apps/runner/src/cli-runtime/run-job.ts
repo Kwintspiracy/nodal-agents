@@ -51,6 +51,8 @@ import {
   JOB_ROW_UNREADABLE,
   type JobRowCut,
 } from '../job/state.ts';
+import { shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
+import { claudeShellTools, type BrakeStop, type CliShellSetting } from '@nodal-agents/shared';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
@@ -58,7 +60,6 @@ import { EDIT_TOOLS, resolveScannedPath, scannedEditPath } from '../job/code-pro
 import { finalizeJobSuccess } from '../job/finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
-import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import {
   snapshot,
@@ -137,7 +138,11 @@ async function settleAuditWrites(
 // compile error here instead of a silent omission.
 export interface CliRuntimeAgentRow extends Agent {
   runtime: string;
-  cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
+  cliPermissions: {
+    mode?: 'read' | 'write';
+    shell?: CliShellSetting;
+    extraDisallowed?: string[];
+  } | null;
   cliDefaults: {
     claude?: { model?: string; effort?: string };
     codex?: { model?: string; effort?: string };
@@ -233,12 +238,16 @@ export function buildCliRuntimeJobContext(args: {
  * tour, pour une question à laquelle l'audit répond déjà.
  */
 /**
- * La ligne de ce job est-elle encore à ce run — `processing` sous sa prise —
- * au moment d'écrire (#566) ? Verrouillée FOR SHARE dans la transaction de
+ * Ce run tient-il encore la PRISE de ce job au moment d'écrire (#566) ? La
+ * prise seule (`heldBy(…, null)`), pas le statut : un Stop pose `cancelled`
+ * sans reprendre la ligne, et ce que la CLI a fait jusque-là (sa session, ses
+ * productions) reste à enregistrer, comme la transcription d'un job annulé
+ * (revue Nodal de #551, passe 2). Une reprise par un autre run change la
+ * prise : plus rien ne s'écrit. Verrouillée FOR SHARE dans la transaction de
  * l'appelant : une prise qui arriverait pendant l'écriture attend qu'elle soit
- * finie, et une prise perdue n'écrit rien.
+ * finie.
  */
-async function rowStillHeld(
+async function claimStillHeld(
   tx: AnyDrizzleDb,
   jobId: string,
   claimGeneration: number,
@@ -247,7 +256,7 @@ async function rowStillHeld(
     .select({ id: agentJobs.id })
     .from(agentJobs)
     // `heldBy` : la seule définition de « ce run tient son job » (#566).
-    .where(heldBy(jobId, claimGeneration))
+    .where(heldBy(jobId, claimGeneration, null))
     .for('share');
   return tenu !== undefined;
 }
@@ -398,6 +407,32 @@ export async function takeCliTurnCheckpoints(
   }
 }
 
+/**
+ * Le verdict d'un tour de CLI : le code d'échec, ou `null` pour un tour qui a
+ * répondu. Toutes les sorties en échec passent par ici, le frein compris —
+ * voir « UN SEUL ORDRE DE FIN DE TOUR » dans `runCliRuntimeJob`.
+ */
+function turnFailure(turn: CliTurnResult, brakeStop: BrakeStop | null): string | null {
+  // Un tour qui a répondu reste un succès, même si le frein s'est serré
+  // pendant qu'il rendait sa réponse : il n'a pas été tué, sa réponse part.
+  if (!turn.isError && turn.finalText !== '') return null;
+  // Le frein ne décrit qu'un tour déjà en échec : il a tué la CLI, et
+  // l'arrêt se dit comme au départ du tour (serré, ou illisible).
+  if (brakeStop) return brakeStop;
+  // An exhausted subscription window must read as exactly that (D0/risques)
+  // — as a machine CODE + data, never runner-authored prose (invariant #2:
+  // the LLM speaks or the runner stays silent; error fields carry codes).
+  const limitHit = turn.rateLimit && turn.rateLimit.status !== 'allowed';
+  const code = limitHit
+    ? `subscription_limit_reached` +
+      (turn.rateLimit?.resetsAt
+        ? ` resets_at=${new Date(turn.rateLimit.resetsAt * 1000).toISOString()}`
+        : '') +
+      (turn.errorDetail ? ` ${turn.errorDetail}` : '')
+    : `cli_runtime_error: ${turn.errorDetail ?? 'no final text'}`;
+  return code.slice(0, 400);
+}
+
 export async function runCliRuntimeJob(args: {
   db: AnyDrizzleDb;
   jobId: string;
@@ -434,8 +469,19 @@ export async function runCliRuntimeJob(args: {
   // rouge du workspace arrêtait donc les agents ordinaires pendant qu'une
   // session CLI — un shell complet dans le workspace — continuait de tourner.
   // Un frein qui ne freine qu'une partie des agents n'est pas un frein.
-  if (job.entityId && (await isAutoRunPaused(db, job.entityId))) {
-    return fail('auto_run_paused');
+  //
+  // Depuis #494, le frein s'applique AU SHELL, par la règle commune
+  // (`shell-turn.ts`) : une CLI qui sait perdre son shell (Claude) part sans,
+  // une CLI qui ne le sait pas (Codex) ne part pas. Et un tour qui a un shell
+  // est coupé si le frein se serre pendant qu'il tourne.
+  let shellPosture = await shellPostureForTurn(
+    db,
+    job.entityId,
+    binding.provider,
+    agentRow.cliPermissions,
+  );
+  if (shellPosture.kind === 'refused') {
+    return fail(shellPosture.reason);
   }
 
   // The workspace IS the perimeter of a runtime agent — no workspace, no run.
@@ -666,6 +712,19 @@ export async function runCliRuntimeJob(args: {
   // preparation above and the bookkeeping below — through the job's own
   // heartbeat, held by `runJob` from the claim (#565).
 
+  // Le frein relu AU LANCEMENT (voir shell-turn.ts) : serré pendant la
+  // préparation, il décide encore de ce tour.
+  shellPosture = await shellPostureForTurn(
+    db,
+    job.entityId,
+    binding.provider,
+    agentRow.cliPermissions,
+  );
+  if (shellPosture.kind === 'refused') {
+    await releaseHeld();
+    return fail(shellPosture.reason);
+  }
+
   // L'instant où le tour commence — borne basse pour reconnaître les écritures
   // que CE tour a produites (voir `harnessEdits` plus haut).
   const turnStartedAt = new Date();
@@ -699,6 +758,11 @@ export async function runCliRuntimeJob(args: {
     return outcomeOfLostAuthority(beforeSpawn);
   }
 
+  // Le frein serré pendant le tour tue la CLI, comme la perte du droit d'agir :
+  // un seul signal porte les deux.
+  const brake = watchBrakeDuringTurn(db, job.entityId, shellPosture, {
+    personStop: rowWatch.signal,
+  });
   let turn: CliTurnResult;
   try {
     turn = await binding.run({
@@ -708,6 +772,7 @@ export async function runCliRuntimeJob(args: {
       // Les autres dossiers attachés — voir ClaudeTurnOptions.extraWriteDirs.
       extraWriteDirs: args.workspaces.slice(1).map((w) => w.path),
       mode,
+      shellTools: claudeShellTools(shellPosture),
       extraDisallowed: perms.extraDisallowed,
       model: defaults.model,
       effort: defaults.effort,
@@ -717,10 +782,14 @@ export async function runCliRuntimeJob(args: {
       // apply the SAME per-turn cap at this seam (invariant #8).
       maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
       onEvent,
-      abortSignal: rowWatch.signal,
+      // Un seul signal : le frein (qui écoute aussi la ligne du job) ou, sans
+      // shell, la ligne seule. Deux clés abortSignal : la seconde écraserait
+      // la première, et le frein ne tuerait plus la CLI.
+      abortSignal: brake.signal ?? rowWatch.signal,
     });
   } catch (err) {
     rowWatch.stop();
+    brake.stop();
     // La CLI a pu écrire avant de tomber — même contrat conservatif que
     // l'intention, et même raison qu'au seam des outils (#101).
     await bumpEpochsAfterWrite(db, job.entityId ?? '', dirtied);
@@ -729,6 +798,20 @@ export async function runCliRuntimeJob(args: {
     throw err;
   }
   rowWatch.stop();
+  brake.stop();
+  // ── UN SEUL ORDRE DE FIN DE TOUR (revue Nodal de #551) ───────────────────
+  //
+  // Quelle que soit la sortie — le frein, une erreur de la CLI, un succès :
+  //   1. les ENREGISTREMENTS de ce que le processus a fait (époque, audit,
+  //      session, registre des projets), tant que la prise est tenue ;
+  //   2. la relecture du DROIT D'AGIR : un Stop, une reprise par un autre run
+  //      l'emportent sur tout verdict ;
+  //   3. le VERDICT, établi ici une fois (le registre le lit) et rendu à la fin.
+  // Le frein serré pendant le tour n'y est pas une sortie à part : il a tué la
+  // CLI, le tour est un échec parmi les autres, dit comme au départ. Il
+  // sortait avant la session et le registre : une CLI qui avait écrit puis
+  // était tuée perdait son contexte et sa déclaration de projet.
+  const failure = turnFailure(turn, brake.stoppedBy());
   // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
   //
   // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce
@@ -774,18 +857,21 @@ export async function runCliRuntimeJob(args: {
   //     project wins). They stay true whoever holds the job now, and a run cut
   //     mid-turn still writes them: the CLI may have written and cost.
   //   - STATE the next message reads — this session mapping, and the
-  //     conversation's current project. Only the run that still holds the job
-  //     writes them: a stale run — its row taken by another run, its process
-  //     killed — that exits after the new run wrote its own would overwrite it,
-  //     and the next message would resume the wrong session or folder. The job
-  //     row is locked FOR SHARE in the same transaction (`rowStillHeld`).
+  //     conversation's current project. Written while this run still holds the
+  //     CLAIM, whatever the status: a Stop sets `cancelled` without taking the
+  //     row, and the next "continue" must resume the session the killed CLI
+  //     had (Nodal review of #551, pass 2). A stale run — its row re-claimed by
+  //     another run — that exits after the new run wrote its own would
+  //     overwrite it, and the next message would resume the wrong session or
+  //     folder: a new claim stops it. The job row is locked FOR SHARE in the
+  //     same transaction (`claimStillHeld`).
   const sessionId = turn.sessionId;
   if (conversationKey && sessionId) {
     await db
       .transaction(async (tx) => {
-        if (!(await rowStillHeld(tx, jobId, args.claimGeneration))) {
+        if (!(await claimStillHeld(tx, jobId, args.claimGeneration))) {
           console.warn(
-            `[cli-runtime] CLI_SESSION_NOT_RECORDED job=${jobId} — the row no longer belongs to this run`,
+            `[cli-runtime] CLI_SESSION_NOT_RECORDED job=${jobId} — another run holds the claim now`,
           );
           return;
         }
@@ -832,7 +918,7 @@ export async function runCliRuntimeJob(args: {
   // Registre, pas garde — son issue n'interdit rien, et elle est posée AVANT le
   // retour d'erreur pour que le rattachement survive à ce retour.
   if (mode === 'write') {
-    const turnSucceeded = !turn.isError && turn.finalText !== '';
+    const turnSucceeded = failure === null;
     // Toutes les lignes d'audit du tour sont posées avant de les lire — voir
     // `auditWrites`. Une insertion qui a échoué est déjà journalisée ; elle ne
     // fait pas échouer le tour ; une insertion qui ne se règle pas est
@@ -841,10 +927,10 @@ export async function runCliRuntimeJob(args: {
     const edits = await harnessEdits(db, jobId, turnStartedAt, args.workspaces);
     if (turnSucceeded || edits.length > 0) {
       // The job's project is a record; the conversation's CURRENT project is
-      // state the next message reads: set only while this run holds the job,
-      // under the same row lock (#566, see the session mapping above).
+      // state the next message reads: set only while this run holds the
+      // claim, under the same row lock (#566, see the session mapping above).
       await db.transaction(async (tx) => {
-        const tenu = await rowStillHeld(tx, jobId, args.claimGeneration);
+        const tenu = await claimStillHeld(tx, jobId, args.claimGeneration);
         await attachProductionToProject(
           {
             db: tx,
@@ -915,20 +1001,7 @@ export async function runCliRuntimeJob(args: {
   }
   if (cutBy) return outcomeOfLostAuthority(cutBy);
 
-  if (turn.isError || turn.finalText === '') {
-    // An exhausted subscription window must read as exactly that (D0/risques)
-    // — as a machine CODE + data, never runner-authored prose (invariant #2:
-    // the LLM speaks or the runner stays silent; error fields carry codes).
-    const limitHit = turn.rateLimit && turn.rateLimit.status !== 'allowed';
-    const code = limitHit
-      ? `subscription_limit_reached` +
-        (turn.rateLimit?.resetsAt
-          ? ` resets_at=${new Date(turn.rateLimit.resetsAt * 1000).toISOString()}`
-          : '') +
-        (turn.errorDetail ? ` ${turn.errorDetail}` : '')
-      : `cli_runtime_error: ${turn.errorDetail ?? 'no final text'}`;
-    return fail(code.slice(0, 400));
-  }
+  if (failure !== null) return fail(failure);
 
   // ── La porte terminale (V&C, T11) ─────────────────────────────────────────
   //
