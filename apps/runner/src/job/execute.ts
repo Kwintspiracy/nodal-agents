@@ -74,12 +74,12 @@ import type { NodalLlmClient } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
 import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
+import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import { loadApprovalRules } from './approval-rules.ts';
 import {
   computeToolWhitelist,
-  computeToolChoice,
   executeTool,
   ALWAYS_ON_TOOLS,
   createTelegramSendMessageTool,
@@ -141,6 +141,7 @@ import {
   retryBlockedMessage,
   remainingDelegationHops,
   delegationDepthExceededMessage,
+  assertTurnToolCallBudget,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -1671,9 +1672,6 @@ async function runJobTracked(
   // Definite assignment: llmClient is set unconditionally in the resolution
   // block below (or the function returns early with a failed status).
   let llmClient!: NodalLlmClient;
-  // Per-model capability of the primary key (T2): drives computeToolChoice so we
-  // don't force tool_choice:'required' on a model that rejects it.
-  let modelSupportsForcedToolChoice = true;
 
   // Chronomètre du SEGMENT en cours. Capturé à l'entrée de la fonction pour
   // couvrir le chargement du job et de l'agent, pas seulement la boucle LLM.
@@ -2034,11 +2032,9 @@ async function runJobTracked(
       return { status: 'failed', error: code };
     }
     llmClient = resolved.client;
-    modelSupportsForcedToolChoice = resolved.primarySupportsForcedToolChoice;
     trace('llm_client_from_key', {
       provider: resolved.primaryProvider,
       chainLength: resolved.chainLength,
-      forcedToolChoice: modelSupportsForcedToolChoice,
     });
   }
 
@@ -2816,7 +2812,6 @@ async function runJobTracked(
 
   // ── 9. Initialize ChainCounters ───────────────────────────────────────────────
   const counters = new ChainCounters(DEFAULT_LIMITS);
-  const hasAdapterTools = !isOrchestrator && toolDefs.length > ALWAYS_ON_TOOLS.length;
 
   // ── 10. Build tool map ────────────────────────────────────────────────────────
   //
@@ -4307,14 +4302,6 @@ async function runJobTracked(
       // a. Validate message structure
       validateMessageStructure(messages);
 
-      // b. Tool choice
-      const toolChoice = computeToolChoice({
-        isOrchestrator,
-        turn,
-        hasAdapterTools,
-        modelSupportsForcedToolChoice,
-      });
-
       // c. Convert tools to AI SDK format. For the skill-authoring meta-tools,
       // append the live workspace tool list so the model has the real tool names
       // in front of it as it decides to author a skill (see step 10).
@@ -4389,7 +4376,14 @@ async function runJobTracked(
               imageCache,
             ),
             tools: aiSdkTools,
-            toolChoice,
+            // The model decides, on every turn, for every model (#600). Forcing
+            // a tool call on turn 1 made a thinking model plan a whole
+            // trajectory in one response (64 to 546 calls, or the output cap),
+            // and left an orchestrator unable to answer a direct question.
+            // A turn that answers in text is judged after it, by the guards
+            // that already read it (delivery on a tool-only channel, stuck
+            // delegations, declared deliverables, the empty turn).
+            toolChoice: 'auto',
           },
           // #440 : le tour est streamé sous deux horloges de silence, jamais
           // coupé tant qu'il écrit (packages/llm/src/turn-clocks.ts).
@@ -4628,133 +4622,226 @@ async function runJobTracked(
       // completionTokens → outputTokens. Both can be `undefined` when the
       // provider doesn't report usage (local providers like LM Studio /
       // Ollama sometimes omit it) — Number(undefined) is NaN, hence the
-      // isFinite guard below.
-      const usage = response.usage;
-      const promptT = Number(usage?.inputTokens ?? 0);
-      const completionT = Number(usage?.outputTokens ?? 0);
-      // Prompt-cached reads: the portion of this turn's input served from the
-      // provider's cache (Anthropic cache_read, OpenRouter/DeepSeek cached_tokens).
-      // The AI SDK reports `inputTokens` as the TOTAL (incl. cached) and
-      // `cachedInputTokens` as the cached subset — verified for @ai-sdk/anthropic
-      // and @openrouter/ai-sdk-provider. For Anthropic the total ALSO includes
-      // cache WRITES (providerMetadata.anthropic.cacheCreationInputTokens,
-      // verified on @ai-sdk/anthropic 3.0.76) — effective (fresh) input =
-      // total − cache reads − cache writes (review 2026-08-20: without the
-      // writes term, a cache-priming turn inflated effective input by its
-      // entire system prompt).
-      const cachedT = Number(usage?.cachedInputTokens ?? 0);
-      const antMeta = (
-        response.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
-      )?.['anthropic'];
-      const cacheWriteRaw = antMeta?.['cacheCreationInputTokens'];
-      const cacheWriteT =
-        typeof cacheWriteRaw === 'number' && Number.isFinite(cacheWriteRaw) ? cacheWriteRaw : 0;
-      const promptTok = Number.isFinite(promptT) ? promptT : 0;
-      const effectiveT = Math.max(
-        0,
-        promptTok - (Number.isFinite(cachedT) ? cachedT : 0) - cacheWriteT,
-      );
-      inputTokens += promptTok;
-      outputTokens += Number.isFinite(completionT) ? completionT : 0;
-      effectiveInputTokens += effectiveT;
+      // isFinite guard below. Une closure : le tour ET sa relance (#600, plus
+      // bas) sont des appels servis, comptés de la même façon.
+      const compterAppel = (res: typeof response) => {
+        const usage = res.usage;
+        const promptT = Number(usage?.inputTokens ?? 0);
+        const completionT = Number(usage?.outputTokens ?? 0);
+        // Prompt-cached reads: the portion of this turn's input served from the
+        // provider's cache (Anthropic cache_read, OpenRouter/DeepSeek cached_tokens).
+        // The AI SDK reports `inputTokens` as the TOTAL (incl. cached) and
+        // `cachedInputTokens` as the cached subset — verified for @ai-sdk/anthropic
+        // and @openrouter/ai-sdk-provider. For Anthropic the total ALSO includes
+        // cache WRITES (providerMetadata.anthropic.cacheCreationInputTokens,
+        // verified on @ai-sdk/anthropic 3.0.76) — effective (fresh) input =
+        // total − cache reads − cache writes (review 2026-08-20: without the
+        // writes term, a cache-priming turn inflated effective input by its
+        // entire system prompt).
+        const cachedT = Number(usage?.cachedInputTokens ?? 0);
+        const antMeta = (
+          res.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
+        )?.['anthropic'];
+        const cacheWriteRaw = antMeta?.['cacheCreationInputTokens'];
+        const cacheWriteT =
+          typeof cacheWriteRaw === 'number' && Number.isFinite(cacheWriteRaw) ? cacheWriteRaw : 0;
+        const promptTok = Number.isFinite(promptT) ? promptT : 0;
+        const effectiveT = Math.max(
+          0,
+          promptTok - (Number.isFinite(cachedT) ? cachedT : 0) - cacheWriteT,
+        );
+        inputTokens += promptTok;
+        outputTokens += Number.isFinite(completionT) ? completionT : 0;
+        effectiveInputTokens += effectiveT;
 
-      // Accumulate real dollar cost for this call (Guard 1e).
-      // OpenRouter reports per-call cost in providerMetadata.openrouter.usage.cost
-      // when `usage:{include:true}` is passed (set unconditionally in
-      // buildOpenRouterModel). Other providers don't populate this path — the
-      // guard below simply won't fire for them (cost stays 0).
-      // Safe access: providerMetadata is Record<string, JSONObject>; we read
-      // through the chain and coerce to number, guarding NaN and negative values.
-      // orMeta: the openrouter sub-object from providerMetadata. Typed as
-      // Record<string, unknown> so all child accesses are safe regardless of the
-      // upstream's payload shape.
-      const orMeta = (
-        response.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
-      )?.['openrouter'] as Record<string, unknown> | undefined;
-      const rawCost = (orMeta?.['usage'] as Record<string, unknown> | undefined)?.['cost'];
-      const reportedCostUsd =
-        typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0
-          ? rawCost
-          : undefined;
-      // Fix #21: OpenRouter is the only provider that self-reports cost above.
-      // Every native/BYOK provider (DeepSeek/MiniMax/Anthropic-direct/OpenAI/
-      // Google/Groq/Mistral/Ollama) leaves it unset — without this fallback
-      // totalCostUsd stays 0 forever for those and Guard 1e never fires.
-      // Derive from tokens × catalog list price instead; 0 (documented debt)
-      // for a model with no catalogued price yet.
-      const callCostUsd =
-        reportedCostUsd ??
-        estimateCallCostUsd(llmClient.config.provider, llmClient.config.model, {
-          inputTokens: promptTok,
-          outputTokens: completionT,
-          cachedTokens: Number.isFinite(cachedT) ? cachedT : 0,
-          cacheCreationTokens: cacheWriteT,
-        });
-      totalCostUsd += callCostUsd;
-      // Capture the upstream provider name (P0-B: served-upstream observability).
-      // OpenRouter sets providerMetadata.openrouter.provider to the upstream that
-      // actually served the request (e.g. 'DeepSeek', 'Anthropic'). We keep the
-      // last non-empty value across the job so the DB row reflects which upstream
-      // handled the bulk of the work.
-      const rawProvider = orMeta?.['provider'];
-      if (typeof rawProvider === 'string' && rawProvider.length > 0) {
-        servedProvider = rawProvider;
-      }
-
-      // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
-      // pendant que la réponse se terminait, n'exécute aucun des outils
-      // qu'elle demande. Le texte du tour est gardé. Lue AVANT les plafonds
-      // (revue Codex de #449, passe 7) : un Stop suivi d'un débordement rend
-      // `cancelled`, pas `failed` — le parent et la tâche lisent ce statut.
-      // Toute perte du droit d'agir compte ici, pas seulement Stop (#566).
-      const perteApresAppel = await droitPerdu();
-      if (perteApresAppel) {
-        if (texteDuTour.trim() !== '') {
-          messages = [
-            ...messages,
-            { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
-          ];
+        // Accumulate real dollar cost for this call (Guard 1e).
+        // OpenRouter reports per-call cost in providerMetadata.openrouter.usage.cost
+        // when `usage:{include:true}` is passed (set unconditionally in
+        // buildOpenRouterModel). Other providers don't populate this path — the
+        // guard below simply won't fire for them (cost stays 0).
+        // Safe access: providerMetadata is Record<string, JSONObject>; we read
+        // through the chain and coerce to number, guarding NaN and negative values.
+        // orMeta: the openrouter sub-object from providerMetadata. Typed as
+        // Record<string, unknown> so all child accesses are safe regardless of the
+        // upstream's payload shape.
+        const orMeta = (
+          res.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
+        )?.['openrouter'] as Record<string, unknown> | undefined;
+        const rawCost = (orMeta?.['usage'] as Record<string, unknown> | undefined)?.['cost'];
+        const reportedCostUsd =
+          typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0
+            ? rawCost
+            : undefined;
+        // Fix #21: OpenRouter is the only provider that self-reports cost above.
+        // Every native/BYOK provider (DeepSeek/MiniMax/Anthropic-direct/OpenAI/
+        // Google/Groq/Mistral/Ollama) leaves it unset — without this fallback
+        // totalCostUsd stays 0 forever for those and Guard 1e never fires.
+        // Derive from tokens × catalog list price instead; 0 (documented debt)
+        // for a model with no catalogued price yet.
+        const callCostUsd =
+          reportedCostUsd ??
+          estimateCallCostUsd(llmClient.config.provider, llmClient.config.model, {
+            inputTokens: promptTok,
+            outputTokens: completionT,
+            cachedTokens: Number.isFinite(cachedT) ? cachedT : 0,
+            cacheCreationTokens: cacheWriteT,
+          });
+        totalCostUsd += callCostUsd;
+        // Capture the upstream provider name (P0-B: served-upstream observability).
+        // OpenRouter sets providerMetadata.openrouter.provider to the upstream that
+        // actually served the request (e.g. 'DeepSeek', 'Anthropic'). We keep the
+        // last non-empty value across the job so the DB row reflects which upstream
+        // handled the bulk of the work.
+        const rawProvider = orMeta?.['provider'];
+        if (typeof rawProvider === 'string' && rawProvider.length > 0) {
+          servedProvider = rawProvider;
         }
-        return await lacherLeJob(perteApresAppel, 'before_tools');
-      }
+        return { promptT, promptTok, cachedT, effectiveT, completionT, callCostUsd };
+      };
+      const { promptT, promptTok, cachedT, effectiveT, completionT, callCostUsd } =
+        compterAppel(response);
 
-      // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
-      // input + output, not raw input. A job that re-sends a prompt-cached
-      // history (the common long-running pattern: the growing transcript is read
-      // from cache each turn, ~10x cheaper) accrues budget at its real cost, so
-      // it no longer dies at the wall like an uncached runaway would. A genuine
-      // runaway (fresh tokens every turn) still trips. Fail loud BEFORE acting on
-      // this turn's output so a runaway never bleeds the provider's credit dry.
-      // Agnostic: no per-agent knowledge. Runaway coverage is unchanged —
-      // maxTurns + the no-progress detector remain the loop backstops.
-      if (effectiveInputTokens + outputTokens > maxTotalTokensPerJob) {
-        messages = avecTourRepris();
-        // #442 : ce que le run a écrit, ce tour compris, est livré.
-        return await arreterSurBudget(
-          {
-            kind: 'tokens',
-            spent: effectiveInputTokens + outputTokens,
-            limit: maxTotalTokensPerJob,
+      // Les gardes avant d'agir, lues sur ce que le run a dépensé JUSQU'ICI :
+      // après le tour, puis de nouveau après sa relance quand elle a été
+      // servie (#600). Rendent l'arrêt du run, ou null pour continuer.
+      const avantDAgir = async (): Promise<ExecuteJobResult | null> => {
+        // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
+        // pendant que la réponse se terminait, n'exécute aucun des outils
+        // qu'elle demande. Le texte du tour est gardé. Lue AVANT les plafonds
+        // (revue Codex de #449, passe 7) : un Stop suivi d'un débordement rend
+        // `cancelled`, pas `failed` — le parent et la tâche lisent ce statut.
+        // Toute perte du droit d'agir compte ici, pas seulement Stop (#566).
+        const perteApresAppel = await droitPerdu();
+        if (perteApresAppel) {
+          if (texteDuTour.trim() !== '') {
+            messages = [
+              ...messages,
+              { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
+            ];
+          }
+          return await lacherLeJob(perteApresAppel, 'before_tools');
+        }
+
+        // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
+        // input + output, not raw input. A job that re-sends a prompt-cached
+        // history (the common long-running pattern: the growing transcript is read
+        // from cache each turn, ~10x cheaper) accrues budget at its real cost, so
+        // it no longer dies at the wall like an uncached runaway would. A genuine
+        // runaway (fresh tokens every turn) still trips. Fail loud BEFORE acting on
+        // this turn's output so a runaway never bleeds the provider's credit dry.
+        // Agnostic: no per-agent knowledge. Runaway coverage is unchanged —
+        // maxTurns + the no-progress detector remain the loop backstops.
+        if (effectiveInputTokens + outputTokens > maxTotalTokensPerJob) {
+          messages = avecTourRepris();
+          // #442 : ce que le run a écrit, ce tour compris, est livré.
+          return await arreterSurBudget(
+            {
+              kind: 'tokens',
+              spent: effectiveInputTokens + outputTokens,
+              limit: maxTotalTokensPerJob,
+              turn,
+            },
+            texteDuTour,
+          );
+        }
+
+        // Guard 1e — real dollar cost cap. Checked right after Guard 1a so both
+        // guards are evaluated before any of the turn's output is acted on.
+        // Fires only when the provider actually reported a non-zero cost (i.e.
+        // OpenRouter with usage:{include:true}); providers that don't report cost
+        // leave totalCostUsd at 0 and this guard never trips — Guard 1a is the
+        // fallback for those. Fail loud with cost details for observability.
+        if (totalCostUsd > maxCostPerJobUsd) {
+          messages = avecTourRepris();
+          // #442 : ce que le run a écrit, ce tour compris, est livré.
+          return await arreterSurBudget(
+            { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn },
+            texteDuTour,
+          );
+        }
+        return null;
+      };
+      const arretApresTour = await avantDAgir();
+      if (arretApresTour) return arretApresTour;
+
+      // Relecture d'une réponse qui promettait une action (#600). Le modèle
+      // décide seul d'appeler un outil, à chaque tour : un tour qui finit en
+      // prose ANNONÇANT une action (« Je délègue à Dev-C. ») sans l'appel qui
+      // la fait n'a rien fait, et finissait `completed` sur un travail jamais
+      // lancé. Le MÊME mécanisme que le chat (llm/action-recheck.ts) : une
+      // relance locale et courte (la tâche, la réponse, la consigne, les
+      // outils du job), jamais le tour rejoué. Si le modèle appelle un outil,
+      // ses appels deviennent ceux de CE tour, sous les mêmes gardes (Stop,
+      // plafonds de jetons et de coût, 50 appels par tour). Sinon la prose
+      // reste la réponse, jugée plus bas comme avant.
+      //
+      // Elle part APRÈS les gardes : un tour déjà au-dessus d'un plafond
+      // s'arrête sans payer de relance. Et les gardes sont relues après elle.
+      //
+      // Un tour qui attend une approbation se suspend sans finir (branche g) :
+      // rien à relire. Un tour vide non plus.
+      //
+      // Limite connue : si la relance DÉCLINE (le modèle n'appelle rien), une
+      // annonce finit `completed` avec l'annonce pour réponse. Aucune lecture
+      // du texte ne tranche à sa place (invariants #2 et #4).
+      let relecture: typeof response | null = null;
+      if (
+        (response.toolCalls ?? []).length === 0 &&
+        texteDuTour.trim() !== '' &&
+        !approvalPending
+      ) {
+        const veilleRelecture = watchJobRow(db, jobId as string, prise, STOP_POLL_MS);
+        try {
+          relecture = await recheckNarratedAction(llmClient, {
+            request: job.task,
+            reply: texteDuTour.trim(),
+            tools: aiSdkTools,
+            abortSignal: veilleRelecture.signal,
+          });
+          compterAppel(relecture);
+          // Une relance dégénérée (plus d'appels que la règle du tour n'en
+          // admet) est ABANDONNÉE : aucun de ses appels ne s'exécute, et la
+          // prose du tour reste la réponse. Le tour lui-même garde la règle
+          // #564 (`counters.admitTurn` plus bas) : seul le filet change.
+          assertTurnToolCallBudget((relecture.toolCalls ?? []).length);
+          trace('action_recheck', {
             turn,
-          },
-          texteDuTour,
-        );
+            toolCalls: (relecture.toolCalls ?? []).map((tc) => tc.toolName),
+          });
+        } catch (err) {
+          // Une relance coupée au plafond de sortie est ABANDONNÉE, comme toute
+          // autre panne de relance : sa sortie tronquée n'est jamais exécutée,
+          // et la prose du tour, complète, reste la réponse. Elle a été servie :
+          // ce qu'elle a facturé compte, comme pour un tour coupé.
+          if (err instanceof LLMOutputLimitError) {
+            inputTokens += err.usage.inputTokens;
+            effectiveInputTokens += err.usage.inputTokens;
+            outputTokens += err.usage.outputTokens;
+            totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
+              inputTokens: err.usage.inputTokens,
+              outputTokens: err.usage.outputTokens,
+              cachedTokens: 0,
+              cacheCreationTokens: 0,
+            });
+          }
+          // Stop pendant la relance : la relecture des gardes juste en dessous
+          // arrête le run, avec le texte du tour.
+          // Toute autre panne : la relance est un filet, la prose reste la
+          // réponse, et la panne est dite.
+          relecture = null;
+          const detail = err instanceof Error ? err.message.slice(0, 200) : String(err);
+          if (!(err instanceof LLMCallCancelledError)) {
+            console.warn(`[exec ${jobId}] action recheck failed on turn ${turn}: ${detail}`);
+          }
+          trace('action_recheck_failed', { turn, error: detail });
+        } finally {
+          veilleRelecture.stop();
+        }
+        const arretApresRelance = await avantDAgir();
+        if (arretApresRelance) return arretApresRelance;
       }
-
-      // Guard 1e — real dollar cost cap. Checked right after Guard 1a so both
-      // guards are evaluated before any of the turn's output is acted on.
-      // Fires only when the provider actually reported a non-zero cost (i.e.
-      // OpenRouter with usage:{include:true}); providers that don't report cost
-      // leave totalCostUsd at 0 and this guard never trips — Guard 1a is the
-      // fallback for those. Fail loud with cost details for observability.
-      if (totalCostUsd > maxCostPerJobUsd) {
-        messages = avecTourRepris();
-        // #442 : ce que le run a écrit, ce tour compris, est livré.
-        return await arreterSurBudget(
-          { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn },
-          texteDuTour,
-        );
-      }
+      const reponseQuiAgit =
+        relecture !== null && (relecture.toolCalls ?? []).length > 0 ? relecture : null;
 
       // Guard 1c — compact when THIS turn's prompt crossed the threshold. Evicting
       // OLD tool-result bodies (keeping the last N turns) shrinks every subsequent
@@ -4773,7 +4860,7 @@ async function runJobTracked(
         }
       }
 
-      const rawToolCalls = response.toolCalls ?? [];
+      const rawToolCalls = (reponseQuiAgit ?? response).toolCalls ?? [];
       trace('llm_call_done', {
         turn,
         toolCalls: rawToolCalls.map((tc) => tc.toolName),
@@ -4842,7 +4929,12 @@ async function runJobTracked(
       // providerMetadata into providerOptions so the signature lands where the
       // SDK looks. Each provider reads only its own namespaced key (anthropic /
       // openrouter / …), so this is a safe no-op for models that don't need it.
-      const reasoningParts = (response.reasoning ?? []).map((p) => {
+      // La relance qui agit apporte son propre raisonnement : c'est lui qui
+      // accompagne ses appels d'outils, et qu'un modèle de raisonnement relit.
+      const reasoningParts = [
+        ...(response.reasoning ?? []),
+        ...(reponseQuiAgit?.reasoning ?? []),
+      ].map((p) => {
         const part = p as { providerMetadata?: unknown; providerOptions?: unknown };
         return part.providerMetadata != null && part.providerOptions == null
           ? { ...p, providerOptions: part.providerMetadata }

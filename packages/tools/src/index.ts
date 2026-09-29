@@ -156,10 +156,6 @@ export {
   isInlineInterpreterEvalCommand,
 } from '@nodal-agents/shared';
 
-// tool_choice discipline
-export { computeToolChoice } from './tool-choice';
-export type { ToolChoiceConfig, ToolChoice } from './tool-choice';
-
 // Whitelist computation
 export { computeToolWhitelist } from './whitelist';
 export type { WhitelistInput } from './whitelist';

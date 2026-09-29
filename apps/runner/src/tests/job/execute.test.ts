@@ -53,6 +53,7 @@ import {
   shortBlockReason,
   BLOCK_NO_REASON,
 } from '../../job/execute.ts';
+import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import { VERIFY_BEFORE_ASSERT_NUDGE } from '@nodal-agents/orchestration';
 
@@ -196,6 +197,10 @@ function makeMockLlmClient(
   configOverride?: { provider: string; model: string },
   /** The keys of the `tools` object handed to the model each turn — the REAL whitelist. */
   capturedToolKeysPerCall?: string[][],
+  /** What the re-read of a prose turn answers, in order; absent = no action. */
+  recheckResponses?: Array<{
+    toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+  }>,
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
@@ -203,6 +208,33 @@ function makeMockLlmClient(
     provider: 'mock',
     modelId: 'mock',
     doGenerate: async (options) => {
+      // The re-read of a prose turn (#600, llm/action-recheck.ts) is not a turn
+      // of the script: it answers "no action" (no tool call, plain usage) and
+      // leaves the scripted turns aligned. A test that scripts the re-read
+      // itself says so in `recheckResponses`.
+      const last = options.prompt[options.prompt.length - 1];
+      const isRecheck =
+        last?.role === 'user' &&
+        last.content.some((part) => part.type === 'text' && part.text === ACTION_RECHECK);
+      if (isRecheck) {
+        const scripted = recheckResponses?.shift();
+        return {
+          content: (scripted?.toolCalls ?? []).map((tc) => ({
+            type: 'tool-call' as const,
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: JSON.stringify(tc.args),
+          })),
+          finishReason: scripted?.toolCalls?.length
+            ? { unified: 'tool-calls' as const, raw: 'tool-calls' }
+            : { unified: 'stop' as const, raw: 'stop' },
+          usage: {
+            inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
+          },
+          warnings: [],
+        };
+      }
       // Record the prompt each call receives so a test can assert what actually
       // reached the provider (e.g. reasoning round-tripped from a prior turn).
       if (capturedPrompts) capturedPrompts.push(options.prompt);
@@ -290,7 +322,8 @@ function makeMockLlmClient(
       streaming: false,
     },
     generateText: (args) => {
-      if (capturedToolKeysPerCall) {
+      const msgs = (args as { messages?: Array<{ content?: unknown }> }).messages ?? [];
+      if (capturedToolKeysPerCall && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
         const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
         capturedToolKeysPerCall.push(Object.keys(tools));
       }
@@ -1085,9 +1118,11 @@ describe('executeJob', () => {
 
     expect(rows[0]?.status).toBe('completed');
     expect(rows[0]?.result).toBe('Here is my answer to the task.');
-    expect(rows[0]?.inputTokens).toBe(10);
-    expect(rows[0]?.outputTokens).toBe(5);
-    expect(rows[0]?.turn).toBe(1); // single LLM call → turn 1
+    // The prose turn is re-read once (#600, llm/action-recheck.ts), and that
+    // call is billed too: 10/5 for the turn + 10/5 for the re-read.
+    expect(rows[0]?.inputTokens).toBe(20);
+    expect(rows[0]?.outputTokens).toBe(10);
+    expect(rows[0]?.turn).toBe(1); // one turn: the re-read is not a turn of its own
     // Wall-clock timer: should have elapsed time (>= 0, often > 0). On very
     // fast runs Date.now() can resolve to the same ms, so assert non-null.
     expect(rows[0]?.totalDurationMs).not.toBeNull();
@@ -1847,18 +1882,23 @@ describe('executeJob', () => {
 
     // Turn 1: the model NARRATES ("Je lance X") with NO tool call — the MiniMax
     // slip (~1 in 5). The escalation-recovery re-prompt then yields run_task.
-    const llmClient = makeMockLlmClient([
-      { text: 'Je lance Displacer dans le Cortex.' },
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-recheck',
-            toolName: 'run_task',
-            args: { instruction: 'Lancer Displacer dans le Cortex' },
-          },
-        ],
-      },
-    ]);
+    const llmClient = makeMockLlmClient(
+      [{ text: 'Je lance Displacer dans le Cortex.' }],
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-recheck',
+              toolName: 'run_task',
+              args: { instruction: 'Lancer Displacer dans le Cortex' },
+            },
+          ],
+        },
+      ],
+    );
     const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
     const result = await runChatTurn({
       deps: makeDeps(llmClient),
@@ -3002,7 +3042,8 @@ describe('executeJob', () => {
     const job = await createTestJob(db, seed);
 
     // Two-turn scenario: first calls save_memory, second returns final text.
-    // Mock returns 10/5 per call → expected 20/10 totals after 2 calls.
+    // Mock returns 10/5 per call → 30/15 after 3 calls: the two turns and the
+    // re-read of the final prose turn (#600).
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
@@ -3028,9 +3069,9 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
 
-    expect(rows[0]?.inputTokens).toBe(20);
-    expect(rows[0]?.outputTokens).toBe(10);
-    expect(rows[0]?.turn).toBe(2); // two LLM calls → turn 2
+    expect(rows[0]?.inputTokens).toBe(30);
+    expect(rows[0]?.outputTokens).toBe(15);
+    expect(rows[0]?.turn).toBe(2); // two turns; the re-read is not a turn
   });
 
   it('completes when LLM calls dashboard_publish + return_result (Brique 33)', async () => {
@@ -6114,7 +6155,8 @@ describe('reliability guards', () => {
     });
 
     // Real DB row: raw input persisted as 1000, but the budgeted EFFECTIVE input
-    // is only the 5 non-cached tokens.
+    // is only the 5 non-cached tokens. The re-read of the prose turn (#600)
+    // adds its own 10 uncached input tokens to both.
     const [row] = await db
       .select({
         status: agentJobs.status,
@@ -6126,8 +6168,8 @@ describe('reliability guards', () => {
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('completed');
     expect(row?.error).toBeNull();
-    expect(row?.inputTokens).toBe(1000);
-    expect(row?.effectiveInputTokens).toBe(5);
+    expect(row?.inputTokens).toBe(1010);
+    expect(row?.effectiveInputTokens).toBe(15);
   });
 
   it('Guard 1a still trips on FRESH tokens: same raw input, zero cache ⇒ token_budget_exceeded', async () => {

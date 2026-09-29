@@ -277,7 +277,7 @@ vi.mock('@nodal-agents/shared', async () => {
         return {
           modelId,
           label: 'Test No-Tools Model',
-          capabilities: { tools: false, forcedToolChoice: false },
+          capabilities: { tools: false },
         };
       }
       return actual.findModelCatalogEntry(provider, modelId);

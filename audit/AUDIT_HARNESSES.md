@@ -61,6 +61,8 @@ Pour **chacun** des douze fournisseurs, les huit dimensions suivantes sont `BLOC
 Et les six modules transversaux — `tool-call-middleware.ts`, `parsers.ts`, `tolerant-fetch.ts`,
 `retry.ts`, `failover.ts`, `tool-choice-floor.ts` — sont **tous `BLOCKED`**.
 
+> 29/09/2026 : `tool-choice-floor.ts` a été retiré par la PR #604 (issue #600). Le runner n'envoie plus jamais de `tool_choice` forcé ; le filet qui relâchait un `required` refusé n'avait plus rien à rattraper.
+
 Ils méritent une attention particulière au prochain passage, pour deux raisons formulées par le
 protocole lui-même :
 

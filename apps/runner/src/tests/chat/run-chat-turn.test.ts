@@ -25,6 +25,7 @@ import { projectKey } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import { chatSurfaceToolNames } from '@nodal-agents/catalog';
 import { CHAT_TOOLS, runChatTurn } from '../../chat/run-chat-turn.ts';
+import { actionRecheckMessages } from '../../llm/action-recheck.ts';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 
 // ─── Intercept createLlmClient (same pattern as execute.test.ts) ──────────────
@@ -1164,6 +1165,11 @@ describe('runChatTurn — la relance d’escalade (coût d’un tour, 09/09)', (
     expect(relance?.messages[1]?.content).toBe('Bonjour Quentin, je suis là.');
     expect(relance?.messages[2]?.role).toBe('user');
     expect(String(relance?.messages[2]?.content)).toContain('Re-read your previous reply');
+    // Le MÊME mécanisme que la boucle de job (#600) : la relance du chat est
+    // exactement celle que construit llm/action-recheck.ts, consigne comprise.
+    expect(relance?.messages).toEqual(
+      actionRecheckMessages('Bonjour, tu es là ?', 'Bonjour Quentin, je suis là.'),
+    );
   });
 
   it('la relance est un ORDRE DE GRANDEUR plus petite que la réponse', async () => {
