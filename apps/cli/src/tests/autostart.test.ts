@@ -276,13 +276,15 @@ describe('Windows : la valeur Run, sans droits admin @cap:installer-et-demarrer/
     const s = await installAutostart(WIN_DEV, sys.fx);
     expect(s).toEqual({ state: 'at_login' });
     expect(sys.files.get(script)).toContain(' up\r\n');
-    expect(sys.calls).toContain(
-      `reg add ${RUN} /v Nodal Agents /t REG_EXPAND_SZ /d ` +
-        `%SystemRoot%\\System32\\conhost.exe --headless "${script}" /f`,
-    );
+    // conhost héberge cmd.exe, qui exécute le `.cmd` : la forme attestée pour
+    // un script batch (vérifiée le 30/09 sur Windows 11, voir autostart.ts).
+    const line =
+      `%SystemRoot%\\System32\\conhost.exe --headless ` +
+      `%SystemRoot%\\System32\\cmd.exe /c "${script}"`;
+    expect(sys.calls).toContain(`reg add ${RUN} /v Nodal Agents /t REG_EXPAND_SZ /d ${line} /f`);
     expect(sys.registry.get(RUN)?.get('Nodal Agents')).toEqual({
       type: 'REG_EXPAND_SZ',
-      data: `%SystemRoot%\\System32\\conhost.exe --headless "${script}"`,
+      data: line,
     });
     // L'état vient du système : les deux lectures exactes.
     expect(sys.calls).toContain(`reg query ${RUN} /v Nodal Agents`);

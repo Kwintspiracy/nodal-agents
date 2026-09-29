@@ -13,9 +13,9 @@
 //     une tâche planifiée `schtasks /Create /SC ONLOGON` en exige, avec ou sans
 //     `/RU` et `/IT`, et un compte standard recevait « Access is denied ».
 //     La valeur lance un petit script `.cmd` (une ligne Run est bornée à 260
-//     caractères, et celle d'un poste de dev la dépasse) par
-//     `conhost.exe --headless` : aucune fenêtre console à l'ouverture de
-//     session (voir `windowsRunCommand`) ;
+//     caractères, et celle d'un poste de dev la dépasse) par `cmd.exe /c`,
+//     hébergé par `conhost.exe --headless` : aucune fenêtre console à
+//     l'ouverture de session (voir `windowsRunCommand`) ;
 //   - macOS   : un LaunchAgent (~/Library/LaunchAgents), `RunAtLoad` et
 //     `KeepAlive` sur échec ;
 //   - Linux   : une unité systemd UTILISATEUR, `Restart=on-failure`. Elle ne
@@ -96,16 +96,20 @@ export function windowsLauncherScript(argv: readonly string[]): string {
  * La ligne écrite sous Run, en REG_EXPAND_SZ : Windows y développe
  * `%SystemRoot%`, comme pour sa propre valeur SecurityHealth.
  *
- * `conhost.exe --headless` héberge le script SANS fenêtre. C'est le mode que
+ * `conhost.exe --headless` héberge la console SANS fenêtre. C'est le mode que
  * ConPTY utilise depuis Windows 10 1809 : le binaire et le drapeau sont dans
  * tout Windows 10 et 11 encore maintenu, et il court-circuite Windows Terminal
- * quand celui-ci est le terminal par défaut. Les autres voies laissent une
- * fenêtre : `powershell -WindowStyle Hidden` en montre une le temps de se
- * cacher, et sous Windows Terminal elle reste ; `wscript` + `.vbs` dépend de
- * VBScript, que Microsoft retire de Windows.
+ * quand celui-ci est le terminal par défaut. Il lance un PROGRAMME : le `.cmd`
+ * passe donc par `cmd.exe /c`, la forme attestée pour un script batch, plutôt
+ * que d'être donné nu à conhost. Vérifié le 30/09/2026 sur Windows 11 : cette
+ * ligne exacte, lancée par execa puis par `cmd /c start ""`, exécute un `.cmd`
+ * rangé dans un dossier à espaces. Les autres voies laissent une fenêtre :
+ * `powershell -WindowStyle Hidden` en montre une le temps de se cacher, et
+ * sous Windows Terminal elle reste ; `wscript` + `.vbs` dépend de VBScript,
+ * que Microsoft retire de Windows.
  */
 export function windowsRunCommand(script: string): string {
-  return `%SystemRoot%\\System32\\conhost.exe --headless "${script}"`;
+  return `%SystemRoot%\\System32\\conhost.exe --headless %SystemRoot%\\System32\\cmd.exe /c "${script}"`;
 }
 
 function xmlEscape(s: string): string {
