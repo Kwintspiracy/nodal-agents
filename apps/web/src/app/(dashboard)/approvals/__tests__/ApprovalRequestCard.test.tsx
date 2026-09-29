@@ -669,6 +669,46 @@ describe('la carte a deux états, Open et Close @cap:approuver-une-action/ecran'
     expect(parTestId('approval-decision-note')!.textContent).toContain('Answered: main');
     expect(rendu().querySelector('a[href="/runs/j1"]')!.textContent).toContain('Open Run');
   });
+
+  it('#465 — une QUESTION en attente ne se répond pas ici : la carte renvoie là où elle vit', async () => {
+    const entree = { question: 'Which branch do I target?', options: ['main', 'develop'] };
+
+    // Venue d'une conversation : on y répond, dans le fil.
+    await monter(
+      demande({ kind: 'question', toolInput: entree, conversationId: 'c42' } as Partial<Approval>),
+    );
+    const boutons = [...rendu().querySelectorAll('button')].map((b) => b.textContent?.trim());
+    expect(boutons).not.toContain('main');
+    expect(boutons).not.toContain('develop');
+    expect(rendu().querySelector('a[href="/chat/c42"]')!.textContent).toContain(
+      'Answer in the conversation',
+    );
+
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+
+    // Sans conversation (une automatisation) : sur la page du run.
+    await monter(demande({ kind: 'question', toolInput: entree } as Partial<Approval>));
+    const liens = [...rendu().querySelectorAll('a[href="/runs/j1"]')].map((l) =>
+      l.textContent?.trim(),
+    );
+    expect(liens).toContain('Answer on the run');
+  });
+
+  // Revue Nodal de #622, passe 2 : le libellé testait `!== null` pendant que
+  // l'adresse passait par `conversationOf`. Sur un id VIDE, la carte disait
+  // « in the conversation » en menant au run. Une seule règle pour les deux.
+  it('#465 — un id de conversation VIDE : le libellé et l’adresse disent tous deux le run', async () => {
+    const entree = { question: 'Which branch do I target?', options: ['main', 'develop'] };
+    await monter(
+      demande({ kind: 'question', toolInput: entree, conversationId: '' } as Partial<Approval>),
+    );
+    const liens = [...rendu().querySelectorAll('a[href="/runs/j1"]')].map((l) =>
+      l.textContent?.trim(),
+    );
+    expect(liens).toContain('Answer on the run');
+    expect(rendu().textContent).not.toContain('Answer in the conversation');
+  });
 });
 
 // ─── Ce que la revue a trouvé ─────────────────────────────────────────────────

@@ -1,23 +1,13 @@
 'use client';
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
-import type { ApprovalRow } from '@/lib/actions';
 import { listApprovalsAction } from '@/lib/actions';
 import { usePolling } from '@/lib/use-polling';
+import { toPendingApproval, type PendingApproval } from '@/lib/pending-approval.ts';
 
 // Only the fields the bell / pill need — avoids exporting the full ApprovalRow
 // to client bundles that don't need the rest.
-export type PendingApproval = Pick<
-  ApprovalRow,
-  | 'id'
-  | 'jobId'
-  | 'toolName'
-  | 'agentName'
-  | 'toolInput'
-  | 'requestedAt'
-  | 'jobChannel'
-  | 'conversationChannel'
->;
+export type { PendingApproval };
 
 type ApprovalsContextValue = {
   pending: PendingApproval[];
@@ -61,23 +51,7 @@ export function ApprovalsProvider({
       const result = await listApprovalsAction({ status: 'pending' });
       if (!result.ok) return;
       // Map the full ApprovalRow down to the minimal PendingApproval shape.
-      setPending(
-        result.data.map((r) => ({
-          id: r.id,
-          jobId: r.jobId,
-          toolName: r.toolName,
-          agentName: r.agentName,
-          toolInput: r.toolInput,
-          requestedAt: r.requestedAt,
-          // D'OÙ vient la demande. Le menu Chat range chaque attente dans son
-          // dossier avec ces deux champs (#135, #148) — le canal de sa
-          // conversation d'abord, celui de son job quand elle n'en a pas. La
-          // pastille d'un dossier est exactement le nombre de lignes qui le
-          // désignent.
-          jobChannel: r.jobChannel,
-          conversationChannel: r.conversationChannel,
-        })),
-      );
+      setPending(result.data.map(toPendingApproval));
     } catch (err) {
       console.error('[ApprovalsProvider] reading the pending approvals failed', err);
     }

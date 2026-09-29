@@ -24,7 +24,18 @@ import { buildSystemPrompt } from '../system-prompt';
 import type { JobContext, ConversationContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { ALWAYS_ON_TOOLS, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
+import {
+  ALWAYS_ON_TOOLS,
+  DELIVERY_TOOL_NAMES,
+  createListConversationsTool,
+  createSendFileTool,
+  createSendImageTool,
+  createTelegramSendMessageTool,
+  createToolRegistry,
+  registerBuiltins,
+} from '@nodal-agents/tools';
+import { generateTaskTools } from '../planner/task-tools';
+import { VERIFY_BEFORE_ASSERT_NUDGE } from '../chain-counters';
 import { generateAssignTools } from '../router/assign-tools';
 import { KNOWN_TOOL_NAME_UNIVERSE } from '../router/tool-availability';
 import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
@@ -1496,46 +1507,176 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     }
   });
 
-  it('keeps the Telegram etiquette for the job that can follow it, and only for it', async () => {
-    const { entityId, root, worker } = await seedTeam();
-    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
-    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+  // #613 — the channel layer carried 6 300 characters of hand-written
+  // Telegram rules that contradicted the runner (MarkdownV2 escaping on a tool
+  // that sends without parse_mode, markdown on a plain-text channel,
+  // hand-splitting at 4 096 while sendText splits). What stays is one line of
+  // facts, built from the adapter's declaration, for every tool-delivery
+  // channel, and only for the job that holds the tool it names.
+  const TELEGRAM_FACTS = {
+    channel: 'telegram',
+    sendTool: 'telegram_send_message',
+    renders: [],
+    onlyPath: true,
+  } as const;
+  const DISCORD_FACTS = {
+    channel: 'discord',
+    sendTool: 'telegram_send_message',
+    renders: ['**bold**', '*italic*', '`code`'],
+    onlyPath: true,
+  } as const;
+  // Slack renders its own mrkdwn, not markdown: `*x*` is bold there (#615).
+  const SLACK_FACTS = {
+    channel: 'slack',
+    sendTool: 'telegram_send_message',
+    renders: ['*bold*', '_italic_', '<url|text>'],
+    onlyPath: true,
+  } as const;
+  const withSend = [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES];
+  const deliveryLines = (prompt: string): string[] =>
+    prompt.split('\n').filter((l) => l.startsWith('- delivery:'));
 
-    const rootPrompt = await buildSystemPrompt(rootAgent, db, {
+  it('a Telegram job states the channel facts once, and no hand-written channel rule (#613)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
       origin: 'telegram',
       telegramChatId: '199791464',
-      availableToolNames: [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES],
+      channelDelivery: TELEGRAM_FACTS,
+      availableToolNames: withSend,
     });
-    expect(rootPrompt).toContain('## Channel etiquette');
-    expect(rootPrompt).toContain('telegram_send_message({ chatId, text })');
-
-    const workerPrompt = await buildSystemPrompt(workerAgent, db, {
-      origin: 'internal',
-      telegramChatId: '199791464',
-      isDelegated: true,
-      delegationDepth: 1,
-      availableToolNames: ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
-    });
-    expect(workerPrompt).not.toContain('telegram_send_message');
-    expect(workerPrompt).not.toContain('SAME-TURN MULTI-CALL REQUIRED');
-    // The sub-task contract itself stays: reply, then return_result, no direct send.
-    expect(workerPrompt).toContain('## Delegated sub-task');
-    expect(workerPrompt).toContain('Do NOT contact the user yourself');
+    expect(deliveryLines(prompt)).toEqual([
+      '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ' +
+        'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, **bold**, escapes) shows literally. ' +
+        'A long text is split into several messages automatically, so send each reply once, whole.',
+    ]);
+    // The line lives in the Job context block, where the channel is named.
+    const jobContext = prompt.split('## Job context')[1]?.split('\n## ')[0] ?? '';
+    expect(jobContext).toContain('- delivery:');
+    for (const gone of [
+      'MarkdownV2',
+      '4096',
+      '4 096',
+      '## Channel etiquette',
+      'Splitting rules',
+      'Telegram delivery',
+      '## Markdown output',
+    ]) {
+      expect({ gone, found: prompt.includes(gone) }).toEqual({ gone, found: false });
+    }
   });
 
-  it('lists as built-in only the built-ins the job holds', async () => {
+  it('a Discord job states ITS adapter facts: the marks it renders, same splitting (#613)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'discord',
+      telegramChatId: '1511202553420054671',
+      channelDelivery: DISCORD_FACTS,
+      availableToolNames: withSend,
+    });
+    expect(deliveryLines(prompt)).toEqual([
+      '- delivery: `telegram_send_message` reaches the user on discord, the only way your replies reach them. ' +
+        'Text arrives as typed, and these marks render: **bold**, *italic*, `code`. Any other markup shows literally. ' +
+        'A long text is split into several messages automatically, so send each reply once, whole.',
+    ]);
+    for (const gone of [
+      'MarkdownV2',
+      '4096',
+      '2000',
+      '## Channel etiquette',
+      'Telegram delivery',
+      '## Markdown output',
+    ]) {
+      expect({ gone, found: prompt.includes(gone) }).toEqual({ gone, found: false });
+    }
+  });
+
+  it('a Slack job names mrkdwn marks, never claims its markup shows literally (#615)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'slack',
+      telegramChatId: 'C0123456',
+      channelDelivery: SLACK_FACTS,
+      availableToolNames: withSend,
+    });
+    expect(deliveryLines(prompt)).toEqual([
+      '- delivery: `telegram_send_message` reaches the user on slack, the only way your replies reach them. ' +
+        'Text arrives as typed, and these marks render: *bold*, _italic_, <url|text>. Any other markup shows literally. ' +
+        'A long text is split into several messages automatically, so send each reply once, whole.',
+    ]);
+    expect(prompt).not.toContain('no markup renders');
+  });
+
+  it('a dashboard job holding the send tool keeps the format fact, not the only-path clause (#613)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'dashboard',
+      channelDelivery: { ...TELEGRAM_FACTS, onlyPath: false },
+      availableToolNames: withSend,
+    });
+    expect(deliveryLines(prompt)).toEqual([
+      '- delivery: `telegram_send_message` reaches the user on telegram. ' +
+        'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, **bold**, escapes) shows literally. ' +
+        'A long text is split into several messages automatically, so send each reply once, whole.',
+    ]);
+  });
+
+  it('a delegate that inherits the chat_id gets no channel text at all (#559, #613)', async () => {
     const { entityId, worker } = await seedTeam();
     const workerAgent = makeAgent(worker.id, entityId, worker.personality);
     const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish');
+    // Even handed the facts (a caller that got the rule wrong), the line names
+    // a tool the delegate does not hold: it stays out.
+    for (const channelDelivery of [undefined, TELEGRAM_FACTS]) {
+      const workerPrompt = await buildSystemPrompt(workerAgent, db, {
+        origin: 'internal',
+        telegramChatId: '199791464',
+        isDelegated: true,
+        delegationDepth: 1,
+        ...(channelDelivery ? { channelDelivery } : {}),
+        availableToolNames: tools,
+      });
+      expect(deliveryLines(workerPrompt)).toEqual([]);
+      for (const gone of [
+        'telegram_send_message',
+        'MarkdownV2',
+        '4096',
+        'Channel etiquette',
+        'split',
+      ]) {
+        expect({ gone, found: workerPrompt.includes(gone) }).toEqual({ gone, found: false });
+      }
+      // The sub-task contract itself stays: reply, then return_result, no direct send.
+      expect(workerPrompt).toContain('## Delegated sub-task');
+      expect(workerPrompt).toContain('Do NOT contact the user yourself');
+    }
+  });
+
+  it('the web chat surface carries no channel line and no plain-text rule (#613)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const chat = await buildSystemPrompt(rootAgent, db, { origin: 'dashboard', surface: 'chat' });
+    expect(deliveryLines(chat)).toEqual([]);
+    expect(chat).not.toContain('shows literally');
+    expect(chat).not.toContain('## Channel etiquette');
+  });
+
+  it('indexes only the deferred tools the job holds', async () => {
+    const { entityId, worker } = await seedTeam();
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'list_models');
     const prompt = await buildSystemPrompt(workerAgent, db, {
       origin: 'internal',
       isDelegated: true,
       delegationDepth: 1,
       availableToolNames: tools,
     });
-    const builtins = prompt.split('## Built-in capabilities')[1]?.split('\n## ')[0] ?? '';
-    expect(builtins).toContain('`file_read`');
-    expect(builtins).not.toContain('dashboard_publish');
+    const index = prompt.split('## Tools on demand')[1]?.split('\n## ')[0] ?? '';
+    expect(index).toContain('- `search_history`: ');
+    expect(index).not.toContain('list_models');
   });
 });
 
@@ -1698,6 +1839,82 @@ describe('buildSystemPrompt — the whole prompt names only held tools, on real 
         outside: [],
       });
     }
+  });
+
+  // #612 (review of #616, pass 2) — a tool the platform's text tells the model
+  // to call is `eager`: its schema is in the request. A deferred tool is named
+  // only by the "Tools on demand" index, whose job is to name every one of
+  // them; a block that orders a deferred tool would send the model to call a
+  // tool whose schema it has not read. Swept on every job shape, holding every
+  // known tool so every conditional block renders, plus the runner's nudge.
+  it('no text of the platform names a deferred tool, outside the tool index', async () => {
+    const { entityId, root, worker } = await seedConfigured({
+      scriptsAuthorized: true,
+    });
+    // Every definition the platform ships, with its declared loading.
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const defs = [
+      ...registry.list(),
+      createTelegramSendMessageTool(),
+      createSendImageTool(),
+      createSendFileTool(),
+      createListConversationsTool(),
+      ...generateTaskTools(root.id as AgentId, db),
+      ...(await generateAssignTools(root.id as AgentId, db)),
+    ];
+    const eager = new Set(defs.filter((d) => d.loading === 'eager').map((d) => d.name));
+    const universe = new Set([...KNOWN_TOOL_NAME_UNIVERSE, ...defs.map((d) => d.name)]);
+    const deferred = new Set([...universe].filter((n) => !eager.has(n)));
+    const everything = [...universe];
+
+    /** Deferred tool names cited in `text`, the tool index excepted. */
+    const deferredCited = (text: string): string[] => {
+      const start = text.indexOf('## Tools on demand');
+      const end = start === -1 ? -1 : text.indexOf('\n## ', start + 5);
+      const outsideIndex =
+        start === -1 ? text : text.slice(0, start) + (end === -1 ? '' : text.slice(end));
+      return [...new Set(outsideIndex.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])]
+        .filter((w) => deferred.has(w))
+        .sort();
+    };
+
+    const noProject: ConversationContext = {
+      id: 'c1',
+      priorTurns: 2,
+      openedByCommand: false,
+      currentProject: null,
+      registeredProjects: [{ name: 'Notes', path: '/w/notes', kind: 'documents' }],
+    };
+    const cases: Array<{ label: string; agent: Agent; ctx: JobContext }> = [
+      {
+        label: 'root on Telegram, in a conversation without a project',
+        agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+        ctx: { origin: 'telegram', telegramChatId: '1', conversation: noProject },
+      },
+      {
+        label: 'root, cron routine',
+        agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+        ctx: { origin: 'cron', routineState: [] },
+      },
+      {
+        label: 'delegated worker',
+        agent: makeAgent(worker.id, entityId, worker.personality),
+        ctx: { origin: 'internal', telegramChatId: '1', isDelegated: true, delegationDepth: 1 },
+      },
+    ];
+    const found: Record<string, string[]> = {};
+    for (const c of cases) {
+      const prompt = await buildSystemPrompt(c.agent, db, {
+        ...c.ctx,
+        availableToolNames: everything,
+      });
+      const cited = deferredCited(prompt);
+      if (cited.length > 0) found[c.label] = cited;
+    }
+    const nudge = deferredCited(VERIFY_BEFORE_ASSERT_NUDGE);
+    if (nudge.length > 0) found['runner nudge VERIFY_BEFORE_ASSERT'] = nudge;
+    expect(found).toEqual({});
   });
 
   it('the skills block names run_skill_script exactly when the job holds it', async () => {

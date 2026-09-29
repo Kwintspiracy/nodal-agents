@@ -960,6 +960,13 @@
       "when": 1786002900000,
       "tag": "0137_runner_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1786003000000,
+      "tag": "0138_job_loaded_tools",
+      "breakpoints": true
     }
   ]
 }

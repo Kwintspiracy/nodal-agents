@@ -1,5 +1,12 @@
 // catalog/skills/markdown-output.ts — system skill, shipped with the product.
 //
+// Plus injectée sur les canaux (#613) : elle y prescrivait titres, tableaux et
+// gras sur un canal qui les affiche tels quels, et se contredisait (« the
+// Telegram skill overrides this »). Le format d'un canal est un fait de son
+// adaptateur, dit par la ligne `delivery:` de `## Job context`. Le guide reste
+// vrai là où le markdown est rendu (chat web, pages publiées) : chargé à la
+// demande.
+//
 // Source of truth for the 'content' field. The bootstrap seeder
 // (seed-default-skills.ts) upserts this row at boot. Users can override
 // per-install via the dashboard; overrides are preserved on subsequent
@@ -13,7 +20,7 @@ export const markdownOutputSkill: SystemSkill = {
   description:
     'Formats longer responses with clean, readable markdown: headings, lists, tables, fenced code blocks. Knows when plain prose is better.',
   requiredBuiltins: [],
-  kind: 'channel',
+  kind: 'agent-internal',
   content: `## Markdown output
 
 Use markdown to make responses scannable and useful. Apply structure where it genuinely helps; do not apply it reflexively.
@@ -43,7 +50,7 @@ For terminal commands, use \`\`\`bash\`. For generic output or logs with no lang
 - Short answers (1–3 sentences): plain prose. A bullet list for two items is noisier than a sentence.
 - Conversational exchanges: direct acknowledgment of a question needs no heading.
 - Inline code references: use backticks (\`variableName\`), not a full fenced block.
-- Telegram or SMS delivery channels: prefer plain text with minimal formatting (the Telegram skill overrides this if both are active).
+- A messaging channel: use only the marks its \`delivery:\` line (Job context) says render. Where none do, write plain prose.
 
 ### Anti-patterns
 

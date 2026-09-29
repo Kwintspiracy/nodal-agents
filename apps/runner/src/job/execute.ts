@@ -77,6 +77,7 @@ import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
+import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import { loadApprovalRules } from './approval-rules.ts';
 import {
@@ -100,6 +101,8 @@ import {
   resolveRunWorkspaces,
   withJobFolder,
   isExistingDirectory,
+  deferredToolIndex,
+  withToolLoader,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -198,6 +201,12 @@ import type { DeclaredDeliverableFailure } from './finalize.ts';
 import { runnerNotesValue } from './transcript-text.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
+import {
+  channelDeliveryFacts,
+  requiresToolDelivery as requiresToolDeliveryOf,
+  triggerWantsConfirmation as triggerWantsConfirmationOf,
+  TOOL_ONLY_DELIVERY_CHANNELS,
+} from './channel-delivery.ts';
 import { loadConversationContext } from './conversation-id.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
@@ -432,21 +441,7 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   ...DELIVERY_TOOL_NAME_LIST,
 ]);
 
-// Channels whose ONLY path to the user is a delivery tool call (telegram_send_message,
-// which dispatches through the job's own ChannelAdapter — see CHANNEL_SEND_TOOL in
-// thread-history.ts). For these, a job that completes without ever delivering is a
-// silent black hole — the delivery guard re-prompts the agent before letting such a
-// job finish. Other channels (api, dashboard, cron, internal, …) expose agent_jobs.result
-// directly, so a text-only completion is fine there.
-// Live incident: job 4eefb5bf (2026-07-12) completed on discord with tools_used=[] —
-// the guard already existed but only listed 'telegram', so a discord job's plain-text
-// reply silently never reached the channel. discord/slack register the SAME send tools
-// as telegram (gate at the capabilityTools.push call above keys off
-// deliveryBotToken || hasDiscordBinding || hasSlackBinding), so they belong in this set
-// too. whatsapp does NOT: hasWhatsappBinding is not part of that gate yet (no outbound
-// send tool is registered for a whatsapp job today), so adding it here would nudge the
-// agent to call a tool it doesn't have — join it once whatsapp's outbound tooling ships.
-const TOOL_ONLY_DELIVERY_CHANNELS: ReadonlySet<string> = new Set(['telegram', 'discord', 'slack']);
+// TOOL_ONLY_DELIVERY_CHANNELS and the rule that reads it live in channel-delivery.ts.
 
 /**
  * Was the stored prompt written for this exact tool list? Both sides sorted;
@@ -2073,8 +2068,7 @@ async function runJobTracked(
   // chat_id when the trigger's notify_on_success is on). Surface that intent to
   // the agent so it ends with a confirmation, and engage the delivery guard
   // below so the send is actually enforced.
-  const triggerWantsConfirmation =
-    (job.channel === 'cron' || job.channel === 'webhook') && job.chatId != null;
+  const triggerWantsConfirmation = triggerWantsConfirmationOf(job);
   // B1/B2 (notify-channel-choice): a cron or webhook fire whose trigger chose
   // an EXPLICIT notify channel carries it in triggerContext (run-schedules.ts /
   // routes/webhook.ts) — surfaced here as the ToolContext override so every
@@ -2281,7 +2275,7 @@ async function runJobTracked(
   // default a non-transport job origin (cron, webhook, dashboard, api, …) to
   // THIS agent's own channel instead of unconditionally 'telegram'. whatsapp
   // is intentionally excluded: no outbound send tool is registered for it yet
-  // (see TOOL_ONLY_DELIVERY_CHANNELS above), so it isn't a real send-tool
+  // (see TOOL_ONLY_DELIVERY_CHANNELS, channel-delivery.ts), so it isn't a real send-tool
   // target for this ToolContext even when a whatsapp binding exists.
   const activeChannels: ChannelKind[] = [
     ...(deliveryBotToken ? (['telegram'] as const) : []),
@@ -2757,12 +2751,43 @@ async function runJobTracked(
   // and the stored prompt would order a tool the whitelist now refuses: it is
   // rewritten (Codex review of #570, pass 1). A prompt stored before the list
   // was recorded (NULL) is rewritten too — its list is unknown.
-  const promptTools = [...new Set(toolDefs.map((t) => t.name))].sort();
+  //
+  // #612 — the whitelist stays whole; only the SCHEMAS the model reads are
+  // chosen per turn (./tool-loading.ts). A job that holds deferred tools gets
+  // their index in the prompt and `load_tools` to load them, built from this
+  // same list: it cannot load a tool the job does not hold (invariant #9).
+  // `load_tools` is recorded with the rest (system_prompt_tools = every tool
+  // the job may call), and `toolDefs` itself is left as computed.
+  const toolIndex = deferredToolIndex(toolDefs);
+  let jobTools: AnyToolDef[];
+  try {
+    jobTools = withToolLoader(toolDefs as AnyToolDef[]) as AnyToolDef[];
+  } catch (err) {
+    // A tool of the job carries the loader's reserved name (#616 review, P3-4).
+    const errorCode = err instanceof Error ? err.message : 'tool_name_reserved';
+    await failJob(db, jobId as string, errorCode, runStats(), messages);
+    return { status: 'failed', error: errorCode };
+  }
+  // The deferred tools this job has loaded, read back from its row: a resume
+  // sends what the model last saw. A tool withdrawn meanwhile drops out.
+  const deferredNames = deferredToolNames(jobTools);
+  let loadedTools: string[] = (job.loadedTools ?? []).filter((n) => deferredNames.has(n));
+  const promptTools = [...new Set(jobTools.map((t) => t.name))].sort();
   let systemPrompt = job.systemPrompt;
   if (!systemPrompt || !sameToolList(job.systemPromptTools, promptTools)) {
+    // The channel's facts (#613): the channel the send tool will resolve —
+    // `activeChannels` is known only from §6 — and what its adapter does
+    // with a text.
+    const channelDelivery = channelDeliveryFacts({
+      job,
+      notifyChannelOverride: notifyChannelOverride,
+      activeChannels,
+    });
     systemPrompt = await buildSystemPrompt(agent, db, {
       ...jobContext,
+      ...(channelDelivery ? { channelDelivery } : {}),
       availableToolNames: promptTools,
+      toolIndex,
     });
     await db
       .update(agentJobs)
@@ -2832,7 +2857,7 @@ async function runJobTracked(
   // invaliderait le cache de prompt, et l'écart est sans danger — le champ reste
   // demandé alors qu'il aurait pu devenir optionnel, et le gate refuse de toute
   // façon une demande sans phrase.
-  const outilsAvecRaison = exposeStatedPurpose(toolDefs as AnyToolDef[], {
+  const outilsAvecRaison = exposeStatedPurpose(jobTools, {
     approvalRules: approvalRuleList,
     agentId: agentRow.id,
     entityId: job.entityId ?? '',
@@ -3381,8 +3406,7 @@ async function runJobTracked(
   // tick / route) is held to the same bar: the agent must deliver before
   // completing, otherwise the user never gets the "done" message they asked
   // for.
-  const requiresToolDelivery =
-    TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || triggerWantsConfirmation;
+  const requiresToolDelivery = requiresToolDeliveryOf(job);
   // Human-readable capitalization for the nudges below. `job.channel` is one of
   // TOOL_ONLY_DELIVERY_CHANNELS (telegram/discord/slack) here, OR 'cron'/'webhook'
   // via triggerWantsConfirmation — B1/B2 made both multi-channel (see
@@ -4309,8 +4333,11 @@ async function runJobTracked(
       // c. Convert tools to AI SDK format. For the skill-authoring meta-tools,
       // append the live workspace tool list so the model has the real tool names
       // in front of it as it decides to author a skill (see step 10).
+      // #612: the eager schemas, then those the transcript loaded — never the
+      // whole map, which stays the whitelist every call is checked against.
       const aiSdkTools: Record<string, { description: string; inputSchema: z.ZodTypeAny }> = {};
-      for (const [name, toolDef] of toolMap) {
+      for (const toolDef of toolsSentThisTurn(outilsAvecRaison, loadedTools, messages)) {
+        const name = toolDef.name;
         const description =
           authoringToolsSuffix && (name === 'create_skill' || name === 'update_skill')
             ? toolDef.description + authoringToolsSuffix
@@ -5303,6 +5330,20 @@ async function runJobTracked(
           attempt: unavailableToolNudges,
           via: 'toolMap',
         });
+      }
+
+      // #612 — what this turn loads: the names its `load_tools` calls ask for,
+      // and the deferred tools it calls directly. Recorded on the job row
+      // BEFORE any call runs, so a suspension inside this turn resumes with
+      // them, and never in the transcript alone, which compaction elides.
+      const loadedNow = toolsLoadedByCalls(callsToProcess, deferredNames, loadedTools);
+      if (loadedNow.length > 0) {
+        loadedTools = [...loadedTools, ...loadedNow];
+        await db
+          .update(agentJobs)
+          .set({ loadedTools, updatedAt: new Date() })
+          .where(ownJobRow(jobId as string));
+        trace('tools_loaded', { turn, tools: loadedNow });
       }
 
       // i. Process tool calls. AI SDK v6 ToolResultPart shape:

@@ -255,7 +255,7 @@ import {
 } from './service-logs.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
-import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
+import { MCP_CATALOG, AgentSlugSchema, FREE_ANSWER_MAX } from '@nodal-agents/shared';
 import { isRefusedEffort } from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
 import {
@@ -6357,7 +6357,12 @@ const ResolveApprovalSchema = z.object({
    * la transporter, et un libellé qui n'est plus une option revient en erreur
    * plutôt que d'être écrit.
    */
-  answer: z.string().max(400).optional(),
+  answer: z.string().max(FREE_ANSWER_MAX).optional(),
+  /**
+   * #465 — `answer` est une réponse LIBRE, écrite par la personne sous
+   * « Something else ». Le runner ne la compare alors à aucune option.
+   */
+  free: z.boolean().optional(),
 });
 
 /**
@@ -8631,12 +8636,12 @@ export type SkillRow = {
    *  seeded default catalog, shown under Built-in in /skills' Workspace tab.
    *  False for user-authored, agent-learned and community skills. */
   isSystem: boolean;
-  /** Behavior layer of a system skill: 'baseline' | 'channel' | 'capability' |
+  /** Behavior layer of a system skill: 'baseline' | 'capability' |
    *  'agent-internal' (null for custom/community skills). Every kind shows in
    *  /skills' Workspace tab and is editable there (override + reset); the kind
    *  still drives runtime loading, and tool-group skills (isToolGroupSkill)
    *  surface on the agent's Tools tab instead. */
-  systemKind: 'baseline' | 'channel' | 'capability' | 'agent-internal' | null;
+  systemKind: 'baseline' | 'capability' | 'agent-internal' | null;
   content: string;
   defaultContent: string | null;
   contentOverridden: boolean;
@@ -10633,7 +10638,7 @@ export async function getVersionInfoAction(): Promise<ActionResult<VersionInfo>>
 
 // Channels the "Notify via" selector offers (B1, notify-channel-choice plan).
 // A subset of CHANNEL_ORDER: whatsapp has no outbound send tool registered for
-// a job yet (TOOL_ONLY_DELIVERY_CHANNELS, apps/runner/src/job/execute.ts) —
+// a job yet (TOOL_ONLY_DELIVERY_CHANNELS, apps/runner/src/job/channel-delivery.ts) —
 // picking it as a schedule's notify channel would set triggerWantsConfirmation
 // (chatId resolves fine via resolveOwnerConversation) but then force the agent
 // to deliver via a tool it was never given, deadlocking the run. Kept in the DB

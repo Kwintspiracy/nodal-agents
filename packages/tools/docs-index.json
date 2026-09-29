@@ -370,7 +370,7 @@
       "pageTitle": "Skills",
       "heading": "System skills",
       "url": "/nodal-agents/docs/concepts/skills#system-skills",
-      "text": "The system skills ship in @nodal-agents/catalog and are upserted into every install at boot: 27 skills (packages/catalog/src/index.ts). Each carries a kind field that decides where it's injected and whether you manage it: Kind Count In your library? Skills capability 15 Yes, you assign it citation-discipline, claude-html-design, code-review, code-task, command-execution, dev, document-editing, obsidian, office-editing, presentation-editing, request-review, research-scope-discipline, results-delivery, spreadsheet-editing, task-planning baseline 4 No, auto-injected language-mirror, safe-tool-use, verify-before-done, workspace-hygiene. Part of every agent's base prompt by default. channel 2 No, auto-injected markdown-output, telegram-responder. Injected only when the agent is bound to the matching channel. agent-internal 6 No, hidden tool-attach-connector, tool-attach-mcp, tool-create-agent, tool-create-mcp, tool-schedules, tool-update-agent. Usage guides for meta-tools, loaded on demand via skill_view. Only capability skills show up in the dashboard's Skills library for you to assign. The other three kinds are managed by the runner: they're either always on, on when the channel matches, or loaded silently on demand. See the Skills reference for the full content of each system skill."
+      "text": "The system skills ship in @nodal-agents/catalog and are upserted into every install at boot: 27 skills (packages/catalog/src/index.ts). Each carries a kind field that decides where it's injected and whether you manage it: Kind Count In your library? Skills capability 15 Yes, you assign it citation-discipline, claude-html-design, code-review, code-task, command-execution, dev, document-editing, obsidian, office-editing, presentation-editing, request-review, research-scope-discipline, results-delivery, spreadsheet-editing, task-planning baseline 4 No, auto-injected language-mirror, safe-tool-use, verify-before-done, workspace-hygiene. Part of every agent's base prompt by default. agent-internal 8 No, hidden markdown-output, telegram-responder, tool-attach-connector, tool-attach-mcp, tool-create-agent, tool-create-mcp, tool-schedules, tool-update-agent. Guides loaded on demand via skill_view. Only capability skills show up in the dashboard's Skills library for you to assign. The other two kinds are managed by the runner: they're either always on, or loaded silently on demand. A messaging channel injects no skill. What an agent needs to know about the channel it replies on is one line of its job context, built from the channel's adapter: the tool that reaches the user, which formatting marks render there, and that a long text is split automatically. See the Skills reference for the full content of each system skill."
     },
     {
       "page": "concepts/skills",
@@ -1084,7 +1084,7 @@
       "pageTitle": "Telegram",
       "heading": "Related",
       "url": "/nodal-agents/docs/guides/telegram#related",
-      "text": "Skill reference: Telegram responder — system prompt guidance for Telegram-bound agents Concepts: Agents Concepts: Connectors & MCP"
+      "text": "Skill reference: Telegram responder — replying on a messaging channel, loaded on demand Concepts: Agents Concepts: Connectors & MCP"
     },
     {
       "page": "guides/whatsapp",

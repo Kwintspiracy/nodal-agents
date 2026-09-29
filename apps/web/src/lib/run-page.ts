@@ -69,6 +69,26 @@ export function runHrefIn(section: RunSection, runId: string): string {
   return section === 'work' ? runPageHref(runId) : `/jobs/${runId}`;
 }
 
+/**
+ * OÙ SE RÉPOND UNE QUESTION (#465) : le fil de sa conversation, ou la page du
+ * run qui l'a posée quand il n'y a pas de conversation (une automatisation).
+ * La carte Approvals et la cloche renvoient toutes deux ici.
+ */
+export function questionHref(q: { conversationId: string | null; jobId: string }): string {
+  const conversation = conversationOf(q.conversationId);
+  return conversation !== null ? `/chat/${conversation}` : openRunHref(q.jobId);
+}
+
+/**
+ * La conversation d'une ligne, ou null quand elle n'en a pas : `null` ET la
+ * chaîne vide, qu'aucun fil ne porte. Une seule règle pour la cloche, la carte
+ * Approvals et la liste des conversations (revue de #622) : un id vide ne se
+ * pose sur aucune ligne, et `/chat/` n'est l'adresse de rien.
+ */
+export function conversationOf(id: string | null): string | null {
+  return id === null || id === '' ? null : id;
+}
+
 export const OPEN_RUN_PREFIX = '/runs/';
 
 /**

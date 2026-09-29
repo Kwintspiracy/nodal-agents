@@ -12,7 +12,7 @@ import { useApprovals, type PendingApproval } from './ApprovalsProvider';
 import { useSkillUpdates, type SkillUpdateNotice } from './SkillUpdatesProvider';
 import { relativeTime } from '@/lib/format-time';
 import { sourceProblemLabel } from '@/lib/skill-source-problem.ts';
-import { openRunHref } from '@/lib/run-page.ts';
+import { openRunHref, questionHref } from '@/lib/run-page.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,9 +127,12 @@ function ApprovalsDropdown({
         <ul className="max-h-[340px] divide-y divide-rule-2 overflow-y-auto">
           {items.map((item) => (
             <li key={item.id}>
-              {/* The item body is a link to the job; Approve button stops propagation */}
+              {/* The item body is a link to the job; Approve button stops propagation.
+                  #465 — a QUESTION is not approved from here: approving without
+                  an answer is refused by the runner. The row leads to where it is
+                  answered (its conversation, or its run), like the Approvals card. */}
               <Link
-                href={openRunHref(item.jobId)}
+                href={item.kind === 'question' ? questionHref(item) : openRunHref(item.jobId)}
                 onClick={onClose}
                 className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-hover"
               >
@@ -148,7 +151,11 @@ function ApprovalsDropdown({
                     {relativeTime(item.requestedAt)}
                   </p>
                 </div>
-                <ApproveButton item={item} onApproved={onApproved} />
+                {item.kind === 'question' ? (
+                  <span className="shrink-0 text-mono-11-caps text-run">Answer</span>
+                ) : (
+                  <ApproveButton item={item} onApproved={onApproved} />
+                )}
               </Link>
             </li>
           ))}

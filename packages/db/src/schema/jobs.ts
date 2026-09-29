@@ -153,6 +153,13 @@ export const agentJobs = pgTable(
      * NULL : prompt écrit avant cette colonne, réécrit à la reprise.
      */
     systemPromptTools: text('system_prompt_tools').array(),
+    /**
+     * Les outils différés que ce job a chargés, dans l'ordre (#612, migration
+     * 0138) : par `load_tools` ou par un appel direct. Le tour envoie les schémas
+     * `eager` puis ceux-ci. Hors de la transcription parce que la compaction en
+     * élague les entrées ; relue à chaque reprise, elle ne fait que croître.
+     */
+    loadedTools: text('loaded_tools').array(),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
     /**
      * Flattened plain-text transcript (task + assistant text + tool outputs +

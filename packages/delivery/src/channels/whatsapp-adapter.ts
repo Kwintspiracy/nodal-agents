@@ -30,6 +30,7 @@ import type {
   SendResult,
   BotIdentity,
   TextFormat,
+  SendTextOpts,
 } from '../channel-adapter.ts';
 
 /** How long validateCredentials waits for a fresh/reconnecting socket to
@@ -231,7 +232,7 @@ async function sendText(
   creds: ChannelCredentials,
   conversationId: string,
   text: string,
-  opts?: { format?: TextFormat },
+  opts?: SendTextOpts,
 ): Promise<SendResult> {
   const sessionDir = requireSessionDir(creds);
   const jid = requireJid(conversationId);
@@ -240,12 +241,16 @@ async function sendText(
   const handle = ensureWhatsAppSocket(sessionDir, { sessionDir });
 
   let messageId = '';
-  try {
-    for (const chunk of chunkForWhatsApp(body)) {
-      messageId = await handle.send(jid, { text: chunk });
+  const parts = chunkForWhatsApp(body);
+  for (let i = opts?.fromChunk ?? 0; i < parts.length; i += 1) {
+    try {
+      messageId = await handle.send(jid, { text: parts[i] as string });
+    } catch (err) {
+      const e = toDeliveryError(err);
+      // Ce qui est déjà parti ne repart pas : l'appelant reprend ici (#615).
+      e.partialProgress = { sentChunks: i, totalChunks: parts.length };
+      throw e;
     }
-  } catch (err) {
-    throw toDeliveryError(err);
   }
   return { messageId };
 }
@@ -363,6 +368,12 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 export const whatsappAdapter: ChannelAdapter = {
   channel: 'whatsapp',
   capabilities: { buttons: false, threads: false, media: true, editMessage: false },
+  // Sans `format`, aucune conversion (markdownToWhatsApp n'agit que sur
+  // 'markdown') : WhatsApp rend son propre balisage, pas le markdown.
+  text: {
+    renders: ['*bold*', '_italic_', '~strike~', '```monospace```'],
+    maxMessageChars: WHATSAPP_MAX_CHARS,
+  },
   sendText,
   sendMedia,
   listConversations,
