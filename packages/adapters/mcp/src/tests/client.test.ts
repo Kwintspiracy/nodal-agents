@@ -38,8 +38,9 @@ vi.mock('undici', () => ({
   }),
   fetch: vi.fn(async () => new Response(null)),
   // The provider transport of @nodal-agents/llm, reached through the tools
-  // package, builds its own agent at import (#608): inert here too.
+  // package, builds its own dispatcher at import (#608): inert here too.
   EnvHttpProxyAgent: vi.fn(),
+  Dispatcher: class {},
 }));
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   // Capturing the constructor args lets the stdio test inspect what the

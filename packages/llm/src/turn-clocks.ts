@@ -29,6 +29,7 @@ import type { generateText, streamText } from 'ai';
 import type { ProviderConfig } from './types';
 import { LLMTimeoutError, LLMCallCancelledError, streamPartError } from './errors';
 import type { LlmTimeoutReason } from './errors';
+import { isLocalUrl } from './local-url';
 
 // ─── Defaults ──────────────────────────────────────────────────────────────────
 
@@ -74,32 +75,12 @@ export interface TurnClocks {
 /**
  * True when the model runs on the user's machine or network: Ollama, or a base
  * URL whose host is loopback, a private range or a `.local` name. Only the
- * host decides; a hosted provider's default URL is never local.
+ * host decides (`isLocalUrl`); a hosted provider's default URL is never local.
  */
 export function isLocalEndpoint(config: Pick<ProviderConfig, 'provider' | 'baseURL'>): boolean {
   if (config.provider === 'ollama') return true;
   if (!config.baseURL) return false;
-  let host: string;
-  try {
-    host = new URL(config.baseURL).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  host = host.replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host === '::1' || host === '0.0.0.0') return true;
-  if (host.endsWith('.local') || host.endsWith('.localhost')) return true;
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (v4) {
-    const a = Number(v4[1]);
-    const b = Number(v4[2]);
-    if (a === 127 || a === 10) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 169 && b === 254) return true;
-  }
-  // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
-  if (/^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host)) return true;
-  return false;
+  return isLocalUrl(config.baseURL);
 }
 
 // ─── Context size ──────────────────────────────────────────────────────────────
