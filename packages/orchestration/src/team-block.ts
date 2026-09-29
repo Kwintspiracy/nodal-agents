@@ -516,7 +516,10 @@ export async function buildTeamBlock(
   // even when one of this agent's own tools could do a thin version of it. Run
   // 4ca78b68 answered "do a research …" from memory, ace9212a ran one
   // web_search itself, with a research agent on the team. The rule names no
-  // agent and no domain: the specialty is whatever the roster above says.
+  // agent and no domain: the specialty is whatever the roster above says. A
+  // Purpose alone is not enough: the entry must show the means (a teammate
+  // announcing test runs with "Shell commands: no" is not one), the wording
+  // the failed-delegation fallback above already uses (#603, pass 4).
   //
   // What decides is whether the user asks for the WORK, not the politeness of
   // the form: "can you do a … on X?" asks for the work, "what is …?" only for
@@ -542,7 +545,8 @@ export async function buildTeamBlock(
         'whose skills, connectors, folders or Shell commands would have the means.'
       : routeToMatch +
         ' When the user asks you to DO a kind of work that an agent’s entry above announces ' +
-        'as its specialty (its Purpose or Skills), do the same with that agent, even when one ' +
+        'as its specialty (its Purpose or Skills) and whose entry shows the means that work ' +
+        'needs, do the same with that agent, even when one ' +
         'of your own tools could do a thin version of it and even when you believe you already ' +
         'know the answer. The words decide, not the politeness: “do a … on X” or “can you do a ' +
         '… on X?” asks for the work; a question that only wants an answer (“what is …?”) stays ' +

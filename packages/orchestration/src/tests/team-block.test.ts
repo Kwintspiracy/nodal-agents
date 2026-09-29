@@ -840,6 +840,30 @@ describe('buildTeamBlock — une demande explicite de la spécialité d’un co�
     }
   });
 
+  // Revue passe 4 (mineur) : un Purpose qui correspond ne suffit pas. Un
+  // coéquipier qui annonce « écrire et lancer des suites de tests » mais dont
+  // l'entrée dit « Shell commands: no » n'a pas les moyens : la règle ne vise
+  // qu'un agent dont l'entrée montre les moyens, comme la règle de repli sur
+  // échec (« only when its entry shows what the task needs »).
+  it('names only a teammate whose entry shows the means, not one whose Purpose alone matches', async () => {
+    const { orch, specialist } = await seedTeam(
+      'test-suite-runner',
+      'You write and run test suites for the repository.',
+    );
+    for (const opts of [{}, { delegation: false, escalation: true }]) {
+      const block = await buildTeamBlock(orch.id as AgentId, db, opts);
+      // The entry says the Purpose matches and the means are missing.
+      const entry = entryOf(block, specialist.name);
+      expect(entry).toContain('Purpose: You write and run test suites');
+      expect(entry).toContain('Shell commands: no');
+      // The rule is bound to the means, in the text the model reads.
+      const rule = SPECIALTY_RULE.exec(block)?.[0] ?? '';
+      expect(rule).toMatch(
+        /announces as its specialty \(its Purpose or Skills\) and whose entry shows the means that work needs, do the same with that agent/,
+      );
+    }
+  });
+
   it('where no hand-off exists (CLI session, maximum depth): no specialty rule', async () => {
     for (const team of TEAMS) {
       const { orch } = await seedTeam(team.slug, team.purpose);
