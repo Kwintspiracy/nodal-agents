@@ -91,7 +91,7 @@ describe('the tool index @cap:assigner-outils/moteur', () => {
         'file_edit',
       ]),
     );
-    expect(eager).not.toContain('register_project');
+    expect(eager).not.toContain('list_models');
   });
 });
 

@@ -208,6 +208,7 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
       PROCESS_PATHS_RULE,
     inputSchema: runSkillScriptSchema,
     riskLevel: 'destructive',
+    loading: 'eager',
     card: 'terminal',
     present: ({ output }) =>
       terminalCard({

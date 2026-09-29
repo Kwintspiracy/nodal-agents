@@ -249,6 +249,7 @@ export function generateTaskTools(
       'assign_*: an empty list says nothing about whether anything else is running.',
     inputSchema: listTasksSchema,
     riskLevel: 'read',
+    loading: 'eager',
     card: 'text',
     execute: async (input: ListTasksInput, ctx: ToolContext) => {
       const conditions = [

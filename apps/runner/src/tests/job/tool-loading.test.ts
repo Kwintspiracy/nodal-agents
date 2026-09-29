@@ -12,7 +12,7 @@
 //   - after `load_tools`, the next request carries its schema, appended AFTER
 //     the list sent before (the prefix does not move);
 //   - a direct call to a deferred tool of the whitelist runs — builtin
-//     (`list_schedules`) and meta-tool (`create_schedule`, a DB row) — and its
+//     (`list_models`) and meta-tool (`create_schedule`, a DB row) — and its
 //     schema is sent from then on;
 //   - a tool outside the whitelist stays refused, directly and via load_tools;
 //   - for an orchestrator and a worker, on two models.
@@ -81,8 +81,8 @@ describe('a job reads the schemas it needs and keeps its whole whitelist @cap:as
           model,
           role,
           script: [
-            { calls: [{ name: 'load_tools', args: { names: ['list_schedules'] } }] },
-            { calls: [{ name: 'list_schedules', args: {} }] },
+            { calls: [{ name: 'load_tools', args: { names: ['list_models'] } }] },
+            { calls: [{ name: 'list_models', args: {} }] },
           ],
         });
 
@@ -92,26 +92,26 @@ describe('a job reads the schemas it needs and keeps its whole whitelist @cap:as
         // Turn 1: the eager schemas and the loader — not the deferred tool.
         expect(offered(first)).toContain('return_result');
         expect(offered(first)).toContain('load_tools');
-        expect(offered(first)).not.toContain('list_schedules');
+        expect(offered(first)).not.toContain('list_models');
         // …which the prompt names in its index, in place of the old list.
         expect(systemOf(first)).toContain('## Tools on demand');
-        expect(systemOf(first)).toContain('- `list_schedules`: ');
+        expect(systemOf(first)).toContain('- `list_models`: ');
         expect(systemOf(first)).not.toContain('## Built-in capabilities');
 
         // Turn 2: the loaded schema is appended; what was sent before is untouched.
-        expect(offered(second)).toEqual([...offered(first), 'list_schedules']);
-        expect(lastResult(second)).toMatchObject({ loaded: ['list_schedules'], notHeld: [] });
+        expect(offered(second)).toEqual([...offered(first), 'list_models']);
+        expect(lastResult(second)).toMatchObject({ loaded: ['list_models'], notHeld: [] });
 
         // Turn 3: the call ran and returned its real output.
         const listed = toolResults(third).at(-1) ?? '';
-        expect(listed).toContain('"schedules"');
+        expect(listed).toContain('"models"');
         expect(listed).not.toMatch(/unavailable|not available/i);
         expect(offered(third)).toEqual(offered(second));
 
         // The whole whitelist is still recorded for the job, loader included.
         const row = await jobRow(jobId);
         expect(row.systemPromptTools).toEqual(
-          expect.arrayContaining(['list_schedules', 'load_tools', 'return_result']),
+          expect.arrayContaining(['list_models', 'load_tools', 'return_result']),
         );
         expect(row.error ?? '').not.toMatch(/whitelist_violation/);
       });
@@ -122,16 +122,16 @@ describe('a job reads the schemas it needs and keeps its whole whitelist @cap:as
     const { bodies, jobId } = await runJob({
       model: 'xiaomi/mimo-v2.6-pro',
       role: 'orchestrator',
-      script: [{ calls: [{ name: 'list_schedules', args: {} }] }],
+      script: [{ calls: [{ name: 'list_models', args: {} }] }],
     });
 
     const [first, second] = bodies as [Body, Body];
-    expect(offered(first)).not.toContain('list_schedules');
+    expect(offered(first)).not.toContain('list_models');
     const result = toolResults(second).at(-1) ?? '';
-    expect(result).toContain('"schedules"');
+    expect(result).toContain('"models"');
     expect(result).not.toMatch(/unavailable|not available/i);
     // Called once, sent from then on: the transcript names it.
-    expect(offered(second)).toEqual([...offered(first), 'list_schedules']);
+    expect(offered(second)).toEqual([...offered(first), 'list_models']);
     expect((await jobRow(jobId)).error ?? '').not.toMatch(/whitelist_violation/);
   });
 
@@ -229,7 +229,7 @@ describe('a job reads the schemas it needs and keeps its whole whitelist @cap:as
       model: 'openai/gpt-5.6-sol',
       role: 'orchestrator',
       script: [
-        { calls: [{ name: 'load_tools', args: { names: ['list_schedules'] } }] },
+        { calls: [{ name: 'load_tools', args: { names: ['list_models'] } }] },
         { text: 'I will now list the schedules.' },
         { text: 'Nothing to run.' },
       ],
@@ -239,8 +239,8 @@ describe('a job reads the schemas it needs and keeps its whole whitelist @cap:as
     expect(recheck, 'the prose turn was rechecked').toBeDefined();
     const turn = bodies[bodies.indexOf(recheck!) - 1]!;
     expect(offered(recheck!)).toEqual(offered(turn));
-    expect(offered(recheck!)).toContain('list_schedules');
+    expect(offered(recheck!)).toContain('list_models');
     expect(offered(recheck!)).toContain('load_tools');
-    expect(offered(recheck!)).not.toContain('list_models');
+    expect(offered(recheck!)).not.toContain('search_history');
   });
 });
