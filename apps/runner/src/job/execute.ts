@@ -77,7 +77,7 @@ import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
-import { toolsSentThisTurn } from './tool-loading.ts';
+import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import { loadApprovalRules } from './approval-rules.ts';
 import {
@@ -101,8 +101,8 @@ import {
   resolveRunWorkspaces,
   withJobFolder,
   isExistingDirectory,
-  createLoadToolsTool,
   deferredToolIndex,
+  withToolLoader,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -2768,10 +2768,19 @@ async function runJobTracked(
   // `load_tools` is recorded with the rest (system_prompt_tools = every tool
   // the job may call), and `toolDefs` itself is left as computed.
   const toolIndex = deferredToolIndex(toolDefs);
-  const jobTools: AnyToolDef[] =
-    toolIndex.length > 0
-      ? [...(toolDefs as AnyToolDef[]), createLoadToolsTool(toolDefs) as unknown as AnyToolDef]
-      : (toolDefs as AnyToolDef[]);
+  let jobTools: AnyToolDef[];
+  try {
+    jobTools = withToolLoader(toolDefs as AnyToolDef[]) as AnyToolDef[];
+  } catch (err) {
+    // A tool of the job carries the loader's reserved name (#616 review, P3-4).
+    const errorCode = err instanceof Error ? err.message : 'tool_name_reserved';
+    await failJob(db, jobId as string, errorCode, runStats(), messages);
+    return { status: 'failed', error: errorCode };
+  }
+  // The deferred tools this job has loaded, read back from its row: a resume
+  // sends what the model last saw. A tool withdrawn meanwhile drops out.
+  const deferredNames = deferredToolNames(jobTools);
+  let loadedTools: string[] = (job.loadedTools ?? []).filter((n) => deferredNames.has(n));
   const promptTools = [...new Set(jobTools.map((t) => t.name))].sort();
   let systemPrompt = job.systemPrompt;
   if (!systemPrompt || !sameToolList(job.systemPromptTools, promptTools)) {
@@ -4328,7 +4337,7 @@ async function runJobTracked(
       // #612: the eager schemas, then those the transcript loaded — never the
       // whole map, which stays the whitelist every call is checked against.
       const aiSdkTools: Record<string, { description: string; inputSchema: z.ZodTypeAny }> = {};
-      for (const toolDef of toolsSentThisTurn(outilsAvecRaison, messages)) {
+      for (const toolDef of toolsSentThisTurn(outilsAvecRaison, loadedTools, messages)) {
         const name = toolDef.name;
         const description =
           authoringToolsSuffix && (name === 'create_skill' || name === 'update_skill')
@@ -5322,6 +5331,20 @@ async function runJobTracked(
           attempt: unavailableToolNudges,
           via: 'toolMap',
         });
+      }
+
+      // #612 — what this turn loads: the names its `load_tools` calls ask for,
+      // and the deferred tools it calls directly. Recorded on the job row
+      // BEFORE any call runs, so a suspension inside this turn resumes with
+      // them, and never in the transcript alone, which compaction elides.
+      const loadedNow = toolsLoadedByCalls(callsToProcess, deferredNames, loadedTools);
+      if (loadedNow.length > 0) {
+        loadedTools = [...loadedTools, ...loadedNow];
+        await db
+          .update(agentJobs)
+          .set({ loadedTools, updatedAt: new Date() })
+          .where(ownJobRow(jobId as string));
+        trace('tools_loaded', { turn, tools: loadedNow });
       }
 
       // i. Process tool calls. AI SDK v6 ToolResultPart shape:

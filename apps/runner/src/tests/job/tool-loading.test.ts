@@ -18,17 +18,27 @@
 //   - for an orchestrator and a worker, on two models.
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { _setMasterKeyForTests, encrypt } from '@nodal-agents/secrets';
-import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import { randomBytes } from 'node:crypto';
+import { _setMasterKeyForTests } from '@nodal-agents/secrets';
+import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, agents, agentSchedules, entities, entityLlmKeys, eq } from '@nodal-agents/db';
-import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
-import { createEmbeddingClient } from '@nodal-agents/llm';
-import { LocalTrustProvider } from '@nodal-agents/auth';
+import { agentSchedules, eq } from '@nodal-agents/db';
 import type { JobId } from '@nodal-agents/orchestration';
-import type { RunnerDeps } from '../../deps.ts';
 import { executeJob } from '../../job/execute.ts';
+import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
+import {
+  type Body,
+  type ScriptedReply,
+  jobRow as readJobRow,
+  lastMessageText,
+  lastResult,
+  makeDeps,
+  offered,
+  scriptProvider,
+  seedJob,
+  systemOf,
+  toolResults,
+} from './tool-loading-harness.ts';
 
 let db: TestDb;
 
@@ -42,90 +52,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-type ScriptedCall = { name: string; args: Record<string, unknown> };
-type ScriptedReply = { calls: ScriptedCall[] } | { text: string };
-type Body = {
-  model: string;
-  stream?: boolean;
-  tools?: Array<{ function: { name: string } }>;
-  messages: Array<{ role: string; content?: unknown; tool_call_id?: string }>;
-};
-
-/**
- * Stub the network: every chat completion is recorded as the provider receives
- * it, and answered with the next scripted reply (then "Done." once the script
- * is spent), streamed as SSE or as one JSON body, whichever was asked.
- */
-function scriptProvider(script: ScriptedReply[]): Body[] {
-  const bodies: Body[] = [];
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input.toString();
-      if (!url.includes('/chat/completions')) {
-        throw new Error(`tool-loading.test: unexpected fetch ${url}`);
-      }
-      const body = JSON.parse(init?.body as string) as Body;
-      bodies.push(body);
-      const reply = script[bodies.length - 1] ?? { text: 'Done.' };
-      const usage = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 };
-      const toolCalls =
-        'calls' in reply
-          ? reply.calls.map((c, i) => ({
-              index: i,
-              id: `call_${bodies.length}_${i}`,
-              type: 'function',
-              function: { name: c.name, arguments: JSON.stringify(c.args) },
-            }))
-          : undefined;
-      const finish = toolCalls ? 'tool_calls' : 'stop';
-      if (body.stream === true) {
-        const delta = toolCalls
-          ? { role: 'assistant', tool_calls: toolCalls }
-          : { role: 'assistant', content: (reply as { text: string }).text };
-        const chunks = [
-          { id: 'c', choices: [{ index: 0, delta }] },
-          { id: 'c', choices: [{ index: 0, delta: {}, finish_reason: finish }], usage },
-        ];
-        const sse =
-          chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n';
-        return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
-      }
-      const message = toolCalls
-        ? {
-            role: 'assistant',
-            content: null,
-            tool_calls: toolCalls.map(({ index: _i, ...rest }) => rest),
-          }
-        : { role: 'assistant', content: (reply as { text: string }).text };
-      return new Response(
-        JSON.stringify({ id: 'c', choices: [{ message, finish_reason: finish }], usage }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
-    }),
-  );
-  return bodies;
-}
-
-function makeDeps(): RunnerDeps {
-  const registry = createToolRegistry();
-  registerBuiltins(registry);
-  return {
-    db: db as RunnerDeps['db'],
-    // Never read at runtime: the job resolves its client from the agent's key.
-    llmClient: undefined as unknown as RunnerDeps['llmClient'],
-    embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
-    registry,
-    authProvider: new LocalTrustProvider(),
-    close: async () => {},
-  };
-}
-
-/**
- * One workspace, one agent, one job, run to its end against the script.
- * `root` makes the agent the workspace's root, with the schedule grant and a
- * fully autonomous workspace (no approval card on create_schedule).
- */
+/** One job, run to its end against the script. */
 async function runJob(opts: {
   model: string;
   role: 'orchestrator' | 'agent';
@@ -133,81 +60,15 @@ async function runJob(opts: {
   /** The replies, or a function of the agent's slug that returns them. */
   script: ScriptedReply[] | ((agentSlug: string) => ScriptedReply[]);
 }): Promise<{ bodies: Body[]; jobId: string; entityId: string }> {
-  const seed = await seedMinimal(db);
-  const [key] = await db
-    .insert(entityLlmKeys)
-    .values({
-      entityId: seed.entityId,
-      provider: 'openrouter',
-      apiKey: encrypt('or-test-key'),
-      baseUrl: null,
-      nickname: 'OpenRouter (test)',
-      isActive: true,
-    })
-    .returning();
-  if (!key) throw new Error('failed to seed the openrouter key');
-  const [agent] = await db
-    .insert(agents)
-    .values({
-      entityId: seed.entityId,
-      name: `Agent ${randomUUID().slice(0, 6)}`,
-      slug: `agent-${randomUUID().slice(0, 8)}`,
-      personality: 'You are a test agent.',
-      role: opts.role,
-      llmKeyId: key.id,
-      model: opts.model,
-    })
-    .returning();
-  if (!agent) throw new Error('failed to seed the agent');
-  if (opts.root) {
-    await db
-      .update(entities)
-      .set({
-        rootAgentId: agent.id,
-        rootGrants: { manageSchedules: true, autonomy: 'fully_autonomous' },
-      })
-      .where(eq(entities.id, seed.entityId));
-  }
-  const [job] = await db
-    .insert(agentJobs)
-    .values({
-      entityId: seed.entityId,
-      agentId: agent.id,
-      channel: 'api',
-      task: 'Do the thing.',
-      status: 'pending',
-      messages: [],
-      chainCount: 0,
-    })
-    .returning();
-  if (!job) throw new Error('failed to seed the job');
-
+  const seeded = await seedJob(db, opts);
   const bodies = scriptProvider(
-    typeof opts.script === 'function' ? opts.script(agent.slug) : opts.script,
+    typeof opts.script === 'function' ? opts.script(seeded.agentSlug) : opts.script,
   );
-  await executeJob(job.id as JobId, makeDeps());
-  return { bodies, jobId: job.id, entityId: seed.entityId };
+  await executeJob(seeded.jobId as JobId, makeDeps(db));
+  return { bodies, jobId: seeded.jobId, entityId: seeded.entityId };
 }
 
-const offered = (b: Body): string[] => (b.tools ?? []).map((t) => t.function.name);
-const systemOf = (b: Body): string => {
-  const sys = b.messages.find((m) => m.role === 'system');
-  return typeof sys?.content === 'string' ? sys.content : JSON.stringify(sys?.content ?? '');
-};
-/** Every tool result the request carries, as text. */
-const toolResults = (b: Body): string[] =>
-  b.messages
-    .filter((m) => m.role === 'tool')
-    .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)));
-
-/** The last tool result of the request, parsed: what the tool returned. */
-const lastResult = (b: Body): unknown => JSON.parse(toolResults(b).at(-1) ?? 'null');
-
-async function jobRow(jobId: string) {
-  const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
-  if (!row) throw new Error('job row vanished');
-  return row;
-}
+const jobRow = (jobId: string) => readJobRow(db, jobId);
 
 const MODELS = ['openai/gpt-5.6-sol', 'xiaomi/mimo-v2.6-pro'] as const;
 const ROLES = ['orchestrator', 'agent'] as const;
@@ -358,5 +219,28 @@ describe('a job reads the schemas it needs and keeps its whole whitelist @cap:as
     // Never run, never offered for approval either.
     const row = await jobRow(jobId);
     expect(row.status).not.toBe('awaiting_approval');
+  });
+
+  // #604's action recheck re-asks the model with "the job's tools". It must be
+  // the tools offered on THIS turn (eager + loaded + load_tools), never the
+  // whole whitelist: otherwise every recheck would carry every schema again.
+  it('the action recheck offers exactly the tools of its turn, loaded ones included', async () => {
+    const { bodies } = await runJob({
+      model: 'openai/gpt-5.6-sol',
+      role: 'orchestrator',
+      script: [
+        { calls: [{ name: 'load_tools', args: { names: ['list_schedules'] } }] },
+        { text: 'I will now list the schedules.' },
+        { text: 'Nothing to run.' },
+      ],
+    });
+
+    const recheck = bodies.find((b) => lastMessageText(b) === ACTION_RECHECK);
+    expect(recheck, 'the prose turn was rechecked').toBeDefined();
+    const turn = bodies[bodies.indexOf(recheck!) - 1]!;
+    expect(offered(recheck!)).toEqual(offered(turn));
+    expect(offered(recheck!)).toContain('list_schedules');
+    expect(offered(recheck!)).toContain('load_tools');
+    expect(offered(recheck!)).not.toContain('list_models');
   });
 });

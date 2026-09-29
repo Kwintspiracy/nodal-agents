@@ -53,6 +53,27 @@ export interface LoadableTool {
   loading?: 'eager' | 'deferred';
 }
 
+/**
+ * The tool names a `load_tools` input asks for: trimmed, non-empty, each once.
+ *
+ * The ONE reading of that input — the loader answers with it, and the runner
+ * records what was loaded with it — so a name the result says was loaded is
+ * the name whose schema is sent (review of #616: the loader trimmed, the runner
+ * read the raw name, and a padded name was announced loaded but never sent).
+ * Anything that is not a `names` array of strings asks for nothing.
+ */
+export function namesAskedToLoad(input: unknown): string[] {
+  const names = (input as { names?: unknown } | null | undefined)?.names;
+  if (!Array.isArray(names)) return [];
+  const out: string[] = [];
+  for (const n of names) {
+    if (typeof n !== 'string') continue;
+    const name = n.trim();
+    if (name !== '' && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 /** True when the model receives this tool's schema on every turn. */
 export function isEagerTool(tool: { loading?: 'eager' | 'deferred' }): boolean {
   return tool.loading === 'eager';
@@ -110,7 +131,7 @@ export function createLoadToolsTool(
     loading: 'eager',
     card: 'text',
     execute: async (input) => {
-      const asked = [...new Set(input.names.map((n) => n.trim()))];
+      const asked = namesAskedToLoad(input);
       const loaded = asked.filter((n) => deferred.has(n));
       const alreadyAvailable = asked.filter((n) => eager.has(n) || n === LOAD_TOOLS_NAME);
       const notHeld = asked.filter(
@@ -133,4 +154,25 @@ export function createLoadToolsTool(
       return { loaded, alreadyAvailable, notHeld, message: parts.join(' ') };
     },
   };
+}
+
+/**
+ * A job's tool list with its loader: `load_tools` is added when the list holds
+ * at least one deferred tool, built from that same list.
+ *
+ * `load_tools` is a reserved name. A tool of the job that carries it (a
+ * connector or catalog tool) would shadow the loader or be shadowed by it, and
+ * which one the model reaches would depend on list order: the job is refused
+ * instead, with the tool named (invariant #4).
+ */
+export function withToolLoader<T extends LoadableTool>(
+  tools: readonly T[],
+): Array<T | ToolDefinition<typeof LoadToolsInputSchema, LoadToolsOutput>> {
+  if (tools.some((t) => t.name === LOAD_TOOLS_NAME)) {
+    throw new Error(
+      `tool_name_reserved:${LOAD_TOOLS_NAME} — a tool of this agent is named "${LOAD_TOOLS_NAME}", ` +
+        'a name reserved for the loader of deferred tool definitions. Rename or detach that tool.',
+    );
+  }
+  return tools.some((t) => !isEagerTool(t)) ? [...tools, createLoadToolsTool(tools)] : [...tools];
 }

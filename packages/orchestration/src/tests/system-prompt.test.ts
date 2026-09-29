@@ -1526,7 +1526,7 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
   it('indexes only the deferred tools the job holds', async () => {
     const { entityId, worker } = await seedTeam();
     const workerAgent = makeAgent(worker.id, entityId, worker.personality);
-    const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'file_write');
+    const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'list_models');
     const prompt = await buildSystemPrompt(workerAgent, db, {
       origin: 'internal',
       isDelegated: true,
@@ -1534,8 +1534,8 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
       availableToolNames: tools,
     });
     const index = prompt.split('## Tools on demand')[1]?.split('\n## ')[0] ?? '';
-    expect(index).toContain('- `file_edit`: ');
-    expect(index).not.toContain('file_write');
+    expect(index).toContain('- `list_schedules`: ');
+    expect(index).not.toContain('list_models');
   });
 });
 

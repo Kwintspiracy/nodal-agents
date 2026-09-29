@@ -166,7 +166,9 @@ export {
   createLoadToolsTool,
   deferredToolIndex,
   isEagerTool,
+  namesAskedToLoad,
   toolIndexLine,
+  withToolLoader,
 } from './builtin/load-tools';
 export type {
   LoadToolsInput,

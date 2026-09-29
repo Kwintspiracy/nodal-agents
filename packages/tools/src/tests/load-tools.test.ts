@@ -6,6 +6,8 @@ import {
   createLoadToolsTool,
   createToolRegistry,
   deferredToolIndex,
+  namesAskedToLoad,
+  withToolLoader,
   registerBuiltins,
   toolIndexLine,
 } from '../index';
@@ -76,8 +78,46 @@ describe('the tool index @cap:assigner-outils/moteur', () => {
     // The builtins a turn relies on without asking first.
     const eager = ALWAYS_ON_TOOL_DOCS.filter((d) => d.loading === 'eager').map((d) => d.name);
     expect(eager).toEqual(
-      expect.arrayContaining(['return_result', 'ask_user', 'file_read', 'query_memory']),
+      expect.arrayContaining([
+        'return_result',
+        'ask_user',
+        'query_memory',
+        // The file tools go together: prompt blocks name them, and
+        // file_read's own description sends the model to file_search.
+        'file_read',
+        'file_list',
+        'file_search',
+        'file_write',
+        'file_edit',
+      ]),
     );
     expect(eager).not.toContain('register_project');
+  });
+});
+
+describe('one reading of the names a load asks for @cap:assigner-outils/moteur', () => {
+  it('trims, drops empties and non-strings, dedupes — for the loader and the runner alike', () => {
+    expect(namesAskedToLoad({ names: [' a ', 'b', 'a', '', 3, '  '] })).toEqual(['a', 'b']);
+    expect(namesAskedToLoad({ names: 'a' })).toEqual([]);
+    expect(namesAskedToLoad('garbage')).toEqual([]);
+    expect(namesAskedToLoad(null)).toEqual([]);
+  });
+});
+
+describe('the loader of a job @cap:assigner-outils/moteur', () => {
+  it('is added when the job holds a deferred tool, and not otherwise', () => {
+    expect(withToolLoader(TOOLS).map((t) => t.name)).toEqual([
+      'return_result',
+      'list_schedules',
+      'mcp_fetch__fetch_html',
+      'load_tools',
+    ]);
+    const eagerOnly = TOOLS.filter((t) => t.loading === 'eager');
+    expect(withToolLoader(eagerOnly).map((t) => t.name)).toEqual(['return_result']);
+  });
+
+  it('refuses a job tool that takes the loader’s name, and says so', () => {
+    const clash = [...TOOLS, { name: 'load_tools', description: 'A catalog tool.' }];
+    expect(() => withToolLoader(clash)).toThrow(/load_tools.*reserved/);
   });
 });
