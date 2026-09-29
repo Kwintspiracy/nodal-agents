@@ -15,7 +15,7 @@
 // sur le PATH et code_task est exécuté pour de vrai.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, chmod, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -144,8 +144,12 @@ describe('code_task de bout en bout, vraie CLI', () => {
     expect(out.isError).toBe(false);
     // #592 : la CLI est un processus — son tool_result dit comment ses chemins
     // s'adressent (dossier de travail absolu, espace, étiquettes ≠ dossiers).
+    // Le dossier où le processus a VRAIMENT tourné est le chemin canonique :
+    // sous Windows, tmpdir() rend la forme courte 8.3 (C:\Users\RUNNER~1\…) et
+    // le cwd résolu la forme longue (C:\Users\runneradmin\…) — même dossier,
+    // deux écritures. Le test compare donc au chemin canonique (CI Windows, 511e2268).
     expect(out.paths).toBe(
-      `This process ran in ${ws}, the root of workspace "shared". ` +
+      `This process ran in ${await realpath(ws)}, the root of workspace "shared". ` +
         'Paths in a process are relative to that folder, or absolute. ' +
         'Workspace labels are NOT folders for a process: what the file tools call shared/outputs/x is outputs/x here.',
     );
