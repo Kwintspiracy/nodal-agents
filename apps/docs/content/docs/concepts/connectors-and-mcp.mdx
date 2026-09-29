@@ -152,12 +152,25 @@ The direction also works in reverse: Nodal can expose **itself** as an MCP
 server, so an external client — your terminal, a coding agent like Claude Code
 — hands work to your agents instead of the other way around.
 
-Enable the **MCP server** switch in **Settings → Safety** (off by default), then
-register the server in your client, on the machine that hosts Nodal:
+Enable the **MCP server** switch in **Settings → Safety** (off by default). The
+same section then gives, for the machine that hosts Nodal:
 
-```bash
-claude mcp add nodal -- nodal-agents mcp serve
-```
+- **Claude Code**: the exact command to run. It is built from the Node and the
+  script that started this install, so it works whether Nodal was installed
+  globally, launched with `npx`, or run from source. Its shape:
+
+  ```bash
+  claude mcp add nodal -- "<path to node>" "<path to the nodal-agents CLI>" mcp serve
+  ```
+
+- **Claude Desktop**: the `mcpServers` entry for its configuration file, and an
+  **Add to Claude Desktop** button that writes it for you. The button keeps your
+  other servers and saves a copy of the previous file first.
+
+Both clients can be connected at the same time; their runs land on the same
+page. If the section asks you to start Nodal with `nodal-agents up`, the web
+was started some other way and does not know the command: it shows none rather
+than a guess.
 
 The client gets exactly one tool, `run_task`: it creates a **tracked job** for
 your workspace's root agent (or a chosen agent by slug) and returns the job id
