@@ -52,7 +52,7 @@ import {
   type JobRowCut,
 } from '../job/state.ts';
 import { shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
-import { claudeShellTools, type CliShellSetting } from '@nodal-agents/shared';
+import { claudeShellTools, type BrakeStop, type CliShellSetting } from '@nodal-agents/shared';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
@@ -238,12 +238,16 @@ export function buildCliRuntimeJobContext(args: {
  * tour, pour une question à laquelle l'audit répond déjà.
  */
 /**
- * La ligne de ce job est-elle encore à ce run — `processing` sous sa prise —
- * au moment d'écrire (#566) ? Verrouillée FOR SHARE dans la transaction de
+ * Ce run tient-il encore la PRISE de ce job au moment d'écrire (#566) ? La
+ * prise seule (`heldBy(…, null)`), pas le statut : un Stop pose `cancelled`
+ * sans reprendre la ligne, et ce que la CLI a fait jusque-là (sa session, ses
+ * productions) reste à enregistrer, comme la transcription d'un job annulé
+ * (revue Nodal de #551, passe 2). Une reprise par un autre run change la
+ * prise : plus rien ne s'écrit. Verrouillée FOR SHARE dans la transaction de
  * l'appelant : une prise qui arriverait pendant l'écriture attend qu'elle soit
- * finie, et une prise perdue n'écrit rien.
+ * finie.
  */
-async function rowStillHeld(
+async function claimStillHeld(
   tx: AnyDrizzleDb,
   jobId: string,
   claimGeneration: number,
@@ -252,7 +256,7 @@ async function rowStillHeld(
     .select({ id: agentJobs.id })
     .from(agentJobs)
     // `heldBy` : la seule définition de « ce run tient son job » (#566).
-    .where(heldBy(jobId, claimGeneration))
+    .where(heldBy(jobId, claimGeneration, null))
     .for('share');
   return tenu !== undefined;
 }
@@ -408,11 +412,13 @@ export async function takeCliTurnCheckpoints(
  * répondu. Toutes les sorties en échec passent par ici, le frein compris —
  * voir « UN SEUL ORDRE DE FIN DE TOUR » dans `runCliRuntimeJob`.
  */
-function turnFailure(turn: CliTurnResult, brakeEngaged: boolean): string | null {
-  // Le frein serré pendant le tour a tué la CLI : un arrêt, dit comme au
-  // départ du tour, quoi que la CLI ait rendu en mourant.
-  if (brakeEngaged) return 'auto_run_paused';
+function turnFailure(turn: CliTurnResult, brakeStop: BrakeStop | null): string | null {
+  // Un tour qui a répondu reste un succès, même si le frein s'est serré
+  // pendant qu'il rendait sa réponse : il n'a pas été tué, sa réponse part.
   if (!turn.isError && turn.finalText !== '') return null;
+  // Le frein ne décrit qu'un tour déjà en échec : il a tué la CLI, et
+  // l'arrêt se dit comme au départ du tour (serré, ou illisible).
+  if (brakeStop) return brakeStop;
   // An exhausted subscription window must read as exactly that (D0/risques)
   // — as a machine CODE + data, never runner-authored prose (invariant #2:
   // the LLM speaks or the runner stays silent; error fields carry codes).
@@ -805,7 +811,7 @@ export async function runCliRuntimeJob(args: {
   // CLI, le tour est un échec parmi les autres, dit comme au départ. Il
   // sortait avant la session et le registre : une CLI qui avait écrit puis
   // était tuée perdait son contexte et sa déclaration de projet.
-  const failure = turnFailure(turn, brake.engaged());
+  const failure = turnFailure(turn, brake.stoppedBy());
   // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
   //
   // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce
@@ -851,18 +857,21 @@ export async function runCliRuntimeJob(args: {
   //     project wins). They stay true whoever holds the job now, and a run cut
   //     mid-turn still writes them: the CLI may have written and cost.
   //   - STATE the next message reads — this session mapping, and the
-  //     conversation's current project. Only the run that still holds the job
-  //     writes them: a stale run — its row taken by another run, its process
-  //     killed — that exits after the new run wrote its own would overwrite it,
-  //     and the next message would resume the wrong session or folder. The job
-  //     row is locked FOR SHARE in the same transaction (`rowStillHeld`).
+  //     conversation's current project. Written while this run still holds the
+  //     CLAIM, whatever the status: a Stop sets `cancelled` without taking the
+  //     row, and the next "continue" must resume the session the killed CLI
+  //     had (Nodal review of #551, pass 2). A stale run — its row re-claimed by
+  //     another run — that exits after the new run wrote its own would
+  //     overwrite it, and the next message would resume the wrong session or
+  //     folder: a new claim stops it. The job row is locked FOR SHARE in the
+  //     same transaction (`claimStillHeld`).
   const sessionId = turn.sessionId;
   if (conversationKey && sessionId) {
     await db
       .transaction(async (tx) => {
-        if (!(await rowStillHeld(tx, jobId, args.claimGeneration))) {
+        if (!(await claimStillHeld(tx, jobId, args.claimGeneration))) {
           console.warn(
-            `[cli-runtime] CLI_SESSION_NOT_RECORDED job=${jobId} — the row no longer belongs to this run`,
+            `[cli-runtime] CLI_SESSION_NOT_RECORDED job=${jobId} — another run holds the claim now`,
           );
           return;
         }
@@ -918,10 +927,10 @@ export async function runCliRuntimeJob(args: {
     const edits = await harnessEdits(db, jobId, turnStartedAt, args.workspaces);
     if (turnSucceeded || edits.length > 0) {
       // The job's project is a record; the conversation's CURRENT project is
-      // state the next message reads: set only while this run holds the job,
-      // under the same row lock (#566, see the session mapping above).
+      // state the next message reads: set only while this run holds the
+      // claim, under the same row lock (#566, see the session mapping above).
       await db.transaction(async (tx) => {
-        const tenu = await rowStillHeld(tx, jobId, args.claimGeneration);
+        const tenu = await claimStillHeld(tx, jobId, args.claimGeneration);
         await attachProductionToProject(
           {
             db: tx,

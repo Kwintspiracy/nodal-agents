@@ -32,6 +32,8 @@ import type { CliTurnResult } from '../../cli-runtime/provider.ts';
 import type { ClaudeTurnEvent } from '../../cli-runtime/claude-turn.ts';
 import type * as ProviderModule from '../../cli-runtime/provider.ts';
 import type * as OrchestrationModule from '@nodal-agents/orchestration';
+import type * as RulesModule from '../../approvals/rules.ts';
+import type * as ShellTurnModule from '../../cli-runtime/shell-turn.ts';
 
 const fakeRun = vi.fn<(opts: Record<string, unknown>) => Promise<CliTurnResult>>();
 /** Ce qui se passe PENDANT la préparation du tour (la construction du prompt). */
@@ -62,6 +64,31 @@ vi.mock('@nodal-agents/orchestration', async (importOriginal) => {
       if (duringPreflight.hook) await duringPreflight.hook();
       return 'system prompt (test)';
     },
+  };
+});
+
+// La lecture du frein, qu'un test peut faire échouer (invariant #4 : un frein
+// illisible n'est pas un frein desserré).
+const brakeRead = vi.hoisted(() => ({ fails: false }));
+vi.mock('../../approvals/rules.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof RulesModule>();
+  return {
+    ...actual,
+    isAutoRunPaused: async (...a: Parameters<typeof actual.isAutoRunPaused>) => {
+      if (brakeRead.fails) throw new Error('brake read failed (test)');
+      return actual.isAutoRunPaused(...a);
+    },
+  };
+});
+
+// La veille du frein relit toutes les 50 ms au lieu de 5 s : la même veille,
+// à une cadence de test.
+vi.mock('../../cli-runtime/shell-turn.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof ShellTurnModule>();
+  return {
+    ...actual,
+    watchBrakeDuringTurn: (...[d, e, p, o]: Parameters<typeof actual.watchBrakeDuringTurn>) =>
+      actual.watchBrakeDuringTurn(d, e, p, { ...o, everyMs: 50 }),
   };
 });
 
@@ -115,8 +142,20 @@ beforeAll(async () => {
   };
 });
 
+/** Ce qu'une CLI tuée rend : pas de texte final, une erreur. */
+const killedTurn = (): CliTurnResult =>
+  ({
+    ...greenTurn(),
+    sessionId: 'sess-killed',
+    finalText: '',
+    isError: true,
+    errorDetail: 'killed',
+    exitCode: null,
+  }) as unknown as CliTurnResult;
+
 beforeEach(async () => {
   duringPreflight.hook = null;
+  brakeRead.fails = false;
   fakeRun.mockReset();
   fakeRun.mockResolvedValue(greenTurn());
   root = await mkdtemp(join(tmpdir(), 'nodal-494-'));
@@ -251,10 +290,10 @@ describe('CLI runtime shell posture, from the agent row @cap:executer-une-comman
         (opts) =>
           new Promise<CliTurnResult>((resolve) => {
             signalSeen = opts['abortSignal'] as AbortSignal | undefined;
-            // La CLI « tourne » jusqu'à être tuée, ou 20 s au plus.
-            const done = () => resolve(greenTurn());
-            signalSeen?.addEventListener('abort', done, { once: true });
-            setTimeout(done, 20_000);
+            // La CLI « tourne » jusqu'à être tuée (elle sort alors en échec),
+            // ou 20 s au plus.
+            signalSeen?.addEventListener('abort', () => resolve(killedTurn()), { once: true });
+            setTimeout(() => resolve(greenTurn()), 20_000);
             // Le propriétaire serre le frein pendant le tour.
             // (Une requête Drizzle est paresseuse : c'est `then` qui la lance.)
             setBrake(true).then(
@@ -274,63 +313,72 @@ describe('CLI runtime shell posture, from the agent row @cap:executer-une-comman
 //
 // UN seul ordre de fin de tour, quelle que soit la sortie : d'abord les
 // enregistrements de ce que le processus a fait (session, registre des
-// projets), tant que la prise est tenue ; puis la relecture du droit d'agir
-// (un Stop, une reprise l'emportent sur le frein) ; enfin le verdict.
+// projets), sous la prise du run quel que soit le statut ; puis la relecture
+// du droit d'agir (un Stop, une reprise l'emportent sur le frein) ; enfin le
+// verdict, où le frein ne décrit qu'un tour déjà en échec.
 describe('a turn cut by the brake ends like any other turn @cap:executer-une-commande/moteur', () => {
   const shellAgent = (): CliRuntimeAgentRow => ({
     ...baseRow,
     cliPermissions: { mode: 'write', shell: 'auto' },
   });
 
-  /** Ce qu'une CLI tuée rend : pas de texte final, une erreur. */
-  const killedTurn = (): CliTurnResult =>
-    ({
-      ...greenTurn(),
-      sessionId: 'sess-killed',
-      finalText: '',
-      isError: true,
-      errorDetail: 'killed',
-      exitCode: null,
-    }) as unknown as CliTurnResult;
-
   /**
-   * Une CLI qui écrit un fichier (par le VRAI `onEvent`), voit le propriétaire
-   * serrer le frein, et tourne jusqu'à être tuée. `thenAlso` : ce qui arrive
-   * encore avant qu'elle sorte (un Stop).
+   * Une CLI qui écrit un fichier et parle (par le VRAI `onEvent`), puis voit
+   * le frein l'arrêter (`cut` : serré par défaut), et tourne jusqu'à être
+   * tuée. `thenAlso` : ce qui arrive encore avant qu'elle sorte (un Stop) ;
+   * `returns` : ce qu'elle rend en sortant (tuée, par défaut).
    */
-  const cliCutByTheBrake = (filePath: string, thenAlso?: () => Promise<void>) =>
+  const cliCutByTheBrake = (
+    filePath: string | null,
+    o: {
+      thenAlso?: () => Promise<void>;
+      says?: string;
+      cut?: () => Promise<unknown>;
+      returns?: () => CliTurnResult;
+    } = {},
+  ) =>
     fakeRun.mockImplementationOnce(
       (opts) =>
         new Promise<CliTurnResult>((resolve) => {
           const onEvent = opts['onEvent'] as (e: ClaudeTurnEvent) => void;
-          onEvent({
-            kind: 'tool_use',
-            toolUseId: 'tu-1',
-            toolName: 'Write',
-            input: { file_path: filePath },
-          });
-          onEvent({ kind: 'tool_result', toolUseId: 'tu-1', output: 'ok' });
+          if (filePath) {
+            onEvent({
+              kind: 'tool_use',
+              toolUseId: 'tu-1',
+              toolName: 'Write',
+              input: { file_path: filePath },
+            });
+            onEvent({ kind: 'tool_result', toolUseId: 'tu-1', output: 'ok' });
+          }
+          if (o.says) onEvent({ kind: 'assistant_text', text: o.says });
           const signal = opts['abortSignal'] as AbortSignal;
           signal.addEventListener(
             'abort',
             () => {
-              void (thenAlso ? thenAlso() : Promise.resolve()).then(() => resolve(killedTurn()));
+              void (o.thenAlso ? o.thenAlso() : Promise.resolve()).then(() =>
+                resolve((o.returns ?? killedTurn)()),
+              );
             },
             { once: true },
           );
-          setBrake(true).then(
+          (o.cut ?? (() => setBrake(true)))().then(
             () => undefined,
             () => undefined,
           );
         }),
     );
 
-  async function jobInConversation() {
+  async function newConversation(): Promise<string> {
     const [conversation] = await db
       .insert(conversations)
       .values({ entityId: seed.entityId, agentId: seed.agentId })
       .returning({ id: conversations.id });
     if (!conversation) throw new Error('conversation insert failed');
+    return conversation.id;
+  }
+
+  async function jobInConversation() {
+    const conversationId = await newConversation();
     const [job] = await db
       .insert(agentJobs)
       .values({
@@ -339,14 +387,14 @@ describe('a turn cut by the brake ends like any other turn @cap:executer-une-com
         channel: 'dashboard',
         task: 'go',
         status: 'processing',
-        conversationId: conversation.id,
+        conversationId,
       })
       .returning({ id: agentJobs.id });
     if (!job) throw new Error('job insert failed');
-    return { jobId: job.id, conversationId: conversation.id };
+    return { jobId: job.id, conversationId };
   }
 
-  const runJobIn = (jobId: string, conversationId: string) =>
+  const runJobIn = (jobId: string, conversationId: string, row = shellAgent()) =>
     runCliRuntimeJob({
       db: db as unknown as AnyDrizzleDb,
       jobId,
@@ -358,14 +406,29 @@ describe('a turn cut by the brake ends like any other turn @cap:executer-une-com
         task: 'go',
         triggerContext: null,
       },
-      agentRow: shellAgent(),
+      agentRow: row,
       workspaces: [{ label: 'ws', path: root }],
       claimGeneration: 0,
     });
 
+  const runChatIn = (conversationId: string, row = shellAgent(), abortSignal?: AbortSignal) =>
+    runCliRuntimeChatTurn({
+      db: db as unknown as AnyDrizzleDb,
+      entityId: seed.entityId,
+      agentRow: row,
+      conversationId,
+      message: 'lance le rendu',
+      ...(abortSignal ? { abortSignal } : {}),
+    });
+
   const jobRow = async (jobId: string) => {
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error, projectId: agentJobs.projectId })
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        result: agentJobs.result,
+        projectId: agentJobs.projectId,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId));
     return row;
@@ -382,6 +445,42 @@ describe('a turn cut by the brake ends like any other turn @cap:executer-une-com
         ),
       );
     return row?.sessionId ?? null;
+  };
+
+  const chatRows = (conversationId: string) =>
+    db
+      .select({
+        content: chatMessages.content,
+        stopped: chatMessages.stopped,
+        cutReason: chatMessages.cutReason,
+      })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversationId));
+
+  /** Le dossier attaché, déclaré comme projet : c'est à lui qu'un tour de chat se rattache. */
+  async function rootDeclared(): Promise<string> {
+    const [row] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: normalizePath(root),
+        projectKey: projectKey(normalizePath(root)),
+        displayName: 'Root',
+        agentId: seed.agentId,
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    if (!row) throw new Error('project insert failed');
+    return row.id;
+  }
+
+  const currentProjectOf = async (conversationId: string) => {
+    const [row] = await db
+      .select({ currentProjectId: conversations.currentProjectId })
+      .from(conversations)
+      .where(eq(conversations.id, conversationId));
+    return row?.currentProjectId ?? null;
   };
 
   it('job path: the session and the project registry are written before the brake verdict', async () => {
@@ -406,48 +505,150 @@ describe('a turn cut by the brake ends like any other turn @cap:executer-une-com
     expect(row?.projectId).toBe(project?.id);
   }, 15_000);
 
-  it('job path: a Stop that lands with the brake is a cancellation, not a brake failure', async () => {
+  // Passe 2 : un Stop pose `cancelled` sans reprendre la ligne. Le run tient
+  // encore la PRISE, et le « continue » suivant doit reprendre la session que
+  // la CLI tuée avait, pas repartir de zéro.
+  it('job path: a Stop that lands with the brake is a cancellation, and the session is kept', async () => {
     const { jobId, conversationId } = await jobInConversation();
-    cliCutByTheBrake(join(root, 'a.ts'), async () => {
-      // Le chemin d'annulation pose `cancelled` sur la ligne.
-      await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, jobId));
+    cliCutByTheBrake(join(root, 'a.ts'), {
+      thenAlso: async () => {
+        // Le chemin d'annulation pose `cancelled` sur la ligne.
+        await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, jobId));
+      },
     });
 
     const outcome = await runJobIn(jobId, conversationId);
 
     expect(outcome).toEqual({ status: 'cancelled' });
     expect(await jobRow(jobId)).toMatchObject({ status: 'cancelled', error: null });
-    // La session est un ÉTAT que le message suivant lit : seul un run qui
-    // tient encore le job l'écrit (#566).
-    expect(await sessionOf(conversationId)).toBeNull();
+    expect(await sessionOf(conversationId)).toBe('sess-killed');
   }, 15_000);
 
   it('chat path: a Stop that lands with the brake is a stopped answer, not a brake failure', async () => {
-    const [conversation] = await db
-      .insert(conversations)
-      .values({ entityId: seed.entityId, agentId: seed.agentId })
-      .returning({ id: conversations.id });
-    if (!conversation) throw new Error('conversation insert failed');
+    const conversationId = await newConversation();
     const stop = new AbortController();
-    cliCutByTheBrake(join(root, 'a.ts'), async () => {
-      stop.abort();
+    cliCutByTheBrake(join(root, 'a.ts'), {
+      thenAlso: async () => {
+        stop.abort();
+      },
     });
 
-    const outcome = await runCliRuntimeChatTurn({
-      db: db as unknown as AnyDrizzleDb,
-      entityId: seed.entityId,
-      agentRow: shellAgent(),
-      conversationId: conversation.id,
-      message: 'lance le rendu',
-      abortSignal: stop.signal,
-    });
+    const outcome = await runChatIn(conversationId, shellAgent(), stop.signal);
 
     expect(outcome).toMatchObject({ ok: true, stopped: true });
-    const stored = await db
-      .select({ stopped: chatMessages.stopped, role: chatMessages.role })
-      .from(chatMessages)
-      .where(eq(chatMessages.conversationId, conversation.id));
-    expect(stored).toEqual([{ stopped: true, role: 'assistant' }]);
-    expect(await sessionOf(conversation.id)).toBe('sess-killed');
+    expect(await chatRows(conversationId)).toEqual([
+      { content: '', stopped: true, cutReason: null },
+    ]);
+    expect(await sessionOf(conversationId)).toBe('sess-killed');
   }, 15_000);
+
+  // Passe 2 : le frein ne décrit qu'un tour déjà en échec. Une CLI qui a rendu
+  // sa réponse pendant que la veille voyait le frein se serrer n'a pas été
+  // tuée : sa réponse part.
+  it('job path: a turn that answered while the brake was engaged stays a success', async () => {
+    const { jobId, conversationId } = await jobInConversation();
+    cliCutByTheBrake(null, { returns: greenTurn });
+
+    const outcome = await runJobIn(jobId, conversationId);
+
+    expect(outcome).toEqual({ status: 'completed', result: 'fait' });
+    expect(await jobRow(jobId)).toMatchObject({ status: 'completed', error: null });
+  }, 15_000);
+
+  it('chat path: a turn that answered while the brake was engaged stays a success', async () => {
+    const conversationId = await newConversation();
+    cliCutByTheBrake(null, { returns: greenTurn });
+
+    const outcome = await runChatIn(conversationId);
+
+    expect(outcome).toEqual({ ok: true, reply: 'fait' });
+    expect(await chatRows(conversationId)).toEqual([
+      { content: 'fait', stopped: false, cutReason: null },
+    ]);
+  }, 15_000);
+
+  // Passe 2 : côté chat aussi, les enregistrements passent avant le verdict.
+  // Le tour a écrit : le fil se rattache au projet ; il a parlé : ce qu'il a
+  // dit reste la réponse, avec la raison de l'arrêt, comme sur un Stop.
+  it('chat path: a turn the brake cut keeps what it said, and what it wrote joins the project', async () => {
+    const projectId = await rootDeclared();
+    const conversationId = await newConversation();
+    cliCutByTheBrake(join(root, 'a.ts'), { says: 'Je lance le rendu' });
+
+    const outcome = await runChatIn(conversationId);
+
+    expect(outcome).toEqual({
+      ok: true,
+      reply: 'Je lance le rendu',
+      cutReason: 'auto_run_paused',
+    });
+    expect(await chatRows(conversationId)).toEqual([
+      { content: 'Je lance le rendu', stopped: false, cutReason: 'auto_run_paused' },
+    ]);
+    expect(await currentProjectOf(conversationId)).toBe(projectId);
+    expect(await sessionOf(conversationId)).toBe('sess-killed');
+  }, 15_000);
+
+  it('chat path: a turn the brake cut before it wrote or said anything moves no project', async () => {
+    await rootDeclared();
+    const conversationId = await newConversation();
+    cliCutByTheBrake(null);
+
+    const outcome = await runChatIn(conversationId);
+
+    expect(outcome).toEqual({ ok: false, error: 'auto_run_paused' });
+    expect(await chatRows(conversationId)).toEqual([]);
+    expect(await currentProjectOf(conversationId)).toBeNull();
+  }, 15_000);
+});
+
+// ── Un frein illisible n'est pas un frein desserré (invariant #4) ────────────
+//
+// Revue Nodal de #551, passe 2 : la veille laissait passer une lecture ratée.
+// Un tour qui aurait un shell ne part pas si l'état du frein ne se lit pas, et
+// il est coupé si la lecture échoue pendant qu'il tourne. Dans les deux cas,
+// il le dit : `auto_run_state_unreadable`.
+describe('an unreadable brake stops a turn with a shell, and says so @cap:executer-une-commande/moteur', () => {
+  const shellAgent = (): CliRuntimeAgentRow => ({
+    ...baseRow,
+    cliPermissions: { mode: 'write', shell: 'auto' },
+  });
+
+  for (const [path, run] of PATHS) {
+    it(`${path} path: a turn with a shell does not start when the brake cannot be read`, async () => {
+      brakeRead.fails = true;
+      for (const row of [
+        shellAgent(),
+        { ...baseRow, runtime: 'fake-codex', cliPermissions: null },
+      ]) {
+        const outcome = await run(row);
+        expect(JSON.stringify(outcome), row.runtime).toContain('auto_run_state_unreadable');
+      }
+      expect(fakeRun).not.toHaveBeenCalled();
+    });
+
+    it(`${path} path: a turn with no shell does not need the brake, and runs`, async () => {
+      brakeRead.fails = true;
+      const outcome = await run({ ...baseRow, cliPermissions: { mode: 'write' } });
+      expect(JSON.stringify(outcome)).toContain('fait');
+      expect(fakeRun).toHaveBeenCalledTimes(1);
+    });
+
+    it(`${path} path: a brake that stops being readable DURING the turn cuts the CLI`, async () => {
+      let signalSeen: AbortSignal | undefined;
+      fakeRun.mockImplementationOnce(
+        (opts) =>
+          new Promise<CliTurnResult>((resolve) => {
+            signalSeen = opts['abortSignal'] as AbortSignal;
+            const done = () => resolve(killedTurn());
+            signalSeen.addEventListener('abort', done, { once: true });
+            setTimeout(done, 10_000);
+            brakeRead.fails = true;
+          }),
+      );
+      const outcome = await run(shellAgent());
+      expect(signalSeen?.aborted).toBe(true);
+      expect(JSON.stringify(outcome)).toContain('auto_run_state_unreadable');
+    }, 15_000);
+  }
 });

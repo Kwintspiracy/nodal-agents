@@ -61,17 +61,21 @@ export const RUN_WRITES_WHILE = ['processing', 'awaiting_delegation'] as const;
 
 /**
  * La condition SQL « ce job est tenu sous cette prise » — la seule. `statuts`
- * vaut `RUN_ACTS_WHILE` sauf pour les écritures du run (`RUN_WRITES_WHILE`).
+ * vaut `RUN_ACTS_WHILE` sauf pour les écritures du run (`RUN_WRITES_WHILE`),
+ * et `null` pour la prise seule : ce que le run a FAIT pendant qu'il tenait le
+ * job (la transcription d'un job annulé par la personne, la session et le
+ * registre d'un tour de CLI coupé par un Stop), vrai quel que soit le statut
+ * posé depuis, tant qu'aucun autre run n'a repris la ligne.
  */
 export function heldBy(
   jobId: string,
   claimGeneration: number,
-  statuts: readonly string[] = RUN_ACTS_WHILE,
+  statuts: readonly string[] | null = RUN_ACTS_WHILE,
 ): Condition {
   return and(
     eq(agentJobs.id, jobId),
     eq(agentJobs.claimGeneration, claimGeneration),
-    inArray(agentJobs.status, [...statuts]),
+    statuts === null ? undefined : inArray(agentJobs.status, [...statuts]),
   ) as Condition;
 }
 
@@ -108,9 +112,7 @@ export function claimCondition(
 ): Condition | undefined {
   const generation = heldClaim(jobId);
   if (generation === null) return undefined;
-  return statuts === null
-    ? and(eq(agentJobs.id, jobId), eq(agentJobs.claimGeneration, generation))
-    : heldBy(jobId, generation, statuts);
+  return heldBy(jobId, generation, statuts);
 }
 
 /**

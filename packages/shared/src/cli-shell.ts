@@ -49,13 +49,20 @@ export const RUNTIME_CLI: Readonly<Record<string, CodingCli>> = {
   codex: 'codex',
 };
 
+/**
+ * Pourquoi le frein arrête un tour qui aurait un shell : il est serré, ou son
+ * état ne se lit pas. Un frein illisible n'est pas un frein desserré
+ * (invariant #4) : il arrête le tour et le dit.
+ */
+export type BrakeStop = 'auto_run_paused' | 'auto_run_state_unreadable';
+
 /** Ce qu'un tour peut faire d'un shell. */
 export type CliShellPosture =
   /**
    * Le tour ne doit pas démarrer : la CLI ne sait pas se passer de son shell
-   * et le frein d'urgence du workspace est serré.
+   * et le frein d'urgence du workspace est serré (ou illisible).
    */
-  | { readonly kind: 'refused'; readonly reason: 'auto_run_paused' }
+  | { readonly kind: 'refused'; readonly reason: BrakeStop }
   /** Le tour démarre sans aucun outil shell. */
   | { readonly kind: 'no_shell' }
   /**

@@ -14,10 +14,23 @@
 //     route, il coupe le processus. Sans ça, retirer la permission laissait
 //     tourner des commandes jusqu'à la fin du tour, dix minutes et plus (revue
 //     Codex de #494).
+//
+// UN FREIN ILLISIBLE N'EST PAS UN FREIN DESSERRÉ (invariant #4, revue Nodal de
+// #551, passe 2). Au départ, un tour qui aurait un shell ne part pas si l'état
+// du frein ne se lit pas, et le dit (`auto_run_state_unreadable`). Pendant le
+// tour, la même tolérance que la veille de la ligne du job : une lecture ratée
+// est journalisée, et à `JOB_ROW_UNREADABLE_MAX` échecs consécutifs le tour est
+// coupé, pour la même raison dite.
 
-import { cliShellPosture, type CliShellPosture, type CodingCli } from '@nodal-agents/shared';
+import {
+  cliShellPosture,
+  type BrakeStop,
+  type CliShellPosture,
+  type CodingCli,
+} from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { isAutoRunPaused } from '../approvals/rules.ts';
+import { JOB_ROW_UNREADABLE_MAX } from '../job/state.ts';
 
 /** L'intervalle de relecture du frein pendant un tour qui a un shell. */
 export const BRAKE_WATCH_MS = 5_000;
@@ -28,15 +41,29 @@ export async function shellPostureForTurn(
   cli: CodingCli,
   perms: Parameters<typeof cliShellPosture>[1],
 ): Promise<CliShellPosture> {
-  const autoRunPaused = entityId ? await isAutoRunPaused(db, entityId) : false;
+  // Le frein ne décide que d'un tour qui AURAIT un shell : pour les autres, il
+  // ne change rien, et son état n'a pas à être lu.
+  const unbraked = cliShellPosture(cli, perms, { autoRunPaused: false });
+  if (unbraked.kind !== 'shell' || !entityId) return unbraked;
+  let autoRunPaused: boolean;
+  try {
+    autoRunPaused = await isAutoRunPaused(db, entityId);
+  } catch (err) {
+    console.error(
+      `[cli-runtime] AUTO_RUN_STATE_UNREADABLE entity=${entityId} at turn start: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return { kind: 'refused', reason: 'auto_run_state_unreadable' };
+  }
   return cliShellPosture(cli, perms, { autoRunPaused });
 }
 
 export interface BrakeWatch {
-  /** À passer au binding : il tue le processus quand le frein se serre. */
+  /** À passer au binding : il tue le processus quand le frein arrête le tour. */
   readonly signal: AbortSignal | undefined;
-  /** Le frein s'est-il serré pendant le tour ? */
-  engaged(): boolean;
+  /** Ce qui a arrêté le tour — le frein serré, ou illisible —, `null` sinon. */
+  stoppedBy(): BrakeStop | null;
   stop(): void;
 }
 
@@ -44,9 +71,9 @@ export interface BrakeWatch {
  * Surveille le frein pendant un tour qui a un shell. Un tour sans shell n'a
  * rien à couper : aucune lecture, aucun minuteur.
  *
- * Une lecture du frein qui échoue ne relâche rien et ne coupe rien : elle est
- * journalisée, et la suivante décide. Le frein a été lu au départ du tour ;
- * c'est le serrage EN COURS qu'on guette ici.
+ * Le frein a été lu au départ du tour ; c'est le serrage EN COURS qu'on guette
+ * ici. Une lecture ratée est journalisée ; `JOB_ROW_UNREADABLE_MAX` ratées de
+ * suite coupent le tour (voir l'en-tête).
  */
 export function watchBrakeDuringTurn(
   db: AnyDrizzleDb,
@@ -55,19 +82,32 @@ export function watchBrakeDuringTurn(
   opts: { everyMs?: number; personStop?: AbortSignal } = {},
 ): BrakeWatch {
   if (posture.kind !== 'shell' || !entityId) {
-    return { signal: opts.personStop, engaged: () => false, stop: () => {} };
+    return { signal: opts.personStop, stoppedBy: () => null, stop: () => {} };
   }
   const brake = new AbortController();
-  let engaged = false;
+  let stoppedBy: BrakeStop | null = null;
+  let unreadable = 0;
+  const cut = (why: BrakeStop): void => {
+    if (stoppedBy) return;
+    stoppedBy = why;
+    brake.abort();
+  };
   const check = (): void => {
     isAutoRunPaused(db, entityId).then(
       (paused) => {
-        if (paused && !engaged) {
-          engaged = true;
-          brake.abort();
-        }
+        unreadable = 0;
+        if (paused) cut('auto_run_paused');
       },
-      (err: unknown) => console.warn('[cli-runtime] brake read failed during a turn:', err),
+      (err: unknown) => {
+        unreadable += 1;
+        console.warn(
+          `[cli-runtime] brake read failed during a turn (${String(unreadable)}/${String(
+            JOB_ROW_UNREADABLE_MAX,
+          )}):`,
+          err,
+        );
+        if (unreadable >= JOB_ROW_UNREADABLE_MAX) cut('auto_run_state_unreadable');
+      },
     );
   };
   // Une première lecture tout de suite, pas cinq secondes plus tard.
@@ -75,7 +115,7 @@ export function watchBrakeDuringTurn(
   const timer = setInterval(check, opts.everyMs ?? BRAKE_WATCH_MS);
   return {
     signal: opts.personStop ? AbortSignal.any([opts.personStop, brake.signal]) : brake.signal,
-    engaged: () => engaged,
+    stoppedBy: () => stoppedBy,
     stop: () => clearInterval(timer),
   };
 }

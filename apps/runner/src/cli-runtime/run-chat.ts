@@ -29,7 +29,8 @@ import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './w
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
 import { shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
-import { claudeShellTools } from '@nodal-agents/shared';
+import { claudeShellTools, type BrakeStop } from '@nodal-agents/shared';
+import { EDIT_TOOLS, scannedEditPath } from '../job/code-projects.ts';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
@@ -49,7 +50,10 @@ export async function runCliRuntimeChatTurn(args: {
   message: string;
   /** The person's Stop (#456): kills the CLI turn; the reply is what was said so far, marked `stopped`. */
   abortSignal?: AbortSignal;
-}): Promise<{ ok: true; reply: string; stopped?: boolean } | { ok: false; error: string }> {
+}): Promise<
+  | { ok: true; reply: string; stopped?: boolean; cutReason?: BrakeStop }
+  | { ok: false; error: string }
+> {
   const { db, entityId, agentRow, message } = args;
   // Same shared-table guard as the job path — see assertRuntimeSessionKey.
   const conversationId = assertRuntimeSessionKey(args.conversationId);
@@ -115,6 +119,10 @@ export async function runCliRuntimeChatTurn(args: {
   // avant lui ne laisserait rien, alors que la personne a vu ce texte s'écrire
   // (revue Codex de #459, passe 4).
   const emittedTexts: string[] = [];
+  // Ce tour a-t-il écrit un fichier ? Lu par le registre des projets : même
+  // liste d'outils et même lecture du chemin que le chemin job et l'onglet
+  // Code (`EDIT_TOOLS`, `scannedEditPath`) ; une écriture refusée ne compte pas.
+  let wroteFiles = false;
   const onEvent = (evt: ClaudeTurnEvent): void => {
     if (evt.kind === 'assistant_text') {
       if (evt.text) emittedTexts.push(evt.text);
@@ -124,21 +132,19 @@ export async function runCliRuntimeChatTurn(args: {
       const started = pending.get(evt.toolUseId);
       if (!started) return;
       pending.delete(evt.toolUseId);
+      // Même construction que le chemin job — voir audit.ts.
+      const row = buildCliAuditRow({
+        toolName: started.name,
+        toolInput: started.input,
+        toolOutput: evt.output,
+        toolCallId: evt.toolUseId,
+        startedAt: started.startedAt,
+        now: Date.now(),
+      });
+      if (EDIT_TOOLS.includes(row.toolName) && scannedEditPath(row) !== null) wroteFiles = true;
       void db
         .insert(toolCalls)
-        .values({
-          entityId,
-          jobId: null,
-          // Même construction que le chemin job — voir audit.ts.
-          ...buildCliAuditRow({
-            toolName: started.name,
-            toolInput: started.input,
-            toolOutput: evt.output,
-            toolCallId: evt.toolUseId,
-            startedAt: started.startedAt,
-            now: Date.now(),
-          }),
-        })
+        .values({ entityId, jobId: null, ...row })
         .catch((err: unknown) => {
           console.warn('[cli-runtime] chat tool_calls insert failed:', err);
         });
@@ -351,57 +357,27 @@ export async function runCliRuntimeChatTurn(args: {
   }
 
   // Le MÊME ordre de fin de tour que le chemin job (voir run-job.ts, « UN SEUL
-  // ORDRE DE FIN DE TOUR ») : les enregistrements ci-dessus, puis le droit
-  // d'agir — le Stop de la personne l'emporte sur le frein —, puis le verdict.
-  //
-  // Stop (#456) : le processus a été tué à la demande de la personne. Ce n'est
-  // pas une panne du runtime — c'est la réponse arrêtée : le texte final s'il
-  // en était sorti un, et le FAIT de l'arrêt (`stopped`), que l'écran dit.
-  if (args.abortSignal?.aborted) {
-    const reply = turn.finalText.trim() || emittedTexts.join('\n\n').trim();
-    await db.insert(chatMessages).values({
-      entityId,
-      agentId: agentRow.id,
-      conversationId,
-      role: 'assistant',
-      content: reply,
-      stopped: true,
-    });
-    await db
-      .update(conversations)
-      .set({ updatedAt: new Date() })
-      .where(eq(conversations.id, conversationId));
-    return { ok: true, reply, stopped: true };
-  }
+  // ORDRE DE FIN DE TOUR ») : les enregistrements (l'audit, la session
+  // ci-dessus, le registre ci-dessous), puis le droit d'agir — le Stop de la
+  // personne l'emporte sur le frein —, puis le verdict.
+  const answered = !turn.isError && turn.finalText !== '';
 
-  // Le verdict. Le frein serré pendant le tour (#494) a tué la CLI : un échec
-  // parmi les autres, dit comme au départ du tour, quoi qu'elle ait rendu.
-  const brakeEngaged = brake.engaged();
-  if (brakeEngaged || turn.isError || turn.finalText === '') {
-    const limitHit = turn.rateLimit && turn.rateLimit.status !== 'allowed';
-    return {
-      ok: false,
-      error: brakeEngaged
-        ? 'auto_run_paused'
-        : limitHit
-          ? 'subscription_limit_reached'
-          : `cli_runtime_error: ${(turn.errorDetail ?? 'no final text').slice(0, 200)}`,
-    };
-  }
-
-  // ── Le REGISTRE des projets (P5), APRÈS un tour réussi — le JUMEAU du chemin
-  // job (run-job.ts). Un tour de chat n'a pas de jobId, et la colonne de
-  // rattachement vit sur agent_jobs : c'est la CONVERSATION qui porte le projet
-  // ici (P6), et elle suffit. L'issue est `{ job: 'no_job', conversation: 'set' }`.
-  // Après le tour, pas avant (revue Codex passe 27) : un tour en erreur n'a rien
-  // produit, et le projet courant du fil ne doit pas bouger pour lui.
+  // ── Le REGISTRE des projets (P5) — le JUMEAU du chemin job (run-job.ts). Un
+  // tour de chat n'a pas de jobId, et la colonne de rattachement vit sur
+  // agent_jobs : c'est la CONVERSATION qui porte le projet ici (P6), et elle
+  // suffit. L'issue est `{ job: 'no_job', conversation: 'set' }`.
+  // Après le tour, pas avant (revue Codex passe 27) : une CLI qui n'a rien
+  // produit ne déplace pas le projet courant du fil. Mais un tour en échec
+  // (tué par le Stop ou le frein, sorti en erreur) qui a ÉCRIT a produit :
+  // même condition que le chemin job (revue Codex passe 28), avec pour signal
+  // les écritures que CE tour a faites (`wroteFiles`, vues par `onEvent`), et
+  // posé AVANT le verdict (revue Nodal de #551, passe 2).
   // Cibles = les DOSSIERS attachés, pas les fichiers écrits (contrairement à
-  // run-job.ts, P5b) : sans job, les lignes `cli:*` de l'audit n'ont pas de
-  // `job_id`, et rien ne dit lesquelles sont celles de CE tour. Un tour de
-  // chat ne DÉCLARE donc jamais de projet (seules les cibles fichier
-  // déclarent — revue Codex, passe 32) ; il se rattache à un projet déjà
-  // déclaré, et un dossier à manifeste attend un tour de JOB pour l'être.
-  if (mode === 'write') {
+  // run-job.ts, P5b) : un tour de chat ne DÉCLARE jamais de projet (seules les
+  // cibles fichier déclarent — revue Codex, passe 32) ; il se rattache à un
+  // projet déjà déclaré, et un dossier à manifeste attend un tour de JOB pour
+  // l'être.
+  if (mode === 'write' && (answered || wroteFiles)) {
     await attachProductionToProject(
       { db, entityId, jobId: null, conversationId, agentId: agentRow.id, workspaces: wsRows },
       wsRows.map((w) => ({
@@ -410,6 +386,53 @@ export async function runCliRuntimeChatTurn(args: {
         deliverableType: 'code_project' as const,
       })),
     );
+  }
+
+  // Un tour arrêté avant sa fin garde ce qu'il avait dit : c'est la réponse de
+  // ce tour, et la raison de l'arrêt est un FAIT posé sur la ligne, que l'écran
+  // dit (`stopped` pour le Stop de la personne, `cutReason` pour le frein) —
+  // la même règle que le chat Nodal (#456, #458).
+  const partialText = (): string => turn.finalText.trim() || emittedTexts.join('\n\n').trim();
+  const keepPartialReply = async (
+    fact: { stopped: true } | { cutReason: BrakeStop },
+  ): Promise<{ ok: true; reply: string; stopped?: boolean; cutReason?: BrakeStop }> => {
+    const reply = partialText();
+    await db.insert(chatMessages).values({
+      entityId,
+      agentId: agentRow.id,
+      conversationId,
+      role: 'assistant',
+      content: reply,
+      ...fact,
+    });
+    await db
+      .update(conversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(conversations.id, conversationId));
+    return { ok: true, reply, ...fact };
+  };
+
+  // Stop (#456) : le processus a été tué à la demande de la personne. Ce n'est
+  // pas une panne du runtime — c'est la réponse arrêtée, même vide.
+  if (args.abortSignal?.aborted) return keepPartialReply({ stopped: true });
+
+  if (!answered) {
+    // Le frein ne décrit qu'un tour déjà en échec (#494) : il a tué la CLI.
+    // Ce qu'elle avait dit reste la réponse, avec la raison ; rien de dit, le
+    // tour échoue en la disant, comme au départ.
+    const brakeStop = brake.stoppedBy();
+    if (brakeStop) {
+      return partialText() !== ''
+        ? keepPartialReply({ cutReason: brakeStop })
+        : { ok: false, error: brakeStop };
+    }
+    const limitHit = turn.rateLimit && turn.rateLimit.status !== 'allowed';
+    return {
+      ok: false,
+      error: limitHit
+        ? 'subscription_limit_reached'
+        : `cli_runtime_error: ${(turn.errorDetail ?? 'no final text').slice(0, 200)}`,
+    };
   }
 
   await db.insert(chatMessages).values({
