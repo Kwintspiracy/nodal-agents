@@ -22,6 +22,9 @@ export const SOMETHING_ELSE_LABEL = "Something else, I'll explain";
 /** La borne du runner (`FREE_ANSWER_MAX`, approvals/resolve.ts). */
 const FREE_ANSWER_MAX = 2000;
 
+/** La raison d'un refus, facultative : une phrase pour l'agent, pas un document. */
+const DECLINE_NOTES_MAX = 500;
+
 export interface QuestionCardProps {
   /**
    * La question, telle que l'agent l'a écrite. Un `ReactNode` : le fil y met
@@ -56,7 +59,9 @@ export interface QuestionCardProps {
  *
  * Trois états, et un seul est interactif. En attente : la question, UNE LIGNE
  * par option de l'agent, puis la ligne de la plateforme qui ouvre un champ en
- * place (#465) ; et la pastille qui dit qu'on attend. Répondue : la réponse
+ * place (#465), et « Decline » pour ne répondre ni l'un ni l'autre (revue de
+ * #622 : sans lui, le job restait suspendu) ; et la pastille qui dit qu'on
+ * attend. Répondue : la réponse
  * retenue en pastille (une option, ou le texte écrit), les options en retrait.
  * Déclinée : dit comme tel, avec la raison si elle a été donnée.
  *
@@ -77,6 +82,8 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
   const waiting = status === 'pending' && question !== null;
   const [explaining, setExplaining] = useState(false);
   const [text, setText] = useState('');
+  const [declining, setDeclining] = useState(false);
+  const [notes, setNotes] = useState('');
 
   /** `free` : la personne a écrit sa réponse, ce n'est aucune option (#465). */
   function answerWith(answer: string, free: boolean) {
@@ -97,6 +104,31 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
       // resterait en attente jusqu'au prochain passage de LiveRefresh.
       router.refresh();
       // Et la barre, qui compte les attentes côté client.
+      await refresh();
+    });
+  }
+
+  /**
+   * Refuser la question : aucune réponse, et la raison si elle est donnée.
+   * Le job repart par le chemin ordinaire du refus, et l'agent le lit.
+   */
+  function decline() {
+    if (!question) return;
+    const reason = notes.trim();
+    startTransition(async () => {
+      const r = await resolveApprovalAction({
+        approvalRequestId: question.approvalRequestId,
+        decision: 'reject',
+        ...(reason !== '' ? { notes: reason } : {}),
+      });
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      toast.success('Declined');
+      setDeclining(false);
+      setNotes('');
+      router.refresh();
       await refresh();
     });
   }
@@ -135,7 +167,10 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
               <ChoiceTile
                 icon={<PencilSimple size={14} className="text-ink-3" />}
                 label={SOMETHING_ELSE_LABEL}
-                onClick={() => setExplaining(true)}
+                onClick={() => {
+                  setDeclining(false);
+                  setExplaining(true);
+                }}
                 disabled={isPending}
                 className="w-full"
               />
@@ -161,6 +196,50 @@ export default function QuestionCard({ prompt, options, question }: QuestionCard
                   Send
                 </PrimaryButton>
               </div>
+            </div>
+          )}
+          {/* Le refus, en retrait sous les réponses : le geste rare, qui
+              demande confirmation et laisse dire pourquoi. */}
+          {declining ? (
+            <div className="mt-2 flex flex-col gap-2">
+              <TextArea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                maxLength={DECLINE_NOTES_MAX}
+                placeholder="Why none of these fits (optional, sent to the agent)"
+                aria-label="Why you decline"
+              />
+              <div className="flex justify-end gap-2">
+                <PrimaryButton
+                  variant="neutral"
+                  size="sm"
+                  onClick={() => {
+                    setDeclining(false);
+                    setNotes('');
+                  }}
+                  disabled={isPending}
+                >
+                  Cancel
+                </PrimaryButton>
+                <PrimaryButton variant="danger" size="sm" onClick={decline} disabled={isPending}>
+                  Confirm decline
+                </PrimaryButton>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 flex justify-end">
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
+                onClick={() => {
+                  setExplaining(false);
+                  setDeclining(true);
+                }}
+                disabled={isPending}
+              >
+                Decline
+              </PrimaryButton>
             </div>
           )}
         </>

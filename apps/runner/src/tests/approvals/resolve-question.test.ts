@@ -15,7 +15,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
 import { approvalRequests, agentJobs } from '@nodal-agents/db';
-import { resolveApprovalDecision } from '../../approvals/resolve.ts';
+import { FREE_ANSWER_MAX, resolveApprovalDecision } from '../../approvals/resolve.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 
@@ -202,6 +202,43 @@ describe('resolveApprovalDecision — une question', () => {
     expect(result).toEqual({ ok: false, code: 'answer_empty' });
     expect((await readBack(approval.id)).status).toBe('pending');
     expect(await jobStatus()).toBe('awaiting_approval');
+  });
+
+  // Revue Nodal de #622, P3 : la borne n'avait pas de test. Elle se lit sur
+  // le texte RETENU (espaces de bord retirés) : pile la borne passe, un
+  // caractère de plus est refusé, et rien ne bouge.
+  it('#465 — une réponse libre au-delà de FREE_ANSWER_MAX est refusée, et rien n’a bougé', async () => {
+    const approval = await insertQuestion();
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'approve',
+      answer: 'x'.repeat(FREE_ANSWER_MAX + 1),
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result).toEqual({ ok: false, code: 'answer_too_long' });
+    const row = await readBack(approval.id);
+    expect(row.status).toBe('pending');
+    expect(row.answer).toBeNull();
+    expect(await jobStatus()).toBe('awaiting_approval');
+  });
+
+  it('#465 — une réponse libre de FREE_ANSWER_MAX caractères pile est acceptée', async () => {
+    const approval = await insertQuestion();
+    const texte = 'y'.repeat(FREE_ANSWER_MAX);
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval.id,
+      decision: 'approve',
+      answer: `  ${texte}  `,
+      free: true,
+      resolvedBy: 'api',
+    });
+
+    expect(result.ok).toBe(true);
+    expect((await readBack(approval.id)).answer).toBe(texte);
   });
 
   it('#465 — une réponse libre sur une approbation ordinaire est refusée', async () => {

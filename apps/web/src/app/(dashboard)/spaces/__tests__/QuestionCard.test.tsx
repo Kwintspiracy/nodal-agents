@@ -37,6 +37,11 @@ const OPTIONS = ['The repo README', 'A new file in notes'];
 /** La ligne de la PLATEFORME (#465), jamais écrite par l'agent. */
 const SOMETHING_ELSE = "Something else, I'll explain";
 const PROMPT = 'Where should I write the summary?';
+/**
+ * Le REFUS (revue de #622) : ni une option, ni une réponse à écrire. Sans lui,
+ * le job restait en `awaiting_approval` pour toujours.
+ */
+const DECLINE = 'Decline';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -90,7 +95,7 @@ describe('QuestionCard — dans le fil', () => {
   it('en attente : une ligne par option, puis la ligne de la plateforme, et la carte dit qu’elle attend', async () => {
     await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
     expect(container.textContent).toContain(PROMPT);
-    expect(buttonLabels()).toEqual([...OPTIONS, SOMETHING_ELSE]);
+    expect(buttonLabels()).toEqual([...OPTIONS, SOMETHING_ELSE, DECLINE]);
     // Une LIGNE par réponse, pas une rangée de boutons : chacune tient la largeur.
     expect(container.querySelectorAll('[data-testid="question-answer-row"]')).toHaveLength(3);
     // P2bis — forme de la maquette : un cadre encré, une pastille d'attente,
@@ -134,6 +139,68 @@ describe('QuestionCard — dans le fil', () => {
       answer: 'Le fichier est dans D:/ventes',
       free: true,
     });
+  });
+
+  // Revue Nodal de #622, P1 : `QuestionActions` portait le seul « Decline » du
+  // web. Sans lui, une personne qui ne veut ni choisir ni écrire laissait le
+  // job en `awaiting_approval` pour toujours. Le refus revient ICI, là où la
+  // question se répond. Le runner le traite déjà (resolve.ts) :
+  // `resolve-question.test.ts` prouve la ligne `rejected`, la note gardée et
+  // le job qui repart.
+  it('« Decline » demande confirmation, puis REFUSE avec la raison donnée, sans aucune réponse', async () => {
+    await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
+
+    await click(DECLINE);
+    // Le premier clic ne refuse rien : il ouvre la raison, facultative.
+    expect(resolveApprovalAction).not.toHaveBeenCalled();
+    await type(container.querySelector('textarea')!, 'None of these fits');
+    await click('Confirm decline');
+
+    expect(resolveApprovalAction).toHaveBeenCalledWith({
+      approvalRequestId: 'apr-1',
+      decision: 'reject',
+      notes: 'None of these fits',
+    });
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('« Decline » sans raison : aucune note n’est envoyée', async () => {
+    await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
+    await click(DECLINE);
+    await click('Confirm decline');
+    expect(resolveApprovalAction).toHaveBeenCalledWith({
+      approvalRequestId: 'apr-1',
+      decision: 'reject',
+    });
+  });
+
+  it('« Cancel » referme le refus sans rien envoyer', async () => {
+    await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
+    await click(DECLINE);
+    await click('Cancel');
+    expect(resolveApprovalAction).not.toHaveBeenCalled();
+    expect(container.querySelector('textarea')).toBeNull();
+    expect(buttonLabels()).toEqual([...OPTIONS, SOMETHING_ELSE, DECLINE]);
+  });
+
+  it('refusée, la ligne relue dit `rejected` : la carte passe à « Declined », sans bouton', async () => {
+    await render(<QuestionCard prompt={PROMPT} options={OPTIONS} question={pending} />);
+    await click(DECLINE);
+    await click('Confirm decline');
+    // Le fil se relit (router.refresh) et rend la ligne telle que le runner
+    // l'a écrite.
+    await act(async () => {
+      root.render(
+        <QuestionCard
+          prompt={PROMPT}
+          options={OPTIONS}
+          question={{ ...pending, status: 'rejected', notes: 'None of these fits' }}
+        />,
+      );
+    });
+    expect(buttonLabels()).toEqual([]);
+    expect(container.textContent).toContain('Declined · None of these fits');
+    expect(container.textContent).not.toContain('Waiting');
   });
 
   it('un champ vide n’envoie rien : le bouton est inerte', async () => {
@@ -269,7 +336,7 @@ describe('ConversationFeedView — le dispatch sur la carte `question`', () => {
 
     await render(<ConversationFeedView feed={feed} />);
     expect(container.textContent).toContain(PROMPT);
-    expect(buttonLabels()).toEqual([...OPTIONS, SOMETHING_ELSE]);
+    expect(buttonLabels()).toEqual([...OPTIONS, SOMETHING_ELSE, DECLINE]);
     // Pas de repli brut : le nom de l'outil n'apparaît pas comme un titre.
     expect(container.textContent).not.toContain('no card recorded');
 
