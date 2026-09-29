@@ -13,7 +13,11 @@
 //   - `up` retiré d'`autostartArgv` → les trois textes rougissent ;
 //   - la lecture du linger retirée (toujours `at_login`) → « linger actif :
 //     au boot » rougit ;
-//   - le refus du cache npx retiré → « un cache npx est refusé » rougit.
+//   - le refus du cache npx retiré → « un cache npx est refusé » rougit ;
+//   - le refus d'un argv `null` retiré → les trois « sans script connu »
+//     rougissent ;
+//   - `cmd.exe /c` retiré de `windowsRunCommand` → « inscrire : `reg add`
+//     exact sous Run » rougit.
 
 import { describe, it, expect } from 'vitest';
 import { join } from 'path';
@@ -57,6 +61,20 @@ describe('ce que le démarrage lancera @cap:installer-et-demarrer/moteur', () =>
     expect(Array.isArray(r)).toBe(false);
     expect((r as { refused: string }).refused).toContain('npm install -g nodal-agents');
   });
+
+  // Sans script connu (`currentCliLaunchArgv()` rend null), rien n'est inscrit
+  // sur aucun système : l'ancien `resolve('')` inscrivait le dossier courant.
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    '%s : sans script connu, refusé avec la raison, et rien n’est écrit',
+    async (platform) => {
+      const sys = fauxSysteme(platform);
+      const s = await installAutostart(null, sys.fx);
+      expect(s.state).toBe('unsupported');
+      expect((s as { reason: string }).reason).toMatch(/script/i);
+      expect(sys.files.size).toBe(0);
+      expect(sys.calls).toEqual([]);
+    },
+  );
 });
 
 describe('les textes inscrits, par système @cap:installer-et-demarrer/moteur', () => {

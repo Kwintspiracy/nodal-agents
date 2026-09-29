@@ -6,13 +6,12 @@
 // cette même commande avec `--json` : le CLI tient l'intégration au système,
 // le web ne la réécrit pas.
 
-import { resolve } from 'path';
 import { mkdir, rm, stat, writeFile } from 'fs/promises';
 import { homedir, userInfo } from 'os';
 import { execa } from 'execa';
 import chalk from 'chalk';
 import { CONFIG_DIR } from '../lib/config.ts';
-import { cliLaunchArgv } from '../lib/env.ts';
+import { currentCliLaunchArgv } from '../lib/env.ts';
 import {
   installAutostart,
   readAutostartStatus,
@@ -70,14 +69,7 @@ export async function runService(
   const fx = effects();
   const status =
     action === 'install'
-      ? await installAutostart(
-          cliLaunchArgv({
-            execPath: process.execPath,
-            execArgv: process.execArgv,
-            scriptPath: resolve(process.argv[1] ?? ''),
-          }),
-          fx,
-        )
+      ? await installAutostart(currentCliLaunchArgv(), fx)
       : action === 'uninstall'
         ? await uninstallAutostart(fx)
         : await readAutostartStatus(fx);

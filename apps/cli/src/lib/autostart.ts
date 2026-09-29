@@ -68,9 +68,18 @@ export type AutostartStatus =
 /**
  * La commande que le démarrage lancera : ce CLI, en `up` au premier plan.
  * Refusée quand le script vit dans un cache npx : ce chemin n'existera plus au
- * prochain démarrage, et l'inscription pointerait dans le vide.
+ * prochain démarrage, et l'inscription pointerait dans le vide. Refusée aussi
+ * quand le script n'est pas connu (`currentCliLaunchArgv()` rend `null`) :
+ * aucune commande n'est inventée.
  */
-export function autostartArgv(cliArgv: readonly string[]): string[] | { refused: string } {
+export function autostartArgv(cliArgv: readonly string[] | null): string[] | { refused: string } {
+  if (cliArgv === null) {
+    return {
+      refused:
+        'This process was not started from the nodal-agents CLI script, ' +
+        'so there is no command to register at startup.',
+    };
+  }
   const script = cliArgv[cliArgv.length - 1] ?? '';
   if (/[\\/]_npx[\\/]/.test(script)) {
     return {
@@ -310,7 +319,7 @@ export async function readAutostartStatus(fx: AutostartEffects): Promise<Autosta
 }
 
 export async function installAutostart(
-  cliArgv: readonly string[],
+  cliArgv: readonly string[] | null,
   fx: AutostartEffects,
 ): Promise<AutostartStatus> {
   const argv = autostartArgv(cliArgv);
