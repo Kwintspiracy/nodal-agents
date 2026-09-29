@@ -410,6 +410,11 @@ export async function consumeUnderClocks(
     cancelSignal?.removeEventListener('abort', onCancel);
     if (silence !== undefined) clearTimeout(silence);
     clearTimeout(absolute);
+    // #608: the request never outlives the call, whatever ends it. An error
+    // part, a throwing listener or a failed collect used to leave it open, its
+    // body unread; on a shared connection an unread body holds back every
+    // other call to that provider. After a finished stream this is a no-op.
+    controller.abort();
   }
 }
 

@@ -14,6 +14,12 @@ import { createLlmClient } from '../client';
 import { CAPABILITY_MATRIX } from '../providers/registry';
 import { ProviderConfigError } from '../errors';
 
+// Every provider call goes through `providerFetch` (#608). Routed to the global
+// fetch here, so these tests stub `fetch` as they always did.
+vi.mock('../transport', () => ({
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 // ─── patchMoonshotRequestBody — pure function ─────────────────────────────────
 
 describe('patchMoonshotRequestBody', () => {

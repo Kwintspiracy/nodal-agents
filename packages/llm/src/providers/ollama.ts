@@ -4,11 +4,12 @@ import { createOllama } from 'ollama-ai-provider-v2';
 import type { LanguageModel } from 'ai';
 import type { ProviderConfig } from '../types';
 import { PROVIDER_PRESETS } from './registry';
+import { providerFetch } from '../transport';
 
 export function buildOllamaModel(config: ProviderConfig): LanguageModel {
   const baseURL = config.baseURL ?? PROVIDER_PRESETS.ollama.defaultBaseURL;
 
-  const provider = createOllama({ baseURL });
+  const provider = createOllama({ baseURL, fetch: providerFetch });
 
   return provider(config.model);
 }
