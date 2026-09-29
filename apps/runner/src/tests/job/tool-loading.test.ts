@@ -40,6 +40,14 @@ import {
   toolResults,
 } from './tool-loading-harness.ts';
 
+// Provider calls leave through packages/llm's own transport (#609), not the
+// global fetch. Routed back to it here, so the harness's stub is still the
+// fetch boundary and nothing leaves the machine. (vi.mock is hoisted per test
+// file: it cannot live in the shared harness.)
+vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 let db: TestDb;
 
 beforeAll(async () => {

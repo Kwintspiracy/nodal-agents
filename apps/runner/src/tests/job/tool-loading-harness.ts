@@ -6,6 +6,11 @@
 // recorded as the provider receives it and answered with the next scripted
 // reply. A script spans every run of a job (a suspension and its resume read
 // the same list of replies).
+//
+// Since #609 provider calls leave through `providerFetch` (packages/llm/src/
+// transport.ts), not the global fetch: every suite using this harness routes
+// it back to `globalThis.fetch` with its own `vi.mock` (hoisted per test file),
+// or the stub is never called and the real network can be reached.
 
 import { vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
