@@ -4700,6 +4700,69 @@ async function runJobTracked(
       const { promptT, promptTok, cachedT, effectiveT, completionT, callCostUsd } =
         compterAppel(response);
 
+      // Les gardes avant d'agir, lues sur ce que le run a dépensé JUSQU'ICI :
+      // après le tour, puis de nouveau après sa relance quand elle a été
+      // servie (#600). Rendent l'arrêt du run, ou null pour continuer.
+      const avantDAgir = async (): Promise<ExecuteJobResult | null> => {
+        // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
+        // pendant que la réponse se terminait, n'exécute aucun des outils
+        // qu'elle demande. Le texte du tour est gardé. Lue AVANT les plafonds
+        // (revue Codex de #449, passe 7) : un Stop suivi d'un débordement rend
+        // `cancelled`, pas `failed` — le parent et la tâche lisent ce statut.
+        // Toute perte du droit d'agir compte ici, pas seulement Stop (#566).
+        const perteApresAppel = await droitPerdu();
+        if (perteApresAppel) {
+          if (texteDuTour.trim() !== '') {
+            messages = [
+              ...messages,
+              { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
+            ];
+          }
+          return await lacherLeJob(perteApresAppel, 'before_tools');
+        }
+
+        // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
+        // input + output, not raw input. A job that re-sends a prompt-cached
+        // history (the common long-running pattern: the growing transcript is read
+        // from cache each turn, ~10x cheaper) accrues budget at its real cost, so
+        // it no longer dies at the wall like an uncached runaway would. A genuine
+        // runaway (fresh tokens every turn) still trips. Fail loud BEFORE acting on
+        // this turn's output so a runaway never bleeds the provider's credit dry.
+        // Agnostic: no per-agent knowledge. Runaway coverage is unchanged —
+        // maxTurns + the no-progress detector remain the loop backstops.
+        if (effectiveInputTokens + outputTokens > maxTotalTokensPerJob) {
+          messages = avecTourRepris();
+          // #442 : ce que le run a écrit, ce tour compris, est livré.
+          return await arreterSurBudget(
+            {
+              kind: 'tokens',
+              spent: effectiveInputTokens + outputTokens,
+              limit: maxTotalTokensPerJob,
+              turn,
+            },
+            texteDuTour,
+          );
+        }
+
+        // Guard 1e — real dollar cost cap. Checked right after Guard 1a so both
+        // guards are evaluated before any of the turn's output is acted on.
+        // Fires only when the provider actually reported a non-zero cost (i.e.
+        // OpenRouter with usage:{include:true}); providers that don't report cost
+        // leave totalCostUsd at 0 and this guard never trips — Guard 1a is the
+        // fallback for those. Fail loud with cost details for observability.
+        if (totalCostUsd > maxCostPerJobUsd) {
+          messages = avecTourRepris();
+          // #442 : ce que le run a écrit, ce tour compris, est livré.
+          return await arreterSurBudget(
+            { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn },
+            texteDuTour,
+          );
+        }
+        return null;
+      };
+      const arretApresTour = await avantDAgir();
+      if (arretApresTour) return arretApresTour;
+
       // Relecture d'une réponse qui promettait une action (#600). Le modèle
       // décide seul d'appeler un outil, à chaque tour : un tour qui finit en
       // prose ANNONÇANT une action (« Je délègue à Dev-C. ») sans l'appel qui
@@ -4711,8 +4774,15 @@ async function runJobTracked(
       // plafonds de jetons et de coût, 50 appels par tour). Sinon la prose
       // reste la réponse, jugée plus bas comme avant.
       //
+      // Elle part APRÈS les gardes : un tour déjà au-dessus d'un plafond
+      // s'arrête sans payer de relance. Et les gardes sont relues après elle.
+      //
       // Un tour qui attend une approbation se suspend sans finir (branche g) :
       // rien à relire. Un tour vide non plus.
+      //
+      // Limite connue : si la relance DÉCLINE (le modèle n'appelle rien), une
+      // annonce finit `completed` avec l'annonce pour réponse. Aucune lecture
+      // du texte ne tranche à sa place (invariants #2 et #4).
       let relecture: typeof response | null = null;
       if (
         (response.toolCalls ?? []).length === 0 &&
@@ -4733,11 +4803,23 @@ async function runJobTracked(
             toolCalls: (relecture.toolCalls ?? []).map((tc) => tc.toolName),
           });
         } catch (err) {
-          // Un tour coupé au plafond de sortie est refusé, relance comprise
-          // (#554) : même erreur, même échec du job que pour le tour lui-même.
-          if (err instanceof LLMOutputLimitError) throw err;
-          // Stop pendant la relance : la lecture du droit d'agir juste en
-          // dessous arrête le run, avec le texte du tour.
+          // Une relance coupée au plafond de sortie est ABANDONNÉE, comme toute
+          // autre panne de relance : sa sortie tronquée n'est jamais exécutée,
+          // et la prose du tour, complète, reste la réponse. Elle a été servie :
+          // ce qu'elle a facturé compte, comme pour un tour coupé.
+          if (err instanceof LLMOutputLimitError) {
+            inputTokens += err.usage.inputTokens;
+            effectiveInputTokens += err.usage.inputTokens;
+            outputTokens += err.usage.outputTokens;
+            totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
+              inputTokens: err.usage.inputTokens,
+              outputTokens: err.usage.outputTokens,
+              cachedTokens: 0,
+              cacheCreationTokens: 0,
+            });
+          }
+          // Stop pendant la relance : la relecture des gardes juste en dessous
+          // arrête le run, avec le texte du tour.
           // Toute autre panne : la relance est un filet, la prose reste la
           // réponse, et la panne est dite.
           relecture = null;
@@ -4749,64 +4831,11 @@ async function runJobTracked(
         } finally {
           veilleRelecture.stop();
         }
+        const arretApresRelance = await avantDAgir();
+        if (arretApresRelance) return arretApresRelance;
       }
       const reponseQuiAgit =
         relecture !== null && (relecture.toolCalls ?? []).length > 0 ? relecture : null;
-
-      // Dernière lecture avant d'agir : un Stop arrivé entre deux lectures, ou
-      // pendant que la réponse se terminait, n'exécute aucun des outils
-      // qu'elle demande. Le texte du tour est gardé. Lue AVANT les plafonds
-      // (revue Codex de #449, passe 7) : un Stop suivi d'un débordement rend
-      // `cancelled`, pas `failed` — le parent et la tâche lisent ce statut.
-      // Toute perte du droit d'agir compte ici, pas seulement Stop (#566).
-      const perteApresAppel = await droitPerdu();
-      if (perteApresAppel) {
-        if (texteDuTour.trim() !== '') {
-          messages = [
-            ...messages,
-            { role: 'assistant', content: texteDuTour.trim() } as ModelMessage,
-          ];
-        }
-        return await lacherLeJob(perteApresAppel, 'before_tools');
-      }
-
-      // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
-      // input + output, not raw input. A job that re-sends a prompt-cached
-      // history (the common long-running pattern: the growing transcript is read
-      // from cache each turn, ~10x cheaper) accrues budget at its real cost, so
-      // it no longer dies at the wall like an uncached runaway would. A genuine
-      // runaway (fresh tokens every turn) still trips. Fail loud BEFORE acting on
-      // this turn's output so a runaway never bleeds the provider's credit dry.
-      // Agnostic: no per-agent knowledge. Runaway coverage is unchanged —
-      // maxTurns + the no-progress detector remain the loop backstops.
-      if (effectiveInputTokens + outputTokens > maxTotalTokensPerJob) {
-        messages = avecTourRepris();
-        // #442 : ce que le run a écrit, ce tour compris, est livré.
-        return await arreterSurBudget(
-          {
-            kind: 'tokens',
-            spent: effectiveInputTokens + outputTokens,
-            limit: maxTotalTokensPerJob,
-            turn,
-          },
-          texteDuTour,
-        );
-      }
-
-      // Guard 1e — real dollar cost cap. Checked right after Guard 1a so both
-      // guards are evaluated before any of the turn's output is acted on.
-      // Fires only when the provider actually reported a non-zero cost (i.e.
-      // OpenRouter with usage:{include:true}); providers that don't report cost
-      // leave totalCostUsd at 0 and this guard never trips — Guard 1a is the
-      // fallback for those. Fail loud with cost details for observability.
-      if (totalCostUsd > maxCostPerJobUsd) {
-        messages = avecTourRepris();
-        // #442 : ce que le run a écrit, ce tour compris, est livré.
-        return await arreterSurBudget(
-          { kind: 'cost', spent: totalCostUsd, limit: maxCostPerJobUsd, turn },
-          texteDuTour,
-        );
-      }
 
       // Guard 1c — compact when THIS turn's prompt crossed the threshold. Evicting
       // OLD tool-result bodies (keeping the last N turns) shrinks every subsequent

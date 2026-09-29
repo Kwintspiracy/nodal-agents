@@ -69,9 +69,13 @@ const isRecheck = (body: Body): boolean => {
  */
 function stubProvider(opts: {
   turnText: string;
-  recheck: { toolCall: { name: string; args: Record<string, unknown> } } | { text: string };
+  recheck:
+    | { toolCall: { name: string; args: Record<string, unknown> }; cut?: boolean }
+    | { text: string };
   /** Joué pendant la relance, avant qu'elle ne réponde. */
   duringRecheck?: () => Promise<void>;
+  /** Les jetons d'entrée que facture chaque TOUR (10 par défaut). */
+  turnPromptTokens?: number;
 }): Body[] {
   const bodies: Body[] = [];
   let rechecks = 0;
@@ -86,7 +90,8 @@ function stubProvider(opts: {
       bodies.push(body);
       const firstRecheck = isRecheck(body) && rechecks++ === 0;
       if (firstRecheck && opts.duringRecheck) await opts.duringRecheck();
-      const usage = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 };
+      const prompt = isRecheck(body) ? 10 : (opts.turnPromptTokens ?? 10);
+      const usage = { prompt_tokens: prompt, completion_tokens: 2, total_tokens: prompt + 2 };
       const message =
         firstRecheck && 'toolCall' in opts.recheck
           ? {
@@ -107,7 +112,9 @@ function stubProvider(opts: {
               role: 'assistant',
               content: firstRecheck && 'text' in opts.recheck ? opts.recheck.text : opts.turnText,
             };
-      const finish = 'tool_calls' in message ? 'tool_calls' : 'stop';
+      // A re-read cut on the output cap: the provider stops on `length`.
+      const cut = firstRecheck && 'toolCall' in opts.recheck && opts.recheck.cut === true;
+      const finish = cut ? 'length' : 'tool_calls' in message ? 'tool_calls' : 'stop';
       if (body['stream'] === true) {
         const chunks = [
           { id: 'c', choices: [{ index: 0, delta: message }] },
@@ -298,5 +305,89 @@ describe('a prose turn that announced an action is re-read @cap:organiser-equipe
       .where(eq(agentJobs.id, jobId));
     expect(row?.status).toBe('cancelled');
     expect(row?.toolsUsed ?? '').not.toContain(assignTool);
+  });
+
+  it('a re-read cut on the output cap is abandoned: the complete prose stands and the job completes with it', async () => {
+    const { orchestratorId, assignTool } = await seedTeam();
+    const jobId = await createJob(orchestratorId, 'Summarise the release notes.');
+    const bodies = stubProvider({
+      turnText: 'The release adds a re-read of prose turns.',
+      recheck: { toolCall: { name: assignTool, args: { task: 'x' } }, cut: true },
+    });
+
+    const outcome = await executeJob(jobId as JobId, makeDeps());
+
+    expect(bodies.filter(isRecheck)).toHaveLength(1);
+    expect(outcome.status).toBe('completed');
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        result: agentJobs.result,
+        messages: agentJobs.messages,
+        outputTokens: agentJobs.outputTokens,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.status).toBe('completed');
+    expect(row?.result).toBe('The release adds a re-read of prose turns.');
+    // The prose is in the transcript, and the cut call's output is not acted on.
+    expect(JSON.stringify(row?.messages)).toContain('The release adds a re-read of prose turns.');
+    const children = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, jobId));
+    expect(children).toHaveLength(0);
+    // The cut call was served: what it billed is counted (turn 2 + re-read 2).
+    expect(row?.outputTokens).toBe(4);
+  });
+
+  it('a turn already over the token budget stops without paying for a re-read', async () => {
+    const { orchestratorId } = await seedTeam();
+    const jobId = await createJob(orchestratorId, 'What is 2 + 2?');
+    const previous = process.env['MAX_TOTAL_TOKENS_PER_JOB'];
+    process.env['MAX_TOTAL_TOKENS_PER_JOB'] = '500';
+    try {
+      const bodies = stubProvider({
+        turnText: '4.',
+        recheck: { text: 'No action was promised.' },
+        turnPromptTokens: 1_000,
+      });
+
+      const outcome = await executeJob(jobId as JobId, makeDeps());
+
+      expect(bodies.filter(isRecheck)).toHaveLength(0);
+      expect(outcome.status).toBe('failed');
+      if (outcome.status === 'failed') expect(outcome.error).toBe('token_budget_exceeded');
+    } finally {
+      if (previous === undefined) delete process.env['MAX_TOTAL_TOKENS_PER_JOB'];
+      else process.env['MAX_TOTAL_TOKENS_PER_JOB'] = previous;
+    }
+  });
+
+  // Known limit, pinned on purpose (review of PR #604, pass 2). When the
+  // re-read DECLINES, an announcement ends `completed` with the announcement as
+  // its answer. Nothing reads the text in the model's place: no word pattern,
+  // no runner verdict on prose (invariants #2 and #4). A real completion guard
+  // would need a second judgment of the same text (another model call per
+  // prose turn, with its own false reds on real answers) or a declared-intent
+  // contract the model fills in; neither is built here.
+  it('KNOWN LIMIT: an announcement whose re-read declines ends completed with the announcement', async () => {
+    const { orchestratorId } = await seedTeam();
+    const jobId = await createJob(orchestratorId, 'Rewrite the tokenizer.');
+    const bodies = stubProvider({
+      turnText: "I'll delegate the tokenizer to Dev-C.",
+      recheck: { text: 'It was only a plan.' },
+    });
+
+    const outcome = await executeJob(jobId as JobId, makeDeps());
+
+    expect(bodies.filter(isRecheck)).toHaveLength(1);
+    expect(outcome.status).toBe('completed');
+    const [row] = await db
+      .select({ result: agentJobs.result, toolsUsed: agentJobs.toolsUsed })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.result).toBe("I'll delegate the tokenizer to Dev-C.");
+    expect(row?.toolsUsed ?? '').not.toContain('assign_');
   });
 });
