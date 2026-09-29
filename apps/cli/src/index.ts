@@ -192,7 +192,7 @@ const mcp = program
 mcp
   .command('serve')
   .description(
-    'Start the stdio MCP server (use via: claude mcp add nodal -- nodal-agents mcp serve)',
+    'Start the stdio MCP server (your MCP client launches it: copy its exact command from Settings → Safety → MCP server)',
   )
   .action(async () => {
     const { runMcpServe } = await import('./commands/mcp.ts');

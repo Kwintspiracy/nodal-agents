@@ -166,13 +166,17 @@ Full picture, including what a refused write tells you:
 
 Starts Nodal's MCP server on stdio, so an external MCP client — your terminal,
 a coding agent — can hand work to your agents. You never run this by hand:
-your MCP client launches it. Register it once, in one line:
+your MCP client launches it. Register it once: **Settings → Safety → MCP
+server** gives the exact line for Claude Code, and the entry (or a button that
+writes it) for Claude Desktop. The line names the Node and the script that
+started this install, because `nodal-agents` is not on the `PATH` of an `npx`
+install or a source checkout:
 
 ```bash
-claude mcp add nodal -- nodal-agents mcp serve
+claude mcp add nodal -- "<path to node>" "<path to the nodal-agents CLI>" mcp serve
 ```
 
-Run that on the machine that hosts Nodal. The command resolves the database
+Run it on the machine that hosts Nodal. The command resolves the database
 from `~/.nodalai/config.json` (the same resolution `up` uses) — there is no
 `DATABASE_URL` to provide and no secret ends up in your client's config. It
 fails loud if no config exists (`nodal-agents init` first), and it refuses to

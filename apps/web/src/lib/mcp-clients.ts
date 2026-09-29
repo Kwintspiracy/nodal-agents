@@ -45,13 +45,16 @@ export function mcpServeArgv(cliArgv: readonly string[]): string[] {
 }
 
 /**
- * Un argument de shell, entre guillemets doubles quand il en a besoin (un
- * chemin avec des espaces : `C:\Program Files\nodejs\node.exe`). Les
- * guillemets doubles se lisent pareil dans cmd, PowerShell et bash ; les
- * antislashs d'un chemin Windows y restent littéraux, donc seul `"` s'échappe.
+ * Un argument de shell, entre guillemets doubles dès qu'il sort des caractères
+ * que cmd, PowerShell et bash lisent tous tels quels. L'antislash n'en fait PAS
+ * partie : nu, bash (Git Bash) le prend pour un échappement, et
+ * `D:\APPS\cli.js` y devient `D:APPScli.js`. Entre guillemets doubles, un
+ * antislash suivi d'une lettre reste littéral dans les trois shells : la même
+ * commande se colle partout. Un `"` dans l'argument (jamais dans un chemin
+ * Windows) s'échappe en `\"`, que lisent bash et cmd, pas PowerShell.
  */
 function shellArg(arg: string): string {
-  return /^[\w@%+=:,./\\-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '\\"')}"`;
+  return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '\\"')}"`;
 }
 
 /** La commande à taper pour Claude Code. */
