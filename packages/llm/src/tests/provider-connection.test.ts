@@ -390,6 +390,21 @@ describe('provider connections (#608) @cap:parler-a-un-agent/moteur', () => {
     expect(next === 'stalled' ? next : next.text).toBe('answer to after clock');
   });
 
+  it('before the response headers, the first-token clock is the one that cuts', async () => {
+    const p = await standIn();
+    const err = await clientOf(p)
+      .generateText(
+        { messages: [{ role: 'user', content: 'no-headers' }] },
+        { streamed: true, firstTokenTimeoutMs: 300 },
+      )
+      .catch((e: unknown) => e);
+
+    // Our own verdict, which failover and resume read, never a transport one.
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect((err as LLMTimeoutError).reason).toBe('idle_before_first_token');
+    expect(await until(() => servedFor(p, 'no-headers')?.closed === true, 2_000)).toBe(true);
+  });
+
   it('a context probe that is refused cancels the body it will not read', async () => {
     const p = await standIn();
     // A timeout far beyond the assertion: the release must not be the timeout's.

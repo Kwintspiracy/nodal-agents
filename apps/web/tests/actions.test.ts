@@ -38,6 +38,13 @@ afterAll(() => {
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
+// Provider calls take the provider transport (#608). Routed to the global
+// fetch the key-test cases stub, so nothing leaves the machine.
+vi.mock('@nodal-agents/llm', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@nodal-agents/llm')>()),
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 /**
  * Read back what a channel writer actually persisted into
  * `channel_bindings.credentials`.

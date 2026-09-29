@@ -267,7 +267,7 @@ import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts
 import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
 import type { ThreadDeclaredDeliverable } from './declared-proof.ts';
 import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
-import { probeContextWindow } from '@nodal-agents/llm';
+import { probeContextWindow, providerFetch } from '@nodal-agents/llm';
 import {
   systemSkillSlugs,
   skillKindOfSlug,
@@ -12365,18 +12365,23 @@ async function assertSsrfSafeUrl(rawUrl: string): Promise<string | null> {
  * same guard, and follows it at most once (an SSRF-blocked or missing
  * Location target throws, which every caller here treats as a connection
  * failure — never followed).
+ *
+ * #608: these are provider calls, so they take the provider transport
+ * (`providerFetch`: its own HTTP/1.1 connections, the environment's proxy),
+ * and a redirect's own body is cancelled before the hop, never left open.
  */
 async function ssrfSafeFetch(url: string, init: RequestInit): Promise<Response> {
-  const res = await fetch(url, { ...init, redirect: 'manual' });
+  const res = await providerFetch(url, { ...init, redirect: 'manual' });
   if (res.status >= 300 && res.status < 400) {
     const location = res.headers.get('location');
     if (!location) return res;
+    await res.body?.cancel().catch(() => {});
     const target = new URL(location, url).toString();
     const ssrfError = await assertSsrfSafeUrl(target);
     if (ssrfError) {
       throw new Error(`Redirect target blocked: ${ssrfError}`);
     }
-    return fetch(target, { ...init, redirect: 'manual' });
+    return providerFetch(target, { ...init, redirect: 'manual' });
   }
   return res;
 }
@@ -12456,7 +12461,11 @@ async function fetchProviderModelIds(
     }
 
     const res = await ssrfSafeFetch(url, { method: 'GET', headers });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      // #608: a body we will not read is cancelled, never left on the connection.
+      await res.body?.cancel().catch(() => {});
+      return [];
+    }
 
     const data = (await res.json()) as Record<string, unknown>;
     const arr = data['data'] ?? data['models'];
@@ -12554,6 +12563,8 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
 
     const res = await ssrfSafeFetch(url, { method: 'GET', headers });
     if (!res.ok) {
+      // #608: a body we will not read is cancelled, never left on the connection.
+      await res.body?.cancel().catch(() => {});
       // F-1 (audit #2): the remote body is NEVER reflected back to the UI —
       // it could contain anything the endpoint chooses to return, including
       // data from an internal service reached via SSRF. Status code only.

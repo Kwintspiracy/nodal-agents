@@ -107,7 +107,11 @@ export async function fetchModels(
     const timeout = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(url, { headers, signal: controller.signal });
     clearTimeout(timeout);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // #608: a body we will not read is cancelled, never left on the connection.
+      await res.body?.cancel().catch(() => {});
+      return null;
+    }
     const json = (await res.json()) as { data?: Array<{ id: string }> };
     if (!json.data || !Array.isArray(json.data)) return null;
     return json.data.map((m) => m.id).filter(Boolean);
@@ -133,6 +137,8 @@ export async function isEndpointReachable(
     const timeout = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timeout);
+    // #608: only the status was needed; the body is released, not left open.
+    await res.body?.cancel().catch(() => {});
     return res.status < 500;
   } catch {
     return false;

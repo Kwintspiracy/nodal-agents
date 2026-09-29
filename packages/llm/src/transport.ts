@@ -12,22 +12,27 @@
 // Every provider call of this package therefore goes through `providerFetch`:
 // undici's own `fetch` on a dedicated agent that speaks HTTP/1.1 only. Calls
 // in flight at the same time get a socket each, so a body left unread holds
-// its own socket and nothing else. The agent is ours, not the process-wide
+// its own socket and nothing else. It takes the proxy the environment
+// declares (HTTP_PROXY, HTTPS_PROXY, NO_PROXY, read once at start), and leaves
+// time to the turn clocks. The agent is ours, not the process-wide
 // dispatcher, because which dispatcher the global `fetch` uses depends on LOAD
 // ORDER: importing undici 7 installs its own agent as the global one only if
 // nothing has touched the bundled `fetch` yet (measured on Node 26.4.0: HTTP/1.1
 // in one order, HTTP/2 in the other). Ours holds whatever the order and the
 // Node version, in any process that calls a model (runner, conformance CLI,
-// the web key probe), and leaves every other `fetch` of the process as it
-// was. Same shape as the MCP adapter's dedicated agent
+// the web app's key test, model list and context probe), and leaves every
+// other `fetch` of the process as it was. Same shape as the MCP adapter's dedicated agent
 // (packages/adapters/mcp/src/client.ts, P0-H7).
 
-import { Agent, fetch as undiciFetch } from 'undici';
+import { EnvHttpProxyAgent, fetch as undiciFetch } from 'undici';
 
 type FetchLike = typeof globalThis.fetch;
 
-/** HTTP/1.1 only: an unread body can never hold back another call. */
-const providerAgent = new Agent({ allowH2: false });
+/** What undici would otherwise decide for itself, as its own options name it. */
+export interface UndiciDefaults {
+  headersTimeout?: number;
+  bodyTimeout?: number;
+}
 
 /**
  * A body undici's `fetch` takes as it is. Anything else (a global `FormData`
@@ -53,8 +58,30 @@ function urlOf(input: Parameters<FetchLike>[0]): string {
   throw new TypeError('providerFetch takes a URL string or URL, not a Request object');
 }
 
-/** The fetch every provider of this package is given. */
-export const providerFetch: FetchLike = async (input, init) => {
+/**
+ * A provider transport on its own agent. `undiciDefaults` stands for the
+ * values undici applies when nobody sets them (tests shorten them).
+ */
+export function createProviderFetch(undiciDefaults: UndiciDefaults = {}): FetchLike {
+  const agent = new EnvHttpProxyAgent({
+    ...undiciDefaults,
+    // HTTP/1.1 only: an unread body can never hold back another call.
+    allowH2: false,
+    // One authority on time: the turn clocks (turn-clocks.ts), which wait up
+    // to 600 s for a first token. undici's own 300 s header and body timeouts
+    // would cut a model thinking in silence first, with an error that neither
+    // failover nor resume recognises. 0 disables them.
+    headersTimeout: 0,
+    bodyTimeout: 0,
+  });
+  return (input, init) => fetchOn(agent, input, init);
+}
+
+async function fetchOn(
+  agent: EnvHttpProxyAgent,
+  input: Parameters<FetchLike>[0],
+  init: Parameters<FetchLike>[1],
+): Promise<Response> {
   const url = urlOf(input);
   let requestInit: RequestInit = init ?? {};
   if (!isPlainBody(requestInit.body)) {
@@ -69,7 +96,10 @@ export const providerFetch: FetchLike = async (input, init) => {
   // crosses the two copies' type declarations.
   const response = await undiciFetch(url, {
     ...(requestInit as Parameters<typeof undiciFetch>[1]),
-    dispatcher: providerAgent,
+    dispatcher: agent,
   });
   return response as unknown as Response;
-};
+}
+
+/** The fetch every provider call is given, one agent per process. */
+export const providerFetch: FetchLike = createProviderFetch();
