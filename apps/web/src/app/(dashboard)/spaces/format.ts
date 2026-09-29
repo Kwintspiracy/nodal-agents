@@ -27,6 +27,16 @@ export function formatCost(usd: number | null, decimals?: 2 | 4): string {
 }
 
 /**
+ * Le prix d'un ensemble d'appels, tel que la barre d'état, la carte
+ * « Delivered » et la ligne de résumé le disent — un seul mot pour les trois
+ * (#508). Des appels sans prix connu font un montant PARTIEL : il le dit, et
+ * ne se présente jamais comme complet.
+ */
+export function formatCallsCost(usd: number | null, unpricedCalls: number): string {
+  return `${formatCost(usd)}${unpricedCalls > 0 ? ' · partial' : ''}`;
+}
+
+/**
  * La précision d'une COLONNE de coûts : une seule pour toutes ses lignes. Dans
  * une table, `$0.0080` au-dessus de `$0.01` se lit mal — les chiffres ne
  * s'alignent plus. Quatre décimales dès qu'un coût non nul de la colonne est
