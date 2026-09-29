@@ -81,6 +81,7 @@ const delivered: FeedItem = {
     tests: null,
     durationMs: 41_000,
     costUsd: 0.04,
+    unpricedCalls: 0,
     reviews: [],
     checks: [],
     verdict: null,
@@ -108,6 +109,7 @@ function data(live: boolean): SpaceConversationView {
       agentName: 'Nestor',
       agentSlug: 'nestor',
       agentAvatarUrl: null,
+      liveProgress: null,
       createdAt: new Date('2026-09-18T09:00:00Z'),
       completedAt: live ? null : new Date('2026-09-18T09:00:41Z'),
       conversationId: null,
@@ -274,6 +276,35 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
     // Elle n'est pas perdue pour autant : elle reste dans la chronologie, à sa
     // place, et une seule fois.
     expect(page.replace(/<[^>]*>/g, ' ').split(REPLY)).toHaveLength(2);
+  });
+
+  it('#444 — la bande du run en cours se pose SOUS l’en-tête pendant processing, et disparaît ensuite', () => {
+    const enCours = data(true);
+    const page = renderToStaticMarkup(
+      <RunBody
+        data={{
+          ...enCours,
+          job: {
+            ...enCours.job,
+            liveProgress: {
+              turn: 3,
+              textChars: 40,
+              reasoningChars: 0,
+              toolInputChars: 0,
+              toolName: null,
+              callStartedAt: new Date().toISOString(),
+              lastProgressAt: new Date().toISOString(),
+            },
+          },
+        }}
+      />,
+    );
+    const bande = page.indexOf('data-testid="live-run-strip"');
+    // Sous la carte de tête, qui porte la demande en premier.
+    expect(page.indexOf(TASK)).toBeGreaterThan(-1);
+    expect(bande).toBeGreaterThan(page.indexOf(TASK));
+    expect(page).toContain('Turn 3 · writing');
+    expect(renderToStaticMarkup(<RunBody data={data(false)} />)).not.toContain('live-run-strip');
   });
 
   it('la page dit DE QUEL run il s’agit', () => {

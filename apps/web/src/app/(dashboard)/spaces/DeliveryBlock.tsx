@@ -51,7 +51,7 @@ import { canStopRun } from '@/lib/job-live.ts';
 import { openRunHref } from '@/lib/run-page.ts';
 import DeliveryFiles from './DeliveryFiles.tsx';
 import type { DeliveryCommand, DeliverySummary } from '@/lib/conversation-feed.ts';
-import { formatCost, formatMs, shortToolName } from './format.ts';
+import { formatCallsCost, formatMs, shortToolName } from './format.ts';
 
 /** Au-delà, la liste de fichiers cesse d'être lisible : on compte le reste. */
 const FILES_SHOWN = 12;
@@ -172,8 +172,11 @@ export default function DeliveryBlock({
     // La durée est une MESURE : elle porte la couleur des mesures du fil.
     stats.push({ label: 'Duration', value: formatMs(summary.durationMs), mono: true });
   }
-  if (summary.costUsd !== null) {
-    stats.push({ label: 'Cost', value: formatCost(summary.costUsd) });
+  // Le prix de l'arbre, dit comme la barre : « partial » quand des appels
+  // n'ont pas de prix (#508).
+  const unpriced = summary.unpricedCalls ?? 0;
+  if (summary.costUsd !== null || unpriced > 0) {
+    stats.push({ label: 'Cost', value: formatCallsCost(summary.costUsd, unpriced) });
   }
 
   const shownFiles = summary.fileChanges.slice(0, FILES_SHOWN);

@@ -22,7 +22,7 @@
 import { useState, type ReactNode } from 'react';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import type { RunSummary } from '@/lib/conversation-feed.ts';
-import { formatCost, formatMs } from './format.ts';
+import { formatCallsCost, formatMs } from './format.ts';
 
 /** Le singulier et le pluriel, pour ne jamais écrire « 1 tools ». */
 function plural(n: number, one: string, many: string): string {
@@ -45,7 +45,9 @@ export function runSummaryParts(summary: RunSummary): string[] {
   if (summary.modelCalls > 0) parts.push(plural(summary.modelCalls, 'model call', 'model calls'));
   if (summary.durationMs !== null && summary.durationMs > 0)
     parts.push(formatMs(summary.durationMs));
-  if (summary.costUsd !== null && summary.costUsd > 0) parts.push(formatCost(summary.costUsd));
+  // Un coût partiel (des appels sans prix) se dit, même sans montant (#508).
+  if ((summary.costUsd !== null && summary.costUsd > 0) || summary.unpricedCalls > 0)
+    parts.push(formatCallsCost(summary.costUsd, summary.unpricedCalls));
   return parts;
 }
 

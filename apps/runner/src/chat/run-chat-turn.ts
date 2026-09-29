@@ -43,6 +43,7 @@ import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
 import { TERMINAL_STATUSES } from '../job/state.ts';
+import { watchCallProgress } from '../job/call-progress.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
 // size — 20 large turns (verbose replies, or several escalation blocks with
@@ -136,7 +137,15 @@ export type ChatTurnResult =
       /** Une horloge a coupé ce tour (#458) : `reply` est ce qui avait été écrit. */
       cutReason?: LlmTimeoutReason;
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Une horloge a coupé l'appel AVANT tout texte visible (#484) :
+       * `error` vaut `llm_cut` et ce champ dit laquelle.
+       */
+      cutReason?: LlmTimeoutReason;
+    };
 
 /** A head job of this conversation that has not reached a terminal status (#453). */
 type RunningHead = { id: string; task: string; status: string | null };
@@ -313,6 +322,24 @@ function buildHistoryBlock(
     content: truncateFn(r.content),
   };
   return note ? [reply, { role: 'user', content: note }] : [reply];
+}
+
+/**
+ * Un appel du tour a été COUPÉ (#484) : une horloge, ou un flux rompu, avant
+ * tout texte gardé. Le tour échoue en disant la coupure et sa raison, `llm_cut`
+ * + `cutReason`, quel que soit l'appel qu'elle frappe : la réponse diffusée ou
+ * la relance sans outils (revue Nodal de #623 : la relance la disait
+ * `llm_error`, et l'écran peignait « pas de réponse » là où l'appel avait été
+ * coupé). `null` pour toute autre erreur.
+ */
+function failedOnCut(
+  err: unknown,
+  which: string,
+  agentSlug: string,
+): { ok: false; error: 'llm_cut'; cutReason: LlmTimeoutReason } | null {
+  if (!(err instanceof LLMTimeoutError)) return null;
+  console.warn(`[run-chat-turn] ${which} cut by ${err.reason} before any text (${agentSlug})`);
+  return { ok: false, error: 'llm_cut', cutReason: err.reason };
 }
 
 /**
@@ -656,17 +683,28 @@ export async function runChatTurn(opts: {
       // passe à la page pendant que le modèle l'écrit. Un modèle qui ne sait
       // pas diffuser (appels d'outils lus dans son texte) répond d'un bloc :
       // aucun fragment, et `streamed` reste faux.
-      const response = await llmClient.generateText(
-        { system: systemPrompt, messages, tools: CHAT_TOOLS },
-        {
-          streamed: true,
-          onTextDelta: (delta) => {
-            partial += delta;
-            onTextDelta(delta);
-          },
-          ...(abortSignal ? { abortSignal } : {}),
-        },
+      // #484 : le chat dit lui aussi ce que son appel produit, par le même
+      // battement que la boucle des jobs.
+      const production = watchCallProgress((faits) =>
+        console.warn(`[run-chat-turn] llm_call_progress ${agentRow.slug} ${JSON.stringify(faits)}`),
       );
+      let response: Awaited<ReturnType<typeof llmClient.generateText>>;
+      try {
+        response = await llmClient.generateText(
+          { system: systemPrompt, messages, tools: CHAT_TOOLS },
+          {
+            streamed: true,
+            onTextDelta: (delta) => {
+              partial += delta;
+              onTextDelta(delta);
+            },
+            onProgress: production.onProgress,
+            ...(abortSignal ? { abortSignal } : {}),
+          },
+        );
+      } finally {
+        production.stop();
+      }
       if (abortSignal?.aborted) return await keepStoppedReply();
       text = (response.text ?? '').trim();
       runTask = runTaskOf(response);
@@ -695,6 +733,14 @@ export async function runChatTurn(opts: {
     }
     const capped = failedOnRefusedTurn(err, 'reply', agentRow.slug);
     if (capped) return capped;
+    // Coupé AVANT tout texte (#484, revue Codex passe 3) : ce n'est pas un
+    // outil fantôme, et la relance sans outils ci-dessous n'a pas à le
+    // rattraper. Un `run_task` fini dans le flux a été jeté avec lui ; une
+    // relance privée de `run_task` ne pourrait que dire « c'est lancé » sans
+    // qu'aucun job n'existe. Le tour échoue, en disant la coupure — comme un
+    // job coupé (invariant #4).
+    const cut = failedOnCut(err, 'reply', agentRow.slug);
+    if (cut) return cut;
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
     // invariant 4) and fall through to the tool-free retry so conversation works.
@@ -773,9 +819,12 @@ export async function runChatTurn(opts: {
       // Cette réponse-là n'est jamais passée par le flux : ce qui a pu être
       // montré mot à mot, s'il y a eu quoi que ce soit, n'était pas elle.
       streamed = false;
-    } catch {
+    } catch (err) {
       if (abortSignal?.aborted) return await keepStoppedReply();
-      return { ok: false, error: 'llm_error' };
+      // Une coupure se dit comme au premier appel, jamais comme une panne.
+      return (
+        failedOnCut(err, 'tool-free retry', agentRow.slug) ?? { ok: false, error: 'llm_error' }
+      );
     }
     return null;
   };
