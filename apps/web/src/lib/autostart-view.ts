@@ -2,7 +2,7 @@
 // montre (#451). Pur.
 //
 // L'état vient du SYSTÈME, par le CLI (`nodal-agents service status --json`,
-// apps/cli/src/lib/autostart.ts) : la tâche planifiée, le LaunchAgent, l'unité
+// apps/cli/src/lib/autostart.ts) : la valeur Run de Windows, le LaunchAgent, l'unité
 // systemd. Jamais un drapeau stocké, qui dirait « on » au-dessus d'une
 // inscription retirée à la main. Une réponse illisible ne devient pas « off » :
 // elle se dit (invariant #4).
@@ -10,7 +10,8 @@
 import { z } from 'zod';
 
 export const AutostartStatusSchema = z.discriminatedUnion('state', [
-  z.object({ state: z.literal('off') }),
+  /** `reason` : inscrit, mais coupé ailleurs (Paramètres → Démarrage sous Windows). */
+  z.object({ state: z.literal('off'), reason: z.string().optional() }),
   z.object({ state: z.literal('at_login'), lingerCommand: z.string().optional() }),
   z.object({ state: z.literal('at_boot') }),
   z.object({ state: z.literal('unsupported'), reason: z.string() }),

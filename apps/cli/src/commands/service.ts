@@ -49,7 +49,9 @@ function effects(): AutostartEffects {
 function describe(status: AutostartStatus): string {
   switch (status.state) {
     case 'off':
-      return 'Nodal does not start with this machine.';
+      return status.reason
+        ? `Nodal does not start with this machine. ${status.reason}`
+        : 'Nodal does not start with this machine.';
     case 'at_login':
       return status.lingerCommand
         ? `Nodal starts when you log in. To start it at boot, run: ${status.lingerCommand}`

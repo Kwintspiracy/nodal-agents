@@ -5,11 +5,12 @@
 // Une machine qui redémarre laissait Nodal éteint : plus d'automatisation, plus
 // de canal, jusqu'à ce que quelqu'un ouvre un terminal. L'interrupteur inscrit
 // Nodal auprès du démarrage NATIF du système, par le CLI (`nodal-agents service
-// install | uninstall`) : tâche planifiée sous Windows, LaunchAgent sous macOS,
-// unité systemd utilisateur sous Linux.
+// install | uninstall`) : la valeur Run de l'utilisateur sous Windows (aucun
+// droit admin), LaunchAgent sous macOS, unité systemd utilisateur sous Linux.
 //
 // Ce que la ligne montre est lu dans le SYSTÈME à chaque affichage, jamais un
-// drapeau stocké : une inscription retirée à la main se lit « off ». Sous Linux
+// drapeau stocké : une inscription retirée à la main se lit « off », une entrée
+// coupée dans Paramètres → Démarrage de Windows aussi, avec la raison. Sous Linux
 // sans « linger », Nodal ne démarre qu'à la connexion : la ligne le dit, avec la
 // commande exacte qui le fait démarrer au boot.
 
@@ -26,7 +27,9 @@ function stateLine(view: AutostartView): string {
   if (s === null) return view.error ?? 'How Nodal starts with this machine could not be read.';
   switch (s.state) {
     case 'off':
-      return 'Off. After a restart, Nodal stays down until someone starts it.';
+      return s.reason !== undefined
+        ? `Off. ${s.reason}`
+        : 'Off. After a restart, Nodal stays down until someone starts it.';
     case 'at_login':
       return 'On. Nodal starts when you log in to this machine.';
     case 'at_boot':

@@ -101,7 +101,7 @@ program
 // ── nodal-agents service ──────────────────────────────────────────────────────
 //
 // #451 — start Nodal with the machine, through its native startup manager
-// (Task Scheduler, LaunchAgent, systemd user unit). `--json` is what the
+// (the per-user Run key on Windows, LaunchAgent, systemd user unit). `--json` is what the
 // dashboard's Settings switch reads.
 
 program

@@ -56,6 +56,23 @@ describe('Start Nodal when this machine starts @cap:installer-et-demarrer/ecran'
     expect(interrupteur().getAttribute('aria-checked')).toBe('false');
   });
 
+  it('off parce que coupé dans les réglages du système : la raison, et l’interrupteur reste utilisable', async () => {
+    const texte = await render({
+      status: {
+        state: 'off',
+        reason: 'Turned off in Windows Settings, Apps, Startup. Turn this on to enable it again.',
+      },
+      error: null,
+      isOwner: true,
+    });
+    expect(texte).toContain(
+      'Off. Turned off in Windows Settings, Apps, Startup. Turn this on to enable it again.',
+    );
+    expect(texte).not.toContain('Nodal stays down until someone starts it');
+    expect(interrupteur().getAttribute('aria-checked')).toBe('false');
+    expect(interrupteur().disabled).toBe(false);
+  });
+
   it('à la connexion (Linux sans linger) : la commande exacte qui le fait démarrer au boot', async () => {
     const texte = await render({
       status: { state: 'at_login', lingerCommand: 'sudo loginctl enable-linger pi' },

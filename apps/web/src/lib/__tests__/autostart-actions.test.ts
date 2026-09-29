@@ -3,7 +3,7 @@
 // `getAutostartAction` et `setAutostartAction` lancent la commande qui a
 // démarré la stack (`NODAL_CLI_ARGV`) avec `service <geste> --json`, et rendent
 // ce qu'elle a répondu. Ici, un faux CLI : un script node qui écrit sur disque
-// les arguments reçus et répond comme le vrai. Aucune tâche planifiée de la
+// les arguments reçus et répond comme le vrai. Aucun démarrage de la
 // machine n'est touchée.
 //
 // Mutation vérifiée : `'--json'` retiré des arguments → « lit l'état » rougit

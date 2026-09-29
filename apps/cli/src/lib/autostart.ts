@@ -5,9 +5,15 @@
 // jusqu'à ce que quelqu'un ouvre un terminal. Le CLI inscrit maintenant Nodal
 // auprès du gestionnaire de démarrage NATIF de chaque système :
 //
-//   - Windows : une tâche planifiée « à l'ouverture de session » (schtasks),
-//     qui lance un petit script `.cmd` (la ligne de commande d'une tâche est
-//     bornée à 261 caractères, et celle d'un poste de dev la dépasse) ;
+//   - Windows : la valeur « Nodal Agents » sous HKCU\…\CurrentVersion\Run,
+//     le démarrage PAR UTILISATEUR des applications qui « démarrent avec
+//     Windows » (Paramètres → Applications → Démarrage). Aucun droit admin :
+//     une tâche planifiée `schtasks /Create /SC ONLOGON` en exige, avec ou sans
+//     `/RU` et `/IT`, et un compte standard recevait « Access is denied ».
+//     La valeur lance un petit script `.cmd` (une ligne Run est bornée à 260
+//     caractères, et celle d'un poste de dev la dépasse) par
+//     `conhost.exe --headless` : aucune fenêtre console à l'ouverture de
+//     session (voir `windowsRunCommand`) ;
 //   - macOS   : un LaunchAgent (~/Library/LaunchAgents), `RunAtLoad` et
 //     `KeepAlive` sur échec ;
 //   - Linux   : une unité systemd UTILISATEUR, `Restart=on-failure`. Elle ne
@@ -26,17 +32,29 @@
 //
 // Ce module est PUR (textes et lectures de réponses) sauf `runAutostart`, qui
 // reçoit ses effets (fichiers, commandes) en paramètre : les tests ne touchent
-// ni le planificateur de la machine, ni ses fichiers.
+// ni le registre de la machine, ni ses fichiers.
 
 import { join } from 'path';
 
 export const AUTOSTART_LABEL = 'ai.nodal.agents';
+/** Le nom de la valeur sous Run, celui que Paramètres → Démarrage affiche. */
+export const WINDOWS_ENTRY_NAME = 'Nodal Agents';
+export const WINDOWS_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+/**
+ * Où Windows garde l'interrupteur de Paramètres → Démarrage : un binaire dont
+ * le premier octet vaut 02 (activé) ou 03 (coupé par l'utilisateur). Absent,
+ * l'entrée est activée.
+ */
+export const WINDOWS_APPROVED_KEY =
+  'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
+/** La tâche planifiée des premières versions de #451, que l'inscription et le retrait effacent. */
 export const WINDOWS_TASK_NAME = 'Nodal Agents';
 export const SYSTEMD_UNIT = 'nodal-agents.service';
 
 /** L'état, tel que le système le dit. */
 export type AutostartStatus =
-  | { state: 'off' }
+  /** `reason` : l'inscription existe, mais l'utilisateur l'a coupée ailleurs. */
+  | { state: 'off'; reason?: string }
   /** Démarre à l'ouverture de session de l'utilisateur. */
   | { state: 'at_login'; lingerCommand?: string }
   /** Démarre au boot, sans session ouverte (Linux avec linger). */
@@ -66,9 +84,25 @@ function cmdArg(arg: string): string {
   return /^[\w@%+=:,./\\-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '""')}"`;
 }
 
-/** Le script `.cmd` que la tâche Windows lance. */
+/** Le script `.cmd` que la valeur Run lance. */
 export function windowsLauncherScript(argv: readonly string[]): string {
   return `@echo off\r\n${argv.map(cmdArg).join(' ')}\r\n`;
+}
+
+/**
+ * La ligne écrite sous Run, en REG_EXPAND_SZ : Windows y développe
+ * `%SystemRoot%`, comme pour sa propre valeur SecurityHealth.
+ *
+ * `conhost.exe --headless` héberge le script SANS fenêtre. C'est le mode que
+ * ConPTY utilise depuis Windows 10 1809 : le binaire et le drapeau sont dans
+ * tout Windows 10 et 11 encore maintenu, et il court-circuite Windows Terminal
+ * quand celui-ci est le terminal par défaut. Les autres voies laissent une
+ * fenêtre : `powershell -WindowStyle Hidden` en montre une le temps de se
+ * cacher, et sous Windows Terminal elle reste ; `wscript` + `.vbs` dépend de
+ * VBScript, que Microsoft retire de Windows.
+ */
+export function windowsRunCommand(script: string): string {
+  return `%SystemRoot%\\System32\\conhost.exe --headless "${script}"`;
 }
 
 function xmlEscape(s: string): string {
@@ -155,9 +189,24 @@ export function readLinuxStatus(
   return { state: 'at_login', lingerCommand: `sudo loginctl enable-linger ${user}` };
 }
 
-/** Windows : `schtasks /Query /TN` répond 0 quand la tâche existe. */
-export function readWindowsStatus(query: CommandAnswer): AutostartStatus {
-  return query.exitCode === 0 ? { state: 'at_login' } : { state: 'off' };
+export const WINDOWS_DISABLED_REASON =
+  'Turned off in Windows Settings, Apps, Startup. Turn this on to enable it again.';
+
+/**
+ * Windows : `reg query` de la valeur Run (0 quand elle existe), puis de son
+ * entrée StartupApproved. Un premier octet inconnu se dit, il ne devient ni
+ * « on » ni « off » (invariant #4).
+ */
+export function readWindowsStatus(run: CommandAnswer, approved: CommandAnswer): AutostartStatus {
+  if (run.exitCode !== 0) return { state: 'off' };
+  if (approved.exitCode !== 0) return { state: 'at_login' };
+  const first = /REG_BINARY\s+([0-9A-Fa-f]{2})/.exec(approved.stdout)?.[1];
+  if (first === '02') return { state: 'at_login' };
+  if (first === '03') return { state: 'off', reason: WINDOWS_DISABLED_REASON };
+  return {
+    state: 'unsupported',
+    reason: `Windows reports a startup state Nodal does not know: ${approved.stdout.trim() || 'empty'}`,
+  };
 }
 
 /** macOS : un LaunchAgent dans le dossier de l'utilisateur est chargé à sa connexion. */
@@ -191,10 +240,49 @@ function windowsScriptPath(nodalDir: string): string {
   return join(nodalDir, 'autostart.cmd');
 }
 
+function regQuery(fx: AutostartEffects, key: string): Promise<CommandAnswer | null> {
+  return fx.run('reg', ['query', key, '/v', WINDOWS_ENTRY_NAME]);
+}
+
+/** Retire la valeur si elle existe ; un refus se dit. */
+async function regDeleteIfPresent(fx: AutostartEffects, key: string): Promise<void> {
+  const q = await regQuery(fx, key);
+  if (q === null || q.exitCode !== 0) return;
+  const r = await fx.run('reg', ['delete', key, '/v', WINDOWS_ENTRY_NAME, '/f']);
+  if (r === null || r.exitCode !== 0) {
+    throw new Error(
+      `Windows refused to remove "${WINDOWS_ENTRY_NAME}" from ${key}: ${r?.stdout.trim() || 'no answer'}`,
+    );
+  }
+}
+
+/**
+ * La tâche planifiée d'une installation antérieure : laissée en place, elle
+ * lancerait une seconde stack à côté de la valeur Run. Elle part AVANT tout
+ * autre geste ; si Windows refuse (une tâche créée en administrateur), rien
+ * n'a changé et le message donne la commande exacte.
+ */
+async function removeLegacyTask(fx: AutostartEffects): Promise<void> {
+  const q = await fx.run('schtasks', ['/Query', '/TN', WINDOWS_TASK_NAME]);
+  if (q === null || q.exitCode !== 0) return;
+  const r = await fx.run('schtasks', ['/Delete', '/F', '/TN', WINDOWS_TASK_NAME]);
+  if (r === null || r.exitCode !== 0) {
+    throw new Error(
+      `An older "${WINDOWS_TASK_NAME}" scheduled task exists and Windows refused to remove it ` +
+        `(${r?.stdout.trim() || 'no answer'}). Remove it from an administrator terminal: ` +
+        `schtasks /Delete /TN "${WINDOWS_TASK_NAME}" /F`,
+    );
+  }
+}
+
 export async function readAutostartStatus(fx: AutostartEffects): Promise<AutostartStatus> {
   if (fx.platform === 'win32') {
-    const q = await fx.run('schtasks', ['/Query', '/TN', WINDOWS_TASK_NAME]);
-    return readWindowsStatus(q ?? { exitCode: 1, stdout: '' });
+    const run = await regQuery(fx, WINDOWS_RUN_KEY);
+    const approved = await regQuery(fx, WINDOWS_APPROVED_KEY);
+    if (run === null || approved === null) {
+      return { state: 'unsupported', reason: 'reg.exe gave no answer on this machine.' };
+    }
+    return readWindowsStatus(run, approved);
   }
   if (fx.platform === 'darwin') return readMacStatus(await fx.exists(macPlistPath(fx.home)));
   if (fx.platform === 'linux') {
@@ -222,23 +310,25 @@ export async function installAutostart(
   if (!Array.isArray(argv)) return { state: 'unsupported', reason: argv.refused };
 
   if (fx.platform === 'win32') {
+    await removeLegacyTask(fx);
     const script = windowsScriptPath(fx.nodalDir);
     await fx.writeFile(script, windowsLauncherScript(argv));
-    const r = await fx.run('schtasks', [
-      '/Create',
-      '/F',
-      '/TN',
-      WINDOWS_TASK_NAME,
-      '/SC',
-      'ONLOGON',
-      '/RL',
-      'LIMITED',
-      '/TR',
-      `"${script}"`,
+    const r = await fx.run('reg', [
+      'add',
+      WINDOWS_RUN_KEY,
+      '/v',
+      WINDOWS_ENTRY_NAME,
+      '/t',
+      'REG_EXPAND_SZ',
+      '/d',
+      windowsRunCommand(script),
+      '/f',
     ]);
     if (r === null || r.exitCode !== 0) {
-      throw new Error(`schtasks /Create failed: ${r?.stdout.trim() || 'no answer'}`);
+      throw new Error(`reg add ${WINDOWS_RUN_KEY} failed: ${r?.stdout.trim() || 'no answer'}`);
     }
+    // Coupée plus tôt dans Paramètres → Démarrage : allumer ici la rallume.
+    await regDeleteIfPresent(fx, WINDOWS_APPROVED_KEY);
   } else if (fx.platform === 'darwin') {
     const dir = join(fx.home, 'Library', 'LaunchAgents');
     await fx.mkdir(dir);
@@ -268,8 +358,10 @@ export async function installAutostart(
 
 export async function uninstallAutostart(fx: AutostartEffects): Promise<AutostartStatus> {
   if (fx.platform === 'win32') {
-    const r = await fx.run('schtasks', ['/Delete', '/F', '/TN', WINDOWS_TASK_NAME]);
-    if (r !== null && r.exitCode === 0) await fx.removeFile(windowsScriptPath(fx.nodalDir));
+    await removeLegacyTask(fx);
+    await regDeleteIfPresent(fx, WINDOWS_RUN_KEY);
+    await regDeleteIfPresent(fx, WINDOWS_APPROVED_KEY);
+    await fx.removeFile(windowsScriptPath(fx.nodalDir));
   } else if (fx.platform === 'darwin') {
     await fx.removeFile(macPlistPath(fx.home));
   } else if (fx.platform === 'linux') {

@@ -8682,7 +8682,7 @@ export async function addNodalToClaudeDesktopAction(): Promise<
 // ─── Start with the machine (#451) ────────────────────────────────────────────
 
 /**
- * Le CLI tient l'intégration au système (tâche planifiée, LaunchAgent, unité
+ * Le CLI tient l'intégration au système (valeur Run de Windows, LaunchAgent, unité
  * systemd) : le web l'appelle, avec la commande qui a démarré la stack
  * (`NODAL_CLI_ARGV`, #485), et ne réécrit rien lui-même.
  */

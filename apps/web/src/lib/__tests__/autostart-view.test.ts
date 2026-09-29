@@ -15,6 +15,14 @@ describe('parseServiceJson @cap:installer-et-demarrer/moteur', () => {
     expect(parseServiceJson('{"state":"off"}\n')).toEqual({ state: 'off' });
   });
 
+  it('off avec sa raison (coupé dans Paramètres → Démarrage) : la raison traverse', () => {
+    expect(
+      parseServiceJson(
+        '{"state":"off","reason":"Turned off in Windows Settings, Apps, Startup."}\n',
+      ),
+    ).toEqual({ state: 'off', reason: 'Turned off in Windows Settings, Apps, Startup.' });
+  });
+
   it('une réponse illisible ou inconnue rend null, jamais « off »', () => {
     expect(parseServiceJson('')).toBeNull();
     expect(parseServiceJson('Error: boom')).toBeNull();
