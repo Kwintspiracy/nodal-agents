@@ -1392,9 +1392,11 @@ describe('executeJob', () => {
     expect(childRow?.systemPrompt).toContain('## Delegated sub-task');
     expect(childRow?.systemPrompt).not.toContain('telegram_send_message');
     expect(childRow?.systemPrompt).not.toContain('SAME-TURN MULTI-CALL REQUIRED');
+    expect(childRow?.systemPrompt).not.toContain('- delivery:');
 
-    // The same agent, holding its own token on a Telegram job: the etiquette
-    // is there, because the tool is.
+    // The same agent, holding its own token on a Telegram job: the channel's
+    // facts are there, because the tool is — built from the Telegram adapter's
+    // declaration (#613), and no hand-written channel rule.
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -1431,8 +1433,18 @@ describe('executeJob', () => {
         .select({ systemPrompt: agentJobs.systemPrompt })
         .from(agentJobs)
         .where(eq(agentJobs.id, tgJob!.id));
-      expect(tgRow?.systemPrompt).toContain('## Channel etiquette');
-      expect(tgRow?.systemPrompt).toContain('telegram_send_message({ chatId, text })');
+      expect(tgRow?.systemPrompt).toContain(
+        '- delivery: `telegram_send_message` reaches the user on telegram, the only way your ' +
+          'replies reach them. Text arrives as plain text: markdown (headings, tables, **bold**, ' +
+          'escapes) shows literally. A long text is split into several messages automatically, ' +
+          'so send each reply once, whole.',
+      );
+      for (const gone of ['## Channel etiquette', 'MarkdownV2', '4096']) {
+        expect({ gone, found: tgRow?.systemPrompt?.includes(gone) }).toEqual({
+          gone,
+          found: false,
+        });
+      }
     } finally {
       await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
     }
@@ -1476,7 +1488,7 @@ describe('executeJob', () => {
         .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
         .from(agentJobs)
         .where(eq(agentJobs.id, job!.id));
-      expect(first?.systemPrompt).toContain('telegram_send_message({ chatId, text })');
+      expect(first?.systemPrompt).toContain('- delivery: `telegram_send_message` reaches the user');
       expect(first?.tools).toContain('telegram_send_message');
 
       // Resume with the SAME tools: the stored prompt is reused verbatim. A
@@ -1506,7 +1518,7 @@ describe('executeJob', () => {
       );
       const seen = JSON.stringify(afterPrompts[0]);
       expect(seen).not.toContain(SENTINEL);
-      expect(seen).not.toContain('telegram_send_message({ chatId, text })');
+      expect(seen).not.toContain('- delivery:');
       const [after] = await db
         .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
         .from(agentJobs)

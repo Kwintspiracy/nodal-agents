@@ -352,3 +352,20 @@ describe('whatsappAdapter.validateCredentials', () => {
     await assertion;
   });
 });
+
+// #613 — the prompt's channel line is built from this declaration.
+describe('whatsappAdapter.text — what a sent text becomes (#613)', () => {
+  it('declares plain, and splits exactly at its declared size', async () => {
+    expect(whatsappAdapter.text.shownAs).toBe('plain');
+    const handle = makeFakeHandle('open');
+    mockEnsureWhatsAppSocket.mockReturnValue(handle);
+    const max = whatsappAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(2 * max + 808);
+
+    await whatsappAdapter.sendText(CREDS, JID, text);
+
+    const sent = handle.send.mock.calls.map((c) => (c[1] as { text: string }).text);
+    expect(sent.map((s) => s.length)).toEqual([max, max, 808]);
+    expect(sent.join('')).toBe(text);
+  });
+});

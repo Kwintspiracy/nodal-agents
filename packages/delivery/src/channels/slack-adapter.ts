@@ -480,6 +480,9 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 export const slackAdapter: ChannelAdapter = {
   channel: 'slack',
   capabilities: { buttons: true, threads: true, media: true, editMessage: true },
+  // Sans `format`, aucune conversion : Slack lit son propre mrkdwn, pas le
+  // markdown — titres, tableaux, `**gras**` et `[lien](url)` n'y sont pas rendus.
+  text: { shownAs: 'plain', maxMessageChars: SLACK_MAX_CHARS },
   sendText,
   sendMedia,
   sendApprovalCard,

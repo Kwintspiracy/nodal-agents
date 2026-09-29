@@ -1,11 +1,7 @@
 // agent-baseline.test.ts — the three behavior layers injected into every agent.
 
 import { describe, it, expect } from 'vitest';
-import {
-  buildBaselineBlock,
-  buildChannelBlock,
-  buildDiscoverabilityBlock,
-} from '../agent-baseline';
+import { buildBaselineBlock, buildDiscoverabilityBlock } from '../agent-baseline';
 import { systemSkills, skillKind, capabilitySkillSlugs } from '@nodal-agents/catalog';
 import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
 import { ALWAYS_ON_TOOLS, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
@@ -188,61 +184,30 @@ describe('C3 — worker discovery capitalization vs B1 — orchestrator delegati
   });
 });
 
-describe('Layer 2 — channel etiquette', () => {
-  const withSend = [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES];
-
-  it('injects channel content only when the agent is on a channel', () => {
-    expect(buildChannelBlock({ channel: 'telegram', availableTools: withSend })).toContain(
-      '## Channel etiquette',
-    );
-    expect(buildChannelBlock({ telegram: true, availableTools: withSend })).toContain(
-      '## Channel etiquette',
-    );
-    expect(buildChannelBlock({ channel: 'api', availableTools: withSend })).toBe('');
-    expect(buildChannelBlock({ availableTools: withSend })).toBe('');
+// #613 — the channel layer is gone: it injected hand-written Telegram rules
+// (MarkdownV2, hand-splitting at 4 096) that the runner contradicts. No
+// catalog text is injected for a channel any more; the channel's facts are a
+// Job context line built from the adapter (system-prompt.test.ts).
+describe('Layer 2 — no catalog text is injected for a channel (#613)', () => {
+  it('no system skill is of a kind the prompt injects per channel', () => {
+    const kinds = new Set(systemSkills.map((s) => skillKind(s)));
+    expect([...kinds].sort()).toEqual(['agent-internal', 'baseline', 'capability']);
   });
 
-  // #559 — run 806a2218: a delegated Researcher inherited its parent's
-  // chat_id, got the Telegram etiquette ("same turn as return_result:
-  // telegram_send_message(...)"), held no such tool, obeyed, and was killed
-  // for whitelist_violation. Every channel skill, on both job shapes.
-  const channelSkills = systemSkills.filter((s) => skillKind(s) === 'channel');
-
-  it.each(channelSkills.map((s) => [s.slug, s] as const))(
-    'channel skill %s is injected only when the job holds every tool its text names (#559)',
-    (_slug, skill) => {
-      const text = skill.content.trim();
-      const named = toolsNamedIn(text);
-      // A delegated worker on a Telegram-origin run: the always-on set, no
-      // delivery tool (execute.ts arms send tools only for an agent with its
-      // own credential on the transport).
-      const worker = buildChannelBlock({ telegram: true, availableTools: [...ALWAYS_ON_TOOLS] });
-      // The root that owns the binding: the same set plus its send tools.
-      const root = buildChannelBlock({ channel: 'telegram', availableTools: withSend });
-
-      const heldByWorker = named.every((t) => (ALWAYS_ON_TOOLS as readonly string[]).includes(t));
-      expect(worker.includes(text.slice(0, 60))).toBe(heldByWorker);
-      expect(root).toContain(text.slice(0, 60));
-    },
-  );
-
-  it('never names a tool the job does not hold (#559)', () => {
-    const tools = [...ALWAYS_ON_TOOLS];
-    for (const opts of [{ telegram: true }, { channel: 'telegram' }]) {
-      const block = buildChannelBlock({ ...opts, availableTools: tools });
-      expect(findUnavailableToolMentions(block, new Set(tools))).toEqual([]);
+  it('the baseline carries no channel rule, whatever tools the job holds', () => {
+    const block = buildBaselineBlock('anthropic/claude-sonnet-4.6', {
+      role: 'orchestrator',
+      availableTools: [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES],
+    });
+    for (const gone of [
+      'MarkdownV2',
+      '4096',
+      'Splitting rules',
+      'Telegram delivery',
+      '## Markdown output',
+    ]) {
+      expect({ gone, found: block.includes(gone) }).toEqual({ gone, found: false });
     }
-    // The etiquette that names telegram_send_message is really gone: the
-    // assertion above would also pass on an empty block, this one says which.
-    expect(buildChannelBlock({ telegram: true, availableTools: tools })).not.toContain(
-      'telegram_send_message',
-    );
-  });
-
-  it('says nothing that needs a tool on a surface with no Nodal tools (cli-runtime)', () => {
-    expect(
-      buildChannelBlock({ telegram: true, surface: 'cli-runtime', availableTools: [] }),
-    ).not.toContain('telegram_send_message');
   });
 });
 

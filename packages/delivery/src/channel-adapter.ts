@@ -115,9 +115,37 @@ export type DiscoveredConversation = {
   groupName?: string;
 };
 
+/**
+ * Ce que devient un texte envoyé par `sendText` SANS `format` — le seul fait
+ * sur le canal dont un agent a besoin pour écrire sa réponse (#613).
+ *
+ * Le prompt d'un job sur canal portait 6 300 caractères de consignes écrites
+ * à la main pour Telegram : échapper en MarkdownV2 alors que l'outil envoie
+ * sans `parse_mode`, poser titres et tableaux sur un canal qui les affiche
+ * tels quels, découper soi-même à 4 096 alors que `sendText` découpe déjà.
+ * Trois consignes fausses, parce qu'écrites loin du code qui envoie. Ici,
+ * l'adaptateur DÉCLARE ce qu'il fait, et les tests de chaque adaptateur
+ * prouvent que la déclaration est ce que `sendText` fait.
+ */
+export interface TextDelivery {
+  /**
+   * Comment le lecteur voit un texte envoyé sans `format` :
+   * 'plain' — tel que tapé, la syntaxe markdown s'affiche littéralement ;
+   * 'markdown' — le markdown est rendu par la plateforme.
+   */
+  shownAs: Exclude<TextFormat, 'html'>;
+  /**
+   * Le plus long message que l'adaptateur envoie d'un bloc. Au-delà,
+   * `sendText` découpe sur les fins de ligne et envoie les morceaux dans
+   * l'ordre : l'appelant ne découpe jamais.
+   */
+  maxMessageChars: number;
+}
+
 export interface ChannelAdapter {
   readonly channel: ChannelKind;
   readonly capabilities: ChannelCapabilities;
+  readonly text: TextDelivery;
 
   sendText(
     creds: ChannelCredentials,

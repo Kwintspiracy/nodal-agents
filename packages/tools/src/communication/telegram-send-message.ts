@@ -25,7 +25,13 @@ const TelegramSendMessageInput = z.object({
     .max(20)
     .optional()
     .describe('Telegram chat ID to send to. Omit to reply to the chat that triggered this job.'),
-  text: z.string().min(1).max(4096).describe('The message text to send.'),
+  // Pas de plafond (#613) : l'adaptateur découpe tout texte trop long pour le
+  // canal (`ChannelAdapter.text.maxMessageChars`). Le `.max(4096)` d'avant
+  // forçait le modèle à découper lui-même — et la limite de Discord est 2 000.
+  text: z
+    .string()
+    .min(1)
+    .describe('The whole reply. A text too long for one message is split automatically.'),
   channel: z
     .enum(['telegram', 'discord', 'slack', 'whatsapp'])
     .optional()
@@ -68,43 +74,23 @@ export function createTelegramSendMessageTool(): ToolDefinition<
     label: 'Send a Telegram message',
     summary:
       'Send a message through the connected Telegram bot. A sent message cannot be taken back.',
-    description: `Send a Telegram message to a user or chat.
-
-Use this tool to deliver a reply, notification, or result via Telegram.
+    description: `Send a text message to the user on the job's messaging channel (Telegram, Discord or Slack).
 
 - **chatId**: optional. Provide it only when sending to a chat other than the one
   that triggered this job. If you omit it, the platform uses the chat that sent the
   original request (the job's origin chat). An explicit chatId must already be an
   APPROVED chat for this agent (the owner, or a member the owner confirmed) —
   you cannot message an arbitrary chat id.
-- **text**: the message body, sent as plain text (no HTML/Markdown parsing).
+- **text**: the whole reply. How it is shown (plain text or rendered markdown) is
+  the channel's: see the \`delivery:\` line of your Job context. A text too long
+  for one message is split automatically — send each reply in ONE call, never
+  split it yourself.
 - **channel**: optional. Target another connected platform (telegram, discord,
   slack, whatsapp) instead of the current conversation's — the agent must have
   an ENABLED binding for it. Omit to reply on the current conversation's channel.
 
-**Same-response multi-call (CRITICAL for cost & latency)**:
-When you need to send multiple messages (long replies split across the
-4096-char Telegram limit), emit MULTIPLE \`telegram_send_message\` tool calls
-IN THE SAME response.content array, alongside \`return_result\` at the end.
-The runtime executes parallel tool calls correctly. Splitting calls across
-consecutive responses wastes ~7× input tokens and adds latency for no benefit.
-
-Correct (1 LLM round-trip):
-  response.content = [
-    { tool-call: telegram_send_message, input: { text: part1 } },
-    { tool-call: telegram_send_message, input: { text: part2 } },
-    { tool-call: telegram_send_message, input: { text: part3 } },
-    { tool-call: return_result, input: { status: 'success' } }
-  ]
-
-Wrong (4 LLM round-trips for the same outcome):
-  response 1: [{ telegram_send_message: part1 }]
-  response 2: [{ telegram_send_message: part2 }]
-  response 3: [{ telegram_send_message: part3 }]
-  response 4: [{ return_result: ... }]
-
-**Stop when you're done**: once you have sent your reply, call \`return_result\`
-to end your turn. Do NOT keep sending standalone acknowledgements, follow-ups, or
+**Stop when you're done**: send your reply and call \`return_result\` in the same
+response. Do NOT keep sending standalone acknowledgements, follow-ups, or
 emoji-only messages turn after turn — the user did not ask for them and the
 platform will cut you off for spamming if you send on several turns in a row
 without finishing.

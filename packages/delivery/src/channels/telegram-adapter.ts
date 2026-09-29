@@ -16,6 +16,7 @@ import {
   sendTelegramVoice,
   getTelegramBotInfo,
   editTelegramMessageText,
+  TELEGRAM_MAX_CHARS,
   type TelegramInlineKeyboard,
   type TelegramSendOpts,
 } from './telegram.ts';
@@ -198,6 +199,8 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 export const telegramAdapter: ChannelAdapter = {
   channel: 'telegram',
   capabilities: { buttons: true, threads: false, media: true, editMessage: true },
+  // Sans `format`, aucun `parse_mode` : Telegram affiche le texte tel quel.
+  text: { shownAs: 'plain', maxMessageChars: TELEGRAM_MAX_CHARS },
   sendText,
   sendMedia,
   sendApprovalCard,

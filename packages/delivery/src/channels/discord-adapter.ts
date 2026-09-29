@@ -482,6 +482,8 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 export const discordAdapter: ChannelAdapter = {
   channel: 'discord',
   capabilities: { buttons: true, threads: true, media: true, editMessage: true },
+  // Discord rend le markdown nativement (voir assertFormatSupported).
+  text: { shownAs: 'markdown', maxMessageChars: DISCORD_MAX_CHARS },
   sendText,
   sendMedia,
   sendApprovalCard,

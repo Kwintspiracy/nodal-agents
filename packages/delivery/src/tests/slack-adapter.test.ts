@@ -419,3 +419,23 @@ describe('slackAdapter.validateCredentials', () => {
     );
   });
 });
+
+// #613 — the prompt's channel line is built from this declaration.
+describe('slackAdapter.text — what a sent text becomes (#613)', () => {
+  it('declares plain (no markdown conversion without a format), and splits exactly at its declared size', async () => {
+    expect(slackAdapter.text.shownAs).toBe('plain');
+    vi.mocked(WebClient.prototype.apiCall).mockImplementation(() =>
+      Promise.resolve(fakePostMessageResult('9.9')),
+    );
+    const max = slackAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(2 * max + 808);
+
+    await slackAdapter.sendText(CREDS, CHANNEL_ID, text);
+
+    const sent = vi
+      .mocked(WebClient.prototype.apiCall)
+      .mock.calls.map(([, options]) => (options as { text: string }).text);
+    expect(sent.map((s) => s.length)).toEqual([max, max, 808]);
+    expect(sent.join('')).toBe(text);
+  });
+});

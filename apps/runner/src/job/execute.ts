@@ -197,6 +197,12 @@ import type { DeclaredDeliverableFailure } from './finalize.ts';
 import { runnerNotesValue } from './transcript-text.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
+import {
+  channelDeliveryFacts,
+  requiresToolDelivery as requiresToolDeliveryOf,
+  triggerWantsConfirmation as triggerWantsConfirmationOf,
+  TOOL_ONLY_DELIVERY_CHANNELS,
+} from './channel-delivery.ts';
 import { loadConversationContext } from './conversation-id.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
@@ -431,21 +437,7 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   ...DELIVERY_TOOL_NAME_LIST,
 ]);
 
-// Channels whose ONLY path to the user is a delivery tool call (telegram_send_message,
-// which dispatches through the job's own ChannelAdapter — see CHANNEL_SEND_TOOL in
-// thread-history.ts). For these, a job that completes without ever delivering is a
-// silent black hole — the delivery guard re-prompts the agent before letting such a
-// job finish. Other channels (api, dashboard, cron, internal, …) expose agent_jobs.result
-// directly, so a text-only completion is fine there.
-// Live incident: job 4eefb5bf (2026-07-12) completed on discord with tools_used=[] —
-// the guard already existed but only listed 'telegram', so a discord job's plain-text
-// reply silently never reached the channel. discord/slack register the SAME send tools
-// as telegram (gate at the capabilityTools.push call above keys off
-// deliveryBotToken || hasDiscordBinding || hasSlackBinding), so they belong in this set
-// too. whatsapp does NOT: hasWhatsappBinding is not part of that gate yet (no outbound
-// send tool is registered for a whatsapp job today), so adding it here would nudge the
-// agent to call a tool it doesn't have — join it once whatsapp's outbound tooling ships.
-const TOOL_ONLY_DELIVERY_CHANNELS: ReadonlySet<string> = new Set(['telegram', 'discord', 'slack']);
+// TOOL_ONLY_DELIVERY_CHANNELS and the rule that reads it live in channel-delivery.ts.
 
 /**
  * Was the stored prompt written for this exact tool list? Both sides sorted;
@@ -2069,8 +2061,7 @@ async function runJobTracked(
   // chat_id when the trigger's notify_on_success is on). Surface that intent to
   // the agent so it ends with a confirmation, and engage the delivery guard
   // below so the send is actually enforced.
-  const triggerWantsConfirmation =
-    (job.channel === 'cron' || job.channel === 'webhook') && job.chatId != null;
+  const triggerWantsConfirmation = triggerWantsConfirmationOf(job);
   // B1/B2 (notify-channel-choice): a cron or webhook fire whose trigger chose
   // an EXPLICIT notify channel carries it in triggerContext (run-schedules.ts /
   // routes/webhook.ts) — surfaced here as the ToolContext override so every
@@ -2277,7 +2268,7 @@ async function runJobTracked(
   // default a non-transport job origin (cron, webhook, dashboard, api, …) to
   // THIS agent's own channel instead of unconditionally 'telegram'. whatsapp
   // is intentionally excluded: no outbound send tool is registered for it yet
-  // (see TOOL_ONLY_DELIVERY_CHANNELS above), so it isn't a real send-tool
+  // (see TOOL_ONLY_DELIVERY_CHANNELS, channel-delivery.ts), so it isn't a real send-tool
   // target for this ToolContext even when a whatsapp binding exists.
   const activeChannels: ChannelKind[] = [
     ...(deliveryBotToken ? (['telegram'] as const) : []),
@@ -2756,8 +2747,17 @@ async function runJobTracked(
   const promptTools = [...new Set(toolDefs.map((t) => t.name))].sort();
   let systemPrompt = job.systemPrompt;
   if (!systemPrompt || !sameToolList(job.systemPromptTools, promptTools)) {
+    // The channel's facts (#613): the channel the send tool will resolve —
+    // `activeChannels` is known only from §6 — and what its adapter does
+    // with a text.
+    const channelDelivery = channelDeliveryFacts({
+      job,
+      notifyChannelOverride: notifyChannelOverride,
+      activeChannels,
+    });
     systemPrompt = await buildSystemPrompt(agent, db, {
       ...jobContext,
+      ...(channelDelivery ? { channelDelivery } : {}),
       availableToolNames: promptTools,
     });
     await db
@@ -3377,8 +3377,7 @@ async function runJobTracked(
   // tick / route) is held to the same bar: the agent must deliver before
   // completing, otherwise the user never gets the "done" message they asked
   // for.
-  const requiresToolDelivery =
-    TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || triggerWantsConfirmation;
+  const requiresToolDelivery = requiresToolDeliveryOf(job);
   // Human-readable capitalization for the nudges below. `job.channel` is one of
   // TOOL_ONLY_DELIVERY_CHANNELS (telegram/discord/slack) here, OR 'cron'/'webhook'
   // via triggerWantsConfirmation — B1/B2 made both multi-channel (see

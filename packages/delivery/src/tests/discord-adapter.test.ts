@@ -398,3 +398,21 @@ describe('discordAdapter.validateCredentials', () => {
     );
   });
 });
+
+// #613 — the prompt's channel line is built from this declaration.
+describe('discordAdapter.text — what a sent text becomes (#613)', () => {
+  it('declares markdown, and splits exactly at its declared size', async () => {
+    expect(discordAdapter.text.shownAs).toBe('markdown');
+    vi.mocked(REST.prototype.post).mockImplementation(() => Promise.resolve(fakeMessage('9')));
+    const max = discordAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(2 * max + 808);
+
+    await discordAdapter.sendText(CREDS, CHANNEL_ID, text);
+
+    const sent = vi
+      .mocked(REST.prototype.post)
+      .mock.calls.map(([, options]) => (options?.body as { content: string }).content);
+    expect(sent.map((s) => s.length)).toEqual([max, max, 808]);
+    expect(sent.join('')).toBe(text);
+  });
+});

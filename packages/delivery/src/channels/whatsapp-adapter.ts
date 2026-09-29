@@ -363,6 +363,8 @@ async function validateCredentials(creds: ChannelCredentials): Promise<BotIdenti
 export const whatsappAdapter: ChannelAdapter = {
   channel: 'whatsapp',
   capabilities: { buttons: false, threads: false, media: true, editMessage: false },
+  // Sans `format`, aucune conversion (markdownToWhatsApp n'agit que sur 'markdown').
+  text: { shownAs: 'plain', maxMessageChars: WHATSAPP_MAX_CHARS },
   sendText,
   sendMedia,
   listConversations,

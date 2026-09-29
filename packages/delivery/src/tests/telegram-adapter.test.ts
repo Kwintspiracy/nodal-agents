@@ -256,3 +256,41 @@ describe('telegramAdapter.validateCredentials', () => {
     );
   });
 });
+
+// #613 — the runner splits, the model never does. The prompt tells the agent
+// "a long text is split automatically" on the strength of this adapter's
+// declaration; this proves the declaration is what sendText does.
+describe('telegramAdapter.text — what a sent text becomes (#613)', () => {
+  it('declares plain text: sendText sets no parse_mode, so markup arrives as typed', async () => {
+    expect(telegramAdapter.text.shownAs).toBe('plain');
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: { message_id: 1 } }),
+    );
+    await telegramAdapter.sendText(CREDS, FAKE_CHAT_ID, '**bold** _x_');
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body).toEqual({ chat_id: FAKE_CHAT_ID, text: '**bold** _x_' });
+  });
+
+  it('a 9 000-character text passed to sendText goes out as 3 messages, in order, whole', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(() =>
+      Promise.resolve(makeFetchResponse(200, { ok: true, result: { message_id: 7 } })),
+    );
+    // 90 lines of 99 characters + newline, minus the last newline: 8 999.
+    const text = Array.from(
+      { length: 90 },
+      (_, i) => `${String(i).padStart(2, '0')}${'x'.repeat(97)}`,
+    ).join('\n');
+    expect(text.length).toBeGreaterThanOrEqual(8999);
+
+    await telegramAdapter.sendText(CREDS, FAKE_CHAT_ID, text);
+
+    const sent = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.map(([, init]) => (JSON.parse(init?.body as string) as { text: string }).text);
+    expect(sent).toHaveLength(3);
+    for (const part of sent)
+      expect(part.length).toBeLessThanOrEqual(telegramAdapter.text.maxMessageChars);
+    expect(sent.join('\n')).toBe(text);
+  });
+});

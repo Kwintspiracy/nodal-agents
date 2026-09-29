@@ -48,6 +48,7 @@ export type {
   BotIdentity,
   ChannelCapabilities,
   ChannelAdapter,
+  TextDelivery,
   DiscoveredConversation,
 } from './channel-adapter.ts';
 
@@ -68,6 +69,6 @@ export type {
   WhatsAppEventEmitter,
 } from './channels/whatsapp/socket-manager.ts';
 
-export { getAdapter } from './registry.ts';
+export { getAdapter, textDeliveryOf } from './registry.ts';
 
 export { resolveTransportChannel, listActiveChannelsForAgent } from './transport-channel.ts';

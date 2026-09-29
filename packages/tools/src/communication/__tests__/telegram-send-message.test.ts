@@ -394,3 +394,35 @@ describe('createTelegramSendMessageTool', () => {
     });
   });
 });
+
+// #613 — the tool told the model to split at 4 096 characters itself, and its
+// schema refused anything longer, while the adapter's sendText already splits
+// (and at a smaller margin). Hand-splitting is part of what produced 30 sends
+// on 2026-09-28. A whole reply goes in ONE call; the adapter splits it.
+describe('telegram_send_message — one call per reply, the adapter splits (#613)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sendTextMock.mockResolvedValue({ messageId: '42' });
+    installTelegramBindingCredentialsDefault();
+  });
+
+  it('accepts a 9 000-character reply and hands it to sendText whole', async () => {
+    const tool = createTelegramSendMessageTool();
+    const text = Array.from({ length: 90 }, (_, i) => `${i} ${'x'.repeat(96)}`).join('\n');
+    expect(text.length).toBeGreaterThan(8900);
+
+    const parsed = tool.inputSchema.safeParse({ text });
+    expect(parsed.success).toBe(true);
+    await tool.execute(parsed.data as { text: string }, makeCtx({ jobChatId: '99887766' }));
+
+    expect(sendTextMock.mock.calls.map((c) => c[2])).toEqual([text]);
+  });
+
+  it('the description neither asks the model to split nor states a format that is the adapter’s', () => {
+    const { description } = createTelegramSendMessageTool();
+    for (const gone of ['4096', 'MarkdownV2', 'part1', 'no HTML/Markdown parsing']) {
+      expect({ gone, found: description.includes(gone) }).toEqual({ gone, found: false });
+    }
+    expect(description).toContain('split');
+  });
+});
