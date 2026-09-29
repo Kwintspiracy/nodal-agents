@@ -6,7 +6,10 @@
 //
 // Mutations vérifiées :
 //   - la commande du linger retirée de l'écran → « à la connexion » rougit ;
-//   - l'état relu ignoré (`setView` retiré) → « bascule » rougit.
+//   - l'état relu ignoré (`setView` retiré) → « bascule » rougit ;
+//   - le toast rendu au seul « ok » de l'action (l'ancien `toast.success`
+//     inconditionnel) → « refus » rougit : un succès s'affichait au-dessus d'un
+//     CLI qui n'avait rien inscrit.
 
 import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest';
 import { act } from 'react';
@@ -22,14 +25,19 @@ const setAutostartAction = vi.hoisted(() =>
   ),
 );
 vi.mock('@/lib/actions.ts', () => ({ setAutostartAction }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock('sonner', () => ({ toast }));
 
 const { default: AutostartSection } = await import('../AutostartSection.tsx');
 
 let container: HTMLDivElement;
 let root: Root;
 
-beforeEach(() => setAutostartAction.mockClear());
+beforeEach(() => {
+  setAutostartAction.mockClear();
+  toast.success.mockClear();
+  toast.error.mockClear();
+});
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
@@ -113,6 +121,41 @@ describe('Start Nodal when this machine starts @cap:installer-et-demarrer/ecran'
     });
     expect(setAutostartAction).toHaveBeenCalledWith({ enabled: true });
     expect(container.textContent).toContain('On. Nodal starts when you log in to this machine.');
+    expect(toast.success).toHaveBeenCalledWith('Nodal will start with this machine');
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('refus : le CLI répond sans rien inscrire (install lancée par npx), aucun succès, la raison est dite', async () => {
+    const reason =
+      'This install runs through npx: there is no script to start at boot. Install nodal-agents globally first.';
+    setAutostartAction.mockResolvedValueOnce({
+      ok: true,
+      data: { status: { state: 'unsupported', reason }, error: null, isOwner: true },
+    });
+    await render({ status: { state: 'off' }, error: null, isOwner: true });
+    await act(async () => {
+      interrupteur().click();
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(reason);
+    expect(container.textContent).toContain(reason);
+    expect(interrupteur().getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('extinction refusée : l’entrée est toujours là, aucun succès', async () => {
+    setAutostartAction.mockResolvedValueOnce({
+      ok: true,
+      data: { status: { state: 'at_login' }, error: null, isOwner: true },
+    });
+    await render({ status: { state: 'at_login' }, error: null, isOwner: true });
+    await act(async () => {
+      interrupteur().click();
+    });
+    expect(setAutostartAction).toHaveBeenCalledWith({ enabled: false });
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      'Nodal still starts with this machine: the startup entry could not be removed.',
+    );
   });
 
   it('un invité ne peut pas le changer', async () => {

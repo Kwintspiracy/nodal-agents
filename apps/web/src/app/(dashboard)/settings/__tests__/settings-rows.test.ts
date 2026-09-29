@@ -336,7 +336,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     }
   });
 
-  it('les quinze lignes existent, groupées dans l’ordre Access, Safety, Workspace, Advanced', async () => {
+  it('toutes les lignes existent, groupées dans l’ordre Access, Safety, Workspace, Advanced', async () => {
     const rows = await rowsFromDb({ authMode: 'local-auth' });
 
     expect(rows.map((r) => r.id)).toEqual([

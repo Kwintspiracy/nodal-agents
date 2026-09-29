@@ -59,3 +59,33 @@ export function autostartValue(view: AutostartView | null): string {
       return 'Not available on this machine';
   }
 }
+
+/**
+ * Le toast qui suit le geste, déduit de l'état RELU dans le système et jamais du
+ * seul « ok » de l'action : le CLI peut répondre sans erreur qu'il n'a rien
+ * inscrit (`unsupported`, une install lancée par npx), ou que l'entrée est
+ * toujours là. Succès seulement si l'état demandé est obtenu ; sinon, l'échec et
+ * sa raison.
+ */
+export function autostartOutcome(
+  requested: boolean,
+  status: AutostartStatus,
+): { ok: boolean; message: string } {
+  const on = status.state === 'at_login' || status.state === 'at_boot';
+  if (requested === on && status.state !== 'unsupported') {
+    return {
+      ok: true,
+      message: on ? 'Nodal will start with this machine' : 'Nodal will not start with this machine',
+    };
+  }
+  if (status.state === 'unsupported') return { ok: false, message: status.reason };
+  if (status.state === 'off' && status.reason !== undefined) {
+    return { ok: false, message: status.reason };
+  }
+  return {
+    ok: false,
+    message: requested
+      ? 'Nodal is still off: this machine did not keep the startup entry.'
+      : 'Nodal still starts with this machine: the startup entry could not be removed.',
+  };
+}

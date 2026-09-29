@@ -17,7 +17,7 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { setAutostartAction } from '@/lib/actions.ts';
-import type { AutostartView } from '@/lib/autostart-view.ts';
+import { autostartOutcome, type AutostartView } from '@/lib/autostart-view.ts';
 import Switch from '@/components/ui/Switch';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
@@ -54,9 +54,15 @@ export default function AutostartSection({ initial }: { initial: AutostartView }
         return;
       }
       setView(r.data);
-      toast.success(
-        next ? 'Nodal will start with this machine' : 'Nodal will not start with this machine',
-      );
+      // Le toast suit l'état RELU, pas le « ok » de l'action : le CLI répond sans
+      // erreur quand il n'a rien pu inscrire (`unsupported`).
+      if (r.data.status === null) {
+        toast.error(r.data.error ?? 'How Nodal starts with this machine could not be read.');
+        return;
+      }
+      const outcome = autostartOutcome(next, r.data.status);
+      if (outcome.ok) toast.success(outcome.message);
+      else toast.error(outcome.message);
     });
   }
 
