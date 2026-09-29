@@ -25,7 +25,8 @@ import type {
 import { InvalidInputError } from './errors';
 import { refuseWithoutStatedPurpose } from './purpose';
 import { alreadyRejectedInstruction, priorRejectionOfSameCall } from './rejected-call';
-import { judgeShellChecklist, shellChecklistRefusal } from './shell-checklist';
+import { judgeShellChecklist, shellChecklistRefusal, type ShellPlace } from './shell-checklist';
+import { resolveAndCheckPath } from './builtin/file-ops/workspace';
 import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
 import {
@@ -481,7 +482,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   let gateReasons: ShellGateReason[] = [];
   let shellBlock: ShellGateReason[] | null = null;
   if (opts.shellPolicy && commandesJugees.length > 0 && effectiveAction !== 'block') {
-    gateReasons = judgeShellChecklist(commandesJugees, opts.shellPolicy);
+    gateReasons = await judgeShellChecklist(
+      commandesJugees,
+      opts.shellPolicy,
+      await shellPlace(tool.name, validatedInput, ctx),
+    );
     const never = gateReasons.filter((r) => r.state === 'never');
     if (never.length > 0) {
       effectiveAction = 'block';
@@ -1380,6 +1385,30 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
   // projets (P5) relira les premières après l'exécution, une fois le succès
   // connu, et les seconds y seront marqués `produced` — voir executeTool.
   return { targets, deliverables: outcome.kind === 'written' ? outcome.deliverables : [] };
+}
+
+/**
+ * Where the commands of a shell call run, for the checklist (#614): the folder
+ * they start in, resolved the way the tool resolves it (`run_command`'s `cwd`,
+ * the project of a declared proof), and the job's workspaces through the same
+ * boundary check as the file tools. A folder that does not resolve is null:
+ * nothing relative to it can be shown to be inside, so an allowed download
+ * from there asks.
+ */
+async function shellPlace(toolName: string, input: unknown, ctx: ToolContext): Promise<ShellPlace> {
+  const from =
+    toolName === 'declare_verification'
+      ? String((input as { project_path?: unknown })?.project_path ?? '.')
+      : String((input as { cwd?: unknown })?.cwd ?? '.');
+  const cwd = await resolveAndCheckPath(ctx, from).catch(() => null);
+  return {
+    cwd,
+    inWorkspace: (absolutePath) =>
+      resolveAndCheckPath(ctx, absolutePath).then(
+        () => true,
+        () => false,
+      ),
+  };
 }
 
 /**

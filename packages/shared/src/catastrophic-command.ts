@@ -495,7 +495,290 @@ export function staticShellCategories(cmd: string): StaticShellCategory[] {
     found.add('download');
   }
   if (isInlineInterpreterEvalCommand(cmd)) found.add('inline_code');
+  // Télécharger PUIS lancer un programme ou un fichier sur la même ligne, c'est
+  // faire tourner du code venu d'ailleurs (#614, revue Nodal de la PR #618,
+  // P1a) : `curl -o p.sh URL && sh p.sh` ne lisait que [download], et un agent
+  // à qui l'on permet de télécharger sans demander le lançait sans demander.
+  // Même sorte que `curl URL | bash` (code dont personne n'a lu le texte), donc
+  // `inline_code`, sans nouvelle sorte. Ce n'est pas le même mécanisme que le
+  // tuyau : `… | bash` exécute stdin quelle qu'en soit la source, il reste lu
+  // par `hasPipeIntoBareInterpreter`. Deux tours séparés (télécharger, puis
+  // plus tard `sh p.sh`) échappent à une lecture du texte d'UNE commande : la
+  // limite déjà dite, un script lancé depuis un fichier n'est pas ouvert.
+  if (found.has('download') && commandUnits(withoutRedirections(cmd), 0, true).some(runsAFile)) {
+    found.add('inline_code');
+  }
   return [...found];
+}
+
+/** Extensions of a file a shell starts as a program or hands to its interpreter. */
+const RUNNABLE_FILE =
+  /\.(sh|bash|zsh|ps1|psm1|bat|cmd|exe|com|msi|py|pyw|js|mjs|cjs|ts|rb|pl|php|jar|appimage|run|bin)$/i;
+
+/** Programs whose job is to start the file (or the program) they are given. */
+const LAUNCHERS = new Set([
+  'source',
+  '.',
+  'exec',
+  'nohup',
+  'start',
+  'start-process',
+  'saps',
+  'invoke-item',
+  'ii',
+  'open',
+  'xdg-open',
+  'msiexec',
+  'rundll32',
+  'java',
+]);
+
+/**
+ * A command unit (program word as written) that runs a program FILE rather
+ * than a program found on the PATH: an interpreter given a script (`sh p.sh`,
+ * `python run.py`, `powershell -File s.ps1`), a path (`./tool`,
+ * `C:\x\setup.exe`), a file with a runnable extension (`setup.exe`, `x.bat`),
+ * or a launcher (`source a.sh`, `Start-Process x`). The fetchers themselves
+ * (`C:\Windows\System32\curl.exe -o …`) are the download, not what it runs.
+ */
+function runsAFile(unit: readonly string[]): boolean {
+  const head = unit[0] ?? '';
+  const program = interpreterBasename(head);
+  const args = unit.slice(1);
+  if (unitCategories([program, ...args]).includes('download')) return false;
+  if (/[\\/]/.test(head) || RUNNABLE_FILE.test(head)) return true;
+  if (LAUNCHERS.has(program)) return args.length > 0;
+  const kind = interpreterKind(program);
+  if (!kind) return false;
+  // `python -m pip …`: the module is its own unit, judged as such.
+  if (kind === 'python' && args.some((a) => a.toLowerCase() === '-m')) return false;
+  return args.some((a) => !a.startsWith('-'));
+}
+
+/**
+ * Where a download line writes, read from its text (#614, revue Nodal de la PR
+ * #618, P1b). A download is allowed without asking because it lands in the
+ * agent's workspace; `curl -o ~/.ssh/authorized_keys` or `git clone URL
+ * D:\elsewhere` does not. The runner resolves these against the command's
+ * working folder and the job's workspaces (packages/tools, shell-checklist.ts).
+ *
+ * - `targets`: each place a fetcher writes, as written (`'.'` for the working
+ *   folder: `curl -O`, `wget URL`, `git clone URL`), or `null` when the text
+ *   does not say where (a variable, `~`, a sub-shell): that asks, invariant #4.
+ *   A program that writes into its own store (`docker pull`, `ollama pull`,
+ *   `comfy model download`, `hf download` without `--local-dir`) names no path
+ *   and adds none.
+ * - `dirs`: the folders the line moves into before (`cd`, `pushd`,
+ *   `Set-Location`), in order, `null` when unreadable. A relative target is
+ *   judged from every one of them, so a `cd` cannot carry it out unseen.
+ */
+export interface DownloadWrites {
+  dirs: Array<string | null>;
+  targets: Array<string | null>;
+}
+
+export function downloadWrites(cmd: string): DownloadWrites {
+  const out: DownloadWrites = { dirs: [], targets: [] };
+  if (typeof cmd !== 'string' || cmd.trim() === '') return out;
+  const units = commandUnits(withoutRedirections(cmd));
+  let downloads = false;
+  for (const unit of units) {
+    const program = unit[0] ?? '';
+    const args = unit.slice(1);
+    if (CHANGE_DIR.has(program)) {
+      const dir = changeDirArg(program, args);
+      out.dirs.push(dir === null ? null : readablePath(dir));
+      continue;
+    }
+    if (!unitCategories(unit).includes('download')) continue;
+    downloads = true;
+    for (const t of fetcherTargets(program, args))
+      out.targets.push(t === null ? null : readablePath(t));
+  }
+  // `curl URL > file`, `iwr URL | Set-Content file`: the bytes land where the
+  // shell sends them. Read on a line that downloads (or reads a URL into a
+  // redirection, which `staticShellCategories` files as a download).
+  if (downloads || staticShellCategories(cmd).includes('download')) {
+    for (const t of redirectionTargets(cmd, units)) out.targets.push(readablePath(t));
+  }
+  return out;
+}
+
+const CHANGE_DIR = new Set(['cd', 'chdir', 'pushd', 'set-location', 'sl']);
+
+/** The folder a `cd`-like unit moves into; null for home or back (`cd`, `cd ~`, `cd -`). */
+function changeDirArg(program: string, args: readonly string[]): string | null {
+  if (program === 'set-location' || program === 'sl') {
+    const i = args.findIndex((a) => /^-(literal)?path$/i.test(a));
+    const value = i >= 0 ? args[i + 1] : args.find((a) => !a.startsWith('-'));
+    return value ?? null;
+  }
+  // `cd /d D:\x` (cmd) takes a drive switch before the folder.
+  const value = args.find((a) => !/^(-[LP]|\/d)$/i.test(a));
+  if (value === undefined || value === '-') return null;
+  return value;
+}
+
+/** A path as written, or null when the shell decides it at run time. */
+function readablePath(p: string): string | null {
+  if (p === '' || /[$%`]/.test(p) || p.startsWith('~')) return null;
+  return p;
+}
+
+/** The value of a flag written `-f v`, `-fv` (short only), `--flag=v` or `-Flag:v`. */
+function flagValues(
+  args: readonly string[],
+  matches: (flag: string) => boolean,
+  attachedShort?: string,
+): string[] {
+  const values: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? '';
+    const eq = a.match(/^(--?[\w-]+)[=:](.*)$/);
+    if (eq && matches(eq[1] ?? '')) values.push(eq[2] ?? '');
+    else if (matches(a)) values.push(args[i + 1] ?? '');
+    else if (attachedShort && a.startsWith(attachedShort) && a.length > attachedShort.length)
+      values.push(a.slice(attachedShort.length));
+  }
+  return values;
+}
+
+function joinPath(dir: string, name: string): string {
+  if (/^([A-Za-z]:)?[\\/]/.test(name)) return name;
+  return dir === '.' ? name : `${dir.replace(/[\\/]$/, '')}/${name}`;
+}
+
+/** Where one download unit writes, by program; null where the text does not say. */
+function fetcherTargets(program: string, args: readonly string[]): Array<string | null> {
+  const lower = args.map((a) => a.toLowerCase());
+  switch (program) {
+    case 'curl': {
+      const outDir = flagValues(args, (f) => f === '--output-dir')[0];
+      // `-o x`, `--output x`, and a group of short options that ends with o (`-sLo x`).
+      const files = flagValues(args, (f) => f === '--output' || /^-[A-Za-z]*o$/.test(f));
+      const remote = args.some(
+        (a) => /^--remote-name(-all)?$/.test(a) || /^-[A-Za-z]*O[A-Za-z]*$/.test(a),
+      );
+      const targets = files.filter((f) => f !== '-').map((f) => joinPath(outDir ?? '.', f));
+      if (remote) targets.push(outDir ?? '.');
+      return targets;
+    }
+    case 'wget': {
+      const docs = flagValues(args, (f) => f === '-O' || f === '--output-document', '-O');
+      const logs = flagValues(
+        args,
+        (f) => ['-o', '--output-file', '-a', '--append-output'].includes(f),
+        '-o',
+      );
+      const prefix = flagValues(args, (f) => f === '-P' || f === '--directory-prefix', '-P')[0];
+      const targets = [...docs.filter((d) => d !== '-'), ...logs].map((f) =>
+        joinPath(prefix ?? '.', f),
+      );
+      if (docs.length === 0) targets.push(prefix ?? '.');
+      return targets;
+    }
+    case 'invoke-webrequest':
+    case 'iwr':
+    case 'invoke-restmethod':
+    case 'irm':
+      // Without -OutFile the content is returned, not written.
+      return flagValues(args, (f) => /^-outf/i.test(f));
+    case 'start-bitstransfer': {
+      const dest = flagValues(args, (f) => /^-dest/i.test(f));
+      // Positional destination: which word is a value and which a switch is
+      // not readable without the cmdlet's signature, so it asks.
+      return dest.length > 0 ? dest : [null];
+    }
+    case 'aria2c': {
+      const dir = flagValues(args, (f) => f === '-d' || f === '--dir', '-d')[0] ?? '.';
+      const outs = flagValues(args, (f) => f === '-o' || f === '--out', '-o');
+      return outs.length > 0 ? outs.map((o) => joinPath(dir, o)) : [dir];
+    }
+    case 'git': {
+      // `git [global options] clone [options] URL [DIR]`, and `git -C dir lfs pull`.
+      const base = flagValues(args, (f) => f === '-C')[0] ?? '.';
+      const sub = lower.indexOf('clone');
+      if (sub < 0) return [base];
+      const rest = args.slice(sub + 1);
+      const positional: string[] = [];
+      for (let i = 0; i < rest.length; i++) {
+        const a = rest[i] ?? '';
+        if (a.startsWith('-')) {
+          if (!a.includes('=') && GIT_CLONE_VALUE_FLAGS.has(a)) i++;
+          continue;
+        }
+        positional.push(a);
+      }
+      const separate = flagValues(rest, (f) => f === '--separate-git-dir');
+      return [joinPath(base, positional[1] ?? '.'), ...separate];
+    }
+    case 'pip':
+    case 'pip3':
+      return [flagValues(args, (f) => f === '-d' || f === '--dest', '-d')[0] ?? '.'];
+    case 'hf':
+    case 'huggingface-cli':
+      // Without --local-dir, the Hugging Face cache: the program's own store.
+      return flagValues(args, (f) => f === '--local-dir');
+    case 'comfy':
+    case 'ollama':
+    case 'docker':
+    case 'podman':
+    case 'docker-compose':
+    case 'podman-compose':
+      // Their own store (the ComfyUI install, the model or image store): the
+      // command names no path.
+      return [];
+    default:
+      // A fetcher this reading does not know the flags of: it asks.
+      return [null];
+  }
+}
+
+/** `git clone` options that take a value as the next word. */
+const GIT_CLONE_VALUE_FLAGS = new Set([
+  '-b',
+  '--branch',
+  '-o',
+  '--origin',
+  '-c',
+  '--config',
+  '-u',
+  '--upload-pack',
+  '-j',
+  '--jobs',
+  '--depth',
+  '--reference',
+  '--reference-if-able',
+  '--separate-git-dir',
+  '--template',
+  '--filter',
+  '--shallow-since',
+  '--shallow-exclude',
+  '--server-option',
+  '--bundle-uri',
+]);
+
+/** Where the shell writes a line's output: `> file`, `>> file`, `| Out-File file`, `| tee file`. */
+function redirectionTargets(cmd: string, units: readonly string[][]): string[] {
+  const targets: string[] = [];
+  for (const m of cmd.matchAll(/(^|[^\d&>])1?>>?\s*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g)) {
+    const t = stripQuotes(m[2] ?? '');
+    if (t.startsWith('&') || /^(\/dev\/null|nul|\$null)$/i.test(t)) continue;
+    targets.push(t);
+  }
+  for (const unit of units) {
+    const program = unit[0] ?? '';
+    const args = unit.slice(1);
+    if (['out-file', 'set-content', 'add-content', 'tee-object'].includes(program)) {
+      const named = flagValues(args, (f) => /^-(file)?path$|^-literalpath$/i.test(f));
+      targets.push(
+        ...(named.length > 0 ? named : args.filter((a) => !a.startsWith('-')).slice(0, 1)),
+      );
+    } else if (program === 'tee') {
+      targets.push(...args.filter((a) => !a.startsWith('-')));
+    }
+  }
+  return targets;
 }
 
 /** True when `re` matches at the very start of `text`. */
@@ -517,11 +800,15 @@ function isAssignmentPrefix(segment: readonly string[], i: number): boolean {
  * the module of `python -m`, and what `bash -c`, `cmd /c`,
  * `powershell -Command`, `xargs`, `find -exec` and `$(…)` / backticks run
  * inside it.
+ *
+ * `asWritten` keeps the program word as the command wrote it (`./x.sh`,
+ * `C:\tools\setup.exe`) instead of its basename: whether a program is a FILE
+ * the line may have fetched is read on that word (#614).
  */
-export function commandUnits(cmd: string, depth = 0): string[][] {
+export function commandUnits(cmd: string, depth = 0, asWritten = false): string[][] {
   if (depth > 4 || typeof cmd !== 'string' || cmd.trim() === '') return [];
   const units: string[][] = [];
-  const inner = (text: string) => units.push(...commandUnits(text, depth + 1));
+  const inner = (text: string) => units.push(...commandUnits(text, depth + 1, asWritten));
   for (const m of cmd.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) inner(m[1] ?? m[2] ?? '');
   for (const segment of splitShellWords(cmd)) {
     // `FOO=1 rm -rf build`: variables set for the command are not the program
@@ -533,7 +820,7 @@ export function commandUnits(cmd: string, depth = 0): string[][] {
     if (head === undefined) continue;
     const program = interpreterBasename(head);
     const args = tokens.slice(1);
-    units.push([program, ...args]);
+    units.push([asWritten ? head : program, ...args]);
     const lower = args.map((a) => a.toLowerCase());
     // `python -m pip install x` runs pip: the module is the program (review of
     // PR #476; main caught it by reading the whole text).

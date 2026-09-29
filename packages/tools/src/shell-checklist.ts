@@ -10,33 +10,103 @@
 // A reading of the text, like Hermes Agent's: it does not follow what a script
 // does once it runs, and it does not keep an agent inside its folders. That
 // takes an OS-level sandbox.
+//
+// One exception to "reading the text only", and it is the definition of an
+// allowed download (#614, revue Nodal de la PR #618, P1b): a download runs
+// without asking because it lands in the agent's workspace, where a checkpoint
+// keeps what it replaces. So the places a download writes (`downloadWrites`)
+// are resolved against the command's working folder and the job's workspaces;
+// one outside them, or one the text does not name, asks.
 
+import { isAbsolute, resolve } from 'node:path';
 import {
+  downloadWrites,
   staticShellCategories,
   type ShellCategory,
   type ShellGateReason,
   type ShellPolicy,
 } from '@nodal-agents/shared';
 
-/** Judge `commands` (the ones this call will run) against `policy`. */
-export function judgeShellChecklist(
+/** Where the commands of a call run: what an allowed download is judged against. */
+export interface ShellPlace {
+  /** The folder the commands start in, canonical; null when it cannot be resolved. */
+  cwd: string | null;
+  /** True when an absolute path lies inside one of the job's workspaces. */
+  inWorkspace(absolutePath: string): Promise<boolean>;
+}
+
+/** What an unreadable target (a variable, `~`, a sub-shell) is called on the card. */
+const UNREADABLE_TARGET = 'a path decided when the command runs';
+
+/**
+ * The places `command` would download to that are not inside a workspace of
+ * the job, as written. A relative target is judged from the starting folder
+ * and from every folder the line `cd`s into, so a `cd` cannot carry it out
+ * unseen.
+ */
+async function downloadsOutside(command: string, place: ShellPlace): Promise<string[]> {
+  const { dirs, targets } = downloadWrites(command);
+  if (targets.length === 0) return [];
+  const bases: Array<string | null> = [place.cwd];
+  let base = place.cwd;
+  for (const dir of dirs) {
+    base = base === null || dir === null ? null : resolve(base, dir);
+    bases.push(base);
+  }
+  const outside: string[] = [];
+  for (const target of targets) {
+    if (target === null) {
+      outside.push(UNREADABLE_TARGET);
+      continue;
+    }
+    const candidates = isAbsolute(target)
+      ? [target]
+      : bases.map((b) => (b === null ? null : resolve(b, target)));
+    for (const candidate of candidates) {
+      if (candidate === null || !(await place.inWorkspace(candidate))) {
+        outside.push(target);
+        break;
+      }
+    }
+  }
+  return outside;
+}
+
+/** Judge `commands` (the ones this call will run, from `place`) against `policy`. */
+export async function judgeShellChecklist(
   commands: readonly string[],
   policy: ShellPolicy,
-): ShellGateReason[] {
+  place: ShellPlace,
+): Promise<ShellGateReason[]> {
   const details = new Map<ShellCategory, string[]>();
+  const outside: string[] = [];
+  const add = (category: ShellCategory, command: string): void => {
+    const list = details.get(category) ?? [];
+    if (!list.includes(command)) list.push(command);
+    details.set(category, list);
+  };
   for (const command of commands) {
     for (const category of staticShellCategories(command)) {
-      if (policy[category] === 'allow') continue;
-      const list = details.get(category) ?? [];
-      if (!list.includes(command)) list.push(command);
-      details.set(category, list);
+      if (policy[category] !== 'allow') {
+        add(category, command);
+        continue;
+      }
+      if (category !== 'download') continue;
+      const out = await downloadsOutside(command, place);
+      if (out.length === 0) continue;
+      add(category, command);
+      for (const o of out) if (!outside.includes(o)) outside.push(o);
     }
   }
 
   const reasons: ShellGateReason[] = [];
   for (const [category, list] of details) {
     const state = policy[category];
-    if (state === 'allow') continue;
+    if (state === 'allow') {
+      // An allowed download that writes outside the job's workspaces asks.
+      reasons.push({ category, state: 'ask', details: list, outside });
+      continue;
+    }
     reasons.push({ category, state, details: list });
   }
   return reasons;

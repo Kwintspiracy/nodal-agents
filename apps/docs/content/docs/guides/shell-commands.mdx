@@ -120,10 +120,23 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
   autonomous agent asks only for what leaves its workspace or cannot be
   undone: a download adds a file, and when it replaces one in a workspace, the
   [checkpoint](/docs/concepts/proof#checkpoints--the-snapshot-taken-before-a-write)
-  taken before the command keeps the old version. Running code fetched from
-  the web (`curl … | bash`) counts as **Run code written into a command**, so
-  it still asks. What you set on an agent is kept as you set it: set
-  **Download files from the internet** to **Ask me** to be asked again.
+  taken before the command keeps the old version. What you set on an agent is
+  kept as you set it: set **Download files from the internet** to **Ask me**
+  to be asked again, or to **Never** to refuse it.
+- **Allowed** for downloads means _into the job's workspaces_. Nodal reads
+  where the command writes (`curl -o`/`-O`/`--output-dir`, `wget -O`/`-P`,
+  `Invoke-WebRequest -OutFile`, `Start-BitsTransfer -Destination`,
+  `aria2c -d`/`-o`, `git clone URL DIR`, `pip download -d`,
+  `hf download --local-dir`, `> file`), from the command's folder and from
+  every folder the line `cd`s into. A place outside the workspaces asks, and
+  the approval card names it. So does a place the text does not say (a
+  variable, `~`, a sub-shell). A program that fetches into its own store
+  (`docker pull`, `ollama pull`, `comfy model download`, `hf download` without
+  `--local-dir`) names no path and follows the setting as it is.
+- A line that downloads **and** runs a program or a file
+  (`curl -o x.sh URL && sh x.sh`, `python run.py`, `./tool`, `setup.exe`,
+  `powershell -File`, `source`) counts as **Run code written into a
+  command**, and asks: that is code from elsewhere, like `curl … | bash`.
 - An agent already set to **Run without asking** everywhere when this list
   appeared kept what it could do.
 - The checklist also judges a declared proof (`declare_verification`), because
@@ -135,9 +148,12 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
 **What this list does not do.** It reads the text the agent asks to run, not
 what a program does once it runs. A script run from a file (`python
 analyse.py`) is not opened: it can read, delete or download anything your
-user account can reach without the list seeing it. The list does not keep the
-shell inside the agent's folders either; only the file tools are confined to
-them. Keeping a shell inside a folder takes an operating-system sandbox, which
+user account can reach without the list seeing it. It reads one command at a
+time: a file downloaded in one command and run by a later one (`sh x.sh` on
+its own) is judged as that later command alone, a script run from a file.
+Where a download lands is read, but the list does not keep the rest of the
+shell inside the agent's folders; only the file tools are confined to them.
+Keeping a shell inside a folder takes an operating-system sandbox, which
 Nodal does not have yet.
 
 Folded under **Advanced**, the same tab keeps the older list of programs an

@@ -96,6 +96,12 @@ export interface ShellGateReason {
   state: Exclude<ShellCategoryState, 'allow'>;
   /** The commands of the call that did it, as written. */
   details: string[];
+  /**
+   * For a download the agent may do without asking: the places it would write
+   * that are not inside one of the job's workspaces (#614). Only then does an
+   * allowed download ask, and this says why.
+   */
+  outside?: string[];
 }
 
 /** `approval_requests.gate_reasons` as stored, read back for the approval card. */
@@ -104,5 +110,6 @@ export const ShellGateReasonsSchema = z.array(
     category: z.enum(SHELL_CATEGORIES),
     state: z.enum(['ask', 'never']),
     details: z.array(z.string()),
+    outside: z.array(z.string()).optional(),
   }),
 );

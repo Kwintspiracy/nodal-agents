@@ -429,6 +429,11 @@ export default function ApprovalRequestCard({
               {a.gateReasons.map((reason) => (
                 <li key={reason.category} className="text-medium-12 text-ink">
                   {SHELL_CATEGORY_COPY[reason.category].label}
+                  {/* Un téléchargement permis ne demande que s'il écrit hors
+                      des espaces du job (#614) : la carte dit où. */}
+                  {reason.outside && reason.outside.length > 0 && (
+                    <span className="text-ink-2">{` · outside its workspaces: ${reason.outside.join(', ')}`}</span>
+                  )}
                 </li>
               ))}
             </ul>
