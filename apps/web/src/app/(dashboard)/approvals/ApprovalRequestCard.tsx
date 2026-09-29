@@ -432,7 +432,9 @@ export default function ApprovalRequestCard({
                   {/* Un téléchargement permis ne demande que s'il écrit hors
                       des espaces du job (#614) : la carte dit où. */}
                   {reason.outside && reason.outside.length > 0 && (
-                    <span className="text-ink-2">{` · outside its workspaces: ${reason.outside.join(', ')}`}</span>
+                    <span className="text-ink-2">{` · outside its workspaces: ${[
+                      ...new Set(reason.outside.flatMap((o) => o.places)),
+                    ].join(', ')}`}</span>
                   )}
                 </li>
               ))}

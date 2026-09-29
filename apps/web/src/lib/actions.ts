@@ -6096,7 +6096,14 @@ function readGateReasons(approvalId: string, raw: unknown): ShellGateReason[] {
   return parsed.data.map((r) => ({
     ...r,
     details: r.details.map(redactSecretsInText),
-    ...(r.outside ? { outside: r.outside.map(redactSecretsInText) } : {}),
+    ...(r.outside
+      ? {
+          outside: r.outside.map((o) => ({
+            command: redactSecretsInText(o.command),
+            places: o.places.map(redactSecretsInText),
+          })),
+        }
+      : {}),
   }));
 }
 

@@ -1,7 +1,7 @@
 // ShellChecklistSection.test.tsx — what an agent may NOT do with a shell (#464).
 //
 // What this proves, rendered in jsdom and CLICKED: an agent nobody configured
-// shows "Allowed" for downloads and "Ask me" on every other row (#614); a
+// shows "Allowed" for downloads and inline code, "Ask me" on the rest (#614); a
 // click sends the action the kind of action and the state the owner chose (the
 // ARGUMENT, invariant #5), and the row shows it; a refused save puts the row back; a non-owner sees the rows and cannot
 // change them. What the engine does with those states is proven in
@@ -63,10 +63,10 @@ beforeEach(() => {
 });
 
 describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
-  it('an agent nobody configured downloads without asking and asks for every other kind (#614)', async () => {
+  it('an agent nobody configured downloads and runs inline code without asking, and asks for the rest (#614)', async () => {
     await render(null);
     expect(SHELL_CATEGORIES.map((c) => [c, pressed(c)])).toEqual([
-      ['inline_code', 'ask'],
+      ['inline_code', 'allow'],
       ['delete_files', 'ask'],
       ['install_software', 'ask'],
       ['download', 'allow'],
@@ -88,9 +88,9 @@ describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
   });
 
   it('shows what is stored', async () => {
-    await render({ delete_files: 'never', download: 'ask' });
+    await render({ delete_files: 'never', download: 'ask', inline_code: 'ask' });
     expect(pressed('delete_files')).toBe('never');
-    // A stored state wins over the default (#614: downloads default to allowed).
+    // A stored state wins over the default (#614: both default to allowed).
     expect(pressed('download')).toBe('ask');
     expect(pressed('inline_code')).toBe('ask');
   });

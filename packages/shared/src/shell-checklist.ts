@@ -42,15 +42,19 @@ export type ShellPolicy = Record<ShellCategory, ShellCategoryState>;
  * owner's rule of 29/09: three runs that day stopped on a card asking whether
  * an agent could download a picture into its own folder).
  *
- * - `download` runs: it writes a file into the agent's workspace.
- * - `inline_code` still asks: `curl … | bash` reads as inline code only, and
- *   running code fetched from the web is not a workspace-local act.
+ * - `download` runs, when it writes into the job's workspaces; a target
+ *   outside them (or one the text cannot read) asks.
+ * - `inline_code` runs: code written into a command is the same power as a
+ *   script the agent writes and runs, which never asked. Telling "code from
+ *   the web" apart by reading the text is not a boundary (the owner's
+ *   explicit decision of 29/09); keeping an agent's code in bounds is an OS
+ *   sandbox's job, as the top of this file says.
  * - Deleting, installing, stopping programs and system settings ask: they
  *   reach the machine beyond the agent, or cannot be undone from the screen
  *   yet (#617).
  */
 export const DEFAULT_SHELL_POLICY: ShellPolicy = {
-  inline_code: 'ask',
+  inline_code: 'allow',
   delete_files: 'ask',
   install_software: 'ask',
   download: 'allow',
@@ -97,11 +101,11 @@ export interface ShellGateReason {
   /** The commands of the call that did it, as written. */
   details: string[];
   /**
-   * For a download the agent may do without asking: the places it would write
-   * that are not inside one of the job's workspaces (#614). Only then does an
-   * allowed download ask, and this says why.
+   * For a download the agent may do without asking: per command, the places it
+   * would write that are not inside one of the job's workspaces (#614). Only
+   * then does an allowed download ask, and this says why.
    */
-  outside?: string[];
+  outside?: Array<{ command: string; places: string[] }>;
 }
 
 /** `approval_requests.gate_reasons` as stored, read back for the approval card. */
@@ -110,6 +114,6 @@ export const ShellGateReasonsSchema = z.array(
     category: z.enum(SHELL_CATEGORIES),
     state: z.enum(['ask', 'never']),
     details: z.array(z.string()),
-    outside: z.array(z.string()).optional(),
+    outside: z.array(z.object({ command: z.string(), places: z.array(z.string()) })).optional(),
   }),
 );

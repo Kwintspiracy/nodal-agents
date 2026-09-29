@@ -40,9 +40,10 @@ const UNREADABLE_TARGET = 'a path decided when the command runs';
 
 /**
  * The places `command` would download to that are not inside a workspace of
- * the job, as written. A relative target is judged from the starting folder
- * and from every folder the line `cd`s into, so a `cd` cannot carry it out
- * unseen.
+ * the job, as written. A relative target is judged from the folder the line is
+ * in when it runs: the starting folder, then each `cd` that comes BEFORE it
+ * (revue passe 2 : un `cd` écrit après ne la déplace pas). A redirection,
+ * whose place in the line is not known, is judged from every folder of it.
  */
 async function downloadsOutside(command: string, place: ShellPlace): Promise<string[]> {
   const { dirs, targets } = downloadWrites(command);
@@ -54,17 +55,18 @@ async function downloadsOutside(command: string, place: ShellPlace): Promise<str
     bases.push(base);
   }
   const outside: string[] = [];
-  for (const target of targets) {
-    if (target === null) {
-      outside.push(UNREADABLE_TARGET);
+  for (const { path, after } of targets) {
+    if (path === null) {
+      if (!outside.includes(UNREADABLE_TARGET)) outside.push(UNREADABLE_TARGET);
       continue;
     }
-    const candidates = isAbsolute(target)
-      ? [target]
-      : bases.map((b) => (b === null ? null : resolve(b, target)));
+    const from = after === null ? bases : [bases[after] ?? null];
+    const candidates = isAbsolute(path)
+      ? [path]
+      : from.map((b) => (b === null ? null : resolve(b, path)));
     for (const candidate of candidates) {
       if (candidate === null || !(await place.inWorkspace(candidate))) {
-        outside.push(target);
+        if (!outside.includes(path)) outside.push(path);
         break;
       }
     }
@@ -79,7 +81,8 @@ export async function judgeShellChecklist(
   place: ShellPlace,
 ): Promise<ShellGateReason[]> {
   const details = new Map<ShellCategory, string[]>();
-  const outside: string[] = [];
+  // Each command's own places outside, attached to it (revue passe 2).
+  const outside: NonNullable<ShellGateReason['outside']> = [];
   const add = (category: ShellCategory, command: string): void => {
     const list = details.get(category) ?? [];
     if (!list.includes(command)) list.push(command);
@@ -92,10 +95,10 @@ export async function judgeShellChecklist(
         continue;
       }
       if (category !== 'download') continue;
-      const out = await downloadsOutside(command, place);
-      if (out.length === 0) continue;
+      const places = await downloadsOutside(command, place);
+      if (places.length === 0) continue;
       add(category, command);
-      for (const o of out) if (!outside.includes(o)) outside.push(o);
+      if (!outside.some((o) => o.command === command)) outside.push({ command, places });
     }
   }
 
