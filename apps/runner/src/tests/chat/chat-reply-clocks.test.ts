@@ -341,3 +341,35 @@ describe('une coupure sans texte n’est pas un échec d’outil (#484) @cap:par
     expect(repliques.some((r) => r.content.includes('lancé'))).toBe(false);
   });
 });
+
+// Revue Nodal de #623 : la relance sans outils (6b) disait toute panne
+// `llm_error`, coupure comprise. Le même tour, coupé au premier appel, disait
+// `llm_cut` et sa raison : deux mots pour un même fait, et un écran qui peint
+// « l'agent n'a pas répondu » là où l'appel a été coupé. Une coupure se dit
+// par UN vocabulaire, quel que soit l'appel du tour qu'elle frappe.
+describe('une coupure de la relance sans outils se dit comme les autres (#484) @cap:parler-a-un-agent/moteur', () => {
+  it('outil fantôme, puis la relance sans outils coupée par son horloge : `llm_cut`, jamais `llm_error`', async () => {
+    const timeout = (): Error =>
+      Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+    const model = new MockLanguageModelV3({
+      provider: 'openrouter',
+      modelId: 'z-ai/glm-5.2',
+      // Le fournisseur jette l'appel d'un outil absent de cette surface, avant
+      // tout contenu : c'est le chemin qui mène à la relance sans outils.
+      doStream: async () => {
+        throw new Error("Model tried to call unavailable tool 'web_search'");
+      },
+      // La relance sans outils ne répond jamais dans son temps.
+      doGenerate: async () => {
+        throw timeout();
+      },
+    });
+    mockModel.current = model;
+    const conv = await newConversation();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await playTurn(conv).finally(() => warn.mockRestore());
+
+    expect(result).toEqual({ ok: false, error: 'llm_cut', cutReason: 'wall' });
+  });
+});

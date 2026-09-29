@@ -325,6 +325,24 @@ function buildHistoryBlock(
 }
 
 /**
+ * Un appel du tour a été COUPÉ (#484) : une horloge, ou un flux rompu, avant
+ * tout texte gardé. Le tour échoue en disant la coupure et sa raison, `llm_cut`
+ * + `cutReason`, quel que soit l'appel qu'elle frappe : la réponse diffusée ou
+ * la relance sans outils (revue Nodal de #623 : la relance la disait
+ * `llm_error`, et l'écran peignait « pas de réponse » là où l'appel avait été
+ * coupé). `null` pour toute autre erreur.
+ */
+function failedOnCut(
+  err: unknown,
+  which: string,
+  agentSlug: string,
+): { ok: false; error: 'llm_cut'; cutReason: LlmTimeoutReason } | null {
+  if (!(err instanceof LLMTimeoutError)) return null;
+  console.warn(`[run-chat-turn] ${which} cut by ${err.reason} before any text (${agentSlug})`);
+  return { ok: false, error: 'llm_cut', cutReason: err.reason };
+}
+
+/**
  * Un appel du tour qui PROPOSAIT des outils a été refusé : il s'est arrêté sur
  * le plafond de jetons de sortie (#554, refusé par le client), ou il porte plus
  * d'appels que le budget d'un tour (#564, `runTaskOf`). Le tour en a trois (la
@@ -721,10 +739,8 @@ export async function runChatTurn(opts: {
     // relance privée de `run_task` ne pourrait que dire « c'est lancé » sans
     // qu'aucun job n'existe. Le tour échoue, en disant la coupure — comme un
     // job coupé (invariant #4).
-    if (err instanceof LLMTimeoutError) {
-      console.warn(`[run-chat-turn] reply cut by ${err.reason} before any text (${agentRow.slug})`);
-      return { ok: false, error: 'llm_cut', cutReason: err.reason };
-    }
+    const cut = failedOnCut(err, 'reply', agentRow.slug);
+    if (cut) return cut;
     // A provider may THROW when the model emits a tool call for a tool not in
     // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
     // invariant 4) and fall through to the tool-free retry so conversation works.
@@ -803,9 +819,12 @@ export async function runChatTurn(opts: {
       // Cette réponse-là n'est jamais passée par le flux : ce qui a pu être
       // montré mot à mot, s'il y a eu quoi que ce soit, n'était pas elle.
       streamed = false;
-    } catch {
+    } catch (err) {
       if (abortSignal?.aborted) return await keepStoppedReply();
-      return { ok: false, error: 'llm_error' };
+      // Une coupure se dit comme au premier appel, jamais comme une panne.
+      return (
+        failedOnCut(err, 'tool-free retry', agentRow.slug) ?? { ok: false, error: 'llm_error' }
+      );
     }
     return null;
   };
