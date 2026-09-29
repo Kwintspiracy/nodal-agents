@@ -19,7 +19,7 @@ export {
   describeThrown,
 } from './errors';
 export type { MessageStructureErrorCode, LlmTimeoutReason } from './errors';
-export type { GenerateTextCallOptions } from './types';
+export type { GenerateTextCallOptions, CallProgress } from './types';
 export {
   computeTurnClocks,
   isLocalEndpoint,

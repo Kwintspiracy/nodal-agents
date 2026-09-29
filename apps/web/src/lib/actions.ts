@@ -168,7 +168,8 @@ import {
 import { selectVerificationRuns } from './verification-runs-query.ts';
 import { lastReviewVerdict } from './review-state.ts';
 import { readJobRoots } from './job-lineage.ts';
-import type { JobTriggerContext, AnyDrizzleDb } from '@nodal-agents/db';
+import { chatFailureText } from './chat-failure.ts';
+import type { JobTriggerContext, AnyDrizzleDb, JobLiveProgress } from '@nodal-agents/db';
 import {
   DeliveryError,
   getTelegramBotInfo,
@@ -258,7 +259,7 @@ import {
   isToolCard,
 } from './tool-card-payload.ts';
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
-import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
+import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
 import { redactAuditRow, redactPresented } from './redact-presented.ts';
 import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
@@ -2461,6 +2462,12 @@ export type SpaceConversationView = {
      * l'agent au propriétaire, pas une sortie d'outil.
      */
     result: string | null;
+    /**
+     * #444 — l'appel au modèle EN COURS, tel que le runner le pose pendant
+     * l'appel (`agent_jobs.live_progress`, le flux de #484), NULL entre deux
+     * appels et après. La bande du run ne le montre que pendant `processing`.
+     */
+    liveProgress: JobLiveProgress | null;
   };
   feed: ConversationFeed;
   /** P3 — ce que la preuve a fait pour ce travail et ses délégués (même lecture que le détail Code). */
@@ -2815,6 +2822,9 @@ export async function getSpaceConversationAction(
         toolOutput: r.toolOutput,
         presented: r.presented,
       })),
+      // #508 — le prix du run : les appels de la racine et de sa descendance,
+      // ceux-là mêmes que la barre d'état somme (`cost` ci-dessus).
+      cost: costOfCalls(costRows),
       workspaceRoots,
     };
     const feedWithDelivery: ConversationFeed = {
@@ -2826,6 +2836,7 @@ export async function getSpaceConversationAction(
       job: {
         id: job.id,
         task: displayTask,
+        liveProgress: job.liveProgress ?? null,
         channel: job.channel,
         status: job.status,
         agentName: row.agentName,
@@ -13411,13 +13422,15 @@ export async function sendChatMessageAction(
     const data = (await res.json().catch(() => null)) as {
       reply?: string;
       error?: string;
+      cutReason?: string;
     } | null;
     // An empty reply is NOT a failure: when the agent escalates via run_task it
     // may write no acknowledgment text (the dispatch card + job result carry the
     // info, and the UI refetches messages to render them). Only an HTTP error
     // (e.g. the runner's `empty_reply` glitch → 400) is a real failure.
     if (!res.ok) {
-      return fail('chat_failed', data?.error ?? 'The agent did not reply');
+      // Le même vocabulaire que le flux : une coupure se dit coupée (#484).
+      return fail('chat_failed', chatFailureText(data?.error ?? '', data?.cutReason ?? null));
     }
     revalidatePath('/chat');
     return ok({ reply: data?.reply ?? '' });

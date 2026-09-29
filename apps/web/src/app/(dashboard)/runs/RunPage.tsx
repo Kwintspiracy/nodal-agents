@@ -35,6 +35,7 @@ import { threadAgents, threadSubtitle } from '@/app/(dashboard)/spaces/format.ts
 import { truncate } from '@/lib/format-time';
 import RunScreen from './RunScreen.tsx';
 import RunHeaderCard from './RunHeaderCard.tsx';
+import LiveRunStrip from './LiveRunStrip.tsx';
 import ReviewSection from './ReviewSection.tsx';
 import ActivitySection from './ActivitySection.tsx';
 import { activityLabel, runView } from './run-view.ts';
@@ -116,6 +117,10 @@ export function RunBody({ data }: { data: SpaceConversationView }) {
         statusLabel={view.status.label}
         stats={view.stats}
       />
+
+      {/* #444 — ce que le run fait EN CE MOMENT : le tour, l'appel en cours,
+          le budget face aux plafonds. Rien quand il ne tourne pas. */}
+      <LiveRunStrip status={job.status} liveProgress={job.liveProgress} cost={data.cost} />
 
       {/* Pas de liens vers le run parent ni vers les délégués : les délégations
           d'un run se lisent DANS le run, dépliables dans la chronologie, comme

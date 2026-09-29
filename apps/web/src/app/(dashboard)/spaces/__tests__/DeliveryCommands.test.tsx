@@ -38,6 +38,7 @@ const EMPTY: DeliverySummary = {
   tests: null,
   durationMs: null,
   costUsd: null,
+  unpricedCalls: 0,
   reviews: [],
   checks: [],
   verdict: null,
