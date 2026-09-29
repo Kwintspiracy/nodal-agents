@@ -48,6 +48,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import StatusPill from '@/components/ui/StatusPill';
 import StopRunButton from '@/components/ui/StopRunButton';
 import { canStopRun } from '@/lib/job-live.ts';
+import { openRunHref } from '@/lib/run-page.ts';
 import DeliveryFiles from './DeliveryFiles.tsx';
 import type { DeliveryCommand, DeliverySummary } from '@/lib/conversation-feed.ts';
 import { formatCost, formatMs, shortToolName } from './format.ts';
@@ -526,7 +527,7 @@ export default function DeliveryBlock({
             // comme un nom de plus. Le même bouton neutre que « Files » dans la
             // barre, seul sur son bord, l'icône dit qu'il ouvre une page.
             <span className="ml-auto">
-              <PrimaryButton variant="neutral" size="sm" href={`/scheduled/${jobId}`}>
+              <PrimaryButton variant="neutral" size="sm" href={openRunHref(jobId)}>
                 Open run
                 <ArrowSquareOut size={12} aria-hidden />
               </PrimaryButton>

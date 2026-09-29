@@ -545,7 +545,7 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     expect(html).toContain('codex_review');
     expect(html).not.toContain('cli:codex_review');
     expect(html).toContain('Open run');
-    expect(html).toContain('href="/scheduled/job-7"');
+    expect(html).toContain('href="/runs/job-7"');
     // Une relecture qui a dit NON ne se lit pas comme les autres : son nom
     // prend la couleur d'alerte et le dit au survol — la planche ne dessine
     // pas de point, c'est le nom qui porte le verdict.
@@ -841,7 +841,7 @@ describe('DeliveryBlock — une commande non constatée @cap:verifier-un-livrabl
     const at = html.indexOf('Open run');
     const before = html.slice(Math.max(0, at - 400), at);
     expect(before).toContain('ml-auto');
-    expect(before).toContain('href="/scheduled/job-7"');
+    expect(before).toContain('href="/runs/job-7"');
     // Le bouton neutre du design system, pas un lien en texte.
     expect(before).toMatch(/<a[^>]*class="[^"]*inline-flex/);
   });
