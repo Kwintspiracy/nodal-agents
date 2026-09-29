@@ -25,7 +25,7 @@
 // Les parties `reasoning` (persistées par le runner, execute.ts) sont lues ici,
 // en amont.
 
-import { SENT_TEXT_KINDS } from '@nodal-agents/shared';
+import { SENT_TEXT_KINDS, runnerRecordEntries } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 // UNIQUEMENT le type, et c'est load-bearing : ce module est lu par des
 // composants `'use client'`, et une importation de VALEUR depuis
@@ -281,7 +281,7 @@ export type FeedItem =
    * Slack…) que le runner préfixe au transcript (thread-history.ts) pour que
    * l'agent se souvienne. Ce n'est PAS ce job — le fil le montre replié, à part.
    */
-  | { kind: 'history'; exchanges: Array<{ role: 'user' | 'agent'; text: string }> }
+  | { kind: 'history'; exchanges: Array<{ role: HistoryExchangeRole; text: string }> }
   /**
    * Une délégation, TOUJOURS à plat (#135). `from` dit QUI a délégué : l'agent
    * du job pour un enfant direct, l'agent de l'enfant pour un petit-enfant
@@ -370,6 +370,8 @@ export type RunSummary = {
   /** Du début à la fin du travail. null tant qu'il n'est pas terminé. */
   durationMs: number | null;
   costUsd: number | null;
+  /** Appels de l'arbre sans prix connu : `costUsd` est alors partiel (#508). */
+  unpricedCalls: number;
 };
 
 /**
@@ -448,6 +450,13 @@ export type DeliverySummary = {
   /** Du début à la fin du travail. null tant qu'il n'est pas terminé. */
   durationMs: number | null;
   costUsd: number | null;
+  /**
+   * Appels de l'arbre sans prix connu : `costUsd` est alors partiel, et la
+   * carte le dit comme la barre (#508). `null` quand la surface qui a composé
+   * ce récapitulatif ne les a pas comptés (la page Code) : elle ne dit rien,
+   * plutôt qu'affirmer un prix complet que personne n'a vérifié.
+   */
+  unpricedCalls: number | null;
   reviews: DeliveryReview[];
   checks: DeliveryCheck[];
   /** 'green' toutes vertes, 'red' au moins une qui ne l'est pas, null aucune preuve. */
@@ -631,14 +640,30 @@ function lastIndexOfTask(messages: readonly unknown[], task: string): number {
   return 0;
 }
 
-/** L'historique en échanges lisibles : qui a dit quoi, sans les résultats d'outils. */
+/** Qui parle dans un échange rejoué : la personne, l'agent, ou le runner (#562). */
+export type HistoryExchangeRole = 'user' | 'agent' | 'runner';
+
+/**
+ * L'historique en échanges lisibles : qui a dit quoi, sans les résultats d'outils.
+ *
+ * Le relevé du runner (thread-history.ts, #562) se reconnaît à sa STRUCTURE
+ * (`runnerRecordEntries`), jamais à son texte : un message de la personne qui
+ * commence par « [système] » reste le sien (revue Codex de #576). Il est rendu
+ * depuis ses entrées, sans la marque destinée au modèle ; le libellé qui le
+ * signe vit dans l'écran (HistoryGroup), pas dans le runner (invariant #2).
+ */
 function exchangesOf(
   messages: readonly unknown[],
-): Array<{ role: 'user' | 'agent'; text: string }> {
-  const out: Array<{ role: 'user' | 'agent'; text: string }> = [];
+): Array<{ role: HistoryExchangeRole; text: string }> {
+  const out: Array<{ role: HistoryExchangeRole; text: string }> = [];
   for (const raw of messages) {
     const m = raw as { role?: unknown; content?: unknown };
     if (m.role !== 'user' && m.role !== 'assistant') continue;
+    const entries = runnerRecordEntries(raw);
+    if (entries !== null) {
+      if (entries.length > 0) out.push({ role: 'runner', text: entries.join('\n') });
+      continue;
+    }
     const text = textOf(m.content).trim();
     if (text === '') continue;
     out.push({ role: m.role === 'user' ? 'user' : 'agent', text });

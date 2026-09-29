@@ -294,7 +294,7 @@ describe('buildSystemPrompt — runtime block integration', () => {
     const prompt = await buildSystemPrompt(agent, db, { origin: 'api', deployment });
 
     const personalityIdx = prompt.indexOf('You are a test agent.');
-    const builtinIdx = prompt.indexOf('## Built-in capabilities');
+    const builtinIdx = prompt.indexOf('## Tools on demand');
     const boundaryIdx = prompt.indexOf('[[[NODAL_SYSTEM_CACHE_BOUNDARY]]]');
     const runtimeIdx = prompt.indexOf('## Runtime');
 
@@ -307,40 +307,41 @@ describe('buildSystemPrompt — runtime block integration', () => {
     expect(runtimeIdx).toBeGreaterThan(boundaryIdx);
   });
 
-  // Le bloc « Built-in capabilities » NOMME les outils, il ne les DÉCRIT pas.
+  // L'index des outils différés (#612) NOMME les outils dont le schéma ne part
+  // pas, avec UNE ligne chacun ; il ne recopie aucune description.
   //
-  // Il existe pour une raison mesurée : les définitions d'outils du SDK se font
-  // ignorer quand la personnalité est fortement formulée (« just do math »), et
-  // nommer les outils dans le prompt les rend visibles. Cette raison n'exige pas
-  // les descriptions — celles-ci sont déjà envoyées, en entier, dans les
-  // définitions d'outils du même appel. Elles étaient donc payées DEUX FOIS, à
-  // chaque tour de chaque agent : 9 781 caractères, le plus gros bloc du prompt
-  // (ventilation Codex du run 20b73ed1).
-  it('le bloc des built-ins nomme les outils sans recopier leurs descriptions', async () => {
+  // Il remplace le bloc « Built-in capabilities », qui existait pour une raison
+  // mesurée : les définitions d'outils du SDK se font ignorer quand la
+  // personnalité est fortement formulée (« just do math »), et nommer les outils
+  // dans le prompt les rend visibles. Un outil eager a son schéma dans la
+  // requête ; c'est l'outil différé qu'on ne voit pas, et c'est lui qu'il nomme.
+  // Recopier les descriptions coûtait 9 781 caractères (run 20b73ed1).
+  it("l'index nomme les outils différés, une ligne chacun, sans leurs descriptions", async () => {
     const { entityId } = await seedEntity(db);
     const agent = await seedAgent(db, entityId);
     const prompt = await buildSystemPrompt(agent, db, { origin: 'api' });
 
-    const debut = prompt.indexOf('## Built-in capabilities');
+    const debut = prompt.indexOf('## Tools on demand');
     expect(debut).toBeGreaterThanOrEqual(0);
     // Le bloc s'arrête au titre suivant.
     const suite = prompt.indexOf('\n## ', debut + 5);
     const bloc = suite === -1 ? prompt.slice(debut) : prompt.slice(debut, suite);
 
-    // Les outils sont nommés — c'est la raison d'être du bloc.
-    for (const nom of ['return_result', 'save_memory', 'web_search']) {
-      expect(bloc).toContain(nom);
+    // Chaque outil toujours-actif DIFFÉRÉ est nommé, avec sa première phrase ;
+    // un outil eager n'y est pas : son schéma est dans la requête.
+    for (const doc of ALWAYS_ON_TOOL_DOCS) {
+      if (doc.loading === 'deferred') expect(bloc).toContain(`- \`${doc.name}\`: `);
+      else expect(bloc).not.toContain(`\`${doc.name}\``);
     }
+    expect(bloc).toContain('`load_tools`');
 
-    // Aucune description n'y est recopiée. `return_result` a la plus longue et
-    // la plus reconnaissable : elle appartient aux définitions d'outils.
-    const doc = ALWAYS_ON_TOOL_DOCS.find((t) => t.name === 'return_result');
-    expect(doc?.description.length).toBeGreaterThan(40);
+    // Aucune description n'y est recopiée en entier : une ligne, au plus 160 car.
+    const doc = ALWAYS_ON_TOOL_DOCS.find((t) => t.name === 'register_project');
+    expect(doc?.description.length).toBeGreaterThan(200);
     expect(bloc).not.toContain(doc!.description);
-
-    // Et le bloc reste petit : la liste des noms plus une phrase de cadrage.
-    // 9 781 caractères avant ce changement.
-    expect(bloc.length).toBeLessThan(1200);
+    for (const ligne of bloc.split('\n').filter((l) => l.startsWith('- `'))) {
+      expect(ligne.length).toBeLessThan(200);
+    }
   });
 
   it('surfaces jobContext.triggerContext as a "Scheduled run of" line end-to-end', async () => {

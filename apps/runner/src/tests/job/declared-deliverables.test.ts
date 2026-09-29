@@ -28,6 +28,7 @@ import {
   entities,
   jobDeliverableVerificationState,
   verificationRuns,
+  constatedWrites,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -249,6 +250,7 @@ async function jobRow(id: string) {
       status: agentJobs.status,
       error: agentJobs.error,
       result: agentJobs.result,
+      runnerNotes: agentJobs.runnerNotes,
     })
     .from(agentJobs)
     .where(eq(agentJobs.id, id));
@@ -266,6 +268,10 @@ const runsOf = (id: string) =>
   db.select().from(verificationRuns).where(eq(verificationRuns.jobId, id));
 
 const keyOf = (p: string): string => projectKey(normalizePath(p));
+
+/** Une vraie image PNG de 1 × 1. */
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 /** Un MP4 minimal : une boîte `ftyp`, puis des octets binaires. */
 function mp4Bytes(): Buffer {
@@ -316,6 +322,9 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
     expect(row.result).toContain(`${abs}: exists (`);
     expect(row.result).toMatch(/film\.mp4 not found\)\]$/);
     expect(row.result!.indexOf('Rendu relancé')).toBeLessThan(row.result!.indexOf('[stopped:'));
+    // The line is the runner's, and says so apart from the agent's text (#562):
+    // the replay of the thread files it in the runner record.
+    expect(row.runnerNotes).toEqual([row.result!.slice(row.result!.indexOf('[stopped:'))]);
 
     // La ligne d'état : déclarée, rouge, réparation consommée, rouge compté.
     const states = await statesOf(id);
@@ -497,6 +506,63 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
     expect(await statesOf(id)).toHaveLength(0);
   });
 
+  // #588 : essai 4 du banc, job racine 162e0642. Alfred déclarait l'image que
+  // son délégué ComfyArtist avait produite dans SON dossier ; le résolveur des
+  // outils de fichiers ne connaît que les dossiers de la racine, et le run
+  // échouait (`deliverable_not_verified`) alors que l'image existait. Un
+  // fichier qu'un de MES délégués a écrit dans ce run se déclare.
+  it('la racine déclare l’image que son délégué a écrite hors de ses dossiers : completed, preuve verte (#588)', async () => {
+    const dossierDuDelegue = await realpath(await mkdtemp(join(tmpdir(), 'nodal-delegue-588-')));
+    try {
+      const image = join(dossierDuDelegue, '9b964263_000.png');
+      const id = await createJob('fais une image');
+      // Le délégué, créé par la racine, écrit l'image PENDANT son run (une
+      // commande, donc une écriture constatée sans empreinte), puis finit.
+      const [enfant] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'api',
+          task: 'génère l’image',
+          status: 'processing',
+          parentJobId: id,
+          createdAt: new Date(Date.now() - 60_000),
+        })
+        .returning({ id: agentJobs.id });
+      await writeFile(image, Buffer.from(PNG_1X1, 'base64'));
+      await db
+        .update(agentJobs)
+        .set({ status: 'completed', completedAt: new Date(Date.now() + 1_000) })
+        .where(eq(agentJobs.id, enfant!.id));
+      await db.insert(constatedWrites).values({
+        jobId: enfant!.id,
+        turn: 1,
+        path: normalizePath(image),
+        changeKind: 'added',
+        constatedBy: 'disk',
+      });
+      const { client, prompts } = makeMockLlmClient([
+        rendu('rr-1', 'Voici ton image.', [normalizePath(image)]),
+      ]);
+
+      const out = await executeJob(id as JobId, makeDeps(client), testEnv);
+
+      expect(out.status).toBe('completed');
+      expect(prompts).toHaveLength(1);
+      const row = await jobRow(id);
+      expect(row).toMatchObject({ status: 'completed', error: null, result: 'Voici ton image.' });
+      const states = await statesOf(id);
+      expect(states.map((st) => [st.canonicalKey, st.declared, st.decisionStatus])).toEqual([
+        [keyOf(image), true, 'green'],
+      ]);
+      const runs = await runsOf(id);
+      expect(runs.map((r) => [r.command, r.verdict])).toContainEqual(['exists', 'green']);
+    } finally {
+      await rm(dossierDuDelegue, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('renvoyé, l’agent répond en TEXTE SEUL : la déclaration reste due, le run échoue (revue Codex)', async () => {
     // Sans la dette relue dans la transcription, la sortie « texte seul »
     // finalisait en succès : aucune ligne déclarée, rien à opposer.
@@ -509,15 +575,18 @@ describe('un livrable DÉCLARÉ est vérifié avant le succès @cap:verifier-un-
 
     await executeJob(id as JobId, makeDeps(client), testEnv);
 
-    expect(prompts).toHaveLength(2);
+    // Deux tours, puis la relecture du tour en prose (#600), qui n'appelle rien.
+    expect(prompts).toHaveLength(3);
+    expect(prompts[2]).toContain('Re-read your previous reply');
     const row = await jobRow(id);
     expect(row.status).toBe('failed');
     expect(row.error).toBe('deliverable_not_verified');
-    expect(row.result).toContain(
-      deliverableNotVerifiedLine([
-        { path: dehors, check: 'unresolved', detail: 'path_traversal_blocked' },
-      ]),
-    );
+    const line = deliverableNotVerifiedLine([
+      { path: dehors, check: 'unresolved', detail: 'path_traversal_blocked' },
+    ]);
+    expect(row.result).toContain(line);
+    // Same line, recorded as the runner's (#562).
+    expect(row.runnerNotes).toEqual([line]);
   });
 
   it('renvoyé, l’agent rappelle return_result en OMETTANT le champ : la promesse tient, le run échoue (revue Codex de la PR #523)', async () => {

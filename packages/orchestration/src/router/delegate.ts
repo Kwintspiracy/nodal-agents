@@ -1,7 +1,7 @@
 // router/delegate.ts — suspend parent job, create child job
 // Called by the runner when it catches DelegationPendingError from an assign_* tool.
 
-import { eq, and, notInArray } from '@nodal-agents/db';
+import { eq, and, notInArray, insertChildJob } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 
@@ -46,6 +46,13 @@ export async function handleDelegation(
   taskInput: { task: string; chatId?: string | null; data?: string },
   sideToolResults: SideToolResult[],
   db: AnyDrizzleDb,
+  /**
+   * The claim the parent's run holds on its row (#566, `claimJob`). REQUIRED:
+   * the parent is suspended only under that claim — a parent taken by another
+   * run since is not written, exactly like a cancelled one — and a caller
+   * cannot forget it (Nodal review of #575, P3).
+   */
+  parentClaimGeneration: number,
 ): Promise<DelegationResult> {
   // 1. Find the child agent by slug (always DB lookup, never hardcoded).
   // F-6 (audit #2): slug is now unique per (entity_id, slug), not globally —
@@ -101,29 +108,34 @@ export async function handleDelegation(
     .where(eq(agentJobs.id, parentJob.id as string))
     .limit(1);
 
-  // 2. Create the child job
-  const [childJob] = await db
-    .insert(agentJobs)
-    .values({
-      entityId: parentJob.entityId as string,
-      agentId: childAgent.id,
-      channel: 'internal',
-      task: childTask,
-      chatId: taskInput.chatId ?? parentJob.chatId,
-      status: 'pending',
-      parentJobId: parentJob.id as string,
-      delegationDepth: childDepth,
-      // Jobs page grouping (migration 0059): a delegated child is the SAME
-      // conversation as its parent, not a new one.
-      conversationId: parentJob.conversationId ?? undefined,
-      jobFolder: parentFolderRow?.jobFolder ?? undefined,
-      messages: [{ role: 'user', content: childContent }],
-    })
-    .returning();
-
-  if (!childJob) {
-    throw new OrchestrationError('task_board_error', 'Failed to create child job row');
+  // 2. Create the child job — through THE child-birth path (#567, Codex review
+  // of #572, pass 3): the child is born only while its parent is alive, under a
+  // lock the cancel path shares, so a cancel landing now can never leave a
+  // child it did not see.
+  const born = await insertChildJob(db, {
+    entityId: parentJob.entityId as string,
+    agentId: childAgent.id,
+    channel: 'internal',
+    task: childTask,
+    chatId: taskInput.chatId ?? parentJob.chatId,
+    status: 'pending',
+    parentJobId: parentJob.id as string,
+    delegationDepth: childDepth,
+    // Jobs page grouping (migration 0059): a delegated child is the SAME
+    // conversation as its parent, not a new one.
+    conversationId: parentJob.conversationId ?? undefined,
+    jobFolder: parentFolderRow?.jobFolder ?? undefined,
+    messages: [{ role: 'user', content: childContent }],
+  });
+  if (!('job' in born)) {
+    throw new OrchestrationError(
+      'parent_not_delegatable',
+      `Parent job ${parentJob.id} is no longer live (${
+        born.refused === 'parent_not_live' ? (born.parentStatus ?? 'missing') : born.taskStatus
+      }) — delegation aborted, no child job created`,
+    );
   }
+  const childJob = born.job;
 
   // 3. Build pending_delegation payload.
   // toolName mirrors the assign_<slug> tool name the LLM called; resumeDelegated
@@ -152,6 +164,7 @@ export async function handleDelegation(
   // cancel win: 0 rows → the just-created child is an orphan; cancel it and
   // fail loud so executeJob's terminal-guarded failJob leaves the parent
   // `cancelled` (it never overwrites a terminal row).
+  // agent_jobs-write: delegation-parent — sous la prise explicite du parent.
   const [updatedParent] = await db
     .update(agentJobs)
     .set({
@@ -160,13 +173,20 @@ export async function handleDelegation(
       messages: parentJob.messages,
       updatedAt: new Date(),
     })
-    .where(and(eq(agentJobs.id, parentJob.id as string), eq(agentJobs.status, 'processing')))
+    .where(
+      and(
+        eq(agentJobs.id, parentJob.id as string),
+        eq(agentJobs.status, 'processing'),
+        eq(agentJobs.claimGeneration, parentClaimGeneration),
+      ),
+    )
     .returning();
 
   if (!updatedParent) {
     // Don't leave the child we just inserted running with no parent to return
     // to — flip it to cancelled (guarded to non-terminal so we never rewrite a
     // row that already finished).
+    // agent_jobs-write: orphan-child — la ligne d'un AUTRE job, gardée non terminale.
     await db
       .update(agentJobs)
       .set({ status: 'cancelled', updatedAt: new Date() })

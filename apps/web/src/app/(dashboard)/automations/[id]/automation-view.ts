@@ -146,16 +146,6 @@ export function runsHeadline(view: AutomationView): string {
 }
 
 /**
- * Sous quelle route les lignes de runs ouvrent leur run. Un run
- * d'automatisation a sa page sous `/scheduled/<id>` ; un run de webhook n'en
- * passe pas par là et s'ouvre sous `/jobs/<id>`. Les deux rendent la même page
- * de run, par deux portes.
- */
-export function runsBasePath(view: AutomationView): string {
-  return view.kind === 'schedule' ? '/scheduled' : '/jobs';
-}
-
-/**
  * Où mène « See all » : Activity (`/logs`), filtrée sur l'agent de
  * l'automatisation.
  *

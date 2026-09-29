@@ -14,13 +14,30 @@ import {
   channelAllowedConversations,
   telegramAllowedChats,
   agentMemory,
+  connectors,
+  agentConnectorAssignments,
+  mcpServers,
   eq,
 } from '@nodal-agents/db';
+import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { buildSystemPrompt } from '../system-prompt';
 import type { JobContext, ConversationContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
+import {
+  ALWAYS_ON_TOOLS,
+  DELIVERY_TOOL_NAMES,
+  createListConversationsTool,
+  createSendFileTool,
+  createSendImageTool,
+  createTelegramSendMessageTool,
+  createToolRegistry,
+  registerBuiltins,
+} from '@nodal-agents/tools';
+import { generateTaskTools } from '../planner/task-tools';
+import { VERIFY_BEFORE_ASSERT_NUDGE } from '../chain-counters';
+import { generateAssignTools } from '../router/assign-tools';
+import { KNOWN_TOOL_NAME_UNIVERSE } from '../router/tool-availability';
 import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
 
 let db: TestDb;
@@ -1376,4 +1393,589 @@ describe('buildSystemPrompt — le bloc ## Conversation (P6)', () => {
 
     expect(prompt).not.toContain('## Conversation');
   });
+});
+
+// ─── #559 — the assembled prompt names only tools the job holds ──────────────
+//
+// Run 806a2218 (28/09): a delegated Researcher, channel `internal`, inherited
+// its parent's Telegram chat_id. Its prompt carried the Telegram etiquette
+// ("same turn as return_result: telegram_send_message(...)") and the
+// delegated-sub-task block naming `gmail_send_email` / `telegram_send_message`;
+// its whitelist had none of them. It obeyed the prompt and was killed for
+// whitelist_violation. The sweep below reads the WHOLE assembled prompt, on
+// every job shape the runner builds, against the tool list that job has.
+
+describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:assigner-outils/moteur', () => {
+  async function seedTeam() {
+    const { entityId } = await seedContext(db);
+    const tag = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const [root] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'Sweep Root',
+        slug: `sweep-root-${tag}`,
+        personality: 'You coordinate.',
+        role: 'orchestrator',
+      })
+      .returning();
+    const [worker] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'Sweep Worker',
+        slug: `sweep-worker-${tag}`,
+        personality: 'You research.',
+        role: 'agent',
+      })
+      .returning();
+    await db
+      .insert(agentAssignments)
+      .values({ orchestratorId: root!.id, subAgentId: worker!.id, entityId });
+    const assignNames = (await generateAssignTools(root!.id as AgentId, db)).map((t) => t.name);
+    return { entityId, root: root!, worker: worker!, assignNames };
+  }
+
+  const universeWith = (extra: readonly string[]): Set<string> =>
+    new Set([...KNOWN_TOOL_NAME_UNIVERSE, ...extra]);
+  /** Tool names cited in `prompt` that are real tools and absent from `tools`. */
+  const outside = (prompt: string, tools: readonly string[], universe: Set<string>): string[] =>
+    [...new Set(prompt.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter(
+      (w) => universe.has(w) && !tools.includes(w),
+    );
+
+  it('on every job shape: delegated worker, root with and without send tools, cron, max depth', async () => {
+    const { entityId, root, worker, assignNames } = await seedTeam();
+    const universe = universeWith(assignNames);
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    // What execute.ts hands each shape (§6): workers lose dashboard_publish
+    // when delegated; send tools only with the agent's own credential;
+    // delegation tools only while hops remain.
+    const delegatedWorkerTools = ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish');
+    const rootTools = [...ALWAYS_ON_TOOLS, ...assignNames, 'create_task', 'list_tasks'];
+    const rootWithSend = [...rootTools, ...DELIVERY_TOOL_NAMES, 'list_conversations'];
+
+    const shapes: Array<{ name: string; agent: Agent; ctx: JobContext; tools: readonly string[] }> =
+      [
+        {
+          name: 'delegated worker on a Telegram-origin run (#559)',
+          agent: workerAgent,
+          ctx: {
+            origin: 'internal',
+            telegramChatId: '199791464',
+            isDelegated: true,
+            delegationDepth: 1,
+          },
+          tools: delegatedWorkerTools,
+        },
+        {
+          name: 'root on Telegram, holding its send tools',
+          agent: rootAgent,
+          ctx: { origin: 'telegram', telegramChatId: '199791464' },
+          tools: rootWithSend,
+        },
+        {
+          name: 'root with a chat_id but no credential of its own',
+          agent: rootAgent,
+          ctx: { origin: 'telegram', telegramChatId: '199791464' },
+          tools: rootTools,
+        },
+        {
+          name: 'cron job of the root, notify_on_success',
+          agent: rootAgent,
+          ctx: { origin: 'cron', telegramChatId: '1', notifyOnSuccess: true },
+          tools: rootTools,
+        },
+        {
+          name: 'orchestrator at the maximum delegation depth',
+          agent: rootAgent,
+          ctx: { origin: 'internal', isDelegated: true, delegationDepth: 3, telegramChatId: '1' },
+          tools: ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+        },
+      ];
+
+    for (const s of shapes) {
+      const prompt = await buildSystemPrompt(s.agent, db, {
+        ...s.ctx,
+        availableToolNames: s.tools,
+      });
+      expect({ shape: s.name, outside: outside(prompt, s.tools, universe) }).toEqual({
+        shape: s.name,
+        outside: [],
+      });
+    }
+  });
+
+  // #613 — the channel layer carried 6 300 characters of hand-written
+  // Telegram rules that contradicted the runner (MarkdownV2 escaping on a tool
+  // that sends without parse_mode, markdown on a plain-text channel,
+  // hand-splitting at 4 096 while sendText splits). What stays is one line of
+  // facts, built from the adapter's declaration, for every tool-delivery
+  // channel, and only for the job that holds the tool it names.
+  const TELEGRAM_FACTS = {
+    channel: 'telegram',
+    sendTool: 'telegram_send_message',
+    renders: [],
+    onlyPath: true,
+  } as const;
+  const DISCORD_FACTS = {
+    channel: 'discord',
+    sendTool: 'telegram_send_message',
+    renders: ['**bold**', '*italic*', '`code`'],
+    onlyPath: true,
+  } as const;
+  // Slack renders its own mrkdwn, not markdown: `*x*` is bold there (#615).
+  const SLACK_FACTS = {
+    channel: 'slack',
+    sendTool: 'telegram_send_message',
+    renders: ['*bold*', '_italic_', '<url|text>'],
+    onlyPath: true,
+  } as const;
+  const withSend = [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES];
+  const deliveryLines = (prompt: string): string[] =>
+    prompt.split('\n').filter((l) => l.startsWith('- delivery:'));
+
+  it('a Telegram job states the channel facts once, and no hand-written channel rule (#613)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'telegram',
+      telegramChatId: '199791464',
+      channelDelivery: TELEGRAM_FACTS,
+      availableToolNames: withSend,
+    });
+    expect(deliveryLines(prompt)).toEqual([
+      '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ' +
+        'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, **bold**, escapes) shows literally. ' +
+        'A long text is split into several messages automatically, so send each reply once, whole.',
+    ]);
+    // The line lives in the Job context block, where the channel is named.
+    const jobContext = prompt.split('## Job context')[1]?.split('\n## ')[0] ?? '';
+    expect(jobContext).toContain('- delivery:');
+    for (const gone of [
+      'MarkdownV2',
+      '4096',
+      '4 096',
+      '## Channel etiquette',
+      'Splitting rules',
+      'Telegram delivery',
+      '## Markdown output',
+    ]) {
+      expect({ gone, found: prompt.includes(gone) }).toEqual({ gone, found: false });
+    }
+  });
+
+  it('a Discord job states ITS adapter facts: the marks it renders, same splitting (#613)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'discord',
+      telegramChatId: '1511202553420054671',
+      channelDelivery: DISCORD_FACTS,
+      availableToolNames: withSend,
+    });
+    expect(deliveryLines(prompt)).toEqual([
+      '- delivery: `telegram_send_message` reaches the user on discord, the only way your replies reach them. ' +
+        'Text arrives as typed, and these marks render: **bold**, *italic*, `code`. Any other markup shows literally. ' +
+        'A long text is split into several messages automatically, so send each reply once, whole.',
+    ]);
+    for (const gone of [
+      'MarkdownV2',
+      '4096',
+      '2000',
+      '## Channel etiquette',
+      'Telegram delivery',
+      '## Markdown output',
+    ]) {
+      expect({ gone, found: prompt.includes(gone) }).toEqual({ gone, found: false });
+    }
+  });
+
+  it('a Slack job names mrkdwn marks, never claims its markup shows literally (#615)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'slack',
+      telegramChatId: 'C0123456',
+      channelDelivery: SLACK_FACTS,
+      availableToolNames: withSend,
+    });
+    expect(deliveryLines(prompt)).toEqual([
+      '- delivery: `telegram_send_message` reaches the user on slack, the only way your replies reach them. ' +
+        'Text arrives as typed, and these marks render: *bold*, _italic_, <url|text>. Any other markup shows literally. ' +
+        'A long text is split into several messages automatically, so send each reply once, whole.',
+    ]);
+    expect(prompt).not.toContain('no markup renders');
+  });
+
+  it('a dashboard job holding the send tool keeps the format fact, not the only-path clause (#613)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'dashboard',
+      channelDelivery: { ...TELEGRAM_FACTS, onlyPath: false },
+      availableToolNames: withSend,
+    });
+    expect(deliveryLines(prompt)).toEqual([
+      '- delivery: `telegram_send_message` reaches the user on telegram. ' +
+        'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, **bold**, escapes) shows literally. ' +
+        'A long text is split into several messages automatically, so send each reply once, whole.',
+    ]);
+  });
+
+  it('a delegate that inherits the chat_id gets no channel text at all (#559, #613)', async () => {
+    const { entityId, worker } = await seedTeam();
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish');
+    // Even handed the facts (a caller that got the rule wrong), the line names
+    // a tool the delegate does not hold: it stays out.
+    for (const channelDelivery of [undefined, TELEGRAM_FACTS]) {
+      const workerPrompt = await buildSystemPrompt(workerAgent, db, {
+        origin: 'internal',
+        telegramChatId: '199791464',
+        isDelegated: true,
+        delegationDepth: 1,
+        ...(channelDelivery ? { channelDelivery } : {}),
+        availableToolNames: tools,
+      });
+      expect(deliveryLines(workerPrompt)).toEqual([]);
+      for (const gone of [
+        'telegram_send_message',
+        'MarkdownV2',
+        '4096',
+        'Channel etiquette',
+        'split',
+      ]) {
+        expect({ gone, found: workerPrompt.includes(gone) }).toEqual({ gone, found: false });
+      }
+      // The sub-task contract itself stays: reply, then return_result, no direct send.
+      expect(workerPrompt).toContain('## Delegated sub-task');
+      expect(workerPrompt).toContain('Do NOT contact the user yourself');
+    }
+  });
+
+  it('the web chat surface carries no channel line and no plain-text rule (#613)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const chat = await buildSystemPrompt(rootAgent, db, { origin: 'dashboard', surface: 'chat' });
+    expect(deliveryLines(chat)).toEqual([]);
+    expect(chat).not.toContain('shows literally');
+    expect(chat).not.toContain('## Channel etiquette');
+  });
+
+  it('indexes only the deferred tools the job holds', async () => {
+    const { entityId, worker } = await seedTeam();
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'list_models');
+    const prompt = await buildSystemPrompt(workerAgent, db, {
+      origin: 'internal',
+      isDelegated: true,
+      delegationDepth: 1,
+      availableToolNames: tools,
+    });
+    const index = prompt.split('## Tools on demand')[1]?.split('\n## ')[0] ?? '';
+    expect(index).toContain('- `search_history`: ');
+    expect(index).not.toContain('list_models');
+  });
+});
+
+// ─── #559, revue Codex passe 1 — la preuve générale, sur la configuration ────
+//
+// Le balayage ci-dessus ne semait AUCUNE skill assignée : le bloc « Skills
+// (load before acting) » ordonnait `run_skill_script` à tout agent qui en a
+// une, alors que l'outil n'est armé que pour une skill à scripts autorisés
+// (execute.ts §6). Ici la preuve porte sur la configuration réelle de l'agent :
+// skills avec et sans scripts, connecteurs attachés et seulement configurés,
+// serveur MCP, canal lié, délégué ou racine. Tout nom d'outil connu cité par le
+// prompt assemblé est un outil du job.
+//
+// Hors périmètre : la PERSONNALITÉ, écrite en base par le propriétaire
+// (invariant #1) — le runner ne la réécrit pas. Les personnalités semées ici
+// ne nomment aucun outil, pour que le balayage ne lise que le texte du runner.
+
+describe('buildSystemPrompt — the whole prompt names only held tools, on real configurations (#559) @cap:assigner-outils/moteur', () => {
+  const outsideOf = (prompt: string, tools: readonly string[], extra: readonly string[]) => {
+    const universe = new Set([...KNOWN_TOOL_NAME_UNIVERSE, ...extra]);
+    return [...new Set(prompt.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])].filter(
+      (w) => universe.has(w) && !tools.includes(w),
+    );
+  };
+
+  async function seedConfigured(opts: { scriptsAuthorized: boolean }) {
+    const { entityId } = await seedContext(db);
+    const tag = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const [root] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'Cfg Root',
+        slug: `cfg-root-${tag}`,
+        personality: 'You coordinate.',
+        role: 'orchestrator',
+      })
+      .returning();
+    const [worker] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'Cfg Worker',
+        slug: `cfg-worker-${tag}`,
+        personality: 'You research.',
+        role: 'agent',
+      })
+      .returning();
+    await db
+      .insert(agentAssignments)
+      .values({ orchestratorId: root!.id, subAgentId: worker!.id, entityId });
+    // A skill assigned to BOTH, with or without its scripts authorized.
+    const [skill] = await db
+      .insert(agentSkills)
+      .values({
+        entityId,
+        name: 'Deck maker',
+        slug: `deck-maker-${tag}`,
+        description: 'Builds decks.',
+        content: 'Build decks.',
+      })
+      .returning();
+    for (const a of [root!, worker!]) {
+      await db.insert(agentSkillAssignments).values({
+        entityId,
+        agentId: a.id,
+        skillId: skill!.id,
+        scriptsAuthorized: opts.scriptsAuthorized,
+      });
+    }
+    // A connector attached to the worker, another only configured, an MCP server.
+    const [tavily] = await db
+      .insert(connectors)
+      .values({ entityId, name: 'Tavily', slug: 'tavily' })
+      .returning();
+    await db.insert(connectors).values({ entityId, name: 'Gmail', slug: 'gmail' });
+    await db
+      .insert(agentConnectorAssignments)
+      .values({ entityId, agentId: worker!.id, connectorId: tavily!.id });
+    await db
+      .insert(mcpServers)
+      .values({ entityId, name: 'Files MCP', slug: `files-mcp-${tag}`, transport: 'stdio' });
+    // The root is bound to Telegram.
+    await db.insert(channelBindings).values({
+      entityId,
+      agentId: root!.id,
+      channel: 'telegram',
+      credentials: JSON.stringify({ botToken: 'fake-token' }),
+      botIdentity: { username: 'cfg_bot' },
+      enabled: true,
+    });
+    const assignNames = (await generateAssignTools(root!.id as AgentId, db)).map((t) => t.name);
+    return { entityId, root: root!, worker: worker!, assignNames };
+  }
+
+  it.each([
+    { scriptsAuthorized: false, name: 'skill WITHOUT scripts authorized' },
+    { scriptsAuthorized: true, name: 'skill WITH scripts authorized' },
+  ])('$name: delegated worker, root on its channel, cron root', async ({ scriptsAuthorized }) => {
+    const { entityId, root, worker, assignNames } = await seedConfigured({ scriptsAuthorized });
+    const scriptTools = scriptsAuthorized ? ['run_skill_script'] : [];
+    const tavilyTools = ADAPTER_REGISTRY['tavily']!.operations.map((o) => o.slug);
+    const workerTools = [
+      ...ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+      ...scriptTools,
+      ...tavilyTools,
+    ];
+    const rootTools = [
+      ...ALWAYS_ON_TOOLS,
+      ...assignNames,
+      'create_task',
+      'list_tasks',
+      ...scriptTools,
+      ...DELIVERY_TOOL_NAMES,
+      'list_conversations',
+    ];
+
+    const cases: Array<{ label: string; agent: Agent; ctx: JobContext; tools: readonly string[] }> =
+      [
+        {
+          label: 'delegated worker, Telegram-origin run',
+          agent: makeAgent(worker.id, entityId, worker.personality),
+          ctx: { origin: 'internal', telegramChatId: '1', isDelegated: true, delegationDepth: 1 },
+          tools: workerTools,
+        },
+        {
+          label: 'root on Telegram',
+          agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+          ctx: { origin: 'telegram', telegramChatId: '1' },
+          tools: rootTools,
+        },
+        {
+          label: 'root, cron',
+          agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+          ctx: { origin: 'cron' },
+          tools: rootTools,
+        },
+        {
+          // The in-app chat: one tool, `run_task`, which is not a Nodal builtin.
+          label: 'root, chat surface',
+          agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+          ctx: { origin: 'dashboard', surface: 'chat' },
+          tools: [],
+        },
+        {
+          // A coding-CLI session: its own tools, none of Nodal's.
+          label: 'worker, cli-runtime with a chat id',
+          agent: makeAgent(worker.id, entityId, worker.personality),
+          ctx: { origin: 'telegram', surface: 'cli-runtime', telegramChatId: '1' },
+          tools: [],
+        },
+      ];
+    for (const c of cases) {
+      const prompt = await buildSystemPrompt(c.agent, db, {
+        ...c.ctx,
+        availableToolNames: c.tools,
+      });
+      expect({ case: c.label, outside: outsideOf(prompt, c.tools, assignNames) }).toEqual({
+        case: c.label,
+        outside: [],
+      });
+    }
+  });
+
+  // #612 (review of #616, pass 2) — a tool the platform's text tells the model
+  // to call is `eager`: its schema is in the request. A deferred tool is named
+  // only by the "Tools on demand" index, whose job is to name every one of
+  // them; a block that orders a deferred tool would send the model to call a
+  // tool whose schema it has not read. Swept on every job shape, holding every
+  // known tool so every conditional block renders, plus the runner's nudge.
+  it('no text of the platform names a deferred tool, outside the tool index', async () => {
+    const { entityId, root, worker } = await seedConfigured({
+      scriptsAuthorized: true,
+    });
+    // Every definition the platform ships, with its declared loading.
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const defs = [
+      ...registry.list(),
+      createTelegramSendMessageTool(),
+      createSendImageTool(),
+      createSendFileTool(),
+      createListConversationsTool(),
+      ...generateTaskTools(root.id as AgentId, db),
+      ...(await generateAssignTools(root.id as AgentId, db)),
+    ];
+    const eager = new Set(defs.filter((d) => d.loading === 'eager').map((d) => d.name));
+    const universe = new Set([...KNOWN_TOOL_NAME_UNIVERSE, ...defs.map((d) => d.name)]);
+    const deferred = new Set([...universe].filter((n) => !eager.has(n)));
+    const everything = [...universe];
+
+    /** Deferred tool names cited in `text`, the tool index excepted. */
+    const deferredCited = (text: string): string[] => {
+      const start = text.indexOf('## Tools on demand');
+      const end = start === -1 ? -1 : text.indexOf('\n## ', start + 5);
+      const outsideIndex =
+        start === -1 ? text : text.slice(0, start) + (end === -1 ? '' : text.slice(end));
+      return [...new Set(outsideIndex.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [])]
+        .filter((w) => deferred.has(w))
+        .sort();
+    };
+
+    const noProject: ConversationContext = {
+      id: 'c1',
+      priorTurns: 2,
+      openedByCommand: false,
+      currentProject: null,
+      registeredProjects: [{ name: 'Notes', path: '/w/notes', kind: 'documents' }],
+    };
+    const cases: Array<{ label: string; agent: Agent; ctx: JobContext }> = [
+      {
+        label: 'root on Telegram, in a conversation without a project',
+        agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+        ctx: { origin: 'telegram', telegramChatId: '1', conversation: noProject },
+      },
+      {
+        label: 'root, cron routine',
+        agent: makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+        ctx: { origin: 'cron', routineState: [] },
+      },
+      {
+        label: 'delegated worker',
+        agent: makeAgent(worker.id, entityId, worker.personality),
+        ctx: { origin: 'internal', telegramChatId: '1', isDelegated: true, delegationDepth: 1 },
+      },
+    ];
+    const found: Record<string, string[]> = {};
+    for (const c of cases) {
+      const prompt = await buildSystemPrompt(c.agent, db, {
+        ...c.ctx,
+        availableToolNames: everything,
+      });
+      const cited = deferredCited(prompt);
+      if (cited.length > 0) found[c.label] = cited;
+    }
+    const nudge = deferredCited(VERIFY_BEFORE_ASSERT_NUDGE);
+    if (nudge.length > 0) found['runner nudge VERIFY_BEFORE_ASSERT'] = nudge;
+    expect(found).toEqual({});
+  });
+
+  it('the skills block names run_skill_script exactly when the job holds it', async () => {
+    const without = await seedConfigured({ scriptsAuthorized: false });
+    const w = await buildSystemPrompt(
+      makeAgent(without.worker.id, without.entityId, without.worker.personality),
+      db,
+      { origin: 'api', availableToolNames: [...ALWAYS_ON_TOOLS] },
+    );
+    expect(w).toContain('## Skills (load before acting)');
+    expect(w).not.toContain('run_skill_script');
+
+    const withIt = await buildSystemPrompt(
+      makeAgent(without.worker.id, without.entityId, without.worker.personality),
+      db,
+      { origin: 'api', availableToolNames: [...ALWAYS_ON_TOOLS, 'run_skill_script'] },
+    );
+    expect(withIt).toContain('`run_skill_script`');
+  });
+
+  // Revue Codex de #570, passe 2 : un nom détenu ne suffit pas, l'outil nommé
+  // doit agir sur la ressource devant laquelle il est nommé.
+  it.each([[['attach_connector']], [['attach_mcp']]])(
+    'root holding only %j: each configured resource names only the tool of its own kind',
+    async (held) => {
+      const { entityId, root } = await seedConfigured({ scriptsAuthorized: false });
+      const tools = [...ALWAYS_ON_TOOLS, ...held];
+      const prompt = await buildSystemPrompt(
+        makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+        db,
+        { origin: 'cron', availableToolNames: tools },
+      );
+      const OWN: Record<string, string> = {
+        connector: 'attach_connector',
+        'MCP server': 'attach_mcp',
+      };
+      const lines = prompt
+        .split('\n')
+        .map((line) => ({ line, kind: / — (connector|MCP server) `/.exec(line)?.[1] }))
+        .filter((l): l is { line: string; kind: string } => l.kind !== undefined);
+      // gmail + tavily (configured, not attached to the root) and the MCP server.
+      expect(new Set(lines.map((l) => l.kind))).toEqual(new Set(['connector', 'MCP server']));
+      for (const { line, kind } of lines) {
+        const named = ['attach_connector', 'attach_mcp'].filter((t) => line.includes(t));
+        expect({ line, named }).toEqual({
+          line,
+          named: tools.includes(OWN[kind]!) ? [OWN[kind]] : [],
+        });
+      }
+      // And nowhere else in the prompt is an attach tool named as a gesture
+      // over resources of mixed kinds: every line that names one is a line
+      // for a resource of that tool's own kind.
+      for (const line of prompt.split('\n')) {
+        for (const [kind, tool] of Object.entries(OWN)) {
+          if (!line.includes(tool)) continue;
+          expect({ line, kind: / — (connector|MCP server) `/.exec(line)?.[1] }).toEqual({
+            line,
+            kind,
+          });
+        }
+      }
+    },
+  );
 });

@@ -1,0 +1,13 @@
+-- live_progress — ce que l'appel au modèle EN COURS a produit, tant qu'il
+-- tourne (issue #444, « Long runs 5 »).
+--
+-- La page d'un run se relit pendant qu'il tourne ; elle ne voyait rien de
+-- l'appel en cours, et un run de deux heures qui ne montre rien se fait tuer à
+-- la main par inquiétude. Le runner pose ici ce que le flux de l'appel rapporte
+-- (`onProgress`, #484 : caractères de texte, de raisonnement, d'arguments
+-- d'outil, l'outil rempli), le tour, et les heures du début de l'appel et du
+-- dernier morceau reçu. La colonne est REMISE À NULL à la fin de l'appel : ce
+-- qui fait foi ensuite, c'est le transcript et `llm_calls`.
+--
+-- NULL par défaut : aucun appel n'est en cours sur une ligne déjà écrite.
+ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS live_progress jsonb;

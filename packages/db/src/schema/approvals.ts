@@ -1,6 +1,16 @@
 // approval_requests + approval_rules tables
 
-import { pgTable, text, uuid, jsonb, timestamp, index, check, unique } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  jsonb,
+  timestamp,
+  integer,
+  index,
+  check,
+  unique,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -64,6 +74,19 @@ export const approvalRequests = pgTable(
      * Guards against double-execution on duplicate resume triggers.
      */
     executedAt: timestamp('executed_at', { withTimezone: true }),
+    /**
+     * La prise du job (`agent_jobs.claim_generation`) du run qui a RÉSERVÉ
+     * l'exécution de cet appel approuvé (#566, migration 0135). NULL : pas
+     * réservée. Posée atomiquement avant l'exécution, sous la prise du job :
+     * un appel approuvé ne tourne qu'une fois, même quand le job change de run.
+     */
+    executionClaim: integer('execution_claim'),
+    /**
+     * Le tool_result de cet appel, consigné avec `executed_at` (#566) : un run
+     * qui reprend le job après celui qui l'a exécuté le reprend tel quel au
+     * lieu de le perdre. NULL pour une demande close avant cette colonne.
+     */
+    executionOutput: jsonb('execution_output'),
   },
   (table) => [
     index('idx_approval_requests_entity_id').on(table.entityId),

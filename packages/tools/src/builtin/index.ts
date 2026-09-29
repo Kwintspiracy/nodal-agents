@@ -29,6 +29,7 @@ import { codeTaskTool } from './code-task';
 import { reviewVerdictTool } from './review-verdict';
 import { runSkillScriptTool } from './run-skill-script';
 import { saveRoutineStateTool } from './save-routine-state';
+import { listConversationRunsTool, stopConversationRunTool } from './conversation-runs';
 import { declareVerificationTool } from './declare-verification';
 import { skillViewTool } from './skill-view';
 import { listModelsTool } from './list-models';
@@ -127,6 +128,12 @@ export { reviewVerdictTool } from './review-verdict';
 export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';
 export { saveRoutineStateTool } from './save-routine-state';
+export { listConversationRunsTool, stopConversationRunTool } from './conversation-runs';
+export type {
+  ListConversationRunsOutput,
+  StopConversationRunInput,
+  StopConversationRunOutput,
+} from './conversation-runs';
 export { declareVerificationTool } from './declare-verification';
 export type { SaveRoutineStateInput, SaveRoutineStateOutput } from './save-routine-state';
 export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-script';
@@ -223,6 +230,12 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // (`agent_jobs.schedule_id`). Porté ici au registre, ajouté à la whitelist par
   // le runner. Un agent qui n'a pas de routine ne le voit pas dans son prompt.
   registry.register(saveRoutineStateTool);
+  // list_conversation_runs / stop_conversation_run (#567) — offerts UNIQUEMENT
+  // au job de tête d'une conversation (`conversation_id` posé, sans parent),
+  // quel que soit le canal. Portés ici au registre, ajoutés à la whitelist par
+  // le runner, comme `save_routine_state`.
+  registry.register(listConversationRunsTool);
+  registry.register(stopConversationRunTool);
   // declare_verification — offert avec les outils d'écriture de fichiers : un
   // agent qui produit doit pouvoir dire comment on vérifie ce qu'il a produit.
   registry.register(declareVerificationTool);
@@ -316,6 +329,8 @@ export type AlwaysOnToolDoc = {
   label: string;
   /** Le résumé que lit le PROPRIÉTAIRE sous ce titre. */
   summary: string;
+  /** Schéma envoyé à chaque tour, ou chargé à la demande (#612) : celui de l'outil. */
+  loading: 'eager' | 'deferred';
 };
 
 /**
@@ -338,82 +353,47 @@ function ownerCopy(tool: { name: string; label?: string; summary?: string }): {
 
 /**
  * Documentation for the always-on built-in tools.
- * Source of truth for the "Built-in capabilities" block injected into every
- * agent's system prompt by buildSystemPrompt() in @nodal-agents/orchestration,
- * and for the rows the owner reads on the Approvals tab.
+ * Source of the "Tools on demand" index buildSystemPrompt() renders when its
+ * caller passes none (dashboard preview, tests; #612 — a job passes its own),
+ * and of the rows the owner reads on the Approvals tab.
  *
  * Order matches ALWAYS_ON_TOOLS. Adding a new always-on tool requires updating
  * BOTH this array and ALWAYS_ON_TOOLS, in sync. Every field is
  * data-driven from the underlying tool definitions, so neither the prompt block
  * nor the screen can drift from the canonical tool docs.
  */
-export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<AlwaysOnToolDoc> = [
-  {
-    name: returnResultTool.name,
-    description: returnResultTool.description,
-    ...ownerCopy(returnResultTool),
-  },
-  { name: askUserTool.name, description: askUserTool.description, ...ownerCopy(askUserTool) },
-  {
-    name: registerProjectTool.name,
-    description: registerProjectTool.description,
-    ...ownerCopy(registerProjectTool),
-  },
-  {
-    name: declareVerificationTool.name,
-    description: declareVerificationTool.description,
-    ...ownerCopy(declareVerificationTool),
-  },
-  { name: skillViewTool.name, description: skillViewTool.description, ...ownerCopy(skillViewTool) },
-  {
-    name: listModelsTool.name,
-    description: listModelsTool.description,
-    ...ownerCopy(listModelsTool),
-  },
-  {
-    name: listSchedulesTool.name,
-    description: listSchedulesTool.description,
-    ...ownerCopy(listSchedulesTool),
-  },
-  {
-    name: saveMemoryTool.name,
-    description: saveMemoryTool.description,
-    ...ownerCopy(saveMemoryTool),
-  },
-  {
-    name: queryMemoryTool.name,
-    description: queryMemoryTool.description,
-    ...ownerCopy(queryMemoryTool),
-  },
-  { name: nodalDocsTool.name, description: nodalDocsTool.description, ...ownerCopy(nodalDocsTool) },
-  {
-    name: searchHistoryTool.name,
-    description: searchHistoryTool.description,
-    ...ownerCopy(searchHistoryTool),
-  },
-  {
-    name: markMemoryHelpfulTool.name,
-    description: markMemoryHelpfulTool.description,
-    ...ownerCopy(markMemoryHelpfulTool),
-  },
-  {
-    name: markMemoryOutdatedTool.name,
-    description: markMemoryOutdatedTool.description,
-    ...ownerCopy(markMemoryOutdatedTool),
-  },
-  { name: webSearchTool.name, description: webSearchTool.description, ...ownerCopy(webSearchTool) },
-  {
-    name: dashboardPublishTool.name,
-    description: dashboardPublishTool.description,
-    ...ownerCopy(dashboardPublishTool),
-  },
-  { name: fileReadTool.name, description: fileReadTool.description, ...ownerCopy(fileReadTool) },
-  { name: fileWriteTool.name, description: fileWriteTool.description, ...ownerCopy(fileWriteTool) },
-  { name: fileEditTool.name, description: fileEditTool.description, ...ownerCopy(fileEditTool) },
-  { name: fileListTool.name, description: fileListTool.description, ...ownerCopy(fileListTool) },
-  {
-    name: fileSearchTool.name,
-    description: fileSearchTool.description,
-    ...ownerCopy(fileSearchTool),
-  },
-];
+export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<AlwaysOnToolDoc> = (
+  [
+    returnResultTool,
+    askUserTool,
+    registerProjectTool,
+    declareVerificationTool,
+    skillViewTool,
+    listModelsTool,
+    listSchedulesTool,
+    saveMemoryTool,
+    queryMemoryTool,
+    nodalDocsTool,
+    searchHistoryTool,
+    markMemoryHelpfulTool,
+    markMemoryOutdatedTool,
+    webSearchTool,
+    dashboardPublishTool,
+    fileReadTool,
+    fileWriteTool,
+    fileEditTool,
+    fileListTool,
+    fileSearchTool,
+  ] as ReadonlyArray<{
+    name: string;
+    description: string;
+    label?: string;
+    summary?: string;
+    loading?: 'eager' | 'deferred';
+  }>
+).map((tool) => ({
+  name: tool.name,
+  description: tool.description,
+  ...ownerCopy(tool),
+  loading: tool.loading ?? 'deferred',
+}));

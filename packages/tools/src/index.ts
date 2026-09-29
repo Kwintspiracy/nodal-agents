@@ -156,15 +156,26 @@ export {
   isInlineInterpreterEvalCommand,
 } from '@nodal-agents/shared';
 
-// tool_choice discipline
-export { computeToolChoice } from './tool-choice';
-export type { ToolChoiceConfig, ToolChoice } from './tool-choice';
-
 // Whitelist computation
 export { computeToolWhitelist } from './whitelist';
 export type { WhitelistInput } from './whitelist';
 
 // Built-in tools
+export {
+  LOAD_TOOLS_NAME,
+  createLoadToolsTool,
+  deferredToolIndex,
+  isEagerTool,
+  namesAskedToLoad,
+  toolIndexLine,
+  withToolLoader,
+} from './builtin/load-tools';
+export type {
+  LoadToolsInput,
+  LoadToolsOutput,
+  LoadableTool,
+  ToolIndexEntry,
+} from './builtin/load-tools';
 export {
   registerBuiltins,
   ALWAYS_ON_TOOLS,
@@ -219,6 +230,10 @@ export {
   // L'outil par lequel un agent déclare comment on vérifie ce qu'il a produit —
   // exporté pour que le runner puisse l'éprouver de bout en bout.
   declareVerificationTool,
+  // L'arrêt depuis une conversation (#567) — exporté pour que le runner prouve
+  // qu'il atteint aussi un job servi par une CLI.
+  listConversationRunsTool,
+  stopConversationRunTool,
 } from './builtin/index';
 export type {
   AlwaysOnTool,

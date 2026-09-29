@@ -50,6 +50,7 @@ import { runInLane } from '../../chat/turn-lane.ts';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
+import { ACTION_RECHECK, actionRecheckMessages } from '../../llm/action-recheck.ts';
 
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
   let active: RunnerDeps['llmClient'] | null = null;
@@ -490,5 +491,115 @@ describe('toute entrée du chat passe par la file de sa conversation (#453, revu
       (f) => !/runInLane\(conversationId,/.test(readFileSync(f, 'utf8')),
     );
     expect(sansFile).toEqual([]);
+  });
+});
+
+/** Les appels de RELECTURE capturés (#600) : ceux qui finissent par la consigne partagée. */
+const relectures = (captured: readonly ModelMessage[][]): ModelMessage[][] =>
+  captured.filter((m) => m[m.length - 1]?.content === ACTION_RECHECK);
+
+// Revue Nodal de la PR #604, passe 2 : chaque réponse FINALE en prose du tour
+// passe par la relecture partagée, y compris celle qui suit un run_task refusé
+// et celle de la relance sans outils. Une seule fois par tour, jamais en boucle.
+describe('runChatTurn — every final prose reply is re-read, once per turn (#600) @cap:parler-a-un-agent/moteur', () => {
+  it('the reply written after a refused run_task is re-read', async () => {
+    await conversationAvecTravail('processing');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          // The reply acts at once (no re-read: it called the tool)…
+          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
+          // …is refused; the reply after the refusal is prose…
+          { text: 'I will look it up again.' },
+          // …and that prose is re-read, which calls nothing.
+          {},
+        ],
+        captured,
+      ),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'i mean nodal-agents',
+    });
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.reply).toBe('I will look it up again.');
+    expect(relectures(captured)).toEqual([
+      actionRecheckMessages('i mean nodal-agents', 'I will look it up again.'),
+    ]);
+    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
+  });
+
+  it('once per turn: the prose after a refusal is not re-read a second time', async () => {
+    await conversationAvecTravail('processing');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          { text: 'Launching the search.' },
+          // The re-read escalates; the call is refused (a job is running)…
+          { runTask: { instruction: 'Find the nodal-agents 0.9.2 changelog' } },
+          // …and the prose after the refusal stands, not re-read again.
+          { text: 'Still on it.' },
+          { runTask: { instruction: 'never reached' } },
+        ],
+        captured,
+      ),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'status?',
+    });
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.reply).toBe('Still on it.');
+    expect(relectures(captured)).toEqual([
+      actionRecheckMessages('status?', 'Launching the search.'),
+    ]);
+    expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
+  });
+
+  it('the tool-free retry’s reply is re-read, and may escalate', async () => {
+    // A finished job: nothing refuses a new run_task.
+    await conversationAvecTravail('completed');
+    const captured: ModelMessage[][] = [];
+    setActiveLlmClient(
+      modele(
+        [
+          // No text, no run_task: the tool-free retry answers…
+          {},
+          { text: 'I will fetch the 0.9.3 changelog.' },
+          // …and its prose is re-read, which launches the work.
+          { runTask: { instruction: 'Find the nodal-agents 0.9.3 changelog' } },
+        ],
+        captured,
+      ),
+    );
+
+    const r = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId,
+      message: 'and 0.9.3?',
+    });
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.spawnedJobId).toBeTruthy();
+    expect(relectures(captured)).toEqual([
+      actionRecheckMessages('and 0.9.3?', 'I will fetch the 0.9.3 changelog.'),
+    ]);
+    expect((await travauxDuFil()).map((j) => j.task)).toContain(
+      'Find the nodal-agents 0.9.3 changelog',
+    );
   });
 });

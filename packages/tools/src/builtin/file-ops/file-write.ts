@@ -71,6 +71,7 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
     'lines you do not touch. Max 1 MiB per write.',
   inputSchema: FileWriteInputSchema,
   riskLevel: 'write',
+  loading: 'eager',
   card: 'files',
   present: ({ output }) =>
     output.ok

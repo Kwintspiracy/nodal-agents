@@ -24,6 +24,8 @@ import { terminalCard } from '../presenters';
 import {
   assertWorkspacesConfigured,
   resolveAndCheckPath,
+  processAddressing,
+  PROCESS_PATHS_RULE,
   SHARED_WORKSPACE_LABEL,
 } from './file-ops/workspace';
 import { buildChildEnv } from './child-env';
@@ -72,8 +74,11 @@ const runCommandSchema = z.object({
     .max(1000)
     .optional()
     .describe(
-      'Optional working directory, relative to the agent workspace (e.g. "scripts/canvas"). ' +
-        'Defaults to the workspace root. Must stay inside the workspace.',
+      'Optional working directory, addressed like the file tools. With ONE workspace (the ' +
+        'shared one aside): e.g. "scripts/canvas", default its root. With SEVERAL: start with a ' +
+        'label, e.g. "<label>" or "<label>/scripts/canvas" — there is no default, and omitting ' +
+        'it is refused (workspace_label_required). Must stay inside the workspace. The COMMAND ' +
+        'itself does not use labels: its paths are relative to this directory, or absolute.',
     ),
   timeout_seconds: z
     .number()
@@ -100,6 +105,8 @@ export interface RunCommandOutput {
   truncated: boolean;
   /** The absolute working directory the command ran in. */
   cwd: string;
+  /** How the command's paths are addressed (#592) — for the model. */
+  paths: string;
 }
 
 // ─── Tool ───────────────────────────────────────────────────────────────────
@@ -126,7 +133,8 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     '(joined with && or newlines) run as a single call. By DEFAULT every command requires human ' +
     'approval before it runs; the user can enable an auto-run ("Yolo") mode per agent. A non-zero ' +
     'exit code is returned to you (not an error) — read stderr and adapt. Once a command succeeds and gives you the output you need, STOP and deliver your answer with return_result (or dashboard_publish) — do NOT call run_command again for the same goal (re-running it just re-prompts the user for approval). ' +
-    'Your owner may restrict WHICH PROGRAMS this tool may start (a per-agent command allowlist). WITH SUCH A LIST THERE IS NO SHELL: write ONE program, its arguments, and double quotes to group an argument that contains spaces (e.g. node -e "console.log(1)"). No chaining (&&, ;, |), no redirection (>, <), no variables (%VAR%, $VAR), no single quotes. A command using any of those is refused with the character named, so rewrite it as a single program call - run several commands as several calls. The refusal applies to THIS tool only; other tools that start processes are not covered by it.',
+    'Your owner may restrict WHICH PROGRAMS this tool may start (a per-agent command allowlist). WITH SUCH A LIST THERE IS NO SHELL: write ONE program, its arguments, and double quotes to group an argument that contains spaces (e.g. node -e "console.log(1)"). No chaining (&&, ;, |), no redirection (>, <), no variables (%VAR%, $VAR), no single quotes. A command using any of those is refused with the character named, so rewrite it as a single program call - run several commands as several calls. The refusal applies to THIS tool only; other tools that start processes are not covered by it. ' +
+    PROCESS_PATHS_RULE,
   inputSchema: runCommandSchema,
   riskLevel: 'destructive',
   card: 'terminal',
@@ -208,7 +216,10 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
       env: childEnv,
       keep: 'head',
     });
-    return toRunCommandOutput(run);
+    return {
+      ...toRunCommandOutput(run),
+      paths: await processAddressing(ctx.workspaces ?? [], cwd),
+    };
   },
 };
 
@@ -217,7 +228,7 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
  * `exitCode: null` reste la forme que l'agent connaît pour « tué ou pas
  * lancé » ; la panne de lancement reste dans stderr sous son code, comme avant.
  */
-function toRunCommandOutput(run: CommandRunResult): RunCommandOutput {
+function toRunCommandOutput(run: CommandRunResult): Omit<RunCommandOutput, 'paths'> {
   const o = run.outcome;
   return {
     exitCode: o.kind === 'exit' ? o.exitCode : null,

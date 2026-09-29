@@ -2,10 +2,15 @@
 // All transitions are explicit. Invalid transitions throw JobStateError.
 
 import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
-import { agentJobs, agents, toolCalls } from '@nodal-agents/db';
+import { agentJobs, agents, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
-import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
+import {
+  flattenTranscript,
+  deepDbSafe,
+  runnerNotesValue,
+  toDbSafeString,
+} from './transcript-text.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -81,35 +86,82 @@ export async function setJobStatus(
   jobId: string,
   status: JobStatus,
   extra: Record<string, unknown> = {},
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
+  const rows = await db
     .update(agentJobs)
     .set({ status, updatedAt: new Date(), ...extra })
-    .where(eq(agentJobs.id, jobId));
+    .where(ownJobRow(jobId))
+    .returning({ id: agentJobs.id });
+  return rows.length > 0;
 }
 
 /**
  * Atomic claim: flip status pending → processing in a single UPDATE WHERE id=$1
- * AND status='pending'. Returns true iff exactly one row was updated — i.e. this
- * caller won the race. Returns false when the row is missing, already processing,
- * or in any other non-pending state (concurrent claim, orphan reaper already
- * acted, etc.).
+ * AND status='pending'. Returns the claim's generation iff exactly one row was
+ * updated — i.e. this caller won the race. Returns null when the row is missing,
+ * already processing, or in any other non-pending state (concurrent claim,
+ * orphan reaper already acted, etc.).
+ *
+ * Every claim bumps `claim_generation` (#566): the run that won keeps its
+ * number and checks it before each side effect (`readJobAuthority`). A job put
+ * back to `pending` behind its back (the reaper's resume) and claimed by
+ * another run carries another number, so the first run knows it lost the job
+ * even though the row reads `processing` again.
  *
  * Only 'pending' is a valid entry point. All legitimate resume paths
  * (approval, delegation, self-chain) reset the row to 'pending' before calling
  * executeJob, so the WHERE status='pending' predicate never blocks a real resume.
  */
-export async function claimJob(db: AnyDrizzleDb, jobId: string): Promise<boolean> {
+export async function claimJob(db: AnyDrizzleDb, jobId: string): Promise<number | null> {
+  // agent_jobs-write: claim — la prise elle-même, avant qu'une prise existe.
   const rows = await db
     .update(agentJobs)
     .set({
       status: 'processing',
+      claimGeneration: sql`${agentJobs.claimGeneration} + 1`,
       updatedAt: new Date(),
     })
     .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
-    .returning({ id: agentJobs.id });
+    .returning({ id: agentJobs.id, claimGeneration: agentJobs.claimGeneration });
 
-  return rows.length > 0 && rows[0]?.id === jobId;
+  const row = rows[0];
+  return rows.length === 1 && row?.id === jobId ? row.claimGeneration : null;
+}
+
+/** What the job's row says about a run's right to act (#566). */
+export type JobAuthority =
+  | { kind: 'owned' }
+  /**
+   * The row no longer lets this run act. `status` is what the row says (null:
+   * no row). `ownClaim` is false when another claim took the job: then the
+   * run must write nothing at all, not even its transcript.
+   */
+  | { kind: 'lost'; status: string | null; ownClaim: boolean };
+
+/**
+ * The job's row is the authority on whether a run may act (#566): it may only
+ * while the row is `processing` under the claim this run made. Any other
+ * status — terminal (cancelled, failed by the reaper, completed by another
+ * writer), put back to `pending`, suspended — or another claim means stop.
+ * Read, never written: the other writer's status stands.
+ */
+export async function readJobAuthority(
+  db: AnyDrizzleDb,
+  jobId: string,
+  claimGeneration: number,
+): Promise<JobAuthority> {
+  const [row] = await db
+    .select({ status: agentJobs.status, claimGeneration: agentJobs.claimGeneration })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  if (!row) return { kind: 'lost', status: null, ownClaim: false };
+  const ownClaim = row.claimGeneration === claimGeneration;
+  if (ownClaim && (RUN_ACTS_WHILE as readonly (string | null)[]).includes(row.status)) {
+    return { kind: 'owned' };
+  }
+  return { kind: 'lost', status: row.status, ownClaim };
 }
 
 interface RunStats {
@@ -217,7 +269,10 @@ async function fillResultFromChildrenIfEmpty(db: AnyDrizzleDb, jobId: string): P
     // écritures séparées laisseraient une fenêtre où la ligne porte un résultat
     // sans provenance, et un écran qui la lirait retomberait sur l'heuristique.
     .set({ result: compiled, resultKind: 'relay', updatedAt: new Date() })
-    .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
+    // Juste après la ligne terminale que CE run vient de poser (#566).
+    .where(
+      and(ownJobRow(jobId, ['completed']), or(isNull(agentJobs.result), eq(agentJobs.result, ''))),
+    );
 }
 
 /** The text of a message, whatever its shape: a string, or the joined text parts. */
@@ -238,9 +293,11 @@ function messageText(content: unknown): string {
  *
  * Une transcription commence par l'historique rejoué du fil (thread-history.ts) :
  * pour chaque tour passé, un message utilisateur, puis un message assistant
- * SYNTHÉTIQUE qui porte la réponse d'alors et, en parts de texte, ses lignes de
- * grand livre (`[Delegated to X (…) — actions: …]`). Ce sont des textes
- * assistant, et rien ne les distingue d'un texte écrit par l'agent à ce tour.
+ * SYNTHÉTIQUE qui porte la réponse d'alors — un texte assistant que rien ne
+ * distingue d'un texte écrit par l'agent à ce tour. Les lignes de grand livre
+ * (`[Delegated to X (…) — actions: …]`) ne sont plus dans ce message depuis
+ * #562 : elles suivent, dans un relevé `[système]` de rôle utilisateur. La
+ * frontière reste nécessaire pour la réponse rejouée elle-même.
  *
  * Issue #419 : un tour Telegram qui a répondu par `telegram_send_message` puis
  * `return_result {status}` n'écrit aucun texte ; le « dernier texte assistant »
@@ -356,7 +413,9 @@ async function fillResultFromFinalTextIfEmpty(
     // repris parce qu'il n'a appelé aucun outil de livraison. Sa forme ne
     // change rien — du JSON écrit par l'agent reste sa réponse.
     .set({ result: text, resultKind: 'prose', updatedAt: new Date() })
-    .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
+    .where(
+      and(ownJobRow(jobId, ['completed']), or(isNull(agentJobs.result), eq(agentJobs.result, ''))),
+    );
 }
 
 /**
@@ -447,7 +506,13 @@ export async function completeJob(
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
-    .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
+    .where(
+      and(
+        // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
+        ownJobRow(jobId),
+        notInArray(agentJobs.status, TERMINAL_STATUSES),
+      ),
+    )
     .returning({ id: agentJobs.id });
 
   const landed = rows.length > 0 && rows[0]?.id === jobId;
@@ -543,7 +608,13 @@ export async function failJob(
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
-    .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
+    .where(
+      and(
+        // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
+        ownJobRow(jobId),
+        notInArray(agentJobs.status, TERMINAL_STATUSES),
+      ),
+    )
     .returning({ id: agentJobs.id });
 
   const landed = rows.length > 0 && rows[0]?.id === jobId;
@@ -555,12 +626,32 @@ export async function failJob(
   // (a failed parent that delegated) → a generic error-code notice.
   if (landed) {
     let explanation = toDbSafeString(userMessage?.trim() ?? '');
-    if (!explanation) explanation = await compileChildResults(db, jobId);
-    if (!explanation) explanation = genericFailExplanation(errorCode);
+    // Chaque source dit sa provenance, parce que NULL ne la dit pas (revue
+    // Codex de #576, passes 1 et 2) :
+    //  - la compilation des enfants est le texte d'AUTRES jobs : `relay`,
+    //    comme dans fillResultFromChildrenIfEmpty ;
+    //  - l'explication générique est du runner : elle va dans `runner_notes`,
+    //    et la relecture du fil la range dans le relevé du runner (#562) ;
+    //  - le message de l'appelant reste sans marque : sa provenance dépend de
+    //    l'appelant (le texte d'un agent, souvent).
+    let kind: JobResultKind | null = null;
+    let runnerNotes: string[] | null = null;
+    if (!explanation) {
+      explanation = await compileChildResults(db, jobId);
+      if (explanation) kind = 'relay';
+    }
+    if (!explanation) {
+      // Le code peut porter un détail brut (NUL, demi-surrogate) : même
+      // normalisation que le message de l'appelant (revue Codex de #576, passe 4).
+      explanation = toDbSafeString(genericFailExplanation(errorCode));
+      runnerNotes = runnerNotesValue([explanation]);
+    }
     await db
       .update(agentJobs)
-      .set({ result: explanation, updatedAt: new Date() })
-      .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
+      .set({ result: explanation, resultKind: kind, runnerNotes, updatedAt: new Date() })
+      .where(
+        and(ownJobRow(jobId, ['failed']), or(isNull(agentJobs.result), eq(agentJobs.result, ''))),
+      );
   }
 
   return landed;
@@ -592,7 +683,7 @@ export async function cancelRootJob(
       finalizingAt: null,
       updatedAt: now,
     })
-    .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
+    .where(and(ownJobRow(jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
     .returning({ id: agentJobs.id });
   return rows.length > 0 && rows[0]?.id === jobId;
 }
@@ -616,6 +707,12 @@ export async function cancelJob(
   jobId: string,
   stats?: RunStats,
   messages?: unknown[],
+  /**
+   * #444 — ce que l'agent avait écrit quand la personne a arrêté l'appel en
+   * cours. Il devient le RÉSULTAT du run (la page l'affiche) ; le statut
+   * `cancelled` dit qu'il a été arrêté. Absent : aucun partiel, rien n'est posé.
+   */
+  partialResult?: string,
 ): Promise<void> {
   const now = new Date();
   await db
@@ -624,6 +721,7 @@ export async function cancelJob(
       completedAt: now,
       updatedAt: now,
       ...(messages !== undefined && { messages: deepDbSafe(messages) }),
+      ...(partialResult !== undefined && partialResult !== '' && { result: partialResult }),
       ...(stats && {
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,
@@ -636,12 +734,16 @@ export async function cancelJob(
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
-    .where(eq(agentJobs.id, jobId));
+    // Le run qui tenait ce job garde sa transcription d'annulation — sous SA
+    // prise seulement : un autre run qui l'a repris depuis écrit la sienne (#566).
+    .where(ownJobRow(jobId, null));
 }
 
 /**
  * Save job checkpoint (messages + turn + chain_count) for self-chaining.
- * Does NOT change status — caller does that separately.
+ * Does NOT change status — caller does that separately. Written by the run
+ * that holds the job, so only under its claim (#566): rend false quand la
+ * ligne n'est plus à ce run (terminée, remise en attente, reprise ailleurs).
  */
 export async function saveCheckpoint(
   db: AnyDrizzleDb,
@@ -658,8 +760,8 @@ export async function saveCheckpoint(
     servedProvider?: string | null;
     totalDurationMs?: number;
   },
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(agentJobs)
     .set({
       // Byte-level DB safety — this mid-run save was one of the two live
@@ -684,16 +786,118 @@ export async function saveCheckpoint(
         totalDurationMs: checkpoint.totalDurationMs,
       }),
     })
-    .where(eq(agentJobs.id, jobId));
+    .where(ownJobRow(jobId))
+    .returning({ id: agentJobs.id });
+  return rows.length > 0;
 }
 
 /**
- * Heartbeat: bump `updated_at` so the orphan-cleanup cron (resetOrphanedJobs,
- * staleMinutes=5) does not reap a job that is actively working but slow — e.g. a
- * turn running many blocking tool calls, or a long LLM call near the timeout.
- * Cheap single-column UPDATE; safe to call repeatedly mid-turn. Mirrors the bump
- * that reset-orphans itself does for legitimately-waiting delegation parents.
+ * One heartbeat: bump `updated_at` so the reapers (`reclaimJobsOfDeadRunners`,
+ * `resetOrphanedJobs`) see a live runner holding this job. Written ONLY while
+ * the row is `processing` (#565) UNDER the claim the beating run holds (#566):
+ * a beat means "the run that owns this job is alive", so it never refreshes a
+ * job that was suspended, put back to `pending`, ended by another writer, or
+ * taken by another run since. Driven by `holdJobHeartbeat` (job/heartbeat.ts)
+ * for the whole time the runner holds the job — never per activity.
  */
-export async function touchJob(db: AnyDrizzleDb, jobId: string): Promise<void> {
-  await db.update(agentJobs).set({ updatedAt: new Date() }).where(eq(agentJobs.id, jobId));
+export async function touchJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  claimGeneration: number,
+): Promise<void> {
+  // agent_jobs-write: heartbeat — porte explicitement la prise tenue.
+  await db.update(agentJobs).set({ updatedAt: new Date() }).where(heldBy(jobId, claimGeneration));
+}
+
+/**
+ * Combien de relectures ratées D'AFFILÉE un run tolère avant de se couper
+ * (#566, #567 — revue Codex de #572 passe 3) : une ligne qu'on ne sait plus
+ * lire ne vaut pas autorisation d'agir. Une seule règle, pour la boucle Nodal
+ * (pendant l'appel au modèle) comme pour un tour de CLI.
+ */
+export const JOB_ROW_UNREADABLE_MAX = 5;
+
+/** Le code d'un run coupé parce que sa ligne n'était plus lisible. */
+export const JOB_ROW_UNREADABLE = 'job_row_unreadable';
+
+/** Ce qui a coupé un travail surveillé : la perte du droit d'agir, ou une ligne illisible. */
+export type JobRowCut = Extract<JobAuthority, { kind: 'lost' }> | { kind: 'unreadable' };
+
+/**
+ * L'issue d'un run dont la ligne ne l'autorise plus à agir (#566, #567) — la
+ * même pour tous les runtimes. Le statut appartient à celui qui l'a posé : un
+ * job que CE run tenait encore et que la personne a annulé se dit `cancelled` ;
+ * tout autre cas (faucheur, remise en file, repris par un autre run, ligne
+ * disparue) est un job que quelqu'un d'autre a déjà traité.
+ */
+export function outcomeOfLostAuthority(
+  perte: Extract<JobAuthority, { kind: 'lost' }>,
+): { status: 'cancelled' } | { status: 'already_handled' } {
+  return perte.ownClaim && perte.status === 'cancelled'
+    ? { status: 'cancelled' }
+    : { status: 'already_handled' };
+}
+
+/**
+ * Relit l'autorité de la ligne d'un job (`readJobAuthority`, sous la prise du
+ * run) toutes les `pollMs` pendant un travail long qui ne rend pas la main :
+ * l'appel au modèle de la boucle Nodal, un tour de CLI (#566, #567). Dès que
+ * la ligne ne dit plus `processing` sous CETTE prise — annulée par le chemin
+ * d'annulation unique (`cancelJobTree` : le bouton Stop,
+ * `stop_conversation_run`), déclarée morte par un faucheur, remise en file,
+ * reprise par un autre run, disparue — `signal` tombe et l'appelant coupe son
+ * travail avec.
+ *
+ * UNE LIGNE ILLISIBLE N'EST PAS UNE AUTORISATION (invariant #4). Une lecture
+ * ratée est tolérée — le réseau a des hoquets —, chaque échec est journalisé,
+ * et à `JOB_ROW_UNREADABLE_MAX` échecs CONSÉCUTIFS le travail est coupé :
+ * `observed()` rend `{ kind: 'unreadable' }`, que l'appelant dit comme un
+ * échec (`JOB_ROW_UNREADABLE`).
+ *
+ * `observed()` rend ce qui a coupé le travail (`null` : rien encore). `stop()`
+ * est à appeler quoi qu'il arrive, sans quoi la relecture survit au travail.
+ */
+export function watchJobRow(
+  db: AnyDrizzleDb,
+  jobId: string,
+  claimGeneration: number,
+  pollMs: number,
+): { signal: AbortSignal; observed: () => JobRowCut | null; stop: () => void } {
+  const controller = new AbortController();
+  let observed: JobRowCut | null = null;
+  let unreadable = 0;
+  let reading = false;
+  const cut = (why: JobRowCut): void => {
+    if (observed !== null) return;
+    observed = why;
+    clearInterval(timer);
+    controller.abort();
+  };
+  const timer = setInterval(() => {
+    // Une lecture lente ne se double pas : la suivante attend son tour.
+    if (reading || observed !== null) return;
+    reading = true;
+    void readJobAuthority(db, jobId, claimGeneration)
+      .then((autorite) => {
+        unreadable = 0;
+        if (autorite.kind === 'lost') cut(autorite);
+      })
+      .catch((err: unknown) => {
+        unreadable += 1;
+        console.error(
+          `[job-row] JOB_ROW_UNREADABLE job=${jobId} consecutive=${String(unreadable)}/${String(
+            JOB_ROW_UNREADABLE_MAX,
+          )}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        if (unreadable >= JOB_ROW_UNREADABLE_MAX) cut({ kind: 'unreadable' });
+      })
+      .finally(() => {
+        reading = false;
+      });
+  }, pollMs);
+  return {
+    signal: controller.signal,
+    observed: () => observed,
+    stop: () => clearInterval(timer),
+  };
 }

@@ -1033,7 +1033,14 @@ const runFeed = (): ConversationFeed => ({
       agent: { name: 'Agent One', slug: 'agent-one', avatarUrl: null },
       model: 'a-model',
       at: null,
-      summary: { tools: 3, delegations: 1, modelCalls: 2, durationMs: 12_000, costUsd: 0.04 },
+      summary: {
+        tools: 3,
+        delegations: 1,
+        modelCalls: 2,
+        durationMs: 12_000,
+        costUsd: 0.04,
+        unpricedCalls: 0,
+      },
       items: [
         {
           kind: 'turn',

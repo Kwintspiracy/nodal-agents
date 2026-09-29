@@ -196,6 +196,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       schedule_id uuid,
       trigger_context jsonb,
       system_prompt text,
+      -- mirrors migration 0136 (#559) : les outils pour lesquels le prompt a été écrit.
+      system_prompt_tools text[],
+      -- mirrors migration 0138 (#612) : les outils différés que le job a chargés.
+      loaded_tools text[],
       messages jsonb DEFAULT '[]',
       search_text text,
       search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(search_text, ''))) STORED,
@@ -205,6 +209,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0117 (#154, #210) : la provenance du résultat, à
       -- côté du résultat. NULL = pas de marque, jamais une valeur inventée.
       result_kind text CHECK (result_kind IS NULL OR result_kind IN ('prose','relay')),
+      -- mirrors migration 0137 (#562) : les lignes du résultat écrites par le runner.
+      runner_notes text[],
       error text,
       -- Le geste que l'échec appelle, écrit par le runner (#193, migration 0116).
       failure_hint text,
@@ -218,6 +224,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       effective_input_tokens integer DEFAULT 0,
       total_cost_usd real DEFAULT 0,
       served_provider text,
+      live_progress jsonb,
       delegation_depth integer DEFAULT 0,
       last_failed_delegation_slug text,
       last_failed_delegation_streak integer NOT NULL DEFAULT 0,
@@ -231,6 +238,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       restart_resumes integer NOT NULL DEFAULT 0,
       restart_blocked_by jsonb,
       checkpoint_tool_seq bigint,
+      -- mirrors migration 0135 (#566) : le numéro de la prise en cours
+      claim_generation integer NOT NULL DEFAULT 0,
       -- project_id (0093) references code_projects, created further below — la
       -- FK est ajoutée par un ALTER TABLE juste après cette table, comme pour
       -- schedule_id ci-dessus.
@@ -358,7 +367,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       notes text,
       executed_at timestamptz,
       -- mirrors migration 0125 (#464)
-      gate_reasons jsonb
+      gate_reasons jsonb,
+      -- mirrors migration 0135 (#566) : l'exécution réservée d'un appel approuvé
+      execution_claim integer,
+      execution_output jsonb
     );
 
     CREATE TABLE IF NOT EXISTS approval_rules (

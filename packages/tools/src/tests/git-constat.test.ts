@@ -231,7 +231,7 @@ describe('le constat par git @cap:travailler-sur-des-fichiers/moteur', () => {
 
     await writeFile(join(horsDepot, 'ecrit.ts'), 'export const e = 1;\n');
     const constat = await constatedGitWrites(avant);
-    expect(constat).toEqual({ writes: [], roots: [], indecis: [] });
+    expect(constat).toEqual({ writes: [], fallbackWrites: [], roots: [], indecis: [] });
   });
 
   it('le périmètre est comparé sur les chemins RÉELS, pas sur leur graphie', async () => {

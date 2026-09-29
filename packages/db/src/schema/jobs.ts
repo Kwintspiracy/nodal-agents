@@ -32,6 +32,19 @@ import { agentSchedules } from './schedules.ts';
  * the human-readable name at fire time; `triggeredAt` is the ISO timestamp the
  * runner received the request.
  */
+/** #444 — l'appel au modèle en cours, tel que son flux le rapporte (#484). */
+export type JobLiveProgress = {
+  turn: number;
+  textChars: number;
+  reasoningChars: number;
+  toolInputChars: number;
+  toolName: string | null;
+  /** ISO : début de l'appel. */
+  callStartedAt: string;
+  /** ISO : dernier morceau reçu ; `null` tant que rien n'est venu. */
+  lastProgressAt: string | null;
+};
+
 export type JobTriggerContext =
   | {
       type: 'cron';
@@ -132,6 +145,21 @@ export const agentJobs = pgTable(
      */
     triggerContext: jsonb('trigger_context').$type<JobTriggerContext>(),
     systemPrompt: text('system_prompt'),
+    /**
+     * Les noms (triés) des outils pour lesquels `systemPrompt` a été écrit
+     * (#559, migration 0136). Une reprise réutilise le prompt stocké — cache de
+     * préfixe — seulement si la liste recalculée est la même ; sinon le prompt
+     * est réécrit, pour ne jamais nommer un outil retiré pendant l'attente.
+     * NULL : prompt écrit avant cette colonne, réécrit à la reprise.
+     */
+    systemPromptTools: text('system_prompt_tools').array(),
+    /**
+     * Les outils différés que ce job a chargés, dans l'ordre (#612, migration
+     * 0138) : par `load_tools` ou par un appel direct. Le tour envoie les schémas
+     * `eager` puis ceux-ci. Hors de la transcription parce que la compaction en
+     * élague les entrées ; relue à chaque reprise, elle ne fait que croître.
+     */
+    loadedTools: text('loaded_tools').array(),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
     /**
      * Flattened plain-text transcript (task + assistant text + tool outputs +
@@ -166,6 +194,15 @@ export const agentJobs = pgTable(
      * disent.
      */
     resultKind: text('result_kind').$type<JobResultKind>(),
+    /**
+     * Les lignes que le RUNNER a ajoutées au résultat, à part du texte de
+     * l'agent (#562, migration 0137) — aujourd'hui l'avis d'échec de
+     * délégation. `result` les porte toujours pour les écrans (#108) ; ce
+     * champ dit lesquelles sont du runner, et la relecture du fil les range
+     * dans le relevé du runner au lieu de les laisser dans la bouche de
+     * l'agent. NULL : rien d'ajouté.
+     */
+    runnerNotes: text('runner_notes').array(),
     error: text('error'),
     /**
      * LE GESTE que cet échec appelle, dit par le runner lui-même (#193).
@@ -239,6 +276,12 @@ export const agentJobs = pgTable(
      * identity (Anthropic, Ollama, etc.) or when the field was absent.
      */
     servedProvider: text('served_provider'),
+    /**
+     * #444 — ce que l'appel au modèle EN COURS a produit (le flux de #484),
+     * posé par le runner pendant l'appel et remis à NULL à sa fin. La page
+     * d'un run le montre tant que le job est `processing`. Migration 0134.
+     */
+    liveProgress: jsonb('live_progress').$type<JobLiveProgress>(),
     delegationDepth: integer('delegation_depth').default(0),
     /**
      * The slug of the last delegated child that failed on this parent job.
@@ -306,6 +349,13 @@ export const agentJobs = pgTable(
     resumedFromTurn: integer('resumed_from_turn'),
     /** Combien de fois ce job a été repris après un redémarrage (#443) — la borne anti-boucle. */
     restartResumes: integer('restart_resumes').notNull().default(0),
+    /**
+     * Le numéro de la prise en cours (#566, migration 0135) : `claimJob` le
+     * monte à chaque passage `pending → processing`. Le run qui a pris le job
+     * garde le sien et le relit avant chaque effet ; un autre numéro veut dire
+     * qu'un autre run tient ce job, et celui-ci n'a plus le droit d'agir.
+     */
+    claimGeneration: integer('claim_generation').notNull().default(0),
     /**
      * Les outils que le tour interrompu par la mort du runner avait déjà
      * exécutés et qui ne font pas que lire (#443) : rejouer ce tour les

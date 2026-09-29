@@ -129,10 +129,16 @@ export type LlmTimeoutReason =
   | 'idle_before_first_token'
   | 'idle_between_tokens'
   | 'absolute'
+  /** Only reasoning or tool arguments for too long, nothing delivered (#484). */
+  | 'invisible_production'
   /**
-   * Not a clock: the stream broke with an error AFTER writing text. Carried
-   * on the same error so the whole cut path (no replay from scratch, no
-   * failover, resume from the text) applies to it unchanged.
+   * Not a clock: the stream broke with an error after the model had sent
+   * ANYTHING, visible text, reasoning or a tool call (`consumeUnderClocks`,
+   * turn-clocks.ts). The call was served, so it takes the cut path (counted,
+   * no replay from scratch, no failover). It is resumable only when visible
+   * text was written and no tool call was on the wire; a break after
+   * reasoning alone carries an empty `partialText`. A break before the model
+   * sent anything is not this reason: the raw error is thrown.
    */
   | 'stream_error';
 
@@ -157,6 +163,39 @@ export class LLMCallCancelledError extends Error {
   ) {
     super(`LLM call cancelled after ${partialText.length} chars received: ${provider}/${model}`);
     this.name = 'LLMCallCancelledError';
+  }
+}
+
+// ─── LLMOutputLimitError ──────────────────────────────────────────────────────
+
+/**
+ * A turn whose response stopped on the model's OUTPUT-token cap (#554).
+ *
+ * `finishReason === 'length'`, as the AI SDK unifies it for every provider. A
+ * response cut there is not a finished turn: its tool calls may be partial or
+ * degenerate (run 04229144: ~25 calls parsed out of a 131 072-token reply,
+ * `file_write` without content, a real `register_project`, three memories
+ * written, a placeholder `ask_user`). The client refuses such a turn instead of
+ * returning it, so NO caller can act on it. Never retried, never failed over:
+ * the same prompt on the same cap would be cut again, and a retry is a separate
+ * decision. Carries the billed usage, so the caller can still count the call.
+ */
+export class LLMOutputLimitError extends Error {
+  readonly code = 'output_limit_reached' as const;
+
+  constructor(
+    public readonly provider: string,
+    public readonly model: string,
+    /** What the cut call billed. The provider served it in full. */
+    public readonly usage: { inputTokens: number; outputTokens: number },
+    /** The tool calls parsed out of the cut response, none of them executed. */
+    public readonly toolCallCount: number,
+  ) {
+    super(
+      `LLM response stopped on the output-token cap (${usage.outputTokens} output tokens, ` +
+        `${toolCallCount} tool call(s) not executed): ${provider}/${model}`,
+    );
+    this.name = 'LLMOutputLimitError';
   }
 }
 

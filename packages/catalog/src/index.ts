@@ -146,12 +146,6 @@ const slugsOfKind = (k: SkillKind): string[] =>
 export const baselineSkillSlugs: string[] = slugsOfKind('baseline');
 
 /**
- * CHANNEL skills — injected automatically when the agent is bound to a channel
- * (telegram etiquette, markdown). Not assignable.
- */
-export const channelSkillSlugs: string[] = slugsOfKind('channel');
-
-/**
  * CAPABILITY skills — opt-in, shown in the dashboard library AND advertised to
  * the agent as discoverable (it knows they exist even when unassigned).
  */

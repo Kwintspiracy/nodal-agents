@@ -1,14 +1,16 @@
 // execute.test.ts — full E2E job loop with mocked LLM, asserts each transition
 // Tests:
 //   - pending → processing → completed on return_result
-//   - anti-loop: 51 tool_use blocks → tool_call_limit_exceeded
+//   - anti-loop: see 'a turn over the per-turn tool-call budget' (#564)
 //   - tool whitelist violation → whitelist_violation:tool_name
 //   - awaiting_approval does NOT bump chain_count
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { offeredToolNames } from '../offered-tools.ts';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -33,7 +35,7 @@ import {
   toolCalls,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
-import { createEmbeddingClient } from '@nodal-agents/llm';
+import { createEmbeddingClient, validateMessageStructure } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DeliveryError } from '@nodal-agents/delivery';
 import {
@@ -52,6 +54,7 @@ import {
   shortBlockReason,
   BLOCK_NO_REASON,
 } from '../../job/execute.ts';
+import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import { VERIFY_BEFORE_ASSERT_NUDGE } from '@nodal-agents/orchestration';
 
@@ -168,6 +171,8 @@ function makeMockLlmClient(
      * When omitted, the mock returns no cost metadata (provider-silent path).
      */
     costUsd?: number;
+    /** Output tokens the call bills (default 5). The 2026-09-28 turn billed 65 536. */
+    outputTokens?: number;
     /**
      * Simulated upstream provider name as OpenRouter reports in
      * `providerMetadata.openrouter.provider`. Drives served-upstream observability
@@ -193,6 +198,10 @@ function makeMockLlmClient(
   configOverride?: { provider: string; model: string },
   /** The keys of the `tools` object handed to the model each turn — the REAL whitelist. */
   capturedToolKeysPerCall?: string[][],
+  /** What the re-read of a prose turn answers, in order; absent = no action. */
+  recheckResponses?: Array<{
+    toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+  }>,
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
@@ -200,6 +209,33 @@ function makeMockLlmClient(
     provider: 'mock',
     modelId: 'mock',
     doGenerate: async (options) => {
+      // The re-read of a prose turn (#600, llm/action-recheck.ts) is not a turn
+      // of the script: it answers "no action" (no tool call, plain usage) and
+      // leaves the scripted turns aligned. A test that scripts the re-read
+      // itself says so in `recheckResponses`.
+      const last = options.prompt[options.prompt.length - 1];
+      const isRecheck =
+        last?.role === 'user' &&
+        last.content.some((part) => part.type === 'text' && part.text === ACTION_RECHECK);
+      if (isRecheck) {
+        const scripted = recheckResponses?.shift();
+        return {
+          content: (scripted?.toolCalls ?? []).map((tc) => ({
+            type: 'tool-call' as const,
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: JSON.stringify(tc.args),
+          })),
+          finishReason: scripted?.toolCalls?.length
+            ? { unified: 'tool-calls' as const, raw: 'tool-calls' }
+            : { unified: 'stop' as const, raw: 'stop' },
+          usage: {
+            inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
+          },
+          warnings: [],
+        };
+      }
       // Record the prompt each call receives so a test can assert what actually
       // reached the provider (e.g. reasoning round-tripped from a prior turn).
       if (capturedPrompts) capturedPrompts.push(options.prompt);
@@ -262,7 +298,11 @@ function makeMockLlmClient(
             cacheRead: response.cachedTokens,
             cacheWrite: undefined,
           },
-          outputTokens: { total: 5, text: 5, reasoning: undefined },
+          outputTokens: {
+            total: response.outputTokens ?? 5,
+            text: response.outputTokens ?? 5,
+            reasoning: undefined,
+          },
         },
         warnings: [],
         ...(providerMetadata ? { providerMetadata } : {}),
@@ -283,9 +323,9 @@ function makeMockLlmClient(
       streaming: false,
     },
     generateText: (args) => {
-      if (capturedToolKeysPerCall) {
-        const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
-        capturedToolKeysPerCall.push(Object.keys(tools));
+      const msgs = (args as { messages?: Array<{ content?: unknown }> }).messages ?? [];
+      if (capturedToolKeysPerCall && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
+        capturedToolKeysPerCall.push(offeredToolNames(args));
       }
       return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
@@ -1078,9 +1118,11 @@ describe('executeJob', () => {
 
     expect(rows[0]?.status).toBe('completed');
     expect(rows[0]?.result).toBe('Here is my answer to the task.');
-    expect(rows[0]?.inputTokens).toBe(10);
-    expect(rows[0]?.outputTokens).toBe(5);
-    expect(rows[0]?.turn).toBe(1); // single LLM call → turn 1
+    // The prose turn is re-read once (#600, llm/action-recheck.ts), and that
+    // call is billed too: 10/5 for the turn + 10/5 for the re-read.
+    expect(rows[0]?.inputTokens).toBe(20);
+    expect(rows[0]?.outputTokens).toBe(10);
+    expect(rows[0]?.turn).toBe(1); // one turn: the re-read is not a turn of its own
     // Wall-clock timer: should have elapsed time (>= 0, often > 0). On very
     // fast runs Date.now() can resolve to the same ms, so assert non-null.
     expect(rows[0]?.totalDurationMs).not.toBeNull();
@@ -1302,6 +1344,191 @@ describe('executeJob', () => {
 
     // Clean up token so other tests aren't affected
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  // #559 — run 806a2218: a delegated Researcher (channel `internal`) inherited
+  // its parent's chat_id, never its send tools, and its prompt ordered
+  // `telegram_send_message` all the same. The prompt is now built from the
+  // tool list the job runs with: the stored system_prompt is the proof.
+  it('the stored prompt names telegram_send_message only for the job that holds it (#559) @cap:assigner-outils/moteur', async () => {
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '199791464',
+        task: 'Parent run',
+        status: 'completed',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    const [child] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        parentJobId: parent!.id,
+        delegationDepth: 1,
+        channel: 'internal',
+        chatId: '199791464',
+        task: 'Research something and report back',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+
+    await executeJob(
+      child!.id as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'Findings: none.' }])),
+      testEnv,
+    );
+    const [childRow] = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, child!.id));
+    expect(childRow?.systemPrompt).toContain('## Delegated sub-task');
+    expect(childRow?.systemPrompt).not.toContain('telegram_send_message');
+    expect(childRow?.systemPrompt).not.toContain('SAME-TURN MULTI-CALL REQUIRED');
+    expect(childRow?.systemPrompt).not.toContain('- delivery:');
+
+    // The same agent, holding its own token on a Telegram job: the channel's
+    // facts are there, because the tool is — built from the Telegram adapter's
+    // declaration (#613), and no hand-written channel rule.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const [tgJob] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '199791464',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      await executeJob(
+        tgJob!.id as JobId,
+        makeDeps(
+          makeMockLlmClient([
+            {
+              toolCalls: [
+                { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
+                { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+              ],
+            },
+          ]),
+        ),
+        testEnv,
+      );
+      const [tgRow] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, tgJob!.id));
+      expect(tgRow?.systemPrompt).toContain(
+        '- delivery: `telegram_send_message` reaches the user on telegram, the only way your ' +
+          'replies reach them. Text arrives exactly as typed: no markup renders, so markdown ' +
+          '(headings, tables, **bold**, escapes) shows literally. A long text is split into ' +
+          'several messages automatically, ' +
+          'so send each reply once, whole.',
+      );
+      for (const gone of ['## Channel etiquette', 'MarkdownV2', '4096']) {
+        expect({ gone, found: tgRow?.systemPrompt?.includes(gone) }).toEqual({
+          gone,
+          found: false,
+        });
+      }
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
+  });
+
+  // #559, revue Codex passe 1, P1 2 — une reprise (approbation, délégation,
+  // redémarrage) réutilisait `job.systemPrompt` tel quel. Écrit pour la liste
+  // d'outils du premier passage, il pouvait nommer un outil retiré pendant
+  // l'attente. Le prompt stocké porte maintenant sa liste : même liste, il est
+  // gardé mot pour mot (cache de préfixe) ; liste changée, il est réécrit.
+  it('a resumed job keeps its stored prompt when its tools are unchanged, and rewrites it when a tool was withdrawn (#559) @cap:assigner-outils/moteur', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '199791464',
+          task: 'Say hi',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      const sendAndFinish = () =>
+        makeMockLlmClient([
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ]);
+      await executeJob(job!.id as JobId, makeDeps(sendAndFinish()), testEnv);
+      const [first] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(first?.systemPrompt).toContain('- delivery: `telegram_send_message` reaches the user');
+      expect(first?.tools).toContain('telegram_send_message');
+
+      // Resume with the SAME tools: the stored prompt is reused verbatim. A
+      // sentinel stands in for it so a rebuild could not pass unnoticed.
+      const SENTINEL = 'STORED PROMPT, SAME TOOLS';
+      await db
+        .update(agentJobs)
+        .set({ systemPrompt: SENTINEL, status: 'pending' })
+        .where(eq(agentJobs.id, job!.id));
+      const samePrompts: unknown[] = [];
+      await executeJob(
+        job!.id as JobId,
+        makeDeps(makeMockLlmClient([{ text: 'Done.' }], samePrompts)),
+        testEnv,
+      );
+      expect(JSON.stringify(samePrompts[0])).toContain(SENTINEL);
+
+      // The owner withdraws the credential while the job waits: the send tools
+      // are gone from the recalculated list, so the prompt is rewritten.
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+      await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, job!.id));
+      const afterPrompts: unknown[] = [];
+      await executeJob(
+        job!.id as JobId,
+        makeDeps(makeMockLlmClient([{ text: 'Done.' }], afterPrompts)),
+        testEnv,
+      );
+      const seen = JSON.stringify(afterPrompts[0]);
+      expect(seen).not.toContain(SENTINEL);
+      expect(seen).not.toContain('- delivery:');
+      const [after] = await db
+        .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job!.id));
+      expect(after?.systemPrompt).not.toContain('telegram_send_message');
+      expect(after?.tools).not.toContain('telegram_send_message');
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
   });
 
   // ─── Anti-spam guard: consecutive delivery-only turns ─────────────────────
@@ -1668,18 +1895,23 @@ describe('executeJob', () => {
 
     // Turn 1: the model NARRATES ("Je lance X") with NO tool call — the MiniMax
     // slip (~1 in 5). The escalation-recovery re-prompt then yields run_task.
-    const llmClient = makeMockLlmClient([
-      { text: 'Je lance Displacer dans le Cortex.' },
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-recheck',
-            toolName: 'run_task',
-            args: { instruction: 'Lancer Displacer dans le Cortex' },
-          },
-        ],
-      },
-    ]);
+    const llmClient = makeMockLlmClient(
+      [{ text: 'Je lance Displacer dans le Cortex.' }],
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-recheck',
+              toolName: 'run_task',
+              args: { instruction: 'Lancer Displacer dans le Cortex' },
+            },
+          ],
+        },
+      ],
+    );
     const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
     const result = await runChatTurn({
       deps: makeDeps(llmClient),
@@ -1823,6 +2055,123 @@ describe('executeJob', () => {
     expect(flat).toContain('DISPLACER-REPORT');
     // …and the blind static placeholder is gone.
     expect(flat).not.toContain('Task dispatched');
+  });
+
+  // #562, revue Codex de #576 passe 1, P1 (a). `failJob` remplit un résultat
+  // vide avec la compilation des enfants — le texte d'AUTRES jobs, recompilé
+  // par le runner. Le tour suivant du fil le rejouait comme ce que l'agent
+  // avait envoyé. Par le VRAI producteur, jusqu'au prompt réellement envoyé.
+  it('a parent failed by failJob: its children compiled into result never reach the next turn as the agent reply (#562) @cap:reprendre-conversation/moteur', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        origin: 'user',
+      })
+      .returning({ id: conversations.id });
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'processing',
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        conversationId: conv!.id,
+        task: 'recherche la longueur de Planck',
+        messages: [
+          { role: 'user', content: 'recherche la longueur de Planck' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'tc-1',
+                toolName: 'telegram_send_message',
+                input: { text: 'Je lance la recherche.' },
+              },
+            ],
+          },
+        ],
+      })
+      .returning({ id: agentJobs.id });
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      parentJobId: parent!.id,
+      status: 'completed',
+      channel: 'internal',
+      task: 'Recherche web : longueur de Planck',
+      result: 'CHILD-FINDINGS: 1.616e-35 m',
+      completedAt: new Date(),
+    });
+    const { failJob } = await import('../../job/state.ts');
+    await failJob(db as Parameters<typeof failJob>[0], parent!.id, 'turn_limit');
+    const [failed] = await db
+      .select({ result: agentJobs.result, resultKind: agentJobs.resultKind })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent!.id));
+    // The producer states what it wrote: other jobs' text, recompiled.
+    expect(failed?.result).toContain('CHILD-FINDINGS');
+    expect(failed?.resultKind).toBe('relay');
+
+    const [next] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'fail-relay-chat',
+        conversationId: conv!.id,
+        task: 'et alors ?',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const prompts: unknown[] = [];
+    await executeJob(
+      next!.id as JobId,
+      makeDeps(makeMockLlmClient([{ text: 'ok' }], prompts)),
+      testEnv,
+    );
+    const sent = prompts[0] as Array<{ role: string; content: unknown }>;
+    const said = (role: string) =>
+      JSON.stringify(sent.filter((m) => m.role === role).map((m) => m.content));
+    expect(said('assistant')).toContain('Je lance la recherche.');
+    expect(said('assistant')).not.toContain('CHILD-FINDINGS');
+    expect(said('user')).toContain('CHILD-FINDINGS');
+  });
+
+  // Revue Codex de #576, passe 2 : NULL ne dit pas « écrit par le runner ».
+  // L'explication générique de failJob est du runner : il le dit lui-même.
+  it('failJob with nothing to say records its generic explanation as the runner’s (#562)', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'processing',
+        channel: 'api',
+        task: 'nothing to compile',
+      })
+      .returning({ id: agentJobs.id });
+    const { failJob } = await import('../../job/state.ts');
+    await failJob(db as Parameters<typeof failJob>[0], job!.id, 'turn_limit');
+    const [row] = await db
+      .select({
+        result: agentJobs.result,
+        resultKind: agentJobs.resultKind,
+        runnerNotes: agentJobs.runnerNotes,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(row?.result).toContain('could not be completed (turn_limit)');
+    expect(row?.resultKind).toBeNull();
+    expect(row?.runnerNotes).toEqual([row?.result]);
   });
 
   it('runChatTurn: a completed escalation surfaces the delegated child output (completeJob fills the parent, chat reflects it)', async () => {
@@ -2706,7 +3055,8 @@ describe('executeJob', () => {
     const job = await createTestJob(db, seed);
 
     // Two-turn scenario: first calls save_memory, second returns final text.
-    // Mock returns 10/5 per call → expected 20/10 totals after 2 calls.
+    // Mock returns 10/5 per call → 30/15 after 3 calls: the two turns and the
+    // re-read of the final prose turn (#600).
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
@@ -2732,9 +3082,9 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
 
-    expect(rows[0]?.inputTokens).toBe(20);
-    expect(rows[0]?.outputTokens).toBe(10);
-    expect(rows[0]?.turn).toBe(2); // two LLM calls → turn 2
+    expect(rows[0]?.inputTokens).toBe(30);
+    expect(rows[0]?.outputTokens).toBe(15);
+    expect(rows[0]?.turn).toBe(2); // two turns; the re-read is not a turn
   });
 
   it('completes when LLM calls dashboard_publish + return_result (Brique 33)', async () => {
@@ -3131,38 +3481,6 @@ describe('executeJob', () => {
     expect(JSON.stringify(capturedPrompts[2])).toContain('TURN2-REASON');
   });
 
-  it('anti-loop: 51 tool_use blocks → tool_call_limit_exceeded', async () => {
-    const job = await createTestJob(db, seed);
-
-    // Build 51 tool calls, ALTERNATING between two always-on whitelisted
-    // tools so no single tool ever runs 24+ in a row — otherwise Guard 1f
-    // (S1 same-tool streak, see chain-counters.ts) would fail the job first
-    // and mask the per-turn tool_call_limit_exceeded cap this test targets.
-    const manyToolCalls = Array.from({ length: 51 }, (_, i) => ({
-      toolCallId: `tc-${i}`,
-      toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
-      args: i % 2 === 0 ? { fact: `fact ${i}`, category: 'context' } : { query: `fact ${i}` },
-    }));
-
-    // LLM returns 51 tool calls, then text (never reached due to limit)
-    const llmClient = makeMockLlmClient([{ toolCalls: manyToolCalls }, { text: 'done' }]);
-
-    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error).toBe('tool_call_limit_exceeded');
-    }
-
-    // Verify DB row
-    const rows = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, job.id));
-
-    expect(rows[0]?.status).toBe('failed');
-    expect(rows[0]?.error).toBe('tool_call_limit_exceeded');
-  });
-
   it('tool whitelist: calling unregistered tool fails with whitelist_violation', async () => {
     const job = await createTestJob(db, seed);
 
@@ -3504,6 +3822,177 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(stored?.systemPrompt).not.toContain('Routine state');
+  });
+
+  // ─── #567 : un « arrête » envoyé sur un canal atteint le run lancé par un
+  // message PRÉCÉDENT de la même conversation.
+  //
+  // Chaque message d'un canal crée un job de tête neuf. Le job de tête d'une
+  // conversation reçoit donc list_conversation_runs / stop_conversation_run, et
+  // eux seuls : un délégué ou un job sans conversation ne les voit pas. Vérifié
+  // sur la liste RÉELLE remise au modèle, puis sur les lignes en base après
+  // l'appel du modèle.
+
+  it('#567: the head job of a conversation stops the delegate an earlier message started @cap:parler-par-canal-externe/moteur', async () => {
+    const conversationId = randomUUID();
+    const insertJob = async (values: Partial<typeof agentJobs.$inferInsert>) => {
+      const [row] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          // WhatsApp : un canal dont la réponse n'exige pas d'outil de livraison,
+          // la relance « livre sur Telegram » n'est pas le sujet ici.
+          channel: 'whatsapp',
+          conversationId,
+          task: 'x',
+          messages: [],
+          chainCount: 0,
+          ...values,
+        })
+        .returning({ id: agentJobs.id });
+      if (!row) throw new Error('failed to insert job');
+      return row.id;
+    };
+    // Message 1 : un run qui a délégué ; le délégué attend une approbation.
+    const earlierHead = await insertJob({
+      status: 'awaiting_delegation',
+      task: 'Fais un portrait',
+    });
+    const delegate = await insertJob({
+      status: 'awaiting_approval',
+      task: 'Generate the portrait',
+      parentJobId: earlierHead,
+    });
+    const [approval] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: delegate,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'python main.py' },
+      })
+      .returning({ id: approvalRequests.id });
+    // Message 2 : « Arrête !!! », un job de tête neuf.
+    const stopJob = await insertJob({ status: 'pending', task: 'Arrête !!!' });
+
+    const toolKeysPerCall: string[][] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [{ toolCallId: 'tc-list', toolName: 'list_conversation_runs', args: {} }],
+        },
+        {
+          toolCalls: [{ toolCallId: 'tc-stop', toolName: 'stop_conversation_run', args: {} }],
+        },
+        {
+          text: 'Arrêté.',
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      undefined,
+      undefined,
+      toolKeysPerCall,
+    );
+
+    const result = await executeJob(stopJob as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+    expect(toolKeysPerCall[0]).toEqual(
+      expect.arrayContaining(['list_conversation_runs', 'stop_conversation_run']),
+    );
+
+    // Ce que le modèle a lu : le run du message précédent, avec son délégué.
+    const [listed] = await db
+      .select({ toolOutput: toolCalls.toolOutput })
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, stopJob), eq(toolCalls.toolName, 'list_conversation_runs')));
+    expect(listed?.toolOutput).toContain(earlierHead);
+    expect(listed?.toolOutput).toContain(delegate);
+    expect(listed?.toolOutput).toContain(approval!.id);
+
+    // Ce qui a changé en base : le run arrêté, son approbation close.
+    const rows = await db
+      .select({ id: agentJobs.id, status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conversationId));
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({
+      [earlierHead]: 'cancelled',
+      [delegate]: 'cancelled',
+      [stopJob]: 'completed',
+    });
+    const [req] = await db
+      .select({ status: approvalRequests.status, resolvedBy: approvalRequests.resolvedBy })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approval!.id));
+    expect(req).toEqual({ status: 'expired', resolvedBy: 'system:job_cancelled' });
+  });
+
+  it('#567: a delegated job and a job outside any conversation do NOT get the conversation-run tools', async () => {
+    const conversationId = randomUUID();
+    const [head] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        conversationId,
+        task: 'head',
+        status: 'completed',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const [delegated] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        conversationId,
+        parentJobId: head!.id,
+        task: 'delegated work',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const [cron] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        task: 'nightly digest',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+
+    for (const jobId of [delegated!.id, cron!.id]) {
+      const toolKeysPerCall: string[][] = [];
+      const llmClient = makeMockLlmClient(
+        [
+          {
+            text: 'Done.',
+            toolCalls: [
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        undefined,
+        undefined,
+        toolKeysPerCall,
+      );
+      const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+      const tools = new Set(toolKeysPerCall[0]);
+      expect(tools.has('list_conversation_runs')).toBe(false);
+      expect(tools.has('stop_conversation_run')).toBe(false);
+    }
   });
 
   // ─── P5 (causality study, 2026-07-22): dashboard_publish is a delivery
@@ -4077,6 +4566,855 @@ describe('executeJob', () => {
 // row in DB. We assert that row exists (approve path) or is absent (reject path)
 // to prove real execution, not just a marker swap.
 
+// ─── #564 : un tour au-delà du budget d'appels est refusé ENTIER ─────────────
+//
+// Incident 2026-09-28 : un tour de 307 appels (154 telegram_send_message, 150
+// assign_researcher) a été exécuté appel par appel jusqu'au 50e. Le budget par
+// tour (invariant #8) se juge sur la taille du tour, connue dès la réponse :
+// au-delà, AUCUN appel ne tourne, sur les deux chemins d'exécution (pré-passe
+// parallèle des lectures, boucle sérielle) et avec une délégation dans le lot.
+
+describe('a turn over the per-turn tool-call budget runs none of its calls (#564) @cap:suivre-execution/moteur', () => {
+  const CODE_PREFIX = 'tool_call_limit_exceeded:anthropic/mock (turn 1, ';
+
+  async function effectsOf(jobId: string, factPrefix: string) {
+    const calls = await db
+      .select({ toolName: toolCalls.toolName })
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, jobId));
+    const memories = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(eq(agentMemory.agentId, seed.agentId));
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const children = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, jobId));
+    return {
+      toolNames: calls.map((c) => c.toolName),
+      facts: memories.map((m) => m.fact).filter((f) => f.startsWith(factPrefix)),
+      job: row!,
+      children,
+    };
+  }
+
+  /** `n` calls alternating a write (save_memory) and a read (query_memory). */
+  function mixedCalls(n: number, factPrefix: string) {
+    return Array.from({ length: n }, (_, i) => ({
+      toolCallId: `${factPrefix}-${i}`,
+      toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
+      args:
+        i % 2 === 0
+          ? { fact: `${factPrefix} fact ${i}`, category: 'context' }
+          : { query: `${factPrefix} fact ${i}` },
+    }));
+  }
+
+  it('51 side-effect and read calls (serial path): nothing written, job failed with the code', async () => {
+    const job = await createTestJob(db, seed);
+    const prefix = `over-serial-${Date.now()}`;
+    const llmClient = makeMockLlmClient([{ toolCalls: mixedCalls(51, prefix) }, { text: 'done' }]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    const code = `${CODE_PREFIX}51 tool calls over the limit of 50 per turn, none executed)`;
+    expect(result).toMatchObject({ status: 'failed', error: code });
+    const after = await effectsOf(job.id, prefix);
+    expect(after.toolNames).toEqual([]);
+    expect(after.facts).toEqual([]);
+    expect(after.job.status).toBe('failed');
+    expect(after.job.error).toBe(code);
+    // The refused reply is not in the transcript: no tool_use left without its
+    // result, the transcript ends on what acted (the task).
+    expect(JSON.stringify(after.job.messages)).not.toContain(`${prefix}-0`);
+  });
+
+  it('51 reads (parallel pre-pass path): none of them runs', async () => {
+    const job = await createTestJob(db, seed);
+    const prefix = `over-reads-${Date.now()}`;
+    const reads = Array.from({ length: 51 }, (_, i) => ({
+      toolCallId: `${prefix}-${i}`,
+      toolName: 'query_memory',
+      args: { query: `${prefix} ${i}` },
+    }));
+    const llmClient = makeMockLlmClient([{ toolCalls: reads }, { text: 'done' }]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('failed');
+    const after = await effectsOf(job.id, prefix);
+    expect(after.toolNames).toEqual([]);
+    expect(after.job.error).toBe(
+      `${CODE_PREFIX}51 tool calls over the limit of 50 per turn, none executed)`,
+    );
+  });
+
+  it('the incident shape, 307 calls with a delegation among them: no child job, nothing written', async () => {
+    const ts = Date.now();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Oversized Orchestrator',
+        slug: `over-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    const childSlug = `over-child-${ts}`;
+    const [child] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Oversized Child',
+        slug: childSlug,
+        personality: 'child',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    await db.insert(agentAssignments).values({
+      orchestratorId: orch!.id,
+      subAgentId: child!.id,
+      entityId: seed.entityId,
+    });
+    const assignTool = `assign_${childSlug.replace(/-/g, '_')}`;
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch!.id,
+        channel: 'api',
+        task: 'research, then report',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    const prefix = `over-assign-${ts}`;
+    const calls = [
+      { toolCallId: `${prefix}-assign`, toolName: assignTool, args: { task: 'research it' } },
+      ...mixedCalls(305, prefix),
+      { toolCallId: `${prefix}-rr`, toolName: 'return_result', args: { status: 'success' } },
+    ];
+    const llmClient = makeMockLlmClient([{ toolCalls: calls }, { text: 'done' }]);
+
+    const result = await executeJob(job!.id as JobId, makeDeps(llmClient), testEnv);
+
+    const code = `${CODE_PREFIX}307 tool calls over the limit of 50 per turn, none executed)`;
+    expect(result).toMatchObject({ status: 'failed', error: code });
+    const after = await effectsOf(job!.id, prefix);
+    expect(after.children).toEqual([]);
+    expect(after.toolNames).toEqual([]);
+    expect(after.facts).toEqual([]);
+    expect(after.job.error).toBe(code);
+  });
+
+  it('a turn of exactly 50 calls is admitted and runs', async () => {
+    const job = await createTestJob(db, seed);
+    const prefix = `at-budget-${Date.now()}`;
+    const llmClient = makeMockLlmClient([{ toolCalls: mixedCalls(50, prefix) }, { text: 'done' }]);
+
+    await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    const after = await effectsOf(job.id, prefix);
+    expect(after.toolNames).toHaveLength(50);
+    expect(after.facts).toHaveLength(25);
+    expect(after.job.error ?? '').not.toContain('tool_call_limit_exceeded');
+  });
+});
+
+// ─── Régression : le tour réel de l'incident du 2026-09-28, rejoué ───────────
+//
+// Pas une forme approchée : les 307 appels du tour 1 du job da91bdbb, dans leur
+// ordre réel, relus dans le journal du runner (ligne llm_call_done), avec son
+// usage réel (65 536 jetons de sortie, finishReason tool-calls). Les entrées des
+// appels ne sont pas dans le journal : elles sont reconstruites, et le fixture le
+// dit. Le fixture est un JSON autonome pour servir aussi au rejeu sur la vraie
+// stack. Job root, canal telegram, faux client LLM, faux transport Telegram.
+
+describe('incident 2026-09-28 replayed: the real 307-call turn runs none of its calls (#564) @cap:suivre-execution/moteur', () => {
+  interface IncidentFixture {
+    job: { channel: string; subAgentSlug: string; task: string };
+    model: { provider: string; model: string; servedProvider: string };
+    response: {
+      text: string;
+      usage: { inputTokens: number; outputTokens: number };
+      costUsd: number;
+      toolCalls: Array<{ toolCallId: string; toolName: string; input: Record<string, unknown> }>;
+    };
+  }
+  let incDb: TestDb;
+  let incSeed: Awaited<ReturnType<typeof seedMinimal>>;
+  let incident: IncidentFixture;
+  let researcherId: string;
+
+  beforeAll(async () => {
+    incident = JSON.parse(
+      await readFile(
+        new URL('./fixtures/incident-2026-09-28-oversized-turn.json', import.meta.url),
+        'utf8',
+      ),
+    ) as IncidentFixture;
+    incDb = (await spinUpTestDb()).db;
+    incSeed = await seedMinimal(incDb);
+    // Alfred's shape: a root orchestrator on Telegram, with a Researcher under it.
+    await incDb
+      .update(agents)
+      .set({
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+        telegramBotToken: 'fake-token',
+      })
+      .where(eq(agents.id, incSeed.agentId));
+    const [researcher] = await incDb
+      .insert(agents)
+      .values({
+        entityId: incSeed.entityId,
+        name: 'Researcher',
+        slug: incident.job.subAgentSlug,
+        personality: 'researcher',
+        llmKeyId: incSeed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    researcherId = researcher!.id;
+    await incDb.insert(agentAssignments).values({
+      orchestratorId: incSeed.agentId,
+      subAgentId: researcherId,
+      entityId: incSeed.entityId,
+    });
+  });
+
+  it('no tool_calls row, nothing sent on Telegram, no child job, the exact code on the job row', async () => {
+    const [job] = await incDb
+      .insert(agentJobs)
+      .values({
+        entityId: incSeed.entityId,
+        agentId: incSeed.agentId,
+        channel: incident.job.channel,
+        chatId: '12345',
+        task: incident.job.task,
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    const { response, model } = incident;
+    expect(response.toolCalls).toHaveLength(307);
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          ...(response.text ? { text: response.text } : {}),
+          toolCalls: response.toolCalls.map((c) => ({
+            toolCallId: c.toolCallId,
+            toolName: c.toolName,
+            args: c.input,
+          })),
+          promptTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          costUsd: response.costUsd,
+          providerName: model.servedProvider,
+        },
+        { text: 'done' },
+      ],
+      undefined,
+      { provider: model.provider, model: model.model },
+    );
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    setActiveLlmClient(llmClient);
+    sendTelegramMessageMock.mockClear();
+
+    const result = await executeJob(
+      job!.id as JobId,
+      {
+        db: incDb as RunnerDeps['db'],
+        llmClient,
+        embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+        registry,
+        authProvider: new LocalTrustProvider(),
+        close: async () => {},
+      },
+      testEnv,
+    );
+
+    const code =
+      'tool_call_limit_exceeded:openrouter/xiaomi/mimo-v2.6-pro ' +
+      '(turn 1, 307 tool calls over the limit of 50 per turn, none executed)';
+    expect(result).toMatchObject({ status: 'failed', error: code });
+
+    // No call ran: not one tool_calls row.
+    const rows = await incDb
+      .select({ toolName: toolCalls.toolName })
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, job!.id));
+    expect(rows).toEqual([]);
+    // Nothing reached the owner: the Telegram transport sent nothing, no delivery row.
+    expect(sendTelegramMessageMock.mock.calls.map((c) => (c[0] as { text: string }).text)).toEqual(
+      [],
+    );
+    expect(
+      await incDb
+        .select({ id: jobDeliveries.id })
+        .from(jobDeliveries)
+        .where(eq(jobDeliveries.jobId, job!.id)),
+    ).toEqual([]);
+    // No delegation: no child job, and the Researcher has no job at all.
+    expect(
+      await incDb
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(eq(agentJobs.parentJobId, job!.id)),
+    ).toEqual([]);
+    expect(
+      await incDb
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(eq(agentJobs.agentId, researcherId)),
+    ).toEqual([]);
+
+    // What the job row carries: the code, the turn, and the billed call.
+    const [row] = await incDb
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        turn: agentJobs.turn,
+        inputTokens: agentJobs.inputTokens,
+        outputTokens: agentJobs.outputTokens,
+        totalCostUsd: agentJobs.totalCostUsd,
+        servedProvider: agentJobs.servedProvider,
+        messages: agentJobs.messages,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    expect(row).toMatchObject({
+      status: 'failed',
+      error: code,
+      turn: 1,
+      inputTokens: 40_109,
+      outputTokens: 65_536,
+      servedProvider: 'DeepInfra',
+    });
+    expect(row!.totalCostUsd).toBeCloseTo(0.0744637, 6);
+    // The refused turn is not in the transcript: no call id of it survives.
+    expect(JSON.stringify(row!.messages)).not.toContain('call_000');
+    expect(JSON.stringify(row!.messages)).not.toContain('Je relance la recherche');
+  });
+});
+
+// ─── #560 : le budget d'outils indisponibles compte des TOURS ────────────────
+//
+// Job 806a2218 (Researcher) : un seul tour portait 4 × telegram_send_message
+// (indisponible) + return_result. Le budget de 3 se décomptait par APPEL : le
+// 4e appel du même tour tuait le job avant que le modèle ait vu une seule
+// erreur, et le return_result du lot était perdu.
+
+describe('the unavailable-tool budget counts turns, not calls (#560) @cap:assigner-outils/moteur', () => {
+  type Msg = { role: string; content: unknown };
+  type Part = { type?: string; toolCallId?: string; output?: unknown };
+
+  async function rowOf(jobId: string) {
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        turn: agentJobs.turn,
+        messages: agentJobs.messages,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row!;
+  }
+
+  /** The tool-call ids whose tool-result says the tool is not available. */
+  function unavailableResults(messages: unknown): string[] {
+    return ((messages ?? []) as Msg[])
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Part[])
+      .filter(
+        (p) =>
+          p.type === 'tool-result' &&
+          JSON.stringify(p.output ?? '').includes('is not available to you'),
+      )
+      .map((p) => p.toolCallId ?? '')
+      .sort();
+  }
+
+  const bad = (id: string, name = 'gmail_send') => ({
+    toolCallId: id,
+    toolName: name,
+    args: { to: 'x@y.z' },
+  });
+  const finish = {
+    text: 'Done.',
+    toolCalls: [{ toolCallId: 'rr', toolName: 'return_result', args: { status: 'success' } }],
+  };
+
+  it('four parallel calls of one unavailable tool: each gets its error, the model recovers', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [bad('b1'), bad('b2'), bad('b3'), bad('b4')] },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const row = await rowOf(job.id);
+    expect(unavailableResults(row.messages)).toEqual(['b1', 'b2', 'b3', 'b4']);
+  });
+
+  it('several unavailable tools in one turn spend one chance, not one per call', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          bad('m1'),
+          bad('m2', 'definitely_not_a_tool'),
+          bad('m3'),
+          bad('m4', 'telegram_send_message'),
+        ],
+      },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect(unavailableResults((await rowOf(job.id)).messages)).toEqual(['m1', 'm2', 'm3', 'm4']);
+  });
+
+  it('a valid call in the same batch runs, and the batch still spends one chance', async () => {
+    const job = await createTestJob(db, seed);
+    const fact = `batch-560-${Date.now()}`;
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'ok', toolName: 'save_memory', args: { fact, category: 'context' } },
+          bad('v1'),
+          bad('v2'),
+          bad('v3'),
+          bad('v4'),
+        ],
+      },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect(unavailableResults((await rowOf(job.id)).messages)).toEqual(['v1', 'v2', 'v3', 'v4']);
+    const saved = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, fact));
+    expect(saved).toHaveLength(1);
+  });
+
+  it('the incident shape: unavailable sends next to return_result, the result is delivered', async () => {
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    const job = await createTestJob(db, seed);
+    const send = (id: string) => ({
+      toolCallId: id,
+      toolName: 'telegram_send_message',
+      args: { text: 'Recherche terminée' },
+    });
+    const llmClient = makeMockLlmClient([
+      {
+        text: 'The research is written.',
+        toolCalls: [
+          send('s1'),
+          send('s2'),
+          send('s3'),
+          send('s4'),
+          { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect((await rowOf(job.id)).error).toBeNull();
+  });
+
+  it('a turn that repeats the mistake after the budget fails the job, and none of its calls runs', async () => {
+    const job = await createTestJob(db, seed);
+    const fact = `after-budget-560-${Date.now()}`;
+    const batch = (t: number) => ({ toolCalls: [bad(`t${t}-a`), bad(`t${t}-b`)] });
+    const llmClient = makeMockLlmClient([
+      batch(1),
+      batch(2),
+      batch(3),
+      {
+        toolCalls: [
+          { toolCallId: 't4-ok', toolName: 'save_memory', args: { fact, category: 'context' } },
+          bad('t4-a'),
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result).toMatchObject({ status: 'failed', error: 'whitelist_violation:gmail_send' });
+    const row = await rowOf(job.id);
+    expect(row.turn).toBe(4);
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+    // Three turns of mistakes, each call of them answered with its error.
+    expect(unavailableResults(row.messages)).toEqual([
+      't1-a',
+      't1-b',
+      't2-a',
+      't2-b',
+      't3-a',
+      't3-b',
+    ]);
+    // The fourth turn was refused whole: its valid call never ran.
+    const saved = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, fact));
+    expect(saved).toEqual([]);
+  });
+
+  // Revue Codex de #573 : le budget vivait en mémoire du processus, remis à
+  // zéro à chaque exécution. Une suspension (approbation, délégation) rendait
+  // au modèle ses trois chances : il pouvait répéter l'erreur sans fin. Le
+  // budget est celui du JOB, relu dans sa transcription à la reprise.
+
+  /** Une réponse que le SDK refuse en entier : l'outil appelé n'est pas dans la liste. */
+  const sdkRejects = (name = 'gmail_send') => ({
+    beforeRespond: async () => {
+      throw new Error(
+        `Model tried to call unavailable tool '${name}'. Available tools: save_memory.`,
+      );
+    },
+  });
+
+  it('the budget survives a suspension: after resume, the next unavailable turn fails and its valid call never runs', async () => {
+    await db.insert(approvalRules).values({
+      entityId: seed.entityId,
+      agentId: null,
+      toolName: 'save_memory',
+      action: 'require_approval',
+    });
+    try {
+      const job = await createTestJob(db, seed);
+      const gated = `gated-560-${Date.now()}`;
+      const after = `after-resume-560-${Date.now()}`;
+      const llmClient = makeMockLlmClient([
+        // Chance 1: the SDK refuses the whole turn.
+        sdkRejects(),
+        // Chances 2 and 3: unavailable calls answered by their errors.
+        { toolCalls: [bad('r2-a'), bad('r2-b')] },
+        { toolCalls: [bad('r3-a')] },
+        // A gated call: the job suspends for approval.
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r4-gated',
+              toolName: 'save_memory',
+              args: { fact: gated, category: 'context', purpose: 'Garder ce fait.' },
+            },
+          ],
+        },
+        // After resume: the mistake again, next to a valid call.
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r5-ok',
+              toolName: 'save_memory',
+              args: { fact: after, category: 'context' },
+            },
+            bad('r5-a'),
+          ],
+        },
+        finish,
+      ]);
+
+      const first = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(first.status).toBe('awaiting_approval');
+
+      // The person approves; the rule goes, so a save_memory that ran after
+      // the resume would write its row un-gated.
+      const [pending] = await db
+        .select()
+        .from(approvalRequests)
+        .where(and(eq(approvalRequests.jobId, job.id), eq(approvalRequests.status, 'pending')));
+      await db
+        .update(approvalRequests)
+        .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
+        .where(eq(approvalRequests.id, pending!.id));
+      await db.delete(approvalRules).where(eq(approvalRules.entityId, seed.entityId));
+      await db
+        .update(agentJobs)
+        .set({ status: 'pending', updatedAt: new Date() })
+        .where(eq(agentJobs.id, job.id));
+
+      const resumed = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+      expect(resumed).toMatchObject({ status: 'failed', error: 'whitelist_violation:gmail_send' });
+      const facts = async (fact: string) =>
+        db.select({ fact: agentMemory.fact }).from(agentMemory).where(eq(agentMemory.fact, fact));
+      // The approved call ran on resume: the resume itself worked.
+      expect(await facts(gated)).toHaveLength(1);
+      // The turn after the budget was refused whole: its valid call never ran.
+      expect(await facts(after)).toEqual([]);
+      const row = await rowOf(job.id);
+      expect(row.status).toBe('failed');
+      expect(unavailableResults(row.messages)).toEqual(['r2-a', 'r2-b', 'r3-a']);
+    } finally {
+      await db.delete(approvalRules).where(eq(approvalRules.entityId, seed.entityId));
+    }
+  });
+
+  it('SDK rejections and unavailable calls spend the same budget: two then one, the fourth fails', async () => {
+    const job = await createTestJob(db, seed);
+    const fact = `cross-560-${Date.now()}`;
+    const llmClient = makeMockLlmClient([
+      sdkRejects(),
+      sdkRejects('definitely_not_a_tool'),
+      { toolCalls: [bad('x3-a'), bad('x3-b')] },
+      {
+        toolCalls: [
+          { toolCallId: 'x4-ok', toolName: 'save_memory', args: { fact, category: 'context' } },
+          bad('x4-a'),
+        ],
+      },
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result).toMatchObject({ status: 'failed', error: 'whitelist_violation:gmail_send' });
+    const saved = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, fact));
+    expect(saved).toEqual([]);
+  });
+
+  it('unavailable calls then an SDK rejection: the rejection past the budget fails the job', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [bad('y1-a')] },
+      { toolCalls: [bad('y2-a'), bad('y2-b', 'telegram_send_message')] },
+      sdkRejects(),
+      sdkRejects('definitely_not_a_tool'),
+      finish,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: 'whitelist_violation:definitely_not_a_tool',
+    });
+  });
+});
+
+// ─── #561 : chaque tool_use d'un tour a son tool_result, quelle que soit la sortie ─
+//
+// Job b7ecc59a (Alfred, root) : le tour 1 portait assign_researcher + 4 envois
+// + return_result. La délégation a suspendu le tour ; le return_result, retiré
+// de la boucle pour être traité « après », n'a jamais eu de résultat, et le
+// parent est mort à la reprise sur `unmatched_tool_use`.
+
+describe('every tool_use of a turn leaves with its tool_result, whatever the exit (#561) @cap:organiser-equipe/moteur', () => {
+  type Part = { type?: string; toolCallId?: string; output?: unknown };
+
+  async function transcriptOf(jobId: string) {
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row!;
+  }
+
+  function resultFor(messages: unknown, toolCallId: string): string | undefined {
+    const part = ((messages ?? []) as Array<{ role: string; content: unknown }>)
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Part[])
+      .find((p) => p.type === 'tool-result' && p.toolCallId === toolCallId);
+    return part ? JSON.stringify(part.output) : undefined;
+  }
+
+  async function orchestratorWithChild(tag: string) {
+    const ts = `${tag}-${Date.now()}`;
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: `Orch ${ts}`,
+        slug: `orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    const childSlug = `child-${ts}`;
+    const [child] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: `Child ${ts}`,
+        slug: childSlug,
+        personality: 'child',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    await db.insert(agentAssignments).values({
+      orchestratorId: orch!.id,
+      subAgentId: child!.id,
+      entityId: seed.entityId,
+    });
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch!.id,
+        channel: 'api',
+        task: 'research, then report',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    return {
+      jobId: job!.id,
+      agentId: orch!.id,
+      assignTool: `assign_${childSlug.replace(/-/g, '_')}`,
+    };
+  }
+
+  const rr = (id: string) => ({
+    toolCallId: id,
+    toolName: 'return_result',
+    args: { status: 'success' },
+  });
+  const done = { text: 'Report delivered.', toolCalls: [rr('rr-final')] };
+
+  it('delegation next to return_result, the child completes: the parent resumes and completes', async () => {
+    const { jobId, assignTool } = await orchestratorWithChild('del-ok');
+    const llmClient = makeMockLlmClient([
+      // parent, turn 1: the incident shape
+      {
+        toolCalls: [
+          { toolCallId: 'as-1', toolName: assignTool, args: { task: 'research it' } },
+          rr('rr-early'),
+        ],
+      },
+      // child
+      { text: 'Findings: three sources.', toolCalls: [rr('rr-child')] },
+      // parent, turn 2 after resume
+      done,
+    ]);
+
+    const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const row = await transcriptOf(jobId);
+    expect(row.error).toBeNull();
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+    expect(resultFor(row.messages, 'rr-early')).toContain(
+      'not executed: this turn was suspended on a delegation',
+    );
+  });
+
+  it('delegation next to return_result, the child fails: the parent resumes on the failure and completes', async () => {
+    const { jobId, assignTool } = await orchestratorWithChild('del-ko');
+    const bad = (i: number) => ({
+      toolCalls: [{ toolCallId: `cb-${i}`, toolName: 'gmail_send', args: { to: 'x@y.z' } }],
+    });
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'as-2', toolName: assignTool, args: { task: 'research it' } },
+          rr('rr-early-2'),
+        ],
+      },
+      // child: an unavailable tool on every turn, until whitelist_violation
+      bad(1),
+      bad(2),
+      bad(3),
+      bad(4),
+      done,
+    ]);
+
+    const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const row = await transcriptOf(jobId);
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+    expect(resultFor(row.messages, 'rr-early-2')).toContain('not executed');
+    expect(resultFor(row.messages, 'as-2')).toContain('whitelist_violation');
+  });
+
+  it('two assign_ of an agent the job does not have: the dropped one is answered too, the job goes on', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'na-1', toolName: 'assign_nobody', args: { task: 'a' } },
+          { toolCallId: 'na-2', toolName: 'assign_nobody', args: { task: 'b' } },
+        ],
+      },
+      done,
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const row = await transcriptOf(job.id);
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+    expect(resultFor(row.messages, 'na-1')).toContain('is not available to you');
+    expect(resultFor(row.messages, 'na-2')).toContain('Deferred');
+  });
+
+  it('a question next to return_result: the suspended transcript is valid, return_result answered', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'q-1',
+            toolName: 'ask_user',
+            args: { question: 'Which folder?', options: ['a', 'b'] },
+          },
+          rr('rr-q'),
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('awaiting_approval');
+    const row = await transcriptOf(job.id);
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+    expect(resultFor(row.messages, 'q-1')).toContain('[AWAITING_APPROVAL]');
+    expect(resultFor(row.messages, 'rr-q')).toContain(
+      'not executed: an action of this turn is awaiting user approval',
+    );
+  });
+});
+
 describe('executeJob — approval gate (Bugs A, B, C)', () => {
   // Fresh DB per suite so approval rules and memory rows don't bleed across tests.
   let approvalDb: TestDb;
@@ -4125,6 +5463,59 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
     if (!job) throw new Error('Failed to create approval test job');
     return job;
   }
+
+  // #561 : la sortie « approbation » d'un tour passe par la même règle que les
+  // autres : le return_result émis à côté de l'action en attente a son résultat.
+  it('an approval-gated call next to return_result: the suspended transcript is valid (#561) @cap:approuver-une-action/moteur', async () => {
+    const [rule] = await approvalDb
+      .insert(approvalRules)
+      .values({
+        entityId: approvalSeed.entityId,
+        agentId: approvalSeed.agentId,
+        toolName: 'save_memory',
+        action: 'require_approval',
+      })
+      .returning();
+    try {
+      const job = await createApprovalJob();
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'g-561',
+              toolName: 'save_memory',
+              args: {
+                fact: 'gated fact 561',
+                category: 'context',
+                purpose: 'Garder ce fait pour la suite du travail.',
+              },
+            },
+            { toolCallId: 'rr-561', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+
+      const result = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
+
+      expect(result.status).toBe('awaiting_approval');
+      const [row] = await approvalDb
+        .select({ messages: agentJobs.messages })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+      const messages = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+      expect(() => validateMessageStructure(messages as never)).not.toThrow();
+      const results = messages
+        .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+        .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>);
+      const out = (id: string) => JSON.stringify(results.find((r) => r.toolCallId === id)?.output);
+      expect(out('g-561')).toContain('[AWAITING_APPROVAL]');
+      expect(out('rr-561')).toContain(
+        'not executed: an action of this turn is awaiting user approval',
+      );
+    } finally {
+      await approvalDb.delete(approvalRules).where(eq(approvalRules.id, rule!.id));
+    }
+  });
 
   // Le cumul de `total_duration_ms` ne vaut que si le segment est PERSISTÉ au
   // moment où le job se suspend. Sinon la colonne reste à zéro pendant toute
@@ -4777,7 +6168,8 @@ describe('reliability guards', () => {
     });
 
     // Real DB row: raw input persisted as 1000, but the budgeted EFFECTIVE input
-    // is only the 5 non-cached tokens.
+    // is only the 5 non-cached tokens. The re-read of the prose turn (#600)
+    // adds its own 10 uncached input tokens to both.
     const [row] = await db
       .select({
         status: agentJobs.status,
@@ -4789,8 +6181,8 @@ describe('reliability guards', () => {
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('completed');
     expect(row?.error).toBeNull();
-    expect(row?.inputTokens).toBe(1000);
-    expect(row?.effectiveInputTokens).toBe(5);
+    expect(row?.inputTokens).toBe(1010);
+    expect(row?.effectiveInputTokens).toBe(15);
   });
 
   it('Guard 1a still trips on FRESH tokens: same raw input, zero cache ⇒ token_budget_exceeded', async () => {
@@ -5114,6 +6506,12 @@ describe('reliability guards', () => {
     const result = await executeJob(job.id as JobId, customDeps, testEnv);
     expect(result.status).toBe('failed');
     if (result.status === 'failed') expect(result.error).toBe('unresolved_tool_failure');
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    const [persisted] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(() => validateMessageStructure(persisted!.messages as never)).not.toThrow();
   });
 
   it('Guard 3b: an honest return_result(status="blocked") after a failure finalizes as agent_blocked', async () => {
@@ -6346,12 +7744,14 @@ describe('Guard 1f: non-progress detector', () => {
     }
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
     expect(row?.error).toContain('non_progress_detected');
     expect(row?.error).toContain('file_list');
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    expect(() => validateMessageStructure(row!.messages as never)).not.toThrow();
   });
 
   it('S1 regression: alternating tools for 30 calls never nudges or fails', async () => {
@@ -6423,11 +7823,21 @@ describe('Guard 1f: non-progress detector', () => {
     }
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
     expect(row?.error).toContain('non_progress_detected');
+    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
+    expect(() => validateMessageStructure(row!.messages as never)).not.toThrow();
+    // Et le 10e appel, qui a TOURNÉ (et échoué), garde sa vraie erreur — pas
+    // « not executed ».
+    const dixieme = (row!.messages as Array<{ role: string; content: unknown }>)
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>)
+      .find((p) => p.toolCallId === 'sm-err2-9');
+    expect(JSON.stringify(dixieme?.output)).not.toContain('not executed');
+    expect(JSON.stringify(dixieme?.output)).toContain('error');
   });
 
   it('S2: a successful call after 4 errors resets the streak — no nudge at the 5th call overall', async () => {
@@ -6862,8 +8272,10 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
 // updated_at is more than 5 minutes stale — legitimate for a genuinely dead
 // job, fatal for one that's actively blocked on a single SLOW tool call (image
 // gen, MCP call, external API) with no other write touching updated_at in the
-// meantime. The LLM call already had a heartbeat (Leg 5); the serial tool-
-// execution loop did not. This test swaps `web_search`'s execute for one held
+// meantime. Since #565 the job's own heartbeat (job/heartbeat.ts), held from
+// the claim to the end of the run, covers it; job-heartbeat.test.ts proves the
+// general case (chains of short calls, preparation, delegation, CLI). This
+// test swaps `web_search`'s execute for one held
 // open by the test (via a manually-resolved promise) — same name, riskLevel,
 // and inputSchema as the real builtin (already always-on + auto-approve), so
 // no whitelist wiring is needed, only the timing is test-controlled. Fake

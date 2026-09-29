@@ -104,6 +104,23 @@ export function parseNewConversationCommand(text: string): { opensNew: boolean; 
  * un handler entrant.
  */
 export async function resolveConversation(k: ThreadKey): Promise<ConversationRef> {
+  const existing = await findCurrentConversation(k);
+  if (existing) return existing;
+
+  return openNewConversation(k);
+}
+
+/**
+ * La conversation en cours sur ce fil, SANS en créer : `null` quand le fil n'en
+ * a encore aucune. Même verrou et même ordre que `resolveConversation`, qui la
+ * lit par ici : un seul endroit dit laquelle est « en cours ».
+ *
+ * Pour un geste qui porte SUR la conversation sans en être un tour (la
+ * commande `/stop` d'un canal, #602) : il ne doit pas faire naître un fil vide.
+ * Le verrou, tenu jusqu'au COMMIT, range aussi ce geste dans l'ordre des
+ * messages du fil : un message arrivé pendant l'arrêt attend qu'il soit fini.
+ */
+export async function findCurrentConversation(k: ThreadKey): Promise<ConversationRef | null> {
   const threadLockKey = `${k.entityId}:${k.agentId}:${k.channel}:${k.chatId}`;
   await k.db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${threadLockKey}))`);
 
@@ -120,9 +137,7 @@ export async function resolveConversation(k: ThreadKey): Promise<ConversationRef
     )
     .orderBy(desc(conversations.createdAt), desc(conversations.id))
     .limit(1);
-  if (existing) return { id: existing.id, currentProjectId: existing.currentProjectId };
-
-  return openNewConversation(k);
+  return existing ? { id: existing.id, currentProjectId: existing.currentProjectId } : null;
 }
 
 /**

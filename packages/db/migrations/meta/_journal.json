@@ -932,6 +932,41 @@
       "when": 1786002500000,
       "tag": "0133_job_restart_resume",
       "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1786002600000,
+      "tag": "0134_job_live_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1786002700000,
+      "tag": "0135_job_claim_generation",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1786002800000,
+      "tag": "0136_system_prompt_tools",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1786002900000,
+      "tag": "0137_runner_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1786003000000,
+      "tag": "0138_job_loaded_tools",
+      "breakpoints": true
     }
   ]
 }

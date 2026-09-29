@@ -30,6 +30,13 @@ export type TextFormat = 'plain' | 'markdown' | 'html';
 
 export interface SendTextOpts {
   format?: TextFormat;
+  /**
+   * Reprendre un envoi découpé au morceau `fromChunk` (compté depuis 0) : les
+   * précédents sont déjà partis. C'est le `partialProgress.sentChunks` de la
+   * `DeliveryError` que l'essai précédent a levée (#615). Le découpage d'un
+   * même texte est déterministe, donc les morceaux sont les mêmes.
+   */
+  fromChunk?: number;
 }
 
 /** A file to deliver as chat media. `kind` picks the platform's native
@@ -115,9 +122,43 @@ export type DiscoveredConversation = {
   groupName?: string;
 };
 
+/**
+ * Ce que devient un texte envoyé par `sendText` SANS `format` — le seul fait
+ * sur le canal dont un agent a besoin pour écrire sa réponse (#613).
+ *
+ * Le prompt d'un job sur canal portait 6 300 caractères de consignes écrites
+ * à la main pour Telegram : échapper en MarkdownV2 alors que l'outil envoie
+ * sans `parse_mode`, poser titres et tableaux sur un canal qui les affiche
+ * tels quels, découper soi-même à 4 096 alors que `sendText` découpe déjà.
+ * Trois consignes fausses, parce qu'écrites loin du code qui envoie. Ici,
+ * l'adaptateur DÉCLARE ce qu'il fait, et les tests de chaque adaptateur
+ * prouvent que la déclaration est ce que `sendText` fait.
+ */
+export interface TextDelivery {
+  /**
+   * Les marques que la plateforme REND dans un texte envoyé sans `format`,
+   * écrites comme l'expéditeur les tape (`*bold*` pour Slack, `**bold**` pour
+   * Discord). Tout le reste s'affiche tel quel. Vide : rien n'est rendu.
+   *
+   * Une liste, pas « plain » ou « markdown » : Slack et WhatsApp ne rendent
+   * pas le markdown, mais leur propre balisage léger — les déclarer « plain »
+   * faisait dire au prompt que `*gras*` s'afficherait avec ses astérisques,
+   * alors qu'il s'affiche en gras (revue de #615). Le modèle écrit ce que le
+   * canal rend, l'utilisateur lit un texte mis en forme.
+   */
+  renders: readonly string[];
+  /**
+   * Le plus long message que l'adaptateur envoie d'un bloc. Au-delà,
+   * `sendText` découpe sur les fins de ligne et envoie les morceaux dans
+   * l'ordre : l'appelant ne découpe jamais.
+   */
+  maxMessageChars: number;
+}
+
 export interface ChannelAdapter {
   readonly channel: ChannelKind;
   readonly capabilities: ChannelCapabilities;
+  readonly text: TextDelivery;
 
   sendText(
     creds: ChannelCredentials,

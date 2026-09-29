@@ -94,6 +94,7 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
     'omit to search all workspaces. Skips .git/node_modules/dist by default.',
   inputSchema: FileSearchInputSchema,
   riskLevel: 'read',
+  loading: 'eager',
   card: 'search',
   present: ({ input, output }) =>
     output.ok

@@ -435,3 +435,29 @@ describe('runMemoryCuration — candidate rendering', () => {
     expect(system).toContain('RE-SCORE');
   });
 });
+
+// ── Per-turn tool-call budget (#564) ────────────────────────────────────────────
+describe('runMemoryCuration — a turn over the per-turn tool-call budget runs none of its calls (#564) @cap:suivre-execution/moteur', () => {
+  it('51 archive_memory calls in one turn: the pass is refused, the fact stays live', async () => {
+    await db.delete(agentMemory);
+    const factId = await insertFact({ fact: 'a fact to keep', source: 'agent', importance: 1 });
+
+    const { client } = makeScriptedClient([
+      {
+        toolCalls: Array.from({ length: 51 }, (_, i) => ({
+          toolCallId: `ob${i}`,
+          toolName: 'archive_memory',
+          args: { memoryId: factId },
+        })),
+      },
+      {},
+    ]);
+    setActiveLlmClient(client);
+
+    await expect(runMemoryCuration(db, seed.entityId, 3)).rejects.toThrow(
+      'tool_call_limit_exceeded: 51 > 50',
+    );
+    const row = await loadFact(factId);
+    expect(row?.archived).toBe(false);
+  });
+});
