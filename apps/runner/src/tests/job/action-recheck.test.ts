@@ -70,7 +70,12 @@ const isRecheck = (body: Body): boolean => {
 function stubProvider(opts: {
   turnText: string;
   recheck:
-    | { toolCall: { name: string; args: Record<string, unknown> }; cut?: boolean }
+    | {
+        toolCall: { name: string; args: Record<string, unknown> };
+        cut?: boolean;
+        /** How many copies of the call the re-read emits (1 by default). */
+        count?: number;
+      }
     | { text: string };
   /** Joué pendant la relance, avant qu'elle ne réponde. */
   duringRecheck?: () => Promise<void>;
@@ -92,21 +97,20 @@ function stubProvider(opts: {
       if (firstRecheck && opts.duringRecheck) await opts.duringRecheck();
       const prompt = isRecheck(body) ? 10 : (opts.turnPromptTokens ?? 10);
       const usage = { prompt_tokens: prompt, completion_tokens: 2, total_tokens: prompt + 2 };
+      const scripted = 'toolCall' in opts.recheck ? opts.recheck : null;
       const message =
-        firstRecheck && 'toolCall' in opts.recheck
+        firstRecheck && scripted !== null
           ? {
               role: 'assistant',
               content: null,
-              tool_calls: [
-                {
-                  id: `call-recheck-${String(bodies.length)}`,
-                  type: 'function',
-                  function: {
-                    name: opts.recheck.toolCall.name,
-                    arguments: JSON.stringify(opts.recheck.toolCall.args),
-                  },
+              tool_calls: Array.from({ length: scripted.count ?? 1 }, (_v, i) => ({
+                id: `call-recheck-${String(bodies.length)}-${String(i)}`,
+                type: 'function',
+                function: {
+                  name: scripted.toolCall.name,
+                  arguments: JSON.stringify(scripted.toolCall.args),
                 },
-              ],
+              })),
             }
           : {
               role: 'assistant',
@@ -389,5 +393,40 @@ describe('a prose turn that announced an action is re-read @cap:organiser-equipe
       .where(eq(agentJobs.id, jobId));
     expect(row?.result).toBe("I'll delegate the tokenizer to Dev-C.");
     expect(row?.toolsUsed ?? '').not.toContain('assign_');
+  });
+
+  // Decision after review pass 2 of PR #604: the re-read is only a safety net.
+  // A degenerate one (over the per-turn budget) is ABANDONED like a cut one:
+  // none of its calls runs, and the turn's prose stands in the result AND the
+  // transcript. The turn itself keeps #564 (a 51-call turn fails whole).
+  it('a re-read with 51 calls is abandoned: no tool runs, the job completes with the prose', async () => {
+    const { orchestratorId, assignTool } = await seedTeam();
+    const jobId = await createJob(orchestratorId, 'Summarise the changelog.');
+    const bodies = stubProvider({
+      turnText: 'The changelog lists three fixes.',
+      recheck: { toolCall: { name: assignTool, args: { task: 'x' } }, count: 51 },
+    });
+
+    const outcome = await executeJob(jobId as JobId, makeDeps());
+
+    expect(bodies.filter(isRecheck)).toHaveLength(1);
+    expect(outcome.status).toBe('completed');
+    const [row] = await db
+      .select({
+        result: agentJobs.result,
+        messages: agentJobs.messages,
+        toolsUsed: agentJobs.toolsUsed,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.result).toBe('The changelog lists three fixes.');
+    expect(JSON.stringify(row?.messages)).toContain('The changelog lists three fixes.');
+    expect(JSON.stringify(row?.messages)).not.toContain('call-recheck-');
+    expect(row?.toolsUsed ?? '').not.toContain(assignTool);
+    const children = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, jobId));
+    expect(children).toHaveLength(0);
   });
 });

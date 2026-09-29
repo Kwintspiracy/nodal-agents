@@ -141,6 +141,7 @@ import {
   retryBlockedMessage,
   remainingDelegationHops,
   delegationDepthExceededMessage,
+  assertTurnToolCallBudget,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -4798,6 +4799,11 @@ async function runJobTracked(
             abortSignal: veilleRelecture.signal,
           });
           compterAppel(relecture);
+          // Une relance dégénérée (plus d'appels que la règle du tour n'en
+          // admet) est ABANDONNÉE : aucun de ses appels ne s'exécute, et la
+          // prose du tour reste la réponse. Le tour lui-même garde la règle
+          // #564 (`counters.admitTurn` plus bas) : seul le filet change.
+          assertTurnToolCallBudget((relecture.toolCalls ?? []).length);
           trace('action_recheck', {
             turn,
             toolCalls: (relecture.toolCalls ?? []).map((tc) => tc.toolName),

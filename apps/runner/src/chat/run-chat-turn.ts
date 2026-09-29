@@ -742,14 +742,11 @@ export async function runChatTurn(opts: {
       runTask = runTaskOf(recheck);
     } catch (err) {
       if (abortSignal?.aborted) return await keepStoppedReply();
-      // Plus d'appels que la règle du tour n'en admet (#564) : la relance est
-      // un tour pour ce budget, et un tour dégénéré est refusé.
-      if (err instanceof ToolCallLimitExceededError) {
-        return failedOnRefusedTurn(err, 'escalation recheck', agentRow.slug);
-      }
-      // Toute autre panne, plafond de sortie compris (PR #604) : la relance est
-      // abandonnée, sa sortie tronquée n'est jamais exécutée, et la réponse
-      // (déjà partie en flux, peut-être) reste la réponse du tour.
+      // Toute panne, plafond de sortie et relance dégénérée (plus d'appels que
+      // la règle du tour n'en admet, levée par `runTaskOf`) compris (PR #604) :
+      // la relance n'est qu'un filet. Elle est abandonnée, aucun de ses appels
+      // n'est exécuté, et la réponse (déjà partie en flux, peut-être) reste la
+      // réponse du tour. La réponse elle-même garde la règle #564.
       console.warn(
         `[run-chat-turn] escalation recheck failed (${agentRow.slug}):`,
         (err as Error).message,
