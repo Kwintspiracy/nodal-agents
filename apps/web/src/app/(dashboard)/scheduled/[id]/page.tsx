@@ -8,6 +8,8 @@
 // Aucun écran ne l'écrit plus : l'adresse d'un run vient de `lib/run-page.ts`.
 // Elle reste pour les liens déjà envoyés et les favoris, et elle REDIRIGE vers
 // `/runs/<id>`, qui range le run par la tête de sa chaîne. Elle ne dessine rien.
+// Quand cette chaîne ne se lit pas, `/runs/<id>` le dit et garde un lien vers
+// la page du run : un run que `/jobs/<id>` ouvrait reste accessible par ici.
 
 import { redirect } from 'next/navigation';
 import { openRunHref } from '@/lib/run-page.ts';

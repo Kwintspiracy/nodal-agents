@@ -34,3 +34,16 @@ describe('runSectionOf — un run appartient à la section de ce qui l’a lanc�
     expect(openRunHref('r1')).toBe('/runs/r1');
   });
 });
+
+// Revue Nodal de #621, passe 2 : `/runs` restait dans la table de Scheduled.
+// Cette porte ne décide rien, elle redirige ; mais quand la chaîne du run ne se
+// lit pas, elle rend sa PAGE D'ERREUR, le rail est dessiné, et il s'allumait sur
+// Scheduled pour un run de Work : le symptôme de #501 sur sa propre porte. La
+// page d'erreur vit à la MÊME adresse que la redirection, et le rail ne lit que
+// l'adresse : l'assertion vaut pour les deux.
+describe('la porte /runs/<id> n’allume jamais Scheduled (#501) @cap:suivre-execution/ecran', () => {
+  it('ni la redirection, ni sa page d’erreur : le rail reste sur son repli, Work', () => {
+    expect(destinationForPath(openRunHref('r1')).key).not.toBe('run');
+    expect(destinationForPath(openRunHref('r1')).key).toBe('work');
+  });
+});
