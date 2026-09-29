@@ -280,6 +280,7 @@ import { computeNextRun } from './cron.ts';
 import { ROLLUP_MAX_DEPTH, rollupRoot, pipelineMembers } from './coding-rollup.ts';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { APPROVALS_READ_LIMIT } from './approvals-window.ts';
+import type { PartialTotal } from './partial-total.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -10051,8 +10052,14 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
 export type EntityStats = {
   totalJobs: number;
   statusCounts: Record<string, number>;
-  totalInputTokens: number;
-  totalOutputTokens: number;
+  /**
+   * Des totaux PARTIELS (revue Codex de #571) : un job dont un appel n'a pas
+   * rapporté son compte porte NULL, et il est compté à part, jamais comme 0.
+   */
+  totalInputTokens: PartialTotal;
+  totalOutputTokens: PartialTotal;
+  /** Jetons par job, sur les seuls jobs dont l'entrée ET la sortie sont connues. */
+  tokensPerJob: number | null;
   totalDurationMs: number;
   avgDurationMs: number | null;
   totalToolCalls: number;
@@ -10062,8 +10069,8 @@ export type EntityStats = {
     agentName: string;
     agentSlug: string;
     jobCount: number;
-    inputTokens: number;
-    outputTokens: number;
+    inputTokens: PartialTotal;
+    outputTokens: PartialTotal;
   }>;
 };
 
@@ -10078,7 +10085,12 @@ export async function getEntityStatsAction(): Promise<ActionResult<EntityStats>>
         status: agentJobs.status,
         count: sql<string>`count(*)`,
         inputTokens: sql<string>`coalesce(sum(${agentJobs.inputTokens}), 0)`,
+        inputUnreported: sql<string>`count(*) filter (where ${agentJobs.inputTokens} is null)`,
         outputTokens: sql<string>`coalesce(sum(${agentJobs.outputTokens}), 0)`,
+        outputUnreported: sql<string>`count(*) filter (where ${agentJobs.outputTokens} is null)`,
+        // Jetons par job : seulement sur les jobs dont les DEUX comptes sont connus.
+        knownUsageJobs: sql<string>`count(*) filter (where ${agentJobs.inputTokens} is not null and ${agentJobs.outputTokens} is not null)`,
+        knownUsageTokens: sql<string>`coalesce(sum(${agentJobs.inputTokens} + ${agentJobs.outputTokens}), 0)`,
         durationMs: sql<string>`coalesce(sum(${agentJobs.totalDurationMs}), 0)`,
       })
       .from(agentJobs)
@@ -10087,18 +10099,25 @@ export async function getEntityStatsAction(): Promise<ActionResult<EntityStats>>
 
     const statusCounts: Record<string, number> = {};
     let totalJobs = 0;
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
+    const totalInputTokens: PartialTotal = { known: 0, unreported: 0 };
+    const totalOutputTokens: PartialTotal = { known: 0, unreported: 0 };
+    let knownUsageJobs = 0;
+    let knownUsageTokens = 0;
     let totalDurationMs = 0;
     for (const row of jobAgg) {
       const s = row.status ?? 'unknown';
       const n = Number(row.count);
       statusCounts[s] = (statusCounts[s] ?? 0) + n;
       totalJobs += n;
-      totalInputTokens += Number(row.inputTokens);
-      totalOutputTokens += Number(row.outputTokens);
+      totalInputTokens.known += Number(row.inputTokens);
+      totalInputTokens.unreported += Number(row.inputUnreported);
+      totalOutputTokens.known += Number(row.outputTokens);
+      totalOutputTokens.unreported += Number(row.outputUnreported);
+      knownUsageJobs += Number(row.knownUsageJobs);
+      knownUsageTokens += Number(row.knownUsageTokens);
       totalDurationMs += Number(row.durationMs);
     }
+    const tokensPerJob = knownUsageJobs > 0 ? Math.round(knownUsageTokens / knownUsageJobs) : null;
 
     const completedCount = statusCounts['completed'] ?? 0;
     const avgDurationMs = completedCount > 0 ? totalDurationMs / completedCount : null;
@@ -10118,7 +10137,9 @@ export async function getEntityStatsAction(): Promise<ActionResult<EntityStats>>
         agentSlug: agents.slug,
         jobCount: sql<string>`count(*)`,
         inputTokens: sql<string>`coalesce(sum(${agentJobs.inputTokens}), 0)`,
+        inputUnreported: sql<string>`count(*) filter (where ${agentJobs.inputTokens} is null)`,
         outputTokens: sql<string>`coalesce(sum(${agentJobs.outputTokens}), 0)`,
+        outputUnreported: sql<string>`count(*) filter (where ${agentJobs.outputTokens} is null)`,
       })
       .from(agentJobs)
       .leftJoin(agents, eq(agents.id, agentJobs.agentId))
@@ -10135,8 +10156,8 @@ export async function getEntityStatsAction(): Promise<ActionResult<EntityStats>>
         agentName: r.agentName,
         agentSlug: r.agentSlug,
         jobCount: Number(r.jobCount),
-        inputTokens: Number(r.inputTokens),
-        outputTokens: Number(r.outputTokens),
+        inputTokens: { known: Number(r.inputTokens), unreported: Number(r.inputUnreported) },
+        outputTokens: { known: Number(r.outputTokens), unreported: Number(r.outputUnreported) },
       }));
 
     const [agentRow] = await db
@@ -10150,6 +10171,7 @@ export async function getEntityStatsAction(): Promise<ActionResult<EntityStats>>
       statusCounts,
       totalInputTokens,
       totalOutputTokens,
+      tokensPerJob,
       totalDurationMs,
       avgDurationMs,
       totalToolCalls,
@@ -11193,7 +11215,17 @@ const AUTOMATION_RUNS_SHOWN = 10;
 const AUTOMATION_WINDOW_DAYS = 30;
 
 /** Ce que l'automatisation a coûté et combien de fois elle a tourné, sur la fenêtre. */
-export type AutomationWindow = { runs: number; costUsd: number; days: number };
+/**
+ * `costUsd` : la somme des runs dont le coût est connu. `unreportedCostRuns` :
+ * les runs dont le coût ne l'est pas (NULL, revue Codex de #571), jamais
+ * comptés comme 0.
+ */
+export type AutomationWindow = {
+  runs: number;
+  costUsd: number;
+  unreportedCostRuns: number;
+  days: number;
+};
 
 /**
  * Une routine avec son FUSEAU — la colonne que la liste n'affiche pas.
@@ -11284,6 +11316,7 @@ async function readAutomationRuns(
       .select({
         runs: sql<number>`count(*)`,
         costUsd: sql<number>`coalesce(sum(${agentJobs.totalCostUsd}), 0)`,
+        unreportedCostRuns: sql<number>`count(*) filter (where ${agentJobs.totalCostUsd} is null)`,
       })
       .from(agentJobs)
       .where(and(where, gte(agentJobs.createdAt, since))),
@@ -11296,6 +11329,7 @@ async function readAutomationRuns(
       // « 12 runs » se serait comparé à 12 en échouant.
       runs: Number(totalsRow?.runs ?? 0),
       costUsd: Number(totalsRow?.costUsd ?? 0),
+      unreportedCostRuns: Number(totalsRow?.unreportedCostRuns ?? 0),
       days: AUTOMATION_WINDOW_DAYS,
     },
   };

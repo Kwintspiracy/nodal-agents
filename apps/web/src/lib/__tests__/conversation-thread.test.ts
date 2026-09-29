@@ -36,6 +36,8 @@ const totals = (over: Partial<FeedTotals> = {}): FeedTotals => ({
   cachedTokens: 0,
   cacheCreationTokens: 0,
   costUsd: 0.01,
+  unpricedCalls: 0,
+  unreportedTokenCalls: 0,
   llmDurationMs: 500,
   models: ['claude-opus-5'],
   ...over,

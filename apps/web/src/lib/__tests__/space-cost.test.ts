@@ -93,6 +93,8 @@ describe('aggregateSpaceCost', () => {
       cachedTokens: 19_000,
       cacheCreationTokens: 1_000,
       unpricedCalls: 1,
+      // Every call here reports its tokens: the token totals are complete.
+      unreportedTokenCalls: 0,
       llmDurationMs: 38_900,
       durationMs: 18 * 60_000,
       humanWaitMs: 3 * 60_000,

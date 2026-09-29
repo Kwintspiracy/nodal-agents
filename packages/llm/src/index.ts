@@ -13,6 +13,7 @@ export {
   LLMTimeoutError,
   LLMCallCancelledError,
   LLMOutputLimitError,
+  LLMContextWindowError,
   AllProvidersFailedError,
   isContextOverflowError,
   LLMStreamPartError,
@@ -30,6 +31,7 @@ export type { TurnClocks } from './turn-clocks';
 
 // Client factory
 export { createLlmClient } from './client';
+export { reportedUsage, type ReportedUsage } from './reported-usage';
 
 export { probeContextWindow } from './probe-context';
 

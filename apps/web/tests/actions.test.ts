@@ -3132,7 +3132,11 @@ describe('getEntityStatsAction', () => {
         status: 'completed',
         count: '4',
         inputTokens: '2000',
+        inputUnreported: '0',
         outputTokens: '1000',
+        outputUnreported: '0',
+        knownUsageJobs: '4',
+        knownUsageTokens: '3000',
         durationMs: '8000',
         // tool-call count + agent count expected as `count`
         // per-agent rollup
@@ -3148,8 +3152,9 @@ describe('getEntityStatsAction', () => {
     if (r.ok) {
       expect(r.data.totalJobs).toBe(4);
       expect(r.data.statusCounts['completed']).toBe(4);
-      expect(r.data.totalInputTokens).toBe(2000);
-      expect(r.data.totalOutputTokens).toBe(1000);
+      expect(r.data.totalInputTokens).toEqual({ known: 2000, unreported: 0 });
+      expect(r.data.totalOutputTokens).toEqual({ known: 1000, unreported: 0 });
+      expect(r.data.tokensPerJob).toBe(750);
       // avg duration over completed jobs
       expect(r.data.avgDurationMs).toBe(2000);
     }
@@ -3162,7 +3167,8 @@ describe('getEntityStatsAction', () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.data.totalJobs).toBe(0);
-      expect(r.data.totalInputTokens).toBe(0);
+      expect(r.data.totalInputTokens).toEqual({ known: 0, unreported: 0 });
+      expect(r.data.tokensPerJob).toBe(null);
       expect(r.data.avgDurationMs).toBe(null);
       expect(r.data.perAgent).toEqual([]);
     }

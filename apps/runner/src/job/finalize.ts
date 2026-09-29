@@ -288,10 +288,11 @@ export interface FinalizeOutcome {
 
 /** Compteurs de tokens/durée du run — même forme que celle de `completeJob`. */
 export interface FinalizeStats {
-  inputTokens: number;
-  outputTokens: number;
-  effectiveInputTokens?: number;
-  totalCostUsd?: number;
+  /** Null: a call of the job did not report the count (Codex review of #571). */
+  inputTokens: number | null;
+  outputTokens: number | null;
+  effectiveInputTokens?: number | null;
+  totalCostUsd?: number | null;
   servedProvider?: string | null;
   turn: number;
   totalDurationMs?: number;

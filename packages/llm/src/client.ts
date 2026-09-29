@@ -9,9 +9,12 @@ import {
   LLMTimeoutError,
   LLMCallCancelledError,
   LLMOutputLimitError,
+  LLMContextWindowError,
 } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
+import { knownContextWindow, modelOutputCap } from '@nodal-agents/shared';
+import { reportedUsage } from './reported-usage';
 import { withRetry } from './retry';
 import { generateWithToolChoiceFloor } from './tool-choice-floor';
 import { buildLlmCallObservation, emitLlmCall } from './observe';
@@ -304,11 +307,6 @@ export interface CreateLlmClientOptions {
 
 type GenerateTextResult = Awaited<ReturnType<NodalLlmClient['generateText']>>;
 
-function finiteOrZero(value: unknown): number {
-  const n = Number(value ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
 export function createLlmClient(
   config: ProviderConfig,
   opts: CreateLlmClientOptions = {},
@@ -329,6 +327,15 @@ export function createLlmClient(
     hasFallback: opts.hasFallback ?? false,
   };
   const providerModel = { provider: config.provider, model: config.model };
+
+  // #563 — the output cap this client states on every generateText request
+  // whose caller did not state one. Without it the cap that ends a runaway
+  // turn is the serving provider's default, unknown here, and the only sign
+  // of the cut is a finishReason the provider may not report. Each client of
+  // a failover chain states its own model's cap.
+  const outputCap = modelOutputCap(config.provider, config.model);
+  // The window that bounds it too, when known (catalog, else the key's own).
+  const contextWindow = knownContextWindow(config.provider, config.model, config.contextWindow);
 
   // Anthropic does NOT auto-cache — opt it in by annotating cache_control
   // breakpoints (system + sliding last message). Other providers either cache
@@ -392,12 +399,18 @@ export function createLlmClient(
    *
    * The call itself succeeded and was billed: it is observed WITH its usage,
    * and with the refusal as its error, so the trace says both.
+   *
+   * #563 — two signals, the one this client controls being authoritative: the
+   * provider's `finishReason === 'length'`, OR output tokens that reach the cap
+   * the request stated (`statedCap`). On 2026-09-28 a 65 536-token, 307-call
+   * turn came back through OpenRouter without `length` and was executed.
    */
   const refuseCutTurn = (
     args: Parameters<NodalLlmClient['generateText']>[0],
     result: GenerateTextResult,
     startedAt: number,
     inspectOnly: boolean,
+    statedCap: number,
   ): GenerateTextResult => {
     const tools = (args as { tools?: unknown }).tools;
     const offersTools =
@@ -406,19 +419,47 @@ export function createLlmClient(
     // of it, so a cut response is a fact for it to judge, not a turn to refuse
     // (Codex review of #555, P1: a well-formed call followed by the cap read
     // as a model that cannot call tools).
+    //
+    // Output tokens NOT reported (usage absent or not finite, Codex review of
+    // #571) are not 0: read as 0, the turn looked under the cap, a false green.
+    // No other measure in this client bounds the tokens written (characters do
+    // not: a token is one byte or dozens), so a TURN whose completeness cannot
+    // be established is refused too, with its own code
+    // (`output_usage_not_reported`), and the unknown count stays null up to the
+    // caller and the llm_calls row (invariant #4).
+    //
+    // What "not reported" means, including a 0 that cannot be true, is one
+    // rule shared with the runner: `reportedUsage` (pass 3).
+    const reported = reportedUsage(result);
+    const reportedOutput = reported.outputTokens;
+    const cut =
+      result.finishReason === 'length' || (reportedOutput !== null && reportedOutput >= statedCap);
     const refusal =
-      offersTools && !inspectOnly && result.finishReason === 'length'
+      offersTools && !inspectOnly && (cut || reportedOutput === null)
         ? new LLMOutputLimitError(
             config.provider,
             config.model,
-            {
-              inputTokens: finiteOrZero(result.usage?.inputTokens),
-              outputTokens: finiteOrZero(result.usage?.outputTokens),
-            },
+            reported,
             (result.toolCalls ?? []).length,
+            cut ? 'cap' : 'unreported',
           )
         : null;
-    observe('generateText', args, result, refusal, startedAt);
+    // The llm_calls row carries the same reading: an unknown count is null there too.
+    observe(
+      'generateText',
+      args,
+      {
+        usage: {
+          ...result.usage,
+          inputTokens: reported.inputTokens ?? undefined,
+          outputTokens: reported.outputTokens ?? undefined,
+        },
+        providerMetadata: result.providerMetadata,
+        response: result.response,
+      },
+      refusal,
+      startedAt,
+    );
     if (refusal !== null) throw refusal;
     return result;
   };
@@ -426,27 +467,51 @@ export function createLlmClient(
   const clientGenerateText: NodalLlmClient['generateText'] = async (args, callOpts) => {
     validateIfMessages(args as { messages?: unknown });
     const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
+    // The cap the request states (#563): this client's, or the caller's when
+    // LOWER. A caller never raises it (revue Codex de #571): asking 131 072
+    // stated a cap the provider cut under, without `length`, as in #563.
+    //
+    // And never more than the model's KNOWN context window leaves once the
+    // input is in (review of #571): a custom or local model configured at 8 192
+    // tokens was asked for 65 536, and a server that validates `max_tokens`
+    // against its window refuses the turn. The input is the same estimate the
+    // turn clocks use (characters / 4, tools included). No room left: nothing
+    // is sent, the error says so (`LLMContextWindowError`).
+    const callerCap = (args as { maxOutputTokens?: unknown }).maxOutputTokens;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
-    const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
+    const unbounded = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
+    const estimatedInput =
+      estimateContextTokens(unbounded as { system?: unknown; messages?: unknown }) +
+      (await estimateToolTokens((unbounded as { tools?: unknown }).tools));
+    const windowRoom = contextWindow === null ? Infinity : contextWindow - estimatedInput;
+    if (windowRoom < 1) {
+      throw new LLMContextWindowError(
+        config.provider,
+        config.model,
+        contextWindow ?? 0,
+        estimatedInput,
+      );
+    }
+    const statedCap = Math.min(
+      outputCap,
+      windowRoom,
+      typeof callerCap === 'number' && callerCap > 0 ? callerCap : Infinity,
+    );
+    const prepared = { ...unbounded, maxOutputTokens: statedCap };
     const startedAt = Date.now();
     if (callOpts?.streamed === true && canStreamTurns) {
       // #440: the turn streams under two silence clocks, no working wall clock.
       // Same layers as below minus withStaleRetry, whose job (re-asking a call
       // that hung) the clocks now do without discarding what was written.
-      const clocks = computeTurnClocks(
-        config,
-        estimateContextTokens(prepared as { system?: unknown; messages?: unknown }) +
-          (await estimateToolTokens((prepared as { tools?: unknown }).tools)),
-        {
-          ...(callOpts.firstTokenTimeoutMs !== undefined
-            ? { firstTokenTimeoutMs: callOpts.firstTokenTimeoutMs }
-            : {}),
-          ...(callOpts.remainingRunMs !== undefined
-            ? { remainingRunMs: callOpts.remainingRunMs }
-            : {}),
-        },
-      );
+      const clocks = computeTurnClocks(config, estimatedInput, {
+        ...(callOpts.firstTokenTimeoutMs !== undefined
+          ? { firstTokenTimeoutMs: callOpts.firstTokenTimeoutMs }
+          : {}),
+        ...(callOpts.remainingRunMs !== undefined
+          ? { remainingRunMs: callOpts.remainingRunMs }
+          : {}),
+      });
       let streamedResult: GenerateTextResult;
       try {
         streamedResult = await generateWithToolChoiceFloor(
@@ -479,7 +544,13 @@ export function createLlmClient(
         observe('generateText', args, null, err, startedAt);
         throw err;
       }
-      return refuseCutTurn(args, streamedResult, startedAt, callOpts.inspectOnly === true);
+      return refuseCutTurn(
+        args,
+        streamedResult,
+        startedAt,
+        callOpts.inspectOnly === true,
+        statedCap,
+      );
     }
     let result: GenerateTextResult;
     try {
@@ -531,7 +602,7 @@ export function createLlmClient(
       }
       throw err;
     }
-    return refuseCutTurn(args, result, startedAt, callOpts?.inspectOnly === true);
+    return refuseCutTurn(args, result, startedAt, callOpts?.inspectOnly === true, statedCap);
   };
 
   const clientStreamText: NodalLlmClient['streamText'] = (args) => {

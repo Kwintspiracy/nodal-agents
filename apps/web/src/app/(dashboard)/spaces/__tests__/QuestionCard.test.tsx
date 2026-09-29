@@ -227,6 +227,8 @@ describe('ConversationFeedView — le dispatch sur la carte `question`', () => {
         cachedTokens: 0,
         cacheCreationTokens: 0,
         costUsd: null,
+        unpricedCalls: 0,
+        unreportedTokenCalls: 0,
         llmDurationMs: 0,
         models: [],
       },

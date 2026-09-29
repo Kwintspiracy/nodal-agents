@@ -62,6 +62,7 @@ import {
   LLMTimeoutError,
   LLMCallCancelledError,
   LLMOutputLimitError,
+  reportedUsage,
   MessageStructureError,
   AllProvidersFailedError,
   isContextOverflowError,
@@ -881,13 +882,17 @@ export interface BudgetStopFacts {
  * jetons de SORTIE du modèle (#554), pour `agent_jobs.error`. Même famille que
  * `llm_timeout:` et `context_window_exceeded:` : le code, puis les faits qui le
  * rendent lisible (qui, quel tour, combien écrit, combien d'appels d'outils
- * laissés sans exécution).
+ * laissés sans exécution). Un nombre de jetons que le fournisseur n'a pas
+ * rapporté s'écrit « not reported », jamais 0 (revue Codex de #571).
  */
 export function outputLimitErrorCode(err: LLMOutputLimitError, turn: number): string {
+  const sortie =
+    err.usage.outputTokens === null
+      ? 'output tokens not reported'
+      : `${err.usage.outputTokens} output tokens`;
   return (
     `${err.code}:${err.provider}/${err.model} ` +
-    `(turn ${turn}, ${err.usage.outputTokens} output tokens, ` +
-    `${err.toolCallCount} tool calls not executed)`
+    `(turn ${turn}, ${sortie}, ${err.toolCallCount} tool calls not executed)`
   );
 }
 
@@ -1774,6 +1779,15 @@ async function runJobTracked(
   // the persisted column so resumes add to the running total. Undefined stays
   // undefined (providers that don't report cost never accumulate here).
   let totalCostUsd = job.totalCostUsd ?? 0;
+  // Un usage inconnu ne devient jamais un nombre (revue Codex de #571, passe
+  // 3). Dès qu'un appel du job n'a pas rapporté un compte, le TOTAL de ce
+  // compte est inconnu : la ligne du job porte null, jamais une somme partielle
+  // présentée comme complète. Les gardes de budget, elles, continuent sur la
+  // part connue (une borne basse). Amorcé depuis la ligne : ces colonnes valent
+  // 0 par défaut, et seul ce chemin y écrit null.
+  let inputTokensUnknown = job.inputTokens === null || job.effectiveInputTokens === null;
+  let outputTokensUnknown = job.outputTokens === null;
+  let costUnknown = job.totalCostUsd === null;
   // Last non-empty upstream provider name reported by OpenRouter
   // (providerMetadata.openrouter.provider). Updated on every call that carries
   // the field; null when the provider has never reported it this run.
@@ -1797,18 +1811,18 @@ async function runJobTracked(
   const dureeCumuleeMs = (): number => dejaCompteMs + (Date.now() - startedAt);
 
   const runStats = (): {
-    inputTokens: number;
-    outputTokens: number;
-    effectiveInputTokens: number;
-    totalCostUsd: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    effectiveInputTokens: number | null;
+    totalCostUsd: number | null;
     servedProvider: string | null;
     turn: number;
     totalDurationMs: number;
   } => ({
-    inputTokens,
-    outputTokens,
-    effectiveInputTokens,
-    totalCostUsd,
+    inputTokens: inputTokensUnknown ? null : inputTokens,
+    outputTokens: outputTokensUnknown ? null : outputTokens,
+    effectiveInputTokens: inputTokensUnknown ? null : effectiveInputTokens,
+    totalCostUsd: costUnknown ? null : totalCostUsd,
     servedProvider,
     turn,
     totalDurationMs: dureeCumuleeMs(),
@@ -3327,15 +3341,10 @@ async function runJobTracked(
       // Persist the updated messages before entering the LLM loop.
       const sauve = await saveCheckpoint(db, jobId as string, {
         messages,
-        turn,
         chainCount: job.chainCount ?? 0,
         toolsUsed,
-        inputTokens,
-        outputTokens,
-        effectiveInputTokens,
-        totalCostUsd,
-        servedProvider,
-        totalDurationMs: dureeCumuleeMs(),
+        // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+        ...runStats(),
       });
       if (!sauve) return await ecritureRefusee('approval_replay_checkpoint');
 
@@ -3753,15 +3762,10 @@ async function runJobTracked(
     // into `awaiting_approval`, and so never revived by the approval.
     const pointSauve = await saveCheckpoint(db, jobId as string, {
       messages,
-      turn,
       chainCount: job.chainCount ?? 0,
       toolsUsed,
-      inputTokens,
-      outputTokens,
-      effectiveInputTokens,
-      totalCostUsd,
-      servedProvider,
-      totalDurationMs: dureeCumuleeMs(),
+      // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+      ...runStats(),
     });
     if (!pointSauve || !(await setJobStatus(db, jobId as string, 'awaiting_approval'))) {
       return await ecritureRefusee('suspend_for_approval');
@@ -4630,8 +4634,14 @@ async function runJobTracked(
       // Ollama sometimes omit it) — Number(undefined) is NaN, hence the
       // isFinite guard below.
       const usage = response.usage;
-      const promptT = Number(usage?.inputTokens ?? 0);
-      const completionT = Number(usage?.outputTokens ?? 0);
+      // Ce que l'appel a RAPPORTÉ, lu par la même règle que le client : un
+      // compte absent, ou un 0 qui ne peut pas être vrai, vaut null. Il compte
+      // pour 0 dans les gardes (borne basse), et rend le total du job inconnu.
+      const rapporte = reportedUsage(response);
+      if (rapporte.inputTokens === null) inputTokensUnknown = true;
+      if (rapporte.outputTokens === null) outputTokensUnknown = true;
+      const promptT = rapporte.inputTokens ?? 0;
+      const completionT = rapporte.outputTokens ?? 0;
       // Prompt-cached reads: the portion of this turn's input served from the
       // provider's cache (Anthropic cache_read, OpenRouter/DeepSeek cached_tokens).
       // The AI SDK reports `inputTokens` as the TOTAL (incl. cached) and
@@ -4682,6 +4692,14 @@ async function runJobTracked(
       // totalCostUsd stays 0 forever for those and Guard 1e never fires.
       // Derive from tokens × catalog list price instead; 0 (documented debt)
       // for a model with no catalogued price yet.
+      // Sans coût rapporté, l'estimation part des jetons : inconnus, elle
+      // l'est aussi.
+      if (
+        reportedCostUsd === undefined &&
+        (rapporte.inputTokens === null || rapporte.outputTokens === null)
+      ) {
+        costUnknown = true;
+      }
       const callCostUsd =
         reportedCostUsd ??
         estimateCallCostUsd(llmClient.config.provider, llmClient.config.model, {
@@ -5644,15 +5662,10 @@ async function runJobTracked(
               // status atomically; this complements it for observability.
               const avantDelegation = await saveCheckpoint(db, jobId as string, {
                 messages,
-                turn,
                 chainCount: job.chainCount ?? 0,
                 toolsUsed,
-                inputTokens,
-                outputTokens,
-                effectiveInputTokens,
-                totalCostUsd,
-                servedProvider,
-                totalDurationMs: dureeCumuleeMs(),
+                // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+                ...runStats(),
               });
               if (!avantDelegation) return await ecritureRefusee('delegation_checkpoint');
 
@@ -6548,15 +6561,10 @@ async function runJobTracked(
           trace('return_result_with_tasks', { taskCount: taskRows.length });
           const confie = await saveCheckpoint(db, jobId as string, {
             messages,
-            turn,
             chainCount: job.chainCount ?? 0,
             toolsUsed,
-            inputTokens,
-            outputTokens,
-            effectiveInputTokens,
-            totalCostUsd,
-            servedProvider,
-            totalDurationMs: dureeCumuleeMs(),
+            // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+            ...runStats(),
           });
           if (!confie) return await ecritureRefusee('awaiting_tasks_checkpoint');
           return { status: 'awaiting_tasks' };
@@ -6831,15 +6839,10 @@ async function runJobTracked(
       // of CMB research when turn-10 hit Retry exhausted.
       const tourSauve = await saveCheckpoint(db, jobId as string, {
         messages,
-        turn,
         chainCount: job.chainCount ?? 0,
         toolsUsed,
-        inputTokens,
-        outputTokens,
-        effectiveInputTokens,
-        totalCostUsd,
-        servedProvider,
-        totalDurationMs: dureeCumuleeMs(),
+        // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+        ...runStats(),
       });
       if (!tourSauve) return await ecritureRefusee('turn_checkpoint');
     }
@@ -6902,20 +6905,34 @@ async function runJobTracked(
     // réponse finie. Le run échoue avec un code (invariant #2), comme les
     // autres échecs typés. L'appel a été servi et facturé en entier : il est
     // compté avant d'écrire la ligne, sinon les jetons du run mentiraient.
+    //
+    // Même famille (revue Codex de #571) : un tour dont le fournisseur n'a pas
+    // rapporté les jetons de sortie (`output_usage_not_reported`). Un compte
+    // inconnu, d'entrée ou de sortie, n'est pas 0 : le total correspondant du
+    // job, et son coût estimé, deviennent inconnus (null sur la ligne).
     if (err instanceof LLMOutputLimitError) {
-      inputTokens += err.usage.inputTokens;
-      effectiveInputTokens += err.usage.inputTokens;
-      outputTokens += err.usage.outputTokens;
-      totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
-        inputTokens: err.usage.inputTokens,
-        outputTokens: err.usage.outputTokens,
-        cachedTokens: 0,
-        cacheCreationTokens: 0,
-      });
+      const entree = err.usage.inputTokens;
+      const sortie = err.usage.outputTokens;
+      if (entree === null) inputTokensUnknown = true;
+      else {
+        inputTokens += entree;
+        effectiveInputTokens += entree;
+      }
+      if (sortie === null) outputTokensUnknown = true;
+      else outputTokens += sortie;
+      if (entree === null || sortie === null) costUnknown = true;
+      else {
+        totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
+          inputTokens: entree,
+          outputTokens: sortie,
+          cachedTokens: 0,
+          cacheCreationTokens: 0,
+        });
+      }
       const code = outputLimitErrorCode(err, turn);
-      trace('output_limit_reached', {
+      trace(err.code, {
         turn,
-        outputTokens: err.usage.outputTokens,
+        outputTokens: sortie,
         toolCallsNotExecuted: err.toolCallCount,
       });
       await failJob(db, jobId as string, code, runStats(), messages);

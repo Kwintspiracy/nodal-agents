@@ -173,23 +173,65 @@ export class LLMCallCancelledError extends Error {
  * returning it, so NO caller can act on it. Never retried, never failed over:
  * the same prompt on the same cap would be cut again, and a retry is a separate
  * decision. Carries the billed usage, so the caller can still count the call.
+ *
+ * Same family, distinct code (Codex review of #571): a turn whose provider did
+ * not report its output tokens (`output_usage_not_reported`). Its completeness
+ * cannot be established against the stated cap, so it is refused the same way.
+ * In both cases an output count the provider did not report is `null`, never
+ * 0: the error, the trace and the job row say "not reported".
  */
 export class LLMOutputLimitError extends Error {
-  readonly code = 'output_limit_reached' as const;
+  readonly code: 'output_limit_reached' | 'output_usage_not_reported';
 
   constructor(
     public readonly provider: string,
     public readonly model: string,
-    /** What the cut call billed. The provider served it in full. */
-    public readonly usage: { inputTokens: number; outputTokens: number },
-    /** The tool calls parsed out of the cut response, none of them executed. */
+    /** What the refused call reported; a count the provider did not give is null. */
+    public readonly usage: { inputTokens: number | null; outputTokens: number | null },
+    /** The tool calls parsed out of the refused response, none of them executed. */
     public readonly toolCallCount: number,
+    /** `cap`: the response reached the output cap. `unreported`: no output count to judge it on. */
+    public readonly reason: 'cap' | 'unreported' = 'cap',
+  ) {
+    const output =
+      usage.outputTokens === null
+        ? 'output tokens not reported'
+        : `${usage.outputTokens} output tokens`;
+    super(
+      (reason === 'cap'
+        ? 'LLM response stopped on the output-token cap'
+        : 'LLM response did not report its output tokens, the turn cannot be judged complete') +
+        ` (${output}, ${toolCallCount} tool call(s) not executed): ${provider}/${model}`,
+    );
+    this.code = reason === 'cap' ? 'output_limit_reached' : 'output_usage_not_reported';
+    this.name = 'LLMOutputLimitError';
+  }
+}
+
+// ─── LLMContextWindowError ─────────────────────────────────────────────────────
+
+/**
+ * The model's known context window leaves no room for any output once the
+ * estimated input is in (#563, review of #571). The client states its output
+ * cap from that room; when there is none, no request is sent: a `max_tokens`
+ * of 0 or less is invalid, and a larger one is what a server validating it
+ * against the window refuses. The message says "context window" so the job
+ * loop's overflow guard (`isContextOverflowError`) gives its actionable code.
+ */
+export class LLMContextWindowError extends Error {
+  readonly code = 'context_window_exceeded' as const;
+
+  constructor(
+    public readonly provider: string,
+    public readonly model: string,
+    public readonly contextWindow: number,
+    public readonly estimatedInputTokens: number,
   ) {
     super(
-      `LLM response stopped on the output-token cap (${usage.outputTokens} output tokens, ` +
-        `${toolCallCount} tool call(s) not executed): ${provider}/${model}`,
+      `LLM request does not fit the model's context window: ~${estimatedInputTokens} input tokens ` +
+        `estimated for a window of ${contextWindow}, no room left for output: ${provider}/${model}`,
     );
-    this.name = 'LLMOutputLimitError';
+    this.name = 'LLMContextWindowError';
   }
 }
 
@@ -283,6 +325,7 @@ export class ProviderConfigError extends Error {
  * a false positive only changes the error label, never the fact that it failed.
  */
 export function isContextOverflowError(err: unknown): boolean {
+  if (err instanceof LLMContextWindowError) return true;
   // Read to the end: an overflow phrase can sit far into a provider message.
   const msg = (err === undefined || err === null ? '' : describeThrown(err, 100_000)).toLowerCase();
   if (!msg) return false;

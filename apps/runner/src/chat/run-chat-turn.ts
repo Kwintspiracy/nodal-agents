@@ -348,7 +348,7 @@ function failedOnRefusedTurn(
   if (!(err instanceof LLMOutputLimitError) && !(err instanceof ToolCallLimitExceededError)) {
     return null;
   }
-  console.warn(`[run-chat-turn] ${which} refused (${agentSlug}):`, err.message);
+  console.warn(`[run-chat-turn] ${which} refused, ${err.code} (${agentSlug}):`, err.message);
   return { ok: false, error: err.code };
 }
 
