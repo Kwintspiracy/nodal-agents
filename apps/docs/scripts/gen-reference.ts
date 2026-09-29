@@ -174,9 +174,7 @@ const renderSkillPage = (skill: SystemSkill): string => {
       ? `\n**Agent-internal:** loaded on demand via \`skill_view\` (hidden from the dashboard library, not user-assigned).`
       : kind === 'baseline'
         ? `\n**Baseline:** intrinsic — injected into EVERY agent's base prompt by default (not assignable).`
-        : kind === 'channel'
-          ? `\n**Channel:** injected automatically when the agent is bound to a channel (not assignable).`
-          : '';
+        : '';
   return `---
 title: ${fm(skill.name)}
 description: ${fm(skill.description)}
@@ -206,7 +204,7 @@ const writeSkillSection = (dir: string, title: string, list: SystemSkill[]): str
     `These ship in \`@nodal-agents/catalog\` and are upserted into every install at
 boot. Each page carries what the skill does, which tools it unlocks, and the
 exact guidance it injects into an agent's system prompt. Only **capability**
-skills are yours to assign — baseline, channel and agent-internal skills are
+skills are yours to assign — baseline and agent-internal skills are
 managed by the runner.`,
     list.map((s) => ({ slug: s.slug, label: s.name })),
   );

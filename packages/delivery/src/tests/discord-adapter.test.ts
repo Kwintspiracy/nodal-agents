@@ -398,3 +398,67 @@ describe('discordAdapter.validateCredentials', () => {
     );
   });
 });
+
+// #613 — the prompt's channel line is built from this declaration.
+describe('discordAdapter.text — what a sent text becomes (#613)', () => {
+  it('declares the marks Discord renders, and sends them untouched', async () => {
+    expect(discordAdapter.text.renders).toEqual([
+      '**bold**',
+      '*italic*',
+      '~~strike~~',
+      '`code`',
+      '```code block```',
+      '# heading',
+      '> quote',
+      '[text](url)',
+    ]);
+    vi.mocked(REST.prototype.post).mockResolvedValueOnce(fakeMessage('1'));
+    const text = discordAdapter.text.renders.join('\n');
+    await discordAdapter.sendText(CREDS, CHANNEL_ID, text);
+    const body = vi.mocked(REST.prototype.post).mock.calls[0]?.[1]?.body as Record<string, unknown>;
+    // Only content and the mention guard: nothing turns Discord's rendering off.
+    expect(Object.keys(body).sort()).toEqual(['allowed_mentions', 'content']);
+    expect(body['content']).toBe(text);
+  });
+
+  it('splits exactly at its declared size', async () => {
+    vi.mocked(REST.prototype.post).mockImplementation(() => Promise.resolve(fakeMessage('9')));
+    const max = discordAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(2 * max + 808);
+
+    await discordAdapter.sendText(CREDS, CHANNEL_ID, text);
+
+    const sent = vi
+      .mocked(REST.prototype.post)
+      .mock.calls.map(([, options]) => (options?.body as { content: string }).content);
+    expect(sent.map((s) => s.length)).toEqual([max, max, 808]);
+    expect(sent.join('')).toBe(text);
+  });
+});
+
+describe('discordAdapter.sendText — a send that fails partway resumes, never repeats (#615)', () => {
+  it('fails on part 3 of 4 with its progress; resumed, only parts 3 and 4 go out', async () => {
+    const max = discordAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(3 * max + 100);
+    let call = 0;
+    vi.mocked(REST.prototype.post).mockImplementation(() => {
+      call += 1;
+      return call === 3
+        ? Promise.reject(new Error('503'))
+        : Promise.resolve(fakeMessage(String(call)));
+    });
+
+    const err = await discordAdapter.sendText(CREDS, CHANNEL_ID, text).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryError);
+    expect((err as DeliveryError).partialProgress).toEqual({ sentChunks: 2, totalChunks: 4 });
+
+    await discordAdapter.sendText(CREDS, CHANNEL_ID, text, { fromChunk: 2 });
+
+    const contents = vi
+      .mocked(REST.prototype.post)
+      .mock.calls.map(([, options]) => (options?.body as { content: string }).content);
+    const delivered = contents.filter((_, i) => i !== 2);
+    expect(delivered).toHaveLength(4);
+    expect(delivered.join('')).toBe(text);
+  });
+});
