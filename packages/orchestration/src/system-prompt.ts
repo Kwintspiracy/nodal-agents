@@ -27,7 +27,13 @@ import type { JobTriggerContext } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
 import { SYSTEM_PROMPT_CACHE_BOUNDARY, wrapUntrusted } from '@nodal-agents/shared';
-import { ALWAYS_ON_TOOL_DOCS, ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
+import {
+  ALWAYS_ON_TOOL_DOCS,
+  ALWAYS_ON_TOOLS,
+  LOAD_TOOLS_NAME,
+  deferredToolIndex,
+} from '@nodal-agents/tools';
+import type { ToolIndexEntry } from '@nodal-agents/tools';
 import { skillKindOfSlug } from '@nodal-agents/catalog';
 import { buildTeamBlock } from './team-block';
 import { buildBaselineBlock, buildDiscoverabilityBlock } from './agent-baseline';
@@ -76,6 +82,14 @@ export interface JobContext {
    * dashboard, tests —, le prompt retombe sur `ALWAYS_ON_TOOLS`.
    */
   availableToolNames?: readonly string[];
+  /**
+   * L'index des outils DIFFÉRÉS de ce job (#612) : leur nom et une ligne, pour
+   * ceux dont le schéma ne part pas à chaque tour. `executeJob` le passe depuis
+   * la même liste blanche que `availableToolNames`, MCP et connecteurs compris.
+   * Omis (aperçu du dashboard, tests), l'index se calcule sur les outils
+   * toujours-actifs que le job a, avec la même fonction.
+   */
+  toolIndex?: readonly ToolIndexEntry[];
   /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
   telegramChatId?: string;
   /**
@@ -695,36 +709,25 @@ function buildPersistentMemoryBlock(
   );
 }
 
-// ─── buildBuiltinCapabilitiesBlock ────────────────────────────────────────────
-// Renders the always-on built-in tools so EVERY agent sees them explicitly in
-// its system prompt — not buried in the LLM SDK's tool definitions, which can
-// be ignored when the personality is strongly worded ("just do math").
-// Data-driven from ALWAYS_ON_TOOL_DOCS — invariant #1 (no hardcoded metadata).
+// ─── buildToolIndexBlock ──────────────────────────────────────────────────────
+// L'index des outils que ce job TIENT sans que leur schéma parte à chaque tour
+// (#612). Il REMPLACE le bloc « Built-in capabilities », qui nommait les
+// builtins toujours actifs : le besoin d'origine (b4057891, Brique 16 : un outil
+// ignoré face à une personnalité appuyée) est le même — qu'un outil détenu ne
+// soit jamais oublié —, et un outil dont le schéma est dans la requête n'a plus
+// besoin d'être nommé ici. Restent ceux qu'on ne voit PAS : leur nom, une ligne
+// tirée de leur propre description (invariant #1), et la façon de les charger.
 //
-// Il NOMME les outils, il ne les DÉCRIT pas. La raison d'être du bloc ci-dessus
-// — les rendre visibles — n'exige pas les descriptions : celles-ci partent déjà,
-// en entier, dans les définitions d'outils du MÊME appel. Elles étaient donc
-// payées deux fois, à chaque tour de chaque agent. 9 781 caractères, le plus
-// gros bloc du prompt (ventilation Codex du run 20b73ed1, 09/09/2026) ; il en
-// reste quelques centaines.
-//
-// Si un jour un modèle appelle mal un outil faute de description ICI, la réponse
-// n'est pas de recopier les 9 781 caractères : c'est de corriger la description
-// de CET outil, là où elle vit.
-// Seulement ceux que CE job a (#559) : un worker délégué perd
-// `dashboard_publish` (execute.ts §6), et le bloc le lui annonçait « always
-// available ».
-function buildBuiltinCapabilitiesBlock(availableTools: readonly string[]): string {
-  const names = ALWAYS_ON_TOOL_DOCS.filter((t) => availableTools.includes(t.name))
-    .map((t) => `\`${t.name}\``)
-    .join(', ');
-  if (names === '') return '';
+// La phrase contre « je ne peux pas » est là pour #329 : un modèle qui ne voit
+// pas le schéma ne doit pas en conclure qu'il n'a pas l'outil.
+function buildToolIndexBlock(entries: readonly ToolIndexEntry[]): string {
+  if (entries.length === 0) return '';
   return (
-    `## Built-in capabilities\n\n` +
-    `These tools are always available to you — use them proactively when they ` +
-    `fit. Their full parameters and behaviour are in the tool definitions of ` +
-    `this same request; this list is only here so you never forget they exist:\n\n` +
-    `${names}`
+    `## Tools on demand\n\n` +
+    `You also hold these tools. Their definitions are not in this request: call ` +
+    `\`${LOAD_TOOLS_NAME}\` with the names you need, in one call, and use them from your ` +
+    `next step on. Never answer that you cannot do something one of them does.\n\n` +
+    entries.map((e) => `- \`${e.name}\`: ${e.line}`).join('\n')
   );
 }
 
@@ -1187,14 +1190,14 @@ export async function buildSystemPrompt(
       )
     : '';
 
-  // 5. Built-in capabilities block — injected for every agent so the LLM sees
-  //    save_memory / query_memory / return_result as first-class capabilities,
-  //    not just optional tools buried in the SDK's tool list.
+  // 5. Tool index (#612, replaces the built-in capabilities list) — the tools
+  //    this job holds whose schemas are not sent on every turn, so a model
+  //    never forgets one it cannot see.
   //    EXCEPT on the in-app chat surface: there the agent has only `run_task`,
   //    so advertising built-in tools makes it call phantom tools (e.g.
   //    query_memory) that aren't provided — yielding an empty turn. Omit it.
-  // Two surfaces get no built-in capabilities block, for the same reason: the
-  // tools it documents are not the tools they have.
+  // Two surfaces get no tool index, for the same reason: the tools it names
+  // are not the tools they have.
   //   - 'chat'        — one tool, `run_task`.
   //   - 'cli-runtime' — the agent IS a coding CLI; its palette is the CLI's own
   //     (Read, Write, Bash…), not Nodal's builtins. Advertising `file_write` to
@@ -1203,7 +1206,10 @@ export async function buildSystemPrompt(
   const builtinBlock =
     jobContext?.surface === 'chat' || jobContext?.surface === 'cli-runtime'
       ? ''
-      : buildBuiltinCapabilitiesBlock(availableTools);
+      : buildToolIndexBlock(
+          jobContext?.toolIndex ??
+            deferredToolIndex(ALWAYS_ON_TOOL_DOCS.filter((t) => availableTools.includes(t.name))),
+        );
 
   // 5.5 Workspace block — tells the LLM which workspaces exist and how to address
   //     files (label/relative syntax for multi-workspace agents).

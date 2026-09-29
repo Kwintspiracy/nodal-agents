@@ -344,6 +344,23 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   inputSchema: TInput;
   riskLevel: OperationRiskLevel;
   /**
+   * Whether the model receives this tool's SCHEMA on every turn (`eager`) or
+   * only once the job has loaded it (`deferred`, issue #612).
+   *
+   * A property of the TOOL, like `riskLevel`, never of an agent (invariant
+   * #1). It never changes what a job MAY call: the whitelist is the same
+   * either way (invariant #9). A deferred tool is named, with one line, in the
+   * prompt's tool index; `load_tools` adds its schema to the following turns,
+   * and a direct call to it runs like any other call of the whitelist.
+   *
+   * Absent means `deferred`. That is the default on purpose: connector, MCP
+   * and meta-tools (built elsewhere, often by the hundred) then stay out of
+   * the request without anyone having to remember them. A built-in is `eager`
+   * only when turns depend on it without asking first: finishing a job,
+   * delivering on the channel, delegating, reading, remembering.
+   */
+  loading?: 'eager' | 'deferred';
+  /**
    * How this tool's RESULT is shown — the card the conversation view dispatches
    * on (plan « De la maquette au produit », P1). Declared by the tool, never
    * inferred from its name: the screen must not grow a `switch` over tool

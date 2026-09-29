@@ -10,10 +10,13 @@
 // formats the runner writes, anchored at the end of `result`.
 //
 // How a pre-0137 row is made real here: every migration is applied, the rows
-// are written with `runner_notes` NULL, then the migrator's own record of 0137
-// is removed and `runMigrations` runs again. Drizzle applies an entry whose
-// `when` is later than the last one it recorded, so 0137 runs for real, by
-// the real migrator, on rows that were there before it.
+// are written with `runner_notes` NULL, then the migrator's records of 0137
+// AND of every later migration are removed and `runMigrations` runs again.
+// Drizzle applies the entries whose `when` is later than the LAST one it
+// recorded: removing 0137's record alone re-ran it only while it was the last
+// migration (0138 added a later one). So 0137 runs for real, by the real
+// migrator, on rows that were there before it; the later ones, idempotent
+// (`IF NOT EXISTS`), run again with it.
 
 import { describe, it, expect, afterAll } from 'vitest';
 import { startRealPostgres, type RealPostgres } from '@nodal-agents/test-kit';
@@ -124,7 +127,7 @@ describe('migration 0137 fills runner_notes on rows written before it @cap:repre
 
       // Re-run 0137 on these rows, through the real migrator.
       await db.execute(
-        sql`DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ${WHEN_0137}`,
+        sql`DELETE FROM drizzle.__drizzle_migrations WHERE created_at >= ${WHEN_0137}`,
       );
       await runMigrations(harness().url, { patchVectorAsText: true });
 
@@ -255,7 +258,7 @@ describe('migration 0137 fills runner_notes on rows written before it @cap:repre
       expect(genericRow?.result).toContain('\n');
 
       await db.execute(
-        sql`DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ${WHEN_0137}`,
+        sql`DELETE FROM drizzle.__drizzle_migrations WHERE created_at >= ${WHEN_0137}`,
       );
       await runMigrations(harness().url, { patchVectorAsText: true });
 

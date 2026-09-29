@@ -162,6 +162,21 @@ export type { WhitelistInput } from './whitelist';
 
 // Built-in tools
 export {
+  LOAD_TOOLS_NAME,
+  createLoadToolsTool,
+  deferredToolIndex,
+  isEagerTool,
+  namesAskedToLoad,
+  toolIndexLine,
+  withToolLoader,
+} from './builtin/load-tools';
+export type {
+  LoadToolsInput,
+  LoadToolsOutput,
+  LoadableTool,
+  ToolIndexEntry,
+} from './builtin/load-tools';
+export {
   registerBuiltins,
   ALWAYS_ON_TOOLS,
   ALWAYS_ON_TOOL_DOCS,

@@ -6,6 +6,7 @@
 //   - awaiting_approval does NOT bump chain_count
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { offeredToolNames } from '../offered-tools.ts';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -324,8 +325,7 @@ function makeMockLlmClient(
     generateText: (args) => {
       const msgs = (args as { messages?: Array<{ content?: unknown }> }).messages ?? [];
       if (capturedToolKeysPerCall && msgs[msgs.length - 1]?.content !== ACTION_RECHECK) {
-        const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
-        capturedToolKeysPerCall.push(Object.keys(tools));
+        capturedToolKeysPerCall.push(offeredToolNames(args));
       }
       return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
