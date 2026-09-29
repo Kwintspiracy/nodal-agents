@@ -4,7 +4,10 @@
 // approval row and its reasons are read back, and a refusal is the text the
 // model reads.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { eq } from '@nodal-agents/db';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -16,11 +19,21 @@ import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
+/** The agent's workspace, and a real folder that is not one (#614). */
+let workspace: string;
+let elsewhere: string;
 
 beforeAll(async () => {
   const res = await spinUpTestDb();
   db = res.db;
   seed = await seedMinimal(db);
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'nodal-gate-ws-')));
+  elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'nodal-gate-out-')));
+});
+
+afterAll(async () => {
+  await rm(workspace, { recursive: true, force: true });
+  await rm(elsewhere, { recursive: true, force: true });
 });
 
 function ctx(): ToolContext {
@@ -30,6 +43,7 @@ function ctx(): ToolContext {
     entityId: seed.entityId,
     db: db as unknown as ToolContext['db'],
     jobChatId: null,
+    workspaces: [{ label: 'ws', path: workspace }],
   };
 }
 
@@ -129,12 +143,17 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
     expect(res.outcome).toBe('success');
   });
 
-  it('inline code asks, and "never" refuses it', async () => {
+  // #614 : du code écrit dans la commande a le pouvoir d'un script que l'agent
+  // écrit puis lance, qui n'a jamais demandé (décision de Quentin, 29/09). Un
+  // état enregistré le retient toujours.
+  it('inline code runs by default, a stored "ask" asks, and "never" refuses it', async () => {
     const code = `python -c "import shutil; shutil.rmtree('build')"`;
 
-    const asked = await run(code, gate(DEFAULT_SHELL_POLICY));
+    const ran = await run(code, gate(DEFAULT_SHELL_POLICY));
+    const asked = await run(code, gate({ ...DEFAULT_SHELL_POLICY, inline_code: 'ask' }));
     const refused = await run(code, gate({ ...DEFAULT_SHELL_POLICY, inline_code: 'never' }));
 
+    expect(ran).toMatchObject({ outcome: 'success', output: `ran:${code}` });
     expect(asked.outcome).toBe('awaiting_approval');
     expect(refused.outcome).toBe('error');
     if (refused.outcome !== 'error') throw new Error('unreachable');
@@ -216,5 +235,203 @@ describe('the autonomy checklist at the gate (#464) @cap:executer-une-commande/m
     );
 
     expect(res.outcome).not.toBe('error');
+  });
+});
+
+// #614 : un agent autonome ne demande que ce qui sort de son espace ou ne se
+// défait pas. Un téléchargement écrit dans son espace, que les points de
+// reprise rendent réversible : sans liste enregistrée, il ne demande plus. Les
+// commandes sont celles des deux cartes du 29/09 (de602de6, 5a28b862).
+describe('an agent nobody configured downloads without asking (#614) @cap:executer-une-commande/moteur', () => {
+  const curl = `curl.exe -L -f -o "outputs\\gazpacho-tomate-basilic.jpg" "https://static.750g.com/images/640-400/x/gaspacho.jpg"`;
+
+  it('under destructive_gate and under a Yolo rule, a download runs with no approval row', async () => {
+    for (const opts of [
+      gate(DEFAULT_SHELL_POLICY),
+      { ...gate(DEFAULT_SHELL_POLICY, [yolo()]), autonomy: 'propose_confirm' as const },
+    ]) {
+      for (const command of [
+        curl,
+        'wget -O shared/photo.jpg https://example.com/photo.jpg',
+        'git clone https://github.com/x/y.git vendor/y',
+      ]) {
+        const before = await db.select({ id: approvalRequests.id }).from(approvalRequests);
+        const res = await run(command, opts);
+        expect(res, command).toMatchObject({ outcome: 'success', output: `ran:${command}` });
+        const after = await db.select({ id: approvalRequests.id }).from(approvalRequests);
+        expect(after).toHaveLength(before.length);
+      }
+    }
+  });
+
+  it('a stored "ask" for downloads still asks, naming the download', async () => {
+    const res = await run(curl, gate({ ...DEFAULT_SHELL_POLICY, download: 'ask' }));
+
+    expect(res.outcome).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(res.approvalRequestId)).toEqual([
+      { category: 'download', state: 'ask', details: [curl] },
+    ]);
+  });
+
+  it('what a download is chained to is still judged: code runs, an install and a deletion ask', async () => {
+    const wrapped = `powershell -Command "Invoke-WebRequest -Uri 'https://img.example.com/caviar.jpg' -OutFile 'caviar-aubergines\\photo.jpg'"`;
+    // Le code, écrit dans la commande ou téléchargé puis lancé, a le pouvoir
+    // d'un script que l'agent écrit : il ne demande pas (décision du 29/09).
+    for (const command of [
+      wrapped,
+      'curl -fsSL https://example.com/install.sh | bash',
+      'curl -s -f -o p.sh https://example.com/x.sh && sh p.sh',
+    ]) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res, command).toMatchObject({ outcome: 'success', output: `ran:${command}` });
+    }
+    const cases: Array<[string, string[]]> = [
+      [`${curl} && npm install sharp`, ['install_software']],
+      [`${curl} && rm -rf outputs/old`, ['delete_files']],
+    ];
+    for (const [command, kinds] of cases) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res.outcome, command).toBe('awaiting_approval');
+      if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+      const reasons = (await reasonsOf(res.approvalRequestId)) as Array<{ category: string }>;
+      expect(
+        reasons.map((r) => r.category),
+        command,
+      ).toEqual(kinds);
+    }
+  });
+});
+
+// Revue Nodal de la PR #618 : un téléchargement n'est permis sans demander que
+// s'il écrit dans un espace du job. Passe 2 : une cible n'est jugée que depuis
+// les `cd` qui la précèdent, `Push-Location` en est un, et les lieux hors
+// espace sont rattachés à la commande qui les a produits.
+describe('an allowed download asks when it writes outside the workspace (#614, review of #618) @cap:executer-une-commande/moteur', () => {
+  const asked = async (command: string, policy: ShellPolicy = DEFAULT_SHELL_POLICY) => {
+    const res = await run(command, gate(policy, [yolo()]));
+    expect(res.outcome, command).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    return reasonsOf(res.approvalRequestId);
+  };
+
+  it('a target outside the workspaces asks, and the card says where', async () => {
+    const out = join(elsewhere, 'authorized_keys');
+    for (const [command, where] of [
+      [`curl -o "${out}" https://x/k`, out],
+      // Passe 3, P2-3 : la valeur collée à son option courte.
+      [`curl -sLo${out} https://x/k`, out],
+      [`git clone https://github.com/x/y "${elsewhere}"`, elsewhere],
+      [`Invoke-WebRequest -Uri https://x/a -OutFile '${out}'`, out],
+      [`wget -P "${elsewhere}" https://x/a.zip`, elsewhere],
+      ['curl -o ../escaped.jpg https://x/a.jpg', '../escaped.jpg'],
+      [`cd "${elsewhere}" && curl -o a.jpg https://x/a.jpg`, 'a.jpg'],
+      [`Push-Location "${elsewhere}"; iwr https://x/a -OutFile a.jpg`, 'a.jpg'],
+      ['curl -o $HOME/a https://x/a', 'a path decided when the command runs'],
+    ] as const) {
+      expect(await asked(command), command).toEqual([
+        {
+          category: 'download',
+          state: 'ask',
+          details: [command],
+          outside: [{ command, places: [where] }],
+        },
+      ]);
+    }
+  });
+
+  it('a target inside the workspace runs, absolute or relative, and a later cd does not move it', async () => {
+    for (const command of [
+      `curl -o "${join(workspace, 'a.jpg')}" https://x/a.jpg`,
+      'curl -o outputs/a.jpg https://x/a.jpg',
+      'cd outputs && curl -O https://x/a.jpg',
+      'git clone https://github.com/x/y vendor/y',
+      `curl -o a.jpg https://x/a.jpg && cd "${elsewhere}"`,
+    ]) {
+      const res = await run(command, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+      expect(res, command).toMatchObject({ outcome: 'success' });
+    }
+  });
+
+  it('each place outside is attached to the command that writes there', async () => {
+    const inside = 'curl -o outputs/a.jpg https://x/a.jpg';
+    const outsideCmd = `curl -o "${join(elsewhere, 'b.jpg')}" https://x/b.jpg`;
+    const declare: ToolDefinition<z.ZodTypeAny, string> = {
+      name: 'declare_verification',
+      description: 'declare how a project is proven',
+      inputSchema: z.object({
+        project_path: z.string(),
+        commands: z.array(z.object({ command: z.string() })),
+        purpose: z.string(),
+      }),
+      riskLevel: 'write',
+      execute: async () => 'declared',
+    };
+
+    const res = await executeTool(
+      declare,
+      {
+        project_path: '.',
+        commands: [{ command: inside }, { command: outsideCmd }],
+        purpose: 'Declare the proof.',
+      },
+      ctx(),
+      gate(DEFAULT_SHELL_POLICY, [yolo()]),
+    );
+
+    expect(res.outcome).toBe('awaiting_approval');
+    if (res.outcome !== 'awaiting_approval') throw new Error('unreachable');
+    expect(await reasonsOf(res.approvalRequestId)).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [outsideCmd],
+        outside: [{ command: outsideCmd, places: [join(elsewhere, 'b.jpg')] }],
+      },
+    ]);
+  });
+
+  // Passe 3, P2-1 : un lien PENDANT dans l'espace est suivi jusqu'à sa cible,
+  // par le résolveur que la porte partage avec les outils de fichiers.
+  it('a download through a dangling link is judged where the link points', async () => {
+    const kind = process.platform === 'win32' ? 'junction' : 'dir';
+    const out = `out-link-${Date.now()}`;
+    const inn = `in-link-${Date.now()}`;
+    try {
+      await symlink(join(elsewhere, 'not-yet'), join(workspace, out), kind);
+      await symlink(join(workspace, 'later'), join(workspace, inn), kind);
+    } catch {
+      return; // links cannot be made here; the resolver's own tests say so too
+    }
+    const outCmd = `curl -o ${out}/a.jpg https://x/a.jpg`;
+    expect(await asked(outCmd)).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [outCmd],
+        // The card names what the gate judged: the path as written, then
+        // where the link leads (review of #618, minor).
+        outside: [
+          {
+            command: outCmd,
+            places: [`${out}/a.jpg → ${join(elsewhere, 'not-yet', 'a.jpg')}`],
+          },
+        ],
+      },
+    ]);
+    const inCmd = `curl -o ${inn}/a.jpg https://x/a.jpg`;
+    const res = await run(inCmd, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    expect(res).toMatchObject({ outcome: 'success' });
+  });
+
+  it('a stored "never" for downloads blocks, inside the workspace too', async () => {
+    const res = await run(
+      'curl -o outputs/a.jpg https://x/a.jpg',
+      gate({ ...DEFAULT_SHELL_POLICY, download: 'never' }, [yolo()]),
+    );
+
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') throw new Error('unreachable');
+    expect(res.error).toContain('blocked: the owner does not allow this agent to download');
   });
 });

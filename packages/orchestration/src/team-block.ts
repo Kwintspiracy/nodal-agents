@@ -12,12 +12,13 @@ import {
   connectors as connectorsTable,
   agentMcpServers,
   mcpServers,
+  entities,
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
-import { CLI_RUNTIME_RUNS_SHELL_COMMANDS, resolveRunWorkspaces } from '@nodal-agents/tools';
+import { resolveRunWorkspaces } from '@nodal-agents/tools';
 import { resolveBuiltinToolNames } from './builtin-tool-names';
 import { DEFAULT_LIMITS, remainingDelegationHops } from './chain-counters';
-import { modelCanSeeImages } from '@nodal-agents/shared';
+import { cliShellPosture, modelCanSeeImages, RUNTIME_CLI } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
@@ -106,6 +107,7 @@ export async function buildTeamBlock(
       agentModel: agents.model,
       agentRuntime: agents.runtime,
       agentCommandAllowlist: agents.commandAllowlist,
+      agentCliPermissions: agents.cliPermissions,
     })
     .from(agentAssignments)
     .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
@@ -135,6 +137,18 @@ export async function buildTeamBlock(
 
   const parent = parentRow[0];
   if (!parent) return '';
+
+  // The workspace's emergency brake: it takes the shell from a CLI turn (#494),
+  // so the roster says what a delegated turn would get NOW.
+  // An agent with no workspace has no brake to read.
+  const [entityRow] = parent.entityId
+    ? await db
+        .select({ autoRunPaused: entities.autoRunPaused })
+        .from(entities)
+        .where(eq(entities.id, parent.entityId))
+        .limit(1)
+    : [];
+  const autoRunPaused = entityRow?.autoRunPaused ?? false;
 
   const childrenForMode = childRows.map((r) => ({
     role: r.agentRole as 'agent' | 'orchestrator' | 'system',
@@ -306,25 +320,37 @@ export async function buildTeamBlock(
   // the same way for every agent. On the Nodal runtime it is the `run_command`
   // tool, unlocked by a skill and narrowed by `command_allowlist` (an EMPTY
   // list refuses everything). On a CLI runtime that tool does not exist: the
-  // CLI's own posture decides, which `CLI_RUNTIME_RUNS_SHELL_COMMANDS` states
-  // next to the argv that produces it. Run 8dfe4684 sent a render to an agent
-  // on the claude-code runtime, which refuses every command.
+  // turn's shell posture decides (#494), from the agent's own `cli_permissions`
+  // and the workspace brake, through `cliShellPosture`: the very rule the
+  // runner applies to the argv of that agent's turn. Run 8dfe4684 sent a
+  // render to an agent on the claude-code runtime, which refused every command.
   function formatShellTag(
     subAgentId: string,
     runtime: string,
     allowlist: readonly string[] | null,
+    cliPermissions: Parameters<typeof cliShellPosture>[1],
   ): string {
     let canRun: boolean;
     if (runtime === 'nodal') {
       canRun = (runCommandMap.get(subAgentId) ?? false) && allowlist?.length !== 0;
     } else {
-      const cli = CLI_RUNTIME_RUNS_SHELL_COMMANDS[runtime];
+      const cli = RUNTIME_CLI[runtime];
       // The DB check constraint admits no other value; a newer base that
       // does must be taught here, never guessed (invariant #4).
       if (cli === undefined) {
         throw new Error(`buildTeamBlock: unknown agent runtime "${runtime}" for ${subAgentId}`);
       }
-      canRun = cli;
+      const posture = cliShellPosture(cli, cliPermissions, { autoRunPaused });
+      // Every posture is said as the runner applies it: a REFUSED turn (a
+      // runtime that cannot drop its shell, under the brake) does not start
+      // at all, so "no shell" alone would send it work it will refuse.
+      if (posture.kind === 'refused') {
+        return (
+          '\n  Shell commands: no' +
+          '\n  Unavailable: the workspace emergency brake is on, and this runtime cannot start a turn without a shell.'
+        );
+      }
+      canRun = posture.kind === 'shell';
     }
     if (!canRun) return '\n  Shell commands: no';
     if (runtime === 'nodal' && allowlist && allowlist.length > 0) {
@@ -450,6 +476,7 @@ export async function buildTeamBlock(
       agentModel,
       agentRuntime,
       agentCommandAllowlist,
+      agentCliPermissions,
     } = row;
     const toolSlug = agentSlug.replace(/-/g, '_');
     // What the agent is FOR (summary of its personality) — drives correct routing.
@@ -476,7 +503,12 @@ export async function buildTeamBlock(
     const folders = folderMap.get(subAgentId);
     const foldersTag = `\n  Folders: ${folders && folders.length > 0 ? folders.join('; ') : 'none'}`;
     const runtimeTag = `\n  Runtime: ${agentRuntime}`;
-    const shellTag = formatShellTag(subAgentId, agentRuntime, agentCommandAllowlist);
+    const shellTag = formatShellTag(
+      subAgentId,
+      agentRuntime,
+      agentCommandAllowlist,
+      agentCliPermissions,
+    );
     const capabilityTags = `${connectorsTag}${foldersTag}${runtimeTag}${shellTag}`;
     const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
     const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';

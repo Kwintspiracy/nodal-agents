@@ -18,7 +18,7 @@ import {
   isCliSetupError,
   SERVED_CLI_RUNTIMES,
 } from '../../cli-runtime/provider.ts';
-import { CLI_RUNTIME_RUNS_SHELL_COMMANDS } from '@nodal-agents/tools';
+import { RUNTIME_CLI } from '@nodal-agents/shared';
 import { ClaudeCliNotFoundError } from '../../cli-runtime/claude-turn.ts';
 import {
   CodexCliNotFoundError,
@@ -33,9 +33,15 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..
 describe('the shell posture announced for each served CLI runtime', () => {
   it('has exactly one entry per runtime this runner serves', () => {
     expect(SERVED_CLI_RUNTIMES.length).toBeGreaterThan(0);
-    expect([...Object.keys(CLI_RUNTIME_RUNS_SHELL_COMMANDS)].sort()).toEqual(
-      [...SERVED_CLI_RUNTIMES].sort(),
-    );
+    expect([...Object.keys(RUNTIME_CLI)].sort()).toEqual([...SERVED_CLI_RUNTIMES].sort());
+  });
+
+  // Le bloc d'équipe lit la CLI d'un runtime dans `RUNTIME_CLI` (#494) ; le
+  // runner la tient de son registre. Les deux doivent dire la même CLI.
+  it('names, for each runtime, the CLI the runner actually starts', () => {
+    for (const runtime of SERVED_CLI_RUNTIMES) {
+      expect(resolveRuntime(runtime)?.provider, runtime).toBe(RUNTIME_CLI[runtime]);
+    }
   });
 });
 
