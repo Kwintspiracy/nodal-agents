@@ -107,6 +107,7 @@ export const askUserTool: ToolDefinition<typeof AskUserInputSchema, AskUserOutpu
   // de l'appel est l'ATTENTE, pas le risque — et l'attente est portée par
   // `asksUser`, pas par le niveau de risque.
   riskLevel: 'read',
+  loading: 'eager',
   card: 'question',
   asksUser: true,
   present: ({ input, output }) => ({

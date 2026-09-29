@@ -1523,19 +1523,19 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     expect(workerPrompt).toContain('Do NOT contact the user yourself');
   });
 
-  it('lists as built-in only the built-ins the job holds', async () => {
+  it('indexes only the deferred tools the job holds', async () => {
     const { entityId, worker } = await seedTeam();
     const workerAgent = makeAgent(worker.id, entityId, worker.personality);
-    const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish');
+    const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'file_write');
     const prompt = await buildSystemPrompt(workerAgent, db, {
       origin: 'internal',
       isDelegated: true,
       delegationDepth: 1,
       availableToolNames: tools,
     });
-    const builtins = prompt.split('## Built-in capabilities')[1]?.split('\n## ')[0] ?? '';
-    expect(builtins).toContain('`file_read`');
-    expect(builtins).not.toContain('dashboard_publish');
+    const index = prompt.split('## Tools on demand')[1]?.split('\n## ')[0] ?? '';
+    expect(index).toContain('- `file_edit`: ');
+    expect(index).not.toContain('file_write');
   });
 });
 

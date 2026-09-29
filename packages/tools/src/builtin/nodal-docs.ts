@@ -74,6 +74,7 @@ export const nodalDocsTool: ToolDefinition<typeof NodalDocsInputSchema, NodalDoc
     'Offline and instant: it reads an index shipped with the product, no network, no model.',
   inputSchema: NodalDocsInputSchema,
   riskLevel: 'read',
+  loading: 'eager',
   card: 'search',
   present: ({ input, output }) =>
     searchCard({

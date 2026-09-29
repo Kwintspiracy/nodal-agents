@@ -122,6 +122,7 @@ Fail conditions:
     inputSchema: TelegramSendMessageInput,
 
     riskLevel: 'write',
+    loading: 'eager',
     card: 'sent',
     present: ({ input }) =>
       sentCard({

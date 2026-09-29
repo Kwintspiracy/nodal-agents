@@ -24,6 +24,7 @@
 // `root-meta-tools.test.ts` established.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { offeredToolNames } from '../offered-tools.ts';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -128,8 +129,7 @@ function makeCapturingLlmClient(
       streaming: false,
     },
     generateText: (args) => {
-      const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
-      toolKeysPerCall.push(Object.keys(tools));
+      toolKeysPerCall.push(offeredToolNames(args));
       return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
       >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>;

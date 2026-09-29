@@ -256,6 +256,7 @@ export async function generateAssignTools(
       summary: `Hand a task to ${agentName} and wait for the answer before going on.`,
       inputSchema: assignInputSchema,
       riskLevel: 'write',
+      loading: 'eager',
       // Un travail confié à un autre agent : la conversation le rend comme un
       // groupe indenté portant les actes de l'enfant (P1, `ToolCard`).
       card: 'delegation',

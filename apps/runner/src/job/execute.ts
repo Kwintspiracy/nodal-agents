@@ -77,6 +77,7 @@ import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
+import { toolsSentThisTurn } from './tool-loading.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import { loadApprovalRules } from './approval-rules.ts';
 import {
@@ -100,6 +101,8 @@ import {
   resolveRunWorkspaces,
   withJobFolder,
   isExistingDirectory,
+  createLoadToolsTool,
+  deferredToolIndex,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -2757,12 +2760,25 @@ async function runJobTracked(
   // and the stored prompt would order a tool the whitelist now refuses: it is
   // rewritten (Codex review of #570, pass 1). A prompt stored before the list
   // was recorded (NULL) is rewritten too — its list is unknown.
-  const promptTools = [...new Set(toolDefs.map((t) => t.name))].sort();
+  //
+  // #612 — the whitelist stays whole; only the SCHEMAS the model reads are
+  // chosen per turn (./tool-loading.ts). A job that holds deferred tools gets
+  // their index in the prompt and `load_tools` to load them, built from this
+  // same list: it cannot load a tool the job does not hold (invariant #9).
+  // `load_tools` is recorded with the rest (system_prompt_tools = every tool
+  // the job may call), and `toolDefs` itself is left as computed.
+  const toolIndex = deferredToolIndex(toolDefs);
+  const jobTools: AnyToolDef[] =
+    toolIndex.length > 0
+      ? [...(toolDefs as AnyToolDef[]), createLoadToolsTool(toolDefs) as unknown as AnyToolDef]
+      : (toolDefs as AnyToolDef[]);
+  const promptTools = [...new Set(jobTools.map((t) => t.name))].sort();
   let systemPrompt = job.systemPrompt;
   if (!systemPrompt || !sameToolList(job.systemPromptTools, promptTools)) {
     systemPrompt = await buildSystemPrompt(agent, db, {
       ...jobContext,
       availableToolNames: promptTools,
+      toolIndex,
     });
     await db
       .update(agentJobs)
@@ -2832,7 +2848,7 @@ async function runJobTracked(
   // invaliderait le cache de prompt, et l'écart est sans danger — le champ reste
   // demandé alors qu'il aurait pu devenir optionnel, et le gate refuse de toute
   // façon une demande sans phrase.
-  const outilsAvecRaison = exposeStatedPurpose(toolDefs as AnyToolDef[], {
+  const outilsAvecRaison = exposeStatedPurpose(jobTools, {
     approvalRules: approvalRuleList,
     agentId: agentRow.id,
     entityId: job.entityId ?? '',
@@ -4309,8 +4325,11 @@ async function runJobTracked(
       // c. Convert tools to AI SDK format. For the skill-authoring meta-tools,
       // append the live workspace tool list so the model has the real tool names
       // in front of it as it decides to author a skill (see step 10).
+      // #612: the eager schemas, then those the transcript loaded — never the
+      // whole map, which stays the whitelist every call is checked against.
       const aiSdkTools: Record<string, { description: string; inputSchema: z.ZodTypeAny }> = {};
-      for (const [name, toolDef] of toolMap) {
+      for (const toolDef of toolsSentThisTurn(outilsAvecRaison, messages)) {
+        const name = toolDef.name;
         const description =
           authoringToolsSuffix && (name === 'create_skill' || name === 'update_skill')
             ? toolDef.description + authoringToolsSuffix
