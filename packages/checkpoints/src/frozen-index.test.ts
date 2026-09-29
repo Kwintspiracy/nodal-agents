@@ -56,8 +56,16 @@ import {
   statusAgainstFrozenIndex,
 } from './checkpoints';
 
-/** Large devant le temps de tuer un processus, minuscule devant l'éternité. */
+/**
+ * La borne courte ne sert qu'au cas qui PEND : large devant le temps de tuer un
+ * processus, minuscule devant l'éternité. Posée pour tous les cas, elle faisait
+ * gagner la course au délai sur une machine chargée : un vrai `git status`
+ * (Windows) ou l'écriture de 17 Mo (Linux) dépassaient 200 ms, et le test lisait
+ * « timeout » là où il attendait une réponse ou un tampon plein (main, e2a67d12).
+ */
 const BORNE_MS = 200;
+/** Les autres cas ne doivent jamais rencontrer la borne : elle n'est pas leur sujet. */
+const BORNE_LARGE_MS = 60_000;
 
 let root: string;
 let store: string;
@@ -75,7 +83,7 @@ beforeEach(async () => {
   const fige = await freezeSnapshotIndex(store, ws);
   if (fige.kind !== 'frozen') throw new Error(`gel impossible : ${fige.reason}`);
   indexFile = fige.indexFile;
-  process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = String(BORNE_MS);
+  process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = String(BORNE_LARGE_MS);
 });
 
 afterEach(async () => {
@@ -95,6 +103,7 @@ describe('statusAgainstFrozenIndex names each cause @cap:travailler-sur-des-fich
 
   it('git that hangs past the bound is snapshot_status_timeout', async () => {
     etat.mode = 'pend';
+    process.env['NODALAI_CHECKPOINT_TIMEOUT_MS'] = String(BORNE_MS);
     expect(await statusAgainstFrozenIndex(store, ws, indexFile)).toEqual({
       kind: 'failed',
       reason: 'snapshot_status_timeout',
