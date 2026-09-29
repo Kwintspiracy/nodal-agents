@@ -6,7 +6,8 @@
  *
  * What this journey proves, in a browser against the real database:
  *   - the tab is named Autonomy (#438: the guides always called it that);
- *   - a new agent shows "Ask me" on every row of the checklist;
+ *   - a new agent shows "Allowed" for downloads and "Ask me" on the other
+ *     rows of the checklist (#614);
  *   - a click on "Never" for deleting files is WRITTEN (the row read back from
  *     `agents.shell_policy`), and survives a reload;
  *   - the "Run commands" sentence says what really happens instead of
@@ -77,7 +78,7 @@ async function storedPolicy(): Promise<unknown> {
 }
 
 test.describe('the shell checklist @cap:regler-autonomie/ecran', () => {
-  test('a new agent asks for everything; "Never" for deleting is saved and read back', async ({
+  test('a new agent downloads without asking and asks for the rest; "Never" for deleting is saved and read back', async ({
     page,
   }) => {
     await page.goto(`/agents/${agentId}/edit?tab=autonomy`);
@@ -86,7 +87,11 @@ test.describe('the shell checklist @cap:regler-autonomie/ecran', () => {
     });
     await expect(page.getByText('What it may do with a shell')).toBeVisible();
     await expect(page.getByText('Commands ask for your approval by default.')).toHaveCount(0);
-    for (const row of ['inline_code', 'delete_files', 'download']) {
+    await expect(page.getByTestId('shell-btn-download-allow')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    for (const row of ['inline_code', 'delete_files', 'install_software']) {
       await expect(page.getByTestId(`shell-btn-${row}-ask`)).toHaveAttribute(
         'aria-pressed',
         'true',

@@ -222,9 +222,26 @@ describe('a command is filed by what it does: fetching is download, installing i
 });
 
 describe('resolveShellPolicy @cap:executer-une-commande/moteur', () => {
-  it('asks for everything when nothing is stored', () => {
-    expect(resolveShellPolicy(null)).toEqual(DEFAULT_SHELL_POLICY);
-    expect(SHELL_CATEGORIES.every((c) => DEFAULT_SHELL_POLICY[c] === 'ask')).toBe(true);
+  // #614 : un téléchargement écrit dans l'espace de l'agent, où les points de
+  // reprise le rendent réversible ; le reste demande toujours.
+  it('when nothing is stored, a download runs and every other kind asks (#614)', () => {
+    expect(resolveShellPolicy(null)).toEqual({
+      inline_code: 'ask',
+      delete_files: 'ask',
+      install_software: 'ask',
+      download: 'allow',
+      stop_programs: 'ask',
+      system_settings: 'ask',
+    });
+    expect(resolveShellPolicy(undefined)).toEqual(resolveShellPolicy(null));
+    expect(Object.keys(DEFAULT_SHELL_POLICY)).toEqual([...SHELL_CATEGORIES]);
+  });
+
+  it('a stored "ask" for downloads is kept over the default (#614)', () => {
+    expect(resolveShellPolicy({ download: 'ask' })).toEqual({
+      ...DEFAULT_SHELL_POLICY,
+      download: 'ask',
+    });
   });
 
   it('keeps what was set and defaults the rest', () => {

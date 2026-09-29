@@ -37,15 +37,23 @@ export type ShellCategoryState = (typeof SHELL_CATEGORY_STATES)[number];
 export type ShellPolicy = Record<ShellCategory, ShellCategoryState>;
 
 /**
- * An agent nobody configured asks before every kind of action on the list:
- * what `destructive_gate` has always asked about. A false "ask" is cheap; a
- * silent `rm` is not.
+ * What an agent nobody configured may do without asking. An autonomous agent
+ * asks only for what leaves its workspace or cannot be undone (#614, the
+ * owner's rule of 29/09: three runs that day stopped on a card asking whether
+ * an agent could download a picture into its own folder).
+ *
+ * - `download` runs: it writes a file into the agent's workspace.
+ * - `inline_code` still asks: `curl … | bash` reads as inline code only, and
+ *   running code fetched from the web is not a workspace-local act.
+ * - Deleting, installing, stopping programs and system settings ask: they
+ *   reach the machine beyond the agent, or cannot be undone from the screen
+ *   yet (#617).
  */
 export const DEFAULT_SHELL_POLICY: ShellPolicy = {
   inline_code: 'ask',
   delete_files: 'ask',
   install_software: 'ask',
-  download: 'ask',
+  download: 'allow',
   stop_programs: 'ask',
   system_settings: 'ask',
 };

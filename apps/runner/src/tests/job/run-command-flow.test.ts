@@ -13,7 +13,9 @@
 //   execute.test.ts ~L2632–2681        (approval suspend→resume drive)
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { mkdtemp, rm, realpath, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, readFile, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -828,6 +830,129 @@ describe('run_command — the agent checklist reaches the gate (#464) @cap:execu
         .update(entities)
         .set({ rootGrants: before?.rootGrants ?? {} })
         .where(eq(entities.id, seed.entityId));
+    }
+  });
+});
+
+// ─── #614 : un agent autonome télécharge dans son espace sans demander ────────
+//
+// Le VRAI chemin : un job, le runner qui lit `agents.shell_policy` en base, la
+// porte, puis un vrai `curl -o` contre un serveur HTTP local. Le fichier écrit
+// dans le workspace est relu sur disque : la preuve que la commande a tourné,
+// pas seulement qu'elle n'a pas été retenue. Sous `destructive_gate`, le niveau
+// où la liste de l'agent seule juge une commande (celui de l'espace du
+// propriétaire le 29/09).
+describe('run_command — an agent nobody configured downloads into its workspace without asking (#614) @cap:executer-une-commande/moteur', () => {
+  let server: Server;
+  let url = '';
+  const BODY = `picture-${Date.now()}`;
+
+  beforeAll(async () => {
+    server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'image/jpeg' });
+      res.end(BODY);
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/photo.jpg`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((done) => server.close(() => done()));
+  });
+
+  async function underDestructiveGate<T>(
+    storedPolicy: unknown,
+    body: () => Promise<T>,
+  ): Promise<T> {
+    const [before] = await db
+      .select({ rootGrants: entities.rootGrants })
+      .from(entities)
+      .where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' } })
+      .where(eq(entities.id, seed.entityId));
+    await db.update(agents).set({ shellPolicy: storedPolicy }).where(eq(agents.id, seed.agentId));
+    try {
+      return await body();
+    } finally {
+      await db
+        .update(entities)
+        .set({ rootGrants: before?.rootGrants ?? {} })
+        .where(eq(entities.id, seed.entityId));
+      await db.update(agents).set({ shellPolicy: null }).where(eq(agents.id, seed.agentId));
+    }
+  }
+
+  /** One job, one run_command call, then return_result. */
+  async function runOnce(command: string) {
+    const job = await createJob();
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: `tc-614-${Date.now()}`,
+            toolName: 'run_command',
+            args: { purpose: 'fetch the picture for the page', command },
+          },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-614-done', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    const approvals = await db
+      .select({ gateReasons: approvalRequests.gateReasons, status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    return { result, approvals };
+  }
+
+  it('with no stored policy, a real `curl -o` runs, writes the file, and creates no approval', async () => {
+    const file = `photo-${Date.now()}.jpg`;
+
+    const { result, approvals } = await underDestructiveGate(null, () =>
+      runOnce(`curl -s -f -o ${file} ${url}`),
+    );
+
+    expect(result.status).toBe('completed');
+    expect(approvals).toEqual([]);
+    expect(await readFile(join(workspaceDir, file), 'utf8')).toBe(BODY);
+  });
+
+  it('a stored `download: ask` still asks, and the file is not written', async () => {
+    const file = `asked-${Date.now()}.jpg`;
+    const command = `curl -s -f -o ${file} ${url}`;
+
+    const { result, approvals } = await underDestructiveGate({ download: 'ask' }, () =>
+      runOnce(command),
+    );
+
+    expect(result.status).toBe('awaiting_approval');
+    expect(approvals).toEqual([
+      {
+        status: 'pending',
+        gateReasons: [{ category: 'download', state: 'ask', details: [command] }],
+      },
+    ]);
+    await expect(readFile(join(workspaceDir, file), 'utf8')).rejects.toThrow();
+  });
+
+  it('with no stored policy, an install and inline code still ask', async () => {
+    for (const [command, category] of [
+      ['npm install left-pad', 'install_software'],
+      [`node -e "process.stdout.write('x')"`, 'inline_code'],
+    ] as const) {
+      const { result, approvals } = await underDestructiveGate(null, () => runOnce(command));
+
+      expect(result.status, command).toBe('awaiting_approval');
+      expect(approvals, command).toEqual([
+        { status: 'pending', gateReasons: [{ category, state: 'ask', details: [command] }] },
+      ]);
     }
   });
 });

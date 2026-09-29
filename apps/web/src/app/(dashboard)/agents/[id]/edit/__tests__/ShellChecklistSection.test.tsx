@@ -1,9 +1,9 @@
 // ShellChecklistSection.test.tsx — what an agent may NOT do with a shell (#464).
 //
 // What this proves, rendered in jsdom and CLICKED: an agent nobody configured
-// shows "Ask me" on every row; a click sends the action the kind of action and
-// the state the owner chose (the ARGUMENT, invariant #5), and the row shows
-// it; a refused save puts the row back; a non-owner sees the rows and cannot
+// shows "Allowed" for downloads and "Ask me" on every other row (#614); a
+// click sends the action the kind of action and the state the owner chose (the
+// ARGUMENT, invariant #5), and the row shows it; a refused save puts the row back; a non-owner sees the rows and cannot
 // change them. What the engine does with those states is proven in
 // packages/tools/src/tests/shell-checklist-gate.test.ts.
 
@@ -63,9 +63,16 @@ beforeEach(() => {
 });
 
 describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
-  it('an agent nobody configured asks for every kind of action', async () => {
+  it('an agent nobody configured downloads without asking and asks for every other kind (#614)', async () => {
     await render(null);
-    expect(SHELL_CATEGORIES.map(pressed)).toEqual(SHELL_CATEGORIES.map(() => 'ask'));
+    expect(SHELL_CATEGORIES.map((c) => [c, pressed(c)])).toEqual([
+      ['inline_code', 'ask'],
+      ['delete_files', 'ask'],
+      ['install_software', 'ask'],
+      ['download', 'allow'],
+      ['stop_programs', 'ask'],
+      ['system_settings', 'ask'],
+    ]);
     expect(container.textContent).toContain('Run code written into a command');
     expect(container.textContent).toContain('Delete files or discard changes');
     expect(container.textContent).not.toContain('outside its folders');
@@ -81,9 +88,10 @@ describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
   });
 
   it('shows what is stored', async () => {
-    await render({ delete_files: 'never', download: 'allow' });
+    await render({ delete_files: 'never', download: 'ask' });
     expect(pressed('delete_files')).toBe('never');
-    expect(pressed('download')).toBe('allow');
+    // A stored state wins over the default (#614: downloads default to allowed).
+    expect(pressed('download')).toBe('ask');
     expect(pressed('inline_code')).toBe('ask');
   });
 

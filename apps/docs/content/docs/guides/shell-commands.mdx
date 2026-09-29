@@ -116,8 +116,16 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
 - The list applies at **every** autonomy level, and under **Run without
   asking** too: it only ever adds a question or a refusal, it never removes
   one. A rule that blocks the shell tool, and the hard floor below, still win.
-- A new agent asks for all six. An agent already set to **Run without
-  asking** everywhere when this list appeared kept what it could do.
+- A new agent downloads without asking and asks for the other five. An
+  autonomous agent asks only for what leaves its workspace or cannot be
+  undone: a download adds a file, and when it replaces one in a workspace, the
+  [checkpoint](/docs/concepts/proof#checkpoints--the-snapshot-taken-before-a-write)
+  taken before the command keeps the old version. Running code fetched from
+  the web (`curl … | bash`) counts as **Run code written into a command**, so
+  it still asks. What you set on an agent is kept as you set it: set
+  **Download files from the internet** to **Ask me** to be asked again.
+- An agent already set to **Run without asking** everywhere when this list
+  appeared kept what it could do.
 - The checklist also judges a declared proof (`declare_verification`), because
   its steps run later without asking again.
 - Nodal recognises each kind by the program started (`rm`, `npm i`,
@@ -172,9 +180,10 @@ plain-language explanation of why, so nothing fails silently.
 Everything else dangerous is **not** on the hard floor. It follows the agent's
 [shell checklist](#what-an-agent-may-not-do-with-a-shell): **Ask me** by
 default, and once you approve it, it actually runs. This class covers ordinary
-destructive actions (deleting files, killing a process, installing a package, a
-large download, recursive permission changes, force-pushing git) plus one opaque
-category worth calling out:
+destructive actions (deleting files, killing a process, installing a package,
+recursive permission changes, force-pushing git) plus one opaque category worth
+calling out. A download is on the checklist too, but it runs without asking
+unless you set it to **Ask me**:
 
 **Inline interpreter code.** Running arbitrary code passed on the command line
 to a general-purpose interpreter, such as `python -c "…"`, `node -e "…"`,
