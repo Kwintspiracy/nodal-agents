@@ -137,10 +137,49 @@ describe('code_task de bout en bout, vraie CLI', () => {
         fresh: true,
       } as never,
       ctx(),
-    )) as { resultText: string; sessionId: string | null; isError: boolean };
+    )) as { resultText: string; sessionId: string | null; isError: boolean; paths: string };
 
     expect(out.resultText, 'le résultat a été perdu avec la fin du flux').toBe('REPONSE_FINALE');
     expect(out.sessionId).toBe('sess_fake');
     expect(out.isError).toBe(false);
+    // #592 : la CLI est un processus — son tool_result dit comment ses chemins
+    // s'adressent (dossier de travail absolu, espace, étiquettes ≠ dossiers).
+    expect(out.paths).toBe(
+      `This process ran in ${ws}, the root of workspace "shared". ` +
+        'Paths in a process are relative to that folder, or absolute. ' +
+        'Workspace labels are NOT folders for a process: what the file tools call shared/outputs/x is outputs/x here.',
+    );
+  }, 60_000);
+
+  // Revue Reviewer A de #593 (P3) : un agent à PLUSIEURS espaces — la CLI tourne
+  // à la racine de son espace, et les autres espaces sont donnés en absolu.
+  it('agent à plusieurs espaces : `paths` nomme l’espace du cwd et donne les autres en absolu', async () => {
+    const autre = join(root, 'autre');
+    await mkdir(autre, { recursive: true });
+    const out = (await codeTaskTool.execute(
+      {
+        purpose: 'test de câblage',
+        provider: 'claude',
+        task: 'peu importe',
+        mode: 'read',
+        fresh: true,
+        cwd: 'projet',
+      } as never,
+      {
+        ...ctx(),
+        workspaces: [
+          { label: 'projet', path: ws },
+          { label: 'autre', path: autre },
+        ],
+      } as ToolContext,
+    )) as { isError: boolean; paths: string; cwd: string };
+
+    expect(out.isError).toBe(false);
+    expect(out.paths).toBe(
+      `This process ran in ${out.cwd}, the root of workspace "projet". ` +
+        'Paths in a process are relative to that folder, or absolute. ' +
+        'Workspace labels are NOT folders for a process: what the file tools call projet/outputs/x is outputs/x here. ' +
+        `Other workspaces, by absolute path: autre = ${autre}.`,
+    );
   }, 60_000);
 });

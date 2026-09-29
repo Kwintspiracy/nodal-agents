@@ -8,6 +8,12 @@ import {
 } from '../agent-baseline';
 import { systemSkills, skillKind, capabilitySkillSlugs } from '@nodal-agents/catalog';
 import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
+import { ALWAYS_ON_TOOLS, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
+import {
+  findUnavailableToolMentions,
+  KNOWN_TOOL_NAME_UNIVERSE,
+  toolsNamedIn,
+} from '../router/tool-availability';
 
 const baselineSkills = systemSkills.filter((s) => skillKind(s) === 'baseline');
 /** Baseline skills that ask for no tool: every agent gets these, always. */
@@ -183,12 +189,126 @@ describe('C3 — worker discovery capitalization vs B1 — orchestrator delegati
 });
 
 describe('Layer 2 — channel etiquette', () => {
+  const withSend = [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES];
+
   it('injects channel content only when the agent is on a channel', () => {
-    expect(buildChannelBlock({ channel: 'telegram' })).toContain('## Channel etiquette');
-    expect(buildChannelBlock({ telegram: true })).toContain('## Channel etiquette');
-    expect(buildChannelBlock({ channel: 'api' })).toBe('');
-    expect(buildChannelBlock({})).toBe('');
+    expect(buildChannelBlock({ channel: 'telegram', availableTools: withSend })).toContain(
+      '## Channel etiquette',
+    );
+    expect(buildChannelBlock({ telegram: true, availableTools: withSend })).toContain(
+      '## Channel etiquette',
+    );
+    expect(buildChannelBlock({ channel: 'api', availableTools: withSend })).toBe('');
+    expect(buildChannelBlock({ availableTools: withSend })).toBe('');
   });
+
+  // #559 — run 806a2218: a delegated Researcher inherited its parent's
+  // chat_id, got the Telegram etiquette ("same turn as return_result:
+  // telegram_send_message(...)"), held no such tool, obeyed, and was killed
+  // for whitelist_violation. Every channel skill, on both job shapes.
+  const channelSkills = systemSkills.filter((s) => skillKind(s) === 'channel');
+
+  it.each(channelSkills.map((s) => [s.slug, s] as const))(
+    'channel skill %s is injected only when the job holds every tool its text names (#559)',
+    (_slug, skill) => {
+      const text = skill.content.trim();
+      const named = toolsNamedIn(text);
+      // A delegated worker on a Telegram-origin run: the always-on set, no
+      // delivery tool (execute.ts arms send tools only for an agent with its
+      // own credential on the transport).
+      const worker = buildChannelBlock({ telegram: true, availableTools: [...ALWAYS_ON_TOOLS] });
+      // The root that owns the binding: the same set plus its send tools.
+      const root = buildChannelBlock({ channel: 'telegram', availableTools: withSend });
+
+      const heldByWorker = named.every((t) => (ALWAYS_ON_TOOLS as readonly string[]).includes(t));
+      expect(worker.includes(text.slice(0, 60))).toBe(heldByWorker);
+      expect(root).toContain(text.slice(0, 60));
+    },
+  );
+
+  it('never names a tool the job does not hold (#559)', () => {
+    const tools = [...ALWAYS_ON_TOOLS];
+    for (const opts of [{ telegram: true }, { channel: 'telegram' }]) {
+      const block = buildChannelBlock({ ...opts, availableTools: tools });
+      expect(findUnavailableToolMentions(block, new Set(tools))).toEqual([]);
+    }
+    // The etiquette that names telegram_send_message is really gone: the
+    // assertion above would also pass on an empty block, this one says which.
+    expect(buildChannelBlock({ telegram: true, availableTools: tools })).not.toContain(
+      'telegram_send_message',
+    );
+  });
+
+  it('says nothing that needs a tool on a surface with no Nodal tools (cli-runtime)', () => {
+    expect(
+      buildChannelBlock({ telegram: true, surface: 'cli-runtime', availableTools: [] }),
+    ).not.toContain('telegram_send_message');
+  });
+});
+
+describe('Layer 1 — a baseline skill naming a tool the job lacks stays out (#559)', () => {
+  it('filters catalog text by the tools it NAMES, and the universal rules survive', () => {
+    const everything = [...KNOWN_TOOL_NAME_UNIVERSE];
+    const full = buildBaselineBlock('anthropic/claude-sonnet-4.6', { availableTools: everything });
+    // An ordinary delegated worker (execute.ts strips dashboard_publish), on a
+    // model that also gets the execution-discipline reinforcement.
+    const tools = ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish');
+    const worker = buildBaselineBlock('deepseek/deepseek-v4-pro', { availableTools: tools });
+    expect(findUnavailableToolMentions(worker, new Set(tools))).toEqual([]);
+    // The gate must not buy that silence by dropping the rules themselves.
+    for (const slug of ['verify-before-done', 'safe-tool-use', 'workspace-hygiene']) {
+      const s = baselineSkills.find((x) => x.slug === slug)!;
+      const head = s.content.trim().slice(0, 40);
+      expect(full).toContain(head);
+      expect(worker).toContain(head);
+    }
+  });
+});
+
+// #559, revue Codex de #570 passe 2 : UN geste d'attachement, construit sur
+// les outils détenus, était appliqué aux connecteurs ET aux serveurs MCP. Un
+// root qui n'avait que `attach_connector` lisait « attach it yourself with
+// attach_connector » devant un serveur MCP — un outil détenu, une capacité
+// fausse. Chaque ressource dit SON outil, ou qu'il faut le demander.
+describe('Layer 2bis — each configured resource names the tool that attaches THAT kind (#559)', () => {
+  const ready = {
+    assignedSkillSlugs: [] as string[],
+    attachedConnectorSlugs: [] as string[],
+    attachedMcpSlugs: [] as string[],
+    workspaceConnectors: [{ slug: 'gmail', name: 'Gmail' }],
+    workspaceMcps: [{ slug: 'files-mcp', name: 'Files MCP' }],
+  };
+  /** The tool this kind of resource is attached with. */
+  const TOOL_OF: Record<'connector' | 'MCP server', string> = {
+    connector: 'attach_connector',
+    'MCP server': 'attach_mcp',
+  };
+  /** Each resource line of the block, with the attach tools it names. */
+  const resourceLines = (block: string) =>
+    block.split('\n').flatMap((line) => {
+      const kind = / — (connector|MCP server) `/.exec(line)?.[1] as
+        | keyof typeof TOOL_OF
+        | undefined;
+      return kind ? [{ kind, named: toolsNamedIn(line), line }] : [];
+    });
+
+  it.each([[['attach_connector']], [['attach_mcp']], [['attach_connector', 'attach_mcp']], [[]]])(
+    'holding %j: a line names only the tool of its own kind, and only if held',
+    (held) => {
+      const tools = [...ALWAYS_ON_TOOLS, ...held];
+      const block = buildDiscoverabilityBlock({ ...ready, availableTools: tools });
+      const lines = resourceLines(block);
+      expect(lines.map((l) => l.kind).sort()).toEqual(['MCP server', 'connector']);
+      for (const l of lines) {
+        const own = TOOL_OF[l.kind];
+        // Never the other kind's tool, and its own only when the job holds it.
+        expect({ line: l.line, named: l.named }).toEqual({
+          line: l.line,
+          named: tools.includes(own) ? [own] : [],
+        });
+      }
+    },
+  );
 });
 
 describe('Layer 2bis — discoverability', () => {
@@ -223,8 +343,11 @@ describe('Layer 2bis — discoverability', () => {
       workspaceMcps: [{ slug: 'perplexity', name: 'Perplexity' }],
     });
     expect(block).toContain('ALREADY configured in this workspace');
-    expect(block).toContain('connector `tavily` (configured)');
-    expect(block).toContain('MCP server `perplexity` (configured)');
+    // Tools unknown here: each line says so without naming an attach tool.
+    expect(block).toContain('connector `tavily` (configured; ask the user to assign it to you)');
+    expect(block).toContain(
+      'MCP server `perplexity` (configured; ask the user to assign it to you)',
+    );
     // and it must NOT also tell the user to add a Tavily key
     expect(block).not.toContain('needs a Tavily API key');
   });

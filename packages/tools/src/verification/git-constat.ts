@@ -75,6 +75,12 @@ import { normalizePath } from '@nodal-agents/shared';
 import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
 import type { ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { fingerprint, type FileFingerprint } from './observed';
+import {
+  freezeSnapshotIndex,
+  releaseFrozenIndex,
+  statusAgainstFrozenIndex,
+  SNAPSHOT_EXCLUDES,
+} from '@nodal-agents/checkpoints';
 
 const run = promisify(execFile);
 
@@ -111,6 +117,19 @@ export interface RepoSnapshot {
   /** Racine du dépôt, absolue et slash-normalisée. */
   readonly root: string;
   readonly entries: ReadonlyMap<string, GitStatusEntry>;
+  /**
+   * Présent quand ce n'est PAS le dépôt du dossier qui répond, mais une copie
+   * figée de l'index de son instantané de checkpoint (#590) : un workspace hors
+   * de tout dépôt, ou dans un dépôt enraciné au-dessus de lui. `root` est alors
+   * le workspace. L'avant et l'après d'un appel lisent la MÊME copie.
+   */
+  readonly frozen?: FrozenIndex;
+}
+
+/** Une copie figée de l'index d'un instantané, et son magasin. */
+export interface FrozenIndex {
+  readonly store: string;
+  readonly indexFile: string;
 }
 
 /** Ce que le seam garde entre l'avant et l'après d'un appel. */
@@ -209,13 +228,24 @@ export function parsePorcelainZ(
  * que le constat vaille son prix (borne nº 4) — dans les deux cas le run
  * retombe sur le disque, et la raison est dite par un code.
  */
-export async function snapshotRepo(root: string): Promise<RepoSnapshot | null> {
-  const stdout = await git(root, ['status', '--porcelain', '-z', '--untracked-files=all']);
-  if (stdout === null) {
-    console.warn(`[verification] GIT_CONSTAT_STATUS_FAILED root=${root}`);
-    return null;
+export async function snapshotRepo(
+  root: string,
+  frozen?: FrozenIndex,
+): Promise<RepoSnapshot | null> {
+  let stdout: string | null;
+  if (frozen === undefined) {
+    stdout = await git(root, ['status', '--porcelain', '-z', '--untracked-files=all']);
+    if (stdout === null) console.warn(`[verification] GIT_CONSTAT_STATUS_FAILED root=${root}`);
+  } else {
+    const lu = await statusAgainstFrozenIndex(frozen.store, root, frozen.indexFile);
+    stdout = lu.kind === 'status' ? lu.stdout : null;
+    if (lu.kind === 'failed') {
+      console.warn(`[verification] GIT_CONSTAT_NO_FALLBACK ws=${root} reason=${lu.reason}`);
+    }
   }
-  const lignes = parsePorcelainZ(stdout);
+  if (stdout === null) return null;
+  const lignes =
+    frozen === undefined ? parsePorcelainZ(stdout) : contreIndexFige(parsePorcelainZ(stdout));
   if (lignes.length > MAX_STATUS_ENTRIES) {
     console.warn(
       `[verification] GIT_CONSTAT_TREE_TOO_DIRTY root=${root} entries=${lignes.length} ` +
@@ -234,7 +264,64 @@ export async function snapshotRepo(root: string): Promise<RepoSnapshot | null> {
         : {}),
     });
   }
-  return { root, entries };
+  return frozen === undefined ? { root, entries } : { root, entries, frozen };
+}
+
+/**
+ * Le statut lu contre une copie figée d'index d'instantané (#590), ramené à ce
+ * qu'il dit vraiment.
+ *
+ * Le magasin des instantanés n'a jamais de HEAD : la colonne de GAUCHE (HEAD ↔
+ * index) marque donc `A` chaque fichier photographié, qu'il ait bougé ou non.
+ * La lire faisait sortir tout le workspace à chaque appel (au-delà de
+ * `MAX_STATUS_ENTRIES`, plus de constat du tout) et rangeait `added` un
+ * fichier préexistant réécrit (revue A de #591). Seule la colonne de DROITE
+ * (index ↔ arbre de travail) et les `??` parlent de l'arbre de travail : un
+ * `AM` devient ` M` (modifié), un `AD` devient ` D` (supprimé), un `A `
+ * (inchangé depuis l'instantané) disparaît. Même lecture que le constat dans un
+ * vrai dépôt, où l'arbre de travail est comparé à ce qui était là.
+ */
+export function contreIndexFige(
+  lignes: ReadonlyArray<{ status: string; path: string; renamedFrom?: string }>,
+): Array<{ status: string; path: string; renamedFrom?: string }> {
+  const out: Array<{ status: string; path: string; renamedFrom?: string }> = [];
+  for (const ligne of lignes) {
+    if (ligne.status === '??') {
+      out.push({ status: '??', path: ligne.path });
+      continue;
+    }
+    const y = ligne.status[1] ?? ' ';
+    if (y !== ' ') out.push({ status: ` ${y}`, path: ligne.path });
+  }
+  return out;
+}
+
+/**
+ * Ce que le repli ne voit pas, dit UNE fois par workspace et par JOB (revue A
+ * de #591 ; une fois par processus rendait muet un runner qui tourne des
+ * semaines). Un instantané ne photographie ni ce que le `.gitignore` du
+ * workspace exclut, ni les exclusions du magasin (`node_modules/`, `dist/`,
+ * `*.log`…) : une écriture là n'est pas constatée. La nommer demanderait de
+ * lister ces arbres-là, dont la taille n'a pas de borne (`node_modules`,
+ * `.venv`) — exactement ce que `MAX_STATUS_ENTRIES` existe pour éviter. Le
+ * constat dans un vrai dépôt a la même limite pour le `.gitignore`.
+ */
+const couvertureDite = new Set<string>();
+/** Au-delà, les plus anciennes paires job × workspace sont oubliées. */
+const COUVERTURE_MEMOIRE = 1000;
+
+function direCouverture(jobId: string | undefined, root: string): void {
+  const cle = `${jobId ?? 'sans-job'}:${root}`;
+  if (couvertureDite.has(cle)) return;
+  if (couvertureDite.size >= COUVERTURE_MEMOIRE) {
+    const plusAncienne = couvertureDite.values().next().value;
+    if (plusAncienne !== undefined) couvertureDite.delete(plusAncienne);
+  }
+  couvertureDite.add(cle);
+  console.warn(
+    `[verification] GIT_CONSTAT_FALLBACK_COVERAGE job=${jobId ?? '-'} ws=${root} ` +
+      `not_covered=".gitignore of the workspace, ${SNAPSHOT_EXCLUDES.join(', ')}"`,
+  );
 }
 
 /** Deux empreintes du même fichier disent-elles la même chose ? */
@@ -421,32 +508,134 @@ export function perimetreGit(
  *
  * Ne lève jamais. Une panne de git n'est pas une panne d'écriture.
  */
-export async function snapshotGitAvant(dirs: readonly string[]): Promise<GitConstatBefore> {
+export async function snapshotGitAvant(
+  dirs: readonly string[],
+  /**
+   * Les workspaces de l'agent et le magasin de ses instantanés (#590). Un
+   * workspace qu'aucun dépôt ne couvre — hors dépôt, ou dépôt enraciné
+   * au-dessus de lui — est constaté contre l'index de son instantané de
+   * checkpoint, pris avant tout outil qui écrit. Sans magasin ni instantané,
+   * rien ne le couvre, et c'est dit (`GIT_CONSTAT_NO_FALLBACK`).
+   */
+  shadow?: {
+    readonly store: string | undefined;
+    readonly workspaces: readonly string[];
+    /** Le job de l'appel : la couverture du repli est dite une fois par job. */
+    readonly jobId?: string;
+  },
+): Promise<GitConstatBefore> {
   const racines = new Map<string, RepoSnapshot>();
   const vus = new Set<string>();
   // Le périmètre est comparé sur les chemins RÉELS : git rend la forme longue
   // et suivie, le dossier visé peut arriver en 8.3 ou à travers une jonction.
   const perimetre = await Promise.all(dirs.map((d) => cheminReel(d)));
-  for (const dir of perimetre) {
-    if (vus.has(dir)) continue;
-    vus.add(dir);
+  /**
+   * La racine que git retient pour ce dossier, ou null s'il n'y en a pas
+   * d'utilisable. Sondée UNE fois par dossier : un workspace est à la fois dans
+   * le périmètre et dans la liste du repli.
+   */
+  const sondes = new Map<string, Promise<string | null>>();
+  const racineRetenue = (dir: string): Promise<string | null> => {
+    let sonde = sondes.get(dir);
+    if (sonde === undefined) {
+      sonde = sonder(dir);
+      sondes.set(dir, sonde);
+    }
+    return sonde;
+  };
+  const sonder = async (dir: string): Promise<string | null> => {
     const root = await repoRootOf(dir);
-    if (root === null || racines.has(root)) continue;
+    if (root === null) return null;
     const rootReel = await cheminReel(root);
     if (!perimetre.some((d) => sousOuEgal(rootReel, d))) {
       console.warn(`[verification] GIT_CONSTAT_ROOT_ABOVE_SCOPE root=${root} dir=${dir}`);
-      continue;
+      return null;
     }
+    return root;
+  };
+  for (const dir of perimetre) {
+    if (vus.has(dir)) continue;
+    vus.add(dir);
+    const root = await racineRetenue(dir);
+    if (root === null || racines.has(root)) continue;
     const snap = await snapshotRepo(root);
     if (snap !== null) racines.set(root, snap);
   }
+  // LE REPLI, par workspace (#590). La garde au-dessus (pas de dépôt enraciné
+  // au-dessus du périmètre, pour ne pas constater tout un profil) reste
+  // entière : le repli ne lit jamais ce dépôt-là, il lit une copie FIGÉE de
+  // l'index de l'instantané de CE workspace, bornée au workspace par
+  // construction. L'après relira la même copie : un instantané d'un autre job
+  // pris entre les deux ne change rien à ce que cet appel a écrit.
+  // Deux entrées pour le même dossier (`/ws` et `/ws/`, deux étiquettes) :
+  // une seule copie figée, sinon la seconde écrasait la première dans
+  // `racines` et la laissait orpheline, jamais libérée.
+  const replis = new Set<string>();
+  try {
+    for (const ws of shadow?.workspaces ?? []) {
+      const reel = await cheminReel(ws);
+      if (replis.has(reel)) continue;
+      replis.add(reel);
+      await replier(ws, reel);
+    }
+  } catch (err) {
+    // Ne lève pas en principe ; si quelque chose lève quand même, les copies
+    // déjà prises ne restent pas derrière.
+    await releaseGitAvant([...racines.values()]);
+    throw err;
+  }
   return [...racines.values()];
+
+  async function replier(ws: string, reel: string): Promise<void> {
+    if ((await racineRetenue(reel)) !== null) return;
+    if (!shadow?.store) {
+      console.warn(`[verification] GIT_CONSTAT_NO_FALLBACK ws=${ws} reason=no_checkpoint_store`);
+      return;
+    }
+    const fige = await freezeSnapshotIndex(shadow.store, ws);
+    if (fige.kind === 'none') {
+      console.warn(`[verification] GIT_CONSTAT_NO_FALLBACK ws=${ws} reason=${fige.reason}`);
+      return;
+    }
+    const frozen: FrozenIndex = { store: shadow.store, indexFile: fige.indexFile };
+    let snap: RepoSnapshot | null;
+    try {
+      snap = await snapshotRepo(normalizePath(ws), frozen);
+    } catch (err) {
+      await releaseFrozenIndex(frozen.indexFile);
+      throw err;
+    }
+    if (snap === null) {
+      // La raison est déjà dite par `snapshotRepo` (statut en panne, ou trop
+      // de changements depuis l'instantané).
+      await releaseFrozenIndex(frozen.indexFile);
+      return;
+    }
+    direCouverture(shadow.jobId, snap.root);
+    racines.set(`shadow:${reel}`, snap);
+  }
+}
+
+/**
+ * Retire les copies figées d'un avant dont l'après ne sera pas lu (l'outil a
+ * levé, ou son échec ne se constate pas). Sans effet sur un avant déjà relu.
+ */
+export async function releaseGitAvant(before: GitConstatBefore): Promise<void> {
+  for (const avant of before) {
+    if (avant.frozen !== undefined) await releaseFrozenIndex(avant.frozen.indexFile);
+  }
 }
 
 /** Ce que le constat par git a rendu pour un run. */
 export interface GitConstat {
   /** Les fichiers écrits, tous dépôts confondus. */
   readonly writes: readonly ConstatedWrite[];
+  /**
+   * Les fichiers écrits dans un workspace qu'aucun dépôt ne couvre, lus contre
+   * son instantané de checkpoint (#590). Rangés à part : ce n'est pas git du
+   * projet qui les a vus, et l'écran le dit (`constatedBy: 'disk'`).
+   */
+  readonly fallbackWrites: readonly ConstatedWrite[];
   /** Les racines réellement constatées — vide = aucun dépôt, donc constat disque. */
   readonly roots: readonly string[];
   /** Les chemins sur lesquels une empreinte n'a pas pu se lire. */
@@ -472,10 +661,13 @@ export interface GitConstat {
  */
 export async function constatedGitWrites(before: GitConstatBefore): Promise<GitConstat> {
   const writes: ConstatedWrite[] = [];
+  const fallbackWrites: ConstatedWrite[] = [];
   const roots: string[] = [];
   const indecis: string[] = [];
   for (const avant of before) {
-    const apres = await snapshotRepo(avant.root);
+    const apres = await snapshotRepo(avant.root, avant.frozen);
+    // L'après a lu la copie figée : elle a servi, elle part.
+    if (avant.frozen !== undefined) await releaseFrozenIndex(avant.frozen.indexFile);
     if (apres === null) continue;
     const entries = new Map<string, GitStatusEntry>(apres.entries);
     // Les noms d'avant des renommages : déjà portés par la ligne du nom
@@ -489,12 +681,16 @@ export async function constatedGitWrites(before: GitConstatBefore): Promise<GitC
       entries.set(path, { status: null, fingerprint: await fingerprint(path) });
     }
     const delta = deltaConstat(avant, { root: apres.root, entries });
-    roots.push(avant.root);
-    writes.push(...delta.writes);
+    if (avant.frozen === undefined) {
+      roots.push(avant.root);
+      writes.push(...delta.writes);
+    } else {
+      fallbackWrites.push(...delta.writes);
+    }
     indecis.push(...delta.indecis);
   }
   if (indecis.length > 0) {
     console.warn(`[verification] GIT_CONSTAT_UNREADABLE paths=${indecis.join(',')}`);
   }
-  return { writes, roots, indecis };
+  return { writes, fallbackWrites, roots, indecis };
 }

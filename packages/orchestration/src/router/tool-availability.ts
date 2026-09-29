@@ -23,7 +23,14 @@ import {
   mcpServers,
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
-import { ALWAYS_ON_TOOLS, DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
+import {
+  ALWAYS_ON_TOOLS,
+  DELIVERY_TOOL_NAMES,
+  createListConversationsTool,
+  createToolRegistry,
+  registerBuiltins,
+} from '@nodal-agents/tools';
+import { TASK_TOOL_NAMES } from '../planner/task-tool-names';
 import { metaToolsForAgent, parseRootGrants, META_TOOL_NAMES } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb, EntityId } from '../types';
 
@@ -38,9 +45,21 @@ export const KNOWN_FIXED_TOOL_NAMES: ReadonlySet<string> = new Set([
   ...ALWAYS_ON_TOOLS,
   ...DELIVERY_TOOL_NAMES,
   ...META_TOOL_NAMES,
-  'run_skill_script',
-  'skill_file_write',
+  // Every builtin the product registers, gated ones included (office,
+  // run_command, code_task, save_routine_state…): the list used to stop at
+  // the always-on set plus two, so a text naming `run_command` to an agent
+  // without it was never seen (#559).
+  ...registeredBuiltinNames(),
+  // Armed per job with the send tools, not registered (execute.ts §6).
+  createListConversationsTool().name,
+  ...TASK_TOOL_NAMES,
 ]);
+
+function registeredBuiltinNames(): string[] {
+  const registry = createToolRegistry();
+  registerBuiltins(registry);
+  return registry.list().map((t) => t.name);
+}
 
 /** Every connector operation slug across the whole adapter catalog (fixed, static). */
 export const KNOWN_CONNECTOR_TOOL_NAMES: ReadonlySet<string> = new Set(
@@ -188,10 +207,16 @@ export function findUnavailableToolMentions(
   briefText: string,
   availableToolNames: ReadonlySet<string>,
 ): string[] {
-  const words = briefText.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [];
-  const missing = new Set<string>();
-  for (const w of words) {
-    if (KNOWN_TOOL_NAME_UNIVERSE.has(w) && !availableToolNames.has(w)) missing.add(w);
-  }
-  return [...missing];
+  return toolsNamedIn(briefText).filter((w) => !availableToolNames.has(w));
+}
+
+/**
+ * The real tool names (members of `KNOWN_TOOL_NAME_UNIVERSE`) a text cites, once
+ * each, in order of appearance. The same reading serves a brief (B2) and the
+ * system prompt's catalog layers (agent-baseline.ts, #559): one definition of
+ * "this text names a tool".
+ */
+export function toolsNamedIn(text: string): string[] {
+  const words = text.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [];
+  return [...new Set(words.filter((w) => KNOWN_TOOL_NAME_UNIVERSE.has(w)))];
 }
