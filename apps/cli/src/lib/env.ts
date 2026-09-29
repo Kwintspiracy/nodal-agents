@@ -1,9 +1,33 @@
 // env.ts — build environment variable maps for runner and web processes
 
 import { randomBytes } from 'crypto';
+import { resolve } from 'path';
 import type { Config } from './config.ts';
 import { readInstalledVersion } from './version.ts';
 import { LEGACY_PG_PASSWORD, buildPgUrl } from './postgres.ts';
+
+/**
+ * COMMENT RELANCER CE CLI, pour CETTE install (#485).
+ *
+ * Le processus qui démarre la stack sait mieux que personne comment il a été
+ * lancé : le node qui l'exécute, les options de chargement (tsx sur un poste de
+ * dev, rien sur une install publiée), et son script. C'est la seule forme vraie
+ * sur les deux sortes d'install ; `nodal-agents` n'est même pas sur le PATH
+ * d'un poste de dev, ni d'une install lancée par npx. Le web la reçoit
+ * (`NODAL_CLI_ARGV`) pour donner à un client MCP la commande exacte de
+ * `mcp serve`, sans secret : le CLI relit lui-même ~/.nodalai/config.json.
+ *
+ * Les options de débogage sont écartées : un client qui relancerait le CLI
+ * ouvrirait un port d'inspection à chaque connexion.
+ */
+export function cliLaunchArgv(proc: {
+  execPath: string;
+  execArgv: readonly string[];
+  scriptPath: string;
+}): string[] {
+  const loaders = proc.execArgv.filter((a) => !/^--inspect(?:-brk|-port|-wait)?(?:=|$)/.test(a));
+  return [proc.execPath, ...loaders, proc.scriptPath];
+}
 
 /**
  * Build env vars for the runner process.
@@ -153,6 +177,14 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): ChildEnv {
     // and the ROOT prompt screen states it (#454). Removed exactly as for the
     // runner when it cannot be read: both processes get the same value.
     NODAL_VERSION: installedVersion ?? undefined,
+    // #485 — la commande qui relance ce CLI, pour les clients MCP (Settings).
+    NODAL_CLI_ARGV: JSON.stringify(
+      cliLaunchArgv({
+        execPath: process.execPath,
+        execArgv: process.execArgv,
+        scriptPath: resolve(process.argv[1] ?? ''),
+      }),
+    ),
     PORT: String(config.ports.web),
     // BIND mirrors the runner's binding so /settings → Network can render the
     // "restart required" banner when the configured value drifts from runtime.

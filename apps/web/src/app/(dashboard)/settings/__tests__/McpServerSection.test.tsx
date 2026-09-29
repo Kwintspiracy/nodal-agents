@@ -11,8 +11,26 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MCP_MAX_JOBS_IN_FLIGHT } from '@nodal-agents/shared';
 
-vi.mock('@/lib/actions.ts', () => ({ setMcpServerSwitchAction: vi.fn() }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const addNodalToClaudeDesktopAction = vi.hoisted(() =>
+  vi.fn(async () => ({
+    ok: true as const,
+    data: { path: DESKTOP_PATH, backupPath: `${DESKTOP_PATH}.bak`, replaced: false },
+  })),
+);
+const toastSuccess = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/actions.ts', () => ({
+  setMcpServerSwitchAction: vi.fn(),
+  addNodalToClaudeDesktopAction,
+}));
+vi.mock('sonner', () => ({ toast: { success: toastSuccess, error: vi.fn() } }));
+
+const DESKTOP_PATH = 'C:\\Users\\q\\AppData\\Roaming\\Claude\\claude_desktop_config.json';
+const CLIENTS = {
+  claudeCode:
+    'claude mcp add nodal -- "C:\\Program Files\\nodejs\\node.exe" D:\\cli\\index.js mcp serve',
+  claudeDesktop: '{\n  "mcpServers": {\n    "nodal": {}\n  }\n}',
+  claudeDesktopPath: DESKTOP_PATH,
+};
 
 const { default: McpServerSection } = await import('../McpServerSection.tsx');
 
@@ -24,12 +42,12 @@ afterEach(() => {
   container.remove();
 });
 
-async function render(enabled: boolean) {
+async function render(enabled: boolean, clients: typeof CLIENTS | null = CLIENTS) {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root.render(<McpServerSection initial={{ enabled, isOwner: true }} />);
+    root.render(<McpServerSection initial={{ enabled, isOwner: true, clients }} />);
   });
   return container.querySelector('p')!.textContent!.replace(/\s+/g, ' ');
 }
@@ -81,5 +99,48 @@ describe('La confirmation d’activation', () => {
     );
     expect(texte).not.toContain('to your root agent');
     expect(texte).not.toContain('—');
+  });
+});
+
+describe('Deux clients à la fois, Claude Code ET Claude Desktop (#485) @cap:connecter-un-service/ecran', () => {
+  it('montre un bloc par client, avec le texte exact de CETTE install', async () => {
+    await render(true);
+    const claudeCode = container.querySelector('[data-testid="mcp-client-claude-code"]');
+    const desktop = container.querySelector('[data-testid="mcp-client-claude-desktop"]');
+    expect(claudeCode?.textContent).toContain(CLIENTS.claudeCode);
+    expect(desktop?.textContent).toContain('"mcpServers"');
+    expect(desktop?.textContent).toContain(DESKTOP_PATH);
+    expect(container.textContent).toContain('Both can be connected at the same time.');
+  });
+
+  it('« Add to Claude Desktop » montre l’entrée, dit la copie et le redémarrage, puis écrit', async () => {
+    await render(true);
+    const bouton = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Add to Claude Desktop',
+    )!;
+    await act(async () => {
+      bouton.click();
+    });
+    // Rien n'est écrit avant la confirmation.
+    expect(addNodalToClaudeDesktopAction).not.toHaveBeenCalled();
+    const dialogue = document.body.textContent!.replace(/\s+/g, ' ');
+    expect(dialogue).toContain(DESKTOP_PATH);
+    expect(dialogue).toContain('Its other servers are kept, and the file is backed up first.');
+    expect(dialogue).toContain('Restart Claude Desktop');
+
+    const confirmer = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Add',
+    )!;
+    await act(async () => {
+      confirmer.click();
+    });
+    expect(addNodalToClaudeDesktopAction).toHaveBeenCalled();
+    expect(toastSuccess).toHaveBeenCalledWith('Added to Claude Desktop. Restart it to connect.');
+  });
+
+  it('sans la commande du CLI, la carte le dit au lieu d’inventer une commande', async () => {
+    await render(true, null);
+    expect(container.querySelector('[data-testid="mcp-client-claude-code"]')).toBeNull();
+    expect(container.textContent).toContain('Start Nodal with nodal-agents up');
   });
 });

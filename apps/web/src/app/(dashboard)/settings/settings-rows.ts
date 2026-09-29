@@ -33,6 +33,7 @@ import type {
   WorkspaceRow,
 } from '@/lib/actions.ts';
 import { AUTONOMY_OPTIONS } from '@/lib/autonomy.ts';
+import { autostartValue, type AutostartView } from '@/lib/autostart-view.ts';
 import { VERIFICATION_SURFACE_LABELS } from '@/lib/verification-runs-view.ts';
 import { runBudgetValue } from './run-budget-copy.ts';
 
@@ -50,6 +51,7 @@ export type SettingId =
   | 'root-agent'
   | 'mcp-server'
   | 'timezone'
+  | 'autostart'
   | 'install-notes'
   | 'workspaces'
   | 'urls'
@@ -82,6 +84,8 @@ export type SettingsSource = {
   runBudget: RunBudgetView | null;
   mcpServer: McpServerSwitchView | null;
   timezone: { timezone: string; isExplicit: boolean } | null;
+  /** #451 — lu dans le SYSTÈME par le CLI ; `null` quand l'action a échoué. */
+  autostart: AutostartView | null;
   installNotes: string | null;
   workspaces: WorkspaceRow[];
   agents: AgentRow[];
@@ -297,6 +301,16 @@ export function buildSettingRows(src: SettingsSource): SettingRow[] {
         : src.timezone.isExplicit
           ? src.timezone.timezone
           : `${src.timezone.timezone}, detected`,
+  });
+
+  rows.push({
+    id: 'autostart',
+    group: 'workspace',
+    name: 'Start with this machine',
+    lede: 'Nodal starts on its own when this machine starts, through its own startup manager.',
+    value: autostartValue(src.autostart),
+    toggle:
+      src.autostart?.status?.state === 'at_login' || src.autostart?.status?.state === 'at_boot',
   });
 
   rows.push({

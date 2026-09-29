@@ -22,6 +22,17 @@ import {
   normalize as pathNormalize,
 } from 'node:path';
 import { homedir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { parseServiceJson, type AutostartStatus, type AutostartView } from './autostart-view.ts';
+import {
+  claudeCodeCommand,
+  claudeDesktopConfigPath,
+  claudeDesktopEntry,
+  DesktopConfigError,
+  MCP_SERVER_NAME,
+  readCliArgv,
+} from './mcp-clients.ts';
+import { DesktopNotInstalledError, writeNodalIntoClaudeDesktop } from './claude-desktop-config.ts';
 import { pathToFileURL } from 'node:url';
 import {
   realpath as fsRealpath,
@@ -8555,7 +8566,35 @@ export async function setVerificationSurfacesAction(raw: unknown): Promise<Actio
 export type McpServerSwitchView = {
   enabled: boolean;
   isOwner: boolean;
+  /**
+   * #485 — ce qu'il faut coller dans chaque client, bâti pour CETTE install
+   * depuis la commande du CLI qui a démarré la stack (`NODAL_CLI_ARGV`).
+   * `null` quand le web n'a pas été démarré par `nodal-agents up` : l'écran le
+   * dit, plutôt qu'une commande inventée.
+   */
+  clients: {
+    claudeCode: string;
+    /** Le bloc `mcpServers` à coller dans Claude Desktop, en JSON. */
+    claudeDesktop: string;
+    /** Où Claude Desktop range sa config sur cette machine. */
+    claudeDesktopPath: string;
+  } | null;
 };
+
+/** Les commandes des clients MCP pour cette install (#485). */
+function mcpClientsView(): McpServerSwitchView['clients'] {
+  const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
+  if (argv === null) return null;
+  return {
+    claudeCode: claudeCodeCommand(argv),
+    claudeDesktop: JSON.stringify(
+      { mcpServers: { [MCP_SERVER_NAME]: claudeDesktopEntry(argv) } },
+      null,
+      2,
+    ),
+    claudeDesktopPath: claudeDesktopConfigPath(process.platform, process.env, homedir(), pathJoin),
+  };
+}
 
 /**
  * L'interrupteur maître du serveur MCP (migration 0081, décision Quentin
@@ -8575,10 +8614,142 @@ export async function getMcpServerSwitchAction(): Promise<ActionResult<McpServer
     return ok({
       enabled: entityRow.enabled,
       isOwner: entityRow.userId === session.userId,
+      clients: mcpClientsView(),
     });
   } catch (err) {
     console.error('[getMcpServerSwitchAction]', err);
     return fail('db_error', 'Failed to load MCP server setting');
+  }
+}
+
+/**
+ * #485 — poser l'entrée de Nodal dans la config de Claude Desktop, sur la
+ * machine qui héberge Nodal. Le propriétaire seul, et seulement sur une
+ * install à un compte : ce fichier appartient à l'utilisateur de la machine,
+ * pas à un espace de travail (même garde que la config de l'hôte).
+ */
+export async function addNodalToClaudeDesktopAction(): Promise<
+  ActionResult<{ path: string; backupPath: string | null; replaced: boolean }>
+> {
+  try {
+    const session = await getSession();
+    const guard = await assertMonoUserHostInstall();
+    if (guard) return guard;
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can change this setting.');
+    }
+    const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
+    if (argv === null) {
+      return fail(
+        'cli_argv_missing',
+        'Nodal was not started with `nodal-agents up`, so the command to launch its MCP server is unknown.',
+      );
+    }
+    const file = claudeDesktopConfigPath(process.platform, process.env, homedir(), pathJoin);
+    const written = await writeNodalIntoClaudeDesktop(file, claudeDesktopEntry(argv), new Date());
+    return ok(written);
+  } catch (err) {
+    if (err instanceof DesktopNotInstalledError)
+      return fail('claude_desktop_not_found', err.message);
+    if (err instanceof DesktopConfigError) return fail(err.code, err.message);
+    console.error('[addNodalToClaudeDesktopAction]', err);
+    return fail('write_failed', 'Could not write Claude Desktop’s config file');
+  }
+}
+
+// ─── Start with the machine (#451) ────────────────────────────────────────────
+
+/**
+ * Le CLI tient l'intégration au système (valeur Run de Windows, LaunchAgent, unité
+ * systemd) : le web l'appelle, avec la commande qui a démarré la stack
+ * (`NODAL_CLI_ARGV`, #485), et ne réécrit rien lui-même.
+ */
+async function runServiceCommand(
+  action: 'status' | 'install' | 'uninstall',
+): Promise<{ status: AutostartStatus | null; error: string | null }> {
+  const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
+  if (argv === null) {
+    return {
+      status: null,
+      error: 'Start Nodal with nodal-agents up to manage how it starts with this machine.',
+    };
+  }
+  const [cmd, ...args] = argv;
+  return new Promise((resolveResult) => {
+    execFile(
+      cmd!,
+      [...args, 'service', action, '--json'],
+      { timeout: 60_000, windowsHide: true },
+      (err, stdout, stderr) => {
+        const status = parseServiceJson(String(stdout));
+        if (status !== null) return resolveResult({ status, error: null });
+        const detail = String(stderr).trim().split(/\r?\n/).pop() ?? '';
+        resolveResult({
+          status: null,
+          error: detail !== '' ? detail : (err?.message ?? 'The CLI gave no answer'),
+        });
+      },
+    );
+  });
+}
+
+/** Lu À CHAQUE affichage, dans le système : jamais un drapeau stocké. */
+export async function getAutostartAction(): Promise<ActionResult<AutostartView>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    const read = await runServiceCommand('status');
+    return ok({ ...read, isOwner: entityRow.userId === session.userId });
+  } catch (err) {
+    console.error('[getAutostartAction]', err);
+    return fail('read_failed', 'Failed to read how Nodal starts with this machine');
+  }
+}
+
+const SetAutostartSchema = z.object({ enabled: z.boolean() });
+
+/**
+ * Inscrire ou retirer Nodal du démarrage de la machine. Il écrit dans la
+ * configuration de démarrage de la MACHINE : le propriétaire de l'install
+ * seulement, jamais un invité d'une install LAN (même garde que la config de
+ * l'hôte). L'état rendu est relu dans le système après le geste.
+ */
+export async function setAutostartAction(raw: unknown): Promise<ActionResult<AutostartView>> {
+  try {
+    const session = await getSession();
+    const guard = await assertMonoUserHostInstall();
+    if (guard) return guard;
+    const parsed = SetAutostartSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the owner of this installation can change this setting.');
+    }
+    const result = await runServiceCommand(parsed.data.enabled ? 'install' : 'uninstall');
+    if (result.status === null) return fail('service_failed', result.error ?? 'The CLI failed');
+    revalidatePath('/settings');
+    return ok({ ...result, isOwner: true });
+  } catch (err) {
+    console.error('[setAutostartAction]', err);
+    return fail('write_failed', 'Failed to change how Nodal starts with this machine');
   }
 }
 
