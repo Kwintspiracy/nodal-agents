@@ -22,6 +22,15 @@ import {
   normalize as pathNormalize,
 } from 'node:path';
 import { homedir } from 'node:os';
+import {
+  claudeCodeCommand,
+  claudeDesktopConfigPath,
+  claudeDesktopEntry,
+  DesktopConfigError,
+  MCP_SERVER_NAME,
+  readCliArgv,
+} from './mcp-clients.ts';
+import { DesktopNotInstalledError, writeNodalIntoClaudeDesktop } from './claude-desktop-config.ts';
 import { pathToFileURL } from 'node:url';
 import {
   realpath as fsRealpath,
@@ -6108,7 +6117,18 @@ function readGateReasons(approvalId: string, raw: unknown): ShellGateReason[] {
     console.warn(`[listApprovalsAction] unreadable gate_reasons on ${approvalId}`);
     return [];
   }
-  return parsed.data.map((r) => ({ ...r, details: r.details.map(redactSecretsInText) }));
+  return parsed.data.map((r) => ({
+    ...r,
+    details: r.details.map(redactSecretsInText),
+    ...(r.outside
+      ? {
+          outside: r.outside.map((o) => ({
+            command: redactSecretsInText(o.command),
+            places: o.places.map(redactSecretsInText),
+          })),
+        }
+      : {}),
+  }));
 }
 
 export async function listApprovalsAction(
@@ -8605,7 +8625,35 @@ export async function setVerificationSurfacesAction(raw: unknown): Promise<Actio
 export type McpServerSwitchView = {
   enabled: boolean;
   isOwner: boolean;
+  /**
+   * #485 — ce qu'il faut coller dans chaque client, bâti pour CETTE install
+   * depuis la commande du CLI qui a démarré la stack (`NODAL_CLI_ARGV`).
+   * `null` quand le web n'a pas été démarré par `nodal-agents up` : l'écran le
+   * dit, plutôt qu'une commande inventée.
+   */
+  clients: {
+    claudeCode: string;
+    /** Le bloc `mcpServers` à coller dans Claude Desktop, en JSON. */
+    claudeDesktop: string;
+    /** Où Claude Desktop range sa config sur cette machine. */
+    claudeDesktopPath: string;
+  } | null;
 };
+
+/** Les commandes des clients MCP pour cette install (#485). */
+function mcpClientsView(): McpServerSwitchView['clients'] {
+  const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
+  if (argv === null) return null;
+  return {
+    claudeCode: claudeCodeCommand(argv),
+    claudeDesktop: JSON.stringify(
+      { mcpServers: { [MCP_SERVER_NAME]: claudeDesktopEntry(argv) } },
+      null,
+      2,
+    ),
+    claudeDesktopPath: claudeDesktopConfigPath(process.platform, process.env, homedir(), pathJoin),
+  };
+}
 
 /**
  * L'interrupteur maître du serveur MCP (migration 0081, décision Quentin
@@ -8625,10 +8673,52 @@ export async function getMcpServerSwitchAction(): Promise<ActionResult<McpServer
     return ok({
       enabled: entityRow.enabled,
       isOwner: entityRow.userId === session.userId,
+      clients: mcpClientsView(),
     });
   } catch (err) {
     console.error('[getMcpServerSwitchAction]', err);
     return fail('db_error', 'Failed to load MCP server setting');
+  }
+}
+
+/**
+ * #485 — poser l'entrée de Nodal dans la config de Claude Desktop, sur la
+ * machine qui héberge Nodal. Le propriétaire seul, et seulement sur une
+ * install à un compte : ce fichier appartient à l'utilisateur de la machine,
+ * pas à un espace de travail (même garde que la config de l'hôte).
+ */
+export async function addNodalToClaudeDesktopAction(): Promise<
+  ActionResult<{ path: string; backupPath: string | null; replaced: boolean }>
+> {
+  try {
+    const session = await getSession();
+    const guard = await assertMonoUserHostInstall();
+    if (guard) return guard;
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can change this setting.');
+    }
+    const argv = readCliArgv(process.env['NODAL_CLI_ARGV']);
+    if (argv === null) {
+      return fail(
+        'cli_argv_missing',
+        'Nodal was not started with `nodal-agents up`, so the command to launch its MCP server is unknown.',
+      );
+    }
+    const file = claudeDesktopConfigPath(process.platform, process.env, homedir(), pathJoin);
+    const written = await writeNodalIntoClaudeDesktop(file, claudeDesktopEntry(argv), new Date());
+    return ok(written);
+  } catch (err) {
+    if (err instanceof DesktopNotInstalledError)
+      return fail('claude_desktop_not_found', err.message);
+    if (err instanceof DesktopConfigError) return fail(err.code, err.message);
+    console.error('[addNodalToClaudeDesktopAction]', err);
+    return fail('write_failed', 'Could not write Claude Desktop’s config file');
   }
 }
 
