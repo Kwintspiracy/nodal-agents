@@ -261,8 +261,8 @@ describe('telegramAdapter.validateCredentials', () => {
 // "a long text is split automatically" on the strength of this adapter's
 // declaration; this proves the declaration is what sendText does.
 describe('telegramAdapter.text — what a sent text becomes (#613)', () => {
-  it('declares plain text: sendText sets no parse_mode, so markup arrives as typed', async () => {
-    expect(telegramAdapter.text.shownAs).toBe('plain');
+  it('declares that no mark renders: sendText sets no parse_mode, so markup arrives as typed', async () => {
+    expect(telegramAdapter.text.renders).toEqual([]);
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       makeFetchResponse(200, { ok: true, result: { message_id: 1 } }),
     );
@@ -292,5 +292,39 @@ describe('telegramAdapter.text — what a sent text becomes (#613)', () => {
     for (const part of sent)
       expect(part.length).toBeLessThanOrEqual(telegramAdapter.text.maxMessageChars);
     expect(sent.join('\n')).toBe(text);
+  });
+});
+
+// #613, review of #615 — without a length cap, one reply is several messages.
+// A failure on the 3rd of 4 used to leave 1 and 2 delivered with nothing to
+// say so: the retry resent all four. The error says how far it got, and a
+// send resumed from there delivers only the rest.
+describe('telegramAdapter.sendText — a send that fails partway resumes, never repeats (#615)', () => {
+  it('fails on part 3 of 4 with its progress; resumed, only parts 3 and 4 go out', async () => {
+    const max = telegramAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(3 * max + 100);
+    let call = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(() => {
+      call += 1;
+      return Promise.resolve(
+        call === 3
+          ? makeFetchResponse(400, { ok: false, error_code: 400, description: 'Bad Request' })
+          : makeFetchResponse(200, { ok: true, result: { message_id: call } }),
+      );
+    });
+
+    const err = await telegramAdapter.sendText(CREDS, FAKE_CHAT_ID, text).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryError);
+    expect((err as DeliveryError).partialProgress).toEqual({ sentChunks: 2, totalChunks: 4 });
+
+    await telegramAdapter.sendText(CREDS, FAKE_CHAT_ID, text, { fromChunk: 2 });
+
+    const bodies = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.map(([, init]) => (JSON.parse(init?.body as string) as { text: string }).text);
+    // Call 3 failed; what reached the user is every other call, in order.
+    const delivered = bodies.filter((_, i) => i !== 2);
+    expect(delivered).toHaveLength(4);
+    expect(delivered.join('')).toBe(text);
   });
 });

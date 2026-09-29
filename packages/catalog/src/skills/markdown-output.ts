@@ -50,7 +50,7 @@ For terminal commands, use \`\`\`bash\`. For generic output or logs with no lang
 - Short answers (1–3 sentences): plain prose. A bullet list for two items is noisier than a sentence.
 - Conversational exchanges: direct acknowledgment of a question needs no heading.
 - Inline code references: use backticks (\`variableName\`), not a full fenced block.
-- A channel whose \`delivery:\` line (Job context) says plain text: write plain prose, no markdown at all.
+- A messaging channel: use only the marks its \`delivery:\` line (Job context) says render. Where none do, write plain prose.
 
 ### Anti-patterns
 

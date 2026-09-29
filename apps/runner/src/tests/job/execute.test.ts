@@ -1435,8 +1435,9 @@ describe('executeJob', () => {
         .where(eq(agentJobs.id, tgJob!.id));
       expect(tgRow?.systemPrompt).toContain(
         '- delivery: `telegram_send_message` reaches the user on telegram, the only way your ' +
-          'replies reach them. Text arrives as plain text: markdown (headings, tables, **bold**, ' +
-          'escapes) shows literally. A long text is split into several messages automatically, ' +
+          'replies reach them. Text arrives exactly as typed: no markup renders, so markdown ' +
+          '(headings, tables, **bold**, escapes) shows literally. A long text is split into ' +
+          'several messages automatically, ' +
           'so send each reply once, whole.',
       );
       for (const gone of ['## Channel etiquette', 'MarkdownV2', '4096']) {

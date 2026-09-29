@@ -1505,13 +1505,20 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
   const TELEGRAM_FACTS = {
     channel: 'telegram',
     sendTool: 'telegram_send_message',
-    shownAs: 'plain',
+    renders: [],
     onlyPath: true,
   } as const;
   const DISCORD_FACTS = {
     channel: 'discord',
     sendTool: 'telegram_send_message',
-    shownAs: 'markdown',
+    renders: ['**bold**', '*italic*', '`code`'],
+    onlyPath: true,
+  } as const;
+  // Slack renders its own mrkdwn, not markdown: `*x*` is bold there (#615).
+  const SLACK_FACTS = {
+    channel: 'slack',
+    sendTool: 'telegram_send_message',
+    renders: ['*bold*', '_italic_', '<url|text>'],
     onlyPath: true,
   } as const;
   const withSend = [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES];
@@ -1529,7 +1536,7 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     });
     expect(deliveryLines(prompt)).toEqual([
       '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ' +
-        'Text arrives as plain text: markdown (headings, tables, **bold**, escapes) shows literally. ' +
+        'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, **bold**, escapes) shows literally. ' +
         'A long text is split into several messages automatically, so send each reply once, whole.',
     ]);
     // The line lives in the Job context block, where the channel is named.
@@ -1548,7 +1555,7 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     }
   });
 
-  it('a Discord job states ITS adapter facts: markdown rendered, same splitting (#613)', async () => {
+  it('a Discord job states ITS adapter facts: the marks it renders, same splitting (#613)', async () => {
     const { entityId, root } = await seedTeam();
     const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
     const prompt = await buildSystemPrompt(rootAgent, db, {
@@ -1559,7 +1566,7 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     });
     expect(deliveryLines(prompt)).toEqual([
       '- delivery: `telegram_send_message` reaches the user on discord, the only way your replies reach them. ' +
-        'Text arrives with markdown rendered. ' +
+        'Text arrives as typed, and these marks render: **bold**, *italic*, `code`. Any other markup shows literally. ' +
         'A long text is split into several messages automatically, so send each reply once, whole.',
     ]);
     for (const gone of [
@@ -1574,6 +1581,23 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     }
   });
 
+  it('a Slack job names mrkdwn marks, never claims its markup shows literally (#615)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const prompt = await buildSystemPrompt(rootAgent, db, {
+      origin: 'slack',
+      telegramChatId: 'C0123456',
+      channelDelivery: SLACK_FACTS,
+      availableToolNames: withSend,
+    });
+    expect(deliveryLines(prompt)).toEqual([
+      '- delivery: `telegram_send_message` reaches the user on slack, the only way your replies reach them. ' +
+        'Text arrives as typed, and these marks render: *bold*, _italic_, <url|text>. Any other markup shows literally. ' +
+        'A long text is split into several messages automatically, so send each reply once, whole.',
+    ]);
+    expect(prompt).not.toContain('no markup renders');
+  });
+
   it('a dashboard job holding the send tool keeps the format fact, not the only-path clause (#613)', async () => {
     const { entityId, root } = await seedTeam();
     const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
@@ -1584,7 +1608,7 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     });
     expect(deliveryLines(prompt)).toEqual([
       '- delivery: `telegram_send_message` reaches the user on telegram. ' +
-        'Text arrives as plain text: markdown (headings, tables, **bold**, escapes) shows literally. ' +
+        'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, **bold**, escapes) shows literally. ' +
         'A long text is split into several messages automatically, so send each reply once, whole.',
     ]);
   });

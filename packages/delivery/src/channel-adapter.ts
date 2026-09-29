@@ -30,6 +30,13 @@ export type TextFormat = 'plain' | 'markdown' | 'html';
 
 export interface SendTextOpts {
   format?: TextFormat;
+  /**
+   * Reprendre un envoi découpé au morceau `fromChunk` (compté depuis 0) : les
+   * précédents sont déjà partis. C'est le `partialProgress.sentChunks` de la
+   * `DeliveryError` que l'essai précédent a levée (#615). Le découpage d'un
+   * même texte est déterministe, donc les morceaux sont les mêmes.
+   */
+  fromChunk?: number;
 }
 
 /** A file to deliver as chat media. `kind` picks the platform's native
@@ -129,11 +136,17 @@ export type DiscoveredConversation = {
  */
 export interface TextDelivery {
   /**
-   * Comment le lecteur voit un texte envoyé sans `format` :
-   * 'plain' — tel que tapé, la syntaxe markdown s'affiche littéralement ;
-   * 'markdown' — le markdown est rendu par la plateforme.
+   * Les marques que la plateforme REND dans un texte envoyé sans `format`,
+   * écrites comme l'expéditeur les tape (`*bold*` pour Slack, `**bold**` pour
+   * Discord). Tout le reste s'affiche tel quel. Vide : rien n'est rendu.
+   *
+   * Une liste, pas « plain » ou « markdown » : Slack et WhatsApp ne rendent
+   * pas le markdown, mais leur propre balisage léger — les déclarer « plain »
+   * faisait dire au prompt que `*gras*` s'afficherait avec ses astérisques,
+   * alors qu'il s'affiche en gras (revue de #615). Le modèle écrit ce que le
+   * canal rend, l'utilisateur lit un texte mis en forme.
    */
-  shownAs: Exclude<TextFormat, 'html'>;
+  renders: readonly string[];
   /**
    * Le plus long message que l'adaptateur envoie d'un bloc. Au-delà,
    * `sendText` découpe sur les fins de ligne et envoie les morceaux dans

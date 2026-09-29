@@ -355,8 +355,21 @@ describe('whatsappAdapter.validateCredentials', () => {
 
 // #613 — the prompt's channel line is built from this declaration.
 describe('whatsappAdapter.text — what a sent text becomes (#613)', () => {
-  it('declares plain, and splits exactly at its declared size', async () => {
-    expect(whatsappAdapter.text.shownAs).toBe('plain');
+  it('declares the marks WhatsApp renders, and sends them untouched', async () => {
+    expect(whatsappAdapter.text.renders).toEqual([
+      '*bold*',
+      '_italic_',
+      '~strike~',
+      '```monospace```',
+    ]);
+    const handle = makeFakeHandle('open');
+    mockEnsureWhatsAppSocket.mockReturnValue(handle);
+    const text = whatsappAdapter.text.renders.join('\n');
+    await whatsappAdapter.sendText(CREDS, JID, text);
+    expect(handle.send).toHaveBeenCalledWith(JID, { text });
+  });
+
+  it('splits exactly at its declared size', async () => {
     const handle = makeFakeHandle('open');
     mockEnsureWhatsAppSocket.mockReturnValue(handle);
     const max = whatsappAdapter.text.maxMessageChars;
@@ -367,5 +380,30 @@ describe('whatsappAdapter.text — what a sent text becomes (#613)', () => {
     const sent = handle.send.mock.calls.map((c) => (c[1] as { text: string }).text);
     expect(sent.map((s) => s.length)).toEqual([max, max, 808]);
     expect(sent.join('')).toBe(text);
+  });
+});
+
+describe('whatsappAdapter.sendText — a send that fails partway resumes, never repeats (#615)', () => {
+  it('fails on part 3 of 4 with its progress; resumed, only parts 3 and 4 go out', async () => {
+    const handle = makeFakeHandle('open');
+    let call = 0;
+    handle.send.mockImplementation(() => {
+      call += 1;
+      return call === 3 ? Promise.reject(new Error('socket closed')) : Promise.resolve(`m${call}`);
+    });
+    mockEnsureWhatsAppSocket.mockReturnValue(handle);
+    const max = whatsappAdapter.text.maxMessageChars;
+    const text = 'y'.repeat(3 * max + 100);
+
+    const err = await whatsappAdapter.sendText(CREDS, JID, text).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeliveryError);
+    expect((err as DeliveryError).partialProgress).toEqual({ sentChunks: 2, totalChunks: 4 });
+
+    await whatsappAdapter.sendText(CREDS, JID, text, { fromChunk: 2 });
+
+    const texts = handle.send.mock.calls.map((c) => (c[1] as { text: string }).text);
+    const delivered = texts.filter((_, i) => i !== 2);
+    expect(delivered).toHaveLength(4);
+    expect(delivered.join('')).toBe(text);
   });
 });

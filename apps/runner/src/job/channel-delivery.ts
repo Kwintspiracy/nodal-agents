@@ -52,9 +52,9 @@ export function requiresToolDelivery(job: DeliveryJob): boolean {
  *
  * Le canal est celui que l'outil résoudra (`defaultChannelForJob`,
  * delivery-guard.ts) : la cible choisie par la routine, sinon
- * `resolveTransportChannel`. `shownAs` est ce que l'adaptateur de CE canal
- * déclare — pas une phrase par canal (invariants #1 et #2) : Telegram affiche
- * le texte brut, Discord rend le markdown. `onlyPath` est la condition de la
+ * `resolveTransportChannel`. `renders` est ce que l'adaptateur de CE canal
+ * déclare — pas une phrase par canal (invariants #1 et #2) : Telegram ne rend
+ * aucune marque, Discord rend le markdown, Slack et WhatsApp leur balisage. `onlyPath` est la condition de la
  * garde de livraison (`requiresToolDelivery`) : là, l'outil est le seul
  * chemin vers l'utilisateur. Ailleurs (un job du dashboard d'un agent qui a
  * un bot), l'outil existe et le fait de format vaut encore.
@@ -80,7 +80,7 @@ export function channelDeliveryFacts(opts: {
   return {
     channel,
     sendTool,
-    shownAs: textDeliveryOf(channel).shownAs,
+    renders: textDeliveryOf(channel).renders,
     onlyPath: requiresToolDelivery(job),
   };
 }

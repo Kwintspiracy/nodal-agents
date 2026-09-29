@@ -6,7 +6,7 @@
 // avec le canal que l'outil résoudra et ce que SON adaptateur fait du texte.
 
 import { describe, it, expect } from 'vitest';
-import { getAdapter } from '@nodal-agents/delivery';
+import { getAdapter, telegramAdapter, discordAdapter, slackAdapter } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import { channelDeliveryFacts, TOOL_ONLY_DELIVERY_CHANNELS } from '../../job/channel-delivery.ts';
 
@@ -21,20 +21,20 @@ const facts = (
   });
 
 describe('channelDeliveryFacts — the channel line comes from the adapter (#613) @cap:parler-par-canal-externe/moteur', () => {
-  it('a Telegram job: plain text, through the send tool', () => {
+  it('a Telegram job: no mark renders, through the send tool', () => {
     expect(facts({ channel: 'telegram', chatId: '199791464' })).toEqual({
       channel: 'telegram',
       sendTool: 'telegram_send_message',
-      shownAs: 'plain',
+      renders: telegramAdapter.text.renders,
       onlyPath: true,
     });
   });
 
-  it('a Discord job: markdown rendered — its own adapter, not Telegram rules', () => {
+  it('a Discord job: the marks Discord renders — its own adapter, not Telegram rules', () => {
     expect(facts({ channel: 'discord', chatId: '1511202553420054671' })).toEqual({
       channel: 'discord',
       sendTool: 'telegram_send_message',
-      shownAs: 'markdown',
+      renders: discordAdapter.text.renders,
       onlyPath: true,
     });
   });
@@ -42,9 +42,9 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
   it('every tool-delivery channel states what ITS adapter declares', () => {
     for (const channel of TOOL_ONLY_DELIVERY_CHANNELS) {
       const f = facts({ channel, chatId: '1' });
-      expect({ channel, shownAs: f?.shownAs, onlyPath: f?.onlyPath }).toEqual({
+      expect({ channel, renders: f?.renders, onlyPath: f?.onlyPath }).toEqual({
         channel,
-        shownAs: getAdapter(channel as ChannelKind).text.shownAs,
+        renders: getAdapter(channel as ChannelKind).text.renders,
         onlyPath: true,
       });
     }
@@ -55,14 +55,14 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
     expect(facts({ channel: 'cron', chatId: '1' }, { notifyChannelOverride: 'slack' })).toEqual({
       channel: 'slack',
       sendTool: 'telegram_send_message',
-      shownAs: 'plain',
+      renders: slackAdapter.text.renders,
       onlyPath: true,
     });
     // Left on auto: the agent's first active channel, by the same rule.
     expect(facts({ channel: 'webhook', chatId: '1' }, { activeChannels: ['discord'] })).toEqual({
       channel: 'discord',
       sendTool: 'telegram_send_message',
-      shownAs: 'markdown',
+      renders: discordAdapter.text.renders,
       onlyPath: true,
     });
   });
@@ -75,7 +75,7 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
       {
         channel: 'telegram',
         sendTool: 'telegram_send_message',
-        shownAs: 'plain',
+        renders: telegramAdapter.text.renders,
         onlyPath: false,
       },
     );

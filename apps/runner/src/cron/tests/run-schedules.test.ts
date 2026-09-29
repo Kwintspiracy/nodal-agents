@@ -42,7 +42,7 @@ vi.mock('@nodal-agents/delivery', () => ({
   // list preserves the pre-existing 'telegram' default.
   listActiveChannelsForAgent: async (..._args: unknown[]) => [] as string[],
   // Read by the prompt's channel line (#613); Telegram's declaration.
-  textDeliveryOf: () => ({ shownAs: 'plain', maxMessageChars: 3900 }),
+  textDeliveryOf: () => ({ renders: [], maxMessageChars: 3900 }),
   getAdapter: (channel: string) => ({
     channel,
     sendText: (creds: { botToken: string }, conversationId: string, text: string) =>

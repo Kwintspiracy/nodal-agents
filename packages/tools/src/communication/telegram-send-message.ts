@@ -11,7 +11,7 @@
 // target a DIFFERENT connected platform (cross-channel send).
 
 import { z } from 'zod';
-import { getAdapter } from '@nodal-agents/delivery';
+import { DeliveryError, getAdapter } from '@nodal-agents/delivery';
 import { resolveBotToken, resolveRecipientChatId, resolveChannelForJob } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 import { sentCard } from '../presenters';
@@ -57,6 +57,49 @@ type TelegramSendMessageInput = z.infer<typeof TelegramSendMessageInput>;
  */
 type TelegramSendMessageOutput = { sent: true };
 
+// ─── Envoi interrompu ─────────────────────────────────────────────────────────
+
+/**
+ * Les envois découpés qui ont échoué en route, par job, canal et destinataire :
+ * le texte, et combien de ses morceaux sont déjà partis (revue de #615).
+ *
+ * Sans plafond de longueur, une réponse fait N messages. Un échec au 3e sur 4
+ * laissait 1 et 2 livrés sans que rien ne le dise : la garde de livraison
+ * redemandait l'envoi, le modèle renvoyait TOUT, et l'utilisateur recevait 1
+ * et 2 deux fois. Le même texte renvoyé reprend maintenant au morceau manquant
+ * (`SendTextOpts.fromChunk`) ; un autre texte est une autre réponse et part
+ * entière. Borné, comme les compteurs de `delivery-guard.ts`.
+ */
+const partialSends = new Map<string, { text: string; sentChunks: number }>();
+const MAX_PARTIAL_SENDS = 1000;
+
+const partLabel = (from: number, to: number): string =>
+  from === to ? `part ${from}` : `parts ${from}-${to}`;
+
+/**
+ * Retient ce qui est parti et le DIT dans l'erreur que le modèle lira : quels
+ * morceaux ont atteint l'utilisateur, lesquels manquent, et que renvoyer le
+ * même texte n'enverra que ceux-là. Rien de parti : l'erreur d'origine, telle
+ * quelle.
+ */
+function partialSendError(err: unknown, key: string, text: string): unknown {
+  const progress = err instanceof DeliveryError ? err.partialProgress : undefined;
+  if (!progress || progress.sentChunks === 0) return err;
+  partialSends.set(key, { text, sentChunks: progress.sentChunks });
+  if (partialSends.size > MAX_PARTIAL_SENDS) {
+    const oldest = partialSends.keys().next().value;
+    if (oldest !== undefined) partialSends.delete(oldest);
+  }
+  const { sentChunks, totalChunks } = progress;
+  const e = new Error(
+    `send_partial: ${partLabel(1, sentChunks)} of ${totalChunks} reached the user, then the ` +
+      `send failed (${(err as DeliveryError).message}). Sending the same text again sends only ` +
+      `${partLabel(sentChunks + 1, totalChunks)}.`,
+  );
+  e.name = 'send_partial';
+  return e;
+}
+
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 /**
@@ -81,7 +124,7 @@ export function createTelegramSendMessageTool(): ToolDefinition<
   original request (the job's origin chat). An explicit chatId must already be an
   APPROVED chat for this agent (the owner, or a member the owner confirmed) —
   you cannot message an arbitrary chat id.
-- **text**: the whole reply. How it is shown (plain text or rendered markdown) is
+- **text**: the whole reply. Which marks render (none, markdown, the platform's own) is
   the channel's: see the \`delivery:\` line of your Job context. A text too long
   for one message is split automatically — send each reply in ONE call, never
   split it yourself.
@@ -143,8 +186,21 @@ Fail conditions:
 
       // 3. Send via the channel-neutral adapter (battle-tested Telegram delivery
       // helper underneath — see channels/telegram-adapter.ts).
-      const adapter = getAdapter(await resolveChannelForJob(ctx, input.channel));
-      const res = await adapter.sendText({ botToken }, chatId, input.text);
+      const channel = await resolveChannelForJob(ctx, input.channel);
+      const adapter = getAdapter(channel);
+      const key = `${ctx.jobId ?? ''}\u0000${channel}\u0000${chatId}`;
+      const pending = partialSends.get(key);
+      const fromChunk = pending?.text === input.text ? pending.sentChunks : undefined;
+      partialSends.delete(key);
+      let res;
+      try {
+        res =
+          fromChunk === undefined
+            ? await adapter.sendText({ botToken }, chatId, input.text)
+            : await adapter.sendText({ botToken }, chatId, input.text, { fromChunk });
+      } catch (err) {
+        throw partialSendError(err, key, input.text);
+      }
 
       // `res.messageId` reste disponible ici pour qui en aurait besoin côté
       // runner ; il ne remonte simplement pas au modèle.

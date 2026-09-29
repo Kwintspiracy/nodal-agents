@@ -83,9 +83,9 @@ export interface JobContext {
    * canal fait du texte (#613).
    *
    * Posé par le runner (`channelDeliveryFacts`) avec le canal que l'outil
-   * résoudra. `shownAs` vient de `ChannelAdapter.text` : ce n'est pas une
-   * phrase par canal, c'est ce que l'adaptateur déclare, et ses tests
-   * prouvent qu'il le fait. `onlyPath` : la garde de livraison exige un envoi
+   * résoudra. `renders` vient de `ChannelAdapter.text` : les marques que la
+   * plateforme rend, telles qu'on les tape. Ce n'est pas une phrase par canal,
+   * c'est ce que l'adaptateur déclare, et ses tests prouvent qu'il le fait. `onlyPath` : la garde de livraison exige un envoi
    * par cet outil (canal à livraison par outil, ou routine qui a demandé sa
    * confirmation). Rendu en une ligne de `## Job context`, et seulement si le
    * job détient `sendTool` (#559) — un délégué qui hérite du `chat_id` sans
@@ -94,7 +94,7 @@ export interface JobContext {
   channelDelivery?: {
     channel: string;
     sendTool: string;
-    shownAs: 'plain' | 'markdown';
+    renders: readonly string[];
     onlyPath: boolean;
   };
   /**
@@ -478,10 +478,14 @@ function channelDeliveryLine(
 ): string | null {
   if (!availableTools.includes(d.sendTool)) return null;
   const reach = d.onlyPath ? ', the only way your replies reach them' : '';
+  // Les marques que le canal rend, telles qu'il les attend : Slack et
+  // WhatsApp rendent `*gras*`, pas `**gras**` (revue de #615).
   const arrives =
-    d.shownAs === 'markdown'
-      ? 'Text arrives with markdown rendered.'
-      : 'Text arrives as plain text: markdown (headings, tables, **bold**, escapes) shows literally.';
+    d.renders.length === 0
+      ? 'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, ' +
+        '**bold**, escapes) shows literally.'
+      : `Text arrives as typed, and these marks render: ${d.renders.join(', ')}. ` +
+        'Any other markup shows literally.';
   return (
     `- delivery: \`${d.sendTool}\` reaches the user on ${d.channel}${reach}. ${arrives} ` +
     'A long text is split into several messages automatically, so send each reply once, whole.'
