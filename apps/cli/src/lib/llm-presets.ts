@@ -102,11 +102,12 @@ export async function fetchModels(
   const headers: Record<string, string> = {};
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
+  // #608: the 3 s cover the body too. An endpoint that sends its headers and
+  // then goes silent must not hold `nodal-agents init` for ever.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(url, { headers, signal: controller.signal });
-    clearTimeout(timeout);
     if (!res.ok) {
       // #608: a body we will not read is cancelled, never left on the connection.
       await res.body?.cancel().catch(() => {});
@@ -117,6 +118,8 @@ export async function fetchModels(
     return json.data.map((m) => m.id).filter(Boolean);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

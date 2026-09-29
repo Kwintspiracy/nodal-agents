@@ -5,8 +5,9 @@
 // stale retry's timeout, a Stop) is governed by it alone, up to 600 s of
 // silence before a first token. undici's own 300 s header and body timeouts
 // never apply. A call that carries NO deadline (a key test, an embedding, a
-// speech or image request) gets the transport's default one, bounded, so it
-// can never hang for ever.
+// streamed probe, speech, an image) gets the transport's default one, bounded
+// so it can never hang for ever: a wait for the headers, then a wait between
+// two parts of the body. Never a cap on a body that keeps coming.
 //
 // Network path: a user behind a corporate proxy declares it with HTTP_PROXY /
 // HTTPS_PROXY / NO_PROXY, and hosted providers are reached through it. A model
@@ -15,7 +16,9 @@
 //
 // `createProviderFetch` takes short stand-ins for undici's defaults and for
 // the default deadline, so a test can wait past them. undici runs its own
-// timers at about one-second granularity, hence silences of 2 s.
+// timers at about one-second granularity, hence silences of 2 s. A 300 s timer
+// cannot be waited for in a test, so the options that disable undici's are
+// also pinned exactly.
 
 import http from 'node:http';
 import https from 'node:https';
@@ -23,7 +26,7 @@ import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { describe, it, expect, afterEach } from 'vitest';
 
-import { createProviderFetch } from '../transport';
+import { createProviderFetch, PROVIDER_AGENT_OPTIONS } from '../transport';
 import { selfSignedLocalhostCert } from './_tls-fixture';
 
 const closers: Array<() => Promise<void>> = [];
@@ -95,7 +98,7 @@ describe('provider transport (#608) @cap:parler-a-un-agent/moteur', () => {
   it('never cuts a provider that is silent before its headers: the turn clocks decide', async () => {
     const url = await slowProvider(2_000, 0);
     const send = createProviderFetch({
-      undiciDefaults: { headersTimeout: 150, bodyTimeout: 150 },
+      simulateUndiciDefaults: { headersTimeout: 150, bodyTimeout: 150 },
     });
 
     // A deadline of its own (never reached): the turn clocks' case.
@@ -113,7 +116,7 @@ describe('provider transport (#608) @cap:parler-a-un-agent/moteur', () => {
   it('never cuts a provider that is silent between two parts of its body', async () => {
     const url = await slowProvider(0, 2_000);
     const send = createProviderFetch({
-      undiciDefaults: { headersTimeout: 150, bodyTimeout: 150 },
+      simulateUndiciDefaults: { headersTimeout: 150, bodyTimeout: 150 },
     });
 
     // A deadline of its own (never reached): the turn clocks' case.
@@ -142,6 +145,51 @@ describe('provider transport (#608) @cap:parler-a-un-agent/moteur', () => {
     expect(err?.name).toBe('TimeoutError');
     expect(err?.message).toBe(
       `provider call to ${new URL(url).origin} got no answer within 300 ms (no deadline was given by the caller)`,
+    );
+  });
+
+  it('turns the timeouts of undici off, whatever they default to', () => {
+    expect(PROVIDER_AGENT_OPTIONS).toEqual({ allowH2: false, headersTimeout: 0, bodyTimeout: 0 });
+  });
+
+  it('a body that keeps coming, with no deadline of its own, is never cut', async () => {
+    // 8 parts 200 ms apart: 1.6 s in all, four times the default of 400 ms.
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      let sent = 0;
+      const tick = setInterval(() => {
+        sent += 1;
+        if (sent < 8) res.write(`${sent} `);
+        else {
+          clearInterval(tick);
+          res.end('8');
+        }
+      }, 200);
+      res.on('close', () => clearInterval(tick));
+    });
+    const url = `http://127.0.0.1:${await listen(server)}/v1/chat/completions`;
+    const send = createProviderFetch({ callTimeoutMs: 400 });
+
+    const text = await send(url, { method: 'POST', body: '{}' })
+      .then((r) => r.text())
+      .catch((e: unknown) => `failed: ${String(e)}`);
+
+    expect(text).toBe('1 2 3 4 5 6 7 8');
+  });
+
+  it('a body that goes silent, with no deadline of its own, ends at the default, and says so', async () => {
+    const url = await slowProvider(0, 60_000);
+    const send = createProviderFetch({ callTimeoutMs: 400 });
+
+    const res = await send(url, { method: 'POST', body: '{}' });
+    const err = await res.text().then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+
+    expect(err?.name).toBe('TimeoutError');
+    expect(err?.message).toBe(
+      `provider call to ${new URL(url).origin}: the response started, then went silent for 400 ms (no deadline was given by the caller)`,
     );
   });
 

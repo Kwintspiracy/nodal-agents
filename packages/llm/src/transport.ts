@@ -24,6 +24,16 @@
 // the web app's key test, model list and context probe), and leaves every
 // other `fetch` of the process as it was. Same shape as the MCP adapter's
 // dedicated agent (packages/adapters/mcp/src/client.ts, P0-H7).
+//
+// Provider calls that do NOT take this transport:
+//  - the setup wizard's endpoint probes (apps/cli/src/lib/llm-presets.ts):
+//    the published CLI does not depend on this package, and taking it would
+//    make undici a runtime dependency of the CLI. They run one at a time, in a
+//    short-lived process, bounded at 3 s including the body, and release every
+//    body they do not read;
+//  - maintainer tools reading OpenRouter's public model list
+//    (packages/bench/src/sections/catalog-drift.ts,
+//    scripts/refresh-model-vision.mjs): one GET each, body read in full.
 
 import { Agent, Dispatcher, EnvHttpProxyAgent, fetch as undiciFetch } from 'undici';
 
@@ -122,29 +132,39 @@ function urlOf(input: Parameters<FetchLike>[0]): string {
 }
 
 /**
- * A provider transport on its own dispatcher. `undiciDefaults` stands for the
- * values undici applies when nobody sets them, `callTimeoutMs` for the
- * default deadline (tests shorten both).
+ * The agent options every provider call runs on. undici's own header and body
+ * timeouts (300 s when unset) are off: a call's time is its caller's (the turn
+ * clocks wait up to 600 s for a first token), or the default deadline below.
+ */
+export const PROVIDER_AGENT_OPTIONS = Object.freeze({
+  // HTTP/1.1 only: an unread body can never hold back another call.
+  allowH2: false,
+  headersTimeout: 0,
+  bodyTimeout: 0,
+});
+
+/**
+ * A provider transport on its own dispatcher. `simulateUndiciDefaults` stands
+ * in for the values undici applies when nobody sets them, applied first and
+ * then overridden like the real ones; `callTimeoutMs` for the default
+ * deadline. Tests shorten both.
  */
 export function createProviderFetch(
-  opts: { undiciDefaults?: UndiciDefaults; callTimeoutMs?: number } = {},
+  opts: { simulateUndiciDefaults?: UndiciDefaults; callTimeoutMs?: number } = {},
 ): FetchLike {
-  const agentOptions = {
-    ...opts.undiciDefaults,
-    // HTTP/1.1 only: an unread body can never hold back another call.
-    allowH2: false,
-    // undici's own 300 s header and body timeouts never apply: a call's
-    // deadline is its caller's (the turn clocks wait up to 600 s for a first
-    // token), or the default one below. 0 disables them.
-    headersTimeout: 0,
-    bodyTimeout: 0,
-  };
+  const agentOptions = { ...opts.simulateUndiciDefaults, ...PROVIDER_AGENT_OPTIONS };
   const dispatcher = new ProviderDispatcher(
     new Agent(agentOptions),
     new EnvHttpProxyAgent(agentOptions),
   );
   const callTimeoutMs = opts.callTimeoutMs ?? defaultCallTimeoutMs();
   return (input, init) => fetchOn(dispatcher, callTimeoutMs, input, init);
+}
+
+function timeoutError(message: string, cause?: unknown): Error {
+  const err = new Error(`${message} (no deadline was given by the caller)`, { cause });
+  err.name = 'TimeoutError';
+  return err;
 }
 
 async function fetchOn(
@@ -163,31 +183,73 @@ async function fetchOn(
       body: new Uint8Array(await serialised.arrayBuffer()),
     };
   }
-  // One authority on time. A call that brings a signal is governed by it
-  // alone: the turn clocks, the stale retry's timeout, a Stop. One that
-  // brings none (a key test, an embedding, speech, an image) gets the default
-  // deadline, so no provider call can hang for ever. It covers the body too.
-  const deadline = requestInit.signal == null ? AbortSignal.timeout(callTimeoutMs) : undefined;
-  try {
+  const send = (signal?: AbortSignal): Promise<Response> =>
     // undici's Response is the web Response, structurally; the cast only
     // crosses the two copies' type declarations.
-    const response = await undiciFetch(url, {
+    undiciFetch(url, {
       ...(requestInit as Parameters<typeof undiciFetch>[1]),
-      ...(deadline ? { signal: deadline } : {}),
+      ...(signal ? { signal } : {}),
       dispatcher,
-    });
-    return response as unknown as Response;
+    }) as unknown as Promise<Response>;
+
+  // One authority on time. A call that brings a signal is governed by it
+  // alone: the turn clocks, the stale retry's timeout, a Stop.
+  if (requestInit.signal != null) return send();
+
+  // A call that brings none (a key test, an embedding, a streamed probe,
+  // speech, an image) gets the default deadline, so it can never hang for
+  // ever: a wait for the headers, then a wait between two parts of the body,
+  // never a cap on a body that keeps coming.
+  const origin = new URL(url).origin;
+  const controller = new AbortController();
+  let expired: Error | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = (message: string): void => {
+    timer = setTimeout(() => {
+      expired = timeoutError(message);
+      controller.abort(expired);
+    }, callTimeoutMs);
+  };
+  const disarm = (): void => clearTimeout(timer);
+
+  arm(`provider call to ${origin} got no answer within ${callTimeoutMs} ms`);
+  let response: Response;
+  try {
+    response = await send(controller.signal);
   } catch (err) {
-    if (deadline?.aborted) {
-      const timeout = new Error(
-        `provider call to ${new URL(url).origin} got no answer within ${callTimeoutMs} ms (no deadline was given by the caller)`,
-        { cause: err },
-      );
-      timeout.name = 'TimeoutError';
-      throw timeout;
-    }
-    throw err;
+    throw expired ?? err;
+  } finally {
+    disarm();
   }
+  if (response.body === null) return response;
+
+  // The body's clock runs only while its reader waits for the next part: a
+  // silent provider is cut, a slow reader is not.
+  const reader = response.body.getReader();
+  const silent = `provider call to ${origin}: the response started, then went silent for ${callTimeoutMs} ms`;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(out) {
+      arm(silent);
+      try {
+        const next = await reader.read();
+        if (next.done) out.close();
+        else out.enqueue(next.value);
+      } catch (err) {
+        out.error(expired ?? err);
+      } finally {
+        disarm();
+      }
+    },
+    cancel(reason) {
+      disarm();
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 /** The fetch every provider call is given, one dispatcher per process. */

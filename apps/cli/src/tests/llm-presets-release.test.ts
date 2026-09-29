@@ -66,6 +66,15 @@ describe('setup wizard endpoint probes (#608) @cap:installer-et-demarrer/moteur'
     expect(await until(() => p.closed()[0] === true, 2_000)).toBe(true);
   });
 
+  it('a model list whose body goes silent gives up within its 3 s, and releases it', async () => {
+    const p = await endlessEndpoint(200);
+    const started = Date.now();
+
+    expect(await fetchModels(p.baseURL, 'lm-studio', 'k')).toBeNull();
+    expect(Date.now() - started).toBeLessThan(6_000);
+    expect(await until(() => p.closed()[0] === true, 2_000)).toBe(true);
+  }, 15_000);
+
   it('a reachability probe releases the response it only needed the status of', async () => {
     const p = await endlessEndpoint(200);
 
