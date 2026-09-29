@@ -6,7 +6,7 @@
 // the observation the llm_calls sink records still carries the usage.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { CallProgress } from '../turn-clocks';
+import type { CallProgress } from '../types';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 

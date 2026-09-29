@@ -2,7 +2,27 @@
 
 import type { generateText, streamText, generateObject } from 'ai';
 import type { ReasoningEffort } from '@nodal-agents/shared';
-import type { CallProgress } from './turn-clocks';
+
+// ─── Call progress ─────────────────────────────────────────────────────────────
+
+/**
+ * What a streamed call has produced so far, by kind (#484).
+ *
+ * Job 82ecec67 produced 12,030 tokens in 21 minutes and nothing said what: no
+ * text, no finished tool call. Reasoning and tool arguments reset the clocks
+ * (a model writing is not dead), so the only way to see a call that produces
+ * without end is to say WHAT it produces, while it produces it.
+ */
+export interface CallProgress {
+  /** Visible text, in characters. */
+  textChars: number;
+  /** Reasoning, in characters. */
+  reasoningChars: number;
+  /** Tool arguments, in characters, every tool of the call counted. */
+  toolInputChars: number;
+  /** The tool whose arguments are being written last, or `null`. */
+  toolName: string | null;
+}
 
 // ─── Provider names ────────────────────────────────────────────────────────────
 

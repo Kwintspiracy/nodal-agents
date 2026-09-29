@@ -26,7 +26,7 @@
 import { asSchema } from 'ai';
 import type { generateText, streamText } from 'ai';
 
-import type { ProviderConfig } from './types';
+import type { CallProgress, ProviderConfig } from './types';
 import { LLMTimeoutError, LLMCallCancelledError, streamPartError } from './errors';
 import type { LlmTimeoutReason } from './errors';
 import { isLocalUrl } from './local-url';
@@ -231,25 +231,6 @@ export function computeTurnClocks(
 }
 
 // ─── Consuming a stream under the clocks ───────────────────────────────────────
-
-/**
- * What a streamed call has produced so far, by kind (#484).
- *
- * Job 82ecec67 produced 12,030 tokens in 21 minutes and nothing said what: no
- * text, no finished tool call. Reasoning and tool arguments reset the clocks
- * (a model writing is not dead), so the only way to see a call that produces
- * without end is to say WHAT it produces, while it produces it.
- */
-export interface CallProgress {
-  /** Visible text, in characters. */
-  textChars: number;
-  /** Reasoning, in characters. */
-  reasoningChars: number;
-  /** Tool arguments, in characters, every tool of the call counted. */
-  toolInputChars: number;
-  /** The tool whose arguments are being written last, or `null`. */
-  toolName: string | null;
-}
 
 type StreamResult = ReturnType<typeof streamText>;
 type GenerateResult = Awaited<ReturnType<typeof generateText>>;

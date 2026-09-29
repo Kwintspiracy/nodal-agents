@@ -24,7 +24,8 @@ import {
   ABSOLUTE_CALL_MS,
   INVISIBLE_PRODUCTION_MS,
 } from '../turn-clocks';
-import type { TurnClocks, CallProgress } from '../turn-clocks';
+import type { TurnClocks } from '../turn-clocks';
+import type { CallProgress } from '../types';
 import { LLMTimeoutError, LLMCallCancelledError, LLMStreamPartError } from '../errors';
 
 // ─── A stream the fake clock drives ───────────────────────────────────────────
