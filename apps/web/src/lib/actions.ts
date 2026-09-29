@@ -675,7 +675,11 @@ export type AgentRow = {
   /** 'nodal' (default) | 'claude-code' | 'codex'. See packages/db/src/schema/agents.ts. */
   runtime: string;
   /** Runtime-agent permission posture (étape E). NULL/absent mode = 'read'. */
-  cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
+  cliPermissions: {
+    mode?: 'read' | 'write';
+    shell?: 'none' | 'auto';
+    extraDisallowed?: string[];
+  } | null;
   /**
    * agents.command_allowlist (migration 0108). NULL = no list, unrestricted;
    * [] = every command refused; entries of one or more words. Optional so list
@@ -8114,26 +8118,28 @@ export async function getAgentModelChoicesAction(
   }
 }
 
-// ─── Runtime-agent permission mode (read / write) ─────────────────────────────
+// ─── Runtime-agent permissions (mode, shell) ──────────────────────────────────
 //
-// agents.cli_permissions.mode: 'read' (default when NULL) hides the CLI's
-// write tools; 'write' allows workspace edits. Merges onto the existing JSONB
-// value — extraDisallowed (not exposed by this UI yet) must survive a mode
-// change untouched, same merge shape as setCliDefaultsAction above.
+// agents.cli_permissions, one JSONB value per agent:
+//   - mode: 'read' (default when NULL) hides the CLI's write tools; 'write'
+//     allows workspace edits;
+//   - shell (#494): 'auto' lets a Claude Code agent run commands without
+//     asking; absent or 'none' removes its shell tools. Read by
+//     cliShellPosture (@nodal-agents/shared), which the runner's
+//     argv and the team block both use.
+// Each action merges ONE key onto the existing value, through the same helper:
+// extraDisallowed (not exposed by this UI) and the other key survive untouched.
 
-const SetCliRuntimeModeSchema = z.object({
-  agentId: z.string().guid(),
-  mode: z.enum(['read', 'write']),
-});
+type CliPermissionsPatch = { mode: 'read' | 'write' } | { shell: 'none' | 'auto' };
 
-export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResult<void>> {
+async function mergeCliPermissions(
+  agentId: string,
+  patch: CliPermissionsPatch,
+  logTag: string,
+  failMessage: string,
+): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    const parsed = SetCliRuntimeModeSchema.safeParse(raw);
-    if (!parsed.success) {
-      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-    }
-    const { agentId, mode } = parsed.data;
 
     // Owner-only (non-local-trust) — same gate shape as setAgentBudgetAction.
     if (env.AUTH_MODE !== 'local-trust') {
@@ -8158,7 +8164,12 @@ export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResul
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    const nextPermissions = { ...(agent.cliPermissions ?? {}), mode };
+    // Back to read only clears the shell setting (review of #494, pass 4). In
+    // read only it cannot run, so the switch shows it off and locked: kept, it
+    // would come back in silence with write mode, whose confirmation speaks of
+    // files only. Turning the shell on again goes through its own confirmation.
+    const cleared = 'mode' in patch && patch.mode === 'read' ? { shell: 'none' as const } : {};
+    const nextPermissions = { ...(agent.cliPermissions ?? {}), ...patch, ...cleared };
 
     await db
       .update(agents)
@@ -8168,9 +8179,45 @@ export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResul
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
   } catch (err) {
-    console.error('[setCliRuntimeModeAction]', err);
-    return fail('db_error', 'Failed to save the runtime permission mode');
+    console.error(logTag, err);
+    return fail('db_error', failMessage);
   }
+}
+
+const SetCliRuntimeModeSchema = z.object({
+  agentId: z.string().guid(),
+  mode: z.enum(['read', 'write']),
+});
+
+export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResult<void>> {
+  const parsed = SetCliRuntimeModeSchema.safeParse(raw);
+  if (!parsed.success) {
+    return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+  }
+  return mergeCliPermissions(
+    parsed.data.agentId,
+    { mode: parsed.data.mode },
+    '[setCliRuntimeModeAction]',
+    'Failed to save the runtime permission mode',
+  );
+}
+
+const SetCliRuntimeShellSchema = z.object({
+  agentId: z.string().guid(),
+  shell: z.enum(['none', 'auto']),
+});
+
+export async function setCliRuntimeShellAction(raw: unknown): Promise<ActionResult<void>> {
+  const parsed = SetCliRuntimeShellSchema.safeParse(raw);
+  if (!parsed.success) {
+    return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+  }
+  return mergeCliPermissions(
+    parsed.data.agentId,
+    { shell: parsed.data.shell },
+    '[setCliRuntimeShellAction]',
+    'Failed to save the shell command setting',
+  );
 }
 
 // ─── LAN Command Yolo (workspace setting) ────────────────────────────────────

@@ -578,6 +578,55 @@ describe('buildTeamBlock — ce que chaque agent peut réellement faire (#506) @
     expect(entryOf(block, codex.name)).toContain('Shell commands: yes');
     expect(entryOf(block, subOrch.name)).toContain('Shell commands: no');
   });
+
+  // #494 : un agent en runtime CLI a le shell que SON réglage lui donne, et le
+  // frein d'urgence le lui retire. Le bloc le dit comme le runner le fera : le
+  // routeur ne doit ni envoyer une commande à qui la refusera, ni écarter un
+  // agent que son propriétaire a autorisé.
+  it('CLI runtime: the shell announced is the one the agent row and the brake give its turn @cap:executer-une-commande/moteur', async () => {
+    const { entityId } = await seedContext(db);
+    const { entities } = await import('@nodal-agents/db');
+    const orch = await seedAgent(db, entityId, `test-orch-cli-${Date.now()}`, 'orchestrator');
+    const rows: [string, 'claude-code' | 'codex', Record<string, unknown> | null, string][] = [
+      ['cc-default', 'claude-code', null, 'no'],
+      ['cc-read-auto', 'claude-code', { mode: 'read', shell: 'auto' }, 'no'],
+      ['cc-write', 'claude-code', { mode: 'write' }, 'no'],
+      ['cc-write-auto', 'claude-code', { mode: 'write', shell: 'auto' }, 'yes'],
+      [
+        'cc-auto-banned',
+        'claude-code',
+        { mode: 'write', shell: 'auto', extraDisallowed: ['Bash', 'PowerShell'] },
+        'no',
+      ],
+      ['codex-read', 'codex', { mode: 'read' }, 'yes'],
+    ];
+    const byLabel = new Map<string, { name: string; expected: string }>();
+    for (const [label, runtime, cliPermissions, expected] of rows) {
+      const a = await seedAgent(db, entityId, `test-${label}-${Date.now()}`, 'agent');
+      await assignChild(db, orch.id, a.id, entityId);
+      await db
+        .update(agents)
+        .set({ runtime, cliPermissions: cliPermissions as never })
+        .where(eq(agents.id, a.id));
+      byLabel.set(label, { name: a.name, expected });
+    }
+
+    const block = await buildTeamBlock(orch.id as AgentId, db);
+    for (const [label, { name, expected }] of byLabel) {
+      expect(entryOf(block, name), label).toContain(`Shell commands: ${expected}`);
+    }
+
+    // Frein serré : aucun tour CLI n'a de shell (Claude le perd, Codex ne part pas).
+    await db.update(entities).set({ autoRunPaused: true }).where(eq(entities.id, entityId));
+    try {
+      const braked = await buildTeamBlock(orch.id as AgentId, db);
+      for (const [label, { name }] of byLabel) {
+        expect(entryOf(braked, name), `${label} under the brake`).toContain('Shell commands: no');
+      }
+    } finally {
+      await db.update(entities).set({ autoRunPaused: false }).where(eq(entities.id, entityId));
+    }
+  });
 });
 
 // #473 — « Reviewer A n'existe pas dans ce workspace » : faux, il était dans
