@@ -26,6 +26,7 @@ import { kimiToolCallMiddleware, nodalToolCallMiddleware } from './parsers';
 import { createTolerantFetch } from './tolerant-fetch';
 import { isMoonshotModel, sanitizeMoonshotTools } from './moonshot-schema';
 import { isGeminiModel, sanitizeGeminiTools } from './gemini-schema';
+import { providerFetch } from '../transport';
 
 type ModelFamily = 'kimi' | 'nodal-format' | null;
 
@@ -149,7 +150,7 @@ export function patchOpenRouterRequestBody(body: unknown): unknown {
 }
 
 function createOpenRouterFetch(
-  baseFetch: typeof globalThis.fetch = globalThis.fetch,
+  baseFetch: typeof globalThis.fetch = providerFetch,
 ): typeof globalThis.fetch {
   const tolerant = createTolerantFetch(baseFetch);
 

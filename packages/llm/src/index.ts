@@ -32,6 +32,7 @@ export type { TurnClocks } from './turn-clocks';
 export { createLlmClient } from './client';
 
 export { probeContextWindow } from './probe-context';
+export { providerFetch } from './transport';
 
 // Provider failover (opt-in chain: primary + fallbacks)
 export { createFailoverLlmClient } from './failover';
