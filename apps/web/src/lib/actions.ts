@@ -259,7 +259,7 @@ import {
   isToolCard,
 } from './tool-card-payload.ts';
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
-import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
+import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
 import { redactAuditRow, redactPresented } from './redact-presented.ts';
 import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
@@ -2822,6 +2822,9 @@ export async function getSpaceConversationAction(
         toolOutput: r.toolOutput,
         presented: r.presented,
       })),
+      // #508 — le prix du run : les appels de la racine et de sa descendance,
+      // ceux-là mêmes que la barre d'état somme (`cost` ci-dessus).
+      cost: costOfCalls(costRows),
       workspaceRoots,
     };
     const feedWithDelivery: ConversationFeed = {

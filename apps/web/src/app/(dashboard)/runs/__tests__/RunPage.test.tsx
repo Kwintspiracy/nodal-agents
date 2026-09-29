@@ -81,6 +81,7 @@ const delivered: FeedItem = {
     tests: null,
     durationMs: 41_000,
     costUsd: 0.04,
+    unpricedCalls: 0,
     reviews: [],
     checks: [],
     verdict: null,
