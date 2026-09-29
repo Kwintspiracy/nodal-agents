@@ -24,22 +24,23 @@
 // something".
 
 import { eq, and } from '@nodal-agents/db';
-import { agentJobs, agents } from '@nodal-agents/db';
+import { agents } from '@nodal-agents/db';
 import type { WhatsAppInboundMessage } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
-import {
-  resolveConversation,
-  openNewConversation,
-  touchConversation,
-  parseNewConversationCommand,
-} from '../../job/conversation-id.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
+import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../turn.ts';
 
 export interface WhatsAppHandleResult {
   /** A job was created — caller should triggerJobWorker after the transaction commits. */
   jobId?: string;
+  /**
+   * The message was `/stop` (#602): no job was created, and every live run of
+   * the conversation was stopped. The manager acknowledges it with a reaction
+   * where the channel offers one — never with text (invariant #2).
+   */
+  stop?: ChannelStopResult;
   skipped?:
     | 'no_content'
     | 'group_filter'
@@ -85,15 +86,15 @@ export async function handleWhatsAppMessage(args: {
   const conversationId = message.conversationId;
   const kind: 'private' | 'group' = message.isGroup ? 'group' : 'private';
   const isCommand = text.startsWith('/ask ');
-  // `/new` est une commande au même titre que `/ask` (revue Codex, passe 28) :
-  // ouvrir une conversation neuve depuis un groupe ne doit pas exiger de
+  // `/new` et `/stop` sont des commandes au même titre que `/ask` (revue Codex,
+  // passe 28 ; #602) : depuis un groupe, elles ne doivent pas exiger de
   // mentionner le bot, sinon la commande n'est jamais atteinte. Séparé de
   // `isCommand`, qui sert plus bas à reconnaître le routage `/ask` lui-même.
-  const opensNewConversation = parseNewConversationCommand(text).opensNew;
+  const platformCommand = isPlatformCommand(text, null);
 
   // Groups: only a genuine mention or an explicit /ask bypasses the filter —
   // Baileys gives no upstream mention gate (unlike Slack's app_mention).
-  if (message.isGroup && !isCommand && !opensNewConversation && !message.mentionsSelf) {
+  if (message.isGroup && !isCommand && !platformCommand && !message.mentionsSelf) {
     return { skipped: 'group_filter' };
   }
 
@@ -166,60 +167,22 @@ export async function handleWhatsAppMessage(args: {
     taskText = MEDIA_NO_CAPTION_TEXT;
   }
 
-  // La CONVERSATION dont ce message est un tour (P6, migration 0094).
-  //
-  // `/new` s'analyse sur le texte que l'utilisateur a TAPÉ — après le retrait de
-  // la mention et après le routage `/ask`, mais AVANT le préfixe de groupe.
-  // Sinon la commande arrive derrière `[Message from …]: ` et n'est plus
-  // reconnue : en groupe, `/new` ne rouvrait rien (revue Codex, passe 28).
-  //
-  // Un `/new` NU garde `/new` comme tâche : c'est le message de l'utilisateur,
-  // et le runner ne fabrique rien à sa place (invariant #2).
-  const { opensNew, rest } = parseNewConversationCommand(taskText);
-  if (opensNew && rest) taskText = rest;
-  // Le préfixe enveloppe ce qui RESTE : l'agent doit toujours savoir qui parle.
-  // Sauf pour un `/new` NU : la tâche reste exactement `/new`, sans préfixe —
-  // c'est à ce texte que `loadConversationContext` reconnaît la commande
-  // (`openedByCommand`).
-  if (groupPrefix && !(opensNew && !rest)) taskText = groupPrefix + taskText;
-  const threadKey = {
-    db: tx,
+  // La fin du parcours est commune aux quatre canaux (channels/turn.ts) : `/new`,
+  // préfixe de groupe, conversation, job — ou `/stop`, que la plateforme traite
+  // elle-même (#602).
+  const turn = await takeChannelTurn({
+    tx,
     entityId: receivingAgentEntityId,
     agentId: targetAgentId,
     channel: 'whatsapp',
     chatId: conversationId,
-  };
-  const conversation = opensNew
-    ? await openNewConversation(threadKey)
-    : await resolveConversation(threadKey);
+    text: taskText,
+    groupPrefix,
+    botHandle: null,
+  });
+  if (turn.kind === 'stop') return { stop: turn.stop };
 
-  const [job] = await tx
-    .insert(agentJobs)
-    .values({
-      entityId: receivingAgentEntityId,
-      agentId: targetAgentId,
-      channel: 'whatsapp',
-      task: taskText,
-      chatId: conversationId,
-      conversationId: conversation.id,
-      // Le projet courant du fil suit le travail dès l'insert.
-      projectId: conversation.currentProjectId,
-      status: 'pending',
-      messages: [{ role: 'user', content: taskText }],
-    })
-    .returning({ id: agentJobs.id });
-
-  if (!job) {
-    // Insert returned no row — the caller's transaction rolls this back, and
-    // Baileys/WhatsApp will re-deliver on the next connection (mirrors
-    // discord/slack's fail-loud contract).
-    throw new Error('whatsapp_job_insert_failed');
-  }
-
-  // La conversation est vivante, et elle prend son nom sur le premier message.
-  await touchConversation(tx, conversation.id, taskText);
-
-  return { jobId: job.id };
+  return { jobId: turn.jobId };
 }
 
 /**
