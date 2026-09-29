@@ -78,6 +78,7 @@ function view(over: {
       agentName: 'Nestor',
       agentSlug: 'nestor',
       agentAvatarUrl: null,
+      liveProgress: null,
       createdAt: new Date('2026-09-18T09:00:00Z'),
       completedAt: new Date('2026-09-18T09:00:41Z'),
       conversationId: null,
