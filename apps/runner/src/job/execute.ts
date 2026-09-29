@@ -71,6 +71,7 @@ import {
   estimateToolTokens,
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
+import { watchCallProgress } from './call-progress.ts';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
 import { resolveSpeechGenerator } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
@@ -4318,6 +4319,12 @@ async function runJobTracked(
       // A long call (a reasoning model thinking for minutes) stays fresh to the
       // reapers through the job's own heartbeat (#565), held from the claim.
       trace('llm_call_start', { turn, msgCount: messages.length });
+      // #484 : l'appel dit CE QU'IL produit pendant qu'il le produit — texte,
+      // raisonnement, arguments d'outil et l'outil rempli. Un appel qui écrit
+      // vingt minutes sans un mot de texte n'était visible qu'à sa fin.
+      const productionDeLAppel = watchCallProgress((faits) =>
+        trace('llm_call_progress', { turn, ...faits }),
+      );
       // Stop arrête l'appel EN COURS. Le bouton n'écrit que `cancelled` en
       // base ; sans cette lecture pendant l'appel, un tour streamé qui écrit
       // sans s'arrêter ignorait le Stop jusqu'à sa fin (une heure au plus) et
@@ -4390,6 +4397,7 @@ async function runJobTracked(
           {
             streamed: true,
             abortSignal: veille.signal,
+            onProgress: productionDeLAppel.onProgress,
             // #442 : l'attente du premier jeton posée pour l'agent, et ce
             // qu'il reste du budget de temps du run.
             ...(agentFirstTokenMs !== undefined ? { firstTokenTimeoutMs: agentFirstTokenMs } : {}),
@@ -4439,7 +4447,12 @@ async function runJobTracked(
             }
             return { status: 'failed', error: JOB_ROW_UNREADABLE };
           }
-          trace('cancellation_observed', { turn, during: 'llm_call', partialChars: ecrit.length });
+          trace('cancellation_observed', {
+            turn,
+            during: 'llm_call',
+            partialChars: ecrit.length,
+            produced: productionDeLAppel.produced(),
+          });
           if (coupe) return await lacherLeJob(coupe, 'llm_call');
           await cancelJob(db, jobId as string, runStats(), messages);
           return { status: 'cancelled' };
@@ -4541,7 +4554,11 @@ async function runJobTracked(
           ]
             .filter((t) => t !== '')
             .join('\n\n');
-          trace('llm_timeout_exhausted', { turn, elapsedMs: msExpiresCeTour });
+          trace('llm_timeout_exhausted', {
+            turn,
+            elapsedMs: msExpiresCeTour,
+            produced: productionDeLAppel.produced(),
+          });
           await failJob(db, jobId as string, code, runStats(), messages, livrable);
           return {
             status: 'failed',
@@ -4591,6 +4608,7 @@ async function runJobTracked(
         throw genErr; // not this error, or budget spent → outer catch fails loud
       } finally {
         veille.stop();
+        productionDeLAppel.stop();
       }
       // Le tour a répondu : son budget d'expiration repart à zéro, et le temps
       // perdu avec. Ce qui est compté plus bas est CE tour-ci, pas la mémoire

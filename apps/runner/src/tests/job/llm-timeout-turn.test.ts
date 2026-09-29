@@ -34,6 +34,7 @@ import {
   estimateContextTokens,
   estimateToolTokens,
 } from '@nodal-agents/llm';
+import type { CallProgress } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
@@ -89,7 +90,7 @@ type MockTurn =
     }
   | { failsWith: Error; timesOut?: false; timesOutViaFailover?: false }
   | {
-      stoppedWhileWriting: { jobId: string; partial: string };
+      stoppedWhileWriting: { jobId: string; partial: string; producing?: CallProgress };
       timesOut?: false;
       timesOutViaFailover?: false;
     }
@@ -99,6 +100,13 @@ type MockTurn =
       timesOutViaFailover?: false;
       text?: string;
       toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+    }
+  | {
+      /** Un appel qui produit pendant `ms` (horloge simulée), puis répond. */
+      producesFor: { ms: number; producing: CallProgress };
+      text: string;
+      timesOut?: false;
+      timesOutViaFailover?: false;
     }
   | {
       cancelThenCut: { jobId: string; partial: string };
@@ -244,11 +252,18 @@ function makeMockLlmClient(
             ),
           ) as ReturnType<RunnerDeps['llmClient']['generateText']>;
       }
+      if (prevu && 'producesFor' in prevu) {
+        // Le temps passe PENDANT l'appel : les battements tombent, puis la
+        // réponse arrive par le modèle simulé, qui lit son texte.
+        opts?.onProgress?.(prevu.producesFor.producing);
+        vi.advanceTimersByTime(prevu.producesFor.ms);
+      }
       if (prevu && 'stoppedWhileWriting' in prevu) {
         // Un tour qui écrit sans fin ; la personne appuie sur Stop une seconde
         // après son début. L'appel ne se termine QUE si le runner l'abandonne.
         callIndex++;
-        const { jobId: arrete, partial } = prevu.stoppedWhileWriting;
+        const { jobId: arrete, partial, producing } = prevu.stoppedWhileWriting;
+        if (producing) opts?.onProgress?.(producing);
         setTimeout(() => {
           // Une requête Drizzle ne part qu'à l'attente : sans then, rien n'est écrit.
           void db
@@ -987,6 +1002,42 @@ describe('Stop arrête le travail PENDANT l’appel au modèle @cap:organiser-eq
     expect(compte!.inputTokens ?? 0).toBeGreaterThan(10 + 100);
   }, 20_000);
 
+  // #484 — job 82ecec67 : Stop après vingt et une minutes, et la trace disait
+  // `partialChars: 0`, rien d'autre. Elle dit maintenant ce que l'appel
+  // produisait : ici les arguments d'un `file_write`.
+  it('la trace du Stop dit ce que l’appel produisait : l’outil et ses arguments (#484)', async () => {
+    const jobId = await insertJob();
+    const producing: CallProgress = {
+      textChars: 0,
+      reasoningChars: 1_200,
+      toolInputChars: 48_000,
+      toolName: 'file_write',
+    };
+    const lignes: string[] = [];
+    const espion = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      lignes.push(a.map(String).join(' '));
+    });
+    try {
+      await executeJob(
+        jobId as JobId,
+        makeDeps(
+          makeMockLlmClient([
+            PREMIER_TOUR,
+            { stoppedWhileWriting: { jobId, partial: '', producing } },
+          ]),
+        ),
+        testEnv,
+      );
+    } finally {
+      espion.mockRestore();
+    }
+
+    const arret = lignes.find((l) => l.includes(jobId) && l.includes('cancellation_observed'));
+    expect(arret).toBeDefined();
+    const faits = JSON.parse(arret!.slice(arret!.indexOf('{'))) as { produced: unknown };
+    expect(faits.produced).toEqual(producing);
+  }, 20_000);
+
   it('un Stop suivi d’un débordement de budget rend « annulé », pas « échoué »', async () => {
     const jobId = await insertJob();
     const deps = makeDeps(
@@ -1137,4 +1188,41 @@ describe('une erreur de préparation échoue le job et reprend le parent (#507) 
     ) as Record<string, unknown>;
     expect(record).toMatchObject({ status: 'failed', error: 'job_folder_missing', summary: '' });
   });
+});
+
+// #484, revue Codex — le BATTEMENT de l'appel dit ce qu'il produit. Un appel
+// qui tourne plus d'une minute laisse une ligne `llm_call_progress` par minute,
+// avec sa durée, ses caractères de texte, de raisonnement et d'arguments, et
+// l'outil en cours de remplissage.
+describe('le battement d’un appel au modèle dit ce qu’il produit (#484) @cap:organiser-equipe/moteur', () => {
+  it('au-delà de 60 s, une ligne llm_call_progress porte la production de l’appel', async () => {
+    const jobId = await insertJob();
+    const producing: CallProgress = {
+      textChars: 0,
+      reasoningChars: 900,
+      toolInputChars: 30_000,
+      toolName: 'file_write',
+    };
+    const lignes: string[] = [];
+    const espion = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      lignes.push(a.map(String).join(' '));
+    });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      await executeJob(
+        jobId as JobId,
+        makeDeps(makeMockLlmClient([{ producesFor: { ms: 61_000, producing }, text: 'Fait.' }])),
+        testEnv,
+      );
+    } finally {
+      vi.useRealTimers();
+      espion.mockRestore();
+    }
+
+    const battement = lignes.find((l) => l.includes(jobId) && l.includes('llm_call_progress'));
+    expect(battement).toBeDefined();
+    const faits = JSON.parse(battement!.slice(battement!.indexOf('{'))) as Record<string, unknown>;
+    expect(faits).toMatchObject({ turn: 1, ...producing });
+    expect(faits['elapsedMs']).toBeGreaterThanOrEqual(60_000);
+  }, 20_000);
 });
