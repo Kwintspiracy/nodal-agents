@@ -3,8 +3,9 @@
 //
 // Flow: parse source → download+extract repo → locate the SKILL.md → parse &
 // validate frontmatter → detect bundled scripts → copy the skill folder into
-// the store → upsert the agent_skills row (is_community=true). Fail loud at
-// every step; never write a half-installed row.
+// the store and write the agent_skills row (is_community=true; over an existing
+// row, the row first, like an update). Fail loud at every step; never write a
+// half-installed row.
 
 import { cp, rm, mkdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -56,6 +57,13 @@ export interface InstallSkillOptions {
   skillStoreDir: string;
   /** Entity that owns the installed skill row. */
   entityId: string;
+  /**
+   * The owner's consent to install over a skill of the same slug that did NOT
+   * come from this source (written by hand, or installed from elsewhere). The
+   * row is rewritten in place: same id, so its agent assignments stay. Without
+   * it, such a collision is refused and nothing changes.
+   */
+  replace?: boolean;
 }
 
 export interface InstallSkillResult {
@@ -263,11 +271,16 @@ export async function installCommunitySkill(
     // globally (F-6, audit #2), so an unscoped lookup here would find another
     // entity's skill row sharing the slug and silently overwrite its content
     // on "reinstall".
+    // A row of the same slug from anywhere else (no source: written by hand;
+    // another source) is overwritten only with the owner's explicit consent
+    // (`replace`). Uninstalling it first is no way out: it drops the agent
+    // assignments, and a hand-written skill cannot be uninstalled at all.
     const [existing] = await opts.db
       .select({
         id: agentSkills.id,
         isCommunity: agentSkills.isCommunity,
         source: agentSkills.source,
+        installedScripts: agentSkills.installedScripts,
       })
       .from(agentSkills)
       .where(and(eq(agentSkills.slug, slug), eq(agentSkills.entityId, opts.entityId)))
@@ -275,24 +288,17 @@ export async function installCommunitySkill(
 
     let reinstalled = false;
     if (existing) {
-      if (!existing.isCommunity || existing.source !== source.raw) {
+      const sameSource = existing.isCommunity === true && existing.source === source.raw;
+      if (!sameSource && !opts.replace) {
         throw new SkillInstallError(
           `A skill with slug "${slug}" already exists from a different source. ` +
-            `Uninstall it first if you want to replace it.`,
+            `Nothing was changed.`,
         );
       }
       reinstalled = true;
     }
 
-    // Copy the skill folder into the store (replace on reinstall).
     const destDir = join(opts.skillStoreDir, slug);
-    await mkdir(opts.skillStoreDir, { recursive: true });
-    await rm(destDir, { recursive: true, force: true });
-    await cp(skillDirAbs, destDir, {
-      recursive: true,
-      filter: (src) => !isExcluded(src),
-    });
-
     const content = buildContent(slug, body, scripts);
     const contentBytes = Buffer.byteLength(content, 'utf8');
     if (contentBytes > MAX_SKILL_CONTENT_BYTES) {
@@ -306,23 +312,52 @@ export async function installCommunitySkill(
     const installedScripts = hashedScripts.length ? hashedScripts : null;
 
     if (existing) {
-      await opts.db
-        .update(agentSkills)
-        .set({
-          name,
-          description,
-          content,
-          defaultContent: content,
-          contentOverridden: false,
-          requiredBuiltins: INSTALLED_SKILL_BUILTINS,
-          active: true,
-          isCommunity: true,
-          source: source.raw,
-          installedScripts,
-          updatedAt: new Date(),
-        })
-        .where(eq(agentSkills.id, existing.id));
+      // Every write over an existing row (a reinstall, a replace) goes the way
+      // an update goes (applySkillUpdate): the same row, so its assignments
+      // stay; scripts that differ from the ones on disk lose the execution
+      // authorization the owner gave to the old ones; DB first, files last.
+      const scriptsChanged = await computeScriptsChanged(
+        destDir,
+        skillDirAbs,
+        scripts,
+        existing.installedScripts ?? [],
+      );
+      const now = new Date();
+      await opts.db.transaction(async (tx) => {
+        if (scriptsChanged) {
+          await tx
+            .update(agentSkillAssignments)
+            .set({ scriptsAuthorized: false })
+            .where(
+              and(
+                eq(agentSkillAssignments.skillId, existing.id),
+                eq(agentSkillAssignments.scriptsAuthorized, true),
+              ),
+            );
+        }
+        await tx
+          .update(agentSkills)
+          .set({
+            name,
+            description,
+            content,
+            defaultContent: content,
+            contentOverridden: false,
+            requiredBuiltins: INSTALLED_SKILL_BUILTINS,
+            active: true,
+            isCommunity: true,
+            source: source.raw,
+            installedScripts,
+            updateAvailable: false,
+            updateDetail: null,
+            lastUpdateCheckAt: now,
+            updatedAt: now,
+          })
+          .where(eq(agentSkills.id, existing.id));
+      });
+      await copySkillFolder(skillDirAbs, opts.skillStoreDir, destDir, isExcluded);
     } else {
+      await copySkillFolder(skillDirAbs, opts.skillStoreDir, destDir, isExcluded);
       await opts.db.insert(agentSkills).values({
         entityId: opts.entityId,
         slug,
@@ -351,6 +386,18 @@ export async function installCommunitySkill(
   } finally {
     await cleanup();
   }
+}
+
+/** Replace the skill's folder in the store with the one from the source. */
+async function copySkillFolder(
+  skillDirAbs: string,
+  storeDir: string,
+  destDir: string,
+  isExcluded: (src: string) => boolean,
+): Promise<void> {
+  await mkdir(storeDir, { recursive: true });
+  await rm(destDir, { recursive: true, force: true });
+  await cp(skillDirAbs, destDir, { recursive: true, filter: (src) => !isExcluded(src) });
 }
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

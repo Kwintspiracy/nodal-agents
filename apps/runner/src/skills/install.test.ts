@@ -31,7 +31,7 @@ import {
 } from './install';
 import { checkSkillUpdate } from './check-updates';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
-import { eq, and, agentSkills } from '@nodal-agents/db';
+import { eq, and, agentSkills, agentSkillAssignments } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 import {
   _extractArchiveBuffer,
@@ -1327,6 +1327,114 @@ describe('installCommunitySkill — a skill installed from a catalog card', () =
       await rm(store, { recursive: true, force: true });
     }
   });
+
+  // Screen 8 refused by Quentin (29/09): "comfy-debug" and "comfy-director"
+  // were written into the workspace by hand, then the catalog offered to
+  // install them. A catalog install over a same-slug skill that did not come
+  // from this source is refused unless the owner asks to replace it; the
+  // replace rewrites THAT row, so the agents it was given to keep it.
+  describe.each([
+    ['written by hand (no source)', { isCommunity: false, source: null }],
+    [
+      'installed from another source',
+      { isCommunity: true, source: 'https://github.com/someone/fork/tree/main/comfy' },
+    ],
+  ])(
+    'a skill of the same slug already in the workspace, %s @cap:apprendre-une-skill/moteur',
+    (_label, provenance) => {
+      async function seedExisting() {
+        const { db } = await spinUpTestDb();
+        const seed = await seedMinimal(db);
+        const [skill] = await db
+          .insert(agentSkills)
+          .values({
+            entityId: seed.entityId,
+            name: 'My comfy notes',
+            slug: 'comfy',
+            content: '# my own comfy text',
+            defaultContent: '# my own comfy text',
+            contentOverridden: true,
+            createdBy: 'user',
+            ...provenance,
+          })
+          .returning();
+        if (!skill) throw new Error('fixture not seeded');
+        await db.insert(agentSkillAssignments).values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          skillId: skill.id,
+        });
+        const rows = async () =>
+          db
+            .select()
+            .from(agentSkills)
+            .where(and(eq(agentSkills.entityId, seed.entityId), eq(agentSkills.slug, 'comfy')));
+        return { db, seed, skill, rows };
+      }
+
+      it('a plain install is refused and changes nothing', async () => {
+        const { seed, rows, db } = await seedExisting();
+        mockComfyFolder();
+        const store = await mkdtemp(join(tmpdir(), 'nodal-replace-refused-'));
+        try {
+          await expect(
+            installCommunitySkill({
+              db: db as never,
+              source: 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy',
+              skillStoreDir: store,
+              entityId: seed.entityId,
+            }),
+          ).rejects.toThrow(/already exists from a different source\. Nothing was changed\./);
+          const after = await rows();
+          expect(after).toHaveLength(1);
+          expect(after[0]?.content).toBe('# my own comfy text');
+          expect(after[0]?.source).toBe(provenance.source);
+          expect(await readdir(store)).toEqual([]);
+        } finally {
+          await rm(store, { recursive: true, force: true });
+        }
+      });
+
+      it('replace rewrites the same row with the catalog version, its source attached, its assignments kept', async () => {
+        const { seed, skill, rows, db } = await seedExisting();
+        mockComfyFolder();
+        const store = await mkdtemp(join(tmpdir(), 'nodal-replace-'));
+        try {
+          const result = await installCommunitySkill({
+            db: db as never,
+            source: 'Comfy-Org/comfy-cli/comfy_cli/skills/comfy',
+            skillStoreDir: store,
+            entityId: seed.entityId,
+            replace: true,
+          });
+          expect(result.reinstalled).toBe(true);
+
+          const after = await rows();
+          // One row, the same one: no second skill of that slug.
+          expect(after).toHaveLength(1);
+          const row = after[0]!;
+          expect(row.id).toBe(skill.id);
+          expect(row.content).toContain('You have access to comfy.');
+          expect(row.content).not.toContain('my own comfy text');
+          expect(row.defaultContent).toBe(row.content);
+          expect(row.contentOverridden).toBe(false);
+          expect(row.source).toBe('Comfy-Org/comfy-cli/comfy_cli/skills/comfy');
+          expect(row.isCommunity).toBe(true);
+          expect(row.name).toBe('Comfy (official)');
+          // The files the update tracking re-reads are in the store.
+          expect(await readFile(join(store, 'comfy', 'SKILL.md'), 'utf8')).toContain('name: comfy');
+
+          const assignments = await db
+            .select({ agentId: agentSkillAssignments.agentId })
+            .from(agentSkillAssignments)
+            .where(eq(agentSkillAssignments.skillId, skill.id));
+          expect(assignments).toEqual([{ agentId: seed.agentId }]);
+        } finally {
+          await rm(store, { recursive: true, force: true });
+        }
+      });
+    },
+  );
 
   it('a source that is not a catalog card keeps the name its SKILL.md declares', async () => {
     const { db } = await spinUpTestDb();

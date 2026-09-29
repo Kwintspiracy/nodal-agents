@@ -8903,6 +8903,7 @@ export async function deleteSkillAction(id: string): Promise<ActionResult<void>>
 
 const InstallCommunitySkillSchema = z.object({
   source: z.string().min(1).max(2048),
+  replace: z.boolean().optional(),
 });
 
 export type CommunitySkillInstallResult = {
@@ -8920,13 +8921,18 @@ export type CommunitySkillInstallResult = {
  * URL, "owner/repo", or a skills.sh path. Calls the runner's
  * POST /api/skills/install and awaits the result synchronously. Never throws to
  * the client — network/runner errors are returned as {ok:false, message}.
+ *
+ * `replace`: the owner confirmed installing over a same-slug skill that did not
+ * come from this source. The runner rewrites that row in place, so its agent
+ * assignments stay.
  */
 export async function installCommunitySkillAction(
   source: string,
+  options: { replace?: boolean } = {},
 ): Promise<ActionResult<CommunitySkillInstallResult>> {
   try {
     const session = await getSession();
-    const parsed = InstallCommunitySkillSchema.safeParse({ source });
+    const parsed = InstallCommunitySkillSchema.safeParse({ source, replace: options.replace });
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
@@ -8942,7 +8948,11 @@ export async function installCommunitySkillAction(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.WORKER_SECRET}`,
         },
-        body: JSON.stringify({ source: parsed.data.source, entityId: session.entityId }),
+        body: JSON.stringify({
+          source: parsed.data.source,
+          entityId: session.entityId,
+          replace: parsed.data.replace === true,
+        }),
       });
     } catch (fetchErr) {
       console.error('[installCommunitySkillAction] fetch failed:', fetchErr);
