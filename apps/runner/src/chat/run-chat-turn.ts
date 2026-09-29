@@ -38,6 +38,7 @@ import { TITLE_SYSTEM_PROMPT, cleanTitle, titlePrompt } from './conversation-tit
 import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
+import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
@@ -113,22 +114,6 @@ export const CHAT_TOOLS: Record<
     inputSchema: z.object({ instruction: z.string().min(1).max(16000) }),
   },
 };
-
-// Escalation-recovery nudge. A reasoning model (MiniMax M3) intermittently
-// NARRATES an action in text ("Je lance X…") without emitting the run_task tool
-// call — ~1 turn in 5 in practice. Nodal never forces tool_choice (#600): a chat
-// turn may be pure conversation, and a forced call made a thinking model plan a
-// whole trajectory in one response. So when the model produced text
-// but no run_task, we re-prompt ONCE with this reminder. Pure conversation is
-// unaffected: no action was committed, so the model calls nothing and we keep
-// the text reply. This is LLM-internal steering (never shown to the user).
-const ESCALATION_RECHECK =
-  'Re-read your previous reply. If it committed to performing an action — running, launching, ' +
-  'sending, fetching, creating, configuring, delegating, or any task or tool use — then your ' +
-  'text ALONE did nothing: call the run_task tool NOW, conveying the user’s request faithfully ' +
-  '(their words and data, with no invented scope, method, or delivery). ' +
-  'If your reply was pure conversation, a question, or simply recalling a fact, do not call any ' +
-  'tool — the conversation is complete.';
 
 export type ChatTurnResult =
   | {
@@ -718,9 +703,10 @@ export async function runChatTurn(opts: {
 
   // 5b. ESCALATION RECOVERY. The model produced a reply but NO run_task call. A
   //     reasoning model (MiniMax M3) intermittently narrates an action without
-  //     calling the tool. Since tool_choice is never forced (#600),
-  //     re-prompt ONCE: show it its own reply and have it either escalate or
-  //     confirm it was conversation. Recovers the ~1-in-5 narration misses.
+  //     calling the tool, ~1 turn in 5. Since tool_choice is never forced
+  //     (#600), the reply is re-read ONCE through the mechanism the job loop
+  //     shares (llm/action-recheck.ts): the model either escalates or confirms
+  //     it was conversation.
   //
   //     ET ELLE NE REJOUE PAS LE TOUR ENTIER. Mesuré sur la base de Quentin le
   //     09/09 : cette relance envoyait le prompt système COMPLET et tout
@@ -740,17 +726,12 @@ export async function runChatTurn(opts: {
   //     aurait été un troisième prompt à tenir cohérent avec les deux autres.
   if (!runTask && text) {
     try {
-      const recheck = await llmClient.generateText(
-        {
-          messages: [
-            { role: 'user', content: message },
-            { role: 'assistant', content: text },
-            { role: 'user', content: ESCALATION_RECHECK },
-          ],
-          tools: CHAT_TOOLS,
-        },
-        abortSignal ? { abortSignal } : undefined,
-      );
+      const recheck = await recheckNarratedAction(llmClient, {
+        request: message,
+        reply: text,
+        tools: CHAT_TOOLS,
+        ...(abortSignal ? { abortSignal } : {}),
+      });
       runTask = runTaskOf(recheck);
     } catch (err) {
       if (abortSignal?.aborted) return await keepStoppedReply();
