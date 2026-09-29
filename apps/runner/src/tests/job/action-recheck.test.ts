@@ -50,6 +50,13 @@ beforeAll(async () => {
   openrouterKeyId = key.id;
 });
 
+// Provider calls leave through packages/llm's own transport (#608), not the
+// global fetch. Routed back to it here, so the stub below is still the fetch
+// boundary and nothing leaves the machine.
+vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });

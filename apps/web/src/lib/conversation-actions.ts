@@ -66,6 +66,8 @@ import { lastSequencePerDeliverable } from './verification-repairs.ts';
 import { readRepairAttempts } from './verification-repairs-read.ts';
 import { readDeclaredUnverified } from './declared-deliverables-read.ts';
 import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
+import { readJobRoots } from './job-lineage.ts';
+import { runHrefIn, runSectionOf } from './run-page.ts';
 // La borne de `collectDescendants`, nommée ici pour que le message d'erreur la
 // dise plutôt que de la recopier en dur.
 import { ROLLUP_MAX_DEPTH } from './coding-rollup.ts';
@@ -87,7 +89,7 @@ import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
 import { folderOfWork, MCP_JOB_CHANNELS, RUNNING_JOB_STATUSES } from './chat-folders.ts';
 import type { WorkOrigin } from './chat-folders.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
-import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
+import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import {
   deliverableStatuses,
   FILE_DELIVERABLE_TYPES,
@@ -1147,6 +1149,54 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
 }
 
 /**
+ * L'ADRESSE DE LA PAGE D'UN RUN, dans la section à laquelle il appartient
+ * (#501). La route `/runs/<id>` redirige vers elle.
+ *
+ * La section se lit sur la TÊTE de la chaîne (`lib/run-page.ts`) : un délégué
+ * n'a pas de déclencheur à lui, et le délégué d'un run de cron est un travail
+ * de Scheduled. Une chaîne qui ne se remonte pas (un maillon absent, un cycle)
+ * échoue en le disant : l'adresse d'un run ne se devine pas (invariant #4).
+ */
+export async function resolveRunPageHrefAction(id: string): Promise<ActionResult<string>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid run id');
+    }
+    const db = getDb();
+    const [row] = await db
+      .select({
+        id: agentJobs.id,
+        channel: agentJobs.channel,
+        parentJobId: agentJobs.parentJobId,
+      })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
+    if (!row) return fail('not_found', 'Run not found');
+
+    const root = (await readJobRoots(db, session.entityId, [row])).get(row.id);
+    const rootJobId = root?.rootJobId ?? null;
+    if (rootJobId === null) {
+      return fail('lineage_broken', 'The run this one was delegated from could not be read');
+    }
+    const [head] = await db
+      .select({
+        triggerType: sql<string | null>`${agentJobs.triggerContext}->>'type'`,
+        scheduleId: agentJobs.scheduleId,
+      })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.id, rootJobId), eq(agentJobs.entityId, session.entityId)));
+    if (!head) {
+      return fail('lineage_broken', 'The run this one was delegated from could not be read');
+    }
+    return ok(runHrefIn(runSectionOf(head), row.id));
+  } catch (err) {
+    console.error('[resolveRunPageHrefAction]', err);
+    return fail('db_error', 'Failed to open the run');
+  }
+}
+
+/**
  * UNE PAGE des runs venus de dehors, les plus récents d'abord — la liste du
  * dossier MCP (#183).
  *
@@ -1914,6 +1964,19 @@ export async function getConversationThreadAction(
       declaredByRoot.set(root, [...(declaredByRoot.get(root) ?? []), ...items]);
     }
 
+    // #508 — les appels LLM rangés sous leur job de tête, comme la preuve : le
+    // prix d'un run est celui de TOUT son arbre, lu sur les mêmes lignes que la
+    // barre d'état. Un appel de la conversation elle-même (sans job) n'est le
+    // prix d'aucun run : il reste dans la barre seule.
+    const callsByRoot = new Map<string, (typeof costRows)[number][]>();
+    for (const row of costRows) {
+      const root = row.jobId !== null ? rootOf.get(row.jobId) : undefined;
+      if (root === undefined) continue;
+      const bucket = callsByRoot.get(root) ?? [];
+      bucket.push(row);
+      callsByRoot.set(root, bucket);
+    }
+
     const jobs: ThreadJob[] = headRows.map((r, i) => ({
       jobId: r.job.id,
       feed: assembled[i]!.feed,
@@ -1944,6 +2007,7 @@ export async function getConversationThreadAction(
         presented: row.presented,
         rawFilePaths: row.rawFilePaths,
       })),
+      cost: costOfCalls(callsByRoot.get(r.job.id) ?? []),
       workspaceRoots,
     }));
 

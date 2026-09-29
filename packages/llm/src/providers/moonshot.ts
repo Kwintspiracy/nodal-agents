@@ -32,6 +32,7 @@ import { ProviderConfigError } from '../errors';
 import { PROVIDER_PRESETS } from './registry';
 import { createTolerantFetch } from './tolerant-fetch';
 import { sanitizeMoonshotTools } from './moonshot-schema';
+import { providerFetch } from '../transport';
 
 const MOONSHOT_HOSTS = new Set(['api.moonshot.ai', 'api.moonshot.cn']);
 
@@ -84,7 +85,7 @@ export function patchMoonshotRequestBody(
  */
 function createMoonshotFetch(
   opts: { injectThinking: boolean; reasoningEffort?: string },
-  baseFetch: typeof globalThis.fetch = globalThis.fetch,
+  baseFetch: typeof globalThis.fetch = providerFetch,
 ): typeof globalThis.fetch {
   const tolerant = createTolerantFetch(baseFetch);
 

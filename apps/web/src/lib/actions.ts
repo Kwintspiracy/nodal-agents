@@ -168,9 +168,11 @@ import {
 import { selectVerificationRuns } from './verification-runs-query.ts';
 import { lastReviewVerdict } from './review-state.ts';
 import { readJobRoots } from './job-lineage.ts';
+import { chatFailureText } from './chat-failure.ts';
 import type {
   JobTriggerContext,
   AnyDrizzleDb,
+  JobLiveProgress,
   SkillUpdateDetail as DbSkillUpdateDetail,
   SkillSourceProblem as DbSkillSourceProblem,
 } from '@nodal-agents/db';
@@ -263,7 +265,7 @@ import {
   isToolCard,
 } from './tool-card-payload.ts';
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
-import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
+import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
 import { redactAuditRow, redactPresented } from './redact-presented.ts';
 import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
@@ -272,7 +274,7 @@ import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts
 import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
 import type { ThreadDeclaredDeliverable } from './declared-proof.ts';
 import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
-import { probeContextWindow } from '@nodal-agents/llm';
+import { probeContextWindow, providerFetch } from '@nodal-agents/llm';
 import {
   systemSkillSlugs,
   skillKindOfSlug,
@@ -2466,6 +2468,12 @@ export type SpaceConversationView = {
      * l'agent au propriétaire, pas une sortie d'outil.
      */
     result: string | null;
+    /**
+     * #444 — l'appel au modèle EN COURS, tel que le runner le pose pendant
+     * l'appel (`agent_jobs.live_progress`, le flux de #484), NULL entre deux
+     * appels et après. La bande du run ne le montre que pendant `processing`.
+     */
+    liveProgress: JobLiveProgress | null;
   };
   feed: ConversationFeed;
   /** P3 — ce que la preuve a fait pour ce travail et ses délégués (même lecture que le détail Code). */
@@ -2820,6 +2828,9 @@ export async function getSpaceConversationAction(
         toolOutput: r.toolOutput,
         presented: r.presented,
       })),
+      // #508 — le prix du run : les appels de la racine et de sa descendance,
+      // ceux-là mêmes que la barre d'état somme (`cost` ci-dessus).
+      cost: costOfCalls(costRows),
       workspaceRoots,
     };
     const feedWithDelivery: ConversationFeed = {
@@ -2831,6 +2842,7 @@ export async function getSpaceConversationAction(
       job: {
         id: job.id,
         task: displayTask,
+        liveProgress: job.liveProgress ?? null,
         channel: job.channel,
         status: job.status,
         agentName: row.agentName,
@@ -12378,18 +12390,23 @@ async function assertSsrfSafeUrl(rawUrl: string): Promise<string | null> {
  * same guard, and follows it at most once (an SSRF-blocked or missing
  * Location target throws, which every caller here treats as a connection
  * failure — never followed).
+ *
+ * #608: these are provider calls, so they take the provider transport
+ * (`providerFetch`: its own HTTP/1.1 connections, the environment's proxy),
+ * and a redirect's own body is cancelled before the hop, never left open.
  */
 async function ssrfSafeFetch(url: string, init: RequestInit): Promise<Response> {
-  const res = await fetch(url, { ...init, redirect: 'manual' });
+  const res = await providerFetch(url, { ...init, redirect: 'manual' });
   if (res.status >= 300 && res.status < 400) {
     const location = res.headers.get('location');
     if (!location) return res;
+    await res.body?.cancel().catch(() => {});
     const target = new URL(location, url).toString();
     const ssrfError = await assertSsrfSafeUrl(target);
     if (ssrfError) {
       throw new Error(`Redirect target blocked: ${ssrfError}`);
     }
-    return fetch(target, { ...init, redirect: 'manual' });
+    return providerFetch(target, { ...init, redirect: 'manual' });
   }
   return res;
 }
@@ -12469,7 +12486,11 @@ async function fetchProviderModelIds(
     }
 
     const res = await ssrfSafeFetch(url, { method: 'GET', headers });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      // #608: a body we will not read is cancelled, never left on the connection.
+      await res.body?.cancel().catch(() => {});
+      return [];
+    }
 
     const data = (await res.json()) as Record<string, unknown>;
     const arr = data['data'] ?? data['models'];
@@ -12567,6 +12588,8 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
 
     const res = await ssrfSafeFetch(url, { method: 'GET', headers });
     if (!res.ok) {
+      // #608: a body we will not read is cancelled, never left on the connection.
+      await res.body?.cancel().catch(() => {});
       // F-1 (audit #2): the remote body is NEVER reflected back to the UI —
       // it could contain anything the endpoint chooses to return, including
       // data from an internal service reached via SSRF. Status code only.
@@ -13408,13 +13431,15 @@ export async function sendChatMessageAction(
     const data = (await res.json().catch(() => null)) as {
       reply?: string;
       error?: string;
+      cutReason?: string;
     } | null;
     // An empty reply is NOT a failure: when the agent escalates via run_task it
     // may write no acknowledgment text (the dispatch card + job result carry the
     // info, and the UI refetches messages to render them). Only an HTTP error
     // (e.g. the runner's `empty_reply` glitch → 400) is a real failure.
     if (!res.ok) {
-      return fail('chat_failed', data?.error ?? 'The agent did not reply');
+      // Le même vocabulaire que le flux : une coupure se dit coupée (#484).
+      return fail('chat_failed', chatFailureText(data?.error ?? '', data?.cutReason ?? null));
     }
     revalidatePath('/chat');
     return ok({ reply: data?.reply ?? '' });

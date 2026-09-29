@@ -464,6 +464,7 @@ export function createLlmClient(
               providerModel,
               callOpts.abortSignal,
               callOpts.onTextDelta,
+              callOpts.onProgress,
             ),
           retryOpts,
         );

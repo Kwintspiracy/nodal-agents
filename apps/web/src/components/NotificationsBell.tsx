@@ -12,6 +12,7 @@ import { useApprovals, type PendingApproval } from './ApprovalsProvider';
 import { useSkillUpdates, type SkillUpdateNotice } from './SkillUpdatesProvider';
 import { relativeTime } from '@/lib/format-time';
 import { sourceProblemLabel } from '@/lib/skill-source-problem.ts';
+import { openRunHref } from '@/lib/run-page.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -128,7 +129,7 @@ function ApprovalsDropdown({
             <li key={item.id}>
               {/* The item body is a link to the job; Approve button stops propagation */}
               <Link
-                href={`/jobs/${item.jobId}`}
+                href={openRunHref(item.jobId)}
                 onClick={onClose}
                 className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-hover"
               >

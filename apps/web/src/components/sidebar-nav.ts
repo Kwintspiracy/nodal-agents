@@ -305,8 +305,11 @@ export const DESTINATIONS: readonly Destination[] = [
       '/automations',
       // Les pages d'un run et d'un espace de travail. On y arrive depuis une
       // liste, jamais depuis le menu (#143 les fusionnera dans Workspaces).
+      // `/jobs` porte le run d'une automatisation (`lib/run-page.ts`, #501).
+      // Les portes qui ne décident rien n'y sont pas : `/scheduled/<id>` et
+      // `/runs/<id>` redirigent, et la page d'erreur de `/runs/<id>` (chaîne
+      // illisible) n'appartient à aucune section, elle tombe sur Work.
       '/jobs',
-      '/runs',
       '/code',
     ],
     groups: RUN_GROUPS,

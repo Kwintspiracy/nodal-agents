@@ -199,7 +199,7 @@ describe('RunRow — la ligne dépliée @cap:suivre-execution/ecran', () => {
     expect(texte).toContain('(veille)');
     expect(texte).not.toContain('trois articles');
     // Et la ligne d'un run garde son adresse.
-    expect(deplie!.querySelector('a')?.getAttribute('href')).toBe(`/jobs/${RUN_ID}`);
+    expect(deplie!.querySelector('a')?.getAttribute('href')).toBe(`/runs/${RUN_ID}`);
   });
 
   it('propose d’en montrer 50 de plus quand le run en a davantage, et les ajoute', async () => {

@@ -240,3 +240,34 @@ describe('la réponse du chat en flux @cap:parler-a-un-agent/ecran', () => {
     expect(container.querySelector('[data-testid="pending-turn"]')).toBeNull();
   });
 });
+
+// #484, revue Codex passe 4 : une réponse COUPÉE ne se dit pas « The agent did
+// not reply ». L'écran dit que l'appel au modèle a été coupé, et pourquoi.
+describe('une réponse coupée se dit coupée, avec sa raison (#484) @cap:parler-a-un-agent/ecran', () => {
+  async function coupe(cutReason: string | undefined): Promise<void> {
+    const stream = openStream();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(stream.response)),
+    );
+    await render(<Screen items={[]} />);
+    await type('monte la vidéo');
+    await pressEnter();
+    stream.send('error', { error: 'llm_cut', ...(cutReason ? { cutReason } : {}) });
+    stream.close();
+    await settle();
+  }
+
+  it('une production invisible trop longue est dite comme telle', async () => {
+    await coupe('invisible_production');
+    expect(toastError).toHaveBeenCalledWith(
+      'The model call was cut: it ran too long without writing a reply.',
+    );
+    expect(toastError).not.toHaveBeenCalledWith('The agent did not reply');
+  });
+
+  it('une raison inconnue est montrée telle quelle, jamais un message générique', async () => {
+    await coupe('mystery_clock');
+    expect(toastError).toHaveBeenCalledWith('The model call was cut (mystery_clock).');
+  });
+});

@@ -19,7 +19,7 @@ export {
   describeThrown,
 } from './errors';
 export type { MessageStructureErrorCode, LlmTimeoutReason } from './errors';
-export type { GenerateTextCallOptions } from './types';
+export type { GenerateTextCallOptions, CallProgress } from './types';
 export {
   computeTurnClocks,
   isLocalEndpoint,
@@ -32,6 +32,7 @@ export type { TurnClocks } from './turn-clocks';
 export { createLlmClient } from './client';
 
 export { probeContextWindow } from './probe-context';
+export { providerFetch } from './transport';
 
 // Provider failover (opt-in chain: primary + fallbacks)
 export { createFailoverLlmClient } from './failover';
