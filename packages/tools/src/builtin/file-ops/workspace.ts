@@ -11,8 +11,14 @@
 //   3. Absolute paths passed by the LLM must resolve INSIDE exactly one
 //      known workspace root; anything else is path_traversal_blocked.
 
-import { realpath, stat } from 'node:fs/promises';
-import { resolve as resolvePath, relative as relativePath, sep, isAbsolute } from 'node:path';
+import { lstat, readlink, realpath, stat } from 'node:fs/promises';
+import {
+  resolve as resolvePath,
+  relative as relativePath,
+  sep,
+  isAbsolute,
+  dirname,
+} from 'node:path';
 import type { ToolContext } from '../../types';
 import { cheminConstate, currentContentWrittenByJob } from '../../verification/record-constat';
 
@@ -390,6 +396,102 @@ export function windowsPathViolation(
 
 // ─── resolveUnderRoot (private) ──────────────────────────────────────────────
 
+/** Links followed while resolving one path before it is refused (Linux's own bound is 40). */
+const MAX_LINK_HOPS = 40;
+
+/**
+ * The target of `path` when it is a link (symlink, or a Windows junction,
+ * which lstat reports as one), as a path; null when it is not a link or does
+ * not exist.
+ */
+async function danglingLinkTarget(path: string): Promise<string | null> {
+  const isLink = await lstat(path).then(
+    (s) => s.isSymbolicLink(),
+    () => false,
+  );
+  if (!isLink) return null;
+  return linkTargetAsPath(await readlink(path));
+}
+
+/**
+ * A link target as Windows writes it, turned into the path it names. Windows
+ * returns it with a `\\?\` (or NT `\??\`) prefix: `\\?\C:\x` is the drive
+ * path `C:\x`, but `\\?\UNC\server\share\x` is the SHARE `\\server\share\x`
+ * (revue de la PR #618, passe 4 : retirer le préfixe laissait `UNC\server\…`,
+ * lu comme un chemin relatif sous le dossier du lien). Any other prefixed
+ * form (`\\?\Volume{…}\`, a device) is no drive path either, and is returned
+ * in the `\\` form a UNC check refuses.
+ */
+export function linkTargetAsPath(raw: string): string {
+  const prefixed = /^(?:\\\\\?\\|\\\?\?\\)(.*)$/.exec(raw);
+  if (!prefixed) return raw;
+  const rest = prefixed[1] ?? '';
+  if (/^[A-Za-z]:[\\/]/.test(rest)) return rest;
+  if (/^UNC[\\/]/i.test(rest)) return `\\\\${rest.slice(4)}`;
+  return `\\\\${rest}`;
+}
+
+/**
+ * Where an absolute path really lands on disk: the deepest existing ancestor,
+ * realpath()'d, plus the part that does not exist yet. Links are followed on
+ * the way, dangling ones included (#614, revue Nodal de la PR #618, passe 3):
+ * stat() follows a link whose target does not exist yet and fails, yet a
+ * write to this path goes through it and creates its target. Walking up to
+ * the parent judged the link's NAME lexically, inside the workspace, while the
+ * write landed wherever it points.
+ *
+ * A link to a network share is never stat()'d (that is the SMB leak the UNC
+ * check exists for): the walk stops there and `share` says why, with
+ * `canonical` the share path. Exported so a caller can NAME where a path
+ * leads, not only whether it is inside (the approval card, #618).
+ */
+export async function followLinks(
+  lexical: string,
+  requestedPath: string = lexical,
+): Promise<{ canonical: string; share: string | null }> {
+  let path = lexical;
+  let probe = lexical;
+  let hops = 0;
+  while (true) {
+    try {
+      await stat(probe);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new WorkspaceError(
+          'workspace_invalid',
+          `Failed to stat path while resolving "${requestedPath}": ${(err as Error).message}`,
+        );
+      }
+    }
+    const target = await danglingLinkTarget(probe);
+    if (target !== null) {
+      if (++hops > MAX_LINK_HOPS) {
+        throw new WorkspaceError(
+          'path_traversal_blocked',
+          `Path "${requestedPath}" goes through more than ${MAX_LINK_HOPS} links.`,
+        );
+      }
+      const through = resolvePath(dirname(probe), target);
+      path = through + path.slice(probe.length);
+      const linkViolation = windowsPathViolation(target, through);
+      if (linkViolation) return { canonical: path, share: linkViolation };
+      probe = path;
+      continue;
+    }
+    const parent = resolvePath(probe, '..');
+    if (parent === probe) {
+      throw new WorkspaceError(
+        'path_traversal_blocked',
+        `Cannot resolve "${requestedPath}" — walked past the filesystem root.`,
+      );
+    }
+    probe = parent;
+  }
+  const realProbe = await realpath(probe);
+  return { canonical: realProbe + path.slice(probe.length), share: null };
+}
+
 /**
  * Core boundary-check against a single workspace root. IDENTICAL security
  * logic to the former single-root resolveAndCheckPath — only extracted into
@@ -451,33 +553,9 @@ async function resolveUnderRoot(workspaceRoot: string, requestedPath: string): P
    * site's actual open/write could close — out of scope for this hardening.
    */
   async function probeCanonical(): Promise<string> {
-    let probe = lexical;
-    while (true) {
-      try {
-        await stat(probe);
-        break;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw new WorkspaceError(
-            'workspace_invalid',
-            `Failed to stat path while resolving "${requestedPath}": ${(err as Error).message}`,
-          );
-        }
-      }
-      const parent = resolvePath(probe, '..');
-      if (parent === probe) {
-        // Reached filesystem root without finding anything — should be impossible
-        // because the workspace root itself exists (verified above via realpath).
-        throw new WorkspaceError(
-          'path_traversal_blocked',
-          `Cannot resolve "${requestedPath}" — walked past the filesystem root.`,
-        );
-      }
-      probe = parent;
-    }
-    const realProbe = await realpath(probe);
-    const remainder = lexical.slice(probe.length);
-    const canonical = realProbe + remainder;
+    const followed = await followLinks(lexical, requestedPath);
+    if (followed.share !== null) throw new WorkspaceError('path_traversal_blocked', followed.share);
+    const canonical = followed.canonical;
 
     if (canonical !== realRoot && !canonical.startsWith(rootWithSep)) {
       throw new WorkspaceError(

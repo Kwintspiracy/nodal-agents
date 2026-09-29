@@ -13,7 +13,9 @@
 //   execute.test.ts ~L2632–2681        (approval suspend→resume drive)
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { mkdtemp, rm, realpath, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, readFile, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -829,5 +831,223 @@ describe('run_command — the agent checklist reaches the gate (#464) @cap:execu
         .set({ rootGrants: before?.rootGrants ?? {} })
         .where(eq(entities.id, seed.entityId));
     }
+  });
+});
+
+// ─── #614 : un agent autonome télécharge dans son espace sans demander ────────
+//
+// Le VRAI chemin : un job, le runner qui lit `agents.shell_policy` en base, la
+// porte, puis un vrai `curl -o` contre un serveur HTTP local. Le fichier écrit
+// dans le workspace est relu sur disque : la preuve que la commande a tourné,
+// pas seulement qu'elle n'a pas été retenue. Sous `destructive_gate`, le niveau
+// où la liste de l'agent seule juge une commande (celui de l'espace du
+// propriétaire le 29/09).
+describe('run_command — an agent nobody configured downloads into its workspace without asking (#614) @cap:executer-une-commande/moteur', () => {
+  let server: Server;
+  let url = '';
+  const BODY = `picture-${Date.now()}`;
+
+  beforeAll(async () => {
+    server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'image/jpeg' });
+      res.end(BODY);
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/photo.jpg`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((done) => server.close(() => done()));
+  });
+
+  async function underDestructiveGate<T>(
+    storedPolicy: unknown,
+    body: () => Promise<T>,
+  ): Promise<T> {
+    const [before] = await db
+      .select({ rootGrants: entities.rootGrants })
+      .from(entities)
+      .where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' } })
+      .where(eq(entities.id, seed.entityId));
+    await db.update(agents).set({ shellPolicy: storedPolicy }).where(eq(agents.id, seed.agentId));
+    try {
+      return await body();
+    } finally {
+      await db
+        .update(entities)
+        .set({ rootGrants: before?.rootGrants ?? {} })
+        .where(eq(entities.id, seed.entityId));
+      await db.update(agents).set({ shellPolicy: null }).where(eq(agents.id, seed.agentId));
+    }
+  }
+
+  /** One job, one run_command call, then return_result. */
+  async function runOnce(command: string) {
+    const job = await createJob();
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: `tc-614-${Date.now()}`,
+            toolName: 'run_command',
+            args: { purpose: 'fetch the picture for the page', command },
+          },
+        ],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [
+          { toolCallId: 'tc-614-done', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    const approvals = await db
+      .select({ gateReasons: approvalRequests.gateReasons, status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    return { result, approvals, jobId: job.id };
+  }
+
+  /** What the agent read back from each run_command of a job, as stored in its messages. */
+  async function runCommandResults(jobId: string): Promise<string[]> {
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const texts: string[] = [];
+    for (const msg of (row?.messages ?? []) as Array<{ role: string; content: unknown }>) {
+      if (msg.role !== 'tool') continue;
+      for (const block of msg.content as Array<Record<string, unknown>>) {
+        if (block['type'] === 'tool-result' && block['toolName'] === 'run_command')
+          texts.push(JSON.stringify(block['output']));
+      }
+    }
+    return texts;
+  }
+
+  it('with no stored policy, a real `curl -o` runs, writes the file, and creates no approval', async () => {
+    const file = `photo-${Date.now()}.jpg`;
+
+    const { result, approvals } = await underDestructiveGate(null, () =>
+      runOnce(`curl -s -f -o ${file} ${url}`),
+    );
+
+    expect(result.status).toBe('completed');
+    expect(approvals).toEqual([]);
+    expect(await readFile(join(workspaceDir, file), 'utf8')).toBe(BODY);
+  });
+
+  it('a stored `download: ask` still asks, and the file is not written', async () => {
+    const file = `asked-${Date.now()}.jpg`;
+    const command = `curl -s -f -o ${file} ${url}`;
+
+    const { result, approvals } = await underDestructiveGate({ download: 'ask' }, () =>
+      runOnce(command),
+    );
+
+    expect(result.status).toBe('awaiting_approval');
+    expect(approvals).toEqual([
+      {
+        status: 'pending',
+        gateReasons: [{ category: 'download', state: 'ask', details: [command] }],
+      },
+    ]);
+    await expect(readFile(join(workspaceDir, file), 'utf8')).rejects.toThrow();
+  });
+
+  it('with no stored policy, an install still asks', async () => {
+    const command = 'npm install left-pad';
+
+    const { result, approvals } = await underDestructiveGate(null, () => runOnce(command));
+
+    expect(result.status).toBe('awaiting_approval');
+    expect(approvals).toEqual([
+      {
+        status: 'pending',
+        gateReasons: [{ category: 'install_software', state: 'ask', details: [command] }],
+      },
+    ]);
+  });
+
+  // Décision de Quentin, 29/09 : du code écrit dans la commande a le pouvoir
+  // d'un script que l'agent écrit puis lance, qui n'a jamais demandé.
+  it('with no stored policy, `node -e` and `python -c` run with no approval row', async () => {
+    const marker = `inline-${Date.now()}`;
+    const node = `node -e "process.stdout.write('${marker}')"`;
+
+    const ranNode = await underDestructiveGate(null, () => runOnce(node));
+    const ranPython = await underDestructiveGate(null, () => runOnce(`python -c "print(1)"`));
+
+    expect(ranNode.result.status).toBe('completed');
+    expect(ranNode.approvals).toEqual([]);
+    expect((await runCommandResults(ranNode.jobId)).join('\n')).toContain(marker);
+    // Whether a `python` is installed on this machine is not the question: the
+    // gate let it through, no one was asked.
+    expect(ranPython.result.status).toBe('completed');
+    expect(ranPython.approvals).toEqual([]);
+  });
+
+  it('a stored `inline_code: ask` still asks', async () => {
+    const command = `node -e "process.stdout.write('x')"`;
+
+    const { result, approvals } = await underDestructiveGate({ inline_code: 'ask' }, () =>
+      runOnce(command),
+    );
+
+    expect(result.status).toBe('awaiting_approval');
+    expect(approvals).toEqual([
+      {
+        status: 'pending',
+        gateReasons: [{ category: 'inline_code', state: 'ask', details: [command] }],
+      },
+    ]);
+  });
+
+  it('a target outside the workspaces asks, names the place, and the file is not written', async () => {
+    const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'nodal-rc614-out-')));
+    try {
+      const target = join(elsewhere, 'authorized_keys');
+      const command = `curl -s -f -o "${target}" ${url}`;
+
+      const { result, approvals } = await underDestructiveGate(null, () => runOnce(command));
+
+      expect(result.status).toBe('awaiting_approval');
+      expect(approvals).toEqual([
+        {
+          status: 'pending',
+          gateReasons: [
+            {
+              category: 'download',
+              state: 'ask',
+              details: [command],
+              outside: [{ command, places: [target] }],
+            },
+          ],
+        },
+      ]);
+      await expect(readFile(target, 'utf8')).rejects.toThrow();
+    } finally {
+      await rm(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it('a stored `download: never` blocks: the agent is told, no one is asked, nothing is written', async () => {
+    const file = `never-${Date.now()}.jpg`;
+    const command = `curl -s -f -o ${file} ${url}`;
+
+    const { result, approvals, jobId } = await underDestructiveGate({ download: 'never' }, () =>
+      runOnce(command),
+    );
+
+    expect(result.status).toBe('completed');
+    expect(approvals).toEqual([]);
+    expect((await runCommandResults(jobId)).join('\n')).toContain(
+      'blocked: the owner does not allow this agent to download from the internet',
+    );
+    await expect(readFile(join(workspaceDir, file), 'utf8')).rejects.toThrow();
   });
 });

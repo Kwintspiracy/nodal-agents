@@ -1,9 +1,9 @@
 // ShellChecklistSection.test.tsx — what an agent may NOT do with a shell (#464).
 //
 // What this proves, rendered in jsdom and CLICKED: an agent nobody configured
-// shows "Ask me" on every row; a click sends the action the kind of action and
-// the state the owner chose (the ARGUMENT, invariant #5), and the row shows
-// it; a refused save puts the row back; a non-owner sees the rows and cannot
+// shows "Allowed" for downloads and inline code, "Ask me" on the rest (#614); a
+// click sends the action the kind of action and the state the owner chose (the
+// ARGUMENT, invariant #5), and the row shows it; a refused save puts the row back; a non-owner sees the rows and cannot
 // change them. What the engine does with those states is proven in
 // packages/tools/src/tests/shell-checklist-gate.test.ts.
 
@@ -63,12 +63,34 @@ beforeEach(() => {
 });
 
 describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
-  it('an agent nobody configured asks for every kind of action', async () => {
+  it('an agent nobody configured downloads and runs inline code without asking, and asks for the rest (#614)', async () => {
     await render(null);
-    expect(SHELL_CATEGORIES.map(pressed)).toEqual(SHELL_CATEGORIES.map(() => 'ask'));
+    expect(SHELL_CATEGORIES.map((c) => [c, pressed(c)])).toEqual([
+      ['inline_code', 'allow'],
+      ['delete_files', 'ask'],
+      ['install_software', 'ask'],
+      ['download', 'allow'],
+      ['stop_programs', 'ask'],
+      ['system_settings', 'ask'],
+    ]);
     expect(container.textContent).toContain('Run code written into a command');
     expect(container.textContent).toContain('Delete files or discard changes');
     expect(container.textContent).not.toContain('outside its folders');
+  });
+
+  // Revue de la PR #618, passe 3 : « Allowed » pour les téléchargements a un
+  // périmètre, et les magasins des programmes de modèles en font partie. Il
+  // est dit sur la ligne, pas caché.
+  it('the download row says where Allowed reaches, the model stores included (#614)', async () => {
+    await render(null);
+    const row = container.querySelector('[data-testid="shell-row-download"]');
+    expect(row?.textContent).toContain(
+      'Allowed: into its folders and the model and image stores (comfy, ollama, docker, hf).',
+    );
+    // Passe 4 : la lecture de la cible est un filet, pas une frontière (#628).
+    expect(row?.textContent).toContain(
+      'A target it reads elsewhere (curl -o, wget -O…) asks. Not watertight: what programs write on their own (cp, config files) is not bounded, that takes a sandbox.',
+    );
   });
 
   it('says what a reading can promise: a script run from a file is not read (review of PR #474)', async () => {
@@ -81,9 +103,10 @@ describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
   });
 
   it('shows what is stored', async () => {
-    await render({ delete_files: 'never', download: 'allow' });
+    await render({ delete_files: 'never', download: 'ask', inline_code: 'ask' });
     expect(pressed('delete_files')).toBe('never');
-    expect(pressed('download')).toBe('allow');
+    // A stored state wins over the default (#614: both default to allowed).
+    expect(pressed('download')).toBe('ask');
     expect(pressed('inline_code')).toBe('ask');
   });
 
