@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildEnvForRunner, buildEnvForWeb, cliLaunchArgv } from '../lib/env.ts';
 import type { Config } from '../lib/config.ts';
@@ -265,7 +265,7 @@ describe('cliLaunchArgv — comment relancer CE CLI (#485)', () => {
     // Un poste de dev : tsx charge les sources par deux options de node.
     expect(
       cliLaunchArgv({
-        execPath: 'C:\Program Files\nodejs\node.exe',
+        execPath: 'C:\\Program Files\\nodejs\\node.exe',
         execArgv: [
           '--require',
           'D:/repo/tsx/preflight.cjs',
@@ -275,7 +275,7 @@ describe('cliLaunchArgv — comment relancer CE CLI (#485)', () => {
         scriptPath: 'D:/repo/apps/cli/src/index.ts',
       }),
     ).toEqual([
-      'C:\Program Files\nodejs\node.exe',
+      'C:\\Program Files\\nodejs\\node.exe',
       '--require',
       'D:/repo/tsx/preflight.cjs',
       '--import',
@@ -303,5 +303,27 @@ describe('cliLaunchArgv — comment relancer CE CLI (#485)', () => {
     const argv = JSON.parse(env['NODAL_CLI_ARGV'] ?? 'null') as unknown;
     expect(Array.isArray(argv)).toBe(true);
     expect((argv as string[])[0]).toBe(process.execPath);
+    expect((argv as string[]).at(-1)).toBe(resolve(process.argv[1]!));
+  });
+
+  // Sans script connu, aucune commande n'est inventée : `resolve('')` rendrait
+  // le dossier courant, et l'écran proposerait de lancer un dossier. La clé est
+  // RETIRÉE (pas laissée à hériter), et l'écran dit qu'il ne sait pas.
+  it.each([
+    ['absent', undefined],
+    ['vide', ''],
+  ])('script %s : pas de commande, ni ici ni dans NODAL_CLI_ARGV', (_label, script) => {
+    expect(cliLaunchArgv({ execPath: '/usr/bin/node', execArgv: [], scriptPath: script })).toBe(
+      null,
+    );
+    const saved = process.argv;
+    process.argv = script === undefined ? [saved[0]!] : [saved[0]!, script];
+    try {
+      const env = buildEnvForWeb(BASE_CONFIG, DB_URL);
+      expect('NODAL_CLI_ARGV' in env).toBe(true);
+      expect(env['NODAL_CLI_ARGV']).toBeUndefined();
+    } finally {
+      process.argv = saved;
+    }
   });
 });

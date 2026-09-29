@@ -19,12 +19,16 @@ import { LEGACY_PG_PASSWORD, buildPgUrl } from './postgres.ts';
  *
  * Les options de débogage sont écartées : un client qui relancerait le CLI
  * ouvrirait un port d'inspection à chaque connexion.
+ *
+ * `null` quand le script n'est pas connu : aucune commande n'est inventée, et
+ * l'écran du web dit qu'il ne sait pas (invariant #4).
  */
 export function cliLaunchArgv(proc: {
   execPath: string;
   execArgv: readonly string[];
-  scriptPath: string;
-}): string[] {
+  scriptPath: string | undefined;
+}): string[] | null {
+  if (proc.scriptPath === undefined || proc.scriptPath === '') return null;
   const loaders = proc.execArgv.filter((a) => !/^--inspect(?:-brk|-port|-wait)?(?:=|$)/.test(a));
   return [proc.execPath, ...loaders, proc.scriptPath];
 }
@@ -162,6 +166,13 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): ChildEnv {
   const installedVersion = readInstalledVersion();
   const authMode = resolveAuthMode(config);
   const bind = config.bind === 'loopback' ? '127.0.0.1' : '0.0.0.0';
+  // `resolve('')` rendrait le dossier courant : un script absent reste absent.
+  const script = process.argv[1];
+  const cliArgv = cliLaunchArgv({
+    execPath: process.execPath,
+    execArgv: process.execArgv,
+    scriptPath: script === undefined || script === '' ? undefined : resolve(script),
+  });
 
   const env: ChildEnv = {
     DATABASE_URL: databaseUrl,
@@ -178,13 +189,9 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): ChildEnv {
     // runner when it cannot be read: both processes get the same value.
     NODAL_VERSION: installedVersion ?? undefined,
     // #485 — la commande qui relance ce CLI, pour les clients MCP (Settings).
-    NODAL_CLI_ARGV: JSON.stringify(
-      cliLaunchArgv({
-        execPath: process.execPath,
-        execArgv: process.execArgv,
-        scriptPath: resolve(process.argv[1] ?? ''),
-      }),
-    ),
+    // Retirée quand elle n'est pas connue : l'écran affiche alors qu'il ne la
+    // connaît pas, au lieu d'une commande héritée ou inventée.
+    NODAL_CLI_ARGV: cliArgv === null ? undefined : JSON.stringify(cliArgv),
     PORT: String(config.ports.web),
     // BIND mirrors the runner's binding so /settings → Network can render the
     // "restart required" banner when the configured value drifts from runtime.
