@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ChainCounters,
+  assertTurnToolCallBudget,
   DEFAULT_LIMITS,
   NON_PROGRESS_SAME_TOOL_NUDGE_AT,
   NON_PROGRESS_SAME_TOOL_FAIL_AT,
@@ -151,85 +152,59 @@ describe('ChainCounters', () => {
     });
   });
 
-  describe('bumpToolCall()', () => {
+  describe('admitTurn() — a turn is admitted or refused whole (#564)', () => {
+    const limits = {
+      maxChains: 5,
+      maxToolCallsPerTurn: 3,
+      maxDelegationDepth: 3,
+      maxTurns: 50,
+      maxConsecutiveDeliveryTurns: 3,
+      maxTotalTokensPerJob: 1_500_000,
+      maxNoProgressRepeats: 12,
+      noDeliveryNudgeAt: 12,
+      sameToolStreakNudgeAt: 8,
+      maxNoDeliveryNudges: 2,
+      nudgeSpacing: 3,
+      maxCostPerJobUsd: 2.0,
+    };
+
     it('starts at 0', () => {
       const c = new ChainCounters();
       expect(c.toolCallsThisTurn).toBe(0);
     });
 
-    it('throws ToolCallLimitExceededError when exceeding maxToolCallsPerTurn', () => {
-      const c = new ChainCounters({
-        maxChains: 5,
-        maxToolCallsPerTurn: 3,
-        maxDelegationDepth: 3,
-        maxTurns: 50,
-        maxConsecutiveDeliveryTurns: 3,
-        maxTotalTokensPerJob: 1_500_000,
-        maxNoProgressRepeats: 12,
-        noDeliveryNudgeAt: 12,
-        sameToolStreakNudgeAt: 8,
-        maxNoDeliveryNudges: 2,
-        nudgeSpacing: 3,
-        maxCostPerJobUsd: 2.0,
-      });
-      c.bumpToolCall(); // 1
-      c.bumpToolCall(); // 2
-      c.bumpToolCall(); // 3
-      // 4th call: 4 > 3 → throws
-      expect(() => c.bumpToolCall()).toThrow(ToolCallLimitExceededError);
+    it('admits a turn at exactly the budget', () => {
+      const c = new ChainCounters(limits);
+      c.admitTurn(3);
+      expect(c.toolCallsThisTurn).toBe(3);
     });
 
-    it('error carries current and limit', () => {
-      const c = new ChainCounters({
-        maxChains: 5,
-        maxToolCallsPerTurn: 2,
-        maxDelegationDepth: 3,
-        maxTurns: 50,
-        maxConsecutiveDeliveryTurns: 3,
-        maxTotalTokensPerJob: 1_500_000,
-        maxNoProgressRepeats: 12,
-        noDeliveryNudgeAt: 12,
-        sameToolStreakNudgeAt: 8,
-        maxNoDeliveryNudges: 2,
-        nudgeSpacing: 3,
-        maxCostPerJobUsd: 2.0,
-      });
-      c.bumpToolCall();
-      c.bumpToolCall();
+    it('refuses a turn over the budget, with its size and the limit', () => {
+      const c = new ChainCounters(limits);
       try {
-        c.bumpToolCall(); // 3 > 2 → throws
+        c.admitTurn(307);
         expect.fail('should have thrown');
       } catch (err) {
         expect(err).toBeInstanceOf(ToolCallLimitExceededError);
         const e = err as ToolCallLimitExceededError;
         expect(e.code).toBe('tool_call_limit_exceeded');
-        expect(e.current).toBe(3);
-        expect(e.limit).toBe(2);
+        expect(e.current).toBe(307);
+        expect(e.limit).toBe(3);
+        expect(e.message).toBe('tool_call_limit_exceeded: 307 > 3');
       }
     });
 
-    it('resets on resetTurnToolCalls()', () => {
-      const c = new ChainCounters({
-        maxChains: 5,
-        maxToolCallsPerTurn: 2,
-        maxDelegationDepth: 3,
-        maxTurns: 50,
-        maxConsecutiveDeliveryTurns: 3,
-        maxTotalTokensPerJob: 1_500_000,
-        maxNoProgressRepeats: 12,
-        noDeliveryNudgeAt: 12,
-        sameToolStreakNudgeAt: 8,
-        maxNoDeliveryNudges: 2,
-        nudgeSpacing: 3,
-        maxCostPerJobUsd: 2.0,
-      });
-      c.bumpToolCall();
-      c.bumpToolCall();
-      c.resetTurnToolCalls();
-      expect(c.toolCallsThisTurn).toBe(0);
-      // Can bump again after reset
-      c.bumpToolCall();
+    it('each turn is measured on its own: a small turn after a large admitted one passes', () => {
+      const c = new ChainCounters(limits);
+      c.admitTurn(3);
+      c.admitTurn(1);
       expect(c.toolCallsThisTurn).toBe(1);
+    });
+
+    it('the production budget is 50: 50 admitted, 51 refused', () => {
+      expect(() => assertTurnToolCallBudget(50)).not.toThrow();
+      expect(() => assertTurnToolCallBudget(51)).toThrow(ToolCallLimitExceededError);
+      expect(() => new ChainCounters().admitTurn(51)).toThrow(ToolCallLimitExceededError);
     });
   });
 
@@ -306,10 +281,10 @@ describe('ChainCounters', () => {
       expect(() => c.bumpChain()).toThrow(ChainLimitExceededError); // 15 >= 15
     });
 
-    it('throws at 51st tool call (invariant 8)', () => {
+    it('refuses a turn of 51 tool calls, admits one of 50 (invariant 8)', () => {
       const c = new ChainCounters();
-      for (let i = 0; i < 50; i++) c.bumpToolCall(); // 1..50 — fine
-      expect(() => c.bumpToolCall()).toThrow(ToolCallLimitExceededError); // 51 > 50
+      c.admitTurn(50); // fine
+      expect(() => c.admitTurn(51)).toThrow(ToolCallLimitExceededError); // 51 > 50
     });
 
     it('throws at 4th delegation depth (invariant 8)', () => {
@@ -326,7 +301,7 @@ describe('ChainCounters', () => {
       const c = new ChainCounters();
       c.bumpChain();
       c.bumpChain();
-      c.bumpToolCall();
+      c.admitTurn(1);
       c.bumpDelegationDepth();
 
       const snap = c.toJSON();

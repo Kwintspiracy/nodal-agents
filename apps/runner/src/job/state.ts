@@ -1,8 +1,8 @@
 // job/state.ts — JobState machine: transitions and typed state values
 // All transitions are explicit. Invalid transitions throw JobStateError.
 
-import { and, eq, notInArray, or, isNull } from '@nodal-agents/db';
-import { agentJobs, agents } from '@nodal-agents/db';
+import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
+import { agentJobs, agents, toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
 import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
@@ -667,6 +667,9 @@ export async function saveCheckpoint(
       // the whole UPDATE). See toDbSafeString.
       messages: deepDbSafe(checkpoint.messages),
       turn: checkpoint.turn,
+      // L'ordre que ce point de reprise couvre (#443) : tout appel d'outil
+      // écrit APRÈS appartient au tour qui suit, quel que soit son numéro.
+      checkpointToolSeq: sql`(SELECT COALESCE(MAX(${toolCalls.seq}), 0) FROM ${toolCalls} WHERE ${toolCalls.jobId} = ${jobId})`,
       chainCount: checkpoint.chainCount,
       toolsUsed: checkpoint.toolsUsed,
       updatedAt: new Date(),
@@ -685,12 +688,16 @@ export async function saveCheckpoint(
 }
 
 /**
- * Heartbeat: bump `updated_at` so the orphan-cleanup cron (resetOrphanedJobs,
- * staleMinutes=5) does not reap a job that is actively working but slow — e.g. a
- * turn running many blocking tool calls, or a long LLM call near the timeout.
- * Cheap single-column UPDATE; safe to call repeatedly mid-turn. Mirrors the bump
- * that reset-orphans itself does for legitimately-waiting delegation parents.
+ * One heartbeat: bump `updated_at` so the reapers (`reclaimJobsOfDeadRunners`,
+ * `resetOrphanedJobs`) see a live runner holding this job. Written ONLY while
+ * the row is `processing` (#565): a beat means "a runner is working this job",
+ * so it never refreshes a job that was suspended, put back to `pending`, or
+ * ended by another writer. Driven by `holdJobHeartbeat` (job/heartbeat.ts) for
+ * the whole time the runner holds the job — never per activity.
  */
 export async function touchJob(db: AnyDrizzleDb, jobId: string): Promise<void> {
-  await db.update(agentJobs).set({ updatedAt: new Date() }).where(eq(agentJobs.id, jobId));
+  await db
+    .update(agentJobs)
+    .set({ updatedAt: new Date() })
+    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'processing')));
 }

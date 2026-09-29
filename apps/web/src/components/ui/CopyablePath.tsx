@@ -2,6 +2,7 @@
 
 import { toast } from 'sonner';
 import { Copy } from '@phosphor-icons/react';
+import { copyText } from '@/lib/clipboard';
 
 /**
  * CopyablePath — a one-line, layout-safe path display with a Copy button.
@@ -20,7 +21,7 @@ export default function CopyablePath({
 }) {
   async function copy() {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       toast.success('Path copied');
     } catch {
       toast.error('Could not copy');

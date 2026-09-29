@@ -229,11 +229,15 @@ export const toolCallSingle: Probe = {
   requires: 'toolUse',
   async run({ client }) {
     try {
-      const res = await client.generateText({
-        prompt: 'Quelle température fait-il à Lyon ? Utilise l’outil.',
-        tools: { get_weather: weatherTool },
-        maxOutputTokens: 256,
-      });
+      const res = await client.generateText(
+        {
+          prompt: 'Quelle température fait-il à Lyon ? Utilise l’outil.',
+          tools: { get_weather: weatherTool },
+          maxOutputTokens: 256,
+        },
+        // The probe reads the call and runs nothing (#554).
+        { inspectOnly: true },
+      );
       const calls = res.toolCalls ?? [];
       if (calls.length === 0) {
         return ko(
@@ -278,35 +282,39 @@ export const toolCallRoundTrip: Probe = {
   requires: 'toolUse',
   async run({ client }) {
     try {
-      const res = await client.generateText({
-        messages: [
-          { role: 'user', content: 'Quelle température fait-il à Lyon ? Utilise l’outil.' },
-          {
-            role: 'assistant',
-            content: [
-              {
-                type: 'tool-call',
-                toolCallId: 'call_1',
-                toolName: 'get_weather',
-                input: { city: 'Lyon' },
-              },
-            ],
-          },
-          {
-            role: 'tool',
-            content: [
-              {
-                type: 'tool-result',
-                toolCallId: 'call_1',
-                toolName: 'get_weather',
-                output: { type: 'json', value: { celsius: 21 } },
-              },
-            ],
-          },
-        ],
-        tools: { get_weather: weatherTool },
-        maxOutputTokens: 128,
-      });
+      const res = await client.generateText(
+        {
+          messages: [
+            { role: 'user', content: 'Quelle température fait-il à Lyon ? Utilise l’outil.' },
+            {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'tool-call',
+                  toolCallId: 'call_1',
+                  toolName: 'get_weather',
+                  input: { city: 'Lyon' },
+                },
+              ],
+            },
+            {
+              role: 'tool',
+              content: [
+                {
+                  type: 'tool-result',
+                  toolCallId: 'call_1',
+                  toolName: 'get_weather',
+                  output: { type: 'json', value: { celsius: 21 } },
+                },
+              ],
+            },
+          ],
+          tools: { get_weather: weatherTool },
+          maxOutputTokens: 128,
+        },
+        // The probe reads the answer and runs nothing (#554).
+        { inspectOnly: true },
+      );
       const text = (res.text ?? '').trim();
       if (text.length === 0) {
         return ko(

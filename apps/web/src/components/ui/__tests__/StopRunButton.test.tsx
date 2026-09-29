@@ -23,7 +23,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const refresh = vi.hoisted(() => vi.fn());
 vi.mock('next/navigation', () => ({
@@ -95,9 +96,13 @@ describe('canStopRun — ce qui est encore arrêtable @cap:suivre-execution/mote
   // C'est donc le FICHIER qu'on lit ici : il n'y a pas d'autre façon
   // mécanique de dire « ce module reste lisible des deux côtés ».
   it('vit dans un module que le serveur peut lire', () => {
-    // `import.meta.url` n'est pas une URL `file:` sous Vitest : le chemin se
-    // construit depuis la racine du paquet, que le lanceur fixe.
-    const source = readFileSync(resolve(process.cwd(), 'src/lib/job-live.ts'), 'utf8');
+    // Depuis CE fichier, jamais depuis le dossier de lancement : lancé depuis
+    // la racine du dépôt (`vitest --root apps/web`), `process.cwd()` n'est pas
+    // la racine du paquet et la lecture échouait (ENOENT).
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'lib', 'job-live.ts'),
+      'utf8',
+    );
     // La DIRECTIVE, pas le mot : ce fichier PARLE de `'use client'` dans son
     // en-tête, et chercher la chaîne rougirait sur son propre commentaire. Une
     // directive est la première instruction du module ; seuls des commentaires

@@ -226,6 +226,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       finalizing_at timestamptz,
       -- mirrors migration 0091
       verification_skipped_surfaces jsonb NOT NULL DEFAULT '[]',
+      -- mirrors migration 0133 (#443) : reprise après un redémarrage du runner
+      resumed_from_turn integer,
+      restart_resumes integer NOT NULL DEFAULT 0,
+      restart_blocked_by jsonb,
+      checkpoint_tool_seq bigint,
       -- project_id (0093) references code_projects, created further below — la
       -- FK est ajoutée par un ALTER TABLE juste après cette table, comme pour
       -- schedule_id ci-dessus.
@@ -327,6 +332,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- 0095 (P7) : le niveau de risque declare par l'outil. NULL sur les
       -- lignes d'avant et sur les lignes cli:*, ecrites hors registre.
       risk_level text CHECK (risk_level IS NULL OR risk_level IN ('read','write','destructive')),
+      -- mirrors migration 0133 (#443)
+      execution_started boolean,
       -- 0110 : l'ordre d'ECRITURE. Ni l'uuid, ni le tour, ni created_at ne
       -- disent laquelle de deux lignes d'un meme tour est arrivee la derniere.
       seq bigserial,

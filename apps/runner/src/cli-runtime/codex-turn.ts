@@ -40,7 +40,7 @@ import {
   buildProviderArgs,
   parseLiveToolEvent,
 } from '@nodal-agents/tools';
-import { spawnCliTurn } from './spawn-turn.ts';
+import { spawnCliTurn, OPEN_GATE, type ToolCallGate } from './spawn-turn.ts';
 import type { ClaudeTurnEvent, ClaudeTurnResult, ClaudeTurnOptions } from './claude-turn.ts';
 
 /** Même forme d'événement live que le chemin Claude — l'appelant ne trie pas. */
@@ -303,8 +303,11 @@ export function markRefusedIfFailed(item: unknown, output: string): string {
 }
 
 /**
- * Traite UNE ligne du flux. Rend `true` quand la ligne ouvre un appel d'outil —
- * c'est le signal que `spawn-turn.ts` compte pour le garde anti-boucle.
+ * Traite UNE ligne du flux. Rend `true` quand la ligne ouvre un appel d'outil ;
+ * cet appel passe par `gate.admit()`, le garde anti-boucle de `spawn-turn.ts`.
+ * Un appel refusé n'est jamais remis à `onEvent`, ni son ouverture ni sa fin.
+ * Après le cap, seules les fins des appels admis le sont (revue Codex de #568,
+ * passe 3) : aucune ouverture, aucun texte, aucune fin de tour n'est plus lue.
  *
  * Les types d'événements inconnus sont collectés, jamais devinés : une montée
  * de version du CLI se voit dans le journal au lieu de disparaître.
@@ -313,6 +316,7 @@ export function handleCodexLine(
   state: CodexParseState,
   line: string,
   onEvent?: (evt: CodexTurnEvent) => void,
+  gate: ToolCallGate = OPEN_GATE,
 ): boolean {
   const trimmed = line.trim();
   if (trimmed === '') return false;
@@ -325,9 +329,40 @@ export function handleCodexLine(
     return false;
   }
 
-  // Les outils d'abord, par le lecteur que `code_task` utilise déjà.
+  const type = evt['type'];
+  const item = evt['item'] as Record<string, unknown> | undefined;
+  const itemId = typeof item?.['id'] === 'string' ? item['id'] : null;
   const live = parseLiveToolEvent('codex', trimmed);
-  if (live) {
+
+  // Après le cap : seules les fins des appels admis (ouverts, donc dans
+  // `openToolIds`) passent encore. Rien d'autre ne touche l'état du tour.
+  if (gate.capped) {
+    const opened = live?.kind === 'result' ? state.openToolIds.get(live.event.id) : undefined;
+    if (live && opened) {
+      state.openToolIds.delete(live.event.id);
+      for (const toolUseId of opened) {
+        onEvent?.({
+          kind: 'tool_result',
+          toolUseId,
+          output: markRefusedIfFailed(item, (live.event.output ?? '').slice(0, OUTPUT_CAP)),
+        });
+      }
+    }
+    return false;
+  }
+
+  // Le compte d'abord : il décide si l'appel est admis, AVANT que quoi que ce
+  // soit de lui soit remis. Un item d'outil compte à son `item.started`, ou à
+  // sa fin s'il n'a jamais eu de début (le cas normal d'un `file_change`).
+  const opens =
+    isCodexToolItem(item) &&
+    (type === 'item.started' ||
+      (type === 'item.completed' && itemId !== null && !state.countedToolIds.has(itemId)));
+  if (opens && itemId !== null) state.countedToolIds.add(itemId);
+  const admitted = opens ? gate.admit() : true;
+
+  // Les outils ensuite, par le lecteur que `code_task` utilise déjà.
+  if (live && admitted) {
     if (live.kind === 'use') {
       const calls = expandToolCalls(live.event.id, live.event.name, live.event.input);
       // Les identifiants EXPANSÉS sont retenus, pas juste le brut : un
@@ -346,7 +381,6 @@ export function handleCodexLine(
       // l'événement, et l'écriture disparaissait de l'onglet Code comme du
       // contexte des projets. On ouvre donc la paire ici, juste avant de la
       // fermer : mieux vaut une ligne complète a posteriori que rien.
-      const item = evt['item'] as Record<string, unknown> | undefined;
       const opened = state.openToolIds.get(live.event.id);
       const calls: Array<{ toolUseId: string; toolName?: string; input?: unknown }> = opened
         ? opened.map((toolUseId) => ({ toolUseId }))
@@ -370,7 +404,6 @@ export function handleCodexLine(
     }
   }
 
-  const type = evt['type'];
   if (type === 'thread.started') {
     if (typeof evt['thread_id'] === 'string') state.sessionId = evt['thread_id'];
     return false;
@@ -390,14 +423,11 @@ export function handleCodexLine(
     // session qui boucle sur l'un d'eux n'incrémentait rien et dépassait
     // silencieusement le plafond de l'invariant #8.
     //
-    // On compte donc sur l'ITEM, pas sur ce que l'audit sait rendre.
-    const item = evt['item'] as Record<string, unknown> | undefined;
-    if (!isCodexToolItem(item)) return false;
-    if (typeof item?.['id'] === 'string') state.countedToolIds.add(item['id']);
-    return true;
+    // On compte donc sur l'ITEM, pas sur ce que l'audit sait rendre (le compte
+    // est fait plus haut, avant toute remise).
+    return opens;
   }
   if (type === 'item.completed') {
-    const item = evt['item'] as Record<string, unknown> | undefined;
     if (item?.['type'] === 'agent_message' && typeof item['text'] === 'string') {
       state.messages.push(item['text']);
       onEvent?.({ kind: 'assistant_text', text: item['text'] });
@@ -406,14 +436,8 @@ export function handleCodexLine(
     // Un outil qui n'a JAMAIS eu de `item.started` n'a rien compté jusqu'ici.
     // C'est le cas normal d'un `file_change` (revue Codex, 27/08) : sans cette
     // ligne, une session qui n'écrit que des fichiers ne consomme aucun budget
-    // et échappe entièrement au plafond de l'invariant #8.
-    const id = typeof item?.['id'] === 'string' ? item['id'] : null;
-    const jamaisOuvert = id !== null && !state.countedToolIds.has(id);
-    if (isCodexToolItem(item) && jamaisOuvert) {
-      state.countedToolIds.add(id);
-      return true;
-    }
-    return false;
+    // et échappe entièrement au plafond de l'invariant #8 (compté plus haut).
+    return opens;
   }
   if (type === 'turn.completed') {
     state.sawTurnCompleted = true;
@@ -544,7 +568,9 @@ export async function runCodexTurn(opts: CodexTurnOptions): Promise<CodexTurnRes
     // Codex ouvre un item d'outil par événement — jamais de lot, contrairement
     // aux appels parallèles de Claude. Le compte vaut donc 1 ou 0, mais il
     // passe par le même contrat pour que la mécanique n'ait pas deux cas.
-    onLine: (line) => (handleCodexLine(state, line, opts.onEvent) ? 1 : 0),
+    onLine: (line, gate) => {
+      handleCodexLine(state, line, opts.onEvent, gate);
+    },
     finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded }) => {
       if (state.unknownEventTypes.size > 0) {
         console.warn(

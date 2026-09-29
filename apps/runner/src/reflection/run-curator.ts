@@ -26,6 +26,7 @@ import {
   archiveAgentSkill,
 } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
+import { assertTurnToolCallBudget } from '@nodal-agents/orchestration';
 import { z } from 'zod';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 // SKILL-002: same linter as the create_skill tool — the curator writes
@@ -245,6 +246,9 @@ export async function runCuratorConsolidation(
 
     const toolCalls = response.toolCalls ?? [];
     if (toolCalls.length === 0) break; // no-op pass → stop
+    // Invariant #8 (#564): a turn over the per-turn tool-call budget is refused
+    // whole, before any of its calls runs. The pass throws; its caller logs it.
+    assertTurnToolCallBudget(toolCalls.length);
 
     // Record assistant turn
     const assistantParts: Array<

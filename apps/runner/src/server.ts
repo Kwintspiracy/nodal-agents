@@ -8,7 +8,7 @@ import { pathToFileURL } from 'url';
 import { parseEnv } from './env.ts';
 import { createRunnerDeps } from './deps.ts';
 import { healthRoute } from './routes/health.ts';
-import { agentRoute } from './routes/agent.ts';
+import { agentRoute, triggerWorker } from './routes/agent.ts';
 import { workerRoute } from './routes/worker.ts';
 import { approveRoute } from './routes/approve.ts';
 import { fileDiffRoute } from './routes/file-diff.ts';
@@ -383,9 +383,15 @@ async function main(): Promise<void> {
   // attend un enfant que plus personne n'exécute. C'est la même passe, jouée
   // tout de suite. Sans attendre : le serveur n'a pas à retarder son écoute pour
   // une reprise, et une panne ici se DIT sans empêcher le boot.
-  void reclaimJobsOfDeadRunners(deps.db).catch((e: unknown) => {
-    console.error('[runner] startup reclaim of dead-runner jobs failed:', e);
-  });
+  // Un job REPRIS à son dernier tour (#443) repart tout de suite, sans
+  // attendre la récupération des `pending` du premier tour de cron.
+  void reclaimJobsOfDeadRunners(deps.db)
+    .then((r) => {
+      for (const id of r.resumedJobIds) void triggerWorker(id, runnerEnv);
+    })
+    .catch((e: unknown) => {
+      console.error('[runner] startup reclaim of dead-runner jobs failed:', e);
+    });
 
   const ticker = cronTickerEnabled
     ? startCronTicker(deps, { runnerEnv, maxTickMs: cronTickMaxMs })

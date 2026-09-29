@@ -2,6 +2,7 @@
 
 import { toast } from 'sonner';
 import { Copy } from '@phosphor-icons/react';
+import { copyText } from '@/lib/clipboard';
 
 type Props = {
   /** Text copied to the clipboard on click. */
@@ -19,7 +20,8 @@ type Props = {
  * border-rule-2 bg-paper px-2.5 text-[12px]` — lifted from VersionBadge's
  * update-command row (first call site; promoted per DS Phase 2A so future
  * copy affordances — API keys, webhook URLs, code blocks — reuse it instead
- * of hand-rolling `navigator.clipboard` + toast at each call site).
+ * of hand-rolling a clipboard write + toast at each call site). The write itself
+ * is `copyText`, which also works over http on a LAN IP.
  */
 export default function CopyButton({
   value,
@@ -30,7 +32,7 @@ export default function CopyButton({
 }: Props) {
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       toast.success(successMessage);
     } catch {
       toast.error(errorMessage);

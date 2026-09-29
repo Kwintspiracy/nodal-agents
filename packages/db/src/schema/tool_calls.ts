@@ -6,6 +6,7 @@ import {
   uuid,
   integer,
   jsonb,
+  boolean,
   timestamp,
   index,
   check,
@@ -50,6 +51,10 @@ export const toolCalls = pgTable(
     // lignes antérieures à 0095 et sur les lignes `cli:*` (écrites hors
     // registre) : l'écran dit « incertain » plutôt que de deviner.
     riskLevel: text('risk_level'),
+    // 0133 (#443) : cette ligne enregistre-t-elle une exécution qui a
+    // COMMENCÉ ? true = marque d'intention ou exécution faite ; false = appel
+    // refusé par la porte, jamais lancé ; NULL = ligne antérieure ou `cli:*`.
+    executionStarted: boolean('execution_started'),
     // 0110 : l'ORDRE D'ÉCRITURE, et la seule colonne qui le porte. `id` est un
     // uuid aléatoire, `turn` vaut pareil pour tous les appels d'un même tour, et
     // `created_at` peut être identique pour deux insertions rapprochées — la

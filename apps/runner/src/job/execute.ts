@@ -52,6 +52,7 @@ import {
   QuotaExhaustedError,
   LLMTimeoutError,
   LLMCallCancelledError,
+  LLMOutputLimitError,
   MessageStructureError,
   AllProvidersFailedError,
   isContextOverflowError,
@@ -149,15 +150,16 @@ import type {
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import {
-  failJob,
-  cancelJob,
+  failJob as failJobRow,
+  cancelJob as cancelJobRow,
   setJobStatus,
   saveCheckpoint,
-  touchJob,
   claimJob,
   currentTurnMessages,
   findTaskBoundary,
 } from './state.ts';
+import { holdJobHeartbeat } from './heartbeat.ts';
+import { unansweredToolCalls } from './close-transcript.ts';
 // LA porte terminale de succès (plan « Vérifier & Corriger », T09/T10) : les
 // deux chemins de succès de cette boucle passent par elle, jamais par
 // completeJob directement — c'est elle qui calcule et journalise la décision
@@ -709,10 +711,21 @@ type AnyToolDef = ToolDefinition<z.ZodTypeAny, unknown>;
 // ─── describeUnavailableTool ──────────────────────────────────────────────────
 
 /**
+ * La marque que porte chaque renvoi « outil indisponible », pour le RECONNAÎTRE
+ * dans une transcription relue (revue Codex de #573). Le budget de ces renvois
+ * vivait en mémoire et repartait à zéro à chaque reprise : une suspension
+ * (approbation, délégation) rendait au modèle toutes ses chances. Elle porte un
+ * caractère de contrôle, comme `PROGRESS_REMINDER_MARK` : ni un message
+ * d'utilisateur ni le résultat d'un autre outil ne la produit par accident.
+ */
+export const UNAVAILABLE_TOOL_MARK = '[système:outil-indisponible:\u0001]';
+
+/**
  * Build the corrective message fed back to a model that called a tool not in
  * its whitelist. Lists the available tools and, when the bad name looks like a
  * truncated/abbreviated form of a real one (the classic "dropped the MCP
  * prefix" slip), surfaces a "did you mean" hint so the model can self-correct.
+ * Carries `UNAVAILABLE_TOOL_MARK`, which the budget counts on resume.
  * Pure — unit-tested in isolation.
  */
 export function describeUnavailableTool(badName: string, available: readonly string[]): string {
@@ -723,10 +736,34 @@ export function describeUnavailableTool(badName: string, available: readonly str
   });
   const hint = suggestions.length ? ` Did you mean: ${suggestions.slice(0, 3).join(' or ')}?` : '';
   return (
-    `The tool "${badName}" is not available to you.${hint} ` +
+    `${UNAVAILABLE_TOOL_MARK} The tool "${badName}" is not available to you.${hint} ` +
     `Your available tools are: ${available.join(', ')}. ` +
     `Use one of those EXACT names — do not invent, abbreviate, or drop prefixes from tool names.`
   );
+}
+
+/**
+ * Les tours du job qui ont déjà dépensé une chance « outil indisponible »,
+ * relus dans sa transcription (revue Codex de #573). Les deux chemins laissent
+ * la marque, une fois par tour : le refus du SDK, par le message système qu'il
+ * ajoute ; les appels indisponibles d'un tour, par les résultats d'outils de CE
+ * tour (un seul message `tool`, quel que soit leur nombre). Même lecture que le
+ * rappel de progression et le livrable vide : un compteur en mémoire vaudrait
+ * pour une exécution, pas pour le job.
+ */
+export function unavailableToolTurnsFromTranscript(messages: readonly unknown[]): number {
+  // Dans un contenu sérialisé, le caractère de contrôle est échappé.
+  const serializedMark = JSON.stringify(UNAVAILABLE_TOOL_MARK).slice(1, -1);
+  let turns = 0;
+  for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+    if (!m) continue;
+    if (m.role === 'user' && typeof m.content === 'string') {
+      if (m.content.includes(UNAVAILABLE_TOOL_MARK)) turns += 1;
+    } else if (m.role === 'tool') {
+      if (JSON.stringify(m.content ?? '').includes(serializedMark)) turns += 1;
+    }
+  }
+  return turns;
 }
 
 // ─── shortBlockReason ─────────────────────────────────────────────────────────
@@ -801,6 +838,40 @@ export interface BudgetStopFacts {
   spent: number;
   limit: number;
   turn: number;
+}
+
+/**
+ * Le code machine d'un tour dont la réponse s'est arrêtée sur le plafond de
+ * jetons de SORTIE du modèle (#554), pour `agent_jobs.error`. Même famille que
+ * `llm_timeout:` et `context_window_exceeded:` : le code, puis les faits qui le
+ * rendent lisible (qui, quel tour, combien écrit, combien d'appels d'outils
+ * laissés sans exécution).
+ */
+export function outputLimitErrorCode(err: LLMOutputLimitError, turn: number): string {
+  return (
+    `${err.code}:${err.provider}/${err.model} ` +
+    `(turn ${turn}, ${err.usage.outputTokens} output tokens, ` +
+    `${err.toolCallCount} tool calls not executed)`
+  );
+}
+
+/**
+ * Le code machine d'un tour refusé parce qu'il portait plus d'appels d'outils
+ * que le budget par tour (#564, invariant #8), pour `agent_jobs.error`. Même
+ * famille que `outputLimitErrorCode` : le code, puis qui, quel tour, combien
+ * d'appels pour quelle limite, et qu'aucun n'a été exécuté.
+ */
+export function toolCallLimitErrorCode(
+  err: ToolCallLimitExceededError,
+  provider: string,
+  model: string,
+  turn: number,
+): string {
+  return (
+    `${err.code}:${provider}/${model} ` +
+    `(turn ${turn}, ${err.current} tool calls over the limit of ${err.limit} per turn, ` +
+    `none executed)`
+  );
 }
 
 /** Le code d'erreur d'un run arrêté par son budget. Les deux premiers existaient déjà. */
@@ -1230,7 +1301,7 @@ async function failOnUncaughtError(
   // Le code dans `error`, et AUCUN texte du runner dans le résultat propagé
   // (invariant #2, revue Codex passe 4) : le parent reçoit l'échec typé par le
   // chemin de délégation, qui sait déjà le dire au modèle.
-  if (await failJob(deps.db, jobId as string, code)) {
+  if (await failJobRow(deps.db, jobId as string, code)) {
     return { status: 'failed', error: code };
   }
   // L'écriture gardée n'a rien fait : le job a été annulé ou fini entre
@@ -1423,10 +1494,24 @@ async function runJob(
   opts?: ExecuteJobOpts,
 ): Promise<ExecuteJobResult> {
   const delegationOutcomes: DelegationOutcomeMap = new Map();
-  const result = await runJobTracked(jobId, deps, runnerEnv, opts, delegationOutcomes);
+  // Le battement du job (#565) : posé par `runJobTracked` dès que la prise
+  // réussit, rendu ici quand le run rend la main — fini, suspendu, perdu ou
+  // levé. Aucune autre partie du run ne bat.
+  const tenue: JobHold = { lacher: () => {} };
+  let result: ExecuteJobResult;
+  try {
+    result = await runJobTracked(jobId, deps, runnerEnv, opts, delegationOutcomes, tenue);
+  } finally {
+    tenue.lacher();
+  }
   if (result.status !== 'completed' && result.status !== 'failed') return result;
   if (result.subDelegations !== undefined) return result;
   return { ...result, subDelegations: subDelegationList(delegationOutcomes) };
+}
+
+/** Ce que le run rend quand il lâche le job : son battement (#565). */
+interface JobHold {
+  lacher: () => void;
 }
 
 async function runJobTracked(
@@ -1435,8 +1520,53 @@ async function runJobTracked(
   runnerEnv: RunnerEnv | undefined,
   opts: ExecuteJobOpts | undefined,
   delegationOutcomes: DelegationOutcomeMap,
+  tenue: JobHold,
 ): Promise<ExecuteJobResult> {
   const { db, registry } = deps;
+
+  // #561 — la règle d'un tour vaut aussi pour la transcription qu'un run
+  // PERSISTE en finissant : chaque tool_use y garde son tool_result. Tout
+  // échec et toute annulation de ce run passent par les deux écritures
+  // ci-dessous, qui la ferment d'abord — jamais un appel ajouté à chaque sortie
+  // (il y en a une quarantaine). Le tour en cours, quand il a déjà un message
+  // d'outils en construction, le donne (`tourOuvert`) : ses appels exécutés
+  // gardent leur vrai résultat, les autres disent qu'ils n'ont pas tourné.
+  let tourOuvert: ((raison: string) => ModelMessage) | null = null;
+  const RAISON_FIN_DU_RUN = 'the job ended before this call was handled';
+  const transcriptionFermee = (msgs: ModelMessage[]): ModelMessage[] => {
+    const ouverts = unansweredToolCalls(msgs);
+    if (ouverts.length === 0) return msgs;
+    if (tourOuvert) return [...msgs, tourOuvert(RAISON_FIN_DU_RUN)];
+    return [
+      ...msgs,
+      {
+        role: 'tool',
+        content: ouverts.map((c) => ({
+          type: 'tool-result' as const,
+          toolCallId: c.toolCallId,
+          toolName: c.toolName,
+          output: toResultOutput({ error: `not executed: ${RAISON_FIN_DU_RUN}` }),
+        })),
+      } as ModelMessage,
+    ];
+  };
+  const failJob: typeof failJobRow = (base, id, code, stats, msgs, userMessage, hint) =>
+    failJobRow(
+      base,
+      id,
+      code,
+      stats,
+      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      userMessage,
+      hint,
+    );
+  const cancelJob: typeof cancelJobRow = (base, id, stats, msgs) =>
+    cancelJobRow(
+      base,
+      id,
+      stats,
+      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+    );
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
   // Agents MUST have an llmKeyId — if absent we fail loud (invariant 4).
   // deps.llmClient is kept in RunnerDeps for backward compat with tests but
@@ -1487,6 +1617,9 @@ async function runJobTracked(
     trace('claim_lost', { status: job.status ?? 'unknown' });
     return { status: 'already_handled' };
   }
+  // Le job est à nous : il bat jusqu'à ce que `runJob` le lâche, quoi qu'il
+  // fasse entre les deux — préparation, appel modèle, outils, attente (#565).
+  tenue.lacher = holdJobHeartbeat(db, jobId as string);
 
   // Invariant 8: chain_count is bumped on every resume from awaiting_delegation
   // (and would also be bumped on awaiting_approval resume once that path ships).
@@ -2710,60 +2843,49 @@ async function runJobTracked(
                 action: 'auto_approve',
               },
             ];
-            // Heartbeat during the resume-replay too: the serial/parallel tool
-            // paths keep updated_at fresh via a 60 s touchJob interval, but this
-            // replay path historically had NONE — an approved long tool (a
-            // 10-minute code_task, a slow run_command) was reaped at 5 min by
-            // resetOrphanedJobs precisely BECAUSE the human approved it. Same
-            // idiom as the serial path; cleared in `finally` so it never leaks.
-            const resumeHbInterval = setInterval(() => {
-              void touchJob(db, jobId as string).catch(() => {});
-            }, 60_000);
-            let execResult!: Awaited<ReturnType<typeof executeTool>>;
-            try {
-              execResult = await executeTool(
-                toolDef,
-                req.toolInput,
-                {
-                  jobId: jobId as string,
-                  agentId: agentRow.id,
-                  entityId: job.entityId ?? '',
-                  db,
-                  // étape D: the replayed call keeps its ORIGINAL tool_use id
-                  // (stamped on the approval_requests row at gate time) so the
-                  // audit row joins back to the transcript block it answers.
-                  turn,
-                  toolCallId: req.toolCallId ?? undefined,
-                  jobChatId: job.chatId ?? null,
-                  // P6 : la conversation du fil, pour que le registre des projets y pose
-                  // le projet courant.
-                  conversationId: job.conversationId ?? null,
-                  jobChannel: job.channel,
-                  activeChannels,
-                  notifyChannelOverride,
-                  embeddingClient: deps.embeddingClient,
-                  workspaces: agentWorkspacesList,
-                  commandAllowlist: agentRow.commandAllowlist ?? null,
-                  skillStoreDir: skillStore,
-                  checkpointsRoot: checkpointsRoot(),
-                  assignedSkillSlugs,
-                  scriptAuthorizedSkillSlugs,
-                  fileWritableSkillSlugs,
-                  provisioning: TOOL_PROVISIONING,
-                  searchBackend,
-                  ...(speechGenerator ? { speechGenerator } : {}),
-                  resolveAgentToolNames: (targetAgentId: string) =>
-                    resolveAgentToolNames(db, targetAgentId),
-                },
-                {
-                  approvalRules: resumeApprovalRules,
-                  autonomy: workspaceAutonomy,
-                  onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
-                },
-              );
-            } finally {
-              clearInterval(resumeHbInterval);
-            }
+            // An approved long tool (a 10-minute code_task, a slow
+            // run_command) keeps the job alive through the job's own heartbeat
+            // (#565), held from the claim above — no per-call interval here.
+            const execResult = await executeTool(
+              toolDef,
+              req.toolInput,
+              {
+                jobId: jobId as string,
+                agentId: agentRow.id,
+                entityId: job.entityId ?? '',
+                db,
+                // étape D: the replayed call keeps its ORIGINAL tool_use id
+                // (stamped on the approval_requests row at gate time) so the
+                // audit row joins back to the transcript block it answers.
+                turn,
+                toolCallId: req.toolCallId ?? undefined,
+                jobChatId: job.chatId ?? null,
+                // P6 : la conversation du fil, pour que le registre des projets y pose
+                // le projet courant.
+                conversationId: job.conversationId ?? null,
+                jobChannel: job.channel,
+                activeChannels,
+                notifyChannelOverride,
+                embeddingClient: deps.embeddingClient,
+                workspaces: agentWorkspacesList,
+                commandAllowlist: agentRow.commandAllowlist ?? null,
+                skillStoreDir: skillStore,
+                checkpointsRoot: checkpointsRoot(),
+                assignedSkillSlugs,
+                scriptAuthorizedSkillSlugs,
+                fileWritableSkillSlugs,
+                provisioning: TOOL_PROVISIONING,
+                searchBackend,
+                ...(speechGenerator ? { speechGenerator } : {}),
+                resolveAgentToolNames: (targetAgentId: string) =>
+                  resolveAgentToolNames(db, targetAgentId),
+              },
+              {
+                approvalRules: resumeApprovalRules,
+                autonomy: workspaceAutonomy,
+                onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
+              },
+            );
             if (execResult.outcome === 'success') {
               // INJECT-001: the resume path executes the SAME tool the gate
               // suspended, so it needs the same framing. A boundary that is
@@ -3095,7 +3217,7 @@ async function runJobTracked(
         jobId: jobId as string,
         errorCode,
         stats: runStats(),
-        messages,
+        messages: transcriptionFermee(messages),
         ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
         ...(notice
           ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
@@ -3254,72 +3376,64 @@ async function runJobTracked(
       // timers; tests use genuinely small real durations instead.
       const pollIntervalMs = Math.max(1, Math.min(2000, Math.floor(approvalGraceMs / 4)));
       const deadline = Date.now() + approvalGraceMs;
-      // Keep updated_at fresh for the whole wait — same reasoning as the LLM/
-      // tool-call heartbeats above (Leg 5 / F-8): a job that's just waiting on
-      // a human must not look stale to the 5-min orphan reaper.
-      const graceHbInterval = setInterval(() => {
-        void touchJob(db, jobId as string).catch(() => {});
-      }, 60_000);
-      try {
-        while (Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      // The wait on a human stays fresh to the reapers through the job's own
+      // heartbeat (#565), held from the claim — nothing to start here.
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 
-          // Cancel wins even mid-window: execute nothing, touch no status —
-          // mirrors the top-of-turn cancellation check (Leg 2).
-          const [statusRow] = await db
-            .select({ status: agentJobs.status })
-            .from(agentJobs)
-            .where(eq(agentJobs.id, jobId as string));
-          if (statusRow?.status === 'cancelled') {
-            trace('grace_window_cancelled');
-            await cancelJob(db, jobId as string, runStats(), messages);
-            return { status: 'cancelled' };
-          }
-
-          const openRows = await db
-            .select()
-            .from(approvalRequests)
-            .where(
-              and(eq(approvalRequests.jobId, jobId as string), isNull(approvalRequests.executedAt)),
-            )
-            .orderBy(approvalRequests.requestedAt);
-          if (openRows.length === 0 || openRows.some((r) => r.status === 'pending')) {
-            continue; // at least one request is still awaiting a decision
-          }
-
-          // Every open request resolved inside the window — execute them
-          // in-process (same logic as the 11.7 resume step) instead of
-          // suspending the job.
-          trace('grace_window_resolved_inline', { count: openRows.length });
-          const executed = await executeResolvedApprovals(openRows, messages);
-          messages = executed.messages;
-
-          // Issue #370: same re-read as the worker-driven resume above. This is
-          // the path the incident took — the decision landed inside the grace
-          // window, and the rule it wrote was invisible to the rest of the job.
-          approvalRuleList = await loadApprovalRules(db, job, agentRow);
-
-          if (executed.catastrophicRefusalMessage !== null) {
-            trace('resume_catastrophic_command_failed_job');
-            await failJob(
-              db,
-              jobId as string,
-              'catastrophic_command_refused',
-              runStats(),
-              messages,
-              executed.catastrophicRefusalMessage,
-            );
-            return {
-              status: 'failed',
-              error: 'catastrophic_command_refused',
-              result: executed.catastrophicRefusalMessage,
-            };
-          }
-
-          return 'resumed_inline';
+        // Cancel wins even mid-window: execute nothing, touch no status —
+        // mirrors the top-of-turn cancellation check (Leg 2).
+        const [statusRow] = await db
+          .select({ status: agentJobs.status })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, jobId as string));
+        if (statusRow?.status === 'cancelled') {
+          trace('grace_window_cancelled');
+          await cancelJob(db, jobId as string, runStats(), messages);
+          return { status: 'cancelled' };
         }
-      } finally {
-        clearInterval(graceHbInterval);
+
+        const openRows = await db
+          .select()
+          .from(approvalRequests)
+          .where(
+            and(eq(approvalRequests.jobId, jobId as string), isNull(approvalRequests.executedAt)),
+          )
+          .orderBy(approvalRequests.requestedAt);
+        if (openRows.length === 0 || openRows.some((r) => r.status === 'pending')) {
+          continue; // at least one request is still awaiting a decision
+        }
+
+        // Every open request resolved inside the window — execute them
+        // in-process (same logic as the 11.7 resume step) instead of
+        // suspending the job.
+        trace('grace_window_resolved_inline', { count: openRows.length });
+        const executed = await executeResolvedApprovals(openRows, messages);
+        messages = executed.messages;
+
+        // Issue #370: same re-read as the worker-driven resume above. This is
+        // the path the incident took — the decision landed inside the grace
+        // window, and the rule it wrote was invisible to the rest of the job.
+        approvalRuleList = await loadApprovalRules(db, job, agentRow);
+
+        if (executed.catastrophicRefusalMessage !== null) {
+          trace('resume_catastrophic_command_failed_job');
+          await failJob(
+            db,
+            jobId as string,
+            'catastrophic_command_refused',
+            runStats(),
+            messages,
+            executed.catastrophicRefusalMessage,
+          );
+          return {
+            status: 'failed',
+            error: 'catastrophic_command_refused',
+            result: executed.catastrophicRefusalMessage,
+          };
+        }
+
+        return 'resumed_inline';
       }
     }
 
@@ -3777,8 +3891,17 @@ async function runJobTracked(
   // the job being hard-killed on one hallucinated/abbreviated tool name. Generic
   // — benefits every model, most of all the ones that drop MCP prefixes
   // (minimax/deepseek). After the budget, fail loud (invariant #4 / #8).
+  // The budget counts TURNS, not calls (#560): the model only sees the error
+  // between turns, so four bad calls in one batch are one mistake, not four.
+  // Both paths spend it once per turn: the SDK rejection (the whole turn) and
+  // the check below the delegation filter (every unavailable call of a turn).
+  // The budget is the JOB's, not one execution's (Codex review of #573): read
+  // back from this job's transcript, so a resume after an approval or a
+  // delegation does not hand the model its chances back.
   const MAX_UNAVAILABLE_TOOL_NUDGES = 3;
-  let unavailableToolNudges = 0;
+  let unavailableToolNudges = unavailableToolTurnsFromTranscript(
+    currentTurnMessages(messages, job.task),
+  );
 
   // Expiration d'un tour : UN rejeu, puis l'échec (#121). Le compteur et le
   // temps perdu valent pour le tour en cours, et sont remis à zéro dès qu'un
@@ -3799,7 +3922,8 @@ async function runJobTracked(
   try {
     while (true) {
       turn += 1;
-      counters.resetTurnToolCalls();
+      // Un nouveau tour n'a pas encore de message d'outils en construction (#561).
+      tourOuvert = null;
 
       // Leg 2 — Top-of-turn terminal check (primary zombie-stopper).
       //
@@ -3910,19 +4034,9 @@ async function runJobTracked(
       }
 
       // d. Call LLM
-      // Heartbeat before the (potentially ~300s) LLM call so a slow turn doesn't
-      // go stale and get reaped by the 5-min orphan-reset mid-flight.
-      await touchJob(db, jobId as string);
-
+      // A long call (a reasoning model thinking for minutes) stays fresh to the
+      // reapers through the job's own heartbeat (#565), held from the claim.
       trace('llm_call_start', { turn, msgCount: messages.length });
-      // Leg 5 — Heartbeat during LLM call. The pre-call touchJob above covers
-      // the moment we start; this interval covers long in-progress calls (e.g.
-      // reasoning models that think for 2–5 min). 60s is well inside the 5-min
-      // orphan-reset window. The interval is cleared in a finally block so it
-      // never leaks past this turn regardless of success/error.
-      const hbInterval = setInterval(() => {
-        void touchJob(db, jobId as string).catch(() => {});
-      }, 60_000);
       // Stop arrête l'appel EN COURS. Le bouton n'écrit que `cancelled` en
       // base ; sans cette lecture pendant l'appel, un tour streamé qui écrit
       // sans s'arrêter ignorait le Stop jusqu'à sa fin (une heure au plus) et
@@ -4186,7 +4300,6 @@ async function runJobTracked(
         }
         throw genErr; // not this error, or budget spent → outer catch fails loud
       } finally {
-        clearInterval(hbInterval);
         clearInterval(surveilleArret);
       }
       // Le tour a répondu : son budget d'expiration repart à zéro, et le temps
@@ -4384,6 +4497,18 @@ async function runJobTracked(
         },
         ...(servedProvider ? { servedProvider } : {}),
       });
+
+      // #564 — invariant #8, per-turn tool-call budget. The size of the turn is
+      // known now, before any of its calls runs: a turn over the budget is
+      // refused WHOLE, not executed up to its 50th call. Incident 2026-09-28:
+      // a 307-call turn (154 telegram_send_message, 150 assign_) ran call by
+      // call until Telegram's own send limit stopped it. Checked before the
+      // assistant message is appended, like the cut turn of #554 which never
+      // reaches it: the persisted transcript stays valid (no tool_use without
+      // its result) and ends on the last turn that acted. Both execution paths
+      // below (the parallel read pre-pass and the serial loop) run only calls
+      // of an admitted turn. Throws into the outer catch, which fails the job.
+      counters.admitTurn(rawToolCalls.length);
 
       // e-pré. Anti-spam guard (invariant 8). A "delivery-only" turn is one
       // whose tool calls are ALL user-facing sends (no return_result, no other
@@ -4726,6 +4851,36 @@ async function runJobTracked(
         ? [...othersWithoutReturn, keptAssign]
         : othersWithoutReturn;
 
+      // #560 — a turn that calls tools the agent does not have spends ONE
+      // chance to self-correct, however many such calls it holds; each of them
+      // gets its error as its tool-result in the loop below. A turn that does
+      // it again once the budget is spent (the model saw the errors and
+      // repeated the mistake) fails the job, before any call of it runs.
+      const unavailableThisTurn = callsToProcess.filter((c) => !toolMap.has(c.name));
+      if (unavailableThisTurn.length > 0) {
+        const badTools = [...new Set(unavailableThisTurn.map((c) => c.name))];
+        if (unavailableToolNudges >= MAX_UNAVAILABLE_TOOL_NUDGES) {
+          const code = `whitelist_violation:${badTools[0]}`;
+          await failJob(
+            db,
+            jobId as string,
+            code,
+            runStats(),
+            messages,
+            `L'agent a appelé à répétition un outil indisponible (${badTools.join(', ')}).`,
+          );
+          return { status: 'failed', error: code };
+        }
+        unavailableToolNudges += 1;
+        trace('unavailable_tool_nudge', {
+          turn,
+          badTools,
+          calls: unavailableThisTurn.length,
+          attempt: unavailableToolNudges,
+          via: 'toolMap',
+        });
+      }
+
       // i. Process tool calls. AI SDK v6 ToolResultPart shape:
       //   { type: 'tool-result', toolCallId, toolName, output: ToolResultOutput }
       // where ToolResultOutput is the discriminated union defined at step 11.6.
@@ -4756,6 +4911,51 @@ async function runJobTracked(
           });
         }
       }
+
+      // #561 — ONE rule for every way this turn ends: each of its tool_use
+      // blocks leaves with a tool_result, whatever the exit (next turn,
+      // approval, question, delegation, return_result deferred). A call the
+      // turn did not handle — the return_result stripped from the loop, an
+      // assign_ dropped by the one-delegation-per-turn filter, anything a
+      // refusal skipped — gets one here: the dropped assign keeps its deferral
+      // text, anything else says why it did not run. Before this rule each
+      // exit patched its own leftovers, and one exit that did not (a
+      // delegation next to a return_result) left the parent dead on
+      // `unmatched_tool_use` at resume (job b7ecc59a).
+      // `pendingId`: the call whose result arrives later (the delegation).
+      const missingResults = (reason: string, pendingId?: string): typeof toolResultBlocks => {
+        const answered = new Set(toolResultBlocks.map((b) => b.toolCallId));
+        const missing: typeof toolResultBlocks = [];
+        for (const tc of rawToolCalls) {
+          if (answered.has(tc.toolCallId) || tc.toolCallId === pendingId) continue;
+          const deferred = sideToolResults.find((sr) => sr.tool_use_id === tc.toolCallId);
+          missing.push({
+            type: 'tool-result',
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            output: toResultOutput({ error: deferred?.content ?? `not executed: ${reason}` }),
+          });
+          answered.add(tc.toolCallId);
+        }
+        return missing;
+      };
+      const closeTurn = (reason: string, pendingId?: string): void => {
+        toolResultBlocks.push(...missingResults(reason, pendingId));
+      };
+      // Le tour en cours, pour une écriture terminale qui tombe au milieu
+      // (#561) : sans rien changer à ce que le tour a construit.
+      tourOuvert = (raison) =>
+        ({
+          role: 'tool',
+          content: [...toolResultBlocks, ...missingResults(raison)],
+        }) as ModelMessage;
+      /** This turn's tool message, closed by `closeTurn` first. */
+      const turnToolMessage = (
+        reason = 'this turn ended before this call was handled; call it again if it is still needed',
+      ): ModelMessage => {
+        closeTurn(reason);
+        return { role: 'tool', content: toolResultBlocks } as ModelMessage;
+      };
 
       let awaitingApproval = false;
 
@@ -4848,46 +5048,30 @@ async function runJobTracked(
             !wouldRequireApproval(c.name),
         );
       if (parallelizable) {
-        // Cap at the per-turn tool budget so we never execute past the limit the
-        // serial loop would enforce.
-        const batch = callsToProcess.slice(0, DEFAULT_LIMITS.maxToolCallsPerTurn);
+        // The turn was admitted whole by `counters.admitTurn` (#564): it is
+        // within the per-turn budget, nothing to cut here.
+        const batch = callsToProcess;
         trace('parallel_tool_prepass', { turn, count: batch.length, concurrency: toolConcurrency });
-        // F-8 (parallel path) — heartbeat for the WHOLE pre-pass, not just
-        // between waves. `Promise.all` blocks until the slowest call in a wave
-        // resolves; a single in-flight read (Apify run up to 30min, a slow MCP
-        // or scrape) then leaves nothing touching `updated_at` while the wave is
-        // in flight, and the orphan reaper's 5-min window (resetOrphanedJobs)
-        // reaps a job that is still alive — a false 'failed' plus silent loss of
-        // the completed work. The between-wave touchJob below is insufficient
-        // precisely because it only fires once a wave has already resolved. Same
-        // 60s interval / finally-cleared pattern as the serial path (Leg 5).
-        const prepassHbInterval = setInterval(() => {
-          void touchJob(db, jobId as string).catch(() => {});
-        }, 60_000);
-        try {
-          for (let i = 0; i < batch.length; i += toolConcurrency) {
-            const wave = batch.slice(i, i + toolConcurrency);
-            const results = await Promise.all(
-              wave.map(async (c) => {
-                const def = toolMap.get(c.name);
-                if (!def) return { id: c.id, r: null };
-                return {
-                  id: c.id,
-                  r: await executeTool(
-                    def,
-                    c.input,
-                    { ...sharedToolCtx, toolCallId: c.id },
-                    sharedToolOpts,
-                  ),
-                };
-              }),
-            );
-            for (const { id, r } of results) if (r) preExecuted.set(id, r);
-            // Immediate bump between waves (on top of the interval above).
-            await touchJob(db, jobId as string);
-          }
-        } finally {
-          clearInterval(prepassHbInterval);
+        // A slow wave (an Apify run up to 30 min, a slow MCP or scrape) stays
+        // fresh to the reapers through the job's own heartbeat (#565).
+        for (let i = 0; i < batch.length; i += toolConcurrency) {
+          const wave = batch.slice(i, i + toolConcurrency);
+          const results = await Promise.all(
+            wave.map(async (c) => {
+              const def = toolMap.get(c.name);
+              if (!def) return { id: c.id, r: null };
+              return {
+                id: c.id,
+                r: await executeTool(
+                  def,
+                  c.input,
+                  { ...sharedToolCtx, toolCallId: c.id },
+                  sharedToolOpts,
+                ),
+              };
+            }),
+          );
+          for (const { id, r } of results) if (r) preExecuted.set(id, r);
         }
       }
 
@@ -4909,16 +5093,14 @@ async function runJobTracked(
           continue;
         }
 
-        counters.bumpToolCall();
         toolsUsed = [...new Set([...toolsUsed, call.name])];
 
         // Guard 1f (S1) — same-tool streak, across the whole job (any
         // inputs, any turn). Checked BEFORE the toolDef lookup below so it
         // also catches a model hammering the same unavailable/hallucinated
-        // tool name. `fail` returns immediately — no tool-result is pushed
-        // for this call (mirrors the whitelist_violation fail path above),
-        // and the job's persisted transcript reflects everything up to the
-        // PRIOR turn (failJob is passed the current `messages`).
+        // tool name. `fail` returns immediately, before this call runs: the
+        // transcript persisted by failJob answers it, and every other call of
+        // the turn, as not executed (#561, `transcriptionFermee`).
         {
           const { state, signal } = recordSameToolCall(
             sameToolStreakState,
@@ -4949,35 +5131,18 @@ async function runJobTracked(
           // Recoverable (mirrors the deferred-approval pattern above): feed the
           // unavailable-tool mistake back as THIS call's tool-result so the
           // message-structure invariant holds (every tool_use gets a
-          // tool_result) and the model can retry with a valid name. Bounded;
-          // after the budget, fail loud (invariant #4 / #8).
-          if (unavailableToolNudges < MAX_UNAVAILABLE_TOOL_NUDGES) {
-            unavailableToolNudges += 1;
-            trace('unavailable_tool_nudge', {
-              turn,
-              badTool: call.name,
-              attempt: unavailableToolNudges,
-              via: 'toolMap',
-            });
-            toolResultBlocks.push({
-              type: 'tool-result',
-              toolCallId: call.id,
-              toolName: call.name,
-              output: toResultOutput({
-                error: describeUnavailableTool(call.name, [...toolMap.keys()]),
-              }),
-            });
-            continue;
-          }
-          await failJob(
-            db,
-            jobId as string,
-            `whitelist_violation:${call.name}`,
-            runStats(),
-            messages,
-            `L'agent a appelé à répétition un outil indisponible (${call.name}).`,
-          );
-          return { status: 'failed', error: `whitelist_violation:${call.name}` };
+          // tool_result) and the model can retry with a valid name. The turn
+          // already spent its chance above (#560); every such call of it gets
+          // its result.
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: call.id,
+            toolName: call.name,
+            output: toResultOutput({
+              error: describeUnavailableTool(call.name, [...toolMap.keys()]),
+            }),
+          });
+          continue;
         }
 
         if (call.name.startsWith('assign_')) {
@@ -5000,14 +5165,8 @@ async function runJobTracked(
                 error: delegationDepthExceededMessage(),
               }),
             });
-            for (const sr of sideToolResults) {
-              toolResultBlocks.push({
-                type: 'tool-result',
-                toolCallId: sr.tool_use_id,
-                toolName: sr.toolName,
-                output: toResultOutput({ error: sr.content }),
-              });
-            }
+            // The assign_ calls dropped by the one-per-turn filter get their
+            // deferral from `closeTurn` when this turn's tool message is built.
             continue;
           }
 
@@ -5035,14 +5194,8 @@ async function runJobTracked(
                   'deferred: this job already delegates via the task board (create_task). Do NOT also assign_ — let the tasks run and compile, or add more parallel work with create_task. Mixing both delegation styles on one job is not allowed.',
               }),
             });
-            for (const sr of sideToolResults) {
-              toolResultBlocks.push({
-                type: 'tool-result',
-                toolCallId: sr.tool_use_id,
-                toolName: sr.toolName,
-                output: toResultOutput({ error: sr.content }),
-              });
-            }
+            // The assign_ calls dropped by the one-per-turn filter get their
+            // deferral from `closeTurn` when this turn's tool message is built.
             continue;
           }
 
@@ -5072,18 +5225,8 @@ async function runJobTracked(
                 toolName: call.name,
                 output: toResultOutput({ error: describeDuplicateReview(duplicate) }),
               });
-              // Même raison que pour les autres refus de délégation : les
-              // assign_* frères écartés par `filterToolCallsForDelegation`
-              // n'ont pas de tool_result si on ne les vide pas ici, et le tour
-              // suivant meurt sur `unmatched_tool_use`.
-              for (const sr of sideToolResults) {
-                toolResultBlocks.push({
-                  type: 'tool-result',
-                  toolCallId: sr.tool_use_id,
-                  toolName: sr.toolName,
-                  output: toResultOutput({ error: sr.content }),
-                });
-              }
+              // Les assign_* frères écartés par `filterToolCallsForDelegation`
+              // reçoivent leur report de `closeTurn` (#561).
               continue;
             }
           }
@@ -5130,26 +5273,12 @@ async function runJobTracked(
               }),
             });
 
-            // Flush the deferred siblings (other assign_* calls that the LLM
-            // emitted in the same turn but `filterToolCallsForDelegation`
-            // dropped to keep one-per-turn). In the normal delegation path
-            // `handleDelegation` persists these in `pending_delegation` and
-            // `resumeDelegated` re-injects them. The cap-refusal path skips
-            // `handleDelegation` entirely, so without this loop the dropped
-            // tool_use blocks land in messages with no matching tool_result —
-            // next LLM call trips `message_structure_invalid:unmatched_tool_use`
-            // and the whole job dies. Live regression: job `a5ac5d6e`
-            // (2026-05-18) — Conciergus issued 2 parallel `assign_summarizer`
-            // while cap was already at 1, only the first received a refusal
-            // tool_result, the second stayed orphan, job failed at turn 7.
-            for (const sr of sideToolResults) {
-              toolResultBlocks.push({
-                type: 'tool-result',
-                toolCallId: sr.tool_use_id,
-                toolName: sr.toolName,
-                output: toResultOutput({ error: sr.content }),
-              });
-            }
+            // The other assign_* calls of this turn, dropped to keep one
+            // delegation per turn, get their deferral from `closeTurn` when
+            // this turn's tool message is built (#561). Live regression it
+            // covers: job `a5ac5d6e` (2026-05-18), two parallel
+            // `assign_summarizer` with the cap at 1, the second left without a
+            // tool_result, the job dead on `unmatched_tool_use` at turn 7.
             continue;
           }
 
@@ -5235,10 +5364,16 @@ async function runJobTracked(
                 conversationId: job.conversationId ?? null,
               };
 
-              // Forward any non-assign tool results we already executed in this
-              // turn (e.g. save_memory ran before the assign) as additional
-              // sideToolResults. Without this, the LLM's earlier tool_use
-              // blocks have no matching tool_result on resume → unmatched_tool_use.
+              // Every other tool_use of this turn travels with the delegation
+              // as a side result, re-injected next to the child's result on
+              // resume: the calls that ran before the assign (e.g. save_memory),
+              // and, closed by `closeTurn` (#561), the ones that did not — the
+              // return_result emitted next to the assign (job b7ecc59a), the
+              // assign_ dropped by the one-per-turn filter.
+              closeTurn(
+                'this turn was suspended on a delegation; call it again once the delegation has returned',
+                call.id,
+              );
               const preAssignSideResults = toolResultBlocks.map((b) => ({
                 type: 'tool_result' as const,
                 tool_use_id: b.toolCallId,
@@ -5258,7 +5393,7 @@ async function runJobTracked(
                   data: call.input['data'] as string | undefined,
                   chatId: job.chatId,
                 },
-                [...sideToolResults, ...preAssignSideResults],
+                preAssignSideResults,
                 db,
               );
 
@@ -5339,27 +5474,15 @@ async function runJobTracked(
         if (preResult) {
           toolResult = preResult;
         } else {
-          // F-8 — heartbeat while THIS ONE tool call runs. A single slow tool
-          // (image gen, MCP call, external API) can block here for minutes
-          // with nothing else touching `updated_at` in the meantime — without
-          // this, the orphan reaper's 5-min staleness window
-          // (reset-orphans.ts resetOrphanedJobs) reaps a job that is still
-          // alive, mid-tool-call. Same pattern as the LLM-call heartbeat
-          // above (Leg 5): 60s interval, well inside the 5-min window,
-          // cleared in `finally` so it never leaks past this call.
-          const toolHbInterval = setInterval(() => {
-            void touchJob(db, jobId as string).catch(() => {});
-          }, 60_000);
-          try {
-            toolResult = await executeTool(
-              toolDef,
-              call.input,
-              { ...sharedToolCtx, toolCallId: call.id },
-              sharedToolOpts,
-            );
-          } finally {
-            clearInterval(toolHbInterval);
-          }
+          // A slow tool (image gen, MCP call, external API) — and a chain of
+          // short ones — stays fresh to the reapers through the job's own
+          // heartbeat (#565), never a per-call interval.
+          toolResult = await executeTool(
+            toolDef,
+            call.input,
+            { ...sharedToolCtx, toolCallId: call.id },
+            sharedToolOpts,
+          );
         }
 
         if (toolResult.outcome === 'awaiting_approval') {
@@ -5451,7 +5574,32 @@ async function runJobTracked(
           }
         }
 
-        // Guard 1f (S2) — error streak, across the whole job. `toolResult`
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.id,
+          toolName: call.name,
+          output: toResultOutput(
+            toolResult.outcome === 'success'
+              ? toolResult.output
+              : toolResult.mayHaveDelivered === true
+                ? // Keep the flag in the block so the sibling-error guard below
+                  // can recognize this as "probably delivered" and let a
+                  // same-turn return_result through instead of deferring it
+                  // (deferral invites the duplicate re-send this flag exists
+                  // to prevent).
+                  { error: toolResult.error, mayHaveDelivered: true }
+                : { error: toolResult.error },
+            // INJECT-001. The name is passed ONLY on the success path: an
+            // error string is the product's own text, and framing it as
+            // untrusted third-party data would be a lie the model has to
+            // reason about.
+            toolResult.outcome === 'success' ? call.name : undefined,
+          ),
+        });
+
+        // Guard 1f (S2) — error streak, across the whole job. Checked once this
+        // call's result is recorded (#561): a failure here persists the call
+        // with its real error, not as a call that never ran. `toolResult`
         // here is always success|error (awaiting_approval already `continue`d
         // above), so `outcome === 'error'` is exactly the runtime's tool-error
         // shape (executeTool catches everything except MessageStructureError /
@@ -5489,29 +5637,6 @@ async function runJobTracked(
             );
           }
         }
-
-        toolResultBlocks.push({
-          type: 'tool-result',
-          toolCallId: call.id,
-          toolName: call.name,
-          output: toResultOutput(
-            toolResult.outcome === 'success'
-              ? toolResult.output
-              : toolResult.mayHaveDelivered === true
-                ? // Keep the flag in the block so the sibling-error guard below
-                  // can recognize this as "probably delivered" and let a
-                  // same-turn return_result through instead of deferring it
-                  // (deferral invites the duplicate re-send this flag exists
-                  // to prevent).
-                  { error: toolResult.error, mayHaveDelivered: true }
-                : { error: toolResult.error },
-            // INJECT-001. The name is passed ONLY on the success path: an
-            // error string is the product's own text, and framing it as
-            // untrusted third-party data would be a lie the model has to
-            // reason about.
-            toolResult.outcome === 'success' ? call.name : undefined,
-          ),
-        });
       }
 
       // j. Suspension states — approval gate.
@@ -5530,20 +5655,15 @@ async function runJobTracked(
         approvalPending = true;
       }
       if (approvalPending) {
-        // Keep the saved conversation valid for resume: every tool_use needs a
-        // matching tool_result. Gated/deferred markers are already in
-        // toolResultBlocks; synthesize one for return_result if the agent emitted
-        // it this turn — we are NOT finalizing while an approval is pending.
-        if (returnResultCall && !toolResultBlocks.some((b) => b.toolName === 'return_result')) {
-          toolResultBlocks.push({
-            type: 'tool-result',
-            toolCallId: returnResultCall.toolCallId,
-            toolName: 'return_result',
-            output: toResultOutput({ error: 'deferred: an action is awaiting user approval' }),
-          });
-        }
-        if (toolResultBlocks.length > 0) {
-          messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+        // Keep the saved conversation valid for resume: gated/deferred markers
+        // are already in toolResultBlocks, and `closeTurn` answers the rest (a
+        // return_result emitted this turn: we are NOT finalizing while an
+        // approval is pending).
+        if (rawToolCalls.length > 0) {
+          messages = [
+            ...messages,
+            turnToolMessage('an action of this turn is awaiting user approval'),
+          ];
         }
         if (requiresToolDelivery && !toolDelivered && redeliveryNudges < MAX_REDELIVERY_NUDGES) {
           redeliveryNudges += 1;
@@ -5598,7 +5718,7 @@ async function runJobTracked(
                 'deferred: verify platform state with a read tool before finalizing — see the runtime notice below.',
             }),
           });
-          messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+          messages = [...messages, turnToolMessage()];
           messages = [
             ...messages,
             { role: 'user', content: VERIFY_BEFORE_ASSERT_NUDGE } as ModelMessage,
@@ -5659,7 +5779,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ error: 'deferred: sibling tool error must be addressed first' }),
         });
-        messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+        messages = [...messages, turnToolMessage()];
         continue;
       }
 
@@ -5706,7 +5826,7 @@ async function runJobTracked(
                   "l'utilisateur peut faire — il la verra telle quelle.",
               }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             messages = [
               ...messages,
               {
@@ -5741,7 +5861,7 @@ async function runJobTracked(
                   "return_result avec status='blocked'.",
               }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -5756,7 +5876,7 @@ async function runJobTracked(
             toolName: 'return_result',
             output: toResultOutput({ acknowledged: true }),
           });
-          messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+          messages = [...messages, turnToolMessage()];
           toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
           // The error column carries a SHORT human reason (first sentence) so the
@@ -5835,7 +5955,7 @@ async function runJobTracked(
                     "appelle return_result avec status='blocked'.",
                 }),
               });
-              messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+              messages = [...messages, turnToolMessage()];
               messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
               continue;
             }
@@ -5880,7 +6000,7 @@ async function runJobTracked(
                   "deferred: tu n'as pas encore livré ta réponse via telegram_send_message — fais-le avant de terminer",
               }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -5974,7 +6094,7 @@ async function runJobTracked(
                     'réponse, puis signale à nouveau.',
                 }),
               });
-              messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+              messages = [...messages, turnToolMessage()];
               messages = [
                 ...messages,
                 { role: 'user', content: emptyDeliverableNudge } as ModelMessage,
@@ -6019,7 +6139,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(dueRetour);
           }
@@ -6069,7 +6189,7 @@ async function runJobTracked(
                   })),
                 }),
               });
-              messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+              messages = [...messages, turnToolMessage()];
               continue;
             }
             toolResultBlocks.push({
@@ -6078,7 +6198,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, turnToolMessage()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(items);
           }
@@ -6101,7 +6221,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ acknowledged: true }),
         });
-        messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+        messages = [...messages, turnToolMessage()];
 
         // If this run created tasks on the board, the workflow continues
         // asynchronously: the cron's executeReadyTasks runs each task and
@@ -6249,8 +6369,8 @@ async function runJobTracked(
       }
 
       // k. Append tool results and continue
-      if (toolResultBlocks.length > 0) {
-        messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+      if (rawToolCalls.length > 0) {
+        messages = [...messages, turnToolMessage()];
       }
 
       // k-pré-bis. Guard 1f — flush any non-progress nudges queued while
@@ -6412,9 +6532,19 @@ async function runJobTracked(
       errMsg: describeLlmError(err),
     });
     // Typed errors — error codes only (invariant 2)
+    // #564 : le tour portait plus d'appels d'outils que le budget par tour
+    // (invariant #8). Aucun n'a été exécuté. Le run échoue avec un code et ses
+    // faits, comme le tour coupé de #554 (`outputLimitErrorCode`).
     if (err instanceof ToolCallLimitExceededError) {
-      await failJob(db, jobId as string, err.code, runStats(), messages);
-      return { status: 'failed', error: err.code };
+      const code = toolCallLimitErrorCode(
+        err,
+        llmClient.config.provider,
+        llmClient.config.model,
+        turn,
+      );
+      trace('tool_call_limit_exceeded', { turn, toolCalls: err.current, limit: err.limit });
+      await failJob(db, jobId as string, code, runStats(), messages);
+      return { status: 'failed', error: code };
     }
 
     if (err instanceof ChainLimitExceededError) {
@@ -6447,6 +6577,32 @@ async function runJobTracked(
         messages,
       );
       return { status: 'failed', error: `message_structure_invalid:${err.code}` };
+    }
+
+    // #554 : la réponse du tour s'est arrêtée sur le plafond de jetons de
+    // SORTIE du modèle. Le client l'a refusée (packages/llm/src/client.ts) :
+    // aucun de ses appels d'outils n'a été exécuté, et son texte n'est pas une
+    // réponse finie. Le run échoue avec un code (invariant #2), comme les
+    // autres échecs typés. L'appel a été servi et facturé en entier : il est
+    // compté avant d'écrire la ligne, sinon les jetons du run mentiraient.
+    if (err instanceof LLMOutputLimitError) {
+      inputTokens += err.usage.inputTokens;
+      effectiveInputTokens += err.usage.inputTokens;
+      outputTokens += err.usage.outputTokens;
+      totalCostUsd += estimateCallCostUsd(err.provider, err.model, {
+        inputTokens: err.usage.inputTokens,
+        outputTokens: err.usage.outputTokens,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+      });
+      const code = outputLimitErrorCode(err, turn);
+      trace('output_limit_reached', {
+        turn,
+        outputTokens: err.usage.outputTokens,
+        toolCallsNotExecuted: err.toolCallCount,
+      });
+      await failJob(db, jobId as string, code, runStats(), messages);
+      return { status: 'failed', error: code };
     }
 
     // É-3 garde: the prompt overflowed the model's REAL context window. With the

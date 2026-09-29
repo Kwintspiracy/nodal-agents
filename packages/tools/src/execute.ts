@@ -46,7 +46,12 @@ import {
   dossiersNonConstates,
   snapshotFileTargets,
 } from './verification/observed';
-import { constatedGitWrites, perimetreGit, snapshotGitAvant } from './verification/git-constat';
+import {
+  constatedGitWrites,
+  perimetreGit,
+  releaseGitAvant,
+  snapshotGitAvant,
+} from './verification/git-constat';
 import {
   fusionnerConstats,
   kindSurDisque,
@@ -779,6 +784,45 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   const harnaisAvant = auditTool.reportsHarnessWrites
     ? await lignesDeHarnaisDejaLa(ctx.db, ctx.jobId)
     : new Set<string>();
+  // Ce que le hook a DÉCLARÉ voyage jusqu'à l'outil, sur un contexte dérivé —
+  // celui de l'appelant n'est pas modifié. Un outil qui doit connaître le type
+  // de ce qu'il écrit (donc la clé que portera sa carte) relit la décision de
+  // l'intention au lieu de la refaire après coup : reclasser rouvrait une
+  // fenêtre de course, la table `code_projects` pouvant changer entre les deux
+  // lectures, au bout de laquelle la carte et l'état posé ne parlaient plus du
+  // même livrable (revue C, dette #88). Voir `declaredMutationTargets`.
+  // Les empreintes des octets que l'outil ÉCRIT (#505) : rangées avec le
+  // constat, jamais relues sur le disque après coup.
+  const contenusEcrits = new Map<string, string>();
+  const execCtx: ToolContext = {
+    ...ctx,
+    ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
+    ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
+    reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
+  };
+  // ── 2.95 La MARQUE d'intention, AVANT tout outil qui ne fait pas que lire ──
+  //
+  // (#443, revue Codex passe 2.) La ligne d'audit s'écrit APRÈS l'outil, et
+  // son échec n'est pas fatal : un runner mort entre l'effet et elle ne
+  // laissait aucune trace, et la reprise après redémarrage rejouait l'effet.
+  // La ligne `tool_calls` naît donc ICI, sans sortie (« commencé »), et elle
+  // est COMPLÉTÉE après. Une marque sans sortie veut dire « peut-être fait » :
+  // le faucheur ne reprend pas un tour qui en porte une. Si elle ne peut pas
+  // être écrite, l'outil ne tourne pas — pas d'effet sans marque. Une lecture
+  // n'en a pas besoin : la rejouer ne refait rien. Le coût : une écriture de
+  // plus par appel d'outil qui n'est pas une lecture.
+  const marque =
+    auditTool.riskLevel !== 'read' && ctx.jobId
+      ? await markToolStarted(ctx, auditTool, validatedInput)
+      : undefined;
+  if (marque === null) {
+    return {
+      outcome: 'error',
+      error:
+        `tool_intent_unrecorded: "${tool.name}" did NOT run. Its start could not be recorded, ` +
+        `and a tool that changes something never runs without that record. Call it again.`,
+    };
+  }
   // Et, quand les dossiers visés sont des DÉPÔTS GIT, l'état de leur `git
   // status` AVANT l'appel (issue #199). C'est le seul constat qui voit ce
   // qu'un shell écrit sans le nommer : le delta avant/après est la liste des
@@ -808,23 +852,17 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             dossiersVises.map((t) => t.path),
             (ctx.workspaces ?? []).map((w) => w.path),
           ),
+          // Un workspace qu'aucun dépôt ne couvre est constaté contre son
+          // instantané de checkpoint, pris juste au-dessus (#590).
+          {
+            store: ctx.checkpointsRoot,
+            workspaces: (ctx.workspaces ?? []).map((w) => w.path),
+            jobId: ctx.jobId,
+          },
         );
-  // Ce que le hook a DÉCLARÉ voyage jusqu'à l'outil, sur un contexte dérivé —
-  // celui de l'appelant n'est pas modifié. Un outil qui doit connaître le type
-  // de ce qu'il écrit (donc la clé que portera sa carte) relit la décision de
-  // l'intention au lieu de la refaire après coup : reclasser rouvrait une
-  // fenêtre de course, la table `code_projects` pouvant changer entre les deux
-  // lectures, au bout de laquelle la carte et l'état posé ne parlaient plus du
-  // même livrable (revue C, dette #88). Voir `declaredMutationTargets`.
-  // Les empreintes des octets que l'outil ÉCRIT (#505) : rangées avec le
-  // constat, jamais relues sur le disque après coup.
-  const contenusEcrits = new Map<string, string>();
-  const execCtx: ToolContext = {
-    ...ctx,
-    ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
-    ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
-    reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
-  };
+  // PRIS JUSTE AVANT LE `try` dont le `finally` libère ses copies figées
+  // d'index (#590) : rien ne peut lever entre les deux, donc aucune copie
+  // n'est laissée derrière un marqueur qui lève ou un départ refusé.
   try {
     // ── L'ÉCRITURE MONTE L'ÉPOQUE, elle aussi (issue #101) ──────────────────
     //
@@ -847,9 +885,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       }
     }
     const durationMs = Date.now() - startMs;
-    await _writeToolCall(ctx, auditTool, validatedInput, JSON.stringify(output), durationMs, {
-      value: output,
-    });
+    await _writeToolCall(
+      ctx,
+      auditTool,
+      validatedInput,
+      JSON.stringify(output),
+      durationMs,
+      { value: output },
+      marque,
+      true,
+    );
 
     // ── 3.5 Le REGISTRE des projets (P5), APRÈS l'écriture ────────────────────
     //
@@ -924,7 +969,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           // Une écriture vue par git vaut une cible constatée : c'est tout le
           // point de #199 — un `run_command` qui écrit pour de bon crédite son
           // projet, au lieu de se faire refuser sa déclaration de preuve.
-          ...git.writes.map((w) => ({
+          ...[...git.writes, ...git.fallbackWrites].map((w) => ({
             kind: 'file' as const,
             path: w.path,
             deliverableType: 'code_project' as const,
@@ -955,7 +1000,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       for (const f of fichiersDisque) {
         disque.push({ path: f.path, kind: await kindSurDisque(f.path, filesBefore ?? new Map()) });
       }
-      const lignesDeConstat = fusionnerConstats({ git: git.writes, disque });
+      // Ce que l'instantané de checkpoint a vu dans un workspace hors dépôt
+      // (#590) est un constat DISQUE : ce n'est pas git du projet qui l'a vu.
+      const lignesDeConstat = fusionnerConstats({
+        git: git.writes,
+        disque: [...disque, ...git.fallbackWrites],
+      });
       await recordConstatedWrites({
         db: ctx.db,
         jobId: ctx.jobId,
@@ -1047,6 +1097,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             to: signal.childSlug ?? null,
           }),
           Date.now() - startMs,
+          undefined,
+          marque,
+          true,
         );
       } catch (auditErr) {
         // Une ligne d'audit ne vaut JAMAIS un signal de contrôle perdu : sans
@@ -1084,8 +1137,15 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       validatedInput,
       JSON.stringify(result),
       Date.now() - startMs,
+      undefined,
+      marque,
+      true,
     );
     return result;
+  } finally {
+    // Les copies figées d'index (#590) que l'après n'a pas relues : l'outil a
+    // levé, ou son échec ne se constate pas. Sans effet sur celles déjà relues.
+    await releaseGitAvant(gitAvant);
   }
 }
 
@@ -1496,6 +1556,13 @@ async function _writeToolCall(
   durationMs: number,
   /** The tool's ACTUAL output — only on a successful execution; absent, the row records no payload. */
   produced?: { value: unknown },
+  /** The intent mark written before the tool ran (#443): completed, never duplicated. */
+  markId?: string,
+  /**
+   * Did the tool START running? (#443) False for a call the gate refused,
+   * which never ran; the reaper does not count those as effects.
+   */
+  ran = false,
 ): Promise<void> {
   const toolName = tool.name;
   // P1 (plan « De la maquette au produit »): the row carries the card the tool
@@ -1521,9 +1588,24 @@ async function _writeToolCall(
     }
   }
   try {
+    if (markId) {
+      await ctx.db
+        .update(toolCalls)
+        .set({
+          card,
+          presented,
+          presentationError,
+          toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
+          toolOutput: output,
+          durationMs,
+        })
+        .where(eq(toolCalls.id, markId));
+      return;
+    }
     await ctx.db.insert(toolCalls).values({
       entityId: ctx.entityId,
       jobId: ctx.jobId,
+      executionStarted: ran,
       toolName,
       card,
       presented,
@@ -1554,6 +1636,44 @@ async function _writeToolCall(
       `[tools] tool_calls audit insert failed (job=${ctx.jobId}, tool=${toolName}):`,
       err,
     );
+  }
+}
+
+/**
+ * La marque d'intention d'un outil qui ne fait pas que lire (#443) : sa ligne
+ * `tool_calls`, écrite AVANT qu'il tourne, sans sortie. Rend son id, ou
+ * `null` quand l'écriture a échoué — et l'appelant ne lance pas l'outil.
+ */
+async function markToolStarted(
+  ctx: ToolContext,
+  tool: ToolDefinition<z.ZodTypeAny, unknown>,
+  input: unknown,
+): Promise<string | null> {
+  try {
+    const [row] = await ctx.db
+      .insert(toolCalls)
+      .values({
+        entityId: ctx.entityId,
+        jobId: ctx.jobId,
+        toolName: tool.name,
+        card: typeof tool.card === 'string' ? tool.card : 'generic',
+        riskLevel: tool.riskLevel,
+        toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
+        toolOutput: null,
+        // La marque EST une exécution commencée (#443) : c'est elle, et elle
+        // seule parmi les lignes d'un appel non-lecture, que le faucheur compte.
+        executionStarted: true,
+        turn: ctx.turn ?? null,
+        toolCallId: ctx.toolCallId ?? null,
+      })
+      .returning({ id: toolCalls.id });
+    return row?.id ?? null;
+  } catch (err) {
+    console.error(
+      `[tools] TOOL_INTENT_MARK_FAILED job=${ctx.jobId} tool=${tool.name} — the tool does not run:`,
+      err,
+    );
+    return null;
   }
 }
 
