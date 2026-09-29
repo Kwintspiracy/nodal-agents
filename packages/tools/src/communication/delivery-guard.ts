@@ -26,6 +26,7 @@ import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveAndCheckPath, WorkspaceError } from '../builtin/file-ops/workspace';
+import { descendantFilesUnreadableMessage, fileProducedByDescendant } from '../descendant-files';
 import type { ToolContext } from '../types';
 
 // ─── Transport channel ──────────────────────────────────────────────────────
@@ -366,6 +367,21 @@ export async function assertLocalSourceAllowed(source: string, ctx: ToolContext)
   const isInside = resolvedRoots.some(
     (normRoot) => normReal === normRoot || normReal.startsWith(normRoot + path.sep),
   );
+
+  // A file whose current content one of this job's DELEGATES produced in
+  // this run is this job's to deliver (#588): the root sends what its
+  // delegate produced, without a second delegation to copy it. Nothing else
+  // widens — see descendant-files.ts.
+  if (!isInside) {
+    const verdict = await fileProducedByDescendant(ctx, real);
+    if (verdict.kind === 'produced') return real;
+    if (verdict.kind === 'unreadable') {
+      // Said as such, never as "not yours" (review of #589, P3).
+      const err = new Error(descendantFilesUnreadableMessage(verdict.error));
+      err.name = 'descendant_files_unreadable';
+      throw err;
+    }
+  }
 
   if (!isInside) {
     const err = new Error(

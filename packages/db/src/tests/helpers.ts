@@ -233,6 +233,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       restart_resumes integer NOT NULL DEFAULT 0,
       restart_blocked_by jsonb,
       checkpoint_tool_seq bigint,
+      -- mirrors migration 0135 (#566) : le numéro de la prise en cours
+      claim_generation integer NOT NULL DEFAULT 0,
       -- project_id (0093) references code_projects, created further below — la
       -- FK est ajoutée par un ALTER TABLE juste après cette table, comme pour
       -- schedule_id ci-dessus.
@@ -360,7 +362,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       notes text,
       executed_at timestamptz,
       -- mirrors migration 0125 (#464)
-      gate_reasons jsonb
+      gate_reasons jsonb,
+      -- mirrors migration 0135 (#566) : l'exécution réservée d'un appel approuvé
+      execution_claim integer,
+      execution_output jsonb
     );
 
     CREATE TABLE IF NOT EXISTS approval_rules (

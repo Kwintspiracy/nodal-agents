@@ -128,16 +128,31 @@ describe('le garde anti-boucle compte les appels PARALLÈLES', () => {
     expect(countToolUses(state, '')).toBe(0);
   });
 
-  it('la mécanique ADDITIONNE le compte au lieu d’incrémenter de un', () => {
-    // L'autre moitié du câblage : rendre six ne sert à rien si le compteur
-    // n'avance que d'un cran par ligne.
-    const src = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), '../../cli-runtime/spawn-turn.ts'),
-      'utf8',
-    );
-    expect(src, 'le compteur avance d’un cran quel que soit le nombre d’appels').toContain(
-      'toolCalls += opened',
-    );
+  it('la mécanique compte CHAQUE appel de la ligne, pas la ligne', () => {
+    // L'autre moitié du câblage : le budget de `spawn-turn.ts` avance par
+    // `gate.admit()`, une fois par appel ouvert (le cas bout en bout, 45 + 6
+    // appels parallèles qui tuent la CLI, est dans spawn-turn-tool-cap.test.ts).
+    const state = newStreamParseState();
+    const ligne = JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: Array.from({ length: 6 }, (_, i) => ({
+          type: 'tool_use',
+          id: `toolu_p${String(i)}`,
+          name: 'Read',
+          input: {},
+        })),
+      },
+    });
+    let admis = 0;
+    countToolUses(state, ligne, undefined, {
+      admit: () => {
+        admis += 1;
+        return true;
+      },
+      capped: false,
+    });
+    expect(admis, 'le compteur avance d’un cran quel que soit le nombre d’appels').toBe(6);
   });
 });
 

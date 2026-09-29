@@ -31,6 +31,7 @@ export type { OrchestrationErrorCode } from './errors';
 // ─── ChainCounters ────────────────────────────────────────────────────────────
 export {
   ChainCounters,
+  assertTurnToolCallBudget,
   DEFAULT_LIMITS,
   remainingDelegationHops,
   delegationDepthExceededMessage,

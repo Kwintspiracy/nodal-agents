@@ -21,7 +21,6 @@ import {
   FIRST_TOKEN_BASE_MS,
   FIRST_TOKEN_OVER_50K_MS,
   FIRST_TOKEN_OVER_100K_MS,
-  FIRST_TOKEN_HIGH_EFFORT_MS,
   ABSOLUTE_CALL_MS,
 } from '../turn-clocks';
 import type { TurnClocks } from '../turn-clocks';
@@ -157,7 +156,7 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
       timedModel([
         textStart(FIRST_TOKEN_BASE_MS + 10_000),
         text(FIRST_TOKEN_BASE_MS + 10_000, 'late'),
-        ...end(200_000),
+        ...end(FIRST_TOKEN_BASE_MS + 20_000),
       ]),
     );
 
@@ -168,6 +167,36 @@ describe('streamed turn clocks @cap:organiser-equipe/moteur', () => {
     const err = state.error as LLMTimeoutError;
     expect(err).toBeInstanceOf(LLMTimeoutError);
     expect(err.reason).toBe('idle_before_first_token');
+    expect(err.partialText).toBe('');
+  });
+
+  // #583 : des modèles hébergés qui réfléchissent en silence (mimo, glm via
+  // OpenRouter) étaient coupés à 120 s, 0 caractère reçu, alors que leurs
+  // appels réussis durent jusqu'à 408 s. Deux coupures de suite faisaient
+  // échouer le job. Le délai avant le premier jeton d'un modèle hébergé couvre
+  // la réflexion silencieuse, à tout effort.
+  it('a hosted model silent for 200 s before its first token, at no particular effort, completes', async () => {
+    const state = run(
+      timedModel([textStart(200_000), text(200_000, 'done'), textEnd(200_000), ...end(200_000)]),
+    );
+
+    await vi.advanceTimersByTimeAsync(200_001);
+
+    expect(state.error).toBeUndefined();
+    expect(state.value?.text).toBe('done');
+  });
+
+  it('silent past the first-token clock of a hosted model: cut, with the same reason', async () => {
+    const state = run(timedModel([textStart(310_000), text(310_000, 'late'), ...end(310_000)]));
+
+    await vi.advanceTimersByTimeAsync(300_000 - 1);
+    expect(state.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+
+    const err = state.error as LLMTimeoutError;
+    expect(err).toBeInstanceOf(LLMTimeoutError);
+    expect(err.reason).toBe('idle_before_first_token');
+    expect(err.timeoutMs).toBe(300_000);
     expect(err.partialText).toBe('');
   });
 
@@ -440,10 +469,18 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
     );
   });
 
-  it('floors the first-token clock on a high reasoning effort', () => {
-    const c = computeTurnClocks({ provider: 'anthropic', reasoningEffort: 'high' }, 1_000);
-    expect(c.firstTokenMs).toBe(FIRST_TOKEN_HIGH_EFFORT_MS);
-    expect(c.betweenTokensMs).toBe(BETWEEN_TOKENS_MS);
+  it('a hosted model waits the hidden-thinking floor at every effort, only max raises it (#583)', () => {
+    for (const reasoningEffort of [undefined, 'off', 'low', 'medium', 'high'] as const) {
+      const c = computeTurnClocks(
+        { provider: 'openrouter', ...(reasoningEffort ? { reasoningEffort } : {}) },
+        1_000,
+      );
+      expect(c.firstTokenMs, String(reasoningEffort)).toBe(300_000);
+      expect(c.betweenTokensMs).toBe(BETWEEN_TOKENS_MS);
+    }
+    expect(
+      computeTurnClocks({ provider: 'anthropic', reasoningEffort: 'max' }, 1_000).firstTokenMs,
+    ).toBe(600_000);
   });
 
   // #442 : trois niveaux, l'explicite gagne toujours sur l'implicite.
@@ -467,11 +504,16 @@ describe('computeTurnClocks @cap:organiser-equipe/moteur', () => {
   });
 
   it('the run budget caps an IMPLICIT clock at half of what remains, never below 60 s', () => {
-    // Reste 4 min : l'implicite de 120 s tient déjà sous la moitié (120 s).
+    // Reste 10 min : l'implicite de 300 s tient déjà sous la moitié (300 s).
+    expect(
+      computeTurnClocks({ provider: 'openrouter' }, 1_000, { remainingRunMs: 600_000 })
+        .firstTokenMs,
+    ).toBe(FIRST_TOKEN_BASE_MS);
+    // Reste 4 min : la moitié, 120 s, sous l'implicite de 300 s.
     expect(
       computeTurnClocks({ provider: 'openrouter' }, 1_000, { remainingRunMs: 240_000 })
         .firstTokenMs,
-    ).toBe(FIRST_TOKEN_BASE_MS);
+    ).toBe(120_000);
     // Reste 3 min sur un effort max (600 s) : la moitié, 90 s.
     expect(
       computeTurnClocks({ provider: 'anthropic', reasoningEffort: 'max' }, 1_000, {

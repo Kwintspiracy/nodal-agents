@@ -315,6 +315,13 @@ export const agentJobs = pgTable(
     /** Combien de fois ce job a été repris après un redémarrage (#443) — la borne anti-boucle. */
     restartResumes: integer('restart_resumes').notNull().default(0),
     /**
+     * Le numéro de la prise en cours (#566, migration 0135) : `claimJob` le
+     * monte à chaque passage `pending → processing`. Le run qui a pris le job
+     * garde le sien et le relit avant chaque effet ; un autre numéro veut dire
+     * qu'un autre run tient ce job, et celui-ci n'a plus le droit d'agir.
+     */
+    claimGeneration: integer('claim_generation').notNull().default(0),
+    /**
      * Les outils que le tour interrompu par la mort du runner avait déjà
      * exécutés et qui ne font pas que lire (#443) : rejouer ce tour les
      * referait, donc le job n'a pas été repris. NULL ailleurs.
