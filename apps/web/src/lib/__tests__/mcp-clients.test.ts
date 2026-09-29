@@ -8,7 +8,10 @@
 // Mutations vérifiées :
 //   - `...servers` retiré de `withNodalEntry` → « garde les autres serveurs »
 //     rougit ;
-//   - la copie de sauvegarde retirée → « copie l'ancien fichier » rougit.
+//   - la copie de sauvegarde retirée → « copie l'ancien fichier » rougit ;
+//   - l'antislash remis dans la classe « sûre » de `shellArg` → « tout chemin
+//     Windows entre guillemets » et « chaque antislash sous guillemets »
+//     rougissent.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -42,12 +45,29 @@ describe('la commande de chaque client, pour CETTE install @cap:connecter-un-ser
     expect(readCliArgv('["node"]')).toBeNull();
   });
 
-  it('Claude Code : la commande entière, un chemin à espaces entre guillemets', () => {
+  it('Claude Code : la commande entière, tout chemin Windows entre guillemets', () => {
     expect(claudeCodeCommand(DEV)).toBe(
       'claude mcp add nodal -- "C:\\Program Files\\nodejs\\node.exe" --import ' +
         'file:///D:/APPS/NodalAI/node_modules/tsx/dist/loader.mjs ' +
-        'D:\\APPS\\NodalAI\\apps\\cli\\src\\index.ts mcp serve',
+        '"D:\\APPS\\NodalAI\\apps\\cli\\src\\index.ts" mcp serve',
     );
+  });
+
+  // Un antislash nu est un échappement pour bash (Git Bash) : `D:\APPS\cli.js`
+  // collé tel quel y devient `D:APPScli.js`. Tout argument qui en porte un est
+  // donc cité, avec ou sans espace, et un argument sûr reste nu.
+  it.each([
+    ['install Windows sans espace', ['C:\\nodejs\\node.exe', 'C:\\Users\\q\\nodal\\cli.js']],
+    [
+      'install npx Windows',
+      ['C:\\Program Files\\nodejs\\node.exe', 'C:\\npm-cache\\_npx\\a1\\cli.js'],
+    ],
+    ['install macOS / Linux', ['/usr/local/bin/node', '/home/q/.npm/_npx/a1/cli.js']],
+  ])('Claude Code : %s, chaque antislash sous guillemets', (_label, argv) => {
+    const command = claudeCodeCommand(argv);
+    for (const arg of argv) {
+      expect(command).toContain(arg.includes('\\') || arg.includes(' ') ? `"${arg}"` : ` ${arg} `);
+    }
   });
 
   it('Claude Desktop : le node en commande, le reste en arguments, et aucun secret', () => {
