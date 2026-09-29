@@ -36,7 +36,7 @@ import {
   CLAUDE_READONLY_DISALLOWED,
   type NormalizedCliResult,
 } from '@nodal-agents/tools';
-import { CLAUDE_SHELL_TOOLS } from '@nodal-agents/shared';
+import { claudeShellFlags } from '@nodal-agents/shared';
 
 export interface ClaudeTurnEvent {
   kind: 'tool_use' | 'tool_result' | 'assistant_text';
@@ -165,15 +165,10 @@ export function buildClaudeTurnArgs(opts: ClaudeTurnOptions, personalityFile: st
     args.push('--disallowedTools', disallowed.join(','));
   } else {
     args.push('--permission-mode', 'acceptEdits');
-    // Les commandes, décidées ici et nulle part ailleurs (#494). En `-p`,
-    // personne ne peut répondre à une demande de permission : sans décision,
-    // chaque commande était refusée APRÈS que le modèle l'avait tentée. Donc
-    // soit on les autorise d'avance, soit on retire les outils de la palette,
-    // et le modèle sait dès le départ qu'il n'a pas de shell.
-    const allowed = CLAUDE_SHELL_TOOLS.filter((t) => opts.shellTools.includes(t));
-    if (allowed.length > 0) args.push('--allowedTools', allowed.join(','));
-    const disallowed = [...CLAUDE_SHELL_TOOLS.filter((t) => !allowed.includes(t)), ...extra];
-    if (disallowed.length > 0) args.push('--disallowedTools', disallowed.join(','));
+    // Les commandes (#494) : sans décision, chaque commande était refusée
+    // APRÈS que le modèle l'avait tentée. Les drapeaux sont ceux de la règle
+    // commune, les mêmes que ceux du code_task.
+    args.push(...claudeShellFlags(opts.shellTools, extra));
   }
   return args;
 }

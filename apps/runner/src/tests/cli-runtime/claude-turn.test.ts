@@ -15,8 +15,7 @@ import {
   countToolUses,
   type ClaudeTurnEvent,
 } from '../../cli-runtime/claude-turn.ts';
-import { cliShellPosture } from '@nodal-agents/shared';
-import { claudeShellTools } from '../../cli-runtime/shell-turn.ts';
+import { claudeShellTools, cliShellPosture } from '@nodal-agents/shared';
 
 const FIXTURE = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'stream-fixture.jsonl'),

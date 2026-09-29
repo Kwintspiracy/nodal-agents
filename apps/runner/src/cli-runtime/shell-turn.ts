@@ -32,11 +32,6 @@ export async function shellPostureForTurn(
   return cliShellPosture(cli, perms, { autoRunPaused });
 }
 
-/** Les outils shell de Claude à autoriser pour ce tour (vide = aucun). */
-export function claudeShellTools(posture: CliShellPosture): readonly string[] {
-  return posture.kind === 'shell' && posture.tools !== 'sandbox' ? posture.tools : [];
-}
-
 export interface BrakeWatch {
   /** À passer au binding : il tue le processus quand le frein se serre. */
   readonly signal: AbortSignal | undefined;

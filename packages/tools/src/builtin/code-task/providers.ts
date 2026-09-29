@@ -18,7 +18,13 @@
 //     claim, and the gap between them is exactly what a user relies on. The
 //     combination is now refused up front; see sandbox.ts.
 
-import { CLAUDE_SHELL_TOOLS, type CliModelUsage } from '@nodal-agents/shared';
+import {
+  CLAUDE_SHELL_TOOLS,
+  claudeShellFlags,
+  claudeShellTools,
+  cliShellPosture,
+  type CliModelUsage,
+} from '@nodal-agents/shared';
 
 export type CodeTaskProvider = 'claude' | 'codex';
 export type CodeTaskMode = 'read' | 'write';
@@ -81,9 +87,16 @@ export interface NormalizedCliResult {
  * them from the model's palette entirely (A-bis finding 3) — the model cannot
  * even attempt them, and permission_denials stays empty. Task (sub-agents) is
  * deliberately NOT disallowed: restrictions were proven to inherit into
- * sub-agents (A-bis finding 4).
+ * sub-agents (A-bis finding 4). The shell tools are the platform's list
+ * (`CLAUDE_SHELL_TOOLS`), never a copy of it.
  */
-export const CLAUDE_READONLY_DISALLOWED = 'Write,Edit,MultiEdit,NotebookEdit,Bash,PowerShell';
+export const CLAUDE_READONLY_DISALLOWED = [
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+  ...CLAUDE_SHELL_TOOLS,
+].join(',');
 
 // ─── argv builders ───────────────────────────────────────────────────────────
 
@@ -163,8 +176,11 @@ export function buildProviderArgs(
       // has no shell setting, so Claude gets none, and its shell tools leave
       // the palette. Before, they stayed in it and every command waited for an
       // approval a headless run cannot grant: the model found out by failing.
+      // The rule is ASKED, not copied: with no setting, the brake changes
+      // nothing for Claude (no shell either way), hence `autoRunPaused: false`.
       args.push('--permission-mode', 'acceptEdits');
-      args.push('--disallowedTools', CLAUDE_SHELL_TOOLS.join(','));
+      const posture = cliShellPosture('claude', null, { autoRunPaused: false });
+      args.push(...claudeShellFlags(claudeShellTools(posture)));
     }
     return args;
   }

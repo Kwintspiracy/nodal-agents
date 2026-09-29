@@ -101,3 +101,31 @@ export function cliShellPosture(
   const tools = CLAUDE_SHELL_TOOLS.filter((t) => !banned.has(t));
   return tools.length === 0 ? { kind: 'no_shell' } : { kind: 'shell', tools };
 }
+
+/** Les outils shell de Claude qu'une posture autorise (vide = aucun). */
+export function claudeShellTools(posture: CliShellPosture): readonly string[] {
+  return posture.kind === 'shell' && posture.tools !== 'sandbox' ? posture.tools : [];
+}
+
+/**
+ * Les drapeaux shell de l'argv de Claude, écrits une fois pour les deux argv
+ * qui le lancent en `-p` : le tour d'agent (`claude-turn.ts`) et le
+ * `code_task`. En `-p`, personne ne répond à une demande de permission :
+ * chaque outil shell est soit autorisé d'avance, soit retiré de la palette, et
+ * le modèle sait dès le départ ce qu'il a. `extraDisallowed` rejoint les
+ * outils retirés.
+ */
+export function claudeShellFlags(
+  shellTools: readonly string[],
+  extraDisallowed: readonly string[] = [],
+): string[] {
+  const allowed = CLAUDE_SHELL_TOOLS.filter((t) => shellTools.includes(t));
+  const disallowed = [
+    ...CLAUDE_SHELL_TOOLS.filter((t) => !allowed.includes(t)),
+    ...extraDisallowed,
+  ];
+  return [
+    ...(allowed.length > 0 ? ['--allowedTools', allowed.join(',')] : []),
+    ...(disallowed.length > 0 ? ['--disallowedTools', disallowed.join(',')] : []),
+  ];
+}
