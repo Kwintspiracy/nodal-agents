@@ -78,6 +78,17 @@ describe('ShellChecklistSection @cap:regler-autonomie/ecran', () => {
     expect(container.textContent).not.toContain('outside its folders');
   });
 
+  // Revue de la PR #618, passe 3 : « Allowed » pour les téléchargements a un
+  // périmètre, et les magasins des programmes de modèles en font partie. Il
+  // est dit sur la ligne, pas caché.
+  it('the download row says where Allowed reaches, the model stores included (#614)', async () => {
+    await render(null);
+    const row = container.querySelector('[data-testid="shell-row-download"]');
+    expect(row?.textContent).toContain(
+      'Allowed: into its folders and the model and image stores (comfy, ollama, docker, hf). Anywhere else, it asks.',
+    );
+  });
+
   it('says what a reading can promise: a script run from a file is not read (review of PR #474)', async () => {
     await render(null);
     // A reading of the command is not a sandbox, and the screen does not

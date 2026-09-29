@@ -427,9 +427,11 @@ export const STATIC_SHELL_CATEGORY_PATTERNS = {
   // in install_software, so an owner who let an agent fetch models without
   // asking had to let it install software.
   download: [
-    // `curl -sLo x`: the output flag may close a group of short options, and
-    // `iwr` is Invoke-WebRequest's alias (review of PR #476).
-    /\bwget\b|\bcurl\b[^\n]*(\s-[A-Za-z]*[oO]\b|\s--output\b|\s--remote-name\b)|\bInvoke-WebRequest\b|\biwr\b|\bStart-BitsTransfer\b|\baria2c\b/i, // large download
+    // `iwr` is Invoke-WebRequest's alias (review of PR #476). `curl` is not
+    // here: it downloads only when it writes a file (`-o`, `-O`, `--output`,
+    // `-sLoC:\x`), read by `curlWritesAFile` with the same reader as its
+    // targets, which a pattern cannot do (`-XPOST` swallows its group).
+    /\bwget\b|\bInvoke-WebRequest\b|\biwr\b|\bStart-BitsTransfer\b|\baria2c\b/i, // large download
     subcommand('git', String.raw`clone\b`), // clone
     // `download` / `pull` must END the word: `comfy model download-status`,
     // `downloads` and `download-cancel` only read or stop one, and `\b` alone
@@ -616,6 +618,54 @@ function flagValues(
   return values;
 }
 
+/**
+ * The short options of a fetcher that take a value (from each program's
+ * manual). In a group (`-sLo x`, `-sLox`, `-qO-`), options without a value
+ * stack, and the first one that takes a value takes the rest of the group, or
+ * the next word when the group ends with it: `-XPOST` is `-X POST`, not an
+ * `-O` (#614, revue Nodal de la PR #618, passe 3).
+ */
+const SHORT_VALUE_OPTIONS: Record<'curl' | 'wget' | 'aria2c', string> = {
+  curl: 'AbcCdDeEFHKmoPQrtTuUwxXyYz',
+  wget: 'aABDeIilOoPQRtTUwX',
+  aria2c: 'dijklmostUx',
+};
+
+/** Every short option of `args` as the program reads it, with its value ('' for a switch). */
+function shortOptions(
+  args: readonly string[],
+  program: keyof typeof SHORT_VALUE_OPTIONS,
+): Array<{ option: string; value: string }> {
+  const takesValue = SHORT_VALUE_OPTIONS[program];
+  const read: Array<{ option: string; value: string }> = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? '';
+    if (!/^-[A-Za-z]/.test(a)) continue;
+    for (let j = 1; j < a.length; j++) {
+      const option = a[j] ?? '';
+      if (!takesValue.includes(option)) {
+        read.push({ option, value: '' });
+        continue;
+      }
+      const rest = a.slice(j + 1);
+      read.push({ option, value: rest !== '' ? rest : (args[++i] ?? '') });
+      break;
+    }
+  }
+  return read;
+}
+
+/** The values a program's short option `option` was given. */
+function shortValues(
+  args: readonly string[],
+  program: keyof typeof SHORT_VALUE_OPTIONS,
+  option: string,
+): string[] {
+  return shortOptions(args, program)
+    .filter((o) => o.option === option)
+    .map((o) => o.value);
+}
+
 function joinPath(dir: string, name: string): string {
   if (/^([A-Za-z]:)?[\\/]/.test(name)) return name;
   return dir === '.' ? name : `${dir.replace(/[\\/]$/, '')}/${name}`;
@@ -627,23 +677,31 @@ function fetcherTargets(program: string, args: readonly string[]): Array<string 
   switch (program) {
     case 'curl': {
       const outDir = flagValues(args, (f) => f === '--output-dir')[0];
-      // `-o x`, `--output x`, and a group of short options that ends with o (`-sLo x`).
-      const files = flagValues(args, (f) => f === '--output' || /^-[A-Za-z]*o$/.test(f));
-      const remote = args.some(
-        (a) => /^--remote-name(-all)?$/.test(a) || /^-[A-Za-z]*O[A-Za-z]*$/.test(a),
-      );
+      const files = [
+        ...flagValues(args, (f) => f === '--output'),
+        ...shortValues(args, 'curl', 'o'),
+      ];
+      const remote =
+        args.some((a) => /^--remote-name(-all)?$/.test(a)) ||
+        shortOptions(args, 'curl').some((o) => o.option === 'O');
       const targets = files.filter((f) => f !== '-').map((f) => joinPath(outDir ?? '.', f));
       if (remote) targets.push(outDir ?? '.');
       return targets;
     }
     case 'wget': {
-      const docs = flagValues(args, (f) => f === '-O' || f === '--output-document', '-O');
-      const logs = flagValues(
-        args,
-        (f) => ['-o', '--output-file', '-a', '--append-output'].includes(f),
-        '-o',
-      );
-      const prefix = flagValues(args, (f) => f === '-P' || f === '--directory-prefix', '-P')[0];
+      const docs = [
+        ...flagValues(args, (f) => f === '--output-document'),
+        ...shortValues(args, 'wget', 'O'),
+      ];
+      const logs = [
+        ...flagValues(args, (f) => f === '--output-file' || f === '--append-output'),
+        ...shortValues(args, 'wget', 'o'),
+        ...shortValues(args, 'wget', 'a'),
+      ];
+      const prefix = [
+        ...flagValues(args, (f) => f === '--directory-prefix'),
+        ...shortValues(args, 'wget', 'P'),
+      ][0];
       const targets = [...docs.filter((d) => d !== '-'), ...logs].map((f) =>
         joinPath(prefix ?? '.', f),
       );
@@ -663,8 +721,9 @@ function fetcherTargets(program: string, args: readonly string[]): Array<string 
       return dest.length > 0 ? dest : [null];
     }
     case 'aria2c': {
-      const dir = flagValues(args, (f) => f === '-d' || f === '--dir', '-d')[0] ?? '.';
-      const outs = flagValues(args, (f) => f === '-o' || f === '--out', '-o');
+      const dir =
+        [...flagValues(args, (f) => f === '--dir'), ...shortValues(args, 'aria2c', 'd')][0] ?? '.';
+      const outs = [...flagValues(args, (f) => f === '--out'), ...shortValues(args, 'aria2c', 'o')];
       return outs.length > 0 ? outs.map((o) => joinPath(dir, o)) : [dir];
     }
     case 'git': {
@@ -896,7 +955,7 @@ export function isDestructiveOrHeavyCommand(cmd: string): boolean {
   const units = commandUnits(withoutRedirections(cmd));
   if (units.length > 0 && units.every(isReadUnit)) return false;
   const c = normalizeSlashes(cmd.trim());
-  return DESTRUCTIVE_PATTERNS.some((re) => re.test(c));
+  return DESTRUCTIVE_PATTERNS.some((re) => re.test(c)) || units.some(curlWritesAFile);
 }
 
 /** The read flags the catastrophic floor lets through: never `-h` (`shutdown -h` halts). */
@@ -946,8 +1005,21 @@ function patternKinds(unit: readonly string[]): Array<keyof typeof STATIC_SHELL_
       [keyof typeof STATIC_SHELL_CATEGORY_PATTERNS, readonly RegExp[]]
     >
   )
-    .filter(([, patterns]) => patterns.some((re) => startsWithMatch(re, text)))
+    .filter(
+      ([category, patterns]) =>
+        patterns.some((re) => startsWithMatch(re, text)) ||
+        (category === 'download' && curlWritesAFile(unit)),
+    )
     .map(([category]) => category);
+}
+
+/**
+ * A `curl` that writes a file: the same reading as where it writes
+ * (`fetcherTargets`), so the kind and the target never disagree (#614, revue
+ * Nodal de la PR #618, passe 3 : `-sLoC:\x` échappait aux deux).
+ */
+function curlWritesAFile(unit: readonly string[]): boolean {
+  return unit[0] === 'curl' && fetcherTargets('curl', unit.slice(1)).length > 0;
 }
 
 /** The kinds one command unit performs: none for a version or help check. */

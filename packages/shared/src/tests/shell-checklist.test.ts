@@ -420,6 +420,25 @@ describe('downloadWrites: where a download line writes (#614, review P1b) @cap:e
     ]);
   });
 
+  // Passe 3, P2-3 : une valeur collée à son option courte (`-sLoC:\x`). Une
+  // seule lecture des options courtes pour curl, wget et aria2c : dans un
+  // groupe, la première option qui prend une valeur prend le reste du groupe.
+  it('a value glued to a short option is read, by the same reader for curl, wget and aria2c', () => {
+    const paths = (cmd: string) => downloadWrites(cmd).targets.map((t) => t.path);
+    const glued = 'curl -sLoC:\\Users\\k\\.ssh\\authorized_keys https://x/k';
+    expect(staticShellCategories(glued)).toEqual(['download']);
+    expect(paths(glued)).toEqual(['C:\\Users\\k\\.ssh\\authorized_keys']);
+    expect(paths('curl -oout.bin https://x/a')).toEqual(['out.bin']);
+    expect(paths('wget -qO/tmp/x https://x/a')).toEqual(['/tmp/x']);
+    expect(paths('wget -qO- https://x/a')).toEqual([]);
+    expect(paths('aria2c -d/data -oout.bin https://x/m')).toEqual(['/data/out.bin']);
+    // An option that takes a value swallows the rest of its group: no output there.
+    expect(staticShellCategories('curl -XPOST https://x/api')).toEqual([]);
+    expect(staticShellCategories('curl -sXPOST -H "X-O: 1" https://x/api')).toEqual([]);
+    expect(isDestructiveOrHeavyCommand(glued)).toBe(true);
+    expect(isDestructiveOrHeavyCommand('curl -XPOST https://x/api')).toBe(false);
+  });
+
   it('a program with its own store names no path: nothing to judge', () => {
     for (const cmd of [
       'ollama pull llama3',

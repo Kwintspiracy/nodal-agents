@@ -5,7 +5,7 @@
 // model reads.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -319,6 +319,8 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
     const out = join(elsewhere, 'authorized_keys');
     for (const [command, where] of [
       [`curl -o "${out}" https://x/k`, out],
+      // Passe 3, P2-3 : la valeur collée à son option courte.
+      [`curl -sLo${out} https://x/k`, out],
       [`git clone https://github.com/x/y "${elsewhere}"`, elsewhere],
       [`Invoke-WebRequest -Uri https://x/a -OutFile '${out}'`, out],
       [`wget -P "${elsewhere}" https://x/a.zip`, elsewhere],
@@ -387,6 +389,32 @@ describe('an allowed download asks when it writes outside the workspace (#614, r
         outside: [{ command: outsideCmd, places: [join(elsewhere, 'b.jpg')] }],
       },
     ]);
+  });
+
+  // Passe 3, P2-1 : un lien PENDANT dans l'espace est suivi jusqu'à sa cible,
+  // par le résolveur que la porte partage avec les outils de fichiers.
+  it('a download through a dangling link is judged where the link points', async () => {
+    const kind = process.platform === 'win32' ? 'junction' : 'dir';
+    const out = `out-link-${Date.now()}`;
+    const inn = `in-link-${Date.now()}`;
+    try {
+      await symlink(join(elsewhere, 'not-yet'), join(workspace, out), kind);
+      await symlink(join(workspace, 'later'), join(workspace, inn), kind);
+    } catch {
+      return; // links cannot be made here; the resolver's own tests say so too
+    }
+    const outCmd = `curl -o ${out}/a.jpg https://x/a.jpg`;
+    expect(await asked(outCmd)).toEqual([
+      {
+        category: 'download',
+        state: 'ask',
+        details: [outCmd],
+        outside: [{ command: outCmd, places: [`${out}/a.jpg`] }],
+      },
+    ]);
+    const inCmd = `curl -o ${inn}/a.jpg https://x/a.jpg`;
+    const res = await run(inCmd, gate(DEFAULT_SHELL_POLICY, [yolo()]));
+    expect(res).toMatchObject({ outcome: 'success' });
   });
 
   it('a stored "never" for downloads blocks, inside the workspace too', async () => {

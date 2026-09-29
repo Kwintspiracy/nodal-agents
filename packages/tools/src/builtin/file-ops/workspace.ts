@@ -11,8 +11,14 @@
 //   3. Absolute paths passed by the LLM must resolve INSIDE exactly one
 //      known workspace root; anything else is path_traversal_blocked.
 
-import { realpath, stat } from 'node:fs/promises';
-import { resolve as resolvePath, relative as relativePath, sep, isAbsolute } from 'node:path';
+import { lstat, readlink, realpath, stat } from 'node:fs/promises';
+import {
+  resolve as resolvePath,
+  relative as relativePath,
+  sep,
+  isAbsolute,
+  dirname,
+} from 'node:path';
 import type { ToolContext } from '../../types';
 import { cheminConstate, currentContentWrittenByJob } from '../../verification/record-constat';
 
@@ -390,6 +396,25 @@ export function windowsPathViolation(
 
 // ─── resolveUnderRoot (private) ──────────────────────────────────────────────
 
+/** Links followed while resolving one path before it is refused (Linux's own bound is 40). */
+const MAX_LINK_HOPS = 40;
+
+/**
+ * The target of `path` when it is a link (symlink, or a Windows junction,
+ * which lstat reports as one), as written in the link; null when it is not a
+ * link or does not exist. Windows hands a junction's target back with the
+ * `\\?\` long-path prefix, which is not a UNC share and is dropped.
+ */
+async function danglingLinkTarget(path: string): Promise<string | null> {
+  const isLink = await lstat(path).then(
+    (s) => s.isSymbolicLink(),
+    () => false,
+  );
+  if (!isLink) return null;
+  const target = await readlink(path);
+  return target.startsWith('\\\\?\\') ? target.slice(4) : target;
+}
+
 /**
  * Core boundary-check against a single workspace root. IDENTICAL security
  * logic to the former single-root resolveAndCheckPath — only extracted into
@@ -451,7 +476,9 @@ async function resolveUnderRoot(workspaceRoot: string, requestedPath: string): P
    * site's actual open/write could close — out of scope for this hardening.
    */
   async function probeCanonical(): Promise<string> {
+    let path = lexical;
     let probe = lexical;
+    let hops = 0;
     while (true) {
       try {
         await stat(probe);
@@ -463,6 +490,28 @@ async function resolveUnderRoot(workspaceRoot: string, requestedPath: string): P
             `Failed to stat path while resolving "${requestedPath}": ${(err as Error).message}`,
           );
         }
+      }
+      // A DANGLING link (symlink or junction whose target does not exist yet):
+      // stat() follows it and fails, yet a write to this path goes through it
+      // and creates its target (#614, revue Nodal de la PR #618, passe 3).
+      // Walking up to the parent judged the link's NAME lexically, inside the
+      // workspace, while the write landed wherever it points. So the link is
+      // followed: the path becomes its target plus what remained, and the
+      // walk starts again from there, for every caller of this resolver.
+      const target = await danglingLinkTarget(probe);
+      if (target !== null) {
+        if (++hops > MAX_LINK_HOPS) {
+          throw new WorkspaceError(
+            'path_traversal_blocked',
+            `Path "${requestedPath}" goes through more than ${MAX_LINK_HOPS} links.`,
+          );
+        }
+        const through = resolvePath(dirname(probe), target);
+        const linkViolation = windowsPathViolation(target, through);
+        if (linkViolation) throw new WorkspaceError('path_traversal_blocked', linkViolation);
+        path = through + path.slice(probe.length);
+        probe = path;
+        continue;
       }
       const parent = resolvePath(probe, '..');
       if (parent === probe) {
@@ -476,7 +525,7 @@ async function resolveUnderRoot(workspaceRoot: string, requestedPath: string): P
       probe = parent;
     }
     const realProbe = await realpath(probe);
-    const remainder = lexical.slice(probe.length);
+    const remainder = path.slice(probe.length);
     const canonical = realProbe + remainder;
 
     if (canonical !== realRoot && !canonical.startsWith(rootWithSep)) {

@@ -20,9 +20,16 @@ export const SHELL_CATEGORY_COPY: Record<ShellCategory, { label: string; summary
     label: 'Install software or packages',
     summary: 'npm, pip, winget, choco, brew install…',
   },
+  // Le périmètre de « Allowed » est dit sur la ligne (#614, revue de la PR
+  // #618, passe 3) : un téléchargement hors des dossiers de l'agent demande,
+  // et ceux vers le magasin d'un programme de modèles ou d'images restent
+  // permis (décision du 28/09 : « ComfyArtist doit juste télécharger les
+  // modèles manquants »).
   download: {
     label: 'Download files from the internet',
-    summary: 'wget, curl -o, git clone, hf download, comfy model download, ollama pull…',
+    summary:
+      'wget, curl -o, git clone, hf download, comfy model download, ollama pull… ' +
+      'Allowed: into its folders and the model and image stores (comfy, ollama, docker, hf). Anywhere else, it asks.',
   },
   stop_programs: {
     label: 'Stop other programs or services',

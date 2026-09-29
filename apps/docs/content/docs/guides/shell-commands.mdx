@@ -129,18 +129,24 @@ kinds of action Nodal recognises in what the agent asks to run. Each one is
 - What you set on an agent is kept as you set it. Set **Run code written into
   a command** or **Download files from the internet** to **Ask me** to be
   asked again, or to **Never** to refuse it.
-- **Allowed** for downloads means _into the job's workspaces_. Nodal reads
-  where the command writes (`curl -o`/`-O`/`--output-dir`, `wget -O`/`-P`,
+- **Allowed** for downloads means _into the job's workspaces, and into the
+  model and image stores of the programs that keep one_. Nodal reads where the
+  command writes (`curl -o`/`-O`/`--output-dir`, `wget -O`/`-P`,
   `Invoke-WebRequest -OutFile`, `Start-BitsTransfer -Destination`,
   `aria2c -d`/`-o`, `git clone URL DIR`, `pip download -d`,
-  `hf download --local-dir`, `> file`), from the folder the line is in at that
-  point: the command's folder, then each `cd`, `pushd` or `Push-Location` that
-  comes before it. A place outside the workspaces asks, and the approval card
-  names it. So does a place the text does not say (a variable, `~`, a
-  sub-shell, a folder left with `popd`). A program that fetches into its own
-  store (`comfy model download`, `docker pull`, `ollama pull`, `hf download`
-  without `--local-dir`) names no path: it follows the download setting as it
-  is.
+  `hf download --local-dir`, `> file`), glued values included (`curl -sLo/x`),
+  from the folder the line is in at that point: the command's folder, then
+  each `cd`, `pushd` or `Push-Location` that comes before it. A link in a
+  workspace is followed to where it points, even when nothing is there yet. A
+  place outside the workspaces asks, and the approval card names it. So does a
+  place the text does not say (a variable, `~`, a sub-shell, a folder left
+  with `popd`).
+- A download into a program's own store (`comfy model download`,
+  `ollama pull`, `docker pull`, `podman pull`, `hf download` without
+  `--local-dir`) names no path and runs when downloads are **Allowed**. That
+  is deliberate: an agent that makes images fetches the models it is missing.
+  The store lies outside the workspaces and no checkpoint covers it. Set
+  downloads to **Ask me** to be asked for these too.
 - An agent already set to **Run without asking** everywhere when this list
   appeared kept what it could do.
 - The checklist also judges a declared proof (`declare_verification`), because
