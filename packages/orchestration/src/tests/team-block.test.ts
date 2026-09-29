@@ -722,3 +722,99 @@ describe('buildTeamBlock — à la profondeur maximale, aucune délégation anno
     expect(block).not.toContain('`create_task`');
   });
 });
+
+// #601 — le root répondait de mémoire, ou faisait lui-même UN web_search, quand
+// le propriétaire écrivait « Fais une recherche … » et qu'un agent de recherche
+// était dans son équipe. Règle produit (Quentin, 29/09) : une demande EXPLICITE
+// du travail qu'un coéquipier a pour spécialité se délègue à ce coéquipier ; une
+// question qui attend une réponse immédiate, l'orchestrateur peut y répondre.
+// La règle est UNE phrase du pied de bloc, la même pour toute équipe : elle ne
+// nomme aucun agent ni aucun domaine, la spécialité vient de l'entrée du roster.
+describe('buildTeamBlock — une demande explicite de la spécialité d’un coéquipier va à ce coéquipier (#601) @cap:organiser-equipe/moteur', () => {
+  const RULE = /When the user explicitly asks for a kind of work[^]*?answer it yourself\./;
+
+  async function seedTeam(specialistSlug: string, purpose: string) {
+    const { entityId } = await seedContext(db);
+    const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const orch = await seedAgent(db, entityId, `test-root-spec-${t}`, 'orchestrator');
+    const specialist = await seedAgent(db, entityId, `${specialistSlug}-${t}`, 'agent');
+    await db.update(agents).set({ personality: purpose }).where(eq(agents.id, specialist.id));
+    await assignChild(db, orch.id, specialist.id, entityId);
+    return { orch, specialist };
+  }
+  // An entry spans its first line and the indented lines under it.
+  const entryOf = (block: string, name: string): string => {
+    const lines = block.split('\n');
+    const start = lines.findIndex((l) => l.includes(`**${name}**`));
+    if (start === -1) return '';
+    const rest = lines.slice(start + 1);
+    const end = rest.findIndex((l) => !l.startsWith('  '));
+    return [lines[start], ...(end === -1 ? rest : rest.slice(0, end))].join('\n');
+  };
+
+  const TEAMS = [
+    {
+      slug: 'test-deep-research',
+      purpose: 'You are a deep research specialist. Every research task is a full investigation.',
+    },
+    {
+      slug: 'test-legal-translator',
+      purpose: 'You translate legal contracts between French and German, clause by clause.',
+    },
+  ];
+
+  it('on a job that can delegate: the specialty rule, with the delegation route, for any team', async () => {
+    const rules: string[] = [];
+    for (const team of TEAMS) {
+      const { orch, specialist } = await seedTeam(team.slug, team.purpose);
+      const block = await buildTeamBlock(orch.id as AgentId, db);
+      // The specialty is visible in the entry, from the database.
+      expect(entryOf(block, specialist.name)).toContain(`Purpose: ${team.purpose}`);
+      const rule = RULE.exec(block)?.[0] ?? '';
+      expect(rule, 'the specialty rule is missing from the team block').not.toBe('');
+      expect(rule).toContain('even when one of your own tools could do a thin version');
+      expect(rule).toContain('even when you believe you already know the answer');
+      expect(rule).toContain('A direct question that expects an immediate answer');
+      // The rule follows the delegation route of this surface.
+      const footer = block.slice(block.indexOf('⚠️ The roster above'));
+      expect(footer).toContain('delegate to it');
+      expect(footer).toContain(rule);
+      // Nothing in it names this team's agent.
+      expect(rule).not.toContain(specialist.name);
+      expect(rule).not.toContain(specialist.slug);
+      rules.push(rule);
+    }
+    // The same sentence for both teams: no domain in it.
+    expect(rules[0]).toBe(rules[1]);
+  });
+
+  it('on the chat (run_task): the same rule, and the teammate is named in the run_task instruction', async () => {
+    for (const team of TEAMS) {
+      const { orch, specialist } = await seedTeam(team.slug, team.purpose);
+      const chat = await buildTeamBlock(orch.id as AgentId, db, {
+        delegation: false,
+        escalation: true,
+      });
+      expect(entryOf(chat, specialist.name)).toContain(`Purpose: ${team.purpose}`);
+      const rule = RULE.exec(chat)?.[0] ?? '';
+      expect(rule, 'the specialty rule is missing from the chat team block').not.toBe('');
+      const footer = chat.slice(chat.indexOf('⚠️ The roster above'));
+      expect(footer).toContain('name that agent in the instruction');
+      expect(footer).toContain(rule);
+      // Never an order to delegate from a surface that has no delegation tool.
+      expect(chat).not.toContain('delegate to it');
+    }
+  });
+
+  it('where no hand-off exists (CLI session, maximum depth): no specialty rule', async () => {
+    for (const team of TEAMS) {
+      const { orch } = await seedTeam(team.slug, team.purpose);
+      const cli = await buildTeamBlock(orch.id as AgentId, db, { delegation: false });
+      expect(cli).toContain('You cannot hand work to these agents from here');
+      expect(cli).not.toMatch(RULE);
+      const deepest = await buildTeamBlock(orch.id as AgentId, db, { delegationDepth: 3 });
+      expect(deepest).toContain('maximum delegation depth');
+      expect(deepest).not.toMatch(RULE);
+    }
+  });
+});

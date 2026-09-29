@@ -509,18 +509,33 @@ export async function buildTeamBlock(
   // (Codex review of #473, pass 4): delegate only where a delegation tool
   // exists; through the run_task job on chat; otherwise do what your own tools
   // cover, and name the agent that would have the means in a blocked result.
-  const footerRoute =
+  //
+  // Wherever a hand-off exists, the same two triggers lead to it (#601): a
+  // request this agent cannot serve, and an EXPLICIT request for the work a
+  // teammate's entry announces as its specialty — which goes to that teammate
+  // even when one of this agent's own tools could do a thin version of it. Run
+  // 4ca78b68 answered "do a research …" from memory, ace9212a ran one
+  // web_search itself, with a research agent on the team. The rule names no
+  // agent and no domain: the specialty is whatever the roster above says.
+  const routeToMatch =
     reachMeans === 'delegate'
       ? 'A request that needs a shell command goes only to an agent whose Shell commands is ' +
         'yes. Before saying you cannot do something, scan the list: if any agent’s ' +
         'skills/connectors match the request, delegate to it.'
-      : reachMeans === 'escalate'
-        ? 'Before saying you cannot do something, scan the list: if any agent’s ' +
-          'skills/connectors match the request, start the work with `run_task` and name that ' +
-          'agent in the instruction; the job it starts is the one that hands it on.'
-        : 'You cannot hand work to these agents from here. Do yourself what your own tools ' +
-          'cover; for the rest, call return_result with a blocked status that names the agent ' +
-          'whose skills, connectors, folders or Shell commands would have the means.';
+      : 'Before saying you cannot do something, scan the list: if any agent’s ' +
+        'skills/connectors match the request, start the work with `run_task` and name that ' +
+        'agent in the instruction; the job it starts is the one that hands it on.';
+  const footerRoute =
+    reachMeans === 'none'
+      ? 'You cannot hand work to these agents from here. Do yourself what your own tools ' +
+        'cover; for the rest, call return_result with a blocked status that names the agent ' +
+        'whose skills, connectors, folders or Shell commands would have the means.'
+      : routeToMatch +
+        ' When the user explicitly asks for a kind of work that an agent’s entry above ' +
+        'announces as its specialty (its Purpose or Skills), do the same with that agent — ' +
+        'even when one of your own tools could do a thin version of that work, and even when ' +
+        'you believe you already know the answer. A direct question that expects an immediate ' +
+        'answer is not such a request: you may answer it yourself.';
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
       'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +
