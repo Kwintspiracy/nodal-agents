@@ -517,6 +517,13 @@ export async function buildTeamBlock(
   // 4ca78b68 answered "do a research …" from memory, ace9212a ran one
   // web_search itself, with a research agent on the team. The rule names no
   // agent and no domain: the specialty is whatever the roster above says.
+  //
+  // What decides is whether the user asks for the WORK, not the politeness of
+  // the form: "can you do a … on X?" asks for the work, "what is …?" only for
+  // an answer (Reviewer A on #603, P2). And knowledge of Nodal itself is never
+  // a teammate's specialty — the same reason the "A question about Nodal is
+  // yours" baseline rule gives (#455, catalog platform-questions.ts), which
+  // sits in the same prompt: the two rules say one thing (#603, P1).
   const routeToMatch =
     reachMeans === 'delegate'
       ? 'A request that needs a shell command goes only to an agent whose Shell commands is ' +
@@ -531,11 +538,13 @@ export async function buildTeamBlock(
         'cover; for the rest, call return_result with a blocked status that names the agent ' +
         'whose skills, connectors, folders or Shell commands would have the means.'
       : routeToMatch +
-        ' When the user explicitly asks for a kind of work that an agent’s entry above ' +
-        'announces as its specialty (its Purpose or Skills), do the same with that agent — ' +
-        'even when one of your own tools could do a thin version of that work, and even when ' +
-        'you believe you already know the answer. A direct question that expects an immediate ' +
-        'answer is not such a request: you may answer it yourself.';
+        ' When the user asks you to DO a kind of work that an agent’s entry above announces ' +
+        'as its specialty (its Purpose or Skills), do the same with that agent, even when one ' +
+        'of your own tools could do a thin version of it and even when you believe you already ' +
+        'know the answer. The words decide, not the politeness: “do a … on X” or “can you do a ' +
+        '… on X?” asks for the work; a question that only wants an answer (“what is …?”) stays ' +
+        'yours, and so does knowledge of Nodal itself, since no teammate knows the platform ' +
+        'better than you.';
   lines.push(
     '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
       'capabilities. ONLY ever reference agents, skills, connectors, tools, or folders that ' +

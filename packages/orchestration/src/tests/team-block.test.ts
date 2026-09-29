@@ -12,6 +12,7 @@ import {
   agentWorkspaces,
 } from '@nodal-agents/db';
 import { buildTeamBlock } from '../team-block';
+import { buildSystemPrompt } from '../system-prompt';
 import { holdersOfPath } from '../path-holders';
 import { resolveRunWorkspaces } from '@nodal-agents/tools';
 import type { AgentId } from '../types';
@@ -731,7 +732,7 @@ describe('buildTeamBlock — à la profondeur maximale, aucune délégation anno
 // La règle est UNE phrase du pied de bloc, la même pour toute équipe : elle ne
 // nomme aucun agent ni aucun domaine, la spécialité vient de l'entrée du roster.
 describe('buildTeamBlock — une demande explicite de la spécialité d’un coéquipier va à ce coéquipier (#601) @cap:organiser-equipe/moteur', () => {
-  const RULE = /When the user explicitly asks for a kind of work[^]*?answer it yourself\./;
+  const RULE = /When the user asks you to DO a kind of work[^]*?better than you\./;
 
   async function seedTeam(specialistSlug: string, purpose: string) {
     const { entityId } = await seedContext(db);
@@ -774,7 +775,15 @@ describe('buildTeamBlock — une demande explicite de la spécialité d’un co�
       expect(rule, 'the specialty rule is missing from the team block').not.toBe('');
       expect(rule).toContain('even when one of your own tools could do a thin version');
       expect(rule).toContain('even when you believe you already know the answer');
-      expect(rule).toContain('A direct question that expects an immediate answer');
+      // The tie-break (Reviewer A, #603 pass 1, P2): a polite question that
+      // asks for the WORK is a request for the work; only a question that
+      // wants nothing but an answer stays with the orchestrator.
+      expect(rule).toContain('The words decide, not the politeness');
+      expect(rule).toContain('asks for the work');
+      expect(rule).toContain('a question that only wants an answer');
+      // Knowledge of the platform stays the orchestrator's, as the
+      // "A question about Nodal is yours" rule says (P1).
+      expect(rule).toContain('knowledge of Nodal itself');
       // The rule follows the delegation route of this surface.
       const footer = block.slice(block.indexOf('⚠️ The roster above'));
       expect(footer).toContain('delegate to it');
@@ -817,4 +826,44 @@ describe('buildTeamBlock — une demande explicite de la spécialité d’un co�
       expect(deepest).not.toMatch(RULE);
     }
   });
+});
+
+// Revue Reviewer A de #603, passe 1, P1 : la règle de spécialité cohabite dans
+// le MÊME prompt avec « A question about Nodal is yours » (#455, run 6f08b1b8 :
+// 192 074 jetons pour un changelog confié à un Researcher). « Fais une recherche
+// sur le changelog de Nodal 0.9.3 » avec un chercheur dans l'équipe : les deux
+// règles doivent dire la même chose. On le prouve sur le prompt réellement
+// construit, pas sur le seul bloc d'équipe.
+describe('buildSystemPrompt — la règle de spécialité et « A question about Nodal is yours » disent la même chose (#601, revue #603 P1) @cap:organiser-equipe/moteur', () => {
+  const RULE = /When the user asks you to DO a kind of work[^]*?better than you\./;
+
+  for (const surface of ['job', 'chat'] as const) {
+    it(`on the ${surface} surface, both rules are in the prompt and the specialty rule leaves platform knowledge to the orchestrator`, async () => {
+      const { entityId } = await seedContext(db);
+      const t = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const orch = await seedAgent(db, entityId, `test-root-np-${t}`, 'orchestrator');
+      const specialist = await seedAgent(db, entityId, `test-deep-research-np-${t}`, 'agent');
+      await db
+        .update(agents)
+        .set({ personality: 'You are a deep research specialist.' })
+        .where(eq(agents.id, specialist.id));
+      await assignChild(db, orch.id, specialist.id, entityId);
+      const [row] = await db.select().from(agents).where(eq(agents.id, orch.id)).limit(1);
+
+      const prompt = await buildSystemPrompt(row as never, db, {
+        origin: 'api',
+        ...(surface === 'chat' ? { surface: 'chat' } : {}),
+      } as never);
+
+      expect(prompt).toContain('### A question about Nodal is yours');
+      expect(prompt).toContain('never delegate it to a teammate');
+      const rule = RULE.exec(prompt)?.[0] ?? '';
+      expect(rule, 'the specialty rule is missing from the built prompt').not.toBe('');
+      // The specialty rule itself carves out what #455 keeps: no request for
+      // knowledge of the platform is handed on, whatever its wording.
+      expect(rule).toMatch(
+        /and so does knowledge of Nodal itself, since no teammate knows the platform better than you\.$/,
+      );
+    });
+  }
 });
