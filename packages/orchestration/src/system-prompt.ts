@@ -30,7 +30,7 @@ import { SYSTEM_PROMPT_CACHE_BOUNDARY, wrapUntrusted } from '@nodal-agents/share
 import { ALWAYS_ON_TOOL_DOCS, ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
 import { skillKindOfSlug } from '@nodal-agents/catalog';
 import { buildTeamBlock } from './team-block';
-import { buildBaselineBlock, buildChannelBlock, buildDiscoverabilityBlock } from './agent-baseline';
+import { buildBaselineBlock, buildDiscoverabilityBlock } from './agent-baseline';
 import type { Agent, AnyDrizzleDb } from './types';
 
 // ─── JobContext ────────────────────────────────────────────────────────────────
@@ -78,6 +78,25 @@ export interface JobContext {
   availableToolNames?: readonly string[];
   /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
   telegramChatId?: string;
+  /**
+   * Le canal où l'outil d'envoi de ce job écrit, et ce que l'adaptateur de ce
+   * canal fait du texte (#613).
+   *
+   * Posé par le runner (`channelDeliveryFacts`) avec le canal que l'outil
+   * résoudra. `renders` vient de `ChannelAdapter.text` : les marques que la
+   * plateforme rend, telles qu'on les tape. Ce n'est pas une phrase par canal,
+   * c'est ce que l'adaptateur déclare, et ses tests prouvent qu'il le fait. `onlyPath` : la garde de livraison exige un envoi
+   * par cet outil (canal à livraison par outil, ou routine qui a demandé sa
+   * confirmation). Rendu en une ligne de `## Job context`, et seulement si le
+   * job détient `sendTool` (#559) — un délégué qui hérite du `chat_id` sans
+   * l'outil n'en lit rien.
+   */
+  channelDelivery?: {
+    channel: string;
+    sendTool: string;
+    renders: readonly string[];
+    onlyPath: boolean;
+  };
   /**
    * The user asked to be notified when this job succeeds (per-schedule opt-in).
    * Instruction to the LLM — it writes the confirmation in its own voice; the
@@ -441,9 +460,45 @@ export function buildRuntimeBlock(
 
 // ─── buildJobContextBlock ─────────────────────────────────────────────────────
 
-function buildJobContextBlock(ctx: JobContext): string {
+/**
+ * La ligne de faits d'un canal à livraison par outil (#613).
+ *
+ * Elle remplace la couche « Channel etiquette » : 6 300 caractères écrits à la
+ * main pour Telegram, dont trois consignes contredisaient le runner —
+ * MarkdownV2 alors que l'outil envoie sans `parse_mode`, du markdown sur un
+ * canal qui l'affiche tel quel, un découpage à 4 096 que `sendText` fait déjà.
+ * Le découpage à la main a nourri les 30 envois du 28/09. Ne restent que des
+ * FAITS, tirés de l'adaptateur : par où la réponse passe, sous quelle forme
+ * elle arrive, et qu'elle est découpée sans l'agent. Aucune limite chiffrée :
+ * le modèle n'a rien à en faire.
+ */
+function channelDeliveryLine(
+  d: NonNullable<JobContext['channelDelivery']>,
+  availableTools: readonly string[],
+): string | null {
+  if (!availableTools.includes(d.sendTool)) return null;
+  const reach = d.onlyPath ? ', the only way your replies reach them' : '';
+  // Les marques que le canal rend, telles qu'il les attend : Slack et
+  // WhatsApp rendent `*gras*`, pas `**gras**` (revue de #615).
+  const arrives =
+    d.renders.length === 0
+      ? 'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, ' +
+        '**bold**, escapes) shows literally.'
+      : `Text arrives as typed, and these marks render: ${d.renders.join(', ')}. ` +
+        'Any other markup shows literally.';
+  return (
+    `- delivery: \`${d.sendTool}\` reaches the user on ${d.channel}${reach}. ${arrives} ` +
+    'A long text is split into several messages automatically, so send each reply once, whole.'
+  );
+}
+
+function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]): string {
   const lines = [`- origin: ${ctx.origin}`];
   if (ctx.telegramChatId) lines.push(`- telegram_chat_id: ${ctx.telegramChatId}`);
+  const delivery = ctx.channelDelivery
+    ? channelDeliveryLine(ctx.channelDelivery, availableTools)
+    : null;
+  if (delivery) lines.push(delivery);
   if (ctx.surface === 'chat') {
     // In-app chat turn: the user reads your reply directly. You have EXACTLY ONE
     // tool here — `run_task` — and none of your built-in tools, connectors, or
@@ -1180,8 +1235,10 @@ export async function buildSystemPrompt(
 
   // 7. Job context block — runtime data provided by the runner per-job.
   //    Only appended when jobContext is provided. The agent's personality
-  //    decides how to use this data (e.g. send via Telegram if chat_id is set).
-  const jobContextBlock = jobContext ? buildJobContextBlock(jobContext) : '';
+  //    decides how to use this data. On a tool-delivery channel it carries
+  //    the channel's facts, from the adapter (#613) — there is no separate
+  //    channel layer any more.
+  const jobContextBlock = jobContext ? buildJobContextBlock(jobContext, availableTools) : '';
 
   // 7bis. Conversation block — le fil dont ce tour fait partie et son projet
   //       courant (P6). Volatile par nature : le compte de tours et le projet
@@ -1192,7 +1249,7 @@ export async function buildSystemPrompt(
 
   // 8. Behavior layers (see agent-baseline.ts):
   //    L1 baseline — intrinsic discipline for EVERY agent (+ model-aware nudge).
-  //    L2 channel  — per-channel etiquette when bound to a channel.
+  //    (L2 channel is gone: a channel's facts are one Job context line, #613.)
   //    L2bis discoverability — capabilities the agent could request but lacks.
   // The baseline is written entirely around Nodal's builtins — it MANDATES
   // `mark_memory_outdated` then `save_memory` when a memory proves wrong, and
@@ -1208,12 +1265,6 @@ export async function buildSystemPrompt(
   const baselineBlock = buildBaselineBlock(agent.model, {
     role: agent.role === 'orchestrator' && !canHandOn ? 'agent' : agent.role,
     nodalTools: jobContext?.surface !== 'cli-runtime',
-    surface: jobContext?.surface ?? 'job',
-    availableTools,
-  });
-  const channelBlock = buildChannelBlock({
-    channel: jobContext?.origin,
-    telegram: Boolean(jobContext?.telegramChatId),
     surface: jobContext?.surface ?? 'job',
     availableTools,
   });
@@ -1284,7 +1335,6 @@ export async function buildSystemPrompt(
     skillsBlock +
     wrap(discoverabilityBlock) +
     wrap(messagingChannelsBlock) +
-    wrap(channelBlock) +
     wrap(subAgentBlock);
 
   // Live inventory of the shared workspace (JobContext.workspaceInventory —
