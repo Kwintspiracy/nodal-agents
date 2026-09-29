@@ -35,8 +35,9 @@ export interface SlackHandleResult {
   jobId?: string;
   /**
    * The message was `/stop` (#602): no job was created, and every live run of
-   * the conversation was stopped. The socket acknowledges it with a reaction
-   * where the channel offers one — never with text (invariant #2).
+   * the conversation was stopped. The socket does NOT acknowledge it yet: no
+   * reaction is posted on this channel (listed as not done in PR #605), and
+   * the runner writes no text either (invariant #2).
    */
   stop?: ChannelStopResult;
   skipped?:
