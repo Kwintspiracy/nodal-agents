@@ -5,6 +5,8 @@ type Props = {
   label: ReactNode;
   onClick: () => void;
   className?: string;
+  /** Inerte le temps qu'une action lancée par une tuile voisine aboutisse. */
+  disabled?: boolean;
 };
 
 /**
@@ -14,12 +16,19 @@ type Props = {
  * messaging-channel picker grid. Geometry: `rounded-lg border px-4 py-3`,
  * icon left, label right.
  */
-export default function ChoiceTile({ icon, label, onClick, className = '' }: Props) {
+export default function ChoiceTile({
+  icon,
+  label,
+  onClick,
+  className = '',
+  disabled = false,
+}: Props) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas px-4 py-3 text-left transition-colors hover:border-ink ${className}`}
+      disabled={disabled}
+      className={`flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas px-4 py-3 text-left transition-colors hover:border-ink disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
     >
       <span className="shrink-0">{icon}</span>
       <span className="text-medium-13 text-ink">{label}</span>
