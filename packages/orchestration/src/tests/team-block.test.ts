@@ -731,8 +731,34 @@ describe('buildTeamBlock — à la profondeur maximale, aucune délégation anno
 // question qui attend une réponse immédiate, l'orchestrateur peut y répondre.
 // La règle est UNE phrase du pied de bloc, la même pour toute équipe : elle ne
 // nomme aucun agent ni aucun domaine, la spécialité vient de l'entrée du roster.
+const SPECIALTY_RULE = /When the user asks you to DO a kind of work[^]*?better than you\./;
+
+// What the rule itself must settle, on every surface that carries it (revue
+// Reviewer A de #603). Passe 1, P2 : la FORME départage — une demande polie du
+// travail reste une demande du travail. Passe 2, P1 : le SUJET l'emporte sur la
+// forme pour Nodal — « Fais une recherche sur le changelog de Nodal 0.9.3 »
+// avec un chercheur dans l'équipe (run 6f08b1b8, #455) : le texte PRODUIT doit
+// le trancher, pas un commentaire de code que le modèle ne voit jamais.
+function expectRuleSettlesBothAxes(rule: string): void {
+  expect(rule, 'the specialty rule is missing').not.toBe('');
+  // Form: the words decide, not the politeness.
+  const form = rule.indexOf('The words decide, not the politeness');
+  expect(form, 'the form tie-break is missing').toBeGreaterThan(-1);
+  expect(rule).toContain('“can you do a … on X?” asks for the work');
+  expect(rule).toContain('a question that only wants an answer (“what is …?”) stays yours');
+  // Subject: Nodal knowledge stays, even asked for as work; said AFTER the
+  // form tie-break, as the case it overrides, and closing the rule.
+  const subject = rule.indexOf(
+    'Knowledge of Nodal itself is no teammate’s specialty, even when it is asked for as work',
+  );
+  expect(subject, 'the Nodal tie-break is missing').toBeGreaterThan(form);
+  expect(rule.slice(subject)).toMatch(
+    /^Knowledge of Nodal itself is no teammate’s specialty, even when it is asked for as work \(“do a … on Nodal …”\): it stays yours, since no teammate knows the platform better than you\.$/,
+  );
+}
+
 describe('buildTeamBlock — une demande explicite de la spécialité d’un coéquipier va à ce coéquipier (#601) @cap:organiser-equipe/moteur', () => {
-  const RULE = /When the user asks you to DO a kind of work[^]*?better than you\./;
+  const RULE = SPECIALTY_RULE;
 
   async function seedTeam(specialistSlug: string, purpose: string) {
     const { entityId } = await seedContext(db);
@@ -775,15 +801,7 @@ describe('buildTeamBlock — une demande explicite de la spécialité d’un co�
       expect(rule, 'the specialty rule is missing from the team block').not.toBe('');
       expect(rule).toContain('even when one of your own tools could do a thin version');
       expect(rule).toContain('even when you believe you already know the answer');
-      // The tie-break (Reviewer A, #603 pass 1, P2): a polite question that
-      // asks for the WORK is a request for the work; only a question that
-      // wants nothing but an answer stays with the orchestrator.
-      expect(rule).toContain('The words decide, not the politeness');
-      expect(rule).toContain('asks for the work');
-      expect(rule).toContain('a question that only wants an answer');
-      // Knowledge of the platform stays the orchestrator's, as the
-      // "A question about Nodal is yours" rule says (P1).
-      expect(rule).toContain('knowledge of Nodal itself');
+      expectRuleSettlesBothAxes(rule);
       // The rule follows the delegation route of this surface.
       const footer = block.slice(block.indexOf('⚠️ The roster above'));
       expect(footer).toContain('delegate to it');
@@ -807,6 +825,7 @@ describe('buildTeamBlock — une demande explicite de la spécialité d’un co�
       expect(entryOf(chat, specialist.name)).toContain(`Purpose: ${team.purpose}`);
       const rule = RULE.exec(chat)?.[0] ?? '';
       expect(rule, 'the specialty rule is missing from the chat team block').not.toBe('');
+      expectRuleSettlesBothAxes(rule);
       const footer = chat.slice(chat.indexOf('⚠️ The roster above'));
       expect(footer).toContain('name that agent in the instruction');
       expect(footer).toContain(rule);
@@ -835,7 +854,7 @@ describe('buildTeamBlock — une demande explicite de la spécialité d’un co�
 // règles doivent dire la même chose. On le prouve sur le prompt réellement
 // construit, pas sur le seul bloc d'équipe.
 describe('buildSystemPrompt — la règle de spécialité et « A question about Nodal is yours » disent la même chose (#601, revue #603 P1) @cap:organiser-equipe/moteur', () => {
-  const RULE = /When the user asks you to DO a kind of work[^]*?better than you\./;
+  const RULE = SPECIALTY_RULE;
 
   for (const surface of ['job', 'chat'] as const) {
     it(`on the ${surface} surface, both rules are in the prompt and the specialty rule leaves platform knowledge to the orchestrator`, async () => {
@@ -859,11 +878,9 @@ describe('buildSystemPrompt — la règle de spécialité et « A question about
       expect(prompt).toContain('never delegate it to a teammate');
       const rule = RULE.exec(prompt)?.[0] ?? '';
       expect(rule, 'the specialty rule is missing from the built prompt').not.toBe('');
-      // The specialty rule itself carves out what #455 keeps: no request for
-      // knowledge of the platform is handed on, whatever its wording.
-      expect(rule).toMatch(
-        /and so does knowledge of Nodal itself, since no teammate knows the platform better than you\.$/,
-      );
+      // The specialty rule itself settles the case #455 keeps: a request for
+      // knowledge of the platform is not handed on, even worded as work.
+      expectRuleSettlesBothAxes(rule);
     });
   }
 });
