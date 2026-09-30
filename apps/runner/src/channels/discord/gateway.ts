@@ -28,7 +28,6 @@ import {
   GatewayIntentBits,
   Partials,
   ChannelType,
-  MessageFlags,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -45,6 +44,7 @@ import {
   type DiscordHandleResult,
 } from './handler.ts';
 import { routeDiscordInteraction } from './interactions.ts';
+import { makeDiscordInteractionAck } from './interaction-ack.ts';
 import { DISCORD_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
 import { channelTurnReaction } from '../turn.ts';
 import type { DiscordInboundMessage } from './types.ts';
@@ -315,14 +315,7 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
       receivingAgentId: agentId,
       deps,
       env,
-      ack: {
-        async ephemeralReply(text: string): Promise<void> {
-          await interaction.reply({ content: text, flags: MessageFlags.Ephemeral }).catch(() => {});
-        },
-        async resolveCard(text: string): Promise<void> {
-          await interaction.update({ content: text, components: [] }).catch(() => {});
-        },
-      },
+      ack: makeDiscordInteractionAck(interaction),
     });
     if (!result.handled && result.reason === 'unknown_custom_id') {
       // Not one of ours — ack so the client's spinner stops, never react to malformed/foreign taps otherwise.

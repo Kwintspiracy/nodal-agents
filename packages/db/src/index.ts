@@ -70,6 +70,23 @@ export {
 } from './repos/app-settings.ts';
 export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
 export {
+  recordApprovalCardMessage,
+  claimSettledApprovalCards,
+  finishApprovalCard,
+  releaseApprovalCardAfterFailure,
+  adoptApprovalCard,
+  claimApprovalCardForDisplay,
+  releaseApprovalCardClaim,
+  requeueApprovalCards,
+  APPROVAL_CARD_CLAIM_LEASE_MS,
+} from './repos/approval-cards.ts';
+export type {
+  ApprovalCardMessageInput,
+  SettledApprovalCard,
+  ApprovalCardFinalOutcome,
+  ApprovalCardLocation,
+} from './repos/approval-cards.ts';
+export {
   cancelJobTree,
   insertChildJob,
   listConversationRuns,

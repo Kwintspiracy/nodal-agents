@@ -16,6 +16,7 @@ import {
   scanForDirectTerminalCompleted,
   scanForCompleteJobCallers,
   scanForTerminalSendOutsideOutbox,
+  RUNNER_NON_TERMINAL_SENDERS,
   scanFilesForDeliverableTypeLiterals,
 } from '@nodal-agents/test-kit';
 import type { Metric, Section } from '../types';
@@ -139,14 +140,7 @@ export const architectureSection: Section = {
     }
     const terminalSendHits = scanForTerminalSendOutsideOutbox({
       srcDir: runnerSrc,
-      skipFiles: [
-        'delivery/outbox.ts',
-        'approvals/notify.ts',
-        'notify/code-transitions.ts',
-        'cron/run-schedules.ts',
-        'cron/reset-orphans.ts',
-        'telegram/poller.ts',
-      ],
+      skipFiles: RUNNER_NON_TERMINAL_SENDERS,
     }).map((v) => `apps/runner:${v.line}`);
     const deliverableLiteralHits = scanFilesForDeliverableTypeLiterals([
       join(runnerSrc, 'job', 'finalize.ts'),

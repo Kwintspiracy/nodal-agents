@@ -28,6 +28,7 @@ import {
   type ParsedApprovalCallback,
 } from '../../telegram/approval-callback.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
+import { requeueApprovalCard } from '../../approvals/card-settlement.ts';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -190,6 +191,14 @@ export async function handleSlackApprovalInteraction(args: {
 
   if (approval.status !== 'pending') {
     await ack.ephemeralReply(`Already ${approval.status}.`);
+    // Le clic prouve que la carte montre encore des boutons : elle retourne au
+    // règlement, essais remis à zéro (#637).
+    await requeueApprovalCard(deps.db, {
+      approvalRequestId: approval.id,
+      channel: 'slack',
+      agentId: target.agentId,
+      conversationId: target.channelId,
+    });
     return { handled: false, reason: 'already_resolved' };
   }
 
@@ -222,7 +231,8 @@ export async function handleSlackApprovalInteraction(args: {
       await ack.ephemeralReply('Could not apply — try the dashboard.');
       return { handled: false, reason: answered.code };
     }
-    await ack.resolveCard(`✅ Answered: ${chosen}`);
+    // La carte est réécrite par resolveApprovalDecision → settleApprovalCards
+    // (#637, un seul écrivain). Slack a déjà reçu son `ack()` (socket.ts).
     return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
   }
 
@@ -247,9 +257,8 @@ export async function handleSlackApprovalInteraction(args: {
     return { handled: false, reason: result.code };
   }
 
-  const verb = parsed.decision === 'approve' ? 'Approved' : 'Rejected';
-  const mark = parsed.decision === 'approve' ? '✅' : '❌';
-  await ack.resolveCard(`${mark} ${verb} — ${approval.toolName}`);
+  // La carte est réécrite par resolveApprovalDecision → settleApprovalCards
+  // (#637, un seul écrivain). Slack a déjà reçu son `ack()` (socket.ts).
 
   return { handled: true, decision: parsed.decision, jobId: result.jobId };
 }

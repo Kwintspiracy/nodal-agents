@@ -18,6 +18,55 @@
 // tableaux et des cadres à l'intérieur de la page, clé par clé.
 
 export const EXPLICATIONS = {
+  testes: {
+    titre: 'What is tested',
+    enBref:
+      'Every test the nightly measurement has run, sorted by the part of the product it exercises: the root and the chat, delegation, runs, tools, skills, proof, channels, connectors and the rest. Open a part to see its files and each test with its last five runs. The page starts with what each page of this portal answers, and with what no test covers.',
+    parties: [
+      {
+        titre: "What it's for",
+        texte: `<p>Answering "what do our tests actually check?" with the tests themselves, all of them, and not with a count. The repository runs more than eleven thousand tests; until 30/09/2026 this portal listed only the fifty worst, and nothing said which part of the product the others were about.</p>
+<p>It is also where a red test is found: a part that holds a red or flaky test says so on its heading, before you open it.</p>`,
+      },
+      {
+        titre: 'How to read it',
+        texte: `<p>One heading per part of the product. Each says how many tests it holds, how many exercise the <b>screens</b> (a component of the web app, or a browser journey) and how many the <b>engine</b> (the runner, the tools, the orchestration, the database), how many are red or flaky, and when the last one ran. Click a heading to open it; <b>Open all</b> and <b>Close all</b> do every part at once.</p>
+<p>Inside a part, one line per test file, with the reason the file sits there ("telegram" in the file name, lives in packages/llm, imports packages/delivery). Open a file to see its tests.</p>
+<p>A <b>ribbon</b> shows the last five runs of a test, oldest on the left: green passed, red failed, amber passed on a retry, grey skipped. The two numbers next to it, failed / runs, count every run the memory has seen since it started tracking the test.</p>
+<p><b>Red</b> means its last run failed. <b>Flaky</b> means a failure or a retry within its last five runs while the last one passed: that test cannot be believed either way. <b>Repaired in (median)</b> answers "when a test breaks, how long does it stay broken", over the repairs seen end to end: green, then red, then green again.</p>
+<p>A test marked <b>not run at the last measurement</b> was tracked before and did not run that night: renamed, removed, or in a file that is no longer in the repository. It stays listed until the memory drops it, so the count is never inflated in silence.</p>
+<p>The search box keeps only the tests whose title or file contains what you type, and opens the parts that have some.</p>`,
+      },
+      {
+        titre: 'Where it comes from',
+        texte: `<p>The tests come from <code>apps/qa/data/tests.ndjson</code>, one line per test, updated by the nightly measurement: every test it runs advances its own counters, a test that does not run does not move.</p>
+<p>The sorting is DERIVED, never written test by test. One rule in <code>apps/qa/lib.mjs</code> (<code>domaineDuTest</code>) reads what the code says about itself, and asks four questions in order: does the file name say "architecture" (those scanners live in every package); does the file live in a package with one subject only (the Gmail adapter, the database); do its name, then its folders, carry a word of a part; does it import a package or a module that does. The parts are tried from the most specific to the most general, and the most precise word wins: "run-command-flow" is about the shell guard, not about runs. A test file added tomorrow is sorted without anyone touching the table.</p>
+<p>A test the rule cannot place goes to <b>Unclassified</b>, with its count and its reason. It is never put in a part by default: that would paint a coverage nobody wrote.</p>
+<p>The sorting is computed when the portal is collected, on the repository being deployed, so a new test file is sorted at the next deployment.</p>`,
+      },
+      {
+        titre: 'When to act',
+        texte: `<p>A part with a red test: understand it the same day, it is a dated regression. A flaky test gets repaired or removed, never ignored: it poisons trust in the others. A red older than 14 days turns its Age red, and the Gaps page names it.</p>
+<p>A part that is thin next to how much the product relies on it, or a part whose tests are all on screens and none in the engine: that is where a promise is checked by the buttons only.</p>
+<p>A growing Unclassified: new test files whose names say nothing of what they test. Rename the file, or put it in the folder of the part it proves.</p>`,
+      },
+      {
+        titre: 'What it does not tell you',
+        texte: `<p>Whether the tests check anything useful: a test that calls a function and looks at nothing is counted like the others. The repository's rule demands asserting on the real result; that is a review rule, not a portal one.</p>
+<p>Whether a real agent, on a real model, finishes a real task. No test here sends a real request to a real model: the browser journeys talk to no model at all, and the engine tests answer with fake models. A bench that does run real requests is being built; its results will have their own place, and will not be mixed into these counts.</p>
+<p>The sorting reads names, not intentions: a test called <code>registry.test.ts</code> in a folder called <code>tests</code> says nothing, and lands in Unclassified. The "why here" line under each file lets you check every placement.</p>`,
+      },
+    ],
+    blocs: {
+      cartes:
+        'The tests the memory knows, how many ran at the last measurement, and how many are red or flaky on their last five runs.',
+      parties:
+        'One part of the product per heading, sorted in the order the product is told: talking to the root first, the plumbing last. A part is drawn only when you open it.',
+      avoir:
+        'Every test whose last run failed, then every test that failed or needed a retry within its last five runs, across all parts. "Red since" only dates a flip that was seen; past 14 days the Age turns red.',
+    },
+  },
+
   chantiers: {
     titre: 'Work in flight',
     enBref:
@@ -38,8 +87,8 @@ export const EXPLICATIONS = {
 <li><b>Done</b>: closed issue, merged pull request, mixed in one chronology. It shows the last seven days, newest first, and folds the rest under a count; the heading still counts everything.</li>
 <li><b>Abandoned</b>: a pull request closed without being merged.</li>
 </ul>
-<p>The left bar follows the same order as the eye: Work in flight, Capabilities, Gaps, Journeys, Test memory. Those five pages are the ones you steer with, and they read in that order.</p>
-<p>Under the "How it runs" heading sit the four plumbing pages: the test overview, the bench, the triggers and the history. You open them when you doubt a number, not every day.</p>
+<p>The left bar follows the same order as the eye: What is tested, Work in flight, Capabilities, Gaps, Journeys, Workflows. Those six pages are the ones you steer with, and they read in that order.</p>
+<p>Under the "How it runs" heading sit the four plumbing pages: code coverage, the bench, the triggers and the history. You open them when you doubt a number, not every day.</p>
 <p>A seventh column sits first, "Running", and it is the only one not deduced from issues and pull requests. It has two halves, each with its own time. The top half is read by YOUR BROWSER, from the public GitHub runs API, when the page opens and then every two minutes while the tab stays visible. It says "as of" the time of that read, on your own clock. The bottom half is read when the page is built: the release check flag left on the machine that ran it, and the Nodal review line. It is labelled "at build time" for that reason.</p>
 <p>If GitHub does not answer, the column says so with the time of the attempt and the reason, and it keeps the last read that worked, with that read's own date. An empty column never stands for "nothing is running": read and empty says "nothing in flight as of" a time, silent says nothing is known.</p>
 <p>On a pull request card, the CI pill says whether its checks are green, red or still running. "CI green" does not mean "reviewed": a pull request is merged after a review AND green checks.</p>
@@ -121,9 +170,9 @@ export const EXPLICATIONS = {
   },
 
   vue: {
-    titre: 'Tests, overview',
+    titre: 'Code coverage',
     enBref:
-      'How many tests the repository carries, how much of the code they actually exercise, and how many user journeys the CI really plays. This is the "code health" page, useful to an engineer, less telling for the product (for that, see Capabilities).',
+      'How much of the code the tests actually go through, package by package, and how many user journeys the CI really plays. This is the "code health" page, useful to an engineer, less telling for the product (for the tests themselves, see What is tested; for the product, see Capabilities).',
     parties: [
       {
         titre: "What it's for",
@@ -134,7 +183,7 @@ export const EXPLICATIONS = {
         texte: `<p><b>Line coverage</b>: out of 100 lines of code, how many at least one test executed. 81% means 19 lines out of 100 are crossed by no test, if one of them breaks, nothing will say so before a user does. It is NOT "81% of the code is correct": a line run by a test can still be wrong if the test does not check the right result.</p>
 <p>Under the gauge, one sentence says where that number is going: "up 2 points over 7 days", "down", or "stable". Seven days, because the question under that number is "did we just add code without tests", not "where were we this month". Two collections in the week are needed for a trend to exist; otherwise the sentence says so and invents nothing. The full history, over 30 days and as curves, is on the History page.</p>
 <p><b>Branches</b>: at every "if" there are two paths; this percentage says how many of the two a test took. Always lower than lines, and more honest.</p>
-<p><b>Test cases</b>: the number of <code>it(…)</code> in the repository. A vanity number on its own, it says nothing about what they check.</p>
+<p>The number of tests is not on this page any more. It used to count the <code>it(…)</code> written in the source, a number that differed from the tests that actually run and said nothing of what they check. The tests that ran, all of them, are on What is tested.</p>
 <p><b>Journeys played by the CI</b>: the end-to-end scenarios (a real browser, a real page) that continuous integration actually runs. This is the number that got this portal built: 28 out of 30 were never played.</p>
 <p>The per-package table is sorted by UNCOVERED lines: what sits on top is what costs the most to ignore. A hatched package does not have zero, it has nothing, it was never measured.</p>`,
       },
@@ -154,7 +203,7 @@ export const EXPLICATIONS = {
     ],
     blocs: {
       cartes:
-        'Four numbers: the share of code a test goes through, the number of tests, the share of user scenarios the CI plays, and the number of bench sections. The first one only holds for the measured packages.',
+        'Three numbers: the share of code a test goes through, the share of user scenarios the CI plays, and the number of bench sections. The first one only holds for the measured packages.',
       paquets:
         'A package = a folder of the repository with its own code (the runner, the web app, the tools…). Sorted by what costs the most to ignore: the lines nobody tests.',
     },
@@ -222,7 +271,7 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'When to act',
-        texte: `<p>A journey red for a short while (see "Red since" in Test memory) is a regression to understand fast. A journey red forever on the runner and green locally is an environment gap to settle: either the test must turn itself off cleanly when the service is missing, or the runner must have the service.</p>
+        texte: `<p>A journey red for a short while (see "Red since" in What is tested) is a regression to understand fast. A journey red forever on the runner and green locally is an environment gap to settle: either the test must turn itself off cleanly when the service is missing, or the runner must have the service.</p>
 <p>The underlying question, still open: which of these journeys should move from "every night" to "every pull request", to BLOCK a regression instead of observing it? Every promotion costs CI minutes per pull request.</p>`,
       },
       {
@@ -320,46 +369,36 @@ export const EXPLICATIONS = {
     },
   },
 
-  memoire: {
-    titre: 'Test memory',
+  workflows: {
+    titre: 'Workflows',
     enBref:
-      'One record per test, kept from one measurement to the next: how many times it ran, how many times it fell, how long it has been red. It is the only page that sees TIME, and therefore flakiness, invisible in an isolated run.',
+      'Real requests, always the same ones, sent to the real root agent with a real model, and judged on what really happened. The only page that says whether an everyday request still works end to end, and whether it got slower from one version to the next.',
     parties: [
       {
         titre: "What it's for",
-        texte: `<p>A test that falls one time in three is more harmful than a broken test: it passes for green every time it passes, and casts doubt on every red. No single run can see it. You have to remember the previous runs, that is this page.</p>
-<p>It can also date a problem: a test that turned red yesterday is a regression (something moved, and we know when); a test red for three months is a debt we have learned not to see. The two are not handled the same way.</p>`,
+        texte: `<p>Thousands of tests run on every change, and none of them sends a real request to a real model: unit tests use fake models, journeys click screens that talk to no model. Every recent real failure slipped through that gap: calls that took minutes because of a stalled connection, a model looping through hundreds of tool calls, an approval asked for nothing, a simple question handed to a sub-agent.</p>
+<p>This page is that missing layer. A fixed set of everyday requests (a question, a research, a file, a script, a print, an image) is replayed on the owner's own stack, and each run leaves one line.</p>`,
       },
       {
         titre: 'How to read it',
-        texte: `<p>Four counters: <b>flaky</b> (green AND red within their recent window), <b>broken</b> (red at their last runs), <b>tracked</b> (every one we have seen at least once), and <b>repaired in (median)</b>.</p>
-<p><b>Repaired in (median) N days</b> answers "when a test breaks, how long does it stay broken". A repository with twenty reds repaired in a day and one with twenty reds repaired in forty are not in the same state at all, and the number of reds does not tell them apart. Only repairs seen end to end count: the test was green, we saw it fall, we saw it come back. A test already red before the first measurement has no starting point, therefore no duration.</p>
-<p>The <b>median</b> and not the mean: it is the value that cuts the repairs into two halves. A single repair forgotten for six months pulls a mean up and makes it look normal; the median does not move for an accident. As long as no repair has been observed, the box shows "·": no absence is painted as a zero.</p>
-<p>In the tables, the <b>ribbon</b> reads left to right, oldest to newest: one letter per run, green, red, skipped, flaky. <b>Rate</b> = failures over runs. <b>Red since</b> = the date we SAW it flip from green to red, never the date we started looking, otherwise the first collection would have presented twenty-two old reds as regressions of the day.</p>
-<p>The first table, "The most harmful", is sorted by failure rate.</p>`,
+        texte: `<p>One card per workflow. <b>Green means</b> says, in one sentence, what had to be true for the run to count as green. The row of pills is the last five runs, oldest first: <b>Green</b>, <b>Red</b> (the workflow did not do what was asked, or stopped to ask the owner something), <b>Skipped</b> (the owner was working on the stack, so the bench waited, then gave up and said why), <b>Bench error</b> (the bench itself could not run the request). Hover a pill for its date, its version and its reasons. The latest red reason is written under the pills.</p>
+<p>The table gives, for every Nodal-Agents version, how many runs were green, and the <b>median</b> time, tokens and cost of the green runs. Only green runs count: a red run may have been stopped after ten seconds, and counting it would make a failure look like a speed-up.</p>
+<p>A red banner <b>Slower since</b> appears when the median of the last five green runs on the current version is more than 1.5 times the median of the previous version, for time or for tokens.</p>`,
       },
       {
         titre: 'Where it comes from',
-        texte: `<p>From the file <code>apps/qa/data/tests.ndjson</code>: one line per test, written to main by the nightly measurement. Every measurement merges its results into it: a test seen again advances its counters, a test absent from the measurement does not move (it did not run, counting a run, or worse a failure, would make every rate lie). A "flaky" test here is not the same word as a "flaky" journey on the Journeys page: over there it is "passed on the second attempt within the same run", here it is "green one day, red the next".</p>`,
+        texte: `<p>From <code>apps/qa/data/workflows.ndjson</code>, one line per run, appended by <code>pnpm bench:workflows</code> on the machine that hosts the stack, usually at night. The request goes through the same door as an MCP client of the owner. The verdict is read from facts: the job rows, the tool results, the files on disk, never from what the model says it did.</p>
+<p>When a workflow changes (its request or its judge), its version goes up and a new series starts: the card shows the newest series, and names the older ones instead of comparing two different things.</p>`,
       },
       {
         titre: 'When to act',
-        texte: `<p>A <b>fresh red</b> (within the last two days) gets understood the same day: it is a dated regression. A <b>flaky</b> test gets repaired or removed, never ignored, it poisons trust in the others.</p>
-<p>Past <b>14 days</b>, the "Age" column turns red and the Gaps page names these tests. The threshold is not a science: two weeks is the moment when nobody remembers what broke any more, and when a red stops being a regression and becomes a decision we did not take. Those rows wake nobody up (they no longer move) but they are named, otherwise they end up invisible from sheer presence. Two ways out only: repair, or delete the test along with the capability it proved.</p>
-<p>This page is worth nothing in the first days: it needs several runs before it can say anything at all. It started on 10/09/2026.</p>`,
+        texte: `<p>A <b>red</b> caused by the product (an approval asked for nothing, a wrong answer, a file not written) is a product bug: open an issue with the reason and the run. A <b>Slower since</b> banner after a release is a regression to explain before the next one. Several <b>Skipped</b> nights in a row mean the stack is never free at night: a job of the owner is stuck.</p>`,
       },
       {
         titre: 'What it does not tell you',
-        texte: `<p>Why a test is flaky. The usual causes: a timeout too short, an execution order that matters, an external service that answers sometimes. The portal names the test; the cause is found by replaying it.</p>
-<p>The "see the run" link leads to the GitHub Actions run that saw this red. There you find the full log of the journey, and the <code>parcours-en-echec</code> artifact: Playwright's traces and screenshots, that is, what the user would have seen the moment it broke. Playwright takes a screenshot ONLY ON FAILURE, and a trace only when it retries a fallen test: on a green test there is nothing to look at. You do not find the cause there either, the link shows the symptom, it does not explain it, and the artifact is kept fourteen days, after which the link leads to the run without its pieces.</p>`,
+        texte: `<p>Why a run failed, beyond its reasons: the run itself is on the Runs page of the stack, under its job id. It does not measure every model either: the runs use the models the owner's agents are set to, which the line records. And one run is one observation: a single red on a model is a hint, a pattern over several nights is a finding.</p>`,
       },
     ],
-    blocs: {
-      nuisibles:
-        'The tests that fall most often relative to their runs. A 30% rate over ten runs is worse than a test that is always red: you never know whether to believe it.',
-      casses:
-        'Red at their last runs. "Red since" only dates the flips we saw: a test red since before the first measurement has no date, and that is honest. "Age" counts the days as of the collection, not as of when you open the page; past 14 days it turns red.',
-    },
   },
 
   historique: {
@@ -389,7 +428,7 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'What it does not tell you',
-        texte: `<p>Anything finer than a collection. The test-by-test detail is in Test memory.</p>`,
+        texte: `<p>Anything finer than a collection. The test-by-test detail is in What is tested.</p>`,
       },
     ],
     blocs: {
