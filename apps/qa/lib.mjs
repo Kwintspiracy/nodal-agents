@@ -2453,6 +2453,10 @@ export function fusionnerTableauGitHub(mesure, frais) {
     // gardé quand la lecture échoue : c'est une identité, pas un état, et elle
     // ne change qu'au renommage du dépôt.
     depotNom: frais?.depotNom ?? mesure.depotNom ?? null,
+    // Le rangement des tests par partie du produit : il lit le checkout qu'on
+    // déploie, donc un fichier de test ajouté depuis la mesure est rangé tout
+    // de suite. Il porte sa propre date (`le`), jamais celle de la mesure.
+    rangement: frais?.rangement ?? mesure.rangement ?? null,
   };
   if (!frais?.chantiers) return socle;
   return {
@@ -3282,4 +3286,951 @@ export const SCRIPT_EN_VOL = [
   // Une balise fermante de script dans un littéral couperait le bloc au milieu
   // du code. Il n'y en a aucune aujourd'hui, et cette garde fait qu'il n'y en
   // aura jamais par accident (le portail a déjà perdu une page ainsi, PR #78).
+  .replace(/<\/script/gi, '<\\/script');
+
+// ─── CE QUI EST TESTÉ, rangé par partie du produit ────────────────────────────
+//
+// Quentin, 30/09/2026 : « on a soi-disant 11 000 tests, je ne les vois pas ; la
+// liste en montre cinquante au plus ». La mémoire en suivait 11 508, et la page
+// n'en rendait que les pires. Aucun endroit ne disait CE QUI est testé.
+//
+// Le rangement est DÉRIVÉ, jamais tenu test par test : la même règle que le
+// registre des capacités (CLAUDE.md), un rangement imaginé décrirait le produit
+// qu'on aimerait avoir. La règle lit ce que le code dit de lui-même — le chemin
+// du fichier de test, son nom, et les modules qu'il importe — et la table
+// ci-dessous ne nomme que des PARTIES du produit et les mots de code qui les
+// désignent. Un fichier de test ajouté demain se range sans que personne
+// touche à cette table.
+//
+// L'ORDRE compte : une partie plus spécifique passe avant une partie plus
+// générale. « run-command-flow » parle de la garde du shell, pas du moteur de
+// runs ; « job-with-mcp-server » parle d'un connecteur, pas d'un job. Les mots
+// génériques (job, run, chat, tool) vivent donc dans les parties du bas.
+//
+// `chemins` : les paquets qui n'ont qu'UN sujet. Leur test y est rangé quel que
+// soit son nom — `messages.test.ts` de l'adaptateur Gmail parle de Gmail, pas
+// du chat. `parImport: false` : un paquet que tout le monde importe comme
+// outillage (la base, l'authentification) ne désigne pas le sujet d'un test
+// qui l'importe.
+
+/** Les parties du produit, de la plus spécifique à la plus générale. */
+export const DOMAINES = Object.freeze([
+  {
+    id: 'channels',
+    nom: 'Channels',
+    quoi: 'Telegram, Discord, Slack, WhatsApp and email: receiving a message, answering, sending a file.',
+    chemins: ['packages/delivery/'],
+    mots: [
+      'telegram',
+      'discord',
+      'slack',
+      'whatsapp',
+      'baileys',
+      'channel',
+      'pairing',
+      'poller',
+      'email',
+      'notify',
+    ],
+  },
+  {
+    id: 'connectors',
+    nom: 'Connectors & MCP',
+    quoi: 'Notion, Google, Microsoft, Airtable and the other services an agent reaches, their OAuth and keys, and MCP servers in both directions.',
+    chemins: ['packages/adapters/', 'packages/mcp-server/'],
+    mots: [
+      'mcp',
+      'connector',
+      'oauth',
+      'credential',
+      'adapter',
+      'apify',
+      'notion',
+      'airtable',
+      'gmail',
+      'google',
+      'outlook',
+      'microsoft',
+      'firecrawl',
+      'tavily',
+      'poyo',
+      'cloudflare',
+      'apikey',
+    ],
+  },
+  {
+    id: 'skills',
+    nom: 'Skills',
+    quoi: 'Installing, updating and assigning skills and agent recipes, and the community catalog.',
+    chemins: ['packages/catalog/'],
+    mots: ['skill', 'recipe', 'community', 'learned'],
+  },
+  {
+    id: 'memory',
+    nom: 'Memory',
+    quoi: 'What an agent writes down and reads back later, the curator that tidies it, and reflection after a run.',
+    chemins: ['packages/memory/'],
+    mots: ['memory', 'curator', 'reflection', 'embedding', 'recall'],
+  },
+  {
+    id: 'security',
+    nom: 'Accounts, secrets & security',
+    quoi: 'Sign-in, the owner account, secrets at rest, redaction of what must not be shown, and the checks on where a request comes from.',
+    chemins: ['packages/auth/', 'packages/secrets/'],
+    parImport: false,
+    mots: [
+      'auth',
+      'password',
+      'owner',
+      'secret',
+      'redact',
+      'redaction',
+      'ssrf',
+      'idor',
+      'trusted',
+      'origin',
+      'bearer',
+      'lan',
+      'untrusted',
+      'destructive',
+      'master',
+    ],
+  },
+  {
+    id: 'proof',
+    nom: 'Proof & delivery',
+    quoi: 'What an agent declares it delivered, what the platform checks against the disk, the reviewer, and what the user is shown as done.',
+    mots: [
+      'verification',
+      'verify',
+      'proof',
+      'deliverable',
+      'delivery',
+      'delivered',
+      'constat',
+      'constated',
+      'declared',
+      'declare',
+      'declaration',
+      'review',
+      'reviewer',
+      'verdict',
+      'repair',
+      'result-kind',
+      'observed',
+    ],
+  },
+  {
+    id: 'approvals',
+    nom: 'Approvals & shell safety',
+    quoi: 'What an agent may do without asking, what waits for a yes, and the guards on shell commands.',
+    mots: [
+      'approval',
+      'approve',
+      'allowlist',
+      'shell',
+      'command',
+      'yolo',
+      'autonomy',
+      'grant',
+      'permission',
+      'catastrophic',
+      'question',
+      'ask-user',
+      'sandbox',
+      'gating',
+      'gate',
+    ],
+  },
+  {
+    id: 'runtimes',
+    nom: 'Claude Code & Codex runtimes',
+    quoi: 'Agents that run on a subscription CLI (Claude Code, Codex) instead of an API key.',
+    chemins: ['packages/runner-adapters/'],
+    mots: ['runtime', 'claude', 'codex', 'code-task', 'spawn', 'cli'],
+  },
+  {
+    id: 'llm',
+    nom: 'LLM providers & transport',
+    quoi: 'Talking to Anthropic, OpenRouter, Gemini and the others: requests, retries, timeouts, costs, model choice.',
+    chemins: ['packages/llm/'],
+    mots: [
+      'llm',
+      'model',
+      'provider',
+      'anthropic',
+      'openrouter',
+      'gemini',
+      'deepseek',
+      'moonshot',
+      'minimax',
+      'speech',
+      'reasoning',
+      'effort',
+      'transport',
+      'retry',
+      'failover',
+      'quota',
+      'rate-limit',
+      'cost',
+      'pricing',
+    ],
+  },
+  {
+    id: 'delegation',
+    nom: 'Delegation & team',
+    quoi: 'The root handing work to its team, the planner, the router and the limits on how deep delegation goes.',
+    mots: [
+      'delegation',
+      'delegate',
+      'team',
+      'router',
+      'planner',
+      'subtree',
+      'depth',
+      'orchestrator',
+      'lineage',
+      'ledger',
+      'baseline',
+      'send-task',
+      'task-tool',
+      'dependency',
+      'completion',
+    ],
+  },
+  {
+    id: 'automations',
+    nom: 'Schedules & automations',
+    quoi: 'Routines on a schedule, webhooks, and the ticker that starts them.',
+    mots: [
+      'cron',
+      'schedule',
+      'scheduled',
+      'routine',
+      'automation',
+      'webhook',
+      'tick',
+      'ticker',
+      'trigger',
+    ],
+  },
+  {
+    id: 'workspace',
+    nom: 'Projects, folders & git',
+    quoi: 'The folders an agent works in, projects, git, the files it changed and the checkpoints that restore them.',
+    chemins: ['packages/checkpoints/'],
+    mots: [
+      'project',
+      'workspace',
+      'folder',
+      'git',
+      'space',
+      'checkpoint',
+      'diff',
+      'file-change',
+      'footprint',
+      'marker',
+      'attach',
+      'path',
+    ],
+  },
+  {
+    id: 'tools',
+    nom: 'Tools',
+    quoi: 'The built-in tools an agent calls (files, Office documents, links, search) and the whitelist that decides which ones it gets.',
+    mots: [
+      'tool',
+      'builtin',
+      'file',
+      'office',
+      'docx',
+      'xlsx',
+      'pptx',
+      'whitelist',
+      'meta-op',
+      'link',
+      'card',
+    ],
+  },
+  {
+    id: 'chat',
+    nom: 'Root & chat',
+    quoi: 'Talking to the root agent: a turn, the thread, the conversation list, the system prompt.',
+    mots: [
+      'chat',
+      'conversation',
+      'thread',
+      'turn',
+      'root-agent',
+      'composer',
+      'welcome',
+      'onboarding',
+      'personality',
+      'feed',
+      'transcript',
+      'stream',
+      'prompt',
+      'message',
+      'lane',
+    ],
+  },
+  {
+    id: 'runs',
+    nom: 'Runs (the job engine)',
+    quoi: 'A run from start to finish: claiming it, resuming it, stopping it, its budget, and the anti-loop guards.',
+    mots: [
+      'job',
+      'run',
+      'execute',
+      'finalize',
+      'heartbeat',
+      'state',
+      'resume',
+      'reclaim',
+      'orphan',
+      'budget',
+      'concurrency',
+      'interleaving',
+      'outbox',
+      'stop',
+      'cancel',
+      'activity',
+      'log',
+      'progress',
+      'output',
+      'timeout',
+      'result',
+      'worker',
+      'chain',
+      'failure',
+    ],
+  },
+  {
+    id: 'screens',
+    nom: 'Screens & design system',
+    quoi: 'The web app as such: layout, sidebar, shared components, contrast, the parity with the Figma design system.',
+    mots: [
+      'ui',
+      'sidebar',
+      'page-shell',
+      'table',
+      'switch',
+      'contrast',
+      'brand',
+      'figma',
+      'layer',
+      'markdown',
+      'clipboard',
+      'code-block',
+      'button',
+      'row-action',
+      'menu',
+      'docked',
+      'disclosure',
+      'select',
+      'scroll',
+      'help',
+      'guide',
+      'setting',
+    ],
+  },
+  {
+    id: 'install',
+    nom: 'Install, start & update',
+    quoi: 'The nodal-agents command: first install, starting and stopping the stack, embedded Postgres, updates.',
+    chemins: ['apps/cli/'],
+    mots: ['autostart', 'launcher', 'version', 'bootstrap', 'seed', 'migrate'],
+  },
+  {
+    id: 'database',
+    nom: 'Database & migrations',
+    quoi: 'The schema, its migrations, and the queries every other part relies on.',
+    chemins: ['packages/db/'],
+    parImport: false,
+    mots: ['migration', 'schema', 'constraint'],
+  },
+  {
+    id: 'docs',
+    nom: 'Docs site',
+    quoi: 'The public documentation site and the pages it generates from the code.',
+    chemins: ['apps/docs/'],
+    mots: ['docs', 'documentation'],
+  },
+  {
+    id: 'qa',
+    nom: 'Quality portal & bench',
+    quoi: 'This portal, the bench and the test kit: the tools that tell us what the tests say.',
+    chemins: ['apps/qa/', 'packages/bench/', 'packages/test-kit/'],
+    parImport: false,
+    mots: ['bench', 'portal'],
+  },
+]);
+
+/** Les règles d'architecture : des scanners qui vivent dans CHAQUE paquet. */
+export const DOMAINE_ARCHITECTURE = Object.freeze({
+  id: 'architecture',
+  nom: 'Architecture rules',
+  quoi: 'The invariants of CLAUDE.md checked by scanners, in every package: no hardcoded agent text, layering, lint rules.',
+  mots: ['architecture', 'arch', 'lint', 'eslint', 'hygiene'],
+});
+
+/** Ce que la règle n'a pas su ranger. Montré, compté, jamais caché. */
+export const DOMAINE_NON_RANGE = Object.freeze({
+  id: 'non-range',
+  nom: 'Unclassified',
+  quoi: 'Tests whose file name, folders and imports name no part of the product. The rule cannot place them, so they are listed here rather than hidden.',
+});
+
+/** Le mot au singulier : `approvals` et `approval` sont le même sujet. */
+function auSingulier(m) {
+  if (m.length > 4 && m.endsWith('ies')) return m.slice(0, -3) + 'y';
+  if (m.length > 3 && m.endsWith('s') && !/(ss|us|is)$/.test(m)) return m.slice(0, -1);
+  return m;
+}
+
+/**
+ * Les mots d'un nom de code : `ApprovalRequestCard`, `approval-rules_fresh` et
+ * `approvals` donnent tous des mots en minuscules, au singulier.
+ */
+export function motsDuCode(nom) {
+  return String(nom ?? '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map(auSingulier);
+}
+
+/** Le mot-clé d'une partie trouvé dans une suite de mots — le plus long —, ou null. */
+function motTrouve(domaine, mots) {
+  let trouve = null;
+  for (const cle of domaine.mots ?? []) {
+    const suite = motsDuCode(cle);
+    if (trouve && suite.length <= trouve.longueur) continue;
+    for (let i = 0; i + suite.length <= mots.length; i += 1) {
+      if (suite.every((m, j) => mots[i + j] === m)) {
+        trouve = { cle, longueur: suite.length };
+        break;
+      }
+    }
+  }
+  return trouve?.cle ?? null;
+}
+
+/**
+ * La partie qu'une suite de mots désigne. Le mot-clé le plus PRÉCIS gagne —
+ * « page shell » (deux mots, un composant d'écran) passe devant « shell » (un
+ * mot, la garde des commandes) —, puis, à précision égale, l'ordre de la table.
+ */
+function premierDomaine(mots, domaines) {
+  let meilleur = null;
+  for (const d of domaines) {
+    const cle = motTrouve(d, mots);
+    if (!cle) continue;
+    const longueur = motsDuCode(cle).length;
+    if (!meilleur || longueur > meilleur.longueur) meilleur = { d, cle, longueur };
+  }
+  return meilleur;
+}
+
+/** Le nom d'un fichier de test sans son suffixe : `a.pg.test.ts` → `a.pg`. */
+function nomDuFichierDeTest(fichier) {
+  return String(fichier)
+    .split('/')
+    .pop()
+    .replace(/\.(test|spec)\.(ts|tsx|mts|mjs|js)$/, '');
+}
+
+/**
+ * Le dossier racine du paquet d'un fichier : `apps/web`, `packages/tools`,
+ * `packages/adapters/gmail`. Ce sont les dossiers EN DESSOUS qui parlent du
+ * sujet ; `apps` et `packages` ne disent rien.
+ */
+function racineDuPaquet(fichier) {
+  const p = String(fichier).split('/');
+  const n = p[0] === 'packages' && p[1] === 'adapters' ? 3 : 2;
+  return p.slice(0, n).join('/');
+}
+
+/**
+ * Les modules qu'un fichier de test importe, en chemins du dépôt.
+ *
+ * Relatifs (`../job/state`), alias de l'app web (`@/lib/actions`), et paquets
+ * du workspace (`@nodal-agents/llm` → `packages/llm/`, par la liste des paquets
+ * que le collecteur connaît — un nom de paquet n'est jamais deviné). Le reste
+ * (vitest, react, `node:`) ne dit rien du sujet et n'est pas rendu.
+ */
+export function modulesImportes(fichier, texte, paquets = []) {
+  if (!texte) return [];
+  const src = String(texte);
+  const specs = new Set();
+  for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]/g))
+    specs.add(m[1]);
+  for (const m of src.matchAll(/(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g)) specs.add(m[1]);
+  for (const m of src.matchAll(/(?:vi\.mock|vi\.doMock|import)\(\s*['"]([^'"]+)['"]/g))
+    specs.add(m[1]);
+  const dossier = String(fichier).split('/').slice(0, -1);
+  const sansExtension = (p) => p.replace(/\.(m?[jt]sx?)$/, '');
+  const out = [];
+  for (const s of specs) {
+    if (s.startsWith('.')) {
+      const parts = [...dossier];
+      for (const seg of s.split('/')) {
+        if (seg === '.' || seg === '') continue;
+        if (seg === '..') parts.pop();
+        else parts.push(seg);
+      }
+      out.push(sansExtension(parts.join('/')));
+    } else if (s.startsWith('@/') && String(fichier).startsWith('apps/web/')) {
+      out.push(sansExtension('apps/web/src/' + s.slice(2)));
+    } else {
+      const p = (paquets ?? []).find((x) => s === x.nom || s.startsWith(x.nom + '/'));
+      if (p) out.push(p.chemin + '/');
+    }
+  }
+  return out;
+}
+
+/**
+ * LA RÈGLE. Un fichier de test → la partie du produit qu'il éprouve, et POURQUOI.
+ *
+ * Quatre questions, dans cet ordre, et la première qui répond décide :
+ *   1. son nom dit-il « architecture » (arch, lint) ? Ces scanners vivent dans
+ *      chaque paquet et ne parlent d'aucune partie en particulier ;
+ *   2. vit-il dans un paquet qui n'a qu'un sujet (`chemins`) ?
+ *   3. son NOM, puis ses dossiers du plus proche au plus lointain, portent-ils
+ *      un mot d'une partie ? Les parties sont essayées dans l'ordre de la table ;
+ *   4. un module qu'il IMPORTE est-il un paquet à sujet unique, ou porte-t-il
+ *      un mot d'une partie ?
+ *
+ * Aucune réponse : « Unclassified », avec sa raison. JAMAIS une partie par
+ * défaut : ranger d'office un test inconnu dans « Runs » peindrait une
+ * couverture que personne n'a écrite (invariant #4).
+ *
+ * `texte` null (le fichier n'est plus dans le dépôt) : la quatrième question
+ * ne peut pas être posée, et la raison le dit.
+ */
+export function domaineDuTest(fichier, texte = null, paquets = [], domaines = DOMAINES) {
+  const f = String(fichier ?? '');
+  const motsDuNom = motsDuCode(nomDuFichierDeTest(f));
+
+  const arch = motTrouve(DOMAINE_ARCHITECTURE, motsDuNom);
+  if (arch) return { domaine: DOMAINE_ARCHITECTURE.id, raison: `"${arch}" in the file name` };
+
+  for (const d of domaines) {
+    const c = (d.chemins ?? []).find((x) => f.startsWith(x));
+    if (c) return { domaine: d.id, raison: `lives in ${c.replace(/\/$/, '')}` };
+  }
+
+  const parNom = premierDomaine(motsDuNom, domaines);
+  if (parNom) return { domaine: parNom.d.id, raison: `"${parNom.cle}" in the file name` };
+
+  const racine = racineDuPaquet(f);
+  const dossiers = f
+    .slice(racine.length + 1)
+    .split('/')
+    .slice(0, -1)
+    .reverse();
+  for (const dossier of dossiers) {
+    const t = premierDomaine(motsDuCode(dossier), domaines);
+    if (t) return { domaine: t.d.id, raison: `"${t.cle}" in the folder ${dossier}` };
+  }
+
+  if (texte == null) {
+    return {
+      domaine: DOMAINE_NON_RANGE.id,
+      raison:
+        'its name and folders name no area, and the file is no longer in the repository so its imports cannot be read',
+    };
+  }
+
+  const modules = modulesImportes(f, texte, paquets);
+  for (const m of modules) {
+    for (const d of domaines) {
+      if (d.parImport === false) continue;
+      const c = (d.chemins ?? []).find((x) => m.startsWith(x) || m + '/' === x);
+      if (c) return { domaine: d.id, raison: `imports ${c.replace(/\/$/, '')}` };
+    }
+  }
+  const locaux = modules.filter((m) => !m.endsWith('/')).map((m) => m.split('/').pop());
+  for (const d of domaines) {
+    for (const m of locaux) {
+      const cle = motTrouve(d, motsDuCode(m));
+      if (cle) return { domaine: d.id, raison: `imports ${m} ("${cle}")` };
+    }
+  }
+  return {
+    domaine: DOMAINE_NON_RANGE.id,
+    raison: 'no word of its name, its folders or the modules it imports names an area',
+  };
+}
+
+/**
+ * La règle appliquée à une liste de fichiers : `{ fichier: { domaine, raison,
+ * absent } }`. `lire(f)` rend le texte du fichier, ou null s'il n'est plus
+ * dans le dépôt — et `absent` le dit, pour que la page ne présente pas comme un
+ * test vivant un test dont le fichier a disparu.
+ */
+export function domainesDesFichiers(fichiers, lire, paquets = []) {
+  const out = {};
+  for (const f of [...new Set(fichiers ?? [])].sort()) {
+    const texte = lire(f);
+    out[f] = { ...domaineDuTest(f, texte, paquets), absent: texte == null };
+  }
+  return out;
+}
+
+/**
+ * L'ordre dans lequel la page PRÉSENTE les parties : celui dans lequel on
+ * raconte le produit, pas celui dans lequel la règle les essaie. Les deux ne
+ * se confondent pas — la règle essaie « Channels » avant « Root & chat » parce
+ * qu'un nom qui dit « telegram » est plus précis qu'un nom qui dit « chat ».
+ */
+export const ORDRE_DE_LECTURE = Object.freeze([
+  'chat',
+  'delegation',
+  'runs',
+  'tools',
+  'skills',
+  'proof',
+  'approvals',
+  'memory',
+  'channels',
+  'connectors',
+  'llm',
+  'runtimes',
+  'automations',
+  'workspace',
+  'security',
+  'screens',
+  'install',
+  'database',
+  'docs',
+  'qa',
+  'architecture',
+  'non-range',
+]);
+
+// ─── Les cinq derniers tours ──────────────────────────────────────────────────
+//
+// Quentin, 30/09 : « à quoi servent les coches de couleur quand il y en a 33,
+// 17 ? Ce qui compte, ce sont les 5 derniers ». La mémoire garde trente tours
+// par test — c'est ce qui permet de dater une bascule et de mesurer une
+// réparation —, mais la PAGE n'en montre que cinq, partout, par cette seule
+// fonction. Les totaux (échecs / tours) restent des nombres.
+
+/** Le nombre de tours qu'un ruban montre, partout sur le portail. */
+export const TOURS_MONTRES = 5;
+
+/** Les derniers tours d'une fenêtre `recents`, du plus ancien au plus récent. */
+export function derniersTours(recents, n = TOURS_MONTRES) {
+  return String(recents ?? '').slice(-n);
+}
+
+/**
+ * Ce que les cinq derniers tours disent d'un test :
+ *   - `rouge` : son DERNIER tour a échoué ;
+ *   - `instable` : un échec, ou un vert obtenu au second essai, parmi les
+ *     cinq, sans que le dernier soit rouge ;
+ *   - `ignore` : les cinq ont été sautés ;
+ *   - `vert` : le reste ;
+ *   - `jamais` : aucun tour connu.
+ */
+export function etatDesDerniersTours(recents) {
+  const d = derniersTours(recents);
+  if (!d) return 'jamais';
+  if (d.at(-1) === 'r') return 'rouge';
+  if (/[rf]/.test(d)) return 'instable';
+  if (/^i+$/.test(d)) return 'ignore';
+  return 'vert';
+}
+
+/** Le ruban : un carré par tour, les cinq derniers, du plus ancien au plus récent. */
+export function htmlRuban(recents) {
+  var CLASSE = { v: 'ok', r: 'ko', i: 'inconnu', f: 'moyen' };
+  var MOT = { v: 'passed', r: 'failed', i: 'skipped', f: 'passed on retry' };
+  var tours = String(recents == null ? '' : recents).slice(-5);
+  if (!tours) return '<span class="ruban dim">never run</span>';
+  var mots = [];
+  var grains = '';
+  for (var k = 0; k < tours.length; k += 1) {
+    var c = tours.charAt(k);
+    mots.push(MOT[c] || 'unknown');
+    grains += '<i class="grain grain--' + (CLASSE[c] || 'inconnu') + '"></i>';
+  }
+  var dit =
+    'last ' +
+    tours.length +
+    ' run' +
+    (tours.length > 1 ? 's' : '') +
+    ', oldest first: ' +
+    mots.join(', ');
+  return (
+    '<span class="ruban" role="img" aria-label="' +
+    dit +
+    '" title="' +
+    dit +
+    '">' +
+    grains +
+    '</span>'
+  );
+}
+
+/**
+ * Le niveau d'un test, par son chemin (CLAUDE.md, « Ce qu'un test PROUVE ») :
+ * `e2e` un parcours Playwright, `ecran` un test de composant ou d'action web,
+ * `moteur` tout le reste — runner, outils, orchestration, base.
+ */
+export function niveauDuTest(fichier) {
+  const f = String(fichier ?? '');
+  if (f.startsWith('apps/web/tests/e2e/')) return 'e2e';
+  if (f.startsWith('apps/web/')) return 'ecran';
+  return 'moteur';
+}
+
+const NOM_DES_PARTIES = Object.fromEntries(
+  [...DOMAINES, DOMAINE_ARCHITECTURE, DOMAINE_NON_RANGE].map((d) => [d.id, d]),
+);
+
+/**
+ * Les tests de la mémoire, rangés par partie du produit, avec leurs comptes.
+ *
+ * `rangement` est la carte `{ fichier: { domaine, raison, absent } }` que la
+ * collecte a écrite. Un fichier que la carte ne connaît pas (une mémoire plus
+ * récente que la carte) va dans « Unclassified », avec cette raison-là : il
+ * n'est jamais posé dans une partie par défaut.
+ *
+ * `mesureLe` est la date de la dernière mesure : un test dont le dernier tour
+ * est plus ancien n'a PAS tourné cette fois-là, et la page le dit.
+ */
+export function testsParDomaine({ tests = [], rangement = {}, mesureLe = null } = {}) {
+  const parties = new Map();
+  const partie = (id) => {
+    if (!parties.has(id)) {
+      const d = NOM_DES_PARTIES[id] ?? DOMAINE_NON_RANGE;
+      parties.set(id, {
+        id: d.id,
+        nom: d.nom,
+        quoi: d.quoi,
+        total: 0,
+        ecran: 0,
+        e2e: 0,
+        moteur: 0,
+        rouges: 0,
+        instables: 0,
+        nonJoues: 0,
+        dernierTourLe: null,
+        fichiers: new Map(),
+      });
+    }
+    return parties.get(id);
+  };
+  const bilan = { total: 0, joues: 0, rouges: 0, instables: 0, nonJoues: 0, disparus: 0 };
+
+  for (const t of tests) {
+    const r = rangement?.[t.fichier] ?? {
+      domaine: DOMAINE_NON_RANGE.id,
+      raison: 'the collection that classified the files did not know this file',
+      absent: false,
+    };
+    const p = partie(NOM_DES_PARTIES[r.domaine] ? r.domaine : DOMAINE_NON_RANGE.id);
+    const etat = etatDesDerniersTours(t.recents);
+    const joue = mesureLe != null && t.dernierTourLe === mesureLe;
+    const niveau = niveauDuTest(t.fichier);
+
+    p.total += 1;
+    if (niveau === 'moteur') p.moteur += 1;
+    else p.ecran += 1;
+    if (niveau === 'e2e') p.e2e += 1;
+    if (etat === 'rouge') p.rouges += 1;
+    if (etat === 'instable') p.instables += 1;
+    if (!joue) p.nonJoues += 1;
+    if (t.dernierTourLe && (!p.dernierTourLe || t.dernierTourLe > p.dernierTourLe)) {
+      p.dernierTourLe = t.dernierTourLe;
+    }
+
+    bilan.total += 1;
+    if (joue) bilan.joues += 1;
+    else bilan.nonJoues += 1;
+    if (etat === 'rouge') bilan.rouges += 1;
+    if (etat === 'instable') bilan.instables += 1;
+    if (r.absent) bilan.disparus += 1;
+
+    if (!p.fichiers.has(t.fichier)) {
+      p.fichiers.set(t.fichier, {
+        fichier: t.fichier,
+        raison: r.raison,
+        absent: Boolean(r.absent),
+        tests: [],
+      });
+    }
+    p.fichiers.get(t.fichier).tests.push({
+      titre: t.titre ?? t.cle,
+      recents: derniersTours(t.recents),
+      etat,
+      echecs: t.echecs ?? 0,
+      tours: t.tours ?? 0,
+      joue,
+      // Le chemin vers la cause, seulement quand il y a un rouge À MONTRER : un
+      // lien sur un ruban vert mènerait à un run où il n'y a rien à voir.
+      lien: /r/.test(derniersTours(t.recents)) ? (t.dernierRougeExecution ?? null) : null,
+      rougeDepuis: t.rougeDepuis ?? null,
+    });
+  }
+
+  const rang = (id) => {
+    const i = ORDRE_DE_LECTURE.indexOf(id);
+    return i === -1 ? ORDRE_DE_LECTURE.length : i;
+  };
+  return {
+    ...bilan,
+    parties: [...parties.values()]
+      .sort((a, b) => rang(a.id) - rang(b.id))
+      .map((p) => ({
+        ...p,
+        fichiers: [...p.fichiers.values()].sort((a, b) => a.fichier.localeCompare(b.fichier)),
+      })),
+  };
+}
+
+/**
+ * La charge que la page embarque : les tests d'une partie en tableaux courts.
+ * Onze mille lignes rendues d'avance feraient une page de plusieurs mégaoctets
+ * de HTML ; la page ne rend une partie qu'au moment où on l'ouvre.
+ *
+ * Un fichier : `[chemin, raison, absent, tests]` ; un test : `[titre, cinq
+ * derniers tours, échecs, tours, joué à la dernière mesure, lien du run rouge]`.
+ */
+export function chargeDesTests(parties) {
+  return (parties ?? []).map((p) => ({
+    id: p.id,
+    fichiers: p.fichiers.map((f) => [
+      f.fichier,
+      f.raison,
+      f.absent ? 1 : 0,
+      f.tests.map((t) => [t.titre, t.recents, t.echecs, t.tours, t.joue ? 1 : 0, t.lien]),
+    ]),
+  }));
+}
+
+/**
+ * Le contenu d'une partie, rendu DANS LE NAVIGATEUR à son ouverture — la même
+ * fonction que les tests éprouvent, inscrite dans la page par `SCRIPT_TESTES`.
+ *
+ * `requete` filtre les tests par texte (titre ou chemin, sans casse). En
+ * recherche, un fichier qui a des résultats est ouvert, et au-delà de
+ * `plafond` lignes la partie DIT combien de résultats elle ne montre pas.
+ *
+ * Écrite en ES5 et sans constante du module : elle voyage par `String(fn)`.
+ */
+export function htmlDuneCharge(charge, requete, plafond) {
+  var q = String(requete == null ? '' : requete)
+    .trim()
+    .toLowerCase();
+  var max = typeof plafond === 'number' && plafond > 0 ? plafond : Infinity;
+  var rendus = 0;
+  var trouves = 0;
+  var html = '';
+  var fichiers = (charge && charge.fichiers) || [];
+  for (var i = 0; i < fichiers.length; i += 1) {
+    var f = fichiers[i];
+    var chemin = String(f[0]);
+    var dansChemin = q !== '' && chemin.toLowerCase().indexOf(q) !== -1;
+    var lignes = '';
+    var n = 0;
+    var ko = 0;
+    for (var j = 0; j < f[3].length; j += 1) {
+      var t = f[3][j];
+      var titre = String(t[0]);
+      if (q !== '' && !dansChemin && titre.toLowerCase().indexOf(q) === -1) continue;
+      n += 1;
+      if (/r|f/.test(t[1])) ko += 1;
+      if (rendus >= max) continue;
+      rendus += 1;
+      lignes +=
+        '<tr><td>' +
+        echapperHtml(titre) +
+        (t[4] ? '' : ' <span class="jeton">not run at the last measurement</span>') +
+        (t[5]
+          ? ' <a class="lien-run" href="' +
+            echapperHtml(t[5]) +
+            '" target="_blank" rel="noopener">see the run</a>'
+          : '') +
+        '</td><td class="mono">' +
+        htmlRuban(t[1]) +
+        '</td><td class="num">' +
+        Number(t[2]) +
+        '/' +
+        Number(t[3]) +
+        '</td></tr>';
+    }
+    if (n === 0) continue;
+    trouves += n;
+    html +=
+      '<details class="fichier-tests"' +
+      (q !== '' ? ' open' : '') +
+      '><summary><span class="mono">' +
+      echapperHtml(chemin) +
+      '</span> <span class="compte">' +
+      n +
+      ' test' +
+      (n > 1 ? 's' : '') +
+      '</span>' +
+      (ko > 0 ? ' <span class="pastille pastille--ko">' + ko + ' red or flaky</span>' : '') +
+      (f[2]
+        ? ' <span class="pastille pastille--inconnu">file no longer in the repository</span>'
+        : '') +
+      '<span class="raison">why here: ' +
+      echapperHtml(f[1]) +
+      '</span></summary>' +
+      (lignes
+        ? '<table class="tests-du-fichier"><thead><tr><th>Test</th><th>Last 5 runs</th><th class="num">Failed / runs</th></tr></thead><tbody>' +
+          lignes +
+          '</tbody></table>'
+        : '') +
+      '</details>';
+  }
+  if (trouves > rendus) {
+    html +=
+      '<p class="note-section">' +
+      (trouves - rendus) +
+      (trouves - rendus > 1
+        ? ' more matches in this area are not drawn. Refine the search to see them.</p>'
+        : ' more match in this area is not drawn. Refine the search to see it.</p>');
+  }
+  if (trouves === 0) html = '<p class="vide">No test here matches the search.</p>';
+  return { html: html, trouves: trouves };
+}
+
+/**
+ * Combien de tests d'une partie répondent à une recherche — sans rien rendre :
+ * la page le demande à chaque frappe, pour les vingt parties à la fois.
+ */
+export function trouvesDansCharge(charge, requete) {
+  var q = String(requete == null ? '' : requete)
+    .trim()
+    .toLowerCase();
+  var n = 0;
+  var fichiers = (charge && charge.fichiers) || [];
+  for (var i = 0; i < fichiers.length; i += 1) {
+    var tous = q === '' || String(fichiers[i][0]).toLowerCase().indexOf(q) !== -1;
+    for (var j = 0; j < fichiers[i][3].length; j += 1) {
+      if (tous || String(fichiers[i][3][j][0]).toLowerCase().indexOf(q) !== -1) n += 1;
+    }
+  }
+  return n;
+}
+
+/**
+ * LE SCRIPT DE LA PAGE « What is tested », inscrit tel quel : la page exécute
+ * les fonctions que les tests éprouvent, pas une copie.
+ */
+export const SCRIPT_TESTES = [
+  String(echapperHtml),
+  String(htmlRuban),
+  String(htmlDuneCharge),
+  String(trouvesDansCharge),
+]
+  .join('\n')
   .replace(/<\/script/gi, '<\\/script');

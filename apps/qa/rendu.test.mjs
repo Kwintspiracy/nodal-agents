@@ -124,7 +124,7 @@ let rendus = 0;
  * bloc de script ne se prouve qu'avec une explication qui contient cette
  * balise, et les vraies explications n'en contiennent aucune.
  */
-const rendre = (instantane, modules = {}) => {
+const rendre = (instantane, modules = {}, tests = null) => {
   const app = join(bac, `rendu-${(rendus += 1)}`, 'apps', 'qa');
   mkdirSync(join(app, 'data'), { recursive: true });
   for (const f of MODULES_DU_BAC) {
@@ -132,6 +132,13 @@ const rendre = (instantane, modules = {}) => {
     else cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
   }
   writeFileSync(join(app, 'data', 'snapshot.json'), JSON.stringify(instantane));
+  // La mémoire test par test (`tests.ndjson`), quand le cas en a besoin.
+  if (tests) {
+    writeFileSync(
+      join(app, 'data', 'tests.ndjson'),
+      tests.map((t) => JSON.stringify(t)).join('\n') + '\n',
+    );
+  }
   execFileSync(process.execPath, [join(app, 'build.mjs')], { encoding: 'utf8' });
   return readFileSync(join(app, 'dist', 'index.html'), 'utf8');
 };
@@ -712,7 +719,8 @@ describe('l’adresse porte la release, et la PAGE la relit (revue C de #192)', 
     const html = rendre(INSTANTANE);
     // Le filtre est posé AU DÉMARRAGE, juste après la vue : sans cet appel-là,
     // une adresse partagée ouvrirait le tableau entier.
-    expect(html).toMatch(/montrer\(vueDuHash\(\) \|\| '#chantiers'\);\s*\n\s*appliquerFiltre\(\);/);
+    // La page s'ouvre sur « What is tested » (30/09) ; le filtre, lui, suit.
+    expect(html).toMatch(/montrer\(vueDuHash\(\) \|\| '#testes'\);\s*\n\s*appliquerFiltre\(\);/);
     // Et l'adresse qui change le rejoue : sans quoi un retour en arrière du
     // navigateur laisserait la page sur l'ancienne release.
     expect(html).toContain("addEventListener('hashchange'");
@@ -888,31 +896,28 @@ describe('le rendu mène à la cause, et seulement quand elle existe', () => {
     ...o,
   });
 
-  const MEMOIRE = {
-    total: 2,
-    joues: 2,
-    instables: 0,
-    casses: 2,
-    pires: [],
-    regressions: [],
-    reparations: { durees: [], mediane: null },
-    listeCasses: [
-      casse({
-        titre: 'a test that remembers its run',
-        dernierRougeExecution: 'https://github.com/x/y/actions/runs/111',
-      }),
-      casse({ titre: 'a test that never met the CI', dernierRougeExecution: null }),
-    ],
-  };
+  // Depuis le 30/09, les rouges se lisent sur « What is tested » (tableau
+  // « Red or flaky now »), qui lit la mémoire test par test elle-même.
+  const TESTS = [
+    casse({
+      titre: 'a test that remembers its run',
+      dernierRougeExecution: 'https://github.com/x/y/actions/runs/111',
+    }),
+    casse({ titre: 'a test that never met the CI', dernierRougeExecution: null }),
+  ];
 
   let memoire = '';
   beforeAll(() => {
-    const html = rendre({
-      ...INSTANTANE,
-      execution: { id: '999', url: 'https://github.com/x/y/actions/runs/999' },
-      memoire: MEMOIRE,
-    });
-    memoire = html.slice(html.indexOf('id="memoire"'), html.indexOf('id="memoire"') + 20000);
+    const html = rendre(
+      {
+        ...INSTANTANE,
+        execution: { id: '999', url: 'https://github.com/x/y/actions/runs/999' },
+      },
+      {},
+      TESTS,
+    );
+    const debut = html.indexOf('Red or flaky now');
+    memoire = html.slice(debut, html.indexOf('</section>', debut));
   });
 
   /** La ligne du tableau de la mémoire qui porte ce titre. */
@@ -1024,7 +1029,9 @@ describe('la colonne « Running » du Kanban', () => {
 
   /** Le HTML de la colonne « Running », de son en-tête à la fin de sa pile. */
   const colonne = (html) => {
-    const debut = html.indexOf('colonne--en-vol');
+    // Cherchée DANS la page du tableau : la feuille de style porte le même nom
+    // de classe, et d'autres pages la précèdent désormais.
+    const debut = html.indexOf('colonne--en-vol', html.indexOf('<section id="chantiers"'));
     expect(debut, 'la colonne Running est absente de la page').toBeGreaterThan(-1);
     return html.slice(debut, html.indexOf('</section>', debut));
   };
@@ -1221,5 +1228,145 @@ describe('la colonne « Running » du Kanban', () => {
     expect(col).toContain('<span class="compte" id="en-vol-compte">?</span>');
     // Et la part directe reste là : elle, elle sait lire.
     expect(col).toContain('id="en-vol-direct"');
+  });
+});
+
+// ─── « What is tested » (30/09/2026) ─────────────────────────────────────────
+//
+// Quentin : « on a soi-disant 11 000 tests, je ne les vois pas ; à quoi servent
+// les coches quand il y en a 33 ? ». La page est rendue pour de vrai, avec une
+// mémoire et un rangement écrits ici, et on lit ce qu'elle montre.
+
+describe('« What is tested », sur la page', () => {
+  const LE = '2026-09-29T10:00:00.000Z';
+  const test = (fichier, titre, recents, o = {}) => ({
+    cle: `${fichier}::${titre}`,
+    fichier,
+    titre,
+    recents,
+    tours: recents.length,
+    echecs: [...recents].filter((c) => c === 'r').length,
+    dernierTourLe: LE,
+    rougeDepuis: null,
+    ...o,
+  });
+  const TESTS = [
+    test(
+      'apps/runner/src/tests/telegram/handler.test.ts',
+      'telegram handler answers',
+      'v'.repeat(30),
+    ),
+    // Trente-trois tours connus : la page n'en montre que cinq.
+    test(
+      'apps/runner/src/tests/telegram/handler.test.ts',
+      'telegram handler breaks',
+      'v'.repeat(28) + 'vvvvr',
+      {
+        rougeDepuis: '2026-09-28T00:00:00.000Z',
+        dernierRougeExecution: 'https://github.com/x/y/actions/runs/42',
+      },
+    ),
+    test('apps/web/tests/e2e/telegram-allowlist.spec.ts', 'allowlist journey', 'vvv'),
+    test('packages/shared/src/tests/round-trip.test.ts', 'a test nobody can place', 'vv'),
+  ];
+  const RANGEMENT = {
+    le: LE,
+    fichiers: {
+      'apps/runner/src/tests/telegram/handler.test.ts': {
+        domaine: 'channels',
+        raison: '"telegram" in the folder telegram',
+        absent: false,
+      },
+      'apps/web/tests/e2e/telegram-allowlist.spec.ts': {
+        domaine: 'channels',
+        raison: '"telegram" in the file name',
+        absent: false,
+      },
+      'packages/shared/src/tests/round-trip.test.ts': {
+        domaine: 'non-range',
+        raison: 'no word of its name, its folders or the modules it imports names an area',
+        absent: false,
+      },
+    },
+  };
+  let page = '';
+  let vue = '';
+  beforeAll(() => {
+    page = rendre({ ...INSTANTANE, genereLe: LE, rangement: RANGEMENT }, {}, TESTS);
+    vue = page.slice(
+      page.indexOf('<section id="testes"'),
+      page.indexOf('</section>', page.indexOf('<section id="testes"')),
+    );
+  });
+
+  /** L'en-tête d'une partie, tel qu'il est rendu fermé. */
+  const tete = (id) => {
+    const i = vue.indexOf(`data-partie="${id}"`);
+    expect(i, `partie ${id} absente`).toBeGreaterThan(-1);
+    return vue.slice(i, vue.indexOf('</summary>', i));
+  };
+
+  it('est la PREMIÈRE page, celle sur laquelle le portail s’ouvre', () => {
+    expect(page.indexOf('<section id="testes"')).toBeLessThan(
+      page.indexOf('<section id="chantiers"'),
+    );
+    expect(page).toContain("montrer(vueDuHash() || '#testes')");
+  });
+
+  it('chaque partie dit ses tests, écran et moteur, ses rouges et sa dernière exécution', () => {
+    const t = tete('channels');
+    expect(t).toContain('3 tests');
+    expect(t).toContain('1 on screens (1 in browser journeys)');
+    expect(t).toContain('2 in the engine');
+    expect(t).toContain('1 red');
+    expect(t).toContain('last run');
+    // Fermée par défaut : ses lignes ne sont pas dans le HTML, elles sont dans la charge.
+    expect(vue).not.toContain('<details class="partie" data-partie="channels" open');
+    expect(page).toContain('"telegram handler answers"');
+  });
+
+  it('Unclassified est montré, compté, et dit sur la page — jamais caché', () => {
+    expect(tete('non-range')).toContain('1 test');
+    expect(vue).toContain(
+      'The rule placed 3 of the 4 tests. 1 it could not place is in Unclassified',
+    );
+  });
+
+  it('un ruban montre les CINQ derniers tours, même quand la mémoire en garde trente-trois', () => {
+    const i = vue.indexOf('telegram handler breaks');
+    expect(i, 'le test rouge manque au tableau « Red or flaky now »').toBeGreaterThan(-1);
+    const ligne = vue.slice(vue.lastIndexOf('<tr>', i), vue.indexOf('</tr>', i));
+    expect(ligne.match(/class="grain /g)).toHaveLength(5);
+    expect(ligne).toContain('1/33');
+    expect(ligne).toContain('actions/runs/42');
+  });
+
+  it('le guide dit ce que chaque page répond, et ce qu’AUCUN test ne couvre', () => {
+    expect(vue).toContain('What each page answers');
+    expect(vue).toContain('No test sends a real request to a real model.');
+    expect(vue).toContain('Real requests on a real model: not measured yet.');
+    for (const ancre of [
+      '#chantiers',
+      '#capacites',
+      '#ecarts',
+      '#parcours',
+      '#vue',
+      '#banc',
+      '#ci',
+      '#historique',
+    ]) {
+      expect(vue, ancre).toContain(`href="${ancre}"`);
+    }
+  });
+
+  it('une collecte d’avant le rangement le DIT, et range tout dans Unclassified', () => {
+    const p = rendre({ ...INSTANTANE, genereLe: LE, rangement: undefined }, {}, TESTS);
+    expect(p).toContain('This collection predates the sorting by part.');
+    expect(p).not.toContain('data-partie="channels"');
+  });
+
+  it('sans mémoire, la page dit qu’elle manque, jamais « 0 test »', () => {
+    const p = rendre({ ...INSTANTANE });
+    expect(p).toContain('No test memory in this collection.');
   });
 });
