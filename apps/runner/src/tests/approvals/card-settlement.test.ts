@@ -778,4 +778,26 @@ describe('a tap on the card: one write, the same text @cap:approuver-une-action/
 
     expect(completedTelegramEdits.at(-1)).toEqual(noButtons('⌛ Expired — run_command'));
   });
+
+  it('race: the request is answered elsewhere while « Back » restores the card — the card ends without buttons', async () => {
+    const { approvalId } = await telegramCard();
+    fetchMock.mockClear();
+    onNextTelegramEdit = async () => {
+      await resolveApprovalDecision(deps, testEnv, {
+        approvalRequestId: approvalId,
+        decision: 'reject',
+        resolvedBy: 'api',
+      });
+    };
+
+    await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:wb`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    expect(completedTelegramEdits.at(-1)).toEqual(noButtons('❌ Rejected — run_command'));
+  });
 });
