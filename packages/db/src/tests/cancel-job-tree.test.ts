@@ -54,7 +54,7 @@ describe('cancelJobTree @cap:suivre-execution/moteur', () => {
       jobId: head,
     });
 
-    expect(out).toEqual({ jobIds: [child], taskIds: [], requestIds: [] });
+    expect(out).toEqual({ jobIds: [child], taskIds: [], requestIds: [], discardedMessages: [] });
     expect(await statuses([head, child, grandchild])).toEqual({
       [head]: 'failed',
       [child]: 'cancelled',
@@ -78,7 +78,7 @@ describe('cancelJobTree @cap:suivre-execution/moteur', () => {
       jobId: head,
     });
 
-    expect(out).toEqual({ jobIds: [], taskIds: [], requestIds: [] });
+    expect(out).toEqual({ jobIds: [], taskIds: [], requestIds: [], discardedMessages: [] });
     expect(await statuses([head])).toEqual({ [head]: 'awaiting_approval' });
     const [still] = await db
       .select({ status: approvalRequests.status })

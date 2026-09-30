@@ -11,8 +11,14 @@
 // after the escalation shipped, and a comment that states a rule gets read as
 // one (revue Codex de la dette de la PR #73, passe 3).
 
-import { eq, and, asc, desc, isNull, notInArray, or, sql } from '@nodal-agents/db';
-import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
+import { eq, and, asc, desc, sql } from '@nodal-agents/db';
+import {
+  agents,
+  chatMessages,
+  conversations,
+  agentJobs,
+  deliverOrStartTurn,
+} from '@nodal-agents/db';
 import {
   buildSystemPrompt,
   assertTurnToolCallBudget,
@@ -43,7 +49,6 @@ import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
 import type { BrakeStop } from '@nodal-agents/shared';
-import { TERMINAL_STATUSES } from '../job/state.ts';
 import { watchCallProgress } from '../job/call-progress.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
@@ -110,9 +115,9 @@ export const CHAT_TOOLS: Record<
       'self-contained by carrying the user’s intent across turns — NOT by enriching it.\n' +
       'Never decline an action the user asks for — escalate it here. For plain conversation or ' +
       'recalling facts, reply in text instead (do not call this).\n' +
-      'While a job you launched from this conversation is still running, a new call is refused ' +
-      'and you are shown that job: the person is often just clarifying the same request. ' +
-      'Different work starts once it has finished, or from a new conversation.',
+      'While a job launched from this conversation is still running, a call starts nothing new: ' +
+      'the person’s message is handed to that job, which reads it and decides what to do with ' +
+      'it (a clarification of the same request, or other work it takes on).',
     inputSchema: z.object({ instruction: z.string().min(1).max(16000) }),
   },
 };
@@ -151,22 +156,30 @@ export type ChatTurnResult =
       cutReason?: LlmTimeoutReason;
     };
 
-/** A head job of this conversation that has not reached a terminal status (#453). */
+/** The head job of this conversation still running when the turn called `run_task` (#453, #531). */
 type RunningHead = { id: string; task: string; status: string | null };
 
 /**
- * The tool-result of a `run_task` refused because work launched from this
- * conversation is still running (#453). LLM-facing: a bracketed platform line
- * built from the running jobs' typed fields, never shown as the reply.
+ * The tool-result of a `run_task` that started nothing because work launched
+ * from this conversation is still running (#453): the person's message was
+ * handed to that job instead (#531). LLM-facing: a bracketed platform line
+ * built from the running job's typed fields, never shown as the reply.
+ * `again` is a second call in the same turn: the message was already handed
+ * over, and is not handed over twice.
  */
-export function runTaskRefusal(running: readonly RunningHead[]): string {
-  const jobs = running
-    .map((j) => `job ${j.id} (status: ${j.status ?? 'unknown'}) task: "${j.task}"`)
-    .join('; ');
+export function runTaskDelivered(head: RunningHead, again: boolean): string {
+  const job = `job ${head.id} (status: ${head.status ?? 'unknown'}) task: "${head.task}"`;
+  if (again) {
+    return (
+      `[run_task not launched: the person's message was already handed to the running ${job}. ` +
+      'Nothing was launched.]'
+    );
+  }
   return (
-    `[run_task refused: work launched from this conversation is still running: ${jobs}. ` +
-    'Nothing was launched. Tell the person you are already on it; its result will arrive in ' +
-    'this conversation. Different work starts once it has finished, or from a new conversation.]'
+    `[run_task not launched: work launched from this conversation is still running: ${job}. ` +
+    "The person's message was handed to that job: it reads it at its next step and decides " +
+    'what to do with it. Nothing new was launched. Tell the person their message reached the ' +
+    'running work; its result will arrive in this conversation.]'
   );
 }
 
@@ -833,30 +846,37 @@ export async function runChatTurn(opts: {
     return null;
   };
 
-  // 5c. UN TRAVAIL DU FIL COURT DÉJÀ (#453). La personne qui précise sa demande
-  //     pendant que le premier travail tourne faisait lancer un second travail
-  //     identique : l'historique montrait bien le premier en cours, le modèle
-  //     re-déclenchait par-dessus. Le contrat, pour tout agent : l'appel est
-  //     REFUSÉ au modèle, qui reçoit le travail en cours dans le résultat de son
-  //     appel d'outil et répond une seconde fois : il est déjà dessus. Un
-  //     travail différent se lance quand celui-ci est fini, ou depuis une
-  //     nouvelle conversation.
+  // 5c. UN TRAVAIL DU FIL COURT DÉJÀ (#453, #531). La personne qui précise sa
+  //     demande pendant que le premier travail tourne faisait lancer un second
+  //     travail identique : l'historique montrait bien le premier en cours, le
+  //     modèle re-déclenchait par-dessus. #453 refusait l'appel — et la
+  //     précision n'atteignait jamais le travail en cours.
   //
-  //     AUCUNE échappatoire « en parallèle » (revue Codex, passe 3). Un champ
-  //     `alongside` a existé : une reformulation passait sous la comparaison
-  //     de textes, et il ne reposait que sur la parole du modèle. Il est
-  //     retiré plutôt que rafistolé (invariant #11).
+  //     Le contrat, le MÊME que sur chaque canal (`deliverOrStartTurn`,
+  //     @nodal-agents/db) : un `run_task` démarre une tête seulement si aucune
+  //     tête de la conversation ne vit. Sinon le message de la personne entre
+  //     dans la file de celle qui vit, qui le lira à son prochain pas et jugera
+  //     — précision, ou autre travail qu'elle prend en charge. Le modèle du chat
+  //     reçoit le fait dans le résultat de son appel d'outil et répond une
+  //     seconde fois : le message est arrivé au travail en cours.
+  //
+  //     AUCUNE échappatoire « en parallèle » (revue Codex de #453, passe 3). Un
+  //     champ `alongside` a existé : une reformulation passait sous la
+  //     comparaison de textes, et il ne reposait que sur la parole du modèle.
+  //     Il est retiré plutôt que rafistolé (invariant #11).
   //
   //     Un second appel encore retenu ne garde PAS sa phrase : « je lance
   //     l'autre tâche » posée au-dessus d'un appel jeté annoncerait un travail
   //     qui n'existe pas. Le texte est vidé, et la relance SANS outils (6b)
-  //     répond avec les deux refus sous les yeux. Rien ne se jette en silence :
-  //     chaque refus est ce que le modèle lit.
+  //     répond avec les deux résultats sous les yeux. Le message n'est remis
+  //     qu'une fois par tour.
   //
   //     Chaque passage de la boucle part d'une réponse : sans texte ni appel,
   //     elle est redemandée sans outils ; en prose, elle est relue (une fois
-  //     par tour) ; un run_task passe ensuite par le refus ci-dessous.
+  //     par tour) ; un run_task passe ensuite par le point de décision.
   let refusals = 0;
+  let startedJobId: string | undefined;
+  let deliveredTo: RunningHead | null = null;
   for (;;) {
     if (!runTask && !text) {
       const arret = await repondreSansOutils();
@@ -865,26 +885,58 @@ export async function runChatTurn(opts: {
     const arretRelecture = await relireUneFois();
     if (arretRelecture) return arretRelecture;
     if (!runTask) break;
-    const runningHeads: RunningHead[] = await db
-      .select({ id: agentJobs.id, task: agentJobs.task, status: agentJobs.status })
-      .from(agentJobs)
-      .where(
-        and(
-          eq(agentJobs.entityId, entityId),
-          eq(agentJobs.conversationId, conversationId),
-          isNull(agentJobs.parentJobId),
-          // Non terminal = pas encore fini. `NULL NOT IN (…)` vaut « inconnu » en
-          // SQL et EXCLUT la ligne : une tête sans statut, que l'historique dit
-          // « still running », laissait passer un doublon (revue Codex, passe 4).
-          or(isNull(agentJobs.status), notInArray(agentJobs.status, TERMINAL_STATUSES)),
-        ),
-      );
-    if (runningHeads.length === 0) break;
+
+    if (deliveredTo === null) {
+      const instruction =
+        String(
+          (runTask.input as { instruction?: unknown } | undefined)?.instruction ?? '',
+        ).trim() || message;
+      // SAFETY NET against intent drift: the worker must always see the USER's
+      // actual words, not only the orchestrator's framing. If the instruction did
+      // not already carry them (an orchestrator reworded/compressed despite the steer), append
+      // the user's exact message as the source of truth. Dedup when it's already in.
+      const probe = message.trim().slice(0, 160);
+      const workerContent =
+        probe.length > 0 && !instruction.includes(probe)
+          ? `${instruction}\n\n[User's exact request, verbatim — this is the source of truth; the line above is only framing]\n${message}`
+          : instruction;
+      const decision = await deliverOrStartTurn(db, {
+        entityId,
+        conversationId,
+        // Ce que la tête vivante lira : les mots de la personne, tels quels.
+        message: { task: message, content: message },
+        start: {
+          entityId,
+          agentId,
+          status: 'pending',
+          channel: 'dashboard',
+          task: instruction,
+          // Jobs page grouping (migration 0059): this channel already has a
+          // real conversation entity (the dashboard sidebar thread) — stamp
+          // that id directly rather than re-deriving it from a gap heuristic.
+          conversationId,
+          // Le projet courant du fil (P6) : le travail escaladé naît dans le
+          // dossier où cette conversation travaille, sans attendre qu'une
+          // écriture l'y rattache.
+          projectId: conv.currentProjectId,
+          messages: [{ role: 'user', content: workerContent }],
+        },
+      });
+      if (decision.kind === 'started') {
+        startedJobId = decision.jobId;
+        break;
+      }
+      const [head] = await db
+        .select({ id: agentJobs.id, task: agentJobs.task, status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, decision.headJobId));
+      deliveredTo = head ?? { id: decision.headJobId, task: '', status: null };
+    }
 
     const toolCallId =
       (runTask as { toolCallId?: unknown }).toolCallId !== undefined
         ? String((runTask as { toolCallId?: unknown }).toolCallId)
-        : `run-task-refused-${String(refusals)}`;
+        : `run-task-delivered-${String(refusals)}`;
     // L'historique porte déjà le message de ce tour (écrit en 1b).
     messages = [
       ...messages,
@@ -907,7 +959,10 @@ export async function runChatTurn(opts: {
             type: 'tool-result' as const,
             toolCallId,
             toolName: 'run_task',
-            output: { type: 'text' as const, value: runTaskRefusal(runningHeads) },
+            output: {
+              type: 'text' as const,
+              value: runTaskDelivered(deliveredTo, refusals >= 1),
+            },
           },
         ],
       },
@@ -915,8 +970,8 @@ export async function runChatTurn(opts: {
     // Ce qui a pu passer par le flux n'est plus la réponse.
     streamed = false;
     if (refusals >= 1) {
-      // Second refus : ni son appel ni sa phrase ne restent. La relance sans
-      // outils (6b) écrit la réponse, refus compris.
+      // Second appel : ni son appel ni sa phrase ne restent. La relance sans
+      // outils (6b) écrit la réponse, les deux résultats compris.
       text = '';
       runTask = undefined;
       continue;
@@ -931,10 +986,10 @@ export async function runChatTurn(opts: {
       runTask = runTaskOf(again);
     } catch (err) {
       if (abortSignal?.aborted) return await keepStoppedReply();
-      const capped = failedOnRefusedTurn(err, 'reply after a refused run_task', agentRow.slug);
+      const capped = failedOnRefusedTurn(err, 'reply after a delivered run_task', agentRow.slug);
       if (capped) return capped;
       console.warn(
-        `[run-chat-turn] reply after a refused run_task failed (${agentRow.slug}):`,
+        `[run-chat-turn] reply after a delivered run_task failed (${agentRow.slug}):`,
         (err as Error).message,
       );
       text = '';
@@ -946,38 +1001,10 @@ export async function runChatTurn(opts: {
   // 6a. ESCALATION: the agent wants to act → spawn a real job (the unit of work).
   //     The spawned job runs the ROOT with its full toolset (delegating to
   //     sub-agents → the dispatch cards). The chat just shows its progress.
-  if (runTask) {
-    const instruction =
-      String((runTask.input as { instruction?: unknown } | undefined)?.instruction ?? '').trim() ||
-      message;
-    // SAFETY NET against intent drift: the worker must always see the USER's
-    // actual words, not only the orchestrator's framing. If the instruction did
-    // not already carry them (an orchestrator reworded/compressed despite the steer), append
-    // the user's exact message as the source of truth. Dedup when it's already in.
-    const probe = message.trim().slice(0, 160);
-    const workerContent =
-      probe.length > 0 && !instruction.includes(probe)
-        ? `${instruction}\n\n[User's exact request, verbatim — this is the source of truth; the line above is only framing]\n${message}`
-        : instruction;
-    const [job] = await db
-      .insert(agentJobs)
-      .values({
-        entityId,
-        agentId,
-        status: 'pending',
-        channel: 'dashboard',
-        task: instruction,
-        // Jobs page grouping (migration 0059): this channel already has a
-        // real conversation entity (the dashboard sidebar thread) — stamp
-        // that id directly rather than re-deriving it from a gap heuristic.
-        conversationId,
-        // Le projet courant du fil (P6) : le travail escaladé naît dans le
-        // dossier où cette conversation travaille, sans attendre qu'une
-        // écriture l'y rattache.
-        projectId: conv.currentProjectId,
-        messages: [{ role: 'user', content: workerContent }],
-      })
-      .returning({ id: agentJobs.id });
+  if (runTask && startedJobId) {
+    // Le job est né au point de décision (5c), dans la transaction qui a
+    // vérifié qu'aucune tête de la conversation ne vivait.
+    const job = { id: startedJobId };
 
     // The acknowledgment is the agent's OWN words (it's prompted to write a
     // one-liner when it escalates). If it wrote none, the runner stays SILENT
@@ -992,7 +1019,7 @@ export async function runChatTurn(opts: {
         conversationId,
         role: 'assistant',
         content: reply,
-        jobId: job?.id ?? null,
+        jobId: job.id,
       })
       .returning({ id: chatMessages.id });
     await db
@@ -1023,19 +1050,17 @@ export async function runChatTurn(opts: {
     // tel quel dans Runs —, la réponse est marquée arrêtée, et l'appelant ne
     // reçoit aucun job à lancer.
     if (abortSignal?.aborted) {
-      if (job?.id) {
-        await db
-          .update(agentJobs)
-          .set({ status: 'cancelled', updatedAt: new Date() })
-          .where(eq(agentJobs.id, job.id));
-      }
+      await db
+        .update(agentJobs)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(eq(agentJobs.id, job.id));
       if (ackRow?.id) {
         await db.update(chatMessages).set({ stopped: true }).where(eq(chatMessages.id, ackRow.id));
       }
       return { ok: true, reply, streamed, stopped: true };
     }
 
-    return { ok: true, reply, spawnedJobId: job?.id, streamed };
+    return { ok: true, reply, spawnedJobId: job.id, streamed };
   }
 
   // 6b. Pure conversation — persist the assistant turn. No job created. A

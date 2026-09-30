@@ -40,6 +40,13 @@ export interface SlackHandleResult {
    * the runner writes no text either (invariant #2).
    */
   stop?: ChannelStopResult;
+  /**
+   * A job of this conversation was still alive (#531): no job was created, the
+   * message is in that job's inbox, which its loop reads at its next turn. The
+   * caller acknowledges it with a reaction where the channel offers one
+   * (`channelTurnReaction`) — never with text (invariant #2).
+   */
+  delivered?: { headJobId: string; entryId: string };
   skipped?:
     | 'bot_author'
     | 'no_content'
@@ -193,6 +200,9 @@ export async function handleSlackMessage(args: {
   });
   if (turn.kind === 'stop') return { stop: turn.stop };
 
+  if (turn.kind === 'delivered') {
+    return { delivered: { headJobId: turn.headJobId, entryId: turn.entryId } };
+  }
   return { jobId: turn.jobId };
 }
 

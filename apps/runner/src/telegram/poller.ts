@@ -32,7 +32,7 @@ import {
   parseAuthCallbackData,
   buildAuthConfirmKeyboard,
 } from './auth-callback.ts';
-import { stopReaction } from '../channels/turn.ts';
+import { channelTurnReaction } from '../channels/turn.ts';
 
 export interface PollerOpts {
   agentId: string;
@@ -371,6 +371,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       let createdPhoto: HandleResult['photo'];
       let createdPendingAuth: HandleResult['pendingAuth'];
       let stopResult: HandleResult['stop'];
+      let deliveredResult: HandleResult['delivered'];
 
       try {
         // Atomic: create job + advance offset. If anything throws, the txn
@@ -393,6 +394,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
           createdPhoto = result.photo;
           createdPendingAuth = result.pendingAuth;
           stopResult = result.stop;
+          deliveredResult = result.delivered;
         });
         // The transaction just committed — the DB is healthy again.
         dbBackoffMs = BACKOFF_INITIAL_MS;
@@ -475,12 +477,13 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       offset = newOffset;
 
       // Inbound photo: download it (network — out of the txn) and attach it to
-      // the job BEFORE the worker runs, so the agent sees the image. Best-effort:
-      // a failed download leaves the job text-only and the worker still runs.
-      if (createdJobId && createdPhoto) {
+      // the message BEFORE the worker runs — the new job, or its entry in a
+      // live job's inbox (#531) — so the agent sees the image. Best-effort: a
+      // failed download leaves the message text-only and the worker still runs.
+      if (createdPhoto) {
+        const photoTarget = createdPhoto.target;
         try {
           await attachInboundPhoto({
-            jobId: createdJobId,
             entityId: agentEntityId,
             botToken,
             photo: createdPhoto,
@@ -488,9 +491,9 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
           });
         } catch (err) {
           console.warn(
-            `[telegram-poller agent=${agentId}] photo attach failed for job ${createdJobId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
+            `[telegram-poller agent=${agentId}] photo attach failed for ${
+              photoTarget.kind === 'job' ? photoTarget.jobId : photoTarget.entryId
+            }: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
@@ -500,21 +503,23 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
         triggerJobWorker(createdJobId, env);
       }
 
-      // `/stop` (#602): the runs are already stopped, in the transaction that
-      // just committed. Acknowledge it with a reaction on the message — the
-      // runner writes no text (invariant #2). Network I/O, so out of the txn;
-      // a failed reaction changes nothing that was stopped, and is logged.
-      const stopMessageId = update.message?.message_id;
-      const stopChatId = update.message?.chat?.id;
-      if (stopResult && stopMessageId !== undefined && stopChatId !== undefined) {
+      // `/stop` (#602), or a message delivered to the conversation's running
+      // work (#531): nothing new runs, what happened is already committed.
+      // Acknowledge it with a reaction on the message — the runner writes no
+      // text (invariant #2). Network I/O, so out of the txn; a failed reaction
+      // changes nothing that was stopped or delivered, and is logged.
+      const ackMessageId = update.message?.message_id;
+      const ackChatId = update.message?.chat?.id;
+      const ack = channelTurnReaction({ stop: stopResult, delivered: deliveredResult });
+      if (ack && ackMessageId !== undefined && ackChatId !== undefined) {
         await setTelegramMessageReaction({
           botToken,
-          chatId: stopChatId,
-          messageId: stopMessageId,
-          emoji: stopReaction(stopResult),
+          chatId: ackChatId,
+          messageId: ackMessageId,
+          emoji: ack,
         }).catch((err) => {
           console.warn(
-            `[telegram-poller agent=${agentId}] /stop reaction failed for chat ${stopChatId}: ${
+            `[telegram-poller agent=${agentId}] ${ack} reaction failed for chat ${ackChatId}: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );

@@ -201,6 +201,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0138 (#612) : les outils différés que le job a chargés.
       loaded_tools text[],
       messages jsonb DEFAULT '[]',
+      -- mirrors migration 0141 (#531) : la file des messages arrivés pendant que la tête vivait.
+      inbox jsonb NOT NULL DEFAULT '[]'::jsonb,
       search_text text,
       search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(search_text, ''))) STORED,
       tools_used text[] DEFAULT '{}',
@@ -251,6 +253,36 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );
+
+    -- mirrors migration 0141 (#531) : ce qui reste en file quand la tête
+    -- finit devient une nouvelle tête de la conversation.
+    CREATE OR REPLACE FUNCTION agent_jobs_inbox_relaunch() RETURNS trigger
+    LANGUAGE plpgsql AS $fn$
+    DECLARE
+      premier jsonb := NEW.inbox -> 0;
+    BEGIN
+      INSERT INTO agent_jobs (
+        entity_id, agent_id, channel, chat_id, conversation_id, project_id,
+        status, task, messages, inbox
+      ) VALUES (
+        NEW.entity_id, NEW.agent_id, NEW.channel, NEW.chat_id, NEW.conversation_id,
+        (SELECT c.current_project_id FROM conversations c WHERE c.id = NEW.conversation_id),
+        'pending',
+        premier ->> 'task',
+        jsonb_build_array(jsonb_build_object('role', 'user', 'content', premier -> 'content')),
+        NEW.inbox - 0
+      );
+      NEW.inbox := '[]'::jsonb;
+      RETURN NEW;
+    END;
+    $fn$;
+
+    DROP TRIGGER IF EXISTS agent_jobs_inbox_relaunch ON agent_jobs;
+    CREATE TRIGGER agent_jobs_inbox_relaunch
+      BEFORE UPDATE ON agent_jobs
+      FOR EACH ROW
+      WHEN (NEW.status IN ('completed', 'failed', 'cancelled') AND NEW.inbox <> '[]'::jsonb)
+      EXECUTE FUNCTION agent_jobs_inbox_relaunch();
 
     CREATE TABLE IF NOT EXISTS agent_tasks (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

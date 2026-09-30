@@ -12,6 +12,19 @@
 // les lignes en base : la tête et son délégué sont `cancelled`, l'approbation
 // en attente est `expired`, aucun job n'est né, et une autre conversation du
 // même canal n'a pas bougé.
+//
+// UN travail de tête par conversation (#531), par les mêmes handlers : un
+// message qui n'est pas `/stop`, envoyé pendant que la conversation travaille
+// (tête en cours, suspendue pour une délégation ou une approbation, pas encore
+// prise), entre dans la file de la tête au lieu de démarrer un second job ; un
+// fil où rien ne vit, ou dont la tête est terminée, démarre un job comme avant ;
+// `/stop` vide la file sans la relancer ; `/new` ouvre un fil neuf qui démarre.
+//
+// Mutations vérifiées : `deliverOrStartTurn` qui démarre toujours (la remise
+// neutralisée) → « delivers it to the running work » rougit sur les quatre
+// canaux et les quatre états (un second job naît, la file reste vide) ; la
+// file non vidée par `cancelJobTree` → « `/stop` after a delivery » rougit
+// sur les quatre canaux (une tête naît de l'arrêt).
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -26,6 +39,7 @@ import {
   and,
   eq,
   inArray,
+  isNull,
 } from '@nodal-agents/db';
 import type { TelegramUpdate, WhatsAppInboundMessage } from '@nodal-agents/delivery';
 import { handleTelegramUpdate } from '../../telegram/handler.ts';
@@ -67,6 +81,7 @@ type Channel = 'telegram' | 'discord' | 'slack' | 'whatsapp';
 interface Outcome {
   jobId?: string;
   stop?: ChannelStopResult;
+  delivered?: { headJobId: string; entryId: string };
   skipped?: string;
 }
 
@@ -326,7 +341,11 @@ describe('/stop from a channel ends every run of the conversation, without a mod
       const result = await send(channel, chatId, '/stop the music please');
 
       expect(result.stop).toBeUndefined();
-      expect(result.jobId).toBeDefined();
+      // A message for the agent — delivered to the conversation's running work
+      // (#531), which stops nothing by itself.
+      expect(result.jobId).toBeUndefined();
+      expect(result.delivered?.headJobId).toBe(busy.head);
+      expect(await inboxTasks(busy.head)).toEqual(['/stop the music please']);
       expect(await statusOf([busy.head, busy.child])).toEqual({
         [busy.head]: 'awaiting_delegation',
         [busy.child]: 'processing',
@@ -400,6 +419,127 @@ describe('/stop from a channel ends every run of the conversation, without a mod
       expect(result.stop).toBeUndefined();
       expect(result.skipped).toBe('group_filter');
       expect(await statusOf([busy.head])).toEqual({ [busy.head]: 'awaiting_delegation' });
+    });
+  });
+});
+
+async function inboxTasks(jobId: string): Promise<string[]> {
+  const [row] = await db
+    .select({ inbox: agentJobs.inbox })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId));
+  return (row?.inbox ?? []).map((e) => e.task);
+}
+
+async function headsOf(conversationId: string) {
+  return db
+    .select({ id: agentJobs.id, task: agentJobs.task, status: agentJobs.status })
+    .from(agentJobs)
+    .where(
+      and(
+        eq(agentJobs.entityId, entityId),
+        eq(agentJobs.conversationId, conversationId),
+        isNull(agentJobs.parentJobId),
+      ),
+    )
+    .orderBy(agentJobs.createdAt);
+}
+
+/** La conversation courante du fil, lue en base. */
+async function conversationsOf(channel: Channel, chatId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.channel, channel), eq(conversations.chatId, chatId)))
+    .orderBy(conversations.createdAt);
+  return rows.map((r) => r.id);
+}
+
+describe('one head job per conversation: a message sent while its work runs goes to that work (#531) @cap:parler-par-canal-externe/moteur', () => {
+  describe.each(CHANNELS)('on %s', (channel) => {
+    it.each(['processing', 'awaiting_delegation', 'awaiting_approval', 'pending'])(
+      'the head is %s: the message delivers it to the running work, no second job is born',
+      async (status) => {
+        const chatId = chat(channel);
+        await allow(channel, chatId);
+        const busy = await busyThread(channel, chatId);
+        await db.update(agentJobs).set({ status }).where(eq(agentJobs.id, busy.head));
+
+        const result = await send(channel, chatId, 'et mets-le dans le dossier partagé');
+
+        expect(result.jobId).toBeUndefined();
+        expect(result.stop).toBeUndefined();
+        expect(result.delivered).toEqual({
+          headJobId: busy.head,
+          entryId: expect.any(String) as string,
+        });
+        expect((await headsOf(busy.conversationId)).map((h) => h.id)).toEqual([busy.head]);
+        expect(await inboxTasks(busy.head)).toEqual(['et mets-le dans le dossier partagé']);
+      },
+    );
+
+    it('nothing runs in the thread: the message starts a job, as before', async () => {
+      const chatId = chat(channel);
+      await allow(channel, chatId);
+
+      const result = await send(channel, chatId, 'Fais-moi un portrait');
+
+      expect(result.delivered).toBeUndefined();
+      expect(result.jobId).toBeDefined();
+      const [conversationId] = await conversationsOf(channel, chatId);
+      expect(await headsOf(conversationId!)).toEqual([
+        { id: result.jobId, task: 'Fais-moi un portrait', status: 'pending' },
+      ]);
+    });
+
+    it('the head has finished: the next message starts a job, as before', async () => {
+      const chatId = chat(channel);
+      await allow(channel, chatId);
+      const first = await send(channel, chatId, 'Fais-moi un portrait');
+      await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, first.jobId!));
+
+      const result = await send(channel, chatId, 'Et un autre, en couleur');
+
+      expect(result.delivered).toBeUndefined();
+      const [conversationId] = await conversationsOf(channel, chatId);
+      expect((await headsOf(conversationId!)).map((h) => [h.task, h.status])).toEqual([
+        ['Fais-moi un portrait', 'completed'],
+        ['Et un autre, en couleur', 'pending'],
+      ]);
+      expect(await inboxTasks(first.jobId!)).toEqual([]);
+    });
+
+    it('`/stop` after a delivery: everything stops, the waiting message is discarded and relaunches nothing', async () => {
+      const chatId = chat(channel);
+      await allow(channel, chatId);
+      const busy = await busyThread(channel, chatId);
+      await send(channel, chatId, 'et mets-le dans le dossier partagé');
+
+      const result = await send(channel, chatId, '/stop');
+
+      expect(result.stop?.stopped[0]?.discardedMessages).toEqual([
+        { jobId: busy.head, task: 'et mets-le dans le dossier partagé' },
+      ]);
+      expect((await headsOf(busy.conversationId)).map((h) => [h.id, h.status])).toEqual([
+        [busy.head, 'cancelled'],
+      ]);
+    });
+
+    it('`/new` while the work runs: a new conversation, where the message starts its own job', async () => {
+      const chatId = chat(channel);
+      await allow(channel, chatId);
+      const busy = await busyThread(channel, chatId);
+
+      const result = await send(channel, chatId, '/new Autre chose');
+
+      expect(result.delivered).toBeUndefined();
+      expect(result.jobId).toBeDefined();
+      const convs = await conversationsOf(channel, chatId);
+      expect(convs).toHaveLength(2);
+      expect(await headsOf(convs[1]!)).toEqual([
+        { id: result.jobId, task: 'Autre chose', status: 'pending' },
+      ]);
+      expect(await inboxTasks(busy.head)).toEqual([]);
     });
   });
 });

@@ -1,6 +1,16 @@
 // channels/turn.ts — ce que devient un message AUTORISÉ d'un canal : un tour de
-// sa conversation (un job), ou la commande `/stop`, que la plateforme traite
-// elle-même (#602).
+// sa conversation (un job), un message remis au travail qui y tourne déjà
+// (#531), ou la commande `/stop`, que la plateforme traite elle-même (#602).
+//
+// UN TRAVAIL DE TÊTE PAR CONVERSATION (#531). Chaque message insérait sa tête :
+// une précision envoyée pendant que la première demande tournait (« et mets-le
+// dans le dossier partagé ») relançait tout le travail. Le choix entre
+// « démarrer » et « remettre » est `deliverOrStartTurn` (@nodal-agents/db), le
+// point de décision que le chat web appelle aussi : tant qu'une tête du fil vit
+// — en cours, en attente d'une approbation ou d'une délégation, pas encore
+// prise —, le message va dans sa file, que la boucle lit à son prochain tour.
+// `/stop` et `/new` restent les sorties immédiates : l'un arrête tout (file
+// comprise), l'autre ouvre un fil neuf où rien ne vit.
 //
 // UN endroit pour les quatre canaux. Telegram, Discord, Slack et WhatsApp
 // portaient chacun leur copie de la même fin de parcours (`/new`, préfixe de
@@ -24,7 +34,15 @@
 // qui a été arrêté, et l'appelant de chaque canal le dit par une réaction sur
 // le message `/stop` quand son SDK en offre une (`stopReaction`).
 
-import { agentJobs, stopConversationRuns } from '@nodal-agents/db';
+import {
+  agentJobs,
+  and,
+  attachToInboxEntry,
+  deliverOrStartTurn,
+  eq,
+  stopConversationRuns,
+} from '@nodal-agents/db';
+import type { InboxContent } from '@nodal-agents/shared';
 import type { StoppedRun } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import {
@@ -84,8 +102,27 @@ export interface ChannelStopResult {
   readonly alreadyFinished: string[];
 }
 
+/**
+ * Où un média arrivé avec le message (téléchargé hors transaction) doit être
+ * rattaché : le job que le message a démarré, ou son entrée dans la file de la
+ * tête qui l'a reçu (#531).
+ */
+export type ChannelTurnTarget =
+  | { readonly kind: 'job'; readonly jobId: string }
+  | { readonly kind: 'inbox'; readonly headJobId: string; readonly entryId: string };
+
 export type ChannelTurn =
   | { readonly kind: 'job'; readonly jobId: string; readonly taskText: string }
+  /**
+   * Un travail de la conversation vivait : le message est dans sa file, aucun
+   * job n'est né (#531). Le canal l'accuse par une réaction (`DELIVERED_REACTION`).
+   */
+  | {
+      readonly kind: 'delivered';
+      readonly headJobId: string;
+      readonly entryId: string;
+      readonly taskText: string;
+    }
   | { readonly kind: 'stop'; readonly stop: ChannelStopResult };
 
 /**
@@ -150,9 +187,17 @@ export async function takeChannelTurn(args: {
     ? await openNewConversation(threadKey)
     : await resolveConversation(threadKey);
 
-  const [job] = await tx
-    .insert(agentJobs)
-    .values({
+  // UN travail de tête par conversation (#531) : si une tête de ce fil vit
+  // encore, le message va dans sa file au lieu de démarrer un second job qui
+  // referait la même demande. `/new` ouvre une conversation neuve, où rien ne
+  // vit : il démarre toujours. Le point de décision est celui du chat web.
+  const turn = await deliverOrStartTurn(tx, {
+    entityId,
+    conversationId: conversation.id,
+    // Texte seul ici ; un média entrant est attaché ensuite par l'appelant du
+    // canal, hors transaction, à la cible que ce tour rend.
+    message: { task: taskText, content: taskText },
+    start: {
       entityId,
       agentId,
       channel,
@@ -163,22 +208,66 @@ export async function takeChannelTurn(args: {
       // conversation ancrée à un projet porte ce projet dès l'insert.
       projectId: conversation.currentProjectId,
       status: 'pending',
-      // Texte seul à l'insert ; un média entrant est attaché ensuite par
-      // l'appelant du canal, hors transaction.
       messages: [{ role: 'user', content: taskText }],
-    })
-    .returning({ id: agentJobs.id });
-
-  if (!job) {
-    // Un INSERT ... RETURNING vide : la transaction de l'appelant annule tout,
-    // et le canal redélivre le message (invariant #4 : échouer fort).
-    throw new Error(`${channel}_job_insert_failed`);
-  }
+    },
+  });
 
   // La conversation est vivante, et elle prend son nom sur le premier message.
   await touchConversation(tx, conversation.id, taskText);
 
-  return { kind: 'job', jobId: job.id, taskText };
+  if (turn.kind === 'delivered') {
+    return {
+      kind: 'delivered',
+      headJobId: turn.headJobId,
+      entryId: turn.entryId,
+      taskText,
+    };
+  }
+  return { kind: 'job', jobId: turn.jobId, taskText };
+}
+
+/** La cible d'un média arrivé avec ce tour, ou `null` pour `/stop`. */
+export function channelTurnTarget(turn: ChannelTurn): ChannelTurnTarget | null {
+  if (turn.kind === 'job') return { kind: 'job', jobId: turn.jobId };
+  if (turn.kind === 'delivered') {
+    return { kind: 'inbox', headJobId: turn.headJobId, entryId: turn.entryId };
+  }
+  return null;
+}
+
+/**
+ * Rattache le contenu complet d'un message (texte et image) à sa cible, une
+ * fois le média téléchargé : le premier message d'un job encore `pending`, ou
+ * l'entrée de la file où il attend. Rend `false` quand la cible a déjà avancé
+ * (job pris, entrée vidée) : l'appelant le dit dans son journal (G1).
+ */
+export async function attachTurnContent(
+  db: RunnerDeps['db'],
+  target: ChannelTurnTarget,
+  content: InboxContent,
+): Promise<boolean> {
+  if (target.kind === 'inbox') {
+    return attachToInboxEntry(db, {
+      headJobId: target.headJobId,
+      entryId: target.entryId,
+      content,
+    });
+  }
+  const attached = await db
+    .update(agentJobs)
+    .set({ messages: [{ role: 'user', content }] })
+    .where(and(eq(agentJobs.id, target.jobId), eq(agentJobs.status, 'pending')))
+    .returning({ id: agentJobs.id });
+  return attached.length > 0;
+}
+
+/**
+ * Le nom de fichier d'un média entrant : il COMMENCE par l'id du job qui le
+ * lira (la tête, pour un message en file), c'est par là que l'élagage d'un
+ * dossier de canal sait s'il sert encore (`pruneTelegramWorkspace`).
+ */
+export function turnMediaFileStem(target: ChannelTurnTarget): string {
+  return target.kind === 'job' ? target.jobId : `${target.headJobId}.${target.entryId}`;
 }
 
 /**
@@ -192,4 +281,21 @@ export async function takeChannelTurn(args: {
  */
 export function stopReaction(stop: ChannelStopResult): '👌' | '🤷' {
   return stop.stopped.length > 0 ? '👌' : '🤷';
+}
+
+/**
+ * La réaction qui accuse réception d'un message remis au travail en cours
+ * (#531) : il a été reçu, et c'est le travail en cours qui le lira. Aucun texte
+ * du runner (invariant #2). Dans la liste restreinte de Telegram.
+ */
+export const DELIVERED_REACTION = '👀';
+
+/** La réaction d'un tour de canal, quand il en appelle une. */
+export function channelTurnReaction(result: {
+  stop?: ChannelStopResult;
+  delivered?: unknown;
+}): '👌' | '🤷' | typeof DELIVERED_REACTION | null {
+  if (result.stop) return stopReaction(result.stop);
+  if (result.delivered) return DELIVERED_REACTION;
+  return null;
 }

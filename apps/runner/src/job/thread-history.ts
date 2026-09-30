@@ -69,7 +69,8 @@ import {
   loadInlineDelegationLedger,
   formatInlineDelegationLines,
 } from './task-ledger.ts';
-import { runnerRecordMessage } from '@nodal-agents/shared';
+import { isInboxMessage, runnerRecordMessage } from '@nodal-agents/shared';
+import { messageText } from './state.ts';
 
 /**
  * Channels that represent ongoing conversations. Others (`api`, `cron`,
@@ -281,7 +282,23 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     // Un texte que l'agent a lui-même envoyé n'est pas redit par le relevé.
     const unmarked = agentsOwnResult ? '' : (agentsWords ?? '').trim();
     const runnerResult = unmarked === (assistant ?? '').trim() ? '' : unmarked;
-    if (assistant === null && runnerResult === '' && runnerNotes.length === 0) continue;
+    // Ce que la personne a écrit PENDANT ce tour, remis au travail en cours
+    // (#531) : rejoué juste après sa demande, pour que la précision ne
+    // disparaisse pas des tours suivants. Lu à sa marque structurelle.
+    const followUps: ModelMessage[] = (Array.isArray(row.messages) ? row.messages : [])
+      .filter(isInboxMessage)
+      .map((m) => messageText((m as { content?: unknown }).content).trim())
+      .filter((text) => text !== '')
+      .map((text) => ({ role: 'user', content: truncate(text) }));
+    const asked: ModelMessage[] = [{ role: 'user', content: truncate(row.task) }, ...followUps];
+    if (
+      assistant === null &&
+      runnerResult === '' &&
+      runnerNotes.length === 0 &&
+      followUps.length === 0
+    ) {
+      continue;
+    }
 
     // Action ledger (see file header) — only when this job actually used a
     // STATE-CHANGING tool. Lists the job's FULL tools_used (not just the
@@ -314,7 +331,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
 
     if (assistant === null) {
       // Un tour où l'agent n'a rien dit lui-même : seul le relevé en reste.
-      blocks.push([{ role: 'user', content: truncate(row.task) }, ...record]);
+      blocks.push([...asked, ...record]);
       continue;
     }
 
@@ -322,7 +339,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     if (sendTool) {
       const callId = `history-tool-${nextSynthId++}`;
       blocks.push([
-        { role: 'user', content: truncate(row.task) },
+        ...asked,
         {
           role: 'assistant',
           content: [
@@ -357,11 +374,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
         ...record,
       ]);
     } else {
-      blocks.push([
-        { role: 'user', content: truncate(row.task) },
-        { role: 'assistant', content: truncate(assistant) },
-        ...record,
-      ]);
+      blocks.push([...asked, { role: 'assistant', content: truncate(assistant) }, ...record]);
     }
   }
 

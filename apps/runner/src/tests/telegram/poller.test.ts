@@ -120,11 +120,17 @@ describe('runTelegramPoller', () => {
     // test deterministic.
     const controller = new AbortController();
     let getUpdatesCalls = 0;
-    fetchSpy.mockImplementation((input) => {
+    const botApiCalls: Array<{ method: string; body: unknown }> = [];
+    fetchSpy.mockImplementation((input, init) => {
       const url = String(input);
       if (url.includes('/api/worker')) {
         // triggerWorker — ignore, runner isn't really up
         return Promise.resolve(new Response('ok'));
+      }
+      const method = url.slice(url.lastIndexOf('/') + 1);
+      if (method !== 'getUpdates') {
+        botApiCalls.push({ method, body: JSON.parse(String(init?.body ?? '{}')) });
+        return Promise.resolve(fakeResponse(200, { ok: true, result: true }));
       }
       // Telegram getUpdates
       getUpdatesCalls += 1;
@@ -156,9 +162,19 @@ describe('runTelegramPoller', () => {
     expect(exit.reason).toBe('aborted');
     expect(exit.finalOffset).toBe(102);
 
+    // Both messages reached the conversation, and ONE job runs (#531): 'second'
+    // arrived while 'first' was still alive (pending), so it waits in that
+    // job's inbox instead of starting a second job — acknowledged by a
+    // reaction, never by text.
     const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
-    expect(jobs.length).toBe(2);
-    expect(jobs.map((j) => j.task).sort()).toEqual(['first', 'second']);
+    expect(jobs.map((j) => j.task)).toEqual(['first']);
+    expect(jobs[0]!.inbox.map((e) => e.task)).toEqual(['second']);
+    expect(botApiCalls).toEqual([
+      {
+        method: 'setMessageReaction',
+        body: { chat_id: 555, message_id: 101, reaction: [{ type: 'emoji', emoji: '👀' }] },
+      },
+    ]);
 
     const [agentRow] = await db
       .select({
@@ -531,10 +547,14 @@ describe('runTelegramPoller', () => {
     expect(transactionAttempt).toBe(3); // 100 fails, 100 retried (succeeds), 101 (succeeds)
     expect(batchesAfterConfirmation).toBe(1);
 
-    // BOTH updates ended up as real jobs — 100 was retried and delivered, not
-    // silently dropped because 101 (later in the batch) happened to succeed first.
+    // BOTH updates reached the conversation — 100 was retried and delivered, not
+    // silently dropped because 101 (later in the batch) happened to succeed
+    // first. 101 arrived while 100's job was alive: it waits in its inbox (#531).
     const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
-    expect(jobs.map((j) => j.task).sort()).toEqual(['first', 'second']);
+    expect(jobs.flatMap((j) => [j.task, ...j.inbox.map((e) => e.task)]).sort()).toEqual([
+      'first',
+      'second',
+    ]);
   });
 
   it('#602: /stop creates no job and is acknowledged by a reaction on the message, never by text @cap:parler-par-canal-externe/moteur', async () => {

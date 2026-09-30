@@ -18,7 +18,7 @@
 // son délégué ComfyArtist tournait encore deux heures : lire le statut de la
 // tête seule aurait répondu « rien ne tourne », exactement le faux de l'incident.
 
-import { and, asc, eq, inArray, isNull, notInArray, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import { TERMINAL_STATUSES } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentJobs } from '../schema/jobs.ts';
@@ -37,6 +37,12 @@ export interface CancelledTree {
   readonly taskIds: string[];
   /** Les approbations et questions en attente passées à `expired`. */
   readonly requestIds: string[];
+  /**
+   * Les messages qui attendaient dans la file d'un job arrêté (#531), retirés
+   * sans être relancés : l'arrêt vaut pour ce que la personne avait ajouté au
+   * travail qu'elle arrête. Rendus ici, jamais jetés en silence.
+   */
+  readonly discardedMessages: Array<{ jobId: string; task: string }>;
 }
 
 function notTerminal() {
@@ -84,7 +90,7 @@ export async function cancelJobTree(
       .from(agentJobs)
       .where(and(eq(agentJobs.id, jobId), eq(agentJobs.entityId, entityId)))
       .for('update');
-    if (!target) return { jobIds: [], taskIds: [], requestIds: [] };
+    if (!target) return { jobIds: [], taskIds: [], requestIds: [], discardedMessages: [] };
 
     const ids = new Set([jobId]);
     let frontier = [jobId];
@@ -101,10 +107,25 @@ export async function cancelJobTree(
     }
     const tree = [...ids];
 
+    // La file des jobs arrêtés est lue sous le verrou pris plus haut, puis
+    // vidée dans la MÊME instruction que le statut : le déclencheur de relance
+    // (migration 0141) la voit vide et ne fait naître aucune tête. Arrêter,
+    // c'est arrêter aussi ce qui attendait ce travail (#531).
+    const queued = await t
+      .select({ id: agentJobs.id, inbox: agentJobs.inbox })
+      .from(agentJobs)
+      .where(
+        and(
+          inArray(agentJobs.id, tree),
+          eq(agentJobs.entityId, entityId),
+          notTerminal(),
+          sql`${agentJobs.inbox} <> '[]'::jsonb`,
+        ),
+      );
     const now = new Date();
     const jobs = await t
       .update(agentJobs)
-      .set({ status: 'cancelled', updatedAt: now })
+      .set({ status: 'cancelled', updatedAt: now, inbox: sql`'[]'::jsonb` })
       .where(and(inArray(agentJobs.id, tree), eq(agentJobs.entityId, entityId), notTerminal()))
       .returning({ id: agentJobs.id });
     const tasks = await t
@@ -133,6 +154,7 @@ export async function cancelJobTree(
       jobIds: jobs.map((r) => r.id),
       taskIds: tasks.map((r) => r.id),
       requestIds: requests.map((r) => r.id),
+      discardedMessages: queued.flatMap((q) => q.inbox.map((e) => ({ jobId: q.id, task: e.task }))),
     };
   });
 }

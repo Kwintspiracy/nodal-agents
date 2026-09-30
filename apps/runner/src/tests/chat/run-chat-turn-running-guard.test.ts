@@ -8,10 +8,12 @@
 // le premier job en cours : c'est le modèle qui re-déclenche par-dessus.
 //
 // LE CONTRAT, générique, sur `run_task` dans le chat : tant qu'un travail lancé
-// depuis CETTE conversation court, un nouveau `run_task` est REFUSÉ au modèle,
-// qui reçoit le travail en cours (id, tâche, état) et la règle : dire qu'il est
-// déjà dessus ; un travail différent se lance quand celui-ci est fini, ou depuis
-// une nouvelle conversation. Jamais un appel jeté en silence.
+// depuis CETTE conversation court, un nouveau `run_task` ne lance RIEN. Depuis
+// #531, le message de la personne est REMIS au travail en cours (sa file, le
+// même point de décision que les quatre canaux : `deliverOrStartTurn`) — avant,
+// l'appel était refusé et la précision n'atteignait jamais ce travail. Le modèle
+// du chat reçoit le travail en cours (id, tâche, état) et le fait : le message
+// lui a été remis. Jamais un appel jeté en silence.
 //
 // Il n'y a PAS d'échappatoire « en parallèle » (revue Codex, passe 3). Le champ
 // `alongside` a existé : une reformulation (« the changelog of 0.9.2 » puis
@@ -24,7 +26,8 @@
 //
 // Mutation vérifiée : la garde retirée (`runningHeads` forcé à `[]`) → « un
 // run_task pendant qu'un travail court » rougit sur le nombre de jobs (2 au
-// lieu de 1).
+// lieu de 1). #531 : `deliverOrStartTurn` qui démarre toujours (la remise
+// neutralisée) → le même test rougit (2 têtes, file vide).
 // Revue Codex (P1) : la garde n'est atomique avec l'insertion que parce que
 // chaque tour passe par la file de sa conversation (`runInLane`). Mutations :
 //   - la file neutralisée (`work()` lancé sans attendre le tour précédent) →
@@ -231,13 +234,22 @@ async function travauxDuFil(): Promise<Array<{ id: string; task: string }>> {
     .where(and(eq(agentJobs.conversationId, conversationId), isNull(agentJobs.parentJobId)));
 }
 
+/** Les messages qui attendent dans la file d'un job (#531). */
+async function fileDe(jobId: string): Promise<string[]> {
+  const [row] = await db
+    .select({ inbox: agentJobs.inbox })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId));
+  return (row?.inbox ?? []).map((e) => e.task);
+}
+
 beforeEach(() => {
   conversationId = '';
   premierJob = '';
 });
 
 describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un-agent/moteur', () => {
-  it('un run_task pendant qu’un travail court est REFUSÉ au modèle : un seul job, et le refus nomme le travail', async () => {
+  it('un run_task pendant qu’un travail court ne lance rien : le message de la personne est REMIS à ce travail, un seul job, et le résultat le nomme (#531)', async () => {
     await conversationAvecTravail('processing');
     const captured: ModelMessage[][] = [];
     setActiveLlmClient(
@@ -265,13 +277,16 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     // UNE ligne : le travail d'origine, et lui seul.
     expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
 
-    // Le second appel a reçu le refus, dans le résultat de SON appel d'outil :
-    // l'id, la tâche et l'état du travail qui court, et la règle.
+    // Le message de la personne est dans la file du travail en cours, tel quel.
+    expect(await fileDe(premierJob)).toEqual(['i mean nodal-agents']);
+
+    // Le second appel a reçu le fait, dans le résultat de SON appel d'outil :
+    // l'id, la tâche et l'état du travail qui court, et la remise.
     const refus = toolResults(captured[1] ?? []);
     expect(refus).toContain(premierJob);
     expect(refus).toContain('Find the changelog of nodal-agents 0.9.2');
     expect(refus).toContain('processing');
-    expect(refus).toContain('once it has finished, or from a new conversation');
+    expect(refus).toContain("The person's message was handed to that job");
     expect(refus).not.toContain('alongside');
 
     // La réponse du tour est écrite, sans job rattaché.
@@ -287,7 +302,7 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     });
   });
 
-  it('une REFORMULATION, même avec un `alongside: true` inventé par le modèle, est refusée : un seul job (revue Codex, passe 3)', async () => {
+  it('une REFORMULATION, même avec un `alongside: true` inventé par le modèle, ne lance rien : un seul job, le message remis (revue Codex, passe 3)', async () => {
     await conversationAvecTravail('processing');
     const captured: ModelMessage[][] = [];
     setActiveLlmClient(
@@ -316,6 +331,7 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     expect(r.spawnedJobId).toBeUndefined();
     expect(r.reply).toBe('Already on it.');
     expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
+    expect(await fileDe(premierJob)).toEqual(['the release notes, I mean']);
     expect(toolResults(captured[1] ?? [])).toContain(premierJob);
   });
 
@@ -323,7 +339,7 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     const schema = CHAT_TOOLS.run_task.inputSchema as unknown as { shape: Record<string, unknown> };
     expect(Object.keys(schema.shape)).toEqual(['instruction']);
     expect(CHAT_TOOLS.run_task.description).not.toContain('alongside');
-    expect(CHAT_TOOLS.run_task.description).toContain('once it has finished');
+    expect(CHAT_TOOLS.run_task.description).toContain('message is handed to that job');
   });
 
   it('après le refus, un second run_task refusé ne laisse pas sa phrase « je lance » : le modèle répond sans outil, refus en mains (revue Codex, passe 2)', async () => {
@@ -354,9 +370,11 @@ describe('runChatTurn — un travail du fil court déjà (#453) @cap:parler-a-un
     // La phrase qui annonçait un lancement n'est PAS la réponse.
     expect(r.reply).toBe('The research is still running; I will summarise once it is done.');
     expect((await travauxDuFil()).map((j) => j.id)).toEqual([premierJob]);
-    // Le dernier appel a vu les DEUX refus, et c'était un appel sans outils.
+    // Le dernier appel a vu les DEUX résultats, et c'était un appel sans outils.
     const dernier = captured[2] ?? [];
-    expect(toolResults(dernier).split('run_task refused').length - 1).toBe(2);
+    expect(toolResults(dernier).split('run_task not launched').length - 1).toBe(2);
+    // Le message n'est remis qu'UNE fois, quel que soit le nombre d'appels.
+    expect(await fileDe(premierJob)).toEqual(['and summarise it']);
     const [ecrit] = await db
       .select({ content: chatMessages.content })
       .from(chatMessages)

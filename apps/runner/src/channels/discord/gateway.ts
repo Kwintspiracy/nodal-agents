@@ -46,7 +46,7 @@ import {
 } from './handler.ts';
 import { routeDiscordInteraction } from './interactions.ts';
 import { DISCORD_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
-import { stopReaction } from '../turn.ts';
+import { channelTurnReaction } from '../turn.ts';
 import type { DiscordInboundMessage } from './types.ts';
 
 export interface DiscordGatewayOpts {
@@ -184,17 +184,18 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
     // Image attach: download it (network — out of the txn) and attach it to
     // the job BEFORE the worker runs, so the agent sees the image. Best-effort:
     // a failed download leaves the job text-only and the worker still runs.
-    if (result.jobId && result.attachment) {
+    // The target is the new job, or the message's entry in a live job's inbox (#531).
+    if (result.attachment) {
+      const attachmentTarget = result.attachment.target;
       await attachInboundImage({
-        jobId: result.jobId,
         entityId: agentEntityId,
         attachment: result.attachment,
         db: deps.db,
       }).catch((err) => {
         console.warn(
-          `[discord-gateway agent=${agentId}] image attach failed for job ${result.jobId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[discord-gateway agent=${agentId}] image attach failed for ${
+            attachmentTarget.kind === 'job' ? attachmentTarget.jobId : attachmentTarget.entryId
+          }: ${err instanceof Error ? err.message : String(err)}`,
         );
       });
     }
@@ -204,15 +205,16 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
       triggerJobWorker(result.jobId, env);
     }
 
-    // `/stop` (#602): the runs are already stopped, in the transaction that
-    // just committed. Acknowledge it with a reaction on the message — the
-    // runner writes no text (invariant #2). A failed reaction (no Add Reactions
-    // permission in a guild channel) changes nothing that was stopped, and is
-    // logged.
-    if (result.stop) {
-      await message.react(stopReaction(result.stop)).catch((err: unknown) => {
+    // `/stop` (#602), or a message delivered to the conversation's running
+    // work (#531): already committed. Acknowledge it with a reaction on the
+    // message — the runner writes no text (invariant #2). A failed reaction (no
+    // Add Reactions permission in a guild channel) changes nothing that was
+    // stopped or delivered, and is logged.
+    const ack = channelTurnReaction(result);
+    if (ack) {
+      await message.react(ack).catch((err: unknown) => {
         console.warn(
-          `[discord-gateway agent=${agentId}] /stop reaction failed (channel=${message.channelId}): ${
+          `[discord-gateway agent=${agentId}] ${ack} reaction failed (channel=${message.channelId}): ${
             err instanceof Error ? err.message : String(err)
           }`,
         );

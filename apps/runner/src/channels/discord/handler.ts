@@ -20,13 +20,21 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { workspacesRoot } from '@nodal-agents/tools';
 import { eq, and } from '@nodal-agents/db';
-import { agentJobs, agents } from '@nodal-agents/db';
+import { agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
 import { pruneTelegramWorkspace } from '../../telegram/handler.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
-import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../turn.ts';
+import {
+  attachTurnContent,
+  channelTurnTarget,
+  isPlatformCommand,
+  takeChannelTurn,
+  turnMediaFileStem,
+  type ChannelStopResult,
+  type ChannelTurnTarget,
+} from '../turn.ts';
 import type { DiscordInboundMessage } from './types.ts';
 
 export interface DiscordHandleResult {
@@ -39,11 +47,25 @@ export interface DiscordHandleResult {
    */
   stop?: ChannelStopResult;
   /**
+   * A job of this conversation was still alive (#531): no job was created, the
+   * message is in that job's inbox, which its loop reads at its next turn. The
+   * caller acknowledges it with a reaction where the channel offers one
+   * (`channelTurnReaction`) — never with text (invariant #2).
+   */
+  delivered?: { headJobId: string; entryId: string };
+  /**
    * Present when the message carried an eligible image attachment. Download is
    * network I/O and so happens OUTSIDE the DB transaction — see
    * attachInboundImage below, called by the gateway after the job is created.
    */
-  attachment?: { url: string; contentType: string; size: number; channelId: string; text: string };
+  attachment?: {
+    url: string;
+    contentType: string;
+    size: number;
+    channelId: string;
+    text: string;
+    target: ChannelTurnTarget;
+  };
   skipped?:
     | 'bot_author'
     | 'no_content'
@@ -220,16 +242,21 @@ export async function handleDiscordMessage(args: {
   });
   if (turn.kind === 'stop') return { stop: turn.stop };
 
+  const target = channelTurnTarget(turn);
   return {
-    jobId: turn.jobId,
+    ...(turn.kind === 'job' ? { jobId: turn.jobId } : {}),
+    ...(turn.kind === 'delivered'
+      ? { delivered: { headJobId: turn.headJobId, entryId: turn.entryId } }
+      : {}),
     attachment:
-      imageAttachment && imageAttachment.size <= MAX_IMAGE_BYTES
+      imageAttachment && imageAttachment.size <= MAX_IMAGE_BYTES && target
         ? {
             url: imageAttachment.url,
             contentType: imageAttachment.contentType ?? 'application/octet-stream',
             size: imageAttachment.size,
             channelId: conversationId,
             text: turn.taskText,
+            target,
           }
         : undefined,
   };
@@ -256,12 +283,18 @@ export function triggerJobWorker(jobId: string, env: RunnerEnv): void {
  * this ticket.
  */
 export async function attachInboundImage(args: {
-  jobId: string;
   entityId: string;
-  attachment: { url: string; contentType: string; size: number; channelId: string; text: string };
+  attachment: {
+    url: string;
+    contentType: string;
+    size: number;
+    channelId: string;
+    text: string;
+    target: ChannelTurnTarget;
+  };
   db: RunnerDeps['db'];
 }): Promise<string> {
-  const { jobId, entityId, attachment, db } = args;
+  const { entityId, attachment, db } = args;
 
   const res = await fetch(attachment.url);
   if (!res.ok) {
@@ -274,37 +307,28 @@ export async function attachInboundImage(args: {
     );
   }
 
-  // Mirrors telegram's shared workspace layout: <workspacesRoot>/<entityId>/shared/<channel>/<conversationId>/<jobId>.<ext>
+  // Mirrors telegram's shared workspace layout: <workspacesRoot>/<entityId>/shared/<channel>/<conversationId>/<stem>.<ext>
   const dir = join(workspacesRoot(), entityId, 'shared', 'discord', attachment.channelId);
   await mkdir(dir, { recursive: true });
   const ext = extFromContentType(attachment.contentType);
-  const filePath = join(dir, `${jobId}.${ext}`);
+  const filePath = join(dir, `${turnMediaFileStem(attachment.target)}.${ext}`);
   await writeFile(filePath, buf);
 
-  // Conditional on the job still being `pending` (mirrors telegram's TOCTOU
-  // guard, audit followup G1): the download is out-of-txn network I/O; in
-  // that window the worker (or a cron pickup) can claim the job. Guarding on
-  // `pending` makes claim win — we log loudly rather than silently clobber.
-  const attached = await db
-    .update(agentJobs)
-    .set({
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: attachment.text },
-            { type: 'image', image: filePath },
-          ],
-        },
-      ],
-    })
-    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
-    .returning({ id: agentJobs.id });
+  // Conditional on the message still WAITING (mirrors telegram's TOCTOU guard,
+  // audit followup G1): the job still `pending`, or the entry still in the
+  // live job's inbox (#531). The download is out-of-txn network I/O; in that
+  // window the run can move on. Guarding makes the run win — we log loudly
+  // rather than silently clobber.
+  const attached = await attachTurnContent(db, attachment.target, [
+    { type: 'text', text: attachment.text },
+    { type: 'image', image: filePath },
+  ]);
 
-  if (attached.length === 0) {
+  if (!attached) {
     console.warn(
-      `[discord] inbound image for job ${jobId} arrived after the job left 'pending' ` +
-        `(claimed/worker started); image saved to ${filePath} but not attached to the transcript.`,
+      `[discord] inbound image for ${turnMediaFileStem(attachment.target)} arrived after the ` +
+        `message was picked up (job claimed, or inbox drained); image saved to ${filePath} but ` +
+        `not attached to the transcript.`,
     );
   }
 

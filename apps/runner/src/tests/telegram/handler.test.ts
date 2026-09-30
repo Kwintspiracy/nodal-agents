@@ -440,6 +440,9 @@ describe('handleTelegramUpdate — la CONVERSATION du fil (P6)', () => {
       .update(conversations)
       .set({ currentProjectId: projet.id })
       .where(eq(conversations.id, ancienJob.conversationId!));
+    // Le premier tour est fini : le message suivant démarre un job (tant qu'il
+    // vivait, il serait allé dans sa file — #531).
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, premier.jobId!));
 
     const suivant = await envoyer('et on continue');
 
@@ -504,7 +507,12 @@ describe('handleTelegramUpdate — group chats', () => {
     });
 
     const task = '[Message from Alice]: Image envoyée (sans légende).';
-    expect(result.photo).toEqual({ fileId: 'large', chatId: '-100123', text: task });
+    expect(result.photo).toEqual({
+      fileId: 'large',
+      chatId: '-100123',
+      text: task,
+      target: { kind: 'job', jobId: result.jobId },
+    });
     const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
     expect(job?.task).toBe(task);
     const [conv] = await db

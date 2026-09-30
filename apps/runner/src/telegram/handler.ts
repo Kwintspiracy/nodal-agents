@@ -28,7 +28,15 @@ import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { TERMINAL_STATUSES } from '../job/state.ts';
 import { sanitizeSenderName, escapeRegex } from '../channels/shared.ts';
-import { takeChannelTurn, isPlatformCommand, type ChannelStopResult } from '../channels/turn.ts';
+import {
+  attachTurnContent,
+  channelTurnTarget,
+  isPlatformCommand,
+  takeChannelTurn,
+  turnMediaFileStem,
+  type ChannelStopResult,
+  type ChannelTurnTarget,
+} from '../channels/turn.ts';
 
 export interface HandleResult {
   /** A job was created — caller should triggerWorker after txn commits. */
@@ -40,13 +48,21 @@ export interface HandleResult {
    */
   stop?: ChannelStopResult;
   /**
+   * A job of this conversation was still alive (#531): no job was created, the
+   * message is in that job's inbox, which its loop reads at its next turn. The
+   * caller acknowledges it with a reaction where the channel offers one
+   * (`channelTurnReaction`) — never with text (invariant #2).
+   */
+  delivered?: { headJobId: string; entryId: string };
+  /**
    * Present when the message carried a photo. The DOWNLOAD is network I/O, so it
    * must happen OUTSIDE this DB transaction: the poller takes this, downloads the
-   * file, saves it to the shared workspace (telegram/<chatId>/<jobId>.<ext>), and
-   * upgrades the job to a multimodal [text + image] message — all before it
-   * triggers the worker.
+   * file, saves it to the shared workspace (telegram/<chatId>/<stem>.<ext>), and
+   * upgrades the message to multimodal [text + image] where it waits — the new
+   * job's first message, or its entry in a live job's inbox (#531) — all before
+   * it triggers the worker.
    */
-  photo?: { fileId: string; chatId: string; text: string };
+  photo?: { fileId: string; chatId: string; text: string; target: ChannelTurnTarget };
   /** The update was filtered out. */
   skipped?:
     | 'no_message'
@@ -275,11 +291,16 @@ export async function handleTelegramUpdate(args: {
       .where(eq(agents.id, receivingAgentId));
   }
 
+  const target = channelTurnTarget(turn);
   return {
-    jobId: turn.jobId,
-    photo: largestPhoto
-      ? { fileId: largestPhoto.file_id, chatId: String(chatId), text: turn.taskText }
-      : undefined,
+    ...(turn.kind === 'job' ? { jobId: turn.jobId } : {}),
+    ...(turn.kind === 'delivered'
+      ? { delivered: { headJobId: turn.headJobId, entryId: turn.entryId } }
+      : {}),
+    photo:
+      largestPhoto && target
+        ? { fileId: largestPhoto.file_id, chatId: String(chatId), text: turn.taskText, target }
+        : undefined,
   };
 }
 
@@ -309,13 +330,12 @@ export function triggerJobWorker(jobId: string, env: RunnerEnv): void {
  * the image rather than silently doing nothing).
  */
 export async function attachInboundPhoto(args: {
-  jobId: string;
   entityId: string;
   botToken: string;
-  photo: { fileId: string; chatId: string; text: string };
+  photo: { fileId: string; chatId: string; text: string; target: ChannelTurnTarget };
   db: RunnerDeps['db'];
 }): Promise<string> {
-  const { jobId, entityId, botToken, photo, db } = args;
+  const { entityId, botToken, photo, db } = args;
 
   const download = await getTelegramFile(botToken, photo.fileId);
   // Mirror execute.ts: the shared workspace lives at
@@ -323,36 +343,27 @@ export async function attachInboundPhoto(args: {
   const dir = join(workspacesRoot(), entityId, 'shared', 'telegram', photo.chatId);
   await mkdir(dir, { recursive: true });
   const ext = download.ext === 'bin' ? 'jpg' : download.ext;
-  const filePath = join(dir, `${jobId}.${ext}`);
+  const filePath = join(dir, `${turnMediaFileStem(photo.target)}.${ext}`);
   await writeFile(filePath, download.bytes);
 
-  // Conditional on the job still being `pending` (G1, audit followup). The photo
-  // download is out-of-txn network I/O (up to 30s); in that window the worker (or
-  // a cron pickup) can claim the job — claimJob flips it pending→processing and
-  // starts reading `messages`. An UNCONDITIONAL overwrite here would then clobber
-  // the in-flight conversation. Guarding on `pending` makes claim win: if the job
-  // already moved on, we do NOT overwrite; we log loudly (never a silent
-  // corruption/loss — invariant #4) so the missed image is diagnosable.
-  const attached = await db
-    .update(agentJobs)
-    .set({
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: photo.text },
-            { type: 'image', image: filePath },
-          ],
-        },
-      ],
-    })
-    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
-    .returning({ id: agentJobs.id });
+  // Conditional on the message still WAITING (G1, audit followup): the job
+  // still `pending`, or the entry still in the live job's inbox (#531). The
+  // photo download is out-of-txn network I/O (up to 30s); in that window the
+  // worker (or a cron pickup) can claim the job, or the live job can drain its
+  // inbox. An UNCONDITIONAL overwrite would then clobber the in-flight
+  // conversation. Guarding makes the run win: if the message already moved on,
+  // we do NOT overwrite; we log loudly (never a silent corruption/loss —
+  // invariant #4) so the missed image is diagnosable.
+  const attached = await attachTurnContent(db, photo.target, [
+    { type: 'text', text: photo.text },
+    { type: 'image', image: filePath },
+  ]);
 
-  if (attached.length === 0) {
+  if (!attached) {
     console.warn(
-      `[telegram] inbound photo for job ${jobId} arrived after the job left 'pending' ` +
-        `(claimed/worker started); image saved to ${filePath} but not attached to the transcript.`,
+      `[telegram] inbound photo for ${turnMediaFileStem(photo.target)} arrived after the message ` +
+        `was picked up (job claimed, or inbox drained); image saved to ${filePath} but not ` +
+        `attached to the transcript.`,
     );
   }
 
@@ -405,10 +416,12 @@ export async function pruneTelegramWorkspace(dir: string, db: RunnerDeps['db']):
       const path = join(dir, name);
       try {
         const st = await stat(path);
-        // Filename is `<jobId>.<ext>` (see attachInboundPhoto) — everything
-        // before the LAST dot is the id.
-        const lastDot = name.lastIndexOf('.');
-        const jobId = lastDot > 0 ? name.slice(0, lastDot) : '';
+        // Filename STARTS with the id of the job that reads it (see
+        // attachInboundPhoto, `turnMediaFileStem`): `<jobId>.<ext>`, or
+        // `<headJobId>.<entryId>.<ext>` for a message waiting in a live job's
+        // inbox (#531) — everything before the FIRST dot is the id.
+        const firstDot = name.indexOf('.');
+        const jobId = firstDot > 0 ? name.slice(0, firstDot) : '';
         return { path, jobId, mtimeMs: st.mtimeMs };
       } catch {
         // Deleted concurrently between readdir and stat — ignore.

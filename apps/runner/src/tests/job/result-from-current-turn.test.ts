@@ -13,11 +13,15 @@
 // Ce que ces tests prouvent : le repli lit le TOUR COURANT, du message
 // utilisateur qui porte la tâche jusqu'à la fin, et rien avant. Assertions sur
 // la ligne relue en base, jamais sur un appel.
+//
+// Mutation vérifiée (#531) : le saut des messages remis retiré de
+// `findTaskBoundary` → « un message remis PENDANT le run » rougit.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs } from '@nodal-agents/db';
+import { inboxMessage } from '@nodal-agents/shared';
 import { completeJob, currentTurnMessages } from '../../job/state.ts';
 
 let db: TestDb;
@@ -196,5 +200,25 @@ describe('le résultat d’un job vient de SON tour, jamais de l’historique re
     // Sans tâche retrouvée, la transcription entière — l'ancien comportement,
     // dit et non caché.
     expect(currentTurnMessages(messages, 'une tâche absente')).toHaveLength(6);
+  });
+
+  it('un message remis PENDANT le run qui répète la tâche mot pour mot ne déplace pas le début du tour (#531)', () => {
+    // La personne renvoie sa demande pendant que le travail tourne : le message
+    // entre dans la file, puis dans la transcription, marqué. Ce n'est pas le
+    // début d'un tour — le travail déjà fait à ce tour reste le sien.
+    const remis = inboxMessage({
+      id: 'e1',
+      task: TASK,
+      content: TASK,
+      receivedAt: '2026-09-30T10:00:00.000Z',
+    });
+    const messages = [
+      { role: 'user', content: TASK },
+      { role: 'assistant', content: 'Oui, je cherche.' },
+      remis,
+      { role: 'assistant', content: 'Oui, toujours là.' },
+    ];
+
+    expect(currentTurnMessages(messages, TASK)).toEqual(messages);
   });
 });

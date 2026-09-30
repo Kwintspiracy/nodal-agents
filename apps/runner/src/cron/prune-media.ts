@@ -7,6 +7,8 @@
 //     (apps/runner/src/telegram/handler.ts attachInboundPhoto)
 //   <workspacesRoot>/<entityId>/shared/discord/<channelId>/<jobId>.<ext>
 //     (apps/runner/src/channels/discord/handler.ts attachInboundImage)
+// — or `<headJobId>.<entryId>.<ext>` for a message delivered to a live job's
+// inbox (#531): the file belongs to the job whose id STARTS its name.
 //
 // DB retention (packages/db's pruneOldJobs) only deletes the agent_jobs row —
 // it must never touch the filesystem (only the runner owns workspace paths).
@@ -20,7 +22,7 @@
 
 import { readdir, rm } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
-import { join, basename, extname } from 'node:path';
+import { join } from 'node:path';
 
 /** Channel subdirectories under <entityId>/shared/ that hold inbound media. */
 const MEDIA_CHANNEL_DIRS = ['telegram', 'discord'] as const;
@@ -78,8 +80,12 @@ export async function pruneJobMediaFiles(
 
         for (const file of files) {
           if (!file.isFile()) continue;
-          const stem = basename(file.name, extname(file.name));
-          if (!jobIdSet.has(stem)) continue;
+          // The name STARTS with the id of the job that reads the file:
+          // `<jobId>.<ext>`, or `<headJobId>.<entryId>.<ext>` for a message
+          // that waited in a live job's inbox (#531, `turnMediaFileStem`).
+          const firstDot = file.name.indexOf('.');
+          const owner = firstDot > 0 ? file.name.slice(0, firstDot) : file.name;
+          if (!jobIdSet.has(owner)) continue;
 
           const filePath = join(convoPath, file.name);
           try {

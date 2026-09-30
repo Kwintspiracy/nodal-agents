@@ -13,7 +13,7 @@ import {
   check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { JobResultKind } from '@nodal-agents/shared';
+import type { InboxEntry, JobResultKind } from '@nodal-agents/shared';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
 import { agentSchedules } from './schedules.ts';
@@ -161,6 +161,19 @@ export const agentJobs = pgTable(
      */
     loadedTools: text('loaded_tools').array(),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
+    /**
+     * Les messages de la conversation arrivés pendant que ce job de TÊTE vivait
+     * (#531, migration 0141). La boucle les vide en haut de chaque tour et
+     * avant de conclure sur une réponse en texte : ils entrent alors dans
+     * `messages`, marqués (`isInboxMessage`). Ce qui y reste quand le job
+     * devient terminal devient une NOUVELLE tête de la conversation — c'est le
+     * déclencheur `agent_jobs_inbox_relaunch` qui le fait, à la transition
+     * elle-même, quel que soit celui qui l'écrit. Vide pour tout autre job.
+     */
+    inbox: jsonb('inbox')
+      .$type<InboxEntry[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     /**
      * Flattened plain-text transcript (task + assistant text + tool outputs +
      * result) for full-text episodic search. Populated at job completion by

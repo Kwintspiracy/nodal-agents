@@ -5,6 +5,7 @@ import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
 import { agentJobs, agents, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
+import { isInboxMessage } from '@nodal-agents/shared';
 import {
   flattenTranscript,
   deepDbSafe,
@@ -276,7 +277,7 @@ async function fillResultFromChildrenIfEmpty(db: AnyDrizzleDb, jobId: string): P
 }
 
 /** The text of a message, whatever its shape: a string, or the joined text parts. */
-function messageText(content: unknown): string {
+export function messageText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   const parts: string[] = [];
@@ -318,6 +319,10 @@ export function findTaskBoundary(messages: readonly unknown[], task: string): nu
   if (task.trim() === '') return -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i] as { role?: unknown; content?: unknown } | null;
+    // Un message remis pendant le run (#531) qui répète la tâche mot pour mot
+    // n'est pas le début du tour : il en fait partie. Sa marque est
+    // structurelle, jamais lue dans le texte.
+    if (isInboxMessage(m)) continue;
     if (m && m.role === 'user' && messageText(m.content) === task) return i;
   }
   return -1;
