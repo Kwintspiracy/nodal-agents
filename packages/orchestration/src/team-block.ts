@@ -30,19 +30,10 @@ import type { ReachMeans } from './reach';
 // No bound on the folders or programs an entry lists (Codex review of #506,
 // pass 2): the roster is declared COMPLETE, and a "+N more" made the
 // orchestrator treat the Nth folder as nobody's. The prompt cost of a long
-// list was a P3; a false "cannot" is worse.
-//
-// The tool names after a connector or MCP server ARE bounded (#611): what the
-// roster declares is the server, always named in full; its tools only say
-// what kind of work it does, and a few say it as well as thirty. The "+N more"
-// keeps the count honest.
-const MAX_TOOL_NAMES_PER_ENTRY = 8;
-
-function listHeldTools(names: readonly string[]): string {
-  const shown = names.slice(0, MAX_TOOL_NAMES_PER_ENTRY);
-  const more = names.length - shown.length;
-  return more > 0 ? `${shown.join(', ')}, +${more} more` : shown.join(', ');
-}
+// list was a P3; a false "cannot" is worse. The same holds for the tools
+// after a connector or MCP server (#611, review of #653 pass 2): a bound hid
+// the one that mattered (Send email 21st of Gmail, the print request 12th of
+// its server).
 
 /** Record that `agentId` holds `names` through `slug`, merged with any earlier instance. */
 function addHeld(
@@ -344,10 +335,10 @@ export async function buildTeamBlock(
       const names = ADAPTER_REGISTRY[slug]!.operations.filter((o) => held.has(o.slug)).map(
         (o) => o.name,
       );
-      entries.push(`${slug} (${listHeldTools(names)})`);
+      entries.push(`${slug} (${names.join(', ')})`);
     }
     for (const [slug, held] of mcpMap.get(subAgentId) ?? []) {
-      entries.push(`${slug} (${listHeldTools([...held])})`);
+      entries.push(`${slug} (${[...held].join(', ')})`);
     }
     if (entries.length === 0) return '';
     return `\n  Connectors: ${entries.join('; ')}`;

@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import {
   agents,
@@ -167,39 +168,48 @@ describe('buildTeamBlock — a Connectors entry says what the teammate can do (#
     expect(line).not.toContain('ghost_tool');
   });
 
-  it('names at most 8 tools, then says how many more the server holds', async () => {
+  it('every tool held is named, however many: a print request 12th of its server is visible', async () => {
     const t = await seedTeam();
-    const names = Array.from({ length: 12 }, (_, i) => `op_${String(i + 1).padStart(2, '0')}`);
-    await attachMcp(t, 'big-srv', names, null);
+    // The server's own order, as the orchestrator read it: the print request
+    // comes 12th. A "+N more" after 8 names hid it (review of #653, pass 2).
+    const names = [
+      'list_printers',
+      'get_status',
+      'get_capabilities',
+      'get_queue',
+      'preview_print_job',
+      'cancel_job',
+      'identify_printer',
+      'scan_document',
+      'get_print_preview',
+      'get_print_request',
+      'confirm_print',
+      'request_print',
+      'reject_print',
+      'update_print',
+      'change_print_options',
+      'cancel_print_request',
+      'read_web_page',
+      'get_page_images',
+      'search_images',
+    ];
+    expect(names.indexOf('request_print')).toBe(11);
+    await attachMcp(t, 'hp-connector', names, null);
 
-    expect(await connectorsLine(t.orchId)).toBe(
-      'big-srv (op_01, op_02, op_03, op_04, op_05, op_06, op_07, op_08, +4 more)',
-    );
+    const line = await connectorsLine(t.orchId);
+    expect(line).toBe(`hp-connector (${names.join(', ')})`);
+    expect(line).not.toContain('more');
   });
 
-  it('exactly 8 tools are all named, with no "+N"', async () => {
-    const t = await seedTeam();
-    const names = Array.from({ length: 8 }, (_, i) => `t${i + 1}`);
-    await attachMcp(t, 'eight', names, null);
-
-    expect(await connectorsLine(t.orchId)).toBe('eight (t1, t2, t3, t4, t5, t6, t7, t8)');
-  });
-
-  it('a connector held in full lists its operations by their adapter names, bounded like an MCP server', async () => {
+  it('a connector held in full names every operation by its adapter name: Send email, 21st of Gmail, is visible', async () => {
     const t = await seedTeam();
     await attachConnector(t, 'gmail', null);
 
     const ops = ADAPTER_REGISTRY['gmail']!.operations;
-    expect(ops.length).toBeGreaterThan(8);
+    expect(ops.findIndex((o) => o.slug === 'gmail_send_email')).toBe(20);
     const line = await connectorsLine(t.orchId);
-    expect(line).toBe(
-      `gmail (${ops
-        .slice(0, 8)
-        .map((o) => o.name)
-        .join(', ')}, +${ops.length - 8} more)`,
-    );
-    // No label written for the roster (invariant #1, Codex review of #653, pass 1).
-    expect(line).not.toContain('Read and send email');
+    expect(line).toBe(`gmail (${ops.map((o) => o.name).join(', ')})`);
+    expect(line).toContain(opName('gmail', 'gmail_send_email'));
   });
 
   it('a connector held in part lists only the operations it holds', async () => {
@@ -255,33 +265,47 @@ describe('buildTeamBlock — a Connectors entry says what the teammate can do (#
     expect(await connectorsLine(t.orchId)).toBe('cortex (get_feed, create_post)');
   });
 
-  it('the capability comes from the data: arbitrary tool names come out exactly as stored', async () => {
+  it('every name shown comes from the data: generated names, random subsets, nothing else on the line (invariant #1)', async () => {
     const t = await seedTeam();
-    const names = [uniq('zq_alpha'), uniq('zq_beta'), uniq('zq_gamma')];
-    await attachMcp(t, 'opaque-srv', names, null);
+    const rnd = () => `n_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const pick = <T>(xs: readonly T[]): T[] => xs.filter(() => Math.random() < 0.5);
 
-    expect(await connectorsLine(t.orchId)).toBe(`opaque-srv (${names.join(', ')})`);
+    // Two MCP servers with generated slugs and tool names; each teammate holds
+    // a random part of the second one.
+    const slugA = `srv-${rnd()}`;
+    const toolsA = Array.from({ length: 5 }, rnd);
+    await attachMcp(t, slugA, toolsA, null);
+    const slugB = `srv-${rnd()}`;
+    const toolsB = Array.from({ length: 14 }, rnd);
+    const enabledB = [...pick(toolsB), toolsB[0]!];
+    await attachMcp(t, slugB, toolsB, enabledB);
+    // A catalogue connector held in a random part: its names are its adapter's.
+    const gmailOps = ADAPTER_REGISTRY['gmail']!.operations;
+    const gmailHeld = [...pick(gmailOps.map((o) => o.slug)), 'gmail_send_email'];
+    await attachConnector(t, 'gmail', gmailHeld);
+
+    const expected = new Map<string, string[]>([
+      ['gmail', gmailOps.filter((o) => gmailHeld.includes(o.slug)).map((o) => o.name)],
+      [slugA, toolsA],
+      [slugB, toolsB.filter((n) => enabledB.includes(n))],
+    ]);
+
+    const line = await connectorsLine(t.orchId);
+    const parsed = new Map<string, string[]>();
+    for (const entry of line.split('; ')) {
+      const m = /^(\S+) \((.*)\)$/.exec(entry);
+      expect(m, `entry "${entry}" is not "<slug> (<names>)"`).not.toBeNull();
+      parsed.set(m![1]!, m![2]!.split(', '));
+    }
+    // Exactly the data, entry by entry: a label or a word written in code
+    // would be a name that is in none of them.
+    expect(parsed).toEqual(expected);
   });
 
-  it('the roster code carries no text of its own about any connector or MCP server (invariant #1)', () => {
-    const source = readFileSync(join(__dirname, '..', 'team-block.ts'), 'utf8');
-    // The server and tools of the incident, and of the other servers of the
-    // team the ticket was measured on: none may be spelled in the roster code.
-    // Nor may it read the connector labels written in code (Codex review of
-    // #653, pass 1): the entry is what the database says the teammate holds.
-    for (const word of [
-      'connector_capability',
-      'connectorcapability',
-      'agent-baseline',
-      'hp-connector',
-      'hp_connector',
-      'request_print',
-      'list_printers',
-      'playwright',
-      'browser_',
-      'cogni',
-    ]) {
-      expect(source.toLowerCase()).not.toContain(word);
+  it('the roster code does not read the connector labels written in code (Codex review of #653, pass 1)', () => {
+    const source = readFileSync(join(__dirname, '..', 'team-block.ts'), 'utf8').toLowerCase();
+    for (const word of ['connector_capability', 'connectorcapability', 'agent-baseline']) {
+      expect(source).not.toContain(word);
     }
   });
 });
