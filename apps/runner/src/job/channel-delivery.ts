@@ -1,5 +1,6 @@
-// channel-delivery.ts — the channels where a reply reaches the user only by a
-// tool, and the facts the prompt states about them (#613).
+// channel-delivery.ts — where a job's reply goes (#649), the channels where it
+// reaches the user only by a tool, and the facts the prompt states about them
+// (#613).
 
 import { resolveTransportChannel, textDeliveryOf } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
@@ -38,12 +39,59 @@ export function triggerWantsConfirmation(job: DeliveryJob): boolean {
 }
 
 /**
- * The job must deliver through a tool before it completes: a tool-only
- * channel, or a routine that asked for its confirmation. The delivery guard
- * (execute.ts) and the prompt's channel line read this one rule.
+ * Où va la RÉPONSE d'un job (#649) — une notion, calculée une fois par job,
+ * lue par le prompt (`channelDeliveryFacts`) et par la garde de livraison
+ * (execute.ts).
+ *
+ * - `parent` : un délégué répond à son parent ; le `chat_id` qu'il hérite ne
+ *   fait pas de lui un interlocuteur (#559).
+ * - `channel` : la demande porte un chat où répondre — elle en vient
+ *   (telegram, discord, slack) ou son déclencheur l'a désigné (`chat_id` posé
+ *   par une routine qui veut sa confirmation, un webhook, « Send via
+ *   Telegram » du dashboard) —, et ce canal a un outil d'envoi : l'outil est
+ *   le seul chemin de la réponse.
+ * - `result` : sinon. La réponse est le résultat du job, rendu là d'où vient
+ *   la demande — l'appelant MCP ou API le lit, le web l'affiche, les Runs le
+ *   gardent.
+ *
+ * Le canal de REPLI (`resolveTransportChannel` d'une origine sans transport)
+ * ne décide jamais de la destination : il sert aux messages que le
+ * propriétaire doit recevoir sans les avoir demandés dans un chat (cartes
+ * d'approbation, approvals/notify.ts ; envoi délibéré d'un outil, owner
+ * fallback de delivery-guard.ts). L'y confondre envoyait la réponse d'une
+ * demande MCP sur le Telegram du propriétaire (runs 06a4ab7d, 12f2972f).
  */
-export function requiresToolDelivery(job: DeliveryJob): boolean {
-  return TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || triggerWantsConfirmation(job);
+export type ReplyDestination =
+  | { to: 'parent' }
+  | { to: 'channel'; channel: ChannelKind }
+  | { to: 'result' };
+
+type ReplyJob = DeliveryJob & { parentJobId: string | null };
+
+interface ReplyInputs {
+  job: ReplyJob;
+  notifyChannelOverride: ChannelKind | undefined;
+  activeChannels: readonly ChannelKind[];
+}
+
+/**
+ * Le canal que l'outil d'envoi de ce job résout quand l'agent n'en nomme pas
+ * (`defaultChannelForJob`, delivery-guard.ts) : la cible choisie par la
+ * routine, sinon `resolveTransportChannel`.
+ */
+function sendToolChannel(opts: ReplyInputs): ChannelKind {
+  return (
+    opts.notifyChannelOverride ?? resolveTransportChannel(opts.job.channel, opts.activeChannels)
+  );
+}
+
+export function replyDestination(opts: ReplyInputs): ReplyDestination {
+  const { job } = opts;
+  if (job.parentJobId) return { to: 'parent' };
+  const hasChat = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || job.chatId != null;
+  const channel = sendToolChannel(opts);
+  if (hasChat && TOOL_ONLY_DELIVERY_CHANNELS.has(channel)) return { to: 'channel', channel };
+  return { to: 'result' };
 }
 
 /**
@@ -54,10 +102,12 @@ export function requiresToolDelivery(job: DeliveryJob): boolean {
  * delivery-guard.ts) : la cible choisie par la routine, sinon
  * `resolveTransportChannel`. `renders` est ce que l'adaptateur de CE canal
  * déclare — pas une phrase par canal (invariants #1 et #2) : Telegram ne rend
- * aucune marque, Discord rend le markdown, Slack et WhatsApp leur balisage. `onlyPath` est la condition de la
- * garde de livraison (`requiresToolDelivery`) : là, l'outil est le seul
- * chemin vers l'utilisateur. Ailleurs (un job du dashboard d'un agent qui a
- * un bot), l'outil existe et le fait de format vaut encore.
+ * aucune marque, Discord rend le markdown, Slack et WhatsApp leur balisage.
+ * `reply` est la destination de la réponse (`replyDestination`, #649) : sur
+ * `channel`, l'outil est le seul chemin vers l'utilisateur ; sur `result`
+ * (un job MCP, API, du dashboard d'un agent qui a un bot), la réponse est le
+ * résultat du job, l'outil n'envoie qu'un message séparé au propriétaire, et
+ * le fait de format vaut encore pour ce message.
  *
  * L'orchestration ne rend la ligne que si le job détient `sendTool` (#559) :
  * un délégué qui hérite du `chat_id` sans l'outil n'en lit rien.
@@ -67,20 +117,17 @@ export function requiresToolDelivery(job: DeliveryJob): boolean {
  * contredisaient le runner. Le découpage à la main qu'elle ordonnait a nourri
  * les 30 envois du 28/09.
  */
-export function channelDeliveryFacts(opts: {
-  job: DeliveryJob;
-  notifyChannelOverride: ChannelKind | undefined;
-  activeChannels: readonly ChannelKind[];
-}): JobContext['channelDelivery'] {
-  const { job } = opts;
-  const channel =
-    opts.notifyChannelOverride ?? resolveTransportChannel(job.channel, opts.activeChannels);
+export function channelDeliveryFacts(
+  opts: ReplyInputs,
+  reply: ReplyDestination = replyDestination(opts),
+): JobContext['channelDelivery'] {
+  const channel = sendToolChannel(opts);
   const sendTool = CHANNEL_SEND_TOOL[channel];
   if (sendTool === undefined) return undefined;
   return {
     channel,
     sendTool,
     renders: textDeliveryOf(channel).renders,
-    onlyPath: requiresToolDelivery(job),
+    reply: reply.to,
   };
 }

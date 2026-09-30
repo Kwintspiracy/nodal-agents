@@ -43,9 +43,9 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'Report that a task succeeded or is blocked. It sends no answer by itself: the agent delivers its answer in the same step, through the right channel.',
   description:
     'Signal that the task is complete (status="success") or blocked (status="blocked"). ' +
-    'For content delivery to the user, use the appropriate delivery tool ' +
-    '(`telegram_send_message`, `dashboard_publish`, etc.) — return_result carries no content. ' +
-    'On a DELEGATED sub-task you have no delivery tool: your written reply is the delivery, so ' +
+    'return_result carries no content: your answer is your written reply, unless the ' +
+    '`delivery:` line of your Job context says a send tool is the only way your replies reach ' +
+    'the user. On a DELEGATED sub-task you have no delivery tool: your written reply is the delivery, so ' +
     'write your deliverable as your reply text in the same turn. Signalling success with no ' +
     'reply and no delivery hands back an empty result and the run is failed, not accepted. ' +
     'Whenever your task involves delivering an answer, emit `return_result` and the delivery ' +

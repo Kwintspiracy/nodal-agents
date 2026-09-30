@@ -206,9 +206,8 @@ import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import {
   channelDeliveryFacts,
-  requiresToolDelivery as requiresToolDeliveryOf,
+  replyDestination,
   triggerWantsConfirmation as triggerWantsConfirmationOf,
-  TOOL_ONLY_DELIVERY_CHANNELS,
 } from './channel-delivery.ts';
 import { loadConversationContext } from './conversation-id.ts';
 import { triggerWorker } from '../routes/agent.ts';
@@ -2264,6 +2263,15 @@ async function runJobTracked(
     ...(hasSlackBinding ? (['slack'] as const) : []),
   ];
 
+  // Où va la réponse de ce job (#649) — calculé une fois, lu par la ligne
+  // `delivery:` du prompt, par la garde de livraison et par la cible des
+  // notices du harnais. Jamais le canal de repli d'une origine sans chat.
+  const replyTo = replyDestination({
+    job: { channel: job.channel, chatId: job.chatId, parentJobId: job.parentJobId },
+    notifyChannelOverride,
+    activeChannels,
+  });
+
   // Close callbacks for per-job MCP transports — invoked in the LLM loop's
   // finally so the Streamable HTTP connections never leak.
   const mcpClosers: Array<() => Promise<void>> = [];
@@ -2704,11 +2712,14 @@ async function runJobTracked(
     // The channel's facts (#613): the channel the send tool will resolve —
     // `activeChannels` is known only from §6 — and what its adapter does
     // with a text.
-    const channelDelivery = channelDeliveryFacts({
-      job,
-      notifyChannelOverride: notifyChannelOverride,
-      activeChannels,
-    });
+    const channelDelivery = channelDeliveryFacts(
+      {
+        job: { channel: job.channel, chatId: job.chatId, parentJobId: job.parentJobId },
+        notifyChannelOverride,
+        activeChannels,
+      },
+      replyTo,
+    );
     systemPrompt = await buildSystemPrompt(agent, db, {
       ...jobContext,
       ...(channelDelivery ? { channelDelivery } : {}),
@@ -3329,25 +3340,22 @@ async function runJobTracked(
   // is reached while still false, we re-prompt the agent (bounded) before letting
   // it finish. In-memory/intra-run: in the router/delegation case the parent makes
   // its final send in the same run it finalizes, so the flag is evaluated correctly.
-  // Tool-only channels (Telegram) always require a tool delivery. A cron or
-  // webhook job that opted into a success confirmation (chat_id set by the
-  // tick / route) is held to the same bar: the agent must deliver before
-  // completing, otherwise the user never gets the "done" message they asked
-  // for.
-  const requiresToolDelivery = requiresToolDeliveryOf(job);
-  // Human-readable capitalization for the nudges below. `job.channel` is one of
-  // TOOL_ONLY_DELIVERY_CHANNELS (telegram/discord/slack) here, OR 'cron'/'webhook'
-  // via triggerWantsConfirmation — B1/B2 made both multi-channel (see
-  // notifyChannelOverride above the comment over triggerWantsConfirmation), but
-  // this display name is only used for an in-agent nudge (never user-facing,
-  // invariant #2), so an unrecognized channel falls back to 'Telegram' rather
-  // than guessing.
+  // The bar is the reply's destination (#649, `replyTo`): a request that
+  // carries a chat to answer on — it came from one, or its trigger named one
+  // (a routine's confirmation, a webhook, the dashboard's "send via
+  // Telegram") — must be answered there before completing, otherwise the
+  // user never gets the answer they asked for. A request with no chat (MCP,
+  // API, the web) is answered by its result: no send is required.
+  const requiresToolDelivery = replyTo.to === 'channel';
+  // Human-readable capitalization for the nudges below: the channel the reply
+  // goes to. Only used for an in-agent nudge (never user-facing, invariant #2).
   const CHANNEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
     telegram: 'Telegram',
     discord: 'Discord',
     slack: 'Slack',
   };
-  const channelDisplayName = CHANNEL_DISPLAY_NAMES[job.channel ?? ''] ?? 'Telegram';
+  const channelDisplayName =
+    CHANNEL_DISPLAY_NAMES[replyTo.to === 'channel' ? replyTo.channel : ''] ?? 'Telegram';
   const MAX_REDELIVERY_NUDGES = 2;
   let redeliveryNudges = 0;
   let toolDelivered = false;
@@ -3426,14 +3434,11 @@ async function runJobTracked(
    * Le descripteur de livraison à poser DANS la transaction terminale, ou
    * `null` quand il n'y a rien à dire ou aucun canal à outil pour le dire.
    */
-  // Où part une notice du harnais : le canal à outil du job, ou celui que la
-  // routine a choisi pour sa confirmation. `null` : aucun canal à outil.
+  // Où part une notice du harnais : là où va la réponse (#649), quand c'est un
+  // chat. `null` : la réponse est le résultat du job, ou celui d'un parent.
   const harnessNoticeTarget = (): { channel: string; chatId: string } | null => {
-    const canal = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')
-      ? (job.channel ?? '')
-      : (notifyChannelOverride ?? '');
-    if (!TOOL_ONLY_DELIVERY_CHANNELS.has(canal) || !job.chatId) return null;
-    return { channel: canal, chatId: job.chatId };
+    if (replyTo.to !== 'channel' || !job.chatId) return null;
+    return { channel: replyTo.channel, chatId: job.chatId };
   };
   const harnessNoticeDelivery = (
     payload: string,

@@ -16,6 +16,7 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and, sql } from '@nodal-agents/db';
+import type { JobTriggerContext } from '@nodal-agents/db';
 import {
   agentJobs,
   jobDeliveries,
@@ -1774,6 +1775,145 @@ describe('executeJob', () => {
     expect(sendTelegramMessageMock).not.toHaveBeenCalled();
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  // #649 — bench runs 06a4ab7d / 12f2972f: a request that came through the MCP
+  // server (`run_task`, no chat) read « `telegram_send_message` reaches the user
+  // on telegram », the agent's FALLBACK channel stated as the path of its
+  // answer. The answer went to the owner's Telegram, and the MCP caller read
+  // the narration line the job ended on. Where the answer goes is computed once
+  // from the job's origin, and the prompt the model receives states it.
+  it('the answer goes back where the request came from: an MCP job is answered by its result, a chat or a routine that named one by the send tool (#649) @cap:parler-par-canal-externe/moteur', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      const run = async (
+        values: { channel: string; chatId: string | null; triggerContext?: JobTriggerContext },
+        turns: Parameters<typeof makeMockLlmClient>[0],
+      ) => {
+        const [job] = await db
+          .insert(agentJobs)
+          .values({
+            entityId: seed.entityId,
+            agentId: seed.agentId,
+            task: 'What is 1388 divided by 5?',
+            status: 'pending',
+            messages: [{ role: 'user', content: 'What is 1388 divided by 5?' }],
+            chainCount: 0,
+            ...values,
+          })
+          .returning();
+        const prompts: unknown[] = [];
+        sendTelegramMessageMock.mockClear();
+        await executeJob(job!.id as JobId, makeDeps(makeMockLlmClient(turns, prompts)), testEnv);
+        const [row] = await db
+          .select({
+            systemPrompt: agentJobs.systemPrompt,
+            result: agentJobs.result,
+            status: agentJobs.status,
+          })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, job!.id));
+        const deliveryLine =
+          (row?.systemPrompt ?? '').split('\n').find((l) => l.startsWith('- delivery:')) ?? '';
+        return { row, deliveryLine, firstRequest: JSON.stringify(prompts[0]) };
+      };
+
+      // MCP: the reply is the result the caller reads; the send tool is not its path.
+      const mcp = await run(
+        {
+          channel: 'mcp',
+          chatId: null,
+          triggerContext: { type: 'mcp', caller: 'bench', triggeredAt: new Date().toISOString() },
+        },
+        [{ text: '277.6' }],
+      );
+      expect(
+        mcp.deliveryLine.startsWith(
+          "- delivery: your reply is this job's result, returned to where the request came from. " +
+            '`telegram_send_message` sends a separate message to your owner on telegram. ',
+        ),
+      ).toBe(true);
+      expect(mcp.deliveryLine).not.toContain('reaches the user');
+      // What the model was actually sent, not only what was stored.
+      expect(mcp.firstRequest).toContain("your reply is this job's result");
+      expect(mcp.firstRequest).not.toContain('reaches the user on telegram');
+      expect({ status: mcp.row?.status, result: mcp.row?.result }).toEqual({
+        status: 'completed',
+        result: '277.6',
+      });
+      expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+
+      // A Telegram request: unchanged, the send tool is the only path.
+      const tg = await run({ channel: 'telegram', chatId: '199791464' }, [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: '277.6' } },
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+      expect(
+        tg.deliveryLine.startsWith(
+          '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
+        ),
+      ).toBe(true);
+
+      // A routine that asked for its confirmation on Telegram: unchanged.
+      const cron = await run(
+        {
+          channel: 'cron',
+          chatId: '12345',
+          triggerContext: {
+            type: 'cron',
+            scheduleName: 'daily',
+            prevRunAt: null,
+            notifyChannel: 'telegram',
+          },
+        },
+        [
+          {
+            toolCalls: [
+              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'Done.' } },
+              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+      );
+      expect(
+        cron.deliveryLine.startsWith(
+          '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
+        ),
+      ).toBe(true);
+      expect(sendTelegramMessageMock).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: '12345', text: 'Done.' }),
+      );
+
+      // A dashboard task sent with "send via Telegram": the requester named the
+      // chat, so the reply goes there, and the delivery guard holds it to it
+      // (the same rule as a routine's confirmation).
+      const dash = await run({ channel: 'dashboard', chatId: '199791464' }, [
+        { text: '277.6' },
+        {
+          toolCalls: [
+            { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: '277.6' } },
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+      expect(
+        dash.deliveryLine.startsWith(
+          '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
+        ),
+      ).toBe(true);
+      expect(sendTelegramMessageMock).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: '199791464', text: '277.6' }),
+      );
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
   });
 
   // ─── Conversation-first chat: runChatTurn never creates a job ─────────────

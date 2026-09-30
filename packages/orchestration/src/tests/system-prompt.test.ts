@@ -1734,20 +1734,20 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     channel: 'telegram',
     sendTool: 'telegram_send_message',
     renders: [],
-    onlyPath: true,
+    reply: 'channel',
   } as const;
   const DISCORD_FACTS = {
     channel: 'discord',
     sendTool: 'telegram_send_message',
     renders: ['**bold**', '*italic*', '`code`'],
-    onlyPath: true,
+    reply: 'channel',
   } as const;
   // Slack renders its own mrkdwn, not markdown: `*x*` is bold there (#615).
   const SLACK_FACTS = {
     channel: 'slack',
     sendTool: 'telegram_send_message',
     renders: ['*bold*', '_italic_', '<url|text>'],
-    onlyPath: true,
+    reply: 'channel',
   } as const;
   const withSend = [...ALWAYS_ON_TOOLS, ...DELIVERY_TOOL_NAMES];
   const deliveryLines = (prompt: string): string[] =>
@@ -1826,19 +1826,42 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
     expect(prompt).not.toContain('no markup renders');
   });
 
-  it('a dashboard job holding the send tool keeps the format fact, not the only-path clause (#613)', async () => {
+  // #649 — a request that came through MCP read « `telegram_send_message`
+  // reaches the user on telegram »: the fallback channel of a job with no chat,
+  // stated as the path of its answer. The answer went to the owner's Telegram
+  // and the MCP caller got a narration line. Whatever the origin without a chat
+  // (MCP, API, the dashboard, a silent routine), the line now says the reply is
+  // the job's result, and that the send tool reaches the owner separately.
+  it('a request with no chat to answer on: the reply is the result, the send tool is a separate message to the owner (#649) @cap:parler-par-canal-externe/moteur', async () => {
     const { entityId, root } = await seedTeam();
     const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
-    const prompt = await buildSystemPrompt(rootAgent, db, {
-      origin: 'dashboard',
-      channelDelivery: { ...TELEGRAM_FACTS, onlyPath: false },
-      availableToolNames: withSend,
-    });
-    expect(deliveryLines(prompt)).toEqual([
-      '- delivery: `telegram_send_message` reaches the user on telegram. ' +
-        'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, **bold**, escapes) shows literally. ' +
-        'A long text is split into several messages automatically, so send each reply once, whole.',
-    ]);
+    for (const [origin, facts] of [
+      ['mcp', { ...TELEGRAM_FACTS, reply: 'result' }],
+      ['api', { ...TELEGRAM_FACTS, reply: 'result' }],
+      ['dashboard', { ...TELEGRAM_FACTS, reply: 'result' }],
+      ['cron', { ...DISCORD_FACTS, reply: 'result' }],
+    ] as const) {
+      const prompt = await buildSystemPrompt(rootAgent, db, {
+        origin,
+        channelDelivery: facts,
+        availableToolNames: withSend,
+      });
+      const lines = deliveryLines(prompt);
+      expect({ origin, lines: lines.length }).toEqual({ origin, lines: 1 });
+      const line = lines[0] ?? '';
+      expect(
+        line.startsWith(
+          "- delivery: your reply is this job's result, returned to where the request came from. " +
+            `\`telegram_send_message\` sends a separate message to your owner on ${facts.channel}. `,
+        ),
+      ).toBe(true);
+      // Never the path of the answer, whatever the channel.
+      expect({ origin, found: line.includes('reaches the user') }).toEqual({
+        origin,
+        found: false,
+      });
+      expect({ origin, found: line.includes('the only way') }).toEqual({ origin, found: false });
+    }
   });
 
   it('a delegate that inherits the chat_id gets no channel text at all (#559, #613)', async () => {
