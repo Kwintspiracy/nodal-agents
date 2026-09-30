@@ -14,7 +14,7 @@
 // regrossir le socle devient une décision, pas une dérive.
 //
 // Le seuil, 5 000, et pourquoi il n'est pas plus bas : le socle budgété en
-// fait 4 913. Chacune des sections retirées, remise seule, le fait sortir du
+// fait 4 921. Chacune des sections retirées, remise seule, le fait sortir du
 // budget, la plus petite (le bloc d'approbation, 343 car.) comprise. Descendre
 // le socle sous ~4 660 sans baisser le seuil rouvrirait ce trou : la marge est
 // voulue petite, une phrase, pas une section.
@@ -70,8 +70,13 @@ describe('chaque règle gardée garde une phrase repérable', () => {
   it.each([
     ['parler la langue de l’utilisateur', "Reply in the language of the user's latest message"],
     ['ne jamais traduire le code', 'Never translate code, identifiers'],
+    ['anglais au premier message ambigu', 'or English if there is none yet'],
     ['une preuve de CE tour', 'without evidence from THIS turn'],
     ['relire un fichier écrit', 'After a `file_write`, `file_read` the path'],
+    [
+      'lancer le code écrit avant de dire fait',
+      'Run code you wrote (or its tests) before calling it done',
+    ],
     [
       'ne jamais inventer une sortie d’outil',
       'Never write a tool output you did not actually get back',
@@ -82,6 +87,7 @@ describe('chaque règle gardée garde une phrase repérable', () => {
     ['le travail délégué se lit dans le ledger (ca672ced)', 'task ledger entries of your history'],
     ['le « fait » d’un délégué n’est pas le résultat', 'A delegate\'s "done" is not the result'],
     ['lire avant d’écrire', 'Read before you write'],
+    ['dire quand l’état courant est illisible', 'and say so when you cannot'],
     ['échouer bruyamment', 'Fail loud'],
     [
       'être décisif, pour tout modèle (ex-NEEDS_FIRMER_VERIFY)',

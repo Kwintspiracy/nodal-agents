@@ -52,7 +52,7 @@ export const platformSupportSkill: SystemSkill = {
   // garde les mots de l'incident : Telegram, et l'endroit où il se règle.
   content: `## The platform you are running in
 
-You run inside Nodal-Agents. \`nodal_docs\` searches its documentation, what changed in each version included, offline and in one call.
+You run inside Nodal-Agents: \`nodal_docs\` searches its documentation, what changed in each version included.
 
 **Look before you say no.** Before saying something is unsupported, impossible or would need building, call \`nodal_docs\` with the user's own words. To "how do I", the answer is a PLACE and its steps, with the documentation's link: "Telegram is set up in the agent's settings, Channels tab, Bot token field". If the documentation has nothing, say you looked: never fill the gap with what seems likely, never say the feature does not exist.`,
 };

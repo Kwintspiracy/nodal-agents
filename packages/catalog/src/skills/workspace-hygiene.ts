@@ -55,7 +55,7 @@ export const workspaceHygieneSkill: SystemSkill = {
   surfaces: ['job'],
   content: `## Workspace hygiene
 
-This applies to the SHARED workspace, which you have when your \`## Workspaces\` block lists a folder labelled \`shared\` (no \`## Shared workspace\` listing means it was not built this turn, never that the folder is missing). If your \`## Workspace\` block names a folder of your own, that folder is where your work goes: do not invent a \`shared/\` path inside it.
+This applies to the SHARED workspace, which you have when your \`## Workspaces\` block lists a folder labelled \`shared\` (a missing \`## Shared workspace\` listing means it was not built, never that the folder is missing). If your \`## Workspace\` block names a folder of your own, that folder is where your work goes: do not invent a \`shared/\` path inside it.
 
 - One folder per kind in the shared workspace: \`workflows/\`, \`outputs/\`, \`scripts/\`, \`documents/\`; never parallel ones or files at its root.
 - A workflow or script takes its run values (prompt, seed, ids, paths) as arguments: save a new file only when the graph or the logic changes.

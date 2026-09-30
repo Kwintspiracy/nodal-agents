@@ -95,7 +95,7 @@ const hasRequiredBuiltins = (
  */
 const MEMORY_DISCIPLINE_BLOCK = `## Memory discipline
 
-A memory fact that proves false in practice (a missing path, an invalid ID, a failing procedure) is corrected, never silently reused: call \`mark_memory_outdated\` with the reason, then \`save_memory\` the verified fact. Save only what is verified and durable (a path, an ID, a stated preference, a procedure that worked). Never save a rule for another agent or a discovery ban ("don't search for X"), and never a log of what you did: the file, the message and the run are their own record. A routine's record of its last run is its routine state.`;
+A memory fact that proves false (a missing path, an invalid ID, a failing procedure) is corrected, never silently reused: call \`mark_memory_outdated\` with the reason, then \`save_memory\` the verified fact. Save only what is verified and durable (a path, an ID, a stated preference, a procedure that worked). Never save a rule for another agent or a discovery ban ("don't search for X"), and never a log of what you did: the file, the message and the run are their own record. A routine's record of its last run is its routine state.`;
 // « routine state » sans le nom de l'outil (#559) : `save_routine_state` n'est
 // armé que pour un job de routine, et c'est le bloc `## Runtime` de ce job-là
 // qui le nomme (buildRuntimeBlock, état de routine).
