@@ -87,7 +87,7 @@ export const EXPLICATIONS = {
 <li><b>Done</b>: closed issue, merged pull request, mixed in one chronology. It shows the last seven days, newest first, and folds the rest under a count; the heading still counts everything.</li>
 <li><b>Abandoned</b>: a pull request closed without being merged.</li>
 </ul>
-<p>The left bar follows the same order as the eye: What is tested, Work in flight, Capabilities, Gaps, Journeys. Those five pages are the ones you steer with, and they read in that order.</p>
+<p>The left bar follows the same order as the eye: What is tested, Work in flight, Capabilities, Gaps, Journeys, Workflows. Those six pages are the ones you steer with, and they read in that order.</p>
 <p>Under the "How it runs" heading sit the four plumbing pages: code coverage, the bench, the triggers and the history. You open them when you doubt a number, not every day.</p>
 <p>A seventh column sits first, "Running", and it is the only one not deduced from issues and pull requests. It has two halves, each with its own time. The top half is read by YOUR BROWSER, from the public GitHub runs API, when the page opens and then every two minutes while the tab stays visible. It says "as of" the time of that read, on your own clock. The bottom half is read when the page is built: the release check flag left on the machine that ran it, and the Nodal review line. It is labelled "at build time" for that reason.</p>
 <p>If GitHub does not answer, the column says so with the time of the attempt and the reason, and it keeps the last read that worked, with that read's own date. An empty column never stands for "nothing is running": read and empty says "nothing in flight as of" a time, silent says nothing is known.</p>
@@ -367,6 +367,38 @@ export const EXPLICATIONS = {
     blocs: {
       prix: "How long you wait for a pull request's checks, over the CI's last thirty green runs. It is this number that decides the fate of the tests: when the wait becomes unbearable, it is the suite that gets shortened.",
     },
+  },
+
+  workflows: {
+    titre: 'Workflows',
+    enBref:
+      'Real requests, always the same ones, sent to the real root agent with a real model, and judged on what really happened. The only page that says whether an everyday request still works end to end, and whether it got slower from one version to the next.',
+    parties: [
+      {
+        titre: "What it's for",
+        texte: `<p>Thousands of tests run on every change, and none of them sends a real request to a real model: unit tests use fake models, journeys click screens that talk to no model. Every recent real failure slipped through that gap: calls that took minutes because of a stalled connection, a model looping through hundreds of tool calls, an approval asked for nothing, a simple question handed to a sub-agent.</p>
+<p>This page is that missing layer. A fixed set of everyday requests (a question, a research, a file, a script, a print, an image) is replayed on the owner's own stack, and each run leaves one line.</p>`,
+      },
+      {
+        titre: 'How to read it',
+        texte: `<p>One card per workflow. <b>Green means</b> says, in one sentence, what had to be true for the run to count as green. The row of pills is the last five runs, oldest first: <b>Green</b>, <b>Red</b> (the workflow did not do what was asked, or stopped to ask the owner something), <b>Skipped</b> (the owner was working on the stack, so the bench waited, then gave up and said why), <b>Bench error</b> (the bench itself could not run the request). Hover a pill for its date, its version and its reasons. The latest red reason is written under the pills.</p>
+<p>The table gives, for every Nodal-Agents version, how many runs were green, and the <b>median</b> time, tokens and cost of the green runs. Only green runs count: a red run may have been stopped after ten seconds, and counting it would make a failure look like a speed-up.</p>
+<p>A red banner <b>Slower since</b> appears when the median of the last five green runs on the current version is more than 1.5 times the median of the previous version, for time or for tokens.</p>`,
+      },
+      {
+        titre: 'Where it comes from',
+        texte: `<p>From <code>apps/qa/data/workflows.ndjson</code>, one line per run, appended by <code>pnpm bench:workflows</code> on the machine that hosts the stack, usually at night. The request goes through the same door as an MCP client of the owner. The verdict is read from facts: the job rows, the tool results, the files on disk, never from what the model says it did.</p>
+<p>When a workflow changes (its request or its judge), its version goes up and a new series starts: the card shows the newest series, and names the older ones instead of comparing two different things.</p>`,
+      },
+      {
+        titre: 'When to act',
+        texte: `<p>A <b>red</b> caused by the product (an approval asked for nothing, a wrong answer, a file not written) is a product bug: open an issue with the reason and the run. A <b>Slower since</b> banner after a release is a regression to explain before the next one. Several <b>Skipped</b> nights in a row mean the stack is never free at night: a job of the owner is stuck.</p>`,
+      },
+      {
+        titre: 'What it does not tell you',
+        texte: `<p>Why a run failed, beyond its reasons: the run itself is on the Runs page of the stack, under its job id. It does not measure every model either: the runs use the models the owner's agents are set to, which the line records. And one run is one observation: a single red on a model is a hint, a pattern over several nights is a finding.</p>`,
+      },
+    ],
   },
 
   historique: {

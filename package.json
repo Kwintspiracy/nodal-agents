@@ -25,6 +25,9 @@
     "pack:smoke": "node scripts/smoke-pack.mjs",
     "pack:upgrade": "node scripts/smoke-upgrade.mjs",
     "bench": "pnpm --filter @nodal-agents/bench bench",
+    "bench:workflows": "pnpm --filter @nodal-agents/bench workflows",
+    "bench:workflows:schedule": "pnpm --filter @nodal-agents/bench workflows:schedule",
+    "bench:workflows:unschedule": "pnpm --filter @nodal-agents/bench workflows:unschedule",
     "inventory": "node scripts/inventory/collect.mjs audit/inventory.json && node scripts/inventory/render.mjs audit/inventory.json audit/inventaire.html"
   },
   "devDependencies": {

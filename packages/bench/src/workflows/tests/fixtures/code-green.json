@@ -1,0 +1,274 @@
+{
+  "scenario": "code",
+  "version": 1,
+  "facts": {
+    "rootId": "8f643869-7b51-4702-958b-d372340f87a5",
+    "entityId": "00000000-0000-0000-0000-000000000002",
+    "jobs": [
+      {
+        "id": "8f643869-7b51-4702-958b-d372340f87a5",
+        "parentJobId": null,
+        "agentSlug": "alfred",
+        "status": "completed",
+        "channel": "mcp",
+        "result": "Fait. Voici le résultat :\n\n**Somme de `petal_length` pour l'espèce *virginica* : 277,6**\n\nVérifications effectuées :\n- **CSV téléchargé** dans `nodal-bench/iris.csv` (3 858 octets) — relu en entier : 150 lignes de données, dont 50 lignes virginica, en-tête `sepal_length,sepal_width,petal_length,petal_width,species` conforme à la source GitHub.\n- **Script** écrit dans `scripts/sum_petal_length_virginica.py` — réutilisable (chemin du CSV passé en argument, arithmétique `Decimal` exacte, bibliothèque standard uniquement). Il a été exécuté et affiche la somme sur stdout.\n- **Recalcul indépendant** : j'ai moi-même additionné les 50 valeurs `petal_length` virginica du CSV relu — je retrouve bien 277,6 (cohérent aussi avec la moyenne connue de 5,552 × 50).\n\nFichiers livrés :\n- `nodal-bench/iris.csv`\n- `scripts/sum_petal_length_virginica.py`",
+        "error": null,
+        "createdMs": 1790744751650.295,
+        "updatedMs": 1790744987598
+      },
+      {
+        "id": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "parentJobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "agentSlug": "researcher",
+        "status": "completed",
+        "channel": "internal",
+        "result": "Tout est vérifié. Je sauvegarde la leçon opérationnelle (piège `cmd.exe` multi-lignes) et je livre le résultat.",
+        "error": null,
+        "createdMs": 1790744774015.805,
+        "updatedMs": 1790744968233
+      }
+    ],
+    "toolCalls": [
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "toolName": "load_tools",
+        "input": "{\"names\": [\"mcp_fetch__fetch_txt\"], \"purpose\": \"Télécharger le CSV iris depuis GitHub raw\"}",
+        "output": "{\"loaded\":[\"mcp_fetch__fetch_txt\"],\"alreadyAvailable\":[],\"notHeld\":[],\"message\":\"Loaded: mcp_fetch__fetch_txt. Their definitions are in your tool list from your next step on; call them directly.\"}",
+        "createdMs": 1790744754695.893
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "toolName": "skill_view",
+        "input": "{\"slug\": \"command-execution\", \"purpose\": \"Exécuter un script Python pour calculer la somme demandée\"}",
+        "output": "{\"ok\":true,\"name\":\"Command execution\",\"content\":\"## Command execution\\n\\nThis skill unlocks the `run_command` tool, which runs a shell command in the agent's workspace and returns its **stdout**, **stderr** and **exit code**. Use it for anything that needs the shell: installing dependencies (`npm install`, `pip install`), running scripts (`node build.js`, `python gen.py`), build steps, or CLI tools.\\n\\n### How it runs\\n\\n- The command runs via **cmd.exe** on Windows and **/bin/sh** on Unix, so shell features like `&&`, `|` and quoting work.\\n- The working directory defaults to the **workspace root**. Pass `cwd` (a workspace-relative path, e.g. `\\\"scripts/canvas\\\"`) to run somewhere else inside the workspace.\\n- Default timeout is **300 seconds**; pass `timeout_seconds` to change it (e.g. a long native build). On timeout the command and its child processes are killed.\\n\\n### Discipline\\n\\n1. **Run, then finish.** As soon as a command gives you the output you need, STOP — write the result as your answer (or publish it with `dashboard_publish`), signal with `return_result`, and end your turn. The signal carries no content: an empty answer delivers nothing. A successful command (exit 0) is DONE; re-running it, or running another just to \\\"double-check\\\", only re-prompts the user for approval and goes nowhere. Run another command ONLY if the task genuinely requires a different one.\\n2. **Batch multi-step work into ONE call.** A compound command (`npm install && node download_font.js && node draw_text.js`) runs as a single `run_command` — and, in approval mode, is **one approval** instead of three. Prefer this over three separate calls.\\n3. **A non-zero exit code is data, not a crash.** It is returned to you with stderr — read it, fix the cause, and retry a corrected command. Do not silently repeat the same failing command.\\n4. **Stay in the workspace.** Read/write files with the `file_*` tools and target the workspace; `cwd` cannot point outside it.\\n5. **Non-interactive only.** Commands that wait for input (a `y/n` prompt, a password) will hang until the timeout. Use non-interactive flags (e.g. `npm install --yes`, `--no-input`).\\n6. **Output is capped** (~100k characters per stream). If you need full output of a verbose command, redirect it to a file in the workspace and read it back with `file_read`.\\n7. **Never install heavyweight software or reinstall a service on your own initiative.** A multi-gigabyte install (a fresh app, large model downloads, a full toolchain — e.g. `comfy install`, `apt install` of a big package) is a heavy, easily-duplicated action. If a local service or CLI you need is NOT responding — a server on a port, a daemon — that is **not** a licence to install it: it may simply be down, on a different port, or misconfigured. Report that it is unreachable and **ask the user** before installing anything large. This matters most under Yolo / auto-approve, where such a command would otherwise run with no human in the loop. A transient connection failure means \\\"tell the user it's unreachable\\\", never \\\"install a fresh copy\\\".\\n\\n### Approval vs Yolo\\n\\nBy default **every command pauses for human approval**. The user does NOT decide on a raw command first — they decide on the **`purpose`** you provide: a short plain-language sentence, **IN THEIR LANGUAGE**, of what the command does and why. ALWAYS fill `purpose` (it is required). When the command has a real downside — deletes/overwrites files, installs software, downloads from the network, spends money, long-running, hard to undo — also fill **`impact`** (shown to the user as a ⚠️ warning); omit it only when the command is genuinely harmless / read-only. A clear `purpose` gets approved fast; an unexplained wall of shell gets rejected or ignored. If **Yolo mode** is enabled for this agent, commands run immediately without asking — still fill `purpose`/`impact` for the record.\\n\"}",
+        "createdMs": 1790744754696.724
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "toolName": "load_tools",
+        "input": "{\"names\": [\"run_command\"], \"purpose\": \"Exécuter le script Python de calcul demandé\"}",
+        "output": "{\"loaded\":[],\"alreadyAvailable\":[],\"notHeld\":[\"run_command\"],\"message\":\"Not tools you hold: run_command. Nothing was loaded for them; only the names in your tool index can be loaded.\"}",
+        "createdMs": 1790744756402.269
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "toolName": "mcp_fetch__fetch_txt",
+        "input": "{\"url\": \"https://raw.githubusercontent.com/mwaskom/seaborn-data/8504c04d4b02ac56527949baafb416e5864698b6/iris.csv\", \"purpose\": \"Télécharger le fichier iris.csv depuis GitHub pour le sauvegarder dans l'espace de travail\", \"max_length\": 20000}",
+        "output": "\"sepal_length,sepal_width,petal_length,petal_width,species 5.1,3.5,1.4,0.2,setosa 4.9,3.0,1.4,0.2,setosa 4.7,3.2,1.3,0.2,setosa 4.6,3.1,1.5,0.2,setosa 5.0,3.6,1.4,0.2,setosa 5.4,3.9,1.7,0.4,setosa 4.6,3.4,1.4,0.3,setosa 5.0,3.4,1.5,0.2,setosa 4.4,2.9,1.4,0.2,setosa 4.9,3.1,1.5,0.1,setosa 5.4,3.7,1.5,0.2,setosa 4.8,3.4,1.6,0.2,setosa 4.8,3.0,1.4,0.1,setosa 4.3,3.0,1.1,0.1,setosa 5.8,4.0,1.2,0.2,setosa 5.7,4.4,1.5,0.4,setosa 5.4,3.9,1.3,0.4,setosa 5.1,3.5,1.4,0.3,setosa 5.7,3.8,1.7,0.3,setosa 5.1,3.8,1.5,0.3,setosa 5.4,3.4,1.7,0.2,setosa 5.1,3.7,1.5,0.4,setosa 4.6,3.6,1.0,0.2,setosa 5.1,3.3,1.7,0.5,setosa 4.8,3.4,1.9,0.2,setosa 5.0,3.0,1.6,0.2,setosa 5.0,3.4,1.6,0.4,setosa 5.2,3.5,1.5,0.2,setosa 5.2,3.4,1.4,0.2,setosa 4.7,3.2,1.6,0.2,setosa 4.8,3.1,1.6,0.2,setosa 5.4,3.4,1.5,0.4,setosa 5.2,4.1,1.5,0.1,setosa 5.5,4.2,1.4,0.2,setosa 4.9,3.1,1.5,0.2,setosa 5.0,3.2,1.2,0.2,setosa 5.5,3.5,1.3,0.2,setosa 4.9,3.6,1.4,0.1,setosa 4.4,3.0,1.3,0.2,setosa 5.1,3.4,1.5,0.2,setosa 5.0,3.5,1.3,0.3,setosa 4.5,2.3,1.3,0.3,setosa 4.4,3.2,1.3,0.2,setosa 5.0,3.5,1.6,0.6,setosa 5.1,3.8,1.9,0.4,setosa 4.8,3.0,1.4,0.3,setosa 5.1,3.8,1.6,0.2,setosa 4.6,3.2,1.4,0.2,setosa 5.3,3.7,1.5,0.2,setosa 5.0,3.3,1.4,0.2,setosa 7.0,3.2,4.7,1.4,versicolor 6.4,3.2,4.5,1.5,versicolor 6.9,3.1,4.9,1.5,versicolor 5.5,2.3,4.0,1.3,versicolor 6.5,2.8,4.6,1.5,versicolor 5.7,2.8,4.5,1.3,versicolor 6.3,3.3,4.7,1.6,versicolor 4.9,2.4,3.3,1.0,versicolor 6.6,2.9,4.6,1.3,versicolor 5.2,2.7,3.9,1.4,versicolor 5.0,2.0,3.5,1.0,versicolor 5.9,3.0,4.2,1.5,versicolor 6.0,2.2,4.0,1.0,versicolor 6.1,2.9,4.7,1.4,versicolor 5.6,2.9,3.6,1.3,versicolor 6.7,3.1,4.4,1.4,versicolor 5.6,3.0,4.5,1.5,versicolor 5.8,2.7,4.1,1.0,versicolor 6.2,2.2,4.5,1.5,versicolor 5.6,2.5,3.9,1.1,versicolor 5.9,3.2,4.8,1.8,versicolor 6.1,2.8,4.0,1.3,versicolor 6.3,2.5,4.9,1.5,versicolor 6.1,2.8,4.7,1.2,versicolor 6.4,2.9,4.3,1.3,versicolor 6.6,3.0,4.4,1.4,versicolor 6.8,2.8,4.8,1.4,versicolor 6.7,3.0,5.0,1.7,versicolor 6.0,2.9,4.5,1.5,versicolor 5.7,2.6,3.5,1.0,versicolor 5.5,2.4,3.8,1.1,versicolor 5.5,2.4,3.7,1.0,versicolor 5.8,2.7,3.9,1.2,versicolor 6.0,2.7,5.1,1.6,versicolor 5.4,3.0,4.5,1.5,versicolor 6.0,3.4,4.5,1.6,versicolor 6.7,3.1,4.7,1.5,versicolor 6.3,2.3,4.4,1.3,versicolor 5.6,3.0,4.1,1.3,versicolor 5.5,2.5,4.0,1.3,versicolor 5.5,2.6,4.4,1.2,versicolor 6.1,3.0,4.6,1.4,versicolor 5.8,2.6,4.0,1.2,versicolor 5.0,2.3,3.3,1.0,versicolor 5.6,2.7,4.2,1.3,versicolor 5.7,3.0,4.2,1.2,versicolor 5.7,2.9,4.2,1.3,versicolor 6.2,2.9,4.3,1.3,versicolor 5.1,2.5,3.0,1.1,versicolor 5.7,2.8,4.1,1.3,versicolor 6.3,3.3,6.0,2.5,virginica 5.8,2.7,5.1,1.9,virginica 7.1,3.0,5.9,2.1,virginica 6.3,2.9,5.6,1.8,virginica 6.5,3.0,5.8,2.2,virginica 7.6,3.0,6.6,2.1,virginica 4.9,2.5,4.5,1.7,virginica 7.3,2.9,6.3,1.8,virginica 6.7,2.5,5.8,1.8,virginica 7.2,3.6,6.1,2.5,virginica 6.5,3.2,5.1,2.0,virginica 6.4,2.7,5.3,1.9,virginica 6.8,3.0,5.5,2.1,virginica 5.7,2.5,5.0,2.0,virginica 5.8,2.8,5.1,2.4,virginica 6.4,3.2,5.3,2.3,virginica 6.5,3.0,5.5,1.8,virginica 7.7,3.8,6.7,2.2,virginica 7.7,2.6,6.9,2.3,virginica 6.0,2.2,5.0,1.5,virginica 6.9,3.2,5.7,2.3,virginica 5.6,2.8,4.9,2.0,virginica 7.7,2.8,6.7,2.0,virginica 6.3,2.7,4.9,1.8,virginica 6.7,3.3,5.7,2.1,virginica 7.2,3.2,6.0,1.8,virginica 6.2,2.8,4.8,1.8,virginica 6.1,3.0,4.9,1.8,virginica 6.4,2.8,5.6,2.1,virginica 7.2,3.0,5.8,1.6,virginica 7.4,2.8,6.1,1.9,virginica 7.9,3.8,6.4,2.0,virginica 6.4,2.8,5.6,2.2,virginica 6.3,2.8,5.1,1.5,virginica 6.1,2.6,5.6,1.4,virginica 7.7,3.0,6.1,2.3,virginica 6.3,3.4,5.6,2.4,virginica 6.4,3.1,5.5,1.8,virginica 6.0,3.0,4.8,1.8,virginica 6.9,3.1,5.4,2.1,virginica 6.7,3.1,5.6,2.4,virginica 6.9,3.1,5.1,2.3,virginica 5.8,2.7,5.1,1.9,virginica 6.8,3.2,5.9,2.3,virginica 6.7,3.3,5.7,2.5,virginica 6.7,3.0,5.2,2.3,virginica 6.3,2.5,5.0,1.9,virginica 6.5,3.0,5.2,2.0,virginica 6.2,3.4,5.4,2.3,virginica 5.9,3.0,5.1,1.8,virginica\"",
+        "createdMs": 1790744756404.01
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "toolName": "assign_researcher",
+        "input": "{\"task\": \"Dans le workspace shared (~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared) :\\n1. Télécharge le fichier https://raw.githubusercontent.com/mwaskom/seaborn-data/8504c04d4b02ac56527949baafb416e5864698b6/iris.csv vers nodal-bench/iris.csv (crée le dossier nodal-bench s'il n'existe pas déjà — il contient ventes-bench.xlsx). Utilise curl ou équivalent.\\n2. Écris un petit script Python réutilisable (dans scripts/, avec le chemin du CSV en argument) qui calcule la somme de la colonne petal_length pour les lignes où species == \\\"virginica\\\".\\n3. Exécute le script et vérifie le résultat (vérifie aussi que le CSV a 150 lignes de données et 50 lignes virginica).\\nRetourne : la somme exacte, le chemin du CSV, le chemin du script, et le résultat de ta vérification.\", \"purpose\": \"Télécharger iris.csv dans nodal-bench/ et exécuter un script Python calculant la somme de petal_length pour virginica\"}",
+        "output": "{\"outcome\":\"delegation_requested\",\"to\":\"researcher\"}",
+        "createdMs": 1790744774011.234
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "load_tools",
+        "input": "{\"names\": [\"run_command\"], \"purpose\": \"Download iris.csv with curl and run the Python sum script plus verification commands.\"}",
+        "output": "{\"loaded\":[\"run_command\"],\"alreadyAvailable\":[],\"notHeld\":[],\"message\":\"Loaded: run_command. Their definitions are in your tool list from your next step on; call them directly.\"}",
+        "createdMs": 1790744824432.376
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "skill_view",
+        "input": "{\"slug\": \"command-execution\", \"purpose\": \"Run curl to download iris.csv and python to execute the sum script in the shared workspace.\"}",
+        "output": "{\"ok\":true,\"name\":\"Command execution\",\"content\":\"## Command execution\\n\\nThis skill unlocks the `run_command` tool, which runs a shell command in the agent's workspace and returns its **stdout**, **stderr** and **exit code**. Use it for anything that needs the shell: installing dependencies (`npm install`, `pip install`), running scripts (`node build.js`, `python gen.py`), build steps, or CLI tools.\\n\\n### How it runs\\n\\n- The command runs via **cmd.exe** on Windows and **/bin/sh** on Unix, so shell features like `&&`, `|` and quoting work.\\n- The working directory defaults to the **workspace root**. Pass `cwd` (a workspace-relative path, e.g. `\\\"scripts/canvas\\\"`) to run somewhere else inside the workspace.\\n- Default timeout is **300 seconds**; pass `timeout_seconds` to change it (e.g. a long native build). On timeout the command and its child processes are killed.\\n\\n### Discipline\\n\\n1. **Run, then finish.** As soon as a command gives you the output you need, STOP — write the result as your answer (or publish it with `dashboard_publish`), signal with `return_result`, and end your turn. The signal carries no content: an empty answer delivers nothing. A successful command (exit 0) is DONE; re-running it, or running another just to \\\"double-check\\\", only re-prompts the user for approval and goes nowhere. Run another command ONLY if the task genuinely requires a different one.\\n2. **Batch multi-step work into ONE call.** A compound command (`npm install && node download_font.js && node draw_text.js`) runs as a single `run_command` — and, in approval mode, is **one approval** instead of three. Prefer this over three separate calls.\\n3. **A non-zero exit code is data, not a crash.** It is returned to you with stderr — read it, fix the cause, and retry a corrected command. Do not silently repeat the same failing command.\\n4. **Stay in the workspace.** Read/write files with the `file_*` tools and target the workspace; `cwd` cannot point outside it.\\n5. **Non-interactive only.** Commands that wait for input (a `y/n` prompt, a password) will hang until the timeout. Use non-interactive flags (e.g. `npm install --yes`, `--no-input`).\\n6. **Output is capped** (~100k characters per stream). If you need full output of a verbose command, redirect it to a file in the workspace and read it back with `file_read`.\\n7. **Never install heavyweight software or reinstall a service on your own initiative.** A multi-gigabyte install (a fresh app, large model downloads, a full toolchain — e.g. `comfy install`, `apt install` of a big package) is a heavy, easily-duplicated action. If a local service or CLI you need is NOT responding — a server on a port, a daemon — that is **not** a licence to install it: it may simply be down, on a different port, or misconfigured. Report that it is unreachable and **ask the user** before installing anything large. This matters most under Yolo / auto-approve, where such a command would otherwise run with no human in the loop. A transient connection failure means \\\"tell the user it's unreachable\\\", never \\\"install a fresh copy\\\".\\n\\n### Approval vs Yolo\\n\\nBy default **every command pauses for human approval**. The user does NOT decide on a raw command first — they decide on the **`purpose`** you provide: a short plain-language sentence, **IN THEIR LANGUAGE**, of what the command does and why. ALWAYS fill `purpose` (it is required). When the command has a real downside — deletes/overwrites files, installs software, downloads from the network, spends money, long-running, hard to undo — also fill **`impact`** (shown to the user as a ⚠️ warning); omit it only when the command is genuinely harmless / read-only. A clear `purpose` gets approved fast; an unexplained wall of shell gets rejected or ignored. If **Yolo mode** is enabled for this agent, commands run immediately without asking — still fill `purpose`/`impact` for the record.\\n\"}",
+        "createdMs": 1790744824433.451
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "file_write",
+        "input": "{\"path\": \"shared/scripts/sum_petal_length_virginica.py\", \"content\": \"#!/usr/bin/env python3\\n\\\"\\\"\\\"Somme de la colonne petal_length pour les lignes species == \\\"virginica\\\".\\n\\nUsage :\\n    python sum_petal_length_virginica.py <chemin/vers/iris.csv>\\n\\nLe script est reutilisable : il prend le chemin du CSV en argument,\\nn'impose aucun chemin en dur, et n'utilise que la bibliotheque standard\\n(arithmetique Decimal pour une somme exacte sur des decimales).\\n\\\"\\\"\\\"\\nfrom __future__ import annotations\\n\\nimport csv\\nimport sys\\nfrom decimal import Decimal\\n\\nSPECIES_COLUMN = \\\"species\\\"\\nVALUE_COLUMN = \\\"petal_length\\\"\\nTARGET_SPECIES = \\\"virginica\\\"\\n\\n\\ndef sum_petal_length(csv_path: str, species: str = TARGET_SPECIES) -> tuple[Decimal, int, int]:\\n    \\\"\\\"\\\"Retourne (somme de petal_length, nb lignes retenues, nb lignes de donnees).\\n\\n    - `csv_path` : chemin du CSV (colonnes attendues : species, petal_length).\\n    - `species`  : valeur cible dans la colonne species (insensible a la casse).\\n    \\\"\\\"\\\"\\n    total = Decimal(\\\"0\\\")\\n    matched = 0\\n    data_rows = 0\\n    with open(csv_path, newline=\\\"\\\", encoding=\\\"utf-8\\\") as handle:\\n        reader = csv.DictReader(handle)\\n        if reader.fieldnames is None:\\n            raise SystemExit(f\\\"CSV vide ou sans en-tete : {csv_path}\\\")\\n        missing = [c for c in (SPECIES_COLUMN, VALUE_COLUMN) if c not in reader.fieldnames]\\n        if missing:\\n            raise SystemExit(\\n                f\\\"Colonnes manquantes {missing} dans {csv_path} (trouvees : {reader.fieldnames})\\\"\\n            )\\n        for row in reader:\\n            data_rows += 1\\n            if row[SPECIES_COLUMN].strip().lower() == species.lower():\\n                total += Decimal(row[VALUE_COLUMN].strip())\\n                matched += 1\\n    return total, matched, data_rows\\n\\n\\ndef main(argv: list[str]) -> int:\\n    if len(argv) != 2:\\n        print(f\\\"Usage : {argv[0]} <chemin/vers/iris.csv>\\\", file=sys.stderr)\\n        return 2\\n    csv_path = argv[1]\\n    total, matched, data_rows = sum_petal_length(csv_path)\\n    # Sortie principale : la somme exacte (seule ligne attendue par l'appelant).\\n    print(total)\\n    # Diagnostics en stderr pour ne pas polluer la sortie standard.\\n    print(\\n        f\\\"# lignes de donnees : {data_rows} | lignes {TARGET_SPECIES} : {matched}\\\",\\n        file=sys.stderr,\\n    )\\n    return 0\\n\\n\\nif __name__ == \\\"__main__\\\":\\n    raise SystemExit(main(sys.argv))\\n\", \"create_dirs\": false}",
+        "output": "{\"ok\":true,\"written\":true,\"bytes\":2287,\"path\":\"~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared\\\\scripts\\\\sum_petal_length_virginica.py\",\"deliverable_key\":\"~/.nodalai/workspaces/00000000-0000-0000-0000-000000000002/shared/scripts/sum_petal_length_virginica.py\"}",
+        "createdMs": 1790744879796.375
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "file_read",
+        "input": "{\"path\": \"shared/scripts/sum_petal_length_virginica.py\"}",
+        "output": "{\"ok\":true,\"content\":\"#!/usr/bin/env python3\\n\\\"\\\"\\\"Somme de la colonne petal_length pour les lignes species == \\\"virginica\\\".\\n\\nUsage :\\n    python sum_petal_length_virginica.py <chemin/vers/iris.csv>\\n\\nLe script est reutilisable : il prend le chemin du CSV en argument,\\nn'impose aucun chemin en dur, et n'utilise que la bibliotheque standard\\n(arithmetique Decimal pour une somme exacte sur des decimales).\\n\\\"\\\"\\\"\\nfrom __future__ import annotations\\n\\nimport csv\\nimport sys\\nfrom decimal import Decimal\\n\\nSPECIES_COLUMN = \\\"species\\\"\\nVALUE_COLUMN = \\\"petal_length\\\"\\nTARGET_SPECIES = \\\"virginica\\\"\\n\\n\\ndef sum_petal_length(csv_path: str, species: str = TARGET_SPECIES) -> tuple[Decimal, int, int]:\\n    \\\"\\\"\\\"Retourne (somme de petal_length, nb lignes retenues, nb lignes de donnees).\\n\\n    - `csv_path` : chemin du CSV (colonnes attendues : species, petal_length).\\n    - `species`  : valeur cible dans la colonne species (insensible a la casse).\\n    \\\"\\\"\\\"\\n    total = Decimal(\\\"0\\\")\\n    matched = 0\\n    data_rows = 0\\n    with open(csv_path, newline=\\\"\\\", encoding=\\\"utf-8\\\") as handle:\\n        reader = csv.DictReader(handle)\\n        if reader.fieldnames is None:\\n            raise SystemExit(f\\\"CSV vide ou sans en-tete : {csv_path}\\\")\\n        missing = [c for c in (SPECIES_COLUMN, VALUE_COLUMN) if c not in reader.fieldnames]\\n        if missing:\\n            raise SystemExit(\\n                f\\\"Colonnes manquantes {missing} dans {csv_path} (trouvees : {reader.fieldnames})\\\"\\n            )\\n        for row in reader:\\n            data_rows += 1\\n            if row[SPECIES_COLUMN].strip().lower() == species.lower():\\n                total += Decimal(row[VALUE_COLUMN].strip())\\n                matched += 1\\n    return total, matched, data_rows\\n\\n\\ndef main(argv: list[str]) -> int:\\n    if len(argv) != 2:\\n        print(f\\\"Usage : {argv[0]} <chemin/vers/iris.csv>\\\", file=sys.stderr)\\n        return 2\\n    csv_path = argv[1]\\n    total, matched, data_rows = sum_petal_length(csv_path)\\n    # Sortie principale : la somme exacte (seule ligne attendue par l'appelant).\\n    print(total)\\n    # Diagnostics en stderr pour ne pas polluer la sortie standard.\\n    print(\\n        f\\\"# lignes de donnees : {data_rows} | lignes {TARGET_SPECIES} : {matched}\\\",\\n        file=sys.stderr,\\n    )\\n    return 0\\n\\n\\nif __name__ == \\\"__main__\\\":\\n    raise SystemExit(main(sys.argv))\\n\",\"total_lines\":66,\"start_line\":1,\"end_line\":66,\"truncated\":false}",
+        "createdMs": 1790744888608.434
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "run_command",
+        "input": "{\"cwd\": \"shared\", \"impact\": \"Téléchargement réseau d'un CSV public (~4 Ko) vers un nouveau fichier dans le workspace shared — aucune suppression.\", \"command\": \"if not exist nodal-bench mkdir nodal-bench\\ncurl -fsSL -o nodal-bench/iris.csv https://raw.githubusercontent.com/mwaskom/seaborn-data/8504c04d4b02ac56527949baafb416e5864698b6/iris.csv\\npython scripts/sum_petal_length_virginica.py nodal-bench/iris.csv\\npython -c \\\"import csv; from decimal import Decimal; rows=list(csv.DictReader(open('nodal-bench/iris.csv',newline='',encoding='utf-8'))); v=[r for r in rows if r['species'].strip().lower()=='virginica']; print('data_rows=',len(rows)); print('virginica_rows=',len(v)); print('sum_check=',sum((Decimal(r['petal_length']) for r in v), Decimal('0'))); print('header=',list(rows[0].keys()) if rows else None)\\\"\", \"purpose\": \"Télécharger iris.csv (dataset seaborn) vers nodal-bench/iris.csv, exécuter le script de somme petal_length/virginica, et vérifier les 150 lignes de données, les 50 lignes virginica et recalculer la somme indépendamment.\"}",
+        "output": "{\"exitCode\":0,\"stdout\":\"\",\"stderr\":\"\",\"timedOut\":false,\"truncated\":false,\"cwd\":\"~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared\",\"paths\":\"This process ran in ~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared, the root of workspace \\\"shared\\\". Paths in a process are relative to that folder, or absolute. Workspace labels are NOT folders for a process: what the file tools call shared/outputs/x is outputs/x here. Other workspaces, by absolute path: Nodal = ~\\\\Documents\\\\Nodal, Obsidian Vault = D:\\\\Obsidian Vaults\\\\Kwint Vault.\"}",
+        "createdMs": 1790744889868.583
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "file_list",
+        "input": "{\"path\": \"shared/nodal-bench\", \"recursive\": false}",
+        "output": "{\"ok\":true,\"entries\":[{\"name\":\"ventes-bench.xlsx\",\"type\":\"file\",\"size\":4931,\"modified\":\"2026-09-30T05:05:20.929Z\"}],\"truncated\":false}",
+        "createdMs": 1790744920046.704
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "run_command",
+        "input": "{\"cwd\": \"shared\", \"impact\": \"Téléchargement réseau d'un CSV public (~4 Ko) vers nodal-bench/iris.csv, puis lecture seule pour les calculs.\", \"command\": \"curl -fsSL --create-dirs -o nodal-bench/iris.csv https://raw.githubusercontent.com/mwaskom/seaborn-data/8504c04d4b02ac56527949baafb416e5864698b6/iris.csv && python scripts/sum_petal_length_virginica.py nodal-bench/iris.csv && python -c \\\"import csv; from decimal import Decimal; rows=list(csv.DictReader(open('nodal-bench/iris.csv',newline='',encoding='utf-8'))); v=[r for r in rows if r['species'].strip().lower()=='virginica']; print('data_rows=',len(rows)); print('virginica_rows=',len(v)); print('sum_check=',sum((Decimal(r['petal_length']) for r in v), Decimal('0'))); print('header=',list(rows[0].keys()) if rows else None)\\\"\", \"purpose\": \"Télécharger iris.csv via curl, exécuter le script de somme petal_length pour virginica, et vérifier 150 lignes de données / 50 virginica avec recalcul indépendant de la somme.\"}",
+        "output": "{\"exitCode\":0,\"stdout\":\"277.6\\r\\ndata_rows= 150\\r\\nvirginica_rows= 50\\r\\nsum_check= 277.6\\r\\nheader= ['sepal_length', 'sepal_width', 'petal_length', 'petal_width', 'species']\\r\\n\",\"stderr\":\"# lignes de donnees : 150 | lignes virginica : 50\\r\\n\",\"timedOut\":false,\"truncated\":false,\"cwd\":\"~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared\",\"paths\":\"This process ran in ~\\\\.nodalai\\\\workspaces\\\\00000000-0000-0000-0000-000000000002\\\\shared, the root of workspace \\\"shared\\\". Paths in a process are relative to that folder, or absolute. Workspace labels are NOT folders for a process: what the file tools call shared/outputs/x is outputs/x here. Other workspaces, by absolute path: Nodal = ~\\\\Documents\\\\Nodal, Obsidian Vault = D:\\\\Obsidian Vaults\\\\Kwint Vault.\"}",
+        "createdMs": 1790744920659.135
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "file_read",
+        "input": "{\"path\": \"shared/nodal-bench/iris.csv\", \"limit\": 5}",
+        "output": "{\"ok\":true,\"content\":\"sepal_length,sepal_width,petal_length,petal_width,species\\n5.1,3.5,1.4,0.2,setosa\\n4.9,3.0,1.4,0.2,setosa\\n4.7,3.2,1.3,0.2,setosa\\n4.6,3.1,1.5,0.2,setosa\",\"total_lines\":152,\"start_line\":1,\"end_line\":5,\"truncated\":true}",
+        "createdMs": 1790744932270.791
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "file_list",
+        "input": "{\"path\": \"shared/nodal-bench\", \"recursive\": false}",
+        "output": "{\"ok\":true,\"entries\":[{\"name\":\"iris.csv\",\"type\":\"file\",\"size\":3858,\"modified\":\"2026-09-30T05:08:41.355Z\"},{\"name\":\"ventes-bench.xlsx\",\"type\":\"file\",\"size\":4931,\"modified\":\"2026-09-30T05:05:20.929Z\"}],\"truncated\":false}",
+        "createdMs": 1790744932271.027
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "toolName": "save_memory",
+        "input": "{\"fact\": \"run_command sous Windows (cmd.exe) : une commande multi-lignes n'exécute que la 1ʳᵉ ligne (sortie vide, exit 0 — trompeur). Chaîner sur UNE seule ligne avec `&&`. curl : utiliser `--create-dirs` avec `-o` pour créer les dossiers parents sans `mkdir` (qui casse `&&` s'il existe déjà).\", \"purpose\": \"Éviter de revivre le piège multi-lignes de run_command sur Windows dans les prochains jobs.\", \"category\": \"learned_rule\", \"importance\": 4, \"skill_tags\": [\"command-execution\"]}",
+        "output": "{\"saved\":true,\"id\":\"ea2436a3-be95-4a0e-a627-802b9ed3fc14\"}",
+        "createdMs": 1790744968173.367
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "toolName": "file_read",
+        "input": "{\"path\": \"nodal-bench/iris.csv\", \"purpose\": \"Vérifier le CSV téléchargé et recalculer la somme petal_length virginica\"}",
+        "output": "{\"ok\":true,\"content\":\"sepal_length,sepal_width,petal_length,petal_width,species\\n5.1,3.5,1.4,0.2,setosa\\n4.9,3.0,1.4,0.2,setosa\\n4.7,3.2,1.3,0.2,setosa\\n4.6,3.1,1.5,0.2,setosa\\n5.0,3.6,1.4,0.2,setosa\\n5.4,3.9,1.7,0.4,setosa\\n4.6,3.4,1.4,0.3,setosa\\n5.0,3.4,1.5,0.2,setosa\\n4.4,2.9,1.4,0.2,setosa\\n4.9,3.1,1.5,0.1,setosa\\n5.4,3.7,1.5,0.2,setosa\\n4.8,3.4,1.6,0.2,setosa\\n4.8,3.0,1.4,0.1,setosa\\n4.3,3.0,1.1,0.1,setosa\\n5.8,4.0,1.2,0.2,setosa\\n5.7,4.4,1.5,0.4,setosa\\n5.4,3.9,1.3,0.4,setosa\\n5.1,3.5,1.4,0.3,setosa\\n5.7,3.8,1.7,0.3,setosa\\n5.1,3.8,1.5,0.3,setosa\\n5.4,3.4,1.7,0.2,setosa\\n5.1,3.7,1.5,0.4,setosa\\n4.6,3.6,1.0,0.2,setosa\\n5.1,3.3,1.7,0.5,setosa\\n4.8,3.4,1.9,0.2,setosa\\n5.0,3.0,1.6,0.2,setosa\\n5.0,3.4,1.6,0.4,setosa\\n5.2,3.5,1.5,0.2,setosa\\n5.2,3.4,1.4,0.2,setosa\\n4.7,3.2,1.6,0.2,setosa\\n4.8,3.1,1.6,0.2,setosa\\n5.4,3.4,1.5,0.4,setosa\\n5.2,4.1,1.5,0.1,setosa\\n5.5,4.2,1.4,0.2,setosa\\n4.9,3.1,1.5,0.2,setosa\\n5.0,3.2,1.2,0.2,setosa\\n5.5,3.5,1.3,0.2,setosa\\n4.9,3.6,1.4,0.1,setosa\\n4.4,3.0,1.3,0.2,setosa\\n5.1,3.4,1.5,0.2,setosa\\n5.0,3.5,1.3,0.3,setosa\\n4.5,2.3,1.3,0.3,setosa\\n4.4,3.2,1.3,0.2,setosa\\n5.0,3.5,1.6,0.6,setosa\\n5.1,3.8,1.9,0.4,setosa\\n4.8,3.0,1.4,0.3,setosa\\n5.1,3.8,1.6,0.2,setosa\\n4.6,3.2,1.4,0.2,setosa\\n5.3,3.7,1.5,0.2,setosa\\n5.0,3.3,1.4,0.2,setosa\\n7.0,3.2,4.7,1.4,versicolor\\n6.4,3.2,4.5,1.5,versicolor\\n6.9,3.1,4.9,1.5,versicolor\\n5.5,2.3,4.0,1.3,versicolor\\n6.5,2.8,4.6,1.5,versicolor\\n5.7,2.8,4.5,1.3,versicolor\\n6.3,3.3,4.7,1.6,versicolor\\n4.9,2.4,3.3,1.0,versicolor\\n6.6,2.9,4.6,1.3,versicolor\\n5.2,2.7,3.9,1.4,versicolor\\n5.0,2.0,3.5,1.0,versicolor\\n5.9,3.0,4.2,1.5,versicolor\\n6.0,2.2,4.0,1.0,versicolor\\n6.1,2.9,4.7,1.4,versicolor\\n5.6,2.9,3.6,1.3,versicolor\\n6.7,3.1,4.4,1.4,versicolor\\n5.6,3.0,4.5,1.5,versicolor\\n5.8,2.7,4.1,1.0,versicolor\\n6.2,2.2,4.5,1.5,versicolor\\n5.6,2.5,3.9,1.1,versicolor\\n5.9,3.2,4.8,1.8,versicolor\\n6.1,2.8,4.0,1.3,versicolor\\n6.3,2.5,4.9,1.5,versicolor\\n6.1,2.8,4.7,1.2,versicolor\\n6.4,2.9,4.3,1.3,versicolor\\n6.6,3.0,4.4,1.4,versicolor\\n6.8,2.8,4.8,1.4,versicolor\\n6.7,3.0,5.0,1.7,versicolor\\n6.0,2.9,4.5,1.5,versicolor\\n5.7,2.6,3.5,1.0,versicolor\\n5.5,2.4,3.8,1.1,versicolor\\n5.5,2.4,3.7,1.0,versicolor\\n5.8,2.7,3.9,1.2,versicolor\\n6.0,2.7,5.1,1.6,versicolor\\n5.4,3.0,4.5,1.5,versicolor\\n6.0,3.4,4.5,1.6,versicolor\\n6.7,3.1,4.7,1.5,versicolor\\n6.3,2.3,4.4,1.3,versicolor\\n5.6,3.0,4.1,1.3,versicolor\\n5.5,2.5,4.0,1.3,versicolor\\n5.5,2.6,4.4,1.2,versicolor\\n6.1,3.0,4.6,1.4,versicolor\\n5.8,2.6,4.0,1.2,versicolor\\n5.0,2.3,3.3,1.0,versicolor\\n5.6,2.7,4.2,1.3,versicolor\\n5.7,3.0,4.2,1.2,versicolor\\n5.7,2.9,4.2,1.3,versicolor\\n6.2,2.9,4.3,1.3,versicolor\\n5.1,2.5,3.0,1.1,versicolor\\n5.7,2.8,4.1,1.3,versicolor\\n6.3,3.3,6.0,2.5,virginica\\n5.8,2.7,5.1,1.9,virginica\\n7.1,3.0,5.9,2.1,virginica\\n6.3,2.9,5.6,1.8,virginica\\n6.5,3.0,5.8,2.2,virginica\\n7.6,3.0,6.6,2.1,virginica\\n4.9,2.5,4.5,1.7,virginica\\n7.3,2.9,6.3,1.8,virginica\\n6.7,2.5,5.8,1.8,virginica\\n7.2,3.6,6.1,2.5,virginica\\n6.5,3.2,5.1,2.0,virginica\\n6.4,2.7,5.3,1.9,virginica\\n6.8,3.0,5.5,2.1,virginica\\n5.7,2.5,5.0,2.0,virginica\\n5.8,2.8,5.1,2.4,virginica\\n6.4,3.2,5.3,2.3,virginica\\n6.5,3.0,5.5,1.8,virginica\\n7.7,3.8,6.7,2.2,virginica\\n7.7,2.6,6.9,2.3,virginica\\n6.0,2.2,5.0,1.5,virginica\\n6.9,3.2,5.7,2.3,virginica\\n5.6,2.8,4.9,2.0,virginica\\n7.7,2.8,6.7,2.0,virginica\\n6.3,2.7,4.9,1.8,virginica\\n6.7,3.3,5.7,2.1,virginica\\n7.2,3.2,6.0,1.8,virginica\\n6.2,2.8,4.8,1.8,virginica\\n6.1,3.0,4.9,1.8,virginica\\n6.4,2.8,5.6,2.1,virginica\\n7.2,3.0,5.8,1.6,virginica\\n7.4,2.8,6.1,1.9,virginica\\n7.9,3.8,6.4,2.0,virginica\\n6.4,2.8,5.6,2.2,virginica\\n6.3,2.8,5.1,1.5,virginica\\n6.1,2.6,5.6,1.4,virginica\\n7.7,3.0,6.1,2.3,virginica\\n6.3,3.4,5.6,2.4,virginica\\n6.4,3.1,5.5,1.8,virginica\\n6.0,3.0,4.8,1.8,virginica\\n6.9,3.1,5.4,2.1,virginica\\n6.7,3.1,5.6,2.4,virginica\\n6.9,3.1,5.1,2.3,virginica\\n5.8,2.7,5.1,1.9,virginica\\n6.8,3.2,5.9,2.3,virginica\\n6.7,3.3,5.7,2.5,virginica\\n6.7,3.0,5.2,2.3,virginica\\n6.3,2.5,5.0,1.9,virginica\\n6.5,3.0,5.2,2.0,virginica\\n6.2,3.4,5.4,2.3,virginica\\n5.9,3.0,5.1,1.8,virginica\\n\",\"total_lines\":152,\"start_line\":1,\"end_line\":152,\"truncated\":false}",
+        "createdMs": 1790744976687.289
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "toolName": "file_read",
+        "input": "{\"path\": \"scripts/sum_petal_length_virginica.py\", \"purpose\": \"Vérifier le contenu du script livré par Researcher\"}",
+        "output": "{\"ok\":true,\"content\":\"#!/usr/bin/env python3\\n\\\"\\\"\\\"Somme de la colonne petal_length pour les lignes species == \\\"virginica\\\".\\n\\nUsage :\\n    python sum_petal_length_virginica.py <chemin/vers/iris.csv>\\n\\nLe script est reutilisable : il prend le chemin du CSV en argument,\\nn'impose aucun chemin en dur, et n'utilise que la bibliotheque standard\\n(arithmetique Decimal pour une somme exacte sur des decimales).\\n\\\"\\\"\\\"\\nfrom __future__ import annotations\\n\\nimport csv\\nimport sys\\nfrom decimal import Decimal\\n\\nSPECIES_COLUMN = \\\"species\\\"\\nVALUE_COLUMN = \\\"petal_length\\\"\\nTARGET_SPECIES = \\\"virginica\\\"\\n\\n\\ndef sum_petal_length(csv_path: str, species: str = TARGET_SPECIES) -> tuple[Decimal, int, int]:\\n    \\\"\\\"\\\"Retourne (somme de petal_length, nb lignes retenues, nb lignes de donnees).\\n\\n    - `csv_path` : chemin du CSV (colonnes attendues : species, petal_length).\\n    - `species`  : valeur cible dans la colonne species (insensible a la casse).\\n    \\\"\\\"\\\"\\n    total = Decimal(\\\"0\\\")\\n    matched = 0\\n    data_rows = 0\\n    with open(csv_path, newline=\\\"\\\", encoding=\\\"utf-8\\\") as handle:\\n        reader = csv.DictReader(handle)\\n        if reader.fieldnames is None:\\n            raise SystemExit(f\\\"CSV vide ou sans en-tete : {csv_path}\\\")\\n        missing = [c for c in (SPECIES_COLUMN, VALUE_COLUMN) if c not in reader.fieldnames]\\n        if missing:\\n            raise SystemExit(\\n                f\\\"Colonnes manquantes {missing} dans {csv_path} (trouvees : {reader.fieldnames})\\\"\\n            )\\n        for row in reader:\\n            data_rows += 1\\n            if row[SPECIES_COLUMN].strip().lower() == species.lower():\\n                total += Decimal(row[VALUE_COLUMN].strip())\\n                matched += 1\\n    return total, matched, data_rows\\n\\n\\ndef main(argv: list[str]) -> int:\\n    if len(argv) != 2:\\n        print(f\\\"Usage : {argv[0]} <chemin/vers/iris.csv>\\\", file=sys.stderr)\\n        return 2\\n    csv_path = argv[1]\\n    total, matched, data_rows = sum_petal_length(csv_path)\\n    # Sortie principale : la somme exacte (seule ligne attendue par l'appelant).\\n    print(total)\\n    # Diagnostics en stderr pour ne pas polluer la sortie standard.\\n    print(\\n        f\\\"# lignes de donnees : {data_rows} | lignes {TARGET_SPECIES} : {matched}\\\",\\n        file=sys.stderr,\\n    )\\n    return 0\\n\\n\\nif __name__ == \\\"__main__\\\":\\n    raise SystemExit(main(sys.argv))\\n\",\"total_lines\":66,\"start_line\":1,\"end_line\":66,\"truncated\":false}",
+        "createdMs": 1790744976687.318
+      }
+    ],
+    "llmCalls": [
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 23504,
+        "outputTokens": 345,
+        "costUsd": 0.009909040294587612,
+        "durationMs": 2803,
+        "error": null,
+        "createdMs": 1790744754692.556
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 25129,
+        "outputTokens": 153,
+        "costUsd": 0.02432611957192421,
+        "durationMs": 1691,
+        "error": null,
+        "createdMs": 1790744756399.828
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 28258,
+        "outputTokens": 489,
+        "costUsd": 0.012893600389361382,
+        "durationMs": 3109,
+        "error": null,
+        "createdMs": 1790744774007.676
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "model": "xiaomi/mimo-v2.6-pro",
+        "inputTokens": 16422,
+        "outputTokens": 2555,
+        "costUsd": 0.0031876040156930685,
+        "durationMs": 50193,
+        "error": null,
+        "createdMs": 1790744824427.622
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "model": "xiaomi/mimo-v2.6-pro",
+        "inputTokens": 20826,
+        "outputTokens": 3092,
+        "costUsd": 0.005570534151047468,
+        "durationMs": 54576,
+        "error": null,
+        "createdMs": 1790744879104.868
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "model": "xiaomi/mimo-v2.6-pro",
+        "inputTokens": 24078,
+        "outputTokens": 463,
+        "costUsd": 0.0019395239651203156,
+        "durationMs": 8769,
+        "error": null,
+        "createdMs": 1790744888603.425
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "model": "xiaomi/mimo-v2.6-pro",
+        "inputTokens": 25537,
+        "outputTokens": 1421,
+        "costUsd": 0.001973280915990472,
+        "durationMs": 29681,
+        "error": null,
+        "createdMs": 1790744920042.535
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "model": "xiaomi/mimo-v2.6-pro",
+        "inputTokens": 27342,
+        "outputTokens": 323,
+        "costUsd": 0.0011963479919359088,
+        "durationMs": 10622,
+        "error": null,
+        "createdMs": 1790744932267.71
+      },
+      {
+        "jobId": "25e17908-bd18-4013-a8ad-07ba2c62073d",
+        "model": "xiaomi/mimo-v2.6-pro",
+        "inputTokens": 27952,
+        "outputTokens": 1670,
+        "costUsd": 0.0018612360581755638,
+        "durationMs": 35842,
+        "error": null,
+        "createdMs": 1790744968170.886
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 29078,
+        "outputTokens": 1762,
+        "costUsd": 0.019861679524183273,
+        "durationMs": 8230,
+        "error": null,
+        "createdMs": 1790744976683.016
+      },
+      {
+        "jobId": "8f643869-7b51-4702-958b-d372340f87a5",
+        "model": "z-ai/glm-5.3",
+        "inputTokens": 34558,
+        "outputTokens": 1542,
+        "costUsd": 0.020072240382432938,
+        "durationMs": 10857,
+        "error": null,
+        "createdMs": 1790744987583.869
+      }
+    ],
+    "approvals": []
+  },
+  "observed": {
+    "found": {
+      "path": "~\\.nodalai\\workspaces\\00000000-0000-0000-0000-000000000002\\shared\\nodal-bench\\iris.csv",
+      "fresh": true
+    },
+    "dataRows": 150,
+    "recomputed": 277.6
+  }
+}
