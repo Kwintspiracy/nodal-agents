@@ -21,6 +21,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentSkills, agentSkillAssignments, entities, users } from '@nodal-agents/db';
 import { ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
 import { buildSystemPrompt } from '../system-prompt';
+import { resolveBuiltinToolNames } from '../builtin-tool-names';
 import type { JobContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
 
@@ -92,72 +93,76 @@ const XLSX_BUILTINS = ['xlsx_create', 'xlsx_read'] as const;
 const GIT = { root: 'C:/Users/owner', branch: null, head: null, dirtyCount: 65 };
 
 describe('index des skills : seulement celles dont le job tient les outils @cap:assigner-skill/moteur', () => {
-  it('un job sans les requiredBuiltins d’une skill ne se la voit pas annoncer ; avec, si', async () => {
+  // Les listes d'outils ne sont PAS écrites à la main : elles viennent de la
+  // règle que le runner applique (`resolveBuiltinToolNames`, #636), plus un
+  // outil MCP comme en porte la liste complète d'un job. Une skill assignée
+  // apporte ses builtins au job : le seul cas réel où l'un manque est un nom
+  // que ce build n'enregistre pas (skill communautaire d'une autre version),
+  // ou un nom qui n'est pas un builtin du tout (revue de #658, passe 1).
+  const MCP_TOOL = 'notion__search';
+
+  /** Les slugs annoncés par l'index, quel que soit le format de la surface. */
+  const announced = (prompt: string, slugs: string[]): string[] =>
+    slugs.filter((s) => prompt.includes(`skill_view('${s}')`) || prompt.includes(`\`${s}\``));
+
+  async function rootWithSkills() {
     const agent = await seedAgent('orchestrator');
-    const sheets = uniq('sheets');
-    const shell = uniq('shell');
-    const prose = uniq('prose');
-    await assign(agent, sheets, [...XLSX_BUILTINS]);
-    await assign(agent, shell, ['run_command']);
+    const slugs = {
+      shell: uniq('shell'),
+      prose: uniq('prose'),
+      ghost: uniq('ghost'),
+      mcp: uniq('mcp'),
+    };
+    await assign(agent, slugs.shell, ['run_command']);
     // Sans requiredBuiltins : jamais concernée, comme au socle.
-    await assign(agent, prose, []);
+    await assign(agent, slugs.prose, []);
+    await assign(agent, slugs.ghost, ['no_such_builtin_in_this_build']);
+    await assign(agent, slugs.mcp, [MCP_TOOL]);
+    const builtins = (await resolveBuiltinToolNames(db, agent.id as string)).names;
+    return { agent, slugs, builtins };
+  }
 
-    const sansTableur = await buildSystemPrompt(agent, db, {
-      origin: 'api',
-      availableToolNames: [...ALWAYS_ON_TOOLS, 'run_command'],
-    } as JobContext);
-    expect(sansTableur).toContain('## Skills (load before acting)');
-    expect(sansTableur, 'skill annoncée sans ses outils').not.toContain(`skill_view('${sheets}')`);
-    expect(sansTableur).toContain(`skill_view('${shell}')`);
-    expect(sansTableur).toContain(`skill_view('${prose}')`);
+  it('un job annonce la skill dont il tient les builtins, jamais celle dont l’outil n’est pas un builtin tenu', async () => {
+    const { agent, slugs, builtins } = await rootWithSkills();
+    expect(builtins).toContain('run_command');
+    expect(builtins).not.toContain('no_such_builtin_in_this_build');
 
-    // Un outil manquant sur plusieurs suffit à la retirer : la skill prescrit
-    // tout son jeu, pas un seul de ses outils.
-    const tableurPartiel = await buildSystemPrompt(agent, db, {
+    const job = await buildSystemPrompt(agent, db, {
       origin: 'api',
-      availableToolNames: [...ALWAYS_ON_TOOLS, XLSX_BUILTINS[0]!],
+      availableToolNames: [...builtins, MCP_TOOL],
     } as JobContext);
-    expect(tableurPartiel).not.toContain(`skill_view('${sheets}')`);
-    expect(tableurPartiel, 'la skill shell reste sans run_command').not.toContain(
-      `skill_view('${shell}')`,
-    );
-
-    const avecTout = await buildSystemPrompt(agent, db, {
-      origin: 'api',
-      availableToolNames: [...ALWAYS_ON_TOOLS, ...XLSX_BUILTINS, 'run_command'],
-    } as JobContext);
-    expect(avecTout).toContain(`skill_view('${sheets}')`);
-    expect(avecTout).toContain(`skill_view('${shell}')`);
+    expect(job).toContain('## Skills (load before acting)');
+    expect(announced(job, Object.values(slugs))).toEqual([slugs.shell, slugs.prose]);
   });
 
-  it('aucune skill retenue : pas de titre `## Skills` vide', async () => {
-    const agent = await seedAgent();
-    await assign(agent, uniq('sheets'), [...XLSX_BUILTINS]);
-    const prompt = await buildSystemPrompt(agent, db, {
-      origin: 'api',
-      availableToolNames: [...ALWAYS_ON_TOOLS],
-    } as JobContext);
-    expect(prompt).not.toContain('## Skills');
-  });
-
-  it('sur le chat, la liste suit les outils du JOB auquel il passe la main, pas le seul run_task', async () => {
+  it('le chat annonce EXACTEMENT les skills du job auquel il passe la main', async () => {
     // Le chat ne tient que `run_task` : filtrer sur ses outils à lui viderait
-    // la liste de toute skill outillée, alors que le job qui la chargera en a
-    // les outils. Une skill dont l'outil n'existe pas dans ce build, elle,
-    // n'est tenue par aucun job : elle disparaît aussi du chat.
-    const agent = await seedAgent('orchestrator');
-    const sheets = uniq('sheets');
-    const ghost = uniq('ghost');
-    await assign(agent, sheets, [...XLSX_BUILTINS]);
-    await assign(agent, ghost, ['no_such_builtin_in_this_build']);
-
+    // la liste de toute skill outillée. Et une liste MCP qui ne compterait
+    // que du côté job ferait diverger les deux surfaces.
+    const { agent, slugs, builtins } = await rootWithSkills();
+    const all = Object.values(slugs);
+    const job = await buildSystemPrompt(agent, db, {
+      origin: 'api',
+      availableToolNames: [...builtins, MCP_TOOL],
+    } as JobContext);
     const chat = await buildSystemPrompt(agent, db, {
       origin: 'dashboard',
       surface: 'chat',
     } as JobContext);
     expect(chat).toContain('## Skills');
-    expect(chat, 'le job tient xlsx_* : la skill est à lui').toContain(`\`${sheets}\``);
-    expect(chat, 'aucun job ne tient cet outil').not.toContain(ghost);
+    expect(announced(chat, all)).toEqual(announced(job, all));
+    expect(announced(chat, all)).toEqual([slugs.shell, slugs.prose]);
+  });
+
+  it('aucune skill retenue : pas de titre `## Skills` vide', async () => {
+    const agent = await seedAgent();
+    await assign(agent, uniq('ghost'), ['no_such_builtin_in_this_build']);
+    const builtins = (await resolveBuiltinToolNames(db, agent.id as string)).names;
+    const prompt = await buildSystemPrompt(agent, db, {
+      origin: 'api',
+      availableToolNames: builtins,
+    } as JobContext);
+    expect(prompt).not.toContain('## Skills');
   });
 });
 

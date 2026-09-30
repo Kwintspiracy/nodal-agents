@@ -9,16 +9,18 @@
 // hold something. Factual data only — behavioral conventions live at the agent
 // layer (skills), never here.
 //
-// FOLDERS AND COUNTS, never the names of the files (#638, 01/10). The listing
-// showed up to eight names per folder, and those names are yesterday's
+// MEANS ARE NAMED, DELIVERABLES ARE COUNTED (#638, 01/10). The listing showed
+// up to eight names in every folder, and most of them are yesterday's
 // deliverables: asked to "print a recipe of caviar d'aubergines", the root read
 // `caviar-aubergines/ (3 files): caviar-aubergines.html, …` in its own prompt,
 // opened that file and edited it instead of doing the request (job a22e173f).
-// A file NAME never let an agent reuse a workflow or a script anyway — it has
-// to read it first, and listing the folder is the same one call. What the
-// listing keeps is what stops a recreation: `workflows/ (19 files)` says where
-// the means live and that there are some, and the folder names are the
-// layout new files go into.
+// A workflow template or a script is the opposite: "reuse the Krea 2 Turbo
+// template" must find `Krea2_Turbo_NSFW.json` without a search (review of
+// #658, pass 1). Which folder holds which is platform data, not a guess from a
+// name: `SHARED_WORKSPACE_FOLDERS` (catalog), the same list the
+// workspace-hygiene skill announces. A folder it does not mark as `means` —
+// the canonical deliverable folders and every folder an agent made up — is
+// counted, never listed.
 //
 // Cost/cache: computed once per job (the built prompt is persisted on the job
 // row) and rendered in the VOLATILE half of the system prompt, after
@@ -27,8 +29,16 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { SHARED_WORKSPACE_FOLDERS } from '@nodal-agents/catalog';
+
 /** Root folders beyond this count are elided (keeps pathological dirs bounded). */
 const MAX_ROOT_FOLDERS = 30;
+/** File names shown per means folder. */
+const MAX_MEANS_SHOWN = 20;
+/** Root folders whose files are named: the canonical means folders. */
+const MEANS_FOLDERS = new Set(
+  SHARED_WORKSPACE_FOLDERS.filter((f) => f.holds === 'means').map((f) => f.name.toLowerCase()),
+);
 /** Hard cap on the rendered block (chars) — safety net, not a target. */
 const MAX_CHARS = 3500;
 /** Never descended into nor counted: tooling noise, not agent artifacts. */
@@ -91,13 +101,15 @@ export function inventoryForContext(
 
 /**
  * Render the inventory of `root` (the shared workspace): its folders, each with
- * its recursive file count, then how many files sit at the root.
+ * its recursive file count — and, for a means folder, the names inside — then
+ * how many files sit at the root.
  *
  * `''` when the directory is empty, `null` when it could NOT be read — les deux
  * ne se confondent pas : le second se dit à l'agent, le premier est un fait.
  * Plain factual text, one line per folder:
  *
- *   - workflows/ (19 files)
+ *   - outputs/ (126 files)
+ *   - workflows/ (2 files): krea.json, zimage.json
  *   - 2 files at the root
  */
 export async function buildSharedWorkspaceInventory(root: string): Promise<string | null> {
@@ -120,8 +132,22 @@ export async function buildSharedWorkspaceInventory(root: string): Promise<strin
 
   const lines: string[] = [];
   for (const e of folders.slice(0, MAX_ROOT_FOLDERS)) {
-    const total = await countFiles(join(root, e.name), { n: 2000 });
-    lines.push(`- ${e.name}/ (${total} file${total === 1 ? '' : 's'})`);
+    const dirPath = join(root, e.name);
+    const total = await countFiles(dirPath, { n: 2000 });
+    const head = `- ${e.name}/ (${total} file${total === 1 ? '' : 's'})`;
+    if (!MEANS_FOLDERS.has(e.name.toLowerCase())) {
+      lines.push(head);
+      continue;
+    }
+    const children = (await safeReaddir(dirPath))
+      .filter((c) => !IGNORED.has(c.name) && !c.name.startsWith('.'))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const shown = children
+      .slice(0, MAX_MEANS_SHOWN)
+      .map((c) => (c.isDirectory() ? `${c.name}/` : c.name))
+      .join(', ');
+    const more = children.length > MAX_MEANS_SHOWN ? ', …' : '';
+    lines.push(shown ? `${head}: ${shown}${more}` : head);
   }
   if (folders.length > MAX_ROOT_FOLDERS) {
     lines.push(`- … ${folders.length - MAX_ROOT_FOLDERS} more folders elided`);

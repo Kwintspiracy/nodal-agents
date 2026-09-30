@@ -41,7 +41,7 @@ import {
   buildDiscoverabilityBlock,
   hasRequiredBuiltins,
 } from './agent-baseline';
-import { resolveBuiltinToolNames } from './builtin-tool-names';
+import { resolveBuiltinToolNames, registeredBuiltinNames } from './builtin-tool-names';
 import type { Agent, AnyDrizzleDb } from './types';
 
 // ─── JobContext ────────────────────────────────────────────────────────────────
@@ -1180,16 +1180,23 @@ export async function buildSystemPrompt(
   // à l'index au lieu d'une asymétrie. Sinon `skill_view` rend ensuite une
   // procédure dont chaque étape rate (carte du prompt §1.4, famille #559).
   //
-  // Quel job : celui qui chargera la skill. Pour un job, c'est lui-même
-  // (`availableTools`). Le chat ne tient que `run_task` et passe la main à un
-  // job : ce sont les outils de CE job qui comptent, lus par la règle unique
-  // que le runner applique (`resolveBuiltinToolNames`, #636). Lue seulement si
-  // une skill en exige un.
+  // Contre quoi : les BUILTINS que tient le job qui chargera la skill — le
+  // champ ne nomme que des builtins, et un nom qui n'en est pas un n'est
+  // jamais accordé par la skill (`agentBuiltinToolNames`). Une seule règle,
+  // donc un seul rendu sur les trois surfaces (revue de #658, passe 1) :
+  //   · un job : ses outils, réduits aux builtins enregistrés — un outil MCP
+  //     ou de connecteur de sa liste ne fait pas tenir une skill qui le
+  //     nommerait, puisque le chat et l'aperçu ne le verraient pas ;
+  //   · le chat ne tient que `run_task` et passe la main à un job : les
+  //     builtins de CE job, par la règle unique du runner
+  //     (`resolveBuiltinToolNames`, #636). Lue seulement si une skill en
+  //     exige un. L'aperçu du dashboard passe ces mêmes builtins.
   const skillToolsHeld: readonly string[] =
-    jobContext?.surface === 'chat' &&
-    capabilitySkillRows.some((r) => (r.requiredBuiltins ?? []).length > 0)
-      ? (await resolveBuiltinToolNames(db, agent.id as string)).names
-      : availableTools;
+    jobContext?.surface === 'chat'
+      ? capabilitySkillRows.some((r) => (r.requiredBuiltins ?? []).length > 0)
+        ? (await resolveBuiltinToolNames(db, agent.id as string)).names
+        : []
+      : availableTools.filter((n) => registeredBuiltinNames().has(n));
   const assignedSkillRows = capabilitySkillRows.filter((r) =>
     hasRequiredBuiltins({ requiredBuiltins: r.requiredBuiltins ?? [] }, skillToolsHeld),
   );
@@ -1516,9 +1523,7 @@ export async function buildSystemPrompt(
       // c'est une REPRISE, pas un versionnement : « never copied under a new
       // name » interdisait le `Name v2.html` que claude-html-design prescrit
       // pour une révision demandée (passe 3).
-      // « in the folders below » : la liste ne nomme plus les fichiers, seulement
-      // les dossiers et leurs comptes (workspace-inventory.ts, lot 2 voie H).
-      'Reuse the workflows, scripts and templates in the folders below instead of recreating them. ' +
+      'Reuse the workflows, scripts and templates listed below instead of recreating them. ' +
       'A deliverable the user asks for is produced for this request: an existing file is the answer only when the user names it or asks to rework it. ' +
       'Finishing a file you started earlier in this job (it is in your transcript) happens at the same path, not in a renamed copy; a new version the user asks for or a skill prescribes is not finishing. ' +
       'Save new files into the existing folder that matches their kind:\n\n' +

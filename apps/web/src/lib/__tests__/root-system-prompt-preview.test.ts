@@ -11,7 +11,9 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentSkills, agentSkillAssignments, entities } from '@nodal-agents/db';
+import { eq, agents, agentSkills, agentSkillAssignments, entities } from '@nodal-agents/db';
+import { buildSystemPrompt, resolveBuiltinToolNames } from '@nodal-agents/orchestration';
+import type { Agent } from '@nodal-agents/orchestration';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -46,6 +48,11 @@ vi.mock('@nodal-agents/auth', async (importOriginal) => {
 
 const SHELL_SLUG = `preview-shell-${Date.now()}`;
 const GHOST_SLUG = `preview-ghost-${Date.now()}`;
+const MCP_SLUG = `preview-mcp-${Date.now()}`;
+const PROSE_SLUG = `preview-prose-${Date.now()}`;
+const ALL = [SHELL_SLUG, GHOST_SLUG, MCP_SLUG, PROSE_SLUG];
+/** Un outil MCP, comme en porte la liste complète d'un job. */
+const MCP_TOOL = 'notion__search';
 
 beforeAll(async () => {
   testDb = (await spinUpTestDb()).db;
@@ -57,6 +64,8 @@ beforeAll(async () => {
   for (const [slug, requiredBuiltins] of [
     [SHELL_SLUG, ['run_command']],
     [GHOST_SLUG, ['no_such_builtin_in_this_build']],
+    [MCP_SLUG, [MCP_TOOL]],
+    [PROSE_SLUG, []],
   ] as const) {
     const [skill] = await testDb
       .insert(agentSkills)
@@ -85,5 +94,25 @@ describe('aperçu du prompt du root @cap:assigner-skill/ecran', () => {
       `skill_view('${SHELL_SLUG}')`,
     );
     expect(res.data, 'aucun job ne tient cet outil').not.toContain(GHOST_SLUG);
+  });
+
+  it('annonce exactement les skills que le JOB du root annonce', async () => {
+    // Revue de #658, passe 1 : l'aperçu et le job doivent lire la même
+    // règle. Le job est rendu ici comme le runner le construit : ses
+    // builtins, plus un outil MCP de sa liste complète.
+    const { getRootSystemPromptAction } = await import('../actions.ts');
+    const res = await getRootSystemPromptAction();
+    expect(res.ok, res.ok ? '' : res.message).toBe(true);
+    if (!res.ok) return;
+    const [row] = await testDb.select().from(agents).where(eq(agents.id, seed.agentId));
+    const builtins = (await resolveBuiltinToolNames(testDb, seed.agentId)).names;
+    const job = await buildSystemPrompt(row as unknown as Agent, testDb, {
+      origin: 'api',
+      availableToolNames: [...builtins, MCP_TOOL],
+    });
+    const announced = (prompt: string): string[] =>
+      ALL.filter((s) => prompt.includes(`skill_view('${s}')`));
+    expect(announced(job)).toEqual([SHELL_SLUG, PROSE_SLUG]);
+    expect(announced(res.data)).toEqual(announced(job));
   });
 });

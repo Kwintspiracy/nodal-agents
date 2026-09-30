@@ -33,6 +33,32 @@
 
 import type { SystemSkill } from '../types';
 
+/**
+ * Les dossiers canoniques de l'espace PARTAGÉ — UNE source, lue par cette skill
+ * (la liste qu'elle annonce aux agents) et par l'inventaire que le runner met
+ * dans le prompt (apps/runner/src/lib/workspace-inventory.ts).
+ *
+ * `holds` dit ce qu'un dossier contient, et c'est ce qui décide de ce que
+ * l'inventaire en montre (revue de #658, passe 1) :
+ *   · `means` — des MOYENS réutilisables (gabarits de workflow, scripts). Ils
+ *     sont nommés, pour qu'« utilise le gabarit Krea 2 Turbo » trouve son
+ *     fichier sans fouiller ;
+ *   · `deliverables` — ce qu'une demande a produit. Seulement compté : le nom
+ *     d'un livrable d'hier faisait reprendre ce fichier au lieu de faire la
+ *     demande du jour (#638, banc `recipe`).
+ * Tout dossier absent de cette liste est traité en `deliverables`.
+ */
+export const SHARED_WORKSPACE_FOLDERS: ReadonlyArray<{
+  name: string;
+  holds: 'means' | 'deliverables';
+  description: string;
+}> = [
+  { name: 'workflows', holds: 'means', description: 'workflow definitions (JSON)' },
+  { name: 'outputs', holds: 'deliverables', description: 'generated artifacts (images, exports)' },
+  { name: 'scripts', holds: 'means', description: 'reusable scripts' },
+  { name: 'documents', holds: 'deliverables', description: 'reports, notes, deliverables' },
+];
+
 export const workspaceHygieneSkill: SystemSkill = {
   slug: 'workspace-hygiene',
   name: 'Workspace hygiene',
@@ -51,10 +77,7 @@ You have one when your \`## Workspaces\` block lists a folder labelled \`shared\
 ### One folder per kind — inside the shared workspace
 
 These are the canonical folders **of the shared workspace**. When you save there, use them and never invent parallel ones (no \`outputs_v2/\`, \`my_workflows/\`, files dumped at the root):
-- \`workflows/\` — workflow definitions (JSON)
-- \`outputs/\` — generated artifacts (images, exports)
-- \`scripts/\` — reusable scripts
-- \`documents/\` — reports, notes, deliverables
+${SHARED_WORKSPACE_FOLDERS.map((f) => `- \`${f.name}/\` — ${f.description}`).join('\n')}
 
 This layout applies to the shared workspace ONLY. If your \`## Workspace\` block names a folder of your own, that folder is where your work goes — do not invent a \`shared/\` path inside it, and do not reach for the folders above.
 

@@ -28,7 +28,7 @@ import {
   entities,
   users,
 } from '@nodal-agents/db';
-import { systemSkills } from '@nodal-agents/catalog';
+import { systemSkills, SHARED_WORKSPACE_FOLDERS } from '@nodal-agents/catalog';
 import { buildSystemPrompt, resolveBuiltinToolNames } from '@nodal-agents/orchestration';
 
 import {
@@ -55,15 +55,24 @@ const SHARED_TREE: Record<string, string[]> = {
   rapports: ['2026-09-25-sandbox-isolement-des-agents.md'],
   scripts: ['_analyze_2026_earnings.py', '_gen_redhead.py'],
   telegram: ['199791464/photo.jpg'],
-  workflows: [],
+  // Le gabarit que le propriétaire désigne par son nom (« réutilise le
+  // template Krea 2 Turbo ») : un MOYEN, qui doit rester nommé.
+  workflows: ['Krea2_Turbo_NSFW.json'],
 };
 const ROOT_FILE = 'budget-septembre.xlsx';
-const EVERY_FILE_NAME = [
-  ...Object.values(SHARED_TREE)
-    .flat()
-    .map((p) => p.split('/').pop()!),
+/** Les dossiers de moyens du catalogue : leurs fichiers restent nommés. */
+const MEANS = new Set(
+  SHARED_WORKSPACE_FOLDERS.filter((f) => f.holds === 'means').map((f) => f.name),
+);
+const DELIVERABLE_NAMES = [
+  ...Object.entries(SHARED_TREE)
+    .filter(([dir]) => !MEANS.has(dir))
+    .flatMap(([, files]) => files.map((p) => p.split('/').pop()!)),
   ROOT_FILE,
 ];
+const MEANS_NAMES = Object.entries(SHARED_TREE)
+  .filter(([dir]) => MEANS.has(dir))
+  .flatMap(([, files]) => files);
 
 const GIT = { root: 'C:/Users/owner', branch: null, head: null, dirtyCount: 65 };
 
@@ -192,7 +201,7 @@ function section(prompt: string, heading: string): string {
 }
 
 describe('prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-sur-des-fichiers/moteur', () => {
-  it('Alfred (tableur, shell, voix) : le livrable d’hier n’est plus nommé, les dossiers et leurs comptes restent', async () => {
+  it('Alfred (tableur, shell, voix) : le livrable d’hier n’est plus nommé, les moyens le restent', async () => {
     const { prompt, tools } = await rootPrompt([
       'command-execution',
       'spreadsheet-editing',
@@ -205,11 +214,15 @@ describe('prompt d’un root sur l’espace partagé du 01/10 @cap:travailler-su
     );
 
     expect(inventory).toContain('- caviar-aubergines/ (3 files)');
-    expect(inventory).toContain('- workflows/ (0 files)');
     expect(inventory).toContain('- 1 file at the root');
-    for (const name of EVERY_FILE_NAME) {
-      expect(prompt, `« ${name} » est nommé dans le prompt`).not.toContain(name);
+    for (const name of DELIVERABLE_NAMES) {
+      expect(prompt, `le livrable « ${name} » est nommé dans le prompt`).not.toContain(name);
     }
+    expect(MEANS_NAMES.length).toBeGreaterThan(0);
+    for (const name of MEANS_NAMES) {
+      expect(inventory, `le moyen « ${name} » n'est plus nommé`).toContain(name);
+    }
+    expect(inventory).toContain('- workflows/ (1 file): Krea2_Turbo_NSFW.json');
 
     // Ce root tient run_command (groupe « command-execution », #636) : le
     // bloc git et la skill restent, comme ses outils.
