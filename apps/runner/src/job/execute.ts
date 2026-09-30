@@ -117,8 +117,7 @@ import type { ChannelKind } from '@nodal-agents/delivery';
 import {
   ChainCounters,
   DEFAULT_LIMITS,
-  generateAssignTools,
-  generateTaskTools,
+  generateDelegationTools,
   handleDelegation,
   findDeliveredReviewForTarget,
   describeDuplicateReview,
@@ -2624,14 +2623,13 @@ async function runJobTracked(
     // no delegation tool at all: the same rule (remainingDelegationHops)
     // decides the whitelist, the refusal below and the team block, so the
     // model is never offered a route that is refused (Codex review of #473,
-    // pass 3).
-    const delegationTools: AnyToolDef[] =
-      isOrchestrator && remainingDelegationHops(job.delegationDepth ?? 0) > 0
-        ? [
-            ...((await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[]),
-            ...(generateTaskTools(agent.id, db) as unknown as AnyToolDef[]),
-          ]
-        : [];
+    // pass 3). With no active teammate, no delegation tool either: neither
+    // route has anyone to reach. One function decides, for this whitelist, the
+    // Tools tab and the team block's conditions (generateDelegationTools).
+    const delegationTools = (await generateDelegationTools(agent.id, db, {
+      isOrchestrator,
+      delegationDepth: job.delegationDepth ?? 0,
+    })) as unknown as AnyToolDef[];
     toolDefs = [...delegationTools, ...builtinToolDefs];
   } catch (err) {
     const errorCode = err instanceof Error ? err.message : 'whitelist_computation_failed';
@@ -2678,6 +2676,14 @@ async function runJobTracked(
   // rewritten (Codex review of #570, pass 1). A prompt stored before the list
   // was recorded (NULL) is rewritten too — its list is unknown.
   //
+  // And only while it was written by the SAME version of Nodal (review of
+  // #655): a job waiting through an update resumed with the old build's prompt
+  // and the new build's tools, and what the update had moved between the two
+  // (a rule said in a tool, now in the prompt) was said nowhere. The version is
+  // the one the launcher reads from the installed package, the one the
+  // prompt's own Runtime block states: every change of the code reaches an
+  // install through a new version, with no constant to remember to bump.
+  //
   // #612 — the whitelist stays whole; only the SCHEMAS the model reads are
   // chosen per turn (./tool-loading.ts). A job that holds deferred tools gets
   // their index in the prompt and `load_tools` to load them, built from this
@@ -2699,8 +2705,13 @@ async function runJobTracked(
   const deferredNames = deferredToolNames(jobTools);
   let loadedTools: string[] = (job.loadedTools ?? []).filter((n) => deferredNames.has(n));
   const promptTools = [...new Set(jobTools.map((t) => t.name))].sort();
+  const promptVersion = deployment.version ?? null;
   let systemPrompt = job.systemPrompt;
-  if (!systemPrompt || !sameToolList(job.systemPromptTools, promptTools)) {
+  if (
+    !systemPrompt ||
+    !sameToolList(job.systemPromptTools, promptTools) ||
+    job.systemPromptVersion !== promptVersion
+  ) {
     // The channel's facts (#613): the channel the send tool will resolve —
     // `activeChannels` is known only from §6 — and what its adapter does
     // with a text.
@@ -2717,7 +2728,12 @@ async function runJobTracked(
     });
     await db
       .update(agentJobs)
-      .set({ systemPrompt, systemPromptTools: promptTools, updatedAt: new Date() })
+      .set({
+        systemPrompt,
+        systemPromptTools: promptTools,
+        systemPromptVersion: promptVersion,
+        updatedAt: new Date(),
+      })
       // Sous la prise du run (#566) : un run repris ailleurs pendant sa
       // préparation n'écrase pas le prompt de la prise suivante.
       .where(ownJobRow(jobId as string));

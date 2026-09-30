@@ -31,10 +31,9 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
 import { buildSystemPrompt } from '../../system-prompt';
 import type { JobContext } from '../../system-prompt';
-import { generateAssignTools } from '../../router/assign-tools';
-import { generateTaskTools } from '../../planner/task-tools';
+import { generateDelegationTools } from '../../delegation-tools';
 import { DELEGATION_SCOPE_RULE } from '../../router/delegation-scope';
-import { DEFAULT_LIMITS, remainingDelegationHops } from '../../chain-counters';
+import { DEFAULT_LIMITS } from '../../chain-counters';
 import type { Agent, AgentId, EntityId } from '../../types';
 
 let db: TestDb;
@@ -52,8 +51,11 @@ interface Mate {
   instructions: string | null;
 }
 
-/** A root orchestrator and ten teammates, the shape of an owner's root. */
-async function seedOwnerRoot(): Promise<{ root: Agent; mates: Mate[] }> {
+/**
+ * A root orchestrator and ten teammates, the shape of an owner's root, plus an
+ * orchestrator of the same workspace with no team of its own.
+ */
+async function seedOwnerRoot(): Promise<{ root: Agent; lone: Agent; mates: Mate[] }> {
   const tag = `${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
   const [user] = await db
     .insert(users)
@@ -148,30 +150,53 @@ async function seedOwnerRoot(): Promise<{ root: Agent; mates: Mate[] }> {
     mates.push({ id: row!.id, name, personality, skills, connector, instructions });
   }
 
-  const root: Agent = {
-    id: rootRow!.id as AgentId,
-    name: rootRow!.name,
-    slug: rootRow!.slug,
+  const [loneRow] = await db
+    .insert(agents)
+    .values({
+      entityId,
+      name: 'Lone',
+      slug: `lone-${tag}`,
+      personality: 'You coordinate.',
+      role: 'orchestrator',
+    })
+    .returning();
+
+  const asAgent = (row: typeof rootRow): Agent => ({
+    id: row!.id as AgentId,
+    name: row!.name,
+    slug: row!.slug,
     role: 'orchestrator',
-    personality: rootRow!.personality,
+    personality: row!.personality,
     entityId: entityId as EntityId,
     model: 'claude-sonnet-4-6-20260217',
     active: true,
     orchestratorMode: null,
     memoryTokenBudget: 0,
-  };
-  return { root, mates };
+  });
+  return { root: asAgent(rootRow), lone: asAgent(loneRow), mates };
 }
 
 type Def = { name: string; description: string; inputSchema: z.ZodType; loading?: string };
 
-/** The delegation tools the runner gives this job (execute.ts §6, same rule). */
-async function delegationToolsOf(root: Agent, depth: number): Promise<Def[]> {
-  if (remainingDelegationHops(depth) === 0) return [];
-  return [
-    ...((await generateAssignTools(root.id, db)) as unknown as Def[]),
-    ...(generateTaskTools(root.id, db) as unknown as Def[]),
-  ];
+/** The delegation tools the runner gives this job: the function execute.ts §6 calls. */
+async function delegationToolsOf(agent: Agent, depth: number): Promise<Def[]> {
+  return (await generateDelegationTools(agent.id, db, {
+    isOrchestrator: agent.role === 'orchestrator',
+    delegationDepth: depth,
+  })) as unknown as Def[];
+}
+
+/** A teammate's entry in `## Your team`: its first line and the indented ones under it. */
+function rosterEntry(prompt: string, name: string): string {
+  const start = prompt.indexOf(`- **${name}**`);
+  if (start === -1) return '';
+  const [head, ...rest] = prompt.slice(start).split('\n');
+  const body: string[] = [];
+  for (const line of rest) {
+    if (!line.startsWith('  ')) break;
+    body.push(line);
+  }
+  return [head, ...body].join('\n');
 }
 
 /** One tool as the model receives it: the AI SDK's own conversion of the zod schema. */
@@ -189,8 +214,14 @@ function occurrences(haystack: string, needle: string): number {
 
 describe('A delegating job reads each fact of its team once @cap:organiser-equipe/moteur', () => {
   it('the delegation scope rule is said exactly once where the job can delegate, never where it cannot', async () => {
-    const { root } = await seedOwnerRoot();
-    const cases: Array<{ label: string; ctx: JobContext; depth: number; expected: number }> = [
+    const { root, lone } = await seedOwnerRoot();
+    const cases: Array<{
+      label: string;
+      ctx: JobContext;
+      depth: number;
+      expected: number;
+      agent?: Agent;
+    }> = [
       {
         label: 'root on a channel',
         ctx: { origin: 'telegram', telegramChatId: '1' },
@@ -219,18 +250,30 @@ describe('A delegating job reads each fact of its team once @cap:organiser-equip
         depth: DEFAULT_LIMITS.maxDelegationDepth,
         expected: 0,
       },
+      {
+        // An orchestrator with no active teammate: no route reaches anyone,
+        // so no delegation tool and no delegation manual.
+        label: 'orchestrator without a team',
+        ctx: { origin: 'telegram', telegramChatId: '1' },
+        depth: 0,
+        expected: 0,
+        agent: lone,
+      },
     ];
     const seen: Record<string, number> = {};
     const want: Record<string, number> = {};
+    const tools: Record<string, string[]> = {};
     for (const c of cases) {
-      const tools = await delegationToolsOf(root, c.depth);
-      const prompt = await buildSystemPrompt(root, db, {
+      const agent = c.agent ?? root;
+      const defs = await delegationToolsOf(agent, c.depth);
+      tools[c.label] = defs.map((t) => t.name);
+      const prompt = await buildSystemPrompt(agent, db, {
         ...c.ctx,
-        availableToolNames: [...new Set([...ALWAYS_ON_TOOLS, ...tools.map((t) => t.name)])].sort(),
+        availableToolNames: [...new Set([...ALWAYS_ON_TOOLS, ...defs.map((t) => t.name)])].sort(),
       });
       seen[c.label] =
         occurrences(prompt, DELEGATION_SCOPE_RULE) +
-        tools.reduce((n, t) => n + occurrences(t.description, DELEGATION_SCOPE_RULE), 0);
+        defs.reduce((n, t) => n + occurrences(t.description, DELEGATION_SCOPE_RULE), 0);
       want[c.label] = c.expected;
     }
     // The chat surface has no delegation tool: the job it starts reads the rule.
@@ -238,6 +281,10 @@ describe('A delegating job reads each fact of its team once @cap:organiser-equip
     seen['dashboard chat'] = occurrences(chat, DELEGATION_SCOPE_RULE);
     want['dashboard chat'] = 0;
     expect(seen).toEqual(want);
+    // Where the rule is absent, so are the tools it governs.
+    expect(tools['at the maximum delegation depth']).toEqual([]);
+    expect(tools['orchestrator without a team']).toEqual([]);
+    expect(tools['root on a channel']).toContain('create_task');
   });
 
   it('an assign_* tool names its teammate from the base; what the roster describes is said there only', async () => {
@@ -260,15 +307,16 @@ describe('A delegating job reads each fact of its team once @cap:organiser-equip
         unnamed.push(mate.name);
         continue;
       }
-      // Each fact of the roster, in the words the roster uses.
+      // Each fact of the teammate's own roster entry, in the words it uses.
       const facts = [
         mate.personality.slice(0, 60),
         ...mate.skills,
         ...(mate.connector ? [mate.connector] : []),
         ...(mate.instructions ? [mate.instructions] : []),
       ];
+      const entry = rosterEntry(prompt, mate.name);
       for (const fact of facts) {
-        if (!prompt.includes(fact)) lost.push(`${mate.name}: ${fact}`);
+        if (!entry.includes(fact)) lost.push(`${mate.name}: ${fact}`);
         if (tool.description.includes(fact)) (repeated[tool.name] ??= []).push(fact);
       }
     }
