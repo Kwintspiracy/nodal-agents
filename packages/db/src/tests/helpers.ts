@@ -256,26 +256,70 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       updated_at timestamptz DEFAULT now()
     );
 
-    -- mirrors migration 0141 (#531) : ce qui reste en file quand la tête
-    -- finit devient une nouvelle tête de la conversation.
+    -- mirrors migration 0141 (#531) : aucune file ne reste sur un job
+    -- terminal — un ancêtre vivant la lira, sinon une nouvelle tête la porte.
     CREATE OR REPLACE FUNCTION agent_jobs_inbox_relaunch() RETURNS trigger
     LANGUAGE plpgsql AS $fn$
     DECLARE
-      premier jsonb := NEW.inbox -> 0;
+      cur uuid := NEW.parent_job_id;
+      anc agent_jobs%ROWTYPE;
+      root agent_jobs%ROWTYPE := NEW;
+      depth int := 0;
+      left_behind jsonb;
+      finished_ids uuid[];
+      premier jsonb;
     BEGIN
+      IF NEW.conversation_id IS NULL THEN
+        RETURN NEW;
+      END IF;
+      PERFORM pg_advisory_xact_lock(hashtext('nodal:conversation-turn:' || NEW.conversation_id::text));
+
+      WHILE cur IS NOT NULL AND depth < 64 LOOP
+        SELECT * INTO anc FROM agent_jobs WHERE id = cur;
+        EXIT WHEN NOT FOUND;
+        IF anc.status IN ('pending', 'processing', 'awaiting_approval', 'awaiting_delegation') THEN
+          RETURN NEW;
+        END IF;
+        root := anc;
+        cur := anc.parent_job_id;
+        depth := depth + 1;
+      END LOOP;
+
+      WITH RECURSIVE finished AS (
+        SELECT j.id FROM agent_jobs j
+        WHERE j.parent_job_id = NEW.id AND j.status IN ('completed', 'failed', 'cancelled')
+        UNION ALL
+        SELECT j.id FROM agent_jobs j JOIN finished f ON j.parent_job_id = f.id
+        WHERE j.status IN ('completed', 'failed', 'cancelled')
+      )
+      SELECT COALESCE(array_agg(id), '{}') INTO finished_ids FROM finished;
+
+      SELECT COALESCE(jsonb_agg(x.e ORDER BY j.created_at, x.ord), '[]'::jsonb)
+      INTO left_behind
+      FROM agent_jobs j, jsonb_array_elements(j.inbox) WITH ORDINALITY AS x(e, ord)
+      WHERE j.id = ANY(finished_ids);
+      UPDATE agent_jobs SET inbox = '[]'::jsonb
+      WHERE id = ANY(finished_ids) AND inbox <> '[]'::jsonb;
+
+      left_behind := NEW.inbox || left_behind;
+      NEW.inbox := '[]'::jsonb;
+      IF jsonb_array_length(left_behind) = 0 THEN
+        RETURN NEW;
+      END IF;
+
+      premier := left_behind -> 0;
       INSERT INTO agent_jobs (
         entity_id, agent_id, channel, chat_id, conversation_id, project_id,
         status, task, messages, inbox, relaunched_from_job_id
       ) VALUES (
-        NEW.entity_id, NEW.agent_id, NEW.channel, NEW.chat_id, NEW.conversation_id,
+        root.entity_id, root.agent_id, root.channel, root.chat_id, NEW.conversation_id,
         (SELECT c.current_project_id FROM conversations c WHERE c.id = NEW.conversation_id),
         'pending',
         premier ->> 'task',
         jsonb_build_array(jsonb_build_object('role', 'user', 'content', premier -> 'content')),
-        NEW.inbox - 0,
-        NEW.id
+        left_behind - 0,
+        root.id
       );
-      NEW.inbox := '[]'::jsonb;
       RETURN NEW;
     END;
     $fn$;
@@ -286,8 +330,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       FOR EACH ROW
       WHEN (
         NEW.status IN ('completed', 'failed', 'cancelled')
-        AND NEW.inbox <> '[]'::jsonb
-        AND NEW.parent_job_id IS NULL
+        AND (OLD.status IS NULL OR OLD.status NOT IN ('completed', 'failed', 'cancelled'))
       )
       EXECUTE FUNCTION agent_jobs_inbox_relaunch();
 

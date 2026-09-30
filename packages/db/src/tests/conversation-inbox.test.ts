@@ -24,7 +24,14 @@
 //   - le vidage sans les délégués finis → « read by its parent » rougit ;
 //   - la descente par `relaunched_from_job_id` retirée → « stopping a head that
 //     has just finished » rougit ;
-//   - une ligne NULL tenue pour vivante → « a row WITHOUT a status » rougit.
+//   - une ligne NULL tenue pour vivante → « a row WITHOUT a status » rougit ;
+//   - (revue de #642, passe 2) le déclencheur limité aux têtes → « a delegate
+//     whose head has ALREADY finished » rougit (le message reste sur un job
+//     terminal) ; sans les descendants finis → « the parent’s end relaunches
+//     it » rougit ; le vidage limité aux enfants directs → « at any depth »
+//     rougit ; la décision limitée aux têtes → « a live DELEGATE under a
+//     finished head » rougit ; l'arrêt qui ne vide que les jobs vivants → « what
+//     a FINISHED delegate left » rougit.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { and, asc, eq, isNull } from 'drizzle-orm';
@@ -241,11 +248,14 @@ describe('startConversationTurn — a message while the work runs starts a reply
     expect(heads.filter((h) => h.answersWhileJobId === null).map((h) => h.id)).toEqual([running]);
   });
 
-  it('a live DELEGATE under a finished head is not a head: the message starts a head at rest', async () => {
+  it('a live DELEGATE under a finished head is work running too: the message starts a reply turn answering while it (review of #642, pass 2)', async () => {
+    // « Du travail tourne dans la conversation » : n'importe quel job vivant,
+    // tête ou délégué. Sans cela, la personne qui écrit pendant que ce délégué
+    // tourne tombait sur une tête « au repos », sans le bloc de ce qui tourne.
     const done = await head('failed');
-    await delegate(done, 'processing');
+    const zombie = await delegate(done, 'processing');
 
-    expect((await send('Tu en es où ?')).answersWhileJobId).toBeNull();
+    expect((await send('Tu en es où ?')).answersWhileJobId).toBe(zombie);
   });
 
   it('a live head of ANOTHER conversation holds nothing back', async () => {
@@ -376,6 +386,62 @@ describe('what remains in an inbox when its job finishes is never lost (trigger,
     expect(childRow!.inbox).toEqual([]);
   });
 
+  it('a message passed to a delegate whose head has ALREADY finished is never stranded: when the delegate ends, a new head carries it (review of #642, pass 2)', async () => {
+    const done = await head('completed');
+    const zombie = await delegate(done, 'processing');
+    await forward(zombie, 'Fais-le en PNG.');
+
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, zombie));
+
+    const heads = await headsOfConversation();
+    expect(heads.map((h) => [h.status, h.task, h.relaunchedFromJobId])).toEqual([
+      ['completed', 'Fais-moi un portrait', null],
+      ['pending', 'Fais-le en PNG.', done],
+    ]);
+    const [zombieRow] = await db
+      .select({ inbox: agentJobs.inbox })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, zombie));
+    expect(zombieRow!.inbox).toEqual([]);
+  });
+
+  it('a delegate that ends under a live parent that then ends without reading: the parent’s end relaunches it (no file stays on a terminal job)', async () => {
+    const running = await head('awaiting_delegation');
+    const child = await delegate(running, 'processing');
+    const grandchild = await delegate(child, 'processing');
+    await forward(grandchild, 'Style : encre.');
+
+    // Le petit-enfant finit sous un parent vivant : son message l'attend.
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, grandchild));
+    expect((await headsOfConversation()).map((h) => h.id)).toEqual([running]);
+    // Le parent finit sans avoir relu, puis la tête : plus aucun lecteur vivant.
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, child));
+    await db.update(agentJobs).set({ status: 'failed' }).where(eq(agentJobs.id, running));
+
+    const heads = await headsOfConversation();
+    expect(heads.map((h) => [h.status, h.task])).toEqual([
+      ['failed', 'Fais-moi un portrait'],
+      ['pending', 'Style : encre.'],
+    ]);
+    const rows = await db
+      .select({ inbox: agentJobs.inbox })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conversationId));
+    expect(rows.filter((r) => r.inbox.length > 0)).toEqual([]);
+  });
+
+  it('a live head reads what its FINISHED descendants, at any depth, left in their inbox', async () => {
+    const running = await head('awaiting_delegation');
+    const child = await delegate(running, 'processing');
+    const grandchild = await delegate(child, 'processing');
+    await forward(grandchild, 'Style : encre.');
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, grandchild));
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, child));
+
+    await db.update(agentJobs).set({ status: 'processing' }).where(eq(agentJobs.id, running));
+    expect((await drainAsRun(running)).map((m) => m.content)).toEqual(['Style : encre.']);
+  });
+
   it('a non-terminal transition keeps the inbox where it is (suspension, resume)', async () => {
     const running = await head('processing');
     await forward(running, 'et mets-le dans le dossier partagé');
@@ -414,6 +480,25 @@ describe('the stop the person asks for empties the inbox without relaunching it 
     expect(heads.map((h) => ({ id: h.id, status: h.status, inbox: h.inbox }))).toEqual([
       { id: running, status: 'cancelled', inbox: [] },
     ]);
+  });
+
+  it('stopping a head also discards what a FINISHED delegate left for it: nothing is relaunched after the stop (review of #642, pass 2)', async () => {
+    const running = await head('awaiting_delegation');
+    const child = await delegate(running, 'processing');
+    await forward(child, 'Style : encre.');
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, child));
+
+    const out = await cancelJobTree(any(), { entityId: seed.entityId, jobId: running });
+
+    expect(out.discardedMessages).toEqual([{ jobId: child, task: 'Style : encre.' }]);
+    expect((await headsOfConversation()).map((h) => [h.id, h.status])).toEqual([
+      [running, 'cancelled'],
+    ]);
+    const rows = await db
+      .select({ inbox: agentJobs.inbox })
+      .from(agentJobs)
+      .where(eq(agentJobs.conversationId, conversationId));
+    expect(rows.filter((r) => r.inbox.length > 0)).toEqual([]);
   });
 
   it('stopping a head that has just finished also stops the head its inbox relaunched: the same work (review of #642, pass 1)', async () => {

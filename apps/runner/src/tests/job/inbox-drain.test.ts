@@ -373,6 +373,51 @@ describe('a message while the work runs: the reply turn sees it and passes it on
     expect(net.workerWakes).toEqual([heads[1]!.id]);
   }, 30_000);
 
+  it('a DELEGATE whose head has already finished, sent a message during a last call ending with return_result: a new head carries it, woken at once (review of #642, pass 2)', async () => {
+    const { conversationId, jobId: head } = await headJob('Fais-moi un portrait', 'completed');
+    const [delegated] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId,
+        channel: 'internal',
+        conversationId,
+        parentJobId: head,
+        delegationDepth: 1,
+        task: 'Generate the portrait',
+        status: 'pending',
+        messages: [{ role: 'user', content: 'Generate the portrait' }],
+      })
+      .returning({ id: agentJobs.id });
+    const net = network(
+      [
+        {
+          text: 'Portrait generated.',
+          toolCall: { name: 'return_result', args: { status: 'success' } },
+        },
+      ],
+      async (n) => {
+        if (n === 0) {
+          expect((await forward(conversationId, delegated!.id, FOLLOW_UP)).delivered).toBe(true);
+        }
+      },
+    );
+
+    await executeJob(delegated!.id as JobId, makeDeps(), runnerEnv);
+
+    const heads = await headsOf(conversationId);
+    expect(heads.map((h) => ({ status: h.status, task: h.task }))).toEqual([
+      { status: 'completed', task: 'Fais-moi un portrait' },
+      { status: 'pending', task: FOLLOW_UP },
+    ]);
+    expect(net.workerWakes).toEqual([heads[1]!.id]);
+    const [row] = await db
+      .select({ status: agentJobs.status, inbox: agentJobs.inbox })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, delegated!.id));
+    expect(row).toEqual({ status: 'completed', inbox: [] });
+  }, 30_000);
+
   it('the NEXT turn of a channel conversation replays a message the work read, right after the request it concerned', async () => {
     const [conv] = await db
       .insert(conversations)

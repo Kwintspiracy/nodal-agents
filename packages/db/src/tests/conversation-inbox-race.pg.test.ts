@@ -20,9 +20,15 @@
 //   5. deux messages simultanés sur une conversation au repos : une tête, et
 //      un tour de réponse pendant elle.
 //
+//   6. (revue de #642, passe 2) un délégué finit avec un message en file
+//      PENDANT que sa tête finit : une nouvelle tête le porte, rien ne reste
+//      sur un job terminal.
+//
+// Mutation (passe 2) : le verrou consultatif retiré du déclencheur → 1, 3 et 6
+// rougissent (la décision lit l'entre-deux, le délégué voit sa tête vivante
+// pendant que la tête ne le voit pas fini).
 // Mutations vérifiées : le déclencheur retiré de la migration → 2 rougit
-// (aucune tête ne naît) ; la relecture après la lecture verrouillée retirée →
-// 3 rougit (une tête « au repos » à côté de la relancée) ; la descente par
+// (aucune tête ne naît) ; la descente par
 // `relaunched_from_job_id` retirée de `cancelJobTree` → 4 rougit (la tête
 // relancée tourne) ; le verrou consultatif rendu propre à chaque appel → 5
 // rougit (deux têtes « au repos »).
@@ -294,6 +300,52 @@ describe('the writers that decide a head of the conversation serialize @cap:parl
       expect(rows.filter((r) => r.answersWhileJobId === null).map((r) => r.task)).toEqual([
         'Fais-moi un portrait',
       ]);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it('6. a delegate ends with a waiting message WHILE its head ends: the message is carried by a new head, never stranded on a terminal job (review of #642, pass 2)', async () => {
+    const a = createClient(harness().url, { max: 1 });
+    const b = createClient(harness().url, { max: 1 });
+    try {
+      const { conversationId, head } = await runningHead(a.db as unknown as AnyDrizzleDb);
+      const [child] = await a.db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'internal',
+          conversationId,
+          parentJobId: head,
+          task: 'Generate the portrait',
+          status: 'processing',
+        })
+        .returning({ id: agentJobs.id });
+      await forward(a.db as unknown as AnyDrizzleDb, conversationId, child!.id, 'Style : encre.');
+      // A : le délégué finit, commit retenu HOLD_MS ; la tête vit encore à ce moment.
+      const childEnds = finishHolding(a.db, child!.id);
+      await sleep(150);
+      // B : la tête finit PENDANT ce temps, sans avoir relu.
+      await b.db
+        .update(agentJobs)
+        .set({ status: 'completed', updatedAt: new Date() })
+        .where(eq(agentJobs.id, head));
+      await childEnds;
+
+      const rows = await heads(a.db as unknown as AnyDrizzleDb, conversationId);
+      expect(rows.map((r) => [r.status, r.task])).toEqual([
+        ['completed', 'Fais-moi un portrait'],
+        ['pending', 'Style : encre.'],
+      ]);
+      const stranded = await a.db
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(
+          and(eq(agentJobs.conversationId, conversationId), sql`${agentJobs.inbox} <> '[]'::jsonb`),
+        );
+      expect(stranded.filter((r) => r.id !== rows[1]!.id)).toEqual([]);
     } finally {
       await a.close();
       await b.close();

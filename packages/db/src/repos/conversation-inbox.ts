@@ -19,65 +19,53 @@
 // La file (`agent_jobs.inbox`) d'un job vivant :
 //   - sa boucle la vide en haut de chaque tour et avant de conclure sur une
 //     réponse en texte (`drainJobInbox`) — avec ce qui restait dans la file de
-//     ses délégués finis ;
-//   - ce qui reste quand une TÊTE finit devient une nouvelle tête (déclencheur
-//     `agent_jobs_inbox_relaunch`, migration 0141) — c'est aussi le chemin d'un
-//     job de CLI, qui n'a pas de frontière de tour ;
+//     ses descendants finis ;
+//   - AUCUNE file ne reste sur un job terminal (déclencheur
+//     `agent_jobs_inbox_relaunch`, migration 0141) : ce qui reste à un job qui
+//     finit est lu par son premier ancêtre vivant, ou, s'il n'y en a aucun,
+//     devient une nouvelle tête — c'est aussi le chemin d'un job de CLI, qui
+//     n'a pas de frontière de tour ;
 //   - l'arrêt demandé par la personne (`cancelJobTree`) la vide sans la
 //     relancer, et le rend.
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { LIVE_JOB_STATUSES, TERMINAL_STATUSES, inboxMessage } from '@nodal-agents/shared';
+import { LIVE_JOB_STATUSES, inboxMessage } from '@nodal-agents/shared';
 import type { InboxEntry, InboxMessage } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentJobs } from '../schema/jobs.ts';
 import { ownJobRow, RUN_ACTS_WHILE } from './run-claim.ts';
+import { liveJob } from './conversation-runs.ts';
 
 /** Ce qu'a démarré un message qui arrive dans une conversation. */
 export interface ConversationTurn {
   readonly jobId: string;
-  /** La tête vivante pendant laquelle ce tour de réponse est né ; `null` : la conversation était au repos. */
+  /**
+   * Le travail vivant pendant lequel ce tour de réponse est né : la tête
+   * vivante la plus récente, sinon le job vivant le plus récent (un délégué
+   * dont la tête a fini). `null` : la conversation était au repos.
+   */
   readonly answersWhileJobId: string | null;
 }
 
 /**
- * « Vivant » : la définition partagée (`LIVE_JOB_STATUSES`), celle des
- * faucheurs et du déclencheur de relance — un job qui tourne ou qui attend ce
- * qui le fera repartir. Aucun écrivain ne pose de statut NULL (défaut
- * `pending`) : une ligne sans statut n'est vivante pour aucun chemin, ici non
- * plus (revue de #642, passe 1).
- */
-function live() {
-  return inArray(agentJobs.status, [...LIVE_JOB_STATUSES]);
-}
-
-/**
- * Combien de fois la décision relit la conversation quand une tête y est née
- * pendant qu'elle attendait. Une relecture suffit dans tous les cas connus ;
- * au-delà, la conversation change plus vite qu'on ne la lit, et c'est dit.
- */
-const MAX_DECISION_READS = 5;
-
-/**
  * LE point de décision : démarre `start` dans la conversation — comme tour de
- * réponse (`answers_while_job_id`) si une tête y vit, sinon comme tête d'une
- * conversation au repos.
+ * réponse (`answers_while_job_id`) si du travail y tourne, sinon comme tête
+ * d'une conversation au repos.
  *
- * SÉRIALISÉ PAR CONVERSATION (revue de #642, passe 1), sur un vrai Postgres à
- * deux connexions (conversation-inbox-race.pg.test.ts) :
- *   - deux messages simultanés : le verrou consultatif de la conversation
- *     (`pg_advisory_xact_lock`) les fait passer l'un après l'autre, et le
- *     second voit la tête du premier — il répond PENDANT elle au lieu de
- *     démarrer une seconde tête « au repos » ;
- *   - un message qui croise la fin de la tête : la tête vivante est lue en
- *     `FOR UPDATE`. Si la fin l'emporte et que sa file n'était pas vide, le
- *     déclencheur a fait naître une tête que la lecture verrouillée, prise sur
- *     l'image d'AVANT, ne voit pas : une instruction NOUVELLE relit donc la
- *     conversation, et le tour répond pendant cette tête-là.
- * Le déclencheur ne prend PAS le verrou consultatif : il tourne sous le verrou
- * de ligne que pose l'écriture terminale, alors que la décision prend le
- * verrou consultatif avant la ligne — l'y prendre inverserait l'ordre et
- * ferait des interblocages. La relecture rend ce verrou inutile là-bas.
+ * « Du travail tourne » : N'IMPORTE QUEL job vivant de la conversation, tête
+ * ou délégué (revue de #642, passe 2). Un délégué qui tourne encore sous une
+ * tête finie est du travail en cours : le message qui arrive doit le voir.
+ *
+ * SÉRIALISÉ PAR CONVERSATION, sur un vrai Postgres à deux connexions
+ * (conversation-inbox-race.pg.test.ts) : le verrou consultatif de la
+ * conversation (`pg_advisory_xact_lock`), que le déclencheur de fin de job
+ * (migration 0141) prend aussi. Deux messages simultanés passent l'un après
+ * l'autre, et le second voit le job du premier ; un message qui croise la fin
+ * d'un job voit l'état d'avant (et répond pendant ce job) ou l'état d'après
+ * (et répond pendant la tête que la file a fait naître) — jamais un entre-deux.
+ * Aucun verrou de ligne n'est pris ici : personne ne tient ce verrou en
+ * attendant une ligne, donc aucun interblocage avec le déclencheur, qui le
+ * prend sous le verrou de ligne de l'écriture terminale.
  *
  * Pas d'emballement : un tour de réponse ne naît QUE d'un message. Un message
  * qui arrive pendant un tour de réponse suit la même règle — un tour de plus,
@@ -107,40 +95,32 @@ export async function startConversationTurn(
     await t.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`nodal:conversation-turn:${conversationId}`}))`,
     );
-    const heads = and(
-      eq(agentJobs.entityId, entityId),
-      eq(agentJobs.conversationId, conversationId),
-      isNull(agentJobs.parentJobId),
-      live(),
-    );
-    for (let read = 0; read < MAX_DECISION_READS; read++) {
-      // La tête la plus récente : le travail dont la personne parle le plus
-      // probablement. Le tour de réponse voit de toute façon TOUT ce qui tourne.
-      const [head] = await t
-        .select({ id: agentJobs.id })
-        .from(agentJobs)
-        .where(heads)
-        .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
-        .limit(1)
-        .for('update');
-      if (!head) {
-        // Rien sous verrou. Une instruction NOUVELLE (nouvelle image, READ
-        // COMMITTED) : une tête commitée pendant l'attente du verrou — celle
-        // que le déclencheur fait naître d'une file non vide — est vue ici.
-        const [born] = await t.select({ id: agentJobs.id }).from(agentJobs).where(heads).limit(1);
-        if (born) continue;
-      }
-      const answersWhileJobId = head?.id ?? null;
-      const [job] = await t
-        .insert(agentJobs)
-        .values({ ...start, answersWhileJobId })
-        .returning({ id: agentJobs.id });
-      if (!job) throw new Error('startConversationTurn: the job row was not returned');
-      return { jobId: job.id, answersWhileJobId };
-    }
-    throw new Error(
-      `startConversationTurn: the heads of conversation ${conversationId} kept changing while it was read`,
-    );
+    // La tête vivante la plus récente d'abord — le travail dont la personne
+    // parle le plus probablement —, sinon le job vivant le plus récent. Le
+    // tour de réponse voit de toute façon TOUT ce qui tourne.
+    const [running] = await t
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, entityId),
+          eq(agentJobs.conversationId, conversationId),
+          liveJob(),
+        ),
+      )
+      .orderBy(
+        sql`(${agentJobs.parentJobId} IS NULL) DESC`,
+        desc(agentJobs.createdAt),
+        desc(agentJobs.id),
+      )
+      .limit(1);
+    const answersWhileJobId = running?.id ?? null;
+    const [job] = await t
+      .insert(agentJobs)
+      .values({ ...start, answersWhileJobId })
+      .returning({ id: agentJobs.id });
+    if (!job) throw new Error('startConversationTurn: the job row was not returned');
+    return { jobId: job.id, answersWhileJobId };
   });
 }
 
@@ -210,10 +190,11 @@ export async function deliverToConversationJob(
 /**
  * Vide la file du job que CE run tient (sous sa prise, #566) et rend ce qu'elle
  * contenait, prêt à entrer dans la transcription (marqué, `inboxMessage`) —
- * avec ce qui restait dans la file de ses délégués FINIS : un message transmis
- * à un délégué qui a terminé avant de le lire revient au parent, qui reprend
- * justement la main à ce moment-là. Parent puis enfants : l'ordre de verrous
- * de l'arrêt (`cancelJobTree`).
+ * avec ce qui restait dans la file de ses descendants FINIS, à toute
+ * profondeur : un message transmis à un délégué qui a terminé avant de le lire
+ * revient à son premier ancêtre vivant (le déclencheur de fin de job le lui
+ * laisse), qui le lit ici. Ancêtre puis descendants : l'ordre de verrous de
+ * l'arrêt (`cancelJobTree`).
  *
  * Les messages sont aussi ajoutés à `messages` en base dans la même
  * transaction : entre le vidage et le point de reprise suivant, ils ne vivent
@@ -223,18 +204,31 @@ export async function deliverToConversationJob(
  * n'est pas à lui de la lire, la transition terminale s'en chargera.
  */
 export async function drainJobInbox(db: AnyDrizzleDb, jobId: string): Promise<InboxMessage[]> {
+  // Les descendants FINIS de ce job, à toute profondeur, en ne traversant que
+  // des jobs finis : un descendant encore vivant lit lui-même sa file et celle
+  // des siens.
+  const finishedDescendants = sql`(
+    WITH RECURSIVE finished AS (
+      SELECT c.id FROM agent_jobs c
+      WHERE c.parent_job_id = ${jobId} AND c.status IN ('completed', 'failed', 'cancelled')
+      UNION ALL
+      SELECT c.id FROM agent_jobs c JOIN finished f ON c.parent_job_id = f.id
+      WHERE c.status IN ('completed', 'failed', 'cancelled')
+    )
+    SELECT id FROM finished
+  )`;
   // Une lecture sans verrou d'abord : il n'y a rien à presque tous les tours.
   const [peek] = await db
     .select({
       own: sql<number>`jsonb_array_length(${agentJobs.inbox})`,
-      children: sql<number>`(
-        SELECT count(*) FROM agent_jobs c
-        WHERE c.parent_job_id = ${jobId} AND c.inbox <> '[]'::jsonb
+      descendants: sql<number>`(
+        SELECT count(*) FROM agent_jobs d
+        WHERE d.id IN ${finishedDescendants} AND d.inbox <> '[]'::jsonb
       )`,
     })
     .from(agentJobs)
     .where(eq(agentJobs.id, jobId));
-  if (!peek || (Number(peek.own) === 0 && Number(peek.children) === 0)) return [];
+  if (!peek || (Number(peek.own) === 0 && Number(peek.descendants) === 0)) return [];
 
   return db.transaction(async (tx) => {
     const t = tx as unknown as AnyDrizzleDb;
@@ -244,19 +238,15 @@ export async function drainJobInbox(db: AnyDrizzleDb, jobId: string): Promise<In
       .where(ownJobRow(jobId, RUN_ACTS_WHILE))
       .for('update');
     if (!row) return [];
-    const children = await t
+    const descendants = await t
       .select({ id: agentJobs.id, inbox: agentJobs.inbox })
       .from(agentJobs)
       .where(
-        and(
-          eq(agentJobs.parentJobId, jobId),
-          inArray(agentJobs.status, [...TERMINAL_STATUSES]),
-          sql`${agentJobs.inbox} <> '[]'::jsonb`,
-        ),
+        and(sql`${agentJobs.id} IN ${finishedDescendants}`, sql`${agentJobs.inbox} <> '[]'::jsonb`),
       )
       .orderBy(agentJobs.createdAt)
       .for('update');
-    const entries = [...row.inbox, ...children.flatMap((c) => c.inbox)];
+    const entries = [...row.inbox, ...descendants.flatMap((d) => d.inbox)];
     if (entries.length === 0) return [];
     const drained = entries.map(inboxMessage);
     await t
@@ -266,14 +256,14 @@ export async function drainJobInbox(db: AnyDrizzleDb, jobId: string): Promise<In
         messages: sql`COALESCE(${agentJobs.messages}, '[]'::jsonb) || ${JSON.stringify(drained)}::jsonb`,
       })
       .where(ownJobRow(jobId, RUN_ACTS_WHILE));
-    if (children.length > 0) {
+    if (descendants.length > 0) {
       await t
         .update(agentJobs)
         .set({ inbox: sql`'[]'::jsonb` })
         .where(
           inArray(
             agentJobs.id,
-            children.map((c) => c.id),
+            descendants.map((d) => d.id),
           ),
         );
     }

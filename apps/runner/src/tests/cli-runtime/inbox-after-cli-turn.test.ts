@@ -192,6 +192,98 @@ describe('a job served by a CLI reads its inbox AFTER its turn, through a new he
     30_000,
   );
 
+  it.each(['claude-code', 'codex'] as const)(
+    '%s DELEGATE under a head that has ALREADY finished: a message passed on during its turn is carried by a new head when it ends, never stranded (review of #642, pass 2)',
+    async (runtime) => {
+      await db.update(agents).set({ runtime }).where(eq(agents.id, seed.agentId));
+      const [conv] = await db
+        .insert(conversations)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '8',
+        })
+        .returning({ id: conversations.id });
+      const conversationId = conv!.id;
+      const [head] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId: '8',
+          conversationId,
+          task: 'Fais-moi un portrait',
+          status: 'completed',
+        })
+        .returning({ id: agentJobs.id });
+      const [delegated] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'internal',
+          conversationId,
+          parentJobId: head!.id,
+          task: 'Generate the portrait',
+          status: 'processing',
+        })
+        .returning({ id: agentJobs.id });
+
+      fakeRun.mockReset();
+      fakeRun.mockImplementationOnce(async () => {
+        const delivery = await deliverToConversationJob(db as unknown as AnyDrizzleDb, {
+          entityId: seed.entityId,
+          conversationId,
+          jobId: delegated!.id,
+          text: FOLLOW_UP,
+        });
+        expect(delivery).toMatchObject({ delivered: true });
+        return finished('portrait generated');
+      });
+
+      const outcome = await runCliRuntimeJob({
+        db: db as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+        jobId: delegated!.id,
+        job: {
+          entityId: seed.entityId,
+          chatId: null,
+          channel: 'internal',
+          conversationId,
+          task: 'Generate the portrait',
+          triggerContext: null,
+        },
+        agentRow: { ...baseAgent, runtime },
+        workspaces: [{ label: 'ws0', path: workspace }],
+        claimGeneration: 0,
+      });
+
+      expect(outcome.status).toBe('completed');
+      const rows = await db
+        .select({
+          id: agentJobs.id,
+          status: agentJobs.status,
+          task: agentJobs.task,
+          channel: agentJobs.channel,
+          inbox: agentJobs.inbox,
+          relaunchedFromJobId: agentJobs.relaunchedFromJobId,
+        })
+        .from(agentJobs)
+        .where(eq(agentJobs.conversationId, conversationId))
+        .orderBy(asc(agentJobs.createdAt));
+      // La nouvelle tête parle au nom de la tête du run (son canal), et
+      // plus aucune file ne reste sur un job terminal.
+      expect(rows.map((r) => [r.status, r.task, r.channel, r.relaunchedFromJobId])).toEqual([
+        ['completed', 'Fais-moi un portrait', 'telegram', null],
+        ['completed', 'Generate the portrait', 'internal', null],
+        ['pending', FOLLOW_UP, 'telegram', head!.id],
+      ]);
+      expect(rows.filter((r) => r.inbox.length > 0)).toEqual([]);
+    },
+    30_000,
+  );
+
   it('a REPLY TURN served by a CLI gets the running work in its prompt, on the CLI surface (no Nodal tool offered)', async () => {
     await db.update(agents).set({ runtime: 'claude-code' }).where(eq(agents.id, seed.agentId));
     const [conv] = await db

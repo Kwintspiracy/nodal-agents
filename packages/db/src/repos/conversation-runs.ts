@@ -18,8 +18,8 @@
 // son délégué ComfyArtist tournait encore deux heures : lire le statut de la
 // tête seule aurait répondu « rien ne tourne », exactement le faux de l'incident.
 
-import { and, asc, eq, inArray, isNotNull, isNull, notInArray, or, sql } from 'drizzle-orm';
-import { TERMINAL_STATUSES } from '@nodal-agents/shared';
+import { and, asc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
+import { LIVE_JOB_STATUSES, TERMINAL_STATUSES } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agentJobs } from '../schema/jobs.ts';
 import { agentTasks } from '../schema/tasks.ts';
@@ -45,10 +45,20 @@ export interface CancelledTree {
   readonly discardedMessages: Array<{ jobId: string; task: string }>;
 }
 
-function notTerminal() {
-  // `NULL NOT IN (…)` vaut « inconnu » et exclurait la ligne : un job sans
-  // statut n'a pas fini (même lecture que run-chat-turn.ts).
-  return or(isNull(agentJobs.status), notInArray(agentJobs.status, [...TERMINAL_STATUSES]));
+/**
+ * « Vivant » — LA définition, partagée par l'arrêt, la liste des runs, le bloc
+ * du tour de réponse, le point de décision d'un message (conversation-inbox.ts),
+ * les faucheurs et le déclencheur de relance (migration 0141) :
+ * `LIVE_JOB_STATUSES`, un job qui tourne ou qui attend ce qui le fera
+ * repartir. Aucun écrivain ne pose de statut NULL (défaut `pending`) : une
+ * ligne sans statut n'est vivante pour aucun chemin (revue de #642, passe 2).
+ */
+export function liveJob() {
+  return inArray(agentJobs.status, [...LIVE_JOB_STATUSES]);
+}
+
+function isLiveStatus(status: string): boolean {
+  return (LIVE_JOB_STATUSES as readonly string[]).includes(status);
 }
 
 /**
@@ -121,16 +131,18 @@ export async function cancelJobTree(
     }
     const tree = [...ids];
 
-    // La file des jobs arrêtés est lue sous le verrou pris plus haut, puis
-    // vidée dans la MÊME instruction que le statut : le déclencheur de relance
-    // (migration 0141) la voit vide et ne fait naître aucune tête. Arrêter,
-    // c'est arrêter aussi ce qui attendait ce travail (#531).
-    // Une tête relancée encore vivante porte, en tâche, un message qui
-    // attendait : il est retiré lui aussi, et rendu.
+    // Les files de l'arbre — celles des jobs qu'on arrête ET celles que des
+    // délégués déjà finis ont laissées à un ancêtre — sont lues sous le verrou
+    // pris plus haut, puis VIDÉES avant de poser les statuts : le déclencheur
+    // de relance (migration 0141) ne trouve alors plus rien à relancer.
+    // Arrêter, c'est arrêter aussi ce qui attendait ce travail (#531). Une
+    // tête relancée encore vivante porte, en tâche, un message qui attendait :
+    // il est retiré lui aussi, et rendu.
     const queued = await t
       .select({
         id: agentJobs.id,
         task: agentJobs.task,
+        status: agentJobs.status,
         relaunchedFromJobId: agentJobs.relaunchedFromJobId,
         inbox: agentJobs.inbox,
       })
@@ -139,15 +151,27 @@ export async function cancelJobTree(
         and(
           inArray(agentJobs.id, tree),
           eq(agentJobs.entityId, entityId),
-          notTerminal(),
-          or(sql`${agentJobs.inbox} <> '[]'::jsonb`, isNotNull(agentJobs.relaunchedFromJobId)),
+          or(
+            sql`${agentJobs.inbox} <> '[]'::jsonb`,
+            and(liveJob(), isNotNull(agentJobs.relaunchedFromJobId)),
+          ),
+        ),
+      );
+    await t
+      .update(agentJobs)
+      .set({ inbox: sql`'[]'::jsonb` })
+      .where(
+        and(
+          inArray(agentJobs.id, tree),
+          eq(agentJobs.entityId, entityId),
+          sql`${agentJobs.inbox} <> '[]'::jsonb`,
         ),
       );
     const now = new Date();
     const jobs = await t
       .update(agentJobs)
-      .set({ status: 'cancelled', updatedAt: now, inbox: sql`'[]'::jsonb` })
-      .where(and(inArray(agentJobs.id, tree), eq(agentJobs.entityId, entityId), notTerminal()))
+      .set({ status: 'cancelled', updatedAt: now })
+      .where(and(inArray(agentJobs.id, tree), eq(agentJobs.entityId, entityId), liveJob()))
       .returning({ id: agentJobs.id });
     const tasks = await t
       .update(agentTasks)
@@ -176,7 +200,9 @@ export async function cancelJobTree(
       taskIds: tasks.map((r) => r.id),
       requestIds: requests.map((r) => r.id),
       discardedMessages: queued.flatMap((q) => [
-        ...(q.relaunchedFromJobId !== null ? [{ jobId: q.id, task: q.task }] : []),
+        ...(q.relaunchedFromJobId !== null && q.status !== null && isLiveStatus(q.status)
+          ? [{ jobId: q.id, task: q.task }]
+          : []),
         ...q.inbox.map((e) => ({ jobId: q.id, task: e.task })),
       ]),
     };
@@ -308,7 +334,7 @@ export async function listConversationRuns(
     })
     .from(agentJobs)
     .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-    .where(and(inConversation, notTerminal()))
+    .where(and(inConversation, liveJob()))
     .orderBy(asc(agentJobs.createdAt), asc(agentJobs.id));
   const openTasks = await db
     .select({

@@ -480,6 +480,17 @@ describe('a message sent while the work runs starts a reply turn that sees it, a
       },
     );
 
+    it('only a DELEGATE still runs (its head has finished): that is work running too, the message starts a reply turn answering while it (review of #642, pass 2)', async () => {
+      const chatId = chat(channel);
+      await allow(channel, chatId);
+      const busy = await busyThread(channel, chatId);
+      await db.update(agentJobs).set({ status: 'failed' }).where(eq(agentJobs.id, busy.head));
+
+      const result = await send(channel, chatId, 'Tu en es où ?');
+
+      expect(result.answersWhileJobId).toBe(busy.child);
+    });
+
     it('nothing runs in the thread: the message starts a head at rest, as before', async () => {
       const chatId = chat(channel);
       await allow(channel, chatId);
