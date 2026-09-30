@@ -373,6 +373,18 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       execution_output jsonb
     );
 
+    -- mirrors migration 0140 (#637) : où chaque carte d'approbation a été livrée
+    CREATE TABLE IF NOT EXISTS approval_card_messages (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      approval_request_id uuid NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
+      channel text NOT NULL CHECK (channel IN ('telegram','discord','slack','whatsapp')),
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      conversation_id text NOT NULL,
+      message_id text NOT NULL,
+      sent_at timestamptz NOT NULL DEFAULT now(),
+      settled_at timestamptz
+    );
+
     CREATE TABLE IF NOT EXISTS approval_rules (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,

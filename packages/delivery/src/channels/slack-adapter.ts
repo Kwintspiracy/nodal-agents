@@ -396,7 +396,9 @@ async function editMessageText(
   const channelId = requireChannelId(conversationId);
   const client = makeClient(botToken);
   try {
-    await client.chat.update({ channel: channelId, ts: messageId, text });
+    // `blocks: []` retire les boutons, comme l'édition Telegram (#637) : sans
+    // lui, Slack GARDE les blocs d'origine et la carte reste cliquable.
+    await client.chat.update({ channel: channelId, ts: messageId, text, blocks: [] });
   } catch {
     /* best-effort — the resolution already happened */
   }

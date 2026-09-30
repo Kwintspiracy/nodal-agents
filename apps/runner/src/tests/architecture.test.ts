@@ -91,6 +91,8 @@ const TERMINAL_WRITERS = ['job/finalize.ts', 'job/state.ts'] as const;
 const NON_TERMINAL_SENDERS = [
   'delivery/outbox.ts',
   'approvals/notify.ts',
+  // #637 — réécrit une carte d'approbation quand sa demande est tranchée.
+  'approvals/card-settlement.ts',
   'notify/code-transitions.ts',
   'cron/run-schedules.ts',
   'cron/reset-orphans.ts',

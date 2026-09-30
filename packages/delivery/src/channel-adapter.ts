@@ -192,7 +192,11 @@ export interface ChannelAdapter {
     card: QuestionCard,
   ): Promise<SendResult>;
 
-  /** Optional: only channels with `capabilities.editMessage` implement this. */
+  /**
+   * Optional: only channels with `capabilities.editMessage` implement this.
+   * Rewrites the message's text AND removes its interactive components
+   * (buttons): the only caller is a card that has been settled (#637).
+   */
   editMessageText?(
     creds: ChannelCredentials,
     conversationId: string,

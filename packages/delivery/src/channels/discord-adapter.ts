@@ -393,9 +393,12 @@ async function editMessageText(
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
   const rest = makeRestClient(botToken);
+  // `components: []` retire les boutons, comme l'édition Telegram (#637) : une
+  // carte réécrite est une carte tranchée, rien n'y reste cliquable.
   const body: RESTPatchAPIChannelMessageJSONBody = {
     content: text,
     allowed_mentions: SAFE_ALLOWED_MENTIONS,
+    components: [],
   };
   try {
     await rest.patch(Routes.channelMessage(channelId, messageId), { body });

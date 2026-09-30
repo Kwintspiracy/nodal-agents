@@ -240,7 +240,7 @@ describe('discordAdapter.sendApprovalCard', () => {
 });
 
 describe('discordAdapter.editMessageText', () => {
-  it('PATCHes the channel message route with new content + allowed_mentions', async () => {
+  it('PATCHes the channel message route with new content + allowed_mentions, buttons removed', async () => {
     vi.mocked(REST.prototype.patch).mockResolvedValueOnce(fakeMessage('42'));
 
     await discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Resolved ✅');
@@ -252,6 +252,7 @@ describe('discordAdapter.editMessageText', () => {
     expect(options?.body).toEqual({
       content: 'Resolved ✅',
       allowed_mentions: { parse: ['users'] },
+      components: [],
     });
   });
 

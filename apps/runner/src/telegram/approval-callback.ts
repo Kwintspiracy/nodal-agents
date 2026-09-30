@@ -28,6 +28,7 @@ import {
   APPROVAL_BUTTON_LABELS,
   buildApprovalCardBody,
   resolveApprovalDeliveryTarget,
+  settledApprovalCardText,
 } from '../approvals/notify.ts';
 import {
   upsertAutoApproveRule,
@@ -261,7 +262,12 @@ export async function handleApprovalCallback(
         botToken,
         chatId: jobChatId,
         messageId,
-        text: `✅ Answered: ${chosen}`,
+        text: settledApprovalCardText({
+          status: 'approved',
+          kind: 'question',
+          toolName: approval.toolName,
+          answer: chosen,
+        }),
       });
     }
     return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
@@ -501,15 +507,23 @@ export async function handleApprovalCallback(
     return { handled: false, reason: result.code };
   }
 
-  const verb = parsed.decision === 'approve' ? 'Approved' : 'Rejected';
-  const mark = parsed.decision === 'approve' ? '✅' : '❌';
-  await answerTelegramCallback(botToken, cb.id, `${mark} ${verb}`);
+  const settledText = settledApprovalCardText({
+    status: parsed.decision === 'approve' ? 'approved' : 'rejected',
+    kind: 'approval',
+    toolName: approval.toolName,
+    answer: null,
+  });
+  await answerTelegramCallback(
+    botToken,
+    cb.id,
+    parsed.decision === 'approve' ? '✅ Approved' : '❌ Rejected',
+  );
   if (messageId !== undefined) {
     await editTelegramMessageText({
       botToken,
       chatId: jobChatId,
       messageId,
-      text: `${mark} ${verb} — ${approval.toolName}`,
+      text: settledText,
     });
   }
 

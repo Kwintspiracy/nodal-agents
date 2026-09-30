@@ -53,6 +53,7 @@ const ZERO_RESULT: CronTickResult = {
   pendingRecovered: 0,
   stalePendingFailed: 0,
   approvalsExpired: 0,
+  approvalCardsSettled: 0,
   orphansReset: 0,
   tasksUnblocked: 0,
   tasksExecuted: 0,

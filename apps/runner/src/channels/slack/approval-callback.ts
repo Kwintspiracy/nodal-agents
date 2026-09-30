@@ -28,6 +28,7 @@ import {
   type ParsedApprovalCallback,
 } from '../../telegram/approval-callback.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
+import { settledApprovalCardText } from '../../approvals/notify.ts';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -222,7 +223,14 @@ export async function handleSlackApprovalInteraction(args: {
       await ack.ephemeralReply('Could not apply — try the dashboard.');
       return { handled: false, reason: answered.code };
     }
-    await ack.resolveCard(`✅ Answered: ${chosen}`);
+    await ack.resolveCard(
+      settledApprovalCardText({
+        status: 'approved',
+        kind: 'question',
+        toolName: approval.toolName,
+        answer: chosen,
+      }),
+    );
     return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
   }
 
@@ -247,9 +255,13 @@ export async function handleSlackApprovalInteraction(args: {
     return { handled: false, reason: result.code };
   }
 
-  const verb = parsed.decision === 'approve' ? 'Approved' : 'Rejected';
-  const mark = parsed.decision === 'approve' ? '✅' : '❌';
-  await ack.resolveCard(`${mark} ${verb} — ${approval.toolName}`);
+  const settledText = settledApprovalCardText({
+    status: parsed.decision === 'approve' ? 'approved' : 'rejected',
+    kind: 'approval',
+    toolName: approval.toolName,
+    answer: null,
+  });
+  await ack.resolveCard(settledText);
 
   return { handled: true, decision: parsed.decision, jobId: result.jobId };
 }

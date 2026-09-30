@@ -69,6 +69,8 @@ export {
   INSTALL_NOTES_KEY,
 } from './repos/app-settings.ts';
 export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
+export { recordApprovalCardMessage, claimSettledApprovalCards } from './repos/approval-cards.ts';
+export type { ApprovalCardMessageInput, SettledApprovalCard } from './repos/approval-cards.ts';
 export {
   cancelJobTree,
   insertChildJob,

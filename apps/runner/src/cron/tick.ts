@@ -31,6 +31,7 @@ import { unblockReadyTasks } from './unblock-ready.ts';
 import { executeReadyTasks } from './execute-ready.ts';
 import { runScheduleTick } from './run-schedules.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
+import { settleApprovalCards } from '../approvals/card-settlement.ts';
 import { drainDeliveries, sweepExhaustedDeliveries } from '../delivery/outbox.ts';
 import { runCuratorTick } from './run-curator.ts';
 import { runSkillUpdateCheckTick, type SkillUpdateCheckTickEnv } from './run-skill-update-check.ts';
@@ -61,6 +62,8 @@ export interface CronTickResult {
   stalePendingFailed: number;
   /** Demandes d'approbation échues fermées par le balayage TTL (#349). */
   approvalsExpired: number;
+  /** Cartes d'approbation mises à jour parce que leur demande est tranchée (#637). */
+  approvalCardsSettled: number;
   orphansReset: number;
   tasksUnblocked: number;
   tasksExecuted: number;
@@ -276,6 +279,17 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   const approvalsExpired = await guardPhase(
     'expireStaleApprovals',
     () => expireStaleApprovals(deps.db, resolveRunnerEnvForTrigger()),
+    0,
+  );
+
+  // #637 — une carte d'approbation suit le sort de sa demande. Placé APRÈS
+  // l'expiration ci-dessus, pour que les demandes qu'elle vient de clore voient
+  // leur carte mise à jour dans ce même tick ; et sans filtre, pour rattraper
+  // toute demande close ailleurs (l'annulation d'un arbre depuis le web, qui
+  // ne passe pas par le runner).
+  const approvalCardsSettled = await guardPhase(
+    'settleApprovalCards',
+    async () => (await settleApprovalCards(deps.db)).length,
     0,
   );
 
@@ -495,6 +509,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     pendingRecovered,
     stalePendingFailed,
     approvalsExpired,
+    approvalCardsSettled,
     orphansReset,
     tasksUnblocked,
     tasksExecuted,

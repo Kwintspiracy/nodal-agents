@@ -104,6 +104,49 @@ export const approvalRequests = pgTable(
 export type ApprovalRequestRow = typeof approvalRequests.$inferSelect;
 export type ApprovalRequestInsert = typeof approvalRequests.$inferInsert;
 
+// ─── approval_card_messages ───────────────────────────────────────────────────
+
+/**
+ * Chaque carte d'approbation (ou de question) livrée sur un canal (0140, #637) :
+ * où elle est — canal, agent dont le binding l'a envoyée, conversation, id du
+ * message — pour que la carte suive le sort de sa demande.
+ *
+ * Avant, l'id du message était jeté à l'envoi : seul un clic SUR la carte
+ * pouvait la réécrire. Une demande tranchée ailleurs (dashboard, autre canal),
+ * expirée par le balayage ou close par l'annulation de son job laissait une
+ * carte morte, boutons actifs, dans la conversation du propriétaire.
+ *
+ * `settled_at` : posé, une seule fois, par le point qui réécrit la carte
+ * (`approvals/card-settlement.ts` du runner) quand la demande a quitté
+ * `pending`. NULL : la carte n'a pas encore été mise à jour.
+ */
+export const approvalCardMessages = pgTable(
+  'approval_card_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    approvalRequestId: uuid('approval_request_id')
+      .notNull()
+      .references(() => approvalRequests.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    conversationId: text('conversation_id').notNull(),
+    messageId: text('message_id').notNull(),
+    sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('idx_approval_card_messages_request').on(table.approvalRequestId),
+    check(
+      'approval_card_messages_channel_check',
+      sql`${table.channel} IN ('telegram','discord','slack','whatsapp')`,
+    ),
+  ],
+);
+
+export type ApprovalCardMessageRow = typeof approvalCardMessages.$inferSelect;
+
 // ─── approval_rules ───────────────────────────────────────────────────────────
 
 export const approvalRules = pgTable(

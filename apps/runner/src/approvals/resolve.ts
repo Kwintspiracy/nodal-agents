@@ -13,6 +13,7 @@ import { FREE_ANSWER_MAX } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resumeJobAfterApprovalResolution } from './resume.ts';
+import { settleApprovalCards } from './card-settlement.ts';
 
 export type ApprovalDecision = 'approve' | 'reject';
 
@@ -202,6 +203,12 @@ export async function resolveApprovalDecision(
       .limit(1);
     return { ok: false, code: 'already_resolved', status: current?.status ?? null };
   }
+
+  // #637 — la décision est écrite : chaque carte livrée pour cette demande,
+  // sur quelque canal que ce soit, la dit maintenant (texte final, boutons
+  // retirés). La réponse peut venir du dashboard ou d'un autre canal que celui
+  // de la carte : sans ceci, la carte restait cliquable. Ne lève jamais.
+  await settleApprovalCards(deps.db, { approvalRequestIds: [input.approvalRequestId] });
 
   // Back to pending so executeJob picks it up — but ONLY if the job is still
   // `awaiting_approval` (B1, audit followup). A job the user cancelled while an

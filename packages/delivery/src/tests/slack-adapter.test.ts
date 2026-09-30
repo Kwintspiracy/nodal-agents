@@ -282,14 +282,14 @@ describe('slackAdapter.sendApprovalCard', () => {
 });
 
 describe('slackAdapter.editMessageText', () => {
-  it('calls chat.update with channel + ts + new text', async () => {
+  it('calls chat.update with channel + ts + new text, blocks (buttons) removed', async () => {
     vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce(fakePostMessageResult('42.1'));
 
     await slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Resolved ✅');
 
     const [method, options] = vi.mocked(WebClient.prototype.apiCall).mock.calls[0]!;
     expect(method).toBe('chat.update');
-    expect(options).toEqual({ channel: CHANNEL_ID, ts: '42.1', text: 'Resolved ✅' });
+    expect(options).toEqual({ channel: CHANNEL_ID, ts: '42.1', text: 'Resolved ✅', blocks: [] });
   });
 
   it('never throws — a failed edit must not undo a decision that already happened', async () => {
