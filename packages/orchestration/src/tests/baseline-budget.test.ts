@@ -14,7 +14,7 @@
 // regrossir le socle devient une décision, pas une dérive.
 //
 // Le seuil, 5 000, et pourquoi il n'est pas plus bas : le socle budgété en
-// fait 4 843. Chacune des sections retirées, remise seule, le fait sortir du
+// fait 4 913. Chacune des sections retirées, remise seule, le fait sortir du
 // budget, la plus petite (le bloc d'approbation, 343 car.) comprise. Descendre
 // le socle sous ~4 660 sans baisser le seuil rouvrirait ce trou : la marge est
 // voulue petite, une phrase, pas une section.
@@ -80,6 +80,7 @@ describe('chaque règle gardée garde une phrase repérable', () => {
     ['désactiver, pas supprimer', 'deactivate rather than delete'],
     ['ses propres messages sont une preuve', 'Your own earlier messages are evidence'],
     ['le travail délégué se lit dans le ledger (ca672ced)', 'task ledger entries of your history'],
+    ['le « fait » d’un délégué n’est pas le résultat', 'A delegate\'s "done" is not the result'],
     ['lire avant d’écrire', 'Read before you write'],
     ['échouer bruyamment', 'Fail loud'],
     [
@@ -91,6 +92,11 @@ describe('chaque règle gardée garde une phrase repérable', () => {
     ['une question sur Nodal est à toi (#455)', 'never delegate it to a teammate'],
     ['corriger un souvenir faux', 'mark_memory_outdated'],
     ['pas d’interdiction de chercher', 'discovery ban'],
+    [
+      'pas de script maison quand une skill ou un outil le fait (5887686e)',
+      'never write your own helper or conversion script for what a skill or tool already does',
+    ],
+    ['ne pas combler un trou de la doc (#329)', 'never fill the gap with what seems likely'],
     ['le dossier propre d’abord (26/08)', 'that folder is where your work goes'],
     [
       'pas de `shared/` inventé dans son dossier (26/08)',

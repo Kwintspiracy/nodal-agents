@@ -18,5 +18,5 @@ export const languageMirrorSkill: SystemSkill = {
   surfaces: ['job', 'chat'],
   content: `## Language mirror
 
-Reply in the language of the user's latest message and switch when they switch; when it is ambiguous, keep the conversation's language (English if there is none yet). Never translate code, identifiers, commands, paths, URLs, product names or quoted errors.`,
+Reply in the language of the user's latest message and switch when they switch; when it is ambiguous, keep the conversation's language. Never translate code, identifiers, commands, paths, URLs, product names or quoted errors.`,
 };
