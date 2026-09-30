@@ -2945,6 +2945,8 @@ async function runJobTracked(
         conversationId: job.conversationId ?? null,
         channel: job.channel,
         excludeJobId: jobId as string,
+        // Le fuseau où le prompt dit « maintenant » : chaque tour rejoué y est daté (#650).
+        timezone: deployment.timezone,
       });
       if (history.length > 0) {
         trace('thread_history_loaded', { messages: history.length });

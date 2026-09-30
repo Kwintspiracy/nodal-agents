@@ -31,6 +31,7 @@ import { runCliRuntimeChatTurn } from '../cli-runtime/run-chat.ts';
 import { getDeploymentContext } from '../job/deployment.ts';
 import {
   BUDGET_CHARS as HISTORY_BUDGET_CHARS,
+  datedTurn,
   truncate as truncateHeadTail,
 } from '../job/thread-history.ts';
 import {
@@ -220,6 +221,8 @@ function totalHistoryChars(blocks: ReadonlyArray<ReadonlyArray<ModelMessage>>): 
 interface HistoryRow {
   role: string;
   content: string;
+  /** Quand le message a été écrit : un message de la personne rejoué en porte la date (#650). */
+  createdAt: Date | null;
   /** Réponse arrêtée par la personne (#456) : le modèle doit le savoir. */
   stopped?: boolean;
   /** Réponse coupée par une horloge (#458) : le modèle doit le savoir aussi. */
@@ -250,11 +253,16 @@ interface HistoryRow {
  * never sent it" when a child job's tools_used says otherwise. Appended
  * AFTER truncation of the dispatch output itself so the bounded, already-
  * short ledger can never be the part that gets chopped.
+ *
+ * `timezone` — the one the system prompt states "now" in: each message of the
+ * person carries its own date in it (#650, `datedTurn`, the same form as the
+ * channels' replay in thread-history.ts). The agent's replies stay undated.
  */
 function buildHistoryBlock(
   r: HistoryRow,
   truncateFn: (s: string) => string,
   ledgerLines: readonly string[],
+  timezone: string,
 ): ModelMessage[] {
   if (r.role === 'assistant' && r.jobId) {
     const toolCallId = `hist-${r.jobId}`;
@@ -309,9 +317,17 @@ function buildHistoryBlock(
   // continue ce qu'il a écrit, et il avait « écrit » les notes du runner).
   const reply: ModelMessage = {
     role: r.role as 'user' | 'assistant',
-    content: truncateFn(r.content),
+    content:
+      r.role === 'user'
+        ? datedTurn(truncateFn(r.content), sentAt(r), timezone)
+        : truncateFn(r.content),
   };
   return note ? [reply, { role: 'user', content: note }] : [reply];
+}
+
+function sentAt(r: HistoryRow): Date {
+  if (!r.createdAt) throw new Error('chat history: a chat_messages row has no created_at');
+  return r.createdAt;
 }
 
 /**
@@ -553,6 +569,7 @@ export async function runChatTurn(opts: {
     .select({
       role: chatMessages.role,
       content: chatMessages.content,
+      createdAt: chatMessages.createdAt,
       stopped: chatMessages.stopped,
       cutReason: chatMessages.cutReason,
       jobId: chatMessages.jobId,
@@ -600,7 +617,12 @@ export async function runChatTurn(opts: {
   const chronologicalRows = rows.reverse();
   let remainingRows = chronologicalRows;
   let blocks = remainingRows.map((r) =>
-    buildHistoryBlock(r, (s) => s, ledgerLinesByJobId.get(r.jobId ?? '') ?? []),
+    buildHistoryBlock(
+      r,
+      (s) => s,
+      ledgerLinesByJobId.get(r.jobId ?? '') ?? [],
+      deployment.timezone,
+    ),
   );
 
   // Drop the OLDEST blocks (front of the chronological array) until the
@@ -619,7 +641,12 @@ export async function runChatTurn(opts: {
   // every turn intact, however large a single message is.
   if (totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
     blocks = remainingRows.map((r) =>
-      buildHistoryBlock(r, truncateHeadTail, ledgerLinesByJobId.get(r.jobId ?? '') ?? []),
+      buildHistoryBlock(
+        r,
+        truncateHeadTail,
+        ledgerLinesByJobId.get(r.jobId ?? '') ?? [],
+        deployment.timezone,
+      ),
     );
   }
   const messages: ModelMessage[] = blocks.flatMap((b) => b);

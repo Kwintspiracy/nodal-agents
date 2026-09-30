@@ -65,3 +65,14 @@ export function isInboxMessage(message: unknown): boolean {
   const inbox = (ns as { inbox?: unknown } | undefined)?.inbox;
   return typeof inbox === 'object' && inbox !== null;
 }
+
+/**
+ * L'heure où un message transmis est arrivé (ISO 8601, posée à la remise), ou
+ * `null` si ce message n'en est pas un. L'historique rejoué la date avec (#650).
+ */
+export function inboxMessageReceivedAt(message: unknown): string | null {
+  if (!isInboxMessage(message)) return null;
+  const m = message as { providerOptions: Record<string, { inbox: { receivedAt?: unknown } }> };
+  const receivedAt = m.providerOptions[RUNNER_RECORD_NAMESPACE]?.inbox.receivedAt;
+  return typeof receivedAt === 'string' ? receivedAt : null;
+}

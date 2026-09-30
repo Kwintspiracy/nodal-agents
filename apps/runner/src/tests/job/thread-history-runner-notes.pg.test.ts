@@ -144,6 +144,7 @@ describe('migration 0137 fills runner_notes on rows written before it @cap:repre
         conversationId: conv!.id,
         channel: 'whatsapp',
         excludeJobId: '00000000-0000-0000-0000-000000000000',
+        timezone: 'UTC',
       });
       const spoken = history
         .filter((m) => m.role === 'assistant')
@@ -274,6 +275,7 @@ describe('migration 0137 fills runner_notes on rows written before it @cap:repre
         conversationId: conv!.id,
         channel: 'whatsapp',
         excludeJobId: '00000000-0000-0000-0000-000000000000',
+        timezone: 'UTC',
       });
       const spoken = history
         .filter((m) => m.role === 'assistant')

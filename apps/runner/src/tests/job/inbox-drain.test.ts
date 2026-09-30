@@ -45,7 +45,7 @@ import {
   deliverToConversationJob,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { inboxMessage, isInboxMessage } from '@nodal-agents/shared';
+import { formatLocalTime, inboxMessage, isInboxMessage } from '@nodal-agents/shared';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -423,11 +423,14 @@ describe('a message while the work runs: the reply turn sees it and passes it on
       .insert(conversations)
       .values({ entityId: seed.entityId, agentId, channel: 'telegram', chatId: '555' })
       .returning({ id: conversations.id });
+    // Chaque message rejoué porte l'heure où la personne l'a envoyé (#650).
+    const asked = new Date('2026-09-29T06:21:00Z');
+    const received = new Date('2026-09-29T06:24:00Z');
     const lu = inboxMessage({
       id: randomUUID(),
       task: FOLLOW_UP,
       content: FOLLOW_UP,
-      receivedAt: new Date().toISOString(),
+      receivedAt: received.toISOString(),
     });
     await db.insert(agentJobs).values({
       entityId: seed.entityId,
@@ -436,6 +439,7 @@ describe('a message while the work runs: the reply turn sees it and passes it on
       chatId: '555',
       conversationId: conv!.id,
       task: 'Fais-moi un portrait',
+      createdAt: asked,
       status: 'completed',
       result: 'Portrait rangé dans le dossier partagé.',
       messages: [
@@ -451,11 +455,12 @@ describe('a message while the work runs: the reply turn sees it and passes it on
       conversationId: conv!.id,
       channel: 'telegram',
       excludeJobId: randomUUID(),
+      timezone: 'UTC',
     });
 
     expect(history.slice(0, 2)).toEqual([
-      { role: 'user', content: 'Fais-moi un portrait' },
-      { role: 'user', content: FOLLOW_UP },
+      { role: 'user', content: `[${formatLocalTime('UTC', asked)}] Fais-moi un portrait` },
+      { role: 'user', content: `[${formatLocalTime('UTC', received)}] ${FOLLOW_UP}` },
     ]);
   });
 });
