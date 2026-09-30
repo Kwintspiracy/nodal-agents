@@ -80,7 +80,7 @@ import { runCronTick } from '../../cron/tick.ts';
 const OWNER_CHAT = '199791464';
 const TELEGRAM_CARD_MESSAGE_ID = 4242;
 
-const fetchMock = vi.fn(async (url: string | URL | Request) => {
+const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
   const u = String(url);
   const result = u.includes('/sendMessage') ? { message_id: TELEGRAM_CARD_MESSAGE_ID } : true;
   return new Response(JSON.stringify({ ok: true, result }), {
