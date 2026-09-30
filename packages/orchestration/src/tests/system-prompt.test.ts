@@ -1078,12 +1078,117 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
       promptSans,
       'le bloc s’approprie le partagé alors qu’il ne sait pas si l’agent a le sien',
     ).not.toContain('This is your workspace');
-    expect(promptSans).toContain('save new files into the existing folder that matches their kind');
+    expect(promptSans).toMatch(/save new files into the existing folder that matches their kind/i);
 
     // 2. L'inventaire reste cadré comme une donnée externe, pas comme une
     //    instruction : les NOMS de fichiers viennent de qui les a créés.
     expect(promptSans).toContain('outputs/');
     expect(promptSans).toContain('Source: shared workspace listing');
+  });
+
+  describe('réutiliser les MOYENS, jamais le livrable d’une demande passée (#638)', () => {
+    // Banc `recipe`, 29-30/09 : pour « imprime une recette de … », le root
+    // voyait dans l'inventaire le dossier d'un run précédent (un .html et un
+    // .pdf) et DEUX ordres lui disaient de le reprendre — ce bloc (« workflow,
+    // script, or document … reuse and update it ») et la section « Reuse before
+    // recreating » du socle workspace-hygiene. La règle visait les moyens
+    // (audit du 20/07 : workflows et scripts réécrits chaque jour) ; le mot
+    // « document » l'étendait aux livrables. Reprendre, c'était écraser un
+    // fichier du partagé : approbation file_edit, et la demande jamais faite.
+    //
+    // La règle est dite UNE fois, à côté de la liste qu'elle gouverne. Prouvé
+    // sur les deux rôles, avec ou sans dossier propre, et avec un modèle qui
+    // reçoit le renforcement d'exécution (qui la répétait aussi).
+    const inventaire =
+      'shared/\n  reports/ (2 files): q3-summary.html, q3-summary.pdf\n  scripts/ (1 file): export.py\n';
+
+    /** Chaque phrase du prompt qui ordonne de reprendre ce qui existe déjà. */
+    function phrasesDeReprise(prompt: string): string[] {
+      return prompt
+        .split(/(?<=[.:!?])\s+|\n/)
+        .filter((p) =>
+          /\breuse\b|already covers|rebuild(ing)? what already exists|before recreating/i.test(p),
+        );
+    }
+
+    const cas: Array<{
+      titre: string;
+      role: 'agent' | 'orchestrator';
+      model: string;
+      dossier: boolean;
+    }> = [
+      { titre: 'agent seul', role: 'agent', model: 'claude-sonnet-4-6-20260217', dossier: false },
+      { titre: 'orchestrateur', role: 'orchestrator', model: 'z-ai/glm-5.1', dossier: false },
+      { titre: 'agent avec son dossier', role: 'agent', model: 'z-ai/glm-5.1', dossier: true },
+    ];
+
+    for (const c of cas) {
+      it(`la règle apparaît exactement une fois — ${c.titre}`, async () => {
+        const { entityId } = await seedContext(db);
+        const [row] = await db
+          .insert(agents)
+          .values({
+            entityId,
+            name: `Reprise-${c.role}`,
+            slug: `reprise-${c.role}-${c.dossier}-${Date.now()}`,
+            personality: 'p',
+            role: c.role,
+          })
+          .returning();
+        if (c.dossier) {
+          await db.insert(agentWorkspaces).values({
+            entityId,
+            agentId: row!.id,
+            label: 'Dev',
+            path: 'C:\\Users\\kwint\\Documents\\Dev',
+          });
+        }
+        const agent = { ...makeAgent(row!.id, entityId, 'p', c.role), model: c.model };
+        const prompt = await buildSystemPrompt(agent, db, {
+          origin: 'api',
+          workspaceInventory: inventaire,
+        } as JobContext);
+
+        // Le socle est bien là : sinon « une seule fois » ne prouverait rien.
+        expect(prompt).toContain('## Workspace hygiene');
+        expect(prompt, 'le socle répète la règle dans sa propre section').not.toMatch(/### Reuse/);
+
+        const reprises = phrasesDeReprise(prompt);
+        expect(reprises, `la règle de reprise est dite ${reprises.length} fois`).toHaveLength(1);
+        const regle = reprises[0]!;
+        // Ce qui se réutilise : les moyens, nommés.
+        expect(regle).toMatch(/workflows/i);
+        expect(regle).toMatch(/scripts/i);
+        expect(regle).toMatch(/templates/i);
+        expect(regle, 'un document redevient une chose à reprendre').not.toMatch(/document/i);
+
+        // Et ce qui ne se réutilise pas : le livrable, produit pour CETTE
+        // demande, sauf si l'utilisateur désigne le fichier.
+        const bloc = prompt.slice(prompt.indexOf('## Shared workspace'));
+        expect(bloc).toMatch(/deliverable[^.]*for this request/i);
+        expect(bloc).toMatch(/existing file is the answer only when the user names it/i);
+      });
+    }
+
+    it('le chat, qui n’a pas l’inventaire, ne reçoit pas la règle', async () => {
+      const { entityId } = await seedContext(db);
+      const [row] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: 'RepriseChat',
+          slug: `reprise-chat-${Date.now()}`,
+          personality: 'p',
+          role: 'orchestrator',
+        })
+        .returning();
+      const agent = { ...makeAgent(row!.id, entityId, 'p', 'orchestrator'), model: 'z-ai/glm-5.1' };
+      const prompt = await buildSystemPrompt(agent, db, {
+        origin: 'dashboard',
+        surface: 'chat',
+      } as JobContext);
+      expect(phrasesDeReprise(prompt)).toEqual([]);
+    });
   });
 
   it('un partagé VIDE garde son bloc — l’agent doit savoir qu’il est vide', async () => {

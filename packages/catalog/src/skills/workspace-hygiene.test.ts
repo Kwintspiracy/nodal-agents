@@ -57,7 +57,7 @@ describe('workspace-hygiene', () => {
     // La liste des dossiers est ce que les OUTILS peuvent atteindre : c'est
     // elle qui fait foi. L'inventaire ne dit que ce qu'il y a dedans.
     const c = workspaceHygieneSkill.content;
-    const consigne = c.slice(0, c.indexOf('### Reuse'));
+    const consigne = c.slice(0, c.indexOf('### One folder per kind'));
     expect(consigne, 'la présence du partagé se déduit du bloc Workspaces').toContain(
       '`## Workspaces` block lists a folder labelled `shared`',
     );
@@ -95,6 +95,19 @@ describe('workspace-hygiene', () => {
     for (const dossier of ['`workflows/`', '`outputs/`', '`scripts/`', '`documents/`']) {
       expect(c, `${dossier} a disparu de la disposition canonique`).toContain(dossier);
     }
-    expect(c).toContain('Reuse before recreating');
+  });
+
+  it('ne dit pas la règle de reprise — le bloc `## Shared workspace` la dit, une fois (#638)', () => {
+    // La section « Reuse before recreating » ordonnait de reprendre « a
+    // workflow, script, or document » déjà présent. Le mot « document »
+    // l'étendait aux livrables d'une demande passée : le banc `recipe` a vu le
+    // root reprendre la recette PDF d'un run précédent au lieu de faire la
+    // demande. La règle, corrigée (les moyens, pas les livrables), vit à côté
+    // de l'inventaire qu'elle gouverne ; la répéter ici, c'était deux textes à
+    // tenir d'accord, et c'est la version fausse qui avait survécu.
+    const c = workspaceHygieneSkill.content;
+    expect(c).not.toMatch(/### Reuse/);
+    expect(c).not.toMatch(/\breuse\b/i);
+    expect(workspaceHygieneSkill.description).not.toMatch(/\breuse\b/i);
   });
 });

@@ -22,6 +22,14 @@
 // La section porte maintenant sa portée dans son titre, et renvoie au bloc du
 // prompt pour la question « où va mon travail ». Le skill garde son sujet — la
 // discipline INTERNE du partagé — sans plus décider ce qui doit y atterrir.
+//
+// RETIRÉ le 30/09 (#638) : la section « Reuse before recreating ». Elle
+// ordonnait de reprendre « a workflow, script, or document » déjà présent, et
+// le mot « document » faisait d'un livrable passé la réponse à une demande
+// nouvelle (banc `recipe` : le PDF d'hier repris, donc écrasé, au lieu d'être
+// refait). La règle corrigée — les moyens se réutilisent, un livrable se
+// produit pour la demande — est dite une fois, dans le bloc `## Shared
+// workspace` du prompt, à côté de l'inventaire qu'elle gouverne.
 
 import type { SystemSkill } from '../types';
 
@@ -29,7 +37,7 @@ export const workspaceHygieneSkill: SystemSkill = {
   slug: 'workspace-hygiene',
   name: 'Workspace hygiene',
   description:
-    'Reuse before recreating. One canonical folder per artifact kind. Parametrize scripts. Never write artifacts into a skill bundle.',
+    'One canonical folder per artifact kind. Parametrize scripts. Never write artifacts into a skill bundle.',
   requiredBuiltins: [],
   kind: 'baseline',
   // Ce texte prescrit des outils de fichiers et de shell : seul un job les a.
@@ -39,10 +47,6 @@ export const workspaceHygieneSkill: SystemSkill = {
 This is how you keep the SHARED workspace usable. It is a durable, common asset — not a scratch pad — and everything below applies to what you put THERE.
 
 You have one when your \`## Workspaces\` block lists a folder labelled \`shared\` — that block is what your tools can actually reach, so it is the only thing to check. When a \`## Shared workspace\` block is also present, it lists what is already in there; its absence means the listing was not built for this turn, never that the folder is missing. If no \`shared\` folder is listed at all, work in the folder your \`## Workspaces\` block names and ignore this skill's folder layout.
-
-### Reuse before recreating
-
-Before building a workflow, script, or document, check the inventory: if a file already covers the need, load it and adapt it (\`file_read\`, then edit or pass different arguments). Recreating an existing artifact under a new name is a failure mode, not a fresh start.
 
 ### One folder per kind — inside the shared workspace
 

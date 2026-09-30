@@ -27,9 +27,7 @@ A delegation may have been launched several times (a previous call may have fail
 1. **\`file_list({ glob: "*.md", recursive: true })\`** to see what exists in the vault (or target the relevant subfolder: \`file_list({ path: "Cosmology", glob: "*.md" })\`).
 2. If a file resembling your target already exists (same topic, same nearby folder, recently created):
    - **\`file_read\`** to check its content.
-   - If the content is complete and already answers the task → **DO NOT RE-WRITE**. Reply to the user referencing the existing file + call \`return_result{status:'success'}\` directly.
-   - If the content is partial/incomplete → **\`file_edit\`** or **\`file_write\`** on the SAME path (not a new file with a slightly different name). Better: enrich what exists rather than rewriting everything.
-3. Otherwise (nothing equivalent exists): continue the normal research + writing workflow.
+   - Do this task's work, then write it with **\`file_edit\`** or **\`file_write\`** on the SAME path (not a new file with a slightly different name). Better: enrich what exists rather than rewriting everything.3. Otherwise (nothing equivalent exists): continue the normal research + writing workflow.
 
 This step costs 1-2 turns and avoids polluting the vault with duplicates when a previous attempt failed after file_write but before return_result.
 
