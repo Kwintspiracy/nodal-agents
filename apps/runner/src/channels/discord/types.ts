@@ -45,7 +45,7 @@ export interface DiscordInboundMessage {
 export interface DiscordInteractionAck {
   /**
    * Ephemeral reply visible only to the tapper — does NOT touch the original
-   * card message. Used for security-gate denials and "already resolved" info,
+   * card message. Works before or after `acknowledge()` (a follow-up then). Used for security-gate denials and "already resolved" info,
    * mirroring telegram/approval-callback.ts's `answerTelegramCallback(...,
    * showAlert=true)` popup.
    */

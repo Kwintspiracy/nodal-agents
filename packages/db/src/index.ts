@@ -74,12 +74,17 @@ export {
   claimSettledApprovalCards,
   finishApprovalCard,
   releaseApprovalCardAfterFailure,
+  adoptApprovalCard,
+  claimApprovalCardForDisplay,
+  releaseApprovalCardClaim,
+  requeueApprovalCards,
   APPROVAL_CARD_CLAIM_LEASE_MS,
 } from './repos/approval-cards.ts';
 export type {
   ApprovalCardMessageInput,
   SettledApprovalCard,
   ApprovalCardFinalOutcome,
+  ApprovalCardLocation,
 } from './repos/approval-cards.ts';
 export {
   cancelJobTree,

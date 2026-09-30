@@ -100,6 +100,17 @@ export interface SendResult {
  */
 export type EditResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * Un bouton d'une carte réécrite (#637) — la forme neutre, par rangées. Seul
+ * l'affichage interactif d'une carte encore ouverte en porte (la question
+ * « Always allow? » de Telegram et son retour) ; une carte tranchée n'en a
+ * aucun.
+ */
+export interface CardButton {
+  label: string;
+  callbackData: string;
+}
+
 /** Result of validating a channel's credentials (Telegram: getMe). */
 export interface BotIdentity {
   id: string;
@@ -203,14 +214,18 @@ export interface ChannelAdapter {
 
   /**
    * Optional: only channels with `capabilities.editMessage` implement this.
-   * Rewrites the message's text AND removes its interactive components
-   * (buttons): the only caller is a card that has been settled (#637).
+   * Rewrites the message's text and REPLACES its buttons with `buttons` — none
+   * when absent or empty (a settled card). The only caller is the one function
+   * that owns an approval card's display (runner approvals/card-settlement.ts,
+   * #637). A channel that cannot put buttons on an edited message returns a
+   * failure for a non-empty `buttons`, never a silent text-only edit.
    */
   editMessageText?(
     creds: ChannelCredentials,
     conversationId: string,
     messageId: string,
     text: string,
+    buttons?: readonly (readonly CardButton[])[],
   ): Promise<EditResult>;
 
   /** Optional: only channels whose platform can enumerate what a bot/session

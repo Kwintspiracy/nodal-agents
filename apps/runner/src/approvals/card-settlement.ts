@@ -31,13 +31,17 @@ import {
   claimSettledApprovalCards,
   finishApprovalCard,
   releaseApprovalCardAfterFailure,
+  adoptApprovalCard,
+  claimApprovalCardForDisplay,
+  releaseApprovalCardClaim,
+  requeueApprovalCards,
   getBindingCredentials,
   eq,
   approvalRequests,
   agents,
 } from '@nodal-agents/db';
-import type { SettledApprovalCard } from '@nodal-agents/db';
-import { getAdapter, type ChannelKind } from '@nodal-agents/delivery';
+import type { SettledApprovalCard, ApprovalCardLocation } from '@nodal-agents/db';
+import { getAdapter, type CardButton, type ChannelKind } from '@nodal-agents/delivery';
 import { isCodeExecutionTool } from '@nodal-agents/tools';
 import { settledApprovalCardText } from './notify.ts';
 import { getApprovalRule, isAutoRunPaused } from './rules.ts';
@@ -115,27 +119,6 @@ export async function renderSettledCardText(db: Db, facts: SettledRequestFacts):
     }
   }
   return settledApprovalCardText({ ...facts, standing });
-}
-
-/** Le texte de la carte d'UNE demande, relu en base. null : demande introuvable ou encore pending. */
-export async function renderSettledCardTextFor(
-  db: Db,
-  approvalRequestId: string,
-): Promise<string | null> {
-  const [row] = await db
-    .select({
-      status: approvalRequests.status,
-      kind: approvalRequests.kind,
-      toolName: approvalRequests.toolName,
-      answer: approvalRequests.answer,
-      entityId: approvalRequests.entityId,
-      agentId: approvalRequests.agentId,
-    })
-    .from(approvalRequests)
-    .where(eq(approvalRequests.id, approvalRequestId))
-    .limit(1);
-  if (!row || row.status === null || row.status === 'pending') return null;
-  return renderSettledCardText(db, { ...row, status: row.status });
 }
 
 async function failOne(
@@ -224,6 +207,108 @@ export async function settleApprovalCards(
   const outcomes: CardSettlementOutcome[] = [];
   for (const card of cards) outcomes.push(await settleOne(db, card));
   return outcomes;
+}
+
+/** Ce que `showApprovalCard` a fait. */
+export type CardDisplayOutcome =
+  /** La vue demandée est affichée (la demande est encore ouverte). */
+  | { outcome: 'shown' }
+  /** La demande était tranchée : la carte est passée par le règlement, pas par la vue demandée. */
+  | { outcome: 'settled' }
+  /** La carte est finie ou tenue par un autre écrivain : rien n'a été écrit. */
+  | { outcome: 'busy' }
+  /** L'édition a échoué ; la carte garde ce qu'elle montrait. */
+  | { outcome: 'failed'; error: string };
+
+/**
+ * LA fonction qui affiche une carte encore ouverte — la question « Always
+ * allow? », le retour « Back », tout ce qu'un clic veut y montrer. Avec
+ * `settleApprovalCards`, c'est le seul écrivain d'une carte (#637), et les
+ * deux partagent le même bail `claimed_at` :
+ *
+ * 1. la carte est adoptée (une carte jamais consignée entre dans le protocole),
+ *    puis prise sous le bail — pas prise, rien n'est écrit ;
+ * 2. le statut de la demande est RELU sous le bail : tranchée, la carte passe
+ *    par le règlement (texte final, sans boutons), quoi qu'on ait demandé ;
+ * 3. sinon la vue est écrite, son issue prise en compte, le bail rendu ;
+ * 4. puis le règlement est rejoué : une décision arrivée PENDANT que la carte
+ *    était tenue n'a pas pu la prendre — c'est ici qu'elle la rattrape, et non
+ *    au tick suivant. Sans effet si la demande est encore ouverte.
+ */
+export async function showApprovalCard(
+  db: Db,
+  card: ApprovalCardLocation,
+  view: { text: string; buttons?: readonly (readonly CardButton[])[] },
+): Promise<CardDisplayOutcome> {
+  const cardId = await adoptApprovalCard(db, card);
+  if (!(await claimApprovalCardForDisplay(db, cardId))) return { outcome: 'busy' };
+
+  let result: CardDisplayOutcome;
+  try {
+    const [request] = await db
+      .select({ status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, card.approvalRequestId))
+      .limit(1);
+    if (request?.status !== 'pending') {
+      result = { outcome: 'settled' };
+    } else {
+      const adapter = getAdapter(card.channel as ChannelKind);
+      const creds = await getBindingCredentials(db, card.agentId, card.channel);
+      if (!adapter.editMessageText) {
+        result = { outcome: 'failed', error: `${card.channel} cannot edit a sent message` };
+      } else if (!creds) {
+        result = {
+          outcome: 'failed',
+          error: `no usable ${card.channel} credentials for agent ${card.agentId}`,
+        };
+      } else {
+        const edit = await adapter.editMessageText(
+          creds,
+          card.conversationId,
+          card.messageId,
+          view.text,
+          view.buttons,
+        );
+        result = edit.ok ? { outcome: 'shown' } : { outcome: 'failed', error: edit.error };
+      }
+    }
+  } finally {
+    await releaseApprovalCardClaim(db, cardId);
+  }
+  if (result.outcome === 'failed') {
+    console.warn(
+      `[approval-card] could not show the ${card.channel} card of approval ` +
+        `${card.approvalRequestId} (message ${card.messageId}): ${result.error}`,
+    );
+  }
+  await settleApprovalCards(db, { approvalRequestIds: [card.approvalRequestId] });
+  return result;
+}
+
+/**
+ * Un clic est arrivé sur la carte d'une demande DÉJÀ tranchée : la carte montre
+ * donc encore des boutons (abandonnée après échecs, jamais consignée, ou
+ * réécrite sans que ça tienne). Elle retourne dans la file de règlement, essais
+ * remis à zéro, et le règlement est tenté tout de suite ; un échec est repris
+ * au tick, comme n'importe quelle carte.
+ *
+ * `messageId` connu (Telegram) : la carte est adoptée si elle manque. Inconnu
+ * (Discord, Slack : l'interaction ne le porte pas jusqu'ici) : les cartes
+ * consignées de la demande sur ce canal et dans cette conversation.
+ */
+export async function requeueApprovalCard(
+  db: Db,
+  card: Omit<ApprovalCardLocation, 'messageId'> & { messageId?: string },
+): Promise<CardSettlementOutcome[]> {
+  if (card.messageId !== undefined)
+    await adoptApprovalCard(db, { ...card, messageId: card.messageId });
+  await requeueApprovalCards(db, {
+    approvalRequestId: card.approvalRequestId,
+    channel: card.channel,
+    conversationId: card.conversationId,
+  });
+  return settleApprovalCards(db, { approvalRequestIds: [card.approvalRequestId] });
 }
 
 /** Le décompte d'un passage, pour le tick : seules les cartes RÉÉCRITES comptent comme mises à jour. */

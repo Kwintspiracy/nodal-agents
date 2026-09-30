@@ -25,7 +25,11 @@ CREATE TABLE IF NOT EXISTS approval_card_messages (
   CONSTRAINT approval_card_messages_channel_check
     CHECK (channel IN ('telegram','discord','slack','whatsapp')),
   CONSTRAINT approval_card_messages_outcome_check
-    CHECK (outcome IS NULL OR outcome IN ('edited','cannot_edit','gave_up'))
+    CHECK (outcome IS NULL OR outcome IN ('edited','cannot_edit','gave_up')),
+  -- Un message est UNE carte : un clic sur une carte non consignée (envoyée
+  -- avant cette table) l'adopte sans jamais la dédoubler.
+  CONSTRAINT approval_card_messages_message_unique
+    UNIQUE (approval_request_id, channel, conversation_id, message_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_approval_card_messages_request

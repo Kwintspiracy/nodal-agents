@@ -167,3 +167,101 @@ export async function releaseApprovalCardAfterFailure(
     .set({ claimedAt: null, lastError: error })
     .where(eq(approvalCardMessages.id, cardId));
 }
+
+/** Où est une carte : la demande, le canal, la conversation, le message. */
+export interface ApprovalCardLocation {
+  approvalRequestId: string;
+  channel: string;
+  agentId: string;
+  conversationId: string;
+  messageId: string;
+}
+
+/**
+ * La ligne de CETTE carte, créée si elle manque — une carte envoyée avant la
+ * table, ou dont l'enregistrement a échoué, entre ainsi dans le protocole au
+ * premier clic. Rend son id.
+ */
+export async function adoptApprovalCard(
+  db: AnyDrizzleDb,
+  card: ApprovalCardLocation,
+): Promise<string> {
+  await db.insert(approvalCardMessages).values(card).onConflictDoNothing();
+  const [row] = await db
+    .select({ id: approvalCardMessages.id })
+    .from(approvalCardMessages)
+    .where(
+      and(
+        eq(approvalCardMessages.approvalRequestId, card.approvalRequestId),
+        eq(approvalCardMessages.channel, card.channel),
+        eq(approvalCardMessages.conversationId, card.conversationId),
+        eq(approvalCardMessages.messageId, card.messageId),
+      ),
+    )
+    .limit(1);
+  if (!row) throw new Error(`approval card for ${card.approvalRequestId} could not be adopted`);
+  return row.id;
+}
+
+/**
+ * Prend UNE carte pour l'afficher, sous le même bail que le règlement, SANS
+ * compter de tentative (afficher une carte ouverte n'est pas régler). false :
+ * la carte est finie, ou quelqu'un la tient.
+ */
+export async function claimApprovalCardForDisplay(
+  db: AnyDrizzleDb,
+  cardId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const leaseExpired = new Date(now.getTime() - APPROVAL_CARD_CLAIM_LEASE_MS);
+  const rows = await db
+    .update(approvalCardMessages)
+    .set({ claimedAt: now })
+    .where(
+      and(
+        eq(approvalCardMessages.id, cardId),
+        isNull(approvalCardMessages.settledAt),
+        or(
+          isNull(approvalCardMessages.claimedAt),
+          lt(approvalCardMessages.claimedAt, leaseExpired),
+        ),
+      ),
+    )
+    .returning({ id: approvalCardMessages.id });
+  return rows.length > 0;
+}
+
+/** Rend le bail d'une carte prise pour affichage. */
+export async function releaseApprovalCardClaim(db: AnyDrizzleDb, cardId: string): Promise<void> {
+  await db
+    .update(approvalCardMessages)
+    .set({ claimedAt: null })
+    .where(eq(approvalCardMessages.id, cardId));
+}
+
+/**
+ * Remet dans la file de règlement les cartes d'une demande sur un canal (et,
+ * si donnée, une conversation) : pas finies, essais remis à zéro. Un clic sur
+ * une carte d'une demande déjà tranchée prouve que la carte montre encore des
+ * boutons — qu'elle ait été abandonnée (`gave_up`), jamais consignée, ou
+ * réécrite sans que ça tienne.
+ */
+export async function requeueApprovalCards(
+  db: AnyDrizzleDb,
+  where: { approvalRequestId: string; channel: string; conversationId?: string },
+): Promise<number> {
+  const rows = await db
+    .update(approvalCardMessages)
+    .set({ settledAt: null, outcome: null, attempts: 0, lastError: null })
+    .where(
+      and(
+        eq(approvalCardMessages.approvalRequestId, where.approvalRequestId),
+        eq(approvalCardMessages.channel, where.channel),
+        where.conversationId !== undefined
+          ? eq(approvalCardMessages.conversationId, where.conversationId)
+          : undefined,
+      ),
+    )
+    .returning({ id: approvalCardMessages.id });
+  return rows.length;
+}

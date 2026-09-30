@@ -28,6 +28,7 @@ import type {
   QuestionCard,
   SendResult,
   EditResult,
+  CardButton,
   BotIdentity,
   TextFormat,
   SendTextOpts,
@@ -183,10 +184,19 @@ async function editMessageText(
   conversationId: string,
   messageId: string,
   text: string,
+  buttons?: readonly (readonly CardButton[])[],
 ): Promise<EditResult> {
   const botToken = requireBotToken(creds);
   const chatId = requireChatId(conversationId);
-  return editTelegramMessageText({ botToken, chatId, messageId: Number(messageId), text });
+  return editTelegramMessageText({
+    botToken,
+    chatId,
+    messageId: Number(messageId),
+    text,
+    inlineKeyboard: (buttons ?? []).map((row) =>
+      row.map((b) => ({ text: b.label, callback_data: b.callbackData })),
+    ),
+  });
 }
 
 async function validateCredentials(creds: ChannelCredentials): Promise<BotIdentity> {

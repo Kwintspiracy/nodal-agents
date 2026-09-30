@@ -24,6 +24,7 @@ import type {
   QuestionCard,
   SendResult,
   EditResult,
+  CardButton,
   BotIdentity,
   TextFormat,
   SendTextOpts,
@@ -392,7 +393,14 @@ async function editMessageText(
   conversationId: string,
   messageId: string,
   text: string,
+  buttons?: readonly (readonly CardButton[])[],
 ): Promise<EditResult> {
+  // Aucune carte de ce canal n'offre d'affichage interactif réécrit (le flux
+  // « Always allow? » est propre à Telegram) : le dire plutôt que d'envoyer le
+  // texte seul en prétendant avoir posé les boutons.
+  if (buttons && buttons.some((row) => row.length > 0)) {
+    return { ok: false, error: 'slack cannot put buttons on an edited message' };
+  }
   const botToken = requireBotToken(creds);
   const channelId = requireChannelId(conversationId);
   const client = makeClient(botToken);

@@ -316,7 +316,14 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
       env,
       ack: {
         async ephemeralReply(text: string): Promise<void> {
-          await interaction.reply({ content: text, flags: MessageFlags.Ephemeral }).catch(() => {});
+          // Déjà acquittée (deferUpdate, #637) : une interaction n'a qu'UNE
+          // réponse initiale, la suite passe par un message de suivi.
+          const payload = { content: text, flags: MessageFlags.Ephemeral } as const;
+          await (
+            interaction.deferred || interaction.replied
+              ? interaction.followUp(payload)
+              : interaction.reply(payload)
+          ).catch(() => {});
         },
         async resolveCard(text: string): Promise<void> {
           await interaction.update({ content: text, components: [] }).catch(() => {});

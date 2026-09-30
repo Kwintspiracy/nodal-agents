@@ -237,6 +237,30 @@ describe('telegramAdapter.editMessageText', () => {
     });
   });
 
+  it('puts the given buttons on the edited message, as an inline keyboard', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: true }),
+    );
+
+    await telegramAdapter.editMessageText!(CREDS, FAKE_CHAT_ID, '42', 'Sure?', [
+      [
+        { label: 'Yes', callbackData: 'apr:x:wc' },
+        { label: 'Back', callbackData: 'apr:x:wb' },
+      ],
+    ]);
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body['reply_markup']).toEqual({
+      inline_keyboard: [
+        [
+          { text: 'Yes', callback_data: 'apr:x:wc' },
+          { text: 'Back', callback_data: 'apr:x:wb' },
+        ],
+      ],
+    });
+  });
+
   it('"message is not modified" is a success: the message already reads that text', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       makeFetchResponse(400, {

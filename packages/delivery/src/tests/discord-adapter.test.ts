@@ -266,6 +266,19 @@ describe('discordAdapter.editMessageText', () => {
   });
 });
 
+describe('discordAdapter.editMessageText with buttons', () => {
+  it('refuses buttons on an edit instead of sending the text alone', async () => {
+    vi.mocked(REST.prototype.patch).mockClear();
+
+    const result = await discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Sure?', [
+      [{ label: 'Yes', callbackData: 'apr:x:wc' }],
+    ]);
+
+    expect(result).toEqual({ ok: false, error: 'discord cannot put buttons on an edited message' });
+    expect(vi.mocked(REST.prototype.patch).mock.calls).toEqual([]);
+  });
+});
+
 describe('discordAdapter.listConversations', () => {
   it('maps guilds + their text-capable channels into DiscoveredConversation[]', async () => {
     vi.mocked(REST.prototype.get).mockImplementation((route) => {

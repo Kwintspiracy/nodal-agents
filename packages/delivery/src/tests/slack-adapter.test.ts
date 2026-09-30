@@ -302,6 +302,19 @@ describe('slackAdapter.editMessageText', () => {
   });
 });
 
+describe('slackAdapter.editMessageText with buttons', () => {
+  it('refuses buttons on an edit instead of sending the text alone', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockClear();
+
+    const result = await slackAdapter.editMessageText!(CREDS, CHANNEL_ID, '42.1', 'Sure?', [
+      [{ label: 'Yes', callbackData: 'apr:x:wc' }],
+    ]);
+
+    expect(result).toEqual({ ok: false, error: 'slack cannot put buttons on an edited message' });
+    expect(vi.mocked(WebClient.prototype.apiCall).mock.calls).toEqual([]);
+  });
+});
+
 describe('slackAdapter.listConversations', () => {
   it('maps public/private channels, im, and mpim into DiscoveredConversation[]', async () => {
     vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce({

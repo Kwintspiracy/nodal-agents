@@ -27,6 +27,7 @@ import {
   type ParsedApprovalCallback,
 } from '../../telegram/approval-callback.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
+import { requeueApprovalCard } from '../../approvals/card-settlement.ts';
 import { readQuestionToolInput } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -192,6 +193,15 @@ export async function handleDiscordApprovalInteraction(args: {
 
   if (approval.status !== 'pending') {
     await ack.ephemeralReply(`Already ${approval.status}.`);
+    // Le clic prouve que la carte montre encore des boutons : elle retourne au
+    // règlement, essais remis à zéro (#637). Après la réponse : Discord est
+    // déjà acquitté.
+    await requeueApprovalCard(deps.db, {
+      approvalRequestId: approval.id,
+      channel: 'discord',
+      agentId: target.agentId,
+      conversationId: target.channelId,
+    });
     return { handled: false, reason: 'already_resolved' };
   }
 
@@ -214,6 +224,10 @@ export async function handleDiscordApprovalInteraction(args: {
       await ack.ephemeralReply('Unknown option.');
       return { handled: false, reason: 'unknown_option' };
     }
+    // Acquitté AVANT la décision et la mise à jour de la carte : Discord
+    // laisse 3 s, et ce travail peut les dépasser (#637). Un refus qui suit
+    // passe par un message éphémère de suivi.
+    await ack.acknowledge();
     const answered = await resolveApprovalDecision(deps, env, {
       approvalRequestId: parsed.approvalRequestId,
       decision: 'approve',
@@ -225,8 +239,7 @@ export async function handleDiscordApprovalInteraction(args: {
       return { handled: false, reason: answered.code };
     }
     // La carte est réécrite par resolveApprovalDecision → settleApprovalCards
-    // (#637, un seul écrivain) ; ici, on accuse seulement réception du clic.
-    await ack.acknowledge();
+    // (#637, un seul écrivain).
     return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
   }
 
@@ -239,6 +252,8 @@ export async function handleDiscordApprovalInteraction(args: {
     return { handled: false, reason: 'question_needs_option' };
   }
 
+  // Acquitté AVANT la décision et la mise à jour de la carte (voir plus haut).
+  await ack.acknowledge();
   const result = await resolveApprovalDecision(deps, env, {
     approvalRequestId: parsed.approvalRequestId,
     decision: parsed.decision,
@@ -252,8 +267,7 @@ export async function handleDiscordApprovalInteraction(args: {
   }
 
   // La carte est réécrite par resolveApprovalDecision → settleApprovalCards
-  // (#637, un seul écrivain) ; ici, on accuse seulement réception du clic.
-  await ack.acknowledge();
+  // (#637, un seul écrivain).
 
   return { handled: true, decision: parsed.decision, jobId: result.jobId };
 }

@@ -46,6 +46,7 @@ export type {
   QuestionCard,
   SendResult,
   EditResult,
+  CardButton,
   BotIdentity,
   ChannelCapabilities,
   ChannelAdapter,

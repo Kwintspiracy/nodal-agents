@@ -149,6 +149,13 @@ export const approvalCardMessages = pgTable(
   },
   (table) => [
     index('idx_approval_card_messages_request').on(table.approvalRequestId),
+    // Un message est UNE carte : l'adoption d'une carte non consignée ne la dédouble jamais.
+    unique('approval_card_messages_message_unique').on(
+      table.approvalRequestId,
+      table.channel,
+      table.conversationId,
+      table.messageId,
+    ),
     check(
       'approval_card_messages_channel_check',
       sql`${table.channel} IN ('telegram','discord','slack','whatsapp')`,

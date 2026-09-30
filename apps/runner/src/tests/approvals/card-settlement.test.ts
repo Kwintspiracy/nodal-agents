@@ -105,6 +105,8 @@ let onNextTelegramEdit: ((body: Record<string, unknown>) => Promise<void>) | nul
  * appels, pas des réponses : faux dès qu'une édition en chevauche une autre.)
  */
 const completedTelegramEdits: Array<Record<string, unknown>> = [];
+/** Telegram répond 429 à toute édition tant que c'est vrai. */
+let failTelegramEdits = false;
 
 const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
   const u = String(url);
@@ -112,6 +114,16 @@ const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) 
     const hook = onNextTelegramEdit;
     onNextTelegramEdit = null;
     await hook(JSON.parse(init?.body as string) as Record<string, unknown>);
+  }
+  if (u.includes('/editMessageText') && failTelegramEdits) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: 429,
+        description: 'Too Many Requests: retry after 5',
+      }),
+      { status: 429, headers: { 'content-type': 'application/json' } },
+    );
   }
   if (u.includes('/editMessageText')) {
     completedTelegramEdits.push(JSON.parse(init?.body as string) as Record<string, unknown>);
@@ -289,6 +301,7 @@ beforeEach(() => {
   whatsappSendTextMock.mockClear();
   onNextTelegramEdit = null;
   completedTelegramEdits.length = 0;
+  failTelegramEdits = false;
 });
 
 describe('approval cards follow their request @cap:approuver-une-action/moteur', () => {
@@ -718,9 +731,15 @@ describe('a tap on the card: one write, the same text @cap:approuver-une-action/
     }
   });
 
-  it('Discord ✅: the tap is acknowledged without a write, and the card is rewritten ONCE by the settlement point', async () => {
+  it('Discord ✅: the tap is acknowledged BEFORE the decision, without a write, and the card is rewritten ONCE by the settlement point', async () => {
     const { approvalId } = await discordCard();
-    const acks = { acknowledge: 0, resolveCard: [] as string[], ephemeral: [] as string[] };
+    // L'ordre prouvé par le RÉSULTAT : ce que la demande était au moment de
+    // l'acquittement — encore ouverte, donc acquittée avant la décision.
+    const acks = {
+      acknowledgedWhile: [] as Array<string | null>,
+      resolveCard: [] as string[],
+      ephemeral: [] as string[],
+    };
 
     const r = await handleDiscordApprovalInteraction({
       parsed: { approvalRequestId: approvalId, decision: 'approve' },
@@ -735,7 +754,11 @@ describe('a tap on the card: one write, the same text @cap:approuver-une-action/
           acks.resolveCard.push(text);
         },
         async acknowledge() {
-          acks.acknowledge += 1;
+          const [row] = await db
+            .select({ status: approvalRequests.status })
+            .from(approvalRequests)
+            .where(eq(approvalRequests.id, approvalId));
+          acks.acknowledgedWhile.push(row?.status ?? null);
         },
       },
       deps,
@@ -743,7 +766,7 @@ describe('a tap on the card: one write, the same text @cap:approuver-une-action/
     });
 
     expect(r).toMatchObject({ handled: true, decision: 'approve' });
-    expect(acks).toEqual({ acknowledge: 1, resolveCard: [], ephemeral: [] });
+    expect(acks).toEqual({ acknowledgedWhile: ['pending'], resolveCard: [], ephemeral: [] });
     expect(discordEditMock.mock.calls).toEqual([
       [
         { botToken: 'discord-tok-1' },
@@ -799,5 +822,152 @@ describe('a tap on the card: one write, the same text @cap:approuver-une-action/
     });
 
     expect(completedTelegramEdits.at(-1)).toEqual(noButtons('❌ Rejected — run_command'));
+  });
+});
+
+describe('every write of a card goes through the card protocol @cap:approuver-une-action/moteur', () => {
+  it('a 429 streak makes the card give up; a tap on it puts it back in the queue, and the tick repairs it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { approvalId } = await telegramCard();
+      failTelegramEdits = true;
+      await resolveApprovalDecision(deps, testEnv, {
+        approvalRequestId: approvalId,
+        decision: 'approve',
+        resolvedBy: 'api',
+      });
+      for (let i = 1; i < APPROVAL_CARD_MAX_ATTEMPTS; i += 1) {
+        await settleApprovalCards(deps.db, { approvalRequestIds: [approvalId] });
+      }
+      expect(await cardRow(approvalId)).toMatchObject({
+        outcome: 'gave_up',
+        lastError: 'telegram_request_failed: Too Many Requests: retry after 5',
+      });
+
+      // Le propriétaire tape la carte morte, Telegram refuse encore une fois.
+      await handleApprovalCallback({
+        update: tap(`apr:${approvalId}:a`),
+        receivingAgentId: seed.agentId,
+        botToken: '123:fake',
+        deps,
+        env: testEnv,
+      });
+      expect(await cardRow(approvalId)).toMatchObject({
+        settledAt: null,
+        outcome: null,
+        attempts: 1,
+      });
+
+      // Telegram revient : le tick répare la carte.
+      failTelegramEdits = false;
+      const tick = await runCronTick(deps);
+
+      expect(tick.approvalCardsEdited).toBe(1);
+      expect(completedTelegramEdits.at(-1)).toEqual(noButtons('✅ Approved — run_command'));
+      expect(await cardRow(approvalId)).toMatchObject({ outcome: 'edited', attempts: 2 });
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it('a tap on a settled request whose card was never recorded adopts the card and settles it', async () => {
+    const { approvalId } = await telegramCard();
+    await db
+      .delete(approvalCardMessages)
+      .where(eq(approvalCardMessages.approvalRequestId, approvalId));
+    await db
+      .update(approvalRequests)
+      .set({ status: 'expired', resolvedAt: new Date(), resolvedBy: 'system:ttl_expired' })
+      .where(eq(approvalRequests.id, approvalId));
+    fetchMock.mockClear();
+
+    await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:r`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    expect(completedTelegramEdits).toEqual([noButtons('⌛ Expired — run_command')]);
+    expect(await cardRow(approvalId)).toMatchObject({ outcome: 'edited', attempts: 1 });
+  });
+
+  it('« Always allow? » then « Back » while the dashboard decides: the card ends on the settled text', async () => {
+    const { approvalId } = await telegramCard();
+    await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:w`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+    expect(completedTelegramEdits.at(-1)?.['text']).toContain('Always allow run_command');
+    onNextTelegramEdit = async () => {
+      await resolveApprovalDecision(deps, testEnv, {
+        approvalRequestId: approvalId,
+        decision: 'approve',
+        resolvedBy: 'api',
+      });
+    };
+
+    await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:wb`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    expect(completedTelegramEdits.at(-1)).toEqual(noButtons('✅ Approved — run_command'));
+    expect(await cardRow(approvalId)).toMatchObject({ outcome: 'edited' });
+  });
+
+  it('« Back » on a request without entity (« Still pending ») while the dashboard decides: the card ends on the settled text', async () => {
+    const { approvalId } = await telegramCard();
+    await db
+      .update(approvalRequests)
+      .set({ entityId: null })
+      .where(eq(approvalRequests.id, approvalId));
+    onNextTelegramEdit = async (body) => {
+      expect(body['text']).toBe('⏳ Still pending — run_command. Resolve it from the dashboard.');
+      await resolveApprovalDecision(deps, testEnv, {
+        approvalRequestId: approvalId,
+        decision: 'reject',
+        resolvedBy: 'api',
+      });
+    };
+
+    await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:wb`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    expect(completedTelegramEdits.at(-1)).toEqual(noButtons('❌ Rejected — run_command'));
+  });
+
+  it('a confirmation tap on a request already closed never puts buttons back', async () => {
+    const { approvalId } = await telegramCard();
+    await resolveApprovalDecision(deps, testEnv, {
+      approvalRequestId: approvalId,
+      decision: 'reject',
+      resolvedBy: 'api',
+    });
+    completedTelegramEdits.length = 0;
+
+    await handleApprovalCallback({
+      update: tap(`apr:${approvalId}:w`),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+      env: testEnv,
+    });
+
+    expect(completedTelegramEdits).toEqual([noButtons('❌ Rejected — run_command')]);
   });
 });
