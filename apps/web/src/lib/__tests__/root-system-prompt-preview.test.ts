@@ -11,7 +11,20 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agents, agentSkills, agentSkillAssignments, entities } from '@nodal-agents/db';
+import {
+  eq,
+  agents,
+  agentSkills,
+  agentSkillAssignments,
+  agentMcpServers,
+  entities,
+  mcpServers,
+} from '@nodal-agents/db';
+import {
+  createLazyMcpTools,
+  slugToPrefix,
+  type McpToolDescriptor,
+} from '@nodal-agents/adapter-mcp';
 import { buildSystemPrompt, resolveBuiltinToolNames } from '@nodal-agents/orchestration';
 import type { Agent } from '@nodal-agents/orchestration';
 
@@ -51,8 +64,26 @@ const GHOST_SLUG = `preview-ghost-${Date.now()}`;
 const MCP_SLUG = `preview-mcp-${Date.now()}`;
 const PROSE_SLUG = `preview-prose-${Date.now()}`;
 const ALL = [SHELL_SLUG, GHOST_SLUG, MCP_SLUG, PROSE_SLUG];
-/** Un outil MCP, comme en porte la liste complète d'un job. */
-const MCP_TOOL = 'notion__search';
+/** Un vrai serveur MCP attaché au root, avec son cache d'outils v2. */
+const MCP_SERVER_SLUG = 'notion-preview';
+const MCP_CACHE = [
+  {
+    name: 'search',
+    description: 'Search the workspace',
+    inputSchema: { type: 'object', properties: {} },
+  },
+];
+/** Le nom que le job porte pour cet outil : `<prefix>__<outil>`. */
+const MCP_TOOL = `${slugToPrefix(MCP_SERVER_SLUG)}__search`;
+
+/** Les slugs annoncés par le bloc `## Skills` SEUL, jusqu'au titre suivant. */
+function announced(prompt: string): string[] {
+  const start = prompt.indexOf('\n## Skills');
+  if (start < 0) return [];
+  const end = prompt.indexOf('\n## ', start + 1);
+  const block = prompt.slice(start, end < 0 ? undefined : end);
+  return ALL.filter((s) => block.includes(`- \`skill_view('${s}')\``));
+}
 
 beforeAll(async () => {
   testDb = (await spinUpTestDb()).db;
@@ -61,6 +92,20 @@ beforeAll(async () => {
     .update(entities)
     .set({ rootAgentId: seed.agentId })
     .where(eq(entities.id, seed.entityId));
+  const [server] = await testDb
+    .insert(mcpServers)
+    .values({
+      entityId: seed.entityId,
+      name: 'Notion preview',
+      slug: MCP_SERVER_SLUG,
+      transport: 'stdio',
+      command: 'never-spawned',
+      availableTools: MCP_CACHE,
+    })
+    .returning();
+  await testDb
+    .insert(agentMcpServers)
+    .values({ entityId: seed.entityId, agentId: seed.agentId, mcpServerId: server!.id });
   for (const [slug, requiredBuiltins] of [
     [SHELL_SLUG, ['run_command']],
     [GHOST_SLUG, ['no_such_builtin_in_this_build']],
@@ -90,28 +135,54 @@ describe('aperçu du prompt du root (Réglages → Root context) @cap:configurer
     const res = await getRootSystemPromptAction();
     expect(res.ok, res.ok ? '' : res.message).toBe(true);
     if (!res.ok) return;
-    expect(res.data, 'le job du root tient run_command : sa skill est annoncée').toContain(
-      `skill_view('${SHELL_SLUG}')`,
-    );
+    expect(
+      announced(res.data),
+      'le job du root tient run_command : sa skill est annoncée',
+    ).toContain(SHELL_SLUG);
     expect(res.data, 'aucun job ne tient cet outil').not.toContain(GHOST_SLUG);
   });
 
   it('annonce exactement les skills que le JOB du root annonce', async () => {
-    // Revue de #658, passe 1 : l'aperçu et le job doivent lire la même
-    // règle. Le job est rendu ici comme le runner le construit : ses
-    // builtins, plus un outil MCP de sa liste complète.
+    // Revue de #658, passes 1 et 2 : l'aperçu se compare au rendu du vrai
+    // chemin du job, pas à une liste écrite à la main. La liste du job est
+    // calculée comme execute.ts §6 la calcule, par les mêmes fonctions :
+    // les builtins par la règle unique (`resolveBuiltinToolNames` →
+    // `agentBuiltinToolNames`, #636), les outils MCP par `createLazyMcpTools`
+    // sur le cache du serveur réellement attaché, filtrés par ses
+    // `enabled_tools`. Puis `buildSystemPrompt`, comme au §7.
     const { getRootSystemPromptAction } = await import('../actions.ts');
     const res = await getRootSystemPromptAction();
     expect(res.ok, res.ok ? '' : res.message).toBe(true);
     if (!res.ok) return;
+
     const [row] = await testDb.select().from(agents).where(eq(agents.id, seed.agentId));
     const builtins = (await resolveBuiltinToolNames(testDb, seed.agentId)).names;
+    const attached = await testDb
+      .select({
+        slug: mcpServers.slug,
+        availableTools: mcpServers.availableTools,
+        enabledTools: agentMcpServers.enabledTools,
+      })
+      .from(agentMcpServers)
+      .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
+      .where(eq(agentMcpServers.agentId, seed.agentId));
+    const mcpToolNames = attached.flatMap((ms) => {
+      const toolset = createLazyMcpTools(
+        { transport: 'stdio', slug: ms.slug, command: 'never-spawned', args: [], env: {} },
+        ms.availableTools as McpToolDescriptor[],
+      );
+      const enabled = ms.enabledTools as string[] | null;
+      const prefixLen = slugToPrefix(ms.slug).length + 2;
+      return toolset.tools
+        .filter((t) => enabled === null || enabled.includes(t.name.slice(prefixLen)))
+        .map((t) => t.name);
+    });
+    expect(mcpToolNames, 'le job tient bien l’outil MCP').toContain(MCP_TOOL);
+
     const job = await buildSystemPrompt(row as unknown as Agent, testDb, {
       origin: 'api',
-      availableToolNames: [...builtins, MCP_TOOL],
+      availableToolNames: [...builtins, ...mcpToolNames],
     });
-    const announced = (prompt: string): string[] =>
-      ALL.filter((s) => prompt.includes(`skill_view('${s}')`));
     expect(announced(job)).toEqual([SHELL_SLUG, PROSE_SLUG]);
     expect(announced(res.data)).toEqual(announced(job));
   });

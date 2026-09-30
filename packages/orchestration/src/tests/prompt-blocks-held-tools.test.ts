@@ -102,8 +102,18 @@ describe('index des skills : seulement celles dont le job tient les outils @cap:
   const MCP_TOOL = 'notion__search';
 
   /** Les slugs annoncés par l'index, quel que soit le format de la surface. */
-  const announced = (prompt: string, slugs: string[]): string[] =>
-    slugs.filter((s) => prompt.includes(`skill_view('${s}')`) || prompt.includes(`\`${s}\``));
+  const announced = (prompt: string, slugs: string[]): string[] => {
+    // Le bloc `## Skills` SEUL, jusqu'au titre suivant : un slug cité
+    // ailleurs (Capabilities you can request, mémoire…) ne compte pas pour
+    // une annonce (revue de #658, passe 2).
+    const start = prompt.indexOf('\n## Skills');
+    if (start < 0) return [];
+    const end = prompt.indexOf('\n## ', start + 1);
+    const block = prompt.slice(start, end < 0 ? undefined : end);
+    return slugs.filter(
+      (s) => block.includes(`- \`skill_view('${s}')\``) || block.includes(`- \`${s}\` — `),
+    );
+  };
 
   async function rootWithSkills() {
     const agent = await seedAgent('orchestrator');
